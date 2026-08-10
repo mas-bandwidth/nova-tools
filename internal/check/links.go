@@ -1,6 +1,7 @@
 package check
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"net/url"
@@ -10,11 +11,12 @@ import (
 	"strings"
 )
 
-// BrokenLink is one relative markdown link that does not resolve.
+// BrokenLink is one relative markdown link that does not resolve — or, when
+// Line is 0 and Target is empty, one whole .md file that could not be read.
 type BrokenLink struct {
 	File   string // path of the containing .md file, relative to the scanned dir
-	Line   int    // 1-based line number
-	Target string // the link target as written
+	Line   int    // 1-based line number; 0 when the whole file is the finding
+	Target string // the link target as written; empty when the whole file is the finding
 	Reason string
 }
 
@@ -51,10 +53,7 @@ func Links(dir string) (mdFiles, checked int, broken []BrokenLink, err error) {
 			return nil
 		}
 		mdFiles++
-		n, b, err := checkFileLinks(dir, path)
-		if err != nil {
-			return err
-		}
+		n, b := checkFileLinks(dir, path)
 		checked += n
 		broken = append(broken, b...)
 		return nil
@@ -68,14 +67,22 @@ func Links(dir string) (mdFiles, checked int, broken []BrokenLink, err error) {
 // checkFileLinks extracts and resolves the relative links in one markdown
 // file. Fenced code blocks and inline code spans are stripped first so that
 // examples do not count as links.
-func checkFileLinks(root, mdPath string) (checked int, broken []BrokenLink, err error) {
+//
+// A file that cannot be read (permissions, a dangling symlink) comes back as
+// one whole-file BrokenLink — Line 0, Target empty, reason "unreadable (…)" —
+// never as an error. This is the same posture attest takes with a manifested
+// file that exists but cannot be read: a NAMED FAILURE, not a refusal. The
+// walk continues, so one unreadable file cannot discard the findings from the
+// rest of the tree; before this, it converted the whole run to exit 2 and
+// threw the accumulated broken links away.
+func checkFileLinks(root, mdPath string) (checked int, broken []BrokenLink) {
+	relFile, relErr := filepath.Rel(root, mdPath)
+	if relErr != nil {
+		relFile = mdPath
+	}
 	data, err := os.ReadFile(mdPath)
 	if err != nil {
-		return 0, nil, err
-	}
-	relFile, err := filepath.Rel(root, mdPath)
-	if err != nil {
-		relFile = mdPath
+		return 0, []BrokenLink{{File: relFile, Reason: fmt.Sprintf("unreadable (%v)", readCause(err))}}
 	}
 
 	inFence := false
@@ -118,7 +125,19 @@ func checkFileLinks(root, mdPath string) (checked int, broken []BrokenLink, err 
 			}
 		}
 	}
-	return checked, broken, nil
+	return checked, broken
+}
+
+// readCause unwraps the OS-level cause ("permission denied", "no such file
+// or directory") from a read error, so the whole-file FAIL line stays one
+// short clause: the file's path is already the line's subject and the full
+// *fs.PathError would repeat it.
+func readCause(err error) error {
+	var pe *fs.PathError
+	if errors.As(err, &pe) {
+		return pe.Err
+	}
+	return err
 }
 
 // extractLinkTargets returns every inline link or image destination in one

@@ -12,9 +12,16 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     exists-style probe answers false both when the file is absent AND when the
     directory above it cannot be stat'd) turns a permissions change into "nothing
     blown" -- a fail-open in a safety control. os.ReadFile +
-    errors.Is(err, fs.ErrNotExist) tells the two apart, which is why the read is
-    written with the stdlib primitive that distinguishes them rather than the one
-    that does not.
+    errors.Is(err, fs.ErrNotExist) tells UNREADABLE apart from NONEXISTENT, which is
+    why the read is written with the stdlib primitive that distinguishes those two
+    rather than the one that does not. What that primitive does NOT distinguish: a
+    missing box file from a missing parent directory -- both come back
+    fs.ErrNotExist, so `--box /no/such/dir/fuses.json` also answers VERIFIED CLEAR.
+    Accepted, deliberately, not overlooked: --box is a locator, the caller's
+    statement of where the box lives, and a caller that names the wrong box gets
+    that box's truth -- here, an empty one. The case is pinned by test
+    (TestCheckIntoANonexistentDirectoryIsAlsoClear in cmd/nova-fuse), so changing
+    this answer is a decision, never a drive-by.
 
  2. MALFORMED IS UNREADABLE. A JSON array, a bare string, a truncated file, a
     lockdown whose value is not an object -- every one fails the unmarshal and comes
@@ -137,8 +144,11 @@ func ReadBox(path string) (Box, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			// The box was never created. That is a fact, not a guess: the read reached the
-			// directory and the directory said the file is not there.
+			// Nonexistent, verified: the read failed with the one error that means "not
+			// there" rather than "could not look". fs.ErrNotExist cannot say WHICH part of
+			// the path is missing -- the box file or a parent directory -- so a path into a
+			// directory that does not exist also lands here and answers CLEAR. That is
+			// accepted, per note 1 in the package comment, and pinned by test.
 			return Box{Quarantine: map[string]Fuse{}}, nil
 		}
 		return Box{}, fmt.Errorf("cannot read %s: %w", path, err)

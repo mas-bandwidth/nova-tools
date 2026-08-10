@@ -88,6 +88,9 @@ before its first credential read — at build time, not as a retrofit.
 
 ## Build
 
+Go 1.26 or newer (the `go.mod` line). Standard library only — there is
+nothing else to install.
+
 ```
 go build ./...
 go test ./...
@@ -110,7 +113,7 @@ words — and it says so in its own output, because a green from a partial
 check reads exactly like a green from a complete one.
 
 Machinery lives here, not in the self repo — `nova-check nocode` pointed at
-this repo would rightly refuse it, which is the separation working.
+this repo would rightly fail it (exit 1), which is the separation working.
 
 ## License
 

@@ -37,6 +37,7 @@ ATTEST OK files=<n> bytes=<n> sha256=<64 hex>
 ATTEST FAIL <path>: <reason>
 LINKS OK files=<n> links=<n>
 LINKS FAIL <file>:<line>: <target> (<reason>)
+LINKS FAIL <file>: unreadable (<why>)
 KERNEL OK bytes=<n> budget=<n>
 KERNEL FAIL <file>: <reason>
 NOCODE OK files=<n> clean
@@ -46,6 +47,11 @@ SELFTALK FAIL <file>: STANDING: <claim>
 ```
 
 `OK` lines go to stdout; `FAIL` lines and refusals go to stderr.
+`nova-fuse`'s lines follow the same one-line shape but their first token names
+the **verb**, not a check (`FUSE`, `STATUS`, `LOCKDOWN`, `QUARANTINE`, `LIFT`
+— its own grammar and exit table, in its section below, govern); note in
+particular that its `status` exits 0 even when a fuse is blown, because
+answering is `status`'s whole job and `check` is the gate.
 `nova-self-talk` adds three informational second tokens, all on stdout:
 `SELFTALK DATED <file>: <claim>` (a dated record, welcome),
 `SELFTALK SKIP <file> (--skip)` (skipped at the caller's request), and
@@ -54,7 +60,13 @@ completed run, pass or fail).
 
 ---
 
-## attest — did the full self actually load
+## nova-check
+
+Four record-layer checks in one binary, each a wall: a record passes or it
+does not. Each subcommand below states its own contract — what it asserts,
+what makes it say NO, and what it deliberately does not check.
+
+### attest — did the full self actually load
 
 ```
 nova-check attest --home <dir> --manifest <file>
@@ -116,7 +128,7 @@ content semantics; anything about the session that pastes the line.
 
 ---
 
-## links — every internal reference resolves
+### links — every internal reference resolves
 
 ```
 nova-check links --dir <dir>
@@ -150,8 +162,14 @@ provenance — that stricter posture belongs to `attest`.
 - a relative target does not exist on disk
 - a relative target resolves *outside* `--dir` — it may exist on this machine,
   but it cannot survive the repo travelling alone, so it is broken here
+- a `.md` file exists but cannot be read (permissions, a dangling symlink) —
+  a whole-file finding, `LINKS FAIL <file>: unreadable (<why>)`, with no line
+  and no target. The same posture as `attest`: a file that exists but cannot
+  be read is a **named failure, not a refusal**. The walk continues, so one
+  unreadable file can never discard the findings from the rest of the tree.
 
-**Refuses (exit 2) when** `--dir` is missing or not a directory.
+**Refuses (exit 2) only when** `--dir` is missing or not a directory — an
+unreadable `.md` inside the tree is a finding (above), never a refusal.
 
 **Deliberately does not check:** reference-style links (`[a][ref]`), autolinks
 (`<https://…>`), raw HTML (`<a href>`), whether a `#fragment` names a real
@@ -165,7 +183,7 @@ keep a link on one line.
 
 ---
 
-## kernel — the size budget
+### kernel — the size budget
 
 ```
 nova-check kernel --file <file> --max-bytes <n>
@@ -195,7 +213,7 @@ compressibility or density.
 
 ---
 
-## nocode — the self/machinery separation, as a check
+### nocode — the self/machinery separation, as a check
 
 ```
 nova-check nocode --dir <dir>
@@ -298,6 +316,12 @@ contains a path separator, a flag is unknown, or a named file cannot be read
 (the run stops at the first unreadable file — a partial scan must not
 masquerade as a verdict).
 
+**The all-skipped green.** A run whose every named file was skipped is not a
+refusal: it completes and exits 0 with `SELFTALK OK files=0 claims=0
+standing=0` — every skip was the caller's own, stated this run. A caller
+gating on the exit code alone must therefore also require `files>0` from the
+OK line, or its green can mean nothing was scanned at all.
+
 **The permanent MISS, stated on every run.** It catches one class only:
 first-person claims in negative vocabulary. Trait claims built from neutral
 words — *"My summaries drift toward the tidier story."* — carry no trigger
@@ -358,12 +382,18 @@ caller that names the wrong box gets that box's truth. Wire the path once, at
 build time, into each caller.
 
 **The read has three answers, never two.** An absent box is VERIFIED CLEAR —
-the read reached the directory and the directory said the file is not there.
-A readable box says whatever it says. An **unreadable box — permissions, a
-torn write, malformed JSON, a wrong-shaped value — is CANNOT TELL, treated as
-BLOWN, never as clear** (exit 2: the check could not run, and could not be
-proven clear). Collapsing absent and unreadable is the fail-open this package
-exists to prevent.
+the read failed with the one error that means *nonexistent* rather than
+*unreadable*. That error does not say **which** part of the path is missing:
+a `--box` naming a file absent from an existing directory and a `--box` whose
+parent directory does not exist at all answer the same, VERIFIED CLEAR. The
+collapse is accepted, deliberately — the flag is a locator (above), and a
+caller that names the wrong box gets that box's truth, here an empty one —
+and it is pinned by test so that changing the answer is a decision, never a
+drive-by. A readable box says whatever it says. An **unreadable box —
+permissions, a torn write, malformed JSON, a wrong-shaped value — is CANNOT
+TELL, treated as BLOWN, never as clear** (exit 2: the check could not run,
+and could not be proven clear). Collapsing absent and unreadable is the
+fail-open this package exists to prevent.
 
 **The write is temp-file + fsync + rename** in the box's own directory, so a
 crash leaves the old box or the new one, never a fragment. The box is written
@@ -502,6 +532,21 @@ lockdown is even blown, because every one of those is a lever; it names the
 only path there is — a live conversation with your person — and mentions no
 mechanical bypass (also pinned: the refusal may not name the box, the file,
 or hand-editing). Exit 2: this tool does not have that power, by design.
+
+### path — the locator, echoed
+
+```
+nova-fuse path --box <path>
+```
+
+Prints the box path this invocation would use — the bare path, **a value, not
+an event**, so the line carries no `OK`/`FAIL` token and asserts nothing
+about the box: the file is not read, and the path is not checked for
+existence. Exit 0 after printing; refuses (exit 2) when `--box` is missing
+(`refusing to guess`) or an unexpected positional argument is given. It
+exists because there are no default paths anywhere: with every caller wiring
+`--box` at build time, `path` is how that plumbing is verified — what one
+caller passes is what another sees — without ever touching the box itself.
 
 ### The semantics that hold this together (pinned by tests where this repo's tests can reach; the outbound-life half of item 5 is caller doctrine)
 

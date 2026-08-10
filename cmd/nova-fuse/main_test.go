@@ -687,8 +687,8 @@ func TestHelpIsNotAnError(t *testing.T) {
 
 // TestAbsentBoxIsClear. A machine that has never blown a fuse must not be blocked by
 // this tool, or its owner disables it and then nothing is guarded. "Never created" is a
-// verified fact -- the read reached the directory and the directory said the file is not
-// there -- and that is a different answer from "could not look".
+// verified fact -- the read failed with the one error that means NONEXISTENT rather than
+// UNREADABLE -- and that is a different answer from "could not look".
 func TestAbsentBoxIsClear(t *testing.T) {
 	box := boxIn(t)
 	now := nowish()
@@ -707,6 +707,26 @@ func TestAbsentBoxIsClear(t *testing.T) {
 	}
 	if !strings.Contains(out, "STATUS OK lockdown=clear quarantines=0") {
 		t.Errorf("stdout = %q", out)
+	}
+}
+
+// TestCheckIntoANonexistentDirectoryIsAlsoClear pins a DOCUMENTED DECISION, so a future
+// "fix" is a deliberate one. fs.ErrNotExist is true both when the directory exists and
+// the box file is not in it AND when a parent directory itself does not exist: the read
+// distinguishes unreadable from nonexistent, but it cannot distinguish missing-file from
+// missing-directory. The behavior is kept on purpose -- --box is a locator, the caller's
+// statement of where the box lives, and a caller that names the wrong box gets that
+// box's truth, here an empty one (SPEC, "The box"). If this test goes red, someone has
+// changed an accepted answer of a safety control, and must mean it: rewrite note 1 in
+// internal/fuse's package comment and SPEC's three-answers paragraph in the same commit.
+func TestCheckIntoANonexistentDirectoryIsAlsoClear(t *testing.T) {
+	box := filepath.Join(t.TempDir(), "no", "such", "dir", "fuses.json")
+	code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 -- an absent parent directory answers the same as an absent box\nstderr: %s", code, errOut)
+	}
+	if !strings.Contains(out, "FUSE OK") {
+		t.Errorf("stdout = %q, want FUSE OK", out)
 	}
 }
 

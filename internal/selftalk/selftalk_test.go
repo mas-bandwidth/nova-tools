@@ -100,6 +100,32 @@ func TestA9_RegressionCasesThatOccasionedTheTool(t *testing.T) {
 	}
 }
 
+// SPEC.md, "The permanent MISS, stated on every run": trait claims built from
+// neutral vocabulary are OUT, permanently, and the spec cites "My summaries
+// drift toward the tidier story." as the example "verified to escape". This
+// test IS that verification — before it existed, the claim was pinned by
+// nothing. The rot it guards against already happened once, to this exact
+// paragraph: the spec cited "in one direction, reliably: toward the version
+// that flatters me" as canonically uncatchable, a vocabulary extension pulled
+// that sentence INTO reach (its capture is pinned in TestA9), and the spec
+// stayed stale until a cold reader caught it. If a vocabulary change ever
+// reaches these sentences, this test goes red, and the spec's permanent-MISS
+// section must be rewritten in the same commit — the example replaced with a
+// sentence that still escapes.
+func TestPermanentMissNeutralVocabularyTraitClaimsEscape(t *testing.T) {
+	for _, in := range []string{
+		// SPEC.md's cited example, verbatim.
+		"My summaries drift toward the tidier story.",
+		// A second member of the class, so the pin outlives any one sentence:
+		// first-person, a standing trait, no negative vocabulary, no date.
+		"My first draft keeps whatever framing it started with.",
+	} {
+		if got := Scan(in); len(got) != 0 {
+			t.Errorf("the permanent-MISS class must escape (SPEC.md, \"The permanent MISS\"); %q was caught: %#v", in, got)
+		}
+	}
+}
+
 // The classifier must not invent claims in ordinary prose.
 func TestNoFalsePositivesOnOrdinaryProse(t *testing.T) {
 	clean := "The tree by the house has one lit window. Tree rings beat radiocarbon, " +

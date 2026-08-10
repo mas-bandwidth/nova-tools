@@ -115,6 +115,13 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(broken) > 0 {
 		for _, b := range broken {
+			if b.Line == 0 && b.Target == "" {
+				// A whole-file finding: the .md itself could not be read, so there
+				// is no line and no target — `LINKS FAIL <file>: unreadable (<why>)`.
+				// A named failure like any other, per SPEC; not a refusal.
+				fmt.Fprintf(stderr, "LINKS FAIL %s: %s\n", b.File, b.Reason)
+				continue
+			}
 			fmt.Fprintf(stderr, "LINKS FAIL %s:%d: %s (%s)\n", b.File, b.Line, b.Target, b.Reason)
 		}
 		return 1

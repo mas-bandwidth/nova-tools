@@ -35,8 +35,10 @@ func write(t *testing.T, path, content string) {
 // ------------------------------------------------- 1. THE READ HAS THREE ANSWERS, NOT TWO
 
 // TestAbsentBoxIsVerifiedClearNotAnError: a box that was never created holds no blown
-// fuses -- that is a VERIFIED FACT, reached by the read getting all the way to the
-// directory and being told the file is not there.
+// fuses -- that is a VERIFIED FACT: the read failed with the one error that means
+// NONEXISTENT rather than UNREADABLE. (That error cannot say whether the missing thing
+// was the file or its parent directory; the collapse is accepted -- see note 1 in the
+// package comment -- and pinned separately in cmd/nova-fuse's tests.)
 func TestAbsentBoxIsVerifiedClearNotAnError(t *testing.T) {
 	b, err := ReadBox(boxIn(t))
 	if err != nil {

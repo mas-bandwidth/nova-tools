@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -125,6 +126,43 @@ func TestRunEndToEnd(t *testing.T) {
 				t.Errorf("a failing check must not print an OK line, got %q", stdout.String())
 			}
 		})
+	}
+}
+
+// The unreadable-.md seam a caller actually sees: `LINKS FAIL <file>:
+// unreadable (<why>)` on stderr — a whole-file line, no line number, no
+// target — beside the ordinary broken-link line, and exit 1. The code this
+// was first run against exited 2 and printed NO findings at all: one
+// chmod-000 file converted the run into a refusal and discarded the real
+// broken link. That discard is the defect this test pins shut.
+func TestLinksUnreadableFileIsNamedFailureAtTheCLI(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
+	}
+	dir := t.TempDir()
+	mustWrite(t, dir, "broken.md", "[gone](missing.md)\n")
+	mustWrite(t, dir, "locked.md", "text\n")
+	locked := filepath.Join(dir, "locked.md")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o644) })
+
+	var stdout, stderr bytes.Buffer
+	if got := run([]string{"links", "--dir", dir}, &stdout, &stderr); got != 1 {
+		t.Fatalf("exit = %d, want 1 -- named failures, not a refusal; stderr: %s", got, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "LINKS FAIL locked.md: unreadable") {
+		t.Errorf("stderr = %q, want the whole-file grammar LINKS FAIL <file>: unreadable (<why>)", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "LINKS FAIL broken.md:1: missing.md (does not exist)") {
+		t.Errorf("stderr = %q, want the accumulated broken link kept, not discarded", stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Errorf("a failing check must not print an OK line, got %q", stdout.String())
 	}
 }
 
