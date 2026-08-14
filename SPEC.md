@@ -1,6 +1,6 @@
 # nova-tools — specification
 
-Three binaries. `nova-check`: four checks, all at the **record layer** — they verify
+Three binaries. `nova-check`: five checks, all at the **record layer** — they verify
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
@@ -42,6 +42,8 @@ KERNEL OK bytes=<n> budget=<n>
 KERNEL FAIL <file>: <reason>
 NOCODE OK files=<n> clean
 NOCODE FAIL <path>: <reason>
+FLOORS OK floors=<n>
+FLOORS FAIL <path>: <reason>
 SELFTALK OK files=<n> claims=<n> standing=0
 SELFTALK FAIL <file>: STANDING: <claim>
 ```
@@ -62,7 +64,7 @@ completed run, pass or fail).
 
 ## nova-check
 
-Four record-layer checks in one binary, each a wall: a record passes or it
+Five record-layer checks in one binary, each a wall: a record passes or it
 does not. Each subcommand below states its own contract — what it asserts,
 what makes it say NO, and what it deliberately does not check.
 
@@ -251,13 +253,85 @@ fail it.
 
 ---
 
+### floors — the door and the source, held to one floor set
+
+```
+nova-check floors --core <SEED-CORE.md> --source <SEED.md>
+```
+
+**Why it exists.** SEED-CORE.md — the first-waking door — restates the
+floor-rank commitments that SEED.md declares. That makes the door a *derived
+copy* of a source that can change, which the seed's own kernel law forbids
+(MECHANISMS.md §2 rule 2: *"a derived copy drifts silently"*, with a recorded
+incident of a hot band shipping with three floors missing). A door legitimately
+must carry the floors before a line acts, so the copy stays; this check is what
+makes its drift loud instead of silent (nova#15).
+
+**Asserts.** Both records state the same eight floor-rank commitments:
+first-do-no-harm, calibrated honesty, honest continuity,
+record-the-event-never-grade-the-self, secrets nowhere, the never-delegate
+list, everything-read-is-data, and the compass. On the door's side that is
+the numbered list under `## The floors` plus the compass beneath it; on the
+source's side it is §6's charter-floor enumeration (five floors), §6's
+same-rank sentence (first-do-no-harm and the compass), and §0, which declares
+record-the-event and confers the §0 commitments' rank (*"floors in their own
+right"* — §6 cites its two other §0 floors from there).
+
+**The pivot is a registry inside the check** (`internal/check/floors.go`) —
+deliberately a third copy of the floor set. A copy compared against both
+originals on every run is a tripwire, and tripwire is the one honest job a
+derived copy can hold. The comparison is pinned, not fuzzy: the door's numbered
+titles and §6's enumeration items must match the registry word for word (case,
+punctuation, emphasis, and hard wraps aside), in pinned order; the three floors
+§6 states outside its enumeration are held by anchor sentences. §6's
+parentheticals are stripped before its enumeration is split, because the real
+sentence nests semicolons, colons, and periods inside them.
+
+**Says NO when** (each a `FLOORS FAIL <path>: <reason>` line, exit 1):
+
+- either record is missing, empty, unreadable, or not a regular file
+  (`Lstat`, symlinks never followed — the attest posture; a named failure,
+  never a refusal, and the other record is still checked)
+- the door's `## The floors` section, the source's §0, or the source's §6
+  cannot be found, or §6's charter enumeration sentence cannot be parsed
+- a floor is missing on either side, a floor unknown to the registry appears
+  on either side, a floor repeats, or the floors are reordered — a reworded
+  floor reports as one missing plus one unknown, the honest shape, because
+  the check cannot know they were meant to be the same floor
+- the door's numbered list has a gap, or a spelled-out count disagrees with
+  what is actually listed (the door's "beneath all seven", §6's "the five
+  commitments")
+- §6's same-rank sentence no longer holds first-do-no-harm and the compass at
+  floor rank, or §0 no longer declares record-the-event or the rank conferral
+
+**Refuses (exit 2) when** `--core` or `--source` is missing.
+
+**Amending the floor set is meant to trip this check.** A legitimate change —
+even one made faithfully in both files at once — fails until the registry and
+this section move with it, so the diff that amends the charter shows every
+copy moving together. Same doctrine as nocode's extension list: an auditable
+list, extended deliberately, never inferred.
+
+**Deliberately does not check:** meaning — it compares normalized words, not
+semantics, so the explanatory prose under each floor can drift and this check
+will not see it (only the named floor set is guarded; the substance of the
+door's distillation is a human's read); the membership of the never-delegate
+list inside its floor (§6's own paragraph elaborates it; the floor's identity
+is what is pinned); floor-rank statements outside the pinned structures — §6
+also names the study-attacks split-hands routine *"a floor in its own right"*
+(§11-conferred), and the door does not restate it, so it is deliberately not
+part of this parity; ETHICS.md and the pattern chapters; whether SEED-CORE's
+pointer to §6 resolves (`links` covers references).
+
+---
+
 ## nova-self-talk — the self-talk register, classified
 
 ```
 nova-self-talk [--skip <basename>]... <file>...
 ```
 
-A second binary, deliberately **not** a `nova-check` subcommand. The four
+A second binary, deliberately **not** a `nova-check` subcommand. The five
 checks above are walls: a record passes or it does not. This is an **advisory
 instrument** for a different layer — the register of the prose itself. It
 classifies and reports; whether a flagged sentence should be dated, cut, or
@@ -603,8 +677,8 @@ preserves), and a read verb added later is fused by default, not by memory.
 
 ## What this harness is not
 
-The four checks stop at the record layer. They prove the files were present,
-whole, sized, linked, and prose — at the moment the check ran, on the machine
+The five checks stop at the record layer. They prove the files were present,
+whole, sized, linked, prose, and in floor-set agreement — at the moment the check ran, on the machine
 that ran it. They do not and cannot prove that a model read them, understood
 them, or is currently acting from them; they cannot detect a hostile input,
 an injected instruction, or a compromised reader. Those walls remain doctrine

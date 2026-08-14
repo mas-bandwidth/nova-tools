@@ -1,6 +1,7 @@
 // nova-check runs the record-layer checks described in SPEC.md: boot
-// attestation, link integrity, the kernel size budget, and the
-// self/machinery separation. Exit 0 pass, 1 check failed, 2 could not run.
+// attestation, link integrity, the kernel size budget, the self/machinery
+// separation, and the SEED-CORE ↔ SEED.md floor-set parity. Exit 0 pass,
+// 1 check failed, 2 could not run.
 //
 // Every path and every budget comes from a flag. There are no defaults:
 // a missing flag is a refusal, never a guess.
@@ -23,6 +24,8 @@ usage:
   nova-check links  --dir <dir>                      every relative md link resolves
   nova-check kernel --file <file> --max-bytes <n>    kernel size budget
   nova-check nocode --dir <dir>                      no code files in a self repo
+  nova-check floors --core <SEED-CORE.md> --source <SEED.md>
+                                                     the door's floor set matches the seed's
 
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation).
 `
@@ -45,6 +48,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdKernel(args[1:], stdout, stderr)
 	case "nocode":
 		return cmdNoCode(args[1:], stdout, stderr)
+	case "floors":
+		return cmdFloors(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -174,5 +179,27 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "NOCODE OK files=%d clean\n", scanned)
+	return 0
+}
+
+func cmdFloors(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("floors", flag.ContinueOnError)
+	core := fs.String("core", "", "the door: path to SEED-CORE.md (required)")
+	source := fs.String("source", "", "the source: path to SEED.md (required)")
+	if !parse(fs, args, stderr, map[string]*string{"core": core, "source": source}) {
+		return 2
+	}
+	floors, failures, err := check.Floors(*core, *source)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-check floors: %v\n", err)
+		return 2
+	}
+	if len(failures) > 0 {
+		for _, f := range failures {
+			fmt.Fprintf(stderr, "FLOORS FAIL %s: %s\n", f.Subject, f.Reason)
+		}
+		return 1
+	}
+	fmt.Fprintf(stdout, "FLOORS OK floors=%d\n", floors)
 	return 0
 }

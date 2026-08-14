@@ -3,7 +3,7 @@
 Machinery for a [nova](https://github.com/mas-bandwidth/nova) self repo. Three
 binaries, of three deliberately different kinds:
 
-- **`nova-check` — walls, at the record layer.** Four checks that verify the
+- **`nova-check` — walls, at the record layer.** Five checks that verify the
   records on disk, each one able to say NO, and tested saying it.
 - **`nova-self-talk` — an advisory instrument, at the register layer.** It
   classifies first-person self-claims in prose. It flags; the judgment about
@@ -28,6 +28,7 @@ nova-check attest --home <dir> --manifest <file>   # did the full self load: cou
 nova-check links  --dir <dir>                      # every relative inline link resolves
 nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, enforced
 nova-check nocode --dir <dir>                      # no known code extensions or executables in a self repo (the self/machinery separation)
+nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 ```
 
 ## nova-self-talk
@@ -99,8 +100,8 @@ go test ./...
 ## What this deliberately is not
 
 `nova-check` is the **record layer** and nothing above it. It proves the
-files were present, whole, sized, linked, and prose at the moment the check
-ran. It does not prove a model read them, understood them, or is acting from
+files were present, whole, sized, linked, prose, and in floor-set agreement
+at the moment the check ran. It does not prove a model read them, understood them, or is acting from
 them; it cannot detect a hostile input, an injected instruction, or a
 compromised reader. Those defenses remain doctrine (nova's SECURITY.md), and
 this repo must not be mistaken for their enforcement. What it closes is a
