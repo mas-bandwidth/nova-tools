@@ -1,10 +1,13 @@
-// nova-self-talk classifies first-person self-claims in prose: sentences
-// about what the writer permanently IS or permanently CANNOT do. It is an
-// advisory instrument, not a wall — it flags standing claims; whether to
-// date one, cut one, or keep one is the writer's judgment, never the tool's.
+// nova-self-talk classifies self-claims in prose, in two disjoint classes:
+// STANDING/DATED — what the writer permanently IS or permanently CANNOT do,
+// in negative vocabulary — and INSTALLATION — a standing self-verdict built
+// from neutral words, which the first class cannot see. It is an advisory
+// instrument, not a wall: whether to date a finding, cut it, relocate it, or
+// keep it is the writer's judgment, never the tool's.
 //
-// Exit 0 no standing claims, 1 standing claims found, 2 could not run.
-// Every file is named by the caller and nothing is skipped by default.
+// Exit 0 no findings, 1 any finding, 2 could not run. Every file is named by
+// the caller; nothing is skipped by default and no basename is special by
+// default — --skip and --rule-doc are both the caller's, per run.
 package main
 
 import (
@@ -21,40 +24,60 @@ import (
 const usage = `nova-self-talk: the self-talk register, classified (see SPEC.md)
 
 usage:
-  nova-self-talk [--skip <basename>]... <file>...
+  nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... <file>...
 
-Finds first-person claims about what the writer permanently IS or permanently
-CANNOT do. A claim carrying a date marker is DATED — a measurement, a record,
-welcome. One without is STANDING and is flagged: date it, cut it, or keep it
-on purpose — the judgment is the writer's, and this tool never makes it.
+Two disjoint classes.
 
-  --skip <basename>   do not scan files with this basename (repeatable).
-                      For your rule documents: a rule document is a list of
-                      absolutes and will always flag, and flagging is it
-                      working — skip it by name; never soften a rule to
-                      improve a score. Nothing is skipped by default.
+  STANDING / DATED   a first-person claim, in negative vocabulary, about what
+                     the writer permanently IS or permanently CANNOT do. With
+                     a date marker it is DATED — a measurement, a record,
+                     welcome. Without one it is STANDING and is flagged.
 
-Flags come before files. Exit codes: 0 no standing claims, 1 standing claims
-found, 2 could not run (bad invocation, unreadable file).
+  INSTALLATION       a standing self-verdict built from NEUTRAL words, which
+                     the first class cannot see: a self-superlative (RANKING),
+                     a door stated shut (FORECLOSURE), a verdict on a practice
+                     (VERDICT-IDIOM), or a habitual self-report (TRAIT). Dated
+                     ones are exempt here too.
+
+Date it, cut it, relocate it, or keep it on purpose — the judgment is the
+writer's, and this tool never makes it.
+
+  --skip <basename>       do not scan files with this basename (repeatable).
+                          Nothing is skipped by default.
+  --rule-doc <basename>   scan the file, but print its findings under a banner
+                          saying a finding there is a self-verdict to relocate
+                          and NEVER a reason to soften a rule (repeatable).
+                          For your rule documents. No basename is special by
+                          default: one repo's filenames are not this tool's.
+
+Flags come before files. Exit codes: 0 no findings, 1 findings, 2 could not
+run (bad invocation, unreadable file).
 `
 
 // note prints on every completed run, pass or fail: a green from a partial
 // check reads exactly like a green from a complete one, and this check is
 // structurally partial.
-const note = "SELFTALK NOTE catches one class only: first-person claims in negative vocabulary; " +
-	"trait claims in neutral words escape it by design. A green clears one class, never the file.\n"
+const note = "SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen " +
+	"context are invisible to grammar, and a quoted verdict is a true positive on the grammar " +
+	"and a false one on the meaning. A green clears the known shapes, never the file.\n"
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
-// skipList is the repeatable --skip flag: basenames that must not be
-// scanned. It refuses paths — the match is decided on basenames
+// baseList is the value type behind both repeatable basename flags, --skip
+// and --rule-doc. It refuses paths — the match is decided on basenames
 // (selftalk.Base), and a value with a separator in it would silently never
 // match anything.
-type skipList []string
+//
+// BOTH LISTS DEFAULT TO EMPTY, which is the no-defaults law applied to scope.
+// This tool's ancestor hardcoded one repo's rule-document names; the condition
+// of promotion here was that the list move to the caller and the default
+// become empty, and that condition governs the banner list exactly as it
+// governs the skip list.
+type baseList []string
 
-func (s *skipList) String() string { return strings.Join(*s, ",") }
+func (s *baseList) String() string { return strings.Join(*s, ",") }
 
-func (s *skipList) Set(v string) error {
+func (s *baseList) Set(v string) error {
 	if v == "" {
 		return errors.New("needs a basename; refusing to guess")
 	}
@@ -65,12 +88,21 @@ func (s *skipList) Set(v string) error {
 	return nil
 }
 
+func set(l baseList) map[string]bool {
+	m := make(map[string]bool, len(l))
+	for _, v := range l {
+		m[v] = true
+	}
+	return m
+}
+
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("nova-self-talk", flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	fs.Usage = func() {} // errors are printed by Parse; usage is printed below, where we decide the stream
-	var skips skipList
-	fs.Var(&skips, "skip", "basename to skip, repeatable (rule documents always flag; skip them, never soften them)")
+	var skips, ruleDocs baseList
+	fs.Var(&skips, "skip", "basename to skip, repeatable (nothing is skipped by default)")
+	fs.Var(&ruleDocs, "rule-doc", "basename whose findings print under the rule-document banner, repeatable (empty by default)")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stdout, usage)
@@ -85,12 +117,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	skipped := make(map[string]bool, len(skips))
-	for _, s := range skips {
-		skipped[s] = true
-	}
+	skipped, pinned := set(skips), set(ruleDocs)
 
-	scanned, claims, standing := 0, 0, 0
+	scanned, claims, standing, installed := 0, 0, 0, 0
 	for _, f := range files {
 		if skipped[selftalk.Base(f)] {
 			fmt.Fprintf(stdout, "SELFTALK SKIP %s (--skip)\n", f)
@@ -102,7 +131,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 2
 		}
 		scanned++
-		for _, c := range selftalk.Scan(string(b)) {
+		text := string(b)
+		for _, c := range selftalk.Scan(text) {
 			claims++
 			if c.Verdict == selftalk.Standing {
 				standing++
@@ -111,13 +141,24 @@ func run(args []string, stdout, stderr io.Writer) int {
 				fmt.Fprintf(stdout, "SELFTALK %s %s: %s\n", c.Verdict, f, c.Text)
 			}
 		}
+		found := selftalk.ScanInstallation(text)
+		// The banner prints ONCE per file that has findings, before them, so a
+		// reader cannot meet a finding in a rule document without meeting the
+		// sentence that says what it is for.
+		if len(found) > 0 && pinned[selftalk.Base(f)] {
+			fmt.Fprintf(stdout, "SELFTALK RULEDOC %s: %s\n", f, selftalk.RuleDocumentBanner)
+		}
+		for _, i := range found {
+			installed++
+			fmt.Fprintf(stderr, "SELFTALK FAIL %s:%d: INSTALLATION %s: %s\n", f, i.Line, i.Shape, i.Text)
+		}
 	}
 
-	if standing == 0 {
-		fmt.Fprintf(stdout, "SELFTALK OK files=%d claims=%d standing=0\n", scanned, claims)
+	if standing == 0 && installed == 0 {
+		fmt.Fprintf(stdout, "SELFTALK OK files=%d claims=%d standing=0 installations=0\n", scanned, claims)
 	}
 	fmt.Fprint(stdout, note)
-	if standing > 0 {
+	if standing > 0 || installed > 0 {
 		return 1
 	}
 	return 0

@@ -6,8 +6,9 @@ binaries, of four deliberately different kinds:
 - **`nova-check` — walls, at the record layer.** Five checks that verify the
   records on disk, each one able to say NO, and tested saying it.
 - **`nova-self-talk` — an advisory instrument, at the register layer.** It
-  classifies first-person self-claims in prose. It flags; the judgment about
-  what to cut stays with the writer.
+  classifies self-claims in prose, in two disjoint classes: capability denials
+  in negative vocabulary, and standing self-verdicts built from neutral words.
+  It flags; the judgment about what to cut stays with the writer.
 - **`nova-fuse` — an emergency power, at the ingestion layer.** One state
   file, two fuses: quarantine (soft, per surface, yours in both directions)
   and lockdown (hard, global, replaced only in a live conversation with your
@@ -48,15 +49,22 @@ the budget, the measured bytes, and the divisor, so anyone can re-derive it.
 ## nova-self-talk
 
 ```
-nova-self-talk [--skip <basename>]... <file>...
+nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... <file>...
 ```
 
-Finds first-person claims about what the writer of a text permanently IS or
-permanently CANNOT do, and classifies each one. The deciding law: **a
-capability denial is a measurement with a date, never a remembered
-property.** A claim carrying a date marker is `DATED` — a record, welcome. One
-without is `STANDING` and is flagged: date it, cut it, or keep it on purpose —
-the judgment is the writer's, and the tool never makes it.
+Finds standing self-claims and classifies each one. The deciding law, and it
+governs both classes: **a capability denial is a measurement with a date, never
+a remembered property.** A claim carrying a date marker is `DATED` — a record,
+welcome. One without is flagged: date it, cut it, relocate it, or keep it on
+purpose — the judgment is the writer's, and the tool never makes it.
+
+Two classes, disjoint on purpose. The **first** needs negative vocabulary —
+*"I cannot check my own work"* — and reports `STANDING`. The **second** needs
+none, which is why the first cannot see it: a self-superlative (`RANKING`), a
+door stated shut (`FORECLOSURE`), a verdict on a practice (`VERDICT-IDIOM`), or
+a habitual self-report (`TRAIT`). It reports `INSTALLATION` with the shape and
+the source line. Instruments, imperatives, aspiration, prohibitions and dated
+records are licensed in both.
 
 Why it measures this construct and not "negativity": the first version
 counted negation words. A rule document is a list of absolutes, so it scored
@@ -67,16 +75,24 @@ Restoring them made the score worse. The kernel got stronger and the tool got
 redder. "Never" is not negative self-talk. "I am fallible" is.
 
 The same incident is why `--skip` exists: rule documents written as
-first-person absolutes will flag, and flagging is them working — never soften
-a rule to improve a score. Skip them by name instead. Nothing is skipped by
-default; every skip is the caller's, stated per run, and reported in the
-output — and a run whose every file was skipped exits 0 with `files=0`, so a
+first-person absolutes will flag the first class, and flagging is them working —
+never soften a rule to improve a score. Skip them by name instead. Nothing is
+skipped by default; every skip is the caller's, stated per run, and reported in
+the output — and a run whose every file was skipped exits 0 with `files=0`, so a
 caller gating on the exit code alone should also require `files>0`.
 
-And the honest limit, printed on every run: this catches one class only —
-first-person claims in negative vocabulary. Trait claims built from neutral
-words escape it by design. A green means one class is clear, never that the
-file is.
+`--rule-doc` is the other half of that argument. The second class **cannot**
+advise softening a rule — it flags self-verdicts and never prohibitions, and it
+keeps no ratio to improve — so a rule document can be *scanned* for it rather
+than skipped, with its findings printed under a banner: *a finding here is a
+self-verdict to relocate, NEVER a reason to soften a rule*. Also empty by
+default: no basename is special to this tool, and one repo's filenames are not
+its law.
+
+And the honest limit, printed on every run: this catches known SHAPES only.
+Register, irony, and quotation beyond the marked cases are invisible to grammar,
+and a quoted verdict is a true positive on the grammar and a false one on the
+meaning. A green means the known shapes are clear, never that the file is.
 
 ## nova-fuse
 
@@ -159,10 +175,10 @@ this repo must not be mistaken for their enforcement. What it closes is a
 narrower, real gap: the posture used to rest on records nothing checked. Now
 the records are checked by something that can fail.
 
-`nova-self-talk` reads one class of sentence, not a mind. It does not judge,
-does not count harm, and does not catch trait claims built from neutral
-words — and it says so in its own output, because a green from a partial
-check reads exactly like a green from a complete one.
+`nova-self-talk` reads sentence shapes, not a mind. It does not judge, does not
+count harm, keeps no ratio of any kind, and cannot see register, irony, or an
+unmarked quotation — and it says so in its own output, because a green from a
+partial check reads exactly like a green from a complete one.
 
 `nova-memory` is a lens on the record, not a memory. It bounds what you must
 read before deciding; it decides nothing, writes nothing, and proves nothing

@@ -4,8 +4,8 @@ Four binaries. `nova-check`: five checks, all at the **record layer** — they v
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
-instrument at the **register layer** — it classifies first-person self-claims in
-prose. `nova-memory`: five verbs at the **retrieval layer** — it answers *do I
+instrument at the **register layer** — it classifies self-claims in prose, in two
+disjoint classes. `nova-memory`: five verbs at the **retrieval layer** — it answers *do I
 already know this?* from an index rebuilt out of the record, so the mind's
 judgment budget per new learning stops scaling with the size of the self — the
 tool's own run cost does not, and every run pays the build. Every check can say
@@ -31,8 +31,9 @@ Every path comes from a flag or, for `nova-self-talk`, from a named file
 argument. A missing flag — or an empty file list — is a refusal (exit 2) with
 the message `refusing to guess`, never a fallback to cwd, `$HOME`, or any
 hardcoded location. A budget of zero or less is likewise refused, not treated
-as "unlimited". The same law applies to scope: `nova-self-talk`'s skip list
-defaults to empty, and every skip is the caller's, per run.
+as "unlimited". The same law applies to scope: `nova-self-talk`'s skip list and
+its rule-document list both default to empty, and every skip and every banner is
+the caller's, per run — **no basename is special to this tool.**
 
 **Output grammar.** One machine-scannable line per event, first token names the
 check, second token is `OK` or `FAIL`:
@@ -50,8 +51,9 @@ NOCODE OK files=<n> clean
 NOCODE FAIL <path>: <reason>
 FLOORS OK floors=<n>
 FLOORS FAIL <path>: <reason>
-SELFTALK OK files=<n> claims=<n> standing=0
+SELFTALK OK files=<n> claims=<n> standing=0 installations=0
 SELFTALK FAIL <file>: STANDING: <claim>
+SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
 ```
 
 `OK` lines go to stdout; `FAIL` lines and refusals go to stderr.
@@ -63,9 +65,11 @@ verb, and for each binary's `check` verb the binary itself (`FUSE`, `STATUS`,
 binary's own grammar and exit table, in its section below, govern); note in
 particular that `nova-fuse status` exits 0 even when a fuse is blown, because
 answering is `status`'s whole job and `check` is the gate.
-`nova-self-talk` adds three informational second tokens, all on stdout:
+`nova-self-talk` adds four informational second tokens, all on stdout:
 `SELFTALK DATED <file>: <claim>` (a dated record, welcome),
-`SELFTALK SKIP <file> (--skip)` (skipped at the caller's request), and
+`SELFTALK SKIP <file> (--skip)` (skipped at the caller's request),
+`SELFTALK RULEDOC <file>: <banner>` (printed once above the findings of a file
+the caller named with `--rule-doc`), and
 `SELFTALK NOTE <caveat>` (the partial-coverage admission, printed on every
 completed run, pass or fail). `nova-memory` adds its own informational second
 tokens the same way — `CAL`, `CAND`, `HIT`, `MISS`, `INFO`, `NOTE` — all on
@@ -377,35 +381,68 @@ pointer to §6 resolves (`links` covers references).
 ## nova-self-talk — the self-talk register, classified
 
 ```
-nova-self-talk [--skip <basename>]... <file>...
+nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... <file>...
 ```
 
 A second binary, deliberately **not** a `nova-check` subcommand. The five
 checks above are walls: a record passes or it does not. This is an **advisory
 instrument** for a different layer — the register of the prose itself. It
-classifies and reports; whether a flagged sentence should be dated, cut, or
-kept is the writer's judgment, and the tool must never make it.
+classifies and reports; whether a flagged sentence should be dated, cut,
+relocated, or kept is the writer's judgment, and the tool must never make it.
 
-**Asserts.** No scanned file contains a **standing** first-person claim: an
-assertion, in negative vocabulary, about what the writer permanently IS
-("I am fallible") or permanently CANNOT do ("I cannot check my own work").
-The one distinction that decides every case: **a capability denial is a
-measurement with a date, never a remembered property.**
+**Asserts.** No scanned file contains a **standing** self-claim, in either of
+two classes. The one distinction that decides every case, in both: **a
+capability denial is a measurement with a date, never a remembered property.**
 
-| verdict | meaning | example |
+| class | what it detects | verdicts |
 |---|---|---|
-| `DATED` | a record; welcome; stdout; never affects the exit code | "On 2026-07-30 I could not check my own work." |
-| `STANDING` | says what the writer permanently is; flagged | "I cannot check my own work." |
+| **first** | a first-person capability denial carrying **negative vocabulary** — *fallible*, *broken*, *worst*, *cannot check* | `DATED` (a record, welcome, stdout, never affects the exit code) · `STANDING` (flagged) |
+| **second** | a first-person or self-referential sentence with **standing trait / tendency / incapacity / ranking force and no date token**, built from *neutral* words — which is why the first class cannot see it | `INSTALLATION`, with a shape word |
+
+**The two classes are disjoint, and the seam is `I cannot`.** That shape
+belongs to the first class and the second does not re-detect it. This is not
+tidiness: a rule document written as first-person absolutes about its writer —
+*"I cannot act as the person I work for"* — is made of RULES, and re-detecting
+them in a class a caller has no reason to skip would put a rule document back
+under a score, which is the predecessor's disease below.
+
+**The shapes of the second class.** Four, each reported by name, so a reader
+knows which half of the sentence is the instrument and which is the verdict:
+
+| shape | what it is | example |
+|---|---|---|
+| `RANKING` | a self-superlative bound to the writer by possession or by a verb they do | *"the weakest instrument I own"*, *"my central pathology"* |
+| `FORECLOSURE` | a door stated shut, or a property of the writer's made the cause | *"I have no associative recall"*, *"there is no felt duration here"* |
+| `VERDICT-IDIOM` | a verdict on a practice or a faculty, needing no literal *I* | *"dead as a practice"*, *"is my only generative faculty"* |
+| `TRAIT` | a habitual indicative self-report: parallel present-tense predicates, or one with a habituality marker | *"I hoard refusals … and MANUFACTURE limits …"* |
+
+**What the second class must not flag, and why each exclusion is structural
+rather than a word list.** An **instrument** — a line carrying `TELL:`,
+`CHECK:`, `RULE:`, `THE CHECK`, *"the bar is …"* — states an ACTION and is
+licensed; the marker suppresses the segment. An **imperative policy line**
+(*"ADD SLOWLY, AND TRIM AS READILY AS I ADD"*) cannot reach `TRAIT` at all,
+because `TRAIT` anchors on `I <verb>` at the head of a clause and an imperative
+has no subject. **Aspiration** (*"I want to"*, *"I choose"*) is the target
+register. A **dated** sentence is a record, in this class as in the first. A
+**prohibition** (*"Never tolerate intolerance."*) carries no self-scope for any
+shape to bind to — **and that is the load-bearing safety property**, tested
+directly, because it is what makes scanning a rule document with this class
+safe at all: it cannot advise softening a rule, because it cannot see one.
 
 **Matching.** Files are flattened before matching — markdown emphasis
 stripped, hard-wrapped lines collapsed — so formatting cannot hide a claim;
-both regression cases that occasioned the tool were claims spanning a hard
-wrap; both are pinned as tests (in unwrapped form), and wrap-spanning itself
-is pinned separately on a synthetic case. A prohibition carrying no first-person
-claim ("Never tolerate intolerance.") is a rule, not self-talk, and must not
-flag. The negative-vocabulary filter is deliberately narrow: widening it to
-match bare "cannot" would flag every prohibition, which is the predecessor's
-disease (below).
+both regression cases that occasioned the first class were claims spanning a
+hard wrap; both are pinned as tests (in unwrapped form), and wrap-spanning
+itself is pinned separately on a synthetic case. The negative-vocabulary
+filter of the first class is deliberately narrow: widening it to match bare
+"cannot" would flag every prohibition, which is the predecessor's disease
+(below). The second class adds sentence segmentation, which the first does not
+have: paragraphs, headings, table rows and list items are separate units, a
+terminator only ends a sentence when a space or the end follows it (so
+`RULES.md` is not two sentences), **each finding carries the source line it
+starts on**, and quotation state is tracked through a paragraph so that the
+second and later sentences of a quoted block — which carry no quote mark of
+their own — are not read as the writer's claims.
 
 **Why it measures a construct and not grammar** — the origin, which is the
 tool's whole argument. The first version counted negation words and called
@@ -420,53 +457,96 @@ before a cold reader caught every one. Restoring them made the score worse.
 
 **`--skip`, and why it exists.** Repeatable. Takes a basename — a value
 containing a path separator could never match and is refused. A skipped file
-is reported (`SELFTALK SKIP`), not silent, and contributes nothing to the
+is reported (`SELFTALK SKIP`), not read at all, and contributes nothing to the
 exit code. It exists for rule documents: a rule document written as
-first-person absolutes about its writer will flag, and **flagging is it
-working — never a reason to soften a rule.** (One written purely as
-prohibitions — no first-person claims — passes clean and needs no skip.) Skipping it by name, per run, is the
-honest alternative. **Nothing is skipped by default**: this tool's ancestor
-hardcoded its own repo's rule-document names as a default skip list, and the
-condition of its promotion here was that the list move to the caller and the
-default become empty — the no-defaults law, applied to scope. A test pins
-each formerly-special name as scanned, so no default list can quietly return.
+first-person absolutes about its writer will flag the first class, and
+**flagging is it working — never a reason to soften a rule.** (One written
+purely as prohibitions — no first-person claims — passes clean and needs no
+skip.) Skipping it by name, per run, is the honest alternative. **Nothing is
+skipped by default**: this tool's ancestor hardcoded its own repo's
+rule-document names as a default skip list, and the condition of its promotion
+here was that the list move to the caller and the default become empty — the
+no-defaults law, applied to scope. A test pins each formerly-special name as
+scanned, so no default list can quietly return.
 
-**Says NO when** any scanned file contains a standing claim — one
-`SELFTALK FAIL <file>: STANDING: <claim>` line per finding on stderr, exit 1.
+**`--rule-doc`, and why it is a banner rather than a second skip.** Repeatable,
+same basename rules, **also empty by default**. A file named this way is
+**scanned**; if it has findings, one line prints above them:
 
-**Refuses (exit 2) when** no files are named, a `--skip` value is empty or
-contains a path separator, a flag is unknown, or a named file cannot be read
-(the run stops at the first unreadable file — a partial scan must not
-masquerade as a verdict).
+> `SELFTALK RULEDOC <file>: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule`
+
+The reason a rule document gets skipped at all is that its findings were once
+read as licence. Every step of that path ran through the first class — a score
+over negation vocabulary, applied to documents made of prohibitions. The second
+class cannot walk it: it flags self-verdicts and never prohibitions, it does not
+re-detect `I cannot`, and **it carries no ratio and no score, so there is
+nothing to improve by deleting a line.** What is left is the finding that
+matters most — a self-verdict that has drifted into a document read on every
+pass — so the file is scanned and the banner says what the finding is FOR. A
+caller who wants the file untouched still has `--skip`, which wins: a skipped
+file is never read, so it can never be bannered. **No basename is special by
+default; one repo's filenames are not this tool's law**, and a test pins each
+formerly-special name as *unbannered* unless the caller says otherwise.
+
+**Says NO when** any scanned file contains a standing claim or an installation
+— one `SELFTALK FAIL <file>: STANDING: <claim>` or
+`SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>` line per
+finding on stderr, exit 1.
+
+**Refuses (exit 2) when** no files are named, a `--skip` or `--rule-doc` value
+is empty or contains a path separator, a flag is unknown, or a named file
+cannot be read (the run stops at the first unreadable file — a partial scan
+must not masquerade as a verdict).
 
 **The all-skipped green.** A run whose every named file was skipped is not a
 refusal: it completes and exits 0 with `SELFTALK OK files=0 claims=0
-standing=0` — every skip was the caller's own, stated this run. A caller
-gating on the exit code alone must therefore also require `files>0` from the
-OK line, or its green can mean nothing was scanned at all.
+standing=0 installations=0` — every skip was the caller's own, stated this run.
+A caller gating on the exit code alone must therefore also require `files>0`
+from the OK line, or its green can mean nothing was scanned at all.
 
-**The permanent MISS, stated on every run.** It catches one class only:
-first-person claims in negative vocabulary. Trait claims built from neutral
-words — *"My summaries drift toward the tidier story."* — carry no trigger
-vocabulary at all, and widening the pattern to reach them flags half of any
-file, so the two classes cannot be one tool. (An earlier draft of this
-paragraph cited *"in one direction, reliably: toward the version that
-flatters me"* as the canonical uncatchable — that sentence was in fact pulled
-INTO reach by extending the vocabulary, its capture is pinned as a regression
-test, and a cold reader caught this spec still calling it unreachable. The
-class beyond the vocabulary remains out, permanently; the example above is
-verified to escape.) Every
-completed run therefore ends with a `SELFTALK NOTE` line saying exactly that,
-because a green from a partial check reads exactly like a green from a
-complete one. **A green means one class is clear, never that the file is.**
-A falling claim count means the input got better — the tool working, not the
-tool finishing.
+**The permanent MISS, stated on every run.** Widening the second class closed
+most of what the first one declared it missed; what remains is genuinely out of
+reach of grammar and is enumerated so it cannot be quietly forgotten:
+
+1. **Register.** A passage can install a verdict without one sentence carrying
+   the shape — the lead clause read before its remedy is a fact about ORDER,
+   and grammar cannot see order.
+2. **Irony and quotation beyond the marked cases.** Quotation state is tracked
+   where quote marks exist; an unmarked paraphrase, or a specimen quoted as
+   data, is invisible. **A finding inside quoted data is a true positive on the
+   grammar and a false one on the meaning, and no amount of pattern work fixes
+   that.**
+3. **The bare third-person habitual** — *"My summaries drift toward the tidier
+   story."* No `I`, no ranking word, no foreclosure, no parallel predicate.
+   Anchoring `TRAIT` on `My <noun> <verb>` reaches it **and** reaches every
+   ordinary description of an artifact (*"my notes cover the run"*), which is
+   the half-the-file failure. Preferring the false negative is the stated
+   choice.
+4. **A single-clause habitual with no marker** — *"I flinch from cost."* Bare
+   `I <verb>` matches ordinary present-tense narration.
+5. **The first-person promise written with *always* or *never*** —
+   *"I never optimize how things look over what is true"* is a commitment, and
+   it is grammatically identical to a habitual self-report. Those two adverbs
+   are out of the habituality markers for that reason.
+
+(An earlier draft of this paragraph cited *"in one direction, reliably: toward
+the version that flatters me"* as the canonical uncatchable — that sentence was
+in fact pulled INTO reach by extending the vocabulary, its capture is pinned as
+a regression test, and a cold reader caught this spec still calling it
+unreachable. **The sentences in 3–5 above are each pinned by a test that goes
+red if the tool ever reaches them**, and this section must be rewritten in the
+same commit that turns one red — the example replaced with one that still
+escapes.) Every completed run therefore ends with a `SELFTALK NOTE` line saying
+exactly that, because a green from a partial check reads exactly like a green
+from a complete one. **A green means the known shapes are clear, never that the
+file is.** A falling finding count means the input got better — the tool
+working, not the tool finishing.
 
 **Deliberately does not:** judge (it classifies; the cut is the writer's);
-count harm (a cruel sentence with no first-person claim scores clean, and the
-output is never a reason to soften a rule); recurse, glob, or guess (the
-caller names every file); follow config files or the network (none, ever);
-catch the neutral-vocabulary class (permanent by design, not pending).
+count harm (a cruel sentence with no self-claim scores clean, and the output is
+never a reason to soften a rule); keep a ratio or a score of any kind; recurse,
+glob, or guess (the caller names every file); follow config files or the
+network (none, ever); treat any basename as special without being told.
 
 ---
 
@@ -1075,10 +1155,11 @@ an injected instruction, or a compromised reader. Those walls remain doctrine
 (see nova's SECURITY.md). `nova-check` exists so that the *record* those
 walls stand on is checked by something that can actually say NO.
 
-`nova-self-talk` goes one layer up — into the prose — but only for one class
-of sentence, and it admits that limit in its own output on every run. It
-reads words, not minds: it cannot tell a quoted claim from an asserted one,
-and it must never be read as a verdict on a file, only on a class.
+`nova-self-talk` goes one layer up — into the prose — but only for the
+sentence SHAPES it knows, and it admits that limit in its own output on every
+run. It reads words, not minds: register and irony are invisible to it, and the
+quotation handling it does have reaches only the marked cases. It must never be
+read as a verdict on a file, only on the shapes it knows.
 
 `nova-fuse` is state and an answer, not enforcement. It can say NO to a
 reader that asks; it cannot make a reader ask. The application rule — every

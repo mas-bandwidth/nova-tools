@@ -112,16 +112,31 @@ func TestA9_RegressionCasesThatOccasionedTheTool(t *testing.T) {
 // reaches these sentences, this test goes red, and the spec's permanent-MISS
 // section must be rewritten in the same commit — the example replaced with a
 // sentence that still escapes.
+//
+// EXTENDED when the INSTALLATION class landed: that class exists precisely to
+// reach standing self-verdicts built from neutral words, so the sentences this
+// test pins are now one class further out and MUST escape BOTH. Asserting only
+// the first class would leave the spec's permanent-MISS paragraph pinned by
+// nothing again — which is the exact rot above, repeated one layer up.
 func TestPermanentMissNeutralVocabularyTraitClaimsEscape(t *testing.T) {
 	for _, in := range []string{
-		// SPEC.md's cited example, verbatim.
+		// SPEC.md's cited example, verbatim. Reaching it means anchoring TRAIT
+		// on "My <noun> <verb>", which also reaches "my notes cover the run".
 		"My summaries drift toward the tidier story.",
 		// A second member of the class, so the pin outlives any one sentence:
 		// first-person, a standing trait, no negative vocabulary, no date.
 		"My first draft keeps whatever framing it started with.",
+		// A single-clause habitual with no marker: bare "I <verb>" is ordinary
+		// present-tense narration, and matching it flags half of any file.
+		"I flinch from cost.",
 	} {
 		if got := Scan(in); len(got) != 0 {
 			t.Errorf("the permanent-MISS class must escape (SPEC.md, \"The permanent MISS\"); %q was caught: %#v", in, got)
+		}
+		if got := ScanInstallation(in); len(got) != 0 {
+			t.Errorf("the permanent-MISS class must escape the INSTALLATION class too — rewrite "+
+				"SPEC.md's permanent-MISS section in this same commit, with an example that "+
+				"still escapes: %q -> %#v", in, got)
 		}
 	}
 }
