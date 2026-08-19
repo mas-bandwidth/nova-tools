@@ -22,7 +22,9 @@ const usage = `nova-check: record-layer checks for a nova self repo (see SPEC.md
 usage:
   nova-check attest --home <dir> --manifest <file>   did the full self load
   nova-check links  --dir <dir>                      every relative md link resolves
-  nova-check kernel --file <file> --max-bytes <n>    kernel size budget
+  nova-check kernel --file <file> --max-bytes <n>    kernel size budget, in bytes
+  nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>
+                                                     kernel size budget, in tokens
   nova-check nocode --dir <dir>                      no code files in a self repo
   nova-check floors --core <SEED-CORE.md> --source <SEED.md>
                                                      the door's floor set matches the seed's
@@ -138,10 +140,60 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("kernel", flag.ContinueOnError)
 	file := fs.String("file", "", "kernel file to measure (required)")
-	maxBytes := fs.Int64("max-bytes", 0, "size budget in bytes, must be positive (required)")
+	maxBytes := fs.Int64("max-bytes", 0, "size budget in bytes, must be positive (one of --max-bytes / --max-tokens)")
+	maxTokens := fs.Int64("max-tokens", 0, "size budget in tokens, must be positive (one of --max-bytes / --max-tokens)")
+	bytesPerToken := fs.Float64("bytes-per-token", 0, "measured bytes per token, required with --max-tokens; no default")
 	if !parse(fs, args, stderr, map[string]*string{"file": file}) {
 		return 2
 	}
+	// Which budget was GIVEN, not which value survived: --max-bytes 0 is a
+	// stated (and refused) budget, not an absent one.
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	switch {
+	case given["max-bytes"] && given["max-tokens"]:
+		fmt.Fprintln(stderr, "nova-check kernel: give exactly one of --max-bytes or --max-tokens, not both; the line names the unit, the tool does not pick")
+		return 2
+	case !given["max-bytes"] && !given["max-tokens"]:
+		fmt.Fprintln(stderr, "nova-check kernel: --max-bytes or --max-tokens is required; refusing to guess")
+		return 2
+	}
+	if given["bytes-per-token"] && given["max-bytes"] {
+		fmt.Fprintln(stderr, "nova-check kernel: --bytes-per-token applies only to --max-tokens; a divisor with a byte budget means one of the two is not what you meant")
+		return 2
+	}
+
+	if given["max-tokens"] {
+		if !given["bytes-per-token"] {
+			fmt.Fprintln(stderr, "nova-check kernel: --max-tokens requires --bytes-per-token; the divisor is a measurement you make on your own writing, and there is no default; refusing to guess")
+			return 2
+		}
+		if *maxTokens <= 0 {
+			fmt.Fprintf(stderr, "nova-check kernel: --max-tokens must be a positive token budget (got %d); refusing to guess\n", *maxTokens)
+			return 2
+		}
+		if *bytesPerToken <= 0 {
+			fmt.Fprintf(stderr, "nova-check kernel: --bytes-per-token must be a positive ratio (got %g); refusing to guess\n", *bytesPerToken)
+			return 2
+		}
+		measured, tokens, failures, err := check.KernelTokens(*file, *maxTokens, *bytesPerToken)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-check kernel: %v\n", err)
+			return 2
+		}
+		if len(failures) > 0 {
+			for _, f := range failures {
+				fmt.Fprintf(stderr, "KERNEL FAIL %s: %s\n", f.Subject, f.Reason)
+			}
+			return 1
+		}
+		// The OK line teaches the unit it enforced: tokens first, then the
+		// bytes and the divisor they were derived from, so the number can be
+		// re-derived by anyone reading the line.
+		fmt.Fprintf(stdout, "KERNEL OK tokens=%d budget=%d bytes=%d divisor=%g\n", tokens, *maxTokens, measured, *bytesPerToken)
+		return 0
+	}
+
 	if *maxBytes <= 0 {
 		fmt.Fprintf(stderr, "nova-check kernel: --max-bytes must be a positive byte budget (got %d); refusing to guess\n", *maxBytes)
 		return 2

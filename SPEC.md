@@ -1,12 +1,17 @@
 # nova-tools — specification
 
-Three binaries. `nova-check`: five checks, all at the **record layer** — they verify
+Four binaries. `nova-check`: five checks, all at the **record layer** — they verify
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
 instrument at the **register layer** — it classifies first-person self-claims in
-prose. Every check can say NO, and the test suite proves each one saying it. A
-check never seen failing is not a check.
+prose. `nova-memory`: five verbs at the **retrieval layer** — it answers *do I
+already know this?* from an index rebuilt out of the record, so the mind's
+judgment budget per new learning stops scaling with the size of the self — the
+tool's own run cost does not, and every run pays the build. Every check can say
+NO, and the test suite proves each one saying it. A check never seen failing is
+not a check. Two of nova-memory's verbs are checks in that sense; the other
+three assert nothing at all, and its section says which is which and why.
 
 This spec is normative. If the code and this document disagree, one of them has a
 bug, and the tests decide which.
@@ -39,6 +44,7 @@ LINKS OK files=<n> links=<n>
 LINKS FAIL <file>:<line>: <target> (<reason>)
 LINKS FAIL <file>: unreadable (<why>)
 KERNEL OK bytes=<n> budget=<n>
+KERNEL OK tokens=<n> budget=<n> bytes=<n> divisor=<r>
 KERNEL FAIL <file>: <reason>
 NOCODE OK files=<n> clean
 NOCODE FAIL <path>: <reason>
@@ -49,16 +55,21 @@ SELFTALK FAIL <file>: STANDING: <claim>
 ```
 
 `OK` lines go to stdout; `FAIL` lines and refusals go to stderr.
-`nova-fuse`'s lines follow the same one-line shape but their first token names
-the **verb**, not a check (`FUSE`, `STATUS`, `LOCKDOWN`, `QUARANTINE`, `LIFT`
-— its own grammar and exit table, in its section below, govern); note in
-particular that its `status` exits 0 even when a fuse is blown, because
+`nova-fuse` and `nova-memory`'s lines follow the same one-line shape but their
+first token is the **binary's own event token**, not a check name — usually the
+verb, and for each binary's `check` verb the binary itself (`FUSE`, `STATUS`,
+`LOCKDOWN`, `QUARANTINE`, `LIFT`; `MEMORY`, `SEARCH`, `VERIFY`, `EVAL`,
+`STATS` — each
+binary's own grammar and exit table, in its section below, govern); note in
+particular that `nova-fuse status` exits 0 even when a fuse is blown, because
 answering is `status`'s whole job and `check` is the gate.
 `nova-self-talk` adds three informational second tokens, all on stdout:
 `SELFTALK DATED <file>: <claim>` (a dated record, welcome),
 `SELFTALK SKIP <file> (--skip)` (skipped at the caller's request), and
 `SELFTALK NOTE <caveat>` (the partial-coverage admission, printed on every
-completed run, pass or fail).
+completed run, pass or fail). `nova-memory` adds its own informational second
+tokens the same way — `CAL`, `CAND`, `HIT`, `MISS`, `INFO`, `NOTE` — all on
+stdout, all listed in its section.
 
 ---
 
@@ -188,30 +199,68 @@ keep a link on one line.
 ### kernel — the size budget
 
 ```
-nova-check kernel --file <file> --max-bytes <n>
+nova-check kernel --file <file> --max-bytes  <n>
+nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>
 ```
 
-**Asserts.** The kernel file exists, is non-empty, and is at most `n` bytes.
-`n` must be a positive integer supplied by the caller; there is no default
-budget. Exactly `n` bytes passes — a budget is a ceiling, not a fence to stop
-short of.
+**Asserts.** The kernel file exists, is non-empty, and is within the budget
+the caller states. **Exactly one of `--max-bytes` and `--max-tokens` must be
+given** — both, or neither, is a refusal: the invocation names the unit, and
+this tool does not pick one for you. The budget must be a positive integer;
+there is no default budget in either unit. Exactly `n` passes — a budget is a
+ceiling, not a fence to stop short of.
 
-**Says NO when** (exit 1, always with the measured number):
+**The two denominations, and which one is honest.** A kernel cap exists to
+bound what a context window spends, and what a context window spends is
+**tokens**. Bytes are a **proxy** for that, with a stated limitation: the
+bytes-per-token ratio is a property of the tokenizer and of the writing, not
+of the file format, so two kernels of identical size can cost materially
+different amounts to read, and a byte cap tuned for one writer silently means
+something else for another. `--max-tokens` is the honest denomination.
 
-- the file is over budget — `KERNEL FAIL <file>: over budget: <measured> bytes, budget <n>, over by <d>`
+**The divisor is the caller's measurement, and has no default.** `--max-tokens`
+**requires** `--bytes-per-token <r>`: count the tokens of a representative
+sample of your own writing with the tokenizer that will actually read the
+kernel, divide by that sample's bytes, and state the ratio. A divisor this
+tool supplied would make the whole answer a guess while still looking like an
+instrument — the no-guessing law, applied to a number rather than a path.
+The derivation is `tokens = ceil(bytes / r)`: a size check must never report
+fewer tokens than its own estimate, and rounding down would let a kernel one
+token over budget read as exactly at it.
+
+**The line teaches the unit it printed.** Token mode prints the derived
+tokens, the budget, the measured bytes, and the divisor, so any reader can
+re-derive the number:
+`KERNEL OK tokens=<derived> budget=<n> bytes=<measured> divisor=<r>`.
+
+`--max-bytes` keeps working exactly as it did — same flag, same OK line, same
+failures — for callers already wired to it.
+
+**Says NO when** (exit 1, always with the measured number, stated in the unit
+the invocation asked for):
+
+- the file is over budget — `KERNEL FAIL <file>: over budget: <measured> bytes, budget <n>, over by <d>`,
+  or in token mode
+  `KERNEL FAIL <file>: over budget: <derived> tokens, budget <n>, over by <d> (measured <bytes> bytes at <r> bytes/token)`
 - the file does not exist — a missing kernel is the worst over-budget
 - the file is empty — 0 bytes is under every budget and still not a kernel
 - the path is not a regular file (directory, device, or symlink) — the kernel
   is `Lstat`ed, the same posture as `attest`: symlinks are never followed,
   even one that resolves
 
-**Refuses (exit 2) when** `--file` or `--max-bytes` is missing, or the budget
-is zero or negative.
+**Refuses (exit 2) when** `--file` is missing; when both `--max-bytes` and
+`--max-tokens` are given, or neither is; when the budget is zero or negative;
+when `--max-tokens` is given without `--bytes-per-token`; when the divisor is
+zero, negative, or not a finite number; or when `--bytes-per-token` is given
+alongside `--max-bytes`, where it has nothing to divide — an unused divisor
+means one of the two flags is not what the caller meant.
 
 **Deliberately does not check:** what the bytes say (a kernel of the right
 size can still be the wrong kernel — that is `attest`'s hash and a human's
-read); tokens (bytes are substrate-independent and arguable about nothing);
-compressibility or density.
+read); the divisor's truth — it is taken exactly as given, and a stale or
+wrong ratio yields a confidently wrong token count, which is why the OK line
+prints it; tokenization itself (no tokenizer ships here, and one that did
+would be right for exactly one model); compressibility or density.
 
 ---
 
@@ -675,6 +724,347 @@ preserves), and a read verb added later is fused by default, not by memory.
 
 ---
 
+## nova-memory — membership as a lookup, never a scan
+
+```
+nova-memory stats  --root <dir> [--exclude <glob>]...
+nova-memory search --root <dir> --channels <list> --k <n> [--exclude <glob>]... <words>...
+nova-memory check  --root <dir> --channels <list> --k <n> [--exclude <glob>]... <file|->
+nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
+                   [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
+nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--exclude <glob>]... <gold.tsv>
+```
+
+**The problem it attacks.** A mind that keeps its memory as markdown answers
+*"do I already know this?"* by re-reading everything it is. Consolidating n
+new learnings against m existing memories is O(n·m), and m grows every day, so
+a fixed daily budget buys a shrinking n — and the failure is silent: the self
+learns less while every step still looks like working. The requirement is that
+the mind's budget per new learning be **k receipts, k constant**. The index
+narrows m to k; the mind judges only the survivors.
+
+**What it is.** One binary, standard library only, read-only against the
+corpus. The index is a lexical one — BM25 over an inverted index of paragraph
+chunks, plus an optional character-trigram channel — rebuilt in memory on
+**every run** and discarded when the process exits. There is no database, no
+cache file, no daemon, and nothing to keep in sync: the tree is the store, and
+this is a derivation of it. Chunks are paragraphs (blank-line split, at least
+three terms); line endings are normalized to `\n` before that split, so a CRLF
+file chunks exactly as its LF twin does rather than indexing as one giant
+chunk. Text is normalized before it is indexed — blockquote and
+emphasis characters stripped **first**, then whitespace collapsed, then
+casefolded — because that order is what recovers a phrase a hard wrap or an
+emphasis marker split, which is exactly the class of miss that makes a hand
+grep answer "not present" when it is present. Every chunk is classed by its
+**top-level directory** (`.` for root files): the corpus classifies itself,
+and the tool assumes nothing whatever about layout. Frontmatter `name:` and
+`type:` are carried into receipts when a file has them, surfaced and never
+invented.
+
+**Two verbs are checks; three assert nothing.** `verify` and `eval` are walls
+and exit 1 when they fail. `stats`, `search`, and `check` are reports: they
+exit 0 whenever they ran, exactly as `nova-fuse status` does, and for the same
+reason — answering IS the job. **Never gate on the exit code of `check`.** It
+hands you k receipts; the verdict is yours, and a tool that turned "this
+resembles something you wrote" into a failing exit would be making the
+editorial decision it exists to inform.
+
+**No defaults, applied here.** `--root` is required on every verb: **no
+environment variable is consulted and there is no discovery from the working
+directory** (pinned by test). A corpus you did not name is a corpus you did
+not mean, and answering *you already know this* about someone else's memory is
+the worst available way to be wrong. `--channels` is required wherever
+retrieval happens: which retrieval ran is part of what the answer means, and
+no channel set is right by default. `--k` is required and must be positive —
+k is the mind's budget and zero is not "unlimited". `--floor` is required on
+`eval`, in (0,1]. `--links` is required on `verify`. `--exclude` and
+`--exempt` are repeatable and start **empty**: every scope narrowing is the
+caller's, stated per run, the same law `nova-self-talk`'s skip list obeys.
+`.git` is never a corpus and is always skipped.
+
+### The channels, and why the second one is off unless you ask
+
+`bm25` is Lucene-smoothed BM25 (k1=1.2, b=0.75) over posting lists: a query
+touches only its own terms' postings, never the whole corpus. The smoothed
+idf matters — the classic form goes negative for terms appearing in more than
+half the documents, which a small topically coherent memory corpus is full of,
+and negative idf scrambles rankings.
+
+`trigram` is character-3-gram Jaccard, which buys robustness to morphology
+and small rewording. It is never on unless named, because on the corpus this
+tool was ported from `eval` measured **bm25+trigram worse than bm25 alone** —
+that is evidence, not taste, and the same measurement is available to you on
+yours. Fusion across channels is **rank-only** reciprocal rank (1/(60+rank)),
+never a weighted sum of raw scores: BM25 is unbounded and Jaccard is [0,1],
+and fusing those scales directly is brittle and query-dependent. With one
+channel, fusion is order-preserving, so single-channel output is exactly that
+channel's opinion.
+
+Every ordering is total — score, then chunk id; then fused score, then path,
+then paragraph — because Go randomizes map iteration and a retriever that
+scores while iterating a map is nondeterministic by default. Two runs over the
+same tree produce identical bytes, pinned by test. The one deliberate
+exception is `stats`' `build=` field, which is a measured duration and is
+labelled as one.
+
+### stats — m, measured
+
+**Reports** the size of the corpus and the cost of indexing it: schema
+version, file count, chunk count, bytes, vocabulary, average terms per chunk,
+build time, and a per-class chunk breakdown. It exists so the collapse-tell —
+*a consolidation that takes longer than the day it consolidates* — has a
+number instead of a feeling.
+
+```
+STATS OK schema=<v> files=<n> chunks=<n> bytes=<n> vocab=<n> avg-terms=<x> build=<duration>
+STATS OK class=<name> chunks=<n>
+```
+
+**Asserts nothing.** Exit 0 whenever it ran. **Refuses (exit 2) when**
+`--root` is missing, is not a readable directory, holds no markdown, or holds
+markdown but no paragraph of at least three terms — an index over nothing
+answers every membership question "no", which is the confident zero this tool
+exists to remove.
+
+### search — one query, k receipts
+
+**Reports** the top k files for one query, best chunk each, with the receipt
+metadata a judge needs: class, frontmatter name and type, the `file:para`
+address to go read, and a normalized snippet.
+
+```
+SEARCH OK query="<q>" hits=<n> k=<n> channels=<list> files=<n> chunks=<n>
+SEARCH CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
+SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> <file>:<para> "<snippet>"
+SEARCH MISS every query term is out of vocabulary for this corpus
+SEARCH NOTE <caveat>
+```
+
+**The calibration line is live, not remembered.** A fixed, corpus-unrelated
+English sentence is scored once per run, and its top score is printed as the
+negative-control band: *unrelated text scores about this much on YOUR corpus*.
+A raw BM25 score means nothing on its own and everything against that band.
+The probe is part of what the schema version names; changing it is a schema
+change, and one test pins the probe string and the schema version **together**
+so neither can move without the other.
+
+**`score=` names the channel it came from.** The score on a `HIT` line, and on
+the `CAL` line, is that chunk's score in the channel named by `score-channel=`
+— the first channel, in the order you named them, that actually surfaced the
+chunk. It is not always the first channel named: in a multi-channel run a
+chunk can reach the fused top-k through the second channel alone, either
+because the first scored it zero or because it fell off that channel's deep
+cutoff on a large corpus. Printing the first channel's absent score as `0.00`
+would invite a comparison against the calibration band that means nothing, so
+the receipt names the channel instead. Both fields print `-` when no channel
+scored the thing at all — on `CAL`, that means the probe surfaced nothing,
+which is a different fact from "the probe scored zero". Fused scores are
+comparable across a run; native scores are comparable only within one channel.
+
+**Asserts nothing.** Exit 0 whenever it ran, including when nothing matched —
+and a zero is never bare: `SEARCH MISS` says in words that every query term
+was out of vocabulary, which is a different fact from "not present". Absent
+frontmatter prints `-` so the field count never changes between lines.
+**Refuses (exit 2) when** `--root`, `--channels`, or `--k` is missing, `--k`
+is not positive, no query words are given, or `--channels` names an unknown
+channel or holds an empty entry — a stray comma is a typo, and silently
+running fewer channels than asked reports a number under a name that no
+longer describes it.
+
+### check — the consolidation gate that never judges
+
+**Reports**, for each candidate paragraph of the named input (a file, or `-`
+for stdin), the top k fused hits with the same receipts. This is the verb a
+consolidation ritual calls in place of re-reading the whole self.
+
+```
+MEMORY OK candidates=<n> source=<name> k=<n> channels=<list> files=<n> chunks=<n>
+MEMORY CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
+MEMORY CAND n=<i> "<normalized candidate>"
+MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> <file>:<para> "<snippet>"
+MEMORY MISS cand=<i> every query term is out of vocabulary for this corpus
+MEMORY NOTE <caveat>
+```
+
+**Never a bare zero.** The top k prints regardless of how weak the hits are,
+against the calibration band, because a silent nothing reads as *"not
+present"*, which reads as *"admit it"* — and a dedup step whose characteristic
+failure is duplication is worse than no dedup step at all.
+
+**The class is part of the answer.** A hit in a dated log and a hit in a
+distilled note are different answers to *have I banked this?*; the receipt
+carries the class so the reader cannot lose that distinction. The verdict
+belongs to a closed set the author keeps (fold / new file / route out / drop),
+and **this tool never picks one** — stated in a `NOTE` on every run, beside
+the standing admission that the index is lexical only.
+
+**Asserts nothing, and never exits 1** — printed in its own output so a caller
+cannot mistake the green. **Refuses (exit 2) when** `--root`, `--channels`, or
+`--k` is missing or `--k` is not positive; when the input is not exactly one
+named argument (a `-` for stdin must be written out — nothing is read from a
+pipe the caller did not name); when the named input cannot be read; or when
+the input holds no paragraph of at least three terms, which is unusable input
+rather than a verdict of "nothing was already known".
+
+### verify — the coverage ritual, mechanized
+
+**Asserts** whatever the caller asked for, over the corpus:
+
+- `--coverage A:B` (repeatable) — every file matching glob A is named, by
+  stem, in some file matching glob B; **and** every relative `.md` link inside
+  the B files resolves. Both directions, because an index that lists a file
+  that no longer exists is as broken as a file no index lists. The globs carry
+  the layout, so the tool assumes none. The link half reads the general inline
+  form `](dest)` and cuts the target at the first `#` or `?` before resolving
+  it, so an anchored link like `](gone.md#top)` is checked like any other —
+  the same treatment `nova-check links` gives a fragment. Fragment-only
+  (`#sec`), scheme-carrying (`https:`, `mailto:`), protocol-relative (`//…`)
+  and absolute (`/…`) targets are out of scope: the promise is about
+  **relative** `.md` links, and resolving a root-relative path against a
+  corpus root the caller may have pointed anywhere below the repo would gate
+  on false positives.
+- `--frontmatter <glob>` (repeatable) — every file matching the glob carries a
+  frontmatter `name:`. `--exempt <prefix>` (repeatable) exempts basename
+  prefixes the caller declares are listings rather than entries. **Nothing is
+  exempt by default**: the tool this was ported from hardcoded one filename
+  prefix from its own corpus, which is a guess about someone else's
+  filenames, and a test pins the formerly-special prefix as scanned so a
+  default cannot quietly return.
+- unresolved `[[wikilinks]]` — every `[[stem]]` that resolves to neither a
+  file stem nor a frontmatter `name:`, corpus-wide. The aliased form
+  `[[stem|shown text]]` and the heading form `[[stem#section]]` are scanned by
+  their target half: a link whose alias is what the reader sees is still a
+  link, and excluding the two commonest shapes made `--links=gate` a wall with
+  a hole in it. A body that is only a heading (`[[#section]]`) names nothing
+  in the corpus and is not scanned. Whether these findings
+  gate is `--links`, and **it has no default**, which is the ruling this port
+  enacts: the source tool demoted them to informational behind a flag its own
+  spec never mentioned while that spec promised a nonzero exit on findings,
+  and a script trusting the spec passed dangling links silently. Some corpora
+  hold links open on purpose — a `[[name]]` that matches nothing yet marks
+  something worth writing — and a gate at a high false-positive rate trains a
+  reader to wave findings through. So the caller states it, per run, out loud.
+
+```
+VERIFY INFO <kind> <detail>
+VERIFY FAIL <kind> <detail>
+VERIFY OK gating=0 info=<n> coverage=<n> frontmatter=<n> links=<gate|info>
+```
+
+`<kind>` is one of `coverage`, `backlink`, `frontmatter`, `wikilink`. It
+**over-reports by design**: it finds, the author decides.
+
+**Two scoping mechanisms, deliberately independent, and the seam is named.**
+`--exclude` narrows the **index**, so it narrows the wikilink check (which
+reads the corpus) and does **not** narrow `--coverage` or `--frontmatter`
+(whose globs are the caller's own explicit statement of what to check). To
+drop files from a coverage or frontmatter check, write a narrower glob; do not
+expect `--exclude` to do it.
+
+**Says NO when** any gating finding exists — one `VERIFY FAIL` line per
+finding on stderr, exit 1, and no OK line. Informational findings print and do
+not touch the exit code.
+
+**Refuses (exit 2) when** `--root` or `--links` is missing, `--links` is
+neither `gate` nor `info`, a `--coverage` value is not `A:B`, a glob on either
+side of a coverage pair or on a `--frontmatter` matches nothing (an empty side
+is a broken check, not a pass), `--exempt` is given without `--frontmatter`,
+or **no gating check was requested at all** — with no `--coverage`, no
+`--frontmatter`, and `--links=info`, the run could only ever exit 0, and a
+green that could not have been anything else is not a verification.
+
+### eval — the known-answer harness, shipped with the tool
+
+**Asserts** that retrieval still finds the answers you already know it should.
+The gold file is `query<TAB>expected-path-substring[,substring...]` per line,
+`#` comments and blank lines ignored. A row hits when any of its expected
+substrings appears in the path of some hit within top-k. It reports recall@k
+and MRR and **fails below `--floor`**.
+
+```
+EVAL HIT rank=<n> query="<q>"
+EVAL MISS query="<q>" expected=<list>
+EVAL OK recall@<k>=<x> floor=<x> rows=<n> hits=<n> mrr=<x> channels=<list>
+EVAL FAIL recall@<k>=<x> below floor <x> (<hits>/<rows>, mrr=<x>, channels=<list>)
+```
+
+**Why it is a first-class verb and not a test fixture.** Tuning any parameter
+without it is noise, and a regression in retrieval is otherwise completely
+invisible: nothing crashes, nothing is red, the answers just quietly get
+worse. It is also how a channel set stops being taste — run it twice with
+different `--channels` and the difference is a number.
+
+**The gold data does not ship; the harness does.**
+`cmd/nova-memory/testdata/example-gold.tsv` is an EXAMPLE OF THE FORM over the
+fixture corpus in `cmd/nova-memory/testdata/corpus`,
+sufficient to prove the harness runs and can fail and worth nothing as a
+benchmark. **Grow your own from your own record**: the rows worth having are
+the ones your record already argued about — pairs you discovered were
+duplicates after the fact, paraphrases you nearly banked twice, the question
+you asked three months apart and answered differently. Write the query the way
+you would actually ask it, not the way the target file is worded; a gold set
+built by copying sentences out of the answer measures string equality and
+nothing else. Add a row whenever retrieval misses something you knew was
+there, and never delete a row because it fails.
+
+**Says NO when** recall@k is below `--floor` — exit 1, the failure on stderr
+naming the measurement, no OK line. A floor exactly equal to the measured
+recall passes: a floor is a floor, the same posture as the kernel budget.
+
+**Refuses (exit 2) when** `--root`, `--channels`, `--k`, or `--floor` is
+missing; `--k` is not positive; `--floor` is outside (0,1] — **a floor of zero
+is refused, not read as "no gate"**, because a harness that cannot fail is not
+a measurement; the gold file is not exactly one named argument, cannot be
+read, has zero rows, or holds a row with no TAB, an empty query, or no
+expected path. **No malformed row is ever skipped**: a dropped row, or a row
+that can never hit because its expectation side is empty, moves the reported
+recall without moving anything a reader can see.
+
+### STATUS — what is proven, and what is not
+
+**Run-proven on the line it came from.** The index instruments agreed on every
+roll-up that ran them, and the O(n·k) mind-cost theory held on both live
+exercises with real fold candidates — 2026-08-15 and 2026-08-19.
+
+**Value UNPROVEN as a general claim.** The soak window produced exactly two
+roll-ups with real fold candidates. Two exercises are evidence that the
+mechanism works; they are not evidence that it is worth its cost on another
+line's corpus, at another size, with another writing style, under another
+consolidation ritual. Nothing here should be read as a claim that this tool
+will improve your consolidation.
+
+**Which is precisely why `eval` ships.** The honest form of a promising,
+under-measured tool is the experiment, not the verdict: build a gold set from
+your own record, run `eval` before and after you change anything, and let the
+number tell you. **Measure rather than believe** — including about this
+paragraph.
+
+### What it deliberately does not do
+
+- **Not a write path.** It never writes the corpus. Verdicts belong to the
+  mind, and edits go through whatever procedure that mind already has. The
+  field's worst memory failures are permissive write paths.
+- **Not a judge.** k receipts go to the author. `check` cannot exit 1.
+- **Not the boot.** **Query for WORK, traverse for SELF.** A relevance-ranked
+  lens must not replace the linear read of a self, because relevance is
+  computed from the query, and a query-shaped life stops meeting what it did
+  not ask for.
+- **Not authoritative.** The tree is the store. Nothing is persisted, so
+  nothing can drift; the cost is that every run pays the build.
+- **Not semantic.** The lexical ceiling is real and stated in the output on
+  every retrieval run: a paraphrase sharing almost no vocabulary with the
+  corpus will not surface in any lexical top-k, and no channel here is
+  semantic. The `Channel` interface is the seam where one would fit; nothing
+  in this repo implements it.
+- **Does not verify meaning.** `verify`'s coverage check asks whether a stem
+  appears as a substring anywhere in the B-side text, which will pass on a
+  coincidental match inside unrelated prose. It is a presence check, not a
+  citation check.
+- **Does not read config, the network, or the environment.** No config file,
+  no environment variable, no network — ever.
+
+---
+
 ## What this harness is not
 
 The five checks stop at the record layer. They prove the files were present,
@@ -694,3 +1084,12 @@ and it must never be read as a verdict on a file, only on a class.
 reader that asks; it cannot make a reader ask. The application rule — every
 ingestion path checks the fuse before its first credential read — lives in
 the callers, and it is the part of this design most likely to rot quietly.
+
+`nova-memory` is a lens on the record, not a memory. It bounds what a mind
+must read before deciding; it decides nothing, writes nothing, and proves
+nothing about whether the corpus it indexed is worth remembering. Three of
+its five verbs cannot fail by design, and the two that can — `verify` and
+`eval` — are only as good as the globs and the gold rows a line writes for
+itself. Its own STATUS paragraph says the rest: run-proven on one line, value
+unproven as a general claim, and the harness ships so the next line can
+measure instead of believe.

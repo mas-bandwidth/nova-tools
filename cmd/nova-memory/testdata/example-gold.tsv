@@ -1,0 +1,34 @@
+# example-gold.tsv — a known-answer set for `nova-memory eval`, over the
+# fixture corpus in testdata/corpus. It is an EXAMPLE OF THE FORM, not a
+# benchmark: six rows over six files proves the harness runs and can fail,
+# and proves nothing whatever about retrieval quality on your corpus.
+#
+# Format: query<TAB>expected-path-substring[,substring...]
+# Blank lines and lines beginning with # are ignored. A row passes when ANY
+# of its expected substrings appears in the path of some hit within top-k, so
+# a lesson with more than one legitimate home lists them all. A row with no
+# expectation is refused, not skipped: a case that can never hit would drag
+# the measured recall down invisibly.
+#
+# GROW YOUR OWN FROM YOUR OWN RECORD. The rows that are worth having are the
+# ones your record already argued about: pairs you discovered were duplicates
+# after the fact, paraphrases you nearly banked twice, the question you asked
+# three months apart and answered differently. Write the query the way you
+# would actually ask it, not the way the file is worded — a gold set built by
+# copying sentences out of the target file measures nothing but string
+# equality. Add a row every time retrieval misses something you knew was
+# there, and never delete a row because it fails.
+
+how often should the lantern glazing be washed	notes/lantern.md
+why keep the brass polish away from the optical glass	notes/lantern.md
+when can the relief boat land at the jetty steps	notes/tides.md
+how late is the jetty against the published tide prediction	notes/tides.md
+how long does the compressor take to reach working pressure	notes/fog-signal.md
+what does a short blast mean about the drive belt	notes/fog-signal.md
+
+# A row may name more than one legitimate home. This one is answered by the
+# distilled note AND recorded in the dated log, and either is a correct
+# retrieval — which is also the reason every receipt carries its class: the
+# two answers mean different things when the verdict is "have I banked this
+# already?"
+washing the glazing before an onshore gale	notes/lantern.md,log/1974-03-11.md

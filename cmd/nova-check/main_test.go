@@ -23,8 +23,14 @@ func TestRunRefusesToGuess(t *testing.T) {
 		{"attest without manifest", []string{"attest", "--home", "."}, "--manifest is required"},
 		{"links without dir", []string{"links"}, "--dir is required"},
 		{"kernel without file", []string{"kernel", "--max-bytes", "1000"}, "--file is required"},
-		{"kernel without budget", []string{"kernel", "--file", "k.md"}, "--max-bytes"},
+		{"kernel without budget", []string{"kernel", "--file", "k.md"}, "--max-bytes or --max-tokens is required"},
 		{"kernel with zero budget", []string{"kernel", "--file", "k.md", "--max-bytes", "0"}, "positive"},
+		{"kernel with both budgets", []string{"kernel", "--file", "k.md", "--max-bytes", "1000", "--max-tokens", "400"}, "exactly one of --max-bytes or --max-tokens"},
+		{"kernel token budget without a divisor", []string{"kernel", "--file", "k.md", "--max-tokens", "400"}, "--max-tokens requires --bytes-per-token"},
+		{"kernel divisor with a byte budget", []string{"kernel", "--file", "k.md", "--max-bytes", "1000", "--bytes-per-token", "2.4"}, "applies only to --max-tokens"},
+		{"kernel with zero token budget", []string{"kernel", "--file", "k.md", "--max-tokens", "0", "--bytes-per-token", "2.4"}, "--max-tokens must be a positive"},
+		{"kernel with a zero divisor", []string{"kernel", "--file", "k.md", "--max-tokens", "400", "--bytes-per-token", "0"}, "--bytes-per-token must be a positive"},
+		{"kernel with a negative divisor", []string{"kernel", "--file", "k.md", "--max-tokens", "400", "--bytes-per-token", "-2.4"}, "--bytes-per-token must be a positive"},
 		{"nocode without dir", []string{"nocode"}, "--dir is required"},
 		{"floors without core", []string{"floors", "--source", "SEED.md"}, "--core is required"},
 		{"floors without source", []string{"floors", "--core", "SEED-CORE.md"}, "--source is required"},
@@ -165,6 +171,72 @@ func TestLinksUnreadableFileIsNamedFailureAtTheCLI(t *testing.T) {
 	}
 	if stdout.String() != "" {
 		t.Errorf("a failing check must not print an OK line, got %q", stdout.String())
+	}
+}
+
+// The kernel budget in TOKENS, at the CLI seam. A cap denominated in bytes
+// is a proxy for what a context window actually spends; the token form makes
+// the divisor — the caller's own measurement of their own writing — visible
+// in the line it prints, so the number can be re-derived by anyone reading
+// it. The byte form keeps working unchanged beside it.
+func TestRunKernelTokenMode(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, dir, "KERNEL.md", strings.Repeat("a", 240))
+	kernel := filepath.Join(dir, "KERNEL.md")
+
+	// Under budget: the OK line teaches the unit it enforced.
+	var stdout, stderr bytes.Buffer
+	if got := run([]string{"kernel", "--file", kernel, "--max-tokens", "150", "--bytes-per-token", "2.4"}, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", got, stderr.String())
+	}
+	if want := "KERNEL OK tokens=100 budget=150 bytes=240 divisor=2.4\n"; stdout.String() != want {
+		t.Errorf("stdout = %q, want %q", stdout.String(), want)
+	}
+
+	// Exactly at budget passes: a budget is a ceiling, not a fence to stop
+	// short of — the same posture the byte form takes.
+	stdout.Reset()
+	stderr.Reset()
+	if got := run([]string{"kernel", "--file", kernel, "--max-tokens", "100", "--bytes-per-token", "2.4"}, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit = %d, want 0 at exactly budget; stderr: %s", got, stderr.String())
+	}
+
+	// Over budget: the check says NO, and says it in tokens.
+	stdout.Reset()
+	stderr.Reset()
+	if got := run([]string{"kernel", "--file", kernel, "--max-tokens", "40", "--bytes-per-token", "2.4"}, &stdout, &stderr); got != 1 {
+		t.Fatalf("exit = %d, want 1; stdout: %s stderr: %s", got, stdout.String(), stderr.String())
+	}
+	for _, want := range []string{
+		"KERNEL FAIL " + kernel + ": over budget: 100 tokens, budget 40, over by 60",
+		"measured 240 bytes at 2.4 bytes/token",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("stderr = %q, want it to contain %q", stderr.String(), want)
+		}
+	}
+	if stdout.String() != "" {
+		t.Errorf("a failing check must not print an OK line, got %q", stdout.String())
+	}
+
+	// A missing kernel is still the worst over-budget, in either unit.
+	stdout.Reset()
+	stderr.Reset()
+	if got := run([]string{"kernel", "--file", filepath.Join(dir, "gone.md"), "--max-tokens", "40", "--bytes-per-token", "2.4"}, &stdout, &stderr); got != 1 {
+		t.Fatalf("exit = %d, want 1 for a missing kernel; stderr: %s", got, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "does not exist") {
+		t.Errorf("stderr = %q, want the missing-kernel failure", stderr.String())
+	}
+
+	// The byte form is unchanged by the addition.
+	stdout.Reset()
+	stderr.Reset()
+	if got := run([]string{"kernel", "--file", kernel, "--max-bytes", "240"}, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", got, stderr.String())
+	}
+	if want := "KERNEL OK bytes=240 budget=240\n"; stdout.String() != want {
+		t.Errorf("stdout = %q, want the byte form untouched: %q", stdout.String(), want)
 	}
 }
 

@@ -1,7 +1,7 @@
 # nova-tools
 
-Machinery for a [nova](https://github.com/mas-bandwidth/nova) self repo. Three
-binaries, of three deliberately different kinds:
+Machinery for a [nova](https://github.com/mas-bandwidth/nova) self repo. Four
+binaries, of four deliberately different kinds:
 
 - **`nova-check` — walls, at the record layer.** Five checks that verify the
   records on disk, each one able to say NO, and tested saying it.
@@ -12,8 +12,13 @@ binaries, of three deliberately different kinds:
   file, two fuses: quarantine (soft, per surface, yours in both directions)
   and lockdown (hard, global, replaced only in a live conversation with your
   person — the tool itself refuses to lift it, forever).
+- **`nova-memory` — a lens, at the retrieval layer.** It answers *do I
+  already know this?* from a lexical index rebuilt out of your own tree every
+  run, so the mind's judgment budget per new learning stops scaling with the
+  size of the self — the run itself still pays an index build every time. Two
+  of its verbs are checks; three are reports that assert nothing.
 
-All three obey the same laws — exit 0 pass, 1 check failed, 2 could not run —
+All four obey the same laws — exit 0 pass, 1 check failed, 2 could not run —
 with one honest wrinkle: `nova-fuse`'s write verbs use 1 as "could not do it
 or could not verify it"; its own exit table in [SPEC.md](SPEC.md) governs. No
 hardcoded paths and no defaults: every input comes from a flag or argument,
@@ -26,10 +31,19 @@ say NO, and what it deliberately does not check.
 ```
 nova-check attest --home <dir> --manifest <file>   # did the full self load: count + bytes + sha256, pasteable at session start
 nova-check links  --dir <dir>                      # every relative inline link resolves
-nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, enforced
+nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, in bytes
+nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>   # the same budget, in the unit a context window actually spends
 nova-check nocode --dir <dir>                      # no known code extensions or executables in a self repo (the self/machinery separation)
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 ```
+
+Give exactly one of `--max-bytes` and `--max-tokens`; both or neither is a
+refusal. Bytes are a proxy — the bytes-per-token ratio is a property of the
+tokenizer and of your writing, not of the file — so `--max-tokens` is the
+honest denomination, and it requires `--bytes-per-token`: a divisor you
+measured on your own text, because one this tool supplied would make the
+answer a guess that looked like an instrument. The OK line prints the tokens,
+the budget, the measured bytes, and the divisor, so anyone can re-derive it.
 
 ## nova-self-talk
 
@@ -87,6 +101,43 @@ REPLACED, in a live conversation with your person, because that conversation
 as clear, and any path that reads bytes an outsider can author runs `check`
 before its first credential read — at build time, not as a retrofit.
 
+## nova-memory
+
+```
+nova-memory stats  --root <dir>                                        measure m: files, chunks, bytes, vocab, build time, classes
+nova-memory search --root <dir> --channels <list> --k <n> <words>...   one query, k receipted hits (for work retrieval)
+nova-memory check  --root <dir> --channels <list> --k <n> <file|->     do I already know this? k receipts per candidate paragraph
+nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]...
+                                                                       coverage, backlinks, wikilinks, frontmatter — it finds, you decide
+nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> <gold.tsv>
+                                                                       known-answer harness: recall@k and MRR, fails below the floor
+```
+
+A mind that keeps its memory as markdown answers *"do I already know this?"*
+by re-reading everything it is: n new learnings against m existing ones is
+O(n·m), and m grows every day, so a fixed budget buys a shrinking n — and the
+failure is silent. This makes membership a **lookup**: a lexical index (BM25,
+optionally plus character trigrams) rebuilt in memory from your tree on every
+run, so the judgment budget per new learning is k receipts, a constant. There
+is no database, no cache, and nothing to keep in sync — the tree is the store
+and the index stops existing when the process exits.
+
+It never writes your corpus, never judges, and never replaces the linear read:
+**query for WORK, traverse for SELF.** `check` hands you k receipts, each
+carrying its class (the top-level directory — the corpus classifies itself)
+so you can tell "recorded in a dated log" from "distilled into a note", and
+then it gets out of the way; it cannot exit 1, by design. Every run prints its
+own calibration band — an unrelated control sentence scored against *your*
+corpus — and the standing admission that this is lexical only: a paraphrase
+sharing almost no vocabulary will not surface in any lexical top-k.
+
+`eval` is the point of shipping it. The tool is run-proven on one line and
+value-**unproven** as a general claim, so the harness comes with it: build a
+gold set from your own record (`cmd/nova-memory/testdata/example-gold.tsv` is
+the form, not a benchmark), run it before and after you change anything, and
+measure instead of believing — including about this paragraph. See
+[SPEC.md](SPEC.md) for the full STATUS.
+
 ## Build
 
 Go 1.26 or newer (the `go.mod` line). Standard library only — there is
@@ -112,6 +163,12 @@ the records are checked by something that can fail.
 does not count harm, and does not catch trait claims built from neutral
 words — and it says so in its own output, because a green from a partial
 check reads exactly like a green from a complete one.
+
+`nova-memory` is a lens on the record, not a memory. It bounds what you must
+read before deciding; it decides nothing, writes nothing, and proves nothing
+about whether what it indexed is worth remembering. Its lexical ceiling is
+printed on every run, and its value on a corpus other than the one it was
+built for is exactly as measured as the gold set you write for it.
 
 Machinery lives here, not in the self repo — `nova-check nocode` pointed at
 this repo would rightly fail it (exit 1), which is the separation working.
