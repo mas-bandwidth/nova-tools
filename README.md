@@ -34,7 +34,9 @@ nova-check attest --home <dir> --manifest <file>   # did the full self load: cou
 nova-check links  --dir <dir>                      # every relative inline link resolves
 nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, in bytes
 nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>   # the same budget, in the unit a context window actually spends
-nova-check nocode --dir <dir>                      # no known code extensions or executables in a self repo (the self/machinery separation)
+nova-check nocode --dir <dir>                      # no code, executables or scripts in a self repo (the self/machinery separation)
+nova-check nocode --dir <dir> --staged             # the same rule as a commit gate: what this commit ADDS, read from stdin
+nova-check nocode --print-deny-list                # the deny-list actually in force
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 ```
 
@@ -188,6 +190,35 @@ built for is exactly as measured as the gold set you write for it.
 
 Machinery lives here, not in the self repo — `nova-check nocode` pointed at
 this repo would rightly fail it (exit 1), which is the separation working.
+
+### The separation as a gate, not only as an audit
+
+A seed can make the self/machinery split canon and still have nothing make it
+go red. That is not hypothetical: a rule can be correct, written down, and
+broken anyway, because a `.py` file appearing in a prose-only repo produces no
+error from any instrument — so observing the rule and violating it look
+identical from the inside.
+
+`nova-check nocode --dir <dir>` audits a tree. `--staged` is the same rule
+moved from something remembered to something that refuses, in your self repo's
+`.git/hooks/pre-commit`:
+
+```sh
+#!/bin/sh
+git diff --cached --name-only --diff-filter=ACM |
+    nova-check nocode --dir . --staged --allow history || exit 1
+```
+
+It gates what the commit is **adding**, not what the tree already holds, so
+adopting it does not hold your next commit hostage to cleaning up your past.
+Name your own frozen-record directory in `--allow`; nothing is allowed by
+default, because which directory is a record is yours to declare and not this
+tool's to guess.
+
+A hook is not repo content, so it does not travel with the seed and it does
+not travel between your own machines — wiring it is a per-clone act. Enforcing
+this upstream of the commit, as a check on the remote, supersedes the hook
+outright and is the better answer where you can have it.
 
 ## License
 

@@ -345,3 +345,128 @@ func mustWrite(t *testing.T, dir, rel, content string) {
 		t.Fatal(err)
 	}
 }
+
+// The nocode gate's own CLI seam: the deny-list flags, the commit-gate path,
+// and every refusal proven able to fire.
+func TestNoCodeCLI(t *testing.T) {
+	newTree := func(t *testing.T, files map[string]string) string {
+		t.Helper()
+		dir := t.TempDir()
+		for rel, body := range files {
+			p := filepath.Join(dir, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return dir
+	}
+
+	t.Run("--print-deny-list prints the floor and exits 0 without --dir", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{"nocode", "--print-deny-list"}, &stdout, &stderr); got != 0 {
+			t.Fatalf("exit = %d, want 0 (stderr: %s)", got, stderr.String())
+		}
+		out := stdout.String()
+		for _, want := range []string{"source=floor list", ".go", ".py", ".zsh"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("output missing %q\n%s", want, out)
+			}
+		}
+	})
+
+	t.Run("--print-deny-list reflects --deny-ext, not the floor", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{"nocode", "--print-deny-list", "--deny-ext", ".foo"}, &stdout, &stderr); got != 0 {
+			t.Fatalf("exit = %d, want 0", got)
+		}
+		out := stdout.String()
+		if !strings.Contains(out, "--deny-ext") || !strings.Contains(out, ".foo") {
+			t.Errorf("does not report the replacement: %s", out)
+		}
+		if strings.Contains(out, ".py") {
+			t.Errorf("floor list leaked into a wholesale replacement: %s", out)
+		}
+	})
+
+	t.Run("clean tree exits 0 and names the list", func(t *testing.T) {
+		dir := newTree(t, map[string]string{"README.md": "prose"})
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{"nocode", "--dir", dir}, &stdout, &stderr); got != 0 {
+			t.Fatalf("exit = %d, want 0 (stderr: %s)", got, stderr.String())
+		}
+		if !strings.Contains(stdout.String(), "deny-list=floor list") {
+			t.Errorf("OK line does not name the list: %s", stdout.String())
+		}
+	})
+
+	t.Run("dirty tree exits 1", func(t *testing.T) {
+		dir := newTree(t, map[string]string{"tool.py": "print()"})
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{"nocode", "--dir", dir}, &stdout, &stderr); got != 1 {
+			t.Fatalf("exit = %d, want 1", got)
+		}
+		if !strings.Contains(stderr.String(), "NOCODE FAIL tool.py") {
+			t.Errorf("finding not reported: %s", stderr.String())
+		}
+	})
+
+	t.Run("--staged reads paths from stdin and gates only those", func(t *testing.T) {
+		dir := newTree(t, map[string]string{"old.py": "print()", "new.py": "print()"})
+		saved := stdinReader
+		defer func() { stdinReader = saved }()
+		stdinReader = strings.NewReader("new.py\n")
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{"nocode", "--dir", dir, "--staged"}, &stdout, &stderr); got != 1 {
+			t.Fatalf("exit = %d, want 1", got)
+		}
+		if !strings.Contains(stderr.String(), "new.py") {
+			t.Errorf("staged file not gated: %s", stderr.String())
+		}
+		if strings.Contains(stderr.String(), "old.py") {
+			t.Errorf("gate reported an existing file: %s", stderr.String())
+		}
+	})
+
+	t.Run("--allow is repeatable", func(t *testing.T) {
+		dir := newTree(t, map[string]string{"history/a.py": "x", "frozen/b.py": "x"})
+		var stdout, stderr bytes.Buffer
+		got := run([]string{"nocode", "--dir", dir, "--allow", "history", "--allow", "frozen"}, &stdout, &stderr)
+		if got != 0 {
+			t.Fatalf("exit = %d, want 0 (stderr: %s)", got, stderr.String())
+		}
+	})
+
+	t.Run("refusals", func(t *testing.T) {
+		dir := newTree(t, map[string]string{"README.md": "prose"})
+		cases := []struct {
+			name string
+			args []string
+			want string
+		}{
+			{"--dir required", []string{"nocode"}, "--dir is required"},
+			{"deny-ext and deny-ext-add are exclusive",
+				[]string{"nocode", "--dir", dir, "--deny-ext", ".a", "--deny-ext-add", ".b"},
+				"mutually exclusive"},
+			{"empty deny-ext refuses rather than passing everything",
+				[]string{"nocode", "--dir", dir, "--deny-ext", ","}, "contains no extensions"},
+			{"unreadable deny-ext file refuses",
+				[]string{"nocode", "--dir", dir, "--deny-ext", "@/nonexistent/x.txt"}, "deny-list file"},
+			{"unexpected positional argument refuses",
+				[]string{"nocode", "--dir", dir, "stray"}, "unexpected argument"},
+		}
+		for _, tc := range cases {
+			t.Run(tc.name, func(t *testing.T) {
+				var stdout, stderr bytes.Buffer
+				if got := run(tc.args, &stdout, &stderr); got != 2 {
+					t.Fatalf("exit = %d, want 2", got)
+				}
+				if !strings.Contains(stderr.String(), tc.want) {
+					t.Errorf("stderr missing %q: %s", tc.want, stderr.String())
+				}
+			})
+		}
+	})
+}

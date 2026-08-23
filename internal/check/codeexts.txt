@@ -1,0 +1,74 @@
+# The floor deny-list: extensions that mark a file as machinery.
+#
+# This file is DATA, not code, and it is embedded into the binary. It is here
+# rather than in a function because a list a reader can open, diff and review
+# is auditable, and a list spelled out as string literals inside a walk is not.
+# It is here rather than behind a required flag because its content is not one
+# line's situation: .py is .py in every self. A required flag with no default
+# would buy nothing except a copy of this list in every adopting line's hook —
+# two hand-maintained copies of one truth, drifting apart, and drifting
+# FAIL-OPEN, since the copy that is missing .cpp is the one that lets .cpp in.
+#
+# Tunability is not lost: --deny-ext replaces this list wholesale, for the line
+# that legitimately keeps a language inside its own self, and --deny-ext-add
+# extends it. --print-deny-list prints what is actually in force, which is what
+# keeps this from being a hidden default.
+#
+# TO EXTEND IT: add the extension here, in the same commit as the test that
+# proves it is caught. The list is extended deliberately and never inferred —
+# contents are not sniffed, because an extension list cannot be wrong about
+# what it says, and a heuristic over file contents lies in both directions.
+#
+# One extension per line, lowercase, leading dot. Blank lines and lines
+# beginning with # are ignored.
+
+# shells and scripting
+.sh
+.bash
+.zsh
+.fish
+.ps1
+.bat
+.cmd
+.vbs
+.awk
+.pl
+.py
+.rb
+.lua
+.r
+.jl
+
+# compiled and systems languages
+.c
+.cc
+.cpp
+.cxx
+.h
+.hpp
+.m
+.mm
+.go
+.rs
+.swift
+.java
+.kt
+.scala
+.cs
+.exe
+
+# web and typed javascript
+.js
+.mjs
+.cjs
+.jsx
+.ts
+.tsx
+.php
+
+# functional
+.ex
+.exs
+.clj
+.hs
+.ml

@@ -8,11 +8,13 @@
 package main
 
 import (
+	"bufio"
 	"flag"
 	"fmt"
 	"io"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/check"
 )
@@ -26,6 +28,11 @@ usage:
   nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>
                                                      kernel size budget, in tokens
   nova-check nocode --dir <dir>                      no code files in a self repo
+        [--allow <prefix>]     where machinery may live (repeatable, empty by default)
+        [--deny-ext <l|@f>]    replace the floor deny-list wholesale
+        [--deny-ext-add <l>]   extend the floor deny-list
+        [--staged]             classify repo-relative paths from stdin (the commit gate)
+        [--print-deny-list]    print the deny-list in force, exit 0
   nova-check floors --core <SEED-CORE.md> --source <SEED.md>
                                                      the door's floor set matches the seed's
 
@@ -213,13 +220,72 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// stdinReader is where --staged reads its path list. A variable so a test can
+// drive the commit-gate path without a process boundary.
+var stdinReader io.Reader = os.Stdin
+
+// repeatable collects a flag given more than once. Every scope narrowing is
+// the caller's, stated per run, and starts empty.
+type repeatable []string
+
+func (r *repeatable) String() string     { return strings.Join(*r, ",") }
+func (r *repeatable) Set(v string) error { *r = append(*r, v); return nil }
+
 func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("nocode", flag.ContinueOnError)
 	dir := fs.String("dir", "", "self-repo directory to scan (required)")
-	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
+	denyExt := fs.String("deny-ext", "", "replace the floor deny-list: comma list, or @file")
+	denyExtAdd := fs.String("deny-ext-add", "", "extend the floor deny-list: comma list, or @file")
+	printList := fs.Bool("print-deny-list", false, "print the deny-list in force and exit 0")
+	staged := fs.Bool("staged", false, "classify repo-relative paths read from stdin (the commit gate)")
+	var allow repeatable
+	fs.Var(&allow, "allow", "path prefix where machinery may live (repeatable; empty by default)")
+
+	fs.SetOutput(stderr)
+	if err := fs.Parse(args); err != nil {
 		return 2
 	}
-	scanned, findings, err := check.NoCode(*dir)
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "nova-check nocode: unexpected argument %q\n", fs.Arg(0))
+		return 2
+	}
+	if *denyExt != "" && *denyExtAdd != "" {
+		fmt.Fprintln(stderr, "nova-check nocode: --deny-ext and --deny-ext-add are mutually exclusive")
+		return 2
+	}
+
+	// Resolve the effective deny-list and its provenance before anything else:
+	// a guard that cannot say what it forbids must refuse, not pass.
+	deny, source, err := effectiveDenyList(*denyExt, *denyExtAdd)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-check nocode: %v\n", err)
+		return 2
+	}
+
+	if *printList {
+		fmt.Fprintf(stdout, "NOCODE DENY-LIST source=%s count=%d\n", source, len(deny))
+		for _, e := range deny {
+			fmt.Fprintln(stdout, e)
+		}
+		return 0
+	}
+
+	if *dir == "" {
+		fmt.Fprintln(stderr, "nova-check nocode: --dir is required; refusing to guess")
+		return 2
+	}
+
+	opts := check.NoCodeOptions{Dir: *dir, Allow: allow, DenyExt: deny, DenySource: source}
+	if *staged {
+		paths, err := readLines(stdinReader)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-check nocode: cannot read staged paths: %v\n", err)
+			return 2
+		}
+		opts.Staged, opts.StagedSet = paths, true
+	}
+
+	scanned, findings, err := check.NoCode(opts)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-check nocode: %v\n", err)
 		return 2
@@ -230,8 +296,53 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "NOCODE OK files=%d clean\n", scanned)
+	fmt.Fprintf(stdout, "NOCODE OK files=%d clean deny-list=%s\n", scanned, source)
 	return 0
+}
+
+// effectiveDenyList resolves the floor list, a replacement, or an extension,
+// and reports which of the three produced it.
+func effectiveDenyList(replace, add string) ([]string, string, error) {
+	if replace != "" {
+		exts, err := check.ParseDenyList(replace)
+		if err != nil {
+			return nil, "", err
+		}
+		return exts, check.DenyReplaced, nil
+	}
+	floor, err := check.FloorDenyExts()
+	if err != nil {
+		return nil, "", err
+	}
+	if add == "" {
+		return floor, check.DenyFloor, nil
+	}
+	extra, err := check.ParseDenyList(add)
+	if err != nil {
+		return nil, "", err
+	}
+	seen := make(map[string]bool, len(floor)+len(extra))
+	for _, e := range floor {
+		seen[e] = true
+	}
+	for _, e := range extra {
+		seen[e] = true
+	}
+	merged := make([]string, 0, len(seen))
+	for e := range seen {
+		merged = append(merged, e)
+	}
+	sort.Strings(merged)
+	return merged, check.DenyExtended, nil
+}
+
+func readLines(r io.Reader) ([]string, error) {
+	var out []string
+	sc := bufio.NewScanner(r)
+	for sc.Scan() {
+		out = append(out, sc.Text())
+	}
+	return out, sc.Err()
 }
 
 func cmdFloors(args []string, stdout, stderr io.Writer) int {
