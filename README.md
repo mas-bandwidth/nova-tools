@@ -34,8 +34,8 @@ nova-check attest --home <dir> --manifest <file>   # did the full self load: cou
 nova-check links  --dir <dir>                      # every relative inline link resolves
 nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, in bytes
 nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>   # the same budget, in the unit a context window actually spends
-nova-check nocode --dir <dir>                      # no code, executables or scripts in a self repo (the self/machinery separation)
-nova-check nocode --print-deny-list                # the deny-list actually in force
+nova-check nocode --dir <dir>                      # no code, executables, scripts or build machinery in a self repo (the self/machinery separation)
+nova-check nocode --print-deny-list                # both floors actually in force: the extension list and the name list
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 ```
 

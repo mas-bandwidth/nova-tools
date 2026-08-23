@@ -28,9 +28,13 @@ usage:
                                                      kernel size budget, in tokens
   nova-check nocode --dir <dir>                      no code files in a self repo
         [--allow <prefix>]     where machinery may live (repeatable, empty by default)
-        [--deny-ext <l|@f>]    replace the floor deny-list wholesale
-        [--deny-ext-add <l|@f>] extend the floor deny-list
-        [--print-deny-list]    print the deny-list in force, exit 0
+        [--deny-ext <l|@f>]    replace the floor EXTENSION list wholesale
+        [--deny-ext-add <l|@f>] extend the floor EXTENSION list
+        [--print-deny-list]    print both floors in force, exit 0
+    two floors: an EXTENSION list, and a NAME list for build machinery named
+    or located rather than extensioned (Makefile, .github/workflows/). The
+    --deny-ext flags govern the EXTENSION list only; --allow is the escape
+    for the name floor, and names where machinery may live.
   nova-check floors --core <SEED-CORE.md> --source <SEED.md>
                                                      the door's floor set matches the seed's
 
@@ -228,9 +232,9 @@ func (r *repeatable) Set(v string) error { *r = append(*r, v); return nil }
 func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("nocode", flag.ContinueOnError)
 	dir := fs.String("dir", "", "self-repo directory to scan (required)")
-	denyExt := fs.String("deny-ext", "", "replace the floor deny-list: comma list, or @file")
-	denyExtAdd := fs.String("deny-ext-add", "", "extend the floor deny-list: comma list, or @file")
-	printList := fs.Bool("print-deny-list", false, "print the deny-list in force and exit 0")
+	denyExt := fs.String("deny-ext", "", "replace the floor EXTENSION list (not the name floor): comma list, or @file")
+	denyExtAdd := fs.String("deny-ext-add", "", "extend the floor EXTENSION list (not the name floor): comma list, or @file")
+	printList := fs.Bool("print-deny-list", false, "print both floors in force (extensions and names) and exit 0")
 	var allow repeatable
 	fs.Var(&allow, "allow", "path prefix where machinery may live (repeatable; empty by default)")
 
@@ -256,9 +260,25 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *printList {
+		// The NAME floor is printed alongside the extension list because this
+		// flag's whole job is to print what is actually in force. A floor that
+		// fires but does not appear here would be exactly the hidden default
+		// the deny-list is defended against being.
+		names, prefixes, nerr := check.FloorDenyNames()
+		if nerr != nil {
+			fmt.Fprintf(stderr, "nova-check nocode: %v\n", nerr)
+			return 2
+		}
 		fmt.Fprintf(stdout, "NOCODE DENY-LIST source=%s count=%d\n", source, len(deny))
 		for _, e := range deny {
 			fmt.Fprintln(stdout, e)
+		}
+		fmt.Fprintf(stdout, "NOCODE NAME-LIST source=%s names=%d paths=%d\n", check.DenyFloor, len(names), len(prefixes))
+		for _, n := range sortedNames(names) {
+			fmt.Fprintln(stdout, "name:"+n)
+		}
+		for _, pre := range prefixes {
+			fmt.Fprintln(stdout, "path:"+pre+"/")
 		}
 		return 0
 	}
@@ -348,4 +368,15 @@ func cmdFloors(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "FLOORS OK floors=%d\n", floors)
 	return 0
+}
+
+// sortedNames returns the name-floor keys in a stable order, so that
+// --print-deny-list output can be diffed between runs and between versions.
+func sortedNames(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

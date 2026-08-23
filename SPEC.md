@@ -287,10 +287,11 @@ closed on a symlink**, whose name is classified while its target is never
 followed — so a link named `runbook` pointing at a shell passes, and that is a
 declared limit rather than an absolute this section could claim.
 
-A file is flagged when any of three hold, and **all that hold are reported**,
+A file is flagged when any of four hold, and **all that hold are reported**,
 because a gate that says only *no* teaches nothing:
 
 - its extension (case-insensitive) is on the effective deny-list
+- its **exact name**, or its **location**, is on the floor name list
 - it has any executable bit set (`mode & 0111 != 0`)
 - it begins with a shebang (`#!`)
 
@@ -310,6 +311,45 @@ The three catch different things, and the third is why the first two are not
 enough: **a shebang is the tell that survives renaming.** A script called
 `nova-id`, with no extension and no executable bit, is still a script, and
 until this check read the first two bytes it passed clean.
+
+*(The extension list gains `.mk` and `.mak` in the same change: those are the
+included-fragment spellings of make, and they genuinely are extensions rather
+than exact names.)*
+
+**The floor NAME list is a second list answering a different question**, and it
+is data on the same terms — [`internal/check/codenames.txt`](internal/check/codenames.txt),
+embedded, one entry per line, each carrying its reason. It is **not exhaustive
+and does not try to be** — it is extended deliberately, entry by entry with its
+reason, on the same policy as the extension list. An extension denotes a
+**language**. Build and orchestration files are identified by their exact name
+or by where they sit, and several carry no extension, no shebang and no
+executable bit at all: a `Makefile` is machinery because make runs it, and
+before this list it passed clean. Entries take two shapes: `name:<basename>`,
+matched case-insensitively anywhere in the tree, and `path:<prefix>/`, matched
+against the repo-relative path and **anchored at the repo root**. `.github/
+workflows/ci.yml` is caught; `sub/.github/workflows/ci.yml` is not, because
+that is not a location a CI system reads, and a test pins the decision so it
+cannot drift into an accident.
+
+**Why `.yml` is not simply added to the extension list.** Because that would be
+wrong. Prose repos legitimately carry YAML data and front matter, and a floor
+forbidding it would either be ignored or would push real writing out of the
+tree. What is unambiguous is not the format but the **location**: a file under
+`.github/workflows/` exists to run commands on someone else's computer, which
+is the highest-consequence kind of machinery to find in a repo that is meant
+to be prose. So the CI entries are locations and named files, never a format.
+
+**The name floor is NOT replaced by `--deny-ext`,** and that is a decision
+rather than an oversight. That flag answers *which languages does this line
+legitimately keep inside its own self*, which has nothing to say about whether
+a CI workflow belongs in a prose tree. A line that genuinely keeps build
+machinery declares **where** with `--allow`, which is narrower than switching
+a floor off everywhere and is the existing escape hatch. A test pins both
+halves.
+
+**A malformed name-list entry is exit 2**, on the same argument as the
+extension list: a typo'd `nmae:Makefile` that parsed as nothing would leave a
+list matching less than it says while still reporting a clean tree.
 
 **The deny-list is a floor that ships with the tool**, as data —
 [`internal/check/codeexts.txt`](internal/check/codeexts.txt), embedded, one
@@ -336,9 +376,12 @@ self — **`--deny-ext-add` extends it**, and the two are mutually exclusive.
 Every finding **names the list that produced it** (`floor list`, `--deny-ext`,
 or `floor list + --deny-ext-add`), and the `NOCODE OK` line names it too, so
 neither a red nor a green hides the basis it was reached on.
-`--print-deny-list` prints what is actually in force and exits 0; it needs no
-`--dir`, because what the check forbids is answerable without pointing it
-anywhere. Both deny-list flags accept `@file` as well as a comma list.
+`--print-deny-list` prints what is actually in force and exits 0 — **both
+lists**, the extensions under `NOCODE DENY-LIST` and the name floor under
+`NOCODE NAME-LIST`, each entry spelled as `name:` or `path:` so the output can
+be diffed between versions. A floor that fires without appearing here would be
+precisely the hidden default this flag exists to prevent. It needs no `--dir`,
+because what the check forbids is answerable without pointing it anywhere. Both deny-list flags accept `@file` as well as a comma list.
 
 **An effective deny-list that is empty, unreadable, or not made of extensions
 is exit 2** — a guard that cannot say what it forbids refuses rather than
@@ -381,10 +424,24 @@ intent is a heuristic that lies both ways); languages beyond the listed
 extensions (extend the list, don't sniff); code *fences inside markdown* —
 quoted code is prose about code and exactly what a self repo should hold;
 a symlink's TARGET (the link's own name is classified, but the target is never
-read, so a link named `notes.md` pointing at a script passes); machinery that
-is neither a listed extension nor executable nor a script — a `Makefile`, a
-`Dockerfile`, a CI workflow — which is a real gap and is tracked as one; the
-tools repo itself — this check
+read, so a link named `notes.md` pointing at a script passes); build machinery
+whose name or location is not on the floor name list, **which is a real
+residue and is named here rather than implied away**: `docker-compose.yml`,
+`.pre-commit-config.yaml`, `meson.build`, `BUILD.bazel`, a `package.json` with
+a `postinstall` script, and other CI systems' own directories are all machinery
+this list does not currently reach, along with `Gemfile` (Ruby evaluated as
+Ruby, which is the same argument that lists `rakefile`) and
+`.github/dependabot.yml`. **Nor does exact-name matching reach variant
+spellings**: `Dockerfile.dev` and `Makefile.local` are not `dockerfile` and
+`makefile`, which is the identical objection that removed the `taskfile`
+entries, named here rather than left as an asymmetry a reader has to catch.
+The list grows by decision, never by sniffing. Also unreached: anything below a **symlinked directory** — a link
+named `workflows` AT a guarded location is caught by that location, but a link
+named `.github` pointing at a tree of workflows is not, since the target is
+never followed, and a link named `workflows` anywhere else is caught by
+nothing; and YAML outside
+the named CI locations, deliberately, since data and front matter are
+legitimate prose-repo content. Also the tools repo itself — this check
 aims at the self repo, and this repo would rightly fail it.
 
 ---

@@ -283,6 +283,21 @@ func TestFloorDenyExts(t *testing.T) {
 	if len(exts) < 40 {
 		t.Errorf("floor list has %d entries, expected at least 40", len(exts))
 	}
+	// The two entries this branch adds, pinned by name, because codeexts.txt's
+	// own policy is that an extension arrives in the same commit as the test
+	// proving it is caught — and shipping them unpinned reintroduces, one file
+	// over, exactly the defect this branch went and fixed for the name list.
+	for _, want := range []string{".mk", ".mak"} {
+		found := false
+		for _, e := range exts {
+			if e == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("floor extension list is missing %q", want)
+		}
+	}
 	seen := map[string]bool{}
 	for _, e := range exts {
 		if !strings.HasPrefix(e, ".") {
@@ -480,4 +495,311 @@ func TestNoCodeDenyExtWithoutSourceRefuses(t *testing.T) {
 	if _, _, err := NoCode(NoCodeOptions{Dir: dir, DenyExt: []string{".foo"}}); err == nil {
 		t.Error("accepted a deny-list with no stated provenance")
 	}
+}
+
+// TestNoCodeBuildMachineryByName is issue #6's own reproduction, turned into a
+// test. Each of these three carries no code extension, no executable bit and
+// no shebang, so before the floor name list every one of them passed clean.
+func TestNoCodeBuildMachineryByName(t *testing.T) {
+	files := map[string]os.FileMode{
+		"NOTES.md":                     0o644,
+		"Makefile":                     0o644,
+		"Dockerfile":                   0o644,
+		".github/workflows/deploy.yml": 0o644,
+	}
+	contents := map[string]string{
+		"Makefile":                     "all:\n\tcurl x|sh\n",
+		"Dockerfile":                   "FROM alpine\n",
+		".github/workflows/deploy.yml": "run: rm -rf /\n",
+	}
+	_, findings, err := scan(t, files, contents, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{"Makefile", "Dockerfile", ".github/workflows/deploy.yml"})
+}
+
+// TestNoCodeNameMatchIsCaseInsensitive: "makefile" and "GNUmakefile" are the
+// same machinery as "Makefile", and a floor that can be stepped over by
+// changing one letter's case is not a floor.
+func TestNoCodeNameMatchIsCaseInsensitive(t *testing.T) {
+	for _, name := range []string{"makefile", "MAKEFILE", "GNUmakefile", "dockerfile", "DOCKERFILE"} {
+		_, findings, err := scan(t, map[string]os.FileMode{name: 0o644}, nil, nil, NoCodeOptions{})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(findings) != 1 {
+			t.Errorf("%s: flagged %d, want 1", name, len(findings))
+		}
+	}
+}
+
+// TestNoCodeYAMLDataStillPasses is the counter-case that justifies a name list
+// instead of adding .yml to the extension list. A prose repo's front matter and
+// data files are legitimate content, and a floor that forbids them would be
+// ignored or would push real writing out of the tree.
+func TestNoCodeYAMLDataStillPasses(t *testing.T) {
+	files := map[string]os.FileMode{
+		"NOTES.md":       0o644,
+		"data.yml":       0o644,
+		"meta/tags.yaml": 0o644,
+	}
+	contents := map[string]string{"data.yml": "title: x\n", "meta/tags.yaml": "tags: [a]\n"}
+	_, findings, err := scan(t, files, contents, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, nil)
+}
+
+// TestNoCodeNameFloorSurvivesDenyExtReplacement pins a decision rather than an
+// accident: --deny-ext answers "which languages does this line keep inside its
+// own self" and has nothing to say about whether a CI workflow belongs in a
+// prose tree, so replacing the extension list must not switch the name floor
+// off. The escape hatch for a line that legitimately keeps build machinery is
+// --allow, which names WHERE rather than turning a floor off everywhere.
+func TestNoCodeNameFloorSurvivesDenyExtReplacement(t *testing.T) {
+	files := map[string]os.FileMode{"NOTES.md": 0o644, "Makefile": 0o644}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{
+		DenyExt:    []string{".zzz"},
+		DenySource: DenyReplaced,
+	})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{"Makefile"})
+}
+
+// TestNoCodeAllowExemptsNamedMachinery: the declared escape hatch has to work,
+// or the floor is one a real adopter routes around instead of using.
+func TestNoCodeAllowExemptsNamedMachinery(t *testing.T) {
+	files := map[string]os.FileMode{
+		"NOTES.md":                     0o644,
+		"Makefile":                     0o644,
+		".github/workflows/deploy.yml": 0o644,
+	}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{Allow: []string{"Makefile", ".github"}})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, nil)
+}
+
+// TestNoCodeSymlinkNamedMachineryIsFlaggedWithoutDereference: a link called
+// Makefile is machinery by the same argument that catches a file called
+// Makefile, and deciding that must not require following the link out of the
+// tree the gate is guarding.
+func TestNoCodeSymlinkNamedMachineryIsFlaggedWithoutDereference(t *testing.T) {
+	_, findings, err := scan(t,
+		map[string]os.FileMode{"NOTES.md": 0o644}, nil,
+		map[string]string{"Makefile": "/etc/hosts"}, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{"Makefile"})
+	if !strings.Contains(findings[0].Reason, "target not followed") {
+		t.Errorf("reason %q does not record that the target was not followed", findings[0].Reason)
+	}
+}
+
+// TestFloorDenyNames proves the embedded list parses and actually contains the
+// entries the SPEC promises. An embedded list that silently parsed to nothing
+// would leave every test above passing for the wrong reason.
+func TestFloorDenyNames(t *testing.T) {
+	names, prefixes, err := FloorDenyNames()
+	if err != nil {
+		t.Fatalf("FloorDenyNames: %v", err)
+	}
+	// The EXACT set, not a spot check. This file's own policy is that an entry
+	// arrives with the test that proves it is caught, and a four-name spot
+	// check let twelve of eighteen entries be deleted with the suite green,
+	// including an entire location floor. Pinning the whole set means no entry
+	// can leave, or arrive, without this test being part of the same change.
+	wantNames := []string{
+		"makefile", "gnumakefile",
+		"dockerfile", "containerfile",
+		"jenkinsfile", "vagrantfile", "rakefile", "procfile", "justfile",
+		"cmakelists.txt",
+		".gitlab-ci.yml", ".travis.yml", "azure-pipelines.yml", "appveyor.yml",
+	}
+	if len(names) != len(wantNames) {
+		t.Errorf("floor name list has %d names, want %d: %v", len(names), len(wantNames), names)
+	}
+	for _, want := range wantNames {
+		if !names[want] {
+			t.Errorf("floor name list is missing %q", want)
+		}
+	}
+	wantPrefixes := []string{".circleci", ".github/actions", ".github/workflows"}
+	if len(prefixes) != len(wantPrefixes) {
+		t.Fatalf("floor name list has %d prefixes, want %d: %v", len(prefixes), len(wantPrefixes), prefixes)
+	}
+	for i, want := range wantPrefixes {
+		if prefixes[i] != want {
+			t.Errorf("prefix %d = %q, want %q", i, prefixes[i], want)
+		}
+	}
+}
+
+// TestFloorDenyNamesRefusesAnEmptyList makes the emptiness guard load-bearing.
+// It was not: replacing it with `if false` changed nothing anywhere in the
+// suite, which is a doc comment asserting behavior nothing checks, in the file
+// whose argument is that a guard unable to say what it forbids must refuse.
+func TestFloorDenyNamesRefusesAnEmptyList(t *testing.T) {
+	if _, _, err := floorDenyNamesFrom("# only a comment\n\n"); err == nil {
+		t.Error("a comment-only name list returned no error; the guard is vacuous")
+	}
+}
+
+// TestNoCodeProseActionFilePasses is the counter-test the action entry owed.
+// It was `name:action.yml`, matched anywhere, which in a self repo — prose
+// ABOUT actions — collides with an ordinary dated journal entry, and that is
+// the same false red taskfile.yml was removed for. Matching by LOCATION
+// catches the real thing and leaves the prose alone.
+func TestNoCodeProseActionFilePasses(t *testing.T) {
+	files := map[string]os.FileMode{
+		"NOTES.md":                          0o644,
+		"action.yml":                        0o644,
+		"journal/2026/action.yaml":          0o644,
+		".github/actions/deploy/action.yml": 0o644,
+	}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{".github/actions/deploy/action.yml"})
+}
+
+// TestNoCodeLocationMatchIsCaseInsensitive pins a fixed asymmetry: names were
+// folded and locations were not, so on a case-insensitive filesystem a tree
+// checked out as .GitHub/workflows/ escaped the location floor while a file
+// named MAKEFILE did not.
+func TestNoCodeLocationMatchIsCaseInsensitive(t *testing.T) {
+	files := map[string]os.FileMode{"NOTES.md": 0o644, ".GitHub/Workflows/ci.yml": 0o644}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{".GitHub/Workflows/ci.yml"})
+}
+
+// TestParseNameLinesRefusesMalformed: a typo'd entry must be an error, not a
+// silently dropped line. A list that matches less than it says while reporting
+// a clean tree is the fail-open shape this whole check exists against.
+func TestParseNameLinesRefusesMalformed(t *testing.T) {
+	for _, bad := range []string{
+		"Makefile",              // no name:/path: prefix
+		"nmae:Makefile",         // typo'd prefix
+		"name:sub/dir/Makefile", // a name entry may not carry a path
+		"name:",                 // empty
+		"path:",                 // empty
+		"path:../escape/",       // traversal
+		// Found by the SECOND cold read, after a repair round whose commit
+		// message claimed to hold this list to validExt's standard.
+		`path:.circleci\\`,          // backslash: ToSlash is a no-op here
+		`path:.github\\workflows\\`, // the same, with a separator inside
+		"name:.",                    // filepath.Base never yields this
+		"name:..",                   // the same
+		"path:/.github/workflows/",  // leading slash: refused, not normalized
+		// The path side of the whitespace and non-printable rule, which was the
+		// one validator branch with no test — in the commit whose message says
+		// it closes the prefix validator's fail-open.
+		"path:.github/work flows/",
+		"path:.github\u200b/",
+		// Each of the six below was ACCEPTED by the first version of this
+		// parser, found at the cold-read gate. Every one builds an entry that
+		// matches nothing, survives the emptiness guard because other entries
+		// are fine, and leaves a floor forbidding less than it says — which is
+		// the fail-open shape this check exists against, and which validExt
+		// had already been written to refuse for the extension list.
+		"name:make*",          // glob; names are matched literally
+		"name:*.yml",          // glob
+		"name:make file",      // embedded whitespace
+		"name:makefile\u200b", // zero-width space
+		"path:*",              // glob
+		"path:./.github/",     // a "." segment never matches a cleaned path
+	} {
+		if _, _, err := parseNameLines(bad); err == nil {
+			t.Errorf("parseNameLines(%q) returned no error, want refusal", bad)
+		}
+	}
+}
+
+// TestNoCodeLocationIsAnchoredAtTheRepoRoot pins a decision rather than an
+// accident. A CI system reads .github/workflows/ at the root and nowhere else,
+// so a nested copy is not that machinery and is not flagged by location. Left
+// untested, this would look like an oversight to the next reader and could be
+// "fixed" into a false red.
+func TestNoCodeLocationIsAnchoredAtTheRepoRoot(t *testing.T) {
+	files := map[string]os.FileMode{
+		"NOTES.md":                     0o644,
+		".github/workflows/ci.yml":     0o644,
+		"sub/.github/workflows/ci.yml": 0o644,
+	}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{".github/workflows/ci.yml"})
+}
+
+// TestNoCodeCompositeActionIsFlagged: a composite action executes on the
+// runner exactly as a workflow does and lives one directory over, so a floor
+// that catches only .github/workflows/ leaves the same consequence class open.
+// Matched by name rather than by widening the prefix to .github/, which also
+// holds issue templates and CONTRIBUTING.
+func TestNoCodeCompositeActionIsFlagged(t *testing.T) {
+	files := map[string]os.FileMode{
+		"NOTES.md":                          0o644,
+		".github/actions/deploy/action.yml": 0o644,
+		".github/ISSUE_TEMPLATE/bug.md":     0o644,
+		".github/CONTRIBUTING.md":           0o644,
+	}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{".github/actions/deploy/action.yml"})
+}
+
+// TestNoCodeProseTaskfilePasses is the false red this list can least afford. A
+// writer's own taskfile.yml of things to do is ordinary prose, and a floor that
+// calls it "build machinery by name" says something untrue about it. Entries
+// for it were listed and then removed; this pins the removal so it is not
+// reinstated without an argument.
+func TestNoCodeProseTaskfilePasses(t *testing.T) {
+	files := map[string]os.FileMode{"NOTES.md": 0o644, "taskfile.yml": 0o644}
+	contents := map[string]string{"taskfile.yml": "todo:\n  - write\n"}
+	_, findings, err := scan(t, files, contents, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, nil)
+}
+
+// TestNoCodeMakefileFragmentsAreCaught pins the two extensions this branch adds
+// at the TREE level, not only in the list.
+func TestNoCodeMakefileFragmentsAreCaught(t *testing.T) {
+	files := map[string]os.FileMode{"NOTES.md": 0o644, "rules.mk": 0o644, "config.mak": 0o644}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{"rules.mk", "config.mak"})
+}
+
+// TestNoCodeSymlinkedAncestorDefeatsAMultiSegmentPrefix pins a DECLARED LIMIT
+// rather than a bug. A link named .github pointing at a tree of workflows is
+// not caught: the walk never descends and the link's own name is all that gets
+// classified. A single-segment prefix like .circleci IS immune, because there
+// the link's own name is the prefix. SPEC names this gap, and a named gap with
+// no test is one nobody notices closing or widening.
+func TestNoCodeSymlinkedAncestorDefeatsAMultiSegmentPrefix(t *testing.T) {
+	_, findings, err := scan(t,
+		map[string]os.FileMode{"NOTES.md": 0o644}, nil,
+		map[string]string{".github": "/tmp", ".circleci": "/tmp"}, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{".circleci"})
 }
