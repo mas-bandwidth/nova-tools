@@ -64,6 +64,10 @@ func TestNoCode(t *testing.T) {
 		// rather than deleted, so the coverage difference between platforms is
 		// declared instead of discovered.
 		needsExecBit bool
+		// needsChmodRefusal marks a case that depends on chmod actually
+		// REFUSING a read. Windows has no such semantics — the file stays
+		// readable — so the case cannot observe its property there.
+		needsChmodRefusal bool
 	}{
 		{
 			name:        "prose tree is clean",
@@ -178,11 +182,12 @@ func TestNoCode(t *testing.T) {
 			wantScanned: 2,
 		},
 		{
-			name:        "an unreadable file is a finding, never a pass",
-			files:       map[string]os.FileMode{"secret": 0o000},
-			contents:    map[string]string{"secret": "#!/bin/sh\n"},
-			wantScanned: 1,
-			wantFind:    []string{"secret", "unreadable"},
+			name:              "an unreadable file is a finding, never a pass",
+			needsChmodRefusal: true,
+			files:             map[string]os.FileMode{"secret": 0o000},
+			contents:          map[string]string{"secret": "#!/bin/sh\n"},
+			wantScanned:       1,
+			wantFind:          []string{"secret", "unreadable"},
 		},
 		{
 			name:        "a multi-segment --allow prefix covers everything beneath it",
@@ -202,6 +207,12 @@ func TestNoCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.needsChmodRefusal && runtime.GOOS == "windows" {
+				t.Skip("windows: chmod 0 does not refuse reads, so an unreadable file cannot be produced here")
+			}
+			if tt.needsChmodRefusal && os.Geteuid() == 0 {
+				t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
+			}
 			if tt.needsExecBit && runtime.GOOS == "windows" {
 				t.Skip("windows: no executable bit, so this condition cannot fire here — the extension and shebang conditions carry the check on that platform")
 			}
