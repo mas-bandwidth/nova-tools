@@ -448,97 +448,172 @@ aims at the self repo, and this repo would rightly fail it.
 
 ### nocode --staged — the same check, at commit time
 
-> **SPECIFIED, NOT YET BUILT.** This entry exists before the code deliberately:
-> a spec read off an implementation cannot disagree with it, which makes the
-> is-the-spec-wrong-or-the-tool-wrong question unanswerable. A first attempt at
-> this mode was written, reviewed four times, and withdrawn before v0.5.0
-> because it classified the WORKING TREE while git commits the INDEX. The
-> withdrawn code is in the history and is the wrong foundation; this is the
-> right one, and it is written down first so the next attempt is built against
-> a description rather than a memory.
+> **SPECIFIED, NOT YET BUILT**, and this draft is the second. A spec read off an
+> implementation cannot disagree with it, which is why this is written first —
+> and the first draft earned that argument the hard way: a cold read found a
+> **working silent bypass in the spec itself**, before a line of code existed.
+> A file named `0:notes.md` defeated it. That is the whole case for specifying
+> before building, and the defect is recorded below rather than quietly fixed.
 
 ```
-nova-check nocode --staged                         classify what is about to be committed
+nova-check nocode --staged --repo <dir>            classify what is about to be committed
     [--allow <prefix>]      as in audit mode; the same value means the same thing
     [--deny-ext <list|@file>]      "
     [--deny-ext-add <list|@file>]  "
 ```
 
 **Why a second mode at all.** The audit makes a violation VISIBLE; it does not
-make it REFUSE. Moving a rule from something remembered to something that
-refuses is the whole reason this class of tool exists. But **a gate that can be
-walked past silently is worse than no gate**, because the claim of enforcement
-is what stops anyone checking — which is the argument v0.5.0 itself was built
-on, so this mode has to be right rather than early.
+make it REFUSE. But **a gate that can be walked past silently is worse than no
+gate**, because the claim of enforcement is what stops anyone checking. That
+sentence governs this entry twice: once for what the gate reads, and once for
+the honest scope of what a local hook can enforce at all.
 
-**THE DEFECT THAT WITHDREW THE FIRST ATTEMPT, stated so it cannot be rebuilt.**
-A gate handed a list of changed paths classifies the filesystem. Git commits the
-index. The two differ, and the gap is three commands wide:
+**THE DEFECT THAT WITHDREW THE FIRST ATTEMPT.** A gate handed a list of changed
+paths classifies the filesystem; git commits the index. Reproduced 2026-08-24:
+after `git add evil.sh && rm evil.sh`, `git diff --cached --name-status` reports
+`A evil.sh`, `git ls-files -s` reports mode `100644`, and the staged blob holds
+the shebang — while the working tree has nothing there. A filesystem-reading
+gate must INFER a deletion from `fs.ErrNotExist`, which means "absent from the
+worktree" and is equally true of an index-only addition. Mode and content read
+from the worktree also miss `chmod +x` then `git add`, and any edit made after
+staging. `git add -p` is the everyday-innocent version.
 
-```sh
-printf '#!/bin/sh\nrm -rf /\n' > evil.sh
-git add evil.sh
-rm evil.sh                  # the index still holds the ADDITION
-git commit -m "prose only"  # NOCODE OK ... clean, rc=0
-```
+#### The index is read by OID, never by path-as-revision
 
-Reproduced 2026-08-24: after that sequence `git diff --cached --name-status`
-reports `A evil.sh`, `git ls-files -s` reports it at mode 100644, and
-`git cat-file blob :evil.sh` prints the shebang, while the working tree has
-nothing there at all. A filesystem-reading gate sees an absent file and has to
-INFER a deletion from `fs.ErrNotExist` — which means "absent from the worktree"
-and is equally true of an index-only addition. The same root cause a second way:
-mode and content read from the worktree miss a `chmod +x` followed by
-`git add`, and miss an edit made after staging. `git add -p` is the
-everyday-innocent version of the same thing.
+**This is the load-bearing correction, and the first draft got it wrong.**
 
-**Asserts.** Exactly what the commit would contain, read from the index:
+`git cat-file blob :<path>` is **gitrevisions syntax, not a path argument**.
+`:<n>:<path>` means stage *n*, so a path whose first component ends in a colon
+after a digit is re-parsed as a stage reference. Measured 2026-08-24, in a tree
+holding a prose `notes.md` and a staged shell script named `0:notes.md`:
+`git cat-file blob ":0:notes.md"` returns **`notes.md`'s prose, exit 0** — the
+wrong blob, silently. The script commits clean: `.md` is not on the extension
+list, the name is on no floor, the mode is `100644`. **A filename walks past the
+gate.** And it fails in both directions: with no such file present, the same
+form exits 128, so under a blanket refuse-on-git-error rule an ordinary legal
+filename becomes an unconditional refusal to commit.
 
-- **The changed set** comes from `git diff --cached --name-status -z`. The
-  status letter is CARRIED, not stripped. **`D` is the only skip**, and it is a
-  real skip rather than an inference from a missing file. `R` and `C` classify
-  the **new** path.
-- **Mode** comes from `git ls-files -s`, so a staged `chmod +x` is visible where
-  the working tree's later state is not.
-- **Content**, for the shebang test, comes from `git cat-file blob :<path>`,
-  which resolves against the index. That closes `git add -p` and
-  edit-after-staging in the same stroke.
+So the specified reading is:
 
-**Parsing `-z` is stateful, not pairwise.** Most records are `STATUS\0PATH\0`,
-but a rename or copy is `R100\0OLD\0NEW\0` — three NUL-separated fields — so a
-reader that splits into pairs will desynchronize on the first rename and
-misattribute every path after it. Verified against real git output rather than
-assumed.
+- **One pass over `git ls-files -s -z`**, which yields `<mode> <oid> <stage>\t<path>`
+  per record with **raw** path bytes. This supplies mode, blob OID and stage
+  together, and the OID is the join key from here on.
+- **Content by OID**, through `git cat-file --batch` fed those OIDs. No path is
+  ever re-parsed as a revision, so the bypass above is not merely blocked, it is
+  **unrepresentable**.
+- **Reads are bounded.** Only the first two bytes decide the shebang, and a
+  staged blob may be gigabytes; the batch reader takes a bounded prefix and
+  never streams a whole object.
 
-**The index modes, each with a decided disposition:**
+**`-z` is required on BOTH commands, and the first draft specified it on only
+one.** `core.quotePath` defaults to true, so bare `git ls-files -s` emits
+`"caf\303\251.sh"` while `git diff --cached --name-status -z` emits the same
+path raw. Measured. Two commands keyed by path would silently fail to join on
+every non-ASCII name, and the mode finding for `café.sh` would vanish — a
+fail-open produced by a quoting default. *(The first draft spent a paragraph
+proving it had measured `-z` on `diff` and then wrote the sibling command from
+memory, which is the failure the paragraph claimed to have escaped.)*
+
+#### Every status letter has a disposition, and unknown letters fail closed
+
+`git diff --cached --name-status -z` supplies the changed set. Most records are
+`STATUS\0PATH\0`; a rename or copy is `R100\0OLD\0NEW\0`, **three** NUL-separated
+fields, so a pairwise reader desynchronizes on the first rename and misattributes
+every path after it. Verified against real output.
+
+| letter | meaning | disposition |
+|---|---|---|
+| `A` `M` | added, modified | classify the path |
+| `D` | deleted | **the only skip**, and a real skip rather than an inference |
+| `R` `C` | renamed, copied | classify the **new** path *(`C` requires copy detection, off by default)* |
+| `T` | typechange | **classify.** This is the regular-file ⇄ symlink ⇄ executable transition, which is exactly the interesting one. Measured: replacing a file with a symlink and staging it emits `T` |
+| `U` | unmerged | **refuse (exit 2).** Stages 1–3 exist and there is no single staged content to classify. A conflicted index is not a state to gate; it is a state to finish |
+| anything else | — | **refuse (exit 2).** A gate that skips what it does not recognize is a gate with an unbounded skip list |
+
+#### The index modes
 
 | mode | what it is | disposition |
 |---|---|---|
-| `100644` | ordinary file | classified: extension, name, location, shebang |
-| `100755` | executable | a finding, from the index bit and never the filesystem |
-| `120000` | symlink | **name only.** The blob content is the TARGET PATH, so running the shebang test on it would both misread a target beginning with `#!` and constitute following the link, which the audit refuses to do |
-| `160000` | gitlink (submodule) | **a finding.** Its content is not in this tree and cannot be classified, on the same fail-closed argument as a fifo |
+| `100644` | ordinary file | extension, name, location, shebang |
+| `100755` | executable | a finding, from the index bit, never the filesystem |
+| `120000` | symlink | **name only.** The blob content is the TARGET PATH, so a shebang test would both misread a target beginning with `#!` and amount to following the link the audit refuses to follow |
+| `160000` | gitlink | see the parity note below |
 
 **An unborn HEAD needs no special case.** `git diff --cached --name-status -z`
 returns ordinary `A` records on a repository with no commits, so no diff against
-the empty-tree object is required. *(Recorded because the opposite was assumed
-and then measured; a spec that carries an unrun assumption is how the first
-attempt got its foundation wrong.)*
+the empty-tree object is needed. *(Recorded because the opposite was assumed and
+then measured.)*
 
-**Refuses (exit 2) when** any git command fails or the tool is run outside a
-work tree. **A commit gate that cannot determine what is being committed must
-refuse**, never pass — the same posture the audit takes on a file it cannot
-read.
+#### The environment is normative
 
-**Parity with the audit is a requirement, not a coincidence.** The same
-`--allow` prefix means the same thing in both modes, and both floors — the
-extension list and the name list — are in force identically. A gate that
-disagreed with its own audit would make one of the two a lie.
+Git runs a pre-commit hook against a **temporary index** and exports
+`GIT_INDEX_FILE` to point at it, which is what makes `git commit -- <path>`
+classify the right thing: the partial commit's index, not the full one.
+Therefore, normatively: **run git with the ambient environment, and do not
+`chdir` or pass `-C`.** A tool that sanitizes its child environment to an
+allowlist — an ordinary hardening move — reads the *real* index and gates a
+commit that is not the one being made. On `--amend` the exported value is
+**relative** (`.git/index`), so any directory change silently retargets it.
 
-**Deliberately does not check:** anything about the working tree, which is the
-whole point; commits made with `--no-verify`, which is a property of git and not
-of this tool; anything already in HEAD, since this classifies what is being
-ADDED and a repository that was already dirty is the audit's job.
+`--repo <dir>` is required rather than discovered, because SPEC's own no-guessed-paths
+law forbids a fallback to cwd, and this is the one mode where guessing wrong
+means gating a different repository than the caller meant. *(The first draft had
+no path flag and contradicted that law.)*
+
+**On `--amend`, `diff --cached` is against `HEAD`, which `--amend` is replacing.**
+So the classified set is not the resulting commit's diff against its real parent.
+Stated rather than implied: this mode classifies **what is being staged**, which
+on an amend is the delta against the commit being replaced.
+
+#### Output
+
+`NOCODE FAIL <path>: <reason>` per finding on stderr, exit 1; on success one line
+on stdout, `NOCODE OK staged=<n> clean deny-list=<source>`, exit 0. **`staged`
+counts records CLASSIFIED**, so skipped `D` records are excluded and the number
+means what it says. A gitlink's reason names the mode; a symlink's reason carries
+the same `(target not followed)` annotation the audit uses.
+
+#### Honest scope: a local hook is advisory
+
+**This is the paragraph the first draft owed and did not pay.** It listed
+`--no-verify` alone, which is the *loudest* bypass — typed, per-commit, visible
+in shell history. Measured 2026-08-24, with a working hook installed, these
+committed machinery and **the hook did not run at all**: `git merge --no-ff`,
+`git cherry-pick`, `git rebase`, `git revert`. And one line of config disables it
+with no trace in any commit:
+
+```sh
+git config core.hooksPath /dev/null   # every later commit: no gate, no message
+```
+
+So, plainly: **`--staged` is a convenience for the honest case and cannot be an
+enforcement boundary.** Enforcement of the same rule requires the AUDIT run
+somewhere the committer does not control — CI on push and pull request, which
+this repository now has, or a server-side hook. By this entry's own thesis,
+claiming more than that would be the defect it is written against.
+
+#### Parity with the audit
+
+The same `--allow` prefix means the same thing in both modes, and both floors —
+extensions and names — are in force identically. **One known divergence, named
+rather than left to be discovered: submodules.** The audit walks the filesystem
+and classifies a submodule's files individually; the index holds one `160000`
+record at the submodule's own path. A prose-only submodule therefore passes the
+audit and would fail a staged gate that treats every gitlink as a finding, and a
+Python-filled one produces N findings at `sub/*.py` in one mode and one at `sub`
+in the other.
+
+**Resolved in favor of parity: a `160000` record is NOT a finding by itself.** It
+is a pointer to a tree this check does not govern, and the repository it points
+at is that repository's own gate to run. `--allow sub` suppresses it, and the
+prefix rule is read so that a prefix covers the path itself as well as everything
+beneath it — otherwise the only escape hatch a submodule user has does not reach
+the record they need to suppress.
+
+**Deliberately does not check:** the working tree, which is the whole point;
+anything already in HEAD, which is the audit's job; and whether the hook is
+installed or reachable at all, which the section above says plainly is outside
+what this mode can promise.
 
 ---
 
