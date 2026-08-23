@@ -425,10 +425,17 @@ whose name or location is not on the floor name list, **which is a real
 residue and is named here rather than implied away**: `docker-compose.yml`,
 `.pre-commit-config.yaml`, `meson.build`, `BUILD.bazel`, a `package.json` with
 a `postinstall` script, and other CI systems' own directories are all machinery
-this list does not currently reach. The list grows by decision, never by
-sniffing. Also unreached: anything below a **symlinked directory** — a link
-named `workflows` is caught by name, but a link named `.github` pointing at a
-tree of workflows is not, since the target is never followed; and YAML outside
+this list does not currently reach, along with `Gemfile` (Ruby evaluated as
+Ruby, which is the same argument that lists `rakefile`) and
+`.github/dependabot.yml`. **Nor does exact-name matching reach variant
+spellings**: `Dockerfile.dev` and `Makefile.local` are not `dockerfile` and
+`makefile`, which is the identical objection that removed the `taskfile`
+entries, named here rather than left as an asymmetry a reader has to catch.
+The list grows by decision, never by sniffing. Also unreached: anything below a **symlinked directory** — a link
+named `workflows` AT a guarded location is caught by that location, but a link
+named `.github` pointing at a tree of workflows is not, since the target is
+never followed, and a link named `workflows` anywhere else is caught by
+nothing; and YAML outside
 the named CI locations, deliberately, since data and front matter are
 legitimate prose-repo content. Also the tools repo itself — this check
 aims at the self repo, and this repo would rightly fail it.

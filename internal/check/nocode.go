@@ -61,7 +61,15 @@ func FloorDenyExts() ([]string, error) {
 // empty, for the same reason FloorDenyExts does: a guard that cannot determine
 // what it forbids must refuse, not pass.
 func FloorDenyNames() (names map[string]bool, prefixes []string, err error) {
-	names, prefixes, err = parseNameLines(codeNamesData)
+	return floorDenyNamesFrom(codeNamesData)
+}
+
+// floorDenyNamesFrom is FloorDenyNames over supplied data, so that the
+// emptiness guard below is reachable by a test. It was not: replacing the
+// guard with `if false` changed nothing anywhere in the suite, which makes a
+// doc comment asserting behavior nothing checks.
+func floorDenyNamesFrom(data string) (names map[string]bool, prefixes []string, err error) {
+	names, prefixes, err = parseNameLines(data)
 	if err != nil {
 		return nil, nil, fmt.Errorf("floor name list: %w", err)
 	}
@@ -102,7 +110,14 @@ func parseNameLines(s string) (map[string]bool, []string, error) {
 			names[v] = true
 		case strings.HasPrefix(line, "path:"):
 			v := strings.TrimSpace(strings.TrimPrefix(line, "path:"))
-			v = strings.Trim(filepath.ToSlash(v), "/")
+			// Only the TRAILING slash is trimmed, because "path:<prefix>/" is
+			// the documented spelling. A LEADING slash is refused rather than
+			// normalized away, which is what the comment in validPrefix
+			// already claimed and the code did not do.
+			if strings.HasPrefix(v, "/") {
+				return nil, nil, fmt.Errorf("floor name list: %q starts with /; prefixes are repo-relative", line)
+			}
+			v = strings.TrimSuffix(v, "/")
 			if err := validPrefix(v, line); err != nil {
 				return nil, nil, err
 			}
@@ -136,6 +151,11 @@ func validName(v, line string) error {
 		return fmt.Errorf("floor name list: %q looks like a glob; names are matched literally", line)
 	case strings.IndexFunc(v, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }) >= 0:
 		return fmt.Errorf("floor name list: %q contains whitespace or a non-printable character", line)
+	case v == "." || v == "..":
+		// filepath.Base never returns these for a file the walk classifies, so
+		// the entry would match nothing and survive the emptiness guard. The
+		// path side already refused them; the name side did not.
+		return fmt.Errorf("floor name list: %q is not a file name", line)
 	}
 	return nil
 }
@@ -144,6 +164,14 @@ func validPrefix(v, line string) error {
 	switch {
 	case v == "":
 		return fmt.Errorf("floor name list: %q has an empty path prefix", line)
+	case strings.Contains(v, "\\"):
+		// filepath.ToSlash is a NO-OP on every platform whose separator is
+		// already "/", so it reads as though it handles a backslash entry and
+		// does not. An unrefused "path:.circleci\" prints in
+		// --print-deny-list as a live floor and matches nothing, which is a
+		// whole location floor silently forbidding nothing. validExt refuses
+		// the same character; this now does too.
+		return fmt.Errorf("floor name list: %q contains a backslash; prefixes are written with /", line)
 	case strings.ContainsAny(v, "*?[]"):
 		return fmt.Errorf("floor name list: %q looks like a glob; prefixes are matched literally", line)
 	case strings.IndexFunc(v, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }) >= 0:
@@ -410,8 +438,14 @@ func classify(fullPath, rel string, fi os.FileInfo, isLink bool, denySet map[str
 	if base := strings.TrimSpace(strings.ToLower(filepath.Base(rel))); denyNames[base] {
 		reasons = append(reasons, fmt.Sprintf("build machinery by name %s (floor name list)", base))
 	}
+	// Lowercased on both sides so location matching agrees with name matching.
+	// They disagreed: on a case-insensitive filesystem a tree checked out as
+	// .GitHub/workflows/ is the same directory on disk and the floor did not
+	// fire, while a file named MAKEFILE did. An asymmetry a reader cannot tell
+	// was decided is worse than either choice.
+	lowerRel := strings.ToLower(rel)
 	for _, pre := range denyPrefixes {
-		if rel == pre || strings.HasPrefix(rel, pre+"/") {
+		if lowerRel == pre || strings.HasPrefix(lowerRel, pre+"/") {
 			reasons = append(reasons, fmt.Sprintf("machinery by location %s/ (floor name list)", pre))
 			break
 		}

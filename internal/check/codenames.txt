@@ -69,11 +69,14 @@ path:.github/workflows/
 path:.circleci/
 # composite and JavaScript actions execute on the runner exactly as a workflow
 # does, and they live one directory over at .github/actions/<name>/action.yml.
-# Matched by name rather than by a wider .github/ prefix, because .github also
-# holds legitimate prose: issue templates, CONTRIBUTING, a pull-request
-# template. The prefix is kept narrow and the residue is stated in SPEC.
-name:action.yml
-name:action.yaml
+# Matched by LOCATION rather than by name, and that is a correction: listing
+# name:action.yml matched anywhere in the tree, which is the same false red
+# taskfile.yml was just removed for, and worse, since a self repo is prose
+# ABOUT actions and a dated journal entry called action.yaml is entirely
+# ordinary. The location is what carries the argument, exactly as it does for
+# workflows, and .github/ itself stays unlisted because it also holds issue
+# templates, CONTRIBUTING and a pull-request template.
+path:.github/actions/
 name:.gitlab-ci.yml
 name:.travis.yml
 name:azure-pipelines.yml

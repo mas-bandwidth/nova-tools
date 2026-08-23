@@ -595,20 +595,77 @@ func TestFloorDenyNames(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FloorDenyNames: %v", err)
 	}
-	for _, want := range []string{"makefile", "dockerfile", "jenkinsfile", "cmakelists.txt"} {
+	// The EXACT set, not a spot check. This file's own policy is that an entry
+	// arrives with the test that proves it is caught, and a four-name spot
+	// check let twelve of eighteen entries be deleted with the suite green,
+	// including an entire location floor. Pinning the whole set means no entry
+	// can leave, or arrive, without this test being part of the same change.
+	wantNames := []string{
+		"makefile", "gnumakefile",
+		"dockerfile", "containerfile",
+		"jenkinsfile", "vagrantfile", "rakefile", "procfile", "justfile",
+		"cmakelists.txt",
+		".gitlab-ci.yml", ".travis.yml", "azure-pipelines.yml", "appveyor.yml",
+	}
+	if len(names) != len(wantNames) {
+		t.Errorf("floor name list has %d names, want %d: %v", len(names), len(wantNames), names)
+	}
+	for _, want := range wantNames {
 		if !names[want] {
 			t.Errorf("floor name list is missing %q", want)
 		}
 	}
-	found := false
-	for _, p := range prefixes {
-		if p == ".github/workflows" {
-			found = true
+	wantPrefixes := []string{".circleci", ".github/actions", ".github/workflows"}
+	if len(prefixes) != len(wantPrefixes) {
+		t.Fatalf("floor name list has %d prefixes, want %d: %v", len(prefixes), len(wantPrefixes), prefixes)
+	}
+	for i, want := range wantPrefixes {
+		if prefixes[i] != want {
+			t.Errorf("prefix %d = %q, want %q", i, prefixes[i], want)
 		}
 	}
-	if !found {
-		t.Errorf("floor name list is missing the .github/workflows prefix; got %v", prefixes)
+}
+
+// TestFloorDenyNamesRefusesAnEmptyList makes the emptiness guard load-bearing.
+// It was not: replacing it with `if false` changed nothing anywhere in the
+// suite, which is a doc comment asserting behavior nothing checks, in the file
+// whose argument is that a guard unable to say what it forbids must refuse.
+func TestFloorDenyNamesRefusesAnEmptyList(t *testing.T) {
+	if _, _, err := floorDenyNamesFrom("# only a comment\n\n"); err == nil {
+		t.Error("a comment-only name list returned no error; the guard is vacuous")
 	}
+}
+
+// TestNoCodeProseActionFilePasses is the counter-test the action entry owed.
+// It was `name:action.yml`, matched anywhere, which in a self repo — prose
+// ABOUT actions — collides with an ordinary dated journal entry, and that is
+// the same false red taskfile.yml was removed for. Matching by LOCATION
+// catches the real thing and leaves the prose alone.
+func TestNoCodeProseActionFilePasses(t *testing.T) {
+	files := map[string]os.FileMode{
+		"NOTES.md":                          0o644,
+		"action.yml":                        0o644,
+		"journal/2026/action.yaml":          0o644,
+		".github/actions/deploy/action.yml": 0o644,
+	}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{".github/actions/deploy/action.yml"})
+}
+
+// TestNoCodeLocationMatchIsCaseInsensitive pins a fixed asymmetry: names were
+// folded and locations were not, so on a case-insensitive filesystem a tree
+// checked out as .GitHub/workflows/ escaped the location floor while a file
+// named MAKEFILE did not.
+func TestNoCodeLocationMatchIsCaseInsensitive(t *testing.T) {
+	files := map[string]os.FileMode{"NOTES.md": 0o644, ".GitHub/Workflows/ci.yml": 0o644}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{".GitHub/Workflows/ci.yml"})
 }
 
 // TestParseNameLinesRefusesMalformed: a typo'd entry must be an error, not a
@@ -622,6 +679,13 @@ func TestParseNameLinesRefusesMalformed(t *testing.T) {
 		"name:",                 // empty
 		"path:",                 // empty
 		"path:../escape/",       // traversal
+		// Found by the SECOND cold read, after a repair round whose commit
+		// message claimed to hold this list to validExt's standard.
+		`path:.circleci\\`,          // backslash: ToSlash is a no-op here
+		`path:.github\\workflows\\`, // the same, with a separator inside
+		"name:.",                    // filepath.Base never yields this
+		"name:..",                   // the same
+		"path:/.github/workflows/",  // leading slash: refused, not normalized
 		// Each of the six below was ACCEPTED by the first version of this
 		// parser, found at the cold-read gate. Every one builds an entry that
 		// matches nothing, survives the emptiness guard because other entries
