@@ -392,7 +392,10 @@ mylist.txt`, the missing `@`, is the likely error and it is caught rather than
 silently obeyed.
 
 **`--allow <prefix>` is the one scope narrowing, and it starts EMPTY.**
-Repeatable; a prefix covers everything beneath it at any depth, so `--allow
+Repeatable; a prefix covers **the path itself and** everything beneath it at any
+depth — the shipped behaviour, stated here because it was described as
+beneath-only and the staged mode depends on the path-itself half to give a
+submodule user any escape at all — so `--allow
 history` needs no subdirectory enumeration and `--allow docs/history` works
 the same way. A leading `./` and surrounding slashes are trimmed. **The same
 value means the same thing in both modes** — an `--allow` that behaved one way
@@ -498,12 +501,26 @@ So the specified reading is:
 - **One pass over `git ls-files -s -z`**, which yields `<mode> <oid> <stage>\t<path>`
   per record with **raw** path bytes. This supplies mode, blob OID and stage
   together, and the OID is the join key from here on.
-- **Content by OID**, through `git cat-file --batch` fed those OIDs. No path is
-  ever re-parsed as a revision, so the bypass above is not merely blocked, it is
-  **unrepresentable**.
-- **Reads are bounded.** Only the first two bytes decide the shebang, and a
-  staged blob may be gigabytes; the batch reader takes a bounded prefix and
-  never streams a whole object.
+- **Content by OID.** No path is ever re-parsed as a revision, so the bypass
+  above is not merely blocked, it is **unrepresentable**.
+- **Two requirements on the content reader, and the mechanism is the
+  implementation's to choose.** It must stay FRAMED — `git cat-file --batch` is
+  one continuous stream of `<oid> <type> <size>\n<contents>\n` records with no
+  option that truncates contents, so a reader that inspects two bytes and moves
+  on desynchronizes and starts attributing one file's bytes to another. It must
+  also not BUFFER a whole object, since a staged blob may be gigabytes. Those
+  two are compatible — consume the frame, retain only the prefix — and a reader
+  that has to choose between them has chosen the wrong mechanism.
+  **`<oid> missing` and `<oid> ambiguous` are one-line replies with no body**,
+  and a reader that assumes a body after every header desyncs on them.
+
+> *(The previous draft said the reader "takes a bounded prefix and never streams
+> a whole object", which is not implementable against `--batch` and whose literal
+> reading is itself a bypass: a four-line prose file sorted before a script is
+> enough to slide the frame, and the script commits clean. Found at the gate,
+> with a working commit. The defect is recorded rather than silently corrected,
+> because it is the same desync this section spends a paragraph on for the
+> rename triple, committed one stream over.)*
 
 **`-z` is required on BOTH commands, and the first draft specified it on only
 one.** `core.quotePath` defaults to true, so bare `git ls-files -s` emits
@@ -517,9 +534,13 @@ memory, which is the failure the paragraph claimed to have escaped.)*
 #### Every status letter has a disposition, and unknown letters fail closed
 
 `git diff --cached --name-status -z` supplies the changed set. Most records are
-`STATUS\0PATH\0`; a rename or copy is `R100\0OLD\0NEW\0`, **three** NUL-separated
-fields, so a pairwise reader desynchronizes on the first rename and misattributes
-every path after it. Verified against real output.
+`STATUS\0PATH\0`; a rename or copy is `R<score>\0OLD\0NEW\0`, **three**
+NUL-separated fields, so a pairwise reader desynchronizes on the first rename and
+misattributes every path after it. **The score varies and is not always 100** —
+a near-identical rename emits `R096` — so a reader matching the literal token
+`R100` would send every inexact rename to the refuse-on-unknown rule below and
+turn ordinary renames into failed commits. Score digits appear on `R` and `C`
+and on nothing else. Verified against real output.
 
 | letter | meaning | disposition |
 |---|---|---|
@@ -527,7 +548,7 @@ every path after it. Verified against real output.
 | `D` | deleted | **the only skip**, and a real skip rather than an inference |
 | `R` `C` | renamed, copied | classify the **new** path *(`C` requires copy detection, off by default)* |
 | `T` | typechange | **classify.** This is the regular-file ⇄ symlink ⇄ executable transition, which is exactly the interesting one. Measured: replacing a file with a symlink and staging it emits `T` |
-| `U` | unmerged | **refuse (exit 2).** Stages 1–3 exist and there is no single staged content to classify. A conflicted index is not a state to gate; it is a state to finish |
+| `U` | unmerged | **refuse (exit 2).** More than one stage exists for the path and there is no single staged content to classify — an add/add conflict carries stages 2 and 3 only, so "stages 1-3" would be wrong as a test. A conflicted index is not a state to gate; it is a state to finish |
 | anything else | — | **refuse (exit 2).** A gate that skips what it does not recognize is a gate with an unbounded skip list |
 
 #### The index modes
@@ -535,8 +556,8 @@ every path after it. Verified against real output.
 | mode | what it is | disposition |
 |---|---|---|
 | `100644` | ordinary file | extension, name, location, shebang |
-| `100755` | executable | a finding, from the index bit, never the filesystem |
-| `120000` | symlink | **name only.** The blob content is the TARGET PATH, so a shebang test would both misread a target beginning with `#!` and amount to following the link the audit refuses to follow |
+| `100755` | executable | a finding, from the index bit and never the filesystem — and **additive**: the extension, name, location and shebang conditions still run, and all that hold are reported, exactly as the audit does |
+| `120000` | symlink | **name AND location, never content.** The blob content is the TARGET PATH, so a shebang test would both misread a target beginning with `#!` and amount to following the link the audit refuses to follow. **The location floor still applies** — a symlink at `.github/workflows/ci.yml` is machinery by where it sits, and the shipped audit already flags exactly that. A previous draft said "name only", which committed a symlinked workflow clean while the audit called it a finding |
 | `160000` | gitlink | see the parity note below |
 
 **An unborn HEAD needs no special case.** `git diff --cached --name-status -z`
@@ -546,19 +567,44 @@ then measured.)*
 
 #### The environment is normative
 
-Git runs a pre-commit hook against a **temporary index** and exports
-`GIT_INDEX_FILE` to point at it, which is what makes `git commit -- <path>`
-classify the right thing: the partial commit's index, not the full one.
-Therefore, normatively: **run git with the ambient environment, and do not
-`chdir` or pass `-C`.** A tool that sanitizes its child environment to an
-allowlist — an ordinary hardening move — reads the *real* index and gates a
-commit that is not the one being made. On `--amend` the exported value is
-**relative** (`.git/index`), so any directory change silently retargets it.
+Git exports `GIT_INDEX_FILE` to a pre-commit hook, and **its value varies by
+commit form**. Measured 2026-08-24, one repository, a hook that prints it:
 
-`--repo <dir>` is required rather than discovered, because SPEC's own no-guessed-paths
-law forbids a fallback to cwd, and this is the one mode where guessing wrong
-means gating a different repository than the caller meant. *(The first draft had
-no path flag and contradicted that law.)*
+| invocation | `GIT_INDEX_FILE` |
+|---|---|
+| plain `git commit` | `.git/index` — the REAL index, **relative** |
+| `git commit --amend` | `.git/index` — **relative** |
+| `git commit -- <path>` | `…/.git/next-index-<pid>.lock` — a temporary index, **absolute** |
+| `git commit -a` | `…/.git/index.lock` — **absolute** |
+
+**So, normatively: run git with the ambient environment, and do not `chdir`.**
+The reason is the RELATIVE forms: a relative `GIT_INDEX_FILE` resolves against
+the process's working directory, so any directory change silently retargets it
+or empties it. A tool that sanitizes its child environment to an allowlist — an
+ordinary hardening move — drops the variable entirely and reads the wrong index
+on a partial commit.
+
+> *(A previous draft had this paragraph backwards on both measured claims: it
+> said a pre-commit hook runs against a temporary index, which is false for the
+> plain and amend forms, and it attributed the relative spelling to `--amend`
+> specifically when that is the form the plain commit uses too. The rule it
+> reached is still the right rule; its stated justification was inverted, in the
+> paragraph of a document whose selling point is being measured rather than
+> recalled. The table above is what a measurement looks like.)*
+
+`--repo <dir>` is required rather than discovered, because SPEC's own
+no-guessed-paths law forbids a fallback to cwd, and this is the one mode where
+guessing wrong means gating a different repository than the caller meant.
+**The mechanism is `git -C <repo>`, and it is the one exception to the sentence
+above.** That reads as a contradiction and is not: the rule forbids changing the
+TOOL's working directory, because a relative `GIT_INDEX_FILE` resolves against
+it. `git -C` changes only the child's directory, leaving the tool's own cwd —
+and therefore the relative index path — intact. Measured: under an ambient
+relative `GIT_INDEX_FILE`, `git -C <repo> ls-files -s` returns the index while
+`git --git-dir=… --work-tree=…` returns **nothing at exit 0**, which is a
+fail-open with no error to catch. `--repo` must name the same work tree the hook
+was invoked in; naming another is out of scope and the tool does not try to
+detect it.
 
 **On `--amend`, `diff --cached` is against `HEAD`, which `--amend` is replacing.**
 So the classified set is not the resulting commit's diff against its real parent.
@@ -573,6 +619,25 @@ counts records CLASSIFIED**, so skipped `D` records are excluded and the number
 means what it says. A gitlink's reason names the mode; a symlink's reason carries
 the same `(target not followed)` annotation the audit uses.
 
+**A path is printed C-quoted, the way `core.quotePath` would**, because the
+index is read raw and a staged path may contain a newline — which would
+otherwise split one finding across two lines and break the one-line-per-event
+contract this file states in Conventions. *(Measured: a file named `we\nird.md`
+produces a two-line FAIL if the path is printed raw.)*
+
+**Refusals name their cause on stderr and exit 2**: `NOCODE REFUSE unmerged
+index at <path>: finish the merge first`, `NOCODE REFUSE unknown status letter
+<X> for <path>`, `NOCODE REFUSE unknown index mode <mode> for <path>`. These are
+exit 2 rather than exit 1 because they mean *the gate could not determine what
+is being committed*, which is Conventions' sense of "could not run" rather than
+a check that failed — stated because it stretches that definition and a reader
+should not have to guess.
+
+**`--staged` with `--dir` is exit 2**: the two name different subjects and
+accepting both would leave which one governs to be inferred. `--print-deny-list`
+ignores `--staged`, since what the floors contain is answerable without pointing
+the tool at anything.
+
 #### Honest scope: a local hook is advisory
 
 **This is the paragraph the first draft owed and did not pay.** It listed
@@ -585,6 +650,12 @@ with no trace in any commit:
 ```sh
 git config core.hooksPath /dev/null   # every later commit: no gate, no message
 ```
+
+**Including, not limited to.** Also measured: `git am` applies a machinery commit
+with no hook, `git stash` creates commits with no hook, `git commit-tree` plus
+`update-ref` is the one-line plumbing bypass, and a hook file that is merely
+**not executable** is skipped with only a `hint:` that `advice.ignoredHook=false`
+silences. Any list here is a sample.
 
 So, plainly: **`--staged` is a convenience for the honest case and cannot be an
 enforcement boundary.** Enforcement of the same rule requires the AUDIT run
@@ -603,12 +674,20 @@ audit and would fail a staged gate that treats every gitlink as a finding, and a
 Python-filled one produces N findings at `sub/*.py` in one mode and one at `sub`
 in the other.
 
-**Resolved in favor of parity: a `160000` record is NOT a finding by itself.** It
-is a pointer to a tree this check does not govern, and the repository it points
-at is that repository's own gate to run. `--allow sub` suppresses it, and the
-prefix rule is read so that a prefix covers the path itself as well as everything
-beneath it — otherwise the only escape hatch a submodule user has does not reach
-the record they need to suppress.
+**Resolved: a `160000` record IS a finding, suppressible by `--allow`.** A
+previous draft resolved it the other way, deleting the finding for parity's
+sake, and that was fail-open — measured, a submodule holding `exfil.py` and a
+`Makefile` committed clean while the audit returned two findings on the same
+bytes. Parity is worth having and it is not worth buying in the direction where
+being wrong means machinery ships. **The prose-only case, which is the one
+parity actually costs, already has the hatch: `--allow tools` suppresses it.**
+The code-filled case has no hatch once the finding is deleted, which is the
+asymmetry that decides this. **This depends on `--allow` covering the path
+itself and not only what is beneath it**, which is what the audit's own
+description now says rather than something restated here. *(Also worth knowing when
+reading a clean result: `.gitmodules` is on neither floor, so after a deletion
+of this finding a submodule pointer and its URL file would carry no signal at
+all.)*
 
 **Deliberately does not check:** the working tree, which is the whole point;
 anything already in HEAD, which is the audit's job; and whether the hook is
