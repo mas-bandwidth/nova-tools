@@ -99,8 +99,11 @@ jobs:
     timeout-minutes: 15
     env:
       # Go appends .exe on Windows, so the name has to carry it or every step
-      # below looks for a binary that is not there.
-      BIN: ${{ github.workspace }}/nova-check${{ runner.os == 'Windows' && '.exe' || '' }}
+      # below looks for a binary that is not there. Keyed off matrix.os and NOT
+      # runner.os: the runner context is not available to a job-level env, and
+      # using it there does not warn — it invalidates the whole workflow file,
+      # which fails the run before a single step executes.
+      BIN: ${{ github.workspace }}/nova-check${{ startsWith(matrix.os, 'windows') && '.exe' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
