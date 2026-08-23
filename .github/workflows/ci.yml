@@ -32,7 +32,7 @@ jobs:
   test:
     # Three operating systems because the platforms genuinely differ: Windows
     # has no executable bit, so `nocode`'s executable condition cannot fire
-    # there and only the extension, name and shebang conditions carry it. The
+    # there and only the extension and shebang conditions carry it. The
     # tests that assert the mode-bit behaviour SKIP on Windows with that reason
     # named, so the difference is declared rather than silently untested.
     strategy:
@@ -79,13 +79,16 @@ jobs:
     # is a lie. What is smoked here is `nova-check nocode` and the four
     # properties below. NOT smoked as binaries: `nova-check attest`, `links`,
     # `kernel`, `floors`, the `--allow` and `--deny-ext-add` flags, and the
-    # `nova-fuse`, `nova-memory` and `nova-self-talk` commands. Those are
-    # covered by package tests only, and that gap is written here rather than
-    # left to be inferred from the steps that are absent.
+    # `nova-fuse`, `nova-memory` and `nova-self-talk` commands. Nor is the
+    # `--deny-ext` SUCCESS path, or `nocode`'s classification of a symlink by
+    # name. Those are covered by package tests only, and the gap is written
+    # here rather than left to be inferred from the steps that are absent.
     #
-    # Not run on Windows: three of the four fixtures depend on an executable
-    # bit or on chmod refusing a read, neither of which that platform has. The
-    # matrix above still builds, vets and tests there.
+    # Not run on Windows: the fixtures depend on an executable bit, on chmod
+    # refusing a read, on mkfifo, and on symlinks — none of which that platform
+    # provides on the same terms. The matrix above still builds, vets and tests
+    # there, and the tests that assert those properties skip with their reason
+    # named.
     strategy:
       fail-fast: false
       matrix:
@@ -114,11 +117,45 @@ jobs:
           [ "$rc" -eq 0 ] || { echo "want exit 0, got $rc: $out"; exit 1; }
           # files=2 is the load-bearing half. `nocode` prints NOCODE OK and
           # exits 0 for a tree it never opened, so exit 0 alone cannot tell a
-          # pass from a walk that scanned nothing — which is the fail-open a
-          # symlinked --dir once produced.
+          # pass from a walk that scanned nothing.
           case "$out" in
             *"files=2 clean"*) ;;
             *) echo "want files=2 clean, got: $out"; exit 1 ;;
+          esac
+
+      - name: a symlinked --dir is resolved, not passed over
+        shell: bash
+        run: |
+          # The fail-open the assertion above was WRONGLY credited with
+          # catching. os.Stat follows a link, so --dir naming a symlink to the
+          # tree was seen as a single non-directory entry and returned
+          # NOCODE OK files=0, exit 0: a clean pass over a tree never opened.
+          # A reviewer removed filepath.EvalSymlinks and every other step here
+          # stayed green, because none of their fixtures is itself a link.
+          # This one is.
+          real="$(mktemp -d)"; printf '# n\n' > "$real/NOTES.md"; printf 'print(1)\n' > "$real/tool.py"
+          link="$(mktemp -d)/link"; ln -s "$real" "$link"
+          set +e; out=$("$BIN" nocode --dir "$link" 2>&1); rc=$?; set -e
+          [ "$rc" -eq 1 ] || { echo "symlinked --dir: want exit 1, got $rc: $out"; exit 1; }
+          case "$out" in
+            *"tool.py"*) echo "ok: a symlinked --dir is walked" ;;
+            *) echo "symlinked --dir: the tree was not walked: $out"; exit 1 ;;
+          esac
+
+      - name: a tree that classified nothing says so
+        shell: bash
+        run: |
+          # The scanned==0 warning is the only remaining backstop for the
+          # fail-open above in a real repository, and deleting it left every
+          # other step green. Exit 0 is correct here: an empty tree genuinely
+          # holds no machinery. What must not vanish is the sentence telling
+          # an operator that nothing was classified.
+          empty="$(mktemp -d)"
+          set +e; out=$("$BIN" nocode --dir "$empty" 2>&1); rc=$?; set -e
+          [ "$rc" -eq 0 ] || { echo "empty tree: want exit 0, got $rc: $out"; exit 1; }
+          case "$out" in
+            *"classified NOTHING"*) echo "ok: an unwalked tree is reported" ;;
+            *) echo "empty tree: the scanned==0 warning is gone: $out"; exit 1 ;;
           esac
 
       - name: each condition refuses separately, with the right code and reason
