@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // codeExtsData is the floor deny-list, kept as data a reader can open and diff
@@ -86,8 +87,10 @@ func validExt(e string) error {
 		return fmt.Errorf("deny-list entry %q looks like a path; did you mean @%s?", e, body)
 	case strings.ContainsAny(e, "*?[]"):
 		return fmt.Errorf("deny-list entry %q looks like a glob; extensions are matched literally", e)
-	case strings.ContainsAny(e, " \t"):
-		return fmt.Errorf("deny-list entry %q contains whitespace", e)
+	case strings.IndexFunc(e, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }) >= 0:
+		// Not just " " and "\t": a zero-width space builds an entry that
+		// matches nothing and would be accepted as a one-entry deny-list.
+		return fmt.Errorf("deny-list entry %q contains whitespace or a non-printable character", e)
 	case strings.Contains(body, "."):
 		return fmt.Errorf("deny-list entry %q has more than one dot; did you mean @%s?", e, body)
 	}
@@ -140,6 +143,12 @@ type NoCodeOptions struct {
 	DenySource string   // provenance; required when DenyExt is set
 	Staged     []string // if StagedSet, classify exactly these repo-relative paths
 	StagedSet  bool     // distinguishes "not staged mode" from "staged, nothing staged"
+
+	// StagedMayBeQuoted says the path list came from a newline-separated git
+	// invocation, where core.quotePath may have wrapped names in quotes and
+	// octal escapes. Under -z git never quotes, and decoding there would
+	// corrupt a filename that legitimately begins and ends with a quote.
+	StagedMayBeQuoted bool
 }
 
 // NoCode reports every file that is machinery living inside a prose-only tree.
@@ -257,7 +266,7 @@ func noCodeStaged(opts NoCodeOptions, allow []string, denySet map[string]bool, s
 		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		rel, err := gitPath(raw)
+		rel, err := gitPath(raw, opts.StagedMayBeQuoted)
 		if err != nil {
 			scanned++
 			findings = append(findings, Failure{raw, err.Error()})
@@ -266,7 +275,8 @@ func noCodeStaged(opts NoCodeOptions, allow []string, denySet map[string]bool, s
 		if rel == "." {
 			continue
 		}
-		if strings.HasPrefix(rel, "../") || rel == ".." {
+		// Check the CLEANED path: sub/../../x escapes without a leading "../".
+		if clean := filepath.ToSlash(filepath.Clean(rel)); clean == ".." || strings.HasPrefix(clean, "../") {
 			scanned++
 			findings = append(findings, Failure{rel, "path escapes the tree being guarded; is --dir the repository root?"})
 			continue
@@ -285,7 +295,20 @@ func noCodeStaged(opts NoCodeOptions, allow []string, denySet map[string]bool, s
 			continue
 		}
 		isLink := fi.Mode()&os.ModeSymlink != 0
+		if fi.IsDir() {
+			// Git stages a directory only as a gitlink: a whole nested
+			// repository. That is the loudest possible violation of "prose,
+			// not machinery" and it must never pass as unclassifiable.
+			scanned++
+			findings = append(findings, Failure{rel, "directory staged: a submodule or gitlink is an entire repository"})
+			continue
+		}
 		if !isLink && !fi.Mode().IsRegular() {
+			// FAIL CLOSED. Every earlier hole in this mode was a "cannot
+			// classify this, so skip it" branch; there is now exactly one
+			// thing a staged path may be skipped for, and it is a deletion.
+			scanned++
+			findings = append(findings, Failure{rel, fmt.Sprintf("not a regular file (mode %v): cannot rule out machinery", fi.Mode().Type())})
 			continue
 		}
 		scanned++
@@ -303,16 +326,18 @@ func noCodeStaged(opts NoCodeOptions, allow []string, denySet map[string]bool, s
 // C-style octal escapes. Taken literally such a path matches nothing on disk,
 // which is why this is decoded rather than trimmed: the alternative is a gate
 // that silently ignores every file whose name is not plain ASCII.
-func gitPath(raw string) (string, error) {
+func gitPath(raw string, mayBeQuoted bool) (string, error) {
 	s := raw
-	if strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) && len(s) >= 2 {
+	if mayBeQuoted && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) && len(s) >= 2 {
 		unquoted, err := strconv.Unquote(s)
 		if err != nil {
 			return "", fmt.Errorf("cannot decode git-quoted path (try -z, or -c core.quotePath=false): %v", err)
 		}
 		s = unquoted
 	}
-	return filepath.ToSlash(s), nil
+	s = filepath.ToSlash(s)
+	s = strings.TrimPrefix(s, "./")
+	return s, nil
 }
 
 // normalizeAllow trims each entry to a bare repo-relative directory prefix.

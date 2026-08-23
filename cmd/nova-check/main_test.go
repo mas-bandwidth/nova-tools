@@ -560,10 +560,22 @@ func TestNoCodeStagedAcceptsNulSeparatedPaths(t *testing.T) {
 	}
 	saved := stdinReader
 	defer func() { stdinReader = saved }()
-	stdinReader = strings.NewReader("tool.py\x00")
+	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("prose"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdinReader = strings.NewReader("tool.py\x00notes.md\x00")
 	var stdout, stderr bytes.Buffer
 	if got := run([]string{"nocode", "--dir", dir, "--staged"}, &stdout, &stderr); got != 1 {
 		t.Fatalf("exit = %d, want 1 (git -z output must gate)", got)
+	}
+	// The exit code alone cannot tell "parsed the separator" from "failed to":
+	// an unparsed blob becomes one bogus path and also exits 1. The SUBJECT is
+	// what distinguishes them.
+	if !strings.Contains(stderr.String(), "NOCODE FAIL tool.py:") {
+		t.Errorf("NUL separator not parsed; stderr: %q", stderr.String())
+	}
+	if strings.Contains(stderr.String(), "unreadable") {
+		t.Errorf("the whole blob was treated as one path: %q", stderr.String())
 	}
 }
 
@@ -576,7 +588,7 @@ func TestNoCodeStagedClassifiedNothingIsSaidOutLoud(t *testing.T) {
 	if got := run([]string{"nocode", "--dir", dir, "--staged"}, &stdout, &stderr); got != 0 {
 		t.Fatalf("exit = %d, want 0: a pure-deletion commit is legitimate", got)
 	}
-	if !strings.Contains(stderr.String(), "classified none of the 1 staged path") {
+	if !strings.Contains(stderr.String(), "classified NOTHING out of 1 staged path") {
 		t.Errorf("a run that looked at nothing was silent: %q", stderr.String())
 	}
 }

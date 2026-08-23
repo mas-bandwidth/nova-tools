@@ -362,8 +362,16 @@ deliberate. It reads repo-relative paths from stdin, NUL-separated or one per li
 separator is detected, so `git diff --cached --name-only -z` and the
 newline form both work — and classifies exactly those. **`-z` is the form to
 write down**, because without it git applies `core.quotePath` (on by default)
-and emits `"caf\303\251.sh"` for any non-ASCII name. Such a path is decoded
-rather than ignored; a path that cannot be decoded is a finding. **The gate refuses what is being
+and emits `"caf\303\251.sh"` for any non-ASCII name. In the newline form such
+a path is decoded rather than ignored, and one that cannot be decoded is a
+finding. **Decoding is applied only to the newline form**: under `-z` git never
+quotes, so a file whose name genuinely begins and ends with a quote is that
+name, and decoding it there would turn a real file into a path that does not
+exist — the recommended form failing open while the older one caught it.
+
+**Pair `-z` with `--diff-filter=d` — everything except deletions — rather than
+a positive list.** `ACM` omits renames, so `git mv notes.txt deploy.sh` hands
+the gate an empty list and commits clean while the audit fails the same tree. **The gate refuses what is being
 ADDED, not what already exists.** Gating the whole tree at commit time would
 make the next commit hostage to deleting every finished investigation in the
 repo, which is how a reasonable rule becomes a rule everybody turns off. A
@@ -395,9 +403,8 @@ intent is a heuristic that lies both ways); languages beyond the listed
 extensions (extend the list, don't sniff); code *fences inside markdown* —
 quoted code is prose about code and exactly what a self repo should hold;
 a symlink's TARGET (the link's own name is classified, but the target is never
-read, so a link named `notes.md` pointing at a script passes); names that are
-entirely an extension (`.bashrc` has no extension by Go's reckoning and is
-caught only by its mode or its shebang); the tools repo itself — this check
+read, so a link named `notes.md` pointing at a script passes); file CONTENTS
+beyond the first two bytes; the tools repo itself — this check
 aims at the self repo, and this repo would rightly fail it.
 
 ---

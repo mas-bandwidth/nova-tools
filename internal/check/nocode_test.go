@@ -436,7 +436,7 @@ func TestNoCodeStagedDoesNotSilentlyPass(t *testing.T) {
 
 	t.Run("a git-quoted path is decoded, not skipped", func(t *testing.T) {
 		_, findings, err := NoCode(NoCodeOptions{
-			Dir: dir, Staged: []string{`"caf\303\251.sh"`}, StagedSet: true,
+			Dir: dir, Staged: []string{`"caf\303\251.sh"`}, StagedSet: true, StagedMayBeQuoted: true,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -446,7 +446,7 @@ func TestNoCodeStagedDoesNotSilentlyPass(t *testing.T) {
 
 	t.Run("an undecodable quoted path is a finding, not a skip", func(t *testing.T) {
 		_, findings, err := NoCode(NoCodeOptions{
-			Dir: dir, Staged: []string{`"\q"`}, StagedSet: true,
+			Dir: dir, Staged: []string{`"\q"`}, StagedSet: true, StagedMayBeQuoted: true,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -487,7 +487,7 @@ func TestNoCodeStagedDoesNotSilentlyPass(t *testing.T) {
 			t.Fatal(err)
 		}
 		_, gated, err := NoCode(NoCodeOptions{
-			Dir: dir, Staged: []string{`"caf\303\251.sh"`, "README.md"}, StagedSet: true,
+			Dir: dir, Staged: []string{`"caf\303\251.sh"`, "README.md"}, StagedSet: true, StagedMayBeQuoted: true,
 		})
 		if err != nil {
 			t.Fatal(err)
@@ -566,4 +566,80 @@ func TestNoCodeTrailingWhitespaceInName(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantFailures(t, findings, []string{"code extension .py"})
+}
+
+// Under -z git never quotes, so a name that begins and ends with a quote is
+// that name. Decoding it there turns a real file into a path that does not
+// exist, which the gate would read as a deletion — the recommended form
+// failing open while the older one caught it.
+func TestNoCodeStagedQuotingIsModeDependent(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, `"run"`, "#!/bin/sh\n", 0o755)
+
+	t.Run("NUL mode does not unquote", func(t *testing.T) {
+		_, findings, err := NoCode(NoCodeOptions{
+			Dir: dir, Staged: []string{`"run"`}, StagedSet: true, StagedMayBeQuoted: false,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantOnly(t, findings, []string{`"run"`})
+	})
+
+	t.Run("the gate and the audit agree on it", func(t *testing.T) {
+		_, audit, err := NoCode(NoCodeOptions{Dir: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(audit) != 1 {
+			t.Fatalf("audit = %v, want 1", audit)
+		}
+	})
+}
+
+// A staged directory is a gitlink: a whole nested repository, which is the
+// loudest possible violation of prose-not-machinery. It used to be skipped as
+// unclassifiable while the audit failed the same tree.
+func TestNoCodeStagedSubmoduleIsAFinding(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, "tools/a.go", "package main", 0o644)
+	_, findings, err := NoCode(NoCodeOptions{
+		Dir: dir, Staged: []string{"tools"}, StagedSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFailures(t, findings, []string{"tools", "submodule or gitlink"})
+}
+
+// --allow must not over-match: history must not allow history-of-tools.
+// Nothing pinned the boundary, so widening the prefix test to a bare
+// HasPrefix left the suite green.
+func TestNoCodeAllowDoesNotOverMatchSiblings(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, "history/ok.py", "x", 0o644)
+	writeMode(t, dir, "history-of-tools/run.py", "x", 0o644)
+	writeMode(t, dir, "historical.py", "x", 0o644)
+	_, findings, err := NoCode(NoCodeOptions{Dir: dir, Allow: []string{"history"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOnly(t, findings, []string{"history-of-tools/run.py", "historical.py"})
+}
+
+func TestNoCodeStagedEscapeAfterCleaning(t *testing.T) {
+	dir := t.TempDir()
+	_, findings, err := NoCode(NoCodeOptions{
+		Dir: dir, Staged: []string{"sub/../../elsewhere/x.py"}, StagedSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFailures(t, findings, []string{"escapes the tree"})
+}
+
+func TestParseDenyListRefusesZeroWidthSpace(t *testing.T) {
+	if _, err := ParseDenyList(".py​"); err == nil {
+		t.Error("accepted a zero-width space: a one-entry list that forbids nothing")
+	}
 }
