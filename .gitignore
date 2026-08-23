@@ -1,0 +1,6 @@
+# Runtime output, never repo content. These tools write logs beside the checkout
+# they run in, so any branch worked on in a live checkout accumulates them: a
+# feature branch here once carried 44 stray log files and a reviewer had to
+# point it out. The `latest` symlinks move on every invocation, which also makes
+# them a standing conflict between concurrent branches.
+tending/
