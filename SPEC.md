@@ -446,6 +446,102 @@ aims at the self repo, and this repo would rightly fail it.
 
 ---
 
+### nocode --staged — the same check, at commit time
+
+> **SPECIFIED, NOT YET BUILT.** This entry exists before the code deliberately:
+> a spec read off an implementation cannot disagree with it, which makes the
+> is-the-spec-wrong-or-the-tool-wrong question unanswerable. A first attempt at
+> this mode was written, reviewed four times, and withdrawn before v0.5.0
+> because it classified the WORKING TREE while git commits the INDEX. The
+> withdrawn code is in the history and is the wrong foundation; this is the
+> right one, and it is written down first so the next attempt is built against
+> a description rather than a memory.
+
+```
+nova-check nocode --staged                         classify what is about to be committed
+    [--allow <prefix>]      as in audit mode; the same value means the same thing
+    [--deny-ext <list|@file>]      "
+    [--deny-ext-add <list|@file>]  "
+```
+
+**Why a second mode at all.** The audit makes a violation VISIBLE; it does not
+make it REFUSE. Moving a rule from something remembered to something that
+refuses is the whole reason this class of tool exists. But **a gate that can be
+walked past silently is worse than no gate**, because the claim of enforcement
+is what stops anyone checking — which is the argument v0.5.0 itself was built
+on, so this mode has to be right rather than early.
+
+**THE DEFECT THAT WITHDREW THE FIRST ATTEMPT, stated so it cannot be rebuilt.**
+A gate handed a list of changed paths classifies the filesystem. Git commits the
+index. The two differ, and the gap is three commands wide:
+
+```sh
+printf '#!/bin/sh\nrm -rf /\n' > evil.sh
+git add evil.sh
+rm evil.sh                  # the index still holds the ADDITION
+git commit -m "prose only"  # NOCODE OK ... clean, rc=0
+```
+
+Reproduced 2026-08-24: after that sequence `git diff --cached --name-status`
+reports `A evil.sh`, `git ls-files -s` reports it at mode 100644, and
+`git cat-file blob :evil.sh` prints the shebang, while the working tree has
+nothing there at all. A filesystem-reading gate sees an absent file and has to
+INFER a deletion from `fs.ErrNotExist` — which means "absent from the worktree"
+and is equally true of an index-only addition. The same root cause a second way:
+mode and content read from the worktree miss a `chmod +x` followed by
+`git add`, and miss an edit made after staging. `git add -p` is the
+everyday-innocent version of the same thing.
+
+**Asserts.** Exactly what the commit would contain, read from the index:
+
+- **The changed set** comes from `git diff --cached --name-status -z`. The
+  status letter is CARRIED, not stripped. **`D` is the only skip**, and it is a
+  real skip rather than an inference from a missing file. `R` and `C` classify
+  the **new** path.
+- **Mode** comes from `git ls-files -s`, so a staged `chmod +x` is visible where
+  the working tree's later state is not.
+- **Content**, for the shebang test, comes from `git cat-file blob :<path>`,
+  which resolves against the index. That closes `git add -p` and
+  edit-after-staging in the same stroke.
+
+**Parsing `-z` is stateful, not pairwise.** Most records are `STATUS\0PATH\0`,
+but a rename or copy is `R100\0OLD\0NEW\0` — three NUL-separated fields — so a
+reader that splits into pairs will desynchronize on the first rename and
+misattribute every path after it. Verified against real git output rather than
+assumed.
+
+**The index modes, each with a decided disposition:**
+
+| mode | what it is | disposition |
+|---|---|---|
+| `100644` | ordinary file | classified: extension, name, location, shebang |
+| `100755` | executable | a finding, from the index bit and never the filesystem |
+| `120000` | symlink | **name only.** The blob content is the TARGET PATH, so running the shebang test on it would both misread a target beginning with `#!` and constitute following the link, which the audit refuses to do |
+| `160000` | gitlink (submodule) | **a finding.** Its content is not in this tree and cannot be classified, on the same fail-closed argument as a fifo |
+
+**An unborn HEAD needs no special case.** `git diff --cached --name-status -z`
+returns ordinary `A` records on a repository with no commits, so no diff against
+the empty-tree object is required. *(Recorded because the opposite was assumed
+and then measured; a spec that carries an unrun assumption is how the first
+attempt got its foundation wrong.)*
+
+**Refuses (exit 2) when** any git command fails or the tool is run outside a
+work tree. **A commit gate that cannot determine what is being committed must
+refuse**, never pass — the same posture the audit takes on a file it cannot
+read.
+
+**Parity with the audit is a requirement, not a coincidence.** The same
+`--allow` prefix means the same thing in both modes, and both floors — the
+extension list and the name list — are in force identically. A gate that
+disagreed with its own audit would make one of the two a lie.
+
+**Deliberately does not check:** anything about the working tree, which is the
+whole point; commits made with `--no-verify`, which is a property of git and not
+of this tool; anything already in HEAD, since this classifies what is being
+ADDED and a repository that was already dirty is the audit's job.
+
+---
+
 ### floors — the door and the source, held to one floor set
 
 ```
