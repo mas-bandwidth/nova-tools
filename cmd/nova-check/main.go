@@ -256,9 +256,25 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *printList {
+		// The NAME floor is printed alongside the extension list because this
+		// flag's whole job is to print what is actually in force. A floor that
+		// fires but does not appear here would be exactly the hidden default
+		// the deny-list is defended against being.
+		names, prefixes, nerr := check.FloorDenyNames()
+		if nerr != nil {
+			fmt.Fprintf(stderr, "nova-check nocode: %v\n", nerr)
+			return 2
+		}
 		fmt.Fprintf(stdout, "NOCODE DENY-LIST source=%s count=%d\n", source, len(deny))
 		for _, e := range deny {
 			fmt.Fprintln(stdout, e)
+		}
+		fmt.Fprintf(stdout, "NOCODE NAME-LIST source=%s names=%d paths=%d\n", check.DenyFloor, len(names), len(prefixes))
+		for _, n := range sortedNames(names) {
+			fmt.Fprintln(stdout, "name:"+n)
+		}
+		for _, pre := range prefixes {
+			fmt.Fprintln(stdout, "path:"+pre+"/")
 		}
 		return 0
 	}
@@ -348,4 +364,15 @@ func cmdFloors(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "FLOORS OK floors=%d\n", floors)
 	return 0
+}
+
+// sortedNames returns the name-floor keys in a stable order, so that
+// --print-deny-list output can be diffed between runs and between versions.
+func sortedNames(m map[string]bool) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

@@ -66,6 +66,11 @@
 .tsx
 .php
 
+# build machinery carried as an extension (the exact-name forms of make are in
+# codenames.txt; these are the included-fragment spellings)
+.mk
+.mak
+
 # functional
 .ex
 .exs

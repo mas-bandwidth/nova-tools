@@ -544,3 +544,19 @@ func TestNoCodeWarnsWhenItClassifiedNothing(t *testing.T) {
 		t.Errorf("an empty tree produced no warning; stderr = %q", stderr.String())
 	}
 }
+
+// TestPrintDenyListShowsTheNameFloor: a floor that fires but does not appear in
+// --print-deny-list is a hidden default, which is the one thing the deny-list's
+// whole design argument is against.
+func TestPrintDenyListShowsTheNameFloor(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	if rc := run([]string{"nocode", "--print-deny-list"}, &stdout, &stderr); rc != 0 {
+		t.Fatalf("rc=%d stderr=%s", rc, stderr.String())
+	}
+	out := stdout.String()
+	for _, want := range []string{"NOCODE DENY-LIST", "NOCODE NAME-LIST", "name:makefile", "path:.github/workflows/"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("--print-deny-list output is missing %q", want)
+		}
+	}
+}

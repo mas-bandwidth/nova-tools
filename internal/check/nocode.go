@@ -21,6 +21,16 @@ import (
 //go:embed codeexts.txt
 var codeExtsData string
 
+// codeNamesData is the floor NAME list: build and orchestration machinery
+// identified by exact file name or by repo-relative location rather than by
+// extension. It is a separate list because it answers a different question —
+// an extension denotes a language, while a Makefile is machinery because make
+// runs it, carrying no extension, no shebang and no executable bit. See
+// codenames.txt for why .yml is not simply added to the extension list.
+//
+//go:embed codenames.txt
+var codeNamesData string
+
 // Deny-list provenance, reported with every finding so that neither a red nor
 // a green hides the basis it was reached on.
 const (
@@ -42,6 +52,70 @@ func FloorDenyExts() ([]string, error) {
 		return nil, errors.New("floor deny-list is empty: the embedded list did not parse")
 	}
 	return exts, nil
+}
+
+// FloorDenyNames returns the embedded floor name list as an exact-basename set
+// and an ordered list of path prefixes.
+//
+// It returns an error rather than empty results if the data is unreadable or
+// empty, for the same reason FloorDenyExts does: a guard that cannot determine
+// what it forbids must refuse, not pass.
+func FloorDenyNames() (names map[string]bool, prefixes []string, err error) {
+	names, prefixes, err = parseNameLines(codeNamesData)
+	if err != nil {
+		return nil, nil, fmt.Errorf("floor name list: %w", err)
+	}
+	if len(names) == 0 && len(prefixes) == 0 {
+		return nil, nil, errors.New("floor name list is empty: the embedded data did not parse")
+	}
+	return names, prefixes, nil
+}
+
+// parseNameLines reads "name:<basename>" and "path:<prefix>/" entries.
+//
+// An unprefixed or unrecognized entry is an ERROR rather than a silently
+// ignored line. A typo'd "nmae:Makefile" that parsed as nothing would leave a
+// list that matches less than it says while still reporting a clean tree,
+// which is the fail-open shape this whole check exists against.
+func parseNameLines(s string) (map[string]bool, []string, error) {
+	names := map[string]bool{}
+	seenPrefix := map[string]bool{}
+	var prefixes []string
+	for _, raw := range strings.Split(s, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if i := strings.IndexByte(line, '#'); i >= 0 {
+			line = strings.TrimSpace(line[:i])
+		}
+		if line == "" {
+			continue
+		}
+		line = strings.ToLower(line)
+		switch {
+		case strings.HasPrefix(line, "name:"):
+			v := strings.TrimSpace(strings.TrimPrefix(line, "name:"))
+			if v == "" || strings.ContainsAny(v, "/\\") {
+				return nil, nil, fmt.Errorf("floor name list: %q is not a bare file name", line)
+			}
+			names[v] = true
+		case strings.HasPrefix(line, "path:"):
+			v := strings.TrimSpace(strings.TrimPrefix(line, "path:"))
+			v = strings.Trim(filepath.ToSlash(v), "/")
+			if v == "" || strings.Contains(v, "..") {
+				return nil, nil, fmt.Errorf("floor name list: %q is not a usable path prefix", line)
+			}
+			if !seenPrefix[v] {
+				seenPrefix[v] = true
+				prefixes = append(prefixes, v)
+			}
+		default:
+			return nil, nil, fmt.Errorf("floor name list: %q has no name: or path: prefix", line)
+		}
+	}
+	sort.Strings(prefixes)
+	return names, prefixes, nil
 }
 
 // parseExtLines reads one extension per line, ignoring blanks and # comments.
@@ -177,6 +251,17 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 		denySet[strings.ToLower(e)] = true
 	}
 
+	// The name and path floors are always the embedded floor, and deliberately
+	// are NOT replaced by --deny-ext. That flag answers "which LANGUAGES does
+	// this line legitimately keep inside its own self", which has nothing to
+	// say about whether a CI workflow belongs in a prose tree. A line that
+	// genuinely keeps build machinery declares WHERE with --allow, which is the
+	// existing escape hatch and is narrower than switching a floor off.
+	denyNames, denyPrefixes, err := FloorDenyNames()
+	if err != nil {
+		return 0, nil, err
+	}
+
 	allow := normalizeAllow(opts.Allow)
 
 	// Resolve the root before walking. os.Stat FOLLOWS a symlink, so a --dir
@@ -234,7 +319,7 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 			return nil
 		}
 		scanned++
-		if reasons := classify(path, rel, fi, isLink, denySet, source); len(reasons) > 0 {
+		if reasons := classify(path, rel, fi, isLink, denySet, source, denyNames, denyPrefixes); len(reasons) > 0 {
 			findings = append(findings, Failure{rel, strings.Join(reasons, "; ")})
 		}
 		return nil
@@ -274,8 +359,21 @@ func isAllowed(rel string, allow []string) bool {
 // classify returns every reason the file is machinery, or nil if it is prose.
 // All reasons are reported when more than one holds: a gate that says only
 // "no" teaches nothing, and each reason is separately actionable.
-func classify(fullPath, rel string, fi os.FileInfo, isLink bool, denySet map[string]bool, source string) []string {
+func classify(fullPath, rel string, fi os.FileInfo, isLink bool, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string) []string {
 	var reasons []string
+	// Name and location are checked FIRST, and before the symlink return
+	// below, because both read only the path. A symlink called Makefile is
+	// machinery by the same argument that catches a file called Makefile, and
+	// deciding that requires no dereference.
+	if base := strings.TrimSpace(strings.ToLower(filepath.Base(rel))); denyNames[base] {
+		reasons = append(reasons, fmt.Sprintf("build machinery by name %s (floor name list)", base))
+	}
+	for _, pre := range denyPrefixes {
+		if rel == pre || strings.HasPrefix(rel, pre+"/") {
+			reasons = append(reasons, fmt.Sprintf("machinery by location %s/ (floor name list)", pre))
+			break
+		}
+	}
 	// Trailing whitespace is trimmed for MATCHING only: a file named "x.py "
 	// has extension ".py " by Go's reckoning and would otherwise miss the list
 	// while being every bit as much a script.

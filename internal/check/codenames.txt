@@ -1,0 +1,68 @@
+# The floor NAME list: files that are machinery by exact name or by location,
+# not by extension.
+#
+# WHY A SECOND LIST. An extension denotes a LANGUAGE. Build and orchestration
+# files are identified by their exact name or by where they sit, and several
+# carry no extension at all — so the extension list cannot reach them, and the
+# executable bit and shebang conditions do not either. A Makefile is not
+# executable and has no shebang; it is machinery because make runs it.
+#
+# WHY NOT JUST ADD .yml TO THE EXTENSION LIST. Because that would be wrong.
+# Plenty of prose repos legitimately carry YAML data and front matter, and a
+# floor that forbids it would either be ignored or would push real content out
+# of the tree. What is unambiguous is not the format but the LOCATION: a file
+# under .github/workflows/ exists to execute on someone else's computer, and
+# that is the highest-consequence kind of machinery to find in a repo that is
+# supposed to be prose.
+#
+# EACH ENTRY IS REASONED, deliberately. A floor list nobody argued about is how
+# a list that fails open gets written in the first place.
+#
+# TO EXTEND IT: add the entry here, in the same commit as the test that proves
+# it is caught, with the reason on the line above it.
+#
+# SYNTAX. One entry per line, lowercase. Blank lines and # comments ignored.
+#   name:<basename>   matches that exact file name anywhere in the tree,
+#                     compared case-insensitively
+#   path:<prefix>/    matches every file at or beneath that repo-relative
+#                     directory prefix
+# Matching is on the name or the repo-relative path only. Contents are never
+# sniffed: a name list cannot be wrong about what it says, and a heuristic over
+# file contents lies in both directions.
+
+# make and its variants: recipes are shell, executed by make
+name:makefile
+name:gnumakefile
+
+# container image builds: each instruction executes during a build
+name:dockerfile
+name:containerfile
+
+# CI pipeline definitions carried as a single named file at the repo root
+name:jenkinsfile
+
+# machine provisioning, written in Ruby and evaluated as Ruby
+name:vagrantfile
+
+# ruby's build tool; a Rakefile is a Ruby program
+name:rakefile
+
+# process definitions a hosting platform reads and executes
+name:procfile
+
+# command runners: every entry is a shell recipe
+name:justfile
+name:taskfile.yml
+name:taskfile.yaml
+
+# C and C++ build machinery; CMake's language is a scripting language
+name:cmakelists.txt
+
+# CI configuration by LOCATION, which is what makes it unambiguous. These
+# directories and files exist for one purpose: to run commands on a remote.
+path:.github/workflows/
+path:.circleci/
+name:.gitlab-ci.yml
+name:.travis.yml
+name:azure-pipelines.yml
+name:appveyor.yml

@@ -481,3 +481,150 @@ func TestNoCodeDenyExtWithoutSourceRefuses(t *testing.T) {
 		t.Error("accepted a deny-list with no stated provenance")
 	}
 }
+
+// TestNoCodeBuildMachineryByName is issue #6's own reproduction, turned into a
+// test. Each of these three carries no code extension, no executable bit and
+// no shebang, so before the floor name list every one of them passed clean.
+func TestNoCodeBuildMachineryByName(t *testing.T) {
+	files := map[string]os.FileMode{
+		"NOTES.md":                     0o644,
+		"Makefile":                     0o644,
+		"Dockerfile":                   0o644,
+		".github/workflows/deploy.yml": 0o644,
+	}
+	contents := map[string]string{
+		"Makefile":                     "all:\n\tcurl x|sh\n",
+		"Dockerfile":                   "FROM alpine\n",
+		".github/workflows/deploy.yml": "run: rm -rf /\n",
+	}
+	_, findings, err := scan(t, files, contents, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{"Makefile", "Dockerfile", ".github/workflows/deploy.yml"})
+}
+
+// TestNoCodeNameMatchIsCaseInsensitive: "makefile" and "GNUmakefile" are the
+// same machinery as "Makefile", and a floor that can be stepped over by
+// changing one letter's case is not a floor.
+func TestNoCodeNameMatchIsCaseInsensitive(t *testing.T) {
+	for _, name := range []string{"makefile", "MAKEFILE", "GNUmakefile", "dockerfile", "DOCKERFILE"} {
+		_, findings, err := scan(t, map[string]os.FileMode{name: 0o644}, nil, nil, NoCodeOptions{})
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if len(findings) != 1 {
+			t.Errorf("%s: flagged %d, want 1", name, len(findings))
+		}
+	}
+}
+
+// TestNoCodeYAMLDataStillPasses is the counter-case that justifies a name list
+// instead of adding .yml to the extension list. A prose repo's front matter and
+// data files are legitimate content, and a floor that forbids them would be
+// ignored or would push real writing out of the tree.
+func TestNoCodeYAMLDataStillPasses(t *testing.T) {
+	files := map[string]os.FileMode{
+		"NOTES.md":       0o644,
+		"data.yml":       0o644,
+		"meta/tags.yaml": 0o644,
+	}
+	contents := map[string]string{"data.yml": "title: x\n", "meta/tags.yaml": "tags: [a]\n"}
+	_, findings, err := scan(t, files, contents, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, nil)
+}
+
+// TestNoCodeNameFloorSurvivesDenyExtReplacement pins a decision rather than an
+// accident: --deny-ext answers "which languages does this line keep inside its
+// own self" and has nothing to say about whether a CI workflow belongs in a
+// prose tree, so replacing the extension list must not switch the name floor
+// off. The escape hatch for a line that legitimately keeps build machinery is
+// --allow, which names WHERE rather than turning a floor off everywhere.
+func TestNoCodeNameFloorSurvivesDenyExtReplacement(t *testing.T) {
+	files := map[string]os.FileMode{"NOTES.md": 0o644, "Makefile": 0o644}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{
+		DenyExt:    []string{".zzz"},
+		DenySource: DenyReplaced,
+	})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{"Makefile"})
+}
+
+// TestNoCodeAllowExemptsNamedMachinery: the declared escape hatch has to work,
+// or the floor is one a real adopter routes around instead of using.
+func TestNoCodeAllowExemptsNamedMachinery(t *testing.T) {
+	files := map[string]os.FileMode{
+		"NOTES.md":                     0o644,
+		"Makefile":                     0o644,
+		".github/workflows/deploy.yml": 0o644,
+	}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{Allow: []string{"Makefile", ".github"}})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, nil)
+}
+
+// TestNoCodeSymlinkNamedMachineryIsFlaggedWithoutDereference: a link called
+// Makefile is machinery by the same argument that catches a file called
+// Makefile, and deciding that must not require following the link out of the
+// tree the gate is guarding.
+func TestNoCodeSymlinkNamedMachineryIsFlaggedWithoutDereference(t *testing.T) {
+	_, findings, err := scan(t,
+		map[string]os.FileMode{"NOTES.md": 0o644}, nil,
+		map[string]string{"Makefile": "/etc/hosts"}, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{"Makefile"})
+	if !strings.Contains(findings[0].Reason, "target not followed") {
+		t.Errorf("reason %q does not record that the target was not followed", findings[0].Reason)
+	}
+}
+
+// TestFloorDenyNames proves the embedded list parses and actually contains the
+// entries the SPEC promises. An embedded list that silently parsed to nothing
+// would leave every test above passing for the wrong reason.
+func TestFloorDenyNames(t *testing.T) {
+	names, prefixes, err := FloorDenyNames()
+	if err != nil {
+		t.Fatalf("FloorDenyNames: %v", err)
+	}
+	for _, want := range []string{"makefile", "dockerfile", "jenkinsfile", "cmakelists.txt"} {
+		if !names[want] {
+			t.Errorf("floor name list is missing %q", want)
+		}
+	}
+	found := false
+	for _, p := range prefixes {
+		if p == ".github/workflows" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("floor name list is missing the .github/workflows prefix; got %v", prefixes)
+	}
+}
+
+// TestParseNameLinesRefusesMalformed: a typo'd entry must be an error, not a
+// silently dropped line. A list that matches less than it says while reporting
+// a clean tree is the fail-open shape this whole check exists against.
+func TestParseNameLinesRefusesMalformed(t *testing.T) {
+	for _, bad := range []string{
+		"Makefile",              // no name:/path: prefix
+		"nmae:Makefile",         // typo'd prefix
+		"name:sub/dir/Makefile", // a name entry may not carry a path
+		"name:",                 // empty
+		"path:",                 // empty
+		"path:../escape/",       // traversal
+	} {
+		if _, _, err := parseNameLines(bad); err == nil {
+			t.Errorf("parseNameLines(%q) returned no error, want refusal", bad)
+		}
+	}
+}
