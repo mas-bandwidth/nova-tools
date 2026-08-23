@@ -112,8 +112,10 @@ func parseNameLines(s string) (map[string]bool, []string, error) {
 			v := strings.TrimSpace(strings.TrimPrefix(line, "path:"))
 			// Only the TRAILING slash is trimmed, because "path:<prefix>/" is
 			// the documented spelling. A LEADING slash is refused rather than
-			// normalized away, which is what the comment in validPrefix
-			// already claimed and the code did not do.
+			// normalized away. The empty-segment check in validPrefix would
+			// refuse it too, so this branch changes the MESSAGE rather than
+			// the verdict, and is kept for that: "prefixes are repo-relative"
+			// tells the author what to write.
 			if strings.HasPrefix(v, "/") {
 				return nil, nil, fmt.Errorf("floor name list: %q starts with /; prefixes are repo-relative", line)
 			}

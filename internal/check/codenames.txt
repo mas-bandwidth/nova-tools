@@ -21,7 +21,9 @@
 # TO EXTEND IT: add the entry here, in the same commit as the test that proves
 # it is caught, with the reason on the line above it.
 #
-# SYNTAX. One entry per line, lowercase. Blank lines and # comments ignored.
+# SYNTAX. One entry per line, lowercase. Blank lines and # comments are
+# ignored, whole-line AND from a # to the end of a line, which means a # cannot
+# appear inside a listed name.
 #   name:<basename>   matches that exact file name anywhere in the tree,
 #                     compared case-insensitively
 #   path:<prefix>/    matches every file at or beneath that repo-relative
@@ -77,6 +79,13 @@ path:.circleci/
 # workflows, and .github/ itself stays unlisted because it also holds issue
 # templates, CONTRIBUTING and a pull-request template.
 path:.github/actions/
+# These four are matched ANYWHERE rather than by location, which looks like an
+# exception to the rule that removed taskfile.yml and moved actions to a
+# location. It is not: that rule is about names a writer might plausibly
+# produce, and nobody writes prose into a file called .travis.yml. Each is a
+# vendor's single fixed filename with no ordinary-English reading, so matching
+# it anywhere collides with nothing while catching a repo that keeps its CI
+# config somewhere unusual.
 name:.gitlab-ci.yml
 name:.travis.yml
 name:azure-pipelines.yml

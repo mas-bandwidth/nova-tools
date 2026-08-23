@@ -283,6 +283,21 @@ func TestFloorDenyExts(t *testing.T) {
 	if len(exts) < 40 {
 		t.Errorf("floor list has %d entries, expected at least 40", len(exts))
 	}
+	// The two entries this branch adds, pinned by name, because codeexts.txt's
+	// own policy is that an extension arrives in the same commit as the test
+	// proving it is caught — and shipping them unpinned reintroduces, one file
+	// over, exactly the defect this branch went and fixed for the name list.
+	for _, want := range []string{".mk", ".mak"} {
+		found := false
+		for _, e := range exts {
+			if e == want {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("floor extension list is missing %q", want)
+		}
+	}
 	seen := map[string]bool{}
 	for _, e := range exts {
 		if !strings.HasPrefix(e, ".") {
@@ -686,6 +701,11 @@ func TestParseNameLinesRefusesMalformed(t *testing.T) {
 		"name:.",                    // filepath.Base never yields this
 		"name:..",                   // the same
 		"path:/.github/workflows/",  // leading slash: refused, not normalized
+		// The path side of the whitespace and non-printable rule, which was the
+		// one validator branch with no test — in the commit whose message says
+		// it closes the prefix validator's fail-open.
+		"path:.github/work flows/",
+		"path:.github\u200b/",
 		// Each of the six below was ACCEPTED by the first version of this
 		// parser, found at the cold-read gate. Every one builds an entry that
 		// matches nothing, survives the emptiness guard because other entries
@@ -755,4 +775,31 @@ func TestNoCodeProseTaskfilePasses(t *testing.T) {
 		t.Fatalf("NoCode: %v", err)
 	}
 	wantOnly(t, findings, nil)
+}
+
+// TestNoCodeMakefileFragmentsAreCaught pins the two extensions this branch adds
+// at the TREE level, not only in the list.
+func TestNoCodeMakefileFragmentsAreCaught(t *testing.T) {
+	files := map[string]os.FileMode{"NOTES.md": 0o644, "rules.mk": 0o644, "config.mak": 0o644}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{"rules.mk", "config.mak"})
+}
+
+// TestNoCodeSymlinkedAncestorDefeatsAMultiSegmentPrefix pins a DECLARED LIMIT
+// rather than a bug. A link named .github pointing at a tree of workflows is
+// not caught: the walk never descends and the link's own name is all that gets
+// classified. A single-segment prefix like .circleci IS immune, because there
+// the link's own name is the prefix. SPEC names this gap, and a named gap with
+// no test is one nobody notices closing or widening.
+func TestNoCodeSymlinkedAncestorDefeatsAMultiSegmentPrefix(t *testing.T) {
+	_, findings, err := scan(t,
+		map[string]os.FileMode{"NOTES.md": 0o644}, nil,
+		map[string]string{".github": "/tmp", ".circleci": "/tmp"}, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{".circleci"})
 }

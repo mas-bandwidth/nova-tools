@@ -312,6 +312,10 @@ enough: **a shebang is the tell that survives renaming.** A script called
 `nova-id`, with no extension and no executable bit, is still a script, and
 until this check read the first two bytes it passed clean.
 
+*(The extension list gains `.mk` and `.mak` in the same change: those are the
+included-fragment spellings of make, and they genuinely are extensions rather
+than exact names.)*
+
 **The floor NAME list is a second list answering a different question**, and it
 is data on the same terms — [`internal/check/codenames.txt`](internal/check/codenames.txt),
 embedded, one entry per line, each carrying its reason. It is **not exhaustive
