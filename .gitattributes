@@ -1,0 +1,10 @@
+# Test fixtures must be BYTE-STABLE across platforms. Several checks here assert
+# on exact bytes — a floors mutation locates a literal sentence, and the memory
+# index parses a frontmatter fence — so a checkout that rewrites line endings
+# changes the thing under test and the failure reads as a logic fault rather
+# than a checkout one. Found by CI on its first Windows run.
+#
+# CRLF TOLERANCE IS A SEPARATE QUESTION AND IS NOT ANSWERED HERE. This governs
+# THIS repo's own files. Handling a CRLF file supplied by a USER is the tool's
+# job, and is covered by a unit test rather than by a checkout setting.
+* text=auto eol=lf

@@ -517,3 +517,22 @@ func TestFrontmatterRefusesEmptyGlob(t *testing.T) {
 		t.Error("FrontmatterPresent accepted a glob matching nothing — a broken check reported as a pass")
 	}
 }
+
+// TestFrontmatterToleratesCRLF pins a real defect rather than a fixture one. A
+// checkout on Windows produces CRLF, and the fence check was a literal
+// "---\n", so every entry in a CRLF corpus reported "no name: in frontmatter" —
+// a line-ending fault presenting as a corpus fault, in a tool other people run
+// against their own corpora. The repo's own fixtures are held to LF by
+// .gitattributes, so only a test like this one can cover the user's file.
+func TestFrontmatterToleratesCRLF(t *testing.T) {
+	lf := "---\nname: lantern\ntype: reference\n---\n\nbody\n"
+	crlf := "---\r\nname: lantern\r\ntype: reference\r\n---\r\n\r\nbody\r\n"
+	wantName, wantType := frontmatter(lf)
+	if wantName != "lantern" || wantType != "reference" {
+		t.Fatalf("LF baseline broken: name=%q type=%q", wantName, wantType)
+	}
+	gotName, gotType := frontmatter(crlf)
+	if gotName != wantName || gotType != wantType {
+		t.Errorf("CRLF: name=%q type=%q, want %q/%q", gotName, gotType, wantName, wantType)
+	}
+}

@@ -147,10 +147,27 @@ func Tokenize(s string) []string {
 // verify reports absence where a caller declares it required, and parsing
 // here never fails a build.
 func frontmatter(src string) (name, typ string) {
-	if !strings.HasPrefix(src, "---\n") {
+	// CRLF is tolerated because a checkout on Windows produces it, and a memory
+	// file whose frontmatter fence ends "---\r\n" was parsed as having NO
+	// frontmatter at all: every entry then reported "no name: in frontmatter",
+	// which reads as a corpus fault rather than a line-ending one. Found by CI
+	// on its first Windows run, in a tool other people are told to run against
+	// their own corpora.
+	// SCOPE, stated because this fix is narrower than it looks. Build already
+	// normalizes CRLF before it reaches here, so the only caller this actually
+	// changes is FrontmatterPresent. And it does NOT handle a UTF-8 BOM before
+	// the fence, a lone-CR file, or "---" with trailing spaces: each still
+	// reads as no frontmatter. Named rather than implied away, since a BOM is
+	// plausible on the same platform that produced the CRLF.
+	var body string
+	switch {
+	case strings.HasPrefix(src, "---\n"):
+		body = src[4:]
+	case strings.HasPrefix(src, "---\r\n"):
+		body = src[5:]
+	default:
 		return "", ""
 	}
-	body := src[4:]
 	end := strings.Index(body, "\n---")
 	if end < 0 {
 		return "", ""

@@ -4,3 +4,9 @@
 # point it out. The `latest` symlinks move on every invocation, which also makes
 # them a standing conflict between concurrent branches.
 tending/
+
+# The smoke job builds the binary into the workspace root, so anyone
+# reproducing those steps locally leaves an untracked executable behind — and
+# it would become a nocode finding the day this repo gates itself.
+/nova-check
+/nova-check.exe

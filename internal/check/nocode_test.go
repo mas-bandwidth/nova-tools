@@ -3,6 +3,7 @@ package check
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -56,6 +57,17 @@ func TestNoCode(t *testing.T) {
 		wantScanned int
 		wantFind    []string // substrings; empty = must pass
 		wantExactly []string // exact set of flagged subjects, where absence is the point
+		// needsExecBit marks a case whose subject is the executable-bit
+		// condition. Windows has no such bit — os.Chmod there only toggles
+		// read-only — so the case asserts a property that cannot exist on that
+		// platform. Skipped with a reason rather than left to fail, and named
+		// rather than deleted, so the coverage difference between platforms is
+		// declared instead of discovered.
+		needsExecBit bool
+		// needsChmodRefusal marks a case that depends on chmod actually
+		// REFUSING a read. Windows has no such semantics — the file stays
+		// readable — so the case cannot observe its property there.
+		needsChmodRefusal bool
 	}{
 		{
 			name:        "prose tree is clean",
@@ -75,23 +87,26 @@ func TestNoCode(t *testing.T) {
 			wantFind:    []string{"SCRIPT.PY", "code extension .py"},
 		},
 		{
-			name:        "executable without code extension flagged",
-			files:       map[string]os.FileMode{"runme": 0o755},
-			contents:    map[string]string{"runme": "#!/bin/sh\n"},
-			wantScanned: 1,
-			wantFind:    []string{"runme", "executable (mode 0755)"},
+			name:         "executable without code extension flagged",
+			needsExecBit: true,
+			files:        map[string]os.FileMode{"runme": 0o755},
+			contents:     map[string]string{"runme": "#!/bin/sh\n"},
+			wantScanned:  1,
+			wantFind:     []string{"runme", "executable (mode 0755)"},
 		},
 		{
-			name:        "executable markdown is still a violation",
-			files:       map[string]os.FileMode{"notes.md": 0o744},
-			wantScanned: 1,
-			wantFind:    []string{"notes.md", "executable"},
+			name:         "executable markdown is still a violation",
+			needsExecBit: true,
+			files:        map[string]os.FileMode{"notes.md": 0o744},
+			wantScanned:  1,
+			wantFind:     []string{"notes.md", "executable"},
 		},
 		{
-			name:        "both reasons reported together",
-			files:       map[string]os.FileMode{"deploy.sh": 0o755},
-			wantScanned: 1,
-			wantFind:    []string{"code extension .sh", "executable"},
+			name:         "both reasons reported together",
+			needsExecBit: true,
+			files:        map[string]os.FileMode{"deploy.sh": 0o755},
+			wantScanned:  1,
+			wantFind:     []string{"code extension .sh", "executable"},
 		},
 		{
 			name:        "git internals ignored",
@@ -167,11 +182,12 @@ func TestNoCode(t *testing.T) {
 			wantScanned: 2,
 		},
 		{
-			name:        "an unreadable file is a finding, never a pass",
-			files:       map[string]os.FileMode{"secret": 0o000},
-			contents:    map[string]string{"secret": "#!/bin/sh\n"},
-			wantScanned: 1,
-			wantFind:    []string{"secret", "unreadable"},
+			name:              "an unreadable file is a finding, never a pass",
+			needsChmodRefusal: true,
+			files:             map[string]os.FileMode{"secret": 0o000},
+			contents:          map[string]string{"secret": "#!/bin/sh\n"},
+			wantScanned:       1,
+			wantFind:          []string{"secret", "unreadable"},
 		},
 		{
 			name:        "a multi-segment --allow prefix covers everything beneath it",
@@ -191,6 +207,15 @@ func TestNoCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.needsChmodRefusal && runtime.GOOS == "windows" {
+				t.Skip("windows: chmod 0 does not refuse reads, so an unreadable file cannot be produced here")
+			}
+			if tt.needsChmodRefusal && os.Geteuid() == 0 {
+				t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
+			}
+			if tt.needsExecBit && runtime.GOOS == "windows" {
+				t.Skip("windows: no executable bit, so this condition cannot fire here — the extension and shebang conditions carry the check on that platform")
+			}
 			scanned, findings, err := scan(t, tt.files, tt.contents, tt.symlinks, tt.opts)
 			if err != nil {
 				t.Fatalf("NoCode: %v", err)

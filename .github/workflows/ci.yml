@@ -1,0 +1,252 @@
+# CI for nova-tools.
+#
+# Why this exists: until now, local `go test` on one machine was the whole
+# evidence behind a release — including for four rounds of fail-open fixes in a
+# check other people are told to run against their own repos. A claim that a
+# released tool is tested is exactly what stops anyone checking whether it was
+# tested anywhere but the releasing machine.
+#
+# The smoke job asserts EXIT CODES AND OUTPUT TEXT, never merely "non-zero".
+# An earlier draft of this file accepted any non-zero for its negative cases,
+# and a reviewer proved by mutation that it stayed green when the documented
+# exit 1 was changed to exit 2, and again when `--deny-ext` was misspelled so
+# the flag under test was never exercised at all. A check that cannot tell a
+# failure from a refusal is not checking the contract it claims to.
+
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Three operating systems because the platforms genuinely differ: Windows
+    # has no executable bit, so `nocode`'s executable condition cannot fire
+    # there and only the extension and shebang conditions carry it. The
+    # tests that assert the mode-bit behaviour SKIP on Windows with that reason
+    # named, so the difference is declared rather than silently untested.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: gofmt
+        # gofmt -l prints unformatted files and exits 0 either way, so the exit
+        # code is not the product here — the output is. Checked on one runner:
+        # formatting is a property of the source, not of the platform.
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "not gofmt-clean:"
+            echo "$unformatted"
+            exit 1
+          fi
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test -race ./...
+
+  smoke:
+    # Exercises the BUILT BINARY. `go test` covers the packages; nothing else
+    # covered the executable a user actually runs, and what a release ships is
+    # the executable.
+    #
+    # HONEST SCOPE, because this job's own argument is that unstated coverage
+    # is a lie — and an enumerating sentence that omits items reads worse than
+    # a general one, so this says what IS smoked and stops.
+    #
+    # Smoked here: `nova-check nocode`, and only the properties asserted in the
+    # steps below. Everything else in this repository — every other `nocode`
+    # flag and refusal path, every other `nova-check` subcommand, and the
+    # `nova-fuse`, `nova-memory` and `nova-self-talk` commands — is covered by
+    # package tests and by nothing else.
+    #
+    # WINDOWS. The portable steps run there too. An earlier revision excluded
+    # the whole job on the grounds that its fixtures need an executable bit,
+    # chmod refusing a read, mkfifo or symlinks — true of three steps and false
+    # of the other three, which meant the binary was never smoked on the one
+    # platform whose defects this branch exists to have found. The steps that
+    # genuinely cannot run there are marked individually.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      # Go appends .exe on Windows, so the name has to carry it or every step
+      # below looks for a binary that is not there. Keyed off matrix.os and NOT
+      # runner.os: the runner context is not available to a job-level env, and
+      # using it there does not warn — it invalidates the whole workflow file,
+      # which fails the run before a single step executes.
+      BIN: ${{ github.workspace }}/nova-check${{ startsWith(matrix.os, 'windows') && '.exe' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: build nova-check
+        run: go build -o "$BIN" ./cmd/nova-check
+        shell: bash
+
+      - name: a clean prose tree passes, and is actually walked
+        shell: bash
+        run: |
+          tree="$(mktemp -d)"
+          printf '# notes\n' > "$tree/NOTES.md"
+          printf 'plain text\n' > "$tree/plain.txt"
+          set +e; out=$("$BIN" nocode --dir "$tree" 2>&1); rc=$?; set -e
+          [ "$rc" -eq 0 ] || { echo "want exit 0, got $rc: $out"; exit 1; }
+          # files=2 is the load-bearing half. `nocode` prints NOCODE OK and
+          # exits 0 for a tree it never opened, so exit 0 alone cannot tell a
+          # pass from a walk that scanned nothing.
+          case "$out" in
+            *"files=2 clean"*) ;;
+            *) echo "want files=2 clean, got: $out"; exit 1 ;;
+          esac
+
+      - name: a symlinked --dir is resolved, not passed over
+        # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # The fail-open the assertion above was WRONGLY credited with
+          # catching. os.Stat follows a link, so --dir naming a symlink to the
+          # tree was seen as a single non-directory entry and returned
+          # NOCODE OK files=0, exit 0: a clean pass over a tree never opened.
+          # A reviewer removed filepath.EvalSymlinks and every other step here
+          # stayed green, because none of their fixtures is itself a link.
+          # This one is.
+          real="$(mktemp -d)"; printf '# n\n' > "$real/NOTES.md"; printf 'print(1)\n' > "$real/tool.py"
+          link="$(mktemp -d)/link"; ln -s "$real" "$link"
+          set +e; out=$("$BIN" nocode --dir "$link" 2>&1); rc=$?; set -e
+          [ "$rc" -eq 1 ] || { echo "symlinked --dir: want exit 1, got $rc: $out"; exit 1; }
+          case "$out" in
+            *"tool.py"*) echo "ok: a symlinked --dir is walked" ;;
+            *) echo "symlinked --dir: the tree was not walked: $out"; exit 1 ;;
+          esac
+
+      - name: a tree that classified nothing says so
+        shell: bash
+        run: |
+          # The scanned==0 warning is the only remaining backstop for the
+          # fail-open above in a real repository, and deleting it left every
+          # other step green. Exit 0 is correct here: an empty tree genuinely
+          # holds no machinery. What must not vanish is the sentence telling
+          # an operator that nothing was classified.
+          empty="$(mktemp -d)"
+          set +e; out=$("$BIN" nocode --dir "$empty" 2>&1); rc=$?; set -e
+          [ "$rc" -eq 0 ] || { echo "empty tree: want exit 0, got $rc: $out"; exit 1; }
+          case "$out" in
+            *"classified NOTHING"*) echo "ok: an unwalked tree is reported" ;;
+            *) echo "empty tree: the scanned==0 warning is gone: $out"; exit 1 ;;
+          esac
+
+      - name: each condition refuses separately, with the right code and reason
+        # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # One fixture per condition AND an assertion on which reason fired.
+          # One fixture per condition alone would still go green if a
+          # regression collapsed every case into one spurious finding.
+          check() {
+            desc="$1"; tree="$2"; want_reason="$3"
+            set +e; out=$("$BIN" nocode --dir "$tree" 2>&1); rc=$?; set -e
+            [ "$rc" -eq 1 ] || { echo "$desc: want exit 1, got $rc: $out"; exit 1; }
+            case "$out" in
+              *"$want_reason"*) echo "ok: $desc" ;;
+              *) echo "$desc: want reason '$want_reason', got: $out"; exit 1 ;;
+            esac
+          }
+
+          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf 'print(1)\n' > "$t/tool.py"
+          check "extension" "$t" "code extension .py (floor list)"
+
+          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf 'not a script\n' > "$t/thing"; chmod +x "$t/thing"
+          check "executable bit" "$t" "executable (mode"
+
+          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf '#!/bin/sh\necho hi\n' > "$t/thing"
+          check "shebang" "$t" "executable script (shebang)"
+
+      - name: the fail-opens this CI exists for stay closed
+        # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # These are the regressions that motivated the file. Each was a real
+          # fail-open in a released check: a file nobody can open, and a file
+          # that is not a regular file at all, must be FINDINGS rather than
+          # passes. Making a file less readable must never make this gate
+          # greener.
+          if [ "$(id -u)" = "0" ]; then
+            # FAIL rather than skip. The hosted runners are non-root, so this
+            # branch firing means the environment changed under us — and a
+            # silent skip would turn this job's headline fail-open assertion
+            # into a no-op behind a green check.
+            echo "running as root: chmod cannot refuse a read, so this assertion cannot run"
+            exit 1
+          else
+            t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf 'x\n' > "$t/secret"; chmod 000 "$t/secret"
+            set +e; out=$("$BIN" nocode --dir "$t" 2>&1); rc=$?; set -e
+            chmod 644 "$t/secret" || true
+            [ "$rc" -eq 1 ] || { echo "unreadable: want exit 1, got $rc: $out"; exit 1; }
+            case "$out" in
+              *"cannot rule out machinery"*) echo "ok: unreadable file is a finding" ;;
+              *) echo "unreadable: wrong reason: $out"; exit 1 ;;
+            esac
+          fi
+
+          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; mkfifo "$t/pipe.sh"
+          set +e; out=$("$BIN" nocode --dir "$t" 2>&1); rc=$?; set -e
+          [ "$rc" -eq 1 ] || { echo "fifo: want exit 1, got $rc: $out"; exit 1; }
+          case "$out" in
+            *"not a regular file"*) echo "ok: non-regular file is a finding" ;;
+            *) echo "fifo: wrong reason: $out"; exit 1 ;;
+          esac
+
+      - name: a guard that cannot read its own list refuses, and says so
+        shell: bash
+        run: |
+          # Exit 2, not merely non-zero: `flag` also exits non-zero on an
+          # unknown flag, so "non-zero" would pass with --deny-ext misspelled
+          # and the flag under test never exercised. The message is asserted
+          # for the same reason.
+          # The @path is RELATIVE on purpose. An absolute POSIX path here is
+          # rewritten by git-bash on Windows — "@/nonexistent/list.txt" reached
+          # the binary as "C:/Program Files/Git/nonexistent/list.txt" — so the
+          # exit code held and the message assertion failed on a spelling this
+          # step never chose. A relative name is passed through unchanged by
+          # every shell in the matrix.
+          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"
+          set +e; out=$("$BIN" nocode --dir "$t" --deny-ext "@no-such-deny-list.txt" 2>&1); rc=$?; set -e
+          [ "$rc" -eq 2 ] || { echo "want exit 2, got $rc: $out"; exit 1; }
+          case "$out" in
+            *"deny-list file: open no-such-deny-list.txt"*) echo "ok: unreadable deny-list refused" ;;
+            *) echo "wrong message: $out"; exit 1 ;;
+          esac

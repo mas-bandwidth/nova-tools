@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -389,6 +390,9 @@ func TestLockdownWorksOnAnUnreadableBox(t *testing.T) {
 // announcing a lockdown it did not manage to record: the operator stops worrying, and
 // nothing is actually gated.
 func TestBlowingFailsLoudlyWhenItCannotWrite(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0555 does not make a directory refuse writes, so the failure this pins cannot be produced here")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("running as root: a read-only directory does not refuse writes")
 	}
