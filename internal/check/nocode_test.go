@@ -345,3 +345,23 @@ func TestNoCodeRefusals(t *testing.T) {
 		}
 	})
 }
+
+// A finding may never name a list that did not produce it: an empty DenyExt
+// means the floor ran, whatever provenance the caller passed alongside it.
+func TestNoCodeProvenanceCannotLie(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, "tool.py", "print()", 0o644)
+	_, findings, err := NoCode(NoCodeOptions{Dir: dir, DenyExt: nil, DenySource: DenyReplaced})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %v, want 1", findings)
+	}
+	if !strings.Contains(findings[0].Reason, DenyFloor) {
+		t.Errorf("reason %q does not name the list that actually ran", findings[0].Reason)
+	}
+	if strings.Contains(findings[0].Reason, DenyReplaced) {
+		t.Errorf("reason %q names a list that did not produce it", findings[0].Reason)
+	}
+}

@@ -117,13 +117,13 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 	deny := opts.DenyExt
 	source := opts.DenySource
 	if len(deny) == 0 {
+		// No list supplied means the floor, and the floor is what gets
+		// reported: a finding may never name a list that did not produce it.
 		deny, err = FloorDenyExts()
 		if err != nil {
 			return 0, nil, err
 		}
-		if source == "" {
-			source = DenyFloor
-		}
+		source = DenyFloor
 	}
 	denySet := make(map[string]bool, len(deny))
 	for _, e := range deny {
