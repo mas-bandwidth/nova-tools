@@ -3,6 +3,7 @@ package check
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -276,6 +277,9 @@ func TestAttestHashInjectiveWithNULContents(t *testing.T) {
 
 // An unreadable manifested file is a named failure (exit 1), not a refusal.
 func TestAttestUnreadableFileIsNamedFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
+	}
 	if os.Geteuid() == 0 {
 		t.Skip("root reads through file modes")
 	}

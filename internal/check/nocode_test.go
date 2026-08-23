@@ -3,6 +3,7 @@ package check
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -56,6 +57,13 @@ func TestNoCode(t *testing.T) {
 		wantScanned int
 		wantFind    []string // substrings; empty = must pass
 		wantExactly []string // exact set of flagged subjects, where absence is the point
+		// needsExecBit marks a case whose subject is the executable-bit
+		// condition. Windows has no such bit — os.Chmod there only toggles
+		// read-only — so the case asserts a property that cannot exist on that
+		// platform. Skipped with a reason rather than left to fail, and named
+		// rather than deleted, so the coverage difference between platforms is
+		// declared instead of discovered.
+		needsExecBit bool
 	}{
 		{
 			name:        "prose tree is clean",
@@ -75,23 +83,26 @@ func TestNoCode(t *testing.T) {
 			wantFind:    []string{"SCRIPT.PY", "code extension .py"},
 		},
 		{
-			name:        "executable without code extension flagged",
-			files:       map[string]os.FileMode{"runme": 0o755},
-			contents:    map[string]string{"runme": "#!/bin/sh\n"},
-			wantScanned: 1,
-			wantFind:    []string{"runme", "executable (mode 0755)"},
+			name:         "executable without code extension flagged",
+			needsExecBit: true,
+			files:        map[string]os.FileMode{"runme": 0o755},
+			contents:     map[string]string{"runme": "#!/bin/sh\n"},
+			wantScanned:  1,
+			wantFind:     []string{"runme", "executable (mode 0755)"},
 		},
 		{
-			name:        "executable markdown is still a violation",
-			files:       map[string]os.FileMode{"notes.md": 0o744},
-			wantScanned: 1,
-			wantFind:    []string{"notes.md", "executable"},
+			name:         "executable markdown is still a violation",
+			needsExecBit: true,
+			files:        map[string]os.FileMode{"notes.md": 0o744},
+			wantScanned:  1,
+			wantFind:     []string{"notes.md", "executable"},
 		},
 		{
-			name:        "both reasons reported together",
-			files:       map[string]os.FileMode{"deploy.sh": 0o755},
-			wantScanned: 1,
-			wantFind:    []string{"code extension .sh", "executable"},
+			name:         "both reasons reported together",
+			needsExecBit: true,
+			files:        map[string]os.FileMode{"deploy.sh": 0o755},
+			wantScanned:  1,
+			wantFind:     []string{"code extension .sh", "executable"},
 		},
 		{
 			name:        "git internals ignored",
@@ -191,6 +202,9 @@ func TestNoCode(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.needsExecBit && runtime.GOOS == "windows" {
+				t.Skip("windows: no executable bit, so this condition cannot fire here — the extension and shebang conditions carry the check on that platform")
+			}
 			scanned, findings, err := scan(t, tt.files, tt.contents, tt.symlinks, tt.opts)
 			if err != nil {
 				t.Fatalf("NoCode: %v", err)

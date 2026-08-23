@@ -6,39 +6,51 @@
 # released tool is tested is exactly what stops anyone checking whether it was
 # tested anywhere but the releasing machine.
 #
-# The build/vet/test matrix runs on three operating systems on purpose: the
-# executable-bit condition in `nocode` cannot fire on Windows, so only the
-# extension and shebang conditions carry the check there, and that difference
-# should be exercised rather than assumed.
+# The smoke job asserts EXIT CODES AND OUTPUT TEXT, never merely "non-zero".
+# An earlier draft of this file accepted any non-zero for its negative cases,
+# and a reviewer proved by mutation that it stayed green when the documented
+# exit 1 was changed to exit 2, and again when `--deny-ext` was misspelled so
+# the flag under test was never exercised at all. A check that cannot tell a
+# failure from a refusal is not checking the contract it claims to.
 
 name: ci
 
 on:
   push:
+    branches: [main]
   pull_request:
   workflow_dispatch:
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    # Three operating systems because the platforms genuinely differ: Windows
+    # has no executable bit, so `nocode`'s executable condition cannot fire
+    # there and only the extension, name and shebang conditions carry it. The
+    # tests that assert the mode-bit behaviour SKIP on Windows with that reason
+    # named, so the difference is declared rather than silently untested.
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
 
       - name: gofmt
         # gofmt -l prints unformatted files and exits 0 either way, so the exit
-        # code is not the product here — the output is. Checked on one OS only:
-        # formatting is a property of the source, not of the runner.
+        # code is not the product here — the output is. Checked on one runner:
+        # formatting is a property of the source, not of the platform.
         if: matrix.os == 'ubuntu-latest'
         shell: bash
         run: |
@@ -59,68 +71,121 @@ jobs:
         run: go test -race ./...
 
   smoke:
-    # Exercises the BUILT BINARY against a tree with known findings. `go test`
-    # covers the packages; nothing else covers the executable a user actually
-    # runs, and the release being defended is a binary rather than a library.
+    # Exercises the BUILT BINARY. `go test` covers the packages; nothing else
+    # covered the executable a user actually runs, and what a release ships is
+    # the executable.
     #
-    # Not run on Windows: the dirty fixture below depends on the executable bit,
-    # which that platform cannot set. The matrix above still builds and tests
-    # there, so the gap is in this smoke test only, and it is here in writing
-    # rather than left for a reader to infer from a missing row.
+    # HONEST SCOPE, because this job's own argument is that unstated coverage
+    # is a lie. What is smoked here is `nova-check nocode` and the four
+    # properties below. NOT smoked as binaries: `nova-check attest`, `links`,
+    # `kernel`, `floors`, the `--allow` and `--deny-ext-add` flags, and the
+    # `nova-fuse`, `nova-memory` and `nova-self-talk` commands. Those are
+    # covered by package tests only, and that gap is written here rather than
+    # left to be inferred from the steps that are absent.
+    #
+    # Not run on Windows: three of the four fixtures depend on an executable
+    # bit or on chmod refusing a read, neither of which that platform has. The
+    # matrix above still builds, vets and tests there.
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      BIN: ${{ github.workspace }}/nova-check
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-          cache: true
 
       - name: build nova-check
-        run: go build -o "${{ runner.temp }}/nova-check" ./cmd/nova-check
+        run: go build -o "$BIN" ./cmd/nova-check
+        shell: bash
 
-      - name: nocode passes a clean prose tree
+      - name: a clean prose tree passes, and is actually walked
         shell: bash
         run: |
-          tree="$(mktemp -d)"
-          printf '# notes\n\nprose only.\n' > "$tree/NOTES.md"
-          printf 'plain text\n' > "$tree/plain.txt"
-          "${{ runner.temp }}/nova-check" nocode --dir "$tree"
-
-      - name: nocode refuses each of its three conditions
-        shell: bash
-        run: |
-          # One file per condition, so a pass here cannot come from one
-          # condition covering for another going quietly blind.
-          for case in extension exec shebang; do
-            tree="$(mktemp -d)"
-            printf '# notes\n' > "$tree/NOTES.md"
-            case "$case" in
-              extension) printf 'print(1)\n' > "$tree/tool.py" ;;
-              exec)      printf 'not a script\n' > "$tree/thing"; chmod +x "$tree/thing" ;;
-              shebang)   printf '#!/bin/sh\necho hi\n' > "$tree/thing" ;;
-            esac
-            if "${{ runner.temp }}/nova-check" nocode --dir "$tree"; then
-              echo "FAIL: nocode passed a tree that violates the $case condition"
-              exit 1
-            fi
-            echo "ok: $case refused"
-          done
-
-      - name: a guard that cannot read its own list refuses
-        shell: bash
-        run: |
-          # --deny-ext pointed at a missing file must fail, not fall back to a
-          # silent default. A gate that cannot determine what it forbids has to
-          # refuse; passing here would be the exact fail-open shape this tool
-          # was released to close.
           tree="$(mktemp -d)"
           printf '# notes\n' > "$tree/NOTES.md"
-          if "${{ runner.temp }}/nova-check" nocode --dir "$tree" --deny-ext "@/nonexistent/list.txt"; then
-            echo "FAIL: nocode passed with an unreadable deny-list"
-            exit 1
+          printf 'plain text\n' > "$tree/plain.txt"
+          set +e; out=$("$BIN" nocode --dir "$tree" 2>&1); rc=$?; set -e
+          [ "$rc" -eq 0 ] || { echo "want exit 0, got $rc: $out"; exit 1; }
+          # files=2 is the load-bearing half. `nocode` prints NOCODE OK and
+          # exits 0 for a tree it never opened, so exit 0 alone cannot tell a
+          # pass from a walk that scanned nothing — which is the fail-open a
+          # symlinked --dir once produced.
+          case "$out" in
+            *"files=2 clean"*) ;;
+            *) echo "want files=2 clean, got: $out"; exit 1 ;;
+          esac
+
+      - name: each condition refuses separately, with the right code and reason
+        shell: bash
+        run: |
+          # One fixture per condition AND an assertion on which reason fired.
+          # One fixture per condition alone would still go green if a
+          # regression collapsed every case into one spurious finding.
+          check() {
+            desc="$1"; tree="$2"; want_reason="$3"
+            set +e; out=$("$BIN" nocode --dir "$tree" 2>&1); rc=$?; set -e
+            [ "$rc" -eq 1 ] || { echo "$desc: want exit 1, got $rc: $out"; exit 1; }
+            case "$out" in
+              *"$want_reason"*) echo "ok: $desc" ;;
+              *) echo "$desc: want reason '$want_reason', got: $out"; exit 1 ;;
+            esac
+          }
+
+          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf 'print(1)\n' > "$t/tool.py"
+          check "extension" "$t" "code extension .py (floor list)"
+
+          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf 'not a script\n' > "$t/thing"; chmod +x "$t/thing"
+          check "executable bit" "$t" "executable (mode"
+
+          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf '#!/bin/sh\necho hi\n' > "$t/thing"
+          check "shebang" "$t" "executable script (shebang)"
+
+      - name: the fail-opens this CI exists for stay closed
+        shell: bash
+        run: |
+          # These are the regressions that motivated the file. Each was a real
+          # fail-open in a released check: a file nobody can open, and a file
+          # that is not a regular file at all, must be FINDINGS rather than
+          # passes. Making a file less readable must never make this gate
+          # greener.
+          if [ "$(id -u)" = "0" ]; then
+            echo "running as root: chmod cannot refuse a read, skipping the unreadable fixture"
+          else
+            t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf 'x\n' > "$t/secret"; chmod 000 "$t/secret"
+            set +e; out=$("$BIN" nocode --dir "$t" 2>&1); rc=$?; set -e
+            chmod 644 "$t/secret" || true
+            [ "$rc" -eq 1 ] || { echo "unreadable: want exit 1, got $rc: $out"; exit 1; }
+            case "$out" in
+              *"cannot rule out machinery"*) echo "ok: unreadable file is a finding" ;;
+              *) echo "unreadable: wrong reason: $out"; exit 1 ;;
+            esac
           fi
-          echo "ok: unreadable deny-list refused"
+
+          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; mkfifo "$t/pipe.sh"
+          set +e; out=$("$BIN" nocode --dir "$t" 2>&1); rc=$?; set -e
+          [ "$rc" -eq 1 ] || { echo "fifo: want exit 1, got $rc: $out"; exit 1; }
+          case "$out" in
+            *"not a regular file"*) echo "ok: non-regular file is a finding" ;;
+            *) echo "fifo: wrong reason: $out"; exit 1 ;;
+          esac
+
+      - name: a guard that cannot read its own list refuses, and says so
+        shell: bash
+        run: |
+          # Exit 2, not merely non-zero: `flag` also exits non-zero on an
+          # unknown flag, so "non-zero" would pass with --deny-ext misspelled
+          # and the flag under test never exercised. The message is asserted
+          # for the same reason.
+          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"
+          set +e; out=$("$BIN" nocode --dir "$t" --deny-ext "@/nonexistent/list.txt" 2>&1); rc=$?; set -e
+          [ "$rc" -eq 2 ] || { echo "want exit 2, got $rc: $out"; exit 1; }
+          case "$out" in
+            *"deny-list file: open /nonexistent/list.txt"*) echo "ok: unreadable deny-list refused" ;;
+            *) echo "wrong message: $out"; exit 1 ;;
+          esac
