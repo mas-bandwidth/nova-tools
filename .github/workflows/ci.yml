@@ -76,27 +76,31 @@ jobs:
     # the executable.
     #
     # HONEST SCOPE, because this job's own argument is that unstated coverage
-    # is a lie. What is smoked here is `nova-check nocode` and the four
-    # properties below. NOT smoked as binaries: `nova-check attest`, `links`,
-    # `kernel`, `floors`, the `--allow` and `--deny-ext-add` flags, and the
-    # `nova-fuse`, `nova-memory` and `nova-self-talk` commands. Nor is the
-    # `--deny-ext` SUCCESS path, or `nocode`'s classification of a symlink by
-    # name. Those are covered by package tests only, and the gap is written
-    # here rather than left to be inferred from the steps that are absent.
+    # is a lie — and an enumerating sentence that omits items reads worse than
+    # a general one, so this says what IS smoked and stops.
     #
-    # Not run on Windows: the fixtures depend on an executable bit, on chmod
-    # refusing a read, on mkfifo, and on symlinks — none of which that platform
-    # provides on the same terms. The matrix above still builds, vets and tests
-    # there, and the tests that assert those properties skip with their reason
-    # named.
+    # Smoked here: `nova-check nocode`, and only the properties asserted in the
+    # steps below. Everything else in this repository — every other `nocode`
+    # flag and refusal path, every other `nova-check` subcommand, and the
+    # `nova-fuse`, `nova-memory` and `nova-self-talk` commands — is covered by
+    # package tests and by nothing else.
+    #
+    # WINDOWS. The portable steps run there too. An earlier revision excluded
+    # the whole job on the grounds that its fixtures need an executable bit,
+    # chmod refusing a read, mkfifo or symlinks — true of three steps and false
+    # of the other three, which meant the binary was never smoked on the one
+    # platform whose defects this branch exists to have found. The steps that
+    # genuinely cannot run there are marked individually.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        os: [ubuntu-latest, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     env:
-      BIN: ${{ github.workspace }}/nova-check
+      # Go appends .exe on Windows, so the name has to carry it or every step
+      # below looks for a binary that is not there.
+      BIN: ${{ github.workspace }}/nova-check${{ runner.os == 'Windows' && '.exe' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -124,6 +128,8 @@ jobs:
           esac
 
       - name: a symlinked --dir is resolved, not passed over
+        # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           # The fail-open the assertion above was WRONGLY credited with
@@ -159,6 +165,8 @@ jobs:
           esac
 
       - name: each condition refuses separately, with the right code and reason
+        # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           # One fixture per condition AND an assertion on which reason fired.
@@ -184,6 +192,8 @@ jobs:
           check "shebang" "$t" "executable script (shebang)"
 
       - name: the fail-opens this CI exists for stay closed
+        # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
+        if: runner.os != 'Windows'
         shell: bash
         run: |
           # These are the regressions that motivated the file. Each was a real
@@ -192,7 +202,12 @@ jobs:
           # passes. Making a file less readable must never make this gate
           # greener.
           if [ "$(id -u)" = "0" ]; then
-            echo "running as root: chmod cannot refuse a read, skipping the unreadable fixture"
+            # FAIL rather than skip. The hosted runners are non-root, so this
+            # branch firing means the environment changed under us — and a
+            # silent skip would turn this job's headline fail-open assertion
+            # into a no-op behind a green check.
+            echo "running as root: chmod cannot refuse a read, so this assertion cannot run"
+            exit 1
           else
             t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf 'x\n' > "$t/secret"; chmod 000 "$t/secret"
             set +e; out=$("$BIN" nocode --dir "$t" 2>&1); rc=$?; set -e

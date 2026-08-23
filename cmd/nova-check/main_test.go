@@ -527,3 +527,20 @@ func TestEffectiveDenyList(t *testing.T) {
 		}
 	})
 }
+
+// TestNoCodeWarnsWhenItClassifiedNothing pins the scanned==0 warning in a
+// package test rather than only in CI. It was covered by the smoke job and by
+// nothing else, so deleting it left `go test ./...` entirely green — and that
+// warning is the only backstop, inside a real repository, for a --dir that
+// resolves to a tree the walk never opens. Exit 0 is correct: an empty tree
+// genuinely holds no machinery. What must not vanish is the sentence.
+func TestNoCodeWarnsWhenItClassifiedNothing(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	rc := run([]string{"nocode", "--dir", t.TempDir()}, &stdout, &stderr)
+	if rc != 0 {
+		t.Fatalf("rc = %d, want 0; stderr: %s", rc, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "classified NOTHING") {
+		t.Errorf("an empty tree produced no warning; stderr = %q", stderr.String())
+	}
+}

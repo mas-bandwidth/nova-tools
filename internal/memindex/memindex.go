@@ -153,6 +153,12 @@ func frontmatter(src string) (name, typ string) {
 	// which reads as a corpus fault rather than a line-ending one. Found by CI
 	// on its first Windows run, in a tool other people are told to run against
 	// their own corpora.
+	// SCOPE, stated because this fix is narrower than it looks. Build already
+	// normalizes CRLF before it reaches here, so the only caller this actually
+	// changes is FrontmatterPresent. And it does NOT handle a UTF-8 BOM before
+	// the fence, a lone-CR file, or "---" with trailing spaces: each still
+	// reads as no frontmatter. Named rather than implied away, since a BOM is
+	// plausible on the same platform that produced the CRLF.
 	var body string
 	switch {
 	case strings.HasPrefix(src, "---\n"):

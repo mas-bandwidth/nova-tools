@@ -81,9 +81,11 @@ func checkFileLinks(root, mdPath string) (checked int, broken []BrokenLink) {
 		relFile = mdPath
 	}
 	// Reported paths are forward-slashed on every platform, as nocode already
-	// does. A finding is something a reader copies into a shell or an issue,
-	// and "pattern\\broken.md" is neither the path in the repository nor the
-	// spelling any other output here uses.
+	// does. A finding is something a reader copies into a shell or an issue, and
+	// a backslashed spelling is not what any other output here uses. On the
+	// Rel-error branch above this is an ABSOLUTE path rather than a repo-relative
+	// one, so it is forward-slashed but not repo-relative; that branch is
+	// unreachable in practice and the value is print-only, never re-joined.
 	relFile = filepath.ToSlash(relFile)
 	data, err := os.ReadFile(mdPath)
 	if err != nil {
