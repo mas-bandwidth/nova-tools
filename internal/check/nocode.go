@@ -3,11 +3,13 @@ package check
 import (
 	"bufio"
 	_ "embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -31,15 +33,23 @@ const (
 // It returns an error rather than an empty list if the data is unreadable or
 // empty: a guard that cannot determine what it forbids must refuse, not pass.
 func FloorDenyExts() ([]string, error) {
-	exts := parseExtLines(codeExtsData)
+	exts, err := parseExtLines(codeExtsData)
+	if err != nil {
+		return nil, fmt.Errorf("floor deny-list: %w", err)
+	}
 	if len(exts) == 0 {
-		return nil, fmt.Errorf("floor deny-list is empty: the embedded list did not parse")
+		return nil, errors.New("floor deny-list is empty: the embedded list did not parse")
 	}
 	return exts, nil
 }
 
 // parseExtLines reads one extension per line, ignoring blanks and # comments.
-func parseExtLines(s string) []string {
+//
+// An entry that cannot be an extension is an ERROR, not a silently useless
+// list member: "--deny-ext mylist.txt" (the missing @) would otherwise build a
+// one-entry list of ".mylist.txt", match nothing, pass the emptiness guard,
+// and report a clean tree. A guard that forbids nothing must refuse.
+func parseExtLines(s string) ([]string, error) {
 	seen := map[string]bool{}
 	for _, raw := range strings.Split(s, "\n") {
 		line := strings.TrimSpace(raw)
@@ -49,16 +59,39 @@ func parseExtLines(s string) []string {
 		if i := strings.IndexByte(line, '#'); i >= 0 {
 			line = strings.TrimSpace(line[:i])
 		}
-		line = strings.ToLower(line)
 		if line == "" {
 			continue
 		}
+		line = strings.ToLower(line)
 		if !strings.HasPrefix(line, ".") {
 			line = "." + line
 		}
+		if err := validExt(line); err != nil {
+			return nil, err
+		}
 		seen[line] = true
 	}
-	return sortedKeys(seen)
+	return sortedKeys(seen), nil
+}
+
+// validExt rejects anything that is not a bare file extension. The rejected
+// shapes are the likely user errors, and each of them would otherwise produce
+// a deny-list that matches nothing while reporting success.
+func validExt(e string) error {
+	body := strings.TrimPrefix(e, ".")
+	switch {
+	case body == "":
+		return fmt.Errorf("deny-list entry %q is not an extension", e)
+	case strings.ContainsAny(e, "/\\"):
+		return fmt.Errorf("deny-list entry %q looks like a path; did you mean @%s?", e, body)
+	case strings.ContainsAny(e, "*?[]"):
+		return fmt.Errorf("deny-list entry %q looks like a glob; extensions are matched literally", e)
+	case strings.ContainsAny(e, " \t"):
+		return fmt.Errorf("deny-list entry %q contains whitespace", e)
+	case strings.Contains(body, "."):
+		return fmt.Errorf("deny-list entry %q has more than one dot; did you mean @%s?", e, body)
+	}
+	return nil
 }
 
 // ParseDenyList reads a deny-list specification: either a comma-separated list
@@ -66,7 +99,7 @@ func parseExtLines(s string) []string {
 func ParseDenyList(spec string) ([]string, error) {
 	spec = strings.TrimSpace(spec)
 	if spec == "" {
-		return nil, fmt.Errorf("empty deny-list specification")
+		return nil, errors.New("empty deny-list specification")
 	}
 	if strings.HasPrefix(spec, "@") {
 		path := strings.TrimPrefix(spec, "@")
@@ -74,13 +107,19 @@ func ParseDenyList(spec string) ([]string, error) {
 		if err != nil {
 			return nil, fmt.Errorf("deny-list file: %w", err)
 		}
-		exts := parseExtLines(string(b))
+		exts, err := parseExtLines(string(b))
+		if err != nil {
+			return nil, fmt.Errorf("deny-list file %q: %w", path, err)
+		}
 		if len(exts) == 0 {
 			return nil, fmt.Errorf("deny-list file %q contains no extensions", path)
 		}
 		return exts, nil
 	}
-	exts := parseExtLines(strings.ReplaceAll(spec, ",", "\n"))
+	exts, err := parseExtLines(strings.ReplaceAll(spec, ",", "\n"))
+	if err != nil {
+		return nil, err
+	}
 	if len(exts) == 0 {
 		return nil, fmt.Errorf("deny-list %q contains no extensions", spec)
 	}
@@ -97,10 +136,10 @@ func ParseDenyList(spec string) ([]string, error) {
 type NoCodeOptions struct {
 	Dir        string   // root of the tree being guarded (required)
 	Allow      []string // path prefixes where machinery may live; empty by default
-	DenyExt    []string // effective deny-list; empty means use the floor list
-	DenySource string   // provenance, reported with each finding
-	Staged     []string // if non-nil, classify exactly these repo-relative paths
-	StagedSet  bool     // distinguishes "no staged paths given" from "staged, none"
+	DenyExt    []string // effective deny-list; empty means the floor list
+	DenySource string   // provenance; required when DenyExt is set
+	Staged     []string // if StagedSet, classify exactly these repo-relative paths
+	StagedSet  bool     // distinguishes "not staged mode" from "staged, nothing staged"
 }
 
 // NoCode reports every file that is machinery living inside a prose-only tree.
@@ -111,8 +150,13 @@ type NoCodeOptions struct {
 // catches a chmod +x on anything at all, and the shebang is the tell that
 // survives renaming — a script with no extension is still a script.
 //
-// Symlinks are not followed and not inspected: a gate that can be walked out
-// of the tree it guards is not a gate.
+// A symlink is never dereferenced — a gate that can be walked out of the tree
+// it guards is not a gate — but its own NAME is still classified, because a
+// link called run.sh is machinery by the same argument that catches a file
+// called run.sh, and reading its name requires no dereference.
+//
+// A file that cannot be read produces a finding rather than a pass. Making a
+// file less readable must not make this gate greener.
 func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 	deny := opts.DenyExt
 	source := opts.DenySource
@@ -124,36 +168,29 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 			return 0, nil, err
 		}
 		source = DenyFloor
+	} else if source == "" {
+		return 0, nil, errors.New("DenyExt was set without DenySource: a finding may not name an unknown list")
 	}
 	denySet := make(map[string]bool, len(deny))
 	for _, e := range deny {
 		denySet[strings.ToLower(e)] = true
 	}
 	if len(denySet) == 0 {
-		return 0, nil, fmt.Errorf("effective deny-list is empty: refusing rather than passing everything")
-	}
-	if source == "" {
-		source = DenyFloor
+		return 0, nil, errors.New("effective deny-list is empty: refusing rather than passing everything")
 	}
 
-	allowed := make(map[string]bool, len(opts.Allow))
-	for _, a := range opts.Allow {
-		a = filepath.ToSlash(strings.Trim(strings.TrimSpace(a), "/"))
-		if a != "" {
-			allowed[a] = true
-		}
-	}
+	allow := normalizeAllow(opts.Allow)
 
-	info, err := os.Stat(opts.Dir)
-	if err != nil {
-		return 0, nil, fmt.Errorf("dir: %w", err)
+	info, statErr := os.Stat(opts.Dir)
+	if statErr != nil {
+		return 0, nil, fmt.Errorf("dir: %w", statErr)
 	}
 	if !info.IsDir() {
 		return 0, nil, fmt.Errorf("dir %q is not a directory", opts.Dir)
 	}
 
 	if opts.StagedSet {
-		return noCodeStaged(opts, allowed, denySet, source)
+		return noCodeStaged(opts, allow, denySet, source)
 	}
 
 	err = filepath.WalkDir(opts.Dir, func(path string, d fs.DirEntry, walkErr error) error {
@@ -170,23 +207,26 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 		}
 		if d.IsDir() {
 			// .git is machinery by construction and is not repo content.
-			if d.Name() == ".git" || allowed[rel] || allowed[topSegment(rel)] {
+			if d.Name() == ".git" || isAllowed(rel, allow) {
 				return filepath.SkipDir
 			}
 			return nil
 		}
-		if allowed[rel] || allowed[topSegment(rel)] {
+		if isAllowed(rel, allow) {
 			return nil
 		}
 		fi, infoErr := d.Info()
 		if infoErr != nil {
-			return infoErr
+			scanned++
+			findings = append(findings, Failure{rel, "unreadable: " + infoErr.Error() + " (cannot rule out machinery)"})
+			return nil
 		}
-		if !fi.Mode().IsRegular() {
-			return nil // symlinks and specials: not followed, not flagged
+		isLink := fi.Mode()&os.ModeSymlink != 0
+		if !isLink && !fi.Mode().IsRegular() {
+			return nil // devices, sockets, fifos: not repo content
 		}
 		scanned++
-		if reasons := classify(path, rel, fi, denySet, source); len(reasons) > 0 {
+		if reasons := classify(path, rel, fi, isLink, denySet, source); len(reasons) > 0 {
 			findings = append(findings, Failure{rel, strings.Join(reasons, "; ")})
 		}
 		return nil
@@ -206,69 +246,154 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 //
 // A path that no longer exists on disk — a staged deletion — is skipped
 // rather than reported: taking machinery back out of the self is the
-// direction this gate wants.
-func noCodeStaged(opts NoCodeOptions, allowed, denySet map[string]bool, source string) (int, []Failure, error) {
+// direction this gate wants. EVERY OTHER Lstat failure is a finding. Those
+// two cases look identical to the caller and are not the same thing: a
+// quoted, mis-encoded, or unreachable path that is silently skipped turns
+// this gate into one that reports a clean commit having classified nothing.
+func noCodeStaged(opts NoCodeOptions, allow []string, denySet map[string]bool, source string) (int, []Failure, error) {
 	var findings []Failure
 	scanned := 0
 	for _, raw := range opts.Staged {
-		rel := filepath.ToSlash(strings.TrimSpace(raw))
-		if rel == "" || rel == "." {
+		if strings.TrimSpace(raw) == "" {
 			continue
 		}
-		if allowed[rel] || allowed[topSegment(rel)] {
+		rel, err := gitPath(raw)
+		if err != nil {
+			scanned++
+			findings = append(findings, Failure{raw, err.Error()})
+			continue
+		}
+		if rel == "." {
+			continue
+		}
+		if strings.HasPrefix(rel, "../") || rel == ".." {
+			scanned++
+			findings = append(findings, Failure{rel, "path escapes the tree being guarded; is --dir the repository root?"})
+			continue
+		}
+		if isAllowed(rel, allow) {
 			continue
 		}
 		full := filepath.Join(opts.Dir, filepath.FromSlash(rel))
 		fi, err := os.Lstat(full)
 		if err != nil {
-			continue // staged deletion, or gone: not an accumulation
+			if errors.Is(err, fs.ErrNotExist) {
+				continue // staged deletion, or gone: not an accumulation
+			}
+			scanned++
+			findings = append(findings, Failure{rel, "unreadable: " + err.Error() + " (cannot rule out machinery)"})
+			continue
 		}
-		if !fi.Mode().IsRegular() {
+		isLink := fi.Mode()&os.ModeSymlink != 0
+		if !isLink && !fi.Mode().IsRegular() {
 			continue
 		}
 		scanned++
-		if reasons := classify(full, rel, fi, denySet, source); len(reasons) > 0 {
+		if reasons := classify(full, rel, fi, isLink, denySet, source); len(reasons) > 0 {
 			findings = append(findings, Failure{rel, strings.Join(reasons, "; ")})
 		}
 	}
 	return scanned, findings, nil
 }
 
+// gitPath normalizes one path as git reports it.
+//
+// With core.quotePath on — the DEFAULT — `git diff --cached --name-only`
+// wraps any path containing non-ASCII or special bytes in double quotes with
+// C-style octal escapes. Taken literally such a path matches nothing on disk,
+// which is why this is decoded rather than trimmed: the alternative is a gate
+// that silently ignores every file whose name is not plain ASCII.
+func gitPath(raw string) (string, error) {
+	s := raw
+	if strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) && len(s) >= 2 {
+		unquoted, err := strconv.Unquote(s)
+		if err != nil {
+			return "", fmt.Errorf("cannot decode git-quoted path (try -z, or -c core.quotePath=false): %v", err)
+		}
+		s = unquoted
+	}
+	return filepath.ToSlash(s), nil
+}
+
+// normalizeAllow trims each entry to a bare repo-relative directory prefix.
+func normalizeAllow(allow []string) []string {
+	out := make([]string, 0, len(allow))
+	for _, a := range allow {
+		a = filepath.ToSlash(strings.TrimSpace(a))
+		a = strings.TrimPrefix(a, "./")
+		a = strings.Trim(a, "/")
+		if a != "" && a != "." {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// isAllowed reports whether rel is, or lies beneath, a declared allow prefix.
+// A prefix genuinely covers everything beneath it, at any depth, and the same
+// answer is given in both the walk and the staged path — an --allow value that
+// behaved differently in the commit gate than in the audit would be a gate
+// disagreeing with its own check.
+func isAllowed(rel string, allow []string) bool {
+	for _, a := range allow {
+		if rel == a || strings.HasPrefix(rel, a+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // classify returns every reason the file is machinery, or nil if it is prose.
 // All reasons are reported when more than one holds: a gate that says only
 // "no" teaches nothing, and each reason is separately actionable.
-func classify(fullPath, rel string, fi os.FileInfo, denySet map[string]bool, source string) []string {
+func classify(fullPath, rel string, fi os.FileInfo, isLink bool, denySet map[string]bool, source string) []string {
 	var reasons []string
-	if ext := strings.ToLower(filepath.Ext(rel)); denySet[ext] {
+	// Trailing whitespace is trimmed for MATCHING only: a file named "x.py "
+	// has extension ".py " by Go's reckoning and would otherwise miss the list
+	// while being every bit as much a script.
+	if ext := strings.TrimSpace(strings.ToLower(filepath.Ext(rel))); denySet[ext] {
 		reasons = append(reasons, fmt.Sprintf("code extension %s (%s)", ext, source))
+	}
+	if isLink {
+		// Never dereferenced: the name is classified, the target is not read
+		// and its mode is not consulted.
+		if len(reasons) > 0 {
+			reasons = append(reasons, "symlink (target not followed)")
+		}
+		return reasons
 	}
 	if fi.Mode().Perm()&0o111 != 0 {
 		reasons = append(reasons, fmt.Sprintf("executable (mode %04o)", fi.Mode().Perm()))
 	}
-	if hasShebang(fullPath) {
+	shebang, err := hasShebang(fullPath)
+	switch {
+	case err != nil:
+		reasons = append(reasons, "unreadable: "+err.Error()+" (cannot rule out machinery)")
+	case shebang:
 		reasons = append(reasons, "executable script (shebang)")
 	}
 	return reasons
 }
 
-// topSegment returns the first path element, so an allow entry of "history"
-// covers everything beneath it without the caller enumerating subdirectories.
-func topSegment(rel string) string {
-	if i := strings.IndexByte(rel, '/'); i >= 0 {
-		return rel[:i]
-	}
-	return rel
-}
-
 // hasShebang reports whether a file begins with "#!".
-func hasShebang(p string) bool {
+//
+// An unreadable file returns an error rather than false. Reporting "no
+// shebang" for a file nobody could open would mean a chmod 000 makes this
+// gate greener, which is the fail-open shape this whole check exists against.
+func hasShebang(p string) (bool, error) {
 	f, err := os.Open(p)
 	if err != nil {
-		return false
+		return false, err
 	}
 	defer f.Close()
 	b, err := bufio.NewReader(f).Peek(2)
-	return err == nil && string(b) == "#!"
+	if err != nil {
+		if errors.Is(err, fs.ErrClosed) || errors.Is(err, fs.ErrPermission) {
+			return false, err
+		}
+		return false, nil // a file shorter than two bytes holds no shebang
+	}
+	return string(b) == "#!", nil
 }
 
 func sortedKeys(m map[string]bool) []string {

@@ -205,9 +205,18 @@ moved from something remembered to something that refuses, in your self repo's
 
 ```sh
 #!/bin/sh
-git diff --cached --name-only --diff-filter=ACM |
+git diff --cached --name-only -z --diff-filter=ACM |
     nova-check nocode --dir . --staged --allow history || exit 1
 ```
+
+**Use `-z`.** Without it git applies `core.quotePath`, which is on by default
+and wraps any path containing non-ASCII bytes in quotes and octal escapes —
+`"caf\303\251.sh"`. `--staged` decodes that form rather than ignoring it, so
+the newline-separated hook still works; but `-z` never quotes and never breaks
+on a newline in a filename, so it is the one to write down. Run the hook from
+the repository root, or point `--dir` at it: a path the gate cannot stat is
+reported, never skipped, so a misconfigured hook fails loudly instead of
+reporting a clean commit it never looked at.
 
 It gates what the commit is **adding**, not what the tree already holds, so
 adopting it does not hold your next commit hostage to cleaning up your past.

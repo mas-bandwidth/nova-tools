@@ -280,7 +280,9 @@ nova-check nocode --print-deny-list                print the list in force
 ```
 
 **Asserts.** A self repo contains prose, not machinery: no code files and no
-executables anywhere under `--dir` (skipping `.git`). Regular files only.
+executables under `--dir`, skipping `.git` and anything the caller declares
+with `--allow`. Regular files and symlinks; devices, sockets and fifos are not
+repo content and are not classified.
 
 A file is flagged when any of three hold, and **all that hold are reported**,
 because a gate that says only *no* teaches nothing:
@@ -288,6 +290,16 @@ because a gate that says only *no* teaches nothing:
 - its extension (case-insensitive) is on the effective deny-list
 - it has any executable bit set (`mode & 0111 != 0`)
 - it begins with a shebang (`#!`)
+
+A file that **cannot be read** is a finding — `unreadable: ... (cannot rule
+out machinery)` — never a pass. Making a file less readable must not make this
+gate greener, which is the same posture `links` takes on an unreadable `.md`.
+
+A **symlink is never dereferenced**, but its own NAME is classified: a link
+called `run.sh` is machinery by the same argument that catches a file called
+`run.sh`, and reading a link's name requires no dereference. Its target is not
+read and its mode is not consulted, so a gate still cannot be walked out of
+the tree it guards.
 
 The three catch different things, and the third is why the first two are not
 enough: **a shebang is the tell that survives renaming.** A script called
@@ -321,20 +333,37 @@ or `floor list + --deny-ext-add`), and the `NOCODE OK` line names it too, so
 neither a red nor a green hides the basis it was reached on.
 `--print-deny-list` prints what is actually in force and exits 0; it needs no
 `--dir`, because what the gate forbids is answerable without pointing it
-anywhere. **An effective deny-list that is empty or unreadable is exit 2** — a
-guard that cannot say what it forbids refuses rather than passing everything.
+anywhere. It is **mutually exclusive with `--staged`**: a hook given both would
+print a list and exit 0 having gated nothing. Both flags accept `@file` as well
+as a comma list.
+
+**An effective deny-list that is empty, unreadable, or not made of extensions
+is exit 2** — a guard that cannot say what it forbids refuses rather than
+passing everything. An entry containing a path separator, a glob character,
+whitespace, or a second dot is refused by name, because each of those builds a
+list that matches nothing and would otherwise report a clean tree: `--deny-ext
+mylist.txt`, the missing `@`, is the likely error and it is caught rather than
+silently obeyed.
 
 **`--allow <prefix>` is the one scope narrowing, and it starts EMPTY.**
-Repeatable; a prefix covers everything beneath it, so `--allow history` needs
-no subdirectory enumeration. Nothing is allowed by default and a test pins
+Repeatable; a prefix covers everything beneath it at any depth, so `--allow
+history` needs no subdirectory enumeration and `--allow docs/history` works
+the same way. A leading `./` and surrounding slashes are trimmed. **The same
+value means the same thing in both modes** — an `--allow` that behaved one way
+in the audit and another in the commit gate would be a gate disagreeing with
+its own check, and a test pins the parity. Nothing is allowed by default and a test pins
 that: the tool this was ported from defaulted to allowing its own repo's
 `history/` directory, which is a directory default and a fail-open one — a
 guess about someone else's filenames, and precisely the class the no-defaults
 law names. Which directory is a frozen record is the line's to declare.
 
 **`--staged` is the commit gate**, and the difference from the audit is
-deliberate. It reads repo-relative paths from stdin — `git diff --cached
---name-only` — and classifies exactly those. **The gate refuses what is being
+deliberate. It reads repo-relative paths from stdin, NUL-separated or one per line — the
+separator is detected, so `git diff --cached --name-only -z` and the
+newline form both work — and classifies exactly those. **`-z` is the form to
+write down**, because without it git applies `core.quotePath` (on by default)
+and emits `"caf\303\251.sh"` for any non-ASCII name. Such a path is decoded
+rather than ignored; a path that cannot be decoded is a finding. **The gate refuses what is being
 ADDED, not what already exists.** Gating the whole tree at commit time would
 make the next commit hostage to deleting every finished investigation in the
 repo, which is how a reasonable rule becomes a rule everybody turns off. A
@@ -354,17 +383,22 @@ exactly that reason — and the shebang test carry it.
 line per file, exit 1. Yes, this includes a markdown file someone `chmod +x`ed:
 in a self repo an executable *anything* is a boundary violation worth a look.
 
-**Refuses (exit 2) when** `--dir` is missing or not a directory, when the
-effective deny-list is empty or unreadable, when `--deny-ext` and
-`--deny-ext-add` are given together, or on an unexpected positional argument.
+**Refuses (exit 2) when** `--dir` is missing or not a directory; when the
+effective deny-list is empty, unreadable, or contains something that is not an
+extension; when `--deny-ext` and `--deny-ext-add` are given together; when
+`--print-deny-list` and `--staged` are given together; or on an unexpected
+positional argument.
 
 **Deliberately does not check:** file contents beyond the first two bytes (an
 extension list plus a shebang test is auditable; sniffing a whole file for
 intent is a heuristic that lies both ways); languages beyond the listed
 extensions (extend the list, don't sniff); code *fences inside markdown* —
 quoted code is prose about code and exactly what a self repo should hold;
-symlinks (not followed, not flagged); the tools repo itself — this check aims
-at the self repo, and this repo would rightly fail it.
+a symlink's TARGET (the link's own name is classified, but the target is never
+read, so a link named `notes.md` pointing at a script passes); names that are
+entirely an extension (`.bashrc` has no extension by Go's reckoning and is
+caught only by its mode or its shebang); the tools repo itself — this check
+aims at the self repo, and this repo would rightly fail it.
 
 ---
 

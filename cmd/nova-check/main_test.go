@@ -7,6 +7,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/check"
 )
 
 // The no-guessing rule at the CLI: a missing flag is a refusal (exit 2)
@@ -469,4 +471,112 @@ func TestNoCodeCLI(t *testing.T) {
 			})
 		}
 	})
+}
+
+// --deny-ext-add EXTENDS. Nothing pinned this, so a change making it replace
+// would have shipped green — silently dropping all 43 floor extensions from a
+// gate whose whole purpose is refusing.
+func TestEffectiveDenyList(t *testing.T) {
+	floor, err := check.FloorDenyExts()
+	if err != nil {
+		t.Fatal(err)
+	}
+	has := func(l []string, e string) bool {
+		for _, x := range l {
+			if x == e {
+				return true
+			}
+		}
+		return false
+	}
+
+	t.Run("--deny-ext-add keeps the whole floor and adds to it", func(t *testing.T) {
+		got, src, err := effectiveDenyList("", ".foo")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if src != check.DenyExtended {
+			t.Errorf("source = %q, want %q", src, check.DenyExtended)
+		}
+		if len(got) != len(floor)+1 {
+			t.Errorf("len = %d, want %d: the floor must survive an extension", len(got), len(floor)+1)
+		}
+		for _, e := range floor {
+			if !has(got, e) {
+				t.Fatalf("extension dropped floor entry %s", e)
+			}
+		}
+		if !has(got, ".foo") {
+			t.Error(".foo was not added")
+		}
+	})
+
+	t.Run("--deny-ext replaces the floor wholesale", func(t *testing.T) {
+		got, src, err := effectiveDenyList(".foo", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if src != check.DenyReplaced {
+			t.Errorf("source = %q, want %q", src, check.DenyReplaced)
+		}
+		if len(got) != 1 || got[0] != ".foo" {
+			t.Errorf("got %v, want exactly [.foo]", got)
+		}
+	})
+
+	t.Run("no flags is the floor, named as the floor", func(t *testing.T) {
+		got, src, err := effectiveDenyList("", "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if src != check.DenyFloor || len(got) != len(floor) {
+			t.Errorf("got %d entries from %q, want %d from %q", len(got), src, len(floor), check.DenyFloor)
+		}
+	})
+
+	t.Run("adding a duplicate does not double it", func(t *testing.T) {
+		got, _, err := effectiveDenyList("", ".py")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != len(floor) {
+			t.Errorf("len = %d, want %d", len(got), len(floor))
+		}
+	})
+}
+
+func TestNoCodeGateAndPrintAreExclusive(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	dir := t.TempDir()
+	if got := run([]string{"nocode", "--dir", dir, "--staged", "--print-deny-list"}, &stdout, &stderr); got != 2 {
+		t.Fatalf("exit = %d, want 2: a hook given both would print and exit 0 having gated nothing", got)
+	}
+}
+
+func TestNoCodeStagedAcceptsNulSeparatedPaths(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "tool.py"), []byte("print()"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	saved := stdinReader
+	defer func() { stdinReader = saved }()
+	stdinReader = strings.NewReader("tool.py\x00")
+	var stdout, stderr bytes.Buffer
+	if got := run([]string{"nocode", "--dir", dir, "--staged"}, &stdout, &stderr); got != 1 {
+		t.Fatalf("exit = %d, want 1 (git -z output must gate)", got)
+	}
+}
+
+func TestNoCodeStagedClassifiedNothingIsSaidOutLoud(t *testing.T) {
+	dir := t.TempDir() // the staged path does not exist here
+	saved := stdinReader
+	defer func() { stdinReader = saved }()
+	stdinReader = strings.NewReader("tool.py\n")
+	var stdout, stderr bytes.Buffer
+	if got := run([]string{"nocode", "--dir", dir, "--staged"}, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit = %d, want 0: a pure-deletion commit is legitimate", got)
+	}
+	if !strings.Contains(stderr.String(), "classified none of the 1 staged path") {
+		t.Errorf("a run that looked at nothing was silent: %q", stderr.String())
+	}
 }

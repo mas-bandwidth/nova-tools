@@ -8,7 +8,7 @@ import (
 )
 
 // scan is the common shape: materialize a tree, run with the floor list.
-func scan(t *testing.T, files map[string]os.FileMode, contents map[string]string, opts NoCodeOptions) (int, []Failure, error) {
+func scan(t *testing.T, files map[string]os.FileMode, contents map[string]string, links map[string]string, opts NoCodeOptions) (int, []Failure, error) {
 	t.Helper()
 	dir := t.TempDir()
 	for rel, mode := range files {
@@ -18,8 +18,32 @@ func scan(t *testing.T, files map[string]os.FileMode, contents map[string]string
 		}
 		writeMode(t, dir, rel, body, mode)
 	}
+	for rel, target := range links {
+		if err := os.Symlink(target, filepath.Join(dir, filepath.FromSlash(rel))); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+	}
 	opts.Dir = dir
 	return NoCode(opts)
+}
+
+// wantOnly asserts the exact set of flagged subjects. wantFailures only proves
+// a finding is PRESENT, so on its own it cannot tell a replacement from a
+// merge — the assertion that must exist wherever absence is the point.
+func wantOnly(t *testing.T, findings []Failure, want []string) {
+	t.Helper()
+	got := map[string]bool{}
+	for _, f := range findings {
+		got[f.Subject] = true
+	}
+	if len(got) != len(want) {
+		t.Fatalf("flagged %v, want exactly %v", got, want)
+	}
+	for _, w := range want {
+		if !got[w] {
+			t.Errorf("%q not flagged; flagged %v", w, got)
+		}
+	}
 }
 
 func TestNoCode(t *testing.T) {
@@ -28,8 +52,10 @@ func TestNoCode(t *testing.T) {
 		files       map[string]os.FileMode
 		contents    map[string]string
 		opts        NoCodeOptions
+		symlinks    map[string]string // rel -> target
 		wantScanned int
 		wantFind    []string // substrings; empty = must pass
+		wantExactly []string // exact set of flagged subjects, where absence is the point
 	}{
 		{
 			name:        "prose tree is clean",
@@ -118,6 +144,15 @@ func TestNoCode(t *testing.T) {
 			opts:        NoCodeOptions{DenyExt: []string{".foo"}, DenySource: DenyReplaced},
 			wantScanned: 2,
 			wantFind:    []string{"gone.foo", DenyReplaced},
+			wantExactly: []string{"gone.foo"}, // .py must NOT come back with the floor
+		},
+		{
+			name:        "a symlink named as code is flagged without being followed",
+			files:       map[string]os.FileMode{"README.md": 0o644},
+			symlinks:    map[string]string{"run.sh": "/bin/sh"},
+			wantScanned: 2,
+			wantFind:    []string{"run.sh", "code extension .sh", "target not followed"},
+			wantExactly: []string{"run.sh"},
 		},
 		{
 			name:        "a finding names which list produced it",
@@ -126,15 +161,37 @@ func TestNoCode(t *testing.T) {
 			wantFind:    []string{"code extension .py (" + DenyFloor + ")"},
 		},
 		{
-			name:        "symlinks are not followed and not flagged",
+			name:        "a symlink not named as code is neither followed nor flagged",
 			files:       map[string]os.FileMode{"README.md": 0o644},
+			symlinks:    map[string]string{"link": "/etc"},
+			wantScanned: 2,
+		},
+		{
+			name:        "an unreadable file is a finding, never a pass",
+			files:       map[string]os.FileMode{"secret": 0o000},
+			contents:    map[string]string{"secret": "#!/bin/sh\n"},
 			wantScanned: 1,
+			wantFind:    []string{"secret", "unreadable"},
+		},
+		{
+			name:        "a multi-segment --allow prefix covers everything beneath it",
+			files:       map[string]os.FileMode{"docs/history/old.py": 0o644, "live.py": 0o644},
+			opts:        NoCodeOptions{Allow: []string{"docs/history"}},
+			wantScanned: 1,
+			wantFind:    []string{"live.py"},
+			wantExactly: []string{"live.py"},
+		},
+		{
+			name:        "an --allow entry written ./history still matches",
+			files:       map[string]os.FileMode{"history/old.py": 0o644},
+			opts:        NoCodeOptions{Allow: []string{"./history"}},
+			wantScanned: 0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			scanned, findings, err := scan(t, tt.files, tt.contents, tt.opts)
+			scanned, findings, err := scan(t, tt.files, tt.contents, tt.symlinks, tt.opts)
 			if err != nil {
 				t.Fatalf("NoCode: %v", err)
 			}
@@ -142,6 +199,9 @@ func TestNoCode(t *testing.T) {
 				t.Errorf("scanned = %d, want %d (findings: %v)", scanned, tt.wantScanned, findings)
 			}
 			wantFailures(t, findings, tt.wantFind)
+			if tt.wantExactly != nil {
+				wantOnly(t, findings, tt.wantExactly)
+			}
 		})
 	}
 }
@@ -162,8 +222,8 @@ func TestNoCodeSymlinkNotFollowed(t *testing.T) {
 	if len(findings) != 0 {
 		t.Errorf("symlink was followed or flagged: %v", findings)
 	}
-	if scanned != 1 {
-		t.Errorf("scanned = %d, want 1 (only README.md)", scanned)
+	if scanned != 2 {
+		t.Errorf("scanned = %d, want 2 (README.md and the link's own name)", scanned)
 	}
 }
 
@@ -364,4 +424,146 @@ func TestNoCodeProvenanceCannotLie(t *testing.T) {
 	if strings.Contains(findings[0].Reason, DenyReplaced) {
 		t.Errorf("reason %q names a list that did not produce it", findings[0].Reason)
 	}
+}
+
+// The commit gate and the audit must not disagree about the same tree. Every
+// case here was a silent pass before: a path git quoted, a path with a
+// trailing space, an unreadable file, a wrong --dir.
+func TestNoCodeStagedDoesNotSilentlyPass(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, "café.sh", "#!/bin/sh\n", 0o644)
+	writeMode(t, dir, "README.md", "prose", 0o644)
+
+	t.Run("a git-quoted path is decoded, not skipped", func(t *testing.T) {
+		_, findings, err := NoCode(NoCodeOptions{
+			Dir: dir, Staged: []string{`"caf\303\251.sh"`}, StagedSet: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantOnly(t, findings, []string{"café.sh"})
+	})
+
+	t.Run("an undecodable quoted path is a finding, not a skip", func(t *testing.T) {
+		_, findings, err := NoCode(NoCodeOptions{
+			Dir: dir, Staged: []string{`"\q"`}, StagedSet: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(findings) != 1 {
+			t.Fatalf("findings = %v, want 1", findings)
+		}
+	})
+
+	t.Run("a path escaping the tree is a finding", func(t *testing.T) {
+		_, findings, err := NoCode(NoCodeOptions{
+			Dir: dir, Staged: []string{"../elsewhere/tool.py"}, StagedSet: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantFailures(t, findings, []string{"escapes the tree"})
+	})
+
+	t.Run("an unreadable staged file is a finding", func(t *testing.T) {
+		if os.Geteuid() == 0 {
+			t.Skip("root reads anything")
+		}
+		sub := t.TempDir()
+		writeMode(t, sub, "locked", "#!/bin/sh\n", 0o000)
+		_, findings, err := NoCode(NoCodeOptions{
+			Dir: sub, Staged: []string{"locked"}, StagedSet: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		wantFailures(t, findings, []string{"locked", "unreadable"})
+	})
+
+	t.Run("the gate and the audit agree on the same tree", func(t *testing.T) {
+		_, audit, err := NoCode(NoCodeOptions{Dir: dir})
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, gated, err := NoCode(NoCodeOptions{
+			Dir: dir, Staged: []string{`"caf\303\251.sh"`, "README.md"}, StagedSet: true,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(audit) != len(gated) {
+			t.Errorf("audit flagged %v; gate flagged %v — the two must not disagree", audit, gated)
+		}
+	})
+}
+
+// --allow must mean the same thing in both modes. It did not: a multi-segment
+// prefix worked in the walk (the directory matched and the walk skipped it)
+// and silently did not in the gate, which has no walk.
+func TestNoCodeAllowParityBetweenModes(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, "docs/history/old.py", "print()", 0o644)
+	opts := func(staged bool) NoCodeOptions {
+		o := NoCodeOptions{Dir: dir, Allow: []string{"docs/history"}}
+		if staged {
+			o.Staged, o.StagedSet = []string{"docs/history/old.py"}, true
+		}
+		return o
+	}
+	_, walk, err := NoCode(opts(false))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, gate, err := NoCode(opts(true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(walk) != 0 || len(gate) != 0 {
+		t.Errorf("walk=%v gate=%v; both must honour the same prefix", walk, gate)
+	}
+}
+
+// A deny-list entry that cannot be an extension is a refusal. Each of these
+// built a list that matched nothing and reported a clean tree.
+func TestParseDenyListRefusesNonExtensions(t *testing.T) {
+	for _, spec := range []string{"mylist.txt", "*.py", "src/x", ".a b", "..", "."} {
+		t.Run(spec, func(t *testing.T) {
+			if got, err := ParseDenyList(spec); err == nil {
+				t.Errorf("accepted %q as %v; a guard that forbids nothing must refuse", spec, got)
+			}
+		})
+	}
+}
+
+// An Lstat failure that is NOT "file does not exist" must be a finding.
+// ENOTDIR is the reachable case: point --dir at the wrong level, or hand the
+// gate a path whose parent is a regular file, and every path fails to stat.
+// Skipping those silently is what let a misconfigured hook report a clean
+// commit having classified nothing.
+func TestNoCodeStagedNonExistErrorIsAFinding(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, "notes.md", "prose", 0o644)
+	_, findings, err := NoCode(NoCodeOptions{
+		Dir: dir, Staged: []string{"notes.md/inner.py"}, StagedSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %v, want 1: a path that cannot be stat'd is not a deletion", findings)
+	}
+	if !strings.Contains(findings[0].Reason, "unreadable") {
+		t.Errorf("reason = %q, want an unreadable finding", findings[0].Reason)
+	}
+}
+
+func TestNoCodeTrailingWhitespaceInName(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, "trailing.py ", "print()", 0o644)
+	_, findings, err := NoCode(NoCodeOptions{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFailures(t, findings, []string{"code extension .py"})
 }

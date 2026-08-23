@@ -8,7 +8,6 @@
 package main
 
 import (
-	"bufio"
 	"flag"
 	"fmt"
 	"io"
@@ -253,6 +252,11 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "nova-check nocode: --deny-ext and --deny-ext-add are mutually exclusive")
 		return 2
 	}
+	// A hook given both would print a list and exit 0 having gated nothing.
+	if *printList && *staged {
+		fmt.Fprintln(stderr, "nova-check nocode: --print-deny-list and --staged are mutually exclusive; a gate that only prints is not a gate")
+		return 2
+	}
 
 	// Resolve the effective deny-list and its provenance before anything else:
 	// a guard that cannot say what it forbids must refuse, not pass.
@@ -277,7 +281,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 
 	opts := check.NoCodeOptions{Dir: *dir, Allow: allow, DenyExt: deny, DenySource: source}
 	if *staged {
-		paths, err := readLines(stdinReader)
+		paths, err := readPaths(stdinReader)
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-check nocode: cannot read staged paths: %v\n", err)
 			return 2
@@ -295,6 +299,14 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "NOCODE FAIL %s: %s\n", f.Subject, f.Reason)
 		}
 		return 1
+	}
+	// A staged run that classified nothing is either a pure-deletion commit or
+	// a hook pointed at the wrong directory, and those are indistinguishable
+	// from here. Failing would break the legitimate case, so it is said out
+	// loud instead: a gate that looked at nothing should not read as a gate
+	// that found nothing.
+	if opts.StagedSet && scanned == 0 && len(opts.Staged) > 0 {
+		fmt.Fprintf(stderr, "nova-check nocode: classified none of the %d staged path(s) — all deleted, all allowed, or --dir is not the repository root\n", len(opts.Staged))
 	}
 	fmt.Fprintf(stdout, "NOCODE OK files=%d clean deny-list=%s\n", scanned, source)
 	return 0
@@ -336,13 +348,30 @@ func effectiveDenyList(replace, add string) ([]string, string, error) {
 	return merged, check.DenyExtended, nil
 }
 
-func readLines(r io.Reader) ([]string, error) {
-	var out []string
-	sc := bufio.NewScanner(r)
-	for sc.Scan() {
-		out = append(out, sc.Text())
+// readPaths reads the staged path list, accepting either form git emits:
+// NUL-separated (`-z`, which never quotes and is the safe one) or one per
+// line. The separator is detected rather than demanded, so a hook written
+// either way behaves the same.
+func readPaths(r io.Reader) ([]string, error) {
+	b, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
 	}
-	return out, sc.Err()
+	s := string(b)
+	var sep string
+	if strings.ContainsRune(s, 0) {
+		sep = "\x00"
+	} else {
+		sep = "\n"
+	}
+	var out []string
+	for _, p := range strings.Split(s, sep) {
+		p = strings.TrimSuffix(p, "\r")
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 func cmdFloors(args []string, stdout, stderr io.Writer) int {
