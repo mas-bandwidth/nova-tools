@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"strings"
 	"unicode"
 )
@@ -142,14 +141,6 @@ type NoCodeOptions struct {
 	Allow      []string // path prefixes where machinery may live; empty by default
 	DenyExt    []string // effective deny-list; empty means the floor list
 	DenySource string   // provenance; required when DenyExt is set
-	Staged     []string // if StagedSet, classify exactly these repo-relative paths
-	StagedSet  bool     // distinguishes "not staged mode" from "staged, nothing staged"
-
-	// StagedMayBeQuoted says the path list came from a newline-separated git
-	// invocation, where core.quotePath may have wrapped names in quotes and
-	// octal escapes. Under -z git never quotes, and decoding there would
-	// corrupt a filename that legitimately begins and ends with a quote.
-	StagedMayBeQuoted bool
 }
 
 // NoCode reports every file that is machinery living inside a prose-only tree.
@@ -185,9 +176,6 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 	for _, e := range deny {
 		denySet[strings.ToLower(e)] = true
 	}
-	if len(denySet) == 0 {
-		return 0, nil, errors.New("effective deny-list is empty: refusing rather than passing everything")
-	}
 
 	allow := normalizeAllow(opts.Allow)
 
@@ -207,10 +195,6 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 		return 0, nil, fmt.Errorf("dir %q is not a directory", opts.Dir)
 	}
 	opts.Dir = root
-
-	if opts.StagedSet {
-		return noCodeStaged(opts, allow, denySet, source)
-	}
 
 	err = filepath.WalkDir(opts.Dir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -242,11 +226,9 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 		}
 		isLink := fi.Mode()&os.ModeSymlink != 0
 		if !isLink && !fi.Mode().IsRegular() {
-			// FAIL CLOSED, the same rule the staged mode runs on. This was the
-			// last "cannot classify this, so skip it" branch in the tool, left
-			// in the mode that got less attention — and it made the audit the
-			// weaker of the two: a fifo named pipe.sh passed here while the
-			// gate flagged it.
+			// FAIL CLOSED. A file that cannot be classified is a finding,
+			// never a pass: a fifo named pipe.sh is not prose and cannot be
+			// read, which is exactly what this check exists to refuse.
 			scanned++
 			findings = append(findings, Failure{rel, fmt.Sprintf("not a regular file (mode %v): cannot rule out machinery", fi.Mode().Type())})
 			return nil
@@ -261,103 +243,6 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 		return 0, nil, err
 	}
 	return scanned, findings, nil
-}
-
-// noCodeStaged classifies an explicit path list instead of walking the tree.
-//
-// The distinction is deliberate: the gate refuses what is being ADDED, not
-// what already exists. Gating the whole tree at commit time would make the
-// next commit hostage to deleting every finished investigation in the repo,
-// which is how a reasonable rule becomes a rule everybody disables.
-//
-// A path that no longer exists on disk — a staged deletion — is skipped
-// rather than reported: taking machinery back out of the self is the
-// direction this gate wants. EVERY OTHER Lstat failure is a finding. Those
-// two cases look identical to the caller and are not the same thing: a
-// quoted, mis-encoded, or unreachable path that is silently skipped turns
-// this gate into one that reports a clean commit having classified nothing.
-func noCodeStaged(opts NoCodeOptions, allow []string, denySet map[string]bool, source string) (int, []Failure, error) {
-	var findings []Failure
-	scanned := 0
-	for _, raw := range opts.Staged {
-		if raw == "" {
-			continue // an empty line is not a path; readPaths drops these too
-		}
-		rel, err := gitPath(raw, opts.StagedMayBeQuoted)
-		if err != nil {
-			scanned++
-			findings = append(findings, Failure{raw, err.Error()})
-			continue
-		}
-		if rel == "." {
-			continue
-		}
-		// Clean ONCE, then use the cleaned value for every decision below.
-		// Checking the escape on the cleaned path and the allow-list on the
-		// raw one let "docs/../evil.sh" be allowed by "--allow docs".
-		rel = filepath.ToSlash(filepath.Clean(rel))
-		if rel == ".." || strings.HasPrefix(rel, "../") {
-			scanned++
-			findings = append(findings, Failure{rel, "path escapes the tree being guarded; is --dir the repository root?"})
-			continue
-		}
-		if isAllowed(rel, allow) {
-			continue
-		}
-		full := filepath.Join(opts.Dir, filepath.FromSlash(rel))
-		fi, err := os.Lstat(full)
-		if err != nil {
-			if errors.Is(err, fs.ErrNotExist) {
-				continue // staged deletion, or gone: not an accumulation
-			}
-			scanned++
-			findings = append(findings, Failure{rel, "unreadable: " + err.Error() + " (cannot rule out machinery)"})
-			continue
-		}
-		isLink := fi.Mode()&os.ModeSymlink != 0
-		if fi.IsDir() {
-			// Git stages a directory only as a gitlink: a whole nested
-			// repository. That is the loudest possible violation of "prose,
-			// not machinery" and it must never pass as unclassifiable.
-			scanned++
-			findings = append(findings, Failure{rel, "directory staged: a submodule or gitlink is an entire repository"})
-			continue
-		}
-		if !isLink && !fi.Mode().IsRegular() {
-			// FAIL CLOSED. Every earlier hole in this mode was a "cannot
-			// classify this, so skip it" branch; there is now exactly one
-			// thing a staged path may be skipped for, and it is a deletion.
-			scanned++
-			findings = append(findings, Failure{rel, fmt.Sprintf("not a regular file (mode %v): cannot rule out machinery", fi.Mode().Type())})
-			continue
-		}
-		scanned++
-		if reasons := classify(full, rel, fi, isLink, denySet, source); len(reasons) > 0 {
-			findings = append(findings, Failure{rel, strings.Join(reasons, "; ")})
-		}
-	}
-	return scanned, findings, nil
-}
-
-// gitPath normalizes one path as git reports it.
-//
-// With core.quotePath on — the DEFAULT — `git diff --cached --name-only`
-// wraps any path containing non-ASCII or special bytes in double quotes with
-// C-style octal escapes. Taken literally such a path matches nothing on disk,
-// which is why this is decoded rather than trimmed: the alternative is a gate
-// that silently ignores every file whose name is not plain ASCII.
-func gitPath(raw string, mayBeQuoted bool) (string, error) {
-	s := raw
-	if mayBeQuoted && strings.HasPrefix(s, `"`) && strings.HasSuffix(s, `"`) && len(s) >= 2 {
-		unquoted, err := strconv.Unquote(s)
-		if err != nil {
-			return "", fmt.Errorf("cannot decode git-quoted path (try -z, or -c core.quotePath=false): %v", err)
-		}
-		s = unquoted
-	}
-	s = filepath.ToSlash(s)
-	s = strings.TrimPrefix(s, "./")
-	return s, nil
 }
 
 // normalizeAllow trims each entry to a bare repo-relative directory prefix.
@@ -376,9 +261,7 @@ func normalizeAllow(allow []string) []string {
 
 // isAllowed reports whether rel is, or lies beneath, a declared allow prefix.
 // A prefix genuinely covers everything beneath it, at any depth, and the same
-// answer is given in both the walk and the staged path — an --allow value that
-// behaved differently in the commit gate than in the audit would be a gate
-// disagreeing with its own check.
+// prefix covers everything beneath it at any depth.
 func isAllowed(rel string, allow []string) bool {
 	for _, a := range allow {
 		if rel == a || strings.HasPrefix(rel, a+"/") {

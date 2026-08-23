@@ -329,68 +329,6 @@ func TestParseDenyList(t *testing.T) {
 	})
 }
 
-// TestNoCodeStaged covers the commit-gate path: the gate refuses what is being
-// ADDED, not what already exists.
-func TestNoCodeStaged(t *testing.T) {
-	dir := t.TempDir()
-	writeMode(t, dir, "old.py", "print()", 0o644)
-	writeMode(t, dir, "new.py", "print()", 0o644)
-	writeMode(t, dir, "notes.md", "prose", 0o644)
-
-	t.Run("only staged paths are classified", func(t *testing.T) {
-		scanned, findings, err := NoCode(NoCodeOptions{
-			Dir: dir, Staged: []string{"new.py", "notes.md"}, StagedSet: true,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if scanned != 2 {
-			t.Errorf("scanned = %d, want 2", scanned)
-		}
-		wantFailures(t, findings, []string{"new.py"})
-		for _, f := range findings {
-			if f.Subject == "old.py" {
-				t.Error("old.py was reported: the gate must refuse what is added, not what exists")
-			}
-		}
-	})
-
-	t.Run("staged deletion is not an accumulation", func(t *testing.T) {
-		_, findings, err := NoCode(NoCodeOptions{
-			Dir: dir, Staged: []string{"deleted.py"}, StagedSet: true,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(findings) != 0 {
-			t.Errorf("a removed file was reported: %v", findings)
-		}
-	})
-
-	t.Run("staged with no paths reports nothing and does not walk", func(t *testing.T) {
-		scanned, findings, err := NoCode(NoCodeOptions{Dir: dir, StagedSet: true})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if scanned != 0 || len(findings) != 0 {
-			t.Errorf("scanned=%d findings=%v; an empty staged set is an empty commit", scanned, findings)
-		}
-	})
-
-	t.Run("--allow applies to staged paths too", func(t *testing.T) {
-		writeMode(t, dir, "history/frozen.py", "print()", 0o644)
-		_, findings, err := NoCode(NoCodeOptions{
-			Dir: dir, Staged: []string{"history/frozen.py"}, StagedSet: true, Allow: []string{"history"},
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(findings) != 0 {
-			t.Errorf("allowed path reported: %v", findings)
-		}
-	})
-}
-
 func TestNoCodeRefusals(t *testing.T) {
 	t.Run("missing directory refuses", func(t *testing.T) {
 		if _, _, err := NoCode(NoCodeOptions{Dir: "/nonexistent/nope"}); err == nil {
@@ -426,119 +364,6 @@ func TestNoCodeProvenanceCannotLie(t *testing.T) {
 	}
 }
 
-// The commit gate and the audit must not disagree about the same tree. Every
-// case here was a silent pass before: a path git quoted, a path with a
-// trailing space, an unreadable file, a wrong --dir.
-func TestNoCodeStagedDoesNotSilentlyPass(t *testing.T) {
-	dir := t.TempDir()
-	writeMode(t, dir, "café.sh", "#!/bin/sh\n", 0o644)
-	writeMode(t, dir, "README.md", "prose", 0o644)
-
-	t.Run("a git-quoted path is decoded, not skipped", func(t *testing.T) {
-		_, findings, err := NoCode(NoCodeOptions{
-			Dir: dir, Staged: []string{`"caf\303\251.sh"`}, StagedSet: true, StagedMayBeQuoted: true,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		wantOnly(t, findings, []string{"café.sh"})
-	})
-
-	t.Run("an undecodable quoted path is a finding, not a skip", func(t *testing.T) {
-		_, findings, err := NoCode(NoCodeOptions{
-			Dir: dir, Staged: []string{`"\q"`}, StagedSet: true, StagedMayBeQuoted: true,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(findings) != 1 {
-			t.Fatalf("findings = %v, want 1", findings)
-		}
-	})
-
-	t.Run("a path escaping the tree is a finding", func(t *testing.T) {
-		_, findings, err := NoCode(NoCodeOptions{
-			Dir: dir, Staged: []string{"../elsewhere/tool.py"}, StagedSet: true,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		wantFailures(t, findings, []string{"escapes the tree"})
-	})
-
-	t.Run("an unreadable staged file is a finding", func(t *testing.T) {
-		if os.Geteuid() == 0 {
-			t.Skip("root reads anything")
-		}
-		sub := t.TempDir()
-		writeMode(t, sub, "locked", "#!/bin/sh\n", 0o000)
-		_, findings, err := NoCode(NoCodeOptions{
-			Dir: sub, Staged: []string{"locked"}, StagedSet: true,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		wantFailures(t, findings, []string{"locked", "unreadable"})
-	})
-
-	t.Run("the gate and the audit agree on the same tree", func(t *testing.T) {
-		_, audit, err := NoCode(NoCodeOptions{Dir: dir})
-		if err != nil {
-			t.Fatal(err)
-		}
-		_, gated, err := NoCode(NoCodeOptions{
-			Dir: dir, Staged: []string{`"caf\303\251.sh"`, "README.md"}, StagedSet: true, StagedMayBeQuoted: true,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		// Compare the SETS, not the counts: a gate flagging an entirely
-		// different but equally sized set passed a count comparison.
-		set := func(fs []Failure) map[string]string {
-			m := map[string]string{}
-			for _, f := range fs {
-				m[f.Subject] = f.Reason
-			}
-			return m
-		}
-		a, g := set(audit), set(gated)
-		if len(a) != len(g) {
-			t.Fatalf("audit flagged %v; gate flagged %v", a, g)
-		}
-		for subj, reason := range a {
-			if g[subj] != reason {
-				t.Errorf("%s: audit says %q, gate says %q — the two must not disagree", subj, reason, g[subj])
-			}
-		}
-	})
-}
-
-// --allow must mean the same thing in both modes. It did not: a multi-segment
-// prefix worked in the walk (the directory matched and the walk skipped it)
-// and silently did not in the gate, which has no walk.
-func TestNoCodeAllowParityBetweenModes(t *testing.T) {
-	dir := t.TempDir()
-	writeMode(t, dir, "docs/history/old.py", "print()", 0o644)
-	opts := func(staged bool) NoCodeOptions {
-		o := NoCodeOptions{Dir: dir, Allow: []string{"docs/history"}}
-		if staged {
-			o.Staged, o.StagedSet = []string{"docs/history/old.py"}, true
-		}
-		return o
-	}
-	_, walk, err := NoCode(opts(false))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, gate, err := NoCode(opts(true))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(walk) != 0 || len(gate) != 0 {
-		t.Errorf("walk=%v gate=%v; both must honour the same prefix", walk, gate)
-	}
-}
-
 // A deny-list entry that cannot be an extension is a refusal. Each of these
 // built a list that matched nothing and reported a clean tree.
 func TestParseDenyListRefusesNonExtensions(t *testing.T) {
@@ -551,28 +376,6 @@ func TestParseDenyListRefusesNonExtensions(t *testing.T) {
 	}
 }
 
-// An Lstat failure that is NOT "file does not exist" must be a finding.
-// ENOTDIR is the reachable case: point --dir at the wrong level, or hand the
-// gate a path whose parent is a regular file, and every path fails to stat.
-// Skipping those silently is what let a misconfigured hook report a clean
-// commit having classified nothing.
-func TestNoCodeStagedNonExistErrorIsAFinding(t *testing.T) {
-	dir := t.TempDir()
-	writeMode(t, dir, "notes.md", "prose", 0o644)
-	_, findings, err := NoCode(NoCodeOptions{
-		Dir: dir, Staged: []string{"notes.md/inner.py"}, StagedSet: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(findings) != 1 {
-		t.Fatalf("findings = %v, want 1: a path that cannot be stat'd is not a deletion", findings)
-	}
-	if !strings.Contains(findings[0].Reason, "unreadable") {
-		t.Errorf("reason = %q, want an unreadable finding", findings[0].Reason)
-	}
-}
-
 func TestNoCodeTrailingWhitespaceInName(t *testing.T) {
 	dir := t.TempDir()
 	writeMode(t, dir, "trailing.py ", "print()", 0o644)
@@ -581,50 +384,6 @@ func TestNoCodeTrailingWhitespaceInName(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantFailures(t, findings, []string{"code extension .py"})
-}
-
-// Under -z git never quotes, so a name that begins and ends with a quote is
-// that name. Decoding it there turns a real file into a path that does not
-// exist, which the gate would read as a deletion — the recommended form
-// failing open while the older one caught it.
-func TestNoCodeStagedQuotingIsModeDependent(t *testing.T) {
-	dir := t.TempDir()
-	writeMode(t, dir, `"run"`, "#!/bin/sh\n", 0o755)
-
-	t.Run("NUL mode does not unquote", func(t *testing.T) {
-		_, findings, err := NoCode(NoCodeOptions{
-			Dir: dir, Staged: []string{`"run"`}, StagedSet: true, StagedMayBeQuoted: false,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		wantOnly(t, findings, []string{`"run"`})
-	})
-
-	t.Run("the gate and the audit agree on it", func(t *testing.T) {
-		_, audit, err := NoCode(NoCodeOptions{Dir: dir})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(audit) != 1 {
-			t.Fatalf("audit = %v, want 1", audit)
-		}
-	})
-}
-
-// A staged directory is a gitlink: a whole nested repository, which is the
-// loudest possible violation of prose-not-machinery. It used to be skipped as
-// unclassifiable while the audit failed the same tree.
-func TestNoCodeStagedSubmoduleIsAFinding(t *testing.T) {
-	dir := t.TempDir()
-	writeMode(t, dir, "tools/a.go", "package main", 0o644)
-	_, findings, err := NoCode(NoCodeOptions{
-		Dir: dir, Staged: []string{"tools"}, StagedSet: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantFailures(t, findings, []string{"tools", "submodule or gitlink"})
 }
 
 // --allow must not over-match: history must not allow history-of-tools.
@@ -640,17 +399,6 @@ func TestNoCodeAllowDoesNotOverMatchSiblings(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantOnly(t, findings, []string{"history-of-tools/run.py", "historical.py"})
-}
-
-func TestNoCodeStagedEscapeAfterCleaning(t *testing.T) {
-	dir := t.TempDir()
-	_, findings, err := NoCode(NoCodeOptions{
-		Dir: dir, Staged: []string{"sub/../../elsewhere/x.py"}, StagedSet: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantFailures(t, findings, []string{"escapes the tree"})
 }
 
 func TestParseDenyListRefusesZeroWidthSpace(t *testing.T) {
@@ -701,72 +449,10 @@ func TestNoCodeAuditFailsClosedLikeTheGate(t *testing.T) {
 	wantFailures(t, findings, []string{"pipe.sh", "not a regular file"})
 }
 
-// A whitespace-only filename was skipped by the first branch of the very
-// function whose stated rule is that deletion is the only skip.
-func TestNoCodeStagedWhitespaceNameIsClassified(t *testing.T) {
-	dir := t.TempDir()
-	writeMode(t, dir, " ", "#!/bin/sh\n", 0o644)
-	_, findings, err := NoCode(NoCodeOptions{
-		Dir: dir, Staged: []string{" "}, StagedSet: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantFailures(t, findings, []string{"shebang"})
-}
-
-// --allow must not cover a path that traverses back out of it.
-func TestNoCodeStagedAllowDoesNotCoverTraversal(t *testing.T) {
-	dir := t.TempDir()
-	writeMode(t, dir, "evil.sh", "#!/bin/sh\n", 0o644)
-	writeMode(t, dir, "docs/keep.md", "prose", 0o644)
-	_, findings, err := NoCode(NoCodeOptions{
-		Dir: dir, Staged: []string{"docs/../evil.sh"}, StagedSet: true, Allow: []string{"docs"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantOnly(t, findings, []string{"evil.sh"})
-}
-
-// The gate must report EVERY reason, as the audit does.
-func TestNoCodeStagedReportsAllReasons(t *testing.T) {
-	dir := t.TempDir()
-	writeMode(t, dir, "deploy.sh", "#!/bin/sh\n", 0o755)
-	_, findings, err := NoCode(NoCodeOptions{
-		Dir: dir, Staged: []string{"deploy.sh"}, StagedSet: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(findings) != 1 {
-		t.Fatalf("findings = %v", findings)
-	}
-	for _, want := range []string{"code extension .sh", "executable", "shebang"} {
-		if !strings.Contains(findings[0].Reason, want) {
-			t.Errorf("reason %q is missing %q; a gate that says only no teaches nothing", findings[0].Reason, want)
-		}
-	}
-}
-
 // DenyExt without DenySource must refuse: a finding may not name an unknown list.
 func TestNoCodeDenyExtWithoutSourceRefuses(t *testing.T) {
 	dir := t.TempDir()
 	if _, _, err := NoCode(NoCodeOptions{Dir: dir, DenyExt: []string{".foo"}}); err == nil {
 		t.Error("accepted a deny-list with no stated provenance")
-	}
-}
-
-func TestNoCodeStagedStripsLeadingDotSlash(t *testing.T) {
-	dir := t.TempDir()
-	writeMode(t, dir, "history/old.py", "x", 0o644)
-	_, findings, err := NoCode(NoCodeOptions{
-		Dir: dir, Staged: []string{"./history/old.py"}, StagedSet: true, Allow: []string{"history"},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(findings) != 0 {
-		t.Errorf("./ prefix defeated --allow: %v", findings)
 	}
 }

@@ -415,23 +415,6 @@ func TestNoCodeCLI(t *testing.T) {
 		}
 	})
 
-	t.Run("--staged reads paths from stdin and gates only those", func(t *testing.T) {
-		dir := newTree(t, map[string]string{"old.py": "print()", "new.py": "print()"})
-		saved := stdinReader
-		defer func() { stdinReader = saved }()
-		stdinReader = strings.NewReader("new.py\n")
-		var stdout, stderr bytes.Buffer
-		if got := run([]string{"nocode", "--dir", dir, "--staged"}, &stdout, &stderr); got != 1 {
-			t.Fatalf("exit = %d, want 1", got)
-		}
-		if !strings.Contains(stderr.String(), "new.py") {
-			t.Errorf("staged file not gated: %s", stderr.String())
-		}
-		if strings.Contains(stderr.String(), "old.py") {
-			t.Errorf("gate reported an existing file: %s", stderr.String())
-		}
-	})
-
 	t.Run("--allow is repeatable", func(t *testing.T) {
 		dir := newTree(t, map[string]string{"history/a.py": "x", "frozen/b.py": "x"})
 		var stdout, stderr bytes.Buffer
@@ -543,52 +526,4 @@ func TestEffectiveDenyList(t *testing.T) {
 			t.Errorf("len = %d, want %d", len(got), len(floor))
 		}
 	})
-}
-
-func TestNoCodeGateAndPrintAreExclusive(t *testing.T) {
-	var stdout, stderr bytes.Buffer
-	dir := t.TempDir()
-	if got := run([]string{"nocode", "--dir", dir, "--staged", "--print-deny-list"}, &stdout, &stderr); got != 2 {
-		t.Fatalf("exit = %d, want 2: a hook given both would print and exit 0 having gated nothing", got)
-	}
-}
-
-func TestNoCodeStagedAcceptsNulSeparatedPaths(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dir, "tool.py"), []byte("print()"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	saved := stdinReader
-	defer func() { stdinReader = saved }()
-	if err := os.WriteFile(filepath.Join(dir, "notes.md"), []byte("prose"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	stdinReader = strings.NewReader("tool.py\x00notes.md\x00")
-	var stdout, stderr bytes.Buffer
-	if got := run([]string{"nocode", "--dir", dir, "--staged"}, &stdout, &stderr); got != 1 {
-		t.Fatalf("exit = %d, want 1 (git -z output must gate)", got)
-	}
-	// The exit code alone cannot tell "parsed the separator" from "failed to":
-	// an unparsed blob becomes one bogus path and also exits 1. The SUBJECT is
-	// what distinguishes them.
-	if !strings.Contains(stderr.String(), "NOCODE FAIL tool.py:") {
-		t.Errorf("NUL separator not parsed; stderr: %q", stderr.String())
-	}
-	if strings.Contains(stderr.String(), "unreadable") {
-		t.Errorf("the whole blob was treated as one path: %q", stderr.String())
-	}
-}
-
-func TestNoCodeStagedClassifiedNothingIsSaidOutLoud(t *testing.T) {
-	dir := t.TempDir() // the staged path does not exist here
-	saved := stdinReader
-	defer func() { stdinReader = saved }()
-	stdinReader = strings.NewReader("tool.py\n")
-	var stdout, stderr bytes.Buffer
-	if got := run([]string{"nocode", "--dir", dir, "--staged"}, &stdout, &stderr); got != 0 {
-		t.Fatalf("exit = %d, want 0: a pure-deletion commit is legitimate", got)
-	}
-	if !strings.Contains(stderr.String(), "classified NOTHING out of 1 staged path") {
-		t.Errorf("a run that looked at nothing was silent: %q", stderr.String())
-	}
 }

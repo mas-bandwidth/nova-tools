@@ -268,24 +268,24 @@ would be right for exactly one model); compressibility or density.
 
 ---
 
-### nocode — the self/machinery separation, as a check and as a commit gate
+### nocode — the self/machinery separation, as a check
 
 ```
 nova-check nocode --dir <dir>                      audit a whole tree
-nova-check nocode --dir <dir> --staged             gate what a commit is adding
 nova-check nocode --print-deny-list                print the list in force
     [--allow <prefix>]      where machinery may live (repeatable, empty by default)
     [--deny-ext <list|@file>]   replace the floor deny-list wholesale
-    [--deny-ext-add <list>]     extend the floor deny-list
+    [--deny-ext-add <list|@file>]  extend the floor deny-list
 ```
 
 **Asserts.** A self repo contains prose, not machinery: no code files and no
 executables under `--dir`, skipping `.git` and anything the caller declares
-with `--allow`. **Both modes fail closed: a file that cannot be classified is a
-finding, not a pass.** Regular files and symlinks are classified on their
-merits; devices, sockets and fifos are reported as *not a regular file*,
-because a thing that is not prose and cannot be read is exactly what this
-check exists to refuse.
+with `--allow`. **It fails closed on anything it cannot read: an unreadable file, a device, a
+socket or a fifo is a finding, not a pass**, because a thing that is not prose
+and cannot be read is what this check exists to refuse. **It does NOT fail
+closed on a symlink**, whose name is classified while its target is never
+followed — so a link named `runbook` pointing at a shell passes, and that is a
+declared limit rather than an absolute this section could claim.
 
 A file is flagged when any of three hold, and **all that hold are reported**,
 because a gate that says only *no* teaches nothing:
@@ -337,10 +337,8 @@ Every finding **names the list that produced it** (`floor list`, `--deny-ext`,
 or `floor list + --deny-ext-add`), and the `NOCODE OK` line names it too, so
 neither a red nor a green hides the basis it was reached on.
 `--print-deny-list` prints what is actually in force and exits 0; it needs no
-`--dir`, because what the gate forbids is answerable without pointing it
-anywhere. It is **mutually exclusive with `--staged`**: a hook given both would
-print a list and exit 0 having gated nothing. Both flags accept `@file` as well
-as a comma list.
+`--dir`, because what the check forbids is answerable without pointing it
+anywhere. Both deny-list flags accept `@file` as well as a comma list.
 
 **An effective deny-list that is empty, unreadable, or not made of extensions
 is exit 2** — a guard that cannot say what it forbids refuses rather than
@@ -362,32 +360,6 @@ that: the tool this was ported from defaulted to allowing its own repo's
 guess about someone else's filenames, and precisely the class the no-defaults
 law names. Which directory is a frozen record is the line's to declare.
 
-**`--staged` is the commit gate**, and the difference from the audit is
-deliberate. It reads repo-relative paths from stdin, NUL-separated or one per line — the
-separator is detected, so `git diff --cached --name-only -z` and the
-newline form both work — and classifies exactly those. **`-z` is the form to
-write down**, because without it git applies `core.quotePath` (on by default)
-and emits `"caf\303\251.sh"` for any non-ASCII name. In the newline form such
-a path is decoded rather than ignored, and one that cannot be decoded is a
-finding. **Decoding is applied only to the newline form**: under `-z` git never
-quotes, so a file whose name genuinely begins and ends with a quote is that
-name, and decoding it there would turn a real file into a path that does not
-exist — the recommended form failing open while the older one caught it.
-
-**Pair `-z` with `--diff-filter=d` — everything except deletions — rather than
-a positive list.** `ACM` omits renames, so `git mv notes.txt deploy.sh` hands
-the gate an empty list and commits clean while the audit fails the same tree. **The gate refuses what is being
-ADDED, not what already exists.** Gating the whole tree at commit time would
-make the next commit hostage to deleting every finished investigation in the
-repo, which is how a reasonable rule becomes a rule everybody turns off. A
-staged path that no longer exists on disk — a staged deletion — is skipped
-rather than reported: taking machinery back out of the self is the direction
-this gate wants.
-
-A hook is not repo content and does not travel with the seed. What travels is
-the tool and this contract; wiring it into `.git/hooks/pre-commit` is each
-line's own act, and [README.md](README.md) shows the one line it takes.
-
 On Windows there is no executable bit, so that half of the check is blind
 there; the extension list — which includes `.exe .bat .cmd .ps1 .vbs` for
 exactly that reason — and the shebang test carry it.
@@ -401,8 +373,7 @@ resolve to a directory — it is resolved through symlinks first, so a `--dir`
 naming a link to the repo scans the repo rather than passing with `files=0`; when the
 effective deny-list is empty, unreadable, or contains something that is not an
 extension; when `--deny-ext` and `--deny-ext-add` are given together; when
-`--print-deny-list` and `--staged` are given together; or on an unexpected
-positional argument.
+or on an unexpected positional argument.
 
 **Deliberately does not check:** file contents beyond the first two bytes (an
 extension list plus a shebang test is auditable; sniffing a whole file for
@@ -410,8 +381,10 @@ intent is a heuristic that lies both ways); languages beyond the listed
 extensions (extend the list, don't sniff); code *fences inside markdown* —
 quoted code is prose about code and exactly what a self repo should hold;
 a symlink's TARGET (the link's own name is classified, but the target is never
-read, so a link named `notes.md` pointing at a script passes); file CONTENTS
-beyond the first two bytes; the tools repo itself — this check
+read, so a link named `notes.md` pointing at a script passes); machinery that
+is neither a listed extension nor executable nor a script — a `Makefile`, a
+`Dockerfile`, a CI workflow — which is a real gap and is tracked as one; the
+tools repo itself — this check
 aims at the self repo, and this repo would rightly fail it.
 
 ---

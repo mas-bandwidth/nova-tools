@@ -35,7 +35,6 @@ nova-check links  --dir <dir>                      # every relative inline link 
 nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, in bytes
 nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>   # the same budget, in the unit a context window actually spends
 nova-check nocode --dir <dir>                      # no code, executables or scripts in a self repo (the self/machinery separation)
-nova-check nocode --dir <dir> --staged             # the same rule as a commit gate: what this commit ADDS, read from stdin
 nova-check nocode --print-deny-list                # the deny-list actually in force
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 ```
@@ -191,61 +190,23 @@ built for is exactly as measured as the gold set you write for it.
 Machinery lives here, not in the self repo — `nova-check nocode` pointed at
 this repo would rightly fail it (exit 1), which is the separation working.
 
-### The separation as a gate, not only as an audit
+### Why this one is worth running on a schedule
 
 A seed can make the self/machinery split canon and still have nothing make it
 go red. That is not hypothetical: a rule can be correct, written down, and
 broken anyway, because a `.py` file appearing in a prose-only repo produces no
 error from any instrument — so observing the rule and violating it look
-identical from the inside.
+identical from the inside. This check is what makes that difference visible,
+and it is worth a place in whatever runs over your self repo regularly.
 
-`nova-check nocode --dir <dir>` audits a tree. `--staged` is the same rule
-moved from something remembered to something that refuses, in your self repo's
-`.git/hooks/pre-commit`:
-
-```sh
-#!/bin/sh
-git diff --cached --name-only -z --diff-filter=d |
-    nova-check nocode --dir . --staged || exit 1
-```
-
-**`chmod +x .git/hooks/pre-commit`, or none of this runs.** A hook without the
-executable bit is skipped; git prints a hint and the commit lands anyway, which
-looks exactly like a gate that found nothing.
-
-Add `--allow YOUR-RECORD-DIR` only for a directory you have decided is a frozen
-record — the block above deliberately does not include one. Nothing is allowed
-by default, and a narrowing you did not declare is not one you meant.
-
-**Use `-z`, and `--diff-filter=d` rather than a positive list.** Both details
-are load-bearing, and both were wrong here first:
-
-- Without `-z`, git applies `core.quotePath`, which is on by default and wraps
-  any path containing non-ASCII bytes in quotes and octal escapes —
-  `"caf\303\251.sh"`. The newline form still works (`--staged` decodes it),
-  but `-z` never quotes and never breaks on a newline in a filename.
-- `--diff-filter=d` means *everything except deletions*. A positive list like
-  `ACM` silently omits **renames**, so `git mv notes.txt deploy.sh` hands the
-  gate an empty list and commits clean — while the audit fails the same tree.
-
-Run the hook from the repository root, or point `--dir` at it. A run that
-classifies nothing prints a warning naming every reason it might have — all
-deleted, all allowed, a filter that dropped them, or the wrong `--dir` — and
-still exits 0, because a pure-deletion commit is legitimate and failing it
-would be wrong. **The warning is the signal that a hook is misconfigured; the
-exit code is not**, since a commit that removes machinery and a hook pointed at
-the wrong directory both classify nothing.
-
-It gates what the commit is **adding**, not what the tree already holds, so
-adopting it does not hold your next commit hostage to cleaning up your past.
-Name your own frozen-record directory in `--allow`; nothing is allowed by
-default, because which directory is a record is yours to declare and not this
-tool's to guess.
-
-A hook is not repo content, so it does not travel with the seed and it does
-not travel between your own machines — wiring it is a per-clone act. Enforcing
-this upstream of the commit, as a check on the remote, supersedes the hook
-outright and is the better answer where you can have it.
+**A commit-time gate is the obvious next form and is deliberately not here
+yet.** The honest reason: a gate handed a list of changed paths classifies the
+WORKING TREE, while git commits the INDEX, and the two are not the same — `git
+add script.sh && rm script.sh` commits the script while the working tree shows
+nothing to check. Getting that right means reading the index itself rather
+than the filesystem. A commit gate that can be walked past silently is worse
+than none, because the claim of enforcement is what stops anyone checking, so
+it ships when it is right.
 
 ## License
 

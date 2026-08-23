@@ -30,7 +30,6 @@ usage:
         [--allow <prefix>]     where machinery may live (repeatable, empty by default)
         [--deny-ext <l|@f>]    replace the floor deny-list wholesale
         [--deny-ext-add <l|@f>] extend the floor deny-list
-        [--staged]             classify repo-relative paths from stdin (the commit gate)
         [--print-deny-list]    print the deny-list in force, exit 0
   nova-check floors --core <SEED-CORE.md> --source <SEED.md>
                                                      the door's floor set matches the seed's
@@ -219,10 +218,6 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// stdinReader is where --staged reads its path list. A variable so a test can
-// drive the commit-gate path without a process boundary.
-var stdinReader io.Reader = os.Stdin
-
 // repeatable collects a flag given more than once. Every scope narrowing is
 // the caller's, stated per run, and starts empty.
 type repeatable []string
@@ -236,7 +231,6 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	denyExt := fs.String("deny-ext", "", "replace the floor deny-list: comma list, or @file")
 	denyExtAdd := fs.String("deny-ext-add", "", "extend the floor deny-list: comma list, or @file")
 	printList := fs.Bool("print-deny-list", false, "print the deny-list in force and exit 0")
-	staged := fs.Bool("staged", false, "classify repo-relative paths read from stdin (the commit gate)")
 	var allow repeatable
 	fs.Var(&allow, "allow", "path prefix where machinery may live (repeatable; empty by default)")
 
@@ -250,11 +244,6 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	}
 	if *denyExt != "" && *denyExtAdd != "" {
 		fmt.Fprintln(stderr, "nova-check nocode: --deny-ext and --deny-ext-add are mutually exclusive")
-		return 2
-	}
-	// A hook given both would print a list and exit 0 having gated nothing.
-	if *printList && *staged {
-		fmt.Fprintln(stderr, "nova-check nocode: --print-deny-list and --staged are mutually exclusive; a gate that only prints is not a gate")
 		return 2
 	}
 
@@ -280,17 +269,6 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	}
 
 	opts := check.NoCodeOptions{Dir: *dir, Allow: allow, DenyExt: deny, DenySource: source}
-	if *staged {
-		paths, nulSeparated, err := readPaths(stdinReader)
-		if err != nil {
-			fmt.Fprintf(stderr, "nova-check nocode: cannot read staged paths: %v\n", err)
-			return 2
-		}
-		opts.Staged, opts.StagedSet = paths, true
-		// Only the newline form can carry git's quoting; under -z a name that
-		// begins and ends with a quote is that name, not an encoding.
-		opts.StagedMayBeQuoted = !nulSeparated
-	}
 
 	scanned, findings, err := check.NoCode(opts)
 	if err != nil {
@@ -303,21 +281,12 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		}
 		return 1
 	}
-	// A staged run that classified nothing is either a pure-deletion commit or
-	// a hook pointed at the wrong directory, and those are indistinguishable
-	// from here. Failing would break the legitimate case, so it is said out
-	// loud instead: a gate that looked at nothing should not read as a gate
-	// that found nothing.
-	if !opts.StagedSet && scanned == 0 {
+	// A run that classified nothing should not read as a run that found
+	// nothing: an empty tree and a wrong --dir are indistinguishable here.
+	if scanned == 0 {
 		// The audit had no such warning, so a --dir that resolved to an empty
 		// or unreadable tree read as a clean repo with nothing to say.
 		fmt.Fprintf(stderr, "nova-check nocode: classified NOTHING under %s — an empty tree, everything allowed, or the wrong directory\n", *dir)
-	}
-	if opts.StagedSet && scanned == 0 {
-		// Fires on an empty path list too: a hook that hands the gate nothing
-		// is at least as suspicious as one whose paths all vanished, and a
-		// --diff-filter that silently drops renames produces exactly that.
-		fmt.Fprintf(stderr, "nova-check nocode: classified NOTHING out of %d staged path(s) — all deleted, all allowed, a --diff-filter that dropped them, or --dir is not the repository root\n", len(opts.Staged))
 	}
 	fmt.Fprintf(stdout, "NOCODE OK files=%d clean deny-list=%s\n", scanned, source)
 	return 0
@@ -357,32 +326,6 @@ func effectiveDenyList(replace, add string) ([]string, string, error) {
 	}
 	sort.Strings(merged)
 	return merged, check.DenyExtended, nil
-}
-
-// readPaths reads the staged path list, accepting either form git emits:
-// NUL-separated (`-z`, which never quotes and is the safe one) or one per
-// line. The separator is detected rather than demanded, so a hook written
-// either way behaves the same.
-func readPaths(r io.Reader) (paths []string, nulSeparated bool, err error) {
-	b, err := io.ReadAll(r)
-	if err != nil {
-		return nil, false, err
-	}
-	s := string(b)
-	sep := "\n"
-	if strings.ContainsRune(s, 0) {
-		sep, nulSeparated = "\x00", true
-	}
-	var out []string
-	for _, p := range strings.Split(s, sep) {
-		if !nulSeparated {
-			p = strings.TrimSuffix(p, "\r")
-		}
-		if p != "" {
-			out = append(out, p)
-		}
-	}
-	return out, nulSeparated, nil
 }
 
 func cmdFloors(args []string, stdout, stderr io.Writer) int {
