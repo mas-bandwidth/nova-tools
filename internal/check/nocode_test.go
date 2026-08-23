@@ -622,9 +622,73 @@ func TestParseNameLinesRefusesMalformed(t *testing.T) {
 		"name:",                 // empty
 		"path:",                 // empty
 		"path:../escape/",       // traversal
+		// Each of the six below was ACCEPTED by the first version of this
+		// parser, found at the cold-read gate. Every one builds an entry that
+		// matches nothing, survives the emptiness guard because other entries
+		// are fine, and leaves a floor forbidding less than it says — which is
+		// the fail-open shape this check exists against, and which validExt
+		// had already been written to refuse for the extension list.
+		"name:make*",          // glob; names are matched literally
+		"name:*.yml",          // glob
+		"name:make file",      // embedded whitespace
+		"name:makefile\u200b", // zero-width space
+		"path:*",              // glob
+		"path:./.github/",     // a "." segment never matches a cleaned path
 	} {
 		if _, _, err := parseNameLines(bad); err == nil {
 			t.Errorf("parseNameLines(%q) returned no error, want refusal", bad)
 		}
 	}
+}
+
+// TestNoCodeLocationIsAnchoredAtTheRepoRoot pins a decision rather than an
+// accident. A CI system reads .github/workflows/ at the root and nowhere else,
+// so a nested copy is not that machinery and is not flagged by location. Left
+// untested, this would look like an oversight to the next reader and could be
+// "fixed" into a false red.
+func TestNoCodeLocationIsAnchoredAtTheRepoRoot(t *testing.T) {
+	files := map[string]os.FileMode{
+		"NOTES.md":                     0o644,
+		".github/workflows/ci.yml":     0o644,
+		"sub/.github/workflows/ci.yml": 0o644,
+	}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{".github/workflows/ci.yml"})
+}
+
+// TestNoCodeCompositeActionIsFlagged: a composite action executes on the
+// runner exactly as a workflow does and lives one directory over, so a floor
+// that catches only .github/workflows/ leaves the same consequence class open.
+// Matched by name rather than by widening the prefix to .github/, which also
+// holds issue templates and CONTRIBUTING.
+func TestNoCodeCompositeActionIsFlagged(t *testing.T) {
+	files := map[string]os.FileMode{
+		"NOTES.md":                          0o644,
+		".github/actions/deploy/action.yml": 0o644,
+		".github/ISSUE_TEMPLATE/bug.md":     0o644,
+		".github/CONTRIBUTING.md":           0o644,
+	}
+	_, findings, err := scan(t, files, nil, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, []string{".github/actions/deploy/action.yml"})
+}
+
+// TestNoCodeProseTaskfilePasses is the false red this list can least afford. A
+// writer's own taskfile.yml of things to do is ordinary prose, and a floor that
+// calls it "build machinery by name" says something untrue about it. Entries
+// for it were listed and then removed; this pins the removal so it is not
+// reinstated without an argument.
+func TestNoCodeProseTaskfilePasses(t *testing.T) {
+	files := map[string]os.FileMode{"NOTES.md": 0o644, "taskfile.yml": 0o644}
+	contents := map[string]string{"taskfile.yml": "todo:\n  - write\n"}
+	_, findings, err := scan(t, files, contents, nil, NoCodeOptions{})
+	if err != nil {
+		t.Fatalf("NoCode: %v", err)
+	}
+	wantOnly(t, findings, nil)
 }

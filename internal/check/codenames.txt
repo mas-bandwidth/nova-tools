@@ -52,8 +52,13 @@ name:procfile
 
 # command runners: every entry is a shell recipe
 name:justfile
-name:taskfile.yml
-name:taskfile.yaml
+#
+# taskfile.yml and taskfile.yaml were listed and are deliberately REMOVED. A
+# writer's own "taskfile.yml" of things to do is a completely ordinary prose
+# file, and flagging it says something false about it — the false red this list
+# can least afford, since a floor that misfires is one an adopter routes around
+# rather than uses. Task also reads Taskfile.dist.yml, which was not listed, so
+# the entry bought weak coverage at the highest collision risk in the file.
 
 # C and C++ build machinery; CMake's language is a scripting language
 name:cmakelists.txt
@@ -62,6 +67,13 @@ name:cmakelists.txt
 # directories and files exist for one purpose: to run commands on a remote.
 path:.github/workflows/
 path:.circleci/
+# composite and JavaScript actions execute on the runner exactly as a workflow
+# does, and they live one directory over at .github/actions/<name>/action.yml.
+# Matched by name rather than by a wider .github/ prefix, because .github also
+# holds legitimate prose: issue templates, CONTRIBUTING, a pull-request
+# template. The prefix is kept narrow and the residue is stated in SPEC.
+name:action.yml
+name:action.yaml
 name:.gitlab-ci.yml
 name:.travis.yml
 name:azure-pipelines.yml

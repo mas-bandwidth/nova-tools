@@ -96,15 +96,15 @@ func parseNameLines(s string) (map[string]bool, []string, error) {
 		switch {
 		case strings.HasPrefix(line, "name:"):
 			v := strings.TrimSpace(strings.TrimPrefix(line, "name:"))
-			if v == "" || strings.ContainsAny(v, "/\\") {
-				return nil, nil, fmt.Errorf("floor name list: %q is not a bare file name", line)
+			if err := validName(v, line); err != nil {
+				return nil, nil, err
 			}
 			names[v] = true
 		case strings.HasPrefix(line, "path:"):
 			v := strings.TrimSpace(strings.TrimPrefix(line, "path:"))
 			v = strings.Trim(filepath.ToSlash(v), "/")
-			if v == "" || strings.Contains(v, "..") {
-				return nil, nil, fmt.Errorf("floor name list: %q is not a usable path prefix", line)
+			if err := validPrefix(v, line); err != nil {
+				return nil, nil, err
 			}
 			if !seenPrefix[v] {
 				seenPrefix[v] = true
@@ -116,6 +116,48 @@ func parseNameLines(s string) (map[string]bool, []string, error) {
 	}
 	sort.Strings(prefixes)
 	return names, prefixes, nil
+}
+
+// validName and validPrefix hold the name list to the SAME standard validExt
+// holds the extension list to, and they exist because the first version of this
+// parser did not. It accepted globs, embedded whitespace, zero-width spaces and
+// a leading "./" — every one of which builds an entry that matches nothing,
+// survives the emptiness guard because other entries are fine, prints happily
+// in --print-deny-list, and leaves a floor quietly forbidding less than it
+// says. That is the exact fail-open this check exists against, written into the
+// commit whose own argument condemns it. Found at the gate.
+func validName(v, line string) error {
+	switch {
+	case v == "":
+		return fmt.Errorf("floor name list: %q has an empty name", line)
+	case strings.ContainsAny(v, "/\\"):
+		return fmt.Errorf("floor name list: %q is a path, not a bare file name; use path: for a location", line)
+	case strings.ContainsAny(v, "*?[]"):
+		return fmt.Errorf("floor name list: %q looks like a glob; names are matched literally", line)
+	case strings.IndexFunc(v, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }) >= 0:
+		return fmt.Errorf("floor name list: %q contains whitespace or a non-printable character", line)
+	}
+	return nil
+}
+
+func validPrefix(v, line string) error {
+	switch {
+	case v == "":
+		return fmt.Errorf("floor name list: %q has an empty path prefix", line)
+	case strings.ContainsAny(v, "*?[]"):
+		return fmt.Errorf("floor name list: %q looks like a glob; prefixes are matched literally", line)
+	case strings.IndexFunc(v, func(r rune) bool { return unicode.IsSpace(r) || !unicode.IsPrint(r) }) >= 0:
+		return fmt.Errorf("floor name list: %q contains whitespace or a non-printable character", line)
+	}
+	// "." and ".." segments would each build a prefix that never matches a
+	// cleaned relative path, so they are refused rather than normalized away:
+	// a silent normalization hides which entry the author actually wrote.
+	for _, seg := range strings.Split(v, "/") {
+		if seg == "" || seg == "." || seg == ".." {
+			return fmt.Errorf("floor name list: %q is not a clean path prefix (empty, . or .. segment)", line)
+		}
+	}
+	return nil
 }
 
 // parseExtLines reads one extension per line, ignoring blanks and # comments.

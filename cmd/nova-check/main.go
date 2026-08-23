@@ -28,9 +28,13 @@ usage:
                                                      kernel size budget, in tokens
   nova-check nocode --dir <dir>                      no code files in a self repo
         [--allow <prefix>]     where machinery may live (repeatable, empty by default)
-        [--deny-ext <l|@f>]    replace the floor deny-list wholesale
-        [--deny-ext-add <l|@f>] extend the floor deny-list
-        [--print-deny-list]    print the deny-list in force, exit 0
+        [--deny-ext <l|@f>]    replace the floor EXTENSION list wholesale
+        [--deny-ext-add <l|@f>] extend the floor EXTENSION list
+        [--print-deny-list]    print both floors in force, exit 0
+    two floors: an EXTENSION list, and a NAME list for build machinery named
+    or located rather than extensioned (Makefile, .github/workflows/). The
+    --deny-ext flags govern the EXTENSION list only; --allow is the escape
+    for the name floor, and names where machinery may live.
   nova-check floors --core <SEED-CORE.md> --source <SEED.md>
                                                      the door's floor set matches the seed's
 
@@ -228,9 +232,9 @@ func (r *repeatable) Set(v string) error { *r = append(*r, v); return nil }
 func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("nocode", flag.ContinueOnError)
 	dir := fs.String("dir", "", "self-repo directory to scan (required)")
-	denyExt := fs.String("deny-ext", "", "replace the floor deny-list: comma list, or @file")
-	denyExtAdd := fs.String("deny-ext-add", "", "extend the floor deny-list: comma list, or @file")
-	printList := fs.Bool("print-deny-list", false, "print the deny-list in force and exit 0")
+	denyExt := fs.String("deny-ext", "", "replace the floor EXTENSION list (not the name floor): comma list, or @file")
+	denyExtAdd := fs.String("deny-ext-add", "", "extend the floor EXTENSION list (not the name floor): comma list, or @file")
+	printList := fs.Bool("print-deny-list", false, "print both floors in force (extensions and names) and exit 0")
 	var allow repeatable
 	fs.Var(&allow, "allow", "path prefix where machinery may live (repeatable; empty by default)")
 

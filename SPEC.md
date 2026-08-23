@@ -314,13 +314,18 @@ until this check read the first two bytes it passed clean.
 
 **The floor NAME list is a second list answering a different question**, and it
 is data on the same terms — [`internal/check/codenames.txt`](internal/check/codenames.txt),
-embedded, one entry per line, each carrying its reason. An extension denotes a
+embedded, one entry per line, each carrying its reason. It is **not exhaustive
+and does not try to be** — it is extended deliberately, entry by entry with its
+reason, on the same policy as the extension list. An extension denotes a
 **language**. Build and orchestration files are identified by their exact name
 or by where they sit, and several carry no extension, no shebang and no
 executable bit at all: a `Makefile` is machinery because make runs it, and
-before this list it passed clean. Entries take two shapes — `name:<basename>`,
+before this list it passed clean. Entries take two shapes: `name:<basename>`,
 matched case-insensitively anywhere in the tree, and `path:<prefix>/`, matched
-against the repo-relative path.
+against the repo-relative path and **anchored at the repo root**. `.github/
+workflows/ci.yml` is caught; `sub/.github/workflows/ci.yml` is not, because
+that is not a location a CI system reads, and a test pins the decision so it
+cannot drift into an accident.
 
 **Why `.yml` is not simply added to the extension list.** Because that would be
 wrong. Prose repos legitimately carry YAML data and front matter, and a floor
@@ -416,10 +421,16 @@ extensions (extend the list, don't sniff); code *fences inside markdown* —
 quoted code is prose about code and exactly what a self repo should hold;
 a symlink's TARGET (the link's own name is classified, but the target is never
 read, so a link named `notes.md` pointing at a script passes); build machinery
-whose name is not on the floor name list — that list is extended deliberately,
-entry by entry with its reason, and never inferred; YAML anywhere outside the
-named CI locations, deliberately, since data and front matter are legitimate
-prose-repo content; the tools repo itself — this check
+whose name or location is not on the floor name list, **which is a real
+residue and is named here rather than implied away**: `docker-compose.yml`,
+`.pre-commit-config.yaml`, `meson.build`, `BUILD.bazel`, a `package.json` with
+a `postinstall` script, and other CI systems' own directories are all machinery
+this list does not currently reach. The list grows by decision, never by
+sniffing. Also unreached: anything below a **symlinked directory** — a link
+named `workflows` is caught by name, but a link named `.github` pointing at a
+tree of workflows is not, since the target is never followed; and YAML outside
+the named CI locations, deliberately, since data and front matter are
+legitimate prose-repo content. Also the tools repo itself — this check
 aims at the self repo, and this repo would rightly fail it.
 
 ---
