@@ -237,10 +237,16 @@ jobs:
           # unknown flag, so "non-zero" would pass with --deny-ext misspelled
           # and the flag under test never exercised. The message is asserted
           # for the same reason.
+          # The @path is RELATIVE on purpose. An absolute POSIX path here is
+          # rewritten by git-bash on Windows — "@/nonexistent/list.txt" reached
+          # the binary as "C:/Program Files/Git/nonexistent/list.txt" — so the
+          # exit code held and the message assertion failed on a spelling this
+          # step never chose. A relative name is passed through unchanged by
+          # every shell in the matrix.
           t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"
-          set +e; out=$("$BIN" nocode --dir "$t" --deny-ext "@/nonexistent/list.txt" 2>&1); rc=$?; set -e
+          set +e; out=$("$BIN" nocode --dir "$t" --deny-ext "@no-such-deny-list.txt" 2>&1); rc=$?; set -e
           [ "$rc" -eq 2 ] || { echo "want exit 2, got $rc: $out"; exit 1; }
           case "$out" in
-            *"deny-list file: open /nonexistent/list.txt"*) echo "ok: unreadable deny-list refused" ;;
+            *"deny-list file: open no-such-deny-list.txt"*) echo "ok: unreadable deny-list refused" ;;
             *) echo "wrong message: $out"; exit 1 ;;
           esac
