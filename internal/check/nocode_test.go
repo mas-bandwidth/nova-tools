@@ -492,8 +492,23 @@ func TestNoCodeStagedDoesNotSilentlyPass(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(audit) != len(gated) {
-			t.Errorf("audit flagged %v; gate flagged %v — the two must not disagree", audit, gated)
+		// Compare the SETS, not the counts: a gate flagging an entirely
+		// different but equally sized set passed a count comparison.
+		set := func(fs []Failure) map[string]string {
+			m := map[string]string{}
+			for _, f := range fs {
+				m[f.Subject] = f.Reason
+			}
+			return m
+		}
+		a, g := set(audit), set(gated)
+		if len(a) != len(g) {
+			t.Fatalf("audit flagged %v; gate flagged %v", a, g)
+		}
+		for subj, reason := range a {
+			if g[subj] != reason {
+				t.Errorf("%s: audit says %q, gate says %q — the two must not disagree", subj, reason, g[subj])
+			}
 		}
 	})
 }
@@ -641,5 +656,117 @@ func TestNoCodeStagedEscapeAfterCleaning(t *testing.T) {
 func TestParseDenyListRefusesZeroWidthSpace(t *testing.T) {
 	if _, err := ParseDenyList(".py​"); err == nil {
 		t.Error("accepted a zero-width space: a one-entry list that forbids nothing")
+	}
+}
+
+// --dir naming a SYMLINK to the repo. os.Stat follows the link, so the
+// directory check passed and WalkDir then saw the root as a single non-dir
+// entry: a clean pass over a tree never opened. On macOS /var is such a link.
+func TestNoCodeDirIsASymlinkToTheTree(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeMode(t, real, "deploy.sh", "#!/bin/sh\n", 0o755)
+	link := filepath.Join(base, "link")
+	if err := os.Symlink("real", link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	scanned, findings, err := NoCode(NoCodeOptions{Dir: link})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned == 0 {
+		t.Fatal("scanned nothing through a symlinked root: a clean pass over a tree never opened")
+	}
+	wantFailures(t, findings, []string{"deploy.sh"})
+}
+
+// The audit must not be the weaker mode. Every one of these was a finding in
+// the gate and a silent pass in the audit.
+func TestNoCodeAuditFailsClosedLikeTheGate(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, "README.md", "prose", 0o644)
+	if err := syscallMkfifo(filepath.Join(dir, "pipe.sh")); err != nil {
+		t.Skipf("fifo unavailable: %v", err)
+	}
+	scanned, findings, err := NoCode(NoCodeOptions{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if scanned != 2 {
+		t.Errorf("scanned = %d, want 2", scanned)
+	}
+	wantFailures(t, findings, []string{"pipe.sh", "not a regular file"})
+}
+
+// A whitespace-only filename was skipped by the first branch of the very
+// function whose stated rule is that deletion is the only skip.
+func TestNoCodeStagedWhitespaceNameIsClassified(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, " ", "#!/bin/sh\n", 0o644)
+	_, findings, err := NoCode(NoCodeOptions{
+		Dir: dir, Staged: []string{" "}, StagedSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantFailures(t, findings, []string{"shebang"})
+}
+
+// --allow must not cover a path that traverses back out of it.
+func TestNoCodeStagedAllowDoesNotCoverTraversal(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, "evil.sh", "#!/bin/sh\n", 0o644)
+	writeMode(t, dir, "docs/keep.md", "prose", 0o644)
+	_, findings, err := NoCode(NoCodeOptions{
+		Dir: dir, Staged: []string{"docs/../evil.sh"}, StagedSet: true, Allow: []string{"docs"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOnly(t, findings, []string{"evil.sh"})
+}
+
+// The gate must report EVERY reason, as the audit does.
+func TestNoCodeStagedReportsAllReasons(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, "deploy.sh", "#!/bin/sh\n", 0o755)
+	_, findings, err := NoCode(NoCodeOptions{
+		Dir: dir, Staged: []string{"deploy.sh"}, StagedSet: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("findings = %v", findings)
+	}
+	for _, want := range []string{"code extension .sh", "executable", "shebang"} {
+		if !strings.Contains(findings[0].Reason, want) {
+			t.Errorf("reason %q is missing %q; a gate that says only no teaches nothing", findings[0].Reason, want)
+		}
+	}
+}
+
+// DenyExt without DenySource must refuse: a finding may not name an unknown list.
+func TestNoCodeDenyExtWithoutSourceRefuses(t *testing.T) {
+	dir := t.TempDir()
+	if _, _, err := NoCode(NoCodeOptions{Dir: dir, DenyExt: []string{".foo"}}); err == nil {
+		t.Error("accepted a deny-list with no stated provenance")
+	}
+}
+
+func TestNoCodeStagedStripsLeadingDotSlash(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, "history/old.py", "x", 0o644)
+	_, findings, err := NoCode(NoCodeOptions{
+		Dir: dir, Staged: []string{"./history/old.py"}, StagedSet: true, Allow: []string{"history"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 {
+		t.Errorf("./ prefix defeated --allow: %v", findings)
 	}
 }

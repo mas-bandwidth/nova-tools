@@ -5,6 +5,7 @@ import (
 	_ "embed"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -190,13 +191,22 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 
 	allow := normalizeAllow(opts.Allow)
 
-	info, statErr := os.Stat(opts.Dir)
+	// Resolve the root before walking. os.Stat FOLLOWS a symlink, so a --dir
+	// naming a link to the repo passed the directory check and then handed
+	// WalkDir a root it saw as a single non-directory entry — a clean pass
+	// over a tree never opened. On this platform /var is such a link.
+	root, statErr := filepath.EvalSymlinks(opts.Dir)
+	if statErr != nil {
+		return 0, nil, fmt.Errorf("dir: %w", statErr)
+	}
+	info, statErr := os.Stat(root)
 	if statErr != nil {
 		return 0, nil, fmt.Errorf("dir: %w", statErr)
 	}
 	if !info.IsDir() {
 		return 0, nil, fmt.Errorf("dir %q is not a directory", opts.Dir)
 	}
+	opts.Dir = root
 
 	if opts.StagedSet {
 		return noCodeStaged(opts, allow, denySet, source)
@@ -232,7 +242,14 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 		}
 		isLink := fi.Mode()&os.ModeSymlink != 0
 		if !isLink && !fi.Mode().IsRegular() {
-			return nil // devices, sockets, fifos: not repo content
+			// FAIL CLOSED, the same rule the staged mode runs on. This was the
+			// last "cannot classify this, so skip it" branch in the tool, left
+			// in the mode that got less attention — and it made the audit the
+			// weaker of the two: a fifo named pipe.sh passed here while the
+			// gate flagged it.
+			scanned++
+			findings = append(findings, Failure{rel, fmt.Sprintf("not a regular file (mode %v): cannot rule out machinery", fi.Mode().Type())})
+			return nil
 		}
 		scanned++
 		if reasons := classify(path, rel, fi, isLink, denySet, source); len(reasons) > 0 {
@@ -263,8 +280,8 @@ func noCodeStaged(opts NoCodeOptions, allow []string, denySet map[string]bool, s
 	var findings []Failure
 	scanned := 0
 	for _, raw := range opts.Staged {
-		if strings.TrimSpace(raw) == "" {
-			continue
+		if raw == "" {
+			continue // an empty line is not a path; readPaths drops these too
 		}
 		rel, err := gitPath(raw, opts.StagedMayBeQuoted)
 		if err != nil {
@@ -275,8 +292,11 @@ func noCodeStaged(opts NoCodeOptions, allow []string, denySet map[string]bool, s
 		if rel == "." {
 			continue
 		}
-		// Check the CLEANED path: sub/../../x escapes without a leading "../".
-		if clean := filepath.ToSlash(filepath.Clean(rel)); clean == ".." || strings.HasPrefix(clean, "../") {
+		// Clean ONCE, then use the cleaned value for every decision below.
+		// Checking the escape on the cleaned path and the allow-list on the
+		// raw one let "docs/../evil.sh" be allowed by "--allow docs".
+		rel = filepath.ToSlash(filepath.Clean(rel))
+		if rel == ".." || strings.HasPrefix(rel, "../") {
 			scanned++
 			findings = append(findings, Failure{rel, "path escapes the tree being guarded; is --dir the repository root?"})
 			continue
@@ -413,10 +433,12 @@ func hasShebang(p string) (bool, error) {
 	defer f.Close()
 	b, err := bufio.NewReader(f).Peek(2)
 	if err != nil {
-		if errors.Is(err, fs.ErrClosed) || errors.Is(err, fs.ErrPermission) {
-			return false, err
+		// Short file: genuinely no shebang. Anything else is a read that
+		// failed, and scoring that as "no shebang" is the fail-open shape.
+		if errors.Is(err, io.EOF) {
+			return false, nil
 		}
-		return false, nil // a file shorter than two bytes holds no shebang
+		return false, err
 	}
 	return string(b) == "#!", nil
 }

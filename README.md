@@ -206,8 +206,16 @@ moved from something remembered to something that refuses, in your self repo's
 ```sh
 #!/bin/sh
 git diff --cached --name-only -z --diff-filter=d |
-    nova-check nocode --dir . --staged --allow history || exit 1
+    nova-check nocode --dir . --staged || exit 1
 ```
+
+**`chmod +x .git/hooks/pre-commit`, or none of this runs.** A hook without the
+executable bit is skipped; git prints a hint and the commit lands anyway, which
+looks exactly like a gate that found nothing.
+
+Add `--allow YOUR-RECORD-DIR` only for a directory you have decided is a frozen
+record — the block above deliberately does not include one. Nothing is allowed
+by default, and a narrowing you did not declare is not one you meant.
 
 **Use `-z`, and `--diff-filter=d` rather than a positive list.** Both details
 are load-bearing, and both were wrong here first:

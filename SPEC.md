@@ -281,8 +281,11 @@ nova-check nocode --print-deny-list                print the list in force
 
 **Asserts.** A self repo contains prose, not machinery: no code files and no
 executables under `--dir`, skipping `.git` and anything the caller declares
-with `--allow`. Regular files and symlinks; devices, sockets and fifos are not
-repo content and are not classified.
+with `--allow`. **Both modes fail closed: a file that cannot be classified is a
+finding, not a pass.** Regular files and symlinks are classified on their
+merits; devices, sockets and fifos are reported as *not a regular file*,
+because a thing that is not prose and cannot be read is exactly what this
+check exists to refuse.
 
 A file is flagged when any of three hold, and **all that hold are reported**,
 because a gate that says only *no* teaches nothing:
@@ -291,9 +294,11 @@ because a gate that says only *no* teaches nothing:
 - it has any executable bit set (`mode & 0111 != 0`)
 - it begins with a shebang (`#!`)
 
-A file that **cannot be read** is a finding — `unreadable: ... (cannot rule
-out machinery)` — never a pass. Making a file less readable must not make this
-gate greener, which is the same posture `links` takes on an unreadable `.md`.
+A file that **cannot be opened or read** is a finding — `unreadable: ...
+(cannot rule out machinery)` — never a pass. Making a file less readable must
+not make this gate greener, which is the same posture `links` takes on an
+unreadable `.md`. A file shorter than two bytes is not a read failure: it
+genuinely holds no shebang.
 
 A **symlink is never dereferenced**, but its own NAME is classified: a link
 called `run.sh` is machinery by the same argument that catches a file called
@@ -391,7 +396,9 @@ exactly that reason — and the shebang test carry it.
 line per file, exit 1. Yes, this includes a markdown file someone `chmod +x`ed:
 in a self repo an executable *anything* is a boundary violation worth a look.
 
-**Refuses (exit 2) when** `--dir` is missing or not a directory; when the
+**Refuses (exit 2) when** `--dir` is missing, unresolvable, or does not
+resolve to a directory — it is resolved through symlinks first, so a `--dir`
+naming a link to the repo scans the repo rather than passing with `files=0`; when the
 effective deny-list is empty, unreadable, or contains something that is not an
 extension; when `--deny-ext` and `--deny-ext-add` are given together; when
 `--print-deny-list` and `--staged` are given together; or on an unexpected

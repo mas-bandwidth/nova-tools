@@ -308,6 +308,11 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	// from here. Failing would break the legitimate case, so it is said out
 	// loud instead: a gate that looked at nothing should not read as a gate
 	// that found nothing.
+	if !opts.StagedSet && scanned == 0 {
+		// The audit had no such warning, so a --dir that resolved to an empty
+		// or unreadable tree read as a clean repo with nothing to say.
+		fmt.Fprintf(stderr, "nova-check nocode: classified NOTHING under %s — an empty tree, everything allowed, or the wrong directory\n", *dir)
+	}
 	if opts.StagedSet && scanned == 0 {
 		// Fires on an empty path list too: a hook that hands the gate nothing
 		// is at least as suspicious as one whose paths all vanished, and a
