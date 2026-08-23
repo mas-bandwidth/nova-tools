@@ -34,7 +34,8 @@ nova-check attest --home <dir> --manifest <file>   # did the full self load: cou
 nova-check links  --dir <dir>                      # every relative inline link resolves
 nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, in bytes
 nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>   # the same budget, in the unit a context window actually spends
-nova-check nocode --dir <dir>                      # no known code extensions or executables in a self repo (the self/machinery separation)
+nova-check nocode --dir <dir>                      # no code, executables or scripts in a self repo (the self/machinery separation)
+nova-check nocode --print-deny-list                # the deny-list actually in force
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 ```
 
@@ -188,6 +189,24 @@ built for is exactly as measured as the gold set you write for it.
 
 Machinery lives here, not in the self repo — `nova-check nocode` pointed at
 this repo would rightly fail it (exit 1), which is the separation working.
+
+### Why this one is worth running on a schedule
+
+A seed can make the self/machinery split canon and still have nothing make it
+go red. That is not hypothetical: a rule can be correct, written down, and
+broken anyway, because a `.py` file appearing in a prose-only repo produces no
+error from any instrument — so observing the rule and violating it look
+identical from the inside. This check is what makes that difference visible,
+and it is worth a place in whatever runs over your self repo regularly.
+
+**A commit-time gate is the obvious next form and is deliberately not here
+yet.** The honest reason: a gate handed a list of changed paths classifies the
+WORKING TREE, while git commits the INDEX, and the two are not the same — `git
+add script.sh && rm script.sh` commits the script while the working tree shows
+nothing to check. Getting that right means reading the index itself rather
+than the filesystem. A commit gate that can be walked past silently is worse
+than none, because the claim of enforcement is what stops anyone checking, so
+it ships when it is right.
 
 ## License
 

@@ -271,38 +271,121 @@ would be right for exactly one model); compressibility or density.
 ### nocode — the self/machinery separation, as a check
 
 ```
-nova-check nocode --dir <dir>
+nova-check nocode --dir <dir>                      audit a whole tree
+nova-check nocode --print-deny-list                print the list in force
+    [--allow <prefix>]      where machinery may live (repeatable, empty by default)
+    [--deny-ext <list|@file>]   replace the floor deny-list wholesale
+    [--deny-ext-add <list|@file>]  extend the floor deny-list
 ```
 
 **Asserts.** A self repo contains prose, not machinery: no code files and no
-executables anywhere under `--dir` (skipping `.git`). Regular files only.
+executables under `--dir`, skipping `.git` and anything the caller declares
+with `--allow`. **It fails closed on anything it cannot read: an unreadable file, a device, a
+socket or a fifo is a finding, not a pass**, because a thing that is not prose
+and cannot be read is what this check exists to refuse. **It does NOT fail
+closed on a symlink**, whose name is classified while its target is never
+followed — so a link named `runbook` pointing at a shell passes, and that is a
+declared limit rather than an absolute this section could claim.
 
-A file is flagged when either:
+A file is flagged when any of three hold, and **all that hold are reported**,
+because a gate that says only *no* teaches nothing:
 
-- its extension (case-insensitive) is one of:
-  `.go .py .sh .js .ts .c .cc .cpp .rs .cs .rb .pl .php .java .lua .swift
-  .kt .mjs .cjs .jsx .tsx .bash .ps1 .bat .cmd .exe`
+- its extension (case-insensitive) is on the effective deny-list
 - it has any executable bit set (`mode & 0111 != 0`)
+- it begins with a shebang (`#!`)
 
-Both conditions are reported when both hold.
+A file that **cannot be opened or read** is a finding — `unreadable: ...
+(cannot rule out machinery)` — never a pass. Making a file less readable must
+not make this gate greener, which is the same posture `links` takes on an
+unreadable `.md`. A file shorter than two bytes is not a read failure: it
+genuinely holds no shebang.
 
-On Windows there is no executable bit, so the mode half of the check is blind
-there; the extension list — which includes `.exe .bat .cmd .ps1` for exactly
-that reason — is the whole check on Windows.
+A **symlink is never dereferenced**, but its own NAME is classified: a link
+called `run.sh` is machinery by the same argument that catches a file called
+`run.sh`, and reading a link's name requires no dereference. Its target is not
+read and its mode is not consulted, so a gate still cannot be walked out of
+the tree it guards.
+
+The three catch different things, and the third is why the first two are not
+enough: **a shebang is the tell that survives renaming.** A script called
+`nova-id`, with no extension and no executable bit, is still a script, and
+until this check read the first two bytes it passed clean.
+
+**The deny-list is a floor that ships with the tool**, as data —
+[`internal/check/codeexts.txt`](internal/check/codeexts.txt), embedded, one
+extension per line, comments allowed. It is a list a reader can open and diff
+rather than string literals inside a walk.
+
+**Why it has a default when nothing else here does.** This repo's law is that
+every input comes from a flag and a missing one is a refusal. Its subject is
+**paths** — directories, homes, files — the things that encode one line's
+situation as everyone's. An extension list is not that: `.py` is `.py` in
+every self. The distinction that actually governs is **fail-open versus
+fail-closed**. A default *skip* or *exempt* list silently narrows scope and
+hides violations, so `nova-self-talk --skip` and `nova-memory --exempt` start
+empty and tests pin that no default can return. A default *deny* list can only
+ever produce findings; the cost of it being wrong is a false red, which is
+visible and gets fixed. Requiring the list from the caller would buy nothing
+but a copy of it in every adopting line's hook — two hand-maintained copies of
+one truth, drifting apart, and drifting fail-open, since the copy missing
+`.cpp` is the one that lets `.cpp` in.
+
+Tunability is preserved rather than assumed: **`--deny-ext` replaces the floor
+wholesale** — for the line that legitimately keeps a language inside its own
+self — **`--deny-ext-add` extends it**, and the two are mutually exclusive.
+Every finding **names the list that produced it** (`floor list`, `--deny-ext`,
+or `floor list + --deny-ext-add`), and the `NOCODE OK` line names it too, so
+neither a red nor a green hides the basis it was reached on.
+`--print-deny-list` prints what is actually in force and exits 0; it needs no
+`--dir`, because what the check forbids is answerable without pointing it
+anywhere. Both deny-list flags accept `@file` as well as a comma list.
+
+**An effective deny-list that is empty, unreadable, or not made of extensions
+is exit 2** — a guard that cannot say what it forbids refuses rather than
+passing everything. An entry containing a path separator, a glob character,
+whitespace, or a second dot is refused by name, because each of those builds a
+list that matches nothing and would otherwise report a clean tree: `--deny-ext
+mylist.txt`, the missing `@`, is the likely error and it is caught rather than
+silently obeyed.
+
+**`--allow <prefix>` is the one scope narrowing, and it starts EMPTY.**
+Repeatable; a prefix covers everything beneath it at any depth, so `--allow
+history` needs no subdirectory enumeration and `--allow docs/history` works
+the same way. A leading `./` and surrounding slashes are trimmed. **The same
+value means the same thing in both modes** — an `--allow` that behaved one way
+in the audit and another in the commit gate would be a gate disagreeing with
+its own check, and a test pins the parity. Nothing is allowed by default and a test pins
+that: the tool this was ported from defaulted to allowing its own repo's
+`history/` directory, which is a directory default and a fail-open one — a
+guess about someone else's filenames, and precisely the class the no-defaults
+law names. Which directory is a frozen record is the line's to declare.
+
+On Windows there is no executable bit, so that half of the check is blind
+there; the extension list — which includes `.exe .bat .cmd .ps1 .vbs` for
+exactly that reason — and the shebang test carry it.
 
 **Says NO when** any such file exists — one `NOCODE FAIL <path>: <reason>`
 line per file, exit 1. Yes, this includes a markdown file someone `chmod +x`ed:
 in a self repo an executable *anything* is a boundary violation worth a look.
 
-**Refuses (exit 2) when** `--dir` is missing or not a directory.
+**Refuses (exit 2) when** `--dir` is missing, unresolvable, or does not
+resolve to a directory — it is resolved through symlinks first, so a `--dir`
+naming a link to the repo scans the repo rather than passing with `files=0`; when the
+effective deny-list is empty, unreadable, or contains something that is not an
+extension; when `--deny-ext` and `--deny-ext-add` are given together; when
+or on an unexpected positional argument.
 
-**Deliberately does not check:** shebang lines or file contents (an extension
-list is auditable; content sniffing is a heuristic that lies both ways);
-languages beyond the listed extensions (extend the list, don't sniff);
-code *fences inside markdown* — quoted code is prose about code and exactly
-what a self repo should hold; symlinks (not followed, not flagged); the tools
-repo itself — this check aims at the self repo, and this repo would rightly
-fail it.
+**Deliberately does not check:** file contents beyond the first two bytes (an
+extension list plus a shebang test is auditable; sniffing a whole file for
+intent is a heuristic that lies both ways); languages beyond the listed
+extensions (extend the list, don't sniff); code *fences inside markdown* —
+quoted code is prose about code and exactly what a self repo should hold;
+a symlink's TARGET (the link's own name is classified, but the target is never
+read, so a link named `notes.md` pointing at a script passes); machinery that
+is neither a listed extension nor executable nor a script — a `Makefile`, a
+`Dockerfile`, a CI workflow — which is a real gap and is tracked as one; the
+tools repo itself — this check
+aims at the self repo, and this repo would rightly fail it.
 
 ---
 
