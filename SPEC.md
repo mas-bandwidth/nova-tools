@@ -337,6 +337,22 @@ workflows/ci.yml` is caught; `sub/.github/workflows/ci.yml` is not, because
 that is not a location a CI system reads, and a test pins the decision so it
 cannot drift into an accident.
 
+**The normalisations applied before a match, stated here because this is their
+one home.** Any other mode of this check calls the same classifier and does not
+restate them; a second copy of a matching rule rots toward fail-open.
+
+- The **base name** is lowercased and whitespace-trimmed at **both** ends
+  (Go's `strings.TrimSpace`, Unicode whitespace) before the name lookup, so
+  `" Makefile"` is caught.
+- The **repo-relative path is lowercased** — both sides — before the `path:`
+  prefix comparison, so `.GitHub/workflows/ci.yml` is caught. Location matching
+  agrees with name matching deliberately: they once disagreed, and on a
+  case-insensitive filesystem that is the same directory on disk. **At most one
+  location reason is reported**, the first prefix that matches.
+- The **extension** is lowercased and whitespace-trimmed the same way, so a
+  file named `x.py ` does not miss a list it plainly belongs on.
+- Paths are compared slash-separated on every platform.
+
 **Why `.yml` is not simply added to the extension list.** Because that would be
 wrong. Prose repos legitimately carry YAML data and front matter, and a floor
 forbidding it would either be ignored or would push real writing out of the
@@ -400,10 +416,15 @@ silently obeyed.
 **`--allow <prefix>` is the one scope narrowing, and it starts EMPTY.**
 Repeatable; a prefix covers everything beneath it at any depth, so `--allow
 history` needs no subdirectory enumeration and `--allow docs/history` works
-the same way. A leading `./` and surrounding slashes are trimmed. **The same
-value means the same thing in both modes** — an `--allow` that behaved one way
-in the audit and another in the commit gate would be a gate disagreeing with
-its own check, and a test pins the parity. Nothing is allowed by default and a test pins
+the same way. A leading `./` and surrounding slashes are trimmed. **A prefix
+matches whole path SEGMENTS**: it must equal the path or be followed by `/`,
+so `--allow doc` does not cover `docs/`. **And it is the one matcher that is
+case-SENSITIVE** — unlike the name and location floors, which lowercase both
+sides — so `--allow docs` does not exempt `Docs/`; named here because the
+asymmetry is real and an implementer who "made it consistent" would open an
+exemption the audit does not grant. **The same value means the same thing in
+every mode** — an `--allow` that behaved one way in the audit and another in
+the commit gate would be a gate disagreeing with its own check. Nothing is allowed by default and a test pins
 that: the tool this was ported from defaulted to allowing its own repo's
 `history/` directory, which is a directory default and a fail-open one — a
 guess about someone else's filenames, and precisely the class the no-defaults
@@ -450,7 +471,7 @@ the named CI locations, deliberately, since data and front matter are
 legitimate prose-repo content. Also the tools repo itself — this check
 aims at the self repo, and this repo would rightly fail it.
 
-#### `--staged` — the same four conditions, over the index, as an ADVISORY
+#### `--staged` — the audit's classifier over the index, as an ADVISORY
 
 ```
 nova-check nocode --staged --dir <repo>
@@ -474,22 +495,37 @@ rather than auditing itself, and would rightly fail its own check. Read the
 limits below as the load-bearing half of this entry, not as a disclaimer
 attached to it.
 
-**Asserts.** Every path staged for the next commit satisfies the same four
-conditions the audit asserts, matched by the same rules, honouring the same
-`--allow` prefixes and the same two deny-list flags. `--dir` must resolve to
-the root of a git repository; it is required, on the house no-guessing law,
-rather than inferred from the working directory.
+**Asserts.** Every path staged for the next commit is classified by **the same
+classifier the audit uses, called unchanged**, honouring the same `--allow`
+prefixes and the same two deny-list flags — which act on the extension list
+only, the name and location floors being unconditional here as there.
+`--dir` is required, on the house no-guessing law, rather than inferred from
+the working directory.
 
-**The record it reads.** One command — `git diff-index --cached -z HEAD` —
+> **PARITY IS BY CONSTRUCTION, NOT BY TRANSCRIPTION, and that is a
+> specification decision.** An earlier draft of this entry restated the audit's
+> matching rules here so an implementer could build from this section alone. It
+> got them wrong: it named a closed set of "two" normalisations where the
+> source applies several, and the omitted one — the location floor — is the
+> highest-consequence entry in the floor name list. **A hand-copied rule set is
+> two copies of one truth and rots toward fail-open**, because the copy is
+> written by someone reading for the rule they came for. So this entry
+> specifies the two INPUTS that differ — where the mode comes from, where the
+> content comes from — and specifies nothing about matching. The matching rules
+> have exactly one statement, in the `nocode` entry above, and an implementation
+> that re-derives them here is wrong by that fact.
+
+**The record it reads.** One plumbing command — `git diff-index --cached -z HEAD` —
 whose output is NUL-separated pairs of a metadata chunk and a path:
 
 ```
 :<srcmode> <dstmode> <srcOID> <dstOID> <status>\0<path>\0
 ```
 
-Everything the check needs is in that one record, which is why it is one
-command: a second command joining a path back to its content is the seam two
-earlier designs' bypasses lived in.
+That one record carries the mode and the content handle together, which is why
+it is one command: a second command joining a path back to its content is the
+seam two earlier designs' bypasses lived in. Content is then read per candidate
+path by OID.
 
 - **Content is read by DESTINATION OID** — `git cat-file blob <dstOID>` — and
   a path is never re-parsed to reach a blob. `git cat-file blob :<path>` is
@@ -504,9 +540,14 @@ earlier designs' bypasses lived in.
 - **`-M` is deliberately NOT passed**, so no `R` records are produced and the
   parser stays a flat pairwise split rather than a stateful one. A rename
   arrives as a `D` of the old path and an `A` of the new, and classifying the
-  `A` is exactly right. Measured: `diff.renames` set to `true` or to `copies`
-  does not change plumbing output, so this shape cannot be flipped by a
-  contributor's config.
+  `A` is exactly right. Measured: `diff.renames` set to `true` or to `copies`,
+  `diff.copies`, and `status.renames` all leave plumbing output byte-identical,
+  so this shape cannot be flipped by a contributor's config.
+- **Every git invocation is `git -C <resolved dir>` with the caller's
+  environment intact.** The hook is handed `GIT_INDEX_FILE` — measured as
+  relative `.git/index` on a plain commit and an absolute `index.lock` under
+  `commit -a` — and a tool that scrubs or re-anchors the environment reads a
+  different index than the one being committed.
 
 **Status letters, and the one skip.** `D` is the only skip, and it is a **real
 status skip, never an inference from a missing working-tree file** — that
@@ -524,45 +565,77 @@ no `R` or `C` is produced. A gate that **skips what it does not recognise has
 an unbounded skip list**, which is a fail-open whose size nobody can state, so
 an unrecognised status stops the check rather than passing the path.
 
-**Modes, which the index records and a filesystem walk does not.** `100755` is
-the executable condition; the index stores only `100644`, `100755`, `120000`
-and `160000`, so this half of the check works identically on Windows, where
-the audit is blind. **`120000` is a symlink** whose blob content is a target
-path: classified **by name only**, never by shebang, on exactly the audit's
-reasoning — a symlink whose stored bytes begin `#!` is a link to a script, not
-a script. **`160000` is a gitlink**, whose destination OID is a commit in
-another repository and is not in this tree: a **finding**, not a pass, because
-a submodule is machinery arriving by reference and the check cannot read it to
-decide otherwise.
+**Modes.** The index stores only `100644`, `100755`, `120000` and `160000`.
 
-**Two matching rules the audit applies that this document did not state**, both
-written down here so an implementer working from the spec builds something
-that agrees with the shipped check rather than disagreeing with it in the
-fail-open direction. Both are trims for **matching only**, and both are in
-`internal/check/nocode.go`:
+- **`120000` is a symlink** whose blob content is a target path. It is
+  classified **by its PATH** — every path-derived rule the audit applies still
+  applies — and only the mode bit and the shebang are skipped, on the audit's
+  own reasoning that a symlink whose stored bytes begin `#!` is a link to a
+  script rather than a script. A symlink named `run.sh`, or sitting at a
+  guarded location, is a finding.
+- **`160000` is a gitlink**, whose destination OID is a commit in another
+  repository and is **not an object in this one**: it is classified **from its
+  mode alone and its OID is never read**, so it cannot collide with the
+  unreadable-blob rule below. It is a finding — machinery arriving by
+  reference, which the check cannot read to decide otherwise — and it is
+  suppressible by `--allow` like any other path.
+- **An unreadable blob is a FINDING, not a refusal**, matching the audit,
+  which reports unreadable content as `cannot rule out machinery` rather than
+  aborting.
 
-- the **extension** is lowercased and **trailing-whitespace-trimmed** before
-  the deny-list lookup — a file named `x.py ` has extension `".py "` by Go's
-  reckoning and would otherwise miss a list it plainly belongs on;
-- the **base name** is lowercased and trimmed the same way before the floor
-  name list lookup, which the parity note that produced this entry missed.
+**Says NO when** any staged path is classified as machinery: the audit's
+`NOCODE FAIL <path>: <reason>` line per path **on stderr**, reasons joined
+with `"; "` in the audit's fixed order, at most one location reason, exit 1.
+A clean run prints the audit's `NOCODE OK` line on stdout.
 
-**Says NO when** any staged path satisfies any condition — the audit's
-`NOCODE FAIL <path>: <reason>` line per path, all reasons that hold, exit 1.
-
-**Refuses (exit 2) when** `--dir` is missing or does not resolve to a git
-repository root; when the index holds unmerged entries; when a staged blob
-cannot be read; and on every refusal the audit already makes — an empty or
-malformed effective deny-list, `--deny-ext` together with `--deny-ext-add`.
+**Refuses (exit 2) when** `--dir` is missing, or does not resolve to the root
+of a git repository; when the index holds unmerged entries; when a status
+letter is unrecognised; and on every refusal the audit already makes — an
+empty or malformed effective deny-list, `--deny-ext` together with
+`--deny-ext-add`. **The root test is `git -C <dir> rev-parse --show-toplevel`,
+compared with `--dir` after resolving symlinks on both sides** — never a test
+for `.git` being a directory, which is false in a linked worktree and in a
+submodule, both of which run the hook and both of which are legitimate places
+to commit from. An advisory that refuses on every commit is an advisory people
+disable.
 
 **On an unborn HEAD** — no commits yet — `git diff-index --cached HEAD` exits
 128 with *ambiguous argument*. The check detects it with `git rev-parse -q
 --verify HEAD` and compares against the **empty tree** instead, obtaining that
-object's id from `git hash-object -t tree /dev/null` rather than hard-coding
-`4b825dc6…`, on the seed's no-hardcoding law. **The trade is taken
-deliberately and in this direction: a repository's first commit is gated like
-every later one.** The alternative — skipping the check where there is no HEAD
-— makes the very first commit the one place machinery enters unexamined.
+object's id from `git hash-object -t tree /dev/null` **run inside the
+repository**, rather than hard-coding `4b825dc6…`, on the seed's
+no-hardcoding law — the constant is wrong for a sha256 repository, and the
+command run outside a repository returns the sha1 answer regardless. **The
+trade is taken deliberately and in this direction: a repository's first commit
+is gated like every later one.** The alternative — skipping the check where
+there is no HEAD — makes the very first commit the one place machinery enters
+unexamined.
+
+**WHERE THIS MODE IS WEAKER THAN THE AUDIT, deliberately and by measurement.**
+It is a projection of the audit onto the index, and a projection loses
+information. Naming exactly what it loses is what keeps *advisory* an honest
+word rather than a hedge:
+
+- **The executable condition is `dstmode == 100755` and nothing more, which is
+  ONE BIT where the audit reads three.** The audit tests `perm & 0o111`, so it
+  flags a file that is group- or other-executable only; git derives the index
+  mode from the owner bit alone. Measured: a `0654` and a `0645` prose file
+  both stage as `100644` and both fail the audit. **And `core.fileMode=false`
+  — a one-line per-repo setting, and the default on Windows and on
+  exec-bit-less mounts — makes every entry `100644`**, so a `0755` `.md` file
+  with no shebang, where the exec bit is the only condition that fires, is
+  invisible to this mode entirely. This is the sharpest reason the entry is an
+  advisory. *(An earlier draft claimed the opposite — that mode checking "works
+  identically on Windows, where the audit is blind." That is backwards: the
+  filesystem walk records strictly more mode information than the index does.)*
+- **`--amend` is compared against the commit it replaces, not against its
+  parent.** The hook is given no amend signal — measured, no `GIT_` variable
+  distinguishes it — so paths already in `HEAD` are not re-examined, and
+  machinery that reached `HEAD` by any route in the limits table below stays
+  unexamined through an amend.
+- **`git add -N` records an intent-to-add whose destination is the empty
+  blob**, so the content classified is not the content on disk; the path is
+  reported on its name and mode alone, and the commit does not contain it.
 
 **Known limits — what does not invoke this check at all.** Every one of these
 was measured against a hook that appends a line when it runs; the count in
@@ -576,8 +649,8 @@ each case was zero:
 | a hook without its executable bit | git prints a hint and proceeds; exit 0 |
 | any commit made through another tool, UI or bot | it was never this repository's hook to run |
 
-`git commit` and `git commit --amend` both do run it, which is the common case
-this advisory is for and the whole of what it claims.
+`git commit` and `git commit --amend` both do run it — `--amend` with the
+narrower base named above — and that is the common case this advisory is for.
 
 **Deliberately does not check:** anything the audit deliberately does not
 check, unchanged — and additionally **the rest of the tree**. A clean
@@ -585,7 +658,6 @@ check, unchanged — and additionally **the rest of the tree**. A clean
 machinery committed before the check was adopted stays invisible to it
 forever. That is what the audit is for, and it is why the two modes are not
 alternatives.
-
 ---
 
 ### floors — the door and the source, held to one floor set
