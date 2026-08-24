@@ -394,6 +394,12 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-check corpus: --min-anchors must be a positive row floor (got %d); a floor of zero guards nothing, which is what an empty ledger already is; refusing to guess\n", *minAnchors)
 		return 2
 	}
+	// --root is validated BEFORE any finding is printed: a FAIL line from a
+	// run that then exits 2 reports findings from a run that did not happen.
+	if _, _, rootErr := check.ResolveRoot(*root); rootErr != nil {
+		fmt.Fprintf(stderr, "nova-check corpus: %v\n", rootErr)
+		return 2
+	}
 	raw, err := os.ReadFile(*ledger)
 	if err != nil {
 		// Nothing was checked, so this is a refusal rather than a pass —

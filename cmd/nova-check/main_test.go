@@ -402,11 +402,13 @@ func TestRunCorpusEndToEnd(t *testing.T) {
 		t.Errorf("stderr = %q, want the empty-ledger refusal", stderr.String())
 	}
 
-	// A ledger whose rows are ALL malformed is VISIBLY POPULATED. Telling its
-	// author it is empty while withholding the diagnosis is the worst of both,
-	// and it is a check that RAN and failed — exit 1, with the ledger:<line>
-	// grammar SPEC declares.
-	mustWrite(t, dir, "bad.md", "| fragment | home | given |\n|---|---|---|\n| the light is on | README.md | 2026 |\n")
+	// A ledger whose anchor-table rows are ALL malformed is VISIBLY
+	// POPULATED. Telling its author it is empty while withholding the
+	// diagnosis is the worst of both, and it is a check that RAN and failed —
+	// exit 1, with the ledger:<line> grammar SPEC declares. (The table's
+	// header and separator are four-column, so this IS the anchor table; a
+	// three-column table would be somebody else's and correctly ignored.)
+	mustWrite(t, dir, "bad.md", "| fragment | home | given | by |\n|---|---|---|---|\n| the light is on | README.md | 2026 | me | oops |\n")
 	stdout.Reset()
 	stderr.Reset()
 	if got := run([]string{"corpus", "--ledger", filepath.Join(dir, "bad.md"), "--root", root, "--min-anchors", "1"}, &stdout, &stderr); got != 1 {

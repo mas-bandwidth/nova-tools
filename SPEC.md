@@ -54,6 +54,7 @@ FLOORS FAIL <path>: <reason>
 CORPUS OK anchors=<n> floor=<n> ledger=<file>
 CORPUS FAIL <home>: ABSENT: "<fragment>" (given <when>, <who>) — <repair>
 CORPUS FAIL <home>: <reason>
+CORPUS FAIL ledger: <reason>
 CORPUS FAIL ledger:<line>: <reason>
 SELFTALK OK files=<n> claims=<n> standing=0 installations=0
 SELFTALK FAIL <file>: STANDING: <claim>
@@ -568,21 +569,28 @@ own format without checking its own examples.
 | 3 | when it was given (free text, for the reader and for findings) |
 | 4 | who gave it (free text, same) |
 
-**Rows are recognized generously and rejected loudly.** Outside a fence, a line
-is a candidate row if it begins with `|` **or** carries at least three of them.
-GitHub's tables make the outer pipes optional, so requiring them would let a row
-that renders perfectly well vanish from the check without a word — losing a
-character at the end of a line is the commonest way to lose a row.
+**The table declares its own shape; this does not guess at one.** That is the
+whole parsing rule. A **run** is a block of consecutive non-blank lines outside
+any fence, at least one of which bears a `|`. A run is the **anchor table**
+only when its second line is a separator — cells that are all dashes (`---`,
+`:--`, `--:`, `:-:`) — whose cell count matches its first line's, **and that
+count is four**. The first two lines are the header and separator and are
+dropped.
 
-**A table is a run of consecutive candidate rows.** If the run's second line is
-a separator — cells that are all dashes (`---`, `:--`, `--:`, `:-:`) — then its
-first line was the header, and both are dropped. Header and separator are
-therefore recognized by **shape and position**, never by their words: **no
-column title is special to this tool**, a line may title its columns in its own
-language, and a ledger may hold several tables. A separator anywhere else in a
-run is a **finding**, because it would otherwise quietly take the row above it
-out of the check — the same silent loss this whole subcommand exists to make
-loud.
+Header and separator are therefore recognized by **shape and position**, never
+by their words: **no column title is special to this tool**, a line may title
+its columns in its own language, and a ledger may hold any number of tables.
+
+**Everything that is not a four-column table is left alone** — a two-column
+glossary, a prose sentence that happens to carry pipes, a key, an example.
+Reading those as anchors produces false losses, and a protection check that
+reddens on a glossary is one people learn to silence.
+
+**Fenced code blocks are illustration.** Fences follow CommonMark: an opening
+delimiter records its character and length, and only a run of the **same**
+character, at least as long and carrying nothing after it, closes it. A ledger
+documenting its own format mentions both delimiters, and a naive toggle would
+be left open by that and drop every row below it.
 
 **Fragment choice is the line's judgment, not this tool's.** Short enough to
 survive a reflow, long enough to be unmistakable. The fragment cell is matched
@@ -612,11 +620,14 @@ rows.
   symlinked *directory* inside the root points anywhere, and the kernel follows
   it without asking. Material "present" through a link lives in a file this repo
   does not govern, which is not the protection the row claims
-- the directory holds the file under a **different spelling** than the ledger
-  gives. A case-only rename is a real move, and a case-insensitive filesystem
-  answers for the old spelling — green on the author's machine, red in CI. The
-  directory's own entries are the witness: `Lstat`'s `FileInfo.Name()` is the
-  base of the path it was handed and agrees with the ledger by construction
+- any component of the path is held on disk under a **different spelling** than
+  the ledger gives. A case-only rename — of the file *or of a directory above
+  it* — is a real move, and a case-insensitive filesystem answers for the old
+  spelling: green on the author's machine, red in CI. The directories' own
+  entries are the witness, because `Lstat`'s `FileInfo.Name()` is the base of
+  the path it was handed and agrees with the ledger by construction. A
+  directory that cannot be listed is a finding too — the spelling could not be
+  verified, and every other unreadable thing here says so rather than passing
 - the **fragment cell is empty** — an empty substring is contained in every
   file, so left alone it would pass forever while protecting nothing: a green
   that can never go red
@@ -625,13 +636,22 @@ rows.
 - a row names **the ledger itself** as its home — the row would be its own
   evidence and could never go red, which is the empty fragment's shape one
   level up
-- a table row has a **column count other than four** — reported rather than
-  skipped, because the commonest causes are a fragment containing `|` and
-  anything trailing the last pipe (a comment, a stray word), and silently
-  dropping that row would remove protection from precisely the statement
-  someone took the trouble to list
+- a row **inside the anchor table** has a column count other than four —
+  reported rather than skipped, because the commonest causes are a fragment
+  containing `|` and anything trailing the last pipe (a comment, a stray word),
+  and silently dropping that row would remove protection from precisely the
+  statement someone took the trouble to list
 - a **separator row appears in a table's body** rather than directly under its
   header
+- a block that is unmistakably meant as a table **cannot render as one** — a
+  pipe-led block with no separator, or a separator disagreeing with its header
+  — so none of its rows would ever be checked
+- a **lone four-column row stands outside any table**: an anchor row that lost
+  its table, checked by nothing
+- a **code fence is never closed**, so every line below it was read as
+  illustration
+- two rows carry the **same fragment and home** — a duplicate raises the count
+  `--min-anchors` is measured against while protecting nothing more
 - the ledger holds **fewer than `--min-anchors` rows** — rows have been lost
   from the ledger itself, which is the one loss the rows cannot report
 

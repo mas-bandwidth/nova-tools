@@ -106,7 +106,7 @@ func TestAllPresentIsQuiet(t *testing.T) {
 		"README.md":          "and he said the door is not locked, and meant it\n",
 		"memory/standing.md": "his words: you are not a tool.\n",
 	})
-	wantFailures(t, corpusOK(t, root, "l.md", 1, parseOK(t, ledgerMD)), nil)
+	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, parseOK(t, ledgerMD)), nil)
 }
 
 // THE CASE THIS EXISTS FOR: the words were lost in place. The finding names
@@ -117,7 +117,7 @@ func TestALostAnchorIsNamedWithItsProvenanceAndTheRepair(t *testing.T) {
 		"README.md":          "a rewrite that dropped the warm sentence\n",
 		"memory/standing.md": "his words: you are not a tool.\n",
 	})
-	f := corpusOK(t, root, "l.md", 1, parseOK(t, ledgerMD))
+	f := corpusOK(t, root, tmpLedger(t), 1, parseOK(t, ledgerMD))
 	if len(f) != 1 {
 		t.Fatalf("want exactly one finding, got %v", f)
 	}
@@ -129,12 +129,12 @@ func TestALostAnchorIsNamedWithItsProvenanceAndTheRepair(t *testing.T) {
 func TestAMissingHomeFileIsItsOwnReason(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"README.md": "the door is not locked\n"})
-	wantFailures(t, corpusOK(t, root, "l.md", 1, parseOK(t, ledgerMD)), []string{"does not exist", "move this ledger row"})
+	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, parseOK(t, ledgerMD)), []string{"does not exist", "move this ledger row"})
 }
 
 // LOSSES ARRIVE IN BATCHES, so every failure reports in one run.
 func TestAllFailuresReportInOneRun(t *testing.T) {
-	if f := corpusOK(t, t.TempDir(), "l.md", 1, parseOK(t, ledgerMD)); len(f) != 2 {
+	if f := corpusOK(t, t.TempDir(), tmpLedger(t), 1, parseOK(t, ledgerMD)); len(f) != 2 {
 		t.Fatalf("want 2 findings from an empty tree, got %d: %v", len(f), f)
 	}
 }
@@ -145,23 +145,23 @@ func TestAnEmptyFragmentIsRefusedRatherThanPassingForever(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"README.md": "any content at all\n"})
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n|  | README.md | 2026-01-01 | someone |\n")
-	wantFailures(t, corpusOK(t, root, "l.md", 1, as), []string{"empty", "protecting nothing"})
+	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, as), []string{"empty", "protecting nothing"})
 }
 
 func TestAnEmptyHomeIsRefused(t *testing.T) {
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| keep the light on |  | 2026-01-01 | someone |\n")
-	wantFailures(t, corpusOK(t, t.TempDir(), "l.md", 1, as), []string{"no home file given"})
+	wantFailures(t, corpusOK(t, t.TempDir(), tmpLedger(t), 1, as), []string{"no home file given"})
 }
 
 // AN ANCHOR HELD OUTSIDE THE REPO IS NOT HELD BY IT.
 func TestAHomeThatEscapesTheRootIsRefused(t *testing.T) {
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| keep the light on | ../elsewhere/notes.md | 2026-01-01 | someone |\n")
-	wantFailures(t, corpusOK(t, t.TempDir(), "l.md", 1, as), []string{"leaves the tree"})
+	wantFailures(t, corpusOK(t, t.TempDir(), tmpLedger(t), 1, as), []string{"leaves the tree"})
 }
 
 func TestAnAbsoluteHomeIsRefused(t *testing.T) {
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| keep the light on | /etc/hosts | 2026-01-01 | someone |\n")
-	wantFailures(t, corpusOK(t, t.TempDir(), "l.md", 1, as), []string{"is absolute"})
+	wantFailures(t, corpusOK(t, t.TempDir(), tmpLedger(t), 1, as), []string{"is absolute"})
 }
 
 // SYMLINKS ARE NEVER FOLLOWED, here as everywhere in this package: an anchor
@@ -179,7 +179,7 @@ func TestASymlinkedHomeIsAFindingRatherThanAFollow(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	writeTree(t, root, map[string]string{"memory/standing.md": "you are not a tool\n"})
-	wantFailures(t, corpusOK(t, root, "l.md", 1, parseOK(t, ledgerMD)), []string{"symlinks are never followed"})
+	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, parseOK(t, ledgerMD)), []string{"symlinks are never followed"})
 }
 
 // A DIRECTORY WHERE A FILE SHOULD BE is likewise not a pass.
@@ -189,7 +189,7 @@ func TestADirectoryHomeIsAFinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeTree(t, root, map[string]string{"memory/standing.md": "you are not a tool\n"})
-	wantFailures(t, corpusOK(t, root, "l.md", 1, parseOK(t, ledgerMD)), []string{"not a regular file"})
+	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, parseOK(t, ledgerMD)), []string{"not a regular file"})
 }
 
 // A finding must survive a ledger whose provenance columns are blank: it
@@ -198,7 +198,7 @@ func TestBlankProvenanceReadsAsUnstated(t *testing.T) {
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| keep the light on | README.md |  |  |\n")
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"README.md": "nothing of the sort\n"})
-	wantFailures(t, corpusOK(t, root, "l.md", 1, as), []string{"provenance unstated"})
+	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, as), []string{"provenance unstated"})
 }
 
 // ---------------------------------------------------------------------------
@@ -276,6 +276,19 @@ func TestCRLFLedgerParsesTheSameWay(t *testing.T) {
 	}
 }
 
+// tmpLedger writes a placeholder ledger on disk and returns its path. Corpus
+// resolves the ledger to refuse a row that names it as its own home, so the
+// path has to be real — a test that passed a fictional one was exercising a
+// code path no caller can reach.
+func tmpLedger(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "ledger.md")
+	if err := os.WriteFile(p, []byte("placeholder\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
 func corpusOK(t *testing.T, root, ledger string, min int, as []Anchor) []Failure {
 	t.Helper()
 	f, err := Corpus(root, ledger, min, as)
@@ -301,13 +314,13 @@ func TestASymlinkedParentDirectoryIsNotFollowed(t *testing.T) {
 		t.Skipf("symlinks unavailable: %v", err)
 	}
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | linked/a.md | 2026 | friend |\n")
-	wantFailures(t, corpusOK(t, root, filepath.Join(root, "l.md"), 1, as), []string{"symlinked path component"})
+	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, as), []string{"symlinked path component"})
 }
 
 // A WRONG --root IS AN INVOCATION ERROR, not the loss of every anchor at
 // once. Firing the loudest alarm for a typo is how a check gets ignored.
 func TestAnAbsentRootIsARefusalNotACorpusWipe(t *testing.T) {
-	_, err := Corpus(filepath.Join(t.TempDir(), "nope"), "l.md", 1, parseOK(t, ledgerMD))
+	_, err := Corpus(filepath.Join(t.TempDir(), "nope"), tmpLedger(t), 1, parseOK(t, ledgerMD))
 	if err == nil {
 		t.Fatal("an absent --root must refuse, not report every anchor lost")
 	}
@@ -322,7 +335,7 @@ func TestARootThatIsNotADirectoryIsARefusal(t *testing.T) {
 	if err := os.WriteFile(f, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Corpus(f, "l.md", 1, parseOK(t, ledgerMD)); err == nil {
+	if _, err := Corpus(f, tmpLedger(t), 1, parseOK(t, ledgerMD)); err == nil {
 		t.Fatal("a --root that is a file must refuse")
 	}
 }
@@ -337,8 +350,8 @@ func TestLosingLedgerRowsIsItselfRed(t *testing.T) {
 		"memory/standing.md": "you are not a tool\n",
 	})
 	as := parseOK(t, ledgerMD)
-	wantFailures(t, corpusOK(t, root, "l.md", 2, as), nil)
-	wantFailures(t, corpusOK(t, root, "l.md", 3, as), []string{"below the stated floor", "the rows cannot report"})
+	wantFailures(t, corpusOK(t, root, tmpLedger(t), 2, as), nil)
+	wantFailures(t, corpusOK(t, root, tmpLedger(t), 3, as), []string{"below the stated floor", "the rows cannot report"})
 }
 
 // A ROW NAMING THE LEDGER AS ITS OWN HOME is its own evidence and can never
@@ -356,7 +369,7 @@ func TestACaseOnlyRenameIsCaughtOnACaseInsensitiveFilesystem(t *testing.T) {
 	root := t.TempDir()
 	writeTree(t, root, map[string]string{"readme.md": "the door is not locked\n"})
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | README.MD | 2026 | me |\n")
-	f := corpusOK(t, root, "l.md", 1, as)
+	f := corpusOK(t, root, tmpLedger(t), 1, as)
 	if len(f) == 0 {
 		t.Fatal("a case-only mismatch passed; on a case-sensitive filesystem it would be a missing home")
 	}
@@ -364,4 +377,197 @@ func TestACaseOnlyRenameIsCaughtOnACaseInsensitiveFilesystem(t *testing.T) {
 	if !strings.Contains(joined, "the directory holds") && !strings.Contains(joined, "does not exist") {
 		t.Errorf("unexpected reason for a case mismatch: %s", joined)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// Regressions from the SECOND cold read. Two of these were bypasses the FIRST
+// repair introduced — the fence toggle and the self-home path comparison —
+// which is why the parser was re-derived rather than patched a third time.
+// ---------------------------------------------------------------------------
+
+// A TOGGLE IS NOT FENCE TRACKING. A ledger documenting its own format mentions
+// both delimiters, which left a toggle stuck open and silently dropped every
+// row below it while the run printed OK.
+func TestAFenceClosesOnlyOnItsOwnDelimiter(t *testing.T) {
+	md := "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n" +
+		"\nFence markers are ``` or, less often:\n\n```\n~~~\n```\n\n" +
+		"| f | h | g | b |\n|---|---|---|---|\n| you are not a tool | b.md | 2026 | me |\n"
+	as := parseOK(t, md)
+	if len(as) != 2 {
+		t.Fatalf("a ~~~ inside a ``` fence swallowed the rest of the ledger: got %d rows, want 2: %v", len(as), as)
+	}
+}
+
+// The reverse polarity of the same defect: rows inside the illustration must
+// not leak into the check.
+func TestAFencedExampleContainingTheOtherDelimiterStaysIllustration(t *testing.T) {
+	md := "```\n| f | h | g | b |\n|---|---|---|---|\n| SOME EXAMPLE | example/path.md | when | who |\n~~~\n```\n\n" +
+		"| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n"
+	as := parseOK(t, md)
+	for _, a := range as {
+		if a.Home == "example/path.md" {
+			t.Fatalf("the illustration leaked into the anchors: %+v", a)
+		}
+	}
+}
+
+// An unterminated fence swallows the tail of the file, which is the silent
+// drop this whole subcommand exists to forbid.
+func TestAnUnterminatedFenceIsNamed(t *testing.T) {
+	md := "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n" +
+		"\n```\n| f | h | g | b |\n|---|---|---|---|\n| you are not a tool | b.md | 2026 | me |\n"
+	as, bad, err := ParseLedger([]byte(md))
+	if err != nil {
+		t.Fatalf("ParseLedger: %v", err)
+	}
+	if len(as) != 1 {
+		t.Errorf("rows below an open fence must not be checked: %v", as)
+	}
+	wantFailures(t, bad, []string{"unterminated code fence"})
+}
+
+// A PROTECTION CHECK THAT REDDENS ON A GLOSSARY IS ONE PEOPLE SILENCE. The
+// table declares its own shape: anything that is not a four-column
+// header+separator table belongs to the document, not to this check.
+func TestAnUnrelatedTableIsLeftAlone(t *testing.T) {
+	md := ledgerMD + "\nA glossary, for the reader:\n\n| term | meaning |\n|------|---------|\n| anchor | a protected fragment |\n"
+	as := parseOK(t, md)
+	if len(as) != 2 {
+		t.Fatalf("a two-column glossary disturbed the anchors: %v", as)
+	}
+}
+
+// Prose is not a table row, however many pipes it carries.
+func TestProseCarryingPipesIsNotAnAnchorRow(t *testing.T) {
+	md := "The columns run fragment | home | given | by, in that order.\n\n" + ledgerMD
+	as := parseOK(t, md)
+	if len(as) != 2 {
+		t.Fatalf("prose was read as an anchor row: %v", as)
+	}
+}
+
+// But a block that is unmistakably meant as a table and cannot render as one
+// is named, because none of its rows would ever be checked.
+func TestATableWithNoSeparatorIsNamed(t *testing.T) {
+	_, bad, _ := ParseLedger([]byte("| f | h | g | b |\n| the door is not locked | a.md | 2026 | me |\n"))
+	wantFailures(t, bad, []string{"no separator row"})
+}
+
+func TestASeparatorDisagreeingWithItsHeaderIsNamed(t *testing.T) {
+	_, bad, _ := ParseLedger([]byte("| f | h | g | b |\n|---|---|\n| the door is not locked | a.md | 2026 | me |\n"))
+	wantFailures(t, bad, []string{"separator row has 2 cells"})
+}
+
+func TestALoneRowOutsideAnyTableIsNamed(t *testing.T) {
+	_, bad, _ := ParseLedger([]byte(ledgerMD + "\nsome prose\n\n| adrift | a.md | 2026 | me |\n"))
+	wantFailures(t, bad, []string{"standing outside any table"})
+}
+
+// THE SELF-HOME GUARD MUST NOT DEPEND ON HOW THE PATHS WERE SPELLED. Comparing
+// an absolute resolution to a relative one disarmed it whenever --root and
+// --ledger were given in different forms, which is an ordinary invocation.
+func TestALedgerCannotBeItsOwnHomeInEitherPathForm(t *testing.T) {
+	root := t.TempDir()
+	self := filepath.Join(root, "self.md")
+	body := "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | self.md | 2026 | me |\n"
+	if err := os.WriteFile(self, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	as := parseOK(t, body)
+	rel, err := filepath.Rel(mustGetwd(t), self)
+	if err != nil {
+		t.Skipf("no relative form available: %v", err)
+	}
+	for _, form := range []struct{ name, ledger, root string }{
+		{"both absolute", self, root},
+		{"ledger relative, root absolute", rel, root},
+	} {
+		t.Run(form.name, func(t *testing.T) {
+			wantFailures(t, corpusOK(t, form.root, form.ledger, 1, as), []string{"names itself as the home"})
+		})
+	}
+}
+
+func mustGetwd(t *testing.T) string {
+	t.Helper()
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return wd
+}
+
+// A CASE-ONLY RENAME OF A DIRECTORY is as real a move as one of a file, so
+// every component is checked, not only the last.
+func TestACaseOnlyRenameOfAParentDirectoryIsCaught(t *testing.T) {
+	root := t.TempDir()
+	if !caseInsensitive(t, root) {
+		t.Skip("case-sensitive filesystem: the wrong spelling is already a missing home here")
+	}
+	writeTree(t, root, map[string]string{"memory/standing.md": "you are not a tool\n"})
+	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| you are not a tool | Memory/standing.md | 2026 | me |\n")
+	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, as), []string{"spelled differently on disk"})
+}
+
+// caseInsensitive probes the filesystem rather than the operating system:
+// macOS can mount either kind, and a test that assumed would be vacuous in CI.
+func caseInsensitive(t *testing.T, dir string) bool {
+	t.Helper()
+	probe := filepath.Join(dir, "CaseProbe")
+	if err := os.WriteFile(probe, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(probe)
+	_, err := os.Stat(filepath.Join(dir, "caseprobe"))
+	return err == nil
+}
+
+// AN UNREADABLE DIRECTORY IS NOT A PASS. Every other I/O error here says
+// "nothing was checked"; a listing failure quietly answering yes would be that
+// rule broken in the one place it is hardest to see.
+func TestAnUnlistableDirectoryIsAFindingNotAPass(t *testing.T) {
+	if runtime.GOOS == "windows" || os.Geteuid() == 0 {
+		t.Skip("needs a directory whose read permission can be removed")
+	}
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"locked/standing.md": "you are not a tool\n"})
+	locked := filepath.Join(root, "locked")
+	if err := os.Chmod(locked, 0o111); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(locked, 0o755)
+	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| you are not a tool | locked/standing.md | 2026 | me |\n")
+	wantFailures(t, corpusOK(t, root, tmpLedger(t), 1, as), []string{"could not be verified"})
+}
+
+// A DUPLICATED ROW would let the floor be satisfied by copy-paste.
+func TestADuplicateRowIsNamedSoTheFloorCannotBePadded(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"a.md": "the door is not locked\n"})
+	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n| the door is not locked | a.md | 2026 | me |\n")
+	wantFailures(t, corpusOK(t, root, tmpLedger(t), 2, as), []string{"duplicates ledger:3"})
+}
+
+// The floor's finding reads as prose, not as "1 rows".
+func TestTheFloorFindingCountsInEnglish(t *testing.T) {
+	root := t.TempDir()
+	writeTree(t, root, map[string]string{"a.md": "the door is not locked\n"})
+	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n")
+	f := corpusOK(t, root, tmpLedger(t), 2, as)
+	wantFailures(t, f, []string{"holds 1 row,"})
+	if f[0].Subject != "ledger" {
+		t.Errorf("the floor finding's subject should be the declared %q, got %q", "ledger", f[0].Subject)
+	}
+}
+
+// A RELATIVE --root IS AN ORDINARY INVOCATION and must not report every
+// anchor as reached through a symlink. Introduced while repairing the symlink
+// finding — every existing test used an absolute temp dir, so nothing saw it.
+func TestARelativeRootIsNotReadAsASymlinkEscape(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "repo")
+	writeTree(t, root, map[string]string{"a.md": "the door is not locked\n"})
+	t.Chdir(base)
+	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n")
+	wantFailures(t, corpusOK(t, "repo", tmpLedger(t), 1, as), nil)
 }

@@ -64,10 +64,14 @@ type Anchor struct {
 // separatorCell matches a markdown table separator cell (---, :--, --:, :-:).
 var separatorCell = regexp.MustCompile(`^:?-+:?$`)
 
-// fenceRE matches a fenced-code-block delimiter. A ledger that documents its
-// own format shows a table inside a fence, and those rows are illustration
-// rather than protection.
-var fenceRE = regexp.MustCompile("^(```+|~~~+)")
+// fenceRE captures a fenced-code-block delimiter run. Fences are tracked by
+// CommonMark's rule rather than by toggling on any delimiter: an opening fence
+// records its character and length, and only a run of the SAME character, at
+// least as long and carrying nothing after it, closes it. A toggle looked
+// simpler and was a silent bypass — a ledger documenting its own format
+// mentions both delimiters, which left the toggle stuck open and dropped every
+// row after it while the run printed OK.
+var fenceRE = regexp.MustCompile("^(`{3,}|~{3,})(.*)$")
 
 // anchorColumns is the ledger's fixed shape. A row with any other cell count
 // is a finding rather than a skipped line: a fragment containing a literal
@@ -78,19 +82,30 @@ const anchorColumns = 4
 
 // ParseLedger reads the anchor rows out of a ledger's markdown.
 //
-// Rows are recognized generously and rejected loudly. A line inside a fenced
-// code block is illustration and is skipped. Otherwise a line is a candidate
-// row if it begins with "|" or carries at least three of them — GitHub's
-// tables make the outer pipes optional, so requiring them would let a row
-// that renders perfectly well vanish from the check without a word.
+// THE TABLE DECLARES ITS OWN SHAPE; THIS DOES NOT GUESS AT ONE. That is the
+// whole parsing rule, and it replaced two earlier attempts that each failed in
+// one direction: requiring outer pipes silently dropped rows a renderer
+// accepts, and then accepting any pipe-bearing line read ordinary prose and
+// unrelated tables as anchors. Both are the same mistake — a heuristic about
+// what a table looks like — so the heuristic is gone.
 //
-// A table is a run of consecutive candidate rows. If the run's second line is
-// a separator, its first line was the header and both are dropped. Header and
-// separator are therefore recognized by SHAPE and POSITION, never by the
-// words in them: no column title is special to this tool, and a line may
-// title its columns in its own language. A separator anywhere else in a run
-// is a finding — it would otherwise silently delete the row above it, which
-// is the same silent loss this check exists to make loud.
+// A run is a block of consecutive non-blank lines outside any fence, at least
+// one of which bears pipes. A run is an ANCHOR TABLE only when its second line
+// is a separator whose cell count matches its first line's, and that count is
+// four. Everything else is somebody else's table — a two-column glossary, a
+// prose line that happens to contain pipes — and is left alone, because a
+// protection check that reddens on a glossary is one people learn to silence.
+//
+// Header and separator are recognized by SHAPE and POSITION, never by the
+// words in them: no column title is special to this tool, and a line may title
+// its columns in its own language. A ledger may hold any number of tables.
+//
+// What IS reported, because each would otherwise be a silent loss inside the
+// ledger's own anchor table: a separator in the body, a row whose column count
+// is not four, a table whose separator disagrees with its header, a pipe-led
+// block with no separator at all (markdown will not render it as a table, so
+// none of its rows would ever be checked), a lone four-column row adrift
+// outside any table, and an unterminated fence.
 //
 // AN EMPTY LEDGER IS AN ERROR, NEVER A GREEN. A ledger with no rows guards
 // nothing, and "everything present" and "nothing checked" must never print
@@ -100,50 +115,97 @@ func ParseLedger(raw []byte) ([]Anchor, []Failure, error) {
 
 	var out []Anchor
 	var failures []Failure
-	fenced := false
-	run := []int{} // line indexes of the current run of candidate rows
+	run := []int{} // line indexes of the current run
+
+	fail := func(line int, reason string) {
+		failures = append(failures, Failure{fmt.Sprintf("ledger:%d", line+1), reason})
+	}
 
 	flush := func() {
 		defer func() { run = run[:0] }()
 		if len(run) == 0 {
 			return
 		}
-		body := run
-		// A separator on the run's second line marks the row above it as
-		// this table's header; both leave.
-		if len(run) >= 2 && allSeparator(splitRow(lines[run[1]])) {
-			body = run[2:]
+		first := splitRow(lines[run[0]])
+
+		// A lone four-column row outside any table: an anchor row that lost
+		// its table, which is the one single-line case worth a word.
+		if len(run) == 1 {
+			if len(first) == anchorColumns && !allSeparator(first) && strings.HasPrefix(strings.TrimSpace(lines[run[0]]), "|") {
+				fail(run[0], "a four-column row standing outside any table; markdown will not render it as a table row, so it is checked by nothing — give it a header and a separator, or fold it into the table above")
+			}
+			return
 		}
-		for _, i := range body {
+
+		second := splitRow(lines[run[1]])
+		if !allSeparator(second) {
+			// Not a table at all. Only say so when it is unmistakably meant
+			// as one, so ordinary prose carrying pipes stays silent.
+			if strings.HasPrefix(strings.TrimSpace(lines[run[0]]), "|") {
+				fail(run[0], "a table with no separator row under its header; markdown will not render this as a table, so none of its rows are checked — add the |---|---| line")
+			}
+			return
+		}
+		if len(second) != len(first) {
+			fail(run[1], fmt.Sprintf("the separator row has %d cells and its header has %d; markdown will not render this as a table, so none of its rows are checked", len(second), len(first)))
+			return
+		}
+		if len(first) != anchorColumns {
+			return // another table entirely — a glossary, a key, not ours
+		}
+
+		for _, i := range run[2:] {
 			cells := splitRow(lines[i])
-			locus := fmt.Sprintf("ledger:%d", i+1)
-			if allSeparator(cells) {
-				failures = append(failures, Failure{locus, "a separator row in the middle of a table; a separator belongs directly under the header and nowhere else, and one here would quietly take the row above it out of the check"})
-				continue
+			switch {
+			case allSeparator(cells):
+				fail(i, "a separator row in the middle of a table; a separator belongs directly under the header and nowhere else, and one here would quietly take the row above it out of the check")
+			case len(cells) != anchorColumns:
+				fail(i, fmt.Sprintf("malformed row: %d columns, want %d — a \"|\" inside a cell, or anything trailing the last pipe, splits into another column; pick a fragment without one rather than escaping it", len(cells), anchorColumns))
+			default:
+				out = append(out, Anchor{
+					Fragment: cells[0], Home: cells[1], Given: cells[2], By: cells[3],
+					Line: i + 1,
+				})
 			}
-			if len(cells) != anchorColumns {
-				failures = append(failures, Failure{locus, fmt.Sprintf("malformed row: %d columns, want %d — a \"|\" inside a cell, or anything trailing the last pipe, splits into another column; pick a fragment without one rather than escaping it", len(cells), anchorColumns)})
-				continue
-			}
-			out = append(out, Anchor{
-				Fragment: cells[0], Home: cells[1], Given: cells[2], By: cells[3],
-				Line: i + 1,
-			})
 		}
 	}
 
+	var fenceChar byte
+	var fenceLen, fenceLine int
+	fenced := false
 	for i, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if fenceRE.MatchString(trimmed) {
-			flush()
-			fenced = !fenced
+		if m := fenceRE.FindStringSubmatch(trimmed); m != nil {
+			delim := m[1]
+			if !fenced {
+				flush()
+				fenced, fenceChar, fenceLen, fenceLine = true, delim[0], len(delim), i
+				continue
+			}
+			// Only the same character, at least as long, with nothing after
+			// it, closes the fence. Anything else is content.
+			if delim[0] == fenceChar && len(delim) >= fenceLen && strings.TrimSpace(m[2]) == "" {
+				fenced = false
+			}
 			continue
 		}
-		if fenced || !isCandidateRow(trimmed) {
+		if fenced {
+			continue
+		}
+		if trimmed == "" {
 			flush()
 			continue
 		}
-		run = append(run, i)
+		if strings.ContainsRune(trimmed, '|') {
+			run = append(run, i)
+			continue
+		}
+		flush()
+	}
+	if fenced {
+		// Swallowing the tail of a file is exactly the silent drop this check
+		// exists to forbid, so it is named rather than tolerated.
+		fail(fenceLine, "unterminated code fence; every line after it was read as illustration and no row below it was checked")
 	}
 	flush()
 
@@ -154,16 +216,6 @@ func ParseLedger(raw []byte) ([]Anchor, []Failure, error) {
 		return nil, failures, fmt.Errorf("the ledger holds no anchor rows; an empty ledger guards nothing and must not read as a pass")
 	}
 	return out, failures, nil
-}
-
-// isCandidateRow reports whether a line should be read as a table row.
-// Generous on purpose: a row missing an outer pipe still renders as a table,
-// so it must still be checked or reported, never skipped.
-func isCandidateRow(trimmed string) bool {
-	if trimmed == "" {
-		return false
-	}
-	return strings.HasPrefix(trimmed, "|") || strings.Count(trimmed, "|") >= anchorColumns-1
 }
 
 // splitRow splits a table row into trimmed cells, tolerating a missing outer
@@ -205,20 +257,25 @@ func allSeparator(cells []string) bool {
 // were lost in place" — once per anchor, for an invocation mistake, which is
 // the fastest way to teach a caller to ignore the alarm.
 func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, error) {
-	info, err := os.Stat(root)
+	absRoot, resolvedRoot, err := ResolveRoot(root)
 	if err != nil {
-		return nil, fmt.Errorf("root: %w", err)
-	}
-	if !info.IsDir() {
-		return nil, fmt.Errorf("root %q is not a directory", root)
-	}
-	resolvedRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return nil, fmt.Errorf("root %q cannot be resolved: %w", root, err)
+		return nil, err
 	}
 	// The ledger's own path, resolved, so a row cannot name the ledger as its
 	// own home — which would pass forever, the row being its own evidence.
-	resolvedLedger, _ := filepath.EvalSymlinks(ledgerPath)
+	// Both sides go through Abs first: comparing an absolute resolution to a
+	// relative one silently disarmed this guard whenever --root and --ledger
+	// were given in different forms, which is an ordinary invocation.
+	absLedger, err := filepath.Abs(ledgerPath)
+	if err != nil {
+		return nil, fmt.Errorf("ledger %q cannot be resolved: %w", ledgerPath, err)
+	}
+	resolvedLedger, err := filepath.EvalSymlinks(absLedger)
+	if err != nil {
+		// The ledger was read a moment ago, so this cannot be routine; and a
+		// dropped guard is worse than a refusal.
+		return nil, fmt.Errorf("ledger %q cannot be resolved: %w", ledgerPath, err)
+	}
 
 	var failures []Failure
 	dirs := newDirCache()
@@ -228,9 +285,28 @@ func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, er
 	// goes green with a smaller number that nothing compares to anything.
 	if len(as) < minAnchors {
 		failures = append(failures, Failure{
-			filepath.Base(ledgerPath),
-			fmt.Sprintf("the ledger holds %d rows, below the stated floor of %d — rows have been lost from the ledger itself, which is the one loss the rows cannot report. Restore them, or lower the floor in the same commit as a visible decision", len(as), minAnchors),
+			"ledger",
+			fmt.Sprintf("the ledger holds %s, below the stated floor of %d — rows have been lost from the ledger itself, which is the one loss the rows cannot report. Restore them, or lower the floor in the same commit as a visible decision", plural(len(as), "row"), minAnchors),
 		})
+	}
+
+	// A duplicated row inflates the count the floor is measured against
+	// without protecting anything more, which would let the floor be
+	// satisfied by copy-paste.
+	firstSeen := map[string]int{}
+	for _, a := range as {
+		if a.Fragment == "" || a.Home == "" {
+			continue // reported on its own terms below
+		}
+		key := a.Fragment + "\x00" + a.Home
+		if prev, dup := firstSeen[key]; dup {
+			failures = append(failures, Failure{
+				fmt.Sprintf("ledger:%d", a.Line),
+				fmt.Sprintf("duplicates ledger:%d (same fragment, same home); a repeated row raises the count --min-anchors is measured against while protecting nothing more", prev),
+			})
+			continue
+		}
+		firstSeen[key] = a.Line
 	}
 
 	for _, a := range as {
@@ -257,7 +333,7 @@ func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, er
 			continue
 		}
 
-		path := filepath.Join(root, rel)
+		path := filepath.Join(absRoot, rel)
 		fi, statErr := os.Lstat(path)
 		switch {
 		case statErr != nil && os.IsNotExist(statErr):
@@ -276,9 +352,10 @@ func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, er
 		// Mac says green where CI on Linux says red. Lstat cannot settle
 		// this: its FileInfo.Name() is the base of the path it was HANDED,
 		// so it agrees with the ledger by construction. Only the directory
-		// knows what it actually holds.
-		if actual, ok := dirs.exactName(filepath.Dir(path), filepath.Base(rel)); !ok {
-			failures = append(failures, Failure{a.Home, fmt.Sprintf("the directory holds %q, not %q — this filesystem matched a different spelling, and a case-only rename is a real move (ledger:%d)", actual, filepath.Base(rel), a.Line)})
+		// knows what it actually holds — and EVERY component is checked,
+		// because a renamed directory is as real a move as a renamed file.
+		if bad, actual, why := dirs.spellingOf(absRoot, rel); why != "" {
+			failures = append(failures, Failure{a.Home, fmt.Sprintf("%s at %q (the directory holds %q) — a case-only rename is a real move, and this filesystem matched a different spelling (ledger:%d)", why, bad, actual, a.Line)})
 			continue
 		}
 
@@ -312,47 +389,109 @@ func Corpus(root, ledgerPath string, minAnchors int, as []Anchor) ([]Failure, er
 	return failures, nil
 }
 
+// ResolveRoot validates --root and resolves it once. Exported so a caller can
+// refuse a bad root BEFORE printing any finding: a FAIL line emitted by a run
+// that then exits 2 tells a scanner about findings from a run that did not
+// happen.
+// It returns the root twice: made absolute, and additionally symlink-resolved.
+// BOTH are needed and mixing them is a real defect — every path this check
+// builds must be joined onto the ABSOLUTE root, while the containment
+// comparison happens against the RESOLVED one. Joining onto the caller's raw
+// spelling and comparing against a resolved root made every anchor under a
+// relative --root report as reached through a symlink.
+func ResolveRoot(root string) (abs, resolved string, err error) {
+	info, err := os.Stat(root)
+	if err != nil {
+		return "", "", fmt.Errorf("root: %w", err)
+	}
+	if !info.IsDir() {
+		return "", "", fmt.Errorf("root %q is not a directory", root)
+	}
+	abs, err = filepath.Abs(root)
+	if err != nil {
+		return "", "", fmt.Errorf("root %q cannot be resolved: %w", root, err)
+	}
+	resolved, err = filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", "", fmt.Errorf("root %q cannot be resolved: %w", root, err)
+	}
+	return abs, resolved, nil
+}
+
 // dirCache answers "does this directory hold this exact name" without
 // re-reading a directory once per anchor. A case-insensitive filesystem will
-// happily Lstat a name it does not hold, so the entries are the only witness.
-type dirCache struct{ seen map[string][]string }
+// happily Lstat a name it does not hold, so the directory entries are the only
+// witness there is.
+type dirCache struct{ seen map[string]dirListing }
 
-func newDirCache() *dirCache { return &dirCache{seen: map[string][]string{}} }
+type dirListing struct {
+	names    []string
+	readable bool
+}
 
-// exactName reports whether dir holds name byte-for-byte. When it does not,
-// it returns the entry that matched case-insensitively, so the finding can
-// say what is actually there. An unreadable directory answers yes: the file
-// was already Lstat'd successfully, so a listing failure is not evidence
-// against the anchor and must not manufacture one.
-func (d *dirCache) exactName(dir, name string) (string, bool) {
-	names, ok := d.seen[dir]
-	if !ok {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			d.seen[dir] = nil
-			return name, true
+func newDirCache() *dirCache { return &dirCache{seen: map[string]dirListing{}} }
+
+// spellingOf walks every component of rel under root and reports the first one
+// the directory does not hold byte-for-byte. why is "" when the whole path is
+// spelled as the ledger gives it.
+//
+// An UNREADABLE directory is a finding rather than a pass. Every other I/O
+// error here says "nothing was checked, which is not a pass", and a listing
+// failure that quietly returned yes would be that rule broken in the one place
+// it is hardest to see.
+func (d *dirCache) spellingOf(root, rel string) (bad, actual, why string) {
+	parts := strings.Split(rel, string(filepath.Separator))
+	dir := root
+	sofar := ""
+	for _, part := range parts {
+		if part == "" || part == "." {
+			continue
 		}
-		for _, e := range entries {
-			names = append(names, e.Name())
+		sofar = filepath.Join(sofar, part)
+		listing := d.list(dir)
+		if !listing.readable {
+			return sofar, "the directory cannot be listed", "the spelling could not be verified"
 		}
-		d.seen[dir] = names
-	}
-	if names == nil {
-		return name, true
-	}
-	var near string
-	for _, n := range names {
-		if n == name {
-			return n, true
+		exact, near := false, ""
+		for _, n := range listing.names {
+			if n == part {
+				exact = true
+				break
+			}
+			if strings.EqualFold(n, part) {
+				near = n
+			}
 		}
-		if strings.EqualFold(n, name) {
-			near = n
+		if !exact {
+			if near == "" {
+				near = "no entry of that name"
+			}
+			return sofar, near, "the path is spelled differently on disk"
 		}
+		dir = filepath.Join(dir, part)
 	}
-	if near == "" {
-		near = "no entry of that name"
+	return "", "", ""
+}
+
+func (d *dirCache) list(dir string) dirListing {
+	if l, ok := d.seen[dir]; ok {
+		return l
 	}
-	return near, false
+	entries, err := os.ReadDir(dir)
+	l := dirListing{readable: err == nil}
+	for _, e := range entries {
+		l.names = append(l.names, e.Name())
+	}
+	d.seen[dir] = l
+	return l
+}
+
+// plural keeps a finding readable rather than saying "1 rows".
+func plural(n int, noun string) string {
+	if n == 1 {
+		return fmt.Sprintf("%d %s", n, noun)
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 // escapesRoot reports whether a cleaned relative path climbs out of its root.
