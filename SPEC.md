@@ -549,10 +549,35 @@ re-opens the path-to-content seam this entry spends a bullet closing.
 > statement, in the `nocode` entry above, and an implementation that re-derives
 > them here is wrong by that fact.
 
-**The record it reads.** One plumbing command — `git diff-index -r --cached -z
-<base> --` — whose output is NUL-separated pairs of a metadata chunk and a
-path. **Both `-r` and the trailing `--` are load-bearing, and each was measured
-after being got wrong.**
+**The record it reads.** One plumbing command — `git diff-index -r
+--ignore-submodules=none --cached -z <base> --` — whose output is
+NUL-separated pairs of a metadata chunk and a path.
+
+> **THE REQUIREMENT THE FLAGS SERVE, stated first, because enumerating flags
+> has now failed twice.** The command must report **every staged path,
+> irrespective of the repository's own configuration** — and the reason is
+> sharper than tidiness: **the repository is the thing being checked, so its
+> configuration is part of its content.** `submodule.<name>.ignore` can be set
+> in a **committed `.gitmodules`**, which means a contributor can ship, in the
+> same diff, the setting that blinds the gate to what they are shipping. A
+> check that inherits diff-shaping configuration from its own subject is not a
+> check. **So the flags below are the ones measured to be necessary so far, not
+> a closed set, and any future one is chosen by re-asking this question.** The
+> test an implementer can run: stage a path, then try to make the command stop
+> reporting it using nothing but repository configuration.
+
+**All three flags are load-bearing, and each was measured after being got
+wrong.**
+
+**`--ignore-submodules=none` keeps gitlink records.** Measured: with
+`submodule.sub.ignore = all` set in `.gitmodules`, `git diff-index -r --cached
+-z HEAD --` reports the `.gitmodules` change and **omits the `160000` record
+for `sub` entirely**, exiting 0 — indistinguishable from a clean index; with
+the flag, the `:000000 160000 …  A  sub` record returns. The command-line flag
+outranks both `submodule.<name>.ignore` and `diff.ignoreSubmodules`, which is
+why it belongs in the command rather than in a note. *(The asymmetry that makes
+this easy to miss: `diff.ignoreSubmodules=all` does NOT affect plumbing, and
+measuring only that one is what produced a false all-clear here.)*
 
 **`-r` recurses into trees.** Without it, a **sparse index** reports a whole
 sparse directory as ONE record at mode `040000`, whose path is a directory and
@@ -580,8 +605,17 @@ clean case and means what it says. The record:
 
 That one record carries the mode and the content handle together, which is why
 it is one command: a second command joining a path back to its content is the
-seam two earlier designs' bypasses lived in. Content is then read per candidate
-path by OID.
+seam two earlier designs' bypasses lived in. Content is then read by OID through **a
+single `git cat-file --batch` fed from the record list**, never a process per
+path — measured, a 5000-file staged add costs about 37 seconds forked per path
+and effectively nothing batched, and a `pre-commit` that takes 37 seconds gets
+disabled exactly the way an advisory that refuses on every commit does. **The
+batch reader carries two requirements which are compatible and must both
+hold**: stay framed on the stream, consuming each record whole rather than
+reading two bytes and moving on, since a desynchronised reader slides onto the
+next object's bytes; and do not buffer a whole object, since a staged blob may
+be gigabytes while only two bytes decide a shebang. `missing` and `ambiguous`
+replies are one line with no body and desync a reader that assumes one.
 
 - **Content is read by DESTINATION OID** — `git cat-file blob <dstOID>` — and
   a path is never re-parsed to reach a blob. `git cat-file blob :<path>` is
@@ -634,12 +668,11 @@ is what a `040000` record trips if `-r` is ever dropped from the command above,
 which is the whole reason to write the branch rather than leave a four-way
 switch with no default.
 
-- **`120000` is a symlink** whose blob content is a target path. It is
-  classified **by its PATH** — every path-derived rule the audit applies still
-  applies — and only the mode bit and the shebang are skipped, on the audit's
-  own reasoning that a symlink whose stored bytes begin `#!` is a link to a
-  script rather than a script. A symlink named `run.sh`, or sitting at a
-  guarded location, is a finding.
+- **`120000` is a symlink** whose blob content is a target path: **the audit's
+  symlink disposition applies unchanged, as stated above**, on its own
+  reasoning that a symlink whose stored bytes begin `#!` is a link to a script
+  rather than a script. A symlink named `run.sh`, or sitting at a guarded
+  location, is a finding.
 - **`160000` is a gitlink — and this is the ONE matching rule this mode adds,
   because the index carries a type a filesystem walk never sees** (a
   checked-out submodule is walked as an ordinary directory, so the audit has no
@@ -760,6 +793,7 @@ check, unchanged — and additionally **the rest of the tree**. A clean
 machinery committed before the check was adopted stays invisible to it
 forever. That is what the audit is for, and it is why the two modes are not
 alternatives.
+
 ---
 
 ### floors — the door and the source, held to one floor set
