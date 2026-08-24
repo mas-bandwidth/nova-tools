@@ -654,9 +654,13 @@ rows.
 - a **separator row appears in a table's body** rather than directly under its
   header
 - a block that is unmistakably meant as a table **cannot render as one** — two
-  or more consecutive pipe-bearing lines with no separator, or a separator
+  or more consecutive pipe-**led** lines with no separator, or a separator
   disagreeing with its header where either side has four cells — so none of
   its rows would ever be checked
+- a four-column row is **indented into a code block while abutting table
+  rows**. CommonMark wants a blank line before an indented code block, so a row
+  pressed against the table above it is not illustration — it is a row that
+  would be dropped
 - a **four-column row sits inside a table that is not the anchor table**:
   markdown folds it into that table, so it is checked by nothing
 - a **lone four-column row stands outside any table**: an anchor row that lost
@@ -699,17 +703,29 @@ well chosen (a fragment so short it matches by accident will pass, and no tool
 can tell that from a good one); and it ships **no corpus of its own** — the
 ledger is the line's, always.
 
-**Two limits it does have, stated rather than papered over.** *Any* four-column
-table in the ledger is read as an anchor table, because no column title is
-special to this tool and nothing else could distinguish one — so a four-column
-history or changelog table in the same file will be checked as anchors and will
-count toward `--min-anchors`. Give such a table a different column count, or
-put it in another file. And **a lone four-column row written without outer
-pipes is not reported**: `a | b | c | d` standing alone is exactly the shape of
-an ordinary sentence containing three pipes, and in a prose-first document a
+**Three limits it does have, stated rather than papered over.**
+
+**One: the column count is the only thing that identifies the anchor table,
+and it cuts both ways.** *Any* four-column table in the ledger is read as
+anchors — a four-column changelog in the same file will be checked as anchors
+and will count toward `--min-anchors`. And an anchor table given a **fifth
+column** stops being the anchor table: its rows are quietly nobody's, and only
+`--min-anchors` will notice they are gone. No column title is special to this
+tool, so nothing else could tell these apart. Keep other tables to a different
+width, and treat a column change to the anchor table as the schema change it is.
+
+**Two: a row written without a leading `|` is not reported when it stands
+outside a table.** `a | b | c | d` is exactly the shape of an ordinary sentence
+carrying three pipes — a paragraph about *choosing a fragment without a `|` in
+it* trips any gate that does not ask for one — and in a prose-first document a
 false alarm on every such sentence would teach a reader to silence the check.
-Two or more consecutive pipe-bearing lines *are* reported, outer pipes or not,
-and `--min-anchors` is what catches a row that has gone missing entirely.
+Both report gates therefore ask for the leading pipe. Nothing is unprotected by
+this: the gates only *report*, and `--min-anchors` is what catches a row that
+has gone missing.
+
+**Three: an indented example is illustration** — which is the point — so a
+four-column table indented after a blank line is not checked. Indented rows
+*abutting* the table above them are named instead, per the list above.
 
 ---
 

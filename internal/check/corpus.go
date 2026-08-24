@@ -193,25 +193,24 @@ func ParseLedger(raw []byte) ([]Anchor, []Failure, error) {
 
 		// Lines that never belonged to a table.
 		//
-		// TWO OR MORE consecutive pipe-bearing lines are unmistakably meant as
-		// a table, whatever their outer pipes, so that block is reported
-		// without asking for one — requiring an outer pipe here was round
-		// one's silent-drop defect surviving in the report gate.
-		if len(stray) >= 2 && len(splitRow(lines[stray[0]])) >= 2 {
+		// BOTH GATES ASK FOR A LEADING PIPE, and the symmetry is the point.
+		// `a | b | c | d` is exactly the shape of an ordinary sentence
+		// carrying pipes, and this ledger is prose first — a wrapped paragraph
+		// about choosing a fragment without a `|` in it trips a gate that does
+		// not ask. Neither gate protects anything: both only REPORT, so a
+		// false alarm here buys nothing and costs the check its credibility,
+		// while the row it would have named is what --min-anchors is for.
+		// (Stated as a limit in SPEC rather than papered over: an orphaned row
+		// written without outer pipes goes unreported.)
+		leads := func(at int) bool { return strings.HasPrefix(strings.TrimSpace(lines[at]), "|") }
+
+		if len(stray) >= 2 && leads(stray[0]) && len(splitRow(lines[stray[0]])) >= 2 {
 			fail(stray[0], "a table with no separator row under its header; markdown will not render this as a table, so none of its rows are checked — add the |---|---| line")
 			return
 		}
-		// A SINGLE line is genuinely ambiguous, and the limit is stated
-		// rather than papered over: `a | b | c | d` with no outer pipe is
-		// exactly the shape of an ordinary sentence containing three pipes,
-		// and this ledger is prose first. So the lone-row finding asks for a
-		// leading pipe. The cost is that one orphaned row written without
-		// outer pipes goes unreported; --min-anchors is what catches it, and
-		// a false alarm on every such sentence would teach a reader to
-		// silence the check, which costs more.
 		for _, at := range stray {
 			cells := splitRow(lines[at])
-			if len(cells) == anchorColumns && !allSeparator(cells) && strings.HasPrefix(strings.TrimSpace(lines[at]), "|") {
+			if len(cells) == anchorColumns && !allSeparator(cells) && leads(at) {
 				fail(at, "a four-column row standing outside any table; markdown will not render it as a table row, so it is checked by nothing — give it a header and a separator, or fold it into the table above")
 			}
 		}
@@ -229,7 +228,15 @@ func ParseLedger(raw []byte) ([]Anchor, []Failure, error) {
 		trimmed := strings.TrimSpace(line)
 		// An indented code block is markdown's other way of showing an
 		// example, and a ledger documenting its own format may well use it.
+		// But an indented line ABUTTING table rows is not a code block at
+		// all — CommonMark requires a blank line before one — so if a run is
+		// open, an anchor-shaped line here is a row that would be dropped, and
+		// it is named. Indent an example after a blank line and it stays
+		// illustration, which is how a ledger documents its own format.
 		if !fenced && indented(line) {
+			if cells := splitRow(line); len(run) > 0 && len(cells) == anchorColumns && !allSeparator(cells) && strings.HasPrefix(trimmed, "|") {
+				fail(i, "a four-column row indented into a code block; it is read as illustration and checked by nothing — unindent it into the anchor table, or make it clearly an example")
+			}
 			flush()
 			continue
 		}

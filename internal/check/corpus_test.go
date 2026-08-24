@@ -613,12 +613,28 @@ func TestAPipeBearingLineAboveTheHeaderDoesNotHideTheTable(t *testing.T) {
 	}
 }
 
-// TWO OR MORE consecutive pipe-bearing lines are unmistakably a table, outer
-// pipes or not — requiring one here was round one's defect surviving in the
-// report gate.
-func TestATableWithNoSeparatorIsNamedWithoutOuterPipes(t *testing.T) {
-	_, bad, _ := ParseLedger([]byte("f | h | g | b\nthe door is not locked | a.md | 2026 | me\n"))
-	wantFailures(t, bad, []string{"no separator row"})
+// BOTH REPORT GATES ASK FOR A LEADING PIPE, and the symmetry is deliberate.
+// A wrapped paragraph about choosing a fragment without a "|" in it carries
+// pipes on consecutive lines, and this ledger is prose first — so the stated
+// limit is that a separator-less block without outer pipes goes unreported,
+// and --min-anchors is what catches the row.
+func TestASeparatorLessBlockIsNamedOnlyWhenItLeadsWithAPipe(t *testing.T) {
+	_, quiet, _ := ParseLedger([]byte("prose about a | b and c | d\nand more about e | f and g | h\n"))
+	wantFailures(t, quiet, nil)
+
+	_, loud, _ := ParseLedger([]byte("| f | h | g | b |\n| the door is not locked | a.md | 2026 | me |\n"))
+	wantFailures(t, loud, []string{"no separator row"})
+}
+
+// The specimen that earned the symmetry: a real ledger's own prose about
+// fragment choice must not redden the run.
+func TestProseAboutPipesDoesNotRedden(t *testing.T) {
+	md := "**On choosing a fragment.** Pick one without a `|` in it rather than escaping\n" +
+		"one: a `\\|` still splits the cell, so `a | b` and `c | d` are two columns.\n\n" + ledgerMD
+	as := parseOK(t, md)
+	if len(as) != 2 {
+		t.Fatalf("the anchor table was disturbed by prose: %v", as)
+	}
 }
 
 // A blockquoted table renders as a table, so it is read as one.
@@ -649,4 +665,21 @@ func TestATwoColumnTableWithAMismatchedSeparatorIsLeftAlone(t *testing.T) {
 	if len(as) != 2 {
 		t.Fatalf("the anchor table was disturbed: %v", as)
 	}
+}
+
+// AN INDENTED ROW ABUTTING TABLE ROWS is not a code block — CommonMark wants
+// a blank line before one — so it is a row that would be dropped, and it is
+// named. Skipping it was silent when it ENDED a table and loud one line
+// higher, and the same line cannot be illustration in one position and a loss
+// in the other.
+func TestAnIndentedRowAbuttingATableIsNamed(t *testing.T) {
+	md := "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n    | LOST | a.md | 2026 | me |\n"
+	as, bad, err := ParseLedger([]byte(md))
+	if err != nil {
+		t.Fatalf("ParseLedger: %v", err)
+	}
+	if len(as) != 1 {
+		t.Errorf("the real row should survive: %v", as)
+	}
+	wantFailures(t, bad, []string{"indented into a code block"})
 }
