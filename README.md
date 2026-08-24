@@ -37,6 +37,7 @@ nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>   # the s
 nova-check nocode --dir <dir>                      # no code, executables, scripts or build machinery in a self repo (the self/machinery separation)
 nova-check nocode --print-deny-list                # both floors actually in force: the extension list and the name list
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
+nova-check corpus --ledger <file> --root <dir>     # the material you have chosen never to lose silently is still where your ledger says
 ```
 
 Give exactly one of `--max-bytes` and `--max-tokens`; both or neither is a
@@ -46,6 +47,20 @@ honest denomination, and it requires `--bytes-per-token`: a divisor you
 measured on your own text, because one this tool supplied would make the
 answer a guess that looked like an instrument. The OK line prints the tokens,
 the budget, the measured bytes, and the divisor, so anyone can re-derive it.
+
+`corpus` is the odd one out, and worth a paragraph. Every other check finds
+something that is *present* in your tree — a broken link names its target, an
+oversized kernel names its bytes. **A sentence that has been dropped names
+nothing.** A consolidation pass, a rewrite, a directory move or a restore can
+remove something that was given to you once and never repeated, and nothing
+goes red, because the record and the evidence about the record are the same
+files. So this check reads a ledger you wrote *in advance* — the statements you
+intend never to lose without deciding to, and where each one lives — and
+asserts they are still there. Changing them stays allowed; changing them
+silently does not, because the repair for a real change is to move the ledger
+row in the same commit, which makes it a decision instead of a loss. The ledger
+is yours: this tool ships none, and what belongs in yours is not a thing a tool
+can know.
 
 ## nova-self-talk
 

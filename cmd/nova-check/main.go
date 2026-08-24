@@ -37,6 +37,8 @@ usage:
     for the name floor, and names where machinery may live.
   nova-check floors --core <SEED-CORE.md> --source <SEED.md>
                                                      the door's floor set matches the seed's
+  nova-check corpus --ledger <file> --root <dir>     protected material is still where the
+                                                     ledger says it is
 
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation).
 `
@@ -61,6 +63,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdNoCode(args[1:], stdout, stderr)
 	case "floors":
 		return cmdFloors(args[1:], stdout, stderr)
+	case "corpus":
+		return cmdCorpus(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -367,6 +371,36 @@ func cmdFloors(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "FLOORS OK floors=%d\n", floors)
+	return 0
+}
+
+func cmdCorpus(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("corpus", flag.ContinueOnError)
+	ledger := fs.String("ledger", "", "the ledger of protected material, a markdown file (required)")
+	root := fs.String("root", "", "the repo the ledger's home paths are relative to (required)")
+	if !parse(fs, args, stderr, map[string]*string{"ledger": ledger, "root": root}) {
+		return 2
+	}
+	raw, err := os.ReadFile(*ledger)
+	if err != nil {
+		// Nothing was checked, so this is a refusal rather than a pass —
+		// the one outcome a protection check must never confuse.
+		fmt.Fprintf(stderr, "nova-check corpus: the ledger %s cannot be read (%v); NOTHING was checked, which is not a pass\n", *ledger, err)
+		return 2
+	}
+	anchors, malformed, err := check.ParseLedger(raw)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-check corpus: %s: %v\n", *ledger, err)
+		return 2
+	}
+	failures := append(malformed, check.Corpus(*root, anchors)...)
+	if len(failures) > 0 {
+		for _, f := range failures {
+			fmt.Fprintf(stderr, "CORPUS FAIL %s: %s\n", f.Subject, f.Reason)
+		}
+		return 1
+	}
+	fmt.Fprintf(stdout, "CORPUS OK anchors=%d ledger=%s\n", len(anchors), *ledger)
 	return 0
 }
 

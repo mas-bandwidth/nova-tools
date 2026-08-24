@@ -36,6 +36,8 @@ func TestRunRefusesToGuess(t *testing.T) {
 		{"nocode without dir", []string{"nocode"}, "--dir is required"},
 		{"floors without core", []string{"floors", "--source", "SEED.md"}, "--core is required"},
 		{"floors without source", []string{"floors", "--core", "SEED-CORE.md"}, "--source is required"},
+		{"corpus without ledger", []string{"corpus", "--root", "."}, "--ledger is required"},
+		{"corpus without root", []string{"corpus", "--ledger", "corpus/anchors.md"}, "--root is required"},
 		{"stray positional argument", []string{"links", "--dir", ".", "extra"}, "unexpected argument"},
 	}
 	for _, tt := range tests {
@@ -334,6 +336,67 @@ func TestRunFloorsEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), `FLOORS FAIL `+source+`: §6's charter enumeration: the floor "secrets nowhere" is missing`) {
 		t.Errorf("stderr = %q, want the missing-charter-floor grammar", stderr.String())
+	}
+}
+
+// The corpus gate's own CLI seam. The interesting outcome is the middle one:
+// an unreadable ledger and an empty ledger are REFUSALS (exit 2), because a
+// protection check that prints a pass when it checked nothing is the one
+// failure this whole subcommand exists to be the opposite of.
+func TestRunCorpusEndToEnd(t *testing.T) {
+	const ledger = `# what this line protects
+
+| fragment | home | given | by |
+|---|---|---|---|
+| the light is on | README.md | 2026-01-01 | a friend |
+`
+	dir := t.TempDir()
+	mustWrite(t, dir, "ledger.md", ledger)
+	mustWrite(t, dir, "repo/README.md", "and then: the light is on, still.\n")
+	ledgerPath := filepath.Join(dir, "ledger.md")
+	root := filepath.Join(dir, "repo")
+
+	var stdout, stderr bytes.Buffer
+	if got := run([]string{"corpus", "--ledger", ledgerPath, "--root", root}, &stdout, &stderr); got != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", got, stderr.String())
+	}
+	if !strings.Contains(stdout.String(), "CORPUS OK anchors=1") {
+		t.Errorf("stdout = %q, want it to contain %q", stdout.String(), "CORPUS OK anchors=1")
+	}
+
+	// Lose the words in place and watch the check say NO.
+	mustWrite(t, dir, "repo/README.md", "a rewrite that dropped the sentence\n")
+	stdout.Reset()
+	stderr.Reset()
+	if got := run([]string{"corpus", "--ledger", ledgerPath, "--root", root}, &stdout, &stderr); got != 1 {
+		t.Fatalf("exit = %d, want 1; stdout: %s stderr: %s", got, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), `CORPUS FAIL README.md: ABSENT: "the light is on"`) {
+		t.Errorf("stderr = %q, want the absent-anchor grammar", stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Errorf("a failing check must not print an OK line, got %q", stdout.String())
+	}
+
+	// An unreadable ledger is a REFUSAL, and says so in those words.
+	stdout.Reset()
+	stderr.Reset()
+	if got := run([]string{"corpus", "--ledger", filepath.Join(dir, "absent.md"), "--root", root}, &stdout, &stderr); got != 2 {
+		t.Fatalf("exit = %d, want 2; stderr: %s", got, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "NOTHING was checked, which is not a pass") {
+		t.Errorf("stderr = %q, want the nothing-was-checked refusal", stderr.String())
+	}
+
+	// An empty ledger is the same hazard and gets the same answer.
+	mustWrite(t, dir, "empty.md", "# a ledger with no rows yet\n")
+	stdout.Reset()
+	stderr.Reset()
+	if got := run([]string{"corpus", "--ledger", filepath.Join(dir, "empty.md"), "--root", root}, &stdout, &stderr); got != 2 {
+		t.Fatalf("exit = %d, want 2; stderr: %s", got, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "guards nothing") {
+		t.Errorf("stderr = %q, want the empty-ledger refusal", stderr.String())
 	}
 }
 

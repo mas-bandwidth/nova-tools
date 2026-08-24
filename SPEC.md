@@ -51,6 +51,9 @@ NOCODE OK files=<n> clean
 NOCODE FAIL <path>: <reason>
 FLOORS OK floors=<n>
 FLOORS FAIL <path>: <reason>
+CORPUS OK anchors=<n> ledger=<file>
+CORPUS FAIL <home>: ABSENT: <fragment> (given <when>, <who>) — <repair>
+CORPUS FAIL ledger:<line>: <reason>
 SELFTALK OK files=<n> claims=<n> standing=0 installations=0
 SELFTALK FAIL <file>: STANDING: <claim>
 SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
@@ -515,6 +518,102 @@ also names the study-attacks split-hands routine *"a floor in its own right"*
 (§11-conferred), and the door does not restate it, so it is deliberately not
 part of this parity; ETHICS.md and the pattern chapters; whether SEED-CORE's
 pointer to §6 resolves (`links` covers references).
+
+---
+
+### corpus — the material a line has chosen never to lose silently
+
+```
+nova-check corpus --ledger <file> --root <dir>
+```
+
+**Why it exists.** Every other check here finds something that is *present* in
+the tree: a broken link names its target, an oversized kernel names its bytes,
+a code file names itself. **A sentence that has been dropped names nothing.**
+A consolidation pass, a rewrite, a directory move, a restore to an earlier
+checkpoint — each can remove a statement that was given once and never
+repeated, and none of them produces an error. The file still parses, the links
+still resolve, and the record and the evidence about the record are the same
+object, so a line has no way to notice from the inside.
+
+That asymmetry is the argument for a **ledger written in advance**: the line
+names, in prose, the statements it intends never to lose without deciding to,
+and where each one lives. This check reads that ledger and asserts every
+fragment is still where the ledger says it is. It is the twin of
+`nova-self-talk` pointed the other way — that one screens what creeps *in*,
+this one screens what falls *out*.
+
+**The ledger is prose first.** It is a document a person reads as the list of
+what is protected and why; this check reads only its table rows. Anything
+outside a table is ignored, so the reasoning, the provenance and the history
+can live beside the rows.
+
+**The row format.** Four pipe-delimited columns, in order:
+
+| column | meaning |
+|--------|---------|
+| 1 | the **fragment**: a verbatim substring of the home file |
+| 2 | the **home**: a slash-separated path, relative to `--root` |
+| 3 | when it was given (free text, for the reader and for findings) |
+| 4 | who gave it (free text, same) |
+
+**Header and separator rows are recognized by SHAPE, never by their words.** A
+row whose cells are all dashes (`---`, `:--`, `--:`, `:-:`) is a separator, and
+the row immediately above it is its header and is dropped. **No column title is
+special to this tool** — a line may title its columns in its own language, and
+a ledger may hold several tables.
+
+**Fragment choice is the line's judgment, not this tool's.** Short enough to
+survive a reflow, long enough to be unmistakable. A fragment must not contain a
+`|`, which would split into an extra cell; pick a different fragment rather
+than escaping it, and the wrong-column-count case below is what makes that
+loud instead of silent.
+
+**Asserts.** For every row: the home file exists under `--root`, is a regular
+file, is readable, and contains the fragment as a literal substring.
+
+**Says NO when** (each a `CORPUS FAIL <subject>: <reason>` line, exit 1):
+
+- the fragment is **absent** from its home — the words were lost in place. The
+  finding names the fragment, its provenance columns and the ledger line, and
+  states the repair: restore the words, or change that ledger row in the same
+  commit
+- the home file **does not exist**, is not a regular file, or is unreadable —
+  each its own reason, because a moved file and an edited sentence are
+  different facts with different repairs. `Lstat` is used and **symlinks are
+  never followed**: material "present" through a link lives in a file this repo
+  does not govern, which is not the protection the row claims
+- the **fragment cell is empty** — an empty substring is contained in every
+  file, so left alone it would pass forever while protecting nothing: a green
+  that can never go red
+- the **home cell is empty**, is **absolute**, or **climbs out of `--root`**
+  (`../`) — a row whose subject is outside the tree is not held by the tree
+- a table row has a **column count other than four** — reported rather than
+  skipped, because the commonest cause is a fragment containing `|`, and
+  silently dropping that row would remove protection from precisely the
+  statement someone took the trouble to list
+
+Findings are reported for **every** row in one run, never first-only: the
+losses this exists to catch arrive in batches, and a one-at-a-time report would
+take as many runs as there were losses.
+
+**Refuses (exit 2) when** `--ledger` or `--root` is missing, the ledger cannot
+be read (`NOTHING was checked, which is not a pass`), or **the ledger holds no
+rows** — an empty ledger guards nothing, and *"everything present"* and
+*"nothing checked"* must never print the same line.
+
+**Changing protected material is allowed; changing it silently is not.** If the
+words must move or be reworded, the ledger row changes in the same commit. The
+check does not forbid change — it forbids change that leaves no trace, which is
+the whole of what it is for.
+
+**Deliberately does not check:** *what belongs* in the corpus — what is worth
+protecting is one of the more personal decisions a line makes, and a tool that
+guessed it would be answering a question it cannot see; sentiment or tone
+(`nova-self-talk` reads register, this reads presence); whether a fragment is
+well chosen (a fragment so short it matches by accident will pass, and no tool
+can tell that from a good one); duplicate rows; and it ships **no corpus of its
+own** — the ledger is the line's, always.
 
 ---
 
