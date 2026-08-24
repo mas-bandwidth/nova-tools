@@ -277,7 +277,7 @@ would be right for exactly one model); compressibility or density.
 
 ```
 nova-check nocode --dir <dir>                      audit a whole tree
-nova-check nocode --staged --dir <repo>            advisory over the index only
+nova-check nocode --staged --dir <repo>            advisory over the index (specified, not yet built)
 nova-check nocode --print-deny-list                print the list in force
     [--allow <prefix>]      where machinery may live (repeatable, empty by default)
     [--deny-ext <list|@file>]   replace the floor deny-list wholesale
@@ -351,19 +351,23 @@ wrong, and replacing one closure claim with another would repeat it.
   prefix comparison, so `.GitHub/workflows/ci.yml` is caught. Location matching
   agrees with name matching deliberately: they once disagreed, and on a
   case-insensitive filesystem that is the same directory on disk. **At most one
-  location reason is reported**, the first prefix that matches.
+  location reason is reported**, the first matching prefix in sorted order —
+  the floor's prefixes are sorted, so "first" is not the order they are
+  written in.
 - The **extension** is lowercased and whitespace-trimmed the same way, so a
   file named `x.py ` does not miss a list it plainly belongs on.
 - Paths are compared slash-separated on every platform.
 - **Reasons are reported in that same order** — name, location, extension,
-  then (for a symlink) `symlink (target not followed)`, otherwise the
-  executable bit and then the shebang — joined with `"; "`. The four-condition
+  then (for a symlink) `symlink (target not followed)`, appended only when an
+  earlier reason already fired, otherwise the executable bit and then the
+  shebang — joined with `"; "`. The four-condition
   list earlier in this entry is written in the order the conditions are best
   *explained*, which is not the order they are *printed*.
 
-**And the list side is normalised too**, when a deny-list is parsed rather
-than matched: entries are lowercased, an extension entry written without its
-leading dot is given one, and an `--allow` entry is whitespace-trimmed and
+**And the list side is normalised too**, when a list is parsed rather
+than matched: **deny-list** entries are lowercased, an extension entry written
+without its leading dot is given one, and an `--allow` entry — which is never
+lowercased, per the case-sensitivity above — is whitespace-trimmed and
 slash-normalised, with an entry that reduces to nothing discarded — so
 `--allow .` narrows nothing rather than allowing everything.
 
@@ -457,7 +461,7 @@ resolve to a directory — it is resolved through symlinks first, so a `--dir`
 naming a link to the repo scans the repo rather than passing with `files=0`; when the
 effective deny-list is empty, unreadable, or contains something that is not an
 extension; when `--deny-ext` and `--deny-ext-add` are given together; when
-or on an unexpected positional argument.
+a flag cannot be parsed; or on an unexpected positional argument.
 
 **Deliberately does not check:** file contents beyond the first two bytes (an
 extension list plus a shebang test is auditable; sniffing a whole file for
@@ -538,17 +542,19 @@ re-opens the path-to-content seam this entry spends a bullet closing.
 > two copies of one truth and rots toward fail-open**, because the copy is
 > written by someone reading for the rule they came for. So this entry
 > specifies the two INPUTS that differ — where the mode comes from, where the
-> content comes from — and specifies nothing about matching. The matching rules
-> have exactly one statement, in the `nocode` entry above, and an implementation
-> that re-derives them here is wrong by that fact.
+> content comes from — and specifies nothing about matching **except the one
+> rule the index adds, named below**. The matching rules have exactly one
+> statement, in the `nocode` entry above, and an implementation that re-derives
+> them here is wrong by that fact.
 
 **The record it reads.** One plumbing command — `git diff-index --cached -z
 <base> --` — whose output is NUL-separated pairs of a metadata chunk and a
 path. **The trailing `--` is load-bearing**: without it, a repository holding
 a file named `HEAD` makes the command exit 128 with *ambiguous argument*, on
-every commit, and an implementer who reads a failed or empty `diff-index` as
-*nothing is staged* ships a gate that goes green with the rest of the commit
-unexamined. The record:
+every commit, and an implementer who reads a FAILED `diff-index` — whose stdout is
+also empty — as *nothing is staged* ships a gate that goes green with the
+commit unexamined. A genuinely empty output from a valid base is the ordinary
+clean case and means what it says. The record:
 
 ```
 :<srcmode> <dstmode> <srcOID> <dstOID> <status>\0<path>\0
@@ -597,10 +603,16 @@ no `R` or `C` is produced. A gate that **skips what it does not recognise has
 an unbounded skip list**, which is a fail-open whose size nobody can state, so
 an unrecognised status stops the check rather than passing the path.
 
-**Modes.** `diff-index` reports only `100644`, `100755`, `120000` and
-`160000` — scoped to the record deliberately, since a sparse index also stores
-`040000` sparse-directory entries, which `diff-index` expands rather than
-reporting.
+**Modes.** Stated as what is CLASSIFIED rather than as what git can emit,
+because the report side is not a closed set this document can own: a `D` or `U`
+record carries a destination mode of `000000` and is never classified, and a
+sparse index stores `040000` sparse-directory entries, which `diff-index`
+expands rather than reporting. **A classified record — `A`, `M` or `T` — has a
+destination mode of `100644`, `100755`, `120000` or `160000`, and any other
+destination mode is a refusal (exit 2)**, on the same argument as an
+unrecognised status letter: a switch with no default has an unbounded skip
+list. Nothing reaches that refusal today, which is why it is written down —
+it is the branch an implementer omits.
 
 - **`120000` is a symlink** whose blob content is a target path. It is
   classified **by its PATH** — every path-derived rule the audit applies still
@@ -622,6 +634,11 @@ reporting.
   and never coincide: the audit's is *filesystem* readability, this one is
   *object-store* readability.
 
+**Says nothing to say.** A commit staging no classifiable record — nothing
+staged, or deletions only — is exit 0 with the audit's `NOCODE OK` line and a
+count of zero. It is not a refusal: an empty change set is a fact about the
+commit, not a broken check.
+
 **Says NO when** any staged path is classified as machinery: the audit's
 `NOCODE FAIL <path>: <reason>` line per path **on stderr**, reasons joined
 as the audit joins them, exit 1.
@@ -640,7 +657,16 @@ to commit from. An advisory that refuses on every commit is an advisory people
 disable.
 
 **The base is `HEAD`, except on an unborn HEAD** — no commits yet — where
-`diff-index` against `HEAD` exits 128 with *ambiguous argument*. The check detects it with `git rev-parse -q
+`diff-index` against `HEAD` fails.
+
+> **The base is chosen by a DETECTOR, never by matching an error message.**
+> `git rev-parse -q --verify HEAD` exits non-zero exactly when HEAD is unborn,
+> and that is the whole test. Git's wording for the failure is not stable
+> across the invocation: with the trailing `--` this entry mandates it is
+> *bad revision*, without it *ambiguous argument*, and an earlier revision of
+> this paragraph quoted the second while specifying the first. **A specification
+> that pins another tool's error string acquires a dependency it cannot
+> maintain**; this one pins an exit code. The check detects it with `git rev-parse -q
 --verify HEAD` and compares against the **empty tree** instead, obtaining that
 object's id from `git hash-object -t tree /dev/null` **run inside the
 repository**, rather than hard-coding `4b825dc6…`, on the seed's
@@ -680,9 +706,11 @@ word rather than a hedge:
   unexamined through an amend.
 - **`git add -N` records an intent-to-add whose destination is the empty
   blob**, so the content classified is not the content on disk; the path is
-  reported on its name and mode alone. A plain `git commit` then refuses the
-  commit outright, but `git commit -a` stages the real bytes before the hook
-  runs, so that case is seen and is fail-closed.
+  reported on its name and mode alone. A plain `git commit` refuses the commit
+  outright when that is the only change, and otherwise commits without it,
+  so the advisory classifies a path the commit does not contain — over-strict,
+  never fail-open. `git commit -a` stages the real bytes before the hook runs,
+  so that case is seen.
 - **The audit's fail-closed conditions on things it cannot READ have no index
   analogue.** An unreadable file, a device, a socket or a fifo is a finding to
   the audit; here there is only a blob git already holds, so a `chmod 000` file
