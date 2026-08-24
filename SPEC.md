@@ -1,6 +1,6 @@
 # nova-tools — specification
 
-Four binaries. `nova-check`: five checks, all at the **record layer** — they verify
+Four binaries. `nova-check`: six checks, all at the **record layer** — they verify
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
@@ -51,8 +51,9 @@ NOCODE OK files=<n> clean
 NOCODE FAIL <path>: <reason>
 FLOORS OK floors=<n>
 FLOORS FAIL <path>: <reason>
-CORPUS OK anchors=<n> ledger=<file>
-CORPUS FAIL <home>: ABSENT: <fragment> (given <when>, <who>) — <repair>
+CORPUS OK anchors=<n> floor=<n> ledger=<file>
+CORPUS FAIL <home>: ABSENT: "<fragment>" (given <when>, <who>) — <repair>
+CORPUS FAIL <home>: <reason>
 CORPUS FAIL ledger:<line>: <reason>
 SELFTALK OK files=<n> claims=<n> standing=0 installations=0
 SELFTALK FAIL <file>: STANDING: <claim>
@@ -82,7 +83,7 @@ stdout, all listed in its section.
 
 ## nova-check
 
-Five record-layer checks in one binary, each a wall: a record passes or it
+Six record-layer checks in one binary, each a wall: a record passes or it
 does not. Each subcommand below states its own contract — what it asserts,
 what makes it say NO, and what it deliberately does not check.
 
@@ -524,7 +525,7 @@ pointer to §6 resolves (`links` covers references).
 ### corpus — the material a line has chosen never to lose silently
 
 ```
-nova-check corpus --ledger <file> --root <dir>
+nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
 ```
 
 **Why it exists.** Every other check here finds something that is *present* in
@@ -543,10 +544,20 @@ fragment is still where the ledger says it is. It is the twin of
 `nova-self-talk` pointed the other way — that one screens what creeps *in*,
 this one screens what falls *out*.
 
+**And the ledger is inside the thing it protects**, which is the obvious
+objection and is answered by a floor rather than by hope. The same restore that
+drops a sentence drops the row guarding it, and the run would go green with a
+smaller count that nothing compares to anything. So `--min-anchors` states the
+fewest rows the ledger may hold, in the same no-guessed-budgets idiom as
+`kernel`'s: it is **required**, must be positive, and losing rows is itself
+red. Without it this check protects everything except itself.
+
 **The ledger is prose first.** It is a document a person reads as the list of
-what is protected and why; this check reads only its table rows. Anything
-outside a table is ignored, so the reasoning, the provenance and the history
-can live beside the rows.
+what is protected and why; this check reads only its table rows. Prose,
+headings and lists are ignored, so the reasoning, the provenance and the
+history can live beside the rows — and **rows inside a fenced code block
+(``` or ~~~) are illustration, not protection**, so a ledger may document its
+own format without checking its own examples.
 
 **The row format.** Four pipe-delimited columns, in order:
 
@@ -557,20 +568,34 @@ can live beside the rows.
 | 3 | when it was given (free text, for the reader and for findings) |
 | 4 | who gave it (free text, same) |
 
-**Header and separator rows are recognized by SHAPE, never by their words.** A
-row whose cells are all dashes (`---`, `:--`, `--:`, `:-:`) is a separator, and
-the row immediately above it is its header and is dropped. **No column title is
-special to this tool** — a line may title its columns in its own language, and
-a ledger may hold several tables.
+**Rows are recognized generously and rejected loudly.** Outside a fence, a line
+is a candidate row if it begins with `|` **or** carries at least three of them.
+GitHub's tables make the outer pipes optional, so requiring them would let a row
+that renders perfectly well vanish from the check without a word — losing a
+character at the end of a line is the commonest way to lose a row.
+
+**A table is a run of consecutive candidate rows.** If the run's second line is
+a separator — cells that are all dashes (`---`, `:--`, `--:`, `:-:`) — then its
+first line was the header, and both are dropped. Header and separator are
+therefore recognized by **shape and position**, never by their words: **no
+column title is special to this tool**, a line may title its columns in its own
+language, and a ledger may hold several tables. A separator anywhere else in a
+run is a **finding**, because it would otherwise quietly take the row above it
+out of the check — the same silent loss this whole subcommand exists to make
+loud.
 
 **Fragment choice is the line's judgment, not this tool's.** Short enough to
-survive a reflow, long enough to be unmistakable. A fragment must not contain a
-`|`, which would split into an extra cell; pick a different fragment rather
-than escaping it, and the wrong-column-count case below is what makes that
-loud instead of silent.
+survive a reflow, long enough to be unmistakable. The fragment cell is matched
+**literally, with no markdown unescaping**: a fragment must not contain a `|`,
+and backticks or emphasis inside the cell are part of the string being searched
+for. Pick a plainer fragment rather than escaping one; the wrong-column-count
+case below is what makes a stray pipe loud instead of silent.
 
 **Asserts.** For every row: the home file exists under `--root`, is a regular
-file, is readable, and contains the fragment as a literal substring.
+file, is named on disk exactly as the ledger spells it, is reached without
+passing through any symlink, is readable, and contains the fragment as a
+literal substring. And, once: the ledger still holds at least `--min-anchors`
+rows.
 
 **Says NO when** (each a `CORPUS FAIL <subject>: <reason>` line, exit 1):
 
@@ -580,27 +605,53 @@ file, is readable, and contains the fragment as a literal substring.
   commit
 - the home file **does not exist**, is not a regular file, or is unreadable —
   each its own reason, because a moved file and an edited sentence are
-  different facts with different repairs. `Lstat` is used and **symlinks are
-  never followed**: material "present" through a link lives in a file this repo
+  different facts with different repairs
+- the home is reached **through a symlinked path component**, at any depth, not
+  only the final one. `Lstat` settles the last component; `EvalSymlinks` settles
+  the rest, the same resolution `attest` performs and for the same reason — a
+  symlinked *directory* inside the root points anywhere, and the kernel follows
+  it without asking. Material "present" through a link lives in a file this repo
   does not govern, which is not the protection the row claims
+- the directory holds the file under a **different spelling** than the ledger
+  gives. A case-only rename is a real move, and a case-insensitive filesystem
+  answers for the old spelling — green on the author's machine, red in CI. The
+  directory's own entries are the witness: `Lstat`'s `FileInfo.Name()` is the
+  base of the path it was handed and agrees with the ledger by construction
 - the **fragment cell is empty** — an empty substring is contained in every
   file, so left alone it would pass forever while protecting nothing: a green
   that can never go red
 - the **home cell is empty**, is **absolute**, or **climbs out of `--root`**
   (`../`) — a row whose subject is outside the tree is not held by the tree
+- a row names **the ledger itself** as its home — the row would be its own
+  evidence and could never go red, which is the empty fragment's shape one
+  level up
 - a table row has a **column count other than four** — reported rather than
-  skipped, because the commonest cause is a fragment containing `|`, and
-  silently dropping that row would remove protection from precisely the
-  statement someone took the trouble to list
+  skipped, because the commonest causes are a fragment containing `|` and
+  anything trailing the last pipe (a comment, a stray word), and silently
+  dropping that row would remove protection from precisely the statement
+  someone took the trouble to list
+- a **separator row appears in a table's body** rather than directly under its
+  header
+- the ledger holds **fewer than `--min-anchors` rows** — rows have been lost
+  from the ledger itself, which is the one loss the rows cannot report
 
 Findings are reported for **every** row in one run, never first-only: the
 losses this exists to catch arrive in batches, and a one-at-a-time report would
-take as many runs as there were losses.
+take as many runs as there were losses. A ledger whose rows are **all**
+malformed exits 1, not 2, with every row's finding printed: rows were found and
+judged bad, which is a check that ran and failed, and telling an author their
+visibly populated ledger is "empty" while withholding the diagnosis is the
+worst of both answers.
 
-**Refuses (exit 2) when** `--ledger` or `--root` is missing, the ledger cannot
-be read (`NOTHING was checked, which is not a pass`), or **the ledger holds no
-rows** — an empty ledger guards nothing, and *"everything present"* and
-*"nothing checked"* must never print the same line.
+**Refuses (exit 2) when** `--ledger`, `--root` or `--min-anchors` is missing,
+`--min-anchors` is not positive, the ledger cannot be read (`NOTHING was
+checked, which is not a pass`), the ledger parses to **no rows at all** (an
+empty ledger guards nothing, and *"everything present"* and *"nothing checked"*
+must never print the same line), or **`--root` is absent or is not a
+directory**. That last one is not pedantry: a typo'd root would otherwise fire
+this tool's loudest alarm — *the words were lost in place* — once per anchor,
+for an invocation mistake, which is the fastest way to teach a caller to ignore
+the alarm.
 
 **Changing protected material is allowed; changing it silently is not.** If the
 words must move or be reworded, the ledger row changes in the same commit. The
@@ -1386,7 +1437,7 @@ paragraph.
 
 ## What this harness is not
 
-The five checks stop at the record layer. They prove the files were present,
+The six checks stop at the record layer. They prove the files were present,
 whole, sized, linked, prose, and in floor-set agreement — at the moment the check ran, on the machine
 that ran it. They do not and cannot prove that a model read them, understood
 them, or is currently acting from them; they cannot detect a hostile input,

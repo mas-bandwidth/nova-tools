@@ -3,7 +3,7 @@
 Machinery for a [nova](https://github.com/mas-bandwidth/nova) self repo. Four
 binaries, of four deliberately different kinds:
 
-- **`nova-check` — walls, at the record layer.** Five checks that verify the
+- **`nova-check` — walls, at the record layer.** Six checks that verify the
   records on disk, each one able to say NO, and tested saying it.
 - **`nova-self-talk` — an advisory instrument, at the register layer.** It
   classifies self-claims in prose, in two disjoint classes: capability denials
@@ -37,7 +37,7 @@ nova-check kernel --file <file> --max-tokens <n> --bytes-per-token <r>   # the s
 nova-check nocode --dir <dir>                      # no code, executables, scripts or build machinery in a self repo (the self/machinery separation)
 nova-check nocode --print-deny-list                # both floors actually in force: the extension list and the name list
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
-nova-check corpus --ledger <file> --root <dir>     # the material you have chosen never to lose silently is still where your ledger says
+nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
 ```
 
 Give exactly one of `--max-bytes` and `--max-tokens`; both or neither is a

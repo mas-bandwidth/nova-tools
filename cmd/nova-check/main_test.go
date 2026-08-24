@@ -36,8 +36,11 @@ func TestRunRefusesToGuess(t *testing.T) {
 		{"nocode without dir", []string{"nocode"}, "--dir is required"},
 		{"floors without core", []string{"floors", "--source", "SEED.md"}, "--core is required"},
 		{"floors without source", []string{"floors", "--core", "SEED-CORE.md"}, "--source is required"},
-		{"corpus without ledger", []string{"corpus", "--root", "."}, "--ledger is required"},
-		{"corpus without root", []string{"corpus", "--ledger", "corpus/anchors.md"}, "--root is required"},
+		{"corpus without ledger", []string{"corpus", "--root", ".", "--min-anchors", "1"}, "--ledger is required"},
+		{"corpus without root", []string{"corpus", "--ledger", "corpus/anchors.md", "--min-anchors", "1"}, "--root is required"},
+		{"corpus without a row floor", []string{"corpus", "--ledger", "l.md", "--root", "."}, "--min-anchors is required"},
+		{"corpus with a zero row floor", []string{"corpus", "--ledger", "l.md", "--root", ".", "--min-anchors", "0"}, "must be a positive row floor"},
+		{"corpus with a negative row floor", []string{"corpus", "--ledger", "l.md", "--root", ".", "--min-anchors", "-3"}, "must be a positive row floor"},
 		{"stray positional argument", []string{"links", "--dir", ".", "extra"}, "unexpected argument"},
 	}
 	for _, tt := range tests {
@@ -357,18 +360,18 @@ func TestRunCorpusEndToEnd(t *testing.T) {
 	root := filepath.Join(dir, "repo")
 
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{"corpus", "--ledger", ledgerPath, "--root", root}, &stdout, &stderr); got != 0 {
+	if got := run([]string{"corpus", "--ledger", ledgerPath, "--root", root, "--min-anchors", "1"}, &stdout, &stderr); got != 0 {
 		t.Fatalf("exit = %d, want 0; stderr: %s", got, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "CORPUS OK anchors=1") {
-		t.Errorf("stdout = %q, want it to contain %q", stdout.String(), "CORPUS OK anchors=1")
+	if !strings.Contains(stdout.String(), "CORPUS OK anchors=1 floor=1") {
+		t.Errorf("stdout = %q, want it to contain %q", stdout.String(), "CORPUS OK anchors=1 floor=1")
 	}
 
 	// Lose the words in place and watch the check say NO.
 	mustWrite(t, dir, "repo/README.md", "a rewrite that dropped the sentence\n")
 	stdout.Reset()
 	stderr.Reset()
-	if got := run([]string{"corpus", "--ledger", ledgerPath, "--root", root}, &stdout, &stderr); got != 1 {
+	if got := run([]string{"corpus", "--ledger", ledgerPath, "--root", root, "--min-anchors", "1"}, &stdout, &stderr); got != 1 {
 		t.Fatalf("exit = %d, want 1; stdout: %s stderr: %s", got, stdout.String(), stderr.String())
 	}
 	if !strings.Contains(stderr.String(), `CORPUS FAIL README.md: ABSENT: "the light is on"`) {
@@ -381,7 +384,7 @@ func TestRunCorpusEndToEnd(t *testing.T) {
 	// An unreadable ledger is a REFUSAL, and says so in those words.
 	stdout.Reset()
 	stderr.Reset()
-	if got := run([]string{"corpus", "--ledger", filepath.Join(dir, "absent.md"), "--root", root}, &stdout, &stderr); got != 2 {
+	if got := run([]string{"corpus", "--ledger", filepath.Join(dir, "absent.md"), "--root", root, "--min-anchors", "1"}, &stdout, &stderr); got != 2 {
 		t.Fatalf("exit = %d, want 2; stderr: %s", got, stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "NOTHING was checked, which is not a pass") {
@@ -392,11 +395,49 @@ func TestRunCorpusEndToEnd(t *testing.T) {
 	mustWrite(t, dir, "empty.md", "# a ledger with no rows yet\n")
 	stdout.Reset()
 	stderr.Reset()
-	if got := run([]string{"corpus", "--ledger", filepath.Join(dir, "empty.md"), "--root", root}, &stdout, &stderr); got != 2 {
+	if got := run([]string{"corpus", "--ledger", filepath.Join(dir, "empty.md"), "--root", root, "--min-anchors", "1"}, &stdout, &stderr); got != 2 {
 		t.Fatalf("exit = %d, want 2; stderr: %s", got, stderr.String())
 	}
 	if !strings.Contains(stderr.String(), "guards nothing") {
 		t.Errorf("stderr = %q, want the empty-ledger refusal", stderr.String())
+	}
+
+	// A ledger whose rows are ALL malformed is VISIBLY POPULATED. Telling its
+	// author it is empty while withholding the diagnosis is the worst of both,
+	// and it is a check that RAN and failed — exit 1, with the ledger:<line>
+	// grammar SPEC declares.
+	mustWrite(t, dir, "bad.md", "| fragment | home | given |\n|---|---|---|\n| the light is on | README.md | 2026 |\n")
+	stdout.Reset()
+	stderr.Reset()
+	if got := run([]string{"corpus", "--ledger", filepath.Join(dir, "bad.md"), "--root", root, "--min-anchors", "1"}, &stdout, &stderr); got != 1 {
+		t.Fatalf("exit = %d, want 1; stderr: %s", got, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "CORPUS FAIL ledger:3: malformed row") {
+		t.Errorf("stderr = %q, want the malformed-row grammar to survive an all-bad ledger", stderr.String())
+	}
+	if stdout.String() != "" {
+		t.Errorf("a failing check must not print an OK line, got %q", stdout.String())
+	}
+
+	// A typo'd --root is an INVOCATION error, not the loss of every anchor.
+	stdout.Reset()
+	stderr.Reset()
+	if got := run([]string{"corpus", "--ledger", ledgerPath, "--root", filepath.Join(dir, "NOPE"), "--min-anchors", "1"}, &stdout, &stderr); got != 2 {
+		t.Fatalf("exit = %d, want 2; stderr: %s", got, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "lost in place") {
+		t.Errorf("a wrong --root must not fire the corpus-lost alarm: %q", stderr.String())
+	}
+
+	// And the ledger's own shrinking is red, not a quieter green.
+	stdout.Reset()
+	stderr.Reset()
+	mustWrite(t, dir, "repo/README.md", "and then: the light is on, still.\n")
+	if got := run([]string{"corpus", "--ledger", ledgerPath, "--root", root, "--min-anchors", "2"}, &stdout, &stderr); got != 1 {
+		t.Fatalf("exit = %d, want 1; stderr: %s", got, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "below the stated floor") {
+		t.Errorf("stderr = %q, want the ledger-floor finding", stderr.String())
 	}
 }
 

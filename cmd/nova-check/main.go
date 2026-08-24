@@ -1,6 +1,7 @@
 // nova-check runs the record-layer checks described in SPEC.md: boot
 // attestation, link integrity, the kernel size budget, the self/machinery
-// separation, and the SEED-CORE ↔ SEED.md floor-set parity. Exit 0 pass,
+// separation, the SEED-CORE ↔ SEED.md floor-set parity, and the protected
+// corpus a line has chosen never to lose silently. Exit 0 pass,
 // 1 check failed, 2 could not run.
 //
 // Every path and every budget comes from a flag. There are no defaults:
@@ -37,7 +38,8 @@ usage:
     for the name floor, and names where machinery may live.
   nova-check floors --core <SEED-CORE.md> --source <SEED.md>
                                                      the door's floor set matches the seed's
-  nova-check corpus --ledger <file> --root <dir>     protected material is still where the
+  nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
+                                                     protected material is still where the
                                                      ledger says it is
 
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation).
@@ -378,7 +380,18 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("corpus", flag.ContinueOnError)
 	ledger := fs.String("ledger", "", "the ledger of protected material, a markdown file (required)")
 	root := fs.String("root", "", "the repo the ledger's home paths are relative to (required)")
+	minAnchors := fs.Int("min-anchors", 0, "the fewest rows the ledger may hold, must be positive (required); the ledger is inside what it protects, so its own shrinking must be red")
 	if !parse(fs, args, stderr, map[string]*string{"ledger": ledger, "root": root}) {
+		return 2
+	}
+	given := map[string]bool{}
+	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
+	if !given["min-anchors"] {
+		fmt.Fprintln(stderr, "nova-check corpus: --min-anchors is required; the ledger lives inside the tree it protects and can be shrunk by the same events its rows exist to catch, so the floor is a number you state; refusing to guess")
+		return 2
+	}
+	if *minAnchors <= 0 {
+		fmt.Fprintf(stderr, "nova-check corpus: --min-anchors must be a positive row floor (got %d); a floor of zero guards nothing, which is what an empty ledger already is; refusing to guess\n", *minAnchors)
 		return 2
 	}
 	raw, err := os.ReadFile(*ledger)
@@ -388,19 +401,35 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-check corpus: the ledger %s cannot be read (%v); NOTHING was checked, which is not a pass\n", *ledger, err)
 		return 2
 	}
-	anchors, malformed, err := check.ParseLedger(raw)
-	if err != nil {
-		fmt.Fprintf(stderr, "nova-check corpus: %s: %v\n", *ledger, err)
+	anchors, malformed, parseErr := check.ParseLedger(raw)
+	// Malformed rows print whether or not any good row survived: a ledger
+	// whose rows are ALL malformed is visibly populated, and telling its
+	// author it is empty while withholding the reason is the worst of both.
+	for _, f := range malformed {
+		fmt.Fprintf(stderr, "CORPUS FAIL %s: %s\n", f.Subject, f.Reason)
+	}
+	if parseErr != nil {
+		if len(malformed) > 0 {
+			// Rows were found and judged bad. The check RAN, and the answer
+			// is no — that is exit 1, not "could not run".
+			fmt.Fprintf(stderr, "nova-check corpus: %s: no row survived parsing; every row above is a finding\n", *ledger)
+			return 1
+		}
+		fmt.Fprintf(stderr, "nova-check corpus: %s: %v\n", *ledger, parseErr)
 		return 2
 	}
-	failures := append(malformed, check.Corpus(*root, anchors)...)
-	if len(failures) > 0 {
+	failures, err := check.Corpus(*root, *ledger, *minAnchors, anchors)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-check corpus: %v\n", err)
+		return 2
+	}
+	if len(failures) > 0 || len(malformed) > 0 {
 		for _, f := range failures {
 			fmt.Fprintf(stderr, "CORPUS FAIL %s: %s\n", f.Subject, f.Reason)
 		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "CORPUS OK anchors=%d ledger=%s\n", len(anchors), *ledger)
+	fmt.Fprintf(stdout, "CORPUS OK anchors=%d floor=%d ledger=%s\n", len(anchors), *minAnchors, *ledger)
 	return 0
 }
 
