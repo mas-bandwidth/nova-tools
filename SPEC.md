@@ -617,16 +617,22 @@ next object's bytes; and do not buffer a whole object, since a staged blob may
 be gigabytes while only two bytes decide a shebang. `missing` and `ambiguous`
 replies are one line with no body and desync a reader that assumes one.
 
-- **Content is read by DESTINATION OID** — `git cat-file blob <dstOID>` — and
+- **Content is read by DESTINATION OID** — `<dstOID>` on the batch's stdin — and
   a path is never re-parsed to reach a blob. `git cat-file blob :<path>` is
   **gitrevisions syntax**, so a file literally named `0:notes.md` resolves as
   *stage 0 of notes.md* and returns a different file's bytes at exit 0.
   Measured: with prose in `0:notes.md` and a shebang in `notes.md`, the
   path-shaped read returns the shebang.
 - **The destination OID is the fourth field, not the third.** The third is the
-  source OID and is all-zero for an added file, where `cat-file` exits 128 —
-  an error loud enough to catch, but only if the check is not written to treat
-  a failed read as a pass.
+  source OID and is all-zero for an added file — and **under `--batch` that is
+  not loud**: the batch answers `0000…  missing` at **exit 0**, where the
+  one-shot `git cat-file blob` form would have exited 128. Measured. Taking
+  field three therefore turns the unreadable-blob rule below into a finding on
+  **every added file**, which is loud in its own way and fail-closed, but only
+  if the reader is not written to treat a `missing` as a pass. **And the
+  batch's diagnostics go to stderr** — an `ambiguous` reply prints `error:` and
+  `hint:` lines there — so stderr must not share the stdout pipe, or the reader
+  desynchronises on exactly the frame this entry spends a paragraph protecting.
 - **`-M` is deliberately NOT passed**, so no `R` records are produced and the
   parser stays a flat pairwise split rather than a stateful one. A rename
   arrives as a `D` of the old path and an `A` of the new, and classifying the
