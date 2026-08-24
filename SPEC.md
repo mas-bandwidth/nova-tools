@@ -518,6 +518,12 @@ an all-zero destination and therefore no staged content to classify; it is a
 **refusal (exit 2)**, not a silent skip, and git refuses the commit in that
 state anyway.
 
+**Any other letter is a refusal (exit 2), and this is the load-bearing half of
+the table.** `A M D T U` are the letters this mode disposes of; without `-M`
+no `R` or `C` is produced. A gate that **skips what it does not recognise has
+an unbounded skip list**, which is a fail-open whose size nobody can state, so
+an unrecognised status stops the check rather than passing the path.
+
 **Modes, which the index records and a filesystem walk does not.** `100755` is
 the executable condition; the index stores only `100644`, `100755`, `120000`
 and `160000`, so this half of the check works identically on Windows, where
