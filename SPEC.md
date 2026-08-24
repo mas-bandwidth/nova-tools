@@ -277,6 +277,7 @@ would be right for exactly one model); compressibility or density.
 
 ```
 nova-check nocode --dir <dir>                      audit a whole tree
+nova-check nocode --staged --dir <repo>            advisory over the index only
 nova-check nocode --print-deny-list                print the list in force
     [--allow <prefix>]      where machinery may live (repeatable, empty by default)
     [--deny-ext <list|@file>]   replace the floor deny-list wholesale
@@ -448,6 +449,136 @@ nothing; and YAML outside
 the named CI locations, deliberately, since data and front matter are
 legitimate prose-repo content. Also the tools repo itself — this check
 aims at the self repo, and this repo would rightly fail it.
+
+#### `--staged` — the same four conditions, over the index, as an ADVISORY
+
+```
+nova-check nocode --staged --dir <repo>
+```
+
+**What it is for.** The audit walks a tree; a commit does not commit a tree, it
+commits an **index**, and the two are different objects. Staging a script and
+then replacing it in the working directory leaves the script in the commit
+while every working-tree reader sees prose — measured: with `#!/bin/sh` staged
+and `harmless prose now` on disk, the index blob is the shebang. `--staged`
+classifies **what is about to be committed**, which is the only content a
+commit-time check has any business reading.
+
+**It is an advisory and NOT an enforcement boundary, and this is a scope
+decision rather than a limitation to be closed later.** A local hook cannot be
+a boundary, because the committer controls whether it runs at all. The
+enforcement is the audit run in CI, where the committer does not control the
+runner; **for an adopting line that means that line's own CI running
+`nova-check nocode --dir .`** — this repository's CI smoke-tests the tool
+rather than auditing itself, and would rightly fail its own check. Read the
+limits below as the load-bearing half of this entry, not as a disclaimer
+attached to it.
+
+**Asserts.** Every path staged for the next commit satisfies the same four
+conditions the audit asserts, matched by the same rules, honouring the same
+`--allow` prefixes and the same two deny-list flags. `--dir` must resolve to
+the root of a git repository; it is required, on the house no-guessing law,
+rather than inferred from the working directory.
+
+**The record it reads.** One command — `git diff-index --cached -z HEAD` —
+whose output is NUL-separated pairs of a metadata chunk and a path:
+
+```
+:<srcmode> <dstmode> <srcOID> <dstOID> <status>\0<path>\0
+```
+
+Everything the check needs is in that one record, which is why it is one
+command: a second command joining a path back to its content is the seam two
+earlier designs' bypasses lived in.
+
+- **Content is read by DESTINATION OID** — `git cat-file blob <dstOID>` — and
+  a path is never re-parsed to reach a blob. `git cat-file blob :<path>` is
+  **gitrevisions syntax**, so a file literally named `0:notes.md` resolves as
+  *stage 0 of notes.md* and returns a different file's bytes at exit 0.
+  Measured: with prose in `0:notes.md` and a shebang in `notes.md`, the
+  path-shaped read returns the shebang.
+- **The destination OID is the fourth field, not the third.** The third is the
+  source OID and is all-zero for an added file, where `cat-file` exits 128 —
+  an error loud enough to catch, but only if the check is not written to treat
+  a failed read as a pass.
+- **`-M` is deliberately NOT passed**, so no `R` records are produced and the
+  parser stays a flat pairwise split rather than a stateful one. A rename
+  arrives as a `D` of the old path and an `A` of the new, and classifying the
+  `A` is exactly right. Measured: `diff.renames` set to `true` or to `copies`
+  does not change plumbing output, so this shape cannot be flipped by a
+  contributor's config.
+
+**Status letters, and the one skip.** `D` is the only skip, and it is a **real
+status skip, never an inference from a missing working-tree file** — that
+inference was the original design's root defect, because `git add evil.sh &&
+rm evil.sh` leaves an `A` record whose blob still carries the shebang while
+the file is gone from disk. `A`, `M` and `T` are all classified on their
+**destination** mode and OID. `U` — an unmerged entry during a conflict — has
+an all-zero destination and therefore no staged content to classify; it is a
+**refusal (exit 2)**, not a silent skip, and git refuses the commit in that
+state anyway.
+
+**Modes, which the index records and a filesystem walk does not.** `100755` is
+the executable condition; the index stores only `100644`, `100755`, `120000`
+and `160000`, so this half of the check works identically on Windows, where
+the audit is blind. **`120000` is a symlink** whose blob content is a target
+path: classified **by name only**, never by shebang, on exactly the audit's
+reasoning — a symlink whose stored bytes begin `#!` is a link to a script, not
+a script. **`160000` is a gitlink**, whose destination OID is a commit in
+another repository and is not in this tree: a **finding**, not a pass, because
+a submodule is machinery arriving by reference and the check cannot read it to
+decide otherwise.
+
+**Two matching rules the audit applies that this document did not state**, both
+written down here so an implementer working from the spec builds something
+that agrees with the shipped check rather than disagreeing with it in the
+fail-open direction. Both are trims for **matching only**, and both are in
+`internal/check/nocode.go`:
+
+- the **extension** is lowercased and **trailing-whitespace-trimmed** before
+  the deny-list lookup — a file named `x.py ` has extension `".py "` by Go's
+  reckoning and would otherwise miss a list it plainly belongs on;
+- the **base name** is lowercased and trimmed the same way before the floor
+  name list lookup, which the parity note that produced this entry missed.
+
+**Says NO when** any staged path satisfies any condition — the audit's
+`NOCODE FAIL <path>: <reason>` line per path, all reasons that hold, exit 1.
+
+**Refuses (exit 2) when** `--dir` is missing or does not resolve to a git
+repository root; when the index holds unmerged entries; when a staged blob
+cannot be read; and on every refusal the audit already makes — an empty or
+malformed effective deny-list, `--deny-ext` together with `--deny-ext-add`.
+
+**On an unborn HEAD** — no commits yet — `git diff-index --cached HEAD` exits
+128 with *ambiguous argument*. The check detects it with `git rev-parse -q
+--verify HEAD` and compares against the **empty tree** instead, obtaining that
+object's id from `git hash-object -t tree /dev/null` rather than hard-coding
+`4b825dc6…`, on the seed's no-hardcoding law. **The trade is taken
+deliberately and in this direction: a repository's first commit is gated like
+every later one.** The alternative — skipping the check where there is no HEAD
+— makes the very first commit the one place machinery enters unexamined.
+
+**Known limits — what does not invoke this check at all.** Every one of these
+was measured against a hook that appends a line when it runs; the count in
+each case was zero:
+
+| what | why it never runs |
+|---|---|
+| `git merge`, `cherry-pick`, `revert`, `stash`, `rebase`, `am` | none of these verbs runs `pre-commit`; `git am` landed a `#!/bin/sh` script into the tree with the hook installed and unfired |
+| `git commit --no-verify` | the documented escape, working as documented |
+| `core.hooksPath` pointing elsewhere | the hook is simply not found; the commit succeeds silently |
+| a hook without its executable bit | git prints a hint and proceeds; exit 0 |
+| any commit made through another tool, UI or bot | it was never this repository's hook to run |
+
+`git commit` and `git commit --amend` both do run it, which is the common case
+this advisory is for and the whole of what it claims.
+
+**Deliberately does not check:** anything the audit deliberately does not
+check, unchanged — and additionally **the rest of the tree**. A clean
+`--staged` says nothing whatever about paths this commit does not touch;
+machinery committed before the check was adopted stays invisible to it
+forever. That is what the audit is for, and it is why the two modes are not
+alternatives.
 
 ---
 
