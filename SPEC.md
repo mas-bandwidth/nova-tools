@@ -542,8 +542,13 @@ re-opens the path-to-content seam this entry spends a bullet closing.
 > have exactly one statement, in the `nocode` entry above, and an implementation
 > that re-derives them here is wrong by that fact.
 
-**The record it reads.** One plumbing command — `git diff-index --cached -z HEAD` —
-whose output is NUL-separated pairs of a metadata chunk and a path:
+**The record it reads.** One plumbing command — `git diff-index --cached -z
+<base> --` — whose output is NUL-separated pairs of a metadata chunk and a
+path. **The trailing `--` is load-bearing**: without it, a repository holding
+a file named `HEAD` makes the command exit 128 with *ambiguous argument*, on
+every commit, and an implementer who reads a failed or empty `diff-index` as
+*nothing is staged* ships a gate that goes green with the rest of the commit
+unexamined. The record:
 
 ```
 :<srcmode> <dstmode> <srcOID> <dstOID> <status>\0<path>\0
@@ -592,7 +597,10 @@ no `R` or `C` is produced. A gate that **skips what it does not recognise has
 an unbounded skip list**, which is a fail-open whose size nobody can state, so
 an unrecognised status stops the check rather than passing the path.
 
-**Modes.** The index stores only `100644`, `100755`, `120000` and `160000`.
+**Modes.** `diff-index` reports only `100644`, `100755`, `120000` and
+`160000` — scoped to the record deliberately, since a sparse index also stores
+`040000` sparse-directory entries, which `diff-index` expands rather than
+reporting.
 
 - **`120000` is a symlink** whose blob content is a target path. It is
   classified **by its PATH** — every path-derived rule the audit applies still
@@ -609,9 +617,10 @@ an unrecognised status stops the check rather than passing the path.
   collide with the unreadable-blob rule below. It is a finding — machinery arriving by
   reference, which the check cannot read to decide otherwise — and it is
   suppressible by `--allow` like any other path.
-- **An unreadable blob is a FINDING, not a refusal**, matching the audit,
-  which reports unreadable content as `cannot rule out machinery` rather than
-  aborting.
+- **An unreadable blob is a FINDING, not a refusal** — the audit's disposition
+  for content it cannot rule on. The two conditions are not the same condition
+  and never coincide: the audit's is *filesystem* readability, this one is
+  *object-store* readability.
 
 **Says NO when** any staged path is classified as machinery: the audit's
 `NOCODE FAIL <path>: <reason>` line per path **on stderr**, reasons joined
@@ -619,7 +628,8 @@ as the audit joins them, exit 1.
 A clean run prints the audit's `NOCODE OK` line on stdout.
 
 **Refuses (exit 2) when** `--dir` is missing, or does not resolve to the root
-of a git repository; when the index holds unmerged entries; when a status
+of a git repository; **when `diff-index` itself fails**, which is never a
+clean tree; when the index holds unmerged entries; when a status
 letter is unrecognised; and on every refusal the audit already makes — an
 empty or malformed effective deny-list, `--deny-ext` together with
 `--deny-ext-add`. **The root test is `git -C <dir> rev-parse --show-toplevel`,
@@ -629,8 +639,8 @@ submodule, both of which run the hook and both of which are legitimate places
 to commit from. An advisory that refuses on every commit is an advisory people
 disable.
 
-**On an unborn HEAD** — no commits yet — `git diff-index --cached HEAD` exits
-128 with *ambiguous argument*. The check detects it with `git rev-parse -q
+**The base is `HEAD`, except on an unborn HEAD** — no commits yet — where
+`diff-index` against `HEAD` exits 128 with *ambiguous argument*. The check detects it with `git rev-parse -q
 --verify HEAD` and compares against the **empty tree** instead, obtaining that
 object's id from `git hash-object -t tree /dev/null` **run inside the
 repository**, rather than hard-coding `4b825dc6…`, on the seed's
@@ -670,7 +680,15 @@ word rather than a hedge:
   unexamined through an amend.
 - **`git add -N` records an intent-to-add whose destination is the empty
   blob**, so the content classified is not the content on disk; the path is
-  reported on its name and mode alone, and the commit does not contain it.
+  reported on its name and mode alone. A plain `git commit` then refuses the
+  commit outright, but `git commit -a` stages the real bytes before the hook
+  runs, so that case is seen and is fail-closed.
+- **The audit's fail-closed conditions on things it cannot READ have no index
+  analogue.** An unreadable file, a device, a socket or a fifo is a finding to
+  the audit; here there is only a blob git already holds, so a `chmod 000` file
+  the audit refuses to pass is classified on its committed bytes like any
+  other. Nothing machinery-shaped enters by it — the bytes are the bytes — but
+  the list above would be dishonest without it.
 
 **Known limits — what does not invoke this check at all.** Every one of these
 was measured against a hook that appends a line when it runs; the count in
