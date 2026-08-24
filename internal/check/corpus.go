@@ -121,51 +121,98 @@ func ParseLedger(raw []byte) ([]Anchor, []Failure, error) {
 		failures = append(failures, Failure{fmt.Sprintf("ledger:%d", line+1), reason})
 	}
 
+	// A run is walked as a small state machine rather than judged by its first
+	// two lines. Looking only at run[0]/run[1] meant a well-formed anchor
+	// table anywhere but the top of its run was discarded in silence — one
+	// deleted blank line between two tables and every row below it stopped
+	// being protected, while the document still rendered.
+	const (
+		loose   = iota // not inside any table
+		ours           // inside the four-column anchor table's body
+		foreign        // inside somebody else's table
+	)
+
 	flush := func() {
 		defer func() { run = run[:0] }()
 		if len(run) == 0 {
 			return
 		}
-		first := splitRow(lines[run[0]])
+		state := loose
+		var stray []int // pipe-bearing lines belonging to no table
+		for i := 0; i < len(run); i++ {
+			at := run[i]
+			cells := splitRow(lines[at])
 
-		// A lone four-column row outside any table: an anchor row that lost
-		// its table, which is the one single-line case worth a word.
-		if len(run) == 1 {
-			if len(first) == anchorColumns && !allSeparator(first) && strings.HasPrefix(strings.TrimSpace(lines[run[0]]), "|") {
-				fail(run[0], "a four-column row standing outside any table; markdown will not render it as a table row, so it is checked by nothing — give it a header and a separator, or fold it into the table above")
+			// A header is any line whose next line is a separator — but only
+			// outside a body. Inside the anchor table, a following separator
+			// is the stray-separator finding, and the line above it stays a
+			// body row: reading it as a new header is how the separator would
+			// take that row out of the check, which is the defect this
+			// finding exists for.
+			if i+1 < len(run) && state != ours {
+				if next := splitRow(lines[run[i+1]]); allSeparator(next) && !allSeparator(cells) {
+					switch {
+					case len(next) != len(cells):
+						// Only worth saying when one side is our shape;
+						// somebody else's broken table is their business.
+						if len(cells) == anchorColumns || len(next) == anchorColumns {
+							fail(run[i+1], fmt.Sprintf("the separator row has %d cells and its header has %d; markdown will not render this as a table, so none of its rows are checked", len(next), len(cells)))
+						}
+						state = foreign
+					case len(cells) == anchorColumns:
+						state = ours
+					default:
+						state = foreign // a glossary, a key, a history table
+					}
+					i++ // the separator is consumed with its header
+					continue
+				}
 			}
-			return
-		}
 
-		second := splitRow(lines[run[1]])
-		if !allSeparator(second) {
-			// Not a table at all. Only say so when it is unmistakably meant
-			// as one, so ordinary prose carrying pipes stays silent.
-			if strings.HasPrefix(strings.TrimSpace(lines[run[0]]), "|") {
-				fail(run[0], "a table with no separator row under its header; markdown will not render this as a table, so none of its rows are checked — add the |---|---| line")
-			}
-			return
-		}
-		if len(second) != len(first) {
-			fail(run[1], fmt.Sprintf("the separator row has %d cells and its header has %d; markdown will not render this as a table, so none of its rows are checked", len(second), len(first)))
-			return
-		}
-		if len(first) != anchorColumns {
-			return // another table entirely — a glossary, a key, not ours
-		}
-
-		for _, i := range run[2:] {
-			cells := splitRow(lines[i])
 			switch {
-			case allSeparator(cells):
-				fail(i, "a separator row in the middle of a table; a separator belongs directly under the header and nowhere else, and one here would quietly take the row above it out of the check")
-			case len(cells) != anchorColumns:
-				fail(i, fmt.Sprintf("malformed row: %d columns, want %d — a \"|\" inside a cell, or anything trailing the last pipe, splits into another column; pick a fragment without one rather than escaping it", len(cells), anchorColumns))
-			default:
+			case state == ours && allSeparator(cells):
+				fail(at, "a separator row in the middle of a table; a separator belongs directly under the header and nowhere else, and one here would quietly take the row above it out of the check")
+			case state == ours && len(cells) != anchorColumns:
+				fail(at, fmt.Sprintf("malformed row: %d columns, want %d — a \"|\" inside a cell, or anything trailing the last pipe, splits into another column; pick a fragment without one rather than escaping it", len(cells), anchorColumns))
+			case state == ours:
 				out = append(out, Anchor{
 					Fragment: cells[0], Home: cells[1], Given: cells[2], By: cells[3],
-					Line: i + 1,
+					Line: at + 1,
 				})
+			case state == foreign:
+				// Four columns inside a table that is not the anchor table:
+				// anchor rows pasted into a glossary render as part of it and
+				// are checked by nothing, so they are named rather than lost.
+				if len(cells) == anchorColumns && !allSeparator(cells) {
+					fail(at, "a four-column row inside a table that is not the anchor table; markdown folds it into that table, so it is checked by nothing — move it into the anchor table")
+				}
+			default:
+				stray = append(stray, at)
+			}
+		}
+
+		// Lines that never belonged to a table.
+		//
+		// TWO OR MORE consecutive pipe-bearing lines are unmistakably meant as
+		// a table, whatever their outer pipes, so that block is reported
+		// without asking for one — requiring an outer pipe here was round
+		// one's silent-drop defect surviving in the report gate.
+		if len(stray) >= 2 && len(splitRow(lines[stray[0]])) >= 2 {
+			fail(stray[0], "a table with no separator row under its header; markdown will not render this as a table, so none of its rows are checked — add the |---|---| line")
+			return
+		}
+		// A SINGLE line is genuinely ambiguous, and the limit is stated
+		// rather than papered over: `a | b | c | d` with no outer pipe is
+		// exactly the shape of an ordinary sentence containing three pipes,
+		// and this ledger is prose first. So the lone-row finding asks for a
+		// leading pipe. The cost is that one orphaned row written without
+		// outer pipes goes unreported; --min-anchors is what catches it, and
+		// a false alarm on every such sentence would teach a reader to
+		// silence the check, which costs more.
+		for _, at := range stray {
+			cells := splitRow(lines[at])
+			if len(cells) == anchorColumns && !allSeparator(cells) && strings.HasPrefix(strings.TrimSpace(lines[at]), "|") {
+				fail(at, "a four-column row standing outside any table; markdown will not render it as a table row, so it is checked by nothing — give it a header and a separator, or fold it into the table above")
 			}
 		}
 	}
@@ -173,8 +220,19 @@ func ParseLedger(raw []byte) ([]Anchor, []Failure, error) {
 	var fenceChar byte
 	var fenceLen, fenceLine int
 	fenced := false
-	for i, line := range lines {
+	for i := range lines {
+		// A blockquoted table still renders as a table, so the quote markers
+		// come off IN PLACE — flush reads this slice, so stripping a local
+		// copy would leave the markers in every cell it later split.
+		lines[i] = stripQuote(lines[i])
+		line := lines[i]
 		trimmed := strings.TrimSpace(line)
+		// An indented code block is markdown's other way of showing an
+		// example, and a ledger documenting its own format may well use it.
+		if !fenced && indented(line) {
+			flush()
+			continue
+		}
 		if m := fenceRE.FindStringSubmatch(trimmed); m != nil {
 			delim := m[1]
 			if !fenced {
@@ -216,6 +274,25 @@ func ParseLedger(raw []byte) ([]Anchor, []Failure, error) {
 		return nil, failures, fmt.Errorf("the ledger holds no anchor rows; an empty ledger guards nothing and must not read as a pass")
 	}
 	return out, failures, nil
+}
+
+// stripQuote removes leading blockquote markers, nested ones included.
+func stripQuote(line string) string {
+	for {
+		t := strings.TrimLeft(line, " \t")
+		if !strings.HasPrefix(t, ">") {
+			return line
+		}
+		line = strings.TrimPrefix(t, ">")
+	}
+}
+
+// indented reports a line held at markdown's indented-code-block depth.
+func indented(line string) bool {
+	if strings.HasPrefix(line, "\t") {
+		return true
+	}
+	return strings.HasPrefix(line, "    ") && strings.TrimSpace(line) != ""
 }
 
 // splitRow splits a table row into trimmed cells, tolerating a missing outer

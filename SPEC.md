@@ -570,12 +570,20 @@ own format without checking its own examples.
 | 4 | who gave it (free text, same) |
 
 **The table declares its own shape; this does not guess at one.** That is the
-whole parsing rule. A **run** is a block of consecutive non-blank lines outside
-any fence, at least one of which bears a `|`. A run is the **anchor table**
-only when its second line is a separator — cells that are all dashes (`---`,
-`:--`, `--:`, `:-:`) — whose cell count matches its first line's, **and that
-count is four**. The first two lines are the header and separator and are
-dropped.
+whole parsing rule. A **run** is a block of consecutive lines, each bearing a
+`|`, outside any fence or indented code block; a line without one ends the run.
+Within a run, a line whose next line is a **separator** — cells that are all
+dashes (`---`, `:--`, `--:`, `:-:`) — opens a table, and that table is the
+**anchor table** when the separator's cell count matches the header's **and
+that count is four**. The header and separator are dropped; the rows below
+them are anchors until the run ends.
+
+A run may hold more than one table, and the anchor table need not be the first:
+judging a run by its first two lines alone silently discarded a well-formed
+anchor table sitting below anything else, so one deleted blank line between two
+tables unprotected every row beneath it while the document still rendered.
+
+**Blockquote markers are stripped** — a quoted table still renders as a table.
 
 Header and separator are therefore recognized by **shape and position**, never
 by their words: **no column title is special to this tool**, a line may title
@@ -586,11 +594,13 @@ glossary, a prose sentence that happens to carry pipes, a key, an example.
 Reading those as anchors produces false losses, and a protection check that
 reddens on a glossary is one people learn to silence.
 
-**Fenced code blocks are illustration.** Fences follow CommonMark: an opening
-delimiter records its character and length, and only a run of the **same**
-character, at least as long and carrying nothing after it, closes it. A ledger
-documenting its own format mentions both delimiters, and a naive toggle would
-be left open by that and drop every row below it.
+**Fenced and indented code blocks are illustration.** Fences follow CommonMark:
+an opening delimiter records its character and length, and only a run of the
+**same** character, at least as long and carrying nothing after it, closes it. A
+ledger documenting its own format mentions both delimiters, and a naive toggle
+would be left open by that and drop every row below it. Lines indented four
+spaces or a tab are markdown's other way of showing an example and are skipped
+the same way.
 
 **Fragment choice is the line's judgment, not this tool's.** Short enough to
 survive a reflow, long enough to be unmistakable. The fragment cell is matched
@@ -643,9 +653,12 @@ rows.
   statement someone took the trouble to list
 - a **separator row appears in a table's body** rather than directly under its
   header
-- a block that is unmistakably meant as a table **cannot render as one** — a
-  pipe-led block with no separator, or a separator disagreeing with its header
-  — so none of its rows would ever be checked
+- a block that is unmistakably meant as a table **cannot render as one** — two
+  or more consecutive pipe-bearing lines with no separator, or a separator
+  disagreeing with its header where either side has four cells — so none of
+  its rows would ever be checked
+- a **four-column row sits inside a table that is not the anchor table**:
+  markdown folds it into that table, so it is checked by nothing
 - a **lone four-column row stands outside any table**: an anchor row that lost
   its table, checked by nothing
 - a **code fence is never closed**, so every line below it was read as
@@ -683,8 +696,20 @@ protecting is one of the more personal decisions a line makes, and a tool that
 guessed it would be answering a question it cannot see; sentiment or tone
 (`nova-self-talk` reads register, this reads presence); whether a fragment is
 well chosen (a fragment so short it matches by accident will pass, and no tool
-can tell that from a good one); duplicate rows; and it ships **no corpus of its
-own** — the ledger is the line's, always.
+can tell that from a good one); and it ships **no corpus of its own** — the
+ledger is the line's, always.
+
+**Two limits it does have, stated rather than papered over.** *Any* four-column
+table in the ledger is read as an anchor table, because no column title is
+special to this tool and nothing else could distinguish one — so a four-column
+history or changelog table in the same file will be checked as anchors and will
+count toward `--min-anchors`. Give such a table a different column count, or
+put it in another file. And **a lone four-column row written without outer
+pipes is not reported**: `a | b | c | d` standing alone is exactly the shape of
+an ordinary sentence containing three pipes, and in a prose-first document a
+false alarm on every such sentence would teach a reader to silence the check.
+Two or more consecutive pipe-bearing lines *are* reported, outer pipes or not,
+and `--min-anchors` is what catches a row that has gone missing entirely.
 
 ---
 

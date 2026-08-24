@@ -571,3 +571,82 @@ func TestARelativeRootIsNotReadAsASymlinkEscape(t *testing.T) {
 	as := parseOK(t, "| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n")
 	wantFailures(t, corpusOK(t, "repo", tmpLedger(t), 1, as), nil)
 }
+
+// ---------------------------------------------------------------------------
+// Regressions from the THIRD cold read, which found the worst finding smaller
+// and the repair local — the convergence this round was watching for.
+// ---------------------------------------------------------------------------
+
+// A WELL-FORMED ANCHOR TABLE ANYWHERE BUT THE TOP OF ITS RUN was discarded in
+// silence: one deleted blank line between two tables and every row below it
+// stopped being protected, while the document still rendered.
+func TestAnAnchorTableBelowAnotherTableInTheSameRunIsStillChecked(t *testing.T) {
+	md := "| term | meaning |\n|---|---|\n| anchor | a protected fragment |\n" +
+		"| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n"
+	as, _, err := ParseLedger([]byte(md))
+	if err != nil {
+		t.Fatalf("ParseLedger: %v", err)
+	}
+	if len(as) != 1 || as[0].Fragment != "the door is not locked" {
+		t.Fatalf("an anchor table below a glossary was dropped: %v", as)
+	}
+}
+
+// Anchor rows pasted into somebody else's table render as part of it and are
+// checked by nothing, so they are named rather than lost.
+func TestFourColumnRowsInsideAForeignTableAreNamed(t *testing.T) {
+	md := "| term | meaning |\n|---|---|\n| anchor | a protected fragment |\n| the door is not locked | a.md | 2026 | me |\n"
+	_, bad, _ := ParseLedger([]byte(md))
+	wantFailures(t, bad, []string{"inside a table that is not the anchor table"})
+}
+
+// A pipe-bearing prose line directly above the header must not swallow the
+// table beneath it.
+func TestAPipeBearingLineAboveTheHeaderDoesNotHideTheTable(t *testing.T) {
+	md := "The columns run fragment | home | given | by\n| f | h | g | b |\n|---|---|---|---|\n| the door is not locked | a.md | 2026 | me |\n"
+	as, _, err := ParseLedger([]byte(md))
+	if err != nil {
+		t.Fatalf("ParseLedger: %v", err)
+	}
+	if len(as) != 1 {
+		t.Fatalf("the table under a pipe-bearing line was dropped: %v", as)
+	}
+}
+
+// TWO OR MORE consecutive pipe-bearing lines are unmistakably a table, outer
+// pipes or not — requiring one here was round one's defect surviving in the
+// report gate.
+func TestATableWithNoSeparatorIsNamedWithoutOuterPipes(t *testing.T) {
+	_, bad, _ := ParseLedger([]byte("f | h | g | b\nthe door is not locked | a.md | 2026 | me\n"))
+	wantFailures(t, bad, []string{"no separator row"})
+}
+
+// A blockquoted table renders as a table, so it is read as one.
+func TestABlockquotedTableIsRead(t *testing.T) {
+	as := parseOK(t, "> | f | h | g | b |\n> |---|---|---|---|\n> | the door is not locked | a.md | 2026 | me |\n")
+	if len(as) != 1 || as[0].Home != "a.md" {
+		t.Fatalf("blockquoted table not read: %v", as)
+	}
+}
+
+// An indented code block is markdown's other way of showing an example, and a
+// ledger documenting its own format may well use it.
+func TestAnIndentedCodeBlockIsIllustration(t *testing.T) {
+	md := ledgerMD + "\nExample of the format:\n\n    | SOME EXAMPLE | example/path.md | when | who |\n    |---|---|---|---|\n    | ANOTHER | example/other.md | when | who |\n"
+	as := parseOK(t, md)
+	for _, a := range as {
+		if strings.HasPrefix(a.Home, "example/") {
+			t.Fatalf("an indented example was checked: %+v", a)
+		}
+	}
+}
+
+// Somebody else's broken table is their business; only a mismatch touching
+// our shape is worth a word.
+func TestATwoColumnTableWithAMismatchedSeparatorIsLeftAlone(t *testing.T) {
+	md := "| term | meaning |\n|---|---|---|\n| anchor | a protected fragment |\n\n" + ledgerMD
+	as := parseOK(t, md)
+	if len(as) != 2 {
+		t.Fatalf("the anchor table was disturbed: %v", as)
+	}
+}
