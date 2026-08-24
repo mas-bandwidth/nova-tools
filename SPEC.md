@@ -354,8 +354,10 @@ wrong, and replacing one closure claim with another would repeat it.
   location reason is reported**, the first matching prefix in sorted order —
   the floor's prefixes are sorted, so "first" is not the order they are
   written in.
-- The **extension** is lowercased and whitespace-trimmed the same way, so a
-  file named `x.py ` does not miss a list it plainly belongs on.
+- The **extension** is everything from the final dot in the base name — Go's
+  `filepath.Ext` semantics, so a file named `.py` has extension `.py` and is
+  caught — lowercased and whitespace-trimmed the same way, so a file named
+  `x.py ` does not miss a list it plainly belongs on either.
 - Paths are compared slash-separated on every platform.
 - **Reasons are reported in that same order** — name, location, extension,
   then (for a symlink) `symlink (target not followed)`, appended only when an
@@ -547,9 +549,25 @@ re-opens the path-to-content seam this entry spends a bullet closing.
 > statement, in the `nocode` entry above, and an implementation that re-derives
 > them here is wrong by that fact.
 
-**The record it reads.** One plumbing command — `git diff-index --cached -z
+**The record it reads.** One plumbing command — `git diff-index -r --cached -z
 <base> --` — whose output is NUL-separated pairs of a metadata chunk and a
-path. **The trailing `--` is load-bearing**: without it, a repository holding
+path. **Both `-r` and the trailing `--` are load-bearing, and each was measured
+after being got wrong.**
+
+**`-r` recurses into trees.** Without it, a **sparse index** reports a whole
+sparse directory as ONE record at mode `040000`, whose path is a directory and
+whose status is `A` or `M` — a status this entry classifies. Measured: with
+`index.sparse` on and a cherry-pick staging `out/deep/evil.sh`, the bare
+command emits `:000000 040000 …  A` for the path `out/deep`, and **the staged
+script is never named at all**; with `-r` the same index emits
+`:000000 100644 …  A  out/deep/evil.sh`. `cherry-pick -n`, `merge --no-commit`
+and `revert -n` all reach this and are followed by an ordinary `git commit`,
+which **does** run the hook — so this is not covered by the limits table below,
+which is about hooks that never run. Without `-r` an implementer either refuses
+on a legitimate commit or, trusting a directory record to be nothing worth
+classifying, goes green over a committed shebang script.
+
+**The trailing `--` is load-bearing too**: without it, a repository holding
 a file named `HEAD` makes the command exit 128 with *ambiguous argument*, on
 every commit, and an implementer who reads a FAILED `diff-index` — whose stdout is
 also empty — as *nothing is staged* ships a gate that goes green with the
@@ -606,13 +624,15 @@ an unrecognised status stops the check rather than passing the path.
 **Modes.** Stated as what is CLASSIFIED rather than as what git can emit,
 because the report side is not a closed set this document can own: a `D` or `U`
 record carries a destination mode of `000000` and is never classified, and a
-sparse index stores `040000` sparse-directory entries, which `diff-index`
-expands rather than reporting. **A classified record — `A`, `M` or `T` — has a
-destination mode of `100644`, `100755`, `120000` or `160000`, and any other
-destination mode is a refusal (exit 2)**, on the same argument as an
-unrecognised status letter: a switch with no default has an unbounded skip
-list. Nothing reaches that refusal today, which is why it is written down —
-it is the branch an implementer omits.
+sparse index stores `040000` sparse-directory entries, which `-r` expands into
+blob records and which reach the parser as a single tree record without it.
+**A classified record — `A`, `M` or `T` — has a destination mode of `100644`,
+`100755`, `120000` or `160000`, and any other destination mode is a refusal
+(exit 2)**, on the same argument as an unrecognised status letter: a switch
+with no default has an unbounded skip list. **That refusal is reachable** — it
+is what a `040000` record trips if `-r` is ever dropped from the command above,
+which is the whole reason to write the branch rather than leave a four-way
+switch with no default.
 
 - **`120000` is a symlink** whose blob content is a target path. It is
   classified **by its PATH** — every path-derived rule the audit applies still
@@ -647,7 +667,8 @@ A clean run prints the audit's `NOCODE OK` line on stdout.
 **Refuses (exit 2) when** `--dir` is missing, or does not resolve to the root
 of a git repository; **when `diff-index` itself fails**, which is never a
 clean tree; when the index holds unmerged entries; when a status
-letter is unrecognised; and on every refusal the audit already makes — an
+letter is unrecognised; when a classified record's destination mode is not one
+of the four above; and on every refusal the audit already makes — an
 empty or malformed effective deny-list, `--deny-ext` together with
 `--deny-ext-add`. **The root test is `git -C <dir> rev-parse --show-toplevel`,
 compared with `--dir` after resolving symlinks on both sides** — never a test
