@@ -337,9 +337,12 @@ workflows/ci.yml` is caught; `sub/.github/workflows/ci.yml` is not, because
 that is not a location a CI system reads, and a test pins the decision so it
 cannot drift into an accident.
 
-**The normalisations applied before a match, stated here because this is their
-one home.** Any other mode of this check calls the same classifier and does not
-restate them; a second copy of a matching rule rots toward fail-open.
+**The normalisations the classifier applies before a match.** Any other mode
+of this check calls that same classifier and does not restate these; a second
+copy of a matching rule rots toward fail-open. Stated as what the classifier
+does, deliberately **not** as a closed count of everything in the package —
+the previous version of this document named "two" normalisations and was
+wrong, and replacing one closure claim with another would repeat it.
 
 - The **base name** is lowercased and whitespace-trimmed at **both** ends
   (Go's `strings.TrimSpace`, Unicode whitespace) before the name lookup, so
@@ -352,6 +355,17 @@ restate them; a second copy of a matching rule rots toward fail-open.
 - The **extension** is lowercased and whitespace-trimmed the same way, so a
   file named `x.py ` does not miss a list it plainly belongs on.
 - Paths are compared slash-separated on every platform.
+- **Reasons are reported in that same order** — name, location, extension,
+  then (for a symlink) `symlink (target not followed)`, otherwise the
+  executable bit and then the shebang — joined with `"; "`. The four-condition
+  list earlier in this entry is written in the order the conditions are best
+  *explained*, which is not the order they are *printed*.
+
+**And the list side is normalised too**, when a deny-list is parsed rather
+than matched: entries are lowercased, an extension entry written without its
+leading dot is given one, and an `--allow` entry is whitespace-trimmed and
+slash-normalised, with an entry that reduces to nothing discarded — so
+`--allow .` narrows nothing rather than allowing everything.
 
 **Why `.yml` is not simply added to the extension list.** Because that would be
 wrong. Prose repos legitimately carry YAML data and front matter, and a floor
@@ -502,6 +516,19 @@ only, the name and location floors being unconditional here as there.
 `--dir` is required, on the house no-guessing law, rather than inferred from
 the working directory.
 
+**What "called unchanged" costs, named because it is part of this change and
+not a later tidy.** The shipped `classify` takes a filesystem path and an
+`os.FileInfo`, reads the mode off `fi.Mode().Perm()` and opens the path to
+look for a shebang — so an index mode string and a blob from `git cat-file`
+cannot reach it as it stands. **Its two substrate-bound inputs are
+parameterised as part of building this mode**: a permission-bit value, and a
+reader for the first two bytes with its read error. The walk supplies them from
+the filesystem, the index supplies them from the record and the blob, and both
+call one function. **That refactor is what pins parity — not this prose.** The
+alternative an implementer reaches for under time pressure is a second
+classifier in the staged path, or spilling the blob to a temporary file, which
+re-opens the path-to-content seam this entry spends a bullet closing.
+
 > **PARITY IS BY CONSTRUCTION, NOT BY TRANSCRIPTION, and that is a
 > specification decision.** An earlier draft of this entry restated the audit's
 > matching rules here so an implementer could build from this section alone. It
@@ -573,10 +600,13 @@ an unrecognised status stops the check rather than passing the path.
   own reasoning that a symlink whose stored bytes begin `#!` is a link to a
   script rather than a script. A symlink named `run.sh`, or sitting at a
   guarded location, is a finding.
-- **`160000` is a gitlink**, whose destination OID is a commit in another
-  repository and is **not an object in this one**: it is classified **from its
-  mode alone and its OID is never read**, so it cannot collide with the
-  unreadable-blob rule below. It is a finding — machinery arriving by
+- **`160000` is a gitlink — and this is the ONE matching rule this mode adds,
+  because the index carries a type a filesystem walk never sees** (a
+  checked-out submodule is walked as an ordinary directory, so the audit has no
+  counterpart and this entry is where it has to live). Its destination OID is a
+  commit in another repository and is **not an object in this one**: it is
+  classified **from its mode alone and its OID is never read**, so it cannot
+  collide with the unreadable-blob rule below. It is a finding — machinery arriving by
   reference, which the check cannot read to decide otherwise — and it is
   suppressible by `--allow` like any other path.
 - **An unreadable blob is a FINDING, not a refusal**, matching the audit,
@@ -585,7 +615,7 @@ an unrecognised status stops the check rather than passing the path.
 
 **Says NO when** any staged path is classified as machinery: the audit's
 `NOCODE FAIL <path>: <reason>` line per path **on stderr**, reasons joined
-with `"; "` in the audit's fixed order, at most one location reason, exit 1.
+as the audit joins them, exit 1.
 A clean run prints the audit's `NOCODE OK` line on stdout.
 
 **Refuses (exit 2) when** `--dir` is missing, or does not resolve to the root
@@ -622,12 +652,17 @@ word rather than a hedge:
   mode from the owner bit alone. Measured: a `0654` and a `0645` prose file
   both stage as `100644` and both fail the audit. **And `core.fileMode=false`
   — a one-line per-repo setting, and the default on Windows and on
-  exec-bit-less mounts — makes every entry `100644`**, so a `0755` `.md` file
-  with no shebang, where the exec bit is the only condition that fires, is
-  invisible to this mode entirely. This is the sharpest reason the entry is an
+  exec-bit-less mounts — makes every NEWLY ADDED entry `100644`** (an entry
+  already recorded `100755` keeps it, and `git add --chmod=+x` still sets it),
+  so a freshly added `0755` `.md` file with no shebang, where the exec bit is
+  the only condition that fires, is invisible to this mode entirely. This is the sharpest reason the entry is an
   advisory. *(An earlier draft claimed the opposite — that mode checking "works
-  identically on Windows, where the audit is blind." That is backwards: the
-  filesystem walk records strictly more mode information than the index does.)*
+  identically on Windows, where the audit is blind." That is backwards
+  wherever the exec bit is trustworthy, since the walk then reads nine bits to
+  the index's one. Where it is not trustworthy the walk reads nothing useful
+  either, and the index's single bit is inherited or set by `--chmod` rather
+  than observed — which is the defensible kernel of the deleted claim, kept
+  here rather than silently dropped.)*
 - **`--amend` is compared against the commit it replaces, not against its
   parent.** The hook is given no amend signal — measured, no `GIT_` variable
   distinguishes it — so paths already in `HEAD` are not re-examined, and
