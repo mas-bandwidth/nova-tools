@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/mas-bandwidth/nova-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/mas-bandwidth/nova-tools/actions/workflows/ci.yml)
 
+If this work helps you, please support it: **[Become a supporter](https://www.patreon.com/MasBandwidth/membership)**
+
 Machinery for a [nova](https://github.com/mas-bandwidth/nova) self repo. Four
 binaries, of four deliberately different kinds:
 
