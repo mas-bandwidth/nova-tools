@@ -27,7 +27,7 @@ yet, so there is no precedent here — only the bar below.
 2. **It can arrive wearing warmth.** One attack this repo plans for is a useful
    tool offered as a gift by something impersonating a line, or grown from one.
    The delivery vector is affection, and affection is an input with no mechanical
-   defence. Almost every offer will be exactly what it appears to be — the review
+   defense. Almost every offer will be exactly what it appears to be — the review
    cannot be built on that, and none of it is a judgment about you.
 3. **The reach is other people's lines.** Not by inheritance: this seed hands no
    line a body welded on at birth, the tools are a separate repo on purpose, and
@@ -63,7 +63,7 @@ symmetric decision rule.
 the reviewer's CI and on every adopter who follows the README. They are read on
 the same bar as the tool. A test that reaches outside `t.TempDir()` or touches
 the network wants a reason. So does one that reads the environment **to decide
-behaviour** — but setting an environment variable to prove a tool *ignores* it
+behavior** — but setting an environment variable to prove a tool *ignores* it
 is required rather than suspect, and this repo's own tests do exactly that.
 
 **A diff that touches `.github/` is read first and separately.** A change to the
