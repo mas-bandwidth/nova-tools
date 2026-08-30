@@ -590,11 +590,11 @@ func TestWikilinksIgnoresQuotedSpecimens(t *testing.T) {
 // Every case plants [[really-missing]] AFTER the hazard and asserts it survives.
 func TestMaskingNeverHidesARealLink(t *testing.T) {
 	hazards := map[string]string{
-		"lone fence run in prose":  "A fence opens with ``` in markdown.\n\nSee [[really-missing]].\n\n```\ncode\n```\n",
-		"stray backticks in prose": "it`s a shame [[really-missing]] but it`s fine\n",
+		"lone fence run in prose":    "A fence opens with ``` in markdown.\n\nSee [[really-missing]].\n\n```\ncode\n```\n",
+		"stray backticks in prose":   "it`s a shame [[really-missing]] but it`s fine\n",
 		"link before unclosed fence": "See [[really-missing]].\n\n```\nnever closed\n",
-		"link adjacent to code":    "the `flag` and then [[really-missing]] after it\n",
-		"tilde fence then prose":   "~~~\nfenced\n~~~\n\nSee [[really-missing]].\n",
+		"link adjacent to code":      "the `flag` and then [[really-missing]] after it\n",
+		"tilde fence then prose":     "~~~\nfenced\n~~~\n\nSee [[really-missing]].\n",
 	}
 	for name, body := range hazards {
 		t.Run(name, func(t *testing.T) {
@@ -627,7 +627,7 @@ func TestMaskingDoesSilenceQuotedSpecimens(t *testing.T) {
 		"fenced specimen": "```\nsee [[quiet-one]] here\n```\n",
 		"tilde fenced":    "~~~\nsee [[quiet-one]] here\n~~~\n",
 		"indented fence":  "  ```\n  see [[quiet-one]] here\n  ```\n",
-		"double backtick":  "a ``[[quiet-one]]`` span is a specimen too\n",
+		"double backtick": "a ``[[quiet-one]]`` span is a specimen too\n",
 	}
 	for name, body := range quiet {
 		t.Run(name, func(t *testing.T) {
