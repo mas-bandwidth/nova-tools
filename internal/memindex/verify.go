@@ -37,6 +37,70 @@ type Finding struct {
 // through silently, which is the exact wave-through this file argues against.
 var wikilinkRe = regexp.MustCompile(`\[\[([^\[\]]+?)\]\]`)
 
+// fenceRe matches an opening or closing code fence: three or more backticks or
+// tildes, at the start of a line, indented no more than three spaces. ANCHORED
+// ON PURPOSE — see maskCode.
+var fenceRe = regexp.MustCompile("^[ \t]{0,3}(`{3,}|~{3,})")
+
+// quotedWikilinkRe matches a backtick span whose CONTENT IS the wikilink and
+// nothing else — the exact shape of a quoted specimen, `[[name]]`. Deliberately
+// not "any inline code span": see maskCode.
+var quotedWikilinkRe = regexp.MustCompile("`[ \t]*\\[\\[[^\\[\\]]+?\\]\\][ \t]*`")
+
+// maskCode blanks code so that a wikilink inside it is not read as a citation.
+// A `[[wikilink]]` in inline code or a fenced block is a QUOTED SPECIMEN — prose
+// ABOUT wikilinks — not a reference to a file.
+//
+// Why this matters: `--links` can be run as a GATE, where a false positive is
+// not clutter but a wall in front of a correct document; and even in report mode
+// a list that is half specimens is a list a reader stops reading, so a genuinely
+// dangling pointer hides in plain sight.
+//
+// IT MASKS THE NARROWEST THING THAT WORKS, and both narrowings were bought by a
+// reproduction. A first attempt masked "any fenced block or any inline code
+// span" with one whole-file regexp, and it silently HID real dangling links —
+// the one direction a link checker must never fail in:
+//
+//	A fence opens with ``` in markdown.   <- a lone run in ordinary prose
+//	See [[really-missing]].               <- swallowed: paired with the NEXT fence
+//	it`s a shame [[also-hidden]] but it`s fine   <- swallowed between stray ticks
+//
+// So, two rules. A FENCE IS ONLY RECOGNIZED AT THE START OF A LINE, never from a
+// mid-line run, and fence state is tracked line by line. AND AN INLINE SPAN IS
+// MASKED ONLY WHEN THE SPAN *IS* THE LINK — content `[[name]]` and nothing else,
+// which is exactly what a quoted specimen looks like.
+//
+// A backtick-parity guard was tried instead of that second rule and is NOT
+// enough: the stray-tick line above has EVEN parity, so parity would still eat
+// it. Requiring the span to be the whole link cannot, because a clause of prose
+// is not a wikilink.
+//
+// Everything else over-reports on purpose, which is this file's declared
+// posture: indented (four-space) code blocks, and a wikilink merely NEAR
+// backticks rather than wrapped by them, are both still reported.
+func maskCode(s string) string {
+	lines := strings.Split(s, "\n")
+	fence := ""
+	for i, ln := range lines {
+		if m := fenceRe.FindString(ln); m != "" {
+			mk := strings.TrimLeft(m, " \t")
+			if fence == "" {
+				fence = mk
+			} else if mk[0] == fence[0] && len(mk) >= len(fence) {
+				fence = ""
+			}
+			lines[i] = ""
+			continue
+		}
+		if fence != "" {
+			lines[i] = ""
+			continue
+		}
+		lines[i] = quotedWikilinkRe.ReplaceAllString(ln, " ")
+	}
+	return strings.Join(lines, "\n")
+}
+
 // mdLinkRe matches the general inline-link destination `](dest)`; linkTarget
 // below decides what is in scope. The regex this replaced was
 // `\]\(([^)#?:]+\.md)\)`, whose character class excluded '#' and '?' from the
@@ -196,7 +260,8 @@ func Wikilinks(fsys fs.FS, c *Corpus) ([]Finding, error) {
 		if err != nil {
 			return nil, err
 		}
-		for _, m := range wikilinkRe.FindAllStringSubmatch(string(raw), -1) {
+		prose := maskCode(string(raw))
+		for _, m := range wikilinkRe.FindAllStringSubmatch(prose, -1) {
 			stem := wikilinkTarget(m[1])
 			if stem == "" {
 				continue
