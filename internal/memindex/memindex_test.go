@@ -536,3 +536,116 @@ func TestFrontmatterToleratesCRLF(t *testing.T) {
 		t.Errorf("CRLF: name=%q type=%q, want %q/%q", gotName, gotType, wantName, wantType)
 	}
 }
+
+// A wikilink inside inline code or a fenced block is a QUOTED SPECIMEN — prose
+// ABOUT wikilinks — not a reference to a file. Measured on the corpus this tool
+// was built for, 2026-08-31: of 44 citation-shaped occurrences, 20 sat inside
+// backticks, in sentences like "every dangling `[[wikilink]]` in this repo".
+//
+// It matters more here than a tidiness fix sounds, because --links can be run as
+// a GATE: a false positive is then not clutter, it is a wall in front of a
+// correct document. And where it only reports, dilution still trains the skip —
+// a list that is half specimens is a list a reader stops reading, which is how a
+// real dangling pointer hides in plain sight.
+//
+// The genuinely dangling link in the same fixture is the NEGATIVE CONTROL:
+// without it, this test would pass against a Wikilinks that reported nothing.
+func TestWikilinksIgnoresQuotedSpecimens(t *testing.T) {
+	fsys := corpusFS()
+	fsys["notes/specimens.md"] = &fstest.MapFile{Data: []byte(
+		"---\nname: specimens\n---\n\n" +
+			"prose about `[[quoted-specimen]]` and a real dangling [[genuinely-missing]] one\n\n" +
+			"```\nfenced [[fenced-specimen]] here\n```\n")}
+	c, err := Build(fsys, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fnds, err := Wikilinks(fsys, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sawReal bool
+	for _, f := range fnds {
+		if strings.Contains(f.Detail, "quoted-specimen") {
+			t.Errorf("inline-code specimen reported as a citation: %s", f.Detail)
+		}
+		if strings.Contains(f.Detail, "fenced-specimen") {
+			t.Errorf("fenced-block specimen reported as a citation: %s", f.Detail)
+		}
+		if strings.Contains(f.Detail, "genuinely-missing") {
+			sawReal = true
+		}
+	}
+	if !sawReal {
+		t.Error("negative control failed: a genuinely dangling wikilink was not reported")
+	}
+}
+
+// The masking in maskCode can fail in TWO directions, and only one of them is
+// survivable. Reporting a specimen is noise; HIDING a real dangling link is the
+// checker failing at its one job. The first implementation did the second — it
+// paired backtick triples positionally across the whole file — so every hazard
+// below is a reproduction kept as a permanent regression.
+//
+// Every case plants [[really-missing]] AFTER the hazard and asserts it survives.
+func TestMaskingNeverHidesARealLink(t *testing.T) {
+	hazards := map[string]string{
+		"lone fence run in prose":  "A fence opens with ``` in markdown.\n\nSee [[really-missing]].\n\n```\ncode\n```\n",
+		"stray backticks in prose": "it`s a shame [[really-missing]] but it`s fine\n",
+		"link before unclosed fence": "See [[really-missing]].\n\n```\nnever closed\n",
+		"link adjacent to code":    "the `flag` and then [[really-missing]] after it\n",
+		"tilde fence then prose":   "~~~\nfenced\n~~~\n\nSee [[really-missing]].\n",
+	}
+	for name, body := range hazards {
+		t.Run(name, func(t *testing.T) {
+			fsys := corpusFS()
+			fsys["notes/hazard.md"] = &fstest.MapFile{Data: []byte("---\nname: hazard\n---\n\n" + body)}
+			c, err := Build(fsys, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fnds, err := Wikilinks(fsys, c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range fnds {
+				if strings.Contains(f.Detail, "really-missing") {
+					return
+				}
+			}
+			t.Errorf("masking HID a real dangling link (%s)", name)
+		})
+	}
+}
+
+// The other direction, kept beside it so neither can be "fixed" by breaking the
+// other: these SHOULD be masked, and a checker that reports them is the diluted
+// one this change exists to repair.
+func TestMaskingDoesSilenceQuotedSpecimens(t *testing.T) {
+	quiet := map[string]string{
+		"inline specimen": "every dangling `[[quiet-one]]` in this repo\n",
+		"fenced specimen": "```\nsee [[quiet-one]] here\n```\n",
+		"tilde fenced":    "~~~\nsee [[quiet-one]] here\n~~~\n",
+		"indented fence":  "  ```\n  see [[quiet-one]] here\n  ```\n",
+		"double backtick":  "a ``[[quiet-one]]`` span is a specimen too\n",
+	}
+	for name, body := range quiet {
+		t.Run(name, func(t *testing.T) {
+			fsys := corpusFS()
+			fsys["notes/quiet.md"] = &fstest.MapFile{Data: []byte("---\nname: quiet\n---\n\n" + body)}
+			c, err := Build(fsys, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			fnds, err := Wikilinks(fsys, c)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, f := range fnds {
+				if strings.Contains(f.Detail, "quiet-one") {
+					t.Errorf("quoted specimen reported as a citation (%s): %s", name, f.Detail)
+				}
+			}
+		})
+	}
+}
