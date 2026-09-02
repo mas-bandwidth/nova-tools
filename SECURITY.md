@@ -44,8 +44,7 @@ No location here is guessed, none is defaulted, and no destination is reached th
 caller did not name, so anything outside that closure is a hole, and so is overwriting a
 path that was named only as an input. Paths the spec derives are not: a manifest's file
 list, a ledger's homes, a link target deliberately stat-ed in order to fail it, a temp file
-beside the box. Nor are the processes the spec itself invokes: the git subprocesses
-`nocode --staged` runs, with the caller's environment intact, as `SPEC.md` specifies.
+beside the box.
 
 **Content changing what a tool does rather than what it reports.** These binaries
 read untrusted text by design, and that text is data. Anything that lets it steer
