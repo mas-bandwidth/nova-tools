@@ -53,20 +53,14 @@ box is reported clear when it is not provably clear: an unreadable box read as
 clear, a recorded state that a lookup fails to find, a surface whose spelling
 escapes a match `SPEC.md` says is insensitive to case and whitespace. `SPEC.md`
 is explicit that absent and unreadable are different answers and that
-collapsing them is the fail-open this package exists to prevent. **One declared
-collapse stays in scope as a finding anyway**, and we would rather say so than
-have you guess: a `--box` whose parent directory is gone answers verified
-clear, which `SPEC.md` accepts deliberately and pins by test, and which still
-loses a live fuse if the path moves under a caller. If you can make that happen
-without editing the box, tell us — the acceptance was a judgment about
-locators, not a licence for every route to a false clear.
+collapsing them is the fail-open this package exists to prevent.
 
 **Untrusted content reaching a tool's own reported lines.** `SPEC.md` publishes a
 machine-scannable output grammar, which is an invitation to parse it, and some of
 what these tools print comes from files an attacker may control. Anything that
 lets such content forge a line, break the grammar, or drive a terminal is a
-finding, and it is not excluded by the class above: that one is about execution,
-this one is about the channel. One instance is already open as
+finding, and it is not excluded by the execution class above: that one is
+about what a tool does, this one about what it says. One instance is already open as
 [#21](https://github.com/mas-bandwidth/nova-tools/issues/21).
 
 **Hostile or malformed input leaving state half-written**, particularly the fuse
@@ -77,11 +71,8 @@ the refusal suppresses something someone was relying on.
 built from `github.com/mas-bandwidth/nova-tools`.
 
 **And what is not.** A check being stricter than you would like, or a missing
-feature. Disagreeing with a judgment from an advisory instrument — there are
-two, and `SPEC.md` names them — where the instrument flags so that you decide.
-**But that exclusion is rebuttable by consequence rather than by genre**: a
-declared advisory that a caller can be led to trust as a boundary is a finding,
-whatever the page it is declared on calls it. And anything `SPEC.md` declares:
+feature. Disagreeing with a judgment from an instrument `SPEC.md`
+declares advisory, where it flags so that you decide. And anything `SPEC.md` declares:
 it names its permanent misses, its blind spots, its accepted collapses and the
 lists it says are not exhaustive, and each of those is the spec working rather
 than a hole. **If a declared limit looks wrong to you, that is a finding about
