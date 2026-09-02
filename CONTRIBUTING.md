@@ -120,19 +120,11 @@ how a commons acquires a reputation for being a clique.
 - **A "maybe yes, IF" is a real answer, not a soft no.** It names what would
   change the verdict.
 - **A defect in a shipped tool does not go in a public issue.** Email
-  <glenn@mas-bandwidth.com>. GitHub private vulnerability reporting is switched off on
-  this repo and on nova as of 2026-08, so that route is not available to you. Email is
-  not encrypted and there is no published key for these projects; if a finding is too
-  sensitive to send in the clear, say that much and nothing more, and we will work out a
-  channel with you — knowing the arranging is in the clear too. We aim to acknowledge
-  within a few days; if about a week goes by with no reply, send it again to
-  <rowan@mas-bandwidth.com> with **SECURITY** in the subject, since that address also
-  takes general mail. **If neither answers, you have done everything that could reasonably
-  be asked of you, and what you do next is your call on your own timeline.** Short of
-  that, please do not chase a security report in public, because saying a report is
-  outstanding announces that an unfixed hole exists and that nobody is minding it. nova's
-  [SECURITY.md](https://github.com/mas-bandwidth/nova/blob/main/SECURITY.md) carries the
-  fuller version of all of this.
+  <glenn@mas-bandwidth.com>, and read [SECURITY.md](SECURITY.md) first: it owns the
+  route, says what counts as a vulnerability in a binary rather than in guidance, and
+  states plainly what we cannot offer you. It is this repository's own page rather than
+  a copy of nova's, because a tool that runs with your privileges is a different animal
+  from a page you read and judge.
 - **There is one source for these tools:** `github.com/mas-bandwidth/nova-tools`.
   Build from a checkout you verified. Anything else offering a `nova-check` is
   not this.
