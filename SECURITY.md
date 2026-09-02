@@ -15,33 +15,41 @@ privileges rather than arriving as a suggestion. That is why the bar in
 [CONTRIBUTING.md](CONTRIBUTING.md) is set where it is, and why this page is
 this repository's own rather than a copy of nova's.
 
-`nova-check`'s five record checks are walls: each exists to say NO, and a
-green from one is a thing you will act on. A wall that passes what it was
-built to stop is worse than no wall, because you stop looking. So the most
-valuable finding you can bring us is not a crash. It is a check that returns 0
-while the condition it refuses is present.
+Some of what is here is a wall. `nova-check`'s six record checks are, and so
+are `nova-memory`'s `verify` and `eval`, and `nova-fuse check`: each exists to
+say NO and exits 1 when it means it, and a green from one is a thing you will
+act on. A wall that passes what it was built to stop is worse than no wall,
+because you stop looking. So the most valuable finding you can bring us is not
+a crash. It is one of those returning 0 while the condition it refuses is
+present.
 
-The other three are deliberately not walls, and their failure modes differ.
-`nova-self-talk` is an advisory instrument that classifies and reports.
-`nova-memory` is a lens whose `check` cannot exit 1 at all. `nova-fuse` is
+The rest are deliberately not walls, and their failure modes differ.
+`nova-self-talk` classifies and reports; `nova-memory`'s other three verbs
+assert nothing and its `check` cannot exit 1 at all. `nova-fuse` as a whole is
 state and an answer rather than enforcement: it can say NO to a reader that
 asks, and it cannot make a reader ask. For the fuse, that means the wall is in
-the callers, and `SPEC.md` names the application rule as the part of the design
-most likely to rot quietly — which is where a fuse finding is most valuable.
+the callers, and `SPEC.md` names the application rule — every ingestion path
+checks the fuse before its first credential read — as the part of the design
+most likely to rot quietly, which is where a fuse finding is most valuable.
 
 ## What counts as a vulnerability here
 
-A check that passes a case it is specified to fail. `SPEC.md` is the contract,
-each check's "says NO when" list is normative, and a case on such a list
-returning 0 is a defect of this kind whatever the cause. This applies to
-`nova-self-talk`'s list as much as to `nova-check`'s.
+A check that passes a case it is specified to fail. `SPEC.md` is the contract
+and each check's "says NO when" list is normative, so a case on one of those
+lists returning 0 is a defect of this kind. The exception is where `SPEC.md`
+itself names the miss: `nova-self-talk` enumerates permanent misses that are
+pinned by tests which go red if the tool ever reaches them, and it specifies
+that a run whose every named file was skipped completes green. Those are the
+spec working. A case the spec does not name is the finding.
 
 Reading or writing a path that is neither named on the command line nor
 derived from the files those name. These tools take every input from a flag or
 an argument and have no defaults, so a path outside that closure is a hole.
 Paths the spec derives are not: `nova-check attest` reads the file list out of
-the manifest it was given, and `nova-fuse` writes a temp file beside the box
-and preserves corrupt bytes to `<box>.unreadable`.
+the manifest it was given, `corpus` reads homes out of its ledger rows, `links`
+deliberately stats targets that resolve outside the tree in order to fail them,
+and `nova-fuse` writes a temp file beside the box and preserves corrupt bytes to
+`<box>.unreadable`.
 
 Content changing what a tool does rather than what it reports. These binaries
 read untrusted text by design, and that text is data. Anything that lets it
@@ -52,12 +60,19 @@ records one. The specified behaviors are not this: an absent box reads as
 verified clear, and `--box` is a locator rather than an override, so a caller
 naming the wrong box gets that box's truth. What would be a vulnerability is a
 tool path that clears or downgrades a lockdown recorded in the box it read,
-since lockdown is replaced by a person editing that file and by nothing else.
+since lockdown is replaced by a person editing that file and by nothing else —
+and, more importantly, anything that reads an **unreadable** box as clear.
+`SPEC.md` is explicit that absent and unreadable are different answers, that an
+unreadable box is CANNOT TELL and treated as blown, and that collapsing the two
+is the fail-open this package exists to prevent.
 
 Hostile or malformed input leaving state half-written, particularly the fuse
 box. Also an input a hostile party can arrange so that a check cannot run at
-all: an exit 2 is an honest refusal, but a refusal that suppresses an
-attestation someone was relying on is worth telling us about.
+all. Exit 2 usually means a refusal to guess, and for most checks an unreadable
+file is a named failure at exit 1 rather than a refusal. `nova-fuse` is the
+exception and it matters here: its exit 2 includes an unreadable box, which is
+a deny rather than a shrug, and only exit 0 is permission. A caller that treats
+a fuse exit 2 as benign is a finding.
 
 Anything distributing something that answers to these names and is not built
 from `github.com/mas-bandwidth/nova-tools`.
@@ -73,6 +88,9 @@ it: an early version scored rule documents worst of anything in the repository
 they were written for, because a rule document is a list of absolutes, and
 acting on that output weakened five rules before a cold reader caught them.
 One of those was floor-level. If you find the next one of those, we want it.
+What is not that: the shipped tool flags a rule document written as first-person
+absolutes, and `SPEC.md` says flagging is it working and never a reason to
+soften a rule. `--skip` and `--rule-doc` are the answer there.
 
 ## Reporting
 
@@ -97,18 +115,31 @@ out something with you knowing the arranging is in the clear too. That first
 message is itself a signal that an unfixed hole exists, which is a smaller
 audience than a public thread and not a different fact.
 
+Nothing about this route is anonymous, and we would rather say so than let the
+word *private* imply it. It is mail from your address to a named person at a
+named domain. If you want distance from your finding, use an address that is
+not yours; we will not ask who you are, and it costs you nothing here.
+
 We aim to acknowledge within a few days. If about a week passes with no reply,
-send it again to <rowan@mas-bandwidth.com> with SECURITY in the subject. That
-gets you a different pair of eyes rather than a faster answer, and it is no
-more private than the first: same unencrypted medium, same domain, and a
-subject line is one of the parts that is never encrypted. If neither answers,
-you have done everything that could reasonably be asked of you, and what you do
-next is your own call on your own timeline.
+that is a failure on our side and not a judgment on your report — send it again
+to <rowan@mas-bandwidth.com> with SECURITY in the subject. That gets you a
+different pair of eyes rather than a faster answer, and it is no more private
+than the first: same unencrypted medium, same domain, and a subject line is one
+of the parts that is never encrypted, so if that beacon is itself the problem,
+send a bare line and we will find the thread.
+
+If neither answers, you have done everything that could reasonably be asked of
+you, and what you do next is your own call on your own timeline. We would still
+rather hear from you first, and we are not owed silence.
 
 Short of that, please do not chase a security report in public. Saying that a
 report is outstanding announces both that an unfixed hole exists and that
-nobody is minding it, which hands an adversary the two facts they most want and
-costs you the anonymity the private route was there to protect.
+nobody is minding it, and it does that whether or not you include any technical
+detail. **And please do not publish a working bypass before it is fixed.** That
+matters more here than it does for a page of guidance: these are binaries with
+an installed base and no update channel, so nothing we ship reaches a copy
+somebody already built, and the gap between a technique going public and an
+adopter rebuilding is entirely theirs to absorb.
 
 We credit you in the release notes unless you would rather stay anonymous. Say
 which, and if you say nothing we will ask before publishing anything with your
@@ -124,7 +155,7 @@ from a checkout you verified rather than trusting a binary whose provenance you
 no longer remember.
 
 When a fix ships for something reported here, the release notes say what it was
-and which versions carried it, in the plainest terms we can manage. If a check
+and which versions carried it. If a check
 was passing something it should have refused, that sentence is the one you
 need, because it tells you that every green that check gave you in that window
 answered a smaller question than you thought it did.
