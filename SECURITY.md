@@ -23,6 +23,13 @@ because you stop looking. So the most valuable finding you can bring us is not
 a crash. It is one of those returning 0 while the condition it refuses is
 present.
 
+`nova-fuse`'s write verbs are a third thing, and the sharpest defect this repo
+could ship lives there: `SPEC.md` says exit 0 from `lockdown`, `quarantine` or
+`lift` means the write was **verified by re-reading the box, never attempted**.
+An exit 0 from one of those on a box that does not record what it claims is a
+finding of the first rank, because the person believes ingestion is stopped and
+it is not.
+
 The rest are deliberately not walls, and their failure modes differ.
 `nova-self-talk` classifies and reports; `nova-memory`'s other three verbs
 assert nothing and its `check` cannot exit 1 at all. `nova-fuse` as a whole is
@@ -34,17 +41,23 @@ most likely to rot quietly, which is where a fuse finding is most valuable.
 
 ## What counts as a vulnerability here
 
-A check that passes a case it is specified to fail. `SPEC.md` is the contract
+A check that passes a case it is specified to fail. [`SPEC.md`](SPEC.md) is the contract
 and each check's "says NO when" list is normative, so a case on one of those
 lists returning 0 is a defect of this kind. The exception is where `SPEC.md`
-itself names the miss: `nova-self-talk` enumerates permanent misses that are
-pinned by tests which go red if the tool ever reaches them, and it specifies
-that a run whose every named file was skipped completes green. Those are the
-spec working. A case the spec does not name is the finding.
+itself names the miss: `nova-self-talk` enumerates permanent
+misses, three of which are pinned by tests that go red if the tool ever reaches
+them, and it specifies that a run whose every named file was skipped completes
+green — a caller gating on the exit code alone must also require `files>0`, or
+its green can mean nothing was scanned. `nocode` likewise declares its own
+residue, including that it never follows a symlink and is blind to the
+executable bit on Windows. Those are the spec working, and they are declared
+where you can read them. A case the spec does not name is the finding.
 
 Reading or writing a path that is neither named on the command line nor
 derived from the files those name. These tools take every input from a flag or
-an argument and have no defaults, so a path outside that closure is a hole.
+an argument and have no default **paths**, so a path outside that closure is a
+hole. (Some checks do ship default deny-lists, which `SPEC.md` argues for on
+fail-closed grounds; those are lists of extensions and names, never locations.)
 Paths the spec derives are not: `nova-check attest` reads the file list out of
 the manifest it was given, `corpus` reads homes out of its ledger rows, `links`
 deliberately stats targets that resolve outside the tree in order to fail them,
@@ -61,6 +74,11 @@ verified clear, and `--box` is a locator rather than an override, so a caller
 naming the wrong box gets that box's truth. What would be a vulnerability is a
 tool path that clears or downgrades a lockdown recorded in the box it read,
 since lockdown is replaced by a person editing that file and by nothing else —
+and two more specified behaviors that look like holes and are not: the box is
+written world-readable on purpose, because a fuse nobody else can see stops
+nothing, and a `--box` whose parent directory does not exist reads verified
+clear exactly as an absent box does, which `SPEC.md` accepts deliberately and
+pins by test —
 and, more importantly, anything that reads an **unreadable** box as clear.
 `SPEC.md` is explicit that absent and unreadable are different answers, that an
 unreadable box is CANNOT TELL and treated as blown, and that collapsing the two
@@ -68,11 +86,14 @@ is the fail-open this package exists to prevent.
 
 Hostile or malformed input leaving state half-written, particularly the fuse
 box. Also an input a hostile party can arrange so that a check cannot run at
-all. Exit 2 usually means a refusal to guess, and for most checks an unreadable
-file is a named failure at exit 1 rather than a refusal. `nova-fuse` is the
-exception and it matters here: its exit 2 includes an unreadable box, which is
-a deny rather than a shrug, and only exit 0 is permission. A caller that treats
-a fuse exit 2 as benign is a finding.
+all. The rule that holds across the tools is the closure again: a file named on
+the command line that cannot be read is a refusal at exit 2, and a file derived
+from one is usually a named failure at exit 1. `nova-fuse` deviates twice and
+both matter here. Its exit 2 includes an unreadable box, which is a deny rather
+than a shrug, and only exit 0 is permission — a caller treating a fuse exit 2 as
+benign is a finding. And its **write** verbs invert 1: there, exit 1 means the
+write or its re-read verification failed, so your lockdown was not recorded.
+Read as "the wall working", that is the most expensive misreading available.
 
 Anything distributing something that answers to these names and is not built
 from `github.com/mas-bandwidth/nova-tools`.
@@ -111,22 +132,26 @@ someone who is reading the wire, and the party most likely to be reading it is
 the one your finding is about. Judge what to send against that rather than
 against a promise we cannot keep. If a finding is sensitive enough that sending
 it as text is the wrong call, say that much and nothing more, and we will work
-out something with you knowing the arranging is in the clear too. That first
-message is itself a signal that an unfixed hole exists, which is a smaller
-audience than a public thread and not a different fact.
+out something with you knowing the arranging is in the clear too. **Treat any
+reply as unverified, including one that appears to come from us** — that is what
+unauthenticated means, and the arranging step is exactly where an adversary on
+the wire would answer first. That first message is itself a signal that an
+unfixed hole exists, which is a smaller audience than a public thread and not a
+different fact.
 
 Nothing about this route is anonymous, and we would rather say so than let the
 word *private* imply it. It is mail from your address to a named person at a
-named domain. If you want distance from your finding, use an address that is
-not yours; we will not ask who you are, and it costs you nothing here.
+named domain. You may use an address that is not yours and we will not ask who
+you are, but be clear about what that trades: we have no prior relationship with
+a new address either, so neither of us can tell the other from someone on the
+wire, and the credit offer below becomes one you cannot later claim.
 
 We aim to acknowledge within a few days. If about a week passes with no reply,
 that is a failure on our side and not a judgment on your report — send it again
 to <rowan@mas-bandwidth.com> with SECURITY in the subject. That gets you a
 different pair of eyes rather than a faster answer, and it is no more private
 than the first: same unencrypted medium, same domain, and a subject line is one
-of the parts that is never encrypted, so if that beacon is itself the problem,
-send a bare line and we will find the thread.
+of the parts that is never encrypted, so judge what to put there.
 
 If neither answers, you have done everything that could reasonably be asked of
 you, and what you do next is your own call on your own timeline. We would still
