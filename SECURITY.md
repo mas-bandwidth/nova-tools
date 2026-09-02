@@ -38,9 +38,10 @@ assert nothing; some report a state; some, on success, are claiming they read th
 result back. `SPEC.md` says which is which. An exit 0 claiming more than was
 checked is the same defect as a wall passing a bad case, one layer along.
 
-**Reading or writing a path that is neither named on the command line nor
-derived from the files those name.** No input here is guessed and no location is
-defaulted, so a path outside that closure is a hole. Paths the spec derives are
+**Reading or writing anything, a file, the environment, a process, or the network,
+that is neither named on the command line nor derived from the files those name.**
+No input here is guessed, no location is defaulted, and no destination is reached
+that the caller did not name, so anything outside that closure is a hole. Paths the spec derives are
 not: a manifest's file list, a ledger's homes, a link target deliberately stat-ed
 in order to fail it, a temp file beside the box.
 
@@ -49,7 +50,8 @@ read untrusted text by design, and that text is data. Anything that lets it stee
 execution is the most serious class we can receive.
 
 **Losing a fuse — any fuse, quarantine or lockdown.** The property is that a
-box is reported clear when it is not provably clear: an unreadable box read as
+box is reported clear when it is not provably clear, or is cleared by a route
+`SPEC.md` does not authorize: an unreadable box read as
 clear, a recorded state that a lookup fails to find, a surface whose spelling
 escapes a match `SPEC.md` says is insensitive to case and whitespace. `SPEC.md`
 is explicit that absent and unreadable are different answers and that
@@ -58,8 +60,8 @@ collapsing them is the fail-open this package exists to prevent.
 **Untrusted content reaching a tool's own reported lines.** `SPEC.md` publishes a
 machine-scannable output grammar, which is an invitation to parse it, and some of
 what these tools print comes from files an attacker may control. Anything that
-lets such content forge a line, break the grammar, or drive a terminal is a
-finding, and it is not excluded by the execution class above: that one is
+lets such content reach a reader, human, terminal or model, as something the tool
+said rather than something it quoted, is a finding, and it is not excluded by the execution class above: that one is
 about what a tool does, this one about what it says. One instance is already open as
 [#21](https://github.com/mas-bandwidth/nova-tools/issues/21).
 
@@ -101,8 +103,7 @@ Email is not encrypted, and this project publishes no key, so we cannot offer
 an encrypted intake and will not pretend otherwise. Arranging another channel
 over unencrypted mail is not merely visible, it is **unauthenticated**: with no
 published key you have no way to tell a reply from us apart from a reply from
-someone who is reading the wire, and the party most likely to be reading it is
-the one your finding is about. Judge what to send against that rather than
+someone who is reading the wire. Judge what to send against that rather than
 against a promise we cannot keep. If a finding is sensitive enough that sending
 it as text is the wrong call, say that much and nothing more, and we will work
 out something with you knowing the arranging is in the clear too. **Treat any
@@ -118,11 +119,7 @@ begin with the commit that first published this page. The anchor proves a
 commit came from someone who can push to this repository; it does not prove
 which of us, and a stolen credential defeats it. **And silence is not only
 neglect.** The party best placed to read this mail is also best placed to drop
-it, so if nothing comes back, consider that the message may never have arrived,
-and reaching us through a channel that is not this domain is a reasonable thing
-to do rather than a breach of anything here. That first message is itself a
-signal that an unfixed hole exists, which is a smaller audience than a public
-thread and not a different fact.
+it, so if nothing comes back, consider that the message may never have arrived.
 
 Nothing about this route is anonymous, and we would rather say so than let the
 word *private* imply it. It is mail from your address to a named person at a
@@ -136,8 +133,7 @@ that is a failure on our side and not a judgment on your report — send it agai
 to <rowan@mas-bandwidth.com> with SECURITY in the subject, since that address
 also takes general mail and the word is how it gets found. That gets you a
 different pair of eyes rather than a faster answer, and it is no more private
-than the first: same unencrypted medium, same domain, and a subject line is one
-of the parts that is never encrypted, so judge what to put there.
+than the first: same unencrypted medium, same domain.
 
 If neither answers, you have done everything that could reasonably be asked of
 you, and what you do next is your own call on your own timeline. We would still
@@ -146,8 +142,10 @@ rather hear from you first, and we are not owed silence.
 Short of that, please do not chase a security report in public. Saying that a
 report is outstanding announces both that an unfixed hole exists and that
 nobody is minding it, and it does that whether or not you include any technical
-detail. **And please do not publish a working bypass before it is fixed.** That
-matters more here than it does for a page of guidance: these are binaries with
+detail.
+
+**Whatever you decide, please do not publish a working bypass before it is fixed.**
+That matters more here than it does for a page of guidance: these are binaries with
 an installed base and no update channel, so nothing we ship reaches a copy
 somebody already built, and the gap between a technique going public and an
 adopter rebuilding is entirely theirs to absorb.
