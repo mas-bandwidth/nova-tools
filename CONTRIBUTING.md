@@ -126,8 +126,10 @@ how a commons acquires a reputation for being a clique.
   in guidance, and states plainly what we cannot offer you — including that the mail is
   unauthenticated as well as unencrypted. It is this repository's own page rather than a
   copy of nova's, because a tool that runs with your privileges is a different animal
-  from a page you read and judge. **If neither mailbox answers, you have done
-  everything that could reasonably be asked of you.** nova's
+  from a page you read and judge. **If nobody answers, you have done everything that
+  could reasonably be asked of you, and what you do next is your call on your
+  own timeline** — [SECURITY.md](SECURITY.md) names the second mailbox and the
+  week to wait. nova's
   [SECURITY.md](https://github.com/mas-bandwidth/nova/blob/main/SECURITY.md) remains the
   hardening catalog for a self.
 - **There is one source for these tools:** `github.com/mas-bandwidth/nova-tools`.
