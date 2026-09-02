@@ -20,7 +20,7 @@ this repository's own rather than a copy of nova's.
 
 **[`SPEC.md`](SPEC.md) is the contract, and this page does not restate it.**
 Which verbs are walls, which assert nothing, what each check says NO to, and
-what every exit code means are all specified there, per tool, normatively. Read
+what every exit code means are all specified there, normatively. Read
 it for the rule and treat this page as the shape. **Where the two disagree,
 `SPEC.md` governs, and the disagreement is itself worth reporting** — a page
 that restates a contract is a second copy of it, and the copy is what rots.
@@ -40,10 +40,12 @@ checked is the same defect as a wall passing a bad case, one layer along.
 
 **Reading or writing anything, a file, the environment, a process, or the network,
 that is neither named on the command line nor derived from the files those name.**
-No input here is guessed, no location is defaulted, and no destination is reached
-that the caller did not name, so anything outside that closure is a hole. Paths the spec derives are
-not: a manifest's file list, a ledger's homes, a link target deliberately stat-ed
-in order to fail it, a temp file beside the box.
+No location here is guessed, none is defaulted, and no destination is reached that the
+caller did not name, so anything outside that closure is a hole, and so is overwriting a
+path that was named only as an input. Paths the spec derives are not: a manifest's file
+list, a ledger's homes, a link target deliberately stat-ed in order to fail it, a temp file
+beside the box. Nor are the processes the spec itself invokes: the git subprocesses
+`nocode --staged` runs, with the caller's environment intact, as `SPEC.md` specifies.
 
 **Content changing what a tool does rather than what it reports.** These binaries
 read untrusted text by design, and that text is data. Anything that lets it steer
@@ -61,13 +63,13 @@ collapsing them is the fail-open this package exists to prevent.
 machine-scannable output grammar, which is an invitation to parse it, and some of
 what these tools print comes from files an attacker may control. Anything that
 lets such content reach a reader, human, terminal or model, as something the tool
-said rather than something it quoted, is a finding, and it is not excluded by the execution class above: that one is
-about what a tool does, this one about what it says. One instance is already open as
-[#21](https://github.com/mas-bandwidth/nova-tools/issues/21).
+said rather than something it quoted, or that carries more of a protected record than its
+grammar requires, is a finding, and it is not excluded by the execution class above: that one
+is about what a tool does, this one about what it says.
 
 **Hostile or malformed input leaving state half-written**, particularly the fuse
-box; and an input a hostile party can arrange so a check cannot run at all, where
-the refusal suppresses something someone was relying on.
+box; and an input a hostile party can arrange so a check cannot run, or cannot finish, where
+the refusal or the hang suppresses something someone was relying on.
 
 **Anything distributing something that answers to these names** and is not
 built from `github.com/mas-bandwidth/nova-tools`.
@@ -116,14 +118,14 @@ read [this file's
 history](https://github.com/mas-bandwidth/nova-tools/commits/main/SECURITY.md)
 before you use a channel someone has offered you, and expect that record to
 begin with the commit that first published this page. The anchor proves a
-commit came from someone who can push to this repository; it does not prove
-which of us, and a stolen credential defeats it. **And silence is not only
+commit is in this repository's history; it does not prove which of us put it there, and a
+stolen credential defeats it. **And silence is not only
 neglect.** The party best placed to read this mail is also best placed to drop
 it, so if nothing comes back, consider that the message may never have arrived.
 
 Nothing about this route is anonymous, and we would rather say so than let the
 word *private* imply it. It is mail from your address to a named person at a
-named domain. You may use an address that is not yours and we will not ask who
+named domain. You may use an address that does not identify you and we will not ask who
 you are, but be clear about what that trades: we have no prior relationship with
 a new address either, so neither of us can tell the other from someone on the
 wire, and the credit offer below becomes one you cannot later claim.
@@ -150,7 +152,7 @@ an installed base and no update channel, so nothing we ship reaches a copy
 somebody already built, and the gap between a technique going public and an
 adopter rebuilding is entirely theirs to absorb.
 
-We credit you in the release notes unless you would rather stay anonymous. Say
+We credit you in the release notes unless you would rather stay uncredited. Say
 which, and if you say nothing we will ask before publishing anything with your
 name in it.
 
