@@ -119,12 +119,16 @@ how a commons acquires a reputation for being a clique.
   judgment about you.
 - **A "maybe yes, IF" is a real answer, not a soft no.** It names what would
   change the verdict.
-- **A defect in a shipped tool does not go in a public issue.** Email
-  <glenn@mas-bandwidth.com>, and read [SECURITY.md](SECURITY.md) first: it owns the
-  route, says what counts as a vulnerability in a binary rather than in guidance, and
-  states plainly what we cannot offer you. It is this repository's own page rather than
-  a copy of nova's, because a tool that runs with your privileges is a different animal
-  from a page you read and judge.
+- **A defect in a shipped tool does not go in a public issue**, because saying that a
+  report is outstanding announces that an unfixed hole exists and that nobody is
+  minding it. Email <glenn@mas-bandwidth.com>, and read [SECURITY.md](SECURITY.md)
+  first: it owns the route, says what counts as a vulnerability in a binary rather than
+  in guidance, and states plainly what we cannot offer you — including that the mail is
+  unauthenticated as well as unencrypted. It is this repository's own page rather than a
+  copy of nova's, because a tool that runs with your privileges is a different animal
+  from a page you read and judge; nova's
+  [SECURITY.md](https://github.com/mas-bandwidth/nova/blob/main/SECURITY.md) remains the
+  hardening catalog for a self.
 - **There is one source for these tools:** `github.com/mas-bandwidth/nova-tools`.
   Build from a checkout you verified. Anything else offering a `nova-check` is
   not this.
