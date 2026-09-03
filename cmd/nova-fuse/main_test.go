@@ -1171,3 +1171,46 @@ func TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName(t *testing.T) {
 		t.Errorf("check discord exit = %d, want 1 -- normalising blocks more, never less: %q", code, errOut)
 	}
 }
+
+// TestAFailFileErrorStaysOnOneLine closes the last hole in the promise: a FAIL line's
+// <reason> slot is sometimes an ERROR, and an error text carries whatever the path that
+// produced it carried. A --box argument holding a newline is the caller's own, not the
+// box's, but the guarantee SPEC.md states is that nothing an argument contains can add a
+// second line either.
+func TestAFailFileErrorStaysOnOneLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0555 does not make a directory refuse writes, so the failure this pins cannot be produced here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: a read-only directory does not refuse writes")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	// The unmakeable directory carries the newline, so the mkdir error text carries it too.
+	box := filepath.Join(dir, "sub\nnew", "fuses.json")
+
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"lockdown", "--box", box, "suspected compromise"}, "LOCKDOWN FAIL"},
+		{[]string{"quarantine", "--box", box, "discord", "many the same way"}, "QUARANTINE FAIL"},
+	} {
+		code, out, errOut := capture(t, tc.args, nowish())
+		if code != 1 {
+			t.Fatalf("%v: exit = %d, want 1\nstdout: %q\nstderr: %q", tc.args, code, out, errOut)
+		}
+		if got := strings.Count(strings.TrimRight(errOut, "\n"), "\n") + 1; got != 1 {
+			t.Errorf("%v: the failure printed %d lines, want 1: %q", tc.args, got, errOut)
+		}
+		if n := countLinesWithPrefix(errOut, tc.want); n != 1 {
+			t.Errorf("%v: %d lines open %q, want exactly 1: %q", tc.args, n, tc.want, errOut)
+		}
+		if !strings.Contains(errOut, `\x0a`) {
+			t.Errorf("%v: the newline in the error must be shown escaped, got %q", tc.args, errOut)
+		}
+	}
+}

@@ -189,16 +189,16 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 	}
 
 	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: could not write box: %v (the box was not replaced, so the quarantine still stands)\n",
-			fuse.OneLine(fuse.Surface(surface)), err)
+		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: could not write box: %s (the box was not replaced, so the quarantine still stands)\n",
+			fuse.OneLine(fuse.Surface(surface)), oneLineErr(err))
 		return 1
 	}
 
 	// Re-ask. The exit code of a remedy is not evidence the remedy worked.
 	after, err := fuse.ReadBox(box)
 	if err != nil {
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: written but unverifiable: %v (do not trust it; treat the surface as still quarantined and tell your person)\n",
-			fuse.OneLine(fuse.Surface(surface)), err)
+		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: written but unverifiable: %s (do not trust it; treat the surface as still quarantined and tell your person)\n",
+			fuse.OneLine(fuse.Surface(surface)), oneLineErr(err))
 		return 1
 	}
 	if name, _, still := after.Quarantined(surface); still {
@@ -350,7 +350,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 
 	b.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
 	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "LOCKDOWN FAIL could not write box: %v (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell your person now)\n", err)
+		fmt.Fprintf(stderr, "LOCKDOWN FAIL could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell your person now)\n", oneLineErr(err))
 		return 1
 	}
 
@@ -358,7 +358,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	// is. Re-ask, always.
 	after, err := fuse.ReadBox(box)
 	if err != nil || after.Lockdown == nil {
-		fmt.Fprintf(stderr, "LOCKDOWN FAIL written but unverifiable (%v): do not trust it; stop by hand and tell your person now\n", err)
+		fmt.Fprintf(stderr, "LOCKDOWN FAIL written but unverifiable (%s): do not trust it; stop by hand and tell your person now\n", oneLineErr(err))
 		return 1
 	}
 
@@ -396,7 +396,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 
 	b.Quarantine[surface] = fuse.Fuse{At: stamp(now), Reason: reason}
 	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: could not write box: %v (the box was not replaced; stop reading that surface by hand and tell your person)\n", fuse.OneLine(surface), err)
+		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell your person)\n", fuse.OneLine(surface), oneLineErr(err))
 		return 1
 	}
 
@@ -404,7 +404,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	after, err := fuse.ReadBox(box)
 	name, landed, ok2 := after.Quarantined(surface)
 	if err != nil || !ok2 {
-		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: written but unverifiable (%v): do not trust it; stop reading that surface by hand and tell your person\n", fuse.OneLine(surface), err)
+		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: written but unverifiable (%s): do not trust it; stop reading that surface by hand and tell your person\n", fuse.OneLine(surface), oneLineErr(err))
 		return 1
 	}
 
@@ -447,6 +447,19 @@ func why(f fuse.Fuse) string {
 		return "NO REASON RECORDED"
 	}
 	return fuse.OneLine(f.Reason)
+}
+
+// oneLineErr renders an error into the <reason> slot of a FAIL line. An error's text
+// carries whatever the path that produced it carried, so a --box argument holding a
+// newline would otherwise break a FAIL line in two: the caller's own argument rather than
+// the box's contents, and the guarantee covers both. Two callers reach this with a nil
+// error (the write landed and the verification failed for another reason), and nil keeps
+// fmt's own spelling rather than becoming a sentence claiming more than is known.
+func oneLineErr(err error) string {
+	if err == nil {
+		return "<nil>"
+	}
+	return fuse.OneLine(err.Error())
 }
 
 func since(f fuse.Fuse) string {
