@@ -1398,10 +1398,12 @@ the same normalization that lower-cases them, which means `check` and `lift
 quarantine` fold too, on **both sides of every match**. Each control character
 becomes a SPACE rather than vanishing, so `dis\x01cord` is stored and matched as
 `dis cord`; they disappear only at the ends, where the trim takes the space with
-them, which is why `\x01real` stores as `real`. A reason made ENTIRELY of such
+them, which is why `\x01real` stores as `real`. A reason made ENTIRELY of NON-WHITESPACE control
 characters is kept instead as its visible escapes, rather than refused, because a
-fuse you cannot blow is not a fuse. Only a genuinely empty or all-whitespace
-reason is refused, as it always was.
+fuse you cannot blow is not a fuse. The whitespace half of that category is not
+affected: a reason of nothing but newlines, tabs, CR, VT, FF or U+0085 trims to
+empty. Only a genuinely empty or all-whitespace reason is refused, as it always
+was.
 
 **What the widened matching does, in both directions.** Equivalent spellings are
 ONE surface: `check` refuses on any of them, and `lift quarantine` removes every

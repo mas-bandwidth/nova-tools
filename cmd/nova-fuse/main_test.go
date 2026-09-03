@@ -1307,8 +1307,8 @@ func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
 // the first round of this fix was audited by counting call sites BY HAND and came up nine
 // short. Every one of those nine was a refusal or a note rather than an event line, which
 // is exactly the kind of thing hand-counting misses. So the count is mechanical now: this
-// reads main.go, pairs every fmt.Fprint/Fprintf/Fprintln argument with the verb that
-// prints it, and classifies each one as
+// reads every non-test file of the package, pairs every fmt.Fprint/Fprintf/Fprintln
+// argument with the verb that prints it, and classifies each one as
 //
 //	%q or %d      -- the verb escapes it, or it is a number
 //	a literal     -- written in this file, so nothing untrusted reaches it
@@ -1324,20 +1324,22 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 	// control sequence. See fuse.OneLine.
 	escapers := map[string]bool{"fuse.OneLine": true, "oneLineErr": true, "why": true, "since": true}
 
-	// One entry per site, keyed by function and source text. Each is a claim, and each
+	// One entry per site, keyed by FILE, function and source text. The file is in the key
+	// because a package is many files: without it, a same-named function added in another
+	// file would inherit an exemption written for this one. Each entry is a claim, and each
 	// claim is either checked below or stated here as the reason a reader would accept.
 	exempt := map[string]string{
-		"cmdPath|box":           "`path` prints a value, not an event: the line carries no OK/FAIL token, asserts nothing, and SPEC.md exempts it by name",
-		"liftQuarantine|listed": "built immediately above from fuse.OneLine over every stored name",
-		"run|usage":             "the usage constant declared in this file",
-		"parseBox|usage":        "the usage constant declared in this file",
-		"cmdLift|usage":         "the usage constant declared in this file",
-		"cmdStatus|usage":       "the usage constant declared in this file",
-		"cmdCheck|usage":        "the usage constant declared in this file",
-		"cmdLockdown|usage":     "the usage constant declared in this file",
-		"cmdQuarantine|usage":   "the usage constant declared in this file",
-		"cmdPath|usage":         "the usage constant declared in this file",
-		"parseBox|name":         "the verb's own name, chosen by this file at every call site",
+		"main.go|cmdPath|box":           "`path` hands back the caller-supplied argument unescaped; SPEC.md exempts it by name and states that no caller may scan path output for grammar, because it will print one if the argument is one",
+		"main.go|liftQuarantine|listed": "built immediately above from fuse.OneLine over every stored name",
+		"main.go|run|usage":             "the usage constant declared in this file",
+		"main.go|parseBox|usage":        "the usage constant declared in this file",
+		"main.go|cmdLift|usage":         "the usage constant declared in this file",
+		"main.go|cmdStatus|usage":       "the usage constant declared in this file",
+		"main.go|cmdCheck|usage":        "the usage constant declared in this file",
+		"main.go|cmdLockdown|usage":     "the usage constant declared in this file",
+		"main.go|cmdQuarantine|usage":   "the usage constant declared in this file",
+		"main.go|cmdPath|usage":         "the usage constant declared in this file",
+		"main.go|parseBox|name":         "the verb's own name, chosen by this file at every call site",
 	}
 	usedExemption := map[string]bool{}
 
@@ -1361,7 +1363,7 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 		}
 	}
 	if !usageIsConst {
-		t.Fatal("usage is no longer a constant in main.go, so every exemption naming it is unproven")
+		t.Fatal("usage is no longer a constant in this package, so every exemption naming it is unproven")
 	}
 
 	classified := 0
@@ -1465,7 +1467,7 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 					if e, ok := arg.(*ast.CallExpr); ok && escapers[text(e.Fun)] {
 						continue
 					}
-					if key := fnName + "|" + text(arg); exempt[key] != "" {
+					if key := file + "|" + fnName + "|" + text(arg); exempt[key] != "" {
 						usedExemption[key] = true
 						continue
 					}
@@ -1485,7 +1487,7 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 		}
 	}
 	if classified < 40 {
-		t.Errorf("only %d printed arguments were classified; main.go has many more, so the walk is not reaching them", classified)
+		t.Errorf("only %d printed arguments were classified; this package has many more, so the walk is not reaching them", classified)
 	}
 }
 
@@ -1784,6 +1786,33 @@ func checkOneSourceForBypasses(t *testing.T, f goSource) {
 		}
 		return true
 	})
+
+	// THE IMPORTS ARE PART OF THE FENCE. Everything above classifies what the code DOES
+	// with the packages it has; this refuses the packages that would make the classifying
+	// meaningless. An aliased fmt prints under a name no check here looks for, log writes
+	// to its own default output with a timestamp and no escape at all, and anything not on
+	// the list below is a writer nobody has read yet. The list is what this package uses
+	// today: widening it is a decision, and this test is where the decision gets made.
+	allowed := map[string]bool{
+		`"flag"`: true, `"fmt"`: true, `"io"`: true, `"os"`: true, `"sort"`: true,
+		`"strings"`: true, `"time"`: true,
+		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`: true,
+	}
+	for _, imp := range parsed.Imports {
+		path := imp.Path.Value
+		if imp.Name != nil {
+			t.Errorf("%s: import %s %s is aliased; an aliased package prints under a name no check here looks for",
+				at(imp), imp.Name.Name, path)
+		}
+		if path == `"log"` {
+			t.Errorf("%s: log writes to its own output, unescaped and outside every check here", at(imp))
+			continue
+		}
+		if !allowed[path] {
+			t.Errorf("%s: import %s is not on this package's list; if it is wanted, add it here and say why it cannot write past the escape",
+				at(imp), path)
+		}
+	}
 
 	// io.WriteString is a plain call rather than a selector on a writer, so it is named
 	// directly. Checked over the source text because it takes no other form.

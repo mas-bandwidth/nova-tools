@@ -486,9 +486,12 @@ func oneLineErr(err error) string {
 // BECOMES A REFUSAL. Fold turns control characters into spaces, so a reason made of
 // nothing but them folds away to nothing -- and refusing that would mean a fuse that
 // could be blown yesterday cannot be blown today, which is the one direction this design
-// forbids. In that case the reason is kept as its visible escapes instead, so the record
-// says what was typed. A genuinely empty or all-whitespace reason still comes back empty,
-// and the caller still refuses it, exactly as before.
+// forbids. A reason made entirely of NON-WHITESPACE control characters is therefore kept
+// as its visible escapes instead, so the record says what was typed. The whitespace half
+// of that category is not a change and is not treated as one: a reason of nothing but
+// newlines, tabs, CR, VT, FF or U+0085 trims to empty and is refused, which is what it
+// did before this branch too. A genuinely empty or all-whitespace reason still comes back
+// empty here, and the caller still refuses it, exactly as before.
 func keepableReason(raw string) string {
 	if folded := fuse.Fold(raw); folded != "" {
 		return folded
