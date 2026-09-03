@@ -1341,6 +1341,22 @@ LIFT FAIL quarantine=<surface>: <reason>
 `path` prints the bare path — a value, not an event. Output is deterministic:
 same box, same bytes (quarantines sort; the clock is injected).
 
+**An event is exactly one line, and nothing a box or an argument contains can
+add a second.** Every `<reason>`, `<name>`, `<surface>` and `<t>` above is
+printed with control characters escaped — `\xNN` for a code point below U+0080,
+`\uNNNN` above it, lower-case hex in both, and the same treatment for a byte
+that is not valid UTF-8 — so a newline in a hand-edited reason arrives as
+`\x0a` inside its own line rather than forging a `FUSE OK` beneath a
+`FUSE FAIL`, and an ESC sequence arrives as text rather than repainting an
+operator's terminal. Printable text, including non-ASCII, is untouched, and
+nothing is ever shortened to nothing: a reason stays readable. This tool's own
+writes are folded first — `lockdown` and `quarantine` turn control characters
+in a reason, and in a surface name, into single spaces and collapse the runs,
+**never a refusal**, because a fuse you cannot blow is not a fuse. The folding
+is tidiness; the escape is the guarantee, because the box is hand-editable and
+the next reason may not have come from this tool at all. `path` is exempt: it
+prints a value, not an event.
+
 ### check — the gate
 
 ```
@@ -1467,6 +1483,11 @@ caller passes is what another sees — without ever touching the box itself.
    lockdown stops all untrusted reads and surface-driven acts while outbound
    authored life continues.
 6. Blowing either requires no confirmation, no reason-quality bar, no quorum.
+7. **An event is exactly one line, whatever the box contains** — every reason,
+   surface name and timestamp is printed with its control characters escaped,
+   so nothing a hand-edited box or an argument holds can forge a second line in
+   this grammar; this tool's own writes fold control characters to spaces
+   first. Pinned by test.
 
 ### Known limit — the double-blown blind spot, named rather than hidden
 

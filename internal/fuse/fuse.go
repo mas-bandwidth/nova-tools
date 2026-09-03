@@ -39,6 +39,20 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     `quarantine Discord` then `check discord` answer CLEAR -- a fail-OPEN in a
     safety control, reached by a capital letter. Normalizing can only ever collapse
     two names into one, which blocks more and never less.
+
+ 5. THE ESCAPE LIVES AT PRINT TIME, because the tool cannot trust what it did not
+    write. The box is world-readable on purpose (a fuse nobody else can see is a
+    fuse that stops nothing) and hand-editable on purpose (that is the only
+    lockdown-replacement mechanism there is), so on a shared machine the reason,
+    the `at` stamp and the stored surface names are authored by whoever can write
+    the file. Echoed raw into a one-line output grammar, a newline forges a SECOND
+    event line beneath a real one -- a `FUSE OK lockdown=clear` under a `FUSE
+    FAIL`, which a caller scanning the grammar reads as permission -- and an ESC
+    sequence does the same to an operator's terminal. OneLine escapes every
+    control character as the text is printed, which holds for a box this tool
+    never wrote; Fold only tidies what this tool writes itself, and is never a
+    refusal, because a fuse you cannot blow is not a fuse. Constraining writes
+    alone would defend exactly the case that needs no defending.
 */
 package fuse
 
