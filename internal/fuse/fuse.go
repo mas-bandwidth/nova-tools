@@ -51,6 +51,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 )
 
 // UnreadableSuffix names where the bytes of an unreadable box are kept when a lockdown has
@@ -74,8 +76,60 @@ type Box struct {
 	Quarantine map[string]Fuse `json:"quarantine"`
 }
 
-// Surface normalizes a surface name for storage and for matching. See note 4.
-func Surface(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+// Surface normalizes a surface name for storage and for matching. See notes 4 and 5:
+// control characters fold to spaces before the lower-casing, on the same argument that
+// justifies the lower-casing itself -- collapsing two names into one blocks MORE and
+// never less.
+func Surface(s string) string { return strings.ToLower(Fold(s)) }
+
+// OneLine renders free text for an event line. See note 5: the box is hand-editable and
+// world-readable by design, so a reason, a stored surface name or an `at` stamp is
+// authored by whoever can write the file -- and one line per event is a promise this
+// tool makes to every caller scanning the grammar in SPEC.md.
+//
+// Every control character (Unicode category Cc: the C0 range including \n, \r and \t,
+// DEL, and the C1 range) becomes a visible escape: \xNN for a code point below U+0080,
+// \uNNNN above it, both in lower-case hex. A byte that is not valid UTF-8 at all is
+// escaped by its own value the same way, because it cannot be shown as the character it
+// is not and a terminal reading the stream in some other encoding may act on it.
+// Everything printable passes through untouched, including non-ASCII.
+//
+// It is deterministic, and it never shortens text to nothing: a reason stays readable,
+// which is the whole point of recording one.
+func OneLine(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, size := utf8.DecodeRuneInString(s[i:])
+		switch {
+		case r == utf8.RuneError && size == 1:
+			fmt.Fprintf(&b, `\x%02x`, s[i])
+		case !unicode.IsControl(r):
+			b.WriteRune(r)
+		case r < 0x80:
+			fmt.Fprintf(&b, `\x%02x`, r)
+		default:
+			fmt.Fprintf(&b, `\u%04x`, r)
+		}
+		i += size
+	}
+	return b.String()
+}
+
+// Fold tidies text this tool is about to WRITE: every control character becomes a space,
+// runs of whitespace collapse to one, and the ends are trimmed. It is not the defense --
+// OneLine is, because a box written by another hand still arrives holding anything at all
+// (note 5). And it is never a REFUSAL: a fuse you cannot blow is not a fuse, so a reason
+// is accepted whatever it contains and only its spelling in the file is tidied.
+func Fold(s string) string {
+	folded := strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, s)
+	return strings.Join(strings.Fields(folded), " ")
+}
 
 // Quarantined answers whether this surface is blocked, returning the key AS STORED so a
 // refusal can quote the file rather than the caller's spelling of it.

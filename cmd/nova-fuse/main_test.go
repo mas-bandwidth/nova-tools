@@ -1043,8 +1043,10 @@ func TestStatusPrintsOneLinePerFuseAndNoMore(t *testing.T) {
 			t.Errorf("every status line must open the grammar, got %q", line)
 		}
 	}
-	if strings.Contains(out, "quarantines=0") {
-		t.Errorf("a forged status line survived: %q", out)
+	// The forged text stays visible inside the escaped reason -- what it must never be is
+	// a LINE of its own, which is the only thing a caller scanning the grammar reads.
+	if n := countLinesWithPrefix(out, "STATUS OK lockdown="); n != 1 {
+		t.Errorf("%d lines report lockdown, want exactly 1: %q", n, out)
 	}
 }
 
