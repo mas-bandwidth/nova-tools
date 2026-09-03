@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"strings"
 	"testing"
@@ -1074,7 +1075,7 @@ func TestAStoredQuarantineKeyWithANewlinePrintsEscaped(t *testing.T) {
 		t.Errorf("the stored key must print escaped, got %q", out)
 	}
 
-	// The folded spelling matches the folded key -- normalising blocks more, never less.
+	// The folded spelling matches the folded key: they are one surface.
 	code, out, errOut = capture(t, []string{"check", "--box", box, "dis cord"}, nowish())
 	if code != 1 {
 		t.Fatalf("check exit = %d, want 1 -- that surface is quarantined\nstdout: %q\nstderr: %q", code, out, errOut)
@@ -1149,9 +1150,10 @@ func TestLockdownTakesANewlineInItsReasonAndStoresItFolded(t *testing.T) {
 	}
 }
 
-// TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName: folding a name can only ever
-// collapse two names into one, which blocks MORE and never less (package note 4). The
-// plain spelling must still refuse afterwards.
+// TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName: folding widens the class of
+// spellings that count as one surface (package note 4), so the plain spelling must still
+// refuse afterwards. The other direction of that same widening is pinned by
+// TestLiftRemovesEveryFoldEquivalentSpelling.
 func TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName(t *testing.T) {
 	box := boxIn(t)
 	code, out, errOut := capture(t, []string{"quarantine", "--box", box, "\x1bdiscord\n", "attacked"}, nowish())
@@ -1173,7 +1175,7 @@ func TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName(t *testing.T) {
 
 	code, _, errOut = capture(t, []string{"check", "--box", box, "discord"}, nowish())
 	if code != 1 {
-		t.Errorf("check discord exit = %d, want 1 -- normalising blocks more, never less: %q", code, errOut)
+		t.Errorf("check discord exit = %d, want 1 -- the stored key and this spelling are one surface: %q", code, errOut)
 	}
 }
 
@@ -1316,8 +1318,7 @@ func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
 // Anything else fails, naming the line. A new interpolation is a decision from now on,
 // never a drive-by: adding one means either escaping it or writing down why it is safe.
 func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
-	const file = "main.go"
-	src, fset, parsed := parseMainGo(t)
+	files := packageSources(t)
 
 	// Rendered through one of these, a string cannot carry a line break or a terminal
 	// control sequence. See fuse.OneLine.
@@ -1342,16 +1343,18 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 
 	// The usage exemptions are only honest if usage really is a constant here.
 	usageIsConst := false
-	for _, d := range parsed.Decls {
-		gd, ok := d.(*ast.GenDecl)
-		if !ok || gd.Tok != token.CONST {
-			continue
-		}
-		for _, spec := range gd.Specs {
-			if vs, ok := spec.(*ast.ValueSpec); ok {
-				for _, n := range vs.Names {
-					if n.Name == "usage" {
-						usageIsConst = true
+	for _, f := range files {
+		for _, d := range f.parsed.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				if vs, ok := spec.(*ast.ValueSpec); ok {
+					for _, n := range vs.Names {
+						if n.Name == "usage" {
+							usageIsConst = true
+						}
 					}
 				}
 			}
@@ -1361,115 +1364,119 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 		t.Fatal("usage is no longer a constant in main.go, so every exemption naming it is unproven")
 	}
 
-	text := func(n ast.Node) string {
-		return string(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset])
-	}
-
-	// literalOnly answers whether an expression is nothing but string literals, including
-	// a chain of them concatenated with + (the lift lockdown refusal is written that way).
-	var literalOnly func(ast.Expr) bool
-	literalOnly = func(e ast.Expr) bool {
-		switch e := e.(type) {
-		case *ast.BasicLit:
-			return true
-		case *ast.BinaryExpr:
-			return e.Op == token.ADD && literalOnly(e.X) && literalOnly(e.Y)
-		case *ast.ParenExpr:
-			return literalOnly(e.X)
-		}
-		return false
-	}
-
-	// verbsOf returns the verbs of a format string in order. It deliberately refuses to
-	// guess at flags and widths: none are used here, and a classifier that quietly
-	// mis-pairs arguments would be worse than one that stops.
-	verbsOf := func(t *testing.T, format string) []byte {
-		t.Helper()
-		var verbs []byte
-		for i := 0; i < len(format); i++ {
-			if format[i] != '%' {
-				continue
-			}
-			i++
-			if i >= len(format) {
-				t.Fatalf("trailing %% in format %q", format)
-			}
-			if format[i] == '%' {
-				continue
-			}
-			if strings.IndexByte("+-# 0123456789.*", format[i]) >= 0 {
-				t.Fatalf("format %q uses a flag or width; this classifier does not model those, teach it before using one", format)
-			}
-			verbs = append(verbs, format[i])
-		}
-		return verbs
-	}
-
 	classified := 0
-	for _, decl := range parsed.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok {
-			continue
+	for _, f := range files {
+		file, src, fset, parsed := f.name, f.src, f.fset, f.parsed
+		text := func(n ast.Node) string {
+			return string(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset])
 		}
-		fnName := fn.Name.Name
-		ast.Inspect(fn.Body, func(n ast.Node) bool {
-			call, ok := n.(*ast.CallExpr)
-			if !ok {
-				return true
-			}
-			sel, ok := call.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			pkg, ok := sel.X.(*ast.Ident)
-			if !ok || pkg.Name != "fmt" {
-				return true
-			}
-			line := fset.Position(call.Pos()).Line
 
+		// literalOnly answers whether an expression is nothing but string literals, including
+		// a chain of them concatenated with + (the lift lockdown refusal is written that way).
+		var literalOnly func(ast.Expr) bool
+		literalOnly = func(e ast.Expr) bool {
+			switch e := e.(type) {
+			case *ast.BasicLit:
+				return true
+			case *ast.BinaryExpr:
+				return e.Op == token.ADD && literalOnly(e.X) && literalOnly(e.Y)
+			case *ast.ParenExpr:
+				return literalOnly(e.X)
+			}
+			return false
+		}
+
+		// verbsOf returns the verbs of a format string in order. It deliberately refuses to
+		// guess at flags and widths: none are used here, and a classifier that quietly
+		// mis-pairs arguments would be worse than one that stops.
+		verbsOf := func(t *testing.T, format string) []byte {
+			t.Helper()
 			var verbs []byte
-			args := call.Args[1:] // arg 0 is the writer
-			if sel.Sel.Name == "Fprintf" {
-				format, err := strconv.Unquote(text(args[0]))
-				if err != nil {
-					// A concatenated or computed format string is itself a finding: the
-					// verbs could not be read, so nothing after it can be classified.
-					t.Errorf("%s:%d: format string is not a single literal: %s", file, line, text(args[0]))
-					return true
+			for i := 0; i < len(format); i++ {
+				if format[i] != '%' {
+					continue
 				}
-				verbs = verbsOf(t, format)
-				args = args[1:]
-				if len(verbs) != len(args) {
-					t.Errorf("%s:%d: %d verbs but %d arguments; the classifier cannot pair them", file, line, len(verbs), len(args))
-					return true
+				i++
+				if i >= len(format) {
+					t.Fatalf("trailing %% in format %q", format)
 				}
+				if format[i] == '%' {
+					continue
+				}
+				if strings.IndexByte("+-# 0123456789.*", format[i]) >= 0 {
+					t.Fatalf("format %q uses a flag or width; this classifier does not model those, teach it before using one", format)
+				}
+				verbs = append(verbs, format[i])
 			}
+			return verbs
+		}
 
-			for i, arg := range args {
-				classified++
-				verb := byte(0)
-				if i < len(verbs) {
-					verb = verbs[i]
-				}
-				if verb == 'q' || verb == 'd' {
-					continue // the verb quotes and escapes it, or it is a number
-				}
-				if literalOnly(arg) {
-					continue // written in this file, so nothing untrusted reaches it
-				}
-				if e, ok := arg.(*ast.CallExpr); ok && escapers[text(e.Fun)] {
-					continue
-				}
-				if key := fnName + "|" + text(arg); exempt[key] != "" {
-					usedExemption[key] = true
-					continue
-				}
-				t.Errorf("%s:%d in %s: %%%c prints %s raw -- escape it (fuse.OneLine or oneLineErr) or add an exemption naming the reason",
-					file, line, fnName, verb, text(arg))
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
 			}
-			return true
-		})
+			fnName := fn.Name.Name
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				pkg, ok := sel.X.(*ast.Ident)
+				if !ok || pkg.Name != "fmt" {
+					return true
+				}
+				line := fset.Position(call.Pos()).Line
+
+				var verbs []byte
+				args := call.Args[1:] // arg 0 is the writer
+				if sel.Sel.Name == "Fprintf" {
+					format, err := strconv.Unquote(text(args[0]))
+					if err != nil {
+						// A concatenated or computed format string is itself a finding: the
+						// verbs could not be read, so nothing after it can be classified.
+						t.Errorf("%s:%d: format string is not a single literal: %s", file, line, text(args[0]))
+						return true
+					}
+					verbs = verbsOf(t, format)
+					args = args[1:]
+					if len(verbs) != len(args) {
+						t.Errorf("%s:%d: %d verbs but %d arguments; the classifier cannot pair them", file, line, len(verbs), len(args))
+						return true
+					}
+				}
+
+				for i, arg := range args {
+					classified++
+					verb := byte(0)
+					if i < len(verbs) {
+						verb = verbs[i]
+					}
+					if verb == 'q' || verb == 'd' {
+						continue // the verb quotes and escapes it, or it is a number
+					}
+					if literalOnly(arg) {
+						continue // written in this file, so nothing untrusted reaches it
+					}
+					if e, ok := arg.(*ast.CallExpr); ok && escapers[text(e.Fun)] {
+						continue
+					}
+					if key := fnName + "|" + text(arg); exempt[key] != "" {
+						usedExemption[key] = true
+						continue
+					}
+					t.Errorf("%s:%d in %s: %%%c prints %s raw -- escape it (fuse.OneLine or oneLineErr) or add an exemption naming the reason",
+						file, line, fnName, verb, text(arg))
+				}
+				return true
+			})
+		}
 	}
+
 	// A stale exemption is a claim about a call site that no longer exists, and it would
 	// silently cover the next one written in its place.
 	for key, why := range exempt {
@@ -1621,21 +1628,49 @@ func TestTheQuarantinedNowListingCannotForgeALine(t *testing.T) {
 	}
 }
 
-// parseMainGo reads and parses the package's own source. Reaching outside t.TempDir() has
-// one reason here and it is stated: the subject of these two tests IS the source, and a
-// property of the code is not provable from its output alone.
-func parseMainGo(t *testing.T) ([]byte, *token.FileSet, *ast.File) {
+// goSource is one non-test file of this package, parsed.
+type goSource struct {
+	name   string
+	src    []byte
+	fset   *token.FileSet
+	parsed *ast.File
+}
+
+// packageSources reads and parses EVERY non-test .go file in this directory. Reaching
+// outside t.TempDir() has one reason here and it is stated: the subject of these two tests
+// IS the source, and a property of the code is not provable from its output alone.
+//
+// It reads the DIRECTORY rather than the one filename both tests used to name, because a
+// reader proved that a helper added in a second file of package main defeated both of
+// them while the rest of the suite stayed green. A test that guards one file guards one
+// file; the package is the unit that gets compiled.
+func packageSources(t *testing.T) []goSource {
 	t.Helper()
-	src, err := os.ReadFile("main.go")
+	entries, err := os.ReadDir(".")
 	if err != nil {
 		t.Fatal(err)
 	}
-	fset := token.NewFileSet()
-	parsed, err := parser.ParseFile(fset, "main.go", src, 0)
-	if err != nil {
-		t.Fatal(err)
+	var files []goSource
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fset := token.NewFileSet()
+		parsed, err := parser.ParseFile(fset, name, src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, goSource{name, src, fset, parsed})
 	}
-	return src, fset, parsed
+	if len(files) == 0 {
+		t.Fatal("no non-test source found in this package; the walk is looking in the wrong place")
+	}
+	return files
 }
 
 // TestNoOtherWriterOrShadowCanBypassTheEscape closes the gap in the sibling test above,
@@ -1646,11 +1681,28 @@ func parseMainGo(t *testing.T) ([]byte, *token.FileSet, *ast.File) {
 // before any code in this file ran. Each is refused here by name, and each was proved able
 // to fail by mutation.
 func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
-	src, fset, parsed := parseMainGo(t)
+	for _, f := range packageSources(t) {
+		checkOneSourceForBypasses(t, f)
+	}
+}
+
+func checkOneSourceForBypasses(t *testing.T, f goSource) {
+	t.Helper()
+	src, fset, parsed := f.src, f.fset, f.parsed
 	text := func(n ast.Node) string {
 		return string(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset])
 	}
-	at := func(n ast.Node) string { return fmt.Sprintf("main.go:%d", fset.Position(n.Pos()).Line) }
+	at := func(n ast.Node) string { return fmt.Sprintf("%s:%d", f.name, fset.Position(n.Pos()).Line) }
+
+	// Every selector that IS the callee of a call. Anything else naming fmt is a function
+	// VALUE, which can be stored, passed and called where no classifier will look.
+	calledFuns := map[ast.Node]bool{}
+	ast.Inspect(parsed, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			calledFuns[call.Fun] = true
+		}
+		return true
+	})
 
 	// A name declared inside a function that shadows one of these turns every escape in
 	// scope into a no-op, invisibly to the sibling test, which classifies by source text.
@@ -1666,6 +1718,12 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 	ast.Inspect(parsed, func(n ast.Node) bool {
 		switch node := n.(type) {
 		case *ast.CallExpr:
+			// The builtins first: they are a bare identifier rather than a package call,
+			// so a check written after the selector assertion below never sees them --
+			// which is how this very check was found to be dead, by mutation.
+			if id, ok := node.Fun.(*ast.Ident); ok && (id.Name == "print" || id.Name == "println") {
+				t.Errorf("%s: the %s builtin writes to stderr outside every check here; use fmt.Fprintf", at(node), id.Name)
+			}
 			sel, ok := node.Fun.(*ast.SelectorExpr)
 			if !ok {
 				return true
@@ -1682,15 +1740,15 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 				t.Errorf("%s: %s writes bytes past the escaping path; print through fmt.Fprintf with an escaped argument",
 					at(node), text(node.Fun))
 			}
-		case *ast.AssignStmt:
-			for _, rhs := range node.Rhs {
-				if sel, ok := rhs.(*ast.SelectorExpr); ok {
-					if x, ok := sel.X.(*ast.Ident); ok && x.Name == "fmt" {
-						t.Errorf("%s: %s is a fmt function VALUE; aliased, it prints where the classifier cannot see it",
-							at(node), text(rhs))
-					}
-				}
+		case *ast.SelectorExpr:
+			// fmt.Fprintf(...) is fine; `pr := fmt.Fprintf`, passing it as an argument, or
+			// parking it in a struct field is not -- the call then wears a name this file
+			// chose, and the classifier pairs verbs with arguments by source text.
+			if x, ok := node.X.(*ast.Ident); ok && x.Name == "fmt" && !calledFuns[ast.Node(node)] {
+				t.Errorf("%s: %s is used as a fmt function VALUE rather than called; it prints where the classifier cannot see it",
+					at(node), text(node))
 			}
+		case *ast.AssignStmt:
 			if node.Tok == token.DEFINE {
 				var ids []*ast.Ident
 				for _, lhs := range node.Lhs {
@@ -1701,14 +1759,6 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 				declared(node, ids)
 			}
 		case *ast.ValueSpec:
-			for _, v := range node.Values {
-				if sel, ok := v.(*ast.SelectorExpr); ok {
-					if x, ok := sel.X.(*ast.Ident); ok && x.Name == "fmt" {
-						t.Errorf("%s: %s is a fmt function VALUE; aliased, it prints where the classifier cannot see it",
-							at(node), text(v))
-					}
-				}
-			}
 			declared(node, node.Names)
 		case *ast.RangeStmt:
 			if node.Tok == token.DEFINE {
@@ -1738,6 +1788,129 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 	// io.WriteString is a plain call rather than a selector on a writer, so it is named
 	// directly. Checked over the source text because it takes no other form.
 	if strings.Contains(string(src), "io.WriteString") {
-		t.Error("main.go: io.WriteString writes past the escaping path; print through fmt.Fprintf")
+		t.Errorf("%s: io.WriteString writes past the escaping path; print through fmt.Fprintf", f.name)
+	}
+}
+
+// TestLiftRemovesEveryFoldEquivalentSpelling pins what the fold actually does to lift,
+// which is wider than an earlier comment in this file claimed. Surface is applied to BOTH
+// sides of every match and LiftQuarantine removes every match, so coarsening the
+// equivalence class removes more, not less. That is the same design case already had --
+// lifting "discord" removes "Discord" too -- and it is deliberate: fold-equivalent
+// spellings are ONE surface, and a lift that left one spelling behind would verify its own
+// failure. What makes it safe to look at is that nothing is silent: every removal is
+// announced on its own line, under the spelling as stored.
+func TestLiftRemovesEveryFoldEquivalentSpelling(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
+		"dis cord":    {At: "t", Reason: "one"},
+		"dis\tcord":   {At: "t", Reason: "two"},
+		"DIS\x01CORD": {At: "t", Reason: "three"},
+	}})
+
+	code, out, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "dis cord"}, nowish())
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("stdout printed %d lines, want 3 removals plus the verified line: %q", len(lines), out)
+	}
+	// Each removal, named under its STORED spelling and escaped, on its own line.
+	for i, want := range []string{
+		`LIFT OK quarantine=DIS\x01CORD was since=t: three`,
+		`LIFT OK quarantine=dis\x09cord was since=t: two`,
+		`LIFT OK quarantine=dis cord was since=t: one`,
+	} {
+		if lines[i] != want {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want)
+		}
+	}
+	if !strings.HasPrefix(lines[3], "LIFT OK verified:") {
+		t.Errorf("the last line must be the verification, got %q", lines[3])
+	}
+
+	// And the surface is gone under every spelling of it, because it was one surface.
+	for _, probe := range []string{"dis cord", "dis\tcord", "DIS\x01CORD", "DIS CORD"} {
+		if code, _, errOut := capture(t, []string{"check", "--box", box, probe}, nowish()); code != 0 {
+			t.Errorf("check %q: exit = %d, want 0 after the lift: %q", probe, code, errOut)
+		}
+	}
+}
+
+// TestAnAtStampCannotForgeALine. The `at` field is escaped in code and was pinned by
+// nothing: a box is hand-editable, and a reader who only ever tests `reason` leaves the
+// other stored string free to forge.
+func TestAnAtStampCannotForgeALine(t *testing.T) {
+	const forgedAt = "2026-08-03T00:00:00Z\nFUSE OK lockdown=clear quarantine=clear surface=discord"
+
+	t.Run("through status and check under lockdown", func(t *testing.T) {
+		box := boxIn(t)
+		writeBox(t, box, fuse.Box{
+			Lockdown:   &fuse.Fuse{At: forgedAt, Reason: "real"},
+			Quarantine: map[string]fuse.Fuse{},
+		})
+
+		_, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
+		if got := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1; got != 1 {
+			t.Errorf("status printed %d lines, want 1: %q", got, out)
+		}
+		noForgedOKLine(t, "FUSE OK", out, errOut)
+
+		code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+		if code != 1 {
+			t.Fatalf("exit = %d, want 1", code)
+		}
+		if n := countLinesWithPrefix(errOut, "FUSE"); n != 1 {
+			t.Errorf("stderr holds %d lines opening with FUSE, want 1: %q", n, errOut)
+		}
+		noForgedOKLine(t, "FUSE OK", out, errOut)
+		if !strings.Contains(errOut, `\x0a`) {
+			t.Errorf("the newline in `at` must be shown escaped: %q", errOut)
+		}
+	})
+
+	t.Run("through the announced lift", func(t *testing.T) {
+		box := boxIn(t)
+		writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
+			"discord": {At: forgedAt, Reason: "real"},
+		}})
+		code, out, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "discord"}, nowish())
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0\nstderr: %q", code, errOut)
+		}
+		for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+			if !strings.HasPrefix(line, "LIFT OK") {
+				t.Errorf("every line must open the grammar, got %q", line)
+			}
+		}
+		noForgedOKLine(t, "FUSE OK", out, errOut)
+	})
+}
+
+// TestCheckIsDeterministicWhenTwoStoredKeysFoldTogether. Quarantined answered with the
+// FIRST map-iteration match, and map iteration is randomized -- so a box holding two
+// spellings of one surface made the quoted name, the timestamp and the reason a coin flip
+// between runs. Status was already pinned deterministic; the gate's own refusal was not.
+func TestCheckIsDeterministicWhenTwoStoredKeysFoldTogether(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
+		"dis cord":  {At: "t", Reason: "one"},
+		"dis\tcord": {At: "t", Reason: "two"},
+	}})
+
+	seen := map[string]bool{}
+	for i := 0; i < 30; i++ {
+		_, _, errOut := capture(t, []string{"check", "--box", box, "dis cord"}, nowish())
+		seen[errOut] = true
+	}
+	if len(seen) != 1 {
+		var got []string
+		for s := range seen {
+			got = append(got, s)
+		}
+		sort.Strings(got)
+		t.Errorf("check printed %d different refusals for one box; a gate that reorders itself is one nobody can diff:\n%s",
+			len(seen), strings.Join(got, ""))
 	}
 }

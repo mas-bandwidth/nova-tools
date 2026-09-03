@@ -123,7 +123,7 @@ func TestSurfaceMatchingIgnoresCaseAndSpace(t *testing.T) {
 	b := Box{Quarantine: map[string]Fuse{"discord": {At: "t", Reason: "many the same way"}}}
 	for _, probe := range []string{"discord", "Discord", "DISCORD", "  discord  ", "\tDiscord\n"} {
 		if _, _, ok := b.Quarantined(probe); !ok {
-			t.Errorf("%q must match the stored surface -- normalising can only ever block MORE", probe)
+			t.Errorf("%q must match the stored surface -- equivalent spellings are ONE surface", probe)
 		}
 	}
 }
@@ -149,6 +149,24 @@ func TestEmptySurfaceMatchesNothing(t *testing.T) {
 	for _, probe := range []string{"", "   ", "\t"} {
 		if _, _, ok := b.Quarantined(probe); ok {
 			t.Errorf("empty surface %q must match nothing", probe)
+		}
+	}
+}
+
+// TestQuarantinedIsDeterministicAcrossFoldEquivalentKeys: two stored spellings of one
+// surface must always yield the SAME one, or every caller's refusal text is a coin flip.
+func TestQuarantinedIsDeterministicAcrossFoldEquivalentKeys(t *testing.T) {
+	b := Box{Quarantine: map[string]Fuse{
+		"dis cord":  {At: "t", Reason: "one"},
+		"dis\tcord": {At: "t", Reason: "two"},
+	}}
+	first, _, ok := b.Quarantined("dis cord")
+	if !ok {
+		t.Fatal("want a match")
+	}
+	for i := 0; i < 30; i++ {
+		if name, _, _ := b.Quarantined("dis cord"); name != first {
+			t.Fatalf("Quarantined answered %q then %q for the same box", first, name)
 		}
 	}
 }
@@ -411,9 +429,10 @@ func TestFoldCollapsesControlCharactersToSpaces(t *testing.T) {
 	}
 }
 
-// TestSurfaceFoldsControlCharactersOutOfAName. Folding a name can only ever collapse two
-// names into one, which blocks MORE and never less -- the same argument as note 4's
-// lower-casing, so it is safe in a safety control.
+// TestSurfaceFoldsControlCharactersOutOfAName. Folding widens the class of spellings that
+// count as ONE surface, the same way note 4's lower-casing does -- which makes `check`
+// refuse on more spellings and makes `lift quarantine` remove more of them. Both
+// directions, deliberately; see note 4.
 func TestSurfaceFoldsControlCharactersOutOfAName(t *testing.T) {
 	for _, tc := range []struct{ in, want string }{
 		{"\x1bDiscord\n", "discord"},
