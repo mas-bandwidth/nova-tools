@@ -1225,6 +1225,9 @@ func TestAFailFileErrorStaysOnOneLine(t *testing.T) {
 // path itself. A --box argument is the caller's own rather than the box's contents, and
 // the guarantee stated in SPEC.md covers both.
 func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: a newline is not legal in a filename there, so the box path cannot carry this forgery and the fixture cannot be built; the escaping under test is platform-independent and runs on the other two")
+	}
 	const forgery = "FUSE OK lockdown=clear quarantine=clear surface=discord"
 	dir := t.TempDir()
 
