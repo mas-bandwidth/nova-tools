@@ -35,10 +35,18 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     the old box or the new one and never a fragment. Two copies of the tool blowing
     fuses at once lose one WRITE, but neither can produce a corrupt box.
 
- 4. SURFACE NAMES ARE MATCHED NORMALIZED. Raw string comparison lets
-    `quarantine Discord` then `check discord` answer CLEAR -- a fail-OPEN in a
-    safety control, reached by a capital letter. Normalizing can only ever collapse
-    two names into one, which blocks more and never less.
+ 4. SURFACE NAMES ARE MATCHED NORMALIZED, AND THAT CUTS BOTH WAYS. Raw string
+    comparison lets `quarantine Discord` then `check discord` answer CLEAR -- a
+    fail-OPEN in a safety control, reached by a capital letter. Normalizing collapses
+    spellings into one surface, and the honest statement of what that does is not
+    "it can only ever block more": it is that EQUIVALENT SPELLINGS ARE ONE SURFACE,
+    IN BOTH DIRECTIONS. `check` refuses on any spelling, so the class blocks more.
+    LiftQuarantine removes EVERY spelling in the class, so a lift lifts more too --
+    deliberately, because a lift that left one spelling behind would verify its own
+    failure, and because an operator who lifts a surface means the surface. It is
+    not silent either way: each removal is returned under its stored spelling so the
+    caller can announce it on its own line. The consequence to know: a box holding
+    two keys that fold together holds ONE surface, not two.
 
  5. THE ESCAPE LIVES AT PRINT TIME, because the tool cannot trust what it did not
     write. The box is world-readable on purpose (a fuse nobody else can see is a
@@ -54,7 +62,8 @@ WHAT IS ACTUALLY DECIDED HERE, and why each one is not arbitrary:
     refusal, because a fuse you cannot blow is not a fuse. Constraining writes
     alone would defend exactly the case that needs no defending. The escaped set
     is category Cc plus U+2028 and U+2029, which break a line for readers that
-    follow Unicode rather than counting newlines.
+    follow Unicode rather than counting newlines. Folding also widens the surface
+    classes of note 4, in both directions -- see there.
 */
 package fuse
 
@@ -93,9 +102,10 @@ type Box struct {
 }
 
 // Surface normalizes a surface name for storage and for matching. See notes 4 and 5:
-// control characters fold to spaces before the lower-casing, on the same argument that
-// justifies the lower-casing itself -- collapsing two names into one blocks MORE and
-// never less.
+// control characters fold to spaces before the lower-casing, which widens the class of
+// spellings that count as one surface exactly as the lower-casing does. That is not a
+// one-way "blocks more" guarantee -- it makes `check` refuse on more spellings AND makes
+// `lift quarantine` remove more of them, because they are one surface in both directions.
 func Surface(s string) string { return strings.ToLower(Fold(s)) }
 
 // OneLine renders free text for an event line. See note 5: the box is hand-editable and
@@ -171,9 +181,13 @@ func (b Box) Quarantined(surface string) (string, Fuse, bool) {
 	if want == "" {
 		return "", Fuse{}, false
 	}
-	for k, v := range b.Quarantine {
+	// SORTED, never map order. A hand-edited box can hold two spellings of ONE surface
+	// (note 4), and map iteration is randomized -- so answering with whichever match came
+	// first made the quoted name, the timestamp and the reason a coin flip between runs.
+	// Status was already pinned deterministic; the gate's own refusal was not.
+	for _, k := range b.Surfaces() {
 		if Surface(k) == want {
-			return k, v, true
+			return k, b.Quarantine[k], true
 		}
 	}
 	return "", Fuse{}, false
@@ -187,6 +201,13 @@ func (b Box) Quarantined(surface string) (string, Fuse, bool) {
 // Every match is removed, not just the first: the box is hand-editable, so two spellings
 // of one surface can coexist, and a lift that removed only one would leave the surface
 // still answering as quarantined -- a lift that verifies its own failure.
+//
+// So the normalization in note 4 WIDENS this: the coarser the equivalence, the more
+// spellings one lift removes. `lift "dis cord"` on a box holding "dis cord", "dis\tcord"
+// and "DIS\x01CORD" removes all three, where a build without the fold removed one. That
+// is the same design case already had (lifting "discord" removes "Discord"), it is what
+// "they are one surface" means, and nothing is hidden by it: every removed entry is
+// returned here under its stored spelling for the caller to announce.
 //
 // THE SOFT HALF ONLY. The fuse design separates the powers: quarantine is your own
 // decision in both directions, so this function exists; lockdown is hard -- a blown fuse

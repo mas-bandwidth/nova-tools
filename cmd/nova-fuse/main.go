@@ -106,6 +106,9 @@ func parseBox(name string, args []string, stderr io.Writer) (box string, positio
 	// ran. That is the realistic shape: an untrusted surface name starting with "-". Both
 	// mouths are closed here, and the refusal below is printed by this file, escaped.
 	fs.SetOutput(io.Discard)
+	// Belt and braces beside the line above: with the output discarded there is nothing
+	// for the default usage function to write to, but a flag set whose Usage is the
+	// package default is one line away from printing again if that ever changes.
 	fs.Usage = func() {}
 	boxFlag := fs.String("box", "", "path to the fuse box JSON file (required; no default)")
 	if err := fs.Parse(args); err != nil {

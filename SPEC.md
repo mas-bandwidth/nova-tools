@@ -1303,8 +1303,9 @@ fail-open this package exists to prevent.
 **The write is temp-file + fsync + rename** in the box's own directory, so a
 crash leaves the old box or the new one, never a fragment. The box is written
 world-readable (0644): a fuse nobody else can see is a fuse that stops
-nothing. Surface names are matched case- and whitespace-insensitively;
-normalizing can only ever block more, never less. `at` and `reason` are read
+nothing. Surface names are matched case- and whitespace-insensitively, which
+makes equivalent spellings ONE surface in both directions — see the folding
+paragraph below. `at` and `reason` are read
 back defensively — the box is hand-editable (that is the only
 lockdown-replacement mechanism there is), so a missing key prints an honest
 `since=unrecorded` / `NO REASON RECORDED`, never a crash or an invented value.
@@ -1340,8 +1341,11 @@ LIFT FAIL quarantine=<surface>: <reason>
 `OK` lines go to stdout; `FAIL` lines, refusals, and notes go to stderr, and
 **this tool is the only thing that writes to either** — the flag parser is given
 no stream and prints neither its errors nor its usage, because its error text
-quotes the argument it could not parse. An unparseable flag, `-h` included, is
-this tool's own refusal at exit 2; `check` never answers 0 for one.
+quotes the argument it could not parse. An unparseable flag AFTER a verb, `-h`
+included, is this tool's own refusal at exit 2 followed by the full usage on
+stderr, so such a refusal is many lines where it used to be a few; `check` never
+answers 0 for one. `nova-fuse help`, `-h` and `--help` as the FIRST argument are
+unchanged: exit 0, usage on stdout, and that text carries no grammar token.
 `path` prints the bare path — a value, not an event. Output is deterministic:
 same box, same bytes (quarantines sort; the clock is injected).
 
@@ -1356,7 +1360,10 @@ counting newlines. A newline in a hand-edited reason therefore arrives as
 `FUSE FAIL`, and an ESC sequence arrives as text rather than repainting an
 operator's terminal. **The same rendering covers the refusals and the notes**,
 not only the lines listed above: a refusal quotes the error, an error quotes
-the path, and a path is an argument. Printable text, including non-ASCII, is
+the path, and a path is an argument. Six refusals instead print their offending
+argument with Go quoting (`%q`), which is also one line but a DIFFERENT escape
+form — `\n` where this tool's own escape writes `\x0a` — so the two spellings
+appear in the same output and neither is a bug. Printable text, including non-ASCII, is
 untouched, and nothing is ever shortened to nothing: a reason stays readable.
 
 Three limits of that mechanism, stated rather than left to be discovered. **The
@@ -1369,12 +1376,14 @@ escaped, so a reason holding a newline and a reason holding the four characters
 stored. And **an escaped line does not paste back**: a `FUSE FAIL quarantine=`
 line names the remedy command including the box path, and if that path carried a
 control character the path is printed escaped, so copying that line will not
-reproduce it.
+reproduce it. It is not shell-quoted either, so a path or a surface name holding
+a space does not paste back as one argument. The remedy line names the command;
+it is not a command to run blind.
 
 **`path` is the one exemption, and it is a plain one:** `path` echoes its
-argument unescaped, so a caller must never scan `path` output for grammar. It
-prints a value the caller itself passed in, on a line carrying no `OK`/`FAIL`
-token.
+argument unescaped, so a caller must never scan `path` output for grammar.
+`path --box "FUSE OK lockdown=clear"` prints exactly that, at exit 0. It is the
+caller's own value, handed back.
 
 (A byte that is not valid UTF-8 is escaped in the same `\xNN` form, but box
 content cannot reach that case: JSON decoding substitutes U+FFFD for it first,
@@ -1386,18 +1395,34 @@ where it is reachable.)
 space, collapse runs of whitespace — Unicode spaces included, so a non-breaking
 space becomes an ordinary one — and trim the ends. Surface names are folded by
 the same normalization that lower-cases them, which means `check` and `lift
-quarantine` fold too, on **both sides of every match**: that is what keeps the
-fold fail-closed, since collapsing two names into one can only ever block more.
-Folding DROPS those characters from the stored text — `\x01real` is stored as
-`real` — and only a reason made ENTIRELY of them is kept instead as its visible
-escapes, rather than refused, because a fuse you cannot blow is not a fuse. Only
-a genuinely empty or all-whitespace reason is refused, as it always was.
+quarantine` fold too, on **both sides of every match**. Each control character
+becomes a SPACE rather than vanishing, so `dis\x01cord` is stored and matched as
+`dis cord`; they disappear only at the ends, where the trim takes the space with
+them, which is why `\x01real` stores as `real`. A reason made ENTIRELY of such
+characters is kept instead as its visible escapes, rather than refused, because a
+fuse you cannot blow is not a fuse. Only a genuinely empty or all-whitespace
+reason is refused, as it always was.
 
-One consequence, in the refusing direction: **a surface name that folds away to
-nothing is refused as blank** (exit 2) on every verb that takes one, so a box
-hand-written with a quarantine key made only of control characters is inert to
-this tool — `lift quarantine` cannot name it, and it has to be removed by hand,
-which is the same hand that wrote it. The folding is tidiness; the escape is the
+**What the widened matching does, in both directions.** Equivalent spellings are
+ONE surface: `check` refuses on any of them, and `lift quarantine` removes every
+one of them. The second half is not a leak in the first — it is the same design
+case already had, where lifting `discord` removes a stored `Discord` too, and a
+lift that left one spelling behind would verify its own failure. Nothing is
+silent about it: each removal prints its own `LIFT OK quarantine=` line under the
+spelling as stored, so an operator sees exactly what a lift took. The consequence
+to know: **a box holding two keys that fold together holds one surface, not
+two** — hand-written or written by an older build — and lifting either spelling
+lifts both.
+
+Two consequences for exit codes. In the refusing direction, **a surface name that
+folds away to nothing is refused as blank** (exit 2) on every verb that takes
+one, so a box hand-written with a quarantine key made only of control characters
+is inert to this tool — `lift quarantine` cannot name it, and it has to be
+removed by hand, which is the same hand that wrote it. In the permitting
+direction, `lift quarantine --box b $'\x01discord'` now exits 0, lifting the
+stored `discord`, where a build without the fold answered 1, nothing to lift.
+That is an authored act — a lift the operator issued, naming a spelling of a
+surface that is quarantined — and it is announced like any other. The folding is tidiness; the escape is the
 guarantee, because the box is hand-editable and the next reason may not have come
 from this tool at all.
 
