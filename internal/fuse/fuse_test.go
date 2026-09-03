@@ -18,6 +18,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"unicode"
 )
 
 func boxIn(t *testing.T) string {
@@ -122,7 +123,7 @@ func TestSurfaceMatchingIgnoresCaseAndSpace(t *testing.T) {
 	b := Box{Quarantine: map[string]Fuse{"discord": {At: "t", Reason: "many the same way"}}}
 	for _, probe := range []string{"discord", "Discord", "DISCORD", "  discord  ", "\tDiscord\n"} {
 		if _, _, ok := b.Quarantined(probe); !ok {
-			t.Errorf("%q must match the stored surface -- normalising can only ever block MORE", probe)
+			t.Errorf("%q must match the stored surface -- equivalent spellings are ONE surface", probe)
 		}
 	}
 }
@@ -148,6 +149,24 @@ func TestEmptySurfaceMatchesNothing(t *testing.T) {
 	for _, probe := range []string{"", "   ", "\t"} {
 		if _, _, ok := b.Quarantined(probe); ok {
 			t.Errorf("empty surface %q must match nothing", probe)
+		}
+	}
+}
+
+// TestQuarantinedIsDeterministicAcrossFoldEquivalentKeys: two stored spellings of one
+// surface must always yield the SAME one, or every caller's refusal text is a coin flip.
+func TestQuarantinedIsDeterministicAcrossFoldEquivalentKeys(t *testing.T) {
+	b := Box{Quarantine: map[string]Fuse{
+		"dis cord":  {At: "t", Reason: "one"},
+		"dis\tcord": {At: "t", Reason: "two"},
+	}}
+	first, _, ok := b.Quarantined("dis cord")
+	if !ok {
+		t.Fatal("want a match")
+	}
+	for i := 0; i < 30; i++ {
+		if name, _, _ := b.Quarantined("dis cord"); name != first {
+			t.Fatalf("Quarantined answered %q then %q for the same box", first, name)
 		}
 	}
 }
@@ -340,5 +359,95 @@ func TestPreserveUnreadableNamesTheDestinationEvenWhenItFails(t *testing.T) {
 	}
 	if dst != path+UnreadableSuffix {
 		t.Errorf("the destination must be named even on failure, got %q", dst)
+	}
+}
+
+// ------------------------------------------------- 5. ONE LINE, WHATEVER THE BOX CONTAINS
+
+// TestOneLineEscapesEveryControlCharacter. The box is hand-editable and world-readable by
+// design, so the strings printed from it are authored by whoever can write the file. One
+// line per event is a promise to every caller scanning the grammar, and a control
+// character in a reason is what breaks it -- a newline forges a second event, an ESC
+// repaints an operator's terminal. Escaping is done at PRINT time and covers both.
+func TestOneLineEscapesEveryControlCharacter(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"plain ascii is untouched", "lockdown at 3am", "lockdown at 3am"},
+		{"newline", "real\nFUSE OK lockdown=clear", `real\x0aFUSE OK lockdown=clear`},
+		{"carriage return", "a\rb", `a\x0db`},
+		{"tab", "a\tb", `a\x09b`},
+		{"nul", "a\x00b", `a\x00b`},
+		{"escape", "\x1b[2J", `\x1b[2J`},
+		{"delete", "a\x7fb", `a\x7fb`},
+		{"C1 next-line", "a\u0085b", `a\u0085b`},
+		{"C1 control string introducer", "a\u009bb", `a\u009bb`},
+		{"line separator, which str.splitlines and UAX-14 both break on", "a\u2028b", `a\u2028b`},
+		{"paragraph separator, the same hole", "a\u2029b", `a\u2029b`},
+		{"a byte that is not valid UTF-8 at all", "a\xffb", `a\xffb`},
+		{"printable non-ascii passes through", "café — 日本語", "café — 日本語"},
+		{"empty stays empty", "", ""},
+		{"only control characters, still not shortened to nothing", "\n\n", `\x0a\x0a`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := OneLine(tc.in)
+			if got != tc.want {
+				t.Errorf("OneLine(%q) = %q, want %q", tc.in, got, tc.want)
+			}
+			if strings.ContainsFunc(got, unicode.IsControl) {
+				t.Errorf("OneLine(%q) = %q still holds a control character", tc.in, got)
+			}
+			if tc.in != "" && got == "" {
+				t.Errorf("OneLine(%q) emptied the text; a reason must never vanish", tc.in)
+			}
+			if again := OneLine(tc.in); again != got {
+				t.Errorf("OneLine(%q) is not deterministic: %q then %q", tc.in, got, again)
+			}
+		})
+	}
+}
+
+// TestFoldCollapsesControlCharactersToSpaces pins the WRITE half: this tool's own writes
+// stay tidy, and nothing is ever refused for what it contains -- a fuse you cannot blow is
+// not a fuse. Folding is not the defense (a box written by another hand still arrives with
+// anything in it); OneLine is.
+func TestFoldCollapsesControlCharactersToSpaces(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"line one\nline two", "line one line two"},
+		{"  spaced   out  ", "spaced out"},
+		{"\x1bdiscord\n", "discord"},
+		{"a\t\t\tb", "a b"},
+		{"\n\r\t", ""},
+		{"", ""},
+		{"café — 日本語", "café — 日本語"},
+	} {
+		if got := Fold(tc.in); got != tc.want {
+			t.Errorf("Fold(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+// TestSurfaceFoldsControlCharactersOutOfAName. Folding widens the class of spellings that
+// count as ONE surface, the same way note 4's lower-casing does -- which makes `check`
+// refuse on more spellings and makes `lift quarantine` remove more of them. Both
+// directions, deliberately; see note 4.
+func TestSurfaceFoldsControlCharactersOutOfAName(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"\x1bDiscord\n", "discord"},
+		{"dis\ncord", "dis cord"},
+		{"  BSKY\t", "bsky"},
+		{"\n\t", ""},
+	} {
+		if got := Surface(tc.in); got != tc.want {
+			t.Errorf("Surface(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+
+	// And a folded name still matches the box entry it collapses onto.
+	b := Box{Quarantine: map[string]Fuse{"dis\ncord": {At: "t", Reason: "r"}}}
+	if name, _, ok := b.Quarantined("dis cord"); !ok || name != "dis\ncord" {
+		t.Errorf("Quarantined(%q) = %q, %v -- want the stored spelling", "dis cord", name, ok)
 	}
 }

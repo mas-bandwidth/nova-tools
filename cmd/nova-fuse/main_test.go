@@ -14,9 +14,15 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -919,5 +925,1021 @@ func TestLockdownDoesNotExpire(t *testing.T) {
 	code, _, _ := capture(t, []string{"check", "--box", box}, nowish())
 	if code != 1 {
 		t.Errorf("exit = %d, want 1 -- lockdown does not expire, no matter how old", code)
+	}
+}
+
+// ------------------------------- 7. ONE LINE PER EVENT, WHATEVER THE BOX CONTAINS
+
+// The box is world-readable on purpose and hand-editable on purpose -- and on a shared
+// machine that means any local user can author the strings this tool prints. The output
+// grammar SPEC.md tells callers to scan is one line per event, so a reason carrying a
+// newline could forge a second event line beneath a real one: a `FUSE OK lockdown=clear`
+// under a `FUSE FAIL`, authored by whoever wrote the box. Terminal escape sequences are
+// the same hole aimed at an operator instead of a parser. Every test below writes the box
+// WITHOUT going through this tool, because that is the case that decides it.
+
+// writeBox writes a box's JSON directly, bypassing fuse.WriteBox and therefore bypassing
+// everything this tool does to its own writes. The premise of this section is that the
+// bytes read back are not the bytes this tool wrote.
+func writeBox(t *testing.T, path string, b fuse.Box) {
+	t.Helper()
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("fixture marshal: %v", err)
+	}
+	writeRaw(t, path, string(data))
+}
+
+// countLinesWithPrefix counts the lines of s beginning with prefix. A forged event line is
+// a SECOND line wearing the grammar, so counting lines is the assertion, not substrings.
+func countLinesWithPrefix(s, prefix string) int {
+	n := 0
+	for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// noForgedOKLine fails if any line of either stream opens with an OK token of the grammar
+// -- the line a caller scanning SPEC.md's grammar would read as permission.
+func noForgedOKLine(t *testing.T, prefix, stdout, stderr string) {
+	t.Helper()
+	for name, stream := range map[string]string{"stdout": stdout, "stderr": stderr} {
+		for _, line := range strings.Split(stream, "\n") {
+			if strings.HasPrefix(line, prefix) {
+				t.Errorf("%s carries a forged %q line: %q", name, prefix, line)
+			}
+		}
+	}
+}
+
+// the forgery: a reason whose second line wears the grammar of permission.
+const forgedOK = "real\nFUSE OK lockdown=clear quarantine=clear surface=discord"
+
+// TestALockdownReasonCannotForgeAnOKLine is the finding itself. A blown lockdown must
+// print exactly one FUSE line, and nothing the box contains may add another.
+func TestALockdownReasonCannotForgeAnOKLine(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Lockdown:   &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: forgedOK},
+		Quarantine: map[string]fuse.Fuse{},
+	})
+
+	code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 -- the lockdown is blown\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if n := countLinesWithPrefix(errOut, "FUSE"); n != 1 {
+		t.Errorf("stderr holds %d lines opening with FUSE, want exactly 1: %q", n, errOut)
+	}
+	noForgedOKLine(t, "FUSE OK", out, errOut)
+	if strings.Contains(out+errOut, "\nFUSE") {
+		t.Errorf("a second event line was forged out of the reason: %q", out+errOut)
+	}
+	if !strings.Contains(errOut, `\x0a`) {
+		t.Errorf("the newline must still be VISIBLE, escaped, never dropped: %q", errOut)
+	}
+	if !strings.Contains(errOut, "real") {
+		t.Errorf("the reason must still be readable -- escaping never shortens it to nothing: %q", errOut)
+	}
+}
+
+// TestAQuarantineReasonCannotForgeAnOKLine: the same hole through the soft fuse.
+func TestAQuarantineReasonCannotForgeAnOKLine(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Quarantine: map[string]fuse.Fuse{"discord": {At: "2026-08-03T00:00:00Z", Reason: forgedOK}},
+	})
+
+	code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 -- the surface is quarantined\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if n := countLinesWithPrefix(errOut, "FUSE"); n != 1 {
+		t.Errorf("stderr holds %d lines opening with FUSE, want exactly 1: %q", n, errOut)
+	}
+	noForgedOKLine(t, "FUSE OK", out, errOut)
+}
+
+// TestStatusPrintsOneLinePerFuseAndNoMore: status is the report a person reads and a
+// script diffs, so its line COUNT is part of the contract -- one line, plus one per
+// quarantine, whatever the reasons contain.
+func TestStatusPrintsOneLinePerFuseAndNoMore(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Lockdown: &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: forgedOK},
+		Quarantine: map[string]fuse.Fuse{
+			"discord": {At: "2026-08-03T00:00:00Z", Reason: "one\nSTATUS OK lockdown=clear quarantines=0"},
+			"bsky":    {At: "2026-08-03T00:00:00Z", Reason: "two"},
+		},
+	})
+
+	code, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 -- status reports\nstderr: %q", code, errOut)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Errorf("status printed %d lines, want 1 + 2 quarantines = 3: %q", len(lines), out)
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "STATUS OK") {
+			t.Errorf("every status line must open the grammar, got %q", line)
+		}
+	}
+	// The forged text stays visible inside the escaped reason -- what it must never be is
+	// a LINE of its own, which is the only thing a caller scanning the grammar reads.
+	if n := countLinesWithPrefix(out, "STATUS OK lockdown="); n != 1 {
+		t.Errorf("%d lines report lockdown, want exactly 1: %q", n, out)
+	}
+}
+
+// TestAStoredQuarantineKeyWithANewlinePrintsEscaped: the KEY is attacker-authored too --
+// it is a JSON object name, so it carries anything a reason can.
+func TestAStoredQuarantineKeyWithANewlinePrintsEscaped(t *testing.T) {
+	box := boxIn(t)
+	// Written by hand: `dis\ncord` is a JSON escape, so the stored key holds a real newline.
+	const raw = `{"lockdown":null,"quarantine":{"dis\ncord":{"at":"2026-08-03T00:00:00Z","reason":"r"}}}`
+
+	writeRaw(t, box, raw)
+	code, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
+	if code != 0 {
+		t.Fatalf("status exit = %d, want 0\nstderr: %q", code, errOut)
+	}
+	if got := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1; got != 2 {
+		t.Errorf("status printed %d lines, want 2: %q", got, out)
+	}
+	if !strings.Contains(out, `dis\x0acord`) {
+		t.Errorf("the stored key must print escaped, got %q", out)
+	}
+
+	// The folded spelling matches the folded key: they are one surface.
+	code, out, errOut = capture(t, []string{"check", "--box", box, "dis cord"}, nowish())
+	if code != 1 {
+		t.Fatalf("check exit = %d, want 1 -- that surface is quarantined\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if n := countLinesWithPrefix(errOut, "FUSE"); n != 1 {
+		t.Errorf("stderr holds %d lines opening with FUSE, want exactly 1: %q", n, errOut)
+	}
+	if !strings.Contains(errOut, `dis\x0acord`) {
+		t.Errorf("the FAIL must quote the stored spelling, escaped, got %q", errOut)
+	}
+
+	writeRaw(t, box, raw)
+	code, out, errOut = capture(t, []string{"lift", "quarantine", "--box", box, "dis cord"}, nowish())
+	if code != 0 {
+		t.Fatalf("lift exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if !strings.HasPrefix(line, "LIFT OK") {
+			t.Errorf("every lift line must open the grammar, got %q", line)
+		}
+	}
+	if !strings.Contains(out, `dis\x0acord`) {
+		t.Errorf("the announced lift must quote the stored spelling, escaped, got %q", out)
+	}
+}
+
+// TestAnEscapeSequenceNeverReachesTheTerminal: the same hole aimed at an operator. A
+// reason that clears the screen, or repaints what is above it, must arrive as text.
+func TestAnEscapeSequenceNeverReachesTheTerminal(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Lockdown:   &fuse.Fuse{At: "\x1b[2J", Reason: "clean\x1b[2J\x1b[Hnothing to see"},
+		Quarantine: map[string]fuse.Fuse{},
+	})
+
+	for _, args := range [][]string{
+		{"status", "--box", box},
+		{"check", "--box", box, "discord"},
+	} {
+		_, out, errOut := capture(t, args, nowish())
+		if strings.ContainsRune(out+errOut, 0x1b) {
+			t.Errorf("%v: a raw ESC byte reached the output: %q", args, out+errOut)
+		}
+		if !strings.Contains(out+errOut, `\x1b`) {
+			t.Errorf("%v: the escape must be shown as text, not dropped: %q", args, out+errOut)
+		}
+	}
+}
+
+// TestLockdownTakesANewlineInItsReasonAndStoresItFolded. A fuse you cannot blow is not a
+// fuse, so the reason is never REFUSED -- it is folded, and the write stays tidy. The
+// print-time escape is what actually holds; this only keeps this tool's own writes clean.
+func TestLockdownTakesANewlineInItsReasonAndStoresItFolded(t *testing.T) {
+	box := boxIn(t)
+	code, out, errOut := capture(t, []string{"lockdown", "--box", box, "line one\nline two"}, nowish())
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 -- a reason is never refused for what it contains\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if got := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1; got != 1 {
+		t.Errorf("LOCKDOWN OK must be one line, got %d: %q", got, out)
+	}
+
+	b, err := fuse.ReadBox(box)
+	if err != nil || b.Lockdown == nil {
+		t.Fatalf("read back: %v, %+v", err, b)
+	}
+	if strings.ContainsAny(b.Lockdown.Reason, "\n\r\t") {
+		t.Errorf("the stored reason still holds a control character: %q", b.Lockdown.Reason)
+	}
+	if b.Lockdown.Reason != "line one line two" {
+		t.Errorf("stored reason = %q, want the folded text with nothing lost", b.Lockdown.Reason)
+	}
+}
+
+// TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName: folding widens the class of
+// spellings that count as one surface (package note 4), so the plain spelling must still
+// refuse afterwards. The other direction of that same widening is pinned by
+// TestLiftRemovesEveryFoldEquivalentSpelling.
+func TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName(t *testing.T) {
+	box := boxIn(t)
+	code, out, errOut := capture(t, []string{"quarantine", "--box", box, "\x1bdiscord\n", "attacked"}, nowish())
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if got := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1; got != 1 {
+		t.Errorf("QUARANTINE OK must be one line, got %d: %q", got, out)
+	}
+
+	b, err := fuse.ReadBox(box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := b.Surfaces()
+	if len(names) != 1 || names[0] != "discord" {
+		t.Fatalf("stored keys = %q, want exactly [discord] -- a control character is folded away", names)
+	}
+
+	code, _, errOut = capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	if code != 1 {
+		t.Errorf("check discord exit = %d, want 1 -- the stored key and this spelling are one surface: %q", code, errOut)
+	}
+}
+
+// TestAFailFileErrorStaysOnOneLine closes the last hole in the promise: a FAIL line's
+// <reason> slot is sometimes an ERROR, and an error text carries whatever the path that
+// produced it carried. A --box argument holding a newline is the caller's own, not the
+// box's, but the guarantee SPEC.md states is that nothing an argument contains can add a
+// second line either.
+func TestAFailFileErrorStaysOnOneLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0555 does not make a directory refuse writes, so the failure this pins cannot be produced here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: a read-only directory does not refuse writes")
+	}
+	dir := t.TempDir()
+	if err := os.Chmod(dir, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(dir, 0o755) })
+	// The unmakeable directory carries the newline, so the mkdir error text carries it too.
+	box := filepath.Join(dir, "sub\nnew", "fuses.json")
+
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"lockdown", "--box", box, "suspected compromise"}, "LOCKDOWN FAIL"},
+		{[]string{"quarantine", "--box", box, "discord", "many the same way"}, "QUARANTINE FAIL"},
+	} {
+		code, out, errOut := capture(t, tc.args, nowish())
+		if code != 1 {
+			t.Fatalf("%v: exit = %d, want 1\nstdout: %q\nstderr: %q", tc.args, code, out, errOut)
+		}
+		if got := strings.Count(strings.TrimRight(errOut, "\n"), "\n") + 1; got != 1 {
+			t.Errorf("%v: the failure printed %d lines, want 1: %q", tc.args, got, errOut)
+		}
+		if n := countLinesWithPrefix(errOut, tc.want); n != 1 {
+			t.Errorf("%v: %d lines open %q, want exactly 1: %q", tc.args, n, tc.want, errOut)
+		}
+		if !strings.Contains(errOut, `\x0a`) {
+			t.Errorf("%v: the newline in the error must be shown escaped, got %q", tc.args, errOut)
+		}
+	}
+}
+
+// TestNoRefusalOrNoteCanForgeAnOKLine. The finding was reported against the event lines,
+// but a REFUSAL and a NOTE go to the same stream a caller reads, and they interpolate the
+// same untrusted material: the error text, the preserved-bytes destination, and the box
+// path itself. A --box argument is the caller's own rather than the box's contents, and
+// the guarantee stated in SPEC.md covers both.
+func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: a newline is not legal in a filename there, so the box path cannot carry this forgery and the fixture cannot be built; the escaping under test is platform-independent and runs on the other two")
+	}
+	const forgery = "FUSE OK lockdown=clear quarantine=clear surface=discord"
+	dir := t.TempDir()
+
+	// A newline is legal in a POSIX filename; only / and NUL are not.
+	bad := filepath.Join(dir, "bad\n"+forgery)
+	writeRaw(t, bad, "not json")
+
+	// A DIRECTORY under a name like that reaches the other half of lockdown's note: the
+	// box cannot be read AND its bytes cannot be preserved.
+	badDir := filepath.Join(dir, "dir\n"+forgery)
+	if err := os.Mkdir(badDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		wantCode  int
+		wantLines int    // lines on the stream the refusal or note is written to
+		prefix    string // every one of them must open with this
+		stream    string // "stderr" or "stdout"
+	}{
+		{"check on an unreadable box", []string{"check", "--box", bad, "discord"}, 2, 1, "nova-fuse check:", "stderr"},
+		{"status on an unreadable box", []string{"status", "--box", bad}, 2, 1, "nova-fuse status:", "stderr"},
+		{"lift quarantine on an unreadable box", []string{"lift", "quarantine", "--box", bad, "discord"}, 2, 1, "nova-fuse lift quarantine:", "stderr"},
+		{"quarantine refusing to narrow", []string{"quarantine", "--box", bad, "discord", "why"}, 2, 1, "nova-fuse quarantine:", "stderr"},
+		{"lockdown noting the preserved bytes", []string{"lockdown", "--box", bad, "why"}, 0, 1, "nova-fuse lockdown:", "stderr"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, errOut := capture(t, tc.args, nowish())
+			if code != tc.wantCode {
+				t.Fatalf("exit = %d, want %d\nstdout: %q\nstderr: %q", code, tc.wantCode, out, errOut)
+			}
+			stream := errOut
+			if tc.stream == "stdout" {
+				stream = out
+			}
+			lines := strings.Split(strings.TrimRight(stream, "\n"), "\n")
+			if len(lines) != tc.wantLines {
+				t.Errorf("%s printed %d lines, want %d: %q", tc.stream, len(lines), tc.wantLines, stream)
+			}
+			for _, line := range lines {
+				if !strings.HasPrefix(line, tc.prefix) {
+					t.Errorf("every line must open with %q, got %q", tc.prefix, line)
+				}
+			}
+			noForgedOKLine(t, "FUSE OK", out, errOut)
+			noForgedOKLine(t, "STATUS OK", out, errOut)
+			noForgedOKLine(t, "LIFT OK", out, errOut)
+		})
+	}
+
+	// lockdown over a box it can neither read nor preserve: both halves of the note, and
+	// then a FAIL when the rename cannot replace a directory.
+	t.Run("lockdown over an unpreservable box", func(t *testing.T) {
+		code, out, errOut := capture(t, []string{"lockdown", "--box", badDir, "why"}, nowish())
+		if code != 1 {
+			t.Fatalf("exit = %d, want 1 -- the write cannot land on a directory\nstdout: %q\nstderr: %q", code, out, errOut)
+		}
+		lines := strings.Split(strings.TrimRight(errOut, "\n"), "\n")
+		if len(lines) != 2 {
+			t.Errorf("stderr printed %d lines, want 2 (the note, then the FAIL): %q", len(lines), errOut)
+		}
+		for _, line := range lines {
+			if !strings.HasPrefix(line, "nova-fuse lockdown:") && !strings.HasPrefix(line, "LOCKDOWN FAIL") {
+				t.Errorf("unexpected line: %q", line)
+			}
+		}
+		noForgedOKLine(t, "FUSE OK", out, errOut)
+	})
+}
+
+// TestEveryPrintedArgumentIsLiteralQuotedOrEscaped is the tripwire, and it exists because
+// the first round of this fix was audited by counting call sites BY HAND and came up nine
+// short. Every one of those nine was a refusal or a note rather than an event line, which
+// is exactly the kind of thing hand-counting misses. So the count is mechanical now: this
+// reads every non-test file of the package, pairs every fmt.Fprint/Fprintf/Fprintln
+// argument with the verb that prints it, and classifies each one as
+//
+//	%q or %d      -- the verb escapes it, or it is a number
+//	a literal     -- written in this file, so nothing untrusted reaches it
+//	escaped       -- rendered through fuse.OneLine, oneLineErr, why or since
+//	exempted      -- named below, one entry per site, with the reason stated
+//
+// Anything else fails, naming the line. A new interpolation is a decision from now on,
+// never a drive-by: adding one means either escaping it or writing down why it is safe.
+func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
+	files := packageSources(t)
+
+	// Rendered through one of these, a string cannot carry a line break or a terminal
+	// control sequence. See fuse.OneLine.
+	escapers := map[string]bool{"fuse.OneLine": true, "oneLineErr": true, "why": true, "since": true}
+
+	// One entry per site, keyed by FILE, function and source text. The file is in the key
+	// because a package is many files: without it, a same-named function added in another
+	// file would inherit an exemption written for this one. Each entry is a claim, and each
+	// claim is either checked below or stated here as the reason a reader would accept.
+	exempt := map[string]string{
+		"main.go|cmdPath|box":           "`path` hands back the caller-supplied argument unescaped; SPEC.md exempts it by name and states that no caller may scan path output for grammar, because it will print one if the argument is one",
+		"main.go|liftQuarantine|listed": "built immediately above from fuse.OneLine over every stored name",
+		"main.go|run|usage":             "the usage constant declared in this file",
+		"main.go|parseBox|usage":        "the usage constant declared in this file",
+		"main.go|cmdLift|usage":         "the usage constant declared in this file",
+		"main.go|cmdStatus|usage":       "the usage constant declared in this file",
+		"main.go|cmdCheck|usage":        "the usage constant declared in this file",
+		"main.go|cmdLockdown|usage":     "the usage constant declared in this file",
+		"main.go|cmdQuarantine|usage":   "the usage constant declared in this file",
+		"main.go|cmdPath|usage":         "the usage constant declared in this file",
+		"main.go|parseBox|name":         "the verb's own name, chosen by this file at every call site",
+	}
+	usedExemption := map[string]bool{}
+
+	// The usage exemptions are only honest if usage really is a constant here.
+	usageIsConst := false
+	for _, f := range files {
+		for _, d := range f.parsed.Decls {
+			gd, ok := d.(*ast.GenDecl)
+			if !ok || gd.Tok != token.CONST {
+				continue
+			}
+			for _, spec := range gd.Specs {
+				if vs, ok := spec.(*ast.ValueSpec); ok {
+					for _, n := range vs.Names {
+						if n.Name == "usage" {
+							usageIsConst = true
+						}
+					}
+				}
+			}
+		}
+	}
+	if !usageIsConst {
+		t.Fatal("usage is no longer a constant in this package, so every exemption naming it is unproven")
+	}
+
+	classified := 0
+	for _, f := range files {
+		file, src, fset, parsed := f.name, f.src, f.fset, f.parsed
+		text := func(n ast.Node) string {
+			return string(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset])
+		}
+
+		// literalOnly answers whether an expression is nothing but string literals, including
+		// a chain of them concatenated with + (the lift lockdown refusal is written that way).
+		var literalOnly func(ast.Expr) bool
+		literalOnly = func(e ast.Expr) bool {
+			switch e := e.(type) {
+			case *ast.BasicLit:
+				return true
+			case *ast.BinaryExpr:
+				return e.Op == token.ADD && literalOnly(e.X) && literalOnly(e.Y)
+			case *ast.ParenExpr:
+				return literalOnly(e.X)
+			}
+			return false
+		}
+
+		// verbsOf returns the verbs of a format string in order. It deliberately refuses to
+		// guess at flags and widths: none are used here, and a classifier that quietly
+		// mis-pairs arguments would be worse than one that stops.
+		verbsOf := func(t *testing.T, format string) []byte {
+			t.Helper()
+			var verbs []byte
+			for i := 0; i < len(format); i++ {
+				if format[i] != '%' {
+					continue
+				}
+				i++
+				if i >= len(format) {
+					t.Fatalf("trailing %% in format %q", format)
+				}
+				if format[i] == '%' {
+					continue
+				}
+				if strings.IndexByte("+-# 0123456789.*", format[i]) >= 0 {
+					t.Fatalf("format %q uses a flag or width; this classifier does not model those, teach it before using one", format)
+				}
+				verbs = append(verbs, format[i])
+			}
+			return verbs
+		}
+
+		for _, decl := range parsed.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok {
+				continue
+			}
+			fnName := fn.Name.Name
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				sel, ok := call.Fun.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+				pkg, ok := sel.X.(*ast.Ident)
+				if !ok || pkg.Name != "fmt" {
+					return true
+				}
+				line := fset.Position(call.Pos()).Line
+
+				var verbs []byte
+				args := call.Args[1:] // arg 0 is the writer
+				if sel.Sel.Name == "Fprintf" {
+					format, err := strconv.Unquote(text(args[0]))
+					if err != nil {
+						// A concatenated or computed format string is itself a finding: the
+						// verbs could not be read, so nothing after it can be classified.
+						t.Errorf("%s:%d: format string is not a single literal: %s", file, line, text(args[0]))
+						return true
+					}
+					verbs = verbsOf(t, format)
+					args = args[1:]
+					if len(verbs) != len(args) {
+						t.Errorf("%s:%d: %d verbs but %d arguments; the classifier cannot pair them", file, line, len(verbs), len(args))
+						return true
+					}
+				}
+
+				for i, arg := range args {
+					classified++
+					verb := byte(0)
+					if i < len(verbs) {
+						verb = verbs[i]
+					}
+					if verb == 'q' || verb == 'd' {
+						continue // the verb quotes and escapes it, or it is a number
+					}
+					if literalOnly(arg) {
+						continue // written in this file, so nothing untrusted reaches it
+					}
+					if e, ok := arg.(*ast.CallExpr); ok && escapers[text(e.Fun)] {
+						continue
+					}
+					if key := file + "|" + fnName + "|" + text(arg); exempt[key] != "" {
+						usedExemption[key] = true
+						continue
+					}
+					t.Errorf("%s:%d in %s: %%%c prints %s raw -- escape it (fuse.OneLine or oneLineErr) or add an exemption naming the reason",
+						file, line, fnName, verb, text(arg))
+				}
+				return true
+			})
+		}
+	}
+
+	// A stale exemption is a claim about a call site that no longer exists, and it would
+	// silently cover the next one written in its place.
+	for key, why := range exempt {
+		if !usedExemption[key] {
+			t.Errorf("exemption %q (%s) matches no print site; delete it rather than leave a claim nothing checks", key, why)
+		}
+	}
+	if classified < 40 {
+		t.Errorf("only %d printed arguments were classified; this package has many more, so the walk is not reaching them", classified)
+	}
+}
+
+// TestAUnicodeLineSeparatorCannotForgeALineEither. A scanner is not always `split on \n`:
+// Python's str.splitlines() and every UAX-14 line breaker also break on U+2028 and U+2029,
+// which are Zl and Zp rather than Cc. A box reason carrying one forges a line for those
+// readers and for no others, which is the worst kind of hole -- invisible to the test
+// suite of whoever is not looking for it.
+func TestAUnicodeLineSeparatorCannotForgeALineEither(t *testing.T) {
+	box := boxIn(t)
+	for _, sep := range []string{" ", " "} {
+		writeBox(t, box, fuse.Box{
+			Lockdown:   &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: "real" + sep + "FUSE OK lockdown=clear"},
+			Quarantine: map[string]fuse.Fuse{},
+		})
+		_, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+		if strings.Contains(out+errOut, sep) {
+			t.Errorf("%q reached the output raw: %q", sep, out+errOut)
+		}
+		if !strings.Contains(errOut, `\u202`) {
+			t.Errorf("the separator must be shown as an escape, got %q", errOut)
+		}
+	}
+}
+
+// TestAReasonOfNothingButControlCharactersStillBlowsTheFuse. Folding must never become a
+// new refusal on the HARD fuse: a reason made only of control characters folds to nothing,
+// and refusing it would mean a fuse that could be blown yesterday cannot be blown today.
+// That is the one direction this design forbids. The reason is kept as its escapes instead.
+func TestAReasonOfNothingButControlCharactersStillBlowsTheFuse(t *testing.T) {
+	t.Run("lockdown", func(t *testing.T) {
+		box := boxIn(t)
+		code, out, errOut := capture(t, []string{"lockdown", "--box", box, "\x01"}, nowish())
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0 -- a fuse you cannot blow is not a fuse\nstdout: %q\nstderr: %q", code, out, errOut)
+		}
+		b, err := fuse.ReadBox(box)
+		if err != nil || b.Lockdown == nil {
+			t.Fatalf("read back: %v, %+v", err, b)
+		}
+		if b.Lockdown.Reason != `\x01` {
+			t.Errorf("stored reason = %q, want the visible escape rather than an empty record", b.Lockdown.Reason)
+		}
+	})
+
+	t.Run("quarantine", func(t *testing.T) {
+		box := boxIn(t)
+		code, out, errOut := capture(t, []string{"quarantine", "--box", box, "discord", "\x01"}, nowish())
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+		}
+		b, err := fuse.ReadBox(box)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := b.Quarantine["discord"].Reason; got != `\x01` {
+			t.Errorf("stored reason = %q, want the visible escape", got)
+		}
+	})
+
+	// The genuinely empty reason is still refused, exactly as before this branch.
+	t.Run("whitespace only is still refused", func(t *testing.T) {
+		box := boxIn(t)
+		code, _, errOut := capture(t, []string{"lockdown", "--box", box, " \n\t "}, nowish())
+		if code != 2 {
+			t.Errorf("exit = %d, want 2 -- an empty reason was always refused", code)
+		}
+		if !strings.Contains(errOut, "needs a reason") {
+			t.Errorf("stderr = %q, want the reason refusal", errOut)
+		}
+	})
+}
+
+// TestAFlagErrorCannotForgeALineEither. The last writer outside the fence: package flag
+// prints its OWN error, and that error quotes the argument it could not parse. Every verb
+// parses flags, and the realistic shape is an untrusted surface name that begins with a
+// dash -- so nothing in this file's code had to run for a caller to author a whole line
+// of stderr. This one needs no newline in a path, so unlike the --box tests it runs
+// everywhere.
+func TestAFlagErrorCannotForgeALineEither(t *testing.T) {
+	box := boxIn(t)
+	writeRaw(t, box, `{"lockdown":null,"quarantine":{}}`)
+
+	// Both begin with a dash, which is what makes flag try to parse them.
+	forgeries := map[string]string{
+		"a forged LIFT OK line": "-\nLIFT OK verified: discord is no longer quarantined (soft: your own dial, both directions; a rescind is announced, never silent -- say so out loud)",
+		"a terminal repaint":    "-\x1b]0;PWNED\x07\x1b[2J",
+	}
+	for what, arg := range forgeries {
+		for _, args := range [][]string{
+			{"check", "--box", box, arg},
+			{"status", "--box", box, arg},
+			{"lockdown", "--box", box, arg},
+			{"quarantine", "--box", box, arg, "why"},
+			{"lift", "quarantine", "--box", box, arg},
+			{"path", "--box", box, arg},
+		} {
+			t.Run(what+" through "+args[0], func(t *testing.T) {
+				code, out, errOut := capture(t, args, nowish())
+				if code != 2 {
+					t.Errorf("exit = %d, want 2 -- an unparseable flag is a refusal", code)
+				}
+				// A refusal is not an event: no line of either stream may open the grammar.
+				for _, token := range []string{"FUSE OK", "FUSE FAIL", "STATUS OK", "LIFT OK", "LIFT FAIL", "LOCKDOWN OK", "QUARANTINE OK"} {
+					noForgedOKLine(t, token, out, errOut)
+				}
+				if strings.ContainsRune(out+errOut, 0x1b) {
+					t.Errorf("a raw ESC byte reached the output: %q", out+errOut)
+				}
+				if strings.Contains(errOut, "Usage of") {
+					t.Errorf("flag printed its own usage block; this tool prints its own refusals: %q", errOut)
+				}
+			})
+		}
+	}
+}
+
+// TestTheQuarantinedNowListingCannotForgeALine covers the one exemption in the source
+// tripwire that is a CLAIM rather than a check: the `quarantined now:` listing is built by
+// a loop above its print site, so the classifier can only see a local variable. Removing
+// fuse.OneLine from that loop leaves the whole suite green without this test, while
+// LIFT FAIL forges a line out of a stored key.
+func TestTheQuarantinedNowListingCannotForgeALine(t *testing.T) {
+	box := boxIn(t)
+	writeRaw(t, box, `{"lockdown":null,"quarantine":{
+		"dis\nLIFT OK verified: discord is no longer quarantined (soft)cord": {"at":"t","reason":"r"},
+		"bsky": {"at":"t","reason":"r"}}}`)
+
+	// Lift a surface that is NOT quarantined: the refusal names what IS.
+	code, out, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "zulip"}, nowish())
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 -- a typo must never read as a lift\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if got := strings.Count(strings.TrimRight(errOut, "\n"), "\n") + 1; got != 1 {
+		t.Errorf("stderr printed %d lines, want 1: %q", got, errOut)
+	}
+	noForgedOKLine(t, "LIFT OK", out, errOut)
+	if !strings.Contains(errOut, `\x0a`) {
+		t.Errorf("the stored key must be listed escaped: %q", errOut)
+	}
+}
+
+// goSource is one non-test file of this package, parsed.
+type goSource struct {
+	name   string
+	src    []byte
+	fset   *token.FileSet
+	parsed *ast.File
+}
+
+// packageSources reads and parses EVERY non-test .go file in this directory. Reaching
+// outside t.TempDir() has one reason here and it is stated: the subject of these two tests
+// IS the source, and a property of the code is not provable from its output alone.
+//
+// It reads the DIRECTORY rather than the one filename both tests used to name, because a
+// reader proved that a helper added in a second file of package main defeated both of
+// them while the rest of the suite stayed green. A test that guards one file guards one
+// file; the package is the unit that gets compiled.
+func packageSources(t *testing.T) []goSource {
+	t.Helper()
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var files []goSource
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		src, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fset := token.NewFileSet()
+		parsed, err := parser.ParseFile(fset, name, src, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files = append(files, goSource{name, src, fset, parsed})
+	}
+	if len(files) == 0 {
+		t.Fatal("no non-test source found in this package; the walk is looking in the wrong place")
+	}
+	return files
+}
+
+// TestNoOtherWriterOrShadowCanBypassTheEscape closes the gap in the sibling test above,
+// which walks fmt.* calls and therefore sees only one way of putting bytes on a stream.
+// A reader named the rest: io.WriteString, a bare .Write, a function VALUE aliased out of
+// fmt, a local that shadows the escaping helpers or the fuse package itself, and
+// flag.FlagSet.SetOutput -- which is how package flag came to print an attacker's argument
+// before any code in this file ran. Each is refused here by name, and each was proved able
+// to fail by mutation.
+func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
+	for _, f := range packageSources(t) {
+		checkOneSourceForBypasses(t, f)
+	}
+}
+
+func checkOneSourceForBypasses(t *testing.T, f goSource) {
+	t.Helper()
+	src, fset, parsed := f.src, f.fset, f.parsed
+	text := func(n ast.Node) string {
+		return string(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset])
+	}
+	at := func(n ast.Node) string { return fmt.Sprintf("%s:%d", f.name, fset.Position(n.Pos()).Line) }
+
+	// Every selector that IS the callee of a call. Anything else naming fmt is a function
+	// VALUE, which can be stored, passed and called where no classifier will look.
+	calledFuns := map[ast.Node]bool{}
+	ast.Inspect(parsed, func(n ast.Node) bool {
+		if call, ok := n.(*ast.CallExpr); ok {
+			calledFuns[call.Fun] = true
+		}
+		return true
+	})
+
+	// A name declared inside a function that shadows one of these turns every escape in
+	// scope into a no-op, invisibly to the sibling test, which classifies by source text.
+	shadows := map[string]bool{"fuse": true, "oneLineErr": true, "OneLine": true, "Fold": true, "why": true, "since": true}
+	declared := func(n ast.Node, idents []*ast.Ident) {
+		for _, id := range idents {
+			if shadows[id.Name] {
+				t.Errorf("%s: a local named %q shadows the escaping path; rename it", at(n), id.Name)
+			}
+		}
+	}
+
+	ast.Inspect(parsed, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.CallExpr:
+			// The builtins first: they are a bare identifier rather than a package call,
+			// so a check written after the selector assertion below never sees them --
+			// which is how this very check was found to be dead, by mutation.
+			if id, ok := node.Fun.(*ast.Ident); ok && (id.Name == "print" || id.Name == "println") {
+				t.Errorf("%s: the %s builtin writes to stderr outside every check here; use fmt.Fprintf", at(node), id.Name)
+			}
+			sel, ok := node.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			switch sel.Sel.Name {
+			case "SetOutput":
+				// The whole point: a flag set that can print is a writer this file does
+				// not control, quoting an argument this file did not author.
+				if len(node.Args) != 1 || text(node.Args[0]) != "io.Discard" {
+					t.Errorf("%s: SetOutput(%s) lets another package write to a stream; only io.Discard is allowed",
+						at(node), text(node.Args[0]))
+				}
+			case "Write", "WriteString", "WriteByte", "WriteRune":
+				t.Errorf("%s: %s writes bytes past the escaping path; print through fmt.Fprintf with an escaped argument",
+					at(node), text(node.Fun))
+			}
+		case *ast.SelectorExpr:
+			// fmt.Fprintf(...) is fine; `pr := fmt.Fprintf`, passing it as an argument, or
+			// parking it in a struct field is not -- the call then wears a name this file
+			// chose, and the classifier pairs verbs with arguments by source text.
+			if x, ok := node.X.(*ast.Ident); ok && x.Name == "fmt" && !calledFuns[ast.Node(node)] {
+				t.Errorf("%s: %s is used as a fmt function VALUE rather than called; it prints where the classifier cannot see it",
+					at(node), text(node))
+			}
+		case *ast.AssignStmt:
+			if node.Tok == token.DEFINE {
+				var ids []*ast.Ident
+				for _, lhs := range node.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok {
+						ids = append(ids, id)
+					}
+				}
+				declared(node, ids)
+			}
+		case *ast.ValueSpec:
+			declared(node, node.Names)
+		case *ast.RangeStmt:
+			if node.Tok == token.DEFINE {
+				var ids []*ast.Ident
+				for _, e := range []ast.Expr{node.Key, node.Value} {
+					if id, ok := e.(*ast.Ident); ok {
+						ids = append(ids, id)
+					}
+				}
+				declared(node, ids)
+			}
+		case *ast.FuncType:
+			var ids []*ast.Ident
+			for _, list := range []*ast.FieldList{node.Params, node.Results} {
+				if list == nil {
+					continue
+				}
+				for _, field := range list.List {
+					ids = append(ids, field.Names...)
+				}
+			}
+			declared(node, ids)
+		}
+		return true
+	})
+
+	// THE IMPORTS ARE PART OF THE FENCE. Everything above classifies what the code DOES
+	// with the packages it has; this refuses the packages that would make the classifying
+	// meaningless. An aliased fmt prints under a name no check here looks for, log writes
+	// to its own default output with a timestamp and no escape at all, and anything not on
+	// the list below is a writer nobody has read yet. The list is what this package uses
+	// today: widening it is a decision, and this test is where the decision gets made.
+	allowed := map[string]bool{
+		`"flag"`: true, `"fmt"`: true, `"io"`: true, `"os"`: true, `"sort"`: true,
+		`"strings"`: true, `"time"`: true,
+		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`: true,
+	}
+	for _, imp := range parsed.Imports {
+		path := imp.Path.Value
+		if imp.Name != nil {
+			t.Errorf("%s: import %s %s is aliased; an aliased package prints under a name no check here looks for",
+				at(imp), imp.Name.Name, path)
+		}
+		if path == `"log"` {
+			t.Errorf("%s: log writes to its own output, unescaped and outside every check here", at(imp))
+			continue
+		}
+		if !allowed[path] {
+			t.Errorf("%s: import %s is not on this package's list; if it is wanted, add it here and say why it cannot write past the escape",
+				at(imp), path)
+		}
+	}
+
+	// io.WriteString is a plain call rather than a selector on a writer, so it is named
+	// directly. Checked over the source text because it takes no other form.
+	if strings.Contains(string(src), "io.WriteString") {
+		t.Errorf("%s: io.WriteString writes past the escaping path; print through fmt.Fprintf", f.name)
+	}
+}
+
+// TestLiftRemovesEveryFoldEquivalentSpelling pins what the fold actually does to lift,
+// which is wider than an earlier comment in this file claimed. Surface is applied to BOTH
+// sides of every match and LiftQuarantine removes every match, so coarsening the
+// equivalence class removes more, not less. That is the same design case already had --
+// lifting "discord" removes "Discord" too -- and it is deliberate: fold-equivalent
+// spellings are ONE surface, and a lift that left one spelling behind would verify its own
+// failure. What makes it safe to look at is that nothing is silent: every removal is
+// announced on its own line, under the spelling as stored.
+func TestLiftRemovesEveryFoldEquivalentSpelling(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
+		"dis cord":    {At: "t", Reason: "one"},
+		"dis\tcord":   {At: "t", Reason: "two"},
+		"DIS\x01CORD": {At: "t", Reason: "three"},
+	}})
+
+	code, out, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "dis cord"}, nowish())
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 4 {
+		t.Fatalf("stdout printed %d lines, want 3 removals plus the verified line: %q", len(lines), out)
+	}
+	// Each removal, named under its STORED spelling and escaped, on its own line.
+	for i, want := range []string{
+		`LIFT OK quarantine=DIS\x01CORD was since=t: three`,
+		`LIFT OK quarantine=dis\x09cord was since=t: two`,
+		`LIFT OK quarantine=dis cord was since=t: one`,
+	} {
+		if lines[i] != want {
+			t.Errorf("line %d = %q, want %q", i, lines[i], want)
+		}
+	}
+	if !strings.HasPrefix(lines[3], "LIFT OK verified:") {
+		t.Errorf("the last line must be the verification, got %q", lines[3])
+	}
+
+	// And the surface is gone under every spelling of it, because it was one surface.
+	for _, probe := range []string{"dis cord", "dis\tcord", "DIS\x01CORD", "DIS CORD"} {
+		if code, _, errOut := capture(t, []string{"check", "--box", box, probe}, nowish()); code != 0 {
+			t.Errorf("check %q: exit = %d, want 0 after the lift: %q", probe, code, errOut)
+		}
+	}
+}
+
+// TestAnAtStampCannotForgeALine. The `at` field is escaped in code and was pinned by
+// nothing: a box is hand-editable, and a reader who only ever tests `reason` leaves the
+// other stored string free to forge.
+func TestAnAtStampCannotForgeALine(t *testing.T) {
+	const forgedAt = "2026-08-03T00:00:00Z\nFUSE OK lockdown=clear quarantine=clear surface=discord"
+
+	t.Run("through status and check under lockdown", func(t *testing.T) {
+		box := boxIn(t)
+		writeBox(t, box, fuse.Box{
+			Lockdown:   &fuse.Fuse{At: forgedAt, Reason: "real"},
+			Quarantine: map[string]fuse.Fuse{},
+		})
+
+		_, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
+		if got := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1; got != 1 {
+			t.Errorf("status printed %d lines, want 1: %q", got, out)
+		}
+		noForgedOKLine(t, "FUSE OK", out, errOut)
+
+		code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+		if code != 1 {
+			t.Fatalf("exit = %d, want 1", code)
+		}
+		if n := countLinesWithPrefix(errOut, "FUSE"); n != 1 {
+			t.Errorf("stderr holds %d lines opening with FUSE, want 1: %q", n, errOut)
+		}
+		noForgedOKLine(t, "FUSE OK", out, errOut)
+		if !strings.Contains(errOut, `\x0a`) {
+			t.Errorf("the newline in `at` must be shown escaped: %q", errOut)
+		}
+	})
+
+	t.Run("through the announced lift", func(t *testing.T) {
+		box := boxIn(t)
+		writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
+			"discord": {At: forgedAt, Reason: "real"},
+		}})
+		code, out, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "discord"}, nowish())
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0\nstderr: %q", code, errOut)
+		}
+		for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+			if !strings.HasPrefix(line, "LIFT OK") {
+				t.Errorf("every line must open the grammar, got %q", line)
+			}
+		}
+		noForgedOKLine(t, "FUSE OK", out, errOut)
+	})
+}
+
+// TestCheckIsDeterministicWhenTwoStoredKeysFoldTogether. Quarantined answered with the
+// FIRST map-iteration match, and map iteration is randomized -- so a box holding two
+// spellings of one surface made the quoted name, the timestamp and the reason a coin flip
+// between runs. Status was already pinned deterministic; the gate's own refusal was not.
+func TestCheckIsDeterministicWhenTwoStoredKeysFoldTogether(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
+		"dis cord":  {At: "t", Reason: "one"},
+		"dis\tcord": {At: "t", Reason: "two"},
+	}})
+
+	seen := map[string]bool{}
+	for i := 0; i < 30; i++ {
+		_, _, errOut := capture(t, []string{"check", "--box", box, "dis cord"}, nowish())
+		seen[errOut] = true
+	}
+	if len(seen) != 1 {
+		var got []string
+		for s := range seen {
+			got = append(got, s)
+		}
+		sort.Strings(got)
+		t.Errorf("check printed %d different refusals for one box; a gate that reorders itself is one nobody can diff:\n%s",
+			len(seen), strings.Join(got, ""))
 	}
 }
