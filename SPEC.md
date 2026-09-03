@@ -1343,19 +1343,36 @@ same box, same bytes (quarantines sort; the clock is injected).
 
 **An event is exactly one line, and nothing a box or an argument contains can
 add a second.** Every `<reason>`, `<name>`, `<surface>` and `<t>` above is
-printed with control characters escaped — `\xNN` for a code point below U+0080,
-`\uNNNN` above it, lower-case hex in both, and the same treatment for a byte
-that is not valid UTF-8 — so a newline in a hand-edited reason arrives as
+printed with its control characters escaped — `\xNN` for a code point below
+U+0080, `\uNNNN` above it, lower-case hex in both — and so are U+2028 and
+U+2029, the Unicode line and paragraph separators, which are not control
+characters but break a line for every reader that follows Unicode rather than
+counting newlines. A newline in a hand-edited reason therefore arrives as
 `\x0a` inside its own line rather than forging a `FUSE OK` beneath a
 `FUSE FAIL`, and an ESC sequence arrives as text rather than repainting an
-operator's terminal. Printable text, including non-ASCII, is untouched, and
-nothing is ever shortened to nothing: a reason stays readable. This tool's own
-writes are folded first — `lockdown` and `quarantine` turn control characters
-in a reason, and in a surface name, into single spaces and collapse the runs,
-**never a refusal**, because a fuse you cannot blow is not a fuse. The folding
-is tidiness; the escape is the guarantee, because the box is hand-editable and
-the next reason may not have come from this tool at all. `path` is exempt: it
-prints a value, not an event.
+operator's terminal. **The same rendering covers the refusals and the notes**,
+not only the lines listed above: a refusal quotes the error, an error quotes
+the path, and a path is an argument. Printable text, including non-ASCII, is
+untouched, and nothing is ever shortened to nothing: a reason stays readable.
+`path` is the one exemption — it prints a value, not an event. (A byte that is
+not valid UTF-8 is escaped in the same `\xNN` form, but box content cannot
+reach that case: JSON decoding substitutes U+FFFD for it first, and so does the
+folding below. Error text, which passes through neither, is where it is
+reachable.)
+
+**This tool's own writes are folded first, and folding is never a refusal.**
+`lockdown` and `quarantine` turn every control character in a reason into a
+space, collapse runs of whitespace — Unicode spaces included, so a non-breaking
+space becomes an ordinary one — and trim the ends. Surface names are folded by
+the same normalization that lower-cases them, which means `check` and `lift
+quarantine` fold too, on **both sides of every match**: that is what keeps the
+fold fail-closed, since collapsing two names into one can only ever block more.
+A reason that folds away to nothing — one made only of control characters — is
+stored as its visible escapes rather than refused, because a fuse you cannot
+blow is not a fuse; only a genuinely empty or all-whitespace reason is refused,
+as it always was. The folding is tidiness; the escape is the guarantee, because
+the box is hand-editable and the next reason may not have come from this tool
+at all.
 
 ### check — the gate
 
@@ -1484,10 +1501,13 @@ caller passes is what another sees — without ever touching the box itself.
    authored life continues.
 6. Blowing either requires no confirmation, no reason-quality bar, no quorum.
 7. **An event is exactly one line, whatever the box contains** — every reason,
-   surface name and timestamp is printed with its control characters escaped,
-   so nothing a hand-edited box or an argument holds can forge a second line in
-   this grammar; this tool's own writes fold control characters to spaces
-   first. Pinned by test.
+   surface name, timestamp, error and path printed on an event, a refusal or a
+   note is escaped (control characters, plus U+2028 and U+2029), so nothing a
+   hand-edited box or an argument holds can forge a second line in this
+   grammar; `path` prints a value and is exempt by name. This tool's own writes
+   fold first, and folding never refuses a fuse. Pinned by test, including one
+   that classifies every printed argument in the source as literal, quoted or
+   escaped.
 
 ### Known limit — the double-blown blind spot, named rather than hidden
 

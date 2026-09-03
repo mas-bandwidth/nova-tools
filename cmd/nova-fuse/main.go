@@ -167,7 +167,7 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 		// REFUSE, the mirror of quarantine's refusal to narrow: while the box is
 		// unreadable every fuse is treated as BLOWN, and nothing provable can be lifted
 		// from a box that cannot be read. The corrupt bytes stay put -- they are evidence.
-		fmt.Fprintf(stderr, "nova-fuse lift quarantine: %v -- while the box is unreadable every fuse is treated as BLOWN; nothing provable can be lifted from a box that cannot be read\n", readErr)
+		fmt.Fprintf(stderr, "nova-fuse lift quarantine: %s -- while the box is unreadable every fuse is treated as BLOWN; nothing provable can be lifted from a box that cannot be read\n", oneLineErr(readErr))
 		return 2
 	}
 
@@ -241,7 +241,7 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 
 	b, err := fuse.ReadBox(box)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-fuse status: %v -- an unreadable box is treated as BLOWN, never as clear; repair or replace it with your person, live\n", err)
+		fmt.Fprintf(stderr, "nova-fuse status: %s -- an unreadable box is treated as BLOWN, never as clear; repair or replace it with your person, live\n", oneLineErr(err))
 		return 2
 	}
 
@@ -283,7 +283,7 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		// FAIL CLOSED, and say WHICH fact this is: "could not be read" is deliberately not
 		// "a fuse is blown" -- a claim must never outrun the measurement. Both refuse.
-		fmt.Fprintf(stderr, "nova-fuse check: %v -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; repair the box with your person, live\n", err)
+		fmt.Fprintf(stderr, "nova-fuse check: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; repair the box with your person, live\n", oneLineErr(err))
 		return 2
 	}
 
@@ -326,7 +326,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	// cannot blow is not a fuse. Folding only tidies what THIS tool writes; the guarantee
 	// that an event stays one line is made at print time, because the box is hand-editable
 	// and the next reason may not have come from here at all.
-	reason := fuse.Fold(strings.Join(positional, " "))
+	reason := keepableReason(strings.Join(positional, " "))
 	if reason == "" {
 		fmt.Fprintf(stderr, "nova-fuse lockdown: needs a reason: `lockdown --box <path> \"<reason>\"`\n\n%s", usage)
 		return 2
@@ -342,9 +342,9 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
 		dst, perr := fuse.PreserveUnreadable(box)
 		if perr != nil {
-			fmt.Fprintf(stderr, "nova-fuse lockdown: box was unreadable (%v) and its bytes could NOT be preserved (%v); blowing lockdown anyway\n", readErr, perr)
+			fmt.Fprintf(stderr, "nova-fuse lockdown: box was unreadable (%s) and its bytes could NOT be preserved (%s); blowing lockdown anyway\n", oneLineErr(readErr), oneLineErr(perr))
 		} else {
-			fmt.Fprintf(stderr, "nova-fuse lockdown: box was unreadable (%v); its bytes are kept at %s -- any quarantine it recorded is NOT carried forward, and lockdown blocks everything, so nothing is less blocked than before\n", readErr, dst)
+			fmt.Fprintf(stderr, "nova-fuse lockdown: box was unreadable (%s); its bytes are kept at %s -- any quarantine it recorded is NOT carried forward, and lockdown blocks everything, so nothing is less blocked than before\n", oneLineErr(readErr), fuse.OneLine(dst))
 		}
 	}
 
@@ -378,7 +378,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	surface := fuse.Surface(positional[0])
-	reason := fuse.Fold(strings.Join(positional[1:], " ")) // folded, never refused -- see cmdLockdown
+	reason := keepableReason(strings.Join(positional[1:], " ")) // folded, never refused -- see cmdLockdown
 	if surface == "" || reason == "" {
 		fmt.Fprintf(stderr, "nova-fuse quarantine: needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`\n\n%s", usage)
 		return 2
@@ -390,7 +390,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		// An unreadable box blocks EVERY surface. Replacing it with a fresh box holding
 		// only this one quarantine would UNBLOCK everything else, so the safety-shaped
 		// action would be a fail-OPEN. Under doubt, no.
-		fmt.Fprintf(stderr, "nova-fuse quarantine: %v -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box with your person\n", readErr, box)
+		fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box with your person\n", oneLineErr(readErr), fuse.OneLine(box))
 		return 2
 	}
 
@@ -449,12 +449,19 @@ func why(f fuse.Fuse) string {
 	return fuse.OneLine(f.Reason)
 }
 
-// oneLineErr renders an error into the <reason> slot of a FAIL line. An error's text
-// carries whatever the path that produced it carried, so a --box argument holding a
-// newline would otherwise break a FAIL line in two: the caller's own argument rather than
-// the box's contents, and the guarantee covers both. Two callers reach this with a nil
-// error (the write landed and the verification failed for another reason), and nil keeps
-// fmt's own spelling rather than becoming a sentence claiming more than is known.
+func since(f fuse.Fuse) string {
+	if strings.TrimSpace(f.At) == "" {
+		return "unrecorded"
+	}
+	return fuse.OneLine(f.At)
+}
+
+// oneLineErr renders an error into the <reason> slot of an event, a refusal or a note. An
+// error's text carries whatever the path that produced it carried, so a --box argument
+// holding a newline would otherwise break the line in two -- the caller's own argument
+// rather than the box's contents, and the guarantee covers both. Two callers reach this
+// with a nil error (the write landed and the verification failed for another reason), and
+// nil keeps fmt's own spelling rather than becoming a sentence claiming more than is known.
 func oneLineErr(err error) string {
 	if err == nil {
 		return "<nil>"
@@ -462,9 +469,16 @@ func oneLineErr(err error) string {
 	return fuse.OneLine(err.Error())
 }
 
-func since(f fuse.Fuse) string {
-	if strings.TrimSpace(f.At) == "" {
-		return "unrecorded"
+// keepableReason is how a reason is stored, and it exists to make sure FOLDING NEVER
+// BECOMES A REFUSAL. Fold turns control characters into spaces, so a reason made of
+// nothing but them folds away to nothing -- and refusing that would mean a fuse that
+// could be blown yesterday cannot be blown today, which is the one direction this design
+// forbids. In that case the reason is kept as its visible escapes instead, so the record
+// says what was typed. A genuinely empty or all-whitespace reason still comes back empty,
+// and the caller still refuses it, exactly as before.
+func keepableReason(raw string) string {
+	if folded := fuse.Fold(raw); folded != "" {
+		return folded
 	}
-	return fuse.OneLine(f.At)
+	return fuse.OneLine(strings.TrimSpace(raw))
 }

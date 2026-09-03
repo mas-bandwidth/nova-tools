@@ -1334,15 +1334,15 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 		"liftQuarantine|listed": "built immediately above from fuse.OneLine over every stored name",
 		"run|usage":             "the usage constant declared in this file",
 		"cmdLift|usage":         "the usage constant declared in this file",
-		"parseBox|usage":        "the usage constant declared in this file",
 		"cmdStatus|usage":       "the usage constant declared in this file",
 		"cmdCheck|usage":        "the usage constant declared in this file",
 		"cmdLockdown|usage":     "the usage constant declared in this file",
 		"cmdQuarantine|usage":   "the usage constant declared in this file",
 		"cmdPath|usage":         "the usage constant declared in this file",
 		"parseBox|name":         "the verb's own name, chosen by this file at every call site",
-		"cmdQuarantine|surface": "already normalized by fuse.Surface, which folds every control character to a space",
 	}
+	usedExemption := map[string]bool{}
+
 	// The usage exemptions are only honest if usage really is a constant here.
 	usageIsConst := false
 	for _, d := range parsed.Decls {
@@ -1463,7 +1463,8 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 				if e, ok := arg.(*ast.CallExpr); ok && escapers[text(e.Fun)] {
 					continue
 				}
-				if why, ok := exempt[fnName+"|"+text(arg)]; ok && why != "" {
+				if key := fnName + "|" + text(arg); exempt[key] != "" {
+					usedExemption[key] = true
 					continue
 				}
 				t.Errorf("%s:%d in %s: %%%c prints %s raw -- escape it (fuse.OneLine or oneLineErr) or add an exemption naming the reason",
@@ -1471,6 +1472,13 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 			}
 			return true
 		})
+	}
+	// A stale exemption is a claim about a call site that no longer exists, and it would
+	// silently cover the next one written in its place.
+	for key, why := range exempt {
+		if !usedExemption[key] {
+			t.Errorf("exemption %q (%s) matches no print site; delete it rather than leave a claim nothing checks", key, why)
+		}
 	}
 	if classified < 40 {
 		t.Errorf("only %d printed arguments were classified; main.go has many more, so the walk is not reaching them", classified)
