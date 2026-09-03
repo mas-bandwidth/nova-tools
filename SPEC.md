@@ -1337,7 +1337,11 @@ LIFT OK verified: <surface> is no longer quarantined (…)
 LIFT FAIL quarantine=<surface>: <reason>
 ```
 
-`OK` lines go to stdout; `FAIL` lines, refusals, and notes go to stderr.
+`OK` lines go to stdout; `FAIL` lines, refusals, and notes go to stderr, and
+**this tool is the only thing that writes to either** — the flag parser is given
+no stream and prints neither its errors nor its usage, because its error text
+quotes the argument it could not parse. An unparseable flag, `-h` included, is
+this tool's own refusal at exit 2; `check` never answers 0 for one.
 `path` prints the bare path — a value, not an event. Output is deterministic:
 same box, same bytes (quarantines sort; the clock is injected).
 
@@ -1354,11 +1358,28 @@ operator's terminal. **The same rendering covers the refusals and the notes**,
 not only the lines listed above: a refusal quotes the error, an error quotes
 the path, and a path is an argument. Printable text, including non-ASCII, is
 untouched, and nothing is ever shortened to nothing: a reason stays readable.
-`path` is the one exemption — it prints a value, not an event. (A byte that is
-not valid UTF-8 is escaped in the same `\xNN` form, but box content cannot
-reach that case: JSON decoding substitutes U+FFFD for it first, and so does the
-folding below. Error text, which passes through neither, is where it is
-reachable.)
+
+Three limits of that mechanism, stated rather than left to be discovered. **The
+escaped set is Unicode category Cc plus U+2028 and U+2029, and no more**: format
+characters (category Cf, which includes the bidi controls U+202A to U+202E and
+U+2066 to U+2069) pass through as they are, and are tracked separately from this
+guarantee. **The escape is not injective** — a literal backslash is not itself
+escaped, so a reason holding a newline and a reason holding the four characters
+`\x0a` print identically; the output proves one line, never which of the two was
+stored. And **an escaped line does not paste back**: a `FUSE FAIL quarantine=`
+line names the remedy command including the box path, and if that path carried a
+control character the path is printed escaped, so copying that line will not
+reproduce it.
+
+**`path` is the one exemption, and it is a plain one:** `path` echoes its
+argument unescaped, so a caller must never scan `path` output for grammar. It
+prints a value the caller itself passed in, on a line carrying no `OK`/`FAIL`
+token.
+
+(A byte that is not valid UTF-8 is escaped in the same `\xNN` form, but box
+content cannot reach that case: JSON decoding substitutes U+FFFD for it first,
+and so does the folding below. Error text, which passes through neither, is
+where it is reachable.)
 
 **This tool's own writes are folded first, and folding is never a refusal.**
 `lockdown` and `quarantine` turn every control character in a reason into a
@@ -1367,12 +1388,18 @@ space becomes an ordinary one — and trim the ends. Surface names are folded by
 the same normalization that lower-cases them, which means `check` and `lift
 quarantine` fold too, on **both sides of every match**: that is what keeps the
 fold fail-closed, since collapsing two names into one can only ever block more.
-A reason that folds away to nothing — one made only of control characters — is
-stored as its visible escapes rather than refused, because a fuse you cannot
-blow is not a fuse; only a genuinely empty or all-whitespace reason is refused,
-as it always was. The folding is tidiness; the escape is the guarantee, because
-the box is hand-editable and the next reason may not have come from this tool
-at all.
+Folding DROPS those characters from the stored text — `\x01real` is stored as
+`real` — and only a reason made ENTIRELY of them is kept instead as its visible
+escapes, rather than refused, because a fuse you cannot blow is not a fuse. Only
+a genuinely empty or all-whitespace reason is refused, as it always was.
+
+One consequence, in the refusing direction: **a surface name that folds away to
+nothing is refused as blank** (exit 2) on every verb that takes one, so a box
+hand-written with a quarantine key made only of control characters is inert to
+this tool — `lift quarantine` cannot name it, and it has to be removed by hand,
+which is the same hand that wrote it. The folding is tidiness; the escape is the
+guarantee, because the box is hand-editable and the next reason may not have come
+from this tool at all.
 
 ### check — the gate
 

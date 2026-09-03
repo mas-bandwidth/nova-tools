@@ -1329,6 +1329,7 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 		"cmdPath|box":           "`path` prints a value, not an event: the line carries no OK/FAIL token, asserts nothing, and SPEC.md exempts it by name",
 		"liftQuarantine|listed": "built immediately above from fuse.OneLine over every stored name",
 		"run|usage":             "the usage constant declared in this file",
+		"parseBox|usage":        "the usage constant declared in this file",
 		"cmdLift|usage":         "the usage constant declared in this file",
 		"cmdStatus|usage":       "the usage constant declared in this file",
 		"cmdCheck|usage":        "the usage constant declared in this file",

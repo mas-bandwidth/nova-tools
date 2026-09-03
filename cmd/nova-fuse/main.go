@@ -100,9 +100,19 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 // ok=false after printing the refusal (exit 2 belongs to the caller).
 func parseBox(name string, args []string, stderr io.Writer) (box string, positional []string, ok bool) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	// PACKAGE FLAG IS NOT ALLOWED TO PRINT. Its error text quotes the argument it could not
+	// parse, and its usage dump follows -- so with a stream to write to, an argument
+	// beginning with a dash authored a whole line of stderr before any code in this file
+	// ran. That is the realistic shape: an untrusted surface name starting with "-". Both
+	// mouths are closed here, and the refusal below is printed by this file, escaped.
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
 	boxFlag := fs.String("box", "", "path to the fuse box JSON file (required; no default)")
 	if err := fs.Parse(args); err != nil {
+		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
+		// invocation: exit 2, never 0. `check` answers PERMISSION with 0, and a surface
+		// named "-h" must not be able to reach that answer.
+		fmt.Fprintf(stderr, "nova-fuse %s: %s\n\n%s", name, oneLineErr(err), usage)
 		return "", nil, false
 	}
 	for _, arg := range fs.Args() {
