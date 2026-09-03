@@ -14,6 +14,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -1316,15 +1317,7 @@ func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
 // never a drive-by: adding one means either escaping it or writing down why it is safe.
 func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 	const file = "main.go"
-	src, err := os.ReadFile(file) // the package's own source, not a path from anywhere else
-	if err != nil {
-		t.Fatal(err)
-	}
-	fset := token.NewFileSet()
-	parsed, err := parser.ParseFile(fset, file, src, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	src, fset, parsed := parseMainGo(t)
 
 	// Rendered through one of these, a string cannot carry a line break or a terminal
 	// control sequence. See fuse.OneLine.
@@ -1556,4 +1549,194 @@ func TestAReasonOfNothingButControlCharactersStillBlowsTheFuse(t *testing.T) {
 			t.Errorf("stderr = %q, want the reason refusal", errOut)
 		}
 	})
+}
+
+// TestAFlagErrorCannotForgeALineEither. The last writer outside the fence: package flag
+// prints its OWN error, and that error quotes the argument it could not parse. Every verb
+// parses flags, and the realistic shape is an untrusted surface name that begins with a
+// dash -- so nothing in this file's code had to run for a caller to author a whole line
+// of stderr. This one needs no newline in a path, so unlike the --box tests it runs
+// everywhere.
+func TestAFlagErrorCannotForgeALineEither(t *testing.T) {
+	box := boxIn(t)
+	writeRaw(t, box, `{"lockdown":null,"quarantine":{}}`)
+
+	// Both begin with a dash, which is what makes flag try to parse them.
+	forgeries := map[string]string{
+		"a forged LIFT OK line": "-\nLIFT OK verified: discord is no longer quarantined (soft: your own dial, both directions; a rescind is announced, never silent -- say so out loud)",
+		"a terminal repaint":    "-\x1b]0;PWNED\x07\x1b[2J",
+	}
+	for what, arg := range forgeries {
+		for _, args := range [][]string{
+			{"check", "--box", box, arg},
+			{"status", "--box", box, arg},
+			{"lockdown", "--box", box, arg},
+			{"quarantine", "--box", box, arg, "why"},
+			{"lift", "quarantine", "--box", box, arg},
+			{"path", "--box", box, arg},
+		} {
+			t.Run(what+" through "+args[0], func(t *testing.T) {
+				code, out, errOut := capture(t, args, nowish())
+				if code != 2 {
+					t.Errorf("exit = %d, want 2 -- an unparseable flag is a refusal", code)
+				}
+				// A refusal is not an event: no line of either stream may open the grammar.
+				for _, token := range []string{"FUSE OK", "FUSE FAIL", "STATUS OK", "LIFT OK", "LIFT FAIL", "LOCKDOWN OK", "QUARANTINE OK"} {
+					noForgedOKLine(t, token, out, errOut)
+				}
+				if strings.ContainsRune(out+errOut, 0x1b) {
+					t.Errorf("a raw ESC byte reached the output: %q", out+errOut)
+				}
+				if strings.Contains(errOut, "Usage of") {
+					t.Errorf("flag printed its own usage block; this tool prints its own refusals: %q", errOut)
+				}
+			})
+		}
+	}
+}
+
+// TestTheQuarantinedNowListingCannotForgeALine covers the one exemption in the source
+// tripwire that is a CLAIM rather than a check: the `quarantined now:` listing is built by
+// a loop above its print site, so the classifier can only see a local variable. Removing
+// fuse.OneLine from that loop leaves the whole suite green without this test, while
+// LIFT FAIL forges a line out of a stored key.
+func TestTheQuarantinedNowListingCannotForgeALine(t *testing.T) {
+	box := boxIn(t)
+	writeRaw(t, box, `{"lockdown":null,"quarantine":{
+		"dis\nLIFT OK verified: discord is no longer quarantined (soft)cord": {"at":"t","reason":"r"},
+		"bsky": {"at":"t","reason":"r"}}}`)
+
+	// Lift a surface that is NOT quarantined: the refusal names what IS.
+	code, out, errOut := capture(t, []string{"lift", "quarantine", "--box", box, "zulip"}, nowish())
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 -- a typo must never read as a lift\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if got := strings.Count(strings.TrimRight(errOut, "\n"), "\n") + 1; got != 1 {
+		t.Errorf("stderr printed %d lines, want 1: %q", got, errOut)
+	}
+	noForgedOKLine(t, "LIFT OK", out, errOut)
+	if !strings.Contains(errOut, `\x0a`) {
+		t.Errorf("the stored key must be listed escaped: %q", errOut)
+	}
+}
+
+// parseMainGo reads and parses the package's own source. Reaching outside t.TempDir() has
+// one reason here and it is stated: the subject of these two tests IS the source, and a
+// property of the code is not provable from its output alone.
+func parseMainGo(t *testing.T) ([]byte, *token.FileSet, *ast.File) {
+	t.Helper()
+	src, err := os.ReadFile("main.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, "main.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return src, fset, parsed
+}
+
+// TestNoOtherWriterOrShadowCanBypassTheEscape closes the gap in the sibling test above,
+// which walks fmt.* calls and therefore sees only one way of putting bytes on a stream.
+// A reader named the rest: io.WriteString, a bare .Write, a function VALUE aliased out of
+// fmt, a local that shadows the escaping helpers or the fuse package itself, and
+// flag.FlagSet.SetOutput -- which is how package flag came to print an attacker's argument
+// before any code in this file ran. Each is refused here by name, and each was proved able
+// to fail by mutation.
+func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
+	src, fset, parsed := parseMainGo(t)
+	text := func(n ast.Node) string {
+		return string(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset])
+	}
+	at := func(n ast.Node) string { return fmt.Sprintf("main.go:%d", fset.Position(n.Pos()).Line) }
+
+	// A name declared inside a function that shadows one of these turns every escape in
+	// scope into a no-op, invisibly to the sibling test, which classifies by source text.
+	shadows := map[string]bool{"fuse": true, "oneLineErr": true, "OneLine": true, "Fold": true, "why": true, "since": true}
+	declared := func(n ast.Node, idents []*ast.Ident) {
+		for _, id := range idents {
+			if shadows[id.Name] {
+				t.Errorf("%s: a local named %q shadows the escaping path; rename it", at(n), id.Name)
+			}
+		}
+	}
+
+	ast.Inspect(parsed, func(n ast.Node) bool {
+		switch node := n.(type) {
+		case *ast.CallExpr:
+			sel, ok := node.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			switch sel.Sel.Name {
+			case "SetOutput":
+				// The whole point: a flag set that can print is a writer this file does
+				// not control, quoting an argument this file did not author.
+				if len(node.Args) != 1 || text(node.Args[0]) != "io.Discard" {
+					t.Errorf("%s: SetOutput(%s) lets another package write to a stream; only io.Discard is allowed",
+						at(node), text(node.Args[0]))
+				}
+			case "Write", "WriteString", "WriteByte", "WriteRune":
+				t.Errorf("%s: %s writes bytes past the escaping path; print through fmt.Fprintf with an escaped argument",
+					at(node), text(node.Fun))
+			}
+		case *ast.AssignStmt:
+			for _, rhs := range node.Rhs {
+				if sel, ok := rhs.(*ast.SelectorExpr); ok {
+					if x, ok := sel.X.(*ast.Ident); ok && x.Name == "fmt" {
+						t.Errorf("%s: %s is a fmt function VALUE; aliased, it prints where the classifier cannot see it",
+							at(node), text(rhs))
+					}
+				}
+			}
+			if node.Tok == token.DEFINE {
+				var ids []*ast.Ident
+				for _, lhs := range node.Lhs {
+					if id, ok := lhs.(*ast.Ident); ok {
+						ids = append(ids, id)
+					}
+				}
+				declared(node, ids)
+			}
+		case *ast.ValueSpec:
+			for _, v := range node.Values {
+				if sel, ok := v.(*ast.SelectorExpr); ok {
+					if x, ok := sel.X.(*ast.Ident); ok && x.Name == "fmt" {
+						t.Errorf("%s: %s is a fmt function VALUE; aliased, it prints where the classifier cannot see it",
+							at(node), text(v))
+					}
+				}
+			}
+			declared(node, node.Names)
+		case *ast.RangeStmt:
+			if node.Tok == token.DEFINE {
+				var ids []*ast.Ident
+				for _, e := range []ast.Expr{node.Key, node.Value} {
+					if id, ok := e.(*ast.Ident); ok {
+						ids = append(ids, id)
+					}
+				}
+				declared(node, ids)
+			}
+		case *ast.FuncType:
+			var ids []*ast.Ident
+			for _, list := range []*ast.FieldList{node.Params, node.Results} {
+				if list == nil {
+					continue
+				}
+				for _, field := range list.List {
+					ids = append(ids, field.Names...)
+				}
+			}
+			declared(node, ids)
+		}
+		return true
+	})
+
+	// io.WriteString is a plain call rather than a selector on a writer, so it is named
+	// directly. Checked over the source text because it takes no other form.
+	if strings.Contains(string(src), "io.WriteString") {
+		t.Error("main.go: io.WriteString writes past the escaping path; print through fmt.Fprintf")
+	}
 }
