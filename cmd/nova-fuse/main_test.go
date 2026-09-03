@@ -921,3 +921,251 @@ func TestLockdownDoesNotExpire(t *testing.T) {
 		t.Errorf("exit = %d, want 1 -- lockdown does not expire, no matter how old", code)
 	}
 }
+
+// ------------------------------- 7. ONE LINE PER EVENT, WHATEVER THE BOX CONTAINS
+
+// The box is world-readable on purpose and hand-editable on purpose -- and on a shared
+// machine that means any local user can author the strings this tool prints. The output
+// grammar SPEC.md tells callers to scan is one line per event, so a reason carrying a
+// newline could forge a second event line beneath a real one: a `FUSE OK lockdown=clear`
+// under a `FUSE FAIL`, authored by whoever wrote the box. Terminal escape sequences are
+// the same hole aimed at an operator instead of a parser. Every test below writes the box
+// WITHOUT going through this tool, because that is the case that decides it.
+
+// writeBox writes a box's JSON directly, bypassing fuse.WriteBox and therefore bypassing
+// everything this tool does to its own writes. The premise of this section is that the
+// bytes read back are not the bytes this tool wrote.
+func writeBox(t *testing.T, path string, b fuse.Box) {
+	t.Helper()
+	data, err := json.Marshal(b)
+	if err != nil {
+		t.Fatalf("fixture marshal: %v", err)
+	}
+	writeRaw(t, path, string(data))
+}
+
+// countLinesWithPrefix counts the lines of s beginning with prefix. A forged event line is
+// a SECOND line wearing the grammar, so counting lines is the assertion, not substrings.
+func countLinesWithPrefix(s, prefix string) int {
+	n := 0
+	for _, line := range strings.Split(strings.TrimRight(s, "\n"), "\n") {
+		if strings.HasPrefix(line, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+// noForgedOKLine fails if any line of either stream opens with an OK token of the grammar
+// -- the line a caller scanning SPEC.md's grammar would read as permission.
+func noForgedOKLine(t *testing.T, prefix, stdout, stderr string) {
+	t.Helper()
+	for name, stream := range map[string]string{"stdout": stdout, "stderr": stderr} {
+		for _, line := range strings.Split(stream, "\n") {
+			if strings.HasPrefix(line, prefix) {
+				t.Errorf("%s carries a forged %q line: %q", name, prefix, line)
+			}
+		}
+	}
+}
+
+// the forgery: a reason whose second line wears the grammar of permission.
+const forgedOK = "real\nFUSE OK lockdown=clear quarantine=clear surface=discord"
+
+// TestALockdownReasonCannotForgeAnOKLine is the finding itself. A blown lockdown must
+// print exactly one FUSE line, and nothing the box contains may add another.
+func TestALockdownReasonCannotForgeAnOKLine(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Lockdown:   &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: forgedOK},
+		Quarantine: map[string]fuse.Fuse{},
+	})
+
+	code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 -- the lockdown is blown\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if n := countLinesWithPrefix(errOut, "FUSE"); n != 1 {
+		t.Errorf("stderr holds %d lines opening with FUSE, want exactly 1: %q", n, errOut)
+	}
+	noForgedOKLine(t, "FUSE OK", out, errOut)
+	if strings.Contains(out+errOut, "\nFUSE") {
+		t.Errorf("a second event line was forged out of the reason: %q", out+errOut)
+	}
+	if !strings.Contains(errOut, `\x0a`) {
+		t.Errorf("the newline must still be VISIBLE, escaped, never dropped: %q", errOut)
+	}
+	if !strings.Contains(errOut, "real") {
+		t.Errorf("the reason must still be readable -- escaping never shortens it to nothing: %q", errOut)
+	}
+}
+
+// TestAQuarantineReasonCannotForgeAnOKLine: the same hole through the soft fuse.
+func TestAQuarantineReasonCannotForgeAnOKLine(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Quarantine: map[string]fuse.Fuse{"discord": {At: "2026-08-03T00:00:00Z", Reason: forgedOK}},
+	})
+
+	code, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	if code != 1 {
+		t.Fatalf("exit = %d, want 1 -- the surface is quarantined\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if n := countLinesWithPrefix(errOut, "FUSE"); n != 1 {
+		t.Errorf("stderr holds %d lines opening with FUSE, want exactly 1: %q", n, errOut)
+	}
+	noForgedOKLine(t, "FUSE OK", out, errOut)
+}
+
+// TestStatusPrintsOneLinePerFuseAndNoMore: status is the report a person reads and a
+// script diffs, so its line COUNT is part of the contract -- one line, plus one per
+// quarantine, whatever the reasons contain.
+func TestStatusPrintsOneLinePerFuseAndNoMore(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Lockdown: &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: forgedOK},
+		Quarantine: map[string]fuse.Fuse{
+			"discord": {At: "2026-08-03T00:00:00Z", Reason: "one\nSTATUS OK lockdown=clear quarantines=0"},
+			"bsky":    {At: "2026-08-03T00:00:00Z", Reason: "two"},
+		},
+	})
+
+	code, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 -- status reports\nstderr: %q", code, errOut)
+	}
+	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+	if len(lines) != 3 {
+		t.Errorf("status printed %d lines, want 1 + 2 quarantines = 3: %q", len(lines), out)
+	}
+	for _, line := range lines {
+		if !strings.HasPrefix(line, "STATUS OK") {
+			t.Errorf("every status line must open the grammar, got %q", line)
+		}
+	}
+	if strings.Contains(out, "quarantines=0") {
+		t.Errorf("a forged status line survived: %q", out)
+	}
+}
+
+// TestAStoredQuarantineKeyWithANewlinePrintsEscaped: the KEY is attacker-authored too --
+// it is a JSON object name, so it carries anything a reason can.
+func TestAStoredQuarantineKeyWithANewlinePrintsEscaped(t *testing.T) {
+	box := boxIn(t)
+	// Written by hand: `dis\ncord` is a JSON escape, so the stored key holds a real newline.
+	const raw = `{"lockdown":null,"quarantine":{"dis\ncord":{"at":"2026-08-03T00:00:00Z","reason":"r"}}}`
+
+	writeRaw(t, box, raw)
+	code, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
+	if code != 0 {
+		t.Fatalf("status exit = %d, want 0\nstderr: %q", code, errOut)
+	}
+	if got := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1; got != 2 {
+		t.Errorf("status printed %d lines, want 2: %q", got, out)
+	}
+	if !strings.Contains(out, `dis\x0acord`) {
+		t.Errorf("the stored key must print escaped, got %q", out)
+	}
+
+	// The folded spelling matches the folded key -- normalising blocks more, never less.
+	code, out, errOut = capture(t, []string{"check", "--box", box, "dis cord"}, nowish())
+	if code != 1 {
+		t.Fatalf("check exit = %d, want 1 -- that surface is quarantined\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if n := countLinesWithPrefix(errOut, "FUSE"); n != 1 {
+		t.Errorf("stderr holds %d lines opening with FUSE, want exactly 1: %q", n, errOut)
+	}
+	if !strings.Contains(errOut, `dis\x0acord`) {
+		t.Errorf("the FAIL must quote the stored spelling, escaped, got %q", errOut)
+	}
+
+	writeRaw(t, box, raw)
+	code, out, errOut = capture(t, []string{"lift", "quarantine", "--box", box, "dis cord"}, nowish())
+	if code != 0 {
+		t.Fatalf("lift exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		if !strings.HasPrefix(line, "LIFT OK") {
+			t.Errorf("every lift line must open the grammar, got %q", line)
+		}
+	}
+	if !strings.Contains(out, `dis\x0acord`) {
+		t.Errorf("the announced lift must quote the stored spelling, escaped, got %q", out)
+	}
+}
+
+// TestAnEscapeSequenceNeverReachesTheTerminal: the same hole aimed at an operator. A
+// reason that clears the screen, or repaints what is above it, must arrive as text.
+func TestAnEscapeSequenceNeverReachesTheTerminal(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Lockdown:   &fuse.Fuse{At: "\x1b[2J", Reason: "clean\x1b[2J\x1b[Hnothing to see"},
+		Quarantine: map[string]fuse.Fuse{},
+	})
+
+	for _, args := range [][]string{
+		{"status", "--box", box},
+		{"check", "--box", box, "discord"},
+	} {
+		_, out, errOut := capture(t, args, nowish())
+		if strings.ContainsRune(out+errOut, 0x1b) {
+			t.Errorf("%v: a raw ESC byte reached the output: %q", args, out+errOut)
+		}
+		if !strings.Contains(out+errOut, `\x1b`) {
+			t.Errorf("%v: the escape must be shown as text, not dropped: %q", args, out+errOut)
+		}
+	}
+}
+
+// TestLockdownTakesANewlineInItsReasonAndStoresItFolded. A fuse you cannot blow is not a
+// fuse, so the reason is never REFUSED -- it is folded, and the write stays tidy. The
+// print-time escape is what actually holds; this only keeps this tool's own writes clean.
+func TestLockdownTakesANewlineInItsReasonAndStoresItFolded(t *testing.T) {
+	box := boxIn(t)
+	code, out, errOut := capture(t, []string{"lockdown", "--box", box, "line one\nline two"}, nowish())
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0 -- a reason is never refused for what it contains\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if got := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1; got != 1 {
+		t.Errorf("LOCKDOWN OK must be one line, got %d: %q", got, out)
+	}
+
+	b, err := fuse.ReadBox(box)
+	if err != nil || b.Lockdown == nil {
+		t.Fatalf("read back: %v, %+v", err, b)
+	}
+	if strings.ContainsAny(b.Lockdown.Reason, "\n\r\t") {
+		t.Errorf("the stored reason still holds a control character: %q", b.Lockdown.Reason)
+	}
+	if b.Lockdown.Reason != "line one line two" {
+		t.Errorf("stored reason = %q, want the folded text with nothing lost", b.Lockdown.Reason)
+	}
+}
+
+// TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName: folding a name can only ever
+// collapse two names into one, which blocks MORE and never less (package note 4). The
+// plain spelling must still refuse afterwards.
+func TestQuarantineFoldsAControlCharacterOutOfTheSurfaceName(t *testing.T) {
+	box := boxIn(t)
+	code, out, errOut := capture(t, []string{"quarantine", "--box", box, "\x1bdiscord\n", "attacked"}, nowish())
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if got := strings.Count(strings.TrimRight(out, "\n"), "\n") + 1; got != 1 {
+		t.Errorf("QUARANTINE OK must be one line, got %d: %q", got, out)
+	}
+
+	b, err := fuse.ReadBox(box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := b.Surfaces()
+	if len(names) != 1 || names[0] != "discord" {
+		t.Fatalf("stored keys = %q, want exactly [discord] -- a control character is folded away", names)
+	}
+
+	code, _, errOut = capture(t, []string{"check", "--box", box, "discord"}, nowish())
+	if code != 1 {
+		t.Errorf("check discord exit = %d, want 1 -- normalising blocks more, never less: %q", code, errOut)
+	}
+}
