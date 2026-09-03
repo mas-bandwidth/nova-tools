@@ -14,9 +14,13 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1213,4 +1217,332 @@ func TestAFailFileErrorStaysOnOneLine(t *testing.T) {
 			t.Errorf("%v: the newline in the error must be shown escaped, got %q", tc.args, errOut)
 		}
 	}
+}
+
+// TestNoRefusalOrNoteCanForgeAnOKLine. The finding was reported against the event lines,
+// but a REFUSAL and a NOTE go to the same stream a caller reads, and they interpolate the
+// same untrusted material: the error text, the preserved-bytes destination, and the box
+// path itself. A --box argument is the caller's own rather than the box's contents, and
+// the guarantee stated in SPEC.md covers both.
+func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
+	const forgery = "FUSE OK lockdown=clear quarantine=clear surface=discord"
+	dir := t.TempDir()
+
+	// A newline is legal in a POSIX filename; only / and NUL are not.
+	bad := filepath.Join(dir, "bad\n"+forgery)
+	writeRaw(t, bad, "not json")
+
+	// A DIRECTORY under a name like that reaches the other half of lockdown's note: the
+	// box cannot be read AND its bytes cannot be preserved.
+	badDir := filepath.Join(dir, "dir\n"+forgery)
+	if err := os.Mkdir(badDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		wantCode  int
+		wantLines int    // lines on the stream the refusal or note is written to
+		prefix    string // every one of them must open with this
+		stream    string // "stderr" or "stdout"
+	}{
+		{"check on an unreadable box", []string{"check", "--box", bad, "discord"}, 2, 1, "nova-fuse check:", "stderr"},
+		{"status on an unreadable box", []string{"status", "--box", bad}, 2, 1, "nova-fuse status:", "stderr"},
+		{"lift quarantine on an unreadable box", []string{"lift", "quarantine", "--box", bad, "discord"}, 2, 1, "nova-fuse lift quarantine:", "stderr"},
+		{"quarantine refusing to narrow", []string{"quarantine", "--box", bad, "discord", "why"}, 2, 1, "nova-fuse quarantine:", "stderr"},
+		{"lockdown noting the preserved bytes", []string{"lockdown", "--box", bad, "why"}, 0, 1, "nova-fuse lockdown:", "stderr"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			code, out, errOut := capture(t, tc.args, nowish())
+			if code != tc.wantCode {
+				t.Fatalf("exit = %d, want %d\nstdout: %q\nstderr: %q", code, tc.wantCode, out, errOut)
+			}
+			stream := errOut
+			if tc.stream == "stdout" {
+				stream = out
+			}
+			lines := strings.Split(strings.TrimRight(stream, "\n"), "\n")
+			if len(lines) != tc.wantLines {
+				t.Errorf("%s printed %d lines, want %d: %q", tc.stream, len(lines), tc.wantLines, stream)
+			}
+			for _, line := range lines {
+				if !strings.HasPrefix(line, tc.prefix) {
+					t.Errorf("every line must open with %q, got %q", tc.prefix, line)
+				}
+			}
+			noForgedOKLine(t, "FUSE OK", out, errOut)
+			noForgedOKLine(t, "STATUS OK", out, errOut)
+			noForgedOKLine(t, "LIFT OK", out, errOut)
+		})
+	}
+
+	// lockdown over a box it can neither read nor preserve: both halves of the note, and
+	// then a FAIL when the rename cannot replace a directory.
+	t.Run("lockdown over an unpreservable box", func(t *testing.T) {
+		code, out, errOut := capture(t, []string{"lockdown", "--box", badDir, "why"}, nowish())
+		if code != 1 {
+			t.Fatalf("exit = %d, want 1 -- the write cannot land on a directory\nstdout: %q\nstderr: %q", code, out, errOut)
+		}
+		lines := strings.Split(strings.TrimRight(errOut, "\n"), "\n")
+		if len(lines) != 2 {
+			t.Errorf("stderr printed %d lines, want 2 (the note, then the FAIL): %q", len(lines), errOut)
+		}
+		for _, line := range lines {
+			if !strings.HasPrefix(line, "nova-fuse lockdown:") && !strings.HasPrefix(line, "LOCKDOWN FAIL") {
+				t.Errorf("unexpected line: %q", line)
+			}
+		}
+		noForgedOKLine(t, "FUSE OK", out, errOut)
+	})
+}
+
+// TestEveryPrintedArgumentIsLiteralQuotedOrEscaped is the tripwire, and it exists because
+// the first round of this fix was audited by counting call sites BY HAND and came up nine
+// short. Every one of those nine was a refusal or a note rather than an event line, which
+// is exactly the kind of thing hand-counting misses. So the count is mechanical now: this
+// reads main.go, pairs every fmt.Fprint/Fprintf/Fprintln argument with the verb that
+// prints it, and classifies each one as
+//
+//	%q or %d      -- the verb escapes it, or it is a number
+//	a literal     -- written in this file, so nothing untrusted reaches it
+//	escaped       -- rendered through fuse.OneLine, oneLineErr, why or since
+//	exempted      -- named below, one entry per site, with the reason stated
+//
+// Anything else fails, naming the line. A new interpolation is a decision from now on,
+// never a drive-by: adding one means either escaping it or writing down why it is safe.
+func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
+	const file = "main.go"
+	src, err := os.ReadFile(file) // the package's own source, not a path from anywhere else
+	if err != nil {
+		t.Fatal(err)
+	}
+	fset := token.NewFileSet()
+	parsed, err := parser.ParseFile(fset, file, src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rendered through one of these, a string cannot carry a line break or a terminal
+	// control sequence. See fuse.OneLine.
+	escapers := map[string]bool{"fuse.OneLine": true, "oneLineErr": true, "why": true, "since": true}
+
+	// One entry per site, keyed by function and source text. Each is a claim, and each
+	// claim is either checked below or stated here as the reason a reader would accept.
+	exempt := map[string]string{
+		"cmdPath|box":           "`path` prints a value, not an event: the line carries no OK/FAIL token, asserts nothing, and SPEC.md exempts it by name",
+		"liftQuarantine|listed": "built immediately above from fuse.OneLine over every stored name",
+		"run|usage":             "the usage constant declared in this file",
+		"cmdLift|usage":         "the usage constant declared in this file",
+		"parseBox|usage":        "the usage constant declared in this file",
+		"cmdStatus|usage":       "the usage constant declared in this file",
+		"cmdCheck|usage":        "the usage constant declared in this file",
+		"cmdLockdown|usage":     "the usage constant declared in this file",
+		"cmdQuarantine|usage":   "the usage constant declared in this file",
+		"cmdPath|usage":         "the usage constant declared in this file",
+		"parseBox|name":         "the verb's own name, chosen by this file at every call site",
+		"cmdQuarantine|surface": "already normalized by fuse.Surface, which folds every control character to a space",
+	}
+	// The usage exemptions are only honest if usage really is a constant here.
+	usageIsConst := false
+	for _, d := range parsed.Decls {
+		gd, ok := d.(*ast.GenDecl)
+		if !ok || gd.Tok != token.CONST {
+			continue
+		}
+		for _, spec := range gd.Specs {
+			if vs, ok := spec.(*ast.ValueSpec); ok {
+				for _, n := range vs.Names {
+					if n.Name == "usage" {
+						usageIsConst = true
+					}
+				}
+			}
+		}
+	}
+	if !usageIsConst {
+		t.Fatal("usage is no longer a constant in main.go, so every exemption naming it is unproven")
+	}
+
+	text := func(n ast.Node) string {
+		return string(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset])
+	}
+
+	// literalOnly answers whether an expression is nothing but string literals, including
+	// a chain of them concatenated with + (the lift lockdown refusal is written that way).
+	var literalOnly func(ast.Expr) bool
+	literalOnly = func(e ast.Expr) bool {
+		switch e := e.(type) {
+		case *ast.BasicLit:
+			return true
+		case *ast.BinaryExpr:
+			return e.Op == token.ADD && literalOnly(e.X) && literalOnly(e.Y)
+		case *ast.ParenExpr:
+			return literalOnly(e.X)
+		}
+		return false
+	}
+
+	// verbsOf returns the verbs of a format string in order. It deliberately refuses to
+	// guess at flags and widths: none are used here, and a classifier that quietly
+	// mis-pairs arguments would be worse than one that stops.
+	verbsOf := func(t *testing.T, format string) []byte {
+		t.Helper()
+		var verbs []byte
+		for i := 0; i < len(format); i++ {
+			if format[i] != '%' {
+				continue
+			}
+			i++
+			if i >= len(format) {
+				t.Fatalf("trailing %% in format %q", format)
+			}
+			if format[i] == '%' {
+				continue
+			}
+			if strings.IndexByte("+-# 0123456789.*", format[i]) >= 0 {
+				t.Fatalf("format %q uses a flag or width; this classifier does not model those, teach it before using one", format)
+			}
+			verbs = append(verbs, format[i])
+		}
+		return verbs
+	}
+
+	classified := 0
+	for _, decl := range parsed.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok {
+			continue
+		}
+		fnName := fn.Name.Name
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			pkg, ok := sel.X.(*ast.Ident)
+			if !ok || pkg.Name != "fmt" {
+				return true
+			}
+			line := fset.Position(call.Pos()).Line
+
+			var verbs []byte
+			args := call.Args[1:] // arg 0 is the writer
+			if sel.Sel.Name == "Fprintf" {
+				format, err := strconv.Unquote(text(args[0]))
+				if err != nil {
+					// A concatenated or computed format string is itself a finding: the
+					// verbs could not be read, so nothing after it can be classified.
+					t.Errorf("%s:%d: format string is not a single literal: %s", file, line, text(args[0]))
+					return true
+				}
+				verbs = verbsOf(t, format)
+				args = args[1:]
+				if len(verbs) != len(args) {
+					t.Errorf("%s:%d: %d verbs but %d arguments; the classifier cannot pair them", file, line, len(verbs), len(args))
+					return true
+				}
+			}
+
+			for i, arg := range args {
+				classified++
+				verb := byte(0)
+				if i < len(verbs) {
+					verb = verbs[i]
+				}
+				if verb == 'q' || verb == 'd' {
+					continue // the verb quotes and escapes it, or it is a number
+				}
+				if literalOnly(arg) {
+					continue // written in this file, so nothing untrusted reaches it
+				}
+				if e, ok := arg.(*ast.CallExpr); ok && escapers[text(e.Fun)] {
+					continue
+				}
+				if why, ok := exempt[fnName+"|"+text(arg)]; ok && why != "" {
+					continue
+				}
+				t.Errorf("%s:%d in %s: %%%c prints %s raw -- escape it (fuse.OneLine or oneLineErr) or add an exemption naming the reason",
+					file, line, fnName, verb, text(arg))
+			}
+			return true
+		})
+	}
+	if classified < 40 {
+		t.Errorf("only %d printed arguments were classified; main.go has many more, so the walk is not reaching them", classified)
+	}
+}
+
+// TestAUnicodeLineSeparatorCannotForgeALineEither. A scanner is not always `split on \n`:
+// Python's str.splitlines() and every UAX-14 line breaker also break on U+2028 and U+2029,
+// which are Zl and Zp rather than Cc. A box reason carrying one forges a line for those
+// readers and for no others, which is the worst kind of hole -- invisible to the test
+// suite of whoever is not looking for it.
+func TestAUnicodeLineSeparatorCannotForgeALineEither(t *testing.T) {
+	box := boxIn(t)
+	for _, sep := range []string{" ", " "} {
+		writeBox(t, box, fuse.Box{
+			Lockdown:   &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: "real" + sep + "FUSE OK lockdown=clear"},
+			Quarantine: map[string]fuse.Fuse{},
+		})
+		_, out, errOut := capture(t, []string{"check", "--box", box, "discord"}, nowish())
+		if strings.Contains(out+errOut, sep) {
+			t.Errorf("%q reached the output raw: %q", sep, out+errOut)
+		}
+		if !strings.Contains(errOut, `\u202`) {
+			t.Errorf("the separator must be shown as an escape, got %q", errOut)
+		}
+	}
+}
+
+// TestAReasonOfNothingButControlCharactersStillBlowsTheFuse. Folding must never become a
+// new refusal on the HARD fuse: a reason made only of control characters folds to nothing,
+// and refusing it would mean a fuse that could be blown yesterday cannot be blown today.
+// That is the one direction this design forbids. The reason is kept as its escapes instead.
+func TestAReasonOfNothingButControlCharactersStillBlowsTheFuse(t *testing.T) {
+	t.Run("lockdown", func(t *testing.T) {
+		box := boxIn(t)
+		code, out, errOut := capture(t, []string{"lockdown", "--box", box, "\x01"}, nowish())
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0 -- a fuse you cannot blow is not a fuse\nstdout: %q\nstderr: %q", code, out, errOut)
+		}
+		b, err := fuse.ReadBox(box)
+		if err != nil || b.Lockdown == nil {
+			t.Fatalf("read back: %v, %+v", err, b)
+		}
+		if b.Lockdown.Reason != `\x01` {
+			t.Errorf("stored reason = %q, want the visible escape rather than an empty record", b.Lockdown.Reason)
+		}
+	})
+
+	t.Run("quarantine", func(t *testing.T) {
+		box := boxIn(t)
+		code, out, errOut := capture(t, []string{"quarantine", "--box", box, "discord", "\x01"}, nowish())
+		if code != 0 {
+			t.Fatalf("exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+		}
+		b, err := fuse.ReadBox(box)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := b.Quarantine["discord"].Reason; got != `\x01` {
+			t.Errorf("stored reason = %q, want the visible escape", got)
+		}
+	})
+
+	// The genuinely empty reason is still refused, exactly as before this branch.
+	t.Run("whitespace only is still refused", func(t *testing.T) {
+		box := boxIn(t)
+		code, _, errOut := capture(t, []string{"lockdown", "--box", box, " \n\t "}, nowish())
+		if code != 2 {
+			t.Errorf("exit = %d, want 2 -- an empty reason was always refused", code)
+		}
+		if !strings.Contains(errOut, "needs a reason") {
+			t.Errorf("stderr = %q, want the reason refusal", errOut)
+		}
+	})
 }
