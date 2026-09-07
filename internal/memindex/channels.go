@@ -1,6 +1,7 @@
 package memindex
 
 import (
+	"container/heap"
 	"math"
 	"sort"
 )
@@ -139,13 +140,56 @@ func (t *Trigram) Query(text string, k int) []Scored {
 	return topK(scores, k)
 }
 
-// topK converts a score map into a ranked, deterministic slice: score
-// descending, then chunk id ascending. Map iteration order never leaks
-// because everything is collected before sorting.
+// scoreHeap keeps the worst retained hit at the root: lower score first,
+// then larger chunk id. The tie-break is essential even before the final
+// sort, or map iteration could change which tied chunks survive the cutoff.
+type scoreHeap []Scored
+
+func (h scoreHeap) Len() int { return len(h) }
+func (h scoreHeap) Less(i, j int) bool {
+	if h[i].Score != h[j].Score {
+		return h[i].Score < h[j].Score
+	}
+	return h[i].Chunk > h[j].Chunk
+}
+func (h scoreHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
+func (h *scoreHeap) Push(x any)   { *h = append(*h, x.(Scored)) }
+func (h *scoreHeap) Pop() any {
+	last := len(*h) - 1
+	x := (*h)[last]
+	*h = (*h)[:last]
+	return x
+}
+
+// topK selects scores without sorting all candidates: O(u log k + k log k)
+// time and O(k) selection storage for u scored chunks, when 0 < k < u.
+// Scoring still keeps its own O(u) map and may visit most of the corpus for
+// common terms. This changes neither retrieval semantics nor that cost.
 func topK(scores map[int32]float64, k int) []Scored {
-	out := make([]Scored, 0, len(scores))
-	for id, s := range scores {
-		out = append(out, Scored{Chunk: id, Score: s})
+	if k <= 0 {
+		return []Scored{}
+	}
+	out := make([]Scored, 0, min(k, len(scores)))
+	if k >= len(scores) {
+		// When everything is requested there is nothing to discard.
+		for id, s := range scores {
+			out = append(out, Scored{Chunk: id, Score: s})
+		}
+	} else {
+		h := scoreHeap(out)
+		for id, s := range scores {
+			candidate := Scored{Chunk: id, Score: s}
+			if len(h) < k {
+				h = append(h, candidate)
+				if len(h) == k {
+					heap.Init(&h)
+				}
+			} else if s > h[0].Score || (s == h[0].Score && id < h[0].Chunk) {
+				h[0] = candidate
+				heap.Fix(&h, 0)
+			}
+		}
+		out = []Scored(h)
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Score != out[j].Score {
@@ -153,9 +197,6 @@ func topK(scores map[int32]float64, k int) []Scored {
 		}
 		return out[i].Chunk < out[j].Chunk
 	})
-	if len(out) > k {
-		out = out[:k]
-	}
 	for i := range out {
 		out[i].Rank = i
 	}
