@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 const usage = `nova-fuse: the ingestion fuse -- lockdown and quarantine (see SPEC.md)
@@ -115,7 +116,7 @@ func parseBox(name string, args []string, stderr io.Writer) (box string, positio
 		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
 		// invocation: exit 2, never 0. `check` answers PERMISSION with 0, and a surface
 		// named "-h" must not be able to reach that answer.
-		fmt.Fprintf(stderr, "nova-fuse %s: %s\n\n%s", name, oneLineErr(err), usage)
+		fmt.Fprintf(stderr, "nova-fuse %s: %s\n\n%s", name, oneline.Err(err), usage)
 		return "", nil, false
 	}
 	for _, arg := range fs.Args() {
@@ -180,7 +181,7 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 		// REFUSE, the mirror of quarantine's refusal to narrow: while the box is
 		// unreadable every fuse is treated as BLOWN, and nothing provable can be lifted
 		// from a box that cannot be read. The corrupt bytes stay put -- they are evidence.
-		fmt.Fprintf(stderr, "nova-fuse lift quarantine: %s -- while the box is unreadable every fuse is treated as BLOWN; nothing provable can be lifted from a box that cannot be read\n", oneLineErr(readErr))
+		fmt.Fprintf(stderr, "nova-fuse lift quarantine: %s -- while the box is unreadable every fuse is treated as BLOWN; nothing provable can be lifted from a box that cannot be read\n", oneline.Err(readErr))
 		return 2
 	}
 
@@ -192,18 +193,18 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 		if names := b.Surfaces(); len(names) > 0 {
 			shown := make([]string, 0, len(names))
 			for _, n := range names {
-				shown = append(shown, fuse.OneLine(n))
+				shown = append(shown, oneline.Escape(n))
 			}
 			listed = strings.Join(shown, ", ")
 		}
 		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: nothing to lift; not quarantined (quarantined now: %s)\n",
-			fuse.OneLine(fuse.Surface(surface)), listed)
+			oneline.Field(fuse.Surface(surface)), listed)
 		return 1
 	}
 
 	if err := fuse.WriteBox(box, b); err != nil {
 		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: could not write box: %s (the box was not replaced, so the quarantine still stands)\n",
-			fuse.OneLine(fuse.Surface(surface)), oneLineErr(err))
+			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
 		return 1
 	}
 
@@ -211,12 +212,12 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 	after, err := fuse.ReadBox(box)
 	if err != nil {
 		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: written but unverifiable: %s (do not trust it; treat the surface as still quarantined and tell your person)\n",
-			fuse.OneLine(fuse.Surface(surface)), oneLineErr(err))
+			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
 		return 1
 	}
 	if name, _, still := after.Quarantined(surface); still {
 		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: lift did not take; %s is still quarantined on re-read (do not trust this run; tell your person)\n",
-			fuse.OneLine(fuse.Surface(surface)), fuse.OneLine(name))
+			oneline.Field(fuse.Surface(surface)), oneline.Escape(name))
 		return 1
 	}
 
@@ -228,10 +229,10 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 	sort.Strings(names)
 	for _, n := range names {
 		f := removed[n]
-		fmt.Fprintf(stdout, "LIFT OK quarantine=%s was since=%s: %s\n", fuse.OneLine(n), since(f), why(f))
+		fmt.Fprintf(stdout, "LIFT OK quarantine=%s was since=%s: %s\n", oneline.Field(n), since(f), why(f))
 	}
 	fmt.Fprintf(stdout, "LIFT OK verified: %s is no longer quarantined (soft: your own dial, both directions; a rescind is announced, never silent -- say so out loud)\n",
-		fuse.OneLine(fuse.Surface(surface)))
+		oneline.Escape(fuse.Surface(surface)))
 	if after.Lockdown != nil {
 		fmt.Fprintf(stderr, "nova-fuse lift quarantine: NOTE lockdown is still blown (since=%s) and blocks everything regardless\n",
 			since(*after.Lockdown))
@@ -254,7 +255,7 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 
 	b, err := fuse.ReadBox(box)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-fuse status: %s -- an unreadable box is treated as BLOWN, never as clear; repair or replace it with your person, live\n", oneLineErr(err))
+		fmt.Fprintf(stderr, "nova-fuse status: %s -- an unreadable box is treated as BLOWN, never as clear; repair or replace it with your person, live\n", oneline.Err(err))
 		return 2
 	}
 
@@ -267,7 +268,7 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 	}
 	for _, n := range names {
 		f := b.Quarantine[n]
-		fmt.Fprintf(stdout, "STATUS OK quarantine=%s since=%s: %s\n", fuse.OneLine(n), since(f), why(f))
+		fmt.Fprintf(stdout, "STATUS OK quarantine=%s since=%s: %s\n", oneline.Field(n), since(f), why(f))
 	}
 	return 0
 }
@@ -296,7 +297,7 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		// FAIL CLOSED, and say WHICH fact this is: "could not be read" is deliberately not
 		// "a fuse is blown" -- a claim must never outrun the measurement. Both refuse.
-		fmt.Fprintf(stderr, "nova-fuse check: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; repair the box with your person, live\n", oneLineErr(err))
+		fmt.Fprintf(stderr, "nova-fuse check: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; repair the box with your person, live\n", oneline.Err(err))
 		return 2
 	}
 
@@ -308,7 +309,7 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 
 	if name, f, ok := b.Quarantined(surface); ok {
 		fmt.Fprintf(stderr, "FUSE FAIL quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box %s %s)\n",
-			fuse.OneLine(name), since(f), why(f), fuse.OneLine(box), fuse.OneLine(name))
+			oneline.Field(name), since(f), why(f), oneline.Escape(box), oneline.Escape(name))
 		return 1
 	}
 
@@ -320,7 +321,7 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, "FUSE OK lockdown=clear (no surface named; no quarantine checked)")
 		return 0
 	}
-	fmt.Fprintf(stdout, "FUSE OK lockdown=clear quarantine=clear surface=%s\n", fuse.OneLine(fuse.Surface(surface)))
+	fmt.Fprintf(stdout, "FUSE OK lockdown=clear quarantine=clear surface=%s\n", oneline.Field(fuse.Surface(surface)))
 	return 0
 }
 
@@ -355,15 +356,15 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		b = fuse.Box{Quarantine: map[string]fuse.Fuse{}}
 		dst, perr := fuse.PreserveUnreadable(box)
 		if perr != nil {
-			fmt.Fprintf(stderr, "nova-fuse lockdown: box was unreadable (%s) and its bytes could NOT be preserved (%s); blowing lockdown anyway\n", oneLineErr(readErr), oneLineErr(perr))
+			fmt.Fprintf(stderr, "nova-fuse lockdown: box was unreadable (%s) and its bytes could NOT be preserved (%s); blowing lockdown anyway\n", oneline.Err(readErr), oneline.Err(perr))
 		} else {
-			fmt.Fprintf(stderr, "nova-fuse lockdown: box was unreadable (%s); its bytes are kept at %s -- any quarantine it recorded is NOT carried forward, and lockdown blocks everything, so nothing is less blocked than before\n", oneLineErr(readErr), fuse.OneLine(dst))
+			fmt.Fprintf(stderr, "nova-fuse lockdown: box was unreadable (%s); its bytes are kept at %s -- any quarantine it recorded is NOT carried forward, and lockdown blocks everything, so nothing is less blocked than before\n", oneline.Err(readErr), oneline.Escape(dst))
 		}
 	}
 
 	b.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
 	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "LOCKDOWN FAIL could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell your person now)\n", oneLineErr(err))
+		fmt.Fprintf(stderr, "LOCKDOWN FAIL could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell your person now)\n", oneline.Err(err))
 		return 1
 	}
 
@@ -371,12 +372,12 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	// is. Re-ask, always.
 	after, err := fuse.ReadBox(box)
 	if err != nil || after.Lockdown == nil {
-		fmt.Fprintf(stderr, "LOCKDOWN FAIL written but unverifiable (%s): do not trust it; stop by hand and tell your person now\n", oneLineErr(err))
+		fmt.Fprintf(stderr, "LOCKDOWN FAIL written but unverifiable (%s): do not trust it; stop by hand and tell your person now\n", oneline.Err(err))
 		return 1
 	}
 
 	fmt.Fprintf(stdout, "LOCKDOWN OK since=%s: %s (verified by re-reading the box; all untrusted reads and surface-driven acts stop, authored outbound continues; replaced only in a live conversation with your person -- go have it now)\n",
-		fuse.OneLine(after.Lockdown.At), fuse.OneLine(reason))
+		oneline.Field(after.Lockdown.At), oneline.Escape(reason))
 	return 0
 }
 
@@ -403,26 +404,31 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		// An unreadable box blocks EVERY surface. Replacing it with a fresh box holding
 		// only this one quarantine would UNBLOCK everything else, so the safety-shaped
 		// action would be a fail-OPEN. Under doubt, no.
-		fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box with your person\n", oneLineErr(readErr), fuse.OneLine(box))
+		fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box with your person\n", oneline.Err(readErr), oneline.Escape(box))
 		return 2
 	}
 
 	b.Quarantine[surface] = fuse.Fuse{At: stamp(now), Reason: reason}
 	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell your person)\n", fuse.OneLine(surface), oneLineErr(err))
+		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell your person)\n", oneline.Field(surface), oneline.Err(err))
 		return 1
 	}
 
-	// Re-ask. The exit code of a remedy is not evidence the remedy worked.
+	// Re-ask. The exit code of a remedy is not evidence the remedy worked. And ask for the
+	// KEY THAT WAS WRITTEN, not for any entry folding to it: a box that already held another
+	// spelling of this surface would otherwise verify through the sorted-first sibling and
+	// announce its name and its old stamp under the new reason -- a true claim about the
+	// wrong entry. Quarantined is the right question for the gate; here the question is
+	// whether this write landed.
 	after, err := fuse.ReadBox(box)
-	name, landed, ok2 := after.Quarantined(surface)
+	landed, ok2 := after.Quarantine[surface]
 	if err != nil || !ok2 {
-		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: written but unverifiable (%s): do not trust it; stop reading that surface by hand and tell your person\n", fuse.OneLine(surface), oneLineErr(err))
+		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: written but unverifiable (%s): do not trust it; stop reading that surface by hand and tell your person\n", oneline.Field(surface), oneline.Err(err))
 		return 1
 	}
 
 	fmt.Fprintf(stdout, "QUARANTINE OK %s since=%s: %s (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)\n",
-		fuse.OneLine(name), since(landed), fuse.OneLine(reason))
+		oneline.Field(surface), since(landed), oneline.Escape(reason))
 	return 0
 }
 
@@ -450,36 +456,26 @@ func stamp(now time.Time) string { return now.UTC().Format(time.RFC3339) }
 // why and since read a HAND-EDITED file defensively. Your person editing this box by hand
 // is not an edge case, it is the ONLY lockdown-replacement mechanism -- so a missing key
 // must produce an honest sentence, never a crash and never an invented value.
-// Both render through fuse.OneLine, and that is the load-bearing half: the box is
+// Both render through internal/oneline, and that is the load-bearing half: the box is
 // world-readable and hand-editable on purpose, so on a shared machine these two strings
 // are authored by whoever can write the file. Echoed raw, a newline in a reason forges a
 // SECOND line in the grammar SPEC.md tells callers to scan -- a FUSE OK beneath a real
-// FUSE FAIL -- and an ESC sequence does the same thing to an operator's terminal.
+// FUSE FAIL -- and an ESC sequence does the same thing to an operator's terminal. The
+// reason is the free-text tail of its line and renders through Escape; the stamp is the
+// value of a since= field and renders through Field, which also escapes whitespace and
+// "=", so that a hand-written stamp cannot pose as a second field on the line.
 func why(f fuse.Fuse) string {
 	if strings.TrimSpace(f.Reason) == "" {
 		return "NO REASON RECORDED"
 	}
-	return fuse.OneLine(f.Reason)
+	return oneline.Escape(f.Reason)
 }
 
 func since(f fuse.Fuse) string {
 	if strings.TrimSpace(f.At) == "" {
 		return "unrecorded"
 	}
-	return fuse.OneLine(f.At)
-}
-
-// oneLineErr renders an error into the <reason> slot of an event, a refusal or a note. An
-// error's text carries whatever the path that produced it carried, so a --box argument
-// holding a newline would otherwise break the line in two -- the caller's own argument
-// rather than the box's contents, and the guarantee covers both. Two callers reach this
-// with a nil error (the write landed and the verification failed for another reason), and
-// nil keeps fmt's own spelling rather than becoming a sentence claiming more than is known.
-func oneLineErr(err error) string {
-	if err == nil {
-		return "<nil>"
-	}
-	return fuse.OneLine(err.Error())
+	return oneline.Field(f.At)
 }
 
 // keepableReason is how a reason is stored, and it exists to make sure FOLDING NEVER
@@ -496,5 +492,5 @@ func keepableReason(raw string) string {
 	if folded := fuse.Fold(raw); folded != "" {
 		return folded
 	}
-	return fuse.OneLine(strings.TrimSpace(raw))
+	return oneline.Escape(strings.TrimSpace(raw))
 }

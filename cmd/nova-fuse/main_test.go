@@ -1312,7 +1312,7 @@ func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
 //
 //	%q or %d      -- the verb escapes it, or it is a number
 //	a literal     -- written in this file, so nothing untrusted reaches it
-//	escaped       -- rendered through fuse.OneLine, oneLineErr, why or since
+//	escaped       -- rendered through oneline.Escape, oneline.Field, oneline.Err, why or since
 //	exempted      -- named below, one entry per site, with the reason stated
 //
 // Anything else fails, naming the line. A new interpolation is a decision from now on,
@@ -1322,7 +1322,7 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 
 	// Rendered through one of these, a string cannot carry a line break or a terminal
 	// control sequence. See fuse.OneLine.
-	escapers := map[string]bool{"fuse.OneLine": true, "oneLineErr": true, "why": true, "since": true}
+	escapers := map[string]bool{"oneline.Escape": true, "oneline.Field": true, "oneline.Err": true, "fuse.OneLine": true, "why": true, "since": true}
 
 	// One entry per site, keyed by FILE, function and source text. The file is in the key
 	// because a package is many files: without it, a same-named function added in another
@@ -1330,7 +1330,7 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 	// claim is either checked below or stated here as the reason a reader would accept.
 	exempt := map[string]string{
 		"main.go|cmdPath|box":           "`path` hands back the caller-supplied argument unescaped; SPEC.md exempts it by name and states that no caller may scan path output for grammar, because it will print one if the argument is one",
-		"main.go|liftQuarantine|listed": "built immediately above from fuse.OneLine over every stored name",
+		"main.go|liftQuarantine|listed": "built immediately above from oneline.Escape over every stored name",
 		"main.go|run|usage":             "the usage constant declared in this file",
 		"main.go|parseBox|usage":        "the usage constant declared in this file",
 		"main.go|cmdLift|usage":         "the usage constant declared in this file",
@@ -1471,7 +1471,7 @@ func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
 						usedExemption[key] = true
 						continue
 					}
-					t.Errorf("%s:%d in %s: %%%c prints %s raw -- escape it (fuse.OneLine or oneLineErr) or add an exemption naming the reason",
+					t.Errorf("%s:%d in %s: %%%c prints %s raw -- escape it (oneline.Escape, oneline.Field or oneline.Err) or add an exemption naming the reason",
 						file, line, fnName, verb, text(arg))
 				}
 				return true
@@ -1708,7 +1708,7 @@ func checkOneSourceForBypasses(t *testing.T, f goSource) {
 
 	// A name declared inside a function that shadows one of these turns every escape in
 	// scope into a no-op, invisibly to the sibling test, which classifies by source text.
-	shadows := map[string]bool{"fuse": true, "oneLineErr": true, "OneLine": true, "Fold": true, "why": true, "since": true}
+	shadows := map[string]bool{"fuse": true, "oneline": true, "Escape": true, "Field": true, "Err": true, "OneLine": true, "Fold": true, "why": true, "since": true}
 	declared := func(n ast.Node, idents []*ast.Ident) {
 		for _, id := range idents {
 			if shadows[id.Name] {
@@ -1796,7 +1796,8 @@ func checkOneSourceForBypasses(t *testing.T, f goSource) {
 	allowed := map[string]bool{
 		`"flag"`: true, `"fmt"`: true, `"io"`: true, `"os"`: true, `"sort"`: true,
 		`"strings"`: true, `"time"`: true,
-		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`: true,
+		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`:    true,
+		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`: true,
 	}
 	for _, imp := range parsed.Imports {
 		path := imp.Path.Value
@@ -1849,7 +1850,7 @@ func TestLiftRemovesEveryFoldEquivalentSpelling(t *testing.T) {
 	for i, want := range []string{
 		`LIFT OK quarantine=DIS\x01CORD was since=t: three`,
 		`LIFT OK quarantine=dis\x09cord was since=t: two`,
-		`LIFT OK quarantine=dis cord was since=t: one`,
+		`LIFT OK quarantine=dis\x20cord was since=t: one`,
 	} {
 		if lines[i] != want {
 			t.Errorf("line %d = %q, want %q", i, lines[i], want)
@@ -1941,5 +1942,93 @@ func TestCheckIsDeterministicWhenTwoStoredKeysFoldTogether(t *testing.T) {
 		sort.Strings(got)
 		t.Errorf("check printed %d different refusals for one box; a gate that reorders itself is one nobody can diff:\n%s",
 			len(seen), strings.Join(got, ""))
+	}
+}
+
+// TestAStoredKeyCannotPoseAsAField is the specimen from #24. A stored quarantine key of
+// `x lockdown=clear quarantines=0`, spaces only and nothing OneLine would touch, printed
+// as `STATUS OK quarantine=x lockdown=clear quarantines=0 since=t: r`, so a caller
+// grepping status output for lockdown=clear matched while a real lockdown was blown. A
+// field value is one token now, whitespace and "=" escaped, so a key=value search can
+// match only a field this tool wrote.
+func TestAStoredKeyCannotPoseAsAField(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{
+		Lockdown:   &fuse.Fuse{At: "2026-08-03T00:00:00Z", Reason: "real"},
+		Quarantine: map[string]fuse.Fuse{"x lockdown=clear quarantines=0": {At: "t", Reason: "r"}},
+	})
+
+	code, out, errOut := capture(t, []string{"status", "--box", box}, nowish())
+	if code != 0 {
+		t.Fatalf("status exit = %d, want 0\nstderr: %q", code, errOut)
+	}
+	if strings.Contains(out, "lockdown=clear") {
+		t.Errorf("a stored key posed as the lockdown field:\n%s", out)
+	}
+	if !strings.Contains(out, `quarantine=x\x20lockdown\x3dclear\x20quarantines\x3d0 since=t: r`) {
+		t.Errorf("the key must print as one token with its = escaped, got:\n%s", out)
+	}
+	// Every field on every line is one token holding exactly one "=", the tool's own.
+	for _, line := range strings.Split(strings.TrimRight(out, "\n"), "\n") {
+		head, _, _ := strings.Cut(line, ": ")
+		for _, tok := range strings.Fields(head)[2:] {
+			if strings.Count(tok, "=") != 1 {
+				t.Errorf("token %q on %q is not one key=value field", tok, line)
+			}
+		}
+	}
+
+	// The same key through check and lift, which name it in a field too.
+	code, _, errOut = capture(t, []string{"check", "--box", box, "x lockdown=clear quarantines=0"}, nowish())
+	if code != 1 || strings.Contains(errOut, "lockdown=clear") {
+		t.Errorf("check exit = %d, want 1 with no lockdown=clear anywhere:\n%s", code, errOut)
+	}
+}
+
+// TestASurfaceWithASpaceIsOneTokenInEveryField pins the other half of the same rule on
+// this tool's own writes: a surface name holding a space is legal, folded, and printed as
+// one token wherever it is a field, so a whitespace-splitting scanner still counts fields
+// where this tool wrote them.
+func TestASurfaceWithASpaceIsOneTokenInEveryField(t *testing.T) {
+	box := boxIn(t)
+	mustRun(t, []string{"quarantine", "--box", box, "my surface", "why"}, nowish())
+
+	code, out, _ := capture(t, []string{"check", "--box", box, "other"}, nowish())
+	if code != 0 || !strings.Contains(out, "surface=other\n") {
+		t.Errorf("check other: exit %d, %q", code, out)
+	}
+	_, out, errOut := capture(t, []string{"check", "--box", box, "my surface"}, nowish())
+	if !strings.Contains(errOut, `FUSE FAIL quarantine=my\x20surface since=`) {
+		t.Errorf("FUSE FAIL must name the surface as one token, got %q", errOut)
+	}
+	_, out, _ = capture(t, []string{"status", "--box", box}, nowish())
+	if !strings.Contains(out, `STATUS OK quarantine=my\x20surface since=`) {
+		t.Errorf("STATUS must name the surface as one token, got %q", out)
+	}
+	_, out, _ = capture(t, []string{"lift", "quarantine", "--box", box, "my surface"}, nowish())
+	if !strings.Contains(out, `LIFT OK quarantine=my\x20surface was since=`) {
+		t.Errorf("LIFT must name the surface as one token, got %q", out)
+	}
+}
+
+// TestQuarantineOKNamesTheEntryItVerified. When the box already held a key folding to the
+// surface being quarantined, the verification asked Quarantined, which answers with the
+// sorted-first stored spelling -- so `quarantine discord` over a box holding `Discord`
+// announced `QUARANTINE OK Discord since=<the old stamp>` with the new reason: a true
+// claim about a sibling entry, under the wrong name and the wrong time. The verification
+// now reads back the exact key it wrote, and the line names that entry.
+func TestQuarantineOKNamesTheEntryItVerified(t *testing.T) {
+	box := boxIn(t)
+	writeBox(t, box, fuse.Box{Quarantine: map[string]fuse.Fuse{
+		"Discord": {At: "2020-01-01T00:00:00Z", Reason: "old"},
+	}})
+	now := nowish()
+	code, out, errOut := capture(t, []string{"quarantine", "--box", box, "discord", "new"}, now)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	want := "QUARANTINE OK discord since=" + stamp(now) + ": new ("
+	if !strings.HasPrefix(out, want) {
+		t.Errorf("stdout = %q, want it to open with %q -- the entry that was written and read back, not its sibling", out, want)
 	}
 }
