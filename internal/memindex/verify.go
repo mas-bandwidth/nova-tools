@@ -158,11 +158,55 @@ func wikilinkTarget(body string) string {
 	return strings.TrimSpace(body)
 }
 
-// Coverage checks one A:B pair — every file matching glob A must be named (by
-// stem) in at least one file matching glob B, and every relative .md link
-// inside the B files must point at a file that exists. That is the generic
-// form of "every memory file has an index line, and every index line points
-// at a real file"; the globs carry the layout, so the tool assumes none.
+// identByte reports whether b can be part of a filename stem or an index
+// identifier; every other byte is a boundary. Non-ASCII bytes count as
+// identifier bytes on purpose — a stem butted against a letter in another
+// script is not a bounded mention, and under-matching here only ever
+// over-reports, which is this file's declared posture.
+func identByte(b byte) bool {
+	switch {
+	case b >= 'a' && b <= 'z', b >= 'A' && b <= 'Z', b >= '0' && b <= '9':
+		return true
+	case b == '-', b == '_', b >= 0x80:
+		return true
+	}
+	return false
+}
+
+// containsBounded reports whether needle occurs in hay with a non-identifier
+// byte (or an end of string) on each side. A bare strings.Contains lets one
+// filename's substring supply another filename's membership: an index naming
+// only foobar.md silently covered foo.md, so an unindexed note passed the
+// loss check and the run exited 0 on a real loss. A checker that declares
+// itself over-reporting must still never accept an unrelated entry as
+// evidence — under-reporting is the one failure it has no defence against.
+func containsBounded(hay, needle string) bool {
+	if needle == "" {
+		return false
+	}
+	for i := 0; i+len(needle) <= len(hay); {
+		j := strings.Index(hay[i:], needle)
+		if j < 0 {
+			return false
+		}
+		s, e := i+j, i+j+len(needle)
+		if (s == 0 || !identByte(hay[s-1])) && (e == len(hay) || !identByte(hay[e])) {
+			return true
+		}
+		i = s + 1
+	}
+	return false
+}
+
+// Coverage checks one A:B pair — every file matching glob A must be named in
+// at least one file matching glob B, and every relative .md link inside the B
+// files must point at a file that exists. That is the generic form of "every
+// memory file has an index line, and every index line points at a real file";
+// the globs carry the layout, so the tool assumes none.
+//
+// "Named" means one of two things, and both are bounded: a relative .md link
+// in a B file that RESOLVES to the A file, or the A file's stem appearing in
+// B as a whole identifier. Substring membership is not membership.
 //
 // An empty side is an error, never a pass: a coverage check whose A side
 // matched nothing has not verified anything.
@@ -182,9 +226,13 @@ func Coverage(fsys fs.FS, globA, globB string) ([]Finding, error) {
 	sort.Strings(aFiles)
 	sort.Strings(bFiles)
 
-	// The B side, concatenated once; stems are matched against it.
+	// The B side, read once: concatenated text for bounded stem matching, and
+	// the set of paths its relative .md links actually resolve to. The link
+	// set is the strong evidence — a resolved link names the file itself,
+	// where a stem is only a name that happens to appear.
 	var bContent strings.Builder
 	bSet := map[string]bool{}
+	linked := map[string]bool{}
 	for _, b := range bFiles {
 		raw, err := fs.ReadFile(fsys, b)
 		if err != nil {
@@ -193,6 +241,14 @@ func Coverage(fsys fs.FS, globA, globB string) ([]Finding, error) {
 		bContent.WriteString(string(raw))
 		bContent.WriteByte('\n')
 		bSet[b] = true
+		dir := path.Dir(b)
+		for _, m := range mdLinkRe.FindAllStringSubmatch(string(raw), -1) {
+			target, ok := linkTarget(m[1])
+			if !ok {
+				continue
+			}
+			linked[path.Clean(path.Join(dir, target))] = true
+		}
 	}
 	bAll := bContent.String()
 
@@ -202,10 +258,11 @@ func Coverage(fsys fs.FS, globA, globB string) ([]Finding, error) {
 			continue // an index file need not index itself
 		}
 		stem := strings.TrimSuffix(path.Base(a), ".md")
-		if !strings.Contains(bAll, stem) {
-			out = append(out, Finding{Kind: "coverage",
-				Detail: fmt.Sprintf("%s: stem %q appears in no file matching %s", a, stem, globB)})
+		if linked[path.Clean(a)] || containsBounded(bAll, stem) {
+			continue
 		}
+		out = append(out, Finding{Kind: "coverage",
+			Detail: fmt.Sprintf("%s: stem %q appears in no file matching %s", a, stem, globB)})
 	}
 	// Backward: every relative .md link in B resolves.
 	for _, b := range bFiles {

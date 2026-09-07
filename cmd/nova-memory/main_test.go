@@ -346,8 +346,6 @@ func TestCheckCandidateSplittingIsLineEndingAgnostic(t *testing.T) {
 	lfBody := "The compressor belt hardens with age and the blast runs a half second short.\n\n" +
 		"The relief boat should not try the jetty steps near low water on a spring tide.\n\n" +
 		"Salt haze on the glazing has to be washed off in daylight before it etches the glass.\n"
-	crlfBody := strings.ReplaceAll(lfBody, "\n", "\r\n")
-
 	run := func(name, body string) string {
 		p := filepath.Join(t.TempDir(), name)
 		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
@@ -359,12 +357,6 @@ func TestCheckCandidateSplittingIsLineEndingAgnostic(t *testing.T) {
 		}
 		return stdout
 	}
-	lf, crlf := run("lf.md", lfBody), run("crlf.md", crlfBody)
-	for _, want := range []string{"MEMORY OK candidates=3", "MEMORY CAND n=3"} {
-		if !strings.Contains(crlf, want) {
-			t.Errorf("CRLF input: stdout = %q, want it to contain %q — a CRLF file arrived as one giant candidate", crlf, want)
-		}
-	}
 	strip := func(s string) string {
 		var keep []string
 		for _, line := range strings.Split(s, "\n") {
@@ -374,8 +366,24 @@ func TestCheckCandidateSplittingIsLineEndingAgnostic(t *testing.T) {
 		}
 		return strings.Join(keep, "\n")
 	}
-	if strip(lf) != strip(crlf) {
-		t.Errorf("the twins produced different receipts:\n--- lf ---\n%s--- crlf ---\n%s", lf, crlf)
+	lf := run("lf.md", lfBody)
+	// Both twins, because a normalization that only folds "\r\n" leaves a
+	// lone-CR file exactly as broken as an unfixed CRLF one.
+	for _, tw := range []struct{ name, ending string }{
+		{"CRLF", "\r\n"},
+		{"CR", "\r"},
+	} {
+		t.Run(tw.name, func(t *testing.T) {
+			twin := run("twin.md", strings.ReplaceAll(lfBody, "\n", tw.ending))
+			for _, want := range []string{"MEMORY OK candidates=3", "MEMORY CAND n=3"} {
+				if !strings.Contains(twin, want) {
+					t.Errorf("%s input: stdout = %q, want it to contain %q — the file arrived as one giant candidate", tw.name, twin, want)
+				}
+			}
+			if strip(lf) != strip(twin) {
+				t.Errorf("the twins produced different receipts:\n--- lf ---\n%s--- %s ---\n%s", lf, tw.name, twin)
+			}
+		})
 	}
 }
 

@@ -114,14 +114,6 @@ func TestBuildChunkingIsLineEndingAgnostic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LF build: %v", err)
 	}
-	crlf, err := Build(fstest.MapFS{"twin.md": {Data: []byte(strings.ReplaceAll(body, "\n", "\r\n"))}}, nil)
-	if err != nil {
-		t.Fatalf("CRLF build: %v", err)
-	}
-	if len(lf.Chunks) != len(crlf.Chunks) {
-		t.Fatalf("CRLF twin indexed as %d chunks, LF twin as %d — a CRLF corpus becomes one giant chunk per file",
-			len(crlf.Chunks), len(lf.Chunks))
-	}
 	// Four: the frontmatter block is itself a paragraph over MinTerms, then
 	// the three prose paragraphs. The number is pinned so a regression that
 	// stops splitting shows up as one chunk here rather than as a quiet
@@ -129,16 +121,34 @@ func TestBuildChunkingIsLineEndingAgnostic(t *testing.T) {
 	if len(lf.Chunks) != 4 {
 		t.Fatalf("the fixture is meant to hold 4 indexable paragraphs, got %d", len(lf.Chunks))
 	}
-	for i := range lf.Chunks {
-		if lf.Chunks[i].Text != crlf.Chunks[i].Text || lf.Chunks[i].Para != crlf.Chunks[i].Para {
-			t.Errorf("chunk %d differs between twins:\n LF: %d %q\nCRLF: %d %q",
-				i, lf.Chunks[i].Para, lf.Chunks[i].Text, crlf.Chunks[i].Para, crlf.Chunks[i].Text)
-		}
-	}
-	// Frontmatter is read from the same normalized text, so a CRLF file's
-	// name: reaches receipts too.
-	if crlf.Chunks[0].FMName != "crlf-twin" {
-		t.Errorf("CRLF frontmatter name = %q, want crlf-twin", crlf.Chunks[0].FMName)
+	// The lone-CR twin is not a hypothetical: it is what classic-Mac-era
+	// tooling and a few exporters still emit, and it is what a CRLF fix that
+	// only replaces "\r\n" leaves behind untouched.
+	for _, tw := range []struct{ name, ending string }{
+		{"CRLF", "\r\n"},
+		{"CR", "\r"},
+	} {
+		t.Run(tw.name, func(t *testing.T) {
+			twin, err := Build(fstest.MapFS{"twin.md": {Data: []byte(strings.ReplaceAll(body, "\n", tw.ending))}}, nil)
+			if err != nil {
+				t.Fatalf("%s build: %v", tw.name, err)
+			}
+			if len(twin.Chunks) != len(lf.Chunks) {
+				t.Fatalf("%s twin indexed as %d chunks, LF twin as %d — that corpus becomes one giant chunk per file",
+					tw.name, len(twin.Chunks), len(lf.Chunks))
+			}
+			for i := range lf.Chunks {
+				if lf.Chunks[i].Text != twin.Chunks[i].Text || lf.Chunks[i].Para != twin.Chunks[i].Para {
+					t.Errorf("chunk %d differs between twins:\n  LF: %d %q\n%4s: %d %q",
+						i, lf.Chunks[i].Para, lf.Chunks[i].Text, tw.name, twin.Chunks[i].Para, twin.Chunks[i].Text)
+				}
+			}
+			// Frontmatter is read from the same normalized text, so the twin's
+			// name: reaches receipts too.
+			if twin.Chunks[0].FMName != "crlf-twin" {
+				t.Errorf("%s frontmatter name = %q, want crlf-twin", tw.name, twin.Chunks[0].FMName)
+			}
+		})
 	}
 }
 
@@ -223,6 +233,61 @@ func TestRetrieveEmptyForOutOfVocabularyQuery(t *testing.T) {
 	c := build(t)
 	if hits := Retrieve(c, []Channel{NewBM25(c)}, "zzqq xxvv wwjj", 5); len(hits) != 0 {
 		t.Fatalf("out-of-vocabulary query returned hits: %+v", hits)
+	}
+}
+
+// crowdingFS holds one file owning far more matching paragraphs than any
+// fixed per-channel chunk headroom, and one other file matching the same
+// query. The documented contract is top-k FILES, so k=2 has to reach both.
+func crowdingFS() fstest.MapFS {
+	var long strings.Builder
+	long.WriteString("---\nname: a-long\n---\n")
+	for i := 0; i < 100; i++ {
+		long.WriteString("\nquasar nebula comet\n")
+	}
+	return fstest.MapFS{
+		"a-long.md": {Data: []byte(long.String())},
+		"b-relevant.md": {Data: []byte("---\nname: b-relevant\n---\n\n" +
+			"quasar nebula comet astronomy telescope spectrum planet orbital gravity observation\n")},
+	}
+}
+
+// The unit of the retrieval limit is FILES, not chunks. Each channel was
+// asked for max(50, k*10) chunks and only then aggregated per file, so a
+// document owning more matching paragraphs than that cap filled every slot
+// and every other matching file was truncated away BEFORE it could be
+// counted — --k 2 returning one file, silently, with a green receipt line.
+func TestRetrieveDoesNotLetOneLongFileCrowdOutOthers(t *testing.T) {
+	c, err := Build(crowdingFS(), nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, chans := range [][]Channel{
+		{NewBM25(c)},
+		{NewBM25(c), NewTrigram(c)},
+	} {
+		hits := Retrieve(c, chans, "quasar nebula comet", 2)
+		var files []string
+		for _, h := range hits {
+			files = append(files, h.File)
+		}
+		if len(hits) != 2 {
+			t.Errorf("%d channel(s): asked for 2 files, got %d: %v — one long file exhausted the headroom",
+				len(chans), len(hits), files)
+			continue
+		}
+		var haveLong, haveOther bool
+		for _, f := range files {
+			switch f {
+			case "a-long.md":
+				haveLong = true
+			case "b-relevant.md":
+				haveOther = true
+			}
+		}
+		if !haveLong || !haveOther {
+			t.Errorf("%d channel(s): top-2 files were %v, want both a-long.md and b-relevant.md", len(chans), files)
+		}
 	}
 }
 
@@ -395,6 +460,38 @@ func TestCoverageChecksAnchoredAndQueriedLinks(t *testing.T) {
 	}
 }
 
+// TestCoverageCollidingStemIsNotCoverage plants a collision: a note whose
+// stem is a PREFIX of another note's stem, where only the longer one is
+// indexed. Testing membership with a bare substring over the concatenated
+// index makes foobar.md's entry supply foo.md's coverage, and the orphan
+// passes silently — the one direction a loss check must never fail in, since
+// its whole value is the exit code on a real loss. The correctly indexed
+// notes stay in the fixture as the control: tightening the match must not
+// start reporting files that are genuinely named.
+func TestCoverageCollidingStemIsNotCoverage(t *testing.T) {
+	fsys := corpusFS()
+	fsys["notes/foo.md"] = &fstest.MapFile{Data: []byte("---\nname: foo\n---\n\na lesson no index names at all")}
+	fsys["notes/foobar.md"] = &fstest.MapFile{Data: []byte("---\nname: foobar\n---\n\na lesson the index does name")}
+	fsys["notes/index-a.md"] = &fstest.MapFile{Data: []byte(
+		"# Index\n\n- [wind-log](wind.md) — the anemometer\n- [glazing-care](glass.md) — the glazing\n- [foobar](foobar.md) — the longer stem\n")}
+
+	fnds, err := Coverage(fsys, "notes/*.md", "notes/index-*.md")
+	if err != nil {
+		t.Fatalf("Coverage: %v", err)
+	}
+	var haveFoo bool
+	for _, f := range fnds {
+		if f.Kind == "coverage" && strings.Contains(f.Detail, "notes/foo.md") {
+			haveFoo = true
+			continue
+		}
+		t.Errorf("unexpected finding on a genuinely indexed file: %s: %s", f.Kind, f.Detail)
+	}
+	if !haveFoo {
+		t.Error("notes/foo.md passed coverage on foobar.md's index entry — a substring is not membership")
+	}
+}
+
 func TestCoverageRefusesEmptySide(t *testing.T) {
 	if _, err := Coverage(corpusFS(), "nothing/*.md", "notes/index-*.md"); err == nil {
 		t.Error("Coverage accepted an empty A side — a broken check reported as a pass")
@@ -526,14 +623,18 @@ func TestFrontmatterRefusesEmptyGlob(t *testing.T) {
 // .gitattributes, so only a test like this one can cover the user's file.
 func TestFrontmatterToleratesCRLF(t *testing.T) {
 	lf := "---\nname: lantern\ntype: reference\n---\n\nbody\n"
-	crlf := "---\r\nname: lantern\r\ntype: reference\r\n---\r\n\r\nbody\r\n"
 	wantName, wantType := frontmatter(lf)
 	if wantName != "lantern" || wantType != "reference" {
 		t.Fatalf("LF baseline broken: name=%q type=%q", wantName, wantType)
 	}
-	gotName, gotType := frontmatter(crlf)
-	if gotName != wantName || gotType != wantType {
-		t.Errorf("CRLF: name=%q type=%q, want %q/%q", gotName, gotType, wantName, wantType)
+	for _, tw := range []struct{ name, ending string }{
+		{"CRLF", "\r\n"},
+		{"CR", "\r"}, // the twin a "\r\n" replacement leaves untouched
+	} {
+		gotName, gotType := frontmatter(strings.ReplaceAll(lf, "\n", tw.ending))
+		if gotName != wantName || gotType != wantType {
+			t.Errorf("%s: name=%q type=%q, want %q/%q", tw.name, gotName, gotType, wantName, wantType)
+		}
 	}
 }
 

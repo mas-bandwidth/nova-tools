@@ -389,7 +389,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	// blank-line split: a CRLF candidate file must chunk into the paragraphs
 	// its LF twin does, or check queries one giant blob against a corpus that
 	// was indexed paragraph by paragraph.
-	for _, p := range strings.Split(strings.ReplaceAll(string(raw), "\r\n", "\n"), "\n\n") {
+	for _, p := range strings.Split(memindex.NormalizeNewlines(string(raw)), "\n\n") {
 		if len(memindex.Tokenize(p)) >= memindex.MinTerms {
 			candidates = append(candidates, p)
 		}

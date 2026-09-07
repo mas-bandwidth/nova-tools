@@ -242,6 +242,18 @@ const rrfK = 60.0
 // by best fused chunk, and returns the top k files. With one channel this
 // reduces to that channel's own ranking (order-preserving), so single-channel
 // output is exactly that channel's opinion.
+//
+// THE UNIT OF THE LIMIT IS FILES, NOT CHUNKS. A fixed per-channel chunk
+// headroom is not headroom at all when one document owns more matching
+// paragraphs than the cap: a 100-paragraph file filled the first 50 slots and
+// every other matching file was truncated away BEFORE aggregation, so a
+// request for the top 2 files returned 1, with nothing on the receipt saying
+// so. Raising the multiplier only moves the fixture that breaks it. So the
+// depth DOUBLES until k distinct files are in hand, the channels have no more
+// candidates to give, or the depth covers the corpus. Deepening is monotone —
+// a chunk's rank within a channel does not change when more chunks are asked
+// for, so the fused scores already computed are the same ones — and the
+// progression is fixed, so results stay deterministic.
 func Retrieve(c *Corpus, channels []Channel, text string, k int) []FileHit {
 	if len(channels) == 0 || k <= 0 {
 		return nil
@@ -252,7 +264,6 @@ func Retrieve(c *Corpus, channels []Channel, text string, k int) []FileHit {
 	if deep < 50 {
 		deep = 50
 	}
-	fused := map[int32]float64{}
 	// The native score is claimed by the first channel IN THE CALLER'S ORDER
 	// that surfaced the chunk, so every receipt carries a score some channel
 	// actually computed, and names which one. Channels is a slice, so which
@@ -261,15 +272,36 @@ func Retrieve(c *Corpus, channels []Channel, text string, k int) []FileHit {
 		score float64
 		chn   string
 	}
-	native := map[int32]nativeScore{}
-	for _, ch := range channels {
-		name := ch.Name()
-		for _, s := range ch.Query(text, deep) {
-			fused[s.Chunk] += 1.0 / (rrfK + float64(s.Rank))
-			if _, claimed := native[s.Chunk]; !claimed {
-				native[s.Chunk] = nativeScore{score: s.Score, chn: name}
+	var fused map[int32]float64
+	var native map[int32]nativeScore
+	for {
+		// Rebuilt from scratch at each depth rather than accumulated, so the
+		// fused total is a sum over one consistent set of ranks and the native
+		// claim still goes to the first channel in the caller's order.
+		fused = map[int32]float64{}
+		native = map[int32]nativeScore{}
+		exhausted := true
+		for _, ch := range channels {
+			name := ch.Name()
+			got := ch.Query(text, deep)
+			if len(got) == deep {
+				exhausted = false // it filled the budget, so it may have more
+			}
+			for _, s := range got {
+				fused[s.Chunk] += 1.0 / (rrfK + float64(s.Rank))
+				if _, claimed := native[s.Chunk]; !claimed {
+					native[s.Chunk] = nativeScore{score: s.Score, chn: name}
+				}
 			}
 		}
+		files := map[string]bool{}
+		for id := range fused {
+			files[c.Chunks[id].File] = true
+		}
+		if len(files) >= k || exhausted || deep >= len(c.Chunks) {
+			break
+		}
+		deep *= 2
 	}
 	best := map[string]FileHit{}
 	for id, f := range fused {
