@@ -226,6 +226,61 @@ func TestRetrieveEmptyForOutOfVocabularyQuery(t *testing.T) {
 	}
 }
 
+// crowdingFS holds one file owning far more matching paragraphs than any
+// fixed per-channel chunk headroom, and one other file matching the same
+// query. The documented contract is top-k FILES, so k=2 has to reach both.
+func crowdingFS() fstest.MapFS {
+	var long strings.Builder
+	long.WriteString("---\nname: a-long\n---\n")
+	for i := 0; i < 100; i++ {
+		long.WriteString("\nquasar nebula comet\n")
+	}
+	return fstest.MapFS{
+		"a-long.md": {Data: []byte(long.String())},
+		"b-relevant.md": {Data: []byte("---\nname: b-relevant\n---\n\n" +
+			"quasar nebula comet astronomy telescope spectrum planet orbital gravity observation\n")},
+	}
+}
+
+// The unit of the retrieval limit is FILES, not chunks. Each channel was
+// asked for max(50, k*10) chunks and only then aggregated per file, so a
+// document owning more matching paragraphs than that cap filled every slot
+// and every other matching file was truncated away BEFORE it could be
+// counted — --k 2 returning one file, silently, with a green receipt line.
+func TestRetrieveDoesNotLetOneLongFileCrowdOutOthers(t *testing.T) {
+	c, err := Build(crowdingFS(), nil)
+	if err != nil {
+		t.Fatalf("Build: %v", err)
+	}
+	for _, chans := range [][]Channel{
+		{NewBM25(c)},
+		{NewBM25(c), NewTrigram(c)},
+	} {
+		hits := Retrieve(c, chans, "quasar nebula comet", 2)
+		var files []string
+		for _, h := range hits {
+			files = append(files, h.File)
+		}
+		if len(hits) != 2 {
+			t.Errorf("%d channel(s): asked for 2 files, got %d: %v — one long file exhausted the headroom",
+				len(chans), len(hits), files)
+			continue
+		}
+		var haveLong, haveOther bool
+		for _, f := range files {
+			switch f {
+			case "a-long.md":
+				haveLong = true
+			case "b-relevant.md":
+				haveOther = true
+			}
+		}
+		if !haveLong || !haveOther {
+			t.Errorf("%d channel(s): top-2 files were %v, want both a-long.md and b-relevant.md", len(chans), files)
+		}
+	}
+}
+
 func TestRetrieveRefusesNonPositiveK(t *testing.T) {
 	c := build(t)
 	for _, k := range []int{0, -1} {
