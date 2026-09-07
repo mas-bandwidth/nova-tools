@@ -395,6 +395,38 @@ func TestCoverageChecksAnchoredAndQueriedLinks(t *testing.T) {
 	}
 }
 
+// TestCoverageCollidingStemIsNotCoverage plants a collision: a note whose
+// stem is a PREFIX of another note's stem, where only the longer one is
+// indexed. Testing membership with a bare substring over the concatenated
+// index makes foobar.md's entry supply foo.md's coverage, and the orphan
+// passes silently — the one direction a loss check must never fail in, since
+// its whole value is the exit code on a real loss. The correctly indexed
+// notes stay in the fixture as the control: tightening the match must not
+// start reporting files that are genuinely named.
+func TestCoverageCollidingStemIsNotCoverage(t *testing.T) {
+	fsys := corpusFS()
+	fsys["notes/foo.md"] = &fstest.MapFile{Data: []byte("---\nname: foo\n---\n\na lesson no index names at all")}
+	fsys["notes/foobar.md"] = &fstest.MapFile{Data: []byte("---\nname: foobar\n---\n\na lesson the index does name")}
+	fsys["notes/index-a.md"] = &fstest.MapFile{Data: []byte(
+		"# Index\n\n- [wind-log](wind.md) — the anemometer\n- [glazing-care](glass.md) — the glazing\n- [foobar](foobar.md) — the longer stem\n")}
+
+	fnds, err := Coverage(fsys, "notes/*.md", "notes/index-*.md")
+	if err != nil {
+		t.Fatalf("Coverage: %v", err)
+	}
+	var haveFoo bool
+	for _, f := range fnds {
+		if f.Kind == "coverage" && strings.Contains(f.Detail, "notes/foo.md") {
+			haveFoo = true
+			continue
+		}
+		t.Errorf("unexpected finding on a genuinely indexed file: %s: %s", f.Kind, f.Detail)
+	}
+	if !haveFoo {
+		t.Error("notes/foo.md passed coverage on foobar.md's index entry — a substring is not membership")
+	}
+}
+
 func TestCoverageRefusesEmptySide(t *testing.T) {
 	if _, err := Coverage(corpusFS(), "nothing/*.md", "notes/index-*.md"); err == nil {
 		t.Error("Coverage accepted an empty A side — a broken check reported as a pass")
