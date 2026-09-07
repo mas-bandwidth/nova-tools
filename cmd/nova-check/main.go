@@ -17,6 +17,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/check"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 const usage = `nova-check: record-layer checks for a nova self repo (see SPEC.md)
@@ -78,9 +79,17 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 // parse runs a subcommand flag set and enforces the no-guessing rule:
 // every listed flag must have been given a non-empty value.
+//
+// Package flag is given no stream: its error text quotes the argument it
+// could not parse, raw, and its usage dump follows -- so an argument holding
+// a newline authored a whole line of stderr before any code in this file ran.
+// The refusal is printed here instead, escaped, and -h after a verb is refused
+// at exit 2 like any other unusable invocation.
 func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required map[string]*string) bool {
-	fs.SetOutput(stderr)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(stderr, "nova-check %s: %s\n\n%s", fs.Name(), oneline.Err(err), usage)
 		return false
 	}
 	if fs.NArg() > 0 {
@@ -111,12 +120,12 @@ func cmdAttest(args []string, stdout, stderr io.Writer) int {
 	}
 	att, failures, err := check.Attest(*home, *manifest)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check attest: %v\n", err)
+		fmt.Fprintf(stderr, "nova-check attest: %s\n", oneline.Err(err))
 		return 2
 	}
 	if len(failures) > 0 {
 		for _, f := range failures {
-			fmt.Fprintf(stderr, "ATTEST FAIL %s: %s\n", f.Subject, f.Reason)
+			fmt.Fprintf(stderr, "ATTEST FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
 		}
 		return 1
 	}
@@ -132,7 +141,7 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 	}
 	mdFiles, checked, broken, err := check.Links(*dir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check links: %v\n", err)
+		fmt.Fprintf(stderr, "nova-check links: %s\n", oneline.Err(err))
 		return 2
 	}
 	if len(broken) > 0 {
@@ -141,10 +150,10 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 				// A whole-file finding: the .md itself could not be read, so there
 				// is no line and no target — `LINKS FAIL <file>: unreadable (<why>)`.
 				// A named failure like any other, per SPEC; not a refusal.
-				fmt.Fprintf(stderr, "LINKS FAIL %s: %s\n", b.File, b.Reason)
+				fmt.Fprintf(stderr, "LINKS FAIL %s: %s\n", oneline.Escape(b.File), oneline.Escape(b.Reason))
 				continue
 			}
-			fmt.Fprintf(stderr, "LINKS FAIL %s:%d: %s (%s)\n", b.File, b.Line, b.Target, b.Reason)
+			fmt.Fprintf(stderr, "LINKS FAIL %s:%d: %s (%s)\n", oneline.Escape(b.File), b.Line, oneline.Escape(b.Target), oneline.Escape(b.Reason))
 		}
 		return 1
 	}
@@ -193,12 +202,12 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 		}
 		measured, tokens, failures, err := check.KernelTokens(*file, *maxTokens, *bytesPerToken)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-check kernel: %v\n", err)
+			fmt.Fprintf(stderr, "nova-check kernel: %s\n", oneline.Err(err))
 			return 2
 		}
 		if len(failures) > 0 {
 			for _, f := range failures {
-				fmt.Fprintf(stderr, "KERNEL FAIL %s: %s\n", f.Subject, f.Reason)
+				fmt.Fprintf(stderr, "KERNEL FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
 			}
 			return 1
 		}
@@ -215,12 +224,12 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	}
 	measured, failures, err := check.Kernel(*file, *maxBytes)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check kernel: %v\n", err)
+		fmt.Fprintf(stderr, "nova-check kernel: %s\n", oneline.Err(err))
 		return 2
 	}
 	if len(failures) > 0 {
 		for _, f := range failures {
-			fmt.Fprintf(stderr, "KERNEL FAIL %s: %s\n", f.Subject, f.Reason)
+			fmt.Fprintf(stderr, "KERNEL FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
 		}
 		return 1
 	}
@@ -244,8 +253,10 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	var allow repeatable
 	fs.Var(&allow, "allow", "path prefix where machinery may live (repeatable; empty by default)")
 
-	fs.SetOutput(stderr)
+	fs.SetOutput(io.Discard) // see parse: the flag package is not allowed to print
+	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(stderr, "nova-check nocode: %s\n\n%s", oneline.Err(err), usage)
 		return 2
 	}
 	if fs.NArg() > 0 {
@@ -261,7 +272,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	// a guard that cannot say what it forbids must refuse, not pass.
 	deny, source, err := effectiveDenyList(*denyExt, *denyExtAdd)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check nocode: %v\n", err)
+		fmt.Fprintf(stderr, "nova-check nocode: %s\n", oneline.Err(err))
 		return 2
 	}
 
@@ -272,19 +283,19 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		// the deny-list is defended against being.
 		names, prefixes, nerr := check.FloorDenyNames()
 		if nerr != nil {
-			fmt.Fprintf(stderr, "nova-check nocode: %v\n", nerr)
+			fmt.Fprintf(stderr, "nova-check nocode: %s\n", oneline.Err(nerr))
 			return 2
 		}
 		fmt.Fprintf(stdout, "NOCODE DENY-LIST source=%s count=%d\n", source, len(deny))
 		for _, e := range deny {
-			fmt.Fprintln(stdout, e)
+			fmt.Fprintf(stdout, "%s\n", oneline.Escape(e))
 		}
 		fmt.Fprintf(stdout, "NOCODE NAME-LIST source=%s names=%d paths=%d\n", check.DenyFloor, len(names), len(prefixes))
 		for _, n := range sortedNames(names) {
-			fmt.Fprintln(stdout, "name:"+n)
+			fmt.Fprintf(stdout, "name:%s\n", oneline.Escape(n))
 		}
 		for _, pre := range prefixes {
-			fmt.Fprintln(stdout, "path:"+pre+"/")
+			fmt.Fprintf(stdout, "path:%s/\n", oneline.Escape(pre))
 		}
 		return 0
 	}
@@ -298,12 +309,12 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 
 	scanned, findings, err := check.NoCode(opts)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check nocode: %v\n", err)
+		fmt.Fprintf(stderr, "nova-check nocode: %s\n", oneline.Err(err))
 		return 2
 	}
 	if len(findings) > 0 {
 		for _, f := range findings {
-			fmt.Fprintf(stderr, "NOCODE FAIL %s: %s\n", f.Subject, f.Reason)
+			fmt.Fprintf(stderr, "NOCODE FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
 		}
 		return 1
 	}
@@ -312,7 +323,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	if scanned == 0 {
 		// The audit had no such warning, so a --dir that resolved to an empty
 		// or unreadable tree read as a clean repo with nothing to say.
-		fmt.Fprintf(stderr, "nova-check nocode: classified NOTHING under %s — an empty tree, everything allowed, or the wrong directory\n", *dir)
+		fmt.Fprintf(stderr, "nova-check nocode: classified NOTHING under %s — an empty tree, everything allowed, or the wrong directory\n", oneline.Escape(*dir))
 	}
 	fmt.Fprintf(stdout, "NOCODE OK files=%d clean deny-list=%s\n", scanned, source)
 	return 0
@@ -363,12 +374,12 @@ func cmdFloors(args []string, stdout, stderr io.Writer) int {
 	}
 	floors, failures, err := check.Floors(*core, *source)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check floors: %v\n", err)
+		fmt.Fprintf(stderr, "nova-check floors: %s\n", oneline.Err(err))
 		return 2
 	}
 	if len(failures) > 0 {
 		for _, f := range failures {
-			fmt.Fprintf(stderr, "FLOORS FAIL %s: %s\n", f.Subject, f.Reason)
+			fmt.Fprintf(stderr, "FLOORS FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
 		}
 		return 1
 	}
@@ -397,14 +408,14 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	// --root is validated BEFORE any finding is printed: a FAIL line from a
 	// run that then exits 2 reports findings from a run that did not happen.
 	if _, _, rootErr := check.ResolveRoot(*root); rootErr != nil {
-		fmt.Fprintf(stderr, "nova-check corpus: %v\n", rootErr)
+		fmt.Fprintf(stderr, "nova-check corpus: %s\n", oneline.Err(rootErr))
 		return 2
 	}
 	raw, err := os.ReadFile(*ledger)
 	if err != nil {
 		// Nothing was checked, so this is a refusal rather than a pass —
 		// the one outcome a protection check must never confuse.
-		fmt.Fprintf(stderr, "nova-check corpus: the ledger %s cannot be read (%v); NOTHING was checked, which is not a pass\n", *ledger, err)
+		fmt.Fprintf(stderr, "nova-check corpus: the ledger %s cannot be read (%s); NOTHING was checked, which is not a pass\n", oneline.Escape(*ledger), oneline.Err(err))
 		return 2
 	}
 	anchors, malformed, parseErr := check.ParseLedger(raw)
@@ -412,30 +423,30 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	// whose rows are ALL malformed is visibly populated, and telling its
 	// author it is empty while withholding the reason is the worst of both.
 	for _, f := range malformed {
-		fmt.Fprintf(stderr, "CORPUS FAIL %s: %s\n", f.Subject, f.Reason)
+		fmt.Fprintf(stderr, "CORPUS FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
 	}
 	if parseErr != nil {
 		if len(malformed) > 0 {
 			// Rows were found and judged bad. The check RAN, and the answer
 			// is no — that is exit 1, not "could not run".
-			fmt.Fprintf(stderr, "nova-check corpus: %s: no row survived parsing; every row above is a finding\n", *ledger)
+			fmt.Fprintf(stderr, "nova-check corpus: %s: no row survived parsing; every row above is a finding\n", oneline.Escape(*ledger))
 			return 1
 		}
-		fmt.Fprintf(stderr, "nova-check corpus: %s: %v\n", *ledger, parseErr)
+		fmt.Fprintf(stderr, "nova-check corpus: %s: %s\n", oneline.Escape(*ledger), oneline.Err(parseErr))
 		return 2
 	}
 	failures, err := check.Corpus(*root, *ledger, *minAnchors, anchors)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-check corpus: %v\n", err)
+		fmt.Fprintf(stderr, "nova-check corpus: %s\n", oneline.Err(err))
 		return 2
 	}
 	if len(failures) > 0 || len(malformed) > 0 {
 		for _, f := range failures {
-			fmt.Fprintf(stderr, "CORPUS FAIL %s: %s\n", f.Subject, f.Reason)
+			fmt.Fprintf(stderr, "CORPUS FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
 		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "CORPUS OK anchors=%d floor=%d ledger=%s\n", len(anchors), *minAnchors, *ledger)
+	fmt.Fprintf(stdout, "CORPUS OK anchors=%d floor=%d ledger=%s\n", len(anchors), *minAnchors, oneline.Field(*ledger))
 	return 0
 }
 
