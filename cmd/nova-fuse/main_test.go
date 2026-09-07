@@ -14,20 +14,16 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline/audit"
 )
 
 // capture runs the tool and returns the exit code plus both streams.
@@ -1305,190 +1301,39 @@ func TestNoRefusalOrNoteCanForgeAnOKLine(t *testing.T) {
 
 // TestEveryPrintedArgumentIsLiteralQuotedOrEscaped is the tripwire, and it exists because
 // the first round of this fix was audited by counting call sites BY HAND and came up nine
-// short. Every one of those nine was a refusal or a note rather than an event line, which
-// is exactly the kind of thing hand-counting misses. So the count is mechanical now: this
-// reads every non-test file of the package, pairs every fmt.Fprint/Fprintf/Fprintln
-// argument with the verb that prints it, and classifies each one as
-//
-//	%q or %d      -- the verb escapes it, or it is a number
-//	a literal     -- written in this file, so nothing untrusted reaches it
-//	escaped       -- rendered through oneline.Escape, oneline.Field, oneline.Err, why or since
-//	exempted      -- named below, one entry per site, with the reason stated
-//
-// Anything else fails, naming the line. A new interpolation is a decision from now on,
-// never a drive-by: adding one means either escaping it or writing down why it is safe.
+// short. The classifier lives in internal/oneline/audit now, shared by every binary; what
+// is this tool's own is the list below: its wrappers, its exemptions with their reasons,
+// and its imports. A new interpolation is a decision from now on, never a drive-by.
 func TestEveryPrintedArgumentIsLiteralQuotedOrEscaped(t *testing.T) {
-	files := packageSources(t)
+	audit.PrintedArguments(t, fuseAudit)
+}
 
-	// Rendered through one of these, a string cannot carry a line break or a terminal
-	// control sequence. See fuse.OneLine.
-	escapers := map[string]bool{"oneline.Escape": true, "oneline.Field": true, "oneline.Err": true, "fuse.OneLine": true, "why": true, "since": true}
+// TestNoOtherWriterOrShadowCanBypassTheEscape closes the gap in the sibling test above,
+// which walks fmt calls and therefore sees only one way of putting bytes on a stream. See
+// audit.Bypasses for the list; each entry was proved able to fail by mutation.
+func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
+	audit.Bypasses(t, fuseAudit)
+}
 
-	// One entry per site, keyed by FILE, function and source text. The file is in the key
-	// because a package is many files: without it, a same-named function added in another
-	// file would inherit an exemption written for this one. Each entry is a claim, and each
-	// claim is either checked below or stated here as the reason a reader would accept.
-	exempt := map[string]string{
+var fuseAudit = audit.Config{
+	// Rendered through one of these, a string cannot carry a line break, a terminal
+	// control sequence or a bidi control. why and since wrap oneline; fuse.OneLine is
+	// oneline.Escape under its old name.
+	Escapers: []string{"fuse.OneLine", "why", "since"},
+	// One entry per site, keyed by file, function and source text. Each is a claim, and
+	// each claim is either checked by a test named here or stated as the reason a reader
+	// would accept. The usage constant needs no entry: a package constant is a literal.
+	Exempt: map[string]string{
 		"main.go|cmdPath|box":           "`path` hands back the caller-supplied argument unescaped; SPEC.md exempts it by name and states that no caller may scan path output for grammar, because it will print one if the argument is one",
-		"main.go|liftQuarantine|listed": "built immediately above from oneline.Escape over every stored name",
-		"main.go|run|usage":             "the usage constant declared in this file",
-		"main.go|parseBox|usage":        "the usage constant declared in this file",
-		"main.go|cmdLift|usage":         "the usage constant declared in this file",
-		"main.go|cmdStatus|usage":       "the usage constant declared in this file",
-		"main.go|cmdCheck|usage":        "the usage constant declared in this file",
-		"main.go|cmdLockdown|usage":     "the usage constant declared in this file",
-		"main.go|cmdQuarantine|usage":   "the usage constant declared in this file",
-		"main.go|cmdPath|usage":         "the usage constant declared in this file",
+		"main.go|liftQuarantine|listed": "built immediately above from oneline.Escape over every stored name; pinned by TestTheQuarantinedNowListingCannotForgeALine, because the classifier cannot see inside the loop",
 		"main.go|parseBox|name":         "the verb's own name, chosen by this file at every call site",
-	}
-	usedExemption := map[string]bool{}
-
-	// The usage exemptions are only honest if usage really is a constant here.
-	usageIsConst := false
-	for _, f := range files {
-		for _, d := range f.parsed.Decls {
-			gd, ok := d.(*ast.GenDecl)
-			if !ok || gd.Tok != token.CONST {
-				continue
-			}
-			for _, spec := range gd.Specs {
-				if vs, ok := spec.(*ast.ValueSpec); ok {
-					for _, n := range vs.Names {
-						if n.Name == "usage" {
-							usageIsConst = true
-						}
-					}
-				}
-			}
-		}
-	}
-	if !usageIsConst {
-		t.Fatal("usage is no longer a constant in this package, so every exemption naming it is unproven")
-	}
-
-	classified := 0
-	for _, f := range files {
-		file, src, fset, parsed := f.name, f.src, f.fset, f.parsed
-		text := func(n ast.Node) string {
-			return string(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset])
-		}
-
-		// literalOnly answers whether an expression is nothing but string literals, including
-		// a chain of them concatenated with + (the lift lockdown refusal is written that way).
-		var literalOnly func(ast.Expr) bool
-		literalOnly = func(e ast.Expr) bool {
-			switch e := e.(type) {
-			case *ast.BasicLit:
-				return true
-			case *ast.BinaryExpr:
-				return e.Op == token.ADD && literalOnly(e.X) && literalOnly(e.Y)
-			case *ast.ParenExpr:
-				return literalOnly(e.X)
-			}
-			return false
-		}
-
-		// verbsOf returns the verbs of a format string in order. It deliberately refuses to
-		// guess at flags and widths: none are used here, and a classifier that quietly
-		// mis-pairs arguments would be worse than one that stops.
-		verbsOf := func(t *testing.T, format string) []byte {
-			t.Helper()
-			var verbs []byte
-			for i := 0; i < len(format); i++ {
-				if format[i] != '%' {
-					continue
-				}
-				i++
-				if i >= len(format) {
-					t.Fatalf("trailing %% in format %q", format)
-				}
-				if format[i] == '%' {
-					continue
-				}
-				if strings.IndexByte("+-# 0123456789.*", format[i]) >= 0 {
-					t.Fatalf("format %q uses a flag or width; this classifier does not model those, teach it before using one", format)
-				}
-				verbs = append(verbs, format[i])
-			}
-			return verbs
-		}
-
-		for _, decl := range parsed.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok {
-				continue
-			}
-			fnName := fn.Name.Name
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				call, ok := n.(*ast.CallExpr)
-				if !ok {
-					return true
-				}
-				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok {
-					return true
-				}
-				pkg, ok := sel.X.(*ast.Ident)
-				if !ok || pkg.Name != "fmt" {
-					return true
-				}
-				line := fset.Position(call.Pos()).Line
-
-				var verbs []byte
-				args := call.Args[1:] // arg 0 is the writer
-				if sel.Sel.Name == "Fprintf" {
-					format, err := strconv.Unquote(text(args[0]))
-					if err != nil {
-						// A concatenated or computed format string is itself a finding: the
-						// verbs could not be read, so nothing after it can be classified.
-						t.Errorf("%s:%d: format string is not a single literal: %s", file, line, text(args[0]))
-						return true
-					}
-					verbs = verbsOf(t, format)
-					args = args[1:]
-					if len(verbs) != len(args) {
-						t.Errorf("%s:%d: %d verbs but %d arguments; the classifier cannot pair them", file, line, len(verbs), len(args))
-						return true
-					}
-				}
-
-				for i, arg := range args {
-					classified++
-					verb := byte(0)
-					if i < len(verbs) {
-						verb = verbs[i]
-					}
-					if verb == 'q' || verb == 'd' {
-						continue // the verb quotes and escapes it, or it is a number
-					}
-					if literalOnly(arg) {
-						continue // written in this file, so nothing untrusted reaches it
-					}
-					if e, ok := arg.(*ast.CallExpr); ok && escapers[text(e.Fun)] {
-						continue
-					}
-					if key := file + "|" + fnName + "|" + text(arg); exempt[key] != "" {
-						usedExemption[key] = true
-						continue
-					}
-					t.Errorf("%s:%d in %s: %%%c prints %s raw -- escape it (oneline.Escape, oneline.Field or oneline.Err) or add an exemption naming the reason",
-						file, line, fnName, verb, text(arg))
-				}
-				return true
-			})
-		}
-	}
-
-	// A stale exemption is a claim about a call site that no longer exists, and it would
-	// silently cover the next one written in its place.
-	for key, why := range exempt {
-		if !usedExemption[key] {
-			t.Errorf("exemption %q (%s) matches no print site; delete it rather than leave a claim nothing checks", key, why)
-		}
-	}
-	if classified < 40 {
-		t.Errorf("only %d printed arguments were classified; this package has many more, so the walk is not reaching them", classified)
-	}
+	},
+	Shadows: []string{"fuse", "OneLine", "Fold", "why", "since"},
+	Imports: []string{
+		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"sort"`, `"strings"`, `"time"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`,
+	},
+	MinClassified: 40,
 }
 
 // TestAUnicodeLineSeparatorCannotForgeALineEither. A scanner is not always `split on \n`:
@@ -1631,197 +1476,6 @@ func TestTheQuarantinedNowListingCannotForgeALine(t *testing.T) {
 }
 
 // goSource is one non-test file of this package, parsed.
-type goSource struct {
-	name   string
-	src    []byte
-	fset   *token.FileSet
-	parsed *ast.File
-}
-
-// packageSources reads and parses EVERY non-test .go file in this directory. Reaching
-// outside t.TempDir() has one reason here and it is stated: the subject of these two tests
-// IS the source, and a property of the code is not provable from its output alone.
-//
-// It reads the DIRECTORY rather than the one filename both tests used to name, because a
-// reader proved that a helper added in a second file of package main defeated both of
-// them while the rest of the suite stayed green. A test that guards one file guards one
-// file; the package is the unit that gets compiled.
-func packageSources(t *testing.T) []goSource {
-	t.Helper()
-	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var files []goSource
-	for _, e := range entries {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
-			continue
-		}
-		src, err := os.ReadFile(name)
-		if err != nil {
-			t.Fatal(err)
-		}
-		fset := token.NewFileSet()
-		parsed, err := parser.ParseFile(fset, name, src, 0)
-		if err != nil {
-			t.Fatal(err)
-		}
-		files = append(files, goSource{name, src, fset, parsed})
-	}
-	if len(files) == 0 {
-		t.Fatal("no non-test source found in this package; the walk is looking in the wrong place")
-	}
-	return files
-}
-
-// TestNoOtherWriterOrShadowCanBypassTheEscape closes the gap in the sibling test above,
-// which walks fmt.* calls and therefore sees only one way of putting bytes on a stream.
-// A reader named the rest: io.WriteString, a bare .Write, a function VALUE aliased out of
-// fmt, a local that shadows the escaping helpers or the fuse package itself, and
-// flag.FlagSet.SetOutput -- which is how package flag came to print an attacker's argument
-// before any code in this file ran. Each is refused here by name, and each was proved able
-// to fail by mutation.
-func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
-	for _, f := range packageSources(t) {
-		checkOneSourceForBypasses(t, f)
-	}
-}
-
-func checkOneSourceForBypasses(t *testing.T, f goSource) {
-	t.Helper()
-	src, fset, parsed := f.src, f.fset, f.parsed
-	text := func(n ast.Node) string {
-		return string(src[fset.Position(n.Pos()).Offset:fset.Position(n.End()).Offset])
-	}
-	at := func(n ast.Node) string { return fmt.Sprintf("%s:%d", f.name, fset.Position(n.Pos()).Line) }
-
-	// Every selector that IS the callee of a call. Anything else naming fmt is a function
-	// VALUE, which can be stored, passed and called where no classifier will look.
-	calledFuns := map[ast.Node]bool{}
-	ast.Inspect(parsed, func(n ast.Node) bool {
-		if call, ok := n.(*ast.CallExpr); ok {
-			calledFuns[call.Fun] = true
-		}
-		return true
-	})
-
-	// A name declared inside a function that shadows one of these turns every escape in
-	// scope into a no-op, invisibly to the sibling test, which classifies by source text.
-	shadows := map[string]bool{"fuse": true, "oneline": true, "Escape": true, "Field": true, "Err": true, "OneLine": true, "Fold": true, "why": true, "since": true}
-	declared := func(n ast.Node, idents []*ast.Ident) {
-		for _, id := range idents {
-			if shadows[id.Name] {
-				t.Errorf("%s: a local named %q shadows the escaping path; rename it", at(n), id.Name)
-			}
-		}
-	}
-
-	ast.Inspect(parsed, func(n ast.Node) bool {
-		switch node := n.(type) {
-		case *ast.CallExpr:
-			// The builtins first: they are a bare identifier rather than a package call,
-			// so a check written after the selector assertion below never sees them --
-			// which is how this very check was found to be dead, by mutation.
-			if id, ok := node.Fun.(*ast.Ident); ok && (id.Name == "print" || id.Name == "println") {
-				t.Errorf("%s: the %s builtin writes to stderr outside every check here; use fmt.Fprintf", at(node), id.Name)
-			}
-			sel, ok := node.Fun.(*ast.SelectorExpr)
-			if !ok {
-				return true
-			}
-			switch sel.Sel.Name {
-			case "SetOutput":
-				// The whole point: a flag set that can print is a writer this file does
-				// not control, quoting an argument this file did not author.
-				if len(node.Args) != 1 || text(node.Args[0]) != "io.Discard" {
-					t.Errorf("%s: SetOutput(%s) lets another package write to a stream; only io.Discard is allowed",
-						at(node), text(node.Args[0]))
-				}
-			case "Write", "WriteString", "WriteByte", "WriteRune":
-				t.Errorf("%s: %s writes bytes past the escaping path; print through fmt.Fprintf with an escaped argument",
-					at(node), text(node.Fun))
-			}
-		case *ast.SelectorExpr:
-			// fmt.Fprintf(...) is fine; `pr := fmt.Fprintf`, passing it as an argument, or
-			// parking it in a struct field is not -- the call then wears a name this file
-			// chose, and the classifier pairs verbs with arguments by source text.
-			if x, ok := node.X.(*ast.Ident); ok && x.Name == "fmt" && !calledFuns[ast.Node(node)] {
-				t.Errorf("%s: %s is used as a fmt function VALUE rather than called; it prints where the classifier cannot see it",
-					at(node), text(node))
-			}
-		case *ast.AssignStmt:
-			if node.Tok == token.DEFINE {
-				var ids []*ast.Ident
-				for _, lhs := range node.Lhs {
-					if id, ok := lhs.(*ast.Ident); ok {
-						ids = append(ids, id)
-					}
-				}
-				declared(node, ids)
-			}
-		case *ast.ValueSpec:
-			declared(node, node.Names)
-		case *ast.RangeStmt:
-			if node.Tok == token.DEFINE {
-				var ids []*ast.Ident
-				for _, e := range []ast.Expr{node.Key, node.Value} {
-					if id, ok := e.(*ast.Ident); ok {
-						ids = append(ids, id)
-					}
-				}
-				declared(node, ids)
-			}
-		case *ast.FuncType:
-			var ids []*ast.Ident
-			for _, list := range []*ast.FieldList{node.Params, node.Results} {
-				if list == nil {
-					continue
-				}
-				for _, field := range list.List {
-					ids = append(ids, field.Names...)
-				}
-			}
-			declared(node, ids)
-		}
-		return true
-	})
-
-	// THE IMPORTS ARE PART OF THE FENCE. Everything above classifies what the code DOES
-	// with the packages it has; this refuses the packages that would make the classifying
-	// meaningless. An aliased fmt prints under a name no check here looks for, log writes
-	// to its own default output with a timestamp and no escape at all, and anything not on
-	// the list below is a writer nobody has read yet. The list is what this package uses
-	// today: widening it is a decision, and this test is where the decision gets made.
-	allowed := map[string]bool{
-		`"flag"`: true, `"fmt"`: true, `"io"`: true, `"os"`: true, `"sort"`: true,
-		`"strings"`: true, `"time"`: true,
-		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`:    true,
-		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`: true,
-	}
-	for _, imp := range parsed.Imports {
-		path := imp.Path.Value
-		if imp.Name != nil {
-			t.Errorf("%s: import %s %s is aliased; an aliased package prints under a name no check here looks for",
-				at(imp), imp.Name.Name, path)
-		}
-		if path == `"log"` {
-			t.Errorf("%s: log writes to its own output, unescaped and outside every check here", at(imp))
-			continue
-		}
-		if !allowed[path] {
-			t.Errorf("%s: import %s is not on this package's list; if it is wanted, add it here and say why it cannot write past the escape",
-				at(imp), path)
-		}
-	}
-
-	// io.WriteString is a plain call rather than a selector on a writer, so it is named
-	// directly. Checked over the source text because it takes no other form.
-	if strings.Contains(string(src), "io.WriteString") {
-		t.Errorf("%s: io.WriteString writes past the escaping path; print through fmt.Fprintf", f.name)
-	}
-}
-
 // TestLiftRemovesEveryFoldEquivalentSpelling pins what the fold actually does to lift,
 // which is wider than an earlier comment in this file claimed. Surface is applied to BOTH
 // sides of every match and LiftQuarantine removes every match, so coarsening the
