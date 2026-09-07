@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 const usage = `nova-memory: membership is a lookup, never a scan (see SPEC.md)
@@ -128,9 +129,17 @@ func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
 // required flag must have been GIVEN. Whether it was given is asked of the
 // flag set, not inferred from the value, so "--k 0" is a different (and
 // differently worded) refusal from a missing --k.
+//
+// Package flag is given no stream: its error text quotes the argument it
+// could not parse, raw, and its usage dump follows -- so an argument holding
+// a newline authored a whole line of stderr before any code in this file ran.
+// The refusal is printed here instead, escaped, and -h after a verb is refused
+// at exit 2 like any other unusable invocation.
 func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) (ok bool) {
-	fs.SetOutput(stderr)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
+		fmt.Fprintf(stderr, "nova-memory %s: %s\n\n%s", fs.Name(), oneline.Err(err), usage)
 		return false
 	}
 	given := map[string]bool{}
@@ -164,7 +173,7 @@ func addRootFlags(fs *flag.FlagSet) *rootFlags {
 func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time.Duration, bool) {
 	fi, err := os.Stat(*r.root)
 	if err != nil || !fi.IsDir() {
-		fmt.Fprintf(stderr, "nova-memory %s: --root %s is not a readable directory\n", name, *r.root)
+		fmt.Fprintf(stderr, "nova-memory %s: --root %s is not a readable directory\n", name, oneline.Escape(*r.root))
 		return nil, 0, false
 	}
 	exclude := func(p string) bool {
@@ -183,7 +192,7 @@ func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time
 	t0 := time.Now()
 	c, err := memindex.Build(os.DirFS(*r.root), exclude)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-memory %s: building the index over %s: %v\n", name, *r.root, err)
+		fmt.Fprintf(stderr, "nova-memory %s: building the index over %s: %s\n", name, oneline.Escape(*r.root), oneline.Err(err))
 		return nil, 0, false
 	}
 	return c, time.Since(t0), true
@@ -263,7 +272,10 @@ func scoreFields(score float64, chn string) string {
 }
 
 // hitLine renders one receipt as a single machine-scannable line. Absent
-// frontmatter prints as "-" so the field count never changes.
+// frontmatter prints as "-" so the field count never changes. The class, the
+// name and the type are the corpus's own text and are fields, so each is one
+// token; the file is a positional slot and keeps its spaces; the snippet is
+// Go-quoted, which is one line in a different escape form.
 func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
 	name, typ := h.FMName, h.FMType
 	if name == "" {
@@ -273,7 +285,7 @@ func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
 		typ = "-"
 	}
 	return fmt.Sprintf("%s HIT %srank=%d %s fused=%.5f class=%s name=%s type=%s %s:%d %q\n",
-		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, h.Class, name, typ, h.File, h.Para, h.Snippet)
+		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Escape(h.File), h.Para, h.Snippet)
 }
 
 // ---------------------------------------------------------------------------
@@ -303,7 +315,7 @@ func cmdStats(args []string, stdout, stderr io.Writer) int {
 	}
 	sort.Strings(classes)
 	for _, cl := range classes {
-		fmt.Fprintf(stdout, "STATS OK class=%s chunks=%d\n", cl, c.ByClass[cl])
+		fmt.Fprintf(stdout, "STATS OK class=%s chunks=%d\n", oneline.Field(cl), c.ByClass[cl])
 	}
 	return 0
 }
@@ -373,7 +385,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if fs.Arg(0) != "-" {
 		f, err := os.Open(fs.Arg(0))
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-memory check: %v\n", err)
+			fmt.Fprintf(stderr, "nova-memory check: %s\n", oneline.Err(err))
 			return 2
 		}
 		defer f.Close()
@@ -381,7 +393,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 	raw, err := io.ReadAll(src)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-memory check: reading %s: %v\n", name, err)
+		fmt.Fprintf(stderr, "nova-memory check: reading %s: %s\n", oneline.Escape(name), oneline.Err(err))
 		return 2
 	}
 	var candidates []string
@@ -397,7 +409,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(candidates) == 0 {
 		// Unusable input, not a verdict: a run over nothing must never print
 		// a green that a caller reads as "nothing was already known".
-		fmt.Fprintf(stderr, "nova-memory check: %s holds no candidate paragraph of at least %d terms; nothing to check\n", name, memindex.MinTerms)
+		fmt.Fprintf(stderr, "nova-memory check: %s holds no candidate paragraph of at least %d terms; nothing to check\n", oneline.Escape(name), memindex.MinTerms)
 		return 2
 	}
 
@@ -411,7 +423,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	}
 
 	fmt.Fprintf(stdout, "MEMORY OK candidates=%d source=%s k=%d channels=%s files=%d chunks=%d\n",
-		len(candidates), name, *k, chanNames(chans), len(c.Files), len(c.Chunks))
+		len(candidates), oneline.Field(name), *k, chanNames(chans), len(c.Files), len(c.Chunks))
 	fmt.Fprintf(stdout, "MEMORY CAL %s probe=unrelated-control\n", scoreFields(calibration(c, chans)))
 	for i, cand := range candidates {
 		fmt.Fprintf(stdout, "MEMORY CAND n=%d %q\n", i+1, memindex.Truncate(memindex.Normalize(cand), 100))
@@ -489,7 +501,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		}
 		fnds, err := memindex.Coverage(fsys, a, b)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-memory verify: %v\n", err)
+			fmt.Fprintf(stderr, "nova-memory verify: %s\n", oneline.Err(err))
 			return 2
 		}
 		gating = append(gating, fnds...)
@@ -497,14 +509,14 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	for _, g := range front {
 		fnds, err := memindex.FrontmatterPresent(fsys, g, exempt)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-memory verify: %v\n", err)
+			fmt.Fprintf(stderr, "nova-memory verify: %s\n", oneline.Err(err))
 			return 2
 		}
 		gating = append(gating, fnds...)
 	}
 	wl, err := memindex.Wikilinks(fsys, c)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-memory verify: %v\n", err)
+		fmt.Fprintf(stderr, "nova-memory verify: %s\n", oneline.Err(err))
 		return 2
 	}
 	if gateLinks {
@@ -514,11 +526,11 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	}
 
 	for _, f := range info {
-		fmt.Fprintf(stdout, "VERIFY INFO %s %s\n", f.Kind, f.Detail)
+		fmt.Fprintf(stdout, "VERIFY INFO %s %s\n", f.Kind, oneline.Escape(f.Detail))
 	}
 	if len(gating) > 0 {
 		for _, f := range gating {
-			fmt.Fprintf(stderr, "VERIFY FAIL %s %s\n", f.Kind, f.Detail)
+			fmt.Fprintf(stderr, "VERIFY FAIL %s %s\n", f.Kind, oneline.Escape(f.Detail))
 		}
 		return 1
 	}
@@ -552,7 +564,7 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	}
 	rows, err := readGold(fs.Arg(0))
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-memory eval: %v\n", err)
+		fmt.Fprintf(stderr, "nova-memory eval: %s\n", oneline.Err(err))
 		return 2
 	}
 
@@ -585,7 +597,7 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 			mrr += 1.0 / float64(rank)
 			fmt.Fprintf(stdout, "EVAL HIT rank=%d query=%q\n", rank, row.query)
 		} else {
-			fmt.Fprintf(stdout, "EVAL MISS query=%q expected=%s\n", row.query, strings.Join(row.expected, ","))
+			fmt.Fprintf(stdout, "EVAL MISS query=%q expected=%s\n", row.query, oneline.Field(strings.Join(row.expected, ",")))
 		}
 	}
 	recall := float64(hits) / float64(len(rows))
