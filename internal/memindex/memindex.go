@@ -141,33 +141,45 @@ func Tokenize(s string) []string {
 	return out
 }
 
+// NormalizeNewlines folds CRLF and lone-CR line endings to LF. EVERY parser
+// in this package that looks for "\n" or "\n\n" runs it first, and so must any
+// caller that splits input text the same way — nova-memory's check verb does.
+//
+// The lone-CR case is here because a fix that only replaces "\r\n" leaves a
+// classic-Mac-style or exporter-written file exactly as broken as an unfixed
+// CRLF one was: the blank-line split never fires, the whole document indexes
+// as one chunk, and its valid frontmatter reports as missing — silently, with
+// a green STATS line. Cross-platform compilation is not cross-platform text
+// behavior.
+func NormalizeNewlines(s string) string {
+	if !strings.ContainsRune(s, '\r') {
+		return s
+	}
+	return strings.ReplaceAll(strings.ReplaceAll(s, "\r\n", "\n"), "\r", "\n")
+}
+
 // frontmatter reads a minimal frontmatter shape without a YAML dependency: a
 // leading "---" fence, then "name:" and "type:" lines anywhere before the
 // closing fence. Absent or malformed frontmatter returns empty strings —
 // verify reports absence where a caller declares it required, and parsing
 // here never fails a build.
 func frontmatter(src string) (name, typ string) {
-	// CRLF is tolerated because a checkout on Windows produces it, and a memory
-	// file whose frontmatter fence ends "---\r\n" was parsed as having NO
-	// frontmatter at all: every entry then reported "no name: in frontmatter",
-	// which reads as a corpus fault rather than a line-ending one. Found by CI
-	// on its first Windows run, in a tool other people are told to run against
-	// their own corpora.
-	// SCOPE, stated because this fix is narrower than it looks. Build already
-	// normalizes CRLF before it reaches here, so the only caller this actually
-	// changes is FrontmatterPresent. And it does NOT handle a UTF-8 BOM before
-	// the fence, a lone-CR file, or "---" with trailing spaces: each still
-	// reads as no frontmatter. Named rather than implied away, since a BOM is
-	// plausible on the same platform that produced the CRLF.
-	var body string
-	switch {
-	case strings.HasPrefix(src, "---\n"):
-		body = src[4:]
-	case strings.HasPrefix(src, "---\r\n"):
-		body = src[5:]
-	default:
+	// Line endings are folded first, because a memory file whose frontmatter
+	// fence ends "---\r\n" was parsed as having NO frontmatter at all: every
+	// entry then reported "no name: in frontmatter", which reads as a corpus
+	// fault rather than a line-ending one. Found by CI on its first Windows
+	// run, in a tool other people are told to run against their own corpora.
+	// SCOPE, stated because this is narrower than it looks. Build already
+	// normalizes before the text reaches here, so the only caller this
+	// actually changes is FrontmatterPresent. And it does NOT handle a UTF-8
+	// BOM before the fence, or "---" with trailing spaces: each still reads as
+	// no frontmatter. Named rather than implied away, since a BOM is plausible
+	// on the same platform that produced the CRLF.
+	src = NormalizeNewlines(src)
+	if !strings.HasPrefix(src, "---\n") {
 		return "", ""
 	}
+	body := src[4:]
 	end := strings.Index(body, "\n---")
 	if end < 0 {
 		return "", ""
@@ -249,7 +261,7 @@ func Build(fsys fs.FS, exclude func(p string) bool) (*Corpus, error) {
 		// normalization, and quietly disabling MinTerms filtering — silently,
 		// with a green STATS line. This repo ships to other lines on other
 		// platforms, where CRLF markdown is ordinary.
-		text := strings.ReplaceAll(string(raw), "\r\n", "\n")
+		text := NormalizeNewlines(string(raw))
 		fmName, fmType := frontmatter(text)
 		class := "."
 		if i := strings.IndexByte(f, '/'); i >= 0 {

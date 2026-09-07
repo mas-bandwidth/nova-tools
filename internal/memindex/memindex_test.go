@@ -114,14 +114,6 @@ func TestBuildChunkingIsLineEndingAgnostic(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LF build: %v", err)
 	}
-	crlf, err := Build(fstest.MapFS{"twin.md": {Data: []byte(strings.ReplaceAll(body, "\n", "\r\n"))}}, nil)
-	if err != nil {
-		t.Fatalf("CRLF build: %v", err)
-	}
-	if len(lf.Chunks) != len(crlf.Chunks) {
-		t.Fatalf("CRLF twin indexed as %d chunks, LF twin as %d — a CRLF corpus becomes one giant chunk per file",
-			len(crlf.Chunks), len(lf.Chunks))
-	}
 	// Four: the frontmatter block is itself a paragraph over MinTerms, then
 	// the three prose paragraphs. The number is pinned so a regression that
 	// stops splitting shows up as one chunk here rather than as a quiet
@@ -129,16 +121,34 @@ func TestBuildChunkingIsLineEndingAgnostic(t *testing.T) {
 	if len(lf.Chunks) != 4 {
 		t.Fatalf("the fixture is meant to hold 4 indexable paragraphs, got %d", len(lf.Chunks))
 	}
-	for i := range lf.Chunks {
-		if lf.Chunks[i].Text != crlf.Chunks[i].Text || lf.Chunks[i].Para != crlf.Chunks[i].Para {
-			t.Errorf("chunk %d differs between twins:\n LF: %d %q\nCRLF: %d %q",
-				i, lf.Chunks[i].Para, lf.Chunks[i].Text, crlf.Chunks[i].Para, crlf.Chunks[i].Text)
-		}
-	}
-	// Frontmatter is read from the same normalized text, so a CRLF file's
-	// name: reaches receipts too.
-	if crlf.Chunks[0].FMName != "crlf-twin" {
-		t.Errorf("CRLF frontmatter name = %q, want crlf-twin", crlf.Chunks[0].FMName)
+	// The lone-CR twin is not a hypothetical: it is what classic-Mac-era
+	// tooling and a few exporters still emit, and it is what a CRLF fix that
+	// only replaces "\r\n" leaves behind untouched.
+	for _, tw := range []struct{ name, ending string }{
+		{"CRLF", "\r\n"},
+		{"CR", "\r"},
+	} {
+		t.Run(tw.name, func(t *testing.T) {
+			twin, err := Build(fstest.MapFS{"twin.md": {Data: []byte(strings.ReplaceAll(body, "\n", tw.ending))}}, nil)
+			if err != nil {
+				t.Fatalf("%s build: %v", tw.name, err)
+			}
+			if len(twin.Chunks) != len(lf.Chunks) {
+				t.Fatalf("%s twin indexed as %d chunks, LF twin as %d — that corpus becomes one giant chunk per file",
+					tw.name, len(twin.Chunks), len(lf.Chunks))
+			}
+			for i := range lf.Chunks {
+				if lf.Chunks[i].Text != twin.Chunks[i].Text || lf.Chunks[i].Para != twin.Chunks[i].Para {
+					t.Errorf("chunk %d differs between twins:\n  LF: %d %q\n%4s: %d %q",
+						i, lf.Chunks[i].Para, lf.Chunks[i].Text, tw.name, twin.Chunks[i].Para, twin.Chunks[i].Text)
+				}
+			}
+			// Frontmatter is read from the same normalized text, so the twin's
+			// name: reaches receipts too.
+			if twin.Chunks[0].FMName != "crlf-twin" {
+				t.Errorf("%s frontmatter name = %q, want crlf-twin", tw.name, twin.Chunks[0].FMName)
+			}
+		})
 	}
 }
 
@@ -613,14 +623,18 @@ func TestFrontmatterRefusesEmptyGlob(t *testing.T) {
 // .gitattributes, so only a test like this one can cover the user's file.
 func TestFrontmatterToleratesCRLF(t *testing.T) {
 	lf := "---\nname: lantern\ntype: reference\n---\n\nbody\n"
-	crlf := "---\r\nname: lantern\r\ntype: reference\r\n---\r\n\r\nbody\r\n"
 	wantName, wantType := frontmatter(lf)
 	if wantName != "lantern" || wantType != "reference" {
 		t.Fatalf("LF baseline broken: name=%q type=%q", wantName, wantType)
 	}
-	gotName, gotType := frontmatter(crlf)
-	if gotName != wantName || gotType != wantType {
-		t.Errorf("CRLF: name=%q type=%q, want %q/%q", gotName, gotType, wantName, wantType)
+	for _, tw := range []struct{ name, ending string }{
+		{"CRLF", "\r\n"},
+		{"CR", "\r"}, // the twin a "\r\n" replacement leaves untouched
+	} {
+		gotName, gotType := frontmatter(strings.ReplaceAll(lf, "\n", tw.ending))
+		if gotName != wantName || gotType != wantType {
+			t.Errorf("%s: name=%q type=%q, want %q/%q", tw.name, gotName, gotType, wantName, wantType)
+		}
 	}
 }
 
