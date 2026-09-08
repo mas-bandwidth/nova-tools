@@ -310,6 +310,41 @@ func TestACallersQueryCannotPoseAsAField(t *testing.T) {
 	}
 }
 
+// A receipt's path and snippet are the file's own text, so they sit after the ": " that
+// closes the fields, where the grammar says nothing is scanned. Before this, a receipt
+// ran its fields straight into "<file>:<para>" and the quoted snippet with no boundary,
+// so a filename or snippet saying class=poison was inside the scan region.
+func TestAReceiptsPathAndSnippetSitAfterTheFieldBoundary(t *testing.T) {
+	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3",
+		"when", "can", "the", "relief", "boat", "land", "at", "the", "jetty")
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
+	}
+	hits := 0
+	for _, line := range strings.Split(strings.TrimRight(stdout, "\n"), "\n") {
+		if !strings.HasPrefix(line, "SEARCH HIT ") {
+			continue
+		}
+		hits++
+		head, tail, ok := strings.Cut(line, ": ")
+		if !ok {
+			t.Errorf("no field boundary on %q", line)
+			continue
+		}
+		for _, tok := range strings.Fields(head)[2:] {
+			if strings.Count(tok, "=") != 1 {
+				t.Errorf("token %q before the boundary on %q is not one key=value field", tok, line)
+			}
+		}
+		if !strings.Contains(tail, ".md:") || !strings.HasSuffix(tail, `"`) {
+			t.Errorf("the tail must be <file>:<para> and the quoted snippet, got %q", tail)
+		}
+	}
+	if hits == 0 {
+		t.Fatal("no SEARCH HIT lines to check")
+	}
+}
+
 func TestSearchOutOfVocabularyQuerySaysSoInWords(t *testing.T) {
 	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3", "zzqq", "xxvv")
 	if exit != 0 {
@@ -468,7 +503,7 @@ func TestVerifyPassesOnTheFixtureCorpus(t *testing.T) {
 	if !strings.Contains(stdout, "VERIFY OK gating=0 info=1") {
 		t.Errorf("stdout = %q, want the clean OK line", stdout)
 	}
-	if !strings.Contains(stdout, "VERIFY INFO wikilink [[storm-glass]]") {
+	if !strings.Contains(stdout, "VERIFY INFO wikilink: [[storm-glass]]") {
 		t.Errorf("the informational wikilink finding is missing: %q", stdout)
 	}
 }
@@ -816,7 +851,7 @@ func TestNoCorpusOrCallerTextCanForgeALine(t *testing.T) {
 			t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
 		}
 		noForgedLine(t, forged, stdout, stderr)
-		if !strings.Contains(stdout, `name=x\x20lockdown\x3dclear type=t\x20u notes/zz\x0a`+forged+`.md:1 `) {
+		if !strings.Contains(stdout, `name=x\x20lockdown\x3dclear type=t\x20u: notes/zz\x0a`+forged+`.md:1 `) {
 			t.Errorf("stdout = %q, want the frontmatter as one token each and the file name escaped", stdout)
 		}
 	})

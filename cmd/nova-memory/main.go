@@ -284,7 +284,7 @@ func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
 	if typ == "" {
 		typ = "-"
 	}
-	return fmt.Sprintf("%s HIT %srank=%d %s fused=%.5f class=%s name=%s type=%s %s:%d %q\n",
+	return fmt.Sprintf("%s HIT %srank=%d %s fused=%.5f class=%s name=%s type=%s: %s:%d %q\n",
 		token, prefix, rank, scoreFields(h.Native, h.NativeChan), h.Fused, oneline.Field(h.Class), oneline.Field(name), oneline.Field(typ), oneline.Escape(h.File), h.Para, h.Snippet)
 }
 
@@ -426,7 +426,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		len(candidates), oneline.Field(name), *k, chanNames(chans), len(c.Files), len(c.Chunks))
 	fmt.Fprintf(stdout, "MEMORY CAL %s probe=unrelated-control\n", scoreFields(calibration(c, chans)))
 	for i, cand := range candidates {
-		fmt.Fprintf(stdout, "MEMORY CAND n=%d %q\n", i+1, memindex.Truncate(memindex.Normalize(cand), 100))
+		fmt.Fprintf(stdout, "MEMORY CAND n=%d: %q\n", i+1, memindex.Truncate(memindex.Normalize(cand), 100))
 		hits := memindex.Retrieve(c, chans, cand, *k)
 		if len(hits) == 0 {
 			fmt.Fprintf(stdout, "MEMORY MISS cand=%d every query term is out of vocabulary for this corpus\n", i+1)
@@ -526,7 +526,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	}
 
 	for _, f := range info {
-		fmt.Fprintf(stdout, "VERIFY INFO %s %s\n", f.Kind, oneline.Escape(f.Detail))
+		fmt.Fprintf(stdout, "VERIFY INFO %s: %s\n", f.Kind, oneline.Escape(f.Detail))
 	}
 	if len(gating) > 0 {
 		for _, f := range gating {

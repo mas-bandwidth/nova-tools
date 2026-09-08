@@ -1722,9 +1722,11 @@ frontmatter `name: x lockdown=clear` cannot pose as a field on a receipt; so
 are `check`'s `source=`, `eval`'s `expected=`, and the caller's own `query=`
 on `SEARCH OK`, `EVAL HIT` and `EVAL MISS`, which is argv and so the one slot
 a caller controls outright (a query of `quokka class=poison` prints as
-`query=quokka\x20class\x3dpoison`, never as a second `class=` field). The `<file>:<para>` on a
-receipt is a positional slot, escaped for one line and keeping its spaces; the
-snippet is Go-quoted. The root, the candidate and the gold file in every
+`query=quokka\x20class\x3dpoison`, never as a second `class=` field). A receipt's fields end
+at the `: ` after `type=`; the `<file>:<para>` and the Go-quoted snippet that follow are the
+tail, the path escaped for one line and keeping its spaces, and the tail is never scanned for
+fields, as Conventions says. `MEMORY CAND`'s candidate and `VERIFY INFO`'s detail sit after the
+same `: ` for the same reason. The root, the candidate and the gold file in every
 refusal, and the detail of every `verify` finding, render through
 `internal/oneline`. The flag parser is given no stream. Pinned by
 `TestNoCorpusOrCallerTextCanForgeALine` and by the shared source audit.
@@ -1796,7 +1798,7 @@ address to go read, and a normalized snippet.
 ```
 SEARCH OK query=<q> hits=<n> k=<n> channels=<list> files=<n> chunks=<n>
 SEARCH CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
-SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> <file>:<para> "<snippet>"
+SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|->: <file>:<para> "<snippet>"
 SEARCH MISS every query term is out of vocabulary for this corpus
 SEARCH NOTE <caveat>
 ```
@@ -1841,8 +1843,8 @@ consolidation ritual calls in place of re-reading the whole self.
 ```
 MEMORY OK candidates=<n> source=<name> k=<n> channels=<list> files=<n> chunks=<n>
 MEMORY CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
-MEMORY CAND n=<i> "<normalized candidate>"
-MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> <file>:<para> "<snippet>"
+MEMORY CAND n=<i>: "<normalized candidate>"
+MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|->: <file>:<para> "<snippet>"
 MEMORY MISS cand=<i> every query term is out of vocabulary for this corpus
 MEMORY NOTE <caveat>
 ```
@@ -1907,7 +1909,7 @@ rather than a verdict of "nothing was already known".
   reader to wave findings through. So the caller states it, per run, out loud.
 
 ```
-VERIFY INFO <kind> <detail>
+VERIFY INFO <kind>: <detail>
 VERIFY FAIL <kind> <detail>
 VERIFY OK gating=0 info=<n> coverage=<n> frontmatter=<n> links=<gate|info>
 ```
