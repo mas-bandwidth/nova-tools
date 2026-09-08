@@ -32,13 +32,23 @@ var (
 // inside the tree. It returns the number of markdown files seen, the number
 // of relative links checked, and every broken link found.
 func Links(dir string) (mdFiles, checked int, broken []BrokenLink, err error) {
-	info, err := os.Stat(dir)
-	if err != nil {
-		return 0, 0, nil, fmt.Errorf("dir: %w", err)
+	// Resolve the root before walking. os.Stat FOLLOWS a symlink, so a --dir
+	// naming a link to the repo passed the directory check and then handed
+	// WalkDir a root it saw as a single non-directory entry — a clean pass
+	// over a tree never opened. On this platform /var is such a link.
+	root, statErr := filepath.EvalSymlinks(dir)
+	if statErr != nil {
+		return 0, 0, nil, fmt.Errorf("dir: %w", statErr)
+	}
+	info, statErr := os.Stat(root)
+	if statErr != nil {
+		return 0, 0, nil, fmt.Errorf("dir: %w", statErr)
 	}
 	if !info.IsDir() {
 		return 0, 0, nil, fmt.Errorf("dir %q is not a directory", dir)
 	}
+	dir = root
+
 	err = filepath.WalkDir(dir, func(path string, d fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr

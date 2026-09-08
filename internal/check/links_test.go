@@ -340,3 +340,50 @@ func TestLinksRefusesBadDir(t *testing.T) {
 		t.Error("nonexistent dir should be an error, not a guess")
 	}
 }
+
+// --dir naming a SYMLINK to the tree. os.Stat follows the link, so the
+// directory check passed and WalkDir then saw the root as a single non-dir
+// entry: LINKS OK files=0 links=0, exit 0 — a clean pass over a tree never
+// walked, while the same tree by its real path reported the broken link and
+// exited 1. On macOS /var is such a link. Fixed the way nocode fixes it.
+func TestLinksDirIsASymlinkToTheTree(t *testing.T) {
+	base := t.TempDir()
+	real := filepath.Join(base, "real")
+	if err := os.MkdirAll(real, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTree(t, real, map[string]string{"a.md": "fine\n\n[gone](gone.md)\n"})
+	link := filepath.Join(base, "link")
+	if err := os.Symlink("real", link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	realFiles, realChecked, realBroken, err := Links(real)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(realBroken) != 1 {
+		t.Fatalf("fixture: the real path must report the broken link, got %v", realBroken)
+	}
+
+	mdFiles, checked, broken, err := Links(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mdFiles != realFiles {
+		t.Errorf("mdFiles = %d through the symlink, want %d as by the real path: a clean pass over a tree never walked", mdFiles, realFiles)
+	}
+	if checked != realChecked {
+		t.Errorf("checked = %d through the symlink, want %d as by the real path", checked, realChecked)
+	}
+	var asFailures []Failure
+	for _, b := range broken {
+		asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
+	}
+	wantFailures(t, asFailures, []string{"a.md", "gone.md", "does not exist"})
+	for _, b := range broken {
+		if b.File != "a.md" {
+			t.Errorf("File = %q, want a.md: a finding stays relative to the tree, not absolute through the resolved root", b.File)
+		}
+	}
+}

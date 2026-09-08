@@ -190,8 +190,11 @@ provenance — that stricter posture belongs to `attest`.
   be read is a **named failure, not a refusal**. The walk continues, so one
   unreadable file can never discard the findings from the rest of the tree.
 
-**Refuses (exit 2) only when** `--dir` is missing or not a directory — an
-unreadable `.md` inside the tree is a finding (above), never a refusal.
+**Refuses (exit 2) only when** `--dir` is missing, unresolvable, or does not
+resolve to a directory — it is resolved through symlinks first, so a `--dir`
+naming a link to the repo walks the repo rather than passing with
+`files=0 links=0`; an unreadable `.md` inside the tree is a finding (above),
+never a refusal.
 
 **Deliberately does not check:** reference-style links (`[a][ref]`), autolinks
 (`<https://…>`), raw HTML (`<a href>`), whether a `#fragment` names a real

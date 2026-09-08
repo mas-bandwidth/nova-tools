@@ -79,9 +79,11 @@ jobs:
     # is a lie — and an enumerating sentence that omits items reads worse than
     # a general one, so this says what IS smoked and stops.
     #
-    # Smoked here: `nova-check nocode`, and only the properties asserted in the
-    # steps below. Everything else in this repository — every other `nocode`
-    # flag and refusal path, every other `nova-check` subcommand, and the
+    # Smoked here: `nova-check nocode`, plus one property of `nova-check links`
+    # — that a symlinked `--dir` is resolved rather than passed over — and only
+    # the properties asserted in the steps below. Everything else in this
+    # repository — every other `nocode` flag and refusal path, every other
+    # `links` property, every other `nova-check` subcommand, and the
     # `nova-fuse`, `nova-memory` and `nova-self-talk` commands — is covered by
     # package tests and by nothing else.
     #
@@ -148,6 +150,27 @@ jobs:
           [ "$rc" -eq 1 ] || { echo "symlinked --dir: want exit 1, got $rc: $out"; exit 1; }
           case "$out" in
             *"tool.py"*) echo "ok: a symlinked --dir is walked" ;;
+            *) echo "symlinked --dir: the tree was not walked: $out"; exit 1 ;;
+          esac
+
+      - name: a symlinked --dir is resolved, not passed over (links)
+        # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # The same fail-open, in the other checker. os.Stat follows a link,
+          # so --dir naming a symlink to the tree was seen as a single
+          # non-directory entry and returned LINKS OK files=0 links=0, exit 0
+          # — a clean pass over a tree never walked, while the same tree by its
+          # real path reported the broken link and exited 1. No other step in
+          # this job hands `links` a --dir that is itself a link, so nothing
+          # else here would catch it coming back.
+          real="$(mktemp -d)"; printf 'fine\n\n[gone](gone.md)\n' > "$real/a.md"
+          link="$(mktemp -d)/link"; ln -s "$real" "$link"
+          set +e; out=$("$BIN" links --dir "$link" 2>&1); rc=$?; set -e
+          [ "$rc" -eq 1 ] || { echo "symlinked --dir: want exit 1, got $rc: $out"; exit 1; }
+          case "$out" in
+            *"a.md:3: gone.md (does not exist)"*) echo "ok: a symlinked --dir is walked" ;;
             *) echo "symlinked --dir: the tree was not walked: $out"; exit 1 ;;
           esac
 
