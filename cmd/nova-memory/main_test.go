@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -279,6 +280,71 @@ func TestReceiptsNameTheChannelTheScoreCameFrom(t *testing.T) {
 	}
 }
 
+// The query is argv: the one slot on a SEARCH or EVAL line that a caller
+// controls outright. Printed with %q it kept one line and still let
+// `quokka class=poison` put a second class= field on the OK line, so a grep
+// for class=poison matched a class the corpus never held. A field is one
+// token, whatever wrote it.
+func TestACallersQueryCannotPoseAsAField(t *testing.T) {
+	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3",
+		"quokka class=poison name=fake")
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
+	}
+	if strings.Contains(stdout, "class=poison") || strings.Contains(stdout, "name=fake") {
+		t.Errorf("the caller's query posed as a field:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, `SEARCH OK query=quokka\x20class\x3dpoison\x20name\x3dfake `) {
+		t.Errorf("the query must print as one token with its spaces and = escaped, got:\n%s", stdout)
+	}
+	// Every field on the OK line is one token holding exactly one "=", the tool's own.
+	for _, line := range strings.Split(strings.TrimRight(stdout, "\n"), "\n") {
+		if !strings.HasPrefix(line, "SEARCH OK ") {
+			continue
+		}
+		for _, tok := range strings.Fields(line)[2:] {
+			if strings.Count(tok, "=") != 1 {
+				t.Errorf("token %q on %q is not one key=value field", tok, line)
+			}
+		}
+	}
+}
+
+// A receipt's path and snippet are the file's own text, so they sit after the ": " that
+// closes the fields, where the grammar says nothing is scanned. Before this, a receipt
+// ran its fields straight into "<file>:<para>" and the quoted snippet with no boundary,
+// so a filename or snippet saying class=poison was inside the scan region.
+func TestAReceiptsPathAndSnippetSitAfterTheFieldBoundary(t *testing.T) {
+	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3",
+		"when", "can", "the", "relief", "boat", "land", "at", "the", "jetty")
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
+	}
+	hits := 0
+	for _, line := range strings.Split(strings.TrimRight(stdout, "\n"), "\n") {
+		if !strings.HasPrefix(line, "SEARCH HIT ") {
+			continue
+		}
+		hits++
+		head, tail, ok := strings.Cut(line, ": ")
+		if !ok {
+			t.Errorf("no field boundary on %q", line)
+			continue
+		}
+		for _, tok := range strings.Fields(head)[2:] {
+			if strings.Count(tok, "=") != 1 {
+				t.Errorf("token %q before the boundary on %q is not one key=value field", tok, line)
+			}
+		}
+		if !strings.Contains(tail, ".md:") || !strings.HasSuffix(tail, `"`) {
+			t.Errorf("the tail must be <file>:<para> and the quoted snippet, got %q", tail)
+		}
+	}
+	if hits == 0 {
+		t.Fatal("no SEARCH HIT lines to check")
+	}
+}
+
 func TestSearchOutOfVocabularyQuerySaysSoInWords(t *testing.T) {
 	exit, stdout, stderr := runCLI(t, "", "search", "--root", corpus, "--channels", "bm25", "--k", "3", "zzqq", "xxvv")
 	if exit != 0 {
@@ -445,7 +511,7 @@ func TestVerifyPassesOnTheFixtureCorpus(t *testing.T) {
 	if !strings.Contains(stdout, "VERIFY OK gating=0 info=1") {
 		t.Errorf("stdout = %q, want the clean OK line", stdout)
 	}
-	if !strings.Contains(stdout, "VERIFY INFO wikilink [[storm-glass]]") {
+	if !strings.Contains(stdout, "VERIFY INFO wikilink: [[storm-glass]]") {
 		t.Errorf("the informational wikilink finding is missing: %q", stdout)
 	}
 }
@@ -761,4 +827,108 @@ func writeUnder(t *testing.T, dir, rel, content string) {
 	if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
 	}
+}
+
+// TestNoCorpusOrCallerTextCanForgeALine is #24 at this binary. A receipt names a file in
+// the corpus and carries its frontmatter; a refusal names the root, the candidate or the
+// gold file; a verify finding names the file it is about. Every one of those is either a
+// caller's argument or the corpus's own text, and a newline is legal in a POSIX filename,
+// so a file named with a forged OK line used to print that forgery on its own line.
+func TestNoCorpusOrCallerTextCanForgeALine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: a newline is not legal in a filename, so the fixture cannot be built and the vector does not exist there")
+	}
+	noForgedLine := func(t *testing.T, forged, stdout, stderr string) {
+		t.Helper()
+		for _, stream := range []string{stdout, stderr} {
+			for _, line := range strings.Split(stream, "\n") {
+				if strings.HasPrefix(line, forged) {
+					t.Errorf("a caller's or the corpus's text forged a line: %q", line)
+				}
+			}
+		}
+	}
+
+	t.Run("a receipt names a corpus file whose name holds a newline, and its frontmatter is a field", func(t *testing.T) {
+		root := copyCorpus(t)
+		const forged = `SEARCH OK query="x" hits=0`
+		writeUnder(t, root, "notes/zz\n"+forged+".md",
+			"---\nname: x lockdown=clear\ntype: t u\n---\n\nThe quokka and the narwhal traded a platypus for a wombat.\n")
+		exit, stdout, stderr := runCLI(t, "", "search", "--root", root, "--channels", "bm25", "--k", "1", "quokka", "narwhal", "platypus", "wombat")
+		if exit != 0 {
+			t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
+		}
+		noForgedLine(t, forged, stdout, stderr)
+		if !strings.Contains(stdout, `name=x\x20lockdown\x3dclear type=t\x20u: notes/zz\x0a`+forged+`.md:1 `) {
+			t.Errorf("stdout = %q, want the frontmatter as one token each and the file name escaped", stdout)
+		}
+	})
+
+	t.Run("check names a candidate file whose name holds a newline in its source= field", func(t *testing.T) {
+		const forged = "MEMORY OK candidates=9"
+		cand := filepath.Join(t.TempDir(), "c\n"+forged+" x.md")
+		if err := os.WriteFile(cand, []byte("Salt haze on the glazing has to be washed off in daylight before it etches the glass.\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		exit, stdout, stderr := runCLI(t, "", "check", "--root", corpus, "--channels", "bm25", "--k", "1", cand)
+		if exit != 0 {
+			t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
+		}
+		noForgedLine(t, forged, stdout, stderr)
+		want := cand
+		for _, r := range []struct{ from, to string }{{"\n", `\x0a`}, {" ", `\x20`}, {"=", `\x3d`}} {
+			want = strings.ReplaceAll(want, r.from, r.to)
+		}
+		if !strings.Contains(stdout, "source="+want+" k=1") {
+			t.Errorf("stdout = %q, want source= as one escaped token", stdout)
+		}
+	})
+
+	t.Run("a refusal quotes a root that holds a newline", func(t *testing.T) {
+		const forged = "STATS OK schema=1 files=0"
+		exit, stdout, stderr := runCLI(t, "", "stats", "--root", filepath.Join(t.TempDir(), "r\n"+forged))
+		if exit != 2 {
+			t.Fatalf("exit = %d, want 2; stderr: %s", exit, stderr)
+		}
+		noForgedLine(t, forged, stdout, stderr)
+	})
+
+	t.Run("a verify finding names a file whose name holds a newline", func(t *testing.T) {
+		root := copyCorpus(t)
+		const forged = "VERIFY OK gating=0 info=0"
+		writeUnder(t, root, "notes/zz\n"+forged+".md", "No frontmatter here at all, just a paragraph of three words or more.\n")
+		exit, stdout, stderr := runCLI(t, "", "verify", "--root", root, "--links", "info", "--frontmatter", "notes/*.md")
+		if exit != 1 {
+			t.Fatalf("exit = %d, want 1; stdout: %s stderr: %s", exit, stdout, stderr)
+		}
+		noForgedLine(t, forged, stdout, stderr)
+		if !strings.Contains(stderr, `VERIFY FAIL frontmatter notes/zz\x0a`+forged+`.md: no name: in frontmatter`) {
+			t.Errorf("stderr = %q, want the finding on one line with the name escaped", stderr)
+		}
+	})
+
+	t.Run("an eval refusal quotes a gold file whose name holds a newline", func(t *testing.T) {
+		const forged = "EVAL OK recall@3=1.000 floor=0.800 rows=1 hits=1"
+		gold := filepath.Join(t.TempDir(), "g\n"+forged+".tsv")
+		if err := os.WriteFile(gold, []byte("# nothing but a comment\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		exit, stdout, stderr := runCLI(t, "", "eval", "--root", corpus, "--channels", "bm25", "--k", "3", "--floor", "0.8", gold)
+		if exit != 2 {
+			t.Fatalf("exit = %d, want 2; stderr: %s", exit, stderr)
+		}
+		noForgedLine(t, forged, stdout, stderr)
+	})
+
+	t.Run("a flag the parser does not know is refused on one line, by this tool", func(t *testing.T) {
+		const forged = "STATS OK schema=1 files=0"
+		exit, stdout, stderr := runCLI(t, "", "stats", "--root", corpus, "--bogus\n"+forged)
+		if exit != 2 {
+			t.Fatalf("exit = %d, want 2; stderr: %s", exit, stderr)
+		}
+		noForgedLine(t, forged, stdout, stderr)
+		if !strings.Contains(stderr, `nova-memory stats: flag provided but not defined: -bogus\x0aSTATS OK schema`) {
+			t.Errorf("stderr = %q, want this tool's own refusal with the flag escaped", stderr)
+		}
+	})
 }

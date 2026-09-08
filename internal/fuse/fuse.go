@@ -77,7 +77,8 @@ import (
 	"sort"
 	"strings"
 	"unicode"
-	"unicode/utf8"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // UnreadableSuffix names where the bytes of an unreadable box are kept when a lockdown has
@@ -113,45 +114,12 @@ func Surface(s string) string { return strings.ToLower(Fold(s)) }
 // authored by whoever can write the file -- and one line per event is a promise this
 // tool makes to every caller scanning the grammar in SPEC.md.
 //
-// Every control character (Unicode category Cc: the C0 range including \n, \r and \t,
-// DEL, and the C1 range) becomes a visible escape: \xNN for a code point below U+0080,
-// \uNNNN above it, both in lower-case hex. So do U+2028 and U+2029, the Unicode line and
-// paragraph separators, which are Zl and Zp rather than Cc: they break a line for
-// Python's str.splitlines and for every UAX-14 line breaker, which is a forged line for
-// those readers and for no others. Everything else printable passes through untouched,
-// including non-ASCII.
-//
-// A byte that is not valid UTF-8 is escaped by its own value in the same \xNN form. Note
-// where that is and is not reachable: box content arrives through the JSON decoder, which
-// substitutes U+FFFD for an invalid byte before this function ever sees it, and Fold does
-// the same to this tool's own writes through strings.Map. So the byte form is reached only
-// by text that never passed through the decoder, such as the text of an error.
-//
-// It is deterministic, and it never shortens text to nothing: a reason stays readable,
-// which is the whole point of recording one.
-func OneLine(s string) string {
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); {
-		r, size := utf8.DecodeRuneInString(s[i:])
-		switch {
-		case r == utf8.RuneError && size == 1:
-			fmt.Fprintf(&b, `\x%02x`, s[i])
-		case r == '\u2028' || r == '\u2029':
-			// Not Cc, and not caught by IsControl. They still break a line for readers
-			// that follow Unicode rather than counting \n, so they are escaped here.
-			fmt.Fprintf(&b, `\u%04x`, r)
-		case !unicode.IsControl(r):
-			b.WriteRune(r)
-		case r < 0x80:
-			fmt.Fprintf(&b, `\x%02x`, r)
-		default:
-			fmt.Fprintf(&b, `\u%04x`, r)
-		}
-		i += size
-	}
-	return b.String()
-}
+// The escape itself lives in internal/oneline, because the promise is made by every
+// binary in this repo and has to be met the same way by each: OneLine is oneline.Escape
+// under the name this package has always used, and the table test here pins that the two
+// never drift. See oneline.Escape for the escaped set (category Cc, U+2028 and U+2029,
+// and the bidi controls) and the escape form.
+func OneLine(s string) string { return oneline.Escape(s) }
 
 // Fold tidies text this tool is about to WRITE: every control character becomes a space,
 // then runs of whitespace collapse to a single ASCII space and the ends are trimmed. The

@@ -18,6 +18,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
 )
 
@@ -98,8 +99,12 @@ func set(l baseList) map[string]bool {
 
 func run(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("nova-self-talk", flag.ContinueOnError)
-	fs.SetOutput(stderr)
-	fs.Usage = func() {} // errors are printed by Parse; usage is printed below, where we decide the stream
+	// Package flag is given no stream: its error text quotes the argument it could
+	// not parse, raw, so an argument holding a newline authored a whole line of
+	// stderr before any code in this file ran. The refusal is printed below,
+	// escaped, and usage is printed where this file decides the stream.
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
 	var skips, ruleDocs baseList
 	fs.Var(&skips, "skip", "basename to skip, repeatable (nothing is skipped by default)")
 	fs.Var(&ruleDocs, "rule-doc", "basename whose findings print under the rule-document banner, repeatable (empty by default)")
@@ -108,6 +113,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprint(stdout, usage)
 			return 0
 		}
+		fmt.Fprintf(stderr, "nova-self-talk: %s\n", oneline.Err(err))
 		return 2
 	}
 	files := fs.Args()
@@ -122,12 +128,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 	scanned, claims, standing, installed := 0, 0, 0, 0
 	for _, f := range files {
 		if skipped[selftalk.Base(f)] {
-			fmt.Fprintf(stdout, "SELFTALK SKIP %s (--skip)\n", f)
+			fmt.Fprintf(stdout, "SELFTALK SKIP %s (--skip)\n", oneline.Escape(f))
 			continue
 		}
 		b, err := os.ReadFile(f)
 		if err != nil {
-			fmt.Fprintf(stderr, "nova-self-talk: %v\n", err)
+			fmt.Fprintf(stderr, "nova-self-talk: %s\n", oneline.Err(err))
 			return 2
 		}
 		scanned++
@@ -136,9 +142,9 @@ func run(args []string, stdout, stderr io.Writer) int {
 			claims++
 			if c.Verdict == selftalk.Standing {
 				standing++
-				fmt.Fprintf(stderr, "SELFTALK FAIL %s: %s: %s\n", f, c.Verdict, c.Text)
+				fmt.Fprintf(stderr, "SELFTALK FAIL %s: %s: %s\n", oneline.Escape(f), c.Verdict, oneline.Escape(c.Text))
 			} else {
-				fmt.Fprintf(stdout, "SELFTALK %s %s: %s\n", c.Verdict, f, c.Text)
+				fmt.Fprintf(stdout, "SELFTALK %s %s: %s\n", c.Verdict, oneline.Escape(f), oneline.Escape(c.Text))
 			}
 		}
 		found := selftalk.ScanInstallation(text)
@@ -146,11 +152,11 @@ func run(args []string, stdout, stderr io.Writer) int {
 		// reader cannot meet a finding in a rule document without meeting the
 		// sentence that says what it is for.
 		if len(found) > 0 && pinned[selftalk.Base(f)] {
-			fmt.Fprintf(stdout, "SELFTALK RULEDOC %s: %s\n", f, selftalk.RuleDocumentBanner)
+			fmt.Fprintf(stdout, "SELFTALK RULEDOC %s: %s\n", oneline.Escape(f), selftalk.RuleDocumentBanner)
 		}
 		for _, i := range found {
 			installed++
-			fmt.Fprintf(stderr, "SELFTALK FAIL %s:%d: INSTALLATION %s: %s\n", f, i.Line, i.Shape, i.Text)
+			fmt.Fprintf(stderr, "SELFTALK FAIL %s:%d: INSTALLATION %s: %s\n", oneline.Escape(f), i.Line, i.Shape, oneline.Escape(i.Text))
 		}
 	}
 

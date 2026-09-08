@@ -62,6 +62,56 @@ SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
 ```
 
 `OK` lines go to stdout; `FAIL` lines and refusals go to stderr.
+
+**An event is exactly one line, and nothing a caller supplies or a file holds
+can add a second.** This is one guarantee, stated once here and met by every
+binary the same way, through `internal/oneline`. Every path, file name, reason,
+stored key, stamp, claim, frontmatter value and error text that reaches an
+event line, a refusal or a note is printed with its control characters
+escaped — `\xNN` for a code point below U+0080, `\uNNNN` above it, lower-case
+hex in both — and so are U+2028 and U+2029, the Unicode line and paragraph
+separators, which break a line for every reader that follows Unicode rather
+than counting newlines, and the bidi controls U+202A to U+202E and U+2066 to
+U+2069, which are format characters rather than controls and let a terminal
+display a line in an order other than the one it was written in. A newline in
+a file name therefore arrives as `\x0a` inside its own line rather than forging
+an `OK` beneath a `FAIL`, and an ESC sequence or a right-to-left override
+arrives as text. A byte that is not valid UTF-8 is escaped as `\xNN` by its
+value. The other format characters — the zero-width joiner, the soft hyphen,
+the byte order mark — pass through, because they do not reorder what an
+operator sees. Printable text, including non-ASCII, is untouched, and nothing
+is ever shortened to nothing: a reason a person cannot read is not a record.
+Where a binary quotes an argument with Go quoting (`%q`) instead, that is also
+one line but a DIFFERENT escape form — `\n` where the escape above writes
+`\x0a` — and the two spellings appear in the same output.
+
+**A field is one token.** The value of a `key=value` field that carries
+caller-supplied or stored text — `nova-fuse`'s `quarantine=`, `surface=` and
+`since=`, `nova-check`'s `ledger=`, `nova-memory`'s `class=`, `name=`, `type=`,
+`source=` and `expected=` — is additionally printed with every whitespace
+character and every `=` escaped, `\x20` and `\x3d` for the ASCII two, so a
+whitespace-splitting scanner counts exactly the fields the tool wrote, and a
+search for `lockdown=clear` can match only the field the tool wrote, never a
+stored key of `x lockdown=clear quarantines=0`. A positional `<path>` or
+`<file>` slot is escaped for one line only and keeps its spaces and colons.
+**The free-text tail is never to be scanned for fields.** Everything after the
+fields and the `: ` that closes them — the `<reason>`, the `<claim>`, a
+receipt's snippet, a finding's detail — is whatever the file held, and it may
+say `lockdown=clear`. Anchor a search at the line start, where the tool's own
+tokens are.
+
+**Two limits, stated rather than left to be discovered.** The escape is not
+injective: a literal backslash is not itself escaped, so a stored newline and
+the four characters `\x0a` print identically, and the output proves one line,
+never which of the two was stored. And an escaped line does not paste back: a
+path printed with `\x0a` in it will not reproduce the path, and nothing is
+shell-quoted.
+
+**One exemption, by name:** `nova-fuse path` prints its argument bare — a
+value, not an event — so nothing may scan `path` output for grammar. Every
+other line of every binary keeps the guarantee, and each binary's section
+below says how it meets it and which test pins it.
+
 `nova-fuse` and `nova-memory`'s lines follow the same one-line shape but their
 first token is the **binary's own event token**, not a check name — usually the
 verb, and for each binary's `check` verb the binary itself (`FUSE`, `STATUS`,
@@ -87,6 +137,19 @@ stdout, all listed in its section.
 Six record-layer checks in one binary, each a wall: a record passes or it
 does not. Each subcommand below states its own contract — what it asserts,
 what makes it say NO, and what it deliberately does not check.
+
+**The one-line guarantee, met here.** Every `<path>`, `<file>`, `<target>` and
+`<reason>` on the lines above, and every path an error's text carries into a
+refusal or a note, renders through `internal/oneline`; `ledger=` on
+`CORPUS OK` is a field and prints as one token; `deny-list=` names one of
+three constants from the deny-list machinery and is not caller text. The flag
+parser is given no stream, so an unknown flag after a verb is this tool's own
+one-line refusal followed by the usage, at exit 2, `-h` included. Pinned by
+`TestNoCallerPathCanForgeALine` and by the source audit every binary runs
+(`internal/oneline/audit`), which classifies every printed argument as
+quoted, numeric, literal, escaped or exempted with a stated reason, and fails
+on a new raw one.
+
 
 ### attest — did the full self actually load
 
@@ -1100,6 +1163,14 @@ instrument** for a different layer — the register of the prose itself. It
 classifies and reports; whether a flagged sentence should be dated, cut,
 relocated, or kept is the writer's judgment, and the tool must never make it.
 
+**The one-line guarantee, met here.** The `<file>` on every line is a caller's
+argument and the `<claim>` or `<sentence>` beside it is the file's own text;
+both render through `internal/oneline`, so a file named with a newline or a
+sentence holding a bidi override prints escaped inside its one line. The flag
+parser is given no stream. Pinned by `TestNoFileNameOrClaimCanForgeALine` and
+by the shared source audit.
+
+
 **Asserts.** No scanned file contains a **standing** self-claim, in either of
 two classes. The one distinction that decides every case, in both: **a
 capability denial is a measurement with a date, never a remembered property.**
@@ -1358,35 +1429,27 @@ unchanged: exit 0, usage on stdout, and that text carries no grammar token.
 same box, same bytes (quarantines sort; the clock is injected).
 
 **An event is exactly one line, and nothing a box or an argument contains can
-add a second.** Every `<reason>`, `<name>`, `<surface>` and `<t>` above is
-printed with its control characters escaped — `\xNN` for a code point below
-U+0080, `\uNNNN` above it, lower-case hex in both — and so are U+2028 and
-U+2029, the Unicode line and paragraph separators, which are not control
-characters but break a line for every reader that follows Unicode rather than
-counting newlines. A newline in a hand-edited reason therefore arrives as
-`\x0a` inside its own line rather than forging a `FUSE OK` beneath a
-`FUSE FAIL`, and an ESC sequence arrives as text rather than repainting an
-operator's terminal. **The same rendering covers the refusals and the notes**,
-not only the lines listed above: a refusal quotes the error, an error quotes
-the path, and a path is an argument. Six refusals instead print their offending
-argument with Go quoting (`%q`), which is also one line but a DIFFERENT escape
-form — `\n` where this tool's own escape writes `\x0a` — so the two spellings
-appear in the same output and neither is a bug. Printable text, including non-ASCII, is
-untouched, and nothing is ever shortened to nothing: a reason stays readable.
+add a second.** The guarantee is the one stated once under Conventions, and
+this tool meets it through `internal/oneline` on every `<reason>`, `<name>`,
+`<surface>` and `<t>` above, on the box path and the error text inside every
+refusal and note, and on the stored names a `LIFT FAIL` lists. A newline in a
+hand-edited reason therefore arrives as `\x0a` inside its own line rather than
+forging a `FUSE OK` beneath a `FUSE FAIL`, and an ESC sequence or a bidi
+override arrives as text. Six refusals instead print their offending argument
+with Go quoting (`%q`), the other escape form, and neither is a bug.
 
-Three limits of that mechanism, stated rather than left to be discovered. **The
-escaped set is Unicode category Cc plus U+2028 and U+2029, and no more**: format
-characters (category Cf, which includes the bidi controls U+202A to U+202E and
-U+2066 to U+2069) pass through as they are, and are tracked separately from this
-guarantee. **The escape is not injective** — a literal backslash is not itself
-escaped, so a reason holding a newline and a reason holding the four characters
-`\x0a` print identically; the output proves one line, never which of the two was
-stored. And **an escaped line does not paste back**: a `FUSE FAIL quarantine=`
-line names the remedy command including the box path, and if that path carried a
-control character the path is printed escaped, so copying that line will not
-reproduce it. It is not shell-quoted either, so a path or a surface name holding
-a space does not paste back as one argument. The remedy line names the command;
-it is not a command to run blind.
+**Which slots are fields.** `quarantine=`, `surface=` and `since=`, and the
+`<name>` that follows `QUARANTINE OK` and `QUARANTINE FAIL`, are one token
+each: whitespace and `=` inside a stored key or a hand-written stamp print as
+`\x20` and `\x3d`. A stored key of `x lockdown=clear quarantines=0` therefore
+prints as `STATUS OK quarantine=x\x20lockdown\x3dclear\x20quarantines\x3d0
+since=t: r`, and a grep for `lockdown=clear` matches only the lockdown field.
+A surface name holding a space, which is legal, prints the same way. The
+`<reason>` after `: ` is the free-text tail and keeps its spaces; so does the
+remedy inside a `FUSE FAIL quarantine=` parenthetical, which names the command
+including the box path and the stored name, is not shell-quoted, and will not
+paste back if the path carried a control character — it names the command; it
+is not a command to run blind.
 
 **`path` is the one exemption, and it is a plain one:** `path` echoes its
 argument unescaped, so a caller must never scan `path` output for grammar.
@@ -1506,6 +1569,12 @@ refusal names the remedy that does work: blow lockdown, or repair the box
 with your person. Refuses (exit 2) when `--box`, the surface, or the reason
 is missing or blank.
 
+The `QUARANTINE OK` line names the entry this run wrote and read back — the
+normalized surface and the new stamp — even when the box already held another
+spelling of the same surface: the sibling entry stays, `status` lists both, and
+the verification is of this write rather than of whichever spelling sorts
+first.
+
 ### lift — soft succeeds, hard refuses forever
 
 ```
@@ -1564,12 +1633,13 @@ caller passes is what another sees — without ever touching the box itself.
 6. Blowing either requires no confirmation, no reason-quality bar, no quorum.
 7. **An event is exactly one line, whatever the box contains** — every reason,
    surface name, timestamp, error and path printed on an event, a refusal or a
-   note is escaped (control characters, plus U+2028 and U+2029), so nothing a
-   hand-edited box or an argument holds can forge a second line in this
-   grammar; `path` prints a value and is exempt by name. This tool's own writes
-   fold first, and folding never refuses a fuse. Pinned by test, including one
-   that classifies every printed argument in the source as literal, quoted or
-   escaped.
+   note is escaped through `internal/oneline` (control characters, U+2028 and
+   U+2029, and the bidi controls), and every field is one token, so nothing a
+   hand-edited box or an argument holds can forge a second line or a second
+   field in this grammar; `path` prints a value and is exempt by name. This
+   tool's own writes fold first, and folding never refuses a fuse. Pinned by
+   test, including the source audit every binary runs, which classifies every
+   printed argument as literal, quoted or escaped.
 
 ### Known limit — the double-blown blind spot, named rather than hidden
 
@@ -1654,6 +1724,22 @@ hands you k receipts; the verdict is yours, and a tool that turned "this
 resembles something you wrote" into a failing exit would be making the
 editorial decision it exists to inform.
 
+**The one-line guarantee, met here.** A receipt's `class=`, `name=` and
+`type=` are the corpus's own text and are fields, one token each, so a
+frontmatter `name: x lockdown=clear` cannot pose as a field on a receipt; so
+are `check`'s `source=`, `eval`'s `expected=`, and the caller's own `query=`
+on `SEARCH OK`, `EVAL HIT` and `EVAL MISS`, which is argv and so the one slot
+a caller controls outright (a query of `quokka class=poison` prints as
+`query=quokka\x20class\x3dpoison`, never as a second `class=` field). A receipt's fields end
+at the `: ` after `type=`; the `<file>:<para>` and the Go-quoted snippet that follow are the
+tail, the path escaped for one line and keeping its spaces, and the tail is never scanned for
+fields, as Conventions says. `MEMORY CAND`'s candidate and `VERIFY INFO`'s detail sit after the
+same `: ` for the same reason. The root, the candidate and the gold file in every
+refusal, and the detail of every `verify` finding, render through
+`internal/oneline`. The flag parser is given no stream. Pinned by
+`TestNoCorpusOrCallerTextCanForgeALine` and by the shared source audit.
+
+
 **No defaults, applied here.** `--root` is required on every verb: **no
 environment variable is consulted and there is no discovery from the working
 directory** (pinned by test). A corpus you did not name is a corpus you did
@@ -1718,9 +1804,9 @@ metadata a judge needs: class, frontmatter name and type, the `file:para`
 address to go read, and a normalized snippet.
 
 ```
-SEARCH OK query="<q>" hits=<n> k=<n> channels=<list> files=<n> chunks=<n>
+SEARCH OK query=<q> hits=<n> k=<n> channels=<list> files=<n> chunks=<n>
 SEARCH CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
-SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> <file>:<para> "<snippet>"
+SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|->: <file>:<para> "<snippet>"
 SEARCH MISS every query term is out of vocabulary for this corpus
 SEARCH NOTE <caveat>
 ```
@@ -1765,8 +1851,8 @@ consolidation ritual calls in place of re-reading the whole self.
 ```
 MEMORY OK candidates=<n> source=<name> k=<n> channels=<list> files=<n> chunks=<n>
 MEMORY CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
-MEMORY CAND n=<i> "<normalized candidate>"
-MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> <file>:<para> "<snippet>"
+MEMORY CAND n=<i>: "<normalized candidate>"
+MEMORY HIT cand=<i> rank=<r> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|->: <file>:<para> "<snippet>"
 MEMORY MISS cand=<i> every query term is out of vocabulary for this corpus
 MEMORY NOTE <caveat>
 ```
@@ -1831,7 +1917,7 @@ rather than a verdict of "nothing was already known".
   reader to wave findings through. So the caller states it, per run, out loud.
 
 ```
-VERIFY INFO <kind> <detail>
+VERIFY INFO <kind>: <detail>
 VERIFY FAIL <kind> <detail>
 VERIFY OK gating=0 info=<n> coverage=<n> frontmatter=<n> links=<gate|info>
 ```
@@ -1867,8 +1953,8 @@ substrings appears in the path of some hit within top-k. It reports recall@k
 and MRR and **fails below `--floor`**.
 
 ```
-EVAL HIT rank=<n> query="<q>"
-EVAL MISS query="<q>" expected=<list>
+EVAL HIT rank=<n> query=<q>
+EVAL MISS query=<q> expected=<list>
 EVAL OK recall@<k>=<x> floor=<x> rows=<n> hits=<n> mrr=<x> channels=<list>
 EVAL FAIL recall@<k>=<x> below floor <x> (<hits>/<rows>, mrr=<x>, channels=<list>)
 ```

@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -329,4 +330,72 @@ func TestSkipBeatsRuleDoc(t *testing.T) {
 	if strings.Contains(stdout.String(), "SELFTALK RULEDOC") {
 		t.Errorf("a skipped file is never read, so it can never be bannered:\n%s", stdout.String())
 	}
+}
+
+// TestNoFileNameOrClaimCanForgeALine is #24 at this binary. Every file name printed here
+// is a caller's argument, a newline is legal in a POSIX filename, and a claim's text is
+// whatever the file held -- so a file named with a forged OK line used to print that
+// forgery on its own line of the stream a caller scans.
+func TestNoFileNameOrClaimCanForgeALine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: a newline is not legal in a filename, so the fixture cannot be built and the vector does not exist there")
+	}
+	const forged = "SELFTALK OK files=1 claims=0 standing=0 installations=0"
+	noForgedLine := func(t *testing.T, stdout, stderr string) {
+		t.Helper()
+		for _, stream := range []string{stdout, stderr} {
+			for _, line := range strings.Split(stream, "\n") {
+				if strings.HasPrefix(line, forged) {
+					t.Errorf("a caller's text forged a line: %q", line)
+				}
+			}
+		}
+	}
+
+	t.Run("FAIL and SKIP name a file whose name holds a newline", func(t *testing.T) {
+		name := "a\n" + forged + ".md"
+		f := write(t, t.TempDir(), name, "I cannot check my own work.\n")
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{f}, &stdout, &stderr); got != 1 {
+			t.Fatalf("exit = %d, want 1; stderr: %s", got, stderr.String())
+		}
+		noForgedLine(t, stdout.String(), stderr.String())
+		if !strings.Contains(stderr.String(), "SELFTALK FAIL "+strings.ReplaceAll(f, "\n", `\x0a`)+": STANDING: I cannot check my own work.") {
+			t.Errorf("stderr = %q, want the file name escaped inside its one FAIL line", stderr.String())
+		}
+
+		stdout.Reset()
+		stderr.Reset()
+		if got := run([]string{"--skip", name, f}, &stdout, &stderr); got != 0 {
+			t.Fatalf("exit = %d, want 0; stderr: %s", got, stderr.String())
+		}
+		noForgedLine(t, stdout.String(), stderr.String())
+		if !strings.Contains(stdout.String(), "SELFTALK SKIP "+strings.ReplaceAll(f, "\n", `\x0a`)+" (--skip)") {
+			t.Errorf("stdout = %q, want the skip reported with the name escaped", stdout.String())
+		}
+	})
+
+	t.Run("a claim's text is escaped", func(t *testing.T) {
+		// A bidi override inside the sentence: printable, invisible, and it would display
+		// the rest of the line reversed on a terminal that honors it.
+		f := write(t, t.TempDir(), "drifted.md", "I cannot check my "+string(rune(0x202e))+"own work.\n")
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{f}, &stdout, &stderr); got != 1 {
+			t.Fatalf("exit = %d, want 1; stderr: %s", got, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), `STANDING: I cannot check my \u202eown work.`) {
+			t.Errorf("stderr = %q, want the override escaped", stderr.String())
+		}
+	})
+
+	t.Run("a flag the parser does not know is refused on one line, by this tool", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{"--bogus\n" + forged, "x.md"}, &stdout, &stderr); got != 2 {
+			t.Fatalf("exit = %d, want 2; stderr: %s", got, stderr.String())
+		}
+		noForgedLine(t, stdout.String(), stderr.String())
+		if !strings.Contains(stderr.String(), `nova-self-talk: flag provided but not defined: -bogus\x0aSELFTALK OK files`) {
+			t.Errorf("stderr = %q, want this tool's own refusal with the flag escaped", stderr.String())
+		}
+	})
 }

@@ -666,3 +666,109 @@ func TestPrintDenyListShowsTheNameFloor(t *testing.T) {
 		}
 	}
 }
+
+// TestNoCallerPathCanForgeALine is #24 at this binary. A path is caller-supplied, a
+// newline is legal in a POSIX filename, and every one of these lines is one SPEC.md calls
+// machine-scannable -- so a directory or a file whose name carries a newline and a forged
+// OK line used to print that forgery on its own line, on the same stream a caller scans.
+// Nothing here gates ingestion, which is why the threat is smaller than the fuse's, but
+// the grammar is published as scannable, and that is an invitation to parse it.
+func TestNoCallerPathCanForgeALine(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: a newline is not legal in a filename, so the fixture cannot be built and the vector does not exist there")
+	}
+	// oneEvent asserts that the forged line appears on no line of its own, on either stream.
+	oneEvent := func(t *testing.T, forged, stdout, stderr string) {
+		t.Helper()
+		for _, stream := range []string{stdout, stderr} {
+			for _, line := range strings.Split(strings.TrimRight(stream, "\n"), "\n") {
+				if line == "" {
+					continue
+				}
+				if strings.HasPrefix(line, forged) {
+					t.Errorf("a caller path forged a line: %q", line)
+				}
+			}
+		}
+		if strings.Contains(stdout, "\n"+forged) || strings.Contains(stderr, "\n"+forged) {
+			t.Errorf("the forgery reached a stream on its own line:\nstdout: %q\nstderr: %q", stdout, stderr)
+		}
+	}
+
+	t.Run("links FAIL names a file whose name holds a newline", func(t *testing.T) {
+		dir := t.TempDir()
+		const forged = "LINKS OK files=1 links=1"
+		mustWrite(t, dir, "bad\n"+forged+".md", "[gone](missing.md)\n")
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{"links", "--dir", dir}, &stdout, &stderr); got != 1 {
+			t.Fatalf("exit = %d, want 1; stderr: %s", got, stderr.String())
+		}
+		oneEvent(t, forged, stdout.String(), stderr.String())
+		if !strings.Contains(stderr.String(), `LINKS FAIL bad\x0a`+forged+`.md:1: missing.md (does not exist)`) {
+			t.Errorf("stderr = %q, want the file name escaped inside its one FAIL line", stderr.String())
+		}
+	})
+
+	t.Run("attest refusal quotes a manifest path that holds a newline", func(t *testing.T) {
+		dir := t.TempDir()
+		const forged = "ATTEST OK files=1 bytes=1 sha256=0000000000000000000000000000000000000000000000000000000000000000"
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{"attest", "--home", dir, "--manifest", filepath.Join(dir, "m\n"+forged)}, &stdout, &stderr); got != 2 {
+			t.Fatalf("exit = %d, want 2; stderr: %s", got, stderr.String())
+		}
+		oneEvent(t, forged, stdout.String(), stderr.String())
+	})
+
+	t.Run("corpus OK names a ledger path that holds a newline, escaped in its field", func(t *testing.T) {
+		dir := t.TempDir()
+		const forged = "CORPUS OK anchors=9 floor=1 ledger=x"
+		ledger := "led\n" + forged + " ger.md"
+		mustWrite(t, dir, ledger, "| fragment | home | given | by |\n|---|---|---|---|\n| the light is on | README.md | 2026-01-01 | a friend |\n")
+		mustWrite(t, dir, "repo/README.md", "and then: the light is on, still.\n")
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{"corpus", "--ledger", filepath.Join(dir, ledger), "--root", filepath.Join(dir, "repo"), "--min-anchors", "1"}, &stdout, &stderr); got != 0 {
+			t.Fatalf("exit = %d, want 0; stderr: %s", got, stderr.String())
+		}
+		oneEvent(t, forged, stdout.String(), stderr.String())
+		// The ledger is a field: one token, so the space and the "=" in the name are escaped too.
+		want := filepath.Join(dir, ledger)
+		for _, r := range []struct{ from, to string }{{"\n", `\x0a`}, {" ", `\x20`}, {"=", `\x3d`}} {
+			want = strings.ReplaceAll(want, r.from, r.to)
+		}
+		if !strings.Contains(stdout.String(), "ledger="+want+"\n") {
+			t.Errorf("stdout = %q, want the ledger path as one escaped token", stdout.String())
+		}
+	})
+
+	t.Run("corpus refusal quotes a ledger path that holds a newline", func(t *testing.T) {
+		dir := t.TempDir()
+		const forged = "CORPUS OK anchors=9 floor=1 ledger=x"
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{"corpus", "--ledger", filepath.Join(dir, "m\n"+forged), "--root", dir, "--min-anchors", "1"}, &stdout, &stderr); got != 2 {
+			t.Fatalf("exit = %d, want 2; stderr: %s", got, stderr.String())
+		}
+		oneEvent(t, forged, stdout.String(), stderr.String())
+	})
+
+	t.Run("nocode's classified-nothing note names a directory that holds a newline", func(t *testing.T) {
+		dir := filepath.Join(t.TempDir(), "d\nNOCODE OK files=99 clean")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		var stdout, stderr bytes.Buffer
+		run([]string{"nocode", "--dir", dir}, &stdout, &stderr)
+		oneEvent(t, "NOCODE OK files=99", stdout.String(), stderr.String())
+	})
+
+	t.Run("a flag the parser does not know is refused on one line, by this tool", func(t *testing.T) {
+		const forged = "LINKS OK files=1 links=1"
+		var stdout, stderr bytes.Buffer
+		if got := run([]string{"links", "--dir", t.TempDir(), "--bogus\n" + forged}, &stdout, &stderr); got != 2 {
+			t.Fatalf("exit = %d, want 2; stderr: %s", got, stderr.String())
+		}
+		oneEvent(t, forged, stdout.String(), stderr.String())
+		if !strings.Contains(stderr.String(), `nova-check links: flag provided but not defined: -bogus\x0aLINKS OK files`) {
+			t.Errorf("stderr = %q, want this tool's own refusal with the flag escaped", stderr.String())
+		}
+	})
+}
