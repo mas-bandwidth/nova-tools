@@ -342,11 +342,11 @@ func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
 	// over a tree never opened. On this platform /var is such a link.
 	root, statErr := filepath.EvalSymlinks(opts.Dir)
 	if statErr != nil {
-		return 0, nil, fmt.Errorf("dir: %w", statErr)
+		return 0, nil, fmt.Errorf("dir %q: %w", opts.Dir, statErr)
 	}
 	info, statErr := os.Stat(root)
 	if statErr != nil {
-		return 0, nil, fmt.Errorf("dir: %w", statErr)
+		return 0, nil, fmt.Errorf("dir %q: %w", opts.Dir, statErr)
 	}
 	if !info.IsDir() {
 		return 0, nil, fmt.Errorf("dir %q is not a directory", opts.Dir)
