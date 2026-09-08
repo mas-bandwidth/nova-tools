@@ -191,10 +191,12 @@ provenance — that stricter posture belongs to `attest`.
   unreadable file can never discard the findings from the rest of the tree.
 
 **Refuses (exit 2) only when** `--dir` is missing, unresolvable, or does not
-resolve to a directory — it is resolved through symlinks first, so a `--dir`
+resolve to a directory, or a directory in the walk cannot be listed. The root
+is resolved through symlinks first, so a `--dir`
 naming a link to the repo walks the repo rather than passing with
 `files=0 links=0`; an unreadable `.md` inside the tree is a finding (above),
-never a refusal.
+never a refusal. A walk error stops the run without reporting partial findings.
+Root-resolution errors include the caller's original `--dir` spelling.
 
 **Deliberately does not check:** reference-style links (`[a][ref]`), autolinks
 (`<https://…>`), raw HTML (`<a href>`), whether a `#fragment` names a real
@@ -462,11 +464,14 @@ line per file, exit 1. Yes, this includes a markdown file someone `chmod +x`ed:
 in a self repo an executable *anything* is a boundary violation worth a look.
 
 **Refuses (exit 2) when** `--dir` is missing, unresolvable, or does not
-resolve to a directory — it is resolved through symlinks first, so a `--dir`
+resolve to a directory, or a directory in the walk cannot be listed. The root
+is resolved through symlinks first, so a `--dir`
 naming a link to the repo scans the repo rather than passing with `files=0`; when the
 effective deny-list is empty, unreadable, or contains something that is not an
 extension; when `--deny-ext` and `--deny-ext-add` are given together; when
 a flag cannot be parsed; or on an unexpected positional argument.
+A walk error stops the run without reporting partial findings. Root-resolution
+errors include the caller's original `--dir` spelling.
 
 **Deliberately does not check:** file contents beyond the first two bytes (an
 extension list plus a shebang test is auditable; sniffing a whole file for
