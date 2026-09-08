@@ -348,8 +348,8 @@ func cmdSearch(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	hits := memindex.Retrieve(c, chans, query, *k)
-	fmt.Fprintf(stdout, "SEARCH OK query=%q hits=%d k=%d channels=%s files=%d chunks=%d\n",
-		query, len(hits), *k, chanNames(chans), len(c.Files), len(c.Chunks))
+	fmt.Fprintf(stdout, "SEARCH OK query=%s hits=%d k=%d channels=%s files=%d chunks=%d\n",
+		oneline.Field(query), len(hits), *k, chanNames(chans), len(c.Files), len(c.Chunks))
 	fmt.Fprintf(stdout, "SEARCH CAL %s probe=unrelated-control\n", scoreFields(calibration(c, chans)))
 	if len(hits) == 0 {
 		fmt.Fprintln(stdout, "SEARCH MISS every query term is out of vocabulary for this corpus")
@@ -595,9 +595,9 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 		if rank != 0 {
 			hits++
 			mrr += 1.0 / float64(rank)
-			fmt.Fprintf(stdout, "EVAL HIT rank=%d query=%q\n", rank, row.query)
+			fmt.Fprintf(stdout, "EVAL HIT rank=%d query=%s\n", rank, oneline.Field(row.query))
 		} else {
-			fmt.Fprintf(stdout, "EVAL MISS query=%q expected=%s\n", row.query, oneline.Field(strings.Join(row.expected, ",")))
+			fmt.Fprintf(stdout, "EVAL MISS query=%s expected=%s\n", oneline.Field(row.query), oneline.Field(strings.Join(row.expected, ",")))
 		}
 	}
 	recall := float64(hits) / float64(len(rows))

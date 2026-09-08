@@ -1719,7 +1719,10 @@ editorial decision it exists to inform.
 **The one-line guarantee, met here.** A receipt's `class=`, `name=` and
 `type=` are the corpus's own text and are fields, one token each, so a
 frontmatter `name: x lockdown=clear` cannot pose as a field on a receipt; so
-are `check`'s `source=` and `eval`'s `expected=`. The `<file>:<para>` on a
+are `check`'s `source=`, `eval`'s `expected=`, and the caller's own `query=`
+on `SEARCH OK`, `EVAL HIT` and `EVAL MISS`, which is argv and so the one slot
+a caller controls outright (a query of `quokka class=poison` prints as
+`query=quokka\x20class\x3dpoison`, never as a second `class=` field). The `<file>:<para>` on a
 receipt is a positional slot, escaped for one line and keeping its spaces; the
 snippet is Go-quoted. The root, the candidate and the gold file in every
 refusal, and the detail of every `verify` finding, render through
@@ -1791,7 +1794,7 @@ metadata a judge needs: class, frontmatter name and type, the `file:para`
 address to go read, and a normalized snippet.
 
 ```
-SEARCH OK query="<q>" hits=<n> k=<n> channels=<list> files=<n> chunks=<n>
+SEARCH OK query=<q> hits=<n> k=<n> channels=<list> files=<n> chunks=<n>
 SEARCH CAL score=<x|-> score-channel=<name|-> probe=unrelated-control
 SEARCH HIT rank=<n> score=<x|-> score-channel=<name|-> fused=<x> class=<c> name=<n|-> type=<t|-> <file>:<para> "<snippet>"
 SEARCH MISS every query term is out of vocabulary for this corpus
@@ -1940,8 +1943,8 @@ substrings appears in the path of some hit within top-k. It reports recall@k
 and MRR and **fails below `--floor`**.
 
 ```
-EVAL HIT rank=<n> query="<q>"
-EVAL MISS query="<q>" expected=<list>
+EVAL HIT rank=<n> query=<q>
+EVAL MISS query=<q> expected=<list>
 EVAL OK recall@<k>=<x> floor=<x> rows=<n> hits=<n> mrr=<x> channels=<list>
 EVAL FAIL recall@<k>=<x> below floor <x> (<hits>/<rows>, mrr=<x>, channels=<list>)
 ```
