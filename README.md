@@ -677,7 +677,8 @@ open notes themselves, and `--full` lists them too. The listing is three groups 
 the notes that carry a question, a finding or a request; then what you have
 already said *heard* to and still owe an answer; then the bare acknowledgements —
 and every file it could not parse is named rather than dropped, on every run,
-whichever way you asked.
+whichever way you asked — unless it is dated behind your switch-day line, which
+makes it history rather than news; see `--legacy-before` below.
 
 `INBOX UNADDRESSED` is the quieter half of that. A note whose `To:` line resolves
 to nobody — `To: Team`, on a roster that has no Team — **parses**, so it is not
@@ -703,7 +704,13 @@ one. Without `--advance` it writes nothing at all.
 `--legacy-before <YYYY-MM-DD>` is the switch-day line, and a bus that existed
 before this tool needs it once: a note dated before that UTC date is **not
 carried** on your open list and is **not listed**, appearing only inside the
-count on a single `INBOX LEGACY before=<date> notes=<n>` line. Nothing is
+count on a single `INBOX LEGACY before=<date> notes=<n> unreadable=<m>` line. A
+file this tool **cannot parse** that is dated behind the line goes the same way,
+counted under `unreadable=` — fifteen hand-written notes from the week before a
+bus switched over are history, and naming them on every poll buries the inbox
+they are printed above. A file dated on or after the line, or with no readable
+date at all, is named on every run: the line never quiets a new note, or one it
+cannot date. `--full` lists everything whatever its date. Nothing is
 deleted, marked answered or changed — the notes are still on the bus and still
 answerable; what the line changes is your own open list. The date goes into your
 cursor, so every run after it honours the line with no flag. Moving the line
@@ -824,7 +831,7 @@ SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
-INBOX LEGACY before=<date> notes=<n>
+INBOX LEGACY before=<date> notes=<n> unreadable=<m>
 INBOX OPEN carrying=<n> heard=<m>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
@@ -965,9 +972,13 @@ nova-bus inbox --bus <dir> --as <you> --receipt-max-words 40 \
    unavoidable. A date can only ever forgive fewer notes, never more.
 2. **`inbox --full --legacy-before <the same day> --advance`**, once, for each
    reader. The old notes are left off that reader's open list and counted on one
-   `INBOX LEGACY` line; the date is recorded in their cursor, so every later run
+   `INBOX LEGACY` line — `notes=` for the ones that parse, `unreadable=` for the
+   ones nobody can — and the date is recorded in their cursor, so every later run
    honours it with no flag. Nothing is deleted and no note is changed — an old
-   note is still on the bus, still readable, still answerable by id or path.
+   note is still on the bus, still readable, still answerable by id or path. This
+   full read still lists everything it found; **after the line the inbox is
+   quiet**, which is what every run from here on looks like: what has arrived,
+   and two counts for the history.
 3. **Run `check --full --rebuild-index` once.** It writes each lane's catalogue
    from the notes in it. A note that has an id and no catalogue line is only ever
    a warning — the notes are the record and the catalogue is a cache — but the
@@ -976,8 +987,9 @@ nova-bus inbox --bus <dir> --as <you> --receipt-max-words 40 \
    and it is the size of the change.
 
 A note that says nowhere when it was written — no `Date:` line and no date at the
-front of its filename — is never forgiven and never left off an open list,
-because there is nothing to compare it against.
+front of its filename — is never forgiven and never left off an open list, and a
+file nobody can parse that says nowhere when it was written is still named on
+every run, because there is nothing to compare either against.
 
 Notes written before ids existed keep working throughout: they are addressed by
 **path** everywhere an id is taken, and `send` never rewrites an old note — it
