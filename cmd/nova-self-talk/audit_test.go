@@ -18,6 +18,11 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 }
 
 var selfTalkAudit = audit.Config{
+	// hintFor returns one of this package's own hint constants, or the empty string, and
+	// nothing else -- a switch over a kind of refusal, with no caller text in it. The
+	// classifier walks its body like any other listed escaper, so the claim is checked
+	// rather than taken.
+	Escapers: []string{"hintFor"},
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{

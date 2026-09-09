@@ -5,13 +5,13 @@ what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
 instrument at the **register layer** — it classifies self-claims in prose, in two
-disjoint classes. `nova-memory`: five verbs at the **retrieval layer** — it answers *do I
+disjoint classes. `nova-memory`: six verbs at the **retrieval layer** — it answers *do I
 already know this?* from an index rebuilt out of the record, so the mind's
 judgment budget per new learning stops scaling with the size of the self — the
 tool's own run cost does not, and every run pays the build. Every check can say
 NO, and the test suite proves each one saying it. A check never seen failing is
 not a check. Two of nova-memory's verbs are checks in that sense; the other
-three assert nothing at all, and its section says which is which and why.
+four assert nothing at all, and its section says which is which and why.
 `nova-bus`: six verbs at the **bus layer** — the only binary here that
 writes outside its own state, and the only one that runs another program (`git`).
 The bus it works on is a shared git repository of notes between several lines;
@@ -145,7 +145,7 @@ completed run, pass or fail). `nova-bus`'s tokens are its verbs — `SEND`, `INB
 `RECEIPT`, `NAMES`, and `BUS` for its `check` verb — with the informational second
 tokens `NOTE`, `RECEIPT`, `ALREADY`, `NAME` and `GROUP`, all on stdout, all listed
 in its section. `nova-memory` adds its own informational second
-tokens the same way — `CAL`, `CAND`, `HIT`, `MISS`, `INFO`, `NOTE` — all on
+tokens the same way — `CAL`, `CAND`, `DEMO`, `HIT`, `MISS`, `INFO`, `NOTE` — all on
 stdout, all listed in its section.
 
 ---
@@ -1700,6 +1700,7 @@ preserves), and a read verb added later is fused by default, not by memory.
 ## nova-memory — membership as a lookup, never a scan
 
 ```
+nova-memory quickstart --root <dir> [--words <w>]... [--draft <file>] [--exclude <glob>]...
 nova-memory stats  --root <dir> [--exclude <glob>]...
 nova-memory search --root <dir> --channels <list> --k <n> [--exclude <glob>]... <words>...
 nova-memory check  --root <dir> --channels <list> --k <n> [--exclude <glob>]... <file|->
@@ -1734,8 +1735,8 @@ and the tool assumes nothing whatever about layout. Frontmatter `name:` and
 `type:` are carried into receipts when a file has them, surfaced and never
 invented.
 
-**Two verbs are checks; three assert nothing.** `verify` and `eval` are walls
-and exit 1 when they fail. `stats`, `search`, and `check` are reports: they
+**Two verbs are checks; four assert nothing.** `verify` and `eval` are walls
+and exit 1 when they fail. `quickstart`, `stats`, `search`, and `check` are reports: they
 exit 0 whenever they ran, exactly as `nova-fuse status` does, and for the same
 reason — answering IS the job. **Never gate on the exit code of `check`.** It
 hands you k receipts; the verdict is yours, and a tool that turned "this
@@ -1769,7 +1770,20 @@ k is the mind's budget and zero is not "unlimited". `--floor` is required on
 `eval`, in (0,1]. `--links` is required on `verify`. `--exclude` and
 `--exempt` are repeatable and start **empty**: every scope narrowing is the
 caller's, stated per run, the same law `nova-self-talk`'s skip list obeys.
-`.git` is never a corpus and is always skipped.
+`.git` is never a corpus and is always skipped. `quickstart` does not weaken
+this and is not an exception to it: it is an explicit verb that SAYS which
+channels and which k it used, on the command line it prints for every step and
+again in the sentence it ends on. Nothing it chose is remembered, inherited or
+applied to any other verb — the next run names its own.
+
+**A refusal reports every reason at once.** A first run is usually wrong about
+more than one thing, and a tool that answers one refusal per invocation turns
+that into a guessing game played one round at a time. Every missing required
+flag, every bad value on a flag that WAS given, and the positional-argument
+mistake are reported by the run that could not start, in one deterministic
+order: missing flags first, sorted, then the value checks in a fixed order.
+A flag nobody gave is reported once, as missing, and never a second time for
+the value it therefore does not have. Pinned by test.
 
 **A refusal names the next step, and refuses anyway.** The three flags a first
 run trips over — `--channels` read as a directory name, then a missing `--k`,
@@ -1780,9 +1794,44 @@ paragraph for `check`), and the corpus directory in the shape `--root <dir>`.
 The law is untouched: the exit code is still 2 and the message still says
 `refusing to guess`. What changes is who does the guessing — a refusal that
 names only what was wrong hands the guess to the reader, which is the thing
-this tool exists not to do. The usage banner ends in one runnable example per
-retrieval verb, and README's `### First run` shows both with their output; the
-sentences and the transcript's shape are pinned by test.
+this tool exists not to do. The usage banner ends in the `quickstart` line and
+one runnable example per retrieval verb, and README's `### First run` opens on
+a real `quickstart` transcript and then shows both verbs by hand; the
+sentences, the examples and both transcripts' shapes are pinned by test.
+
+### quickstart — the first run, which says what it chose
+
+**Reports** a whole first run: `stats`, then `search --channels bm25 --k 3`
+over `--words` (default: the corpus's three most frequent terms that are not
+function words), then `check --channels bm25 --k 2` over `--draft` (default:
+the corpus's own first paragraph, fed on stdin — the demonstration whose
+answer is known). Each step's command line is PRINTED above that step's
+output, and the printed line is the argv that ran, through the same dispatch a
+shell reaches, so a transcript cannot teach an invocation that does not work.
+
+```
+QUICKSTART OK root=<dir> steps=3 channels=bm25 k=3/2 words=<w> words-source=given|corpus-top-terms candidate=<file|corpus-first-paragraph>
+$ nova-memory <verb> --root <dir> ...
+QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: <file>:<para>
+QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults: see --channels and --k
+```
+
+**It is a verb, not a default.** The no-defaults law above is what makes a
+first run hard, and the answer is not to soften it for one caller: it is to
+make the choosing VISIBLE once. Every channel and every k this verb used is on
+a line the reader can copy and change, and the closing note says in words that
+they were chosen this once and are chosen by nobody the next time.
+The default words are the corpus's most COMMON terms, which are the weakest
+evidence BM25 has — which is exactly why the calibration band prints beside
+them.
+
+**Asserts nothing**, and exits 0 only when all three steps ran. A step that
+could not run ends the demonstration there, exit 2, naming the step; the
+closing note is not printed over a run that did not finish, because that note
+is the sentence a reader is meant to leave with. **Refuses (exit 2) when**
+`--root` is missing or unreadable, `--draft` is empty, a positional argument
+is given (the query words go after `--words`), or the corpus holds no
+indexable paragraph.
 
 ### The channels, and why the second one is off unless you ask
 
@@ -3436,8 +3485,8 @@ the callers, and it is the part of this design most likely to rot quietly.
 
 `nova-memory` is a lens on the record, not a memory. It bounds what a mind
 must read before deciding; it decides nothing, writes nothing, and proves
-nothing about whether the corpus it indexed is worth remembering. Three of
-its five verbs cannot fail by design, and the two that can — `verify` and
+nothing about whether the corpus it indexed is worth remembering. Four of
+its six verbs cannot fail by design, and the two that can — `verify` and
 `eval` — are only as good as the globs and the gold rows a line writes for
 itself. Its own STATUS paragraph says the rest: run-proven on one line, value
 unproven as a general claim, and the harness ships so the next line can

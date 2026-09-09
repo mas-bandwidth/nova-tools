@@ -23,6 +23,10 @@ import (
 const usage = `nova-check: record-layer checks for a nova self repo (see SPEC.md)
 
 usage:
+  nova-check quickstart --dir <dir>                  the two checks a first run can make
+                                                     with nothing but a directory: links,
+                                                     then nocode. Both run even if the
+                                                     first says NO.
   nova-check attest --home <dir> --manifest <file>   did the full self load
   nova-check links  --dir <dir>                      every relative md link resolves
   nova-check kernel --file <file> --max-bytes <n>    kernel size budget, in bytes
@@ -44,7 +48,61 @@ usage:
                                                      ledger says it is
 
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation).
+
+example:
+  nova-check quickstart --dir ./self
+  nova-check attest --home ./self --manifest ./self/MANIFEST
+  nova-check kernel --file ./self/SEED-CORE.md --max-bytes 4000
+  nova-check corpus --ledger ./self/corpus/anchors.md --root ./self --min-anchors 2
+
+./self there is a directory of your own; cmd/nova-check/testdata/example-self
+in this repo is one the size of a first run, and every line above is run
+against it by the tests.
 `
+
+// The hints below turn this binary's most-hit refusals into a next step. The
+// no-guessing law is unchanged — a missing flag is still exit 2 and still says
+// "refusing to guess" — but a refusal that names only what was wrong leaves a
+// first-time caller to guess what the flag wanted, which is the same guessing
+// the tool refuses to do, moved onto the reader. Each hint says what the flag
+// IS and what a first run should put there.
+const (
+	dirHint      = `--dir <dir> is the tree to walk, your self repo's root or a directory inside it; it is never guessed from the working directory, so write it out every run`
+	homeHint     = `--home <dir> is your memory-home directory: the tree the manifest's paths are relative to, and the only place attest reads`
+	manifestHint = `--manifest <file> is a text file listing the paths a full boot must read, one per line, relative to --home (blank lines and # comments ignored); this tool ships none, because what a full boot reads is yours`
+	fileHint     = `--file <file> is the one kernel file to measure — the file whose size you are holding to a budget, not the directory it lives in`
+	coreHint     = `--core <file> is the door: the derived copy, usually SEED-CORE.md, whose floor set is checked against the source's`
+	sourceHint   = `--source <file> is the source the door was derived from, usually SEED.md; the check is that the copy still agrees with it`
+	ledgerHint   = `--ledger <file> is your ledger of protected material: a markdown file whose table rows are | fragment | home file | given | by |, written in advance and by you — this tool ships no corpus`
+	rootHint     = `--root <dir> is the repo the ledger's home paths are relative to; it is never guessed from the working directory or from where the ledger happens to sit`
+	anchorsHint  = `--min-anchors <n> is the fewest rows the ledger may hold, a positive number you state: the ledger lives inside the tree it protects, so its own shrinking has to be red`
+	budgetHint   = `state the unit: --max-bytes <n> for a byte budget, or --max-tokens <n> --bytes-per-token <r> for the unit a context window actually spends (the divisor is one you measured on your own writing; there is no default)`
+)
+
+// hintFor returns the already-indented hint line for a required flag, newline
+// included, or "" for a flag whose own usage entry is the whole story. It
+// returns package constants only, which is why printing its result is safe.
+func hintFor(name string) string {
+	switch name {
+	case "dir":
+		return "  " + dirHint + "\n"
+	case "home":
+		return "  " + homeHint + "\n"
+	case "manifest":
+		return "  " + manifestHint + "\n"
+	case "file":
+		return "  " + fileHint + "\n"
+	case "core":
+		return "  " + coreHint + "\n"
+	case "source":
+		return "  " + sourceHint + "\n"
+	case "ledger":
+		return "  " + ledgerHint + "\n"
+	case "root":
+		return "  " + rootHint + "\n"
+	}
+	return ""
+}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -56,6 +114,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case "quickstart":
+		return cmdQuickstart(args[1:], stdout, stderr)
 	case "attest":
 		return cmdAttest(args[1:], stdout, stderr)
 	case "links":
@@ -86,6 +146,16 @@ func run(args []string, stdout, stderr io.Writer) int {
 // The refusal is printed here instead, escaped, and -h after a verb is refused
 // at exit 2 like any other unusable invocation.
 func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required map[string]*string) bool {
+	if !parseFlags(fs, args, stderr) {
+		return false
+	}
+	return requireFlags(fs, stderr, required)
+}
+
+// parseFlags is the half of parse that decides whether anything after it can be
+// trusted: once the flag set has failed to parse, the values and the positional
+// arguments are both meaningless, so no verb adds a second complaint on top.
+func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
@@ -96,6 +166,14 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required map[strin
 		fmt.Fprintf(stderr, "nova-check %s: unexpected argument %q\n", fs.Name(), fs.Arg(0))
 		return false
 	}
+	return true
+}
+
+// requireFlags reports EVERY missing required flag, not the first: the flags are
+// independent of each other, so a caller who omitted two should learn about two
+// in one run rather than being sent back for a second refusal. Each one carries
+// the hint that says what the flag wants.
+func requireFlags(fs *flag.FlagSet, stderr io.Writer, required map[string]*string) bool {
 	names := make([]string, 0, len(required))
 	for name := range required {
 		names = append(names, name)
@@ -104,11 +182,38 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required map[strin
 	ok := true
 	for _, name := range names {
 		if *required[name] == "" {
-			fmt.Fprintf(stderr, "nova-check %s: --%s is required; refusing to guess\n", fs.Name(), name)
+			fmt.Fprintf(stderr, "nova-check %s: --%s is required; refusing to guess\n%s", fs.Name(), name, hintFor(name))
 			ok = false
 		}
 	}
 	return ok
+}
+
+// cmdQuickstart is the first run: the two checks that need nothing but a
+// directory, in one command, so that a stranger's first invocation is a line
+// they can type from the usage banner rather than a choice between six verbs
+// and the flags each of them wants. It adds no check of its own — it runs
+// links and then nocode, and both run even when the first says NO, because a
+// first run should learn everything this pair can tell it in one go.
+func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("quickstart", flag.ContinueOnError)
+	dir := fs.String("dir", "", "directory tree to check (required)")
+	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
+		return 2
+	}
+	fmt.Fprintf(stdout, "QUICKSTART OK dir=%s checks=2: links, then nocode\n", oneline.Field(*dir))
+	linksCode := cmdLinks([]string{"--dir", *dir}, stdout, stderr)
+	nocodeCode := cmdNoCode([]string{"--dir", *dir}, stdout, stderr)
+	worst := 0
+	for _, code := range []int{linksCode, nocodeCode} {
+		if code > worst {
+			worst = code
+		}
+	}
+	// The closing line is printed on every outcome, because the verb a first
+	// run needs NEXT does not depend on whether this one was green.
+	fmt.Fprintf(stdout, "QUICKSTART OK done=2 worst-exit=%d next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)\n", worst)
+	return worst
 }
 
 func cmdAttest(args []string, stdout, stderr io.Writer) int {
@@ -167,37 +272,50 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	maxBytes := fs.Int64("max-bytes", 0, "size budget in bytes, must be positive (one of --max-bytes / --max-tokens)")
 	maxTokens := fs.Int64("max-tokens", 0, "size budget in tokens, must be positive (one of --max-bytes / --max-tokens)")
 	bytesPerToken := fs.Float64("bytes-per-token", 0, "measured bytes per token, required with --max-tokens; no default")
-	if !parse(fs, args, stderr, map[string]*string{"file": file}) {
+	if !parseFlags(fs, args, stderr) {
 		return 2
 	}
+	// The file and the budget are independent, so both are judged before
+	// either sends the caller away: `nova-check kernel` with nothing at all
+	// used to name --file and stop, and the second run then learned about the
+	// budget. One run, every problem it can find.
+	ok := requireFlags(fs, stderr, map[string]*string{"file": file})
 	// Which budget was GIVEN, not which value survived: --max-bytes 0 is a
 	// stated (and refused) budget, not an absent one.
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	switch {
 	case given["max-bytes"] && given["max-tokens"]:
-		fmt.Fprintln(stderr, "nova-check kernel: give exactly one of --max-bytes or --max-tokens, not both; the line names the unit, the tool does not pick")
-		return 2
+		fmt.Fprintf(stderr, "nova-check kernel: give exactly one of --max-bytes or --max-tokens, not both; the line names the unit, the tool does not pick\n  %s\n", budgetHint)
+		ok = false
 	case !given["max-bytes"] && !given["max-tokens"]:
-		fmt.Fprintln(stderr, "nova-check kernel: --max-bytes or --max-tokens is required; refusing to guess")
-		return 2
+		fmt.Fprintf(stderr, "nova-check kernel: --max-bytes or --max-tokens is required; refusing to guess\n  %s\n", budgetHint)
+		ok = false
 	}
 	if given["bytes-per-token"] && given["max-bytes"] {
-		fmt.Fprintln(stderr, "nova-check kernel: --bytes-per-token applies only to --max-tokens; a divisor with a byte budget means one of the two is not what you meant")
+		fmt.Fprintf(stderr, "nova-check kernel: --bytes-per-token applies only to --max-tokens; a divisor with a byte budget means one of the two is not what you meant\n  %s\n", budgetHint)
+		ok = false
+	}
+	if !ok {
 		return 2
 	}
 
 	if given["max-tokens"] {
+		// Independent again, and reported together: a run that named a zero
+		// budget and forgot the divisor has two things wrong with it.
+		unit := true
 		if !given["bytes-per-token"] {
-			fmt.Fprintln(stderr, "nova-check kernel: --max-tokens requires --bytes-per-token; the divisor is a measurement you make on your own writing, and there is no default; refusing to guess")
-			return 2
+			fmt.Fprintf(stderr, "nova-check kernel: --max-tokens requires --bytes-per-token; the divisor is a measurement you make on your own writing, and there is no default; refusing to guess\n  %s\n", budgetHint)
+			unit = false
+		} else if *bytesPerToken <= 0 {
+			fmt.Fprintf(stderr, "nova-check kernel: --bytes-per-token must be a positive ratio (got %g); refusing to guess\n  %s\n", *bytesPerToken, budgetHint)
+			unit = false
 		}
 		if *maxTokens <= 0 {
-			fmt.Fprintf(stderr, "nova-check kernel: --max-tokens must be a positive token budget (got %d); refusing to guess\n", *maxTokens)
-			return 2
+			fmt.Fprintf(stderr, "nova-check kernel: --max-tokens must be a positive token budget (got %d); refusing to guess\n  %s\n", *maxTokens, budgetHint)
+			unit = false
 		}
-		if *bytesPerToken <= 0 {
-			fmt.Fprintf(stderr, "nova-check kernel: --bytes-per-token must be a positive ratio (got %g); refusing to guess\n", *bytesPerToken)
+		if !unit {
 			return 2
 		}
 		measured, tokens, failures, err := check.KernelTokens(*file, *maxTokens, *bytesPerToken)
@@ -301,7 +419,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *dir == "" {
-		fmt.Fprintln(stderr, "nova-check nocode: --dir is required; refusing to guess")
+		fmt.Fprintf(stderr, "nova-check nocode: --dir is required; refusing to guess\n%s", hintFor("dir"))
 		return 2
 	}
 
@@ -392,17 +510,23 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	ledger := fs.String("ledger", "", "the ledger of protected material, a markdown file (required)")
 	root := fs.String("root", "", "the repo the ledger's home paths are relative to (required)")
 	minAnchors := fs.Int("min-anchors", 0, "the fewest rows the ledger may hold, must be positive (required); the ledger is inside what it protects, so its own shrinking must be red")
-	if !parse(fs, args, stderr, map[string]*string{"ledger": ledger, "root": root}) {
+	if !parseFlags(fs, args, stderr) {
 		return 2
 	}
+	// All three are independent, so `nova-check corpus` with nothing names all
+	// three at once instead of sending a first run back twice.
+	ok := requireFlags(fs, stderr, map[string]*string{"ledger": ledger, "root": root})
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
-	if !given["min-anchors"] {
-		fmt.Fprintln(stderr, "nova-check corpus: --min-anchors is required; the ledger lives inside the tree it protects and can be shrunk by the same events its rows exist to catch, so the floor is a number you state; refusing to guess")
-		return 2
+	switch {
+	case !given["min-anchors"]:
+		fmt.Fprintf(stderr, "nova-check corpus: --min-anchors is required; the ledger lives inside the tree it protects and can be shrunk by the same events its rows exist to catch, so the floor is a number you state; refusing to guess\n  %s\n", anchorsHint)
+		ok = false
+	case *minAnchors <= 0:
+		fmt.Fprintf(stderr, "nova-check corpus: --min-anchors must be a positive row floor (got %d); a floor of zero guards nothing, which is what an empty ledger already is; refusing to guess\n  %s\n", *minAnchors, anchorsHint)
+		ok = false
 	}
-	if *minAnchors <= 0 {
-		fmt.Fprintf(stderr, "nova-check corpus: --min-anchors must be a positive row floor (got %d); a floor of zero guards nothing, which is what an empty ledger already is; refusing to guess\n", *minAnchors)
+	if !ok {
 		return 2
 	}
 	// --root is validated BEFORE any finding is printed: a FAIL line from a

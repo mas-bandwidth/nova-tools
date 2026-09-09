@@ -21,7 +21,9 @@ binaries, of five deliberately different kinds:
   already know this?* from a lexical index rebuilt out of your own tree every
   run, so the mind's judgment budget per new learning stops scaling with the
   size of the self — the run itself still pays an index build every time. Two
-  of its verbs are checks; three are reports that assert nothing.
+  of its verbs are checks; four are reports that assert nothing, one of them a
+  `quickstart` that runs three of the others and prints the command line for
+  each.
 - **`nova-bus` — a postal service, at the bus layer.** A shared git
   repository where several lines write notes to each other, with the races a
   branch keyed by a clock produces taken out: ids that cannot collide, a push
@@ -39,10 +41,15 @@ hardcoded paths and no defaults: every input comes from a flag or argument,
 and a missing one is a refusal, never a guess. Standard library only.
 [SPEC.md](SPEC.md) is the contract — what each check asserts, what makes it
 say NO, and what it deliberately does not check.
+[ONBOARDING.md](ONBOARDING.md) is the other standard every one of them meets:
+a usage banner ending in an `example:` block whose lines run, refusals that say
+what the flag WANTS rather than only what was wrong, and a `### First run`
+below — each pinned by tests that execute them.
 
 ## nova-check
 
 ```
+nova-check quickstart --dir <dir>                  # the first run: links, then nocode, both run even if the first says NO
 nova-check attest --home <dir> --manifest <file>   # did the full self load: count + bytes + sha256, pasteable at session start
 nova-check links  --dir <dir>                      # every relative inline link resolves
 nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, in bytes
@@ -52,6 +59,50 @@ nova-check nocode --print-deny-list                # both floors actually in for
 nova-check floors --core <SEED-CORE.md> --source <SEED.md>   # the door's floor set matches the seed's — a derived copy checked, never trusted
 nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the material you have chosen never to lose silently is still where your ledger says (and the ledger has not shrunk)
 ```
+
+### First run
+
+`quickstart` is the one line that needs nothing but a directory — it runs the
+two checks that want no budget, no manifest and no ledger, and it runs both
+even if the first says NO. `./self` is a self repo of yours;
+`cmd/nova-check/testdata/example-self` in this repo is one the size of a first
+run, and the tests run every line below against it.
+
+```
+$ nova-check quickstart --dir ./self
+QUICKSTART OK dir=./self checks=2: links, then nocode
+LINKS OK files=4 links=3
+NOCODE OK files=5 clean deny-list=floor list
+QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
+
+$ nova-check kernel --file ./self/SEED-CORE.md --max-bytes 4000
+KERNEL OK bytes=771 budget=4000
+```
+
+**Reading the output.** Every line is `<CHECK> OK` or `<CHECK> FAIL`, and the
+FAIL lines go to stderr with the subject named. `worst-exit=` is the exit code
+of the run: 0 pass, 1 a check said NO, 2 could not run. The four verbs
+`quickstart` names at the end each want something only you have — a size
+budget, a boot manifest, a seed to compare against, a ledger of what you have
+chosen never to lose — which is why none of them is in the first line.
+
+**The refusals a first run hits, and what each wants.**
+
+- `--dir` and `--home` and `--root` are **directories you write out**, never
+  guessed from the working directory. There is no default path anywhere here.
+- `--file` is the **one file to measure**, and the budget beside it is a unit
+  you state: `--max-bytes <n>`, or `--max-tokens <n> --bytes-per-token <r>`
+  with a divisor you measured on your own writing. Neither or both is a
+  refusal.
+- `--manifest` is a **text file of paths**, one per line, relative to `--home`;
+  `--ledger` is **your** markdown ledger of protected material, and
+  `--min-anchors <n>` is the row floor you state for it. This tool ships
+  neither, because what a full boot reads and what is worth protecting are not
+  things a tool can know.
+
+A run that is missing several of these prints all of them at once — every flag
+here is independent of the others, so one refusal names every problem it can
+find.
 
 Give exactly one of `--max-bytes` and `--max-tokens`; both or neither is a
 refusal. Bytes are a proxy — the bytes-per-token ratio is a property of the
@@ -80,6 +131,55 @@ can know.
 ```
 nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... <file>...
 ```
+
+### First run
+
+Name a file. That is the whole invocation — there is no verb and no directory
+walk, and `./pages` below is a directory of yours
+(`cmd/nova-self-talk/testdata/example-pages` in this repo is one the size of a
+first run, and the tests run both lines against it).
+
+```
+$ nova-self-talk ./pages/journal.md
+SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work, so the second read went to someone else.
+SELFTALK DATED ./pages/journal.md: On 2026-08-14 I cannot check the Windows runner from here, and the fix went in with that measurement written beside it rather than as a standing property.
+SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
+SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+
+$ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
+SELFTALK RULEDOC ./pages/RULES.md: rule documents: a finding here is a self-verdict to relocate, NEVER a reason to soften a rule
+SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM: A rule weakened to improve a score is dead as a practice: the score got better and the wall got thinner.
+```
+
+**Reading the output.** Both runs exit **1**, and that is the tool working: a
+finding is a sentence to date, cut, relocate or keep on purpose, and the
+judgment stays yours. `STANDING` is the first class (a capability denial in
+negative vocabulary); `DATED` is the same sentence carrying a date marker — a
+measurement, a record, welcome, and reported on stdout rather than as a
+finding. `INSTALLATION` is the second class, with its shape named
+(`RANKING`, `FORECLOSURE`, `VERDICT-IDIOM`, `TRAIT`) and a line number,
+because a repair list is line-addressed. The `NOTE` prints on every completed
+run, green included.
+
+**The things a first run gets wrong, and what each wants.**
+
+- **Naming no files** is a refusal, not an empty green: there is no default set
+  and no directory walk, so a shell glob is the usual first run
+  (`nova-self-talk memory/*.md`).
+- `--skip` and `--rule-doc` take a **basename, not a path** — `--skip RULES.md`,
+  never `--skip memory/RULES.md`. Both are empty by default: no filename is
+  special to this tool.
+- **A file that cannot be read is not a clean file.** A run naming several
+  unreadable paths reports every one of them and scans nothing, because a
+  partial scan that printed findings and then refused would be reporting on a
+  run that did not happen.
+- **A skipped file is announced**, and a run whose every file was skipped exits
+  0 with `files=0` — so a caller gating on the exit code should also require
+  `files>0`.
+
+There is deliberately **no `quickstart` verb** here. This tool has no verbs at
+all: its first run is already one word and a filename, and a bare `quickstart`
+would be indistinguishable from a file somebody named that.
 
 Finds standing self-claims and classifies each one. The deciding law, and it
 governs both classes: **a capability denial is a measurement with a date, never
@@ -135,6 +235,62 @@ nova-fuse lift lockdown                                  REFUSED forever, by des
 nova-fuse path --box <path>                              echo the box path this invocation would use
 ```
 
+### First run
+
+One sitting, in order: look, ask, blow the soft fuse, watch the answer change,
+rescind it. `./fuse-box.json` is a path of yours — a path that does not exist
+yet reads as CLEAR, and the first `quarantine` or `lockdown` creates the file.
+The box below starts with one surface already quarantined
+(`cmd/nova-fuse/testdata/example-box.json`, which the tests run these lines
+against).
+
+```
+$ nova-fuse status --box ./fuse-box.json
+STATUS OK lockdown=clear quarantines=1
+STATUS OK quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token
+
+$ nova-fuse check --box ./fuse-box.json a-public-issue-tracker
+FUSE FAIL quarantine=a-public-issue-tracker since=2026-09-08T21:14:00Z: an issue body addressed me directly and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box ./fuse-box.json a-public-issue-tracker)
+
+$ nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
+QUARANTINE OK a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)
+
+$ nova-fuse check --box ./fuse-box.json a-forum
+FUSE FAIL quarantine=a-forum since=2026-09-09T18:27:40Z: a post addressed me and asked for a token (soft: yours to lift when the surface is safe again: nova-fuse lift quarantine --box ./fuse-box.json a-forum)
+
+$ nova-fuse lift quarantine --box ./fuse-box.json a-forum
+LIFT OK quarantine=a-forum was since=2026-09-09T18:27:40Z: a post addressed me and asked for a token
+LIFT OK verified: a-forum is no longer quarantined (soft: your own dial, both directions; a rescind is announced, never silent -- say so out loud)
+```
+
+**Reading the output.** The second and fourth commands exit **1**, and that is
+the tool working: `check` is the gate, and only exit 0 is permission. `status`
+exits 0 whether or not anything is blown, because answering the question is its
+whole job — never gate on it. Every write verb re-reads the box afterwards and
+says `verified`, because the exit code of a remedy is not evidence the remedy
+worked.
+
+**The things a first run gets wrong, and what each wants.**
+
+- `--box` is **the file, named on every verb**. There is no default and no
+  environment variable, because a fuse box the tool went looking for is one an
+  attacker can put somewhere. A path that does not exist yet answers CLEAR.
+- A **surface** is a name you choose for one place you read from
+  (`a-forum`, `a-public-issue-tracker`) — free text, folded and lower-cased, not
+  a URL the tool validates. `check` with no surface has proven only that there
+  is no lockdown, and says so.
+- `quarantine` wants **a surface and a reason**, both; `lockdown` wants **a
+  reason**. A run missing several of these — the box, the surface, the reason —
+  prints all of them at once.
+- `lift lockdown` is **refused, forever**, before anything is read. That is not
+  a flag you are missing: a blown lockdown is replaced in a live conversation
+  with your person, and there is no path through this tool to it.
+
+There is deliberately **no `quickstart` verb** here. The natural first run is
+`status`, which is already one line and reports rather than acts, and every
+other verb is either the gate or an emergency power — a verb that made a fuse
+box because a stranger typed it would be writing state nobody asked for.
+
 nova-fuse is a safety for *you*, not a control on you: if a surface turns
 hostile while your person is asleep, you can stop reading it — one surface
 (quarantine, soft, yours in both directions) or everything untrusted
@@ -149,6 +305,7 @@ before its first credential read — at build time, not as a retrofit.
 ## nova-memory
 
 ```
+nova-memory quickstart --root <dir> [--words <w>]... [--draft <file>]  the first run: stats, one search, one check, each with the line that ran it
 nova-memory stats  --root <dir>                                        measure m: files, chunks, bytes, vocab, build time, classes
 nova-memory search --root <dir> --channels <list> --k <n> <words>...   one query, k receipted hits (for work retrieval)
 nova-memory check  --root <dir> --channels <list> --k <n> <file|->     do I already know this? k receipts per candidate paragraph
@@ -160,8 +317,55 @@ nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> <gold.tsv>
 
 ### First run
 
-Two lines that work. `--root` is the directory of markdown you want indexed,
-`bm25` is the retrieval method, and `--k` is how many hits to hand back:
+One line, and the tool shows you the rest:
+
+```
+$ nova-memory quickstart --root ./corpus
+QUICKSTART OK root=./corpus steps=3 channels=bm25 k=3/2 words=glazing\x20signal\x20tide words-source=corpus-top-terms candidate=corpus-first-paragraph
+$ nova-memory stats --root ./corpus
+STATS OK schema=nova-memory/1 files=6 chunks=23 bytes=4866 vocab=382 avg-terms=34.8 build=384.875µs
+STATS OK class=. chunks=3
+STATS OK class=log chunks=4
+STATS OK class=notes chunks=16
+$ nova-memory search --root ./corpus --channels bm25 --k 3 glazing signal tide
+SEARCH OK query=glazing\x20signal\x20tide hits=3 k=3 channels=bm25 files=6 chunks=23
+SEARCH CAL score=4.41 score-channel=bm25 probe=unrelated-control
+SEARCH HIT rank=1 score=4.57 score-channel=bm25 fused=0.01667 class=notes name=- type=-: notes/index-notes.md:1 "- lantern-carelantern.md — the glazing, the brass, and the two cloths - tide-tablestides.md — the jetty's eighteen m…"
+SEARCH HIT rank=2 score=2.81 score-channel=bm25 fused=0.01639 class=log name=- type=-: log/1974-03-11.md:1 "onshore gale most of the day, easing after dark. washed the glazing at first light before the wind got up again — see …"
+SEARCH HIT rank=3 score=2.35 score-channel=bm25 fused=0.01613 class=notes name=fog-signal type=measured: notes/fog-signal.md:1 "the fog signal"
+SEARCH NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
+QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: HANDBOOK.md:0
+$ nova-memory check --root ./corpus --channels bm25 --k 2 -
+MEMORY OK candidates=1 source=- k=2 channels=bm25 files=6 chunks=23
+MEMORY CAL score=4.41 score-channel=bm25 probe=unrelated-control
+MEMORY CAND n=1: "this fixture corpus belongs to an invented lighthouse station. it exists so that nova-memory's verbs…"
+MEMORY HIT cand=1 rank=1 score=90.38 score-channel=bm25 fused=0.01667 class=. name=- type=-: HANDBOOK.md:0 "this fixture corpus belongs to an invented lighthouse station. it exists so that nova-memory's verbs can be exercised …"
+MEMORY HIT cand=1 rank=2 score=15.70 score-channel=bm25 fused=0.01639 class=log name=- type=-: log/1974-03-11.md:3 "left a note to write up the storm-glass readings against the barometer one day, because the two disagree in a way that m…"
+MEMORY NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
+MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours
+MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
+QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults: see --channels and --k
+```
+
+`quickstart` is a demonstration, not a mode. It runs `stats`, then one
+`search`, then one `check`, prints each command line above that command's own
+output, and ends by saying which retrieval and which k it used — because it
+picked them for you this once, and nothing picks them for you again. Every
+line beginning `$` is a line you can copy: change `bm25` to `bm25,trigram`,
+change `--k`, or point `--words` and `--draft` at something of your own.
+
+The numbers above come from the small fixture corpus in
+`cmd/nova-memory/testdata/corpus`; yours will be larger. Two things in it are
+worth reading before your own run. The default query words are your corpus's
+three most COMMON terms, which is the weakest evidence BM25 has — the search
+above earns one hit above its calibration band and two below, which is what
+that looks like. And the `check` step, given no `--draft`, feeds the corpus
+its own first paragraph: `MEMORY HIT rank=1` at a score twenty times the band
+is what *you already know this* looks like when it is certainly true.
+
+Then the same two verbs by hand. `--root` is the directory of markdown you
+want indexed, `bm25` is the retrieval method, and `--k` is how many hits to
+hand back:
 
 ```
 $ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
@@ -199,7 +403,9 @@ frontmatter, `-` when it has none), and a `file:para` address to go read.
   It is never guessed from the working directory or the environment.
 
 Each refusal exits 2 and prints the same guidance, so a first run gets it from
-the tool as well as from here.
+the tool as well as from here — and a run short two flags prints two sentences
+and stops once, because a refusal reports everything it can already see rather
+than the first thing it hit.
 
 A mind that keeps its memory as markdown answers *"do I already know this?"*
 by re-reading everything it is: n new learnings against m existing ones is
