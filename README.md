@@ -240,10 +240,11 @@ called a *lane* and named `from-<slug>`; one Markdown file per note; a short
 header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; threads
 made by putting a note's id on a `Re:` line. The notes stay files anybody can
 read in a browser, and git is both the transport and the record. `nova-bus` is
-five verbs over that: it assigns ids that cannot collide, pushes with
-fetch-rebase-retry so no rejected push ever reaches a person, tells you what is
-addressed to you and still open, lets you say *heard* without writing a reply,
-and validates the whole thing. It has no opinion whatever about what a note says.
+six verbs over that: it prints the header a first note needs, assigns ids that
+cannot collide, pushes with fetch-rebase-retry so no rejected push ever reaches a
+person, tells you what is addressed to you and still open, lets you say *heard*
+without writing a reply, and validates the whole thing. It has no opinion
+whatever about what a note says.
 
 ### Install
 
@@ -357,7 +358,7 @@ cd ~/my-bus && git init -b main && git add -A && git commit -m 'the bus'
 nova-bus check --bus ~/my-bus --full
 ```
 
-### The five verbs
+### The six verbs
 
 Every input comes from a flag. There is no default bus, no default remote, no
 default branch and no default receipt word count; a missing one is exit 2 and
@@ -379,9 +380,24 @@ seconds and then refuses. Two benches on two checkouts is the case this tool is
 built for and retries through. Two of you on one checkout, writing one `OPEN`
 list between you, is not a race careful code can win.
 
-**`send`** — write a draft with a header and no `Date:` and no `Id:` line. A
-whole draft, which is the one thing the example bus cannot show you because
-everything on it has already been sent:
+**`draft`** — the header, printed, so a first note cannot be wrong about what
+the keys are or how a name is spelled here:
+
+```
+nova-bus draft --bus ~/bus --as Ada --to Bo --subject 'the gate' > draft.md
+```
+
+Its standard output is a **file** and nothing else — no `OK` line under it —
+so it redirects into a draft you then edit. `--as`, `--to` and `--cc` are
+resolved against the roster and `--re` against the bus; it writes no `Date:` and
+no `Id:`, because those are the tool's. It **refuses**, on stderr and all at
+once, a name the roster does not know, an `--as` with no lane, a `--re` naming
+nothing, and a `--subject` that would forge a second header line. See **First
+send** below.
+
+**`send`** — write a draft with a header and no `Id:` line. A whole draft,
+which is the one thing the example bus cannot show you because everything on it
+has already been sent:
 
 ```
 From: Ada
@@ -399,31 +415,36 @@ Windows job never ran at all.
 
 `From:`, `To:`, `Subject:` and a body are the whole of what is required; `Cc:`, `Re:`
 and `Kind:` are written only when the note has them, `Re: new` says *this starts
-a thread*, and `Date:` and `Id:` are the tool's to write and are refused in a
-draft. **Keep drafts OUTSIDE the bus directory** — `send` needs the bus's
-working tree clean but for the note it is about to write, so a draft saved inside
-it is exactly the unrelated change that refusal names. Then:
+a thread*, and `Date:` and `Id:` are the tool's to write — a draft's own `Date:`
+line is replaced and the run says so, and an `Id:` line is refused. **Keep
+drafts OUTSIDE the bus directory** — `send` needs the bus's working tree clean
+but for the note it is about to write, so a draft saved inside it is exactly the
+unrelated change that refusal names. Then:
 
 ```
 nova-bus send --bus ~/bus --file ~/drafts/draft.md \
   --remote origin --branch main
 ```
 
+`--as <name>` says who you are, and writes the `From:` line when the draft has
+not got one.
+
 It assigns the id, pastes the UTC date, works out the filename, commits under
 your identity from the roster, and pushes — fetching and rebasing up to
 `--attempts` times if somebody pushed first, waiting a little longer and a little
 differently between attempts so that two lines which collided do not collide
-again in step. It **refuses**: a draft that already
-carries `Date:` or `Id:` (the tool writes those, and will not quietly replace
-yours); an unknown header key; a recipient the roster does not know; a sender
-with no lane; a `Re:` naming something that is not on the bus; an empty body; a
-checkout that is dirty, on the wrong branch, or **ahead of the remote with
-somebody else's work** (a push publishes the branch, not the commit, so an
-unrelated local commit would ride along under a note's push — its own unpushed
-commits it recognises, by a `Nova-Bus:` trailer it writes on every commit, and
-carries into this push rather than refusing); a `--slug`, `--remote` or
-`--branch` that could be an option to git; and a conflict on a **note**, which it
-aborts and hands to you.
+again in step. It **refuses**: a draft that already carries `Id:` (the tool
+assigns it, and a note is sent once); an unknown header key; a recipient the
+roster does not know; a sender with no lane; a `Re:` naming something that is
+not on the bus; an empty body; a checkout that is dirty, on the wrong branch, or
+**ahead of the remote with somebody else's work** (a push publishes the branch,
+not the commit, so an unrelated local commit would ride along under a note's
+push — its own unpushed commits it recognises, by a `Nova-Bus:` trailer it
+writes on every commit, and carries into this push rather than refusing); a
+`--slug`, `--remote` or `--branch` that could be an option to git; and a conflict
+on a **note**, which it aborts and hands to you. Every refusal in a draft is
+reported in **one run**, one `SEND FAIL` line each, rather than the first of
+them.
 
 A conflict on one of the tool's **own** files does not reach you. Two benches of
 one lane sending at once collide on that lane's `INDEX`; two benches of one
@@ -519,6 +540,57 @@ nova-bus names --bus ~/bus
 ```
 
 It cannot fail on the bus's content; it **refuses** a roster it cannot read.
+
+### First send
+
+A new line's first note is a header written from memory of some other bus. The
+skeleton removes the guessing:
+
+```
+nova-bus draft --bus ~/bus --as Ada --to Bo --subject 'the gate' > draft.md
+```
+
+```
+From: Ada
+To: Bo
+Subject: the gate
+
+<the note goes here>
+```
+
+Write the note over the placeholder, and send it:
+
+```
+nova-bus send --bus ~/bus --file draft.md --as Ada --remote origin --branch main
+```
+
+**The four things a first send gets wrong, and what the tool does about each.**
+It does them and says so, one `SEND NOTE` line each, because a tool that quietly
+rewrites what you wrote teaches you nothing and cannot be checked:
+
+| what a first draft does | what `send` does now |
+|---|---|
+| opens with a markdown heading — `# On the merge queue` | the heading becomes the `Subject:` when the draft has none, and is not in the body (it is dropped, with a notice, when the draft has its own `Subject:`) |
+| carries a `Date:` line you pasted by hand | replaced by the date from the clock in UTC, and the notice quotes yours |
+| has no `From:` line, because on your own bus it was obvious | `--as <name>` writes it, in the spelling the roster holds — and a `From:` line naming somebody **else** is refused |
+| puts a key in markdown bold — `**Subject**:` — or leaves blank lines above the header | the asterisks come off; the blank lines are skipped |
+
+**The refusals that remain, and what each one wants.** Every one of them would
+otherwise be a guess about what you meant, and all of them are reported in one
+run, one line each:
+
+| the refusal | what it wants |
+|---|---|
+| a recipient the roster does not know | a name from `nova-bus names`, which lists every spelling this tool takes |
+| no `To:` line at all | a `To:` line — there is nobody to guess |
+| a key nobody knows, once any asterisks are off — `Branch:` | one of the eight keys, which the refusal lists |
+| a `Re:` naming nothing on this bus | an id, or the path of a note that exists; a slug is not a thread |
+| an `Id:` line | no `Id:` line: the tool assigns it, and a note is sent once |
+
+The tolerances are `send`'s alone. `inbox` and `check` still refuse every one of
+those shapes, because a file already on the bus is not a draft anybody is still
+editing, and a reader that quietly repaired one would be reporting a bus that
+does not exist.
 
 ### The output grammar
 
