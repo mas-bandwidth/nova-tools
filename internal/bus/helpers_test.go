@@ -80,3 +80,22 @@ func mustParticipant(t *testing.T, c *Config, name string) Participant {
 	}
 	return p
 }
+
+// identityOf is which FILE a path names, taken from a handle on the file itself rather
+// than from a second look at the path -- so that comparing two of them across a write says
+// whether the file was REPLACED, on every platform this runs on. os.Stat would do on unix;
+// on Windows the file id behind os.SameFile is loaded lazily from the path, which after a
+// replace is the new file, and the comparison would quietly answer "same" every time.
+func identityOf(t *testing.T, path string) os.FileInfo {
+	t.Helper()
+	f, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return fi
+}

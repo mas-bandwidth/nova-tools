@@ -591,22 +591,34 @@ func TestALaneStateFileIsReplacedByRenameAndLeavesNoPartialFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	full := filepath.Join(root, filepath.FromSlash(CursorPath(lane)))
-	// The descriptor is taken the way a reader that is not in the writer's way takes one:
-	// on Windows that means asking for the delete share, or this test's own handle is what
-	// makes the rename it is testing fail. See openHeld.
-	held := openHeld(t, full)
-	defer held.Close()
+	// What the path names before the write, taken from an open handle so it is the file's
+	// own identity and not a second look at the path.
+	before := identityOf(t, full)
+	// And a descriptor held across the write, where a rename can replace a file somebody
+	// has open. See openHeld: on Windows it cannot, and the test's own handle would be what
+	// made the write fail.
+	held, holdable := openHeld(t, full)
+	if holdable {
+		defer held.Close()
+	}
 
 	second := "2222222222222222222222222222222222222222"
 	if err := WriteCursor(root, lane, second, 7, "", at("2026-09-09T13:00:00Z")); err != nil {
 		t.Fatal(err)
 	}
-	old, err := io.ReadAll(held)
-	if err != nil {
-		t.Fatal(err)
+	// The path names a DIFFERENT FILE than it did, which an in-place write cannot do and a
+	// rename cannot avoid. This is the half of the assertion every platform can make.
+	if after := identityOf(t, full); os.SameFile(before, after) {
+		t.Fatal("the path names the same file it named before the write; the cursor was rewritten in place, so a kill mid-write would leave neither the old file nor the new one")
 	}
-	if !strings.Contains(string(old), first) {
-		t.Fatalf("the descriptor opened before the write sees %q; the file was rewritten in place, so a kill mid-write would leave neither the old file nor the new one", string(old))
+	if holdable {
+		old, err := io.ReadAll(held)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(old), first) {
+			t.Fatalf("the descriptor opened before the write sees %q; the file was rewritten in place, so a kill mid-write would leave neither the old file nor the new one", string(old))
+		}
 	}
 	// And the path itself holds the new cursor, whole: one line, four tokens, readable.
 	got, err := ReadCursor(root, lane)
