@@ -21,16 +21,26 @@ var messageBusAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|parse|f.verb":          "the verb's own name, a literal at every newFlags call site in this file; three sites",
+		"main.go|parse|f.verb":          "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|parse|name":            "a required flag's name, a literal map key at every call site in this file",
 		"main.go|count|f.verb":          "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|count|name":            "a required flag's name, a literal at both call sites in this file",
-		"main.go|openBus|verb":          "the verb's own name, a literal at every call site in this file; two sites",
-		"main.go|cmdInbox|token":        "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
+		"main.go|count|name":            "a required flag's name, a literal at every call site in this file",
+		"main.go|openBus|verb":          "the verb's own name, a literal at every call site in this file",
+		"main.go|inboxListing|token":    "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
+		"main.go|lockCheckout|token":    "the verb's own event token, the literals \"INBOX\" and \"WAIT\" at the two call sites in this file",
 		"main.go|gitArgs|f.verb":        "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|attempts|f.verb":       "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|gitTimeoutFlag|f.verb": "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|legacyLine|verb":       "the verb's own name, the literals \"inbox\" and \"check\" at the two call sites in this file",
+		"main.go|legacyLine|verb":       "the verb's own name, the literals \"inbox\", \"wait\" and \"check\" at the three call sites in this file",
+		"main.go|waitLoop|lines": "the inbox listing this run has ALREADY printed, through the escape, into waitPoll's buffer -- every value in it went " +
+			"through oneline.Field or oneline.Escape at the site that wrote it. It is many lines and it is not an event line: escaping it here would " +
+			"fold a whole listing into one unreadable line, which is the mistake printTranscript below documents. The buffer exists because a poll " +
+			"that finds nothing must print nothing, not because anything about the text changed. TestWaitReturnsWhenANoteArrivesDuringTheWait is the " +
+			"behavioural test for this site.",
+		"main.go|hiddenReason|legacy.Text": "not an event line: this function BUILDS a sentence, and both sites that print it pass the whole of it through " +
+			"oneline.Escape, so the one-line guarantee is made once over the finished sentence rather than twice over its parts. The value itself is a " +
+			"switch-day line that has been through bus.NewLegacyLine, so it is a UTC date or an RFC 3339 instant and nothing else.",
+		"main.go|hiddenReason|at": "the same sentence, and a time this code formatted itself with bus.LegacyInstantLayout; two sites in the one call.",
 		"main.go|cmdDraft|skeleton": "the skeleton itself, printed to stdout VERBATIM because it is a FILE and not an event line: a header of " +
 			"several lines that a person redirects into a draft, and an escape would fold it into one unusable line -- the same mistake " +
 			"as the escaped rebase transcript below. Every value in it has been checked before this line runs: From is the roster's own " +
@@ -52,7 +62,11 @@ var messageBusAudit = audit.Config{
 		"oneline.Quote", "quoteList",
 	},
 	Imports: []string{
-		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`, `"time"`,
+		// bytes is `wait`'s buffer and holds no writer of its own: a bytes.Buffer is
+		// written by the same fmt calls this walk classifies -- inboxListing prints INTO
+		// one -- and read back as a string that is printed at the single exempted site
+		// above. It reaches no stream by itself.
+		`"bytes"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`, `"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// version.go, and the reason each one cannot write past the escape: runtime
 		// answers GOOS, GOARCH and Version and holds no writer at all; runtime/debug
