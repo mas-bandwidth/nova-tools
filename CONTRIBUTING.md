@@ -115,6 +115,13 @@ how a commons acquires a reputation for being a clique.
   default paths, and the exit-code grammar — 0 pass, 1 check failed, 2 could not
   run. `nova-fuse`'s write verbs deviate deliberately and SPEC.md's per-tool
   table governs them.
+- **[ONBOARDING.md](ONBOARDING.md) is the standard a new command meets on its
+  first day**, not later: a usage banner ending in an `example:` block whose
+  lines run, refusals that say what the flag wants and that report every
+  independent problem in one go, a `### First run` in README.md, a `quickstart`
+  verb where there is a natural first run, and tests that pin all three by
+  executing them. `internal/ci/onboarding_test.go` walks `cmd/`, so a new
+  binary is held to it without anyone adding it to a list.
 - **Expect the review to be slow and specific.** That is the bar working, not a
   judgment about you.
 - **A "maybe yes, IF" is a real answer, not a soft no.** It names what would

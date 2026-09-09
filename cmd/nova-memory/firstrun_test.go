@@ -198,9 +198,16 @@ func readmeFirstRun(t *testing.T) []string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, tail, found := strings.Cut(string(raw), "\n### First run\n")
+	// Scoped to THIS tool's section first: every command in this repo now carries
+	// a `### First run` (ONBOARDING.md), so cutting on the first one in the file
+	// would hand this test another binary's transcript to run.
+	_, section, found := strings.Cut(string(raw), "\n## nova-memory\n")
 	if !found {
-		t.Fatal("README.md has no `### First run` section; it is what a stranger reads before anything else here")
+		t.Fatal("README.md has no `## nova-memory` section")
+	}
+	_, tail, found := strings.Cut(section, "\n### First run\n")
+	if !found {
+		t.Fatal("README.md `## nova-memory` has no `### First run` section; it is what a stranger reads before anything else here")
 	}
 	body, _, found := strings.Cut(tail, "\n## ")
 	if !found {
