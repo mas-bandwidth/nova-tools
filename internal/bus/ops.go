@@ -1,4 +1,4 @@
-package messagebus
+package bus
 
 import (
 	"errors"
@@ -15,9 +15,13 @@ const SlugMax = 60
 
 // Prepared is a note that has passed every check and is ready to be written.
 type Prepared struct {
-	Note    Note
-	Sender  Participant
-	Path    string // repo-relative
+	Note   Note
+	Sender Participant
+	Path   string // repo-relative
+	// Index is the line this note adds to its lane's catalogue, so that a later reader can
+	// resolve the thread it starts, and a later send can refuse its id as taken, without
+	// opening a single note.
+	Index   IndexEntry
 	Message string // the commit message
 }
 
@@ -82,9 +86,19 @@ func Prepare(t *Table, text string, now time.Time, slugOverride string) (Prepare
 		Note:    n,
 		Sender:  sender,
 		Path:    n.Path,
+		Index:   IndexEntryFor(c, n),
 		Message: sender.Slug() + ": " + n.Header.Subject,
 	}, nil
 }
+
+// Paths is what a send commits: the note, and the line appended to the lane's catalogue.
+// Both, in one commit, because a catalogue that can lag the notes by a commit is a
+// catalogue a reader between the two would resolve wrongly.
+func (p Prepared) Paths() []string { return []string{p.Path, IndexPath(p.Sender.Lane)} }
+
+// AppendIndex adds this note to its lane's catalogue. It runs after Save, so a note that
+// could not be written is never catalogued.
+func (p Prepared) AppendIndex(root string) error { return AppendIndexLine(root, p.Index) }
 
 // ValidSlug holds the one shape the human half of a filename may have, and is what
 // --slug is checked against.

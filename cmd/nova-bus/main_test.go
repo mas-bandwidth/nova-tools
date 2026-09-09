@@ -79,6 +79,14 @@ func table(t *testing.T) (checkout, bare string) {
 		"From: Stella Codex\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: A question about the gate\n\nShould the gate run on the merge queue too?\n")
 	writeFile(t, checkout, "from-stella/2026-09-07T0002Z-heard-111111111111.md",
 		"From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:02:00 UTC 2026\nId: stella-111111111111\nSubject: Heard\n\nHeard, thank you.\n")
+	// The lane's catalogue, which send would have written. A table whose notes are not in
+	// an INDEX is a table check --full warns about, so the fixture is a table in the shape
+	// this tool leaves one in -- and TestCheckFullWarnsAboutANoteWithNoIndexLine covers the
+	// other shape deliberately.
+	writeFile(t, checkout, "from-stella/INDEX", strings.Join([]string{
+		"stella-abcdef012345\tfrom-stella/2026-09-07T0001Z-a-question-abcdef012345.md\t2026-09-07T00:01:00Z\tRowan\t-",
+		"stella-111111111111\tfrom-stella/2026-09-07T0002Z-heard-111111111111.md\t2026-09-07T00:02:00Z\tRowan\t-",
+	}, "\n")+"\n")
 	gitIn(t, checkout, "add", "-A")
 	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@mas-bandwidth.com", "commit", "-q", "-m", "the table")
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
@@ -131,7 +139,7 @@ Yes, and the key is misspelled in the matrix.
 `
 
 func TestUsageAndUnknownVerb(t *testing.T) {
-	invoke(t, "").mustCode(t, 2).mustContain(t, "stderr", "nova-message-bus:")
+	invoke(t, "").mustCode(t, 2).mustContain(t, "stderr", "nova-bus:")
 	invoke(t, "", "help").mustCode(t, 0).mustContain(t, "stdout", "usage:")
 	invoke(t, "", "wibble").mustCode(t, 2).mustContain(t, "stderr", `unknown subcommand "wibble"`)
 }
@@ -154,10 +162,10 @@ func TestRefusingToGuess(t *testing.T) {
 		{"inbox without --as", []string{"inbox", "--table", checkout, "--receipt-max-words", "40"}, "--as is required"},
 		{"inbox without --receipt-max-words", []string{"inbox", "--table", checkout, "--as", "Rowan"}, "--receipt-max-words must be given"},
 		{"receipt without --note", []string{"receipt", "--table", checkout, "--as", "Rowan", "--remote", "origin", "--branch", "main", "--attempts", "3"}, "--note is required"},
-		{"check without --table", []string{"check"}, "--table is required"},
+		{"check without --table", []string{"check", "--full"}, "--table is required"},
 		{"names without --table", []string{"names"}, "--table is required"},
-		{"a positional argument", []string{"check", "--table", checkout, "extra"}, "takes no positional arguments"},
-		{"an unknown flag", []string{"check", "--table", checkout, "--wibble"}, "nova-message-bus check:"},
+		{"a positional argument", []string{"check", "--table", checkout, "--full", "extra"}, "takes no positional arguments"},
+		{"an unknown flag", []string{"check", "--table", checkout, "--full", "--wibble"}, "nova-bus check:"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -170,7 +178,7 @@ func TestRefusingToGuess(t *testing.T) {
 // never see one from a flag it mistyped.
 func TestVerbHelpIsRefusedNotAnswered(t *testing.T) {
 	checkout, _ := table(t)
-	invoke(t, "", "check", "--table", checkout, "-h").mustCode(t, 2)
+	invoke(t, "", "check", "--table", checkout, "--full", "-h").mustCode(t, 2)
 }
 
 func TestSendLandsANoteAndCheckPasses(t *testing.T) {
@@ -192,7 +200,7 @@ func TestSendLandsANoteAndCheckPasses(t *testing.T) {
 	if who := strings.TrimSpace(gitIn(t, bare, "log", "-1", "--format=%an <%ae>", "main")); who != "Rowan <rowan@mas-bandwidth.com>" {
 		t.Fatalf("the note was committed as %q", who)
 	}
-	invoke(t, "", "check", "--table", checkout).mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
+	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
 	// And the question it answers is no longer open.
 	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
 		mustCode(t, 0).
@@ -301,7 +309,7 @@ func TestReceiptMarksHeardAndInboxHonoursIt(t *testing.T) {
 		mustCode(t, 0).
 		mustContain(t, "stdout", "RECEIPT ALREADY note=stella-abcdef012345").
 		mustContain(t, "stdout", "RECEIPT OK recorded=0 already=1 commit=- pushed=false attempts=0")
-	invoke(t, "", "check", "--table", checkout).mustCode(t, 0)
+	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0)
 }
 
 func TestReceiptRefuses(t *testing.T) {
@@ -319,19 +327,26 @@ func TestCheckFailsAndNamesEveryFinding(t *testing.T) {
 	checkout, _ := table(t)
 	writeFile(t, checkout, "from-rowan/broken.md", "From: Rowan\nthis is prose\n\nbody\n")
 	writeFile(t, checkout, "from-rowan/stranger.md", "From: Rowan\nTo: Stela\nSubject: s\n\nbody\n")
-	r := invoke(t, "", "check", "--table", checkout).mustCode(t, 1).
+	r := invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
 		mustContain(t, "stderr", "BUS FAIL from-rowan/broken.md: ").
 		mustContain(t, "stderr", "BUS FAIL from-rowan/stranger.md")
 	if n := strings.Count(r.stderr, "BUS FAIL"); n < 2 {
 		t.Fatalf("check reported %d findings over two broken files:\n%s", n, r.stderr)
 	}
-	if r.stdout != "" {
-		t.Fatalf("a failing check wrote to stdout: %q", r.stdout)
+	// A failing check says on stdout what it WALKED and nothing else: no OK line, no
+	// count that a caller could read as a pass. The scope line is there whether the run
+	// passed or failed, because "which files did you look at" is the first thing a person
+	// reading a failure asks.
+	if strings.Contains(r.stdout, "BUS OK") {
+		t.Fatalf("a failing check printed an OK line: %q", r.stdout)
+	}
+	if got := strings.TrimSpace(r.stdout); got != "BUS SCOPE mode=full cursor=- changed=0" {
+		t.Fatalf("a failing check wrote more than its scope to stdout: %q", r.stdout)
 	}
 }
 
 func TestCheckRefusesATableWithNoRoster(t *testing.T) {
-	invoke(t, "", "check", "--table", t.TempDir()).mustCode(t, 2).mustContain(t, "stderr", "participants.json")
+	invoke(t, "", "check", "--table", t.TempDir(), "--full").mustCode(t, 2).mustContain(t, "stderr", "participants.json")
 }
 
 func TestNamesEchoesTheRoster(t *testing.T) {
@@ -399,7 +414,7 @@ func TestRemoteAndBranchThatCouldBeOptionsAreRefused(t *testing.T) {
 		{"receipt", "--table", checkout, "--as", "Rowan", "--note", "stella-abcdef012345", "--remote", "origin;id", "--branch", "main", "--attempts", "3"},
 	}
 	for _, args := range cases {
-		invoke(t, draft, args...).mustCode(t, 2).mustContain(t, "stderr", "nova-message-bus ")
+		invoke(t, draft, args...).mustCode(t, 2).mustContain(t, "stderr", "nova-bus ")
 	}
 }
 
@@ -475,13 +490,13 @@ func TestCheckLegacyBefore(t *testing.T) {
 		"Rowan, this one does not.\n\nbody\n")
 
 	// Without the flag, both fail and the run fails.
-	r := invoke(t, "", "check", "--table", checkout).mustCode(t, 1)
+	r := invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1)
 	if n := strings.Count(r.stderr, "BUS FAIL"); n != 2 {
 		t.Fatalf("check reported %d failures, want 2:\n%s", n, r.stderr)
 	}
 
 	// With it, the old one warns, the new one still fails, and the run still fails.
-	r = invoke(t, "", "check", "--table", checkout, "--legacy-before", "2026-09-05").mustCode(t, 1).
+	r = invoke(t, "", "check", "--table", checkout, "--full", "--legacy-before", "2026-09-05").mustCode(t, 1).
 		mustContain(t, "stderr", "BUS WARN from-stella/2026-09-01T0001Z-old-prose.md").
 		mustContain(t, "stderr", "BUS FAIL from-stella/2026-09-08T0001Z-new-prose.md")
 	if n := strings.Count(r.stderr, "BUS FAIL"); n != 1 {
@@ -492,7 +507,7 @@ func TestCheckLegacyBefore(t *testing.T) {
 	if err := os.Remove(filepath.Join(checkout, "from-stella", "2026-09-08T0001Z-new-prose.md")); err != nil {
 		t.Fatal(err)
 	}
-	invoke(t, "", "check", "--table", checkout, "--legacy-before", "2026-09-05").mustCode(t, 0).
+	invoke(t, "", "check", "--table", checkout, "--full", "--legacy-before", "2026-09-05").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS OK").
 		mustContain(t, "stdout", "warn=1")
 	// A clean table says warn=0, so a run that forgave nothing and one that forgave fifty
@@ -500,8 +515,8 @@ func TestCheckLegacyBefore(t *testing.T) {
 	if err := os.Remove(filepath.Join(checkout, "from-stella", "2026-09-01T0001Z-old-prose.md")); err != nil {
 		t.Fatal(err)
 	}
-	invoke(t, "", "check", "--table", checkout).mustCode(t, 0).mustContain(t, "stdout", "warn=0")
+	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "warn=0")
 	// A date it cannot read is a bad invocation, not a guess.
-	invoke(t, "", "check", "--table", checkout, "--legacy-before", "last Tuesday").
+	invoke(t, "", "check", "--table", checkout, "--full", "--legacy-before", "last Tuesday").
 		mustCode(t, 2).mustContain(t, "stderr", "is not a UTC date")
 }

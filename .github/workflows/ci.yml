@@ -84,7 +84,7 @@ jobs:
     # the properties asserted in the steps below. Everything else in this
     # repository — every other `nocode` flag and refusal path, every other
     # `links` property, every other `nova-check` subcommand, and the
-    # `nova-fuse`, `nova-memory`, `nova-self-talk` and `nova-message-bus`
+    # `nova-fuse`, `nova-memory`, `nova-self-talk` and `nova-bus`
     # commands — is covered by package tests and by nothing else.
     #
     # WINDOWS. The portable steps run there too. An earlier revision excluded

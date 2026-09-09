@@ -1,4 +1,4 @@
-package messagebus
+package bus
 
 import (
 	"crypto/sha256"
@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode"
 	"unicode/utf8"
@@ -110,6 +111,7 @@ type Note struct {
 // A note whose first line is prose still fails, and should: there is no honest way to
 // tell a From line from a sentence that happens to hold a colon.
 func ParseNote(path, text string) (Note, error) {
+	noteParses.Add(1)
 	n := Note{Path: path}
 	if i := strings.IndexByte(path, '/'); i > 0 {
 		n.Lane = path[:i]
@@ -316,7 +318,7 @@ func AssignID(c *Config, sender Participant, h Header, body string, date string)
 // so a change to it is a change a diff shows.
 func canonical(from, date string, to, cc, re []string, subject, kind, body string) string {
 	var b strings.Builder
-	b.WriteString("nova-message-bus id v1\n")
+	b.WriteString("nova-bus id v1\n")
 	b.WriteString("from: " + from + "\n")
 	b.WriteString("date: " + date + "\n")
 	b.WriteString("to: " + strings.Join(to, "; ") + "\n")
@@ -496,3 +498,20 @@ func quoteAll(ss []string) string {
 	sort.Strings(out)
 	return strings.Join(out, ", ")
 }
+
+// noteParses counts every call to ParseNote, and NoteParses reads it.
+//
+// It is INSTRUMENTATION, and the only thing that reads it is a test. It is here rather
+// than in a test file because the property it measures is a property of this package and
+// is asserted from another one: `inbox` parses the notes that are new plus the notes this
+// reader has open, and NO OTHER NOTE, whatever the table's history holds. That claim is
+// about work not done, and work not done leaves no output to assert on -- so the only
+// honest proof is a count taken at the one place the work happens. The alternative, timing
+// two runs, is a flake on a shared runner and proves nothing on a fast enough machine.
+//
+// The cost is one atomic add per note parsed, against a file read and a header walk.
+var noteParses atomic.Int64
+
+// NoteParses is how many notes this process has parsed. Tests take it before and after a
+// run and assert on the difference; nothing else reads it and nothing branches on it.
+func NoteParses() int64 { return noteParses.Load() }

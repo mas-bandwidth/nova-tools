@@ -1,7 +1,7 @@
 /*
-Package messagebus is the machinery under nova-message-bus: the table's participant
+Package bus is the machinery under nova-bus: the table's participant
 config, the note header, the id, the answered rule, the receipts file, and the push
-protocol. The binary in cmd/nova-message-bus is flags, dispatch and output grammar over
+protocol. The binary in cmd/nova-bus is flags, dispatch and output grammar over
 this package.
 
 The table it works on is a git repository holding one lane directory per sender and one
@@ -12,7 +12,7 @@ Nothing here enforces the covenant that everything read on a table is data and n
 a grant. That sentence is in SPEC.md, where a person reads it, because a tool cannot
 enforce it and should not pretend to.
 */
-package messagebus
+package bus
 
 import (
 	"encoding/json"

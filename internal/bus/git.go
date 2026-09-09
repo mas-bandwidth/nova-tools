@@ -1,9 +1,12 @@
-package messagebus
+package bus
 
 import (
 	"errors"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -341,4 +344,196 @@ func CommitAndPush(dir string, id Identity, paths []string, message, remote, bra
 		res.Commit = strings.TrimSpace(sha)
 	}
 	return res, fmt.Errorf("the push was refused %d times; your commit %s is on the branch and was NOT pushed", res.Attempts, res.Commit)
+}
+
+// --------------------------------------------------------------- reading only what moved
+
+// ValidCommitHex holds the shape a CURSOR's commit may have: 7 to 64 lower-case hex
+// digits, and nothing else.
+//
+// It is the same guard as ValidGitArg and it exists for the same reason. A CURSOR file is
+// an ordinary file on a shared table; anyone who can push can write one, and its contents
+// become a git argument. Requiring plain hex means a cursor cannot be an option to git, a
+// revision expression, or a refname that resolves somewhere surprising -- it is a commit
+// or it is a refusal. The range starts at 7 because a person editing the file by hand
+// writes an abbreviation, and ends at 64 because that is a sha256 object name.
+func ValidCommitHex(s string) error {
+	if s == "" {
+		return errors.New("empty commit")
+	}
+	if len(s) < 7 || len(s) > 64 {
+		return fmt.Errorf("%q is not a commit: 7 to 64 lower-case hex digits", truncate(s, 64))
+	}
+	for _, r := range s {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') {
+			continue
+		}
+		return fmt.Errorf("%q is not a commit: 7 to 64 lower-case hex digits", truncate(s, 64))
+	}
+	return nil
+}
+
+// ValidRevision holds the shape a --since may have: a conservative revision charset with
+// no leading dash, so a value this tool pastes onto a git command line is a revision and
+// never an option. It is wider than ValidCommitHex because a person types `main~3` and
+// narrower than what git accepts, on the same rule as --remote and --branch: the cost of
+// being narrow is a refusal somebody reads.
+func ValidRevision(s string) error {
+	if s == "" {
+		return errors.New("--since: empty")
+	}
+	if strings.HasPrefix(s, "-") {
+		return fmt.Errorf("--since %q: begins with a dash, so git would read it as an option rather than a revision", truncate(s, 64))
+	}
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case r == '-' || r == '_' || r == '/' || r == '.' || r == '~' || r == '^' || r == '@' || r == '{' || r == '}':
+		default:
+			return fmt.Errorf("--since %q: a revision is letters, digits and - _ / . ~ ^ @ { }", truncate(s, 64))
+		}
+	}
+	return nil
+}
+
+// ResolveCommit turns a revision into the full commit it names, so that everything
+// downstream of a --since is a sha and the sha is what the output reports.
+func ResolveCommit(dir, rev string) (string, error) {
+	if err := ValidRevision(rev); err != nil {
+		return "", err
+	}
+	out, err := git(dir, "rev-parse", "--verify", "--quiet", rev+"^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("%q names no commit in this checkout", truncate(rev, 64))
+	}
+	sha := strings.TrimSpace(out)
+	if err := ValidCommitHex(sha); err != nil {
+		return "", err
+	}
+	return sha, nil
+}
+
+// HeadCommit is the commit a cursor advances TO.
+func HeadCommit(dir string) (string, error) {
+	out, err := git(dir, "rev-parse", "--verify", "--quiet", "HEAD^{commit}")
+	if err != nil {
+		return "", fmt.Errorf("this checkout has no commits yet, so there is nothing to read up to: %w", err)
+	}
+	sha := strings.TrimSpace(out)
+	if err := ValidCommitHex(sha); err != nil {
+		return "", err
+	}
+	return sha, nil
+}
+
+// IsAncestor reports whether commit is reachable from HEAD.
+//
+// This is the guard on a cursor, and the failure it closes is a quiet one. A cursor is a
+// promise that everything up to it has been read; that promise is only meaningful while
+// the commit is still on the branch. After a history rewrite -- a rebase of the table, a
+// force-push, a squash -- the commit named is either gone or on a line nobody is on, and a
+// diff taken from it reports changes that are not changes and misses notes that are. So a
+// cursor that is not an ancestor of HEAD is a REFUSAL with --full named in it, never a
+// best effort: a reader told "nothing new" by a broken cursor has been lied to in exactly
+// the way this whole tool exists to stop.
+func IsAncestor(dir, commit string) (bool, error) {
+	if err := ValidCommitHex(commit); err != nil {
+		return false, err
+	}
+	if _, err := git(dir, "rev-parse", "--verify", "--quiet", commit+"^{commit}"); err != nil {
+		return false, nil
+	}
+	cmd := exec.Command("git", "-C", dir, "merge-base", "--is-ancestor", commit, "HEAD")
+	cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "GIT_OPTIONAL_LOCKS=0")
+	if err := cmd.Run(); err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 1 {
+			return false, nil
+		}
+		return false, fmt.Errorf("git merge-base --is-ancestor: %w", err)
+	}
+	return true, nil
+}
+
+// LanePathspec is the pathspec that means "every file inside a lane".
+//
+// The `:(glob)` magic is load-bearing and was found the hard way. Without it, git matches a
+// pathspec with fnmatch and `*` matches `/` as well, so a plain `from-*` also catches a
+// top-level `from-notes.txt` -- and `from-*/`, the shape that reads like a directory,
+// matches NOTHING AT ALL, because a wildcard pathspec must match the whole path and no path
+// ends in a slash. That last one is the dangerous spelling: it is the obvious thing to
+// write, it fails silently, and what it reports is an empty change set, which every reader
+// downstream would have shown as "nothing new". Under `:(glob)`, `*` stops at a slash and
+// `**` crosses one, so this is exactly "one directory whose name begins with from-, then
+// anything under it".
+const LanePathspec = ":(glob)from-*/**"
+
+// ChangedSince is the whole of the O(new) claim, and it is one git command:
+//
+//	git diff --name-only -z --diff-filter=AM --no-renames <commit>..HEAD -- ':(glob)from-*/**'
+//
+// It returns the lane files ADDED or MODIFIED since the cursor, and its cost is
+// proportional to the CHANGE rather than to the history: git walks the two trees and stops
+// at every subtree whose object id is equal on both sides, so a table of ten thousand notes
+// with one new one names one path. Every part of the command line is load-bearing:
+//
+//   - --diff-filter=AM, because a deleted note is not a new note;
+//   - --no-renames, because git's rename detection is on by default and would report a
+//     renamed note as R, which AM excludes -- so a note that moved would go unread. With
+//     renames off it is a D and an A, and the A is the one that matters;
+//   - -z, because --name-only QUOTES a path holding a space or a non-ASCII byte, and a
+//     quoted path does not match a file on disk;
+//   - the pathspec, because the table's own machinery -- a README, a CI file, the roster --
+//     is not a note, and reading one as a note would be a parse failure reported to every
+//     reader on the table.
+func ChangedSince(dir, commit string) ([]string, error) {
+	if err := ValidCommitHex(commit); err != nil {
+		return nil, err
+	}
+	out, err := git(dir, "diff", "--name-only", "-z", "--diff-filter=AM", "--no-renames", commit+"..HEAD", "--", LanePathspec)
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, p := range strings.Split(out, "\x00") {
+		// The same claim the pathspec makes, made again here in Go. It is not redundant:
+		// pathspec magic is a git feature, this is the tool's own rule, and a path that is
+		// not inside a lane is not this tool's business whatever git matched.
+		if p == "" || !strings.HasPrefix(p, "from-") || !strings.Contains(p, "/") {
+			continue
+		}
+		paths = append(paths, p)
+	}
+	sort.Strings(paths)
+	return paths, nil
+}
+
+// StagePaths trims a list of repo-relative paths to the ones `git add` can be asked for.
+//
+// `git add -- <path>` FAILS, exit 128, when the pathspec matches nothing on disk and
+// nothing in the index. That is the right behaviour for a note -- a send that wrote no file
+// should not commit -- and it is exactly wrong for a lane's OPEN list, which is legitimately
+// absent whenever a reader has nothing open. A reader's very first advance with an empty
+// inbox hit that: the run listed the inbox correctly and then died on `pathspec
+// 'from-rowan/OPEN' did not match any files`.
+//
+// So a path is staged when it exists on disk (a write) or when git already tracks it (a
+// deletion this run made, which must be staged or the file comes back), and is dropped when
+// it is neither, because there is nothing there to record.
+func StagePaths(dir string, paths []string) ([]string, error) {
+	var out []string
+	for _, p := range paths {
+		if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(p))); err == nil {
+			out = append(out, p)
+			continue
+		}
+		tracked, err := git(dir, "ls-files", "--", p)
+		if err != nil {
+			return nil, err
+		}
+		if strings.TrimSpace(tracked) != "" {
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }

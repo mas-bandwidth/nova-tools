@@ -1,4 +1,4 @@
-package messagebus
+package bus
 
 import (
 	"fmt"
@@ -123,6 +123,12 @@ func (t *Table) readLane(lane string) error {
 			if err := t.readReceipts(lane, filepath.Join(dir, name)); err != nil {
 				return err
 			}
+			continue
+		}
+		// A lane's other state files -- CURSOR, OPEN, INDEX -- are read by the verbs that
+		// need them, not here. They are not notes and they are not strays; a full check
+		// validates each one's own format.
+		if isLaneStateFile(name) {
 			continue
 		}
 		if !strings.HasSuffix(name, ".md") {
@@ -430,52 +436,34 @@ func (t *Table) CheckWith(o CheckOptions) []Problem {
 		}
 	}
 	for _, stray := range t.strays {
-		add(stray, "a lane holds notes (*.md) and its %s file, and nothing else", ReceiptsName)
+		add(stray, "a lane holds notes (*.md), its %s, and nothing else", strings.Join(laneStateFiles, ", "))
 	}
-	seenID := map[string]string{}
+	// The per-note rules are the SAME code the incremental check runs, with the lookups
+	// answered from the table rather than from the catalogue. They are shared rather than
+	// written twice because two spellings of one rule drift, and a check that says
+	// different things depending on how it was invoked is worse than one that is slow.
+	k := &noteChecker{
+		c:        t.Config,
+		resolves: func(target string) bool { _, ok := t.Resolve(target); return ok },
+		idOwner:  func(string) (string, bool) { return "", false },
+		// The full walk asserts nothing about the INDEX here; CheckIndex does, in both
+		// directions, and it is a separate pass because it is about the catalogue rather
+		// than about a note.
+		indexed: func(*Note) bool { return true },
+		opts:    o,
+		seenID:  map[string]string{},
+	}
 	for i := range t.Notes {
 		n := &t.Notes[i]
 		if n.Parse != nil {
 			warn(n, n.Path, "%s", n.Parse.Err)
 			continue
 		}
-		if err := n.Header.Validate(t.Config); err != nil {
-			add(n.Path, "%s", err)
-		}
-		if sender, ok := t.Config.ResolveOne(n.Header.From); ok && sender.Lane != n.Lane {
-			where := n.Path
-			if line := n.Header.LineOf(KeyFrom); line > 0 {
-				where = fmt.Sprintf("%s:%d", n.Path, line)
-			}
-			add(where, "%s names %q, whose lane is %q", KeyFrom, sender.Name, sender.Lane)
-		}
-		if id := n.Header.ID; id != "" {
-			where := n.Path
-			if line := n.Header.LineOf(KeyID); line > 0 {
-				where = fmt.Sprintf("%s:%d", n.Path, line)
-			}
-			if err := ValidID(id); err != nil {
-				add(where, "%s: %s", KeyID, err)
-			} else if slug := SlugOfID(id); "from-"+slug != n.Lane {
-				add(where, "%s: %q carries the slug of lane %q", KeyID, id, "from-"+slug)
-			}
-			if prev, dup := seenID[id]; dup {
-				add(where, "%s: %q is also the id of %s", KeyID, id, prev)
-			} else {
-				seenID[id] = n.Path
-			}
-		}
-		for _, re := range n.Header.Re {
-			if re == "new" {
-				continue
-			}
-			if _, ok := t.Resolve(re); !ok {
-				where := n.Path
-				if line := n.Header.LineOf(KeyRe); line > 0 {
-					where = fmt.Sprintf("%s:%d", n.Path, line)
-				}
-				warn(n, where, "%s: %q is neither an id on this table nor a note that exists", KeyRe, re)
-			}
+		ps = append(ps, k.check(n)...)
+	}
+	for _, lane := range t.lanesOnDisk() {
+		for _, name := range laneStateFiles {
+			ps = append(ps, checkLaneStateFile(t.Root, lane, name)...)
 		}
 	}
 	for _, r := range t.Receipts {
@@ -491,12 +479,7 @@ func (t *Table) CheckWith(o CheckOptions) []Problem {
 			add(where, "%q is neither an id on this table nor a note that exists", r.Target)
 		}
 	}
-	sort.Slice(ps, func(i, j int) bool {
-		if ps[i].Where != ps[j].Where {
-			return ps[i].Where < ps[j].Where
-		}
-		return ps[i].Reason < ps[j].Reason
-	})
+	sortProblems(ps)
 	return ps
 }
 

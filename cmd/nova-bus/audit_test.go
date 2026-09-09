@@ -32,7 +32,7 @@ var messageBusAudit = audit.Config{
 	},
 	Imports: []string{
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`, `"time"`,
-		`"github.com/mas-bandwidth/nova-tools/internal/messagebus"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 	},
-	MinClassified: 30,
+	MinClassified: 140,
 }
