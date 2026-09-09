@@ -10,8 +10,8 @@ import (
 // knows.
 //
 // This is deliberately a SMALL, ENUMERATED set of tolerances rather than a fuzzy match.
-// Tables in this shape write "To: Stella Codex; Rowan (active bud)" and "To: Everybody at
-// the table — Glenn, Rowan (all instances), Stella", and a tool that refused those would
+// Tables in this shape write "To: Bo Quill; Ada (active line)" and "To: Everybody at
+// the table — Dana, Ada (all instances), Bo", and a tool that refused those would
 // be refusing the table rather than checking it. It is also true that a matcher nobody can
 // predict is worse than one that refuses: a misspelling silently resolving to the wrong
 // reader is the failure this verb exists to stop. So every tolerance below is listed here,
@@ -21,23 +21,23 @@ import (
 // The tolerances, applied in this order:
 //
 //  1. The line is split on ";" and "," -- but NEVER inside parentheses, because
-//     "Rowan (bud, the Studio, the mas account)" is one name and the comma inside the
+//     "Ada (day shift, the west host, the shared account)" is one name and the comma inside the
 //     parenthetical is not a separator.
 //  2. Each piece is split again on an em dash or an en dash, so that a salutation like
-//     "Everybody at the table — Glenn" names the group AND the person.
-//  3. It is split again on " and " and " & ", because "To: Rowan and Stella" is two
-//     readers and resolving it to Rowan alone -- which the prefix rule below did, since
-//     "Rowan and Stella" begins with "Rowan " -- is the silent wrong-reader failure this
+//     "Everybody at the table — Dana" names the group AND the person.
+//  3. It is split again on " and " and " & ", because "To: Ada and Bo" is two
+//     readers and resolving it to Ada alone -- which the prefix rule below did, since
+//     "Ada and Bo" begins with "Ada " -- is the silent wrong-reader failure this
 //     whole file exists to prevent. A leading "and " left over from ", and X" is dropped.
-//  4. A leading "for " is dropped ("for Stella when she arrives").
-//  5. A trailing parenthetical is dropped, repeatedly ("Rowan (bud, the Studio)").
+//  4. A leading "for " is dropped ("for Bo when they arrive").
+//  5. A trailing parenthetical is dropped, repeatedly ("Ada (day shift, the west host)").
 //  6. What remains must EQUAL a known name, alias or group, case-insensitively, or BEGIN
-//     with one followed by a space -- the instance qualifier, so that "Rowan a1b2c3d4"
-//     and "Rowan Claude" are both Rowan. The longest known name that matches wins, so a
-//     roster holding both "Stella" and "Stella Codex" resolves "Stella Codex Two" to
-//     Stella Codex rather than to Stella. The prefix rule REFUSES rather than resolves
-//     when what follows the known name is itself a known name: whatever "Rowan Stella" is,
-//     it is not a note to Rowan, and a tool that decided which of the two was meant would
+//     with one followed by a space -- the instance qualifier, so that "Ada a1b2c3d4"
+//     and "Ada Vale" are both Ada. The longest known name that matches wins, so a
+//     roster holding both "Bo" and "Bo Quill" resolves "Bo Quill Two" to
+//     Bo Quill rather than to Bo. The prefix rule REFUSES rather than resolves
+//     when what follows the known name is itself a known name: whatever "Ada Bo" is,
+//     it is not a note to Ada, and a tool that decided which of the two was meant would
 //     be guessing about a reader.
 //  7. A group expands to its members.
 //
@@ -114,8 +114,8 @@ func (c *Config) ResolveOne(line string) (Participant, bool) {
 //
 // It reports NOT FOUND when the remainder after the longest match is itself a name this
 // roster knows. That is the difference between an instance qualifier and a second reader:
-// "Rowan reads in place" is Rowan with a qualifier nobody else answers to, and
-// "Rowan Stella" is two names in one token, which is a refusal rather than a note
+// "Ada reads in place" is Ada with a qualifier nobody else answers to, and
+// "Ada Bo" is two names in one token, which is a refusal rather than a note
 // delivered to the first of them.
 func (c *Config) longestKnownPrefix(tok string) (key string, found bool) {
 	low := fold(tok)
@@ -179,7 +179,7 @@ var wordSeparators = []string{" and ", " & "}
 // splitAddresses applies tolerances 1 to 5 and returns the cleaned pieces.
 //
 // The split is parenthesis-aware. An earlier version used strings.FieldsFunc and broke
-// "Rowan (bud, the Studio, the mas account)" -- the From line of most of the notes on the
+// "Ada (day shift, the west host, the shared account)" -- the From line of most of the notes on the
 // table this was written for -- into three unresolvable pieces.
 func splitAddresses(line string) []string {
 	var fields []string
@@ -212,7 +212,7 @@ func splitAddresses(line string) []string {
 	var out []string
 	for _, f := range fields {
 		tok := strings.TrimSpace(f)
-		// ", and Stella" leaves "and Stella" behind once the comma has split it.
+		// ", and Bo" leaves "and Bo" behind once the comma has split it.
 		if rest, cut := cutPrefixFold(tok, "and "); cut {
 			tok = strings.TrimSpace(rest)
 		}
@@ -243,7 +243,7 @@ func wordSeparatorAt(line string, i int) (string, bool) {
 }
 
 // stripParentheticals removes trailing "(...)" groups, repeatedly, so that
-// "Rowan a1b2c3d4 (active bud) (the Studio)" is Rowan. Only TRAILING ones: a parenthesis
+// "Ada a1b2c3d4 (active line) (the west host)" is Ada. Only TRAILING ones: a parenthesis
 // in the middle of a name is part of the name as far as this is concerned, and will
 // simply not resolve.
 func stripParentheticals(tok string) string {

@@ -163,7 +163,7 @@ func EnsureLevelWith(dir, remote, branch string) error {
 // have. The first version asked git only `rev-parse --is-inside-work-tree`, which is true
 // anywhere under a repository. Point --table at `docs/table` inside a larger repo and
 // every verb ran: `git diff --name-only` reports paths relative to the REPOSITORY ROOT, so
-// a new note came back as `docs/table/from-stella/x.md`, the `from-` prefix guard in
+// a new note came back as `docs/table/from-bo/x.md`, the `from-` prefix guard in
 // ChangedSince dropped it, and `inbox --since` and `check --as` reported an EMPTY change
 // set and exited 0 over unread notes. Nothing in the output said the table had not been
 // looked at. That is precisely the lie this whole tool exists to stop, so a --table that
@@ -242,7 +242,7 @@ func CurrentBranch(dir string) (string, error) {
 func EnsureClean(dir string, allow []string) error {
 	// --untracked-files=all is load-bearing: without it git COLLAPSES an untracked
 	// directory to one entry, so a new note in a lane that does not exist yet is reported
-	// as "from-rowan/" and never matches the path this run is allowed to write.
+	// as "from-ada/" and never matches the path this run is allowed to write.
 	out, err := git(dir, "status", "--porcelain", "-z", "--untracked-files=all")
 	if err != nil {
 		return err
@@ -600,7 +600,7 @@ func ChangedSince(dir, commit string) ([]string, error) {
 // should not commit -- and it is exactly wrong for a lane's OPEN list, which is legitimately
 // absent whenever a reader has nothing open. A reader's very first advance with an empty
 // inbox hit that: the run listed the inbox correctly and then died on `pathspec
-// 'from-rowan/OPEN' did not match any files`.
+// 'from-ada/OPEN' did not match any files`.
 //
 // So a path is staged when it exists on disk (a write) or when git already tracks it (a
 // deletion this run made, which must be staged or the file comes back), and is dropped when

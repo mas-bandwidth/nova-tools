@@ -24,8 +24,8 @@ func hermetic(t *testing.T) {
 }
 
 var testIdentity = map[string]Identity{
-	"Rowan":  {Name: "Rowan", Email: "rowan@example.com"},
-	"Stella": {Name: "Stella", Email: "stella@example.com"},
+	"Ada": {Name: "Ada", Email: "ada@example.com"},
+	"Bo":  {Name: "Bo", Email: "bo@example.com"},
 }
 
 // bareTable builds a bare repository holding a table with a roster on branch main, and
@@ -41,7 +41,7 @@ func bareTable(t *testing.T) string {
 	}
 	seed := cloneTable(t, bare)
 	write(t, seed, ConfigName, rosterJSON)
-	if _, err := CommitAndPush(seed, testIdentity["Rowan"], []string{ConfigName}, "the roster", "origin", "main", 3); err != nil {
+	if _, err := CommitAndPush(seed, testIdentity["Ada"], []string{ConfigName}, "the roster", "origin", "main", 3); err != nil {
 		t.Fatalf("seeding the table: %v", err)
 	}
 	return bare
@@ -62,22 +62,22 @@ func cloneTable(t *testing.T, bare string) string {
 // noteText is a minimal valid note, so the git tests are about the transport and nothing
 // else.
 func noteText(from, subject, body string) string {
-	return "From: " + from + "\nTo: Stella\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: " + subject + "\n\n" + body + "\n"
+	return "From: " + from + "\nTo: Bo\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: " + subject + "\n\n" + body + "\n"
 }
 
 func TestCommitAndPushLandsANote(t *testing.T) {
 	hermetic(t)
 	bare := bareTable(t)
 	clone := cloneTable(t, bare)
-	write(t, clone, "from-rowan/a.md", noteText("Rowan", "one", "body"))
-	res, err := CommitAndPush(clone, testIdentity["Rowan"], []string{"from-rowan/a.md"}, "rowan: one", "origin", "main", 3)
+	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
+	res, err := CommitAndPush(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one", "origin", "main", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !res.Pushed || res.Attempts != 1 {
 		t.Fatalf("res = %+v, want pushed on the first attempt", res)
 	}
-	out, err := git(bare, "show", "main:from-rowan/a.md")
+	out, err := git(bare, "show", "main:from-ada/a.md")
 	if err != nil {
 		t.Fatalf("the note is not on the remote: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestCommitAndPushLandsANote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(who) != "Rowan <rowan@example.com>" {
+	if strings.TrimSpace(who) != "Ada <ada@example.com>" {
 		t.Fatalf("the commit is authored by %q", strings.TrimSpace(who))
 	}
 }
@@ -101,10 +101,10 @@ func TestCommitAndPushLandsANote(t *testing.T) {
 func TestTwoSendersPushingAtOnceBothLand(t *testing.T) {
 	hermetic(t)
 	bare := bareTable(t)
-	rowan := cloneTable(t, bare)
-	stella := cloneTable(t, bare)
-	write(t, rowan, "from-rowan/a.md", noteText("Rowan", "from rowan", "body"))
-	write(t, stella, "from-stella/b.md", noteText("Stella", "from stella", "body"))
+	ada := cloneTable(t, bare)
+	bo := cloneTable(t, bare)
+	write(t, ada, "from-ada/a.md", noteText("Ada", "from ada", "body"))
+	write(t, bo, "from-bo/b.md", noteText("Bo", "from bo", "body"))
 
 	// Both commits are made BEFORE either push, so the two pushes genuinely race: whichever
 	// arrives second is rejected by the remote and must recover inside the tool.
@@ -115,8 +115,8 @@ func TestTwoSendersPushingAtOnceBothLand(t *testing.T) {
 	senders := []struct {
 		dir, who, path string
 	}{
-		{rowan, "Rowan", "from-rowan/a.md"},
-		{stella, "Stella", "from-stella/b.md"},
+		{ada, "Ada", "from-ada/a.md"},
+		{bo, "Bo", "from-bo/b.md"},
 	}
 	for i, s := range senders {
 		wg.Add(1)
@@ -159,14 +159,14 @@ func TestPushGivesUpInsideTheBudgetAndSaysTheNoteIsNotOnTheTable(t *testing.T) {
 	mine := cloneTable(t, bare)
 	theirs := cloneTable(t, bare)
 
-	write(t, mine, "from-rowan/a.md", noteText("Rowan", "mine", "body"))
+	write(t, mine, "from-ada/a.md", noteText("Ada", "mine", "body"))
 	// Somebody else pushes first, so my push is rejected.
-	write(t, theirs, "from-stella/b.md", noteText("Stella", "theirs", "body"))
-	if _, err := CommitAndPush(theirs, testIdentity["Stella"], []string{"from-stella/b.md"}, "stella: theirs", "origin", "main", 3); err != nil {
+	write(t, theirs, "from-bo/b.md", noteText("Bo", "theirs", "body"))
+	if _, err := CommitAndPush(theirs, testIdentity["Bo"], []string{"from-bo/b.md"}, "bo: theirs", "origin", "main", 3); err != nil {
 		t.Fatal(err)
 	}
 	// One attempt is one push and no recovery.
-	res, err := CommitAndPush(mine, testIdentity["Rowan"], []string{"from-rowan/a.md"}, "rowan: mine", "origin", "main", 1)
+	res, err := CommitAndPush(mine, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: mine", "origin", "main", 1)
 	if err == nil {
 		t.Fatal("a push that could not land reported success")
 	}
@@ -176,7 +176,7 @@ func TestPushGivesUpInsideTheBudgetAndSaysTheNoteIsNotOnTheTable(t *testing.T) {
 	if res.Pushed {
 		t.Fatalf("res = %+v", res)
 	}
-	if _, err := git(bare, "cat-file", "-e", "main:from-rowan/a.md"); err == nil {
+	if _, err := git(bare, "cat-file", "-e", "main:from-ada/a.md"); err == nil {
 		t.Fatal("the note reached the remote after a reported failure")
 	}
 }
@@ -191,12 +191,12 @@ func TestARebaseConflictAbortsAndSaysSo(t *testing.T) {
 	a := cloneTable(t, bare)
 	b := cloneTable(t, bare)
 
-	write(t, a, "from-rowan/RECEIPTS", "2026-09-07T00:01:00Z stella-aaaaaaaaaaaa\n")
-	if _, err := CommitAndPush(a, testIdentity["Rowan"], []string{"from-rowan/RECEIPTS"}, "rowan: receipt", "origin", "main", 3); err != nil {
+	write(t, a, "from-ada/RECEIPTS", "2026-09-07T00:01:00Z bo-aaaaaaaaaaaa\n")
+	if _, err := CommitAndPush(a, testIdentity["Ada"], []string{"from-ada/RECEIPTS"}, "ada: receipt", "origin", "main", 3); err != nil {
 		t.Fatal(err)
 	}
-	write(t, b, "from-rowan/RECEIPTS", "2026-09-07T00:02:00Z stella-bbbbbbbbbbbb\n")
-	_, err := CommitAndPush(b, testIdentity["Rowan"], []string{"from-rowan/RECEIPTS"}, "rowan: another receipt", "origin", "main", 3)
+	write(t, b, "from-ada/RECEIPTS", "2026-09-07T00:02:00Z bo-bbbbbbbbbbbb\n")
+	_, err := CommitAndPush(b, testIdentity["Ada"], []string{"from-ada/RECEIPTS"}, "ada: another receipt", "origin", "main", 3)
 	if err == nil {
 		t.Fatal("a conflicting rebase reported success")
 	}
@@ -224,23 +224,23 @@ func TestTwoBenchesOfOneLaneConflictOnTheCatalogue(t *testing.T) {
 	a := cloneTable(t, bare)
 	b := cloneTable(t, bare)
 
-	first := IndexEntry{ID: "rowan-aaaaaaaaaaaa", Path: "from-rowan/a.md", Date: "2026-09-07T00:01:00Z", To: []string{"Stella"}, Lane: "from-rowan"}
-	write(t, a, first.Path, noteText("Rowan", "one", "body"))
+	first := IndexEntry{ID: "ada-aaaaaaaaaaaa", Path: "from-ada/a.md", Date: "2026-09-07T00:01:00Z", To: []string{"Bo"}, Lane: "from-ada"}
+	write(t, a, first.Path, noteText("Ada", "one", "body"))
 	if err := AppendIndexLine(a, first); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := CommitAndPush(a, testIdentity["Rowan"], []string{first.Path, IndexPath("from-rowan")}, "rowan: one", "origin", "main", 3); err != nil {
+	if _, err := CommitAndPush(a, testIdentity["Ada"], []string{first.Path, IndexPath("from-ada")}, "ada: one", "origin", "main", 3); err != nil {
 		t.Fatal(err)
 	}
 
 	// The second bench cannot see the first: a DIFFERENT note, at a different path, whose
 	// only shared file is the lane's catalogue.
-	second := IndexEntry{ID: "rowan-bbbbbbbbbbbb", Path: "from-rowan/b.md", Date: "2026-09-07T00:02:00Z", To: []string{"Stella"}, Lane: "from-rowan"}
-	write(t, b, second.Path, noteText("Rowan", "two", "body"))
+	second := IndexEntry{ID: "ada-bbbbbbbbbbbb", Path: "from-ada/b.md", Date: "2026-09-07T00:02:00Z", To: []string{"Bo"}, Lane: "from-ada"}
+	write(t, b, second.Path, noteText("Ada", "two", "body"))
 	if err := AppendIndexLine(b, second); err != nil {
 		t.Fatal(err)
 	}
-	res, err := CommitAndPush(b, testIdentity["Rowan"], []string{second.Path, IndexPath("from-rowan")}, "rowan: two", "origin", "main", 3)
+	res, err := CommitAndPush(b, testIdentity["Ada"], []string{second.Path, IndexPath("from-ada")}, "ada: two", "origin", "main", 3)
 	if err == nil {
 		t.Fatal("two benches of one lane appending different catalogue lines did not conflict; if this is now true the SPEC's list of conflict surfaces is wrong in the other direction")
 	}
@@ -278,7 +278,7 @@ func TestEnsureCleanRefusesAnUnrelatedChange(t *testing.T) {
 	bare := bareTable(t)
 	clone := cloneTable(t, bare)
 	write(t, clone, "stray.txt", "something else in flight\n")
-	err := EnsureClean(clone, []string{"from-rowan/a.md"})
+	err := EnsureClean(clone, []string{"from-ada/a.md"})
 	if err == nil {
 		t.Fatal("a checkout holding unrelated work passed; a rebase over it would sweep somebody's work into a note")
 	}
@@ -288,8 +288,8 @@ func TestEnsureCleanRefusesAnUnrelatedChange(t *testing.T) {
 	if err := os.Remove(filepath.Join(clone, "stray.txt")); err != nil {
 		t.Fatal(err)
 	}
-	write(t, clone, "from-rowan/a.md", noteText("Rowan", "one", "body"))
-	if err := EnsureClean(clone, []string{"from-rowan/a.md"}); err != nil {
+	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
+	if err := EnsureClean(clone, []string{"from-ada/a.md"}); err != nil {
 		t.Fatalf("the note being sent was treated as unrelated work: %v", err)
 	}
 }
@@ -298,15 +298,15 @@ func TestCommitOnlyDoesNotPush(t *testing.T) {
 	hermetic(t)
 	bare := bareTable(t)
 	clone := cloneTable(t, bare)
-	write(t, clone, "from-rowan/a.md", noteText("Rowan", "one", "body"))
-	res, err := CommitOnly(clone, testIdentity["Rowan"], []string{"from-rowan/a.md"}, "rowan: one")
+	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
+	res, err := CommitOnly(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: one")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if res.Pushed || res.Commit == "" {
 		t.Fatalf("res = %+v, want a commit and pushed=false", res)
 	}
-	if _, err := git(bare, "cat-file", "-e", "main:from-rowan/a.md"); err == nil {
+	if _, err := git(bare, "cat-file", "-e", "main:from-ada/a.md"); err == nil {
 		t.Fatal("--no-push pushed")
 	}
 }
@@ -318,10 +318,10 @@ func TestCommitRefusesWithoutAnIdentityOrPaths(t *testing.T) {
 	if _, err := CommitOnly(clone, Identity{}, []string{"x"}, "m"); err == nil {
 		t.Fatal("a commit with no identity was allowed")
 	}
-	if _, err := CommitOnly(clone, testIdentity["Rowan"], nil, "m"); err == nil {
+	if _, err := CommitOnly(clone, testIdentity["Ada"], nil, "m"); err == nil {
 		t.Fatal("a commit with no paths was allowed")
 	}
-	if _, err := CommitAndPush(clone, testIdentity["Rowan"], []string{"x"}, "m", "origin", "main", 0); err == nil {
+	if _, err := CommitAndPush(clone, testIdentity["Ada"], []string{"x"}, "m", "origin", "main", 0); err == nil {
 		t.Fatal("an attempt budget of zero was accepted")
 	}
 }
@@ -343,7 +343,7 @@ func TestIsRepoRootAndCurrentBranch(t *testing.T) {
 
 // THE BLOCKER, at the level it is decided. A table one directory down inside a bigger
 // repository is INSIDE a work tree, so the old test passed it -- and then `git diff
-// --name-only` reported `table/from-stella/x.md`, the from- guard dropped it, and the run
+// --name-only` reported `table/from-bo/x.md`, the from- guard dropped it, and the run
 // said "nothing new" over unread notes. The refusal names the root git found, because that
 // is the one thing the caller needs in order to fix the invocation.
 func TestATableThatIsNotTheRepositoryRootIsRefused(t *testing.T) {
@@ -372,8 +372,8 @@ func TestATableThatIsNotTheRepositoryRootIsRefused(t *testing.T) {
 	}
 	// The change set the old code would have reported over that table, for the record: git
 	// names the path from the repository root, and ChangedSince keeps only from-* paths.
-	write(t, nested, "from-stella/a.md", noteText("Stella", "one", "body"))
-	if _, err := CommitAndPush(clone, testIdentity["Stella"], []string{"table"}, "stella: a nested note", "origin", "main", 3); err != nil {
+	write(t, nested, "from-bo/a.md", noteText("Bo", "one", "body"))
+	if _, err := CommitAndPush(clone, testIdentity["Bo"], []string{"table"}, "bo: a nested note", "origin", "main", 3); err != nil {
 		t.Fatal(err)
 	}
 	base, err := ResolveCommit(clone, "HEAD~1")
@@ -400,12 +400,12 @@ func TestARejectedPushRecoversOnTheSecondAttempt(t *testing.T) {
 	mine := cloneTable(t, bare)
 	theirs := cloneTable(t, bare)
 
-	write(t, theirs, "from-stella/b.md", noteText("Stella", "theirs", "body"))
-	if _, err := CommitAndPush(theirs, testIdentity["Stella"], []string{"from-stella/b.md"}, "stella: theirs", "origin", "main", 3); err != nil {
+	write(t, theirs, "from-bo/b.md", noteText("Bo", "theirs", "body"))
+	if _, err := CommitAndPush(theirs, testIdentity["Bo"], []string{"from-bo/b.md"}, "bo: theirs", "origin", "main", 3); err != nil {
 		t.Fatal(err)
 	}
-	write(t, mine, "from-rowan/a.md", noteText("Rowan", "mine", "body"))
-	res, err := CommitAndPush(mine, testIdentity["Rowan"], []string{"from-rowan/a.md"}, "rowan: mine", "origin", "main", 3)
+	write(t, mine, "from-ada/a.md", noteText("Ada", "mine", "body"))
+	res, err := CommitAndPush(mine, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: mine", "origin", "main", 3)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -416,7 +416,7 @@ func TestARejectedPushRecoversOnTheSecondAttempt(t *testing.T) {
 		t.Fatalf("res.Attempts = %d, want 2: the first push must be rejected and the second must land, or the retry loop is not what landed this", res.Attempts)
 	}
 	// Both notes are on the remote, and the rebase replayed mine on top rather than over.
-	for _, path := range []string{"from-rowan/a.md", "from-stella/b.md"} {
+	for _, path := range []string{"from-ada/a.md", "from-bo/b.md"} {
 		if _, err := git(bare, "cat-file", "-e", "main:"+path); err != nil {
 			t.Fatalf("%s is not on the remote", path)
 		}
@@ -429,7 +429,7 @@ func TestARejectedPushRecoversOnTheSecondAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "Rowan <rowan@example.com>|Rowan <rowan@example.com>"; strings.TrimSpace(who) != want {
+	if want := "Ada <ada@example.com>|Ada <ada@example.com>"; strings.TrimSpace(who) != want {
 		t.Fatalf("the replayed commit is author|committer %q, want %q: the identity comes from the roster on every invocation that records one", strings.TrimSpace(who), want)
 	}
 }
@@ -448,7 +448,7 @@ func TestSendRefusesABranchAheadOfTheRemote(t *testing.T) {
 	}
 	// Somebody's unrelated work, committed here and not pushed.
 	write(t, clone, "notes-to-self.txt", "half a thought\n")
-	if _, err := CommitOnly(clone, testIdentity["Rowan"], []string{"notes-to-self.txt"}, "wip"); err != nil {
+	if _, err := CommitOnly(clone, testIdentity["Ada"], []string{"notes-to-self.txt"}, "wip"); err != nil {
 		t.Fatal(err)
 	}
 	err := EnsureLevelWith(clone, "origin", "main")
@@ -483,8 +483,8 @@ func TestRemoteAndBranchAreRefusedWhenTheyCouldBeOptions(t *testing.T) {
 	// And the package refuses it too, at the last place these become argv.
 	bare := bareTable(t)
 	clone := cloneTable(t, bare)
-	write(t, clone, "from-rowan/a.md", noteText("Rowan", "one", "body"))
-	if _, err := CommitAndPush(clone, testIdentity["Rowan"], []string{"from-rowan/a.md"}, "m", "--upload-pack=id", "main", 3); err == nil {
+	write(t, clone, "from-ada/a.md", noteText("Ada", "one", "body"))
+	if _, err := CommitAndPush(clone, testIdentity["Ada"], []string{"from-ada/a.md"}, "m", "--upload-pack=id", "main", 3); err == nil {
 		t.Fatal("CommitAndPush accepted a remote that is an option to git")
 	}
 }
@@ -497,20 +497,20 @@ func TestEnsureCleanReadsARenameAsThePairItIs(t *testing.T) {
 	hermetic(t)
 	bare := bareTable(t)
 	clone := cloneTable(t, bare)
-	write(t, clone, "from-rowan/before.md", noteText("Rowan", "one", "body"))
-	if _, err := CommitAndPush(clone, testIdentity["Rowan"], []string{"from-rowan/before.md"}, "rowan: one", "origin", "main", 3); err != nil {
+	write(t, clone, "from-ada/before.md", noteText("Ada", "one", "body"))
+	if _, err := CommitAndPush(clone, testIdentity["Ada"], []string{"from-ada/before.md"}, "ada: one", "origin", "main", 3); err != nil {
 		t.Fatal(err)
 	}
-	if out, err := git(clone, "mv", "from-rowan/before.md", "from-rowan/after.md"); err != nil {
+	if out, err := git(clone, "mv", "from-ada/before.md", "from-ada/after.md"); err != nil {
 		t.Fatalf("git mv: %v %s", err, out)
 	}
-	err := EnsureClean(clone, []string{"from-rowan/a-note-being-sent.md"})
+	err := EnsureClean(clone, []string{"from-ada/a-note-being-sent.md"})
 	if err == nil {
 		t.Fatal("a checkout holding a rename passed as clean")
 	}
 	// One change, named as the pair it is: both halves, in one entry, with nothing eaten
 	// off the front of the old path.
-	if !strings.HasSuffix(err.Error(), ": from-rowan/before.md -> from-rowan/after.md") {
+	if !strings.HasSuffix(err.Error(), ": from-ada/before.md -> from-ada/after.md") {
 		t.Fatalf("the refusal does not name the rename as one change over two paths: %v", err)
 	}
 	if strings.Contains(err.Error(), ",") {
@@ -518,11 +518,11 @@ func TestEnsureCleanReadsARenameAsThePairItIs(t *testing.T) {
 	}
 	// A short old path is the case that used to vanish: a record under four characters is
 	// skipped, so the rename was reported as clean.
-	if out, err := git(clone, "mv", "from-rowan/after.md", "from-rowan/before.md"); err != nil {
+	if out, err := git(clone, "mv", "from-ada/after.md", "from-ada/before.md"); err != nil {
 		t.Fatalf("git mv back: %v %s", err, out)
 	}
 	write(t, clone, "x.md", "x\n")
-	if _, err := CommitAndPush(clone, testIdentity["Rowan"], []string{"x.md"}, "rowan: x", "origin", "main", 3); err != nil {
+	if _, err := CommitAndPush(clone, testIdentity["Ada"], []string{"x.md"}, "ada: x", "origin", "main", 3); err != nil {
 		t.Fatal(err)
 	}
 	if out, err := git(clone, "mv", "x.md", "y.md"); err != nil {
@@ -553,12 +553,12 @@ func TestThePushRetryWaitsBetweenAttempts(t *testing.T) {
 	bare := bareTable(t)
 	mine := cloneTable(t, bare)
 	theirs := cloneTable(t, bare)
-	write(t, theirs, "from-stella/b.md", noteText("Stella", "theirs", "body"))
-	if _, err := CommitAndPush(theirs, testIdentity["Stella"], []string{"from-stella/b.md"}, "stella: theirs", "origin", "main", 3); err != nil {
+	write(t, theirs, "from-bo/b.md", noteText("Bo", "theirs", "body"))
+	if _, err := CommitAndPush(theirs, testIdentity["Bo"], []string{"from-bo/b.md"}, "bo: theirs", "origin", "main", 3); err != nil {
 		t.Fatal(err)
 	}
-	write(t, mine, "from-rowan/a.md", noteText("Rowan", "mine", "body"))
-	res, err := CommitAndPush(mine, testIdentity["Rowan"], []string{"from-rowan/a.md"}, "rowan: mine", "origin", "main", 3)
+	write(t, mine, "from-ada/a.md", noteText("Ada", "mine", "body"))
+	res, err := CommitAndPush(mine, testIdentity["Ada"], []string{"from-ada/a.md"}, "ada: mine", "origin", "main", 3)
 	if err != nil {
 		t.Fatal(err)
 	}

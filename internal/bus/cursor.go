@@ -68,7 +68,7 @@ var laneStateFiles = []string{ReceiptsName, CursorName, OpenName, IndexName}
 // A README.md IS NOT A NOTE, and until this was written it was read as one: it ends in
 // `.md`, it sits in a lane, so the lane walk parsed it, it had no `From:` line, and every
 // reader on the table was told `INBOX UNREADABLE` about it forever while `check` failed the
-// whole table over it. On the family's own table it was the single file that failed at every
+// whole table over it. On a real table it was the single file that failed at every
 // date -- the one finding the legacy tolerance could not forgive, because a README genuinely
 // cannot say when it was written and genuinely is not a note.
 //
@@ -301,7 +301,7 @@ func validOpenKind(k OpenKind) bool {
 // OpenEntry is one note a reader has been shown and has not yet answered -- and, since
 // OPEN v2, the whole of the line that note prints as.
 //
-// WHY THE ENTRY CARRIES THE DISPLAY AND NOT JUST THE PATH. Glenn's requirement, verbatim:
+// WHY THE ENTRY CARRIES THE DISPLAY AND NOT JUST THE PATH. Dana's requirement, verbatim:
 // "O(new + open) is not great. Can we make it O(new)." Under v1 an entry was `<id> <path>`,
 // so every run re-opened and re-parsed every open note -- to print its sender, its date and
 // its subject, and to decide whether it was a receipt. A reader carrying five hundred notes

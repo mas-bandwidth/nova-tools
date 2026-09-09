@@ -11,35 +11,35 @@ import (
 // right about all four.
 func fixture() map[string]string {
 	return map[string]string{
-		"from-stella/2026-09-07T0001Z-a-question-abcdef012345.md": `From: Stella Codex
-To: Rowan
+		"from-bo/2026-09-07T0001Z-a-question-abcdef012345.md": `From: Bo Quill
+To: Ada
 Date: Mon Sep  7 00:01:00 UTC 2026
-Id: stella-abcdef012345
+Id: bo-abcdef012345
 Subject: A question about the gate
 
 Should the gate run on the merge queue too?
 `,
-		"from-stella/2026-09-06-legacy-note.md": `From: Stella
-To: Rowan
+		"from-bo/2026-09-06-legacy-note.md": `From: Bo
+To: Ada
 Date: Sun Sep  6 23:00:00 UTC 2026
 Subject: The packet void, before ids existed
 
 A finding, written when a Re line named a path and nothing else.
 `,
-		"from-stella/2026-09-07T0002Z-heard-111111111111.md": `From: Stella
-To: Rowan
+		"from-bo/2026-09-07T0002Z-heard-111111111111.md": `From: Bo
+To: Ada
 Date: Mon Sep  7 00:02:00 UTC 2026
-Id: stella-111111111111
+Id: bo-111111111111
 Subject: Heard
 
 Heard, thank you.
 `,
-		"from-stella/2026-09-07T0003Z-for-glenn-222222222222.md": `From: Stella
-To: Glenn
-Cc: Rowan
+		"from-bo/2026-09-07T0003Z-for-dana-222222222222.md": `From: Bo
+To: Dana
+Cc: Ada
 Date: Mon Sep  7 00:03:00 UTC 2026
-Id: stella-222222222222
-Subject: A note to Glenn, copied to Rowan
+Id: bo-222222222222
+Subject: A note to Dana, copied to Ada
 
 The body.
 `,
@@ -51,10 +51,10 @@ func TestReadTableReadsEveryLane(t *testing.T) {
 	if len(tab.Notes) != 4 {
 		t.Fatalf("read %d notes, want 4", len(tab.Notes))
 	}
-	if n, ok := tab.NoteByID("stella-abcdef012345"); !ok || n.Header.Subject != "A question about the gate" {
+	if n, ok := tab.NoteByID("bo-abcdef012345"); !ok || n.Header.Subject != "A question about the gate" {
 		t.Fatalf("NoteByID = %v %v", n, ok)
 	}
-	if _, ok := tab.NoteByPath("from-stella/2026-09-06-legacy-note.md"); !ok {
+	if _, ok := tab.NoteByPath("from-bo/2026-09-06-legacy-note.md"); !ok {
 		t.Fatal("a legacy note is not addressable by path")
 	}
 	if _, ok := tab.NoteByID(""); ok {
@@ -66,49 +66,49 @@ func TestReadTableReadsEveryLane(t *testing.T) {
 // receipt. All three, in my own lane and nowhere else.
 func TestAnsweredRule(t *testing.T) {
 	files := fixture()
-	files["from-rowan/2026-09-07T0010Z-an-answer-999999999999.md"] = `From: Rowan
-To: Stella
+	files["from-ada/2026-09-07T0010Z-an-answer-999999999999.md"] = `From: Ada
+To: Bo
 Date: Mon Sep  7 00:10:00 UTC 2026
-Id: rowan-999999999999
-Re: stella-abcdef012345
+Id: ada-999999999999
+Re: bo-abcdef012345
 Subject: Yes, on the merge queue too
 
 The answer.
 `
-	files["from-rowan/RECEIPTS"] = "# a comment line\n2026-09-07T00:11:00Z stella-111111111111\n"
+	files["from-ada/RECEIPTS"] = "# a comment line\n2026-09-07T00:11:00Z bo-111111111111\n"
 	root := writeTable(t, files)
 	tab := loadTable(t, root)
 
-	byID, _ := tab.NoteByID("stella-abcdef012345")
-	if by, ok := tab.AnsweredBy(byID, "from-rowan"); !ok || by != "from-rowan/2026-09-07T0010Z-an-answer-999999999999.md" {
+	byID, _ := tab.NoteByID("bo-abcdef012345")
+	if by, ok := tab.AnsweredBy(byID, "from-ada"); !ok || by != "from-ada/2026-09-07T0010Z-an-answer-999999999999.md" {
 		t.Fatalf("a note answered by id reads as %q %v", by, ok)
 	}
-	// The same note is NOT answered in Stella's own lane: the rule is per reader.
-	if _, ok := tab.AnsweredBy(byID, "from-stella"); ok {
+	// The same note is NOT answered in Bo's own lane: the rule is per reader.
+	if _, ok := tab.AnsweredBy(byID, "from-bo"); ok {
 		t.Fatal("a note is answered in its own sender's lane; the rule is per reader")
 	}
-	legacy, _ := tab.NoteByPath("from-stella/2026-09-06-legacy-note.md")
-	if _, ok := tab.AnsweredBy(legacy, "from-rowan"); ok {
+	legacy, _ := tab.NoteByPath("from-bo/2026-09-06-legacy-note.md")
+	if _, ok := tab.AnsweredBy(legacy, "from-ada"); ok {
 		t.Fatal("the legacy note is answered before anything answers it")
 	}
-	receipted, _ := tab.NoteByID("stella-111111111111")
-	if by, ok := tab.AnsweredBy(receipted, "from-rowan"); !ok || by != "from-rowan/RECEIPTS" {
+	receipted, _ := tab.NoteByID("bo-111111111111")
+	if by, ok := tab.AnsweredBy(receipted, "from-ada"); !ok || by != "from-ada/RECEIPTS" {
 		t.Fatalf("a receipt did not answer: %q %v", by, ok)
 	}
 
 	// Now answer the legacy note by its PATH, which is the only name it has.
-	files["from-rowan/2026-09-07T0012Z-on-the-void-888888888888.md"] = `From: Rowan
-To: Stella
+	files["from-ada/2026-09-07T0012Z-on-the-void-888888888888.md"] = `From: Ada
+To: Bo
 Date: Mon Sep  7 00:12:00 UTC 2026
-Id: rowan-888888888888
-Re: from-stella/2026-09-06-legacy-note.md
+Id: ada-888888888888
+Re: from-bo/2026-09-06-legacy-note.md
 Subject: On the packet void
 
 The answer to a note that has no id.
 `
 	tab = loadTable(t, writeTable(t, files))
-	legacy, _ = tab.NoteByPath("from-stella/2026-09-06-legacy-note.md")
-	if by, ok := tab.AnsweredBy(legacy, "from-rowan"); !ok || !strings.Contains(by, "888888888888") {
+	legacy, _ = tab.NoteByPath("from-bo/2026-09-06-legacy-note.md")
+	if by, ok := tab.AnsweredBy(legacy, "from-ada"); !ok || !strings.Contains(by, "888888888888") {
 		t.Fatalf("a legacy note answered by path reads as %q %v", by, ok)
 	}
 }
@@ -117,26 +117,26 @@ The answer to a note that has no id.
 // before the tool existed keeps working.
 func TestANoteWithAnIDIsStillAnswerableByPath(t *testing.T) {
 	files := fixture()
-	files["from-rowan/2026-09-07T0010Z-by-path-777777777777.md"] = `From: Rowan
-To: Stella
+	files["from-ada/2026-09-07T0010Z-by-path-777777777777.md"] = `From: Ada
+To: Bo
 Date: Mon Sep  7 00:10:00 UTC 2026
-Id: rowan-777777777777
-Re: from-stella/2026-09-07T0001Z-a-question-abcdef012345.md
+Id: ada-777777777777
+Re: from-bo/2026-09-07T0001Z-a-question-abcdef012345.md
 Subject: Answered by path
 
 The answer.
 `
 	tab := loadTable(t, writeTable(t, files))
-	n, _ := tab.NoteByID("stella-abcdef012345")
-	if _, ok := tab.AnsweredBy(n, "from-rowan"); !ok {
+	n, _ := tab.NoteByID("bo-abcdef012345")
+	if _, ok := tab.AnsweredBy(n, "from-ada"); !ok {
 		t.Fatal("an answer naming the path of a note that HAS an id did not count")
 	}
 }
 
 func TestInboxSeparatesReceiptsFromNotesAndOrdersNewestFirst(t *testing.T) {
 	tab := loadTable(t, writeTable(t, fixture()))
-	rowan := mustParticipant(t, tab.Config, "Rowan")
-	items := tab.Inbox(rowan, 40)
+	ada := mustParticipant(t, tab.Config, "Ada")
+	items := tab.Inbox(ada, 40)
 	if len(items) != 4 {
 		t.Fatalf("inbox has %d items, want 4", len(items))
 	}
@@ -159,7 +159,7 @@ func TestInboxSeparatesReceiptsFromNotesAndOrdersNewestFirst(t *testing.T) {
 	}
 	// The Cc'd note is in the inbox, marked as a Cc rather than a direct address.
 	for _, it := range items {
-		if it.Note.Header.ID == "stella-222222222222" && it.Address != "cc" {
+		if it.Note.Header.ID == "bo-222222222222" && it.Address != "cc" {
 			t.Fatalf("a Cc'd note reads as addr=%q", it.Address)
 		}
 	}
@@ -167,36 +167,36 @@ func TestInboxSeparatesReceiptsFromNotesAndOrdersNewestFirst(t *testing.T) {
 
 func TestInboxDropsWhatIsAnsweredAndWhatIsNotMine(t *testing.T) {
 	files := fixture()
-	files["from-rowan/2026-09-07T0010Z-an-answer-999999999999.md"] = `From: Rowan
-To: Stella
+	files["from-ada/2026-09-07T0010Z-an-answer-999999999999.md"] = `From: Ada
+To: Bo
 Date: Mon Sep  7 00:10:00 UTC 2026
-Id: rowan-999999999999
-Re: stella-abcdef012345
+Id: ada-999999999999
+Re: bo-abcdef012345
 Subject: Yes
 
 The answer.
 `
 	tab := loadTable(t, writeTable(t, files))
-	rowan := mustParticipant(t, tab.Config, "Rowan")
-	for _, it := range tab.Inbox(rowan, 40) {
-		if it.Note.Header.ID == "stella-abcdef012345" {
+	ada := mustParticipant(t, tab.Config, "Ada")
+	for _, it := range tab.Inbox(ada, 40) {
+		if it.Note.Header.ID == "bo-abcdef012345" {
 			t.Fatal("an answered note is still in the inbox")
 		}
-		if it.Note.Lane == "from-rowan" {
+		if it.Note.Lane == "from-ada" {
 			t.Fatal("my own note is in my inbox")
 		}
 	}
-	// Stella's inbox holds Rowan's answer and nothing of her own.
-	stella := mustParticipant(t, tab.Config, "Stella")
-	items := tab.Inbox(stella, 40)
-	if len(items) != 1 || items[0].Note.Header.ID != "rowan-999999999999" {
-		t.Fatalf("Stella's inbox = %d items, want just Rowan's answer", len(items))
+	// Bo's inbox holds Ada's answer and nothing of her own.
+	bo := mustParticipant(t, tab.Config, "Bo")
+	items := tab.Inbox(bo, 40)
+	if len(items) != 1 || items[0].Note.Header.ID != "ada-999999999999" {
+		t.Fatalf("Bo's inbox = %d items, want just Ada's answer", len(items))
 	}
 }
 
 func TestCheckPassesACleanTable(t *testing.T) {
 	files := fixture()
-	files["from-rowan/RECEIPTS"] = "2026-09-07T00:11:00Z stella-111111111111\n"
+	files["from-ada/RECEIPTS"] = "2026-09-07T00:11:00Z bo-111111111111\n"
 	tab := loadTable(t, writeTable(t, files))
 	if ps := tab.Check(); len(ps) != 0 {
 		t.Fatalf("a clean table failed check: %+v", ps)
@@ -214,73 +214,73 @@ func TestCheckFailures(t *testing.T) {
 	}{
 		{
 			"a header that will not parse",
-			map[string]string{"from-rowan/bad.md": "From: Rowan\nthis is prose\n\nbody\n"},
+			map[string]string{"from-ada/bad.md": "From: Ada\nthis is prose\n\nbody\n"},
 			"not a header line",
 		},
 		{
 			"an unknown recipient",
-			map[string]string{"from-rowan/x.md": "From: Rowan\nTo: Stela\nSubject: s\n\nbody\n"},
-			`"Stela"`,
+			map[string]string{"from-ada/x.md": "From: Ada\nTo: Boe\nSubject: s\n\nbody\n"},
+			`"Boe"`,
 		},
 		{
 			"a note in the wrong lane",
-			map[string]string{"from-rowan/x.md": "From: Stella\nTo: Rowan\nSubject: s\n\nbody\n"},
-			`whose lane is "from-stella"`,
+			map[string]string{"from-ada/x.md": "From: Bo\nTo: Ada\nSubject: s\n\nbody\n"},
+			`whose lane is "from-bo"`,
 		},
 		{
 			"an id carrying another lane's slug",
-			map[string]string{"from-rowan/x.md": "From: Rowan\nTo: Stella\nId: stella-000000000000\nSubject: s\n\nbody\n"},
+			map[string]string{"from-ada/x.md": "From: Ada\nTo: Bo\nId: bo-000000000000\nSubject: s\n\nbody\n"},
 			"carries the slug of lane",
 		},
 		{
 			"a malformed id",
-			map[string]string{"from-rowan/x.md": "From: Rowan\nTo: Stella\nId: rowan-nothex\nSubject: s\n\nbody\n"},
+			map[string]string{"from-ada/x.md": "From: Ada\nTo: Bo\nId: ada-nothex\nSubject: s\n\nbody\n"},
 			"is not <sender>",
 		},
 		{
 			"two notes with one id",
 			map[string]string{
-				"from-rowan/a.md": "From: Rowan\nTo: Stella\nId: rowan-000000000000\nSubject: a\n\nbody\n",
-				"from-rowan/b.md": "From: Rowan\nTo: Stella\nId: rowan-000000000000\nSubject: b\n\nbody\n",
+				"from-ada/a.md": "From: Ada\nTo: Bo\nId: ada-000000000000\nSubject: a\n\nbody\n",
+				"from-ada/b.md": "From: Ada\nTo: Bo\nId: ada-000000000000\nSubject: b\n\nbody\n",
 			},
 			"is also the id of",
 		},
 		{
 			"a Re that resolves to nothing",
-			map[string]string{"from-rowan/x.md": "From: Rowan\nTo: Stella\nRe: stella-deadbeefcafe\nSubject: s\n\nbody\n"},
+			map[string]string{"from-ada/x.md": "From: Ada\nTo: Bo\nRe: bo-deadbeefcafe\nSubject: s\n\nbody\n"},
 			"neither an id on this table nor a note that exists",
 		},
 		{
 			"a Re naming a path that was renamed away",
-			map[string]string{"from-rowan/x.md": "From: Rowan\nTo: Stella\nRe: from-stella/gone.md\nSubject: s\n\nbody\n"},
+			map[string]string{"from-ada/x.md": "From: Ada\nTo: Bo\nRe: from-bo/gone.md\nSubject: s\n\nbody\n"},
 			"neither an id on this table nor a note that exists",
 		},
 		{
 			"a lane nobody owns",
-			map[string]string{"from-nobody/x.md": "From: Rowan\nTo: Stella\nSubject: s\n\nbody\n"},
+			map[string]string{"from-nobody/x.md": "From: Ada\nTo: Bo\nSubject: s\n\nbody\n"},
 			"owns this lane",
 		},
 		{
 			"a receipt naming nothing",
-			map[string]string{"from-rowan/RECEIPTS": "2026-09-07T00:11:00Z stella-deadbeefcafe\n"},
+			map[string]string{"from-ada/RECEIPTS": "2026-09-07T00:11:00Z bo-deadbeefcafe\n"},
 			"neither an id on this table nor a note that exists",
 		},
 		{
 			"a receipt with no stamp",
 			map[string]string{
-				"from-rowan/RECEIPTS": "yesterday stella-abcdef012345\n",
-				"from-stella/q.md":    "From: Stella\nTo: Rowan\nId: stella-abcdef012345\nSubject: s\n\nbody\n",
+				"from-ada/RECEIPTS": "yesterday bo-abcdef012345\n",
+				"from-bo/q.md":      "From: Bo\nTo: Ada\nId: bo-abcdef012345\nSubject: s\n\nbody\n",
 			},
 			"is not a UTC stamp",
 		},
 		{
 			"a receipt line with no target",
-			map[string]string{"from-rowan/RECEIPTS": "2026-09-07T00:11:00Z\n"},
+			map[string]string{"from-ada/RECEIPTS": "2026-09-07T00:11:00Z\n"},
 			"a receipt is",
 		},
 		{
 			"something in a lane that is not a note",
-			map[string]string{"from-rowan/notes.txt": "hello\n"},
+			map[string]string{"from-ada/notes.txt": "hello\n"},
 			"and nothing else",
 		},
 	}
@@ -308,7 +308,7 @@ func TestCheckFailures(t *testing.T) {
 // dangling reference.
 func TestCheckAcceptsReNew(t *testing.T) {
 	tab := loadTable(t, writeTable(t, map[string]string{
-		"from-rowan/x.md": "From: Rowan\nTo: Stella\nRe: new\nSubject: s\n\nbody\n",
+		"from-ada/x.md": "From: Ada\nTo: Bo\nRe: new\nSubject: s\n\nbody\n",
 	}))
 	if ps := tab.Check(); len(ps) != 0 {
 		t.Fatalf("Re: new was refused: %+v", ps)
@@ -318,9 +318,9 @@ func TestCheckAcceptsReNew(t *testing.T) {
 // One bad file must not blind the rest of the run: check names every failure it finds.
 func TestCheckReportsEveryFailureNotTheFirst(t *testing.T) {
 	tab := loadTable(t, writeTable(t, map[string]string{
-		"from-rowan/a.md": "From: Rowan\nnot a header\n\nbody\n",
-		"from-rowan/b.md": "From: Rowan\nTo: Stela\nSubject: s\n\nbody\n",
-		"from-rowan/c.md": "From: Rowan\nTo: Stella\nRe: stella-deadbeefcafe\nSubject: s\n\nbody\n",
+		"from-ada/a.md": "From: Ada\nnot a header\n\nbody\n",
+		"from-ada/b.md": "From: Ada\nTo: Boe\nSubject: s\n\nbody\n",
+		"from-ada/c.md": "From: Ada\nTo: Bo\nRe: bo-deadbeefcafe\nSubject: s\n\nbody\n",
 	}))
 	if ps := tab.Check(); len(ps) < 3 {
 		t.Fatalf("check reported %d findings over three broken files: %+v", len(ps), ps)
@@ -333,21 +333,21 @@ func TestCheckReportsEveryFailureNotTheFirst(t *testing.T) {
 // looks delivered and is read by nobody.
 func TestAGroupAddressedNoteIsInEveryMembersInbox(t *testing.T) {
 	files := fixture()
-	files["from-stella/2026-09-07T0004Z-to-everyone-333333333333.md"] = `From: Stella
+	files["from-bo/2026-09-07T0004Z-to-everyone-333333333333.md"] = `From: Bo
 To: Everybody at the table
 Date: Mon Sep  7 00:04:00 UTC 2026
-Id: stella-333333333333
+Id: bo-333333333333
 Subject: A note to the whole table
 
 Something everyone needs, said once.
 `
 	tab := loadTable(t, writeTable(t, files))
-	// Rowan is a member and has a lane, so the note is in his inbox. Stella wrote it, so
+	// Ada is a member and has a lane, so the note is in his inbox. Bo wrote it, so
 	// it is not in hers: a note in my own lane is never in my inbox, group or not.
-	rowan := mustParticipant(t, tab.Config, "Rowan")
+	ada := mustParticipant(t, tab.Config, "Ada")
 	found := false
-	for _, item := range tab.Inbox(rowan, 40) {
-		if item.Note.Header.ID == "stella-333333333333" {
+	for _, item := range tab.Inbox(ada, 40) {
+		if item.Note.Header.ID == "bo-333333333333" {
 			found = true
 			if item.Address != "to" {
 				t.Fatalf("addr = %q, want to", item.Address)
@@ -355,18 +355,18 @@ Something everyone needs, said once.
 		}
 	}
 	if !found {
-		t.Fatal("a note addressed to a group Rowan belongs to is not in Rowan's inbox")
+		t.Fatal("a note addressed to a group Ada belongs to is not in Ada's inbox")
 	}
-	stella := mustParticipant(t, tab.Config, "Stella")
-	for _, item := range tab.Inbox(stella, 40) {
-		if item.Note.Header.ID == "stella-333333333333" {
-			t.Fatal("Stella's own note is in Stella's inbox")
+	bo := mustParticipant(t, tab.Config, "Bo")
+	for _, item := range tab.Inbox(bo, 40) {
+		if item.Note.Header.ID == "bo-333333333333" {
+			t.Fatal("Bo's own note is in Bo's inbox")
 		}
 	}
 	// And the resolution itself names every member, including the one with no lane, who is
 	// addressable and never a sender.
 	to, unknown := tab.Config.ResolveList("Everybody at the table")
-	if len(unknown) > 0 || strings.Join(to, "; ") != "Rowan; Stella; Glenn" {
+	if len(unknown) > 0 || strings.Join(to, "; ") != "Ada; Bo; Dana" {
 		t.Fatalf("the group resolved to %v %v", to, unknown)
 	}
 }
@@ -375,13 +375,13 @@ Something everyone needs, said once.
 // step over in silence. It is now named, with its reason, on every run.
 func TestUnreadableNotesAreNamedAndNotSilent(t *testing.T) {
 	files := fixture()
-	files["from-stella/2026-09-07T0005Z-prose.md"] = "Rowan, the checkpoint is pushed and the suite passed: zero divergence.\n\nMore prose.\n"
-	files["from-rowan/2026-09-07T0006Z-mine.md"] = "not a header at all\n\nbody\n"
+	files["from-bo/2026-09-07T0005Z-prose.md"] = "Ada, the checkpoint is pushed and the suite passed: zero divergence.\n\nMore prose.\n"
+	files["from-ada/2026-09-07T0006Z-mine.md"] = "not a header at all\n\nbody\n"
 	tab := loadTable(t, writeTable(t, files))
-	rowan := mustParticipant(t, tab.Config, "Rowan")
+	ada := mustParticipant(t, tab.Config, "Ada")
 
-	bad := tab.Unreadable(rowan.Lane)
-	if len(bad) != 1 || bad[0].Path != "from-stella/2026-09-07T0005Z-prose.md" {
+	bad := tab.Unreadable(ada.Lane)
+	if len(bad) != 1 || bad[0].Path != "from-bo/2026-09-07T0005Z-prose.md" {
 		t.Fatalf("Unreadable = %v, want the one file outside my own lane", bad)
 	}
 	if bad[0].Parse == nil || bad[0].Parse.Err == nil {
@@ -390,7 +390,7 @@ func TestUnreadableNotesAreNamedAndNotSilent(t *testing.T) {
 	// It is NOT in the inbox listing: an unreadable note has no To line, so nothing can
 	// honestly say it was addressed to me. It is reported separately, which is the whole
 	// point.
-	for _, item := range tab.Inbox(rowan, 40) {
+	for _, item := range tab.Inbox(ada, 40) {
 		if item.Note.Path == bad[0].Path {
 			t.Fatal("an unparseable note was reported as an open note addressed to me")
 		}
@@ -407,20 +407,20 @@ func TestUnreadableNotesAreNamedAndNotSilent(t *testing.T) {
 func TestLegacyBeforeWarnsOnOldNotesAndStillFailsOnNew(t *testing.T) {
 	files := fixture()
 	// Old and unreadable; old with a Re that names nothing; new and unreadable.
-	files["from-stella/2026-09-01T0001Z-old-prose.md"] = "Rowan, this predates the tool entirely.\n\nbody\n"
-	files["from-stella/2026-09-01T0002Z-old-dangling.md"] = `From: Stella
-To: Rowan
+	files["from-bo/2026-09-01T0001Z-old-prose.md"] = "Ada, this predates the tool entirely.\n\nbody\n"
+	files["from-bo/2026-09-01T0002Z-old-dangling.md"] = `From: Bo
+To: Ada
 Date: Tue Sep  1 00:02:00 UTC 2026
 Subject: An answer to a note whose file was renamed
 
 Re lines named filenames once, and a rename orphaned this one.
 `
 	// The Re has to be on the note itself, not in the body.
-	files["from-stella/2026-09-01T0002Z-old-dangling.md"] = strings.Replace(
-		files["from-stella/2026-09-01T0002Z-old-dangling.md"],
+	files["from-bo/2026-09-01T0002Z-old-dangling.md"] = strings.Replace(
+		files["from-bo/2026-09-01T0002Z-old-dangling.md"],
 		"Subject: An answer",
-		"Re: from-stella/renamed-away.md\nSubject: An answer", 1)
-	files["from-stella/2026-09-08T0001Z-new-prose.md"] = "Rowan, this was written after the tool arrived.\n\nbody\n"
+		"Re: from-bo/renamed-away.md\nSubject: An answer", 1)
+	files["from-bo/2026-09-08T0001Z-new-prose.md"] = "Ada, this was written after the tool arrived.\n\nbody\n"
 	tab := loadTable(t, writeTable(t, files))
 
 	// Without the flag, all three FAIL.
@@ -446,19 +446,19 @@ Re lines named filenames once, and a rename orphaned this one.
 		}
 	}
 	for _, where := range []string{
-		"from-stella/2026-09-01T0001Z-old-prose.md",
-		"from-stella/2026-09-01T0002Z-old-dangling.md:4",
+		"from-bo/2026-09-01T0001Z-old-prose.md",
+		"from-bo/2026-09-01T0002Z-old-dangling.md:4",
 	} {
 		if !warned[where] {
 			t.Fatalf("%s was not tolerated; warned=%v failed=%v", where, warned, failed)
 		}
 	}
-	if !failed["from-stella/2026-09-08T0001Z-new-prose.md"] {
+	if !failed["from-bo/2026-09-08T0001Z-new-prose.md"] {
 		t.Fatalf("a note written after the cutoff was tolerated; failed=%v", failed)
 	}
 }
 
-// The four header findings the family's real table failed 163 times on, with the line
+// The four header findings a real table failed 163 times on, with the line
 // drawn at its adoption day: a missing Subject, and a To, a From and a Cc naming somebody
 // the roster does not hold. Every one of them is a note written by hand before there was a
 // roster to check against, so every one of them warns on the old side of the line and
@@ -472,17 +472,17 @@ func TestTheHeaderFindingsAreInsideTheLegacyTolerance(t *testing.T) {
 	kinds := []struct {
 		name, header, want string
 	}{
-		{"no subject", "From: Stella\nTo: Rowan\nDate: %s\n", "no Subject line, or an empty one"},
-		{"To names no one", "From: Stella\nTo: Nobody At All\nDate: %s\nSubject: s\n", `To: "Nobody At All" names no one at this table`},
-		{"From names no one", "From: Nobody At All\nTo: Rowan\nDate: %s\nSubject: s\n", `From: "Nobody At All" names no one at this table`},
-		{"Cc names no one", "From: Stella\nTo: Rowan\nCc: Nobody At All\nDate: %s\nSubject: s\n", `Cc: "Nobody At All" names no one at this table`},
+		{"no subject", "From: Bo\nTo: Ada\nDate: %s\n", "no Subject line, or an empty one"},
+		{"To names no one", "From: Bo\nTo: Nobody At All\nDate: %s\nSubject: s\n", `To: "Nobody At All" names no one at this table`},
+		{"From names no one", "From: Nobody At All\nTo: Ada\nDate: %s\nSubject: s\n", `From: "Nobody At All" names no one at this table`},
+		{"Cc names no one", "From: Bo\nTo: Ada\nCc: Nobody At All\nDate: %s\nSubject: s\n", `Cc: "Nobody At All" names no one at this table`},
 	}
 	before := at("2026-09-05T00:00:00Z")
 	for _, k := range kinds {
 		t.Run(k.name, func(t *testing.T) {
 			files := fixture()
-			oldPath := "from-stella/" + old + "-" + Slugify(k.name, 40) + ".md"
-			newPath := "from-stella/" + new + "-" + Slugify(k.name, 40) + ".md"
+			oldPath := "from-bo/" + old + "-" + Slugify(k.name, 40) + ".md"
+			newPath := "from-bo/" + new + "-" + Slugify(k.name, 40) + ".md"
 			files[oldPath] = fmt.Sprintf(k.header, "Tue Sep  1 00:09:00 UTC 2026") + "\nbody\n"
 			files[newPath] = fmt.Sprintf(k.header, "Tue Sep  8 00:09:00 UTC 2026") + "\nbody\n"
 			tab := loadTable(t, writeTable(t, files))
@@ -526,22 +526,22 @@ func TestTheLegacyToleranceStillFailsOnWhatIsNotAHeader(t *testing.T) {
 	files := fixture()
 	// A note in the wrong lane, a malformed id, and a stray file -- all dated well before
 	// any line anybody would draw.
-	files["from-rowan/2026-09-01T0004Z-wrong-lane.md"] = `From: Stella
-To: Rowan
+	files["from-ada/2026-09-01T0004Z-wrong-lane.md"] = `From: Bo
+To: Ada
 Date: Tue Sep  1 00:04:00 UTC 2026
-Subject: A note of Stella's, sitting in Rowan's lane
+Subject: A note of Bo's, sitting in Ada's lane
 
 body
 `
-	files["from-stella/2026-09-01T0005Z-bad-id.md"] = `From: Stella
-To: Rowan
+	files["from-bo/2026-09-01T0005Z-bad-id.md"] = `From: Bo
+To: Ada
 Date: Tue Sep  1 00:05:00 UTC 2026
-Id: stella-NOTHEXATALL
+Id: bo-NOTHEXATALL
 Subject: An id that is not one
 
 body
 `
-	files["from-stella/notes.txt"] = "a stray file\n"
+	files["from-bo/notes.txt"] = "a stray file\n"
 	tab := loadTable(t, writeTable(t, files))
 	failed := map[string]bool{}
 	for _, p := range tab.CheckWith(CheckOptions{LegacyBefore: at("2030-01-01T00:00:00Z")}) {
@@ -550,9 +550,9 @@ body
 		}
 	}
 	for _, where := range []string{
-		"from-rowan/2026-09-01T0004Z-wrong-lane.md:1",
-		"from-stella/2026-09-01T0005Z-bad-id.md:4",
-		"from-stella/notes.txt",
+		"from-ada/2026-09-01T0004Z-wrong-lane.md:1",
+		"from-bo/2026-09-01T0005Z-bad-id.md:4",
+		"from-bo/notes.txt",
 	} {
 		if !failed[where] {
 			t.Fatalf("%s was tolerated as legacy; failed=%v", where, failed)
@@ -563,10 +563,10 @@ body
 // A note that cannot say WHEN it was written cannot claim to predate anything.
 func TestLegacyToleranceNeedsADateItCanRead(t *testing.T) {
 	files := fixture()
-	files["from-stella/undated-prose.md"] = "Rowan, no date line and no minute in the filename.\n\nbody\n"
+	files["from-bo/undated-prose.md"] = "Ada, no date line and no minute in the filename.\n\nbody\n"
 	tab := loadTable(t, writeTable(t, files))
 	for _, p := range tab.CheckWith(CheckOptions{LegacyBefore: at("2030-01-01T00:00:00Z")}) {
-		if p.Where == "from-stella/undated-prose.md" && p.Warn {
+		if p.Where == "from-bo/undated-prose.md" && p.Warn {
 			t.Fatal("a note with no readable date was tolerated as old")
 		}
 	}
@@ -587,10 +587,10 @@ func TestTheLegacyLineReadsTheDayAtTheFrontOfAFilename(t *testing.T) {
 	files := fixture()
 	for _, name := range shapes {
 		// No Date line at all, and no Subject either -- the finding under test.
-		files["from-stella/"+name] = "From: Stella\nTo: Rowan\n\nbody\n"
+		files["from-bo/"+name] = "From: Bo\nTo: Ada\n\nbody\n"
 	}
 	// The same note, dated after the line by its filename, still fails.
-	files["from-stella/2026-09-08-after-the-line.md"] = "From: Stella\nTo: Rowan\n\nbody\n"
+	files["from-bo/2026-09-08-after-the-line.md"] = "From: Bo\nTo: Ada\n\nbody\n"
 	tab := loadTable(t, writeTable(t, files))
 	warned, failed := map[string]bool{}, map[string]bool{}
 	for _, p := range tab.CheckWith(CheckOptions{LegacyBefore: at("2026-09-05T00:00:00Z")}) {
@@ -601,17 +601,17 @@ func TestTheLegacyLineReadsTheDayAtTheFrontOfAFilename(t *testing.T) {
 		}
 	}
 	for _, name := range shapes {
-		if !warned["from-stella/"+name] {
+		if !warned["from-bo/"+name] {
 			t.Fatalf("%s names its day and was not tolerated; warned=%v failed=%v", name, warned, failed)
 		}
 	}
-	if !failed["from-stella/2026-09-08-after-the-line.md"] {
+	if !failed["from-bo/2026-09-08-after-the-line.md"] {
 		t.Fatalf("a note whose filename names a day AFTER the line was tolerated; failed=%v", failed)
 	}
 	// And the day is read for the line only. What the listing orders by is unchanged: a
 	// note whose Date line cannot be read and whose filename is not the minute still has no
 	// moment, so no catalogue line and no at= field is invented for it.
-	n, ok := tab.NoteByPath("from-stella/2026-09-01-just-the-day.md")
+	n, ok := tab.NoteByPath("from-bo/2026-09-01-just-the-day.md")
 	if !ok {
 		t.Fatal("the note is not on the table")
 	}

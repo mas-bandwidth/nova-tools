@@ -67,7 +67,7 @@ const idHexLen = 12
 
 // Header is a note's header, with the author's own text preserved. Only Date and Id are
 // ever written by this tool; From, To, Cc, Re and Subject are the author's words and are
-// round-tripped verbatim, because "Rowan (bud, the Studio, the mas account)" carries
+// round-tripped verbatim, because "Ada (day shift, the west host, the shared account)" carries
 // information the roster does not hold.
 type Header struct {
 	From    string
@@ -116,7 +116,7 @@ type Note struct {
 // A note whose first line is prose still fails, and should: there is no honest way to
 // tell a From line from a sentence that happens to hold a colon.
 //
-// WHAT THE REFUSALS SAY. A read of the family's own table found three shapes behind
+// WHAT THE REFUSALS SAY. A read of a real table found three shapes behind
 // nearly every unreadable note, and a refusal that only says a file will not parse leaves
 // the writer to guess which. So each of the three names its repair: a key in markdown
 // bold (`**To**:`) is told that headers are plain `Key: value`; an unknown key (`Branch:`)
@@ -167,7 +167,7 @@ func ParseNote(path, text string) (Note, error) {
 		if isProseKey(key) {
 			return n, fmt.Errorf("line %d: %q is a sentence, not a header key: %s", i+1, truncate(key, maxQuotedKey), blankLineAdvice)
 		}
-		// A key in markdown bold -- `**To**: Rowan` -- is a table people also read in a
+		// A key in markdown bold -- `**To**: Ada` -- is a table people also read in a
 		// browser writing what it reads. It is one substitution away from correct and the
 		// refusal says which.
 		if plain, bold := unbold(key); bold {
@@ -359,7 +359,7 @@ func SlugOfID(id string) string {
 // sender sent the same note to the same people in the same second, which is one note.
 //
 // Why the recipients are RESOLVED before hashing: so that a note whose To line says
-// "Rowan Claude" and one whose To line says "Rowan a1b2c3d4" are not accidentally
+// "Ada Vale" and one whose To line says "Ada a1b2c3d4" are not accidentally
 // different notes at the id layer while being the same note to every reader.
 //
 // The id is rename-proof by construction: it is written into the file at send and is

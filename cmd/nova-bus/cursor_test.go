@@ -10,7 +10,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
-// The property this file exists for, in Glenn's words: "Make sure the bus tool is O(n)
+// The property this file exists for, in Dana's words: "Make sure the bus tool is O(n)
 // where n is the number of new messages to be read, instead of O(m) where m is all
 // messages sent so far. This way it maintains performance over time."
 //
@@ -37,7 +37,7 @@ func read(t *testing.T, checkout, path string) string {
 	return string(raw)
 }
 
-// THE COMPLEXITY PROPERTY, proved, in the shape Glenn asked for the second time. His first
+// THE COMPLEXITY PROPERTY, proved, in the shape Dana asked for the second time. His first
 // requirement gave the cursor; the read was then O(new + open), because every open note was
 // re-opened to print its line. "O(new + open) is not great. Can we make it O(new)." This is
 // that, asserted: a table of ten thousand notes, five hundred of them OPEN for this reader,
@@ -51,65 +51,65 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
 
-	// 10,000 notes, of which 500 are addressed to Rowan and will therefore be OPEN for him.
-	// The other 9,500 are Stella's business and the point is that Rowan's read never touches
+	// 10,000 notes, of which 500 are addressed to Ada and will therefore be OPEN for him.
+	// The other 9,500 are Bo's business and the point is that Ada's read never touches
 	// them either.
 	const history = 10000
 	const carried = 500
 	var index strings.Builder
 	for i := range history {
-		id := fmt.Sprintf("stella-%012x", i+0x100000)
-		path := fmt.Sprintf("from-stella/2026-08-%02dT%02d%02dZ-bulk-%s.md", i%28+1, i/60%24, i%60, id[len(id)-12:])
-		to := "Stella"
+		id := fmt.Sprintf("bo-%012x", i+0x100000)
+		path := fmt.Sprintf("from-bo/2026-08-%02dT%02d%02dZ-bulk-%s.md", i%28+1, i/60%24, i%60, id[len(id)-12:])
+		to := "Bo"
 		if i < carried {
-			to = "Rowan"
+			to = "Ada"
 		}
 		writeFile(t, checkout, path, fmt.Sprintf(
-			"From: Stella\nTo: %s\nDate: Sat Aug %2d 00:00:00 UTC 2026\nId: %s\nSubject: bulk %d\n\nA note in the history.\n",
+			"From: Bo\nTo: %s\nDate: Sat Aug %2d 00:00:00 UTC 2026\nId: %s\nSubject: bulk %d\n\nA note in the history.\n",
 			to, i%28+1, id, i))
 		fmt.Fprintf(&index, "%s\t%s\t2026-08-%02dT00:00:00Z\t%s\t-\n", id, path, i%28+1, to)
 	}
-	appendFile(t, checkout, "from-stella/INDEX", index.String())
-	commitAs(t, checkout, "Stella", "ten thousand notes")
+	appendFile(t, checkout, "from-bo/INDEX", index.String())
+	commitAs(t, checkout, "Bo", "ten thousand notes")
 
 	// The first run has no cursor, so it is a full one and it says so. This is the only
 	// full read a reader ever pays for, and it is what writes the open list every later run
 	// prints from.
 	before := bus.NoteParses()
-	r := invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=full cursor=-").
 		mustContain(t, "stdout", "INBOX CURSOR commit=")
 	if full := bus.NoteParses() - before; full < history {
 		t.Fatalf("the full run parsed %d notes over a table of %d; the fixture is not what this test thinks it is\n%s", full, history, r.stdout)
 	}
 
-	// Answer the two notes the FIXTURE leaves open -- by hand, in Rowan's own lane, which is
+	// Answer the two notes the FIXTURE leaves open -- by hand, in Ada's own lane, which is
 	// what a reply is -- so that what is carried is exactly the 500.
-	writeFile(t, checkout, "from-rowan/2026-09-09T1200Z-answering-two-aaaaaaaaaaaa.md",
-		"From: Rowan\nTo: Stella\nDate: Wed Sep  9 12:00:00 UTC 2026\nId: rowan-aaaaaaaaaaaa\n"+
-			"Re: stella-abcdef012345\nRe: stella-111111111111\nSubject: Both of those\n\nAnswered, both.\n")
-	commitAs(t, checkout, "Rowan", "rowan: answering the fixture's two")
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+	writeFile(t, checkout, "from-ada/2026-09-09T1200Z-answering-two-aaaaaaaaaaaa.md",
+		"From: Ada\nTo: Bo\nDate: Wed Sep  9 12:00:00 UTC 2026\nId: ada-aaaaaaaaaaaa\n"+
+			"Re: bo-abcdef012345\nRe: bo-111111111111\nSubject: Both of those\n\nAnswered, both.\n")
+	commitAs(t, checkout, "Ada", "ada: answering the fixture's two")
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", fmt.Sprintf("carrying=%d", carried))
-	if n := openEntries(t, checkout, "from-rowan"); n != carried {
+	if n := openEntries(t, checkout, "from-ada"); n != carried {
 		t.Fatalf("the open list holds %d entries, want %d", n, carried)
 	}
 
-	// One new note, addressed to Rowan.
-	writeFile(t, checkout, "from-stella/2026-09-08T0900Z-one-more-222222222222.md",
-		"From: Stella\nTo: Rowan\nDate: Tue Sep  8 09:00:00 UTC 2026\nId: stella-222222222222\nSubject: One more\n\nIs the gate on the merge queue?\n")
-	appendFile(t, checkout, "from-stella/INDEX",
-		"stella-222222222222\tfrom-stella/2026-09-08T0900Z-one-more-222222222222.md\t2026-09-08T09:00:00Z\tRowan\t-\n")
-	commitAs(t, checkout, "Stella", "one more")
+	// One new note, addressed to Ada.
+	writeFile(t, checkout, "from-bo/2026-09-08T0900Z-one-more-222222222222.md",
+		"From: Bo\nTo: Ada\nDate: Tue Sep  8 09:00:00 UTC 2026\nId: bo-222222222222\nSubject: One more\n\nIs the gate on the merge queue?\n")
+	appendFile(t, checkout, "from-bo/INDEX",
+		"bo-222222222222\tfrom-bo/2026-09-08T0900Z-one-more-222222222222.md\t2026-09-08T09:00:00Z\tAda\t-\n")
+	commitAs(t, checkout, "Bo", "one more")
 
 	// THE DEFAULT READ. It writes nothing (no --advance), so the two reads below see the
 	// same change set, and it prints one line for the 500 rather than 500 lines.
-	quiet := []string{"inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40"}
+	quiet := []string{"inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40"}
 	before = bus.NoteParses()
 	r = invoke(t, "", quiet...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d heard=0", carried+1)).
-		mustContain(t, "stdout", fmt.Sprintf("INBOX OK as=Rowan open=%d", carried+1))
+		mustContain(t, "stdout", fmt.Sprintf("INBOX OK as=Ada open=%d", carried+1))
 	// ONE. Not one plus the open list, not one plus the history: one file opened and parsed,
 	// over a table of ten thousand and one with five hundred of them open.
 	if got := bus.NoteParses() - before; got != 1 {
@@ -123,7 +123,7 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	// open list, and it still parses ONE.
 	before = bus.NoteParses()
 	r = invoke(t, "", append(append([]string{}, quiet...), "--open")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX NOTE id=stella-222222222222 from=Stella addr=to at=2026-09-08T09:00:00Z").
+		mustContain(t, "stdout", "INBOX NOTE id=bo-222222222222 from=Bo addr=to at=2026-09-08T09:00:00Z").
 		mustContain(t, "stdout", "One more")
 	if got := bus.NoteParses() - before; got != 1 {
 		t.Fatalf("inbox --open parsed %d notes, want 1: printing the open list must not open a note\n%s", got, r.stdout)
@@ -135,24 +135,24 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	// Move the cursor over it, then close one entry with a REPLY. Closing is driven by the
 	// new note -- my own file in the change set -- so it is one parse as well, and the open
 	// list is one shorter.
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", fmt.Sprintf("carrying=%d", carried+1))
-	writeFile(t, checkout, "from-rowan/2026-09-09T1300Z-yes-the-gate-bbbbbbbbbbbb.md",
-		"From: Rowan\nTo: Stella\nDate: Wed Sep  9 13:00:00 UTC 2026\nId: rowan-bbbbbbbbbbbb\n"+
-			"Re: stella-222222222222\nSubject: Yes, the gate\n\nYes, on the merge queue too.\n")
-	commitAs(t, checkout, "Rowan", "rowan: yes, the gate")
+	writeFile(t, checkout, "from-ada/2026-09-09T1300Z-yes-the-gate-bbbbbbbbbbbb.md",
+		"From: Ada\nTo: Bo\nDate: Wed Sep  9 13:00:00 UTC 2026\nId: ada-bbbbbbbbbbbb\n"+
+			"Re: bo-222222222222\nSubject: Yes, the gate\n\nYes, on the merge queue too.\n")
+	commitAs(t, checkout, "Ada", "ada: yes, the gate")
 
 	before = bus.NoteParses()
-	r = invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+	r = invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d heard=0", carried)).
 		mustContain(t, "stdout", fmt.Sprintf("carrying=%d pushed=true", carried))
 	if got := bus.NoteParses() - before; got != 1 {
 		t.Fatalf("closing an open entry parsed %d notes, want the 1 reply that closed it\n%s", got, r.stdout)
 	}
-	if strings.Contains(read(t, checkout, "from-rowan/OPEN"), "stella-222222222222") {
+	if strings.Contains(read(t, checkout, "from-ada/OPEN"), "bo-222222222222") {
 		t.Fatalf("the answered note is still on the open list")
 	}
-	if n := openEntries(t, checkout, "from-rowan"); n != carried {
+	if n := openEntries(t, checkout, "from-ada"); n != carried {
 		t.Fatalf("the open list holds %d entries after one closed, want %d", n, carried)
 	}
 }
@@ -185,38 +185,38 @@ func TestOpenListSurvivesTheCursorMovingPastIt(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
 
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0)
-	// Both of Stella's notes are now carried, and the cursor is at HEAD. The entry carries
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
+	// Both of Bo's notes are now carried, and the cursor is at HEAD. The entry carries
 	// the note's whole display line, which is what a later run prints it from.
-	got := read(t, checkout, "from-rowan/OPEN")
-	if !strings.Contains(got, "stella-abcdef012345\tnote\t-\tStella\tto\t2026-09-07T00:01:00Z\tfrom-stella/2026-09-07T0001Z-a-question-abcdef012345.md\tA question about the gate") {
+	got := read(t, checkout, "from-ada/OPEN")
+	if !strings.Contains(got, "bo-abcdef012345\tnote\t-\tBo\tto\t2026-09-07T00:01:00Z\tfrom-bo/2026-09-07T0001Z-a-question-abcdef012345.md\tA question about the gate") {
 		t.Fatalf("the question was not carried into OPEN with its line:\n%s", got)
 	}
-	cursorOne := read(t, checkout, "from-rowan/CURSOR")
+	cursorOne := read(t, checkout, "from-ada/CURSOR")
 
 	// A second run, with NOTHING new on the table. The cursor has already moved past the
 	// note, so without the OPEN list this listing would be empty -- which is the failure
 	// the list exists to stop.
-	r := invoke(t, "", advance(checkout, "Rowan", "--open")...).mustCode(t, 0).
+	r := invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
-		mustContain(t, "stdout", "INBOX NOTE id=stella-abcdef012345 from=Stella addr=to at=2026-09-07T00:01:00Z").
+		mustContain(t, "stdout", "INBOX NOTE id=bo-abcdef012345 from=Bo addr=to at=2026-09-07T00:01:00Z").
 		mustContain(t, "stdout", "A question about the gate").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=2")
+		mustContain(t, "stdout", "INBOX OK as=Ada open=2")
 	if strings.Contains(r.stdout, "changed=0") && !strings.Contains(r.stdout, "carrying=2") {
 		t.Fatalf("the second run lost what the first was carrying:\n%s", r.stdout)
 	}
-	if read(t, checkout, "from-rowan/CURSOR") == cursorOne {
+	if read(t, checkout, "from-ada/CURSOR") == cursorOne {
 		t.Fatalf("the second run did not advance the cursor past its own first commit")
 	}
 
 	// Now answer it. The reply names the note by id, so the third run drops it from OPEN
 	// and from the listing.
 	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
-	r = invoke(t, "", advance(checkout, "Rowan", "--open")...).mustCode(t, 0)
-	if strings.Contains(r.stdout, "stella-abcdef012345") {
+	r = invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0)
+	if strings.Contains(r.stdout, "bo-abcdef012345") {
 		t.Fatalf("an answered note is still carried:\n%s", r.stdout)
 	}
-	if got := read(t, checkout, "from-rowan/OPEN"); strings.Contains(got, "stella-abcdef012345") {
+	if got := read(t, checkout, "from-ada/OPEN"); strings.Contains(got, "bo-abcdef012345") {
 		t.Fatalf("an answered note is still in OPEN:\n%s", got)
 	}
 }
@@ -231,37 +231,37 @@ func TestOpenListSurvivesTheCursorMovingPastIt(t *testing.T) {
 func TestHeardSurvivesTheCursor(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0)
-	invoke(t, "", "receipt", "--table", checkout, "--as", "Rowan", "--note", "stella-abcdef012345",
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
+	invoke(t, "", "receipt", "--table", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
-	invoke(t, "", advance(checkout, "Rowan", "--open")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX HEARD id=stella-abcdef012345")
+	invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX HEARD id=bo-abcdef012345")
 	// The flag is IN the open list now, which is why the next run needs neither the note nor
 	// RECEIPTS to say HEARD.
-	if got := read(t, checkout, "from-rowan/OPEN"); !strings.Contains(got, "stella-abcdef012345\tnote\theard\t") {
+	if got := read(t, checkout, "from-ada/OPEN"); !strings.Contains(got, "bo-abcdef012345\tnote\theard\t") {
 		t.Fatalf("the heard flag was not written into the open list:\n%s", got)
 	}
 	// And again, with the receipt now far behind the cursor -- and with no note opened at
 	// all, which is the count this asserts.
 	before := bus.NoteParses()
-	invoke(t, "", advance(checkout, "Rowan", "--open")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX HEARD id=stella-abcdef012345").
+	invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX HEARD id=bo-abcdef012345").
 		mustContain(t, "stdout", "heard=1")
 	if got := bus.NoteParses() - before; got != 0 {
 		t.Fatalf("a run over an unchanged table parsed %d notes, want 0: heard is read from the open list", got)
 	}
 	// The default read says the same thing in one line, and RECEIPTS is still the durable
 	// record underneath it.
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OPEN carrying=2 heard=1")
-	if got := read(t, checkout, "from-rowan/RECEIPTS"); !strings.Contains(got, "stella-abcdef012345") {
+	if got := read(t, checkout, "from-ada/RECEIPTS"); !strings.Contains(got, "bo-abcdef012345") {
 		t.Fatalf("RECEIPTS is not the durable record any more:\n%s", got)
 	}
 	// A --full read rebuilds the flag from RECEIPTS rather than carrying it, which is what
 	// makes the file the record and the flag the cache.
-	writeFile(t, checkout, "from-rowan/OPEN", bus.OpenHeader+"\n")
-	invoke(t, "", advance(checkout, "Rowan", "--full", "--open")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX HEARD id=stella-abcdef012345").
+	writeFile(t, checkout, "from-ada/OPEN", bus.OpenHeader+"\n")
+	invoke(t, "", advance(checkout, "Ada", "--full", "--open")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX HEARD id=bo-abcdef012345").
 		mustContain(t, "stdout", "heard=1")
 }
 
@@ -271,8 +271,8 @@ func TestHeardSurvivesTheCursor(t *testing.T) {
 func TestACursorThatIsNotAnAncestorIsRefused(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	writeFile(t, checkout, "from-rowan/CURSOR", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef 2026-09-09T12:00:00Z\n")
-	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+	writeFile(t, checkout, "from-ada/CURSOR", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef 2026-09-09T12:00:00Z\n")
+	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "INBOX REFUSED: ").
 		mustContain(t, "stderr", "is not an ancestor of HEAD").
@@ -281,22 +281,22 @@ func TestACursorThatIsNotAnAncestorIsRefused(t *testing.T) {
 		t.Fatalf("the refusal is %d lines, want one:\n%q", n+1, r.stderr)
 	}
 	// --full is the fallback it names, and it works.
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40", "--full").
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX SCOPE mode=full")
 	// A cursor that is not a commit at all is refused where it is read, before it can
 	// become a git argument.
-	writeFile(t, checkout, "from-rowan/CURSOR", "--upload-pack=id 2026-09-09T12:00:00Z\n")
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+	writeFile(t, checkout, "from-ada/CURSOR", "--upload-pack=id 2026-09-09T12:00:00Z\n")
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 1).mustContain(t, "stderr", "is not a commit")
 	// check reads the same cursor and refuses it the same way.
-	invoke(t, "", "check", "--table", checkout, "--as", "Rowan").
+	invoke(t, "", "check", "--table", checkout, "--as", "Ada").
 		mustCode(t, 1).mustContain(t, "stderr", "BUS REFUSED: ")
 }
 
 // A --table that is not the ROOT of its repository is refused by every verb that reads
 // git, and this is the blocker the second read found. It used to run: `rev-parse
 // --is-inside-work-tree` is true anywhere under a repository, `git diff --name-only`
-// reports `table/from-stella/x.md` from the repository root, ChangedSince keeps only paths
+// reports `table/from-bo/x.md` from the repository root, ChangedSince keeps only paths
 // beginning `from-`, and so `inbox --since` and `check --as` printed changed=0 and exited 0
 // over notes nobody had read. Exit 2, because a --table the tool will not work over is a
 // bad invocation and not a table that failed.
@@ -314,19 +314,19 @@ func TestATableBelowTheRepositoryRootIsRefused(t *testing.T) {
 	// repository -- a docs tree, a monorepo -- would be pointed at.
 	nested := filepath.Join(checkout, "table")
 	writeFile(t, nested, "participants.json", rosterJSON)
-	writeFile(t, nested, "from-stella/2026-09-07T0001Z-a-question-abcdef012345.md",
-		"From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: A question about the gate\n\nShould the gate run on the merge queue too?\n")
-	writeFile(t, nested, "from-stella/INDEX",
-		"stella-abcdef012345\tfrom-stella/2026-09-07T0001Z-a-question-abcdef012345.md\t2026-09-07T00:01:00Z\tRowan\t-\n")
+	writeFile(t, nested, "from-bo/2026-09-07T0001Z-a-question-abcdef012345.md",
+		"From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: A question about the gate\n\nShould the gate run on the merge queue too?\n")
+	writeFile(t, nested, "from-bo/INDEX",
+		"bo-abcdef012345\tfrom-bo/2026-09-07T0001Z-a-question-abcdef012345.md\t2026-09-07T00:01:00Z\tAda\t-\n")
 	gitIn(t, checkout, "add", "-A")
-	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@example.com", "commit", "-q", "-m", "a table one directory down")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "a table one directory down")
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 
 	for _, args := range [][]string{
-		{"inbox", "--table", nested, "--as", "Rowan", "--receipt-max-words", "40"},
-		{"check", "--table", nested, "--as", "Rowan"},
+		{"inbox", "--table", nested, "--as", "Ada", "--receipt-max-words", "40"},
+		{"check", "--table", nested, "--as", "Ada"},
 		{"check", "--table", nested, "--since", "HEAD"},
-		{"receipt", "--table", nested, "--as", "Rowan", "--note", "stella-abcdef012345",
+		{"receipt", "--table", nested, "--as", "Ada", "--note", "bo-abcdef012345",
 			"--remote", "origin", "--branch", "main", "--attempts", "3"},
 	} {
 		invoke(t, "", args...).mustCode(t, 2).
@@ -339,8 +339,8 @@ func TestATableBelowTheRepositoryRootIsRefused(t *testing.T) {
 	// the failure: a table below a repository root is readable, it just cannot be read
 	// INCREMENTALLY, and the tool says which.
 	invoke(t, "", "check", "--table", nested, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
-	invoke(t, "", "inbox", "--table", nested, "--as", "Rowan", "--receipt-max-words", "40", "--full").
-		mustCode(t, 0).mustContain(t, "stdout", "INBOX NOTE id=stella-abcdef012345")
+	invoke(t, "", "inbox", "--table", nested, "--as", "Ada", "--receipt-max-words", "40", "--full").
+		mustCode(t, 0).mustContain(t, "stdout", "INBOX NOTE id=bo-abcdef012345")
 }
 
 // A cursor advances past a note because OPEN remembers it. Delete OPEN alone -- the cursor
@@ -351,37 +351,37 @@ func TestATableBelowTheRepositoryRootIsRefused(t *testing.T) {
 func TestACursorWhoseOpenListWentMissingIsRefused(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=2")
-	if line := read(t, checkout, "from-rowan/CURSOR"); !strings.Contains(line, "open=2") {
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=2")
+	if line := read(t, checkout, "from-ada/CURSOR"); !strings.Contains(line, "open=2") {
 		t.Fatalf("the cursor does not record what it was carrying: %q", line)
 	}
-	if err := os.Remove(filepath.Join(checkout, "from-rowan", "OPEN")); err != nil {
+	if err := os.Remove(filepath.Join(checkout, "from-ada", "OPEN")); err != nil {
 		t.Fatal(err)
 	}
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "INBOX REFUSED: ").
 		mustContain(t, "stderr", "was carrying 2 notes").
 		mustContain(t, "stderr", "--full --advance")
 	// And the way through is the one it names: a full read rebuilds the open list from the
 	// whole table and both notes come back.
-	invoke(t, "", advance(checkout, "Rowan", "--full")...).mustCode(t, 0).
+	invoke(t, "", advance(checkout, "Ada", "--full")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=full").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=2").
+		mustContain(t, "stdout", "INBOX OK as=Ada open=2").
 		mustContain(t, "stdout", "carrying=2")
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX SCOPE mode=since")
 	// A reader with genuinely nothing open has no OPEN file either, and that is NOT the
 	// refused state: the count in their cursor is zero and nothing is compared.
 	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
-	invoke(t, "From: Rowan\nTo: Stella\nRe: stella-111111111111\nSubject: That one too\n\nAnswered.\n",
+	invoke(t, "From: Ada\nTo: Bo\nRe: bo-111111111111\nSubject: That one too\n\nAnswered.\n",
 		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=0")
-	if _, err := os.Stat(filepath.Join(checkout, "from-rowan", "OPEN")); !os.IsNotExist(err) {
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=0")
+	if _, err := os.Stat(filepath.Join(checkout, "from-ada", "OPEN")); !os.IsNotExist(err) {
 		t.Fatalf("an empty OPEN list was left on disk, so absent no longer means nothing open: %v", err)
 	}
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
-		mustCode(t, 0).mustContain(t, "stdout", "INBOX OK as=Rowan open=0")
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
+		mustCode(t, 0).mustContain(t, "stdout", "INBOX OK as=Ada open=0")
 }
 
 // The diff is `<cursor>..HEAD`, which is TWO dots and therefore a tree-to-tree comparison,
@@ -392,44 +392,44 @@ func TestACursorWhoseOpenListWentMissingIsRefused(t *testing.T) {
 func TestANoteThatArrivedThroughAMergeIsSeen(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0)
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
 
-	// Stella writes on a side branch while main moves on underneath her.
-	gitIn(t, checkout, "checkout", "-q", "-b", "stella-side")
-	writeFile(t, checkout, "from-stella/2026-09-08T1000Z-on-a-branch-666666666666.md",
-		"From: Stella\nTo: Rowan\nDate: Tue Sep  8 10:00:00 UTC 2026\nId: stella-666666666666\nSubject: On a branch\n\nDoes the runner matrix key need quoting?\n")
-	appendFile(t, checkout, "from-stella/INDEX",
-		"stella-666666666666\tfrom-stella/2026-09-08T1000Z-on-a-branch-666666666666.md\t2026-09-08T10:00:00Z\tRowan\t-\n")
+	// Bo writes on a side branch while main moves on underneath her.
+	gitIn(t, checkout, "checkout", "-q", "-b", "bo-side")
+	writeFile(t, checkout, "from-bo/2026-09-08T1000Z-on-a-branch-666666666666.md",
+		"From: Bo\nTo: Ada\nDate: Tue Sep  8 10:00:00 UTC 2026\nId: bo-666666666666\nSubject: On a branch\n\nDoes the runner matrix key need quoting?\n")
+	appendFile(t, checkout, "from-bo/INDEX",
+		"bo-666666666666\tfrom-bo/2026-09-08T1000Z-on-a-branch-666666666666.md\t2026-09-08T10:00:00Z\tAda\t-\n")
 	gitIn(t, checkout, "add", "-A")
-	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@example.com", "commit", "-q", "-m", "stella: on a branch")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "bo: on a branch")
 	gitIn(t, checkout, "checkout", "-q", "main")
 	// Meanwhile on main, a note written by hand in a browser -- so it touches no INDEX, and
 	// this fixture is about the merge rather than about the catalogue conflict that
 	// TestTwoBenchesOfOneLaneConflictOnTheCatalogue pins.
-	writeFile(t, checkout, "from-stella/2026-09-08T1100Z-meanwhile-777777777777.md",
-		"From: Stella\nTo: Rowan\nDate: Tue Sep  8 11:00:00 UTC 2026\nId: stella-777777777777\nSubject: Meanwhile\n\nAnd the gate on the merge queue?\n")
+	writeFile(t, checkout, "from-bo/2026-09-08T1100Z-meanwhile-777777777777.md",
+		"From: Bo\nTo: Ada\nDate: Tue Sep  8 11:00:00 UTC 2026\nId: bo-777777777777\nSubject: Meanwhile\n\nAnd the gate on the merge queue?\n")
 	gitIn(t, checkout, "add", "-A")
-	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@example.com", "commit", "-q", "-m", "stella: meanwhile")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "bo: meanwhile")
 	// A real merge commit, with two parents, which is the fixture this test is for.
-	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@example.com",
-		"merge", "-q", "--no-ff", "-m", "merge stella's branch", "stella-side")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com",
+		"merge", "-q", "--no-ff", "-m", "merge bo's branch", "bo-side")
 	if parents := strings.Fields(strings.TrimSpace(gitIn(t, checkout, "rev-list", "--parents", "-n", "1", "HEAD"))); len(parents) != 3 {
 		t.Fatalf("HEAD is not a merge commit: %v", parents)
 	}
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 
-	invoke(t, "", advance(checkout, "Rowan", "--open")...).mustCode(t, 0).
+	invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
-		mustContain(t, "stdout", "INBOX NOTE id=stella-666666666666").
-		mustContain(t, "stdout", "INBOX NOTE id=stella-777777777777")
+		mustContain(t, "stdout", "INBOX NOTE id=bo-666666666666").
+		mustContain(t, "stdout", "INBOX NOTE id=bo-777777777777")
 	// The run after it crosses the merge once: nothing new arrives a second time. Its
 	// changed= is 2 and not 0, and that is the grammar rather than a leak -- changed=
 	// counts the PATHS the diff named inside lanes, which includes this reader's own
 	// CURSOR and OPEN from the advance just made. Neither is a note, and no note is
 	// parsed for them.
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "changed=2 carrying=4").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=4 notes=3 receipts=1")
+		mustContain(t, "stdout", "INBOX OK as=Ada open=4 notes=3 receipts=1")
 }
 
 // send appends to its lane's catalogue in the SAME commit as the note, and check --full
@@ -442,7 +442,7 @@ func TestSendAppendsToTheIndexAndCheckAgrees(t *testing.T) {
 	id := field(t, r.stdout, "id=")
 	path := field(t, r.stdout, "path=")
 
-	line := read(t, checkout, "from-rowan/INDEX")
+	line := read(t, checkout, "from-ada/INDEX")
 	fields := strings.Split(strings.TrimRight(line, "\n"), "\t")
 	if len(fields) != 5 {
 		t.Fatalf("the index line is %d fields, want 5: %q", len(fields), line)
@@ -450,16 +450,16 @@ func TestSendAppendsToTheIndexAndCheckAgrees(t *testing.T) {
 	if fields[0] != id || fields[1] != path {
 		t.Fatalf("the index line names %q at %q; the note is %q at %q", fields[0], fields[1], id, path)
 	}
-	if fields[3] != "Stella;Glenn" {
+	if fields[3] != "Bo;Dana" {
 		t.Fatalf("the index line's recipients are %q, want the resolved To then Cc", fields[3])
 	}
-	if fields[4] != "stella-abcdef012345" {
+	if fields[4] != "bo-abcdef012345" {
 		t.Fatalf("the index line's Re is %q", fields[4])
 	}
 	// One commit, both files: a catalogue that could lag the notes by a commit is one a
 	// reader between the two would resolve wrongly.
 	files := gitIn(t, bare, "show", "--name-only", "--format=", "main")
-	if !strings.Contains(files, "from-rowan/INDEX") || !strings.Contains(files, path) {
+	if !strings.Contains(files, "from-ada/INDEX") || !strings.Contains(files, path) {
 		t.Fatalf("the note and its index line are not in one commit:\n%s", files)
 	}
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).
@@ -475,30 +475,30 @@ func TestCheckFullAgainstTheIndex(t *testing.T) {
 	// A note written by hand, in a browser, the way this table's whole form allows. It has
 	// an id and no catalogue line: a WARN, at any date, because the notes are the record
 	// and the catalogue is a cache.
-	writeFile(t, checkout, "from-stella/2026-09-08T0300Z-by-hand-333333333333.md",
-		"From: Stella\nTo: Rowan\nDate: Tue Sep  8 03:00:00 UTC 2026\nId: stella-333333333333\nSubject: By hand\n\nWritten in a browser, with no tool in sight.\n")
+	writeFile(t, checkout, "from-bo/2026-09-08T0300Z-by-hand-333333333333.md",
+		"From: Bo\nTo: Ada\nDate: Tue Sep  8 03:00:00 UTC 2026\nId: bo-333333333333\nSubject: By hand\n\nWritten in a browser, with no tool in sight.\n")
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).
-		mustContain(t, "stderr", "BUS WARN from-stella/2026-09-08T0300Z-by-hand-333333333333.md").
+		mustContain(t, "stderr", "BUS WARN from-bo/2026-09-08T0300Z-by-hand-333333333333.md").
 		mustContain(t, "stderr", "--rebuild-index").
 		mustContain(t, "stdout", "warn=1")
 
 	// --rebuild-index writes it, and the warning goes.
 	invoke(t, "", "check", "--table", checkout, "--full", "--rebuild-index").mustCode(t, 0).
-		mustContain(t, "stdout", "BUS INDEX lane=from-stella notes=3").
-		mustContain(t, "stdout", "BUS INDEX lane=from-rowan notes=0").
+		mustContain(t, "stdout", "BUS INDEX lane=from-bo notes=3").
+		mustContain(t, "stdout", "BUS INDEX lane=from-ada notes=0").
 		mustContain(t, "stdout", "warn=0")
 
 	// A catalogue line naming a note that is not there is a FAILURE, not a warning: that
 	// one could resolve a thread to the wrong note.
-	appendFile(t, checkout, "from-stella/INDEX",
-		"stella-444444444444\tfrom-stella/never-written.md\t2026-09-08T04:00:00Z\tRowan\t-\n")
+	appendFile(t, checkout, "from-bo/INDEX",
+		"bo-444444444444\tfrom-bo/never-written.md\t2026-09-08T04:00:00Z\tAda\t-\n")
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-stella/INDEX:4").
+		mustContain(t, "stderr", "BUS FAIL from-bo/INDEX:4").
 		mustContain(t, "stderr", "which is not a note on this table")
 
 	// And --rebuild-index is refused without --full, because it writes every lane's
 	// catalogue from every note in it.
-	invoke(t, "", "check", "--table", checkout, "--rebuild-index", "--as", "Rowan").
+	invoke(t, "", "check", "--table", checkout, "--rebuild-index", "--as", "Ada").
 		mustCode(t, 2).mustContain(t, "stderr", "needs --full")
 }
 
@@ -511,19 +511,19 @@ func TestCheckSinceChecksOnlyWhatChanged(t *testing.T) {
 
 	// Something already on the table that --full would fail on, committed BEFORE the
 	// baseline: --since must not see it, and --full must.
-	writeFile(t, checkout, "from-stella/older-stranger.md", "From: Stella\nTo: Stela\nSubject: s\n\nbody\n")
+	writeFile(t, checkout, "from-bo/older-stranger.md", "From: Bo\nTo: Boe\nSubject: s\n\nbody\n")
 	gitIn(t, checkout, "add", "-A")
-	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@example.com", "commit", "-q", "-m", "older")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "older")
 	after := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
 
 	invoke(t, "", "check", "--table", checkout, "--since", after).mustCode(t, 0).
 		mustContain(t, "stdout", "BUS SCOPE mode=since").
 		mustContain(t, "stdout", "changed=0")
 	invoke(t, "", "check", "--table", checkout, "--since", base).mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-stella/older-stranger.md").
-		mustContain(t, "stderr", `"Stela"`)
+		mustContain(t, "stderr", "BUS FAIL from-bo/older-stranger.md").
+		mustContain(t, "stderr", `"Boe"`)
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-stella/older-stranger.md")
+		mustContain(t, "stderr", "BUS FAIL from-bo/older-stranger.md")
 	// A revision this checkout does not hold is a bad invocation, not a table that failed.
 	invoke(t, "", "check", "--table", checkout, "--since", "nosuchref").
 		mustCode(t, 2).mustContain(t, "stderr", "names no commit")
@@ -540,7 +540,7 @@ func TestCheckRefusesToGuessItsBaseline(t *testing.T) {
 		mustContain(t, "stderr", "refusing to guess")
 	// A reader with no cursor yet has no baseline, so --as falls back to a full run and
 	// SAYS so rather than reporting an empty change set as a clean table.
-	invoke(t, "", "check", "--table", checkout, "--as", "Rowan").mustCode(t, 0).
+	invoke(t, "", "check", "--table", checkout, "--as", "Ada").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS SCOPE mode=full cursor=-")
 }
 
@@ -549,15 +549,15 @@ func TestCheckRefusesToGuessItsBaseline(t *testing.T) {
 func TestInboxWithoutAdvanceWritesNothing(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").mustCode(t, 0)
-	if _, err := os.Stat(filepath.Join(checkout, "from-rowan")); err == nil {
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
+	if _, err := os.Stat(filepath.Join(checkout, "from-ada")); err == nil {
 		t.Fatalf("a plain inbox created the reader's lane")
 	}
 	if out := gitIn(t, checkout, "status", "--porcelain"); strings.TrimSpace(out) != "" {
 		t.Fatalf("a plain inbox left the checkout dirty:\n%s", out)
 	}
 	// --advance without the flags it needs to push is refused by name.
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40", "--advance").
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40", "--advance").
 		mustCode(t, 2).mustContain(t, "stderr", "needs --remote and --branch")
 }
 
@@ -566,25 +566,25 @@ func TestInboxWithoutAdvanceWritesNothing(t *testing.T) {
 func TestTheCursorIsPushedLikeAReceipt(t *testing.T) {
 	hermetic(t)
 	checkout, bare := table(t)
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX CURSOR commit=").
 		mustContain(t, "stdout", "pushed=true attempts=1")
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	for _, want := range []string{"from-rowan/CURSOR", "from-rowan/OPEN"} {
+	for _, want := range []string{"from-ada/CURSOR", "from-ada/OPEN"} {
 		if !strings.Contains(files, want) {
 			t.Fatalf("%s is not on the remote:\n%s", want, files)
 		}
 	}
-	if who := strings.TrimSpace(gitIn(t, bare, "log", "-1", "--format=%an <%ae>", "main")); who != "Rowan <rowan@example.com>" {
-		t.Fatalf("the cursor was committed as %q, not the roster's identity for Rowan", who)
+	if who := strings.TrimSpace(gitIn(t, bare, "log", "-1", "--format=%an <%ae>", "main")); who != "Ada <ada@example.com>" {
+		t.Fatalf("the cursor was committed as %q, not the roster's identity for Ada", who)
 	}
 	// --no-push commits it and says the cursor is not on the table.
-	writeFile(t, checkout, "from-stella/2026-09-08T0500Z-another-555555555555.md",
-		"From: Stella\nTo: Rowan\nDate: Tue Sep  8 05:00:00 UTC 2026\nId: stella-555555555555\nSubject: Another\n\nWhat about the Windows runner?\n")
+	writeFile(t, checkout, "from-bo/2026-09-08T0500Z-another-555555555555.md",
+		"From: Bo\nTo: Ada\nDate: Tue Sep  8 05:00:00 UTC 2026\nId: bo-555555555555\nSubject: Another\n\nWhat about the Windows runner?\n")
 	gitIn(t, checkout, "add", "-A")
-	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@example.com", "commit", "-q", "-m", "another")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "another")
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
-	invoke(t, "", advance(checkout, "Rowan", "--no-push")...).mustCode(t, 0).
+	invoke(t, "", advance(checkout, "Ada", "--no-push")...).mustCode(t, 0).
 		mustContain(t, "stdout", "pushed=false")
 }
 
@@ -593,25 +593,25 @@ func TestTheCursorIsPushedLikeAReceipt(t *testing.T) {
 func TestLaneStateFilesAreNotStrays(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0)
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
 	// A file that is none of them still is one.
-	writeFile(t, checkout, "from-rowan/notes.txt", "a scratch file\n")
+	writeFile(t, checkout, "from-ada/notes.txt", "a scratch file\n")
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-rowan/notes.txt").
+		mustContain(t, "stderr", "BUS FAIL from-ada/notes.txt").
 		mustContain(t, "stderr", "RECEIPTS, CURSOR, OPEN, INDEX")
 	// A malformed state file is a finding, not a crash: a reader would otherwise refuse on
 	// their next run with nothing on the table saying why.
-	if err := os.Remove(filepath.Join(checkout, "from-rowan", "notes.txt")); err != nil {
+	if err := os.Remove(filepath.Join(checkout, "from-ada", "notes.txt")); err != nil {
 		t.Fatal(err)
 	}
-	writeFile(t, checkout, "from-rowan/OPEN", bus.OpenHeader+"\nno-path-here\n")
+	writeFile(t, checkout, "from-ada/OPEN", bus.OpenHeader+"\nno-path-here\n")
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-rowan/OPEN").
+		mustContain(t, "stderr", "BUS FAIL from-ada/OPEN").
 		mustContain(t, "stderr", "an open entry is 8 tab-separated fields")
 }
 
-// A LANE'S README IS NOT A NOTE, and this is the finding Johnny's read named. It ends in
+// A LANE'S README IS NOT A NOTE, and this is the finding a review named. It ends in
 // `.md` and sits in a lane, so the lane walk parsed it, failed, told every reader on the
 // table `INBOX UNREADABLE` about it forever, and failed `check` at every date -- the one
 // finding the legacy tolerance could not forgive, because a README cannot say when it was
@@ -619,9 +619,9 @@ func TestLaneStateFilesAreNotStrays(t *testing.T) {
 func TestALanesReadmeIsNotANote(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	writeFile(t, checkout, "from-stella/README.md",
-		"# Stella's lane\n\nWhat I write about here, and how to reach me faster than the table.\n")
-	commitAs(t, checkout, "Stella", "stella: a README for the lane")
+	writeFile(t, checkout, "from-bo/README.md",
+		"# Bo's lane\n\nWhat I write about here, and how to reach me faster than the table.\n")
+	commitAs(t, checkout, "Bo", "bo: a README for the lane")
 
 	// check passes over it, in both modes: not a note, not a stray.
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
@@ -629,8 +629,8 @@ func TestALanesReadmeIsNotANote(t *testing.T) {
 		mustContain(t, "stdout", "BUS SCOPE mode=since")
 	// And no reader is told it cannot be read, on either read.
 	for _, args := range [][]string{
-		{"inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40", "--full"},
-		advance(checkout, "Rowan"),
+		{"inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full"},
+		advance(checkout, "Ada"),
 	} {
 		r := invoke(t, "", args...).mustCode(t, 0).mustContain(t, "stdout", "unreadable=0")
 		if strings.Contains(r.stdout, "README.md") {
@@ -641,9 +641,9 @@ func TestALanesReadmeIsNotANote(t *testing.T) {
 	// the note it is not, and fails, exactly as it did before. (A `readme.md` in another case
 	// is a stray too, and is not asserted here because half the machines this runs on cannot
 	// hold both spellings in one directory.)
-	writeFile(t, checkout, "from-stella/NOTES.md", "# not the one allowed name\n\nprose where a header goes.\n")
+	writeFile(t, checkout, "from-bo/NOTES.md", "# not the one allowed name\n\nprose where a header goes.\n")
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-stella/NOTES.md")
+		mustContain(t, "stderr", "BUS FAIL from-bo/NOTES.md")
 }
 
 // AN OPEN LIST WRITTEN BEFORE v2 IS REFUSED, and the refusal names the read that repairs
@@ -654,13 +654,13 @@ func TestALanesReadmeIsNotANote(t *testing.T) {
 func TestAnOpenListFromBeforeV2IsRefusedAndFullAdvanceRepairsIt(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=2")
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=2")
 
 	// The shape the previous version wrote, under the cursor it wrote beside.
-	writeFile(t, checkout, "from-rowan/OPEN",
-		"stella-abcdef012345 from-stella/2026-09-07T0001Z-a-question-abcdef012345.md\n"+
-			"stella-111111111111 from-stella/2026-09-07T0002Z-heard-111111111111.md\n")
-	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+	writeFile(t, checkout, "from-ada/OPEN",
+		"bo-abcdef012345 from-bo/2026-09-07T0001Z-a-question-abcdef012345.md\n"+
+			"bo-111111111111 from-bo/2026-09-07T0002Z-heard-111111111111.md\n")
+	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "INBOX REFUSED: ").
 		mustContain(t, "stderr", bus.OpenHeader).
@@ -671,17 +671,17 @@ func TestAnOpenListFromBeforeV2IsRefusedAndFullAdvanceRepairsIt(t *testing.T) {
 	// check says the same thing about the same file, so a table carrying one is not a
 	// silence that only its own reader ever meets.
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-rowan/OPEN")
+		mustContain(t, "stderr", "BUS FAIL from-ada/OPEN")
 
 	// And the way through is the one it names: nothing is lost, and the list comes back in
 	// the new shape with both notes on it.
-	invoke(t, "", advance(checkout, "Rowan", "--full")...).mustCode(t, 0).
+	invoke(t, "", advance(checkout, "Ada", "--full")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=full").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=2")
-	if got := read(t, checkout, "from-rowan/OPEN"); !strings.HasPrefix(got, bus.OpenHeader+"\n") {
+		mustContain(t, "stdout", "INBOX OK as=Ada open=2")
+	if got := read(t, checkout, "from-ada/OPEN"); !strings.HasPrefix(got, bus.OpenHeader+"\n") {
 		t.Fatalf("--full --advance did not write a v2 open list:\n%s", got)
 	}
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX OPEN carrying=2")
 }
 
@@ -692,27 +692,27 @@ func TestAnOpenListFromBeforeV2IsRefusedAndFullAdvanceRepairsIt(t *testing.T) {
 func TestAnUnreadableFileIsCarriedAcrossRuns(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	writeFile(t, checkout, "from-stella/2026-09-07T0009Z-prose.md",
-		"Rowan, the checkpoint is pushed and the suite passed: zero divergence.\n\nMore prose.\n")
-	commitAs(t, checkout, "Stella", "stella: a file that will not parse")
+	writeFile(t, checkout, "from-bo/2026-09-07T0009Z-prose.md",
+		"Ada, the checkpoint is pushed and the suite passed: zero divergence.\n\nMore prose.\n")
+	commitAs(t, checkout, "Bo", "bo: a file that will not parse")
 
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX UNREADABLE path=from-stella/2026-09-07T0009Z-prose.md: ").
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX UNREADABLE path=from-bo/2026-09-07T0009Z-prose.md: ").
 		mustContain(t, "stdout", "unreadable=1")
-	if got := read(t, checkout, "from-rowan/OPEN"); !strings.Contains(got, "-\tunreadable\t-\t-\t-\t-\tfrom-stella/2026-09-07T0009Z-prose.md\t-") {
+	if got := read(t, checkout, "from-ada/OPEN"); !strings.Contains(got, "-\tunreadable\t-\t-\t-\t-\tfrom-bo/2026-09-07T0009Z-prose.md\t-") {
 		t.Fatalf("the unreadable file was not carried on the open list:\n%s", got)
 	}
 	// The next run, with nothing new at all, still names it. That is the whole point.
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX UNREADABLE path=from-stella/2026-09-07T0009Z-prose.md: ").
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX UNREADABLE path=from-bo/2026-09-07T0009Z-prose.md: ").
 		mustContain(t, "stdout", "unreadable=1")
 
 	// Receipting it is one way it leaves the list: a reader saying "I have seen this file"
 	// about something with no id to answer.
-	invoke(t, "", "receipt", "--table", checkout, "--as", "Rowan",
-		"--note", "from-stella/2026-09-07T0009Z-prose.md",
+	invoke(t, "", "receipt", "--table", checkout, "--as", "Ada",
+		"--note", "from-bo/2026-09-07T0009Z-prose.md",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
-	r := invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "unreadable=0")
 	if strings.Contains(r.stdout, "2026-09-07T0009Z-prose.md") {
 		t.Fatalf("a receipted unreadable file is still named:\n%s", r.stdout)
@@ -720,15 +720,15 @@ func TestAnUnreadableFileIsCarriedAcrossRuns(t *testing.T) {
 
 	// The other way is that somebody FIXES it: it stops being unreadable and becomes an
 	// ordinary open note, with the line it should have had.
-	writeFile(t, checkout, "from-stella/2026-09-08T0009Z-now-a-note-333333333333.md",
-		"Rowan, prose where a header goes.\n\nMore prose.\n")
-	commitAs(t, checkout, "Stella", "stella: another one")
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).mustContain(t, "stdout", "unreadable=1")
-	writeFile(t, checkout, "from-stella/2026-09-08T0009Z-now-a-note-333333333333.md",
-		"From: Stella\nTo: Rowan\nDate: Tue Sep  8 00:09:00 UTC 2026\nId: stella-333333333333\nSubject: Now it parses\n\nAnd here is the question.\n")
-	commitAs(t, checkout, "Stella", "stella: fixed the header")
-	invoke(t, "", advance(checkout, "Rowan", "--open")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX NOTE id=stella-333333333333 from=Stella addr=to").
+	writeFile(t, checkout, "from-bo/2026-09-08T0009Z-now-a-note-333333333333.md",
+		"Ada, prose where a header goes.\n\nMore prose.\n")
+	commitAs(t, checkout, "Bo", "bo: another one")
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "unreadable=1")
+	writeFile(t, checkout, "from-bo/2026-09-08T0009Z-now-a-note-333333333333.md",
+		"From: Bo\nTo: Ada\nDate: Tue Sep  8 00:09:00 UTC 2026\nId: bo-333333333333\nSubject: Now it parses\n\nAnd here is the question.\n")
+	commitAs(t, checkout, "Bo", "bo: fixed the header")
+	invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX NOTE id=bo-333333333333 from=Bo addr=to").
 		mustContain(t, "stdout", "unreadable=0")
 }
 
@@ -779,31 +779,31 @@ func TestTheExampleTableInTestdataIsWhatTheREADMESays(t *testing.T) {
 	copyTree(t, filepath.Join("testdata", "example-table"), root)
 	gitIn(t, root, "init", "--quiet", "-b", "main")
 	gitIn(t, root, "add", "-A")
-	gitIn(t, root, "-c", "user.name=Rowan", "-c", "user.email=rowan@example.com", "commit", "-q", "-m", "the table")
+	gitIn(t, root, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "commit", "-q", "-m", "the table")
 
 	invoke(t, "", "check", "--table", root, "--full").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS OK notes=4 lanes=2 receipts=1 participants=3 warn=0")
 	invoke(t, "", "names", "--table", root).mustCode(t, 0).
-		mustContain(t, "stdout", "NAMES NAME name=Glenn lane=-").
+		mustContain(t, "stdout", "NAMES NAME name=Dana lane=-").
 		mustContain(t, "stdout", "NAMES OK participants=3 groups=1 senders=2")
-	// Rowan's listing: the thread is answered and gone, the Windows finding was receipted
+	// Ada's listing: the thread is answered and gone, the Windows finding was receipted
 	// and is HEARD rather than closed, and the bare acknowledgement is last.
-	invoke(t, "", "inbox", "--table", root, "--as", "Rowan", "--receipt-max-words", "40", "--full").
+	invoke(t, "", "inbox", "--table", root, "--as", "Ada", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX HEARD id=stella-222222222222").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=1 notes=0 receipts=1 heard=1 unreadable=0")
-	// Stella's: the answer to her question is a note she owes nothing on until she reads
+		mustContain(t, "stdout", "INBOX HEARD id=bo-222222222222").
+		mustContain(t, "stdout", "INBOX OK as=Ada open=1 notes=0 receipts=1 heard=1 unreadable=0")
+	// Bo's: the answer to her question is a note she owes nothing on until she reads
 	// it, and it is the one thing in her inbox.
-	invoke(t, "", "inbox", "--table", root, "--as", "Stella", "--receipt-max-words", "40", "--full").
+	invoke(t, "", "inbox", "--table", root, "--as", "Bo", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX NOTE id=rowan-0f1e2d3c4b5a from=Rowan addr=to").
-		mustContain(t, "stdout", "INBOX OK as=Stella open=1")
+		mustContain(t, "stdout", "INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to").
+		mustContain(t, "stdout", "INBOX OK as=Bo open=1")
 	// And a rebuild over it changes nothing, which is what "the catalogue agrees with the
 	// notes" means when you can run it.
-	wantRowan := read(t, root, "from-rowan/INDEX")
-	wantStella := read(t, root, "from-stella/INDEX")
+	wantAda := read(t, root, "from-ada/INDEX")
+	wantBo := read(t, root, "from-bo/INDEX")
 	invoke(t, "", "check", "--table", root, "--full", "--rebuild-index").mustCode(t, 0)
-	if read(t, root, "from-rowan/INDEX") != wantRowan || read(t, root, "from-stella/INDEX") != wantStella {
+	if read(t, root, "from-ada/INDEX") != wantAda || read(t, root, "from-bo/INDEX") != wantBo {
 		t.Fatal("a rebuild changed the example table's catalogue, so the committed one is stale")
 	}
 	// As a repository root it is a table the git-reading verbs will work over, which is
@@ -814,7 +814,7 @@ func TestTheExampleTableInTestdataIsWhatTheREADMESays(t *testing.T) {
 		mustContain(t, "stdout", "changed=0")
 	// And the CURSOR it ships records what its OPEN list holds, so a reader arriving on it
 	// is not refused for an open list that went missing.
-	if line := read(t, root, "from-rowan/CURSOR"); !strings.Contains(line, "open=2") {
+	if line := read(t, root, "from-ada/CURSOR"); !strings.Contains(line, "open=2") {
 		t.Fatalf("the example cursor does not record its two carried notes: %q", line)
 	}
 }
@@ -845,32 +845,32 @@ func copyTree(t *testing.T, from, to string) {
 
 // A reader's very first --advance with an EMPTY inbox. There is no OPEN file to commit,
 // and `git add` refuses a pathspec matching neither the disk nor the index -- so this run
-// used to list the inbox correctly and then die on `pathspec 'from-rowan/OPEN' did not
+// used to list the inbox correctly and then die on `pathspec 'from-ada/OPEN' did not
 // match any files`. The cursor must land anyway: a reader with nothing open is the state
 // every reader is trying to get to.
 func TestAFirstAdvanceWithNothingOpen(t *testing.T) {
 	hermetic(t)
 	checkout, bare := table(t)
-	// Rowan answers the two the fixture leaves open, so nothing is carried.
+	// Ada answers the two the fixture leaves open, so nothing is carried.
 	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
-	invoke(t, "From: Rowan\nTo: Stella\nRe: stella-111111111111\nSubject: That one too\n\nAnswered.\n",
+	invoke(t, "From: Ada\nTo: Bo\nRe: bo-111111111111\nSubject: That one too\n\nAnswered.\n",
 		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=0").
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OK as=Ada open=0").
 		mustContain(t, "stdout", "INBOX CURSOR commit=").
 		mustContain(t, "stdout", "carrying=0 pushed=true")
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	if !strings.Contains(files, "from-rowan/CURSOR") {
+	if !strings.Contains(files, "from-ada/CURSOR") {
 		t.Fatalf("the cursor did not land:\n%s", files)
 	}
-	if strings.Contains(files, "from-rowan/OPEN") {
+	if strings.Contains(files, "from-ada/OPEN") {
 		t.Fatalf("an empty OPEN list was committed as a file:\n%s", files)
 	}
 	// The next run reads from it, and is a `since` run over no change at all.
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=0")
+		mustContain(t, "stdout", "INBOX OK as=Ada open=0")
 }
 
 // And the other direction: a reader who HAD an open list and now has none. The OPEN file
@@ -878,15 +878,15 @@ func TestAFirstAdvanceWithNothingOpen(t *testing.T) {
 func TestAnOpenListThatEmptiesIsRemovedFromTheTable(t *testing.T) {
 	hermetic(t)
 	checkout, bare := table(t)
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0)
-	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); !strings.Contains(files, "from-rowan/OPEN") {
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
+	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); !strings.Contains(files, "from-ada/OPEN") {
 		t.Fatalf("the first advance did not publish an OPEN list:\n%s", files)
 	}
 	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
-	invoke(t, "From: Rowan\nTo: Stella\nRe: stella-111111111111\nSubject: That one too\n\nAnswered.\n",
+	invoke(t, "From: Ada\nTo: Bo\nRe: bo-111111111111\nSubject: That one too\n\nAnswered.\n",
 		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=0")
-	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); strings.Contains(files, "from-rowan/OPEN") {
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=0")
+	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); strings.Contains(files, "from-ada/OPEN") {
 		t.Fatalf("an emptied OPEN list is still on the table:\n%s", files)
 	}
 	if out := gitIn(t, checkout, "status", "--porcelain"); strings.TrimSpace(out) != "" {
@@ -895,7 +895,7 @@ func TestAnOpenListThatEmptiesIsRemovedFromTheTable(t *testing.T) {
 }
 
 // THE SWITCH DAY, end to end. The table this tool was written for had been running by hand
-// for months when it adopted the tool, and the first `inbox --as Rowan --full` reported
+// for months when it adopted the tool, and the first `inbox --as Ada --full` reported
 // 657 notes open. Because the open list is what lets the cursor move, every run after it
 // reported the same 657 -- forever, until each was answered or receipted one at a time.
 // Nobody was going to do that, and a listing nobody reads hides the one new note in it.
@@ -908,39 +908,39 @@ func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
 	checkout, _ := table(t)
 	// Two notes from before the line and one after it, on top of the fixture's two, which
 	// are dated 2026-09-07 and are therefore also in front of the line.
-	writeFile(t, checkout, "from-stella/2026-08-01T0001Z-old-one-aaaaaaaaaaaa.md",
-		"From: Stella\nTo: Rowan\nDate: Sat Aug  1 00:01:00 UTC 2026\nId: stella-aaaaaaaaaaaa\nSubject: One from the months before the tool\n\nThe body.\n")
-	writeFile(t, checkout, "from-stella/2026-08-02T0001Z-old-two-bbbbbbbbbbbb.md",
-		"From: Stella\nTo: Rowan\nDate: Sun Aug  2 00:01:00 UTC 2026\nId: stella-bbbbbbbbbbbb\nSubject: Another from the months before the tool\n\nThe body.\n")
+	writeFile(t, checkout, "from-bo/2026-08-01T0001Z-old-one-aaaaaaaaaaaa.md",
+		"From: Bo\nTo: Ada\nDate: Sat Aug  1 00:01:00 UTC 2026\nId: bo-aaaaaaaaaaaa\nSubject: One from the months before the tool\n\nThe body.\n")
+	writeFile(t, checkout, "from-bo/2026-08-02T0001Z-old-two-bbbbbbbbbbbb.md",
+		"From: Bo\nTo: Ada\nDate: Sun Aug  2 00:01:00 UTC 2026\nId: bo-bbbbbbbbbbbb\nSubject: Another from the months before the tool\n\nThe body.\n")
 	gitIn(t, checkout, "add", "-A")
-	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@example.com", "commit", "-q", "-m", "the months before")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "the months before")
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 
 	// The switch-day read: full, with the line, advancing.
-	r := invoke(t, "", advance(checkout, "Rowan", "--full", "--legacy-before", "2026-09-01")...).mustCode(t, 0).
+	r := invoke(t, "", advance(checkout, "Ada", "--full", "--legacy-before", "2026-09-01")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=2").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=2")
-	for _, old := range []string{"stella-aaaaaaaaaaaa", "stella-bbbbbbbbbbbb"} {
+		mustContain(t, "stdout", "INBOX OK as=Ada open=2")
+	for _, old := range []string{"bo-aaaaaaaaaaaa", "bo-bbbbbbbbbbbb"} {
 		if strings.Contains(r.stdout, old) {
 			t.Fatalf("a note behind the line was listed one by one:\n%s", r.stdout)
 		}
 	}
 	// The open list is the notes in front of the line and nothing else, and the cursor
 	// carries the date so the next run needs no flag.
-	if open := read(t, checkout, "from-rowan/OPEN"); strings.Contains(open, "aaaaaaaaaaaa") || strings.Contains(open, "bbbbbbbbbbbb") {
+	if open := read(t, checkout, "from-ada/OPEN"); strings.Contains(open, "aaaaaaaaaaaa") || strings.Contains(open, "bbbbbbbbbbbb") {
 		t.Fatalf("the open list carries a note from behind the line:\n%s", open)
 	}
-	if cursor := read(t, checkout, "from-rowan/CURSOR"); !strings.Contains(cursor, "legacy=2026-09-01") {
+	if cursor := read(t, checkout, "from-ada/CURSOR"); !strings.Contains(cursor, "legacy=2026-09-01") {
 		t.Fatalf("the cursor did not record the line: %s", cursor)
 	}
 
 	// The second read, with no flag at all: quiet. It honours the line from the cursor,
 	// says so, and names none of the old notes.
-	r = invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+	r = invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=0").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=2")
-	for _, old := range []string{"stella-aaaaaaaaaaaa", "stella-bbbbbbbbbbbb"} {
+		mustContain(t, "stdout", "INBOX OK as=Ada open=2")
+	for _, old := range []string{"bo-aaaaaaaaaaaa", "bo-bbbbbbbbbbbb"} {
 		if strings.Contains(r.stdout, old) {
 			t.Fatalf("the second read brought the old notes back:\n%s", r.stdout)
 		}
@@ -949,22 +949,22 @@ func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
 	// A line that moves EARLIER would put the notes between the two dates back on the open
 	// list, which is a listing the reader has already settled arriving with nothing saying
 	// why. It is refused, and the refusal names the read that can honestly do it.
-	invoke(t, "", advance(checkout, "Rowan", "--legacy-before", "2026-08-02")...).mustCode(t, 1).
+	invoke(t, "", advance(checkout, "Ada", "--legacy-before", "2026-08-02")...).mustCode(t, 1).
 		mustContain(t, "stderr", "moves the line earlier").
 		mustContain(t, "stderr", "--full --legacy-before 2026-08-02 --advance")
 
 	// Moving it LATER forgives more and needs no --full: the forgiven set only grows, and
 	// nothing comes back.
-	invoke(t, "", advance(checkout, "Rowan", "--legacy-before", "2026-09-08")...).mustCode(t, 0).
+	invoke(t, "", advance(checkout, "Ada", "--legacy-before", "2026-09-08")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-08 notes=2").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=0")
+		mustContain(t, "stdout", "INBOX OK as=Ada open=0")
 
 	// And --full is the way through, exactly as the refusal said: with the earlier line the
 	// old notes are the reader's again, counted at zero because none is behind it.
-	r = invoke(t, "", advance(checkout, "Rowan", "--full", "--legacy-before", "2026-08-01")...).mustCode(t, 0).
+	r = invoke(t, "", advance(checkout, "Ada", "--full", "--legacy-before", "2026-08-01")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-08-01 notes=0").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=4")
-	if !strings.Contains(r.stdout, "stella-aaaaaaaaaaaa") {
+		mustContain(t, "stdout", "INBOX OK as=Ada open=4")
+	if !strings.Contains(r.stdout, "bo-aaaaaaaaaaaa") {
 		t.Fatalf("a --full read with an earlier line did not bring the old notes back:\n%s", r.stdout)
 	}
 }
@@ -973,7 +973,7 @@ func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
 // same rule check's is.
 func TestInboxRefusesALegacyDateItCannotRead(t *testing.T) {
 	checkout, _ := table(t)
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40",
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--full", "--legacy-before", "last Tuesday").mustCode(t, 2).
 		mustContain(t, "stderr", "is not a UTC date")
 }

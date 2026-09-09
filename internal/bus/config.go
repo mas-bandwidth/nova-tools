@@ -33,7 +33,7 @@ const ConfigName = "participants.json"
 
 // Participant is one name at the table.
 //
-// Lane may be empty. A person who is written TO and never writes -- Glenn on the table
+// Lane may be empty. A person who is written TO and never writes -- Dana on the table
 // this was built for -- is a participant with no lane: addressable, and refused as a
 // sender, because a sender with no lane has nowhere for a note to go.
 type Participant struct {

@@ -12,14 +12,14 @@ import (
 // second sender, and a person who is addressed and never writes.
 const rosterJSON = `{
   "participants": [
-    {"name": "Rowan", "lane": "from-rowan", "aliases": ["Rowan Claude", "the keeper"],
-     "git_name": "Rowan", "git_email": "rowan@example.com"},
-    {"name": "Stella", "lane": "from-stella", "aliases": ["Stella Codex"],
-     "git_name": "Stella", "git_email": "stella@example.com"},
-    {"name": "Glenn"}
+    {"name": "Ada", "lane": "from-ada", "aliases": ["Ada Vale", "the archivist"],
+     "git_name": "Ada", "git_email": "ada@example.com"},
+    {"name": "Bo", "lane": "from-bo", "aliases": ["Bo Quill"],
+     "git_name": "Bo", "git_email": "bo@example.com"},
+    {"name": "Dana"}
   ],
   "groups": [
-    {"name": "Everybody at the table", "members": ["Rowan", "Stella", "Glenn"]}
+    {"name": "Everybody at the table", "members": ["Ada", "Bo", "Dana"]}
   ]
 }`
 

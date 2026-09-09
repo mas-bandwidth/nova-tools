@@ -6,8 +6,8 @@ roster with three participants (two who write, one who is written to), two lanes
 a thread made of `Re:` lines, a `RECEIPTS` file, a lane `INDEX`, and one reader's
 `CURSOR` and `OPEN`.
 
-Rowan's `OPEN` is worth opening first, because it is where the tool's one
-performance property lives: each line is a note Rowan has been shown and not
+Ada's `OPEN` is worth opening first, because it is where the tool's one
+performance property lives: each line is a note Ada has been shown and not
 answered, carrying the whole line that note PRINTS as — id, kind, heard flag,
 sender, `to`/`cc`, date, path, subject, tab-separated under a first line reading
 `OPEN v2`. That is why a read costs the notes that are NEW and nothing more: the

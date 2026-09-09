@@ -11,14 +11,14 @@ func TestLoadConfigReadsTheRoster(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := c.Senders(); len(got) != 2 || got[0] != "Rowan" || got[1] != "Stella" {
-		t.Fatalf("Senders() = %v, want [Rowan Stella] -- Glenn has no lane and is not a sender", got)
+	if got := c.Senders(); len(got) != 2 || got[0] != "Ada" || got[1] != "Bo" {
+		t.Fatalf("Senders() = %v, want [Ada Bo] -- Dana has no lane and is not a sender", got)
 	}
-	rowan := mustParticipant(t, c, "the keeper")
-	if rowan.Name != "Rowan" || rowan.Slug() != "rowan" {
-		t.Fatalf("an alias resolved to %+v, want Rowan with slug rowan", rowan)
+	ada := mustParticipant(t, c, "the archivist")
+	if ada.Name != "Ada" || ada.Slug() != "ada" {
+		t.Fatalf("an alias resolved to %+v, want Ada with slug ada", ada)
 	}
-	if _, ok := c.Lookup("Rowna"); ok {
+	if _, ok := c.Lookup("Adda"); ok {
 		t.Fatal("a misspelling resolved; the whole point of the roster is that it does not")
 	}
 }
@@ -29,18 +29,18 @@ func TestLoadConfigRefuses(t *testing.T) {
 	cases := []struct {
 		name, json, want string
 	}{
-		{"an unknown field", `{"participants":[{"name":"Rowan","lane":"from-rowan","aliass":["x"],"git_name":"R","git_email":"r@x"}]}`, "aliass"},
+		{"an unknown field", `{"participants":[{"name":"Ada","lane":"from-ada","aliass":["x"],"git_name":"R","git_email":"r@x"}]}`, "aliass"},
 		{"no participants", `{"participants":[]}`, "no participants"},
 		{"an empty name", `{"participants":[{"name":"  ","lane":"from-a","git_name":"R","git_email":"r@x"}]}`, "empty name"},
 		{"one name for two people", `{"participants":[
-			{"name":"Rowan","lane":"from-rowan","git_name":"R","git_email":"r@x"},
-			{"name":"rowan","lane":"from-other","git_name":"O","git_email":"o@x"}]}`, "names both"},
+			{"name":"Ada","lane":"from-ada","git_name":"R","git_email":"r@x"},
+			{"name":"ada","lane":"from-other","git_name":"O","git_email":"o@x"}]}`, "names both"},
 		{"an alias colliding with a name", `{"participants":[
-			{"name":"Rowan","lane":"from-rowan","git_name":"R","git_email":"r@x"},
-			{"name":"Stella","lane":"from-stella","aliases":["ROWAN"],"git_name":"S","git_email":"s@x"}]}`, "names both"},
+			{"name":"Ada","lane":"from-ada","git_name":"R","git_email":"r@x"},
+			{"name":"Bo","lane":"from-bo","aliases":["ADA"],"git_name":"S","git_email":"s@x"}]}`, "names both"},
 		{"two people in one lane", `{"participants":[
-			{"name":"Rowan","lane":"from-rowan","git_name":"R","git_email":"r@x"},
-			{"name":"Stella","lane":"from-rowan","git_name":"S","git_email":"s@x"}]}`, "belongs to both"},
+			{"name":"Ada","lane":"from-ada","git_name":"R","git_email":"r@x"},
+			{"name":"Bo","lane":"from-ada","git_name":"S","git_email":"s@x"}]}`, "belongs to both"},
 		{"a lane that is not from-<slug>", `{"participants":[{"name":"R","lane":"notes","git_name":"R","git_email":"r@x"}]}`, "a lane is from-<slug>"},
 		{"a lane escaping the table", `{"participants":[{"name":"R","lane":"from-../../etc","git_name":"R","git_email":"r@x"}]}`, "lower-case letters"},
 		{"a lane with no git identity", `{"participants":[{"name":"R","lane":"from-r"}]}`, "needs git_name and git_email"},

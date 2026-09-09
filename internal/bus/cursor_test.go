@@ -11,15 +11,15 @@ import (
 func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 	root := writeTable(t, nil)
 	// A lane with no CURSOR is a reader who has not read yet, and that is not an error.
-	got, err := ReadCursor(root, "from-rowan")
+	got, err := ReadCursor(root, "from-ada")
 	if err != nil || got.Commit != "" {
 		t.Fatalf("a lane with no cursor: %+v, %v", got, err)
 	}
 	sha := "0123456789abcdef0123456789abcdef01234567"
-	if err := WriteCursor(root, "from-rowan", sha, 2, "", at("2026-09-09T12:34:56Z")); err != nil {
+	if err := WriteCursor(root, "from-ada", sha, 2, "", at("2026-09-09T12:34:56Z")); err != nil {
 		t.Fatal(err)
 	}
-	got, err = ReadCursor(root, "from-rowan")
+	got, err = ReadCursor(root, "from-ada")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 	}
 	// The commit is written FIRST, the stamp second, the count third: a cursor's subject
 	// is the commit.
-	if line := readFile(t, root, CursorPath("from-rowan")); line != sha+" 2026-09-09T12:34:56Z open=2\n" {
+	if line := readFile(t, root, CursorPath("from-ada")); line != sha+" 2026-09-09T12:34:56Z open=2\n" {
 		t.Fatalf("the cursor line is %q", line)
 	}
 	// A cursor file anyone with push access could have edited into an option to git is
@@ -48,22 +48,22 @@ func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 		sha + " 2026-09-09T12:34:56Z open=-1\n",
 		sha + " 2026-09-09T12:34:56Z open=2 and more\n",
 	} {
-		write(t, root, CursorPath("from-rowan"), bad)
-		if _, err := ReadCursor(root, "from-rowan"); err == nil {
+		write(t, root, CursorPath("from-ada"), bad)
+		if _, err := ReadCursor(root, "from-ada"); err == nil {
 			t.Fatalf("a cursor of %q was accepted", bad)
 		}
 	}
 	// A cursor with two tokens is one written before the count existed. It reads, and says
 	// so: nobody claimed anything about an OPEN file, so nothing is compared against one.
-	write(t, root, CursorPath("from-rowan"), sha+" 2026-09-09T12:34:56Z\n")
-	old, err := ReadCursor(root, "from-rowan")
+	write(t, root, CursorPath("from-ada"), sha+" 2026-09-09T12:34:56Z\n")
+	old, err := ReadCursor(root, "from-ada")
 	if err != nil || old.Commit != sha || old.Counted || old.Open != 0 {
 		t.Fatalf("a cursor written before the count: %+v, %v", old, err)
 	}
 	// Two lines is a cursor that has been merged badly, and is a refusal rather than a
 	// guess about which of the two reads is the real one.
-	write(t, root, CursorPath("from-rowan"), sha+" 2026-09-09T12:34:56Z\n"+sha+" 2026-09-09T12:35:56Z\n")
-	if _, err := ReadCursor(root, "from-rowan"); err == nil || !strings.Contains(err.Error(), "one line") {
+	write(t, root, CursorPath("from-ada"), sha+" 2026-09-09T12:34:56Z\n"+sha+" 2026-09-09T12:35:56Z\n")
+	if _, err := ReadCursor(root, "from-ada"); err == nil || !strings.Contains(err.Error(), "one line") {
 		t.Fatalf("two cursor lines: %v", err)
 	}
 }
@@ -72,22 +72,22 @@ func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 // without opening the note. The round trip is the proof that nothing in that line is lost.
 func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 	root := writeTable(t, nil)
-	if got, err := ReadOpen(root, "from-rowan"); err != nil || got != nil {
+	if got, err := ReadOpen(root, "from-ada"); err != nil || got != nil {
 		t.Fatalf("a lane with no OPEN: %+v, %v", got, err)
 	}
 	want := []OpenEntry{
-		{ID: "stella-abcdef012345", Kind: OpenNote, From: "Stella", Addr: "to",
-			Date: "2026-09-07T00:01:00Z", Path: "from-stella/b.md", Subject: "A question about the gate"},
-		{ID: "", Kind: OpenNote, From: "Stella", Addr: "cc",
-			Path: "from-stella/a legacy note.md", Subject: "Written before there were ids"},
-		{ID: "stella-111111111111", Kind: OpenReceipt, Heard: true, From: "Stella", Addr: "to",
-			Date: "2026-09-09T13:00:00Z", Path: "from-stella/c.md", Subject: "Heard"},
-		{Kind: OpenUnreadable, Path: "from-stella/prose.md"},
+		{ID: "bo-abcdef012345", Kind: OpenNote, From: "Bo", Addr: "to",
+			Date: "2026-09-07T00:01:00Z", Path: "from-bo/b.md", Subject: "A question about the gate"},
+		{ID: "", Kind: OpenNote, From: "Bo", Addr: "cc",
+			Path: "from-bo/a legacy note.md", Subject: "Written before there were ids"},
+		{ID: "bo-111111111111", Kind: OpenReceipt, Heard: true, From: "Bo", Addr: "to",
+			Date: "2026-09-09T13:00:00Z", Path: "from-bo/c.md", Subject: "Heard"},
+		{Kind: OpenUnreadable, Path: "from-bo/prose.md"},
 	}
-	if err := WriteOpen(root, "from-rowan", want); err != nil {
+	if err := WriteOpen(root, "from-ada", want); err != nil {
 		t.Fatal(err)
 	}
-	got, err := ReadOpen(root, "from-rowan")
+	got, err := ReadOpen(root, "from-ada")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +102,7 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 			t.Fatalf("entry %d round-tripped as %+v, wrote %+v", i, got[i], want[i])
 		}
 	}
-	raw := readFile(t, root, OpenPath("from-rowan"))
+	raw := readFile(t, root, OpenPath("from-ada"))
 	// The version header is the first line, and it is what stops a v1 list being read as a
 	// v2 one -- see TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead.
 	if !strings.HasPrefix(raw, OpenHeader+"\n") {
@@ -115,29 +115,29 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 			t.Fatalf("the line holds %d tabs, want %d: %q", n, openFields-1, line)
 		}
 	}
-	if !strings.Contains(raw, "-\tnote\t-\tStella\tcc\t-\tfrom-stella/a legacy note.md\t") {
+	if !strings.Contains(raw, "-\tnote\t-\tBo\tcc\t-\tfrom-bo/a legacy note.md\t") {
 		t.Fatalf("the legacy entry is not <-> <kind> <heard> ... : %q", raw)
 	}
 	// Nothing open REMOVES the file, rather than leaving the header alone in it: absent and
 	// nothing-open are one state on disk, which is what the cursor's count is checked
 	// against.
-	if err := WriteOpen(root, "from-rowan", nil); err != nil {
+	if err := WriteOpen(root, "from-ada", nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(OpenPath("from-rowan")))); !os.IsNotExist(err) {
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(OpenPath("from-ada")))); !os.IsNotExist(err) {
 		t.Fatalf("an empty OPEN list left a file behind: %v", err)
 	}
 	// And every shape that is not an entry is refused where it is read, rather than being
 	// guessed at into a listing.
 	for _, bad := range []string{
 		OpenHeader + "\nno-path\n",
-		OpenHeader + "\n-\tnote\t-\tStella\tto\t-\t\t-\n",
-		OpenHeader + "\n-\twibble\t-\tStella\tto\t-\tfrom-stella/a.md\t-\n",
-		OpenHeader + "\n-\tnote\tyes\tStella\tto\t-\tfrom-stella/a.md\t-\n",
-		OpenHeader + "\nstella-nothex\tnote\t-\tStella\tto\t-\tfrom-stella/a.md\t-\n",
+		OpenHeader + "\n-\tnote\t-\tBo\tto\t-\t\t-\n",
+		OpenHeader + "\n-\twibble\t-\tBo\tto\t-\tfrom-bo/a.md\t-\n",
+		OpenHeader + "\n-\tnote\tyes\tBo\tto\t-\tfrom-bo/a.md\t-\n",
+		OpenHeader + "\nbo-nothex\tnote\t-\tBo\tto\t-\tfrom-bo/a.md\t-\n",
 	} {
-		write(t, root, OpenPath("from-rowan"), bad)
-		if _, err := ReadOpen(root, "from-rowan"); err == nil {
+		write(t, root, OpenPath("from-ada"), bad)
+		if _, err := ReadOpen(root, "from-ada"); err == nil {
 			t.Fatalf("an open list of %q was accepted", bad)
 		}
 	}
@@ -150,8 +150,8 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 // version, and a file that does not is refused at the read, naming the repair.
 func TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead(t *testing.T) {
 	root := writeTable(t, nil)
-	write(t, root, OpenPath("from-rowan"), "stella-abcdef012345 from-stella/old.md\n")
-	_, err := ReadOpen(root, "from-rowan")
+	write(t, root, OpenPath("from-ada"), "bo-abcdef012345 from-bo/old.md\n")
+	_, err := ReadOpen(root, "from-ada")
 	if err == nil {
 		t.Fatal("a v1 open list was read as a v2 one")
 	}
@@ -161,12 +161,12 @@ func TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead(t *testing.T) {
 		}
 	}
 	// And a list this version wrote reads back, which is the other half of the handshake.
-	if err := WriteOpen(root, "from-rowan", []OpenEntry{
-		{ID: "stella-abcdef012345", Kind: OpenNote, From: "Stella", Addr: "to", Path: "from-stella/old.md"},
+	if err := WriteOpen(root, "from-ada", []OpenEntry{
+		{ID: "bo-abcdef012345", Kind: OpenNote, From: "Bo", Addr: "to", Path: "from-bo/old.md"},
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := ReadOpen(root, "from-rowan"); err != nil || len(got) != 1 {
+	if got, err := ReadOpen(root, "from-ada"); err != nil || len(got) != 1 {
 		t.Fatalf("a v2 open list did not read back: %+v, %v", got, err)
 	}
 }
@@ -175,17 +175,17 @@ func TestIndexLineIsFiveFieldsAndCannotBeForged(t *testing.T) {
 	// A roster name holding a tab would otherwise make one record look like two, which is
 	// the same hole the printed lines close and is closed here the same way.
 	e := IndexEntry{
-		ID:   "rowan-0123456789ab",
-		Path: "from-rowan/note.md",
+		ID:   "ada-0123456789ab",
+		Path: "from-ada/note.md",
 		Date: "2026-09-09T12:34:56Z",
-		To:   []string{"Stella\tCodex", "Glenn"},
-		Lane: "from-rowan",
+		To:   []string{"Bo\tQuill", "Dana"},
+		Lane: "from-ada",
 	}
 	line := IndexLine(e)
 	if n := strings.Count(line, "\t"); n != indexFields-1 {
 		t.Fatalf("the line holds %d tabs, want %d: %q", n, indexFields-1, line)
 	}
-	if strings.Contains(line, "Stella\tCodex") {
+	if strings.Contains(line, "Bo\tQuill") {
 		t.Fatalf("a tab in a name was not escaped: %q", line)
 	}
 	// An absent list is "-" and never empty, so no line ever ends in an invisible tab.
@@ -197,7 +197,7 @@ func TestIndexLineIsFiveFieldsAndCannotBeForged(t *testing.T) {
 	if err := AppendIndexLine(root, e); err != nil {
 		t.Fatal(err)
 	}
-	entries, err := ReadLaneIndex(root, "from-rowan")
+	entries, err := ReadLaneIndex(root, "from-ada")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,8 +207,8 @@ func TestIndexLineIsFiveFieldsAndCannotBeForged(t *testing.T) {
 	if len(entries[0].Re) != 0 {
 		t.Fatalf("an absent Re read back as %v", entries[0].Re)
 	}
-	write(t, root, IndexPath("from-rowan"), "one\ttwo\n")
-	if _, err := ReadLaneIndex(root, "from-rowan"); err == nil {
+	write(t, root, IndexPath("from-ada"), "one\ttwo\n")
+	if _, err := ReadLaneIndex(root, "from-ada"); err == nil {
 		t.Fatal("a two-field index line was accepted")
 	}
 }
@@ -217,11 +217,11 @@ func TestIndexLineIsFiveFieldsAndCannotBeForged(t *testing.T) {
 // filesystem for the one thing it cannot hold: a note written before ids existed.
 func TestIndexResolvesByIdAndLegacyPath(t *testing.T) {
 	root := writeTable(t, map[string]string{
-		"from-stella/INDEX":        "stella-abcdef012345\tfrom-stella/new.md\t2026-09-07T00:01:00Z\tRowan\t-\n",
-		"from-stella/new.md":       "From: Stella\nTo: Rowan\nId: stella-abcdef012345\nSubject: s\n\nbody\n",
-		"from-stella/old-one.md":   "From: Stella\nTo: Rowan\nSubject: s\n\nbody\n",
-		"from-rowan/RECEIPTS":      "2026-09-09T12:34:56Z stella-abcdef012345\n",
-		"from-stella/notanote.txt": "not a note\n",
+		"from-bo/INDEX":        "bo-abcdef012345\tfrom-bo/new.md\t2026-09-07T00:01:00Z\tAda\t-\n",
+		"from-bo/new.md":       "From: Bo\nTo: Ada\nId: bo-abcdef012345\nSubject: s\n\nbody\n",
+		"from-bo/old-one.md":   "From: Bo\nTo: Ada\nSubject: s\n\nbody\n",
+		"from-ada/RECEIPTS":    "2026-09-09T12:34:56Z bo-abcdef012345\n",
+		"from-bo/notanote.txt": "not a note\n",
 	})
 	c, err := LoadConfig(root)
 	if err != nil {
@@ -231,12 +231,12 @@ func TestIndexResolvesByIdAndLegacyPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, target := range []string{"stella-abcdef012345", "from-stella/new.md", "from-stella/old-one.md"} {
+	for _, target := range []string{"bo-abcdef012345", "from-bo/new.md", "from-bo/old-one.md"} {
 		if !idx.resolves(target) {
 			t.Errorf("%q does not resolve", target)
 		}
 	}
-	for _, target := range []string{"stella-000000000000", "from-stella/never.md", "from-stella/notanote.txt", "participants.json", "new"} {
+	for _, target := range []string{"bo-000000000000", "from-bo/never.md", "from-bo/notanote.txt", "participants.json", "new"} {
 		if idx.resolves(target) {
 			t.Errorf("%q resolves and should not", target)
 		}
@@ -248,24 +248,24 @@ func TestIndexResolvesByIdAndLegacyPath(t *testing.T) {
 // on an id would be inventing the id.
 func TestRebuildLaneIndexFromTheNotes(t *testing.T) {
 	root := writeTable(t, map[string]string{
-		"from-stella/b.md":   "From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:02:00 UTC 2026\nId: stella-111111111111\nRe: new\nSubject: b\n\nbody\n",
-		"from-stella/a.md":   "From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: a\n\nbody\n",
-		"from-stella/old.md": "From: Stella\nTo: Rowan\nSubject: old\n\nbody\n",
+		"from-bo/b.md":   "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:02:00 UTC 2026\nId: bo-111111111111\nRe: new\nSubject: b\n\nbody\n",
+		"from-bo/a.md":   "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: a\n\nbody\n",
+		"from-bo/old.md": "From: Bo\nTo: Ada\nSubject: old\n\nbody\n",
 	})
 	c, err := LoadConfig(root)
 	if err != nil {
 		t.Fatal(err)
 	}
 	tab := loadTable(t, root)
-	n, err := RebuildLaneIndex(root, c, tab, "from-stella")
+	n, err := RebuildLaneIndex(root, c, tab, "from-bo")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if n != 2 {
 		t.Fatalf("rebuilt %d entries, want the 2 notes that have ids", n)
 	}
-	lines := strings.Split(strings.TrimRight(readFile(t, root, IndexPath("from-stella")), "\n"), "\n")
-	if len(lines) != 2 || !strings.HasPrefix(lines[0], "stella-abcdef012345\tfrom-stella/a.md\t") {
+	lines := strings.Split(strings.TrimRight(readFile(t, root, IndexPath("from-bo")), "\n"), "\n")
+	if len(lines) != 2 || !strings.HasPrefix(lines[0], "bo-abcdef012345\tfrom-bo/a.md\t") {
 		t.Fatalf("the rebuilt catalogue is:\n%s", strings.Join(lines, "\n"))
 	}
 	// And a rebuilt catalogue agrees with the table it was built from.
@@ -283,22 +283,22 @@ func TestRebuildLaneIndexFromTheNotes(t *testing.T) {
 // carrying costs nothing at all.
 func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
 	root := writeTable(t, map[string]string{
-		"from-stella/old.md":        "From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: old\n\nA question?\n",
-		"from-stella/new.md":        "From: Stella\nTo: Rowan\nDate: Tue Sep  8 00:01:00 UTC 2026\nId: stella-111111111111\nSubject: new\n\nAnother question?\n",
-		"from-stella/not-for-me.md": "From: Stella\nTo: Glenn\nDate: Tue Sep  8 00:02:00 UTC 2026\nId: stella-222222222222\nSubject: nope\n\nFor Glenn.\n",
-		"from-rowan/RECEIPTS":       "2026-09-09T12:34:56Z stella-abcdef012345\n",
+		"from-bo/old.md":        "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: old\n\nA question?\n",
+		"from-bo/new.md":        "From: Bo\nTo: Ada\nDate: Tue Sep  8 00:01:00 UTC 2026\nId: bo-111111111111\nSubject: new\n\nAnother question?\n",
+		"from-bo/not-for-me.md": "From: Bo\nTo: Dana\nDate: Tue Sep  8 00:02:00 UTC 2026\nId: bo-222222222222\nSubject: nope\n\nFor Dana.\n",
+		"from-ada/RECEIPTS":     "2026-09-09T12:34:56Z bo-abcdef012345\n",
 	})
 	c, err := LoadConfig(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	me := mustParticipant(t, c, "Rowan")
-	carried := OpenEntry{ID: "stella-abcdef012345", Kind: OpenNote, Heard: true, From: "Stella", Addr: "to",
-		Date: "2026-09-07T00:01:00Z", Path: "from-stella/old.md", Subject: "old"}
+	me := mustParticipant(t, c, "Ada")
+	carried := OpenEntry{ID: "bo-abcdef012345", Kind: OpenNote, Heard: true, From: "Bo", Addr: "to",
+		Date: "2026-09-07T00:01:00Z", Path: "from-bo/old.md", Subject: "old"}
 
 	before := NoteParses()
 	res, err := InboxSince(root, c, me,
-		[]string{"from-stella/new.md", "from-stella/not-for-me.md"},
+		[]string{"from-bo/new.md", "from-bo/not-for-me.md"},
 		[]OpenEntry{carried}, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
@@ -313,7 +313,7 @@ func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
 	}
 	// Newest first when it is PRINTED, arrival order in the file.
 	rows := SortForListing(res.Open)
-	if rows[0].Path != "from-stella/new.md" || rows[0].Subject != "new" || rows[0].From != "Stella" {
+	if rows[0].Path != "from-bo/new.md" || rows[0].Subject != "new" || rows[0].From != "Bo" {
 		t.Fatalf("the listing is not newest first, or a new entry lost its display line: %+v", rows[0])
 	}
 	if !rows[1].Heard {
@@ -327,24 +327,24 @@ func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
 	}
 
 	// Now a reply of mine, in the change set, closes the carried one -- by id.
-	write(t, root, "from-rowan/answer.md", "From: Rowan\nTo: Stella\nDate: Wed Sep  9 00:01:00 UTC 2026\nId: rowan-333333333333\nRe: stella-abcdef012345\nSubject: yes\n\nYes.\n")
+	write(t, root, "from-ada/answer.md", "From: Ada\nTo: Bo\nDate: Wed Sep  9 00:01:00 UTC 2026\nId: ada-333333333333\nRe: bo-abcdef012345\nSubject: yes\n\nYes.\n")
 	res, err = InboxSince(root, c, me,
-		[]string{"from-rowan/answer.md"},
-		[]OpenEntry{carried, {ID: "stella-111111111111", Kind: OpenNote, From: "Stella", Addr: "to",
-			Date: "2026-09-08T00:01:00Z", Path: "from-stella/new.md", Subject: "new"}}, 40, LegacyLine{})
+		[]string{"from-ada/answer.md"},
+		[]OpenEntry{carried, {ID: "bo-111111111111", Kind: OpenNote, From: "Bo", Addr: "to",
+			Date: "2026-09-08T00:01:00Z", Path: "from-bo/new.md", Subject: "new"}}, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Open) != 1 || res.Open[0].ID != "stella-111111111111" {
+	if len(res.Open) != 1 || res.Open[0].ID != "bo-111111111111" {
 		t.Fatalf("the answered note is still open: %+v", res.Open)
 	}
 
 	// And a LEGACY note is closed the same way, by its path: a reply written before there
 	// were ids names the file, and that still has to close the entry that names the file.
-	write(t, root, "from-stella/before-ids.md", "From: Stella\nTo: Rowan\nSubject: before ids\n\nA question?\n")
-	write(t, root, "from-rowan/answer.md", "From: Rowan\nTo: Stella\nDate: Wed Sep  9 00:02:00 UTC 2026\nId: rowan-444444444444\nRe: from-stella/before-ids.md\nSubject: yes\n\nYes.\n")
-	res, err = InboxSince(root, c, me, []string{"from-rowan/answer.md"},
-		[]OpenEntry{{Kind: OpenNote, From: "Stella", Addr: "to", Path: "from-stella/before-ids.md", Subject: "before ids"}},
+	write(t, root, "from-bo/before-ids.md", "From: Bo\nTo: Ada\nSubject: before ids\n\nA question?\n")
+	write(t, root, "from-ada/answer.md", "From: Ada\nTo: Bo\nDate: Wed Sep  9 00:02:00 UTC 2026\nId: ada-444444444444\nRe: from-bo/before-ids.md\nSubject: yes\n\nYes.\n")
+	res, err = InboxSince(root, c, me, []string{"from-ada/answer.md"},
+		[]OpenEntry{{Kind: OpenNote, From: "Bo", Addr: "to", Path: "from-bo/before-ids.md", Subject: "before ids"}},
 		40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
@@ -359,16 +359,16 @@ func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
 // RECEIPTS at all. Heard is still not answered: the entry stays.
 func TestAReceiptInTheChangeSetSetsTheFlagInOpen(t *testing.T) {
 	root := writeTable(t, map[string]string{
-		"from-stella/old.md":  "From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: old\n\nA question?\n",
-		"from-rowan/RECEIPTS": "2026-09-09T12:34:56Z stella-abcdef012345\n",
+		"from-bo/old.md":    "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: old\n\nA question?\n",
+		"from-ada/RECEIPTS": "2026-09-09T12:34:56Z bo-abcdef012345\n",
 	})
 	c, err := LoadConfig(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	me := mustParticipant(t, c, "Rowan")
-	carried := OpenEntry{ID: "stella-abcdef012345", Kind: OpenNote, From: "Stella", Addr: "to",
-		Date: "2026-09-07T00:01:00Z", Path: "from-stella/old.md", Subject: "old"}
+	me := mustParticipant(t, c, "Ada")
+	carried := OpenEntry{ID: "bo-abcdef012345", Kind: OpenNote, From: "Bo", Addr: "to",
+		Date: "2026-09-07T00:01:00Z", Path: "from-bo/old.md", Subject: "old"}
 
 	// RECEIPTS is NOT in the change set: the flag is whatever the entry says, and nothing
 	// reads the file. That is the whole saving, and it is also the limit -- a receipt this
@@ -382,7 +382,7 @@ func TestAReceiptInTheChangeSetSetsTheFlagInOpen(t *testing.T) {
 	}
 	// In the change set, it sets the flag, and the entry stays open.
 	before := NoteParses()
-	res, err = InboxSince(root, c, me, []string{"from-rowan/RECEIPTS"}, []OpenEntry{carried}, 40, LegacyLine{})
+	res, err = InboxSince(root, c, me, []string{"from-ada/RECEIPTS"}, []OpenEntry{carried}, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -402,15 +402,15 @@ func TestAReceiptInTheChangeSetSetsTheFlagInOpen(t *testing.T) {
 // first version lost it: a `--full` read said so once, and no incremental run ever did again.
 func TestAnUnreadableFileIsCarriedAndReChecked(t *testing.T) {
 	root := writeTable(t, map[string]string{
-		"from-stella/prose.md": "Rowan, this is prose and no header at all.\n\nMore prose.\n",
+		"from-bo/prose.md": "Ada, this is prose and no header at all.\n\nMore prose.\n",
 	})
 	c, err := LoadConfig(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	me := mustParticipant(t, c, "Rowan")
+	me := mustParticipant(t, c, "Ada")
 
-	res, err := InboxSince(root, c, me, []string{"from-stella/prose.md"}, nil, 40, LegacyLine{})
+	res, err := InboxSince(root, c, me, []string{"from-bo/prose.md"}, nil, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -431,7 +431,7 @@ func TestAnUnreadableFileIsCarriedAndReChecked(t *testing.T) {
 		t.Fatalf("the unreadable entry was dropped in silence: %+v", res)
 	}
 	// Somebody fixes the file. It becomes an ordinary entry, with its display line.
-	write(t, root, "from-stella/prose.md", "From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: Now it parses\n\nA question?\n")
+	write(t, root, "from-bo/prose.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: Now it parses\n\nA question?\n")
 	res, err = InboxSince(root, c, me, nil, res.Open, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
@@ -441,13 +441,13 @@ func TestAnUnreadableFileIsCarriedAndReChecked(t *testing.T) {
 	}
 	// And a file that never parses leaves the list when it is RECEIPTED, which is how a
 	// reader says "I have seen this" about a file with no id to answer.
-	write(t, root, "from-stella/prose.md", "Rowan, prose again.\n\nMore prose.\n")
-	write(t, root, "from-rowan/RECEIPTS", "2026-09-09T12:34:56Z from-stella/prose.md\n")
-	res, err = InboxSince(root, c, me, []string{"from-stella/prose.md"}, nil, 40, LegacyLine{})
+	write(t, root, "from-bo/prose.md", "Ada, prose again.\n\nMore prose.\n")
+	write(t, root, "from-ada/RECEIPTS", "2026-09-09T12:34:56Z from-bo/prose.md\n")
+	res, err = InboxSince(root, c, me, []string{"from-bo/prose.md"}, nil, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err = InboxSince(root, c, me, []string{"from-rowan/RECEIPTS"}, res.Open, 40, LegacyLine{})
+	res, err = InboxSince(root, c, me, []string{"from-ada/RECEIPTS"}, res.Open, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -467,9 +467,9 @@ func TestAnOpenNoteWhoseFileVanishedIsCarriedUntilAFullRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	me := mustParticipant(t, c, "Rowan")
-	gone := OpenEntry{ID: "stella-abcdef012345", Kind: OpenNote, From: "Stella", Addr: "to",
-		Date: "2026-09-07T00:01:00Z", Path: "from-stella/gone.md", Subject: "gone"}
+	me := mustParticipant(t, c, "Ada")
+	gone := OpenEntry{ID: "bo-abcdef012345", Kind: OpenNote, From: "Bo", Addr: "to",
+		Date: "2026-09-07T00:01:00Z", Path: "from-bo/gone.md", Subject: "gone"}
 	before := NoteParses()
 	res, err := InboxSince(root, c, me, nil, []OpenEntry{gone}, 40, LegacyLine{})
 	if err != nil {
@@ -516,20 +516,20 @@ func readFile(t *testing.T, root, path string) string {
 // edited after I answered it.
 func TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt(t *testing.T) {
 	files := map[string]string{
-		"from-stella/old.md": "From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: old\n\nA question?\n",
-		"from-rowan/answer.md": "From: Rowan\nTo: Stella\nDate: Mon Sep  7 01:00:00 UTC 2026\nId: rowan-333333333333\n" +
-			"Re: stella-abcdef012345\nSubject: yes\n\nYes.\n",
-		"from-rowan/INDEX": "rowan-333333333333\tfrom-rowan/answer.md\t2026-09-07T01:00:00Z\tStella\tstella-abcdef012345\n",
+		"from-bo/old.md": "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: old\n\nA question?\n",
+		"from-ada/answer.md": "From: Ada\nTo: Bo\nDate: Mon Sep  7 01:00:00 UTC 2026\nId: ada-333333333333\n" +
+			"Re: bo-abcdef012345\nSubject: yes\n\nYes.\n",
+		"from-ada/INDEX": "ada-333333333333\tfrom-ada/answer.md\t2026-09-07T01:00:00Z\tBo\tbo-abcdef012345\n",
 	}
 	root := writeTable(t, files)
 	c, err := LoadConfig(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	me := mustParticipant(t, c, "Rowan")
+	me := mustParticipant(t, c, "Ada")
 
 	// While the reply is in the change set it closes the thread.
-	res, err := InboxSince(root, c, me, []string{"from-stella/old.md", "from-rowan/answer.md"}, nil, 40, LegacyLine{})
+	res, err := InboxSince(root, c, me, []string{"from-bo/old.md", "from-ada/answer.md"}, nil, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -538,11 +538,11 @@ func TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt(t *testing.T) 
 	}
 
 	// Once it is behind the cursor, the edited note is shown again. Shown -- not lost.
-	res, err = InboxSince(root, c, me, []string{"from-stella/old.md"}, nil, 40, LegacyLine{})
+	res, err = InboxSince(root, c, me, []string{"from-bo/old.md"}, nil, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Open) != 1 || res.Open[0].ID != "stella-abcdef012345" {
+	if len(res.Open) != 1 || res.Open[0].ID != "bo-abcdef012345" {
 		t.Fatalf("the re-show is not what the docs say it is: %+v", res.Open)
 	}
 
@@ -555,7 +555,7 @@ func TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt(t *testing.T) 
 
 	// The catalogue warning still says what a missing INDEX line costs, because the
 	// catalogue is still what `check --since` resolves a thread through.
-	if err := os.Remove(filepath.Join(root, "from-rowan", "INDEX")); err != nil {
+	if err := os.Remove(filepath.Join(root, "from-ada", "INDEX")); err != nil {
 		t.Fatal(err)
 	}
 	idx, err := ReadIndex(root, c)
@@ -564,7 +564,7 @@ func TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt(t *testing.T) 
 	}
 	var found string
 	for _, p := range CheckIndex(c, tab, idx) {
-		if p.Where == "from-rowan/answer.md" {
+		if p.Where == "from-ada/answer.md" {
 			found = p.Reason
 		}
 	}
@@ -585,7 +585,7 @@ func TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt(t *testing.T) 
 // same descriptor -- so it is a direct test of the mechanism and not of a symptom.
 func TestALaneStateFileIsReplacedByRenameAndLeavesNoPartialFile(t *testing.T) {
 	root := writeTable(t, nil)
-	const lane = "from-rowan"
+	const lane = "from-ada"
 	first := "1111111111111111111111111111111111111111"
 	if err := WriteCursor(root, lane, first, 1, "", at("2026-09-09T12:00:00Z")); err != nil {
 		t.Fatal(err)
@@ -633,9 +633,9 @@ func TestALaneStateFileIsReplacedByRenameAndLeavesNoPartialFile(t *testing.T) {
 // still the file, and the next write replaces it.
 func TestAStrandedTemporaryIsIgnoredByTheLaneWalk(t *testing.T) {
 	files := fixture()
-	files["from-stella/CURSOR"] = "1111111111111111111111111111111111111111 2026-09-09T12:00:00Z open=0\n"
-	files["from-stella/CURSOR"+TempSuffix] = "22222222222222222222222222222222222222"
-	files["from-stella/OPEN"+TempSuffix] = "stella-abcdef012345 from-stella/half-a-l"
+	files["from-bo/CURSOR"] = "1111111111111111111111111111111111111111 2026-09-09T12:00:00Z open=0\n"
+	files["from-bo/CURSOR"+TempSuffix] = "22222222222222222222222222222222222222"
+	files["from-bo/OPEN"+TempSuffix] = "bo-abcdef012345 from-bo/half-a-l"
 	tab := loadTable(t, writeTable(t, files))
 	if n := len(tab.Notes); n != len(fixture()) {
 		t.Fatalf("the lane walk read %d notes, want %d: a temporary was read as a note", n, len(fixture()))
@@ -647,11 +647,11 @@ func TestAStrandedTemporaryIsIgnoredByTheLaneWalk(t *testing.T) {
 	}
 	// A file that merely ends in .tmp is NOT covered: only the four state files' own
 	// temporaries are, and a lane is still a lane that holds notes and nothing else.
-	files["from-stella/notes.tmp"] = "not a state file\n"
+	files["from-bo/notes.tmp"] = "not a state file\n"
 	stray := loadTable(t, writeTable(t, files))
 	found := false
 	for _, p := range stray.Check() {
-		if p.Where == "from-stella/notes.tmp" {
+		if p.Where == "from-bo/notes.tmp" {
 			found = true
 		}
 	}
@@ -667,13 +667,13 @@ func TestAStrandedTemporaryIsIgnoredByTheLaneWalk(t *testing.T) {
 func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 	root := writeTable(t, nil)
 	sha := "0123456789abcdef0123456789abcdef01234567"
-	if err := WriteCursor(root, "from-rowan", sha, 2, "2026-09-01", at("2026-09-09T12:34:56Z")); err != nil {
+	if err := WriteCursor(root, "from-ada", sha, 2, "2026-09-01", at("2026-09-09T12:34:56Z")); err != nil {
 		t.Fatal(err)
 	}
-	if line := readFile(t, root, CursorPath("from-rowan")); line != sha+" 2026-09-09T12:34:56Z open=2 legacy=2026-09-01\n" {
+	if line := readFile(t, root, CursorPath("from-ada")); line != sha+" 2026-09-09T12:34:56Z open=2 legacy=2026-09-01\n" {
 		t.Fatalf("the cursor line is %q", line)
 	}
-	got, err := ReadCursor(root, "from-rowan")
+	got, err := ReadCursor(root, "from-ada")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -682,13 +682,13 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 	}
 	// No line is no token, which is exactly the shape of every cursor written before the
 	// line existed: three tokens, read the same way, LegacyBefore zero.
-	if err := WriteCursor(root, "from-rowan", sha, 2, "", at("2026-09-09T12:34:56Z")); err != nil {
+	if err := WriteCursor(root, "from-ada", sha, 2, "", at("2026-09-09T12:34:56Z")); err != nil {
 		t.Fatal(err)
 	}
-	if line := readFile(t, root, CursorPath("from-rowan")); strings.Contains(line, "legacy=") {
+	if line := readFile(t, root, CursorPath("from-ada")); strings.Contains(line, "legacy=") {
 		t.Fatalf("a cursor with no line still wrote one: %q", line)
 	}
-	got, err = ReadCursor(root, "from-rowan")
+	got, err = ReadCursor(root, "from-ada")
 	if err != nil || got.Legacy != "" || !got.LegacyBefore().IsZero() {
 		t.Fatalf("a cursor with no legacy line: %+v, %v", got, err)
 	}
@@ -698,8 +698,8 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 		sha + " 2026-09-09T12:34:56Z legacy=2026-09-01\n",
 		sha + " 2026-09-09T12:34:56Z legacy=2026-09-01 open=2\n",
 	} {
-		write(t, root, CursorPath("from-rowan"), line)
-		got, err := ReadCursor(root, "from-rowan")
+		write(t, root, CursorPath("from-ada"), line)
+		got, err := ReadCursor(root, "from-ada")
 		if err != nil || got.Legacy != "2026-09-01" {
 			t.Fatalf("cursor %q read as %+v, %v", line, got, err)
 		}
@@ -711,14 +711,14 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 		sha + " 2026-09-09T12:34:56Z legacy=2026-09-01T00:00:00Z\n",
 		sha + " 2026-09-09T12:34:56Z legacy=\n",
 	} {
-		write(t, root, CursorPath("from-rowan"), bad)
-		if _, err := ReadCursor(root, "from-rowan"); err == nil {
+		write(t, root, CursorPath("from-ada"), bad)
+		if _, err := ReadCursor(root, "from-ada"); err == nil {
 			t.Fatalf("a cursor of %q was accepted", bad)
 		}
 	}
 	// A line WriteCursor cannot write is refused before it reaches the file, so a cursor on
 	// the table is never a date nobody can read.
-	if err := WriteCursor(root, "from-rowan", sha, 0, "last Tuesday", at("2026-09-09T12:34:56Z")); err == nil {
+	if err := WriteCursor(root, "from-ada", sha, 0, "last Tuesday", at("2026-09-09T12:34:56Z")); err == nil {
 		t.Fatal("WriteCursor wrote a legacy line that is not a date")
 	}
 }
@@ -727,10 +727,10 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 // gets, kept in one rule so they cannot draw it differently.
 func TestTheLegacyLineLeavesOldNotesOffTheOpenListInBothReads(t *testing.T) {
 	files := fixture()
-	files["from-stella/2026-08-01T0001Z-before-the-line.md"] = `From: Stella
-To: Rowan
+	files["from-bo/2026-08-01T0001Z-before-the-line.md"] = `From: Bo
+To: Ada
 Date: Sat Aug  1 00:01:00 UTC 2026
-Id: stella-aaaaaaaaaaaa
+Id: bo-aaaaaaaaaaaa
 Subject: A note from before the table adopted the tool
 
 The body.
@@ -740,13 +740,13 @@ The body.
 	if err != nil {
 		t.Fatal(err)
 	}
-	me := mustParticipant(t, c, "Rowan")
+	me := mustParticipant(t, c, "Ada")
 	line := LegacyLine{Before: at("2026-09-01T00:00:00Z")}
 
 	// The incremental read: the old note is in the change set, is not carried, and is
 	// counted rather than listed.
 	res, err := InboxSince(root, c, me,
-		[]string{"from-stella/2026-08-01T0001Z-before-the-line.md", "from-stella/2026-09-07T0001Z-a-question-abcdef012345.md"},
+		[]string{"from-bo/2026-08-01T0001Z-before-the-line.md", "from-bo/2026-09-07T0001Z-a-question-abcdef012345.md"},
 		nil, 40, line)
 	if err != nil {
 		t.Fatal(err)
@@ -767,8 +767,8 @@ The body.
 	// from the ENTRY, so no note is opened to draw the line over a carried one.
 	before := NoteParses()
 	res, err = InboxSince(root, c, me, nil,
-		[]OpenEntry{{ID: "stella-aaaaaaaaaaaa", Kind: OpenNote, From: "Stella", Addr: "to",
-			Date: "2026-08-01T00:01:00Z", Path: "from-stella/2026-08-01T0001Z-before-the-line.md",
+		[]OpenEntry{{ID: "bo-aaaaaaaaaaaa", Kind: OpenNote, From: "Bo", Addr: "to",
+			Date: "2026-08-01T00:01:00Z", Path: "from-bo/2026-08-01T0001Z-before-the-line.md",
 			Subject: "A note from before the table adopted the tool"}}, 40, line)
 	if err != nil {
 		t.Fatal(err)
@@ -781,7 +781,7 @@ The body.
 	}
 	// An entry with NO recorded date still falls on the same side as its note, because the
 	// day in its filename is read exactly as Note.legacyDay reads it.
-	_, covered := SplitLegacy([]OpenEntry{{Kind: OpenNote, Path: "from-stella/2026-08-01T0001Z-before-the-line.md"}}, line)
+	_, covered := SplitLegacy([]OpenEntry{{Kind: OpenNote, Path: "from-bo/2026-08-01T0001Z-before-the-line.md"}}, line)
 	if covered != 1 {
 		t.Fatalf("an entry dated only by its filename was not covered by the line")
 	}
@@ -804,7 +804,7 @@ The body.
 	// A note whose date cannot be read AT ALL is never behind the line: a file that cannot
 	// say when it was written cannot claim to predate anything, and the safe direction for
 	// a note nobody can date is to carry it.
-	files["from-stella/undated.md"] = "From: Stella\nTo: Rowan\nSubject: No date line, and no minute in the filename\n\nThe body.\n"
+	files["from-bo/undated.md"] = "From: Bo\nTo: Ada\nSubject: No date line, and no minute in the filename\n\nThe body.\n"
 	undated := loadTable(t, writeTable(t, files))
 	all := OpenFromFull(undated.Inbox(me, 40), nil)
 	_, covered = SplitLegacy(all, LegacyLine{Before: at("2030-01-01T00:00:00Z")})

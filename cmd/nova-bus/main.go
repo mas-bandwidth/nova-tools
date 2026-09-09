@@ -47,7 +47,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-bus: the family's table, with the races taken out (see SPEC.md)
+const usage = `nova-bus: the table, with the races taken out (see SPEC.md)
 
 usage:
   nova-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> --attempts <n> [--slug <s>] [--no-push]
