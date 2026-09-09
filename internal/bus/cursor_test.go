@@ -716,11 +716,22 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 			t.Fatalf("cursor %q read as %+v, %v", line, got, err)
 		}
 	}
-	// And a date that is not one is a refusal at the READ, like every other value on this
-	// line that becomes a decision later.
+	// An INSTANT token reads, and reads as itself and not as its day: this is the shape a
+	// bus switching TODAY writes, and a cursor holding one has to survive every later run.
+	write(t, root, CursorPath("from-ada"), sha+" 2026-09-09T12:34:56Z open=2 legacy=2026-09-09T18:07:00Z\n")
+	got, err = ReadCursor(root, "from-ada")
+	if err != nil || got.Legacy != "2026-09-09T18:07:00Z" || !got.LegacyBefore().Equal(at("2026-09-09T18:07:00Z")) {
+		t.Fatalf("a cursor with an instant line read as %+v, %v", got, err)
+	}
+	if line := got.LegacyLine(); line.Text != "2026-09-09T18:07:00Z" || !line.Before.Equal(at("2026-09-09T18:07:00Z")) {
+		t.Fatalf("the cursor's line was not carried as given: %+v", line)
+	}
+	// And a line that is neither shape is a refusal at the READ, like every other value on
+	// this line that becomes a decision later. An offset is not a UTC instant.
 	for _, bad := range []string{
 		sha + " 2026-09-09T12:34:56Z legacy=last-tuesday\n",
-		sha + " 2026-09-09T12:34:56Z legacy=2026-09-01T00:00:00Z\n",
+		sha + " 2026-09-09T12:34:56Z legacy=2026-09-01T00:00:00+10:00\n",
+		sha + " 2026-09-09T12:34:56Z legacy=2026-09-01T18:07Z\n",
 		sha + " 2026-09-09T12:34:56Z legacy=\n",
 	} {
 		write(t, root, CursorPath("from-ada"), bad)
@@ -729,9 +740,125 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 		}
 	}
 	// A line WriteCursor cannot write is refused before it reaches the file, so a cursor on
-	// the bus is never a date nobody can read.
+	// the bus is never a date nobody can read -- and an instant it CAN write goes down
+	// exactly as given rather than rounded to its day.
 	if err := WriteCursor(root, "from-ada", sha, 0, "last Tuesday", at("2026-09-09T12:34:56Z")); err == nil {
 		t.Fatal("WriteCursor wrote a legacy line that is not a date")
+	}
+	if err := WriteCursor(root, "from-ada", sha, 0, "2026-09-09T18:07:00Z", at("2026-09-09T12:34:56Z")); err != nil {
+		t.Fatal(err)
+	}
+	if line := readFile(t, root, CursorPath("from-ada")); !strings.Contains(line, "legacy=2026-09-09T18:07:00Z") {
+		t.Fatalf("an instant line was not written as given: %q", line)
+	}
+}
+
+// The bug a family of five found in their first hour: a line drawn at TOMORROW's date made
+// every note they wrote that afternoon legacy, because a date is midnight at its START and
+// midnight tomorrow is after everything written today. The line is a MOMENT, so an instant
+// draws it where they actually switched -- and a date still means exactly what it always
+// meant.
+func TestTheLegacyLineIsAMomentSoTheSwitchDayIsNotAllLegacy(t *testing.T) {
+	files := fixture()
+	files["from-bo/2026-09-09T1806Z-a-minute-before-the-switch.md"] = `From: Bo
+To: Ada
+Date: Wed Sep  9 18:06:00 UTC 2026
+Id: bo-bbbbbbbbbbbb
+Subject: Sent a minute before the switch
+
+The body.
+`
+	files["from-bo/2026-09-09T1808Z-a-minute-after-the-switch.md"] = `From: Bo
+To: Ada
+Date: Wed Sep  9 18:08:00 UTC 2026
+Id: bo-cccccccccccc
+Subject: Sent a minute after the switch
+
+The body.
+`
+	root := writeBus(t, files)
+	c, err := LoadConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := mustParticipant(t, c, "Ada")
+	changed := []string{
+		"from-bo/2026-09-09T1806Z-a-minute-before-the-switch.md",
+		"from-bo/2026-09-09T1808Z-a-minute-after-the-switch.md",
+	}
+
+	// The switch happened at 18:07. The note a minute before it is behind the line and the
+	// note a minute after it is on the open list, on the same afternoon and the same date.
+	instant, err := NewLegacyLine("2026-09-09T18:07:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if instant.Text != "2026-09-09T18:07:00Z" || !instant.Before.Equal(at("2026-09-09T18:07:00Z")) {
+		t.Fatalf("an instant line parsed as %+v", instant)
+	}
+	res, err := InboxSince(root, c, me, changed, nil, 40, instant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Legacy != 1 || len(res.Open) != 1 || !strings.Contains(res.Open[0].Path, "1808Z") {
+		t.Fatalf("the line at 18:07 gave legacy=%d open=%+v, want the 18:06 note behind it and the 18:08 note listed", res.Legacy, res.Open)
+	}
+	// The same rule through the full walk, which is the read that WRITES the open list every
+	// later run inherits -- and is the read that reported zero on the real bus.
+	tab := loadBus(t, root)
+	all := OpenFromFull(tab.Inbox(me, 40), nil)
+	keep, coveredNotes, coveredUnreadable := SplitLegacy(all, instant)
+	covered := coveredNotes + coveredUnreadable
+	// Everything on this bus predates the switch except the 18:08 note, so exactly one
+	// entry survives and it is that one.
+	if covered != len(all)-1 {
+		t.Fatalf("the full walk left %d of %d notes off, want all but the 18:08 note", covered, len(all))
+	}
+	for _, e := range keep {
+		if strings.Contains(e.Path, "1806Z") {
+			t.Fatal("the full walk carried the note from before the switch")
+		}
+	}
+	var sawAfter bool
+	for _, e := range keep {
+		sawAfter = sawAfter || strings.Contains(e.Path, "1808Z")
+	}
+	if !sawAfter {
+		t.Fatal("the full walk left off a note sent AFTER the line, which is the bug this closes")
+	}
+
+	// A DATE is midnight at its start, unchanged: tomorrow's date takes both of today's
+	// notes, which is exactly what the family saw and is the honest reading of a date.
+	tomorrow, err := NewLegacyLine("2026-09-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tomorrow.Before.Equal(at("2026-09-10T00:00:00Z")) {
+		t.Fatalf("a date line is not midnight at its start: %+v", tomorrow)
+	}
+	if _, n, u := SplitLegacy(all, tomorrow); n+u != len(all) {
+		t.Fatalf("tomorrow's date left %d of %d notes off, want all of them", n+u, len(all))
+	}
+	// And TODAY's date is midnight this morning, so both of today's notes are carried.
+	today, err := NewLegacyLine("2026-09-09")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep, _, _ = SplitLegacy(all, today)
+	var before, after bool
+	for _, e := range keep {
+		before = before || strings.Contains(e.Path, "1806Z")
+		after = after || strings.Contains(e.Path, "1808Z")
+	}
+	if !before || !after {
+		t.Fatalf("today's date did not behave as midnight at its start: %+v", keep)
+	}
+
+	// The two shapes, and only the two: an instant must be UTC and to the second.
+	for _, bad := range []string{"last Tuesday", "2026-09-09T18:07:00+10:00", "2026-09-09T18:07Z", "2026-09-09 18:07:00Z", ""} {
+		if _, err := NewLegacyLine(bad); err == nil {
+			t.Fatalf("NewLegacyLine accepted %q", bad)
+		}
 	}
 }
 
@@ -793,14 +920,14 @@ The body.
 	}
 	// An entry with NO recorded date still falls on the same side as its note, because the
 	// day in its filename is read exactly as Note.legacyDay reads it.
-	_, covered := SplitLegacy([]OpenEntry{{Kind: OpenNote, Path: "from-bo/2026-08-01T0001Z-before-the-line.md"}}, line)
+	_, covered, _ := SplitLegacy([]OpenEntry{{Kind: OpenNote, Path: "from-bo/2026-08-01T0001Z-before-the-line.md"}}, line)
 	if covered != 1 {
 		t.Fatalf("an entry dated only by its filename was not covered by the line")
 	}
 
 	// The full read: the same rule, over the whole bus, through the same function.
 	tab := loadBus(t, root)
-	keep, covered := SplitLegacy(OpenFromFull(tab.Inbox(me, 40), tab.Unreadable(me.Lane)), line)
+	keep, covered, _ := SplitLegacy(OpenFromFull(tab.Inbox(me, 40), tab.Unreadable(me.Lane)), line)
 	if covered != 1 {
 		t.Fatalf("the full walk left %d notes off, want 1", covered)
 	}
@@ -810,7 +937,7 @@ The body.
 		}
 	}
 	// With no line at all, nothing is left off and the listing is what it always was.
-	if _, covered := SplitLegacy(OpenFromFull(tab.Inbox(me, 40), nil), LegacyLine{}); covered != 0 {
+	if _, covered, _ := SplitLegacy(OpenFromFull(tab.Inbox(me, 40), nil), LegacyLine{}); covered != 0 {
 		t.Fatalf("a run with no line left %d notes off", covered)
 	}
 	// A note whose date cannot be read AT ALL is never behind the line: a file that cannot
@@ -819,8 +946,117 @@ The body.
 	files["from-bo/undated.md"] = "From: Bo\nTo: Ada\nSubject: No date line, and no minute in the filename\n\nThe body.\n"
 	undated := loadBus(t, writeBus(t, files))
 	all := OpenFromFull(undated.Inbox(me, 40), nil)
-	_, covered = SplitLegacy(all, LegacyLine{Before: at("2030-01-01T00:00:00Z")})
+	_, covered, _ = SplitLegacy(all, LegacyLine{Before: at("2030-01-01T00:00:00Z")})
 	if covered != len(all)-1 {
 		t.Fatalf("an undated note was taken as older than the line: %d of %d left off", covered, len(all))
+	}
+}
+
+// byHand is the shape of the notes a real bus was written in before it had a tool: a
+// markdown heading first, a bolded `**To**` where a `To:` line goes, a `Branch:` key
+// nothing knows, and a sentence in the header position. None of it parses, none of it ever
+// will, and there is nothing to fix -- it is history.
+const byHand = `# The gate, and the runner
+
+**To** Ada
+
+Branch: main
+
+The checkpoint is pushed and the suite passed.
+`
+
+// THE FIFTEEN LINES ON EVERY POLL. A live inbox printed fifteen `INBOX UNREADABLE` lines
+// on every run, all of them notes hand-written days before that bus switched over. So the
+// switch-day line reaches an unreadable file too: behind the line it is counted and not
+// named, on or after it -- or with no readable date at all -- it is named exactly as
+// before. And a file behind the line is not even OPENED, which is the part that matters
+// for a run whose cost is meant to be the size of the change: an unreadable entry is the
+// one entry that costs a parse per run.
+func TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened(t *testing.T) {
+	files := fixture()
+	files["from-bo/2026-08-15-by-hand.md"] = byHand
+	files["from-bo/2026-09-08-by-hand.md"] = byHand
+	root := writeBus(t, files)
+	c, err := LoadConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := mustParticipant(t, c, "Ada")
+	line := LegacyLine{Before: at("2026-09-01T00:00:00Z")}
+	const old, recent = "from-bo/2026-08-15-by-hand.md", "from-bo/2026-09-08-by-hand.md"
+
+	// Both arrive in one change set. The older one is counted on the LEGACY line and the
+	// newer one is named, because a file nobody can read that arrived AFTER the switch is
+	// exactly what the unreadable entry is for.
+	res, err := InboxSince(root, c, me, []string{old, recent}, nil, 40, line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.LegacyUnreadable != 1 || res.Legacy != 0 {
+		t.Fatalf("legacy counts are notes=%d unreadable=%d, want notes=0 unreadable=1", res.Legacy, res.LegacyUnreadable)
+	}
+	if len(res.Unreadable) != 1 || res.Unreadable[0].Path != recent {
+		t.Fatalf("named %+v, want only %s", res.Unreadable, recent)
+	}
+	if len(res.Open) != 1 || res.Open[0].Path != recent {
+		t.Fatalf("open = %+v, want only the file in front of the line", res.Open)
+	}
+
+	// And CARRIED, which is the shape the live inbox was in: both already on the open list
+	// from before the line was drawn. The old one leaves the list, is counted, and is not
+	// opened -- one parse for the two entries, and it belongs to the newer file.
+	before := NoteParses()
+	res, err = InboxSince(root, c, me, nil, []OpenEntry{
+		{Kind: OpenUnreadable, Path: old},
+		{Kind: OpenUnreadable, Path: recent},
+	}, 40, line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.LegacyUnreadable != 1 {
+		t.Fatalf("a carried unreadable file behind the line was counted %d times, want 1", res.LegacyUnreadable)
+	}
+	if len(res.Open) != 1 || res.Open[0].Path != recent {
+		t.Fatalf("open = %+v, want only the file in front of the line", res.Open)
+	}
+	if got := NoteParses() - before; got != 1 {
+		t.Fatalf("the run parsed %d files, want 1: a file behind the line must not be opened", got)
+	}
+
+	// With NO line, nothing changes from what it always did: both are carried and both are
+	// named. The line is the only thing that quiets one, and a bus that never draws one
+	// never loses a name.
+	res, err = InboxSince(root, c, me, nil, []OpenEntry{
+		{Kind: OpenUnreadable, Path: old},
+		{Kind: OpenUnreadable, Path: recent},
+	}, 40, LegacyLine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Unreadable) != 2 || len(res.Open) != 2 || res.LegacyUnreadable != 0 {
+		t.Fatalf("with no line: named %d, carrying %d, counted %d; want 2, 2 and 0",
+			len(res.Unreadable), len(res.Open), res.LegacyUnreadable)
+	}
+
+	// A file whose name says NOTHING about when it was written is never behind the line,
+	// on the rule the whole tolerance rests on: it cannot claim to predate anything.
+	files["from-bo/by-hand.md"] = byHand
+	root = writeBus(t, files)
+	res, err = InboxSince(root, c, me, []string{"from-bo/by-hand.md"}, nil, 40, line)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Unreadable) != 1 || res.LegacyUnreadable != 0 {
+		t.Fatalf("an undated unreadable file was taken as history: named %d, counted %d", len(res.Unreadable), res.LegacyUnreadable)
+	}
+
+	// The full read draws the line over the same list through SplitLegacy, and the two
+	// counts come back APART: every note on this bus is in front of the line, and one file
+	// is behind it. Reported as one number they would say neither.
+	files["from-bo/2026-08-01T0001Z-before-the-line.md"] = "From: Bo\nTo: Ada\nDate: Sat Aug  1 00:01:00 UTC 2026\nId: bo-aaaaaaaaaaaa\nSubject: From the months before the tool\n\nThe body.\n"
+	tab := loadBus(t, writeBus(t, files))
+	_, notes, unreadable := SplitLegacy(OpenFromFull(tab.Inbox(me, 40), tab.Unreadable(me.Lane)), line)
+	if notes != 1 || unreadable != 1 {
+		t.Fatalf("the full walk left off notes=%d unreadable=%d, want 1 and 1", notes, unreadable)
 	}
 }

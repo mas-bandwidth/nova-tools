@@ -124,14 +124,27 @@ type Note struct {
 // is told the header ends at the first blank line. The failure is unchanged -- these are
 // the same refusals with the fix in them.
 func ParseNote(path, text string) (Note, error) {
-	noteParses.Add(1)
-	n := Note{Path: path}
-	if i := strings.IndexByte(path, '/'); i > 0 {
-		n.Lane = path[:i]
+	n, probs := ParseNoteAll(path, text)
+	if len(probs) > 0 {
+		// The FIRST problem, and a Note carrying nothing but where it was read from. A
+		// reader that took a half-read header for a header would be guessing at the half
+		// it did not get, and that guess is the failure the refusals exist to stop.
+		return Note{Path: n.Path, Lane: n.Lane}, probs[0]
 	}
-	text = strings.TrimPrefix(text, "\ufeff")
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	lines := strings.Split(text, "\n")
+	return n, nil
+}
+
+// ParseNoteAll is ParseNote with every problem in the header collected rather than the
+// first returned. It exists for SEND, which is a person at a terminal with a draft in
+// front of them: a refusal that names one of three mistakes costs them three runs to find
+// out about the other two. Every reader on the bus still takes the first, through
+// ParseNote, because a file that will not parse is a file that will not parse and a
+// listing of a hundred of them wants one line each.
+//
+// The problems are in the order the lines are read, so the first is the one ParseNote
+// would have returned and the two cannot say different things about the same file.
+func ParseNoteAll(path, text string) (Note, []error) {
+	lines := SplitDraft(text)
 
 	// Tolerance 1. Only at the very top of the file, and only over blank lines: a heading
 	// in the middle of a header is not a heading, it is a broken note.
@@ -142,7 +155,38 @@ func ParseNote(path, text string) (Note, error) {
 			first++
 		}
 	}
+	return parseLines(path, lines, nil, first)
+}
 
+// SplitDraft is a note's text as lines, with the byte-order mark off the front and CRLF
+// folded. Both the reader and send's tolerances start here, so the two cannot disagree
+// about what a line is.
+func SplitDraft(text string) []string {
+	text = strings.TrimPrefix(text, "\ufeff")
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	return strings.Split(text, "\n")
+}
+
+// parseLines is the header walk both entry points share.
+//
+// `at` is where each line came from in the file a PERSON wrote, 1-based, or nil when the
+// lines are the file. Send's tolerances drop lines -- a Date line it will replace, the
+// blanks above a header -- and a refusal about line 6 of what was left is a refusal about
+// a line the writer cannot find. So the numbers in the message are always the file's own.
+func parseLines(path string, lines []string, at []int, first int) (Note, []error) {
+	noteParses.Add(1)
+	n := Note{Path: path}
+	if i := strings.IndexByte(path, '/'); i > 0 {
+		n.Lane = path[:i]
+	}
+	lineNo := func(i int) int {
+		if at == nil || i >= len(at) {
+			return i + 1
+		}
+		return at[i]
+	}
+
+	var problems []error
 	h := Header{lines: make(map[string]int)}
 	end := len(lines)
 	for i := first; i < len(lines); i++ {
@@ -157,7 +201,8 @@ func ParseNote(path, text string) (Note, error) {
 		}
 		key, value, ok := strings.Cut(line, ":")
 		if !ok || key == "" || strings.TrimSpace(key) != key {
-			return n, fmt.Errorf("line %d: not a header line (a header is Key: value): %s", i+1, blankLineAdvice)
+			problems = append(problems, fmt.Errorf("line %d: not a header line (a header is Key: value): %s", lineNo(i), blankLineAdvice))
+			continue
 		}
 		// A key nobody could have meant as a key is a BODY SENTENCE standing where the
 		// header is, which on the real bus is the commonest unreadable shape there is:
@@ -165,19 +210,23 @@ func ParseNote(path, text string) (Note, error) {
 		// clause look like a key. Saying "unknown header key" to that is true and useless,
 		// so it says the thing that fixes it instead.
 		if isProseKey(key) {
-			return n, fmt.Errorf("line %d: %q is a sentence, not a header key: %s", i+1, truncate(key, maxQuotedKey), blankLineAdvice)
+			problems = append(problems, fmt.Errorf("line %d: %q is a sentence, not a header key: %s", lineNo(i), truncate(key, maxQuotedKey), blankLineAdvice))
+			continue
 		}
 		// A key in markdown bold -- `**To**: Ada` -- is a bus people also read in a
 		// browser writing what it reads. It is one substitution away from correct and the
-		// refusal says which.
+		// refusal says which. SEND does the substitution and says so; every reader
+		// refuses, because a file on the bus is not a draft anybody is still editing.
 		if plain, bold := unbold(key); bold {
-			return n, fmt.Errorf("line %d: %q: headers are plain `Key: value`, not markdown bold; write %q", i+1, truncate(key, maxQuotedKey), plain+":")
+			problems = append(problems, fmt.Errorf("line %d: %q: headers are plain `Key: value`, not markdown bold; write %q", lineNo(i), truncate(key, maxQuotedKey), plain+":"))
+			continue
 		}
 		value = strings.TrimSpace(value)
 		switch key {
 		case KeyRe:
 			if value == "" {
-				return n, fmt.Errorf("line %d: empty %s line", i+1, KeyRe)
+				problems = append(problems, fmt.Errorf("line %d: empty %s line", lineNo(i), KeyRe))
+				continue
 			}
 			h.Re = append(h.Re, value)
 			if _, seen := h.lines[key]; !seen {
@@ -186,7 +235,10 @@ func ParseNote(path, text string) (Note, error) {
 			continue
 		case KeyFrom, KeyTo, KeyCc, KeyDate, KeyID, KeySubject, KeyKind:
 			if _, dup := h.lines[key]; dup {
-				return n, fmt.Errorf("line %d: a second %s line", i+1, key)
+				// The FIRST of the two is kept, so that what this header says is what a
+				// reader of the file's top would say it says.
+				problems = append(problems, fmt.Errorf("line %d: a second %s line", lineNo(i), key))
+				continue
 			}
 		default:
 			// The key is quoted SHORT. A file whose first line is a paragraph has that
@@ -197,7 +249,8 @@ func ParseNote(path, text string) (Note, error) {
 			// The known keys are NAMED. `Branch:` is a real line off the real bus, and
 			// a writer told only that their key is unknown has to go and find the eight
 			// that are not; they fit on the line, so they are on it.
-			return n, fmt.Errorf("line %d: unknown header key %q (the keys are %s)", i+1, truncate(key, maxQuotedKey), strings.Join(KnownKeys, ", "))
+			problems = append(problems, fmt.Errorf("line %d: unknown header key %q (the keys are %s)", lineNo(i), truncate(key, maxQuotedKey), strings.Join(KnownKeys, ", ")))
+			continue
 		}
 		h.lines[key] = i + 1
 		switch key {
@@ -218,13 +271,13 @@ func ParseNote(path, text string) (Note, error) {
 		}
 	}
 	if end == first {
-		return n, fmt.Errorf("line %d: the file begins with a blank line, so it has no header", first+1)
+		problems = append(problems, fmt.Errorf("line %d: the file begins with a blank line, so it has no header", lineNo(first)))
 	}
 	if end < len(lines) {
 		n.Body = strings.Join(lines[end+1:], "\n")
 	}
 	n.Header = h
-	return n, nil
+	return n, problems
 }
 
 // blankLineAdvice is the one sentence that fixes every note whose header ran on into its
@@ -260,43 +313,58 @@ func unbold(key string) (string, bool) {
 // LineOf reports the 1-based line a key was read at, or 0.
 func (h Header) LineOf(key string) int { return h.lines[key] }
 
+// ErrNoFrom is a header with no From line at all, as a value rather than a sentence,
+// because SEND says one more thing about it than a reader does: that --as will write the
+// line. Wrapping it there keeps the two from drifting into two different sentences about
+// the same missing line.
+var ErrNoFrom = fmt.Errorf("no %s line", KeyFrom)
+
 // Validate holds the rules every note obeys, whether it is being sent now or was written
 // by hand a week ago. It does NOT check the Id line: a note without one is legacy and is
 // addressed by path, which is the whole of the compatibility promise.
 func (h Header) Validate(c *Config) error {
+	if problems := h.Problems(c); len(problems) > 0 {
+		return problems[0]
+	}
+	return nil
+}
+
+// Problems is Validate with every finding collected rather than the first returned, in
+// the order Validate would have returned them. It is what SEND refuses on: a draft with an
+// unknown recipient AND no subject is two mistakes, and a person who has to run the tool
+// again to be told the second has been made to do the tool's counting.
+func (h Header) Problems(c *Config) []error {
+	var problems []error
 	if h.From == "" {
-		return fmt.Errorf("no %s line", KeyFrom)
+		problems = append(problems, ErrNoFrom)
+	} else if _, ok := c.ResolveOne(h.From); !ok {
+		problems = append(problems, fmt.Errorf("%s: %q names no one on this bus (known: %s)", KeyFrom, h.From, strings.Join(c.KnownNames(), "; ")))
 	}
-	if _, ok := c.ResolveOne(h.From); !ok {
-		return fmt.Errorf("%s: %q names no one on this bus (known: %s)", KeyFrom, h.From, strings.Join(c.KnownNames(), "; "))
-	}
-	if strings.TrimSpace(h.To) == "" {
-		return fmt.Errorf("no %s line", KeyTo)
-	}
-	to, unknown := c.ResolveList(h.To)
-	if len(unknown) > 0 {
-		return fmt.Errorf("%s: %s names no one on this bus (known: %s)", KeyTo, quoteAll(UnknownNames(unknown)), strings.Join(c.KnownNames(), "; "))
-	}
-	if len(to) == 0 {
-		return fmt.Errorf("%s: no recipients", KeyTo)
+	switch to, unknown := c.ResolveList(h.To); {
+	case strings.TrimSpace(h.To) == "":
+		problems = append(problems, fmt.Errorf("no %s line", KeyTo))
+	case len(unknown) > 0:
+		problems = append(problems, fmt.Errorf("%s: %s names no one on this bus (known: %s)", KeyTo, quoteAll(UnknownNames(unknown)), strings.Join(c.KnownNames(), "; ")))
+	case len(to) == 0:
+		problems = append(problems, fmt.Errorf("%s: no recipients", KeyTo))
 	}
 	if h.Cc != "" {
 		if _, unknownCc := c.ResolveList(h.Cc); len(unknownCc) > 0 {
-			return fmt.Errorf("%s: %s names no one on this bus (known: %s)", KeyCc, quoteAll(UnknownNames(unknownCc)), strings.Join(c.KnownNames(), "; "))
+			problems = append(problems, fmt.Errorf("%s: %s names no one on this bus (known: %s)", KeyCc, quoteAll(UnknownNames(unknownCc)), strings.Join(c.KnownNames(), "; ")))
 		}
 	}
 	if strings.TrimSpace(h.Subject) == "" {
-		return fmt.Errorf("no %s line, or an empty one", KeySubject)
+		problems = append(problems, fmt.Errorf("no %s line, or an empty one", KeySubject))
 	}
 	if h.Kind != "" && h.Kind != KindReceipt && h.Kind != KindNote {
-		return fmt.Errorf("%s: %q is neither %q nor %q", KeyKind, h.Kind, KindReceipt, KindNote)
+		problems = append(problems, fmt.Errorf("%s: %q is neither %q nor %q", KeyKind, h.Kind, KindReceipt, KindNote))
 	}
 	if h.ID != "" {
 		if err := ValidID(h.ID); err != nil {
-			return fmt.Errorf("%s: %w", KeyID, err)
+			problems = append(problems, fmt.Errorf("%s: %w", KeyID, err))
 		}
 	}
-	return nil
+	return problems
 }
 
 // Recipients is every name in To and Cc, resolved, with which line named them.

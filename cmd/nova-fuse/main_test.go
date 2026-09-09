@@ -1319,7 +1319,10 @@ var fuseAudit = audit.Config{
 	// Rendered through one of these, a string cannot carry a line break, a terminal
 	// control sequence or a bidi control. why and since wrap oneline; fuse.OneLine is
 	// oneline.Escape under its old name.
-	Escapers: []string{"fuse.OneLine", "why", "since"},
+	// hintFor is the fourth: it returns this package's own boxHint constant, or the empty
+	// string, and nothing else -- a check on a flag name, with no caller text in it. The
+	// classifier walks its body like the others, so the claim is checked rather than taken.
+	Escapers: []string{"fuse.OneLine", "why", "since", "hintFor"},
 	// One entry per site, keyed by file, function and source text. Each is a claim, and
 	// each claim is either checked by a test named here or stated as the reason a reader
 	// would accept. The usage constant needs no entry: a package constant is a literal.

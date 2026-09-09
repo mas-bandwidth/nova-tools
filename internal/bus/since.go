@@ -98,6 +98,12 @@ type InboxResult struct {
 	// before the switch-day line. They are counted and never listed one by one; see
 	// LegacyLine.
 	Legacy int
+	// LegacyUnreadable is the same for the files that would not PARSE and are dated
+	// before the line: left off the open list, left out of Unreadable, and counted here.
+	// It is a second number rather than part of Legacy because the two are different
+	// facts about the bus -- a note taken as read, and a file nobody can read -- and a
+	// reader deciding whether to go and look at the old lane needs to know which.
+	LegacyUnreadable int
 }
 
 // Notes, Receipts and Heard are the three counts on the OK line, taken from the open list
@@ -119,8 +125,9 @@ func (r InboxResult) Counts() (notes, receipts, heard int) {
 	return notes, receipts, heard
 }
 
-// LegacyLine is the switch-day line: the UTC date before which a note is not carried on
-// this reader's open list.
+// LegacyLine is the switch-day line: the MOMENT before which a note is not carried on this
+// reader's open list, given either as a UTC date -- which is midnight at its start -- or as
+// an RFC 3339 UTC instant.
 //
 // THE PROBLEM IT SOLVES, from the day a real bus adopted this tool. The first
 // `inbox --as Ada --full` reported 657 notes open -- 623 notes and 34 receipts, most of
@@ -141,13 +148,41 @@ func (r InboxResult) Counts() (notes, receipts, heard int) {
 // uses: a file that cannot say when it was written cannot claim to predate anything, and
 // the safe direction for a note nobody can date is to carry it. See Note.legacyDay for
 // what counts as saying it.
+//
+// THE LINE REACHES THE UNREADABLE FILES TOO, which it did not at first, and the cost of
+// that showed up on a live inbox: fifteen `INBOX UNREADABLE` lines on every poll, all of
+// them notes written by hand days before the switch -- a markdown heading first, a `**To**`,
+// a `Branch:` key, a sentence where the header goes. They are history, they will never be
+// fixed, and naming them once per run buries the inbox they are printed above. So a file
+// that will not parse and is dated behind the line is left off the open list and counted,
+// exactly like a note that is. What it is NOT is silent about anything new: a file dated on
+// or after the line, and a file whose date cannot be read at all, is still named on every
+// run, and `--full` still lists every unreadable file on the bus whatever its date.
 type LegacyLine struct {
 	// Before is the moment, or the zero time for no line at all.
 	Before time.Time
+	// Text is the line EXACTLY as it was given -- the date, or the instant -- which is what
+	// a cursor records and what `INBOX LEGACY before=` echoes. It is carried rather than
+	// rendered from Before because a line drawn to the second and read back as a day is a
+	// different line, and because what a reader checks their open list against is what they
+	// typed. It is "" when there is no line.
+	Text string
 }
 
-// covers reports whether a day is on the old side of the line. A zero day is never covered:
-// a file that cannot say when it was written cannot claim to predate anything.
+// NewLegacyLine reads a switch-day line in either shape and keeps the text it was given.
+func NewLegacyLine(value string) (LegacyLine, error) {
+	when, err := ParseLegacyBefore(value)
+	if err != nil {
+		return LegacyLine{}, err
+	}
+	return LegacyLine{Before: when, Text: value}, nil
+}
+
+// covers reports whether a note's moment is on the old side of the line. The comparison is
+// by INSTANT and not by day, in both directions: the line is a moment (a date is midnight at
+// its start) and so is the note's date, so a line drawn at 18:07 leaves 18:06 behind and
+// carries 18:08. A zero moment is never covered: a file that cannot say when it was written
+// cannot claim to predate anything.
 func (l LegacyLine) covers(day time.Time) bool {
 	if l.Before.IsZero() || day.IsZero() {
 		return false
@@ -265,6 +300,19 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 			// it turns out to be addressed to me, and going quietly if it is not -- or when I
 			// receipt it, which is how a reader says "I have seen this file" about something
 			// with no id to answer.
+			//
+			// THE SWITCH-DAY LINE IS DRAWN ON IT HERE, above the parse, and not with the
+			// rest of the list at the bottom of this function. This is the one entry that
+			// costs a parse per run, and a hand-written file from before the line will not
+			// parse this run, or the next one, or ever: opening it again on every poll to
+			// print a line the reader has already taken as read is the listing the line
+			// exists to stop, paid for twice. Behind the line it is counted and dropped,
+			// unopened. On or after it -- or with no readable date at all -- nothing here
+			// changes, because a new file nobody can read is exactly what this entry is for.
+			if legacy.covers(e.day()) {
+				res.LegacyUnreadable++
+				continue
+			}
 			if told(e) {
 				continue
 			}
@@ -308,6 +356,14 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 			continue
 		}
 		if n.Parse != nil {
+			// The same line, on a file arriving in the change set rather than carried. A
+			// note from behind the line can still turn up in a diff -- a lane rearranged,
+			// a history rewritten, an old file touched -- and when it does it is the same
+			// history and gets the same answer.
+			if legacy.covers(n.legacyDay()) {
+				res.LegacyUnreadable++
+				continue
+			}
 			res.Unreadable = append(res.Unreadable, n)
 			inOpen[path] = true
 			fresh = append(fresh, OpenEntry{Kind: OpenUnreadable, Path: path})
@@ -329,7 +385,13 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 	// open list whether it arrived in this change set or has been carried since before the
 	// line was drawn. Leaving it off is the whole of what happens to it: it is counted, and
 	// the note is untouched.
-	res.Open, res.Legacy = SplitLegacy(append(keep, fresh...), legacy)
+	var coveredUnreadable int
+	res.Open, res.Legacy, coveredUnreadable = SplitLegacy(append(keep, fresh...), legacy)
+	// Zero on this path: the line was drawn on the unreadable entries above, before the
+	// parse each one costs. It is added rather than asserted because the two counts belong
+	// to SplitLegacy, and a caller that quietly dropped half of what it was handed is how
+	// a count goes wrong.
+	res.LegacyUnreadable += coveredUnreadable
 	sort.Slice(res.Unreadable, func(i, j int) bool { return res.Unreadable[i].Path < res.Unreadable[j].Path })
 	sort.Slice(res.Unaddressed, func(i, j int) bool { return res.Unaddressed[i].Path < res.Unaddressed[j].Path })
 	return res, nil
@@ -340,19 +402,27 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 // added, the full one over what the walk found -- so the two cannot draw the line
 // differently, which matters most on the one run where it is drawn, because a `--full` read
 // is what writes the open list every later run inherits.
-func SplitLegacy(entries []OpenEntry, legacy LegacyLine) (keep []OpenEntry, covered int) {
+//
+// The two counts come back apart, `notes` and `unreadable`, because they are printed apart:
+// a note behind the line is one the reader has taken as read, and a FILE behind the line is
+// one nobody could read in the first place. Reported as one number they would say neither.
+func SplitLegacy(entries []OpenEntry, legacy LegacyLine) (keep []OpenEntry, notes, unreadable int) {
 	if legacy.Before.IsZero() {
-		return entries, 0
+		return entries, 0, 0
 	}
 	keep = make([]OpenEntry, 0, len(entries))
 	for _, e := range entries {
 		if legacy.covers(e.day()) {
-			covered++
+			if e.Kind == OpenUnreadable {
+				unreadable++
+			} else {
+				notes++
+			}
 			continue
 		}
 		keep = append(keep, e)
 	}
-	return keep, covered
+	return keep, notes, unreadable
 }
 
 // OpenFromFull is the OPEN list a --full run implies: every note the full walk found still

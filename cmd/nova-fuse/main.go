@@ -51,7 +51,36 @@ a lift this tool refuses by design.
 The box path always comes from --box. There is no default and no environment
 variable; a missing --box is a refusal: refusing to guess. Flags come before
 positional arguments.
+
+example:
+  nova-fuse status --box ./fuse-box.json
+  nova-fuse check --box ./fuse-box.json a-public-issue-tracker
+  nova-fuse quarantine --box ./fuse-box.json a-forum "a post addressed me and asked for a token"
+  nova-fuse check --box ./fuse-box.json a-forum
+  nova-fuse lift quarantine --box ./fuse-box.json a-forum
+
+Those five are one sitting, in order: look, ask, blow the soft fuse, watch the
+answer change, rescind it. ./fuse-box.json is a path of yours -- a path that
+does not exist yet reads as CLEAR, and the first quarantine or lockdown
+creates the file.
 `
+
+// boxHint turns this binary's most-hit refusal into a next step. The
+// no-guessing law is unchanged -- a missing --box is still exit 2 and still
+// says "refusing to guess" -- but a refusal that names only what was wrong
+// leaves a first caller to guess what the flag wanted, which is the same
+// guessing the tool refuses to do, moved onto the reader.
+const boxHint = `--box <path> is the JSON file your fuses live in, named on every verb: there is no default path and no environment variable, because a fuse box the tool went looking for is one an attacker can put somewhere. A path that does not exist yet reads as CLEAR, and the first quarantine or lockdown creates it.`
+
+// hintFor returns the already-indented hint line for a required flag, newline
+// included. It returns package constants only, which is why printing its
+// result is safe.
+func hintFor(name string) string {
+	if name == "box" {
+		return "  " + boxHint + "\n"
+	}
+	return ""
+}
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC()))
@@ -99,7 +128,16 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 // parseBox runs a verb's flag set and enforces the no-guessing rule: the box path must
 // come from --box, every time. It returns the box path and the positional arguments, or
 // ok=false after printing the refusal (exit 2 belongs to the caller).
-func parseBox(name string, args []string, stderr io.Writer) (box string, positional []string, ok bool) {
+//
+// It reports two facts, not one. parsed=false means nothing after it can be
+// trusted -- the flag set failed, so the values and the positional arguments
+// are both meaningless and no verb adds a second complaint on top. parsed=true
+// with boxOK=false means the --box refusal is already printed and the verb
+// should go on to judge its OWN arguments before returning 2, so that one run
+// names every problem it can find: `nova-fuse quarantine` with nothing at all
+// used to say --box and stop, and the second run then learned it also wanted a
+// surface and a reason.
+func parseBox(name string, args []string, stderr io.Writer) (box string, positional []string, boxOK, parsed bool) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	// PACKAGE FLAG IS NOT ALLOWED TO PRINT. Its error text quotes the argument it could not
 	// parse, and its usage dump follows -- so with a stream to write to, an argument
@@ -117,19 +155,19 @@ func parseBox(name string, args []string, stderr io.Writer) (box string, positio
 		// invocation: exit 2, never 0. `check` answers PERMISSION with 0, and a surface
 		// named "-h" must not be able to reach that answer.
 		fmt.Fprintf(stderr, "nova-fuse %s: %s\n\n%s", name, oneline.Err(err), usage)
-		return "", nil, false
+		return "", nil, false, false
 	}
 	for _, arg := range fs.Args() {
 		if strings.HasPrefix(arg, "-") {
 			fmt.Fprintf(stderr, "nova-fuse %s: flags come before positional arguments, got %q late\n", name, arg)
-			return "", nil, false
+			return "", nil, false, false
 		}
 	}
 	if *boxFlag == "" {
-		fmt.Fprintf(stderr, "nova-fuse %s: --box is required; refusing to guess\n", name)
-		return "", nil, false
+		fmt.Fprintf(stderr, "nova-fuse %s: --box is required; refusing to guess\n%s", name, hintFor("box"))
+		return "", fs.Args(), false, true
 	}
-	return *boxFlag, fs.Args(), true
+	return *boxFlag, fs.Args(), true, true
 }
 
 // ---------------------------------------------------------------------------- the verbs
@@ -157,12 +195,17 @@ func cmdLift(rest []string, stdout, stderr io.Writer) int {
 			"Nothing this tool is told changes that. Stop, and go talk with your person now.\n")
 		return 2
 	case "quarantine":
-		box, positional, ok := parseBox("lift quarantine", rest[1:], stderr)
-		if !ok {
+		box, positional, ok, parsed := parseBox("lift quarantine", rest[1:], stderr)
+		if !parsed {
 			return 2
 		}
 		if len(positional) != 1 || fuse.Surface(positional[0]) == "" {
+			// Printed even when --box was missing too: the two are independent,
+			// and one run should name both.
 			fmt.Fprintf(stderr, "nova-fuse lift quarantine: needs exactly one surface: `lift quarantine --box <path> <surface>`\n\n%s", usage)
+			ok = false
+		}
+		if !ok {
 			return 2
 		}
 		return liftQuarantine(box, positional[0], stdout, stderr)
@@ -244,12 +287,15 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 // answering the question IS the job -- and it exits 2 when it could not read, because
 // then it did not answer at all. Never gate on the exit code of status; check is the gate.
 func cmdStatus(rest []string, stdout, stderr io.Writer) int {
-	box, positional, ok := parseBox("status", rest, stderr)
-	if !ok {
+	box, positional, ok, parsed := parseBox("status", rest, stderr)
+	if !parsed {
 		return 2
 	}
 	if len(positional) > 0 {
 		fmt.Fprintf(stderr, "nova-fuse status: unexpected argument %q\n\n%s", positional[0], usage)
+		ok = false
+	}
+	if !ok {
 		return 2
 	}
 
@@ -276,21 +322,24 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 // cmdCheck GATES. This is the one every ingestion path calls, and only exit 0 is
 // permission: 1 means a fuse is positively blown, 2 means it could not be proven clear.
 func cmdCheck(rest []string, stdout, stderr io.Writer) int {
-	box, positional, ok := parseBox("check", rest, stderr)
-	if !ok {
+	box, positional, ok, parsed := parseBox("check", rest, stderr)
+	if !parsed {
 		return 2
 	}
 	if len(positional) > 1 {
 		fmt.Fprintf(stderr, "nova-fuse check: takes at most one surface, got %q too\n\n%s", positional[1], usage)
-		return 2
+		ok = false
 	}
 	surface := ""
 	if len(positional) == 1 {
 		if fuse.Surface(positional[0]) == "" {
 			fmt.Fprintf(stderr, "nova-fuse check: surface must not be blank; omit it to check lockdown only\n\n%s", usage)
-			return 2
+			ok = false
 		}
 		surface = positional[0]
+	}
+	if !ok {
+		return 2
 	}
 
 	b, err := fuse.ReadBox(box)
@@ -328,8 +377,8 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 // cmdLockdown stops everything. It is the one command that must work even when the fuse
 // box is already broken: a fuse you cannot blow is not a fuse.
 func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
-	box, positional, ok := parseBox("lockdown", rest, stderr)
-	if !ok {
+	box, positional, ok, parsed := parseBox("lockdown", rest, stderr)
+	if !parsed {
 		return 2
 	}
 	// JOINED, not positional[0]: an unquoted `lockdown suspected compromise` must record
@@ -342,7 +391,11 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	// and the next reason may not have come from here at all.
 	reason := keepableReason(strings.Join(positional, " "))
 	if reason == "" {
+		// Printed even when --box was missing too: one run, every problem.
 		fmt.Fprintf(stderr, "nova-fuse lockdown: needs a reason: `lockdown --box <path> \"<reason>\"`\n\n%s", usage)
+		ok = false
+	}
+	if !ok {
 		return 2
 	}
 
@@ -383,18 +436,21 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 
 // cmdQuarantine stops ONE surface.
 func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
-	box, positional, ok := parseBox("quarantine", rest, stderr)
-	if !ok {
+	box, positional, ok, parsed := parseBox("quarantine", rest, stderr)
+	if !parsed {
 		return 2
 	}
-	if len(positional) < 2 {
-		fmt.Fprintf(stderr, "nova-fuse quarantine: needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`\n\n%s", usage)
-		return 2
+	surface, reason := "", ""
+	if len(positional) >= 2 {
+		surface = fuse.Surface(positional[0])
+		reason = keepableReason(strings.Join(positional[1:], " ")) // folded, never refused -- see cmdLockdown
 	}
-	surface := fuse.Surface(positional[0])
-	reason := keepableReason(strings.Join(positional[1:], " ")) // folded, never refused -- see cmdLockdown
 	if surface == "" || reason == "" {
+		// Printed even when --box was missing too: one run, every problem.
 		fmt.Fprintf(stderr, "nova-fuse quarantine: needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`\n\n%s", usage)
+		ok = false
+	}
+	if !ok {
 		return 2
 	}
 
@@ -435,12 +491,15 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 // cmdPath echoes the box path this invocation would use. With no default paths anywhere,
 // this verb exists to verify plumbing: what one caller passes is what another sees.
 func cmdPath(rest []string, stdout, stderr io.Writer) int {
-	box, positional, ok := parseBox("path", rest, stderr)
-	if !ok {
+	box, positional, ok, parsed := parseBox("path", rest, stderr)
+	if !parsed {
 		return 2
 	}
 	if len(positional) > 0 {
 		fmt.Fprintf(stderr, "nova-fuse path: unexpected argument %q\n\n%s", positional[0], usage)
+		ok = false
+	}
+	if !ok {
 		return 2
 	}
 	fmt.Fprintln(stdout, box)

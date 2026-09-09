@@ -132,9 +132,10 @@ type Cursor struct {
 	Open    int
 	Counted bool
 
-	// Legacy is the switch-day line this reader read under, as the UTC date it was given:
-	// notes dated before it are not carried on the open list. It is "" on a cursor written
-	// with no line, which is every cursor written before this field existed.
+	// Legacy is the switch-day line this reader read under, stored EXACTLY as it was given
+	// -- a UTC date, or an RFC 3339 UTC instant: notes dated before it are not carried on
+	// the open list. It is "" on a cursor written with no line, which is every cursor
+	// written before this field existed.
 	//
 	// It is IN THE CURSOR rather than in a flag the reader must remember because a line
 	// that has to be retyped on every run is a line that will be forgotten on one, and the
@@ -201,13 +202,13 @@ func ReadCursor(root, lane string) (Cursor, error) {
 				}
 				got.Open, got.Counted = n, true
 			case strings.HasPrefix(tok, cursorLegacyPrefix):
-				date := strings.TrimPrefix(tok, cursorLegacyPrefix)
-				if _, perr := time.Parse(LegacyDateLayout, date); perr != nil {
-					return Cursor{}, fmt.Errorf("%s: line %d: %q is not %s<date> of the form %s", CursorPath(lane), r.line, truncate(tok, 40), cursorLegacyPrefix, LegacyDateLayout)
+				line := strings.TrimPrefix(tok, cursorLegacyPrefix)
+				if _, perr := ParseLegacyBefore(line); perr != nil {
+					return Cursor{}, fmt.Errorf("%s: line %d: %q is not %s<date-or-instant>: %w", CursorPath(lane), r.line, truncate(tok, 40), cursorLegacyPrefix, perr)
 				}
-				got.Legacy = date
+				got.Legacy = line
 			default:
-				return Cursor{}, fmt.Errorf("%s: line %d: %q is neither %s<n> nor %s<date>", CursorPath(lane), r.line, truncate(tok, 40), cursorOpenPrefix, cursorLegacyPrefix)
+				return Cursor{}, fmt.Errorf("%s: line %d: %q is neither %s<n> nor %s<date-or-instant>", CursorPath(lane), r.line, truncate(tok, 40), cursorOpenPrefix, cursorLegacyPrefix)
 			}
 		}
 	}
@@ -221,11 +222,24 @@ func (c Cursor) LegacyBefore() time.Time {
 	if c.Legacy == "" {
 		return time.Time{}
 	}
-	when, err := time.Parse(LegacyDateLayout, c.Legacy)
+	when, err := ParseLegacyBefore(c.Legacy)
 	if err != nil {
 		return time.Time{}
 	}
 	return when.UTC()
+}
+
+// LegacyLine is the cursor's switch-day line as a run reads under it: the moment, and the
+// text the run that drew it gave. The TEXT is carried and not re-rendered so that a line
+// drawn as a date stays a date and one drawn as an instant stays an instant, in the cursor
+// and on the `INBOX LEGACY` line -- a reader checking which notes they took as read is
+// checking against what they typed.
+func (c Cursor) LegacyLine() LegacyLine {
+	when := c.LegacyBefore()
+	if when.IsZero() {
+		return LegacyLine{}
+	}
+	return LegacyLine{Before: when, Text: c.Legacy}
 }
 
 // cursorFields and the two token prefixes are the shape of a cursor line: the commit, the
@@ -237,11 +251,46 @@ const (
 	cursorLegacyPrefix = "legacy="
 )
 
-// LegacyDateLayout is the one shape a legacy line takes, in a cursor and in the two flags
-// that write one: a UTC calendar date, meaning midnight at its start. A date rather than a
-// timestamp because the thing being drawn is the day a bus adopted this tool, and nobody
-// knows that to the second.
-const LegacyDateLayout = "2006-01-02"
+// LegacyDateLayout and LegacyInstantLayout are the two shapes a legacy line takes, in a
+// cursor and in the two flags that write one: a UTC calendar date, which means midnight at
+// its start, or an RFC 3339 UTC instant.
+//
+// WHY THE INSTANT EXISTS, measured on the hour a family of five switched to this tool. They
+// drew the line at TOMORROW's date, reasonably: nothing written before tomorrow was written
+// under the tool, so the open list would start at zero. It did — and it stayed at zero. A
+// date is midnight at its START, so every note any of them sent that same afternoon was
+// dated before tomorrow's midnight and was therefore legacy: five lines writing to each
+// other all day, and not one note on anybody's open list, not even under `--full`. A date
+// can only ever name a boundary between days, and the boundary they needed was a MOMENT --
+// the moment they switched, which they knew to the second and could not say.
+//
+// So the line takes either, and the comparison is by instant in both cases: a date is the
+// instant of its own midnight, which is exactly what it always meant, and an instant is
+// itself. The date form is kept because the thing usually being drawn IS a day a bus adopted
+// a tool, nobody knows that to the second, and every cursor already on a bus holds one.
+//
+// The instant is required to end in `Z` and not an offset. A switch-day line is compared
+// against note dates that are all UTC, and a line written `+10:00` would be read correctly
+// and reviewed wrongly by the person who has to check it against a filename.
+const (
+	LegacyDateLayout    = "2006-01-02"
+	LegacyInstantLayout = "2006-01-02T15:04:05Z"
+)
+
+// ParseLegacyBefore reads a switch-day line, in either shape, as the moment it names. It is
+// the ONE place either shape is read -- the two flags, a cursor at the read, and a cursor at
+// the write all come here -- so no two of them can accept different spellings of a line, and
+// the error names both shapes because a caller who got one wrong wants to be told the other.
+func ParseLegacyBefore(value string) (time.Time, error) {
+	if when, err := time.Parse(LegacyInstantLayout, value); err == nil {
+		return when.UTC(), nil
+	}
+	if when, err := time.Parse(LegacyDateLayout, value); err == nil {
+		return when.UTC(), nil
+	}
+	return time.Time{}, fmt.Errorf("%s is neither a UTC date of the form %s nor a UTC instant of the form %s",
+		strconv.Quote(truncate(value, 40)), LegacyDateLayout, LegacyInstantLayout)
+}
 
 // OpenPresent reports whether a lane has an OPEN file at all, which is a different
 // question from whether it holds anything. See Cursor.Open.
@@ -291,8 +340,11 @@ func WriteCursor(root, lane, commit string, open int, legacy string, now time.Ti
 	}
 	line := commit + " " + now.UTC().Format(ReceiptStampLayout) + " " + cursorOpenPrefix + strconv.Itoa(open)
 	if legacy != "" {
-		if _, err := time.Parse(LegacyDateLayout, legacy); err != nil {
-			return fmt.Errorf("a cursor's %s is a UTC date of the form %s, got %q", cursorLegacyPrefix, LegacyDateLayout, truncate(legacy, 40))
+		// Written EXACTLY as it was given, once it parses: a line drawn as an instant is
+		// recorded as that instant and not rounded back to its day, which is the whole of
+		// what makes a same-day switch survive into the next run.
+		if _, err := ParseLegacyBefore(legacy); err != nil {
+			return fmt.Errorf("a cursor's %s is a UTC date or instant: %w", cursorLegacyPrefix, err)
 		}
 		line += " " + cursorLegacyPrefix + legacy
 	}

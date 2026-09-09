@@ -53,7 +53,39 @@ writer's, and this tool never makes it.
 
 Flags come before files. Exit codes: 0 no findings, 1 findings, 2 could not
 run (bad invocation, unreadable file).
+
+example:
+  nova-self-talk ./pages/journal.md
+  nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
+
+Both exit 1, and that is the tool working: a finding is a sentence to date,
+cut, relocate or keep on purpose, never a failure. ./pages is a directory of
+yours; cmd/nova-self-talk/testdata/example-pages in this repo is one the size
+of a first run, and both lines are run against it by the tests.
 `
+
+// The hints below turn this binary's two most-hit refusals into a next step.
+// The no-guessing law is unchanged -- naming no files is still exit 2 -- but a
+// refusal that names only what was wrong leaves a first caller to guess what
+// the tool wanted, which is the same guessing the tool refuses to do, moved
+// onto the reader.
+const (
+	filesHint = `nova-self-talk takes markdown FILES, named on the command line: nova-self-talk <file>... There is no default set and no directory walk, so a shell glob is the usual first run (nova-self-talk memory/*.md) -- every file scanned is one you chose, and one this tool cannot read is not a clean one.`
+	baseHint  = `--skip and --rule-doc take a BASENAME, not a path: --skip RULES.md, never --skip memory/RULES.md. The match is on the file's name wherever it sits, and nothing is skipped or banner-marked by default.`
+)
+
+// hintFor returns the already-indented hint line for a kind of refusal,
+// newline included. It returns package constants only, which is why printing
+// its result is safe.
+func hintFor(kind string) string {
+	switch kind {
+	case "files":
+		return "  " + filesHint + "\n"
+	case "basename":
+		return "  " + baseHint + "\n"
+	}
+	return ""
+}
 
 // note prints on every completed run, pass or fail: a green from a partial
 // check reads exactly like a green from a complete one, and this check is
@@ -83,7 +115,7 @@ func (s *baseList) Set(v string) error {
 		return errors.New("needs a basename; refusing to guess")
 	}
 	if strings.ContainsAny(v, `/\`) {
-		return fmt.Errorf("takes a basename, not a path: %q", v)
+		return fmt.Errorf("takes a basename, not a path: %q -- the match is on the file's name wherever it sits", v)
 	}
 	*s = append(*s, v)
 	return nil
@@ -113,31 +145,50 @@ func run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprint(stdout, usage)
 			return 0
 		}
-		fmt.Fprintf(stderr, "nova-self-talk: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-self-talk: %s\n%s", oneline.Err(err), hintFor("basename"))
 		return 2
 	}
 	files := fs.Args()
 	if len(files) == 0 {
 		fmt.Fprint(stderr, usage)
-		fmt.Fprintln(stderr, "nova-self-talk: no files named; refusing to guess")
+		fmt.Fprintf(stderr, "nova-self-talk: no files named; refusing to guess\n%s", hintFor("files"))
 		return 2
 	}
 
 	skipped, pinned := set(skips), set(ruleDocs)
 
-	scanned, claims, standing, installed := 0, 0, 0, 0
-	for _, f := range files {
+	// EVERY NAMED FILE IS READ BEFORE ANY OF THEM IS SCANNED, and every
+	// unreadable one is reported rather than the first. Two reasons, and both
+	// are a first run's: a caller who mistyped three paths should learn about
+	// three in one go, and a run that printed findings and then refused would
+	// be reporting findings from a run that did not happen.
+	contents := make([]string, len(files))
+	readable := true
+	for i, f := range files {
 		if skipped[selftalk.Base(f)] {
-			fmt.Fprintf(stdout, "SELFTALK SKIP %s (--skip)\n", oneline.Escape(f))
 			continue
 		}
 		b, err := os.ReadFile(f)
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-self-talk: %s\n", oneline.Err(err))
-			return 2
+			readable = false
+			continue
+		}
+		contents[i] = string(b)
+	}
+	if !readable {
+		fmt.Fprintf(stderr, "nova-self-talk: NOTHING was scanned, which is not a green\n%s", hintFor("files"))
+		return 2
+	}
+
+	scanned, claims, standing, installed := 0, 0, 0, 0
+	for i, f := range files {
+		if skipped[selftalk.Base(f)] {
+			fmt.Fprintf(stdout, "SELFTALK SKIP %s (--skip)\n", oneline.Escape(f))
+			continue
 		}
 		scanned++
-		text := string(b)
+		text := contents[i]
 		for _, c := range selftalk.Scan(text) {
 			claims++
 			if c.Verdict == selftalk.Standing {
