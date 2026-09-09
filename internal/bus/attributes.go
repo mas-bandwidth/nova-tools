@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// AttributesName is the file at the table ROOT that tells git how to merge the two lane
+// AttributesName is the file at the bus ROOT that tells git how to merge the two lane
 // files this tool only ever appends to.
 const AttributesName = ".gitattributes"
 
@@ -22,11 +22,11 @@ const AttributesName = ".gitattributes"
 // The pattern is `from-*/INDEX` and not `INDEX`, because a gitattributes pattern holding a
 // slash is anchored at the file's own directory and `*` does not cross one -- so this is
 // exactly "a file called INDEX one level inside a directory whose name begins with from-",
-// which is a lane's catalogue and nothing else on the table.
+// which is a lane's catalogue and nothing else on the bus.
 //
 // It is written by `send` and not by `check`, and only when the rule is not already there,
 // because it is a change to a shared file: a verb that reports has no business editing the
-// table, and a verb that publishes a note is already committing and pushing under an
+// bus, and a verb that publishes a note is already committing and pushing under an
 // identity the roster names.
 var attributeLines = []string{
 	"# nova-bus: INDEX and RECEIPTS are append-only line files. Union merge keeps both",
@@ -35,12 +35,12 @@ var attributeLines = []string{
 	"from-*/RECEIPTS merge=union",
 }
 
-// EnsureMergeAttributes puts the union rules on the table if they are not there, and
+// EnsureMergeAttributes puts the union rules on the bus if they are not there, and
 // reports whether it wrote anything -- which is the caller's cue to add AttributesName to
 // the paths its commit names.
 //
-// A table that already has a .gitattributes for its own reasons is APPENDED to rather than
-// replaced: the file belongs to the table and this tool owns two lines of it. A table that
+// A bus that already has a .gitattributes for its own reasons is APPENDED to rather than
+// replaced: the file belongs to the bus and this tool owns two lines of it. A bus that
 // already carries both rules is left exactly as it is, so this is a no-op on every send but
 // the first.
 func EnsureMergeAttributes(root string) (bool, error) {

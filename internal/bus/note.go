@@ -40,7 +40,7 @@ const (
 )
 
 // DateLayout is how send writes the Date line: the same shape `date -u` prints, which is
-// what the table's people have been pasting by hand, so a tool-written note and a
+// what the bus's people have been pasting by hand, so a tool-written note and a
 // hand-written one read alike.
 const DateLayout = "Mon Jan  2 15:04:05 UTC 2006"
 
@@ -55,13 +55,13 @@ const (
 )
 
 // maxQuotedKey is how much of an unknown header key a refusal quotes. A file whose first
-// line is prose makes the whole first sentence look like a key, and a check over a table
+// line is prose makes the whole first sentence look like a key, and a check over a bus
 // of them would otherwise print a paragraph per note.
 const maxQuotedKey = 40
 
 // idHexLen is how much of the sha256 an id carries. Twelve hex is 48 bits, INSIDE a
-// per-sender namespace, over a table whose lifetime is thousands of notes rather than
-// billions -- and send additionally refuses an id already on the table, so a collision is
+// per-sender namespace, over a bus whose lifetime is thousands of notes rather than
+// billions -- and send additionally refuses an id already on the bus, so a collision is
 // a refusal a person reads rather than a note that overwrites another.
 const idHexLen = 12
 
@@ -93,7 +93,7 @@ type Note struct {
 	Body   string
 
 	// Parse is set, and everything above it but Path and Lane is empty, when the file
-	// would not parse. A table with one bad file stays usable: check names it, and every
+	// would not parse. A bus with one bad file stays usable: check names it, and every
 	// other rule steps over it rather than guessing at what it meant.
 	Parse *ParseError
 }
@@ -101,11 +101,11 @@ type Note struct {
 // ParseNote parses a note's text. The header is every line before the first blank line;
 // the body is everything after it.
 //
-// TWO TOLERANCES, for the two shapes a real table writes that a strict reader loses. Both
+// TWO TOLERANCES, for the two shapes a real bus writes that a strict reader loses. Both
 // are enumerated here, in SPEC.md, and pinned by a test; anything else is still a refusal.
 //
 //  1. A markdown HEADING before the header. A note whose file opens `# The subject` and
-//     then, after a blank line, `From:` is the commonest unreadable shape on a table
+//     then, after a blank line, `From:` is the commonest unreadable shape on a bus
 //     people also read in a browser. The heading and the blank lines under it are skipped
 //     and the header is read from the first line after them. Line numbers still count
 //     from the top of the FILE, so a refusal names the line a person would open to.
@@ -116,7 +116,7 @@ type Note struct {
 // A note whose first line is prose still fails, and should: there is no honest way to
 // tell a From line from a sentence that happens to hold a colon.
 //
-// WHAT THE REFUSALS SAY. A read of a real table found three shapes behind
+// WHAT THE REFUSALS SAY. A read of a real bus found three shapes behind
 // nearly every unreadable note, and a refusal that only says a file will not parse leaves
 // the writer to guess which. So each of the three names its repair: a key in markdown
 // bold (`**To**:`) is told that headers are plain `Key: value`; an unknown key (`Branch:`)
@@ -160,14 +160,14 @@ func ParseNote(path, text string) (Note, error) {
 			return n, fmt.Errorf("line %d: not a header line (a header is Key: value): %s", i+1, blankLineAdvice)
 		}
 		// A key nobody could have meant as a key is a BODY SENTENCE standing where the
-		// header is, which on the real table is the commonest unreadable shape there is:
+		// header is, which on the real bus is the commonest unreadable shape there is:
 		// somebody wrote a paragraph, and a colon or a dash inside it made the first
 		// clause look like a key. Saying "unknown header key" to that is true and useless,
 		// so it says the thing that fixes it instead.
 		if isProseKey(key) {
 			return n, fmt.Errorf("line %d: %q is a sentence, not a header key: %s", i+1, truncate(key, maxQuotedKey), blankLineAdvice)
 		}
-		// A key in markdown bold -- `**To**: Ada` -- is a table people also read in a
+		// A key in markdown bold -- `**To**: Ada` -- is a bus people also read in a
 		// browser writing what it reads. It is one substitution away from correct and the
 		// refusal says which.
 		if plain, bold := unbold(key); bold {
@@ -192,9 +192,9 @@ func ParseNote(path, text string) (Note, error) {
 			// The key is quoted SHORT. A file whose first line is a paragraph has that
 			// whole paragraph up to its first colon as the "key", and a refusal that
 			// pasted it back would be one unreadable line per note in a check over a
-			// table of them.
+			// bus of them.
 			//
-			// The known keys are NAMED. `Branch:` is a real line off the real table, and
+			// The known keys are NAMED. `Branch:` is a real line off the real bus, and
 			// a writer told only that their key is unknown has to go and find the eight
 			// that are not; they fit on the line, so they are on it.
 			return n, fmt.Errorf("line %d: unknown header key %q (the keys are %s)", i+1, truncate(key, maxQuotedKey), strings.Join(KnownKeys, ", "))
@@ -228,7 +228,7 @@ func ParseNote(path, text string) (Note, error) {
 }
 
 // blankLineAdvice is the one sentence that fixes every note whose header ran on into its
-// body, which is most of the unreadable notes on a table people wrote by hand. It is
+// body, which is most of the unreadable notes on a bus people wrote by hand. It is
 // shared by the two refusals that mean it so the two cannot say it differently.
 const blankLineAdvice = "the header ends at the first blank line; put a blank line after the last header"
 
@@ -247,7 +247,7 @@ func isProseKey(key string) bool {
 const maxKeyLen = 20
 
 // unbold takes markdown emphasis off a key and says whether there was any. `**To**`,
-// `**To` and `*To*` all arrive on a table whose notes are read in a browser, and all
+// `**To` and `*To*` all arrive on a bus whose notes are read in a browser, and all
 // three are one substitution from a header.
 func unbold(key string) (string, bool) {
 	plain := strings.Trim(key, "*")
@@ -268,21 +268,21 @@ func (h Header) Validate(c *Config) error {
 		return fmt.Errorf("no %s line", KeyFrom)
 	}
 	if _, ok := c.ResolveOne(h.From); !ok {
-		return fmt.Errorf("%s: %q names no one at this table (known: %s)", KeyFrom, h.From, strings.Join(c.KnownNames(), "; "))
+		return fmt.Errorf("%s: %q names no one on this bus (known: %s)", KeyFrom, h.From, strings.Join(c.KnownNames(), "; "))
 	}
 	if strings.TrimSpace(h.To) == "" {
 		return fmt.Errorf("no %s line", KeyTo)
 	}
 	to, unknown := c.ResolveList(h.To)
 	if len(unknown) > 0 {
-		return fmt.Errorf("%s: %s names no one at this table (known: %s)", KeyTo, quoteAll(UnknownNames(unknown)), strings.Join(c.KnownNames(), "; "))
+		return fmt.Errorf("%s: %s names no one on this bus (known: %s)", KeyTo, quoteAll(UnknownNames(unknown)), strings.Join(c.KnownNames(), "; "))
 	}
 	if len(to) == 0 {
 		return fmt.Errorf("%s: no recipients", KeyTo)
 	}
 	if h.Cc != "" {
 		if _, unknownCc := c.ResolveList(h.Cc); len(unknownCc) > 0 {
-			return fmt.Errorf("%s: %s names no one at this table (known: %s)", KeyCc, quoteAll(UnknownNames(unknownCc)), strings.Join(c.KnownNames(), "; "))
+			return fmt.Errorf("%s: %s names no one on this bus (known: %s)", KeyCc, quoteAll(UnknownNames(unknownCc)), strings.Join(c.KnownNames(), "; "))
 		}
 	}
 	if strings.TrimSpace(h.Subject) == "" {
@@ -344,15 +344,15 @@ func SlugOfID(id string) string {
 // the date the tool is about to write, the resolved recipients, the Re targets, the
 // subject, the kind, and the normalized body.
 //
-// Why a hash and not a counter. A counter is shared state on a table whose whole problem
+// Why a hash and not a counter. A counter is shared state on a bus whose whole problem
 // is shared state: two senders writing in the same second would read the same counter and
 // assign the same number, which is the collision this id exists to remove, and resolving
-// it would need exactly the lock the table does not have. A hash is computed with no
+// it would need exactly the lock the bus does not have. A hash is computed with no
 // knowledge of anyone else's notes, so two lines racing cannot collide, and the id can be
 // assigned before the first fetch.
 //
 // Why the whole canonical note and not the body alone. A body alone would give one sender
-// writing "Heard, thank you" twice the same id -- which is a real event on a table of
+// writing "Heard, thank you" twice the same id -- which is a real event on a bus of
 // receipts, and would make the second note unsendable rather than merely unremarkable.
 // The date is in the preimage at second granularity, so the same sender saying the same
 // thing in two different seconds gets two ids, and a genuine collision means the same
@@ -435,7 +435,7 @@ func (n Note) Render() string {
 
 // FileName is the note's filename: the UTC minute, the slug, and the hash half of the id.
 //
-// The minute is the table's existing convention and is for people. The id's hash half is
+// The minute is the bus's existing convention and is for people. The id's hash half is
 // appended because the minute alone collided -- one sender writing twice inside one
 // minute overwrote their own note -- and because a name carrying the id lets a person
 // find a note by the id they were given without opening anything.
@@ -487,7 +487,7 @@ var receiptWords = []string{"heard", "received", "receipt", "ack", "acked", "ack
 // receipt when its body is UNDER maxWords words, contains one of the acknowledgement words
 // (heard, received, receipt, ack, acked, acknowledged, acknowledge, noted), and contains
 // no question mark. The word count comes from the caller because it is a property of how a
-// table writes, not of this tool -- a table of two-line notes and a table of essays do not
+// bus writes, not of this tool -- a bus of two-line notes and a bus of essays do not
 // share a threshold, and a number this tool supplied would make a guess look like a
 // measurement.
 //
@@ -565,7 +565,7 @@ func quoteAll(ss []string) string {
 // It is INSTRUMENTATION, and the only thing that reads it is a test. It is here rather
 // than in a test file because the property it measures is a property of this package and
 // is asserted from another one: `inbox` parses the notes that are new plus the notes this
-// reader has open, and NO OTHER NOTE, whatever the table's history holds. That claim is
+// reader has open, and NO OTHER NOTE, whatever the bus's history holds. That claim is
 // about work not done, and work not done leaves no output to assert on -- so the only
 // honest proof is a count taken at the one place the work happens. The alternative, timing
 // two runs, is a flake on a shared runner and proves nothing on a fast enough machine.

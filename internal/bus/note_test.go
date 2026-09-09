@@ -99,7 +99,7 @@ func TestParseNoteToleratesCRLFAndABOM(t *testing.T) {
 }
 
 func TestHeaderValidate(t *testing.T) {
-	c, err := LoadConfig(writeTable(t, nil))
+	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestHeaderValidate(t *testing.T) {
 		name, text, want string
 	}{
 		{"no From", "To: Bo\nSubject: a\n\nbody\n", "no From line"},
-		{"an unknown From", "From: Nobody\nTo: Bo\nSubject: a\n\nbody\n", "names no one at this table"},
+		{"an unknown From", "From: Nobody\nTo: Bo\nSubject: a\n\nbody\n", "names no one on this bus"},
 		{"no To", "From: Ada\nSubject: a\n\nbody\n", "no To line"},
 		{"an unknown To", "From: Ada\nTo: Boe\nSubject: a\n\nbody\n", `"Boe"`},
 		{"an unknown Cc", "From: Ada\nTo: Bo\nCc: Glen\nSubject: a\n\nbody\n", `"Glen"`},
@@ -157,7 +157,7 @@ func TestValidID(t *testing.T) {
 
 // The id's collision-proofness, stated as the three properties it rests on.
 func TestIDIsDeterministicNamespacedAndSensitiveToEveryFieldThatMakesANoteDifferent(t *testing.T) {
-	c, err := LoadConfig(writeTable(t, nil))
+	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,7 +225,7 @@ func TestIDIsDeterministicNamespacedAndSensitiveToEveryFieldThatMakesANoteDiffer
 
 // The id must survive what an editor does to a file on save, or it is not an id.
 func TestIDIsUnchangedByTrailingWhitespaceAndCRLF(t *testing.T) {
-	c, err := LoadConfig(writeTable(t, nil))
+	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestIDIsUnchangedByTrailingWhitespaceAndCRLF(t *testing.T) {
 // "Ada Vale" and "Ada a1b2c3d4" are one recipient at the id layer as they are to
 // every reader.
 func TestIDUsesResolvedRecipients(t *testing.T) {
-	c, err := LoadConfig(writeTable(t, nil))
+	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -271,7 +271,7 @@ func TestIDUsesResolvedRecipients(t *testing.T) {
 }
 
 func TestAssignIDRefusesASenderWithNoLane(t *testing.T) {
-	c, err := LoadConfig(writeTable(t, nil))
+	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -367,7 +367,7 @@ func TestRenderPutsTheHeaderInCanonicalOrderAndKeepsTheAuthorsWords(t *testing.T
 	}
 }
 
-// The two shapes a real table writes that a strict reader loses. Both are real: a table
+// The two shapes a real bus writes that a strict reader loses. Both are real: a bus
 // whose notes are also read in a browser grows markdown headings, and one writer's notes
 // are markdown lists. Between them they were most of the files inbox used to drop in
 // silence.
@@ -435,7 +435,7 @@ func TestParseNoteAcceptsAHeadingAndBulletHeaders(t *testing.T) {
 // A prose first line still fails -- there is no honest way to tell a From line from a
 // sentence with a colon in it -- but the refusal must be READABLE. A paragraph up to its
 // first colon is not a header key, and quoting the whole of it back would be one
-// unreadable line per note in a check over a table of them.
+// unreadable line per note in a check over a bus of them.
 func TestAProseFirstLineFailsWithAShortQuotedKey(t *testing.T) {
 	long := "Ada, the graph checkpoint is pushed at 15649542 on PR #707 and the whole suite passed: 138,751 mutations, zero divergence"
 	_, err := ParseNote("from-bo/x.md", long+"\n\nbody\n")
@@ -461,7 +461,7 @@ func TestAProseFirstLineFailsWithAShortQuotedKey(t *testing.T) {
 	}
 }
 
-// THE THREE SHAPES A READ OF THE REAL TABLE FOUND, and what each refusal now has to say.
+// THE THREE SHAPES A READ OF THE REAL BUS FOUND, and what each refusal now has to say.
 // A note that will not parse is a note its reader is shown as UNREADABLE and can do
 // nothing about unless the line says which of the three it is: a key in markdown bold, a
 // key nobody knows, or a body sentence standing where the header goes. The failure is

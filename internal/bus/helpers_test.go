@@ -8,7 +8,7 @@ import (
 )
 
 // rosterJSON is the roster every test in this package works against unless it needs a
-// broken one. It carries the three shapes the real table has: a sender with aliases, a
+// broken one. It carries the three shapes the real bus has: a sender with aliases, a
 // second sender, and a person who is addressed and never writes.
 const rosterJSON = `{
   "participants": [
@@ -19,7 +19,7 @@ const rosterJSON = `{
     {"name": "Dana"}
   ],
   "groups": [
-    {"name": "Everybody at the table", "members": ["Ada", "Bo", "Dana"]}
+    {"name": "Everybody on the bus", "members": ["Ada", "Bo", "Dana"]}
   ]
 }`
 
@@ -32,9 +32,9 @@ func at(s string) time.Time {
 	return t.UTC()
 }
 
-// writeTable builds a table under t.TempDir from repo-relative paths to contents. A
+// writeTable builds a bus under t.TempDir from repo-relative paths to contents. A
 // participants.json is written unless files supplies one.
-func writeTable(t *testing.T, files map[string]string) string {
+func writeBus(t *testing.T, files map[string]string) string {
 	t.Helper()
 	root := t.TempDir()
 	if _, ok := files[ConfigName]; !ok {
@@ -59,13 +59,13 @@ func write(t *testing.T, root, path, content string) {
 
 // loadTable is the two calls every verb makes, for a test that only cares about the
 // result.
-func loadTable(t *testing.T, root string) *Table {
+func loadBus(t *testing.T, root string) *Bus {
 	t.Helper()
 	c, err := LoadConfig(root)
 	if err != nil {
 		t.Fatalf("LoadConfig: %v", err)
 	}
-	tab, err := ReadTable(root, c)
+	tab, err := ReadBus(root, c)
 	if err != nil {
 		t.Fatalf("ReadTable: %v", err)
 	}

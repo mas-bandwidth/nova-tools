@@ -6,20 +6,20 @@ import (
 	"testing"
 )
 
-// The two shapes off a real table, and the two that must NOT be reported.
+// The two shapes off a real bus, and the two that must NOT be reported.
 //
 // A note is unaddressed when its whole address resolves to nobody -- not when part of it
 // does. "Bo, Team" reaches Bo and is in her inbox, and telling her it went nowhere
 // would be false; "Team" alone reaches no one and was in no listing at all.
 func TestUnaddressedReason(t *testing.T) {
-	root := writeTable(t, map[string]string{
-		// The shape that was on the table 22 times: a To line naming a group nobody
+	root := writeBus(t, map[string]string{
+		// The shape that was on the bus 22 times: a To line naming a group nobody
 		// declared.
 		"from-bo/2026-09-07T0001Z-team.md": "From: Bo\nTo: Team\nDate: Mon Sep  7 00:01:00 UTC 2026\nSubject: The wire task\n\nA note to nobody.\n",
 		// The other half of the same finding: a From line whose comma is an address
 		// separator, so it names two senders and resolves to none -- and whose To line is
 		// the group nobody declared either.
-		"from-bo/2026-09-07T0002Z-split.md": "From: Bo, Go table-wire task\nTo: Team\nDate: Mon Sep  7 00:02:00 UTC 2026\nSubject: Also the wire task\n\nAlso to nobody.\n",
+		"from-bo/2026-09-07T0002Z-split.md": "From: Bo, Go bus-wire task\nTo: Team\nDate: Mon Sep  7 00:02:00 UTC 2026\nSubject: Also the wire task\n\nAlso to nobody.\n",
 		// A note with no To line at all.
 		"from-bo/2026-09-07T0003Z-none.md": "From: Bo\nTo:\nDate: Mon Sep  7 00:03:00 UTC 2026\nSubject: No one\n\nNo To line worth the name.\n",
 		// PARTLY unknown is not unaddressed: Ada gets this one.
@@ -29,8 +29,8 @@ func TestUnaddressedReason(t *testing.T) {
 		// Only through the Cc is still addressed.
 		"from-bo/2026-09-07T0006Z-cc.md": "From: Bo\nTo: Team\nCc: Dana\nDate: Mon Sep  7 00:06:00 UTC 2026\nSubject: Cc only\n\nDana gets this one.\n",
 	})
-	tab := loadTable(t, root)
-	got := tab.UnaddressedOnTable()
+	tab := loadBus(t, root)
+	got := tab.UnaddressedOnBus()
 	var paths []string
 	for _, u := range got {
 		paths = append(paths, u.Path)

@@ -18,7 +18,7 @@ The matrix key is misspelled, so the step is skipped.
 `
 
 func TestPrepareAssignsTheDateTheIDAndThePath(t *testing.T) {
-	tab := loadTable(t, writeTable(t, fixture()))
+	tab := loadBus(t, writeBus(t, fixture()))
 	p, err := Prepare(tab, draft, at("2026-09-09T12:34:56Z"), "")
 	if err != nil {
 		t.Fatal(err)
@@ -63,13 +63,13 @@ func TestPrepareRefuses(t *testing.T) {
 		{"a Date the author wrote", "From: Ada\nTo: Bo\nDate: whenever\nSubject: s\n\nbody\n", "will not quietly replace yours"},
 		{"an unknown recipient", "From: Ada\nTo: Boe\nSubject: s\n\nbody\n", `"Boe"`},
 		{"a sender with no lane", "From: Dana\nTo: Ada\nSubject: s\n\nbody\n", "has no lane"},
-		{"an unknown sender", "From: Nobody\nTo: Ada\nSubject: s\n\nbody\n", "names no one at this table"},
+		{"an unknown sender", "From: Nobody\nTo: Ada\nSubject: s\n\nbody\n", "names no one on this bus"},
 		{"no subject", "From: Ada\nTo: Bo\nSubject:\n\nbody\n", "no Subject line"},
 		{"no body", "From: Ada\nTo: Bo\nSubject: s\n\n\n", "no body"},
 		{"a Re naming nothing", "From: Ada\nTo: Bo\nRe: bo-deadbeefcafe\nSubject: s\n\nbody\n", "a slug is not a thread"},
 		{"a Re naming a path that does not exist", "From: Ada\nTo: Bo\nRe: from-bo/gone.md\nSubject: s\n\nbody\n", "a slug is not a thread"},
 	}
-	tab := loadTable(t, writeTable(t, fixture()))
+	tab := loadBus(t, writeBus(t, fixture()))
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, err := Prepare(tab, tc.text, at("2026-09-09T12:34:56Z"), "")
@@ -84,7 +84,7 @@ func TestPrepareRefuses(t *testing.T) {
 }
 
 func TestPrepareAcceptsAReByIDAndByLegacyPath(t *testing.T) {
-	tab := loadTable(t, writeTable(t, fixture()))
+	tab := loadBus(t, writeBus(t, fixture()))
 	for _, re := range []string{"bo-abcdef012345", "from-bo/2026-09-06-legacy-note.md", "new"} {
 		text := "From: Ada\nTo: Bo\nRe: " + re + "\nSubject: s\n\nbody\n"
 		if _, err := Prepare(tab, text, at("2026-09-09T12:34:56Z"), ""); err != nil {
@@ -95,9 +95,9 @@ func TestPrepareAcceptsAReByIDAndByLegacyPath(t *testing.T) {
 
 // Sending the same draft in the same second twice is one note, and the second is refused
 // by name rather than overwriting the first.
-func TestPrepareRefusesAnIDAlreadyOnTheTable(t *testing.T) {
-	root := writeTable(t, fixture())
-	tab := loadTable(t, root)
+func TestPrepareRefusesAnIDAlreadyOnTheBus(t *testing.T) {
+	root := writeBus(t, fixture())
+	tab := loadBus(t, root)
 	now := at("2026-09-09T12:34:56Z")
 	p, err := Prepare(tab, draft, now, "")
 	if err != nil {
@@ -106,24 +106,24 @@ func TestPrepareRefusesAnIDAlreadyOnTheTable(t *testing.T) {
 	if err := p.Save(root); err != nil {
 		t.Fatal(err)
 	}
-	tab = loadTable(t, root)
+	tab = loadBus(t, root)
 	_, err = Prepare(tab, draft, now, "")
 	if err == nil {
 		t.Fatal("the same note sent twice in one second was accepted twice")
 	}
-	if !strings.Contains(err.Error(), "already on this table") {
+	if !strings.Contains(err.Error(), "already on this bus") {
 		t.Fatalf("refusal %q", err)
 	}
 	// A second later it is a different note and goes through, which is the reason the
 	// date is in the id's preimage at all.
-	if _, err := Prepare(loadTable(t, root), draft, at("2026-09-09T12:34:57Z"), ""); err != nil {
+	if _, err := Prepare(loadBus(t, root), draft, at("2026-09-09T12:34:57Z"), ""); err != nil {
 		t.Fatalf("the same words a second later were refused: %v", err)
 	}
 }
 
 func TestWriteRefusesToOverwrite(t *testing.T) {
-	root := writeTable(t, fixture())
-	p, err := Prepare(loadTable(t, root), draft, at("2026-09-09T12:34:56Z"), "")
+	root := writeBus(t, fixture())
+	p, err := Prepare(loadBus(t, root), draft, at("2026-09-09T12:34:56Z"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +131,7 @@ func TestWriteRefusesToOverwrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := p.Save(root); err == nil {
-		t.Fatal("a note once written was rewritten; the table's rule is that it is not")
+		t.Fatal("a note once written was rewritten; the bus's rule is that it is not")
 	}
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(p.Path)))
 	if err != nil {
@@ -151,22 +151,22 @@ func TestWriteRefusesToOverwrite(t *testing.T) {
 
 // A note sent by the tool passes check, which is the only interesting round trip here.
 func TestASentNotePassesCheck(t *testing.T) {
-	root := writeTable(t, fixture())
-	p, err := Prepare(loadTable(t, root), draft, at("2026-09-09T12:34:56Z"), "")
+	root := writeBus(t, fixture())
+	p, err := Prepare(loadBus(t, root), draft, at("2026-09-09T12:34:56Z"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := p.Save(root); err != nil {
 		t.Fatal(err)
 	}
-	if ps := loadTable(t, root).Check(); len(ps) != 0 {
+	if ps := loadBus(t, root).Check(); len(ps) != 0 {
 		t.Fatalf("a note this tool wrote failed check: %+v", ps)
 	}
 }
 
 func TestPlanReceipts(t *testing.T) {
-	root := writeTable(t, fixture())
-	tab := loadTable(t, root)
+	root := writeBus(t, fixture())
+	tab := loadBus(t, root)
 	ada := mustParticipant(t, tab.Config, "Ada")
 	now := at("2026-09-09T12:34:56Z")
 
@@ -195,9 +195,9 @@ func TestPlanReceipts(t *testing.T) {
 
 	// inbox honours it: the receipted notes are HEARD. They stay in the listing, because
 	// heard is not answered and a note I acknowledged and never replied to is the state
-	// this table loses most often -- but they are marked, and the caller counts them out
+	// this bus loses most often -- but they are marked, and the caller counts them out
 	// of what is still open.
-	tab = loadTable(t, root)
+	tab = loadBus(t, root)
 	heard := 0
 	for _, it := range tab.Inbox(ada, 40) {
 		if it.Note.Header.ID != "bo-abcdef012345" && it.Note.Path != "from-bo/2026-09-06-legacy-note.md" {
@@ -231,8 +231,8 @@ func TestPlanReceipts(t *testing.T) {
 }
 
 func TestPlanReceiptsRefuses(t *testing.T) {
-	root := writeTable(t, fixture())
-	tab := loadTable(t, root)
+	root := writeBus(t, fixture())
+	tab := loadBus(t, root)
 	ada := mustParticipant(t, tab.Config, "Ada")
 	bo := mustParticipant(t, tab.Config, "Bo")
 	dana := mustParticipant(t, tab.Config, "Dana")
@@ -253,11 +253,11 @@ func TestPlanReceiptsRefuses(t *testing.T) {
 }
 
 // --slug is the one piece of a note's PATH a caller supplies, and it was written into the
-// filename unchecked. "../../x" walks out of the lane and out of the table; "a/b" invents a
+// filename unchecked. "../../x" walks out of the lane and out of the bus; "a/b" invents a
 // directory; a newline forges a second line in anything that lists the path. Every one of
-// them is a refusal, and the refusal happens in Prepare, before the table is touched.
+// them is a refusal, and the refusal happens in Prepare, before the bus is touched.
 func TestPrepareRefusesASlugThatIsNotASlug(t *testing.T) {
-	tab := loadTable(t, writeTable(t, fixture()))
+	tab := loadBus(t, writeBus(t, fixture()))
 	when := at("2026-09-09T12:34:56Z")
 	for _, slug := range []string{
 		"../x",
@@ -299,23 +299,23 @@ func TestPrepareRefusesASlugThatIsNotASlug(t *testing.T) {
 }
 
 // The last wall, behind the flag check: whatever built the path, Save will not write
-// outside the table. This constructs the Prepared by hand precisely because Prepare would
+// outside the bus. This constructs the Prepared by hand precisely because Prepare would
 // not produce it -- the assertion is the point, and an assertion nothing can reach today
 // is one nobody has to remember tomorrow.
-func TestSaveRefusesToWriteOutsideTheTable(t *testing.T) {
-	root := writeTable(t, fixture())
-	tab := loadTable(t, root)
+func TestSaveRefusesToWriteOutsideTheBus(t *testing.T) {
+	root := writeBus(t, fixture())
+	tab := loadBus(t, root)
 	p, err := Prepare(tab, draft, at("2026-09-09T12:34:56Z"), "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	p.Path = "../escaped.md"
 	if err := p.Save(root); err == nil {
-		t.Fatal("Save wrote outside the table root")
-	} else if !strings.Contains(err.Error(), "not inside the table") {
+		t.Fatal("Save wrote outside the bus root")
+	} else if !strings.Contains(err.Error(), "not inside the bus") {
 		t.Fatalf("the refusal does not say why: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(filepath.Dir(root), "escaped.md")); err == nil {
-		t.Fatal("a file was written outside the table root")
+		t.Fatal("a file was written outside the bus root")
 	}
 }

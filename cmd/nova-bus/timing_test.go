@@ -15,7 +15,7 @@ import (
 // not done, which is what O(new) is a claim about. Nothing here replaces that. What a parse
 // count cannot see is a regression that is not a parse -- a walk of every lane's INDEX per
 // note, a git call per open entry, a quadratic string build -- and those show up as one
-// thing only: the tool gets slow on a big table. So this runs every verb over the
+// thing only: the tool gets slow on a big bus. So this runs every verb over the
 // ten-thousand-note fixture and holds each to a bound.
 //
 // The bound is a WALL CLOCK, which makes it the one test here that can flake, so it is
@@ -23,7 +23,7 @@ import (
 // reading verbs actually take (tens of milliseconds against a second), it is skipped under
 // the race detector, whose instrumentation would be what it measured, and its failure
 // message says what it means -- a verb that has gone from milliseconds to a second on a
-// table this size has stopped being the size of the change, and the parse counts are where
+// bus this size has stopped being the size of the change, and the parse counts are where
 // to look next.
 const timingBound = time.Second
 
@@ -45,7 +45,7 @@ func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
 		t.Skip("builds a ten-thousand-note fixture")
 	}
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 
 	const history = 10000
 	const carried = 500
@@ -66,7 +66,7 @@ func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
 	commitAs(t, checkout, "Bo", "ten thousand notes")
 
 	// The one full read a reader ever pays for, which gives Ada a cursor and an open list
-	// of five hundred. It is NOT timed: a full walk is the size of the table by definition
+	// of five hundred. It is NOT timed: a full walk is the size of the bus by definition
 	// and always was, which is why the cursor exists.
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
 
@@ -87,19 +87,19 @@ func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
 			t.Fatalf("%s: exit %d\nstdout: %s\nstderr: %s", name, r.code, r.stdout, r.stderr)
 		}
 		if took > bound {
-			t.Fatalf("%s took %s over a table of %d notes with %d open, past the %s bound; this verb should be the size of the CHANGE, so something now walks the record -- the parse counts in cursor_test.go are where to look",
+			t.Fatalf("%s took %s over a bus of %d notes with %d open, past the %s bound; this verb should be the size of the CHANGE, so something now walks the record -- the parse counts in cursor_test.go are where to look",
 				name, took, history, carried, bound)
 		}
 		t.Logf("%s: %s", name, took)
 	}
 
-	timed("names", timingBound, "names", "--table", checkout)
-	timed("inbox", timingBound, "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40")
-	timed("inbox --open", timingBound, "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open")
-	timed("check --since", timingBound, "check", "--table", checkout, "--since", head)
-	timed("check --as", timingBound, "check", "--table", checkout, "--as", "Ada")
+	timed("names", timingBound, "names", "--bus", checkout)
+	timed("inbox", timingBound, "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40")
+	timed("inbox --open", timingBound, "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open")
+	timed("check --since", timingBound, "check", "--bus", checkout, "--since", head)
+	timed("check --as", timingBound, "check", "--bus", checkout, "--as", "Ada")
 	timed("inbox --advance", pushBound, advance(checkout, "Ada")...)
-	timed("receipt", pushBound, "receipt", "--table", checkout, "--as", "Ada", "--note", "bo-222222222222",
+	timed("receipt", pushBound, "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-222222222222",
 		"--remote", "origin", "--branch", "main")
-	timed("send", pushBound, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main")
+	timed("send", pushBound, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main")
 }

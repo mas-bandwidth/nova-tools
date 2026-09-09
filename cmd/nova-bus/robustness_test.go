@@ -12,7 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
-// The findings of one scenario run over a copy of a real table, each closed and
+// The findings of one scenario run over a copy of a real bus, each closed and
 // each pinned here from both sides: the failure does not happen, and the behaviour it was
 // protecting still does.
 
@@ -30,7 +30,7 @@ func draftFrom(who, subject, body string) string {
 // and the NEXT send runs and carries it.
 func TestASendThatLostItsPushDoesNotWedgeTheNextOne(t *testing.T) {
 	hermetic(t)
-	checkout, bare := table(t)
+	checkout, bare := busDir(t)
 	other := cloneOf(t, bare)
 
 	// Somebody else lands first, so a one-attempt push cannot.
@@ -41,7 +41,7 @@ func TestASendThatLostItsPushDoesNotWedgeTheNextOne(t *testing.T) {
 	gitIn(t, other, "push", "-q", "origin", "HEAD:refs/heads/main")
 
 	lost := invoke(t, draftFrom("Ada", "The one that lost", "This push cannot land."),
-		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "1").
+		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "1").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "was NOT pushed").
 		mustContain(t, "stderr", "git pull --rebase && git push")
@@ -51,14 +51,14 @@ func TestASendThatLostItsPushDoesNotWedgeTheNextOne(t *testing.T) {
 
 	// THE NEXT RUN. This is where the tool refused to run at all.
 	invoke(t, draftFrom("Ada", "The one after it", "This one must run."),
-		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").
+		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "SEND OK id=ada-")
 
-	// Both of Ada's notes are on the table: the second carried the first.
+	// Both of Ada's notes are on the bus: the second carried the first.
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
 	if n := strings.Count(files, "from-ada/2026-09-09T1234Z-the-one-"); n != 2 {
-		t.Fatalf("%d of Ada's two notes reached the table:\n%s", n, files)
+		t.Fatalf("%d of Ada's two notes reached the bus:\n%s", n, files)
 	}
 
 	// The other way: a commit a PERSON made is still refused, because a push publishes the
@@ -67,7 +67,7 @@ func TestASendThatLostItsPushDoesNotWedgeTheNextOne(t *testing.T) {
 	gitIn(t, checkout, "add", "notes-to-self.txt")
 	gitIn(t, checkout, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "-q", "-m", "wip")
 	invoke(t, draftFrom("Ada", "After somebody elses work", "Should be refused."),
-		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").
+		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "SEND REFUSED: ").
 		mustContain(t, "stderr", "1 of which the tool did not make").
@@ -78,8 +78,8 @@ func TestASendThatLostItsPushDoesNotWedgeTheNextOne(t *testing.T) {
 // none is not a refusal.
 func TestTheRetryBudgetHasAMeasuredDefault(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
-	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").
+	checkout, _ := busDir(t)
+	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=ada-")
 	if defaultAttempts < 25 {
 		t.Fatalf("the default budget is %d; five lines sending at once consumed nine attempts at the peak and three landed under a budget of three", defaultAttempts)
@@ -94,7 +94,7 @@ func TestTheRetryBudgetHasAMeasuredDefault(t *testing.T) {
 // Twenty sends, ten rounds of two, and every one of them lands.
 func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
 	hermetic(t)
-	checkout, bare := table(t)
+	checkout, bare := busDir(t)
 	second := cloneOf(t, bare)
 
 	const rounds = 10
@@ -109,7 +109,7 @@ func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
 				subject := fmt.Sprintf("Round %d from bench %d", round, i)
 				body := fmt.Sprintf("Bench %d, round %d, sent at once with the other.", i, round)
 				results[i] = invoke(t, draftFrom("Ada", subject, body),
-					"send", "--table", dir, "--stdin", "--remote", "origin", "--branch", "main")
+					"send", "--bus", dir, "--stdin", "--remote", "origin", "--branch", "main")
 			}(i, dir)
 		}
 		wg.Wait()
@@ -120,10 +120,10 @@ func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
 		}
 	}
 
-	// 20/20 on the table.
+	// 20/20 on the bus.
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
 	if n := strings.Count(files, "from-ada/2026-09-09T1234Z-round-"); n != rounds*2 {
-		t.Fatalf("%d of %d notes reached the table:\n%s", n, rounds*2, files)
+		t.Fatalf("%d of %d notes reached the bus:\n%s", n, rounds*2, files)
 	}
 	// And the catalogue names every one of them: the union kept both sides' lines every
 	// time, rather than one bench's replacing the other's.
@@ -151,9 +151,9 @@ func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
 			}
 		}
 	}
-	// The table itself is still valid.
-	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
-	// And the union rule is on the table, so a person's own `git pull --rebase` gets the
+	// The bus itself is still valid.
+	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
+	// And the union rule is on the bus, so a person's own `git pull --rebase` gets the
 	// same settlement this tool gave itself.
 	attrs := gitIn(t, bare, "show", "main:"+bus.AttributesName)
 	for _, want := range []string{"from-*/INDEX merge=union", "from-*/RECEIPTS merge=union"} {
@@ -165,18 +165,18 @@ func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
 
 // ---------------------------------------------------------------- 3. addressed to nobody
 
-// 22 notes on the real table were in no inbox and were not UNREADABLE either: they parsed,
+// 22 notes on the real bus were in no inbox and were not UNREADABLE either: they parsed,
 // and their To line named nobody. Nothing ever told anyone they were there.
 func TestANoteAddressedToNobodyIsNamed(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	const toNobody = "from-bo/2026-09-08T0100Z-team.md"
 	writeFile(t, checkout, toNobody,
 		"From: Bo\nTo: Team\nDate: Tue Sep  8 01:00:00 UTC 2026\nSubject: The wire task\n\nA note addressed to a name no roster holds.\n")
 	commitAs(t, checkout, "Bo", "bo: a note to nobody")
 
-	// EVERY reader sees it on a full read, because it is a fact about the table.
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full").
+	// EVERY reader sees it on a full read, because it is a fact about the bus.
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX UNADDRESSED path="+toNobody+": ").
 		mustContain(t, "stdout", `"Team"`).
@@ -188,7 +188,7 @@ func TestANoteAddressedToNobodyIsNamed(t *testing.T) {
 	writeFile(t, checkout, "from-bo/2026-09-08T0200Z-also-team.md",
 		"From: Bo\nTo: Team\nDate: Tue Sep  8 02:00:00 UTC 2026\nSubject: Also the wire task\n\nAnother one to nobody.\n")
 	commitAs(t, checkout, "Bo", "bo: another to nobody")
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Bo", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Bo", "--receipt-max-words", "40").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
 		mustContain(t, "stdout", "INBOX UNADDRESSED path=from-bo/2026-09-08T0200Z-also-team.md: ")
@@ -198,7 +198,7 @@ func TestANoteAddressedToNobodyIsNamed(t *testing.T) {
 	writeFile(t, checkout, "from-bo/2026-09-08T0300Z-partly.md",
 		"From: Bo\nTo: Ada, Team\nDate: Tue Sep  8 03:00:00 UTC 2026\nSubject: Partly addressed\n\nThis one reaches Ada.\n")
 	commitAs(t, checkout, "Bo", "bo: partly addressed")
-	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full").mustCode(t, 0)
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full").mustCode(t, 0)
 	if strings.Contains(r.stdout, "2026-09-08T0300Z-partly.md: ") && strings.Contains(r.stdout, "INBOX UNADDRESSED path=from-bo/2026-09-08T0300Z-partly.md") {
 		t.Fatalf("a note that reaches Ada was reported as reaching nobody:\n%s", r.stdout)
 	}
@@ -215,8 +215,8 @@ func TestANoteAddressedToNobodyIsNamed(t *testing.T) {
 // that what comes out of `names` goes into a draft the tool accepts.
 func TestNamesPrintsSomethingASendWillAccept(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
-	r := invoke(t, "", "names", "--table", checkout).mustCode(t, 0)
+	checkout, _ := busDir(t)
+	r := invoke(t, "", "names", "--bus", checkout).mustCode(t, 0)
 	if strings.Contains(r.stdout, `\x20`) {
 		t.Fatalf("a name came out with its spaces escaped, which nobody can paste into a To line:\n%s", r.stdout)
 	}
@@ -226,7 +226,7 @@ func TestNamesPrintsSomethingASendWillAccept(t *testing.T) {
 		t.Fatalf("the aliases are not quoted as %s:\n%s", want, r.stdout)
 	}
 	invoke(t, "From: Bo\nTo: Ada Vale\nSubject: Pasted from names\n\nThe spelling came out of the names verb.\n",
-		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").
+		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=bo-")
 	// The one-line guarantee still holds: every line of the output is one line.
 	for _, line := range strings.Split(strings.TrimRight(r.stdout, "\n"), "\n") {
@@ -241,7 +241,7 @@ func TestNamesPrintsSomethingASendWillAccept(t *testing.T) {
 // actionable line is one line; the transcript follows it, as git wrote it.
 func TestARebaseConflictPrintsOneActionableLineAndTheTranscriptRaw(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	second := cloneOf(t, checkoutRemote(t, checkout))
 
 	// ONE NOTE PATH FROM TWO BENCHES, with different bytes in it. The id is a hash over the
@@ -254,8 +254,8 @@ func TestARebaseConflictPrintsOneActionableLineAndTheTranscriptRaw(t *testing.T)
 	const body = "Written twice in one second by two benches."
 	mine := "From: Ada\nTo: Bo\nSubject: " + subject + "\n\n" + body + "\n"
 	theirs := "From: Ada\nTo: Bo Codex\nSubject: " + subject + "\n\n" + body + "\n"
-	invoke(t, mine, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").mustCode(t, 0)
-	r := invoke(t, theirs, "send", "--table", second, "--stdin", "--remote", "origin", "--branch", "main").mustCode(t, 1)
+	invoke(t, mine, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").mustCode(t, 0)
+	r := invoke(t, theirs, "send", "--bus", second, "--stdin", "--remote", "origin", "--branch", "main").mustCode(t, 1)
 
 	lines := strings.Split(strings.TrimRight(r.stderr, "\n"), "\n")
 	if !strings.HasPrefix(lines[0], "SEND FAIL from-ada/") {
@@ -280,19 +280,19 @@ func TestARebaseConflictPrintsOneActionableLineAndTheTranscriptRaw(t *testing.T)
 	}
 }
 
-// A --table that is a subdirectory of a bigger repository refused with "participants.json:
+// A --bus that is a subdirectory of a bigger repository refused with "participants.json:
 // no such file" -- true, and not the caller's mistake. The root check runs first, so the
 // sentence that fixes the invocation is the one seen.
-func TestASubdirectoryTableIsRefusedByItsRootAndNotByItsRoster(t *testing.T) {
+func TestASubdirectoryBusIsRefusedByItsRootAndNotByItsRoster(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
-	nested := filepath.Join(checkout, "docs", "table")
+	checkout, _ := busDir(t)
+	nested := filepath.Join(checkout, "docs", "bus")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"check", "--table", nested, "--as", "Ada"},
-		{"inbox", "--table", nested, "--as", "Ada", "--receipt-max-words", "40"},
+		{"check", "--bus", nested, "--as", "Ada"},
+		{"inbox", "--bus", nested, "--as", "Ada", "--receipt-max-words", "40"},
 	} {
 		r := invoke(t, "", args...).mustCode(t, 2).
 			mustContain(t, "stderr", "is not its root").
@@ -301,11 +301,11 @@ func TestASubdirectoryTableIsRefusedByItsRootAndNotByItsRoster(t *testing.T) {
 			t.Fatalf("%s: the roster refusal fired first, so the good sentence is not the one seen:\n%s", args[0], r.stderr)
 		}
 	}
-	// The other way: a table that IS a root and has no roster is refused for the roster,
+	// The other way: a bus that IS a root and has no roster is refused for the roster,
 	// which is then the true reason.
 	bareRoot := t.TempDir()
 	gitIn(t, bareRoot, "init", "--quiet", "-b", "main")
-	invoke(t, "", "check", "--table", bareRoot, "--as", "Ada").
+	invoke(t, "", "check", "--bus", bareRoot, "--as", "Ada").
 		mustCode(t, 2).mustContain(t, "stderr", "participants.json")
 }
 
@@ -315,12 +315,12 @@ func TestASubdirectoryTableIsRefusedByItsRootAndNotByItsRoster(t *testing.T) {
 // elsewhere, beside the decomposition that makes them add up.
 func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
-	invoke(t, "", "receipt", "--table", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
+	checkout, _ := busDir(t)
+	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
 		"--remote", "origin", "--branch", "main").mustCode(t, 0)
 	// A cursor first, so the read below is the incremental one a person actually runs.
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
-	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
 	// Two notes on the list, one of them heard: carrying counts it, open does not.
 	for _, want := range []string{
 		"INBOX SCOPE mode=since",
@@ -351,10 +351,10 @@ func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 // rather than a run with no budget at all.
 func TestGitTimeoutIsAFlagAndIsChecked(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
-	invoke(t, "", "check", "--table", checkout, "--full", "--git-timeout", "0").
+	checkout, _ := busDir(t)
+	invoke(t, "", "check", "--bus", checkout, "--full", "--git-timeout", "0").
 		mustCode(t, 2).mustContain(t, "stderr", "--git-timeout is a whole number of seconds and at least 1")
-	invoke(t, "", "check", "--table", checkout, "--full", "--git-timeout", "5").
+	invoke(t, "", "check", "--bus", checkout, "--full", "--git-timeout", "5").
 		mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
 }
 
@@ -362,7 +362,7 @@ func TestGitTimeoutIsAFlagAndIsChecked(t *testing.T) {
 // sentence, rather than writing the same OPEN list from underneath the first.
 func TestASecondInvocationOnOneCheckoutRefuses(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	// The binary waits ten seconds; a test that waited ten seconds would assert the same
 	// thing and take ten seconds to do it.
 	real := checkoutLockWait
@@ -387,7 +387,7 @@ func TestASecondInvocationOnOneCheckoutRefuses(t *testing.T) {
 	if first != nil {
 		t.Fatalf("the first run could not take the lock: %v", first)
 	}
-	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").
+	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "SEND REFUSED: ").
 		mustContain(t, "stderr", "another nova-bus is already running on this checkout").
@@ -395,13 +395,13 @@ func TestASecondInvocationOnOneCheckoutRefuses(t *testing.T) {
 	<-done
 
 	// The other way: with nothing holding it, the same send runs.
-	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").
+	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=ada-")
 }
 
 // ---------------------------------------------------------------- helpers
 
-// cloneOf is a second checkout of one table: the other bench, which cannot see this one.
+// cloneOf is a second checkout of one bus: the other bench, which cannot see this one.
 func cloneOf(t *testing.T, bare string) string {
 	t.Helper()
 	dir := filepath.Join(t.TempDir(), "bench")

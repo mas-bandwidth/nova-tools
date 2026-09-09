@@ -28,8 +28,8 @@ type Receipt struct {
 	Line   int
 }
 
-// Table is the whole table, read once.
-type Table struct {
+// Bus is the whole bus, read once.
+type Bus struct {
 	Root   string
 	Config *Config
 
@@ -65,17 +65,17 @@ func (n Note) When() time.Time {
 //
 // WHY THE LINE READS A DATE THE REST OF THE TOOL DOES NOT. The rule the tolerance rests on
 // is that a file which cannot say when it was written cannot claim to predate anything.
-// That is right, and the first version of it read too little: a table written by hand for
+// That is right, and the first version of it read too little: a bus written by hand for
 // months names its notes four ways -- `2026-09-09T0041Z-slug.md`, the same with seconds,
 // the same with the stamp accidentally doubled, and a plain `2026-09-06-slug.md` -- and
 // only the first is the minute When parses. Every one of the other three still says its
 // DAY, in the first ten characters, which is all a line drawn on a date needs. On a real
-// table those three shapes are 87 notes, and refusing to read their day
+// bus those three shapes are 87 notes, and refusing to read their day
 // meant refusing to forgive a note that says plainly when it was written.
 //
 // It is deliberately NOT folded into When. When orders the listing, fills a catalogue's
 // Date field and prints `at=`, so widening it would rewrite records and make every INDEX
-// line already on a table disagree with its note. The line needs a day and takes one here.
+// line already on a bus disagree with its note. The line needs a day and takes one here.
 func (n Note) legacyDay() time.Time {
 	if when := n.When(); !when.IsZero() {
 		return when
@@ -100,10 +100,10 @@ func filenameDay(path string) time.Time {
 // that a lane nobody owns is visible to check rather than invisible to everything.
 //
 // A file that will not parse is NOT an error here: it becomes a Note with a ParseError, so
-// that inbox keeps working on a table with one bad file and check can name every bad file
+// that inbox keeps working on a bus with one bad file and check can name every bad file
 // in one run instead of the first.
-func ReadTable(root string, c *Config) (*Table, error) {
-	t := &Table{Root: root, Config: c, byID: map[string]*Note{}, byPath: map[string]*Note{}}
+func ReadBus(root string, c *Config) (*Bus, error) {
+	t := &Bus{Root: root, Config: c, byID: map[string]*Note{}, byPath: map[string]*Note{}}
 	entries, err := os.ReadDir(root)
 	if err != nil {
 		return nil, err
@@ -140,7 +140,7 @@ type ParseError struct{ Err error }
 
 func (p *ParseError) Error() string { return p.Err.Error() }
 
-func (t *Table) readLane(lane string) error {
+func (t *Bus) readLane(lane string) error {
 	dir := filepath.Join(t.Root, lane)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -169,7 +169,7 @@ func (t *Table) readLane(lane string) error {
 		// fail over a file the next write replaces.
 		//
 		// AND THE LANE'S README, which is neither. It ends in `.md`, so this walk used to
-		// parse it as a note, fail, and hand every reader on the table an `INBOX UNREADABLE`
+		// parse it as a note, fail, and hand every reader on the bus an `INBOX UNREADABLE`
 		// about a file that is doing exactly what it says it is doing. It is the one non-note
 		// document a lane may hold; see LaneDocName.
 		if isLaneStateFile(name) || isLaneStateTemp(name) || isLaneDoc(name) {
@@ -193,7 +193,7 @@ func (t *Table) readLane(lane string) error {
 	return nil
 }
 
-func (t *Table) readReceipts(lane, path string) error {
+func (t *Bus) readReceipts(lane, path string) error {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return err
@@ -220,11 +220,11 @@ func (t *Table) readReceipts(lane, path string) error {
 // NoteByID and NoteByPath are the two ways a Re line or a receipt can name a note: by the
 // id assigned at send, or by the repo-relative path, which is how every note written
 // before this tool existed is named and stays named.
-func (t *Table) NoteByID(id string) (*Note, bool)     { n, ok := t.byID[id]; return n, ok }
-func (t *Table) NoteByPath(path string) (*Note, bool) { n, ok := t.byPath[path]; return n, ok }
+func (t *Bus) NoteByID(id string) (*Note, bool)     { n, ok := t.byID[id]; return n, ok }
+func (t *Bus) NoteByPath(path string) (*Note, bool) { n, ok := t.byPath[path]; return n, ok }
 
 // Resolve turns one Re or receipt target into the note it names.
-func (t *Table) Resolve(target string) (*Note, bool) {
+func (t *Bus) Resolve(target string) (*Note, bool) {
 	if n, ok := t.byID[target]; ok {
 		return n, true
 	}
@@ -247,7 +247,7 @@ func names(n *Note) []string {
 // AnswerKind is what closed a note for one reader: nothing, a reply, or a receipt.
 //
 // The distinction is not bookkeeping. A receipt says HEARD and a reply says ANSWERED, and
-// collapsing them loses the state the table's people spend the most time in: a note read,
+// collapsing them loses the state the bus's people spend the most time in: a note read,
 // acknowledged, and still owed an answer. Both leave the unanswered count, and only one of
 // them leaves the listing.
 type AnswerKind int
@@ -269,8 +269,8 @@ const (
 // that reader's RECEIPTS file records the note's id or path.
 //
 // It measures whether a note has had a reply, never whether the work in it is finished --
-// the distinction the table was already making, kept.
-func (t *Table) AnsweredBy(n *Note, lane string) (by string, answered bool) {
+// the distinction the bus was already making, kept.
+func (t *Bus) AnsweredBy(n *Note, lane string) (by string, answered bool) {
 	by, kind := t.AnswerFor(n, lane)
 	return by, kind != NotAnswered
 }
@@ -278,7 +278,7 @@ func (t *Table) AnsweredBy(n *Note, lane string) (by string, answered bool) {
 // AnswerFor is AnsweredBy with the two kinds kept apart. A reply is looked for first: a
 // note both receipted and replied to has been answered, and reporting it as merely heard
 // would be the same collapse in the other direction.
-func (t *Table) AnswerFor(n *Note, lane string) (by string, kind AnswerKind) {
+func (t *Bus) AnswerFor(n *Note, lane string) (by string, kind AnswerKind) {
 	keys := names(n)
 	for i := range t.Notes {
 		m := &t.Notes[i]
@@ -315,10 +315,10 @@ type InboxItem struct {
 	Heard   bool   // true when my RECEIPTS records it and nothing of mine replies
 }
 
-// Unreadable lists the notes on the table that would not parse, outside the given lane.
+// Unreadable lists the notes on the bus that would not parse, outside the given lane.
 //
 // It exists because inbox used to step over them in silence. A note somebody wrote, on the
-// table, addressed to a reader who is never told it is there, is the exact failure this
+// bus, addressed to a reader who is never told it is there, is the exact failure this
 // tool was built to end -- and it is worse than a lost push, because nothing about it looks
 // wrong. An unreadable note has no To line to test, so this cannot say whether it was
 // addressed to the caller; it says the file is there and cannot be read, which is all
@@ -326,7 +326,7 @@ type InboxItem struct {
 //
 // The caller's own lane is excluded on the same rule the inbox uses: a note of mine is my
 // own business, and check names it.
-func (t *Table) Unreadable(lane string) []*Note {
+func (t *Bus) Unreadable(lane string) []*Note {
 	var out []*Note
 	for i := range t.Notes {
 		n := &t.Notes[i]
@@ -344,7 +344,7 @@ func (t *Table) Unreadable(lane string) []*Note {
 //
 // Notes in my own lane are never in my inbox, whoever they are addressed to: the answered
 // rule reads my lane for answers, and a note answering itself is not a state this reports.
-func (t *Table) Inbox(me Participant, maxWords int) []InboxItem {
+func (t *Bus) Inbox(me Participant, maxWords int) []InboxItem {
 	var out []InboxItem
 	for i := range t.Notes {
 		n := &t.Notes[i]
@@ -406,29 +406,29 @@ type Problem struct {
 }
 
 // CheckOptions is what a check run tolerates. The zero value tolerates nothing, which is
-// what CI on a table that has only ever been written by this tool should use.
+// what CI on a bus that has only ever been written by this tool should use.
 type CheckOptions struct {
 	// LegacyBefore, when non-zero, is the moment before which a finding about a note's
 	// HEADER -- it will not parse, its From, To or Cc names somebody the roster does not
 	// know, it has no Subject, its Kind is neither word, its Re names nothing -- is a WARN
 	// rather than a FAIL.
 	//
-	// THE ADOPTION PROBLEM, which this exists for and nothing else. A table that has been
+	// THE ADOPTION PROBLEM, which this exists for and nothing else. A bus that has been
 	// running for months was written by people, by hand, in a shape no tool checked. Point
 	// check at it and every note that predates the tool fails at once, so the first run is
 	// a wall of red that nobody can act on and the check gets turned off -- which is worse
-	// than not having it. The tolerance draws a line at the day the table adopted the
+	// than not having it. The tolerance draws a line at the day the bus adopted the
 	// tool: everything after it is held to the rule, everything before it is reported and
 	// forgiven.
 	//
 	// It is a DATE and not a switch, so the forgiven set can only shrink. What it forgives
 	// is a note's HEADER and nothing else, and the width of that was measured rather than
-	// argued: a dry run over a real table with the line at its adoption day
+	// argued: a dry run over a real bus with the line at its adoption day
 	// still failed 163 times -- 109 missing Subject lines, 47 To, From and Cc lines naming
 	// people the roster did not yet hold, and a few notes that would not parse at all --
 	// which is the wall of red the tolerance exists to prevent. A note in the wrong lane, a
 	// malformed or duplicated id, a broken receipt line, an unowned lane and a stray file
-	// all still FAIL at any date, because none of THOSE is a thing a table's history made
+	// all still FAIL at any date, because none of THOSE is a thing a bus's history made
 	// unavoidable: they are facts about where a file sits, not about how it was written.
 	//
 	// A note whose date cannot be read AT ALL -- no parseable Date line and no UTC minute
@@ -450,25 +450,25 @@ func (o CheckOptions) tolerates(n *Note) bool {
 	return when.Before(o.LegacyBefore)
 }
 
-// Check validates the whole table and returns every problem it found, sorted. This is what
-// CI on a table runs, so it names every failure in one pass rather than the first.
+// Check validates the whole bus and returns every problem it found, sorted. This is what
+// CI on a bus runs, so it names every failure in one pass rather than the first.
 //
 // What it asserts: every note parses; every header is valid against the roster; every note
 // sits in the lane its From line names; every id is well formed, carries its own lane's
-// slug, and is unique across the table; every Re resolves to an id or to a path that
+// slug, and is unique across the bus; every Re resolves to an id or to a path that
 // exists; every receipt line parses and names something that exists; every from-* lane on
 // disk has an owner in the roster; and a lane holds notes and its RECEIPTS file and
 // nothing else.
 //
 // What it deliberately does not assert: anything about a note's body. A body is prose,
-// and prose is the part of the table no tool has an opinion about.
+// and prose is the part of the bus no tool has an opinion about.
 //
 // Its findings about a note's HEADER can be TOLERATED for old notes rather than failed;
 // see CheckOptions. Check itself tolerates nothing.
-func (t *Table) Check() []Problem { return t.CheckWith(CheckOptions{}) }
+func (t *Bus) Check() []Problem { return t.CheckWith(CheckOptions{}) }
 
 // CheckWith is Check with a stated tolerance. See CheckOptions.
-func (t *Table) CheckWith(o CheckOptions) []Problem {
+func (t *Bus) CheckWith(o CheckOptions) []Problem {
 	var ps []Problem
 	add := func(where, format string, args ...any) {
 		ps = append(ps, Problem{Where: where, Reason: fmt.Sprintf(format, args...)})
@@ -488,7 +488,7 @@ func (t *Table) CheckWith(o CheckOptions) []Problem {
 		add(stray, "a lane holds notes (*.md), its %s, and nothing else", strings.Join(laneAllowedFiles, ", "))
 	}
 	// The per-note rules are the SAME code the incremental check runs, with the lookups
-	// answered from the table rather than from the catalogue. They are shared rather than
+	// answered from the bus rather than from the catalogue. They are shared rather than
 	// written twice because two spellings of one rule drift, and a check that says
 	// different things depending on how it was invoked is worse than one that is slow.
 	k := &noteChecker{
@@ -525,11 +525,11 @@ func (t *Table) CheckWith(o CheckOptions) []Problem {
 			add(where, "%q is not a UTC stamp of the form %s", r.Raw, ReceiptStampLayout)
 		}
 		if _, ok := t.Resolve(r.Target); !ok {
-			add(where, "%q is neither an id on this table nor a note that exists", r.Target)
+			add(where, "%q is neither an id on this bus nor a note that exists", r.Target)
 		}
 	}
 	sortProblems(ps)
 	return ps
 }
 
-func (t *Table) lanesOnDisk() []string { return t.laneDirs }
+func (t *Bus) lanesOnDisk() []string { return t.laneDirs }

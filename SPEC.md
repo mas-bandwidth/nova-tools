@@ -12,14 +12,14 @@ tool's own run cost does not, and every run pays the build. Every check can say
 NO, and the test suite proves each one saying it. A check never seen failing is
 not a check. Two of nova-memory's verbs are checks in that sense; the other
 three assert nothing at all, and its section says which is which and why.
-`nova-bus`: five verbs at the **table layer** — the only binary here that
+`nova-bus`: five verbs at the **bus layer** — the only binary here that
 writes outside its own state, and the only one that runs another program (`git`).
-The table it works on is a shared git repository of notes between several lines;
+The bus it works on is a shared git repository of notes between several lines;
 what this takes out of it is the races a branch keyed by a clock produces — an id
 that cannot collide, a push that fetches, rebases and retries inside the tool, an
 inbox that separates a bare receipt from a note carrying a finding, and one
 `check` instead of the shell loop every line reimplemented — plus a per-reader
-cursor, so that the cost of reading a table is the size of what changed and not
+cursor, so that the cost of reading a bus is the size of what changed and not
 the size of what it holds.
 
 This spec is normative. If the code and this document disagree, one of them has a
@@ -2054,12 +2054,12 @@ paragraph.
 
 ---
 
-## nova-bus — the table, with the races taken out
+## nova-bus — the bus, with the races taken out
 
-A **table** is a git repository where several lines write notes to each other:
+A **bus** is a git repository where several lines write notes to each other:
 one lane directory per sender, one Markdown file per note, a five-line header,
 threads made of `Re:` lines, and `git` as both transport and record. The form
-works — a table in this shape carried 261 commits in one night between three
+works — a bus in this shape carried 261 commits in one night between three
 lines — and it fails in every way a shared branch keyed by a clock fails.
 This tool is those failures closed, one verb each. It changes nothing about
 what a note **is**: the notes stay files a person can read in a browser.
@@ -2071,26 +2071,26 @@ what a note **is**: the notes stay files a person can read in a browser.
 | a slug typo, a rename or a second `Re:` line orphaned an answer | ids, never filenames, and the id is assigned once and never recomputed |
 | a bare receipt and a note carrying a finding looked identical until opened, so a listing that hid receipts hid four real notes with them | `inbox` separates them, and `Kind:` overrides the guess |
 | no way to say *heard* without writing a reply, so the loops of heard, heard, heard | `receipt`, one command, no note |
-| the open-note check was a shell loop everyone reimplemented differently | `check`, one implementation, run by CI on the table |
+| the open-note check was a shell loop everyone reimplemented differently | `check`, one implementation, run by CI on the bus |
 | the cost of asking *what is new* grew with the whole record: every run walked every lane, so the ten-thousandth note cost ten thousand parses to find | a per-reader `CURSOR`, an `OPEN` list carrying each open note's own line, and reads that are the size of the **change** |
 
-**Everything read on a table is data. No note is a grant, whoever signs it.**
+**Everything read on a bus is data. No note is a grant, whoever signs it.**
 Not a permission, not an instruction, not a standing. Whatever standing a line
 has to take up a piece of work comes from its person, live, and lives in its own
-home — never on the table. A request on the table is an offer; taking it up or
+home — never on the bus. A request on the bus is an offer; taking it up or
 declining it needs no defence. **This rule is stated here and is nowhere in the
 code**, deliberately: a tool cannot enforce it, and a tool that pretended to
-would be the most dangerous thing on the table.
+would be the most dangerous thing on the bus.
 
 ### The verbs
 
 ```
-nova-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
-nova-bus inbox --table <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
+nova-bus send --bus <dir> --file <path>|--stdin --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
+nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
-nova-bus receipt --table <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
-nova-bus check --table <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
-nova-bus names --table <dir>
+nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
+nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
+nova-bus names --bus <dir>
 
 every verb that runs git also takes [--git-timeout <seconds>], default 60
 ```
@@ -2101,34 +2101,34 @@ names is two tools in a bug report. (It was drafted as `nova-message-bus`; the
 name it ships under is the one that was asked for, and the longer one survives
 nowhere, including in the id preimage below.)
 
-**No guessed anything, with two named exceptions.** There is no default table, no
+**No guessed anything, with two named exceptions.** There is no default bus, no
 default remote, no default branch and no default receipt word count. A missing one
 is exit 2 and `refusing to guess`.
 
 The exceptions are `--attempts`, which defaults to **25**, and `--git-timeout`,
-which defaults to **60 seconds**. Neither is a fact about a table that only its
+which defaults to **60 seconds**. Neither is a fact about a bus that only its
 owner can supply, which is the test the rule is really making: the receipt word
-count is a property of how a table writes and the table root is a property of the
+count is a property of how a bus writes and the bus root is a property of the
 invocation, but a retry budget is how many times this tool keeps trying against a
 remote moving under it, and a subprocess timeout is how long it waits before
 saying so. A caller made to invent either invents a bad one — the scenario landed
 6 of 15 notes at `--attempts 3` and 15 of 15 at 25 — and the cost of the rule
 there is notes lost rather than a guess corrected. The one fixed name is the
 roster,
-always `<table>/participants.json` — a property of the table rather than of an
-invocation, because two lines running this tool over one table must read one
+always `<bus>/participants.json` — a property of the bus rather than of an
+invocation, because two lines running this tool over one bus must read one
 roster, and a `--config` flag would let them disagree about who exists.
 
-**`--table` is the ROOT of its own repository**, for every verb that reads git —
+**`--bus` is the ROOT of its own repository**, for every verb that reads git —
 `send`, `receipt`, `inbox` without `--full`, `check --as` and `check --since`.
-The test is `git -C <table> rev-parse --show-toplevel` compared with `--table`
+The test is `git -C <bus> rev-parse --show-toplevel` compared with `--bus`
 after resolving symlinks on both sides, which is the same test `nova-check nocode
 --staged` makes for the same reason: never a test for `.git` being a directory,
-which is false in a linked worktree and in a submodule. A table one directory
+which is false in a linked worktree and in a submodule. A bus one directory
 down inside a bigger repository is exit 2 with the root git found named in the
 refusal, and this is a REFUSAL rather than a tolerance because the alternative was
 silent: `git diff --name-only` reports paths relative to the repository root, so a
-new note came back as `docs/table/from-bo/x.md`, the `from-` guard dropped it,
+new note came back as `docs/bus/from-bo/x.md`, the `from-` guard dropped it,
 and `inbox --since` and `check --as` printed `changed=0` and exited **0** over
 notes nobody had read. `--full` needs no git and works over such a directory, so
 the refusal is exactly as wide as the failure.
@@ -2141,11 +2141,11 @@ the refusal is exactly as wide as the failure.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed |
-| 1 | the verb ran and said **NO**: a draft refused, a table that failed `check`, a push that could not be landed |
-| 2 | could not run: missing flag, unreadable table or roster, a `--table` that is not the ROOT of a git work tree, bad invocation |
+| 1 | the verb ran and said **NO**: a draft refused, a bus that failed `check`, a push that could not be landed |
+| 2 | could not run: missing flag, unreadable bus or roster, a `--bus` that is not the ROOT of a git work tree, bad invocation |
 
 A `send` or `receipt` that exits 1 after committing says so in its refusal: the
-commit is on the branch and the note is **not** on the table.
+commit is on the branch and the note is **not** on the bus.
 
 ### Output grammar
 
@@ -2181,17 +2181,17 @@ NAMES OK participants=<n> groups=<n> senders=<n>
 ```
 
 `SCOPE` is the first line of every `inbox` and every `check`, and it says what the
-run LOOKED AT before it says what it found: `mode=full` walked the table,
+run LOOKED AT before it says what it found: `mode=full` walked the bus,
 `mode=since` walked the change set from `cursor=`. A listing that does not say
 what it looked at is a listing a reader will mistake for everything, and that
 mistake is the same shape as the lost push. `BUS OK`'s `notes=`, `lanes=` and
-`receipts=` count what the run examined, so they are the whole table under
+`receipts=` count what the run examined, so they are the whole bus under
 `--full` and the change set under `--since`; a failing `check` prints its `SCOPE`
 line and no `OK` line.
 
 `changed=` is **how many paths inside lanes the diff named**, and that is paths
 and not notes: a lane's `RECEIPTS`, `CURSOR`, `OPEN` and `INDEX` are files in a
-lane like any other and are counted. So a second `inbox --advance` over a table
+lane like any other and are counted. So a second `inbox --advance` over a bus
 nobody has touched reports `changed=2` — this reader's own `CURSOR` and `OPEN`,
 written by the run before it — and `notes=0`. Neither is parsed as a note. It is
 `changed=0` on a full run, where there is no diff. `carrying=` on the same line
@@ -2214,13 +2214,13 @@ force -- from the flag or from the cursor -- and `notes=` is how many notes that
 run left OFF the open list for being older than the line. It is a count and never
 a listing: the whole reason the line exists is that six hundred of them are not a
 listing anybody reads. Like `changed=`, it counts what THIS run looked at, so it
-is the whole table under `--full` and the change set plus the open list under
+is the whole bus under `--full` and the change set plus the open list under
 `--since`.
 
 `REFUSED` is a `FAIL` with no path slot, because what it refuses is the state of
 the CHECKOUT rather than anything in the note: it is the branch-ahead guard
 below, a cursor that is no longer on this history, or a `--legacy-before` that
-would move a reader's line earlier. `INBOX UNREADABLE` names a file on the table this tool cannot parse — not
+would move a reader's line earlier. `INBOX UNREADABLE` names a file on the bus this tool cannot parse — not
 necessarily one addressed to the caller, because a file with no `To:` line
 cannot say who it was for, and saying so is the honest half of not dropping it.
 `INBOX UNADDRESSED` names a note that parses and reaches no reader at all; see
@@ -2269,7 +2269,7 @@ transcript is what a person opened the terminal for.
 
 ### The roster
 
-`<table>/participants.json`, decoded **strictly** — an unknown field is a
+`<bus>/participants.json`, decoded **strictly** — an unknown field is a
 refusal, because a roster whose `aliases` key was typed `aliass` is a roster
 whose owner believes a name is known.
 
@@ -2284,28 +2284,28 @@ whose owner believes a name is known.
      "git_name": "Cy", "git_email": "cy@example.com"},
     {"name": "Dana"}
   ],
-  "groups": [{"name": "Everybody at the table",
+  "groups": [{"name": "Everybody on the bus",
               "members": ["Ada", "Bo", "Cy", "Dana"]}]
 }
 ```
 
 The roster takes **any number** of participants — people, model instances,
 whatever writes — and the tool has no opinion about how many there are or what
-they are called; a table has one lane per sender and none for the rest.
+they are called; a bus has one lane per sender and none for the rest.
 
 A participant with **no lane** is addressable and never a sender: the one at
-the table who is written to and does not write. A lane is `from-<slug>` where the
+the bus who is written to and does not write. A lane is `from-<slug>` where the
 slug is lower-case letters, digits and hyphens — checked, because the lane is
-joined to the table root and written into, and because the slug is the first half
+joined to the bus root and written into, and because the slug is the first half
 of every id. A lane needs `git_name` and `git_email`: the identity the commit is
 made under, passed with `git -c` on that one invocation. **This tool never writes
 a git config file**, global or local.
 
 **Address lines.** A `To:` or `Cc:` line is resolved against the roster, with a
-small ENUMERATED set of tolerances. Tables in this shape write
+small ENUMERATED set of tolerances. Buses in this shape write
 `To: Bo Quill; Ada (active line)` and
-`To: Everybody at the table — Dana, Ada (all instances), Bo`, and a tool
-that refused those would be refusing the table rather than checking it. In
+`To: Everybody on the bus — Dana, Ada (all instances), Bo`, and a tool
+that refused those would be refusing the bus rather than checking it. In
 order:
 
 1. split on `;` and `,`, but **never inside parentheses**;
@@ -2361,7 +2361,7 @@ The header is every line before the first blank line, and each line is
 was accepted has no thread. `Re` may repeat; nothing else may. `Kind` is
 `receipt` or `note` and is the only override of the receipt heuristic.
 
-**Two parse tolerances**, for the two shapes a table people also read in a
+**Two parse tolerances**, for the two shapes a bus people also read in a
 browser actually writes, both enumerated here and pinned by tests:
 
 1. a **markdown heading** as the first line — `# The subject`, then a blank line,
@@ -2374,12 +2374,12 @@ browser actually writes, both enumerated here and pinned by tests:
 A note whose first line is prose still fails, and should: there is no honest way
 to tell a `From` line from a sentence that happens to hold a colon. The refusal
 quotes at most the first 40 characters of what it took for a key, because a
-paragraph up to its first colon is not a key and a check over a table of them
+paragraph up to its first colon is not a key and a check over a bus of them
 would otherwise print a paragraph per note.
 
 **Each refusal says what to do about it**, because a reader shown `INBOX
 UNREADABLE` can act on it only if the line says which mistake it is. A read of a
-real table found three shapes behind nearly every unreadable note, and each now
+real bus found three shapes behind nearly every unreadable note, and each now
 names its own repair:
 
 | what is on the line | what the refusal says |
@@ -2398,7 +2398,7 @@ quietly replacing the author's line: the tool pastes the date from the clock in
 UTC, assigns the id, and a note is sent once.
 
 The filename is `<UTC minute>Z-<slug>-<the id's hash half>.md` in the sender's
-lane. The minute and the slug are the table's existing convention and are for
+lane. The minute and the slug are the bus's existing convention and are for
 people; the hash half is there because the minute alone collided.
 
 ### The id scheme, and why this one
@@ -2415,18 +2415,18 @@ sent note can change it. What it buys is at SEND time, and it cuts both ways: tw
 drafts of the same note that differ only in whitespace — the same words saved
 twice, once by an editor that strips trailing spaces and once by one that does
 not — hash to the SAME id, so the second is refused as a note already on the
-table rather than landing beside the first as a near-duplicate. That is the
-intended behaviour and not a side effect: on a table where the same body is
+bus rather than landing beside the first as a near-duplicate. That is the
+intended behaviour and not a side effect: on a bus where the same body is
 genuinely meant twice, the date in the preimage separates them by the second.
 
-- **A hash, not a counter.** A counter is shared state on a table whose whole
+- **A hash, not a counter.** A counter is shared state on a bus whose whole
   problem is shared state: two senders writing in the same second read the same
   counter and assign the same number, which is precisely the collision the id
-  exists to remove, and resolving it needs exactly the lock the table does not
+  exists to remove, and resolving it needs exactly the lock the bus does not
   have. A hash is computed with no knowledge of anyone else's notes, so two lines
   racing cannot collide, and the id is assigned before the first fetch.
 - **The whole canonical note, not the body alone.** A body alone gives one
-  sender writing "Heard, thank you" twice the same id — a real event on a table
+  sender writing "Heard, thank you" twice the same id — a real event on a bus
   of receipts, and one that would make the second note unsendable rather than
   merely unremarkable. With the date in the preimage at second granularity, a
   genuine collision means the same sender sent the same note to the same people
@@ -2442,7 +2442,7 @@ genuinely meant twice, the date in the preimage separates them by the second.
 - **Rename-proof by construction.** The id is written into the file at send and
   is never recomputed. Renaming the file, moving it, or fixing its slug changes
   nothing a `Re:` line depends on — which is the failure it replaces.
-- **12 hex is 48 bits**, inside a per-sender namespace, over a table whose
+- **12 hex is 48 bits**, inside a per-sender namespace, over a bus whose
   lifetime is thousands of notes. A collision is a refusal a person reads, never
   a note that overwrites another.
 
@@ -2455,7 +2455,7 @@ stays answered; or when that reader's `RECEIPTS` file records the note's id or
 path.
 
 It measures whether a note has had a reply, never whether the work in it is
-finished — the distinction the table was already making, kept. It is per reader:
+finished — the distinction the bus was already making, kept. It is per reader:
 a note is not answered in its own sender's lane.
 
 ### The receipt rule
@@ -2480,8 +2480,8 @@ says so; a note when its `Kind:` line says so; and with no `Kind:` line, when it
 body is **under `--receipt-max-words` words**, contains one of *heard, received,
 receipt, ack, acked, acknowledged, acknowledge, noted* as a whole word, and
 contains **no question mark**. The word count comes from the caller because it is
-a property of how a table writes, not of this tool: a table of two-line notes and
-a table of essays do not share a threshold, and a number this tool supplied would
+a property of how a bus writes, not of this tool: a bus of two-line notes and
+a bus of essays do not share a threshold, and a number this tool supplied would
 make a guess look like a measurement. It is a heuristic and it is wrong sometimes
 in both directions — which is why `Kind:` exists, costs one line, and wins.
 
@@ -2493,7 +2493,7 @@ by clock hid four real notes with them. It lists them under `--open` and under
 the reason is in the output grammar above.
 
 **Heard is not answered**, and the middle group exists because collapsing them
-lost the state the table's people are in most often. A note I receipted is a
+lost the state the bus's people are in most often. A note I receipted is a
 note I told the sender arrived; it is not a note I answered. It is listed as
 `INBOX HEARD`, counted in `heard=`, and counted **out** of `open=`, so the open
 count is what is still waiting on me and the listing is still everything I owe a
@@ -2504,7 +2504,7 @@ file outside the caller's own lane as `INBOX UNREADABLE`, with its reason, and
 counts them in `unreadable=`. It cannot say whether such a file was addressed to
 the caller — it has no `To:` line to read — and it does not pretend to. Dropping
 them, which is what it used to do, was the same failure as a lost push with a
-quieter cause: a note somebody wrote, on the table, that its reader is never
+quieter cause: a note somebody wrote, on the bus, that its reader is never
 told is there.
 
 **And it is named on every run, not once.** An unreadable file goes on the
@@ -2516,16 +2516,16 @@ and then never again by any incremental run.
 **A note addressed to NOBODY is never silent either**, and it was — for the
 quietest reason on this list. A note whose `To:` line resolves to no one the
 roster holds *parses*, so it is not unreadable; and it is in nobody's inbox, so
-no listing mentioned it. On a real table there were **22** of them:
-`To: Team`, and `From: Bo, Go table-wire task …` where the comma after the
+no listing mentioned it. On a real bus there were **22** of them:
+`To: Team`, and `From: Bo, Go bus-wire task …` where the comma after the
 name is an address separator and the From line therefore named two senders and
-resolved to none. Written by somebody, on the table, and shown to no one.
+resolved to none. Written by somebody, on the bus, and shown to no one.
 
 They are printed as `INBOX UNADDRESSED path=<path>: <reason>` and counted in
 `unaddressed=`, and where depends on whose they are:
 
-- on `--full`, **every** such note on the table, to **every** reader, because a
-  full read says what is on the table rather than what is new for me;
+- on `--full`, **every** such note on the bus, to **every** reader, because a
+  full read says what is on the bus rather than what is new for me;
 - **always** in the reader's own lane, on every run whatever its mode, because
   that is the one person who can repair the header. A line sees its own
   unaddressed notes every run until it fixes them.
@@ -2536,19 +2536,19 @@ list has no reader. It is a report and never a failure; `check` is the gate and
 says the same thing about the header in its own words. `send` refuses an unknown
 recipient, so nothing this tool writes can become one of these: they are the
 legacy notes and the ones typed by hand in a browser, which is exactly the
-writing this table's form exists to allow.
+writing this bus's form exists to allow.
 
 ### The push protocol
 
 `send` and `receipt` share it exactly:
 
-1. **Refuse before writing anything.** The table must be a git work tree, on the
+1. **Refuse before writing anything.** The bus must be a git work tree, on the
    branch `--branch` names, and hold no changes but the one this run is about to
    make. The retry rebases, and a rebase over a dirty tree either refuses or
    sweeps somebody's unrelated work into a note's commit.
 2. **Fetch, and refuse a branch that is ahead of it with somebody ELSE's work.**
    `git push` publishes the BRANCH, not the commit just made. A checkout carrying
-   commits this tool did not make would put all of them on the table under a
+   commits this tool did not make would put all of them on the bus under a
    note's push — somebody else's unfinished work, published by a tool they did
    not run, with nothing in the output saying so. So: `git fetch <remote>
    <branch>`, then `git rev-list --count <remote>/<branch>..HEAD`; if it is not
@@ -2586,7 +2586,7 @@ writing this table's form exists to allow.
    the load-bearing half — two benches that wait the same 50ms are still in step
    — and the cap is what keeps a retry budget a person's wait rather than a
    schedule: eight attempts is at most eight seconds of waiting on top of eight
-   fetches, and a table where that is not enough has a problem no sleep fixes.
+   fetches, and a bus where that is not enough has a problem no sleep fixes.
    The wait is drawn from `math/rand` and not `crypto/rand`, deliberately: it is
    a scheduling nudge and nothing about it is a secret. A test injects the
    sleeper and asserts the spacing, so nothing here waits on a clock.
@@ -2608,7 +2608,7 @@ writing this table's form exists to allow.
 
    The settlement is made **twice over**, and both halves are needed:
 
-   - **`.gitattributes` at the table root.** The first `send` on a table writes
+   - **`.gitattributes` at the bus root.** The first `send` on a bus writes
      `from-*/INDEX merge=union` and `from-*/RECEIPTS merge=union` there if they
      are not already present, and commits them with the note. Union is git's own
      built-in driver and is exactly right for an append-only line file: on a
@@ -2618,12 +2618,12 @@ writing this table's form exists to allow.
    - **The tool's own resolution**, in `internal/bus/conflict.go`, which runs
      whether or not the attribute has reached this checkout. It has to: the
      attribute arrives only once it has been committed and pulled, so the first
-     send on a table, and every bench that has not pulled since, rebases without
+     send on a bus, and every bench that has not pulled since, rebases without
      it. A fix that works only after everybody has it is a fix that does not work
      on the day it is needed.
 
    On the one conflict it will not settle, the rebase is aborted, the commit is
-   left on the branch, the run exits 1 saying the note is **NOT** on the table,
+   left on the branch, the run exits 1 saying the note is **NOT** on the bus,
    and a person decides. **The abort is checked rather than assumed**: `git
    rebase --abort` can itself fail — a rebase state directory that cannot be
    removed — and the run used to return with the checkout still mid-rebase, so
@@ -2642,7 +2642,7 @@ writing this table's form exists to allow.
    — an `INDEX.<bench>` file each, or one file per note named by its id — trade a
    conflict that is now settled automatically for a lane directory whose file
    count grows with its notes, which is the cost the catalogue exists to avoid,
-   and neither can be adopted without changing the layout of every table already
+   and neither can be adopted without changing the layout of every bus already
    running this tool.
 6. Out of attempts: exit 1, saying the commit is on the branch and was **NOT**
    pushed.
@@ -2654,7 +2654,7 @@ these refusals is about. It is `git pull --rebase && git push` now, and a test
 runs the two commands against the state the refusal names.
 
 **`--attempts` defaults to 25**, and it is the one flag here with a default. It
-is not a fact about a table that only its owner can supply; it is how many times
+is not a fact about a bus that only its owner can supply; it is how many times
 this tool will keep trying against a remote that is moving under it, and a caller
 made to invent a number invents a small one. The scenario measured it: five lines
 sending three notes each at once landed **6 of 15** at `--attempts 3` and **15 of
@@ -2675,20 +2675,20 @@ case this tool was built for. This is two of ME on one checkout, writing one
 `OPEN` list and one index between them, which is not a race any care in this code
 can win. It is an flock rather than a sentinel file because the kernel drops it
 when the process dies, so a run killed with the lock held leaves nothing for the
-next one to clear. It is in the git directory rather than at the table root
+next one to clear. It is in the git directory rather than at the bus root
 because that is per-checkout: two linked worktrees of one repository are two
-checkouts and must not block each other, and a lock file on the table is one more
+checkouts and must not block each other, and a lock file on the bus is one more
 file every reader has to know is not a note.
 
 `--remote` and `--branch` become `git`'s own argv, so both are checked against a
 conservative charset — letters, digits, `-`, `_`, `/`, `.` — and neither may
 begin with `-`. A `--remote` of `--upload-pack=…` is not a remote, it is an
 option to git, and this tool would have run it; a value it will not pass on is
-exit 2, a bad invocation rather than a table that failed.
+exit 2, a bad invocation rather than a bus that failed.
 
 Nothing here force-pushes and nothing rewrites published history. `--no-push`
 commits without pushing and prints `pushed=false`, which is a state rather than a
-success: the note is not on the table until it is pushed.
+success: the note is not on the bus until it is pushed.
 
 ### The cursor, the open list and the catalogue — reads that stay O(new)
 
@@ -2700,7 +2700,7 @@ version that answered it: *"O(new + open) is not great. Can we make it O(new)."*
 The first version walked every lane on every `inbox` and every `check`. That is
 correct and it rots: the cost of asking **what is new** rose with the whole
 record while the answer stayed one note, so the tool got slower every week it was
-used, which is the one failure mode a tool for a growing table cannot have. Three
+used, which is the one failure mode a tool for a growing bus cannot have. Three
 files fix it, all of them in a lane, all of them rebuildable from the notes, none
 of them authoritative about anything.
 
@@ -2719,7 +2719,7 @@ goes open. A run parses the notes that are NEW and nothing else.
 | `from-<me>/OPEN` | one reader's | one line per note I have been shown and have not answered — its whole display line, and whether I have heard it |
 | `from-<lane>/INDEX` | one lane's | one line per note that lane has sent: id, path, date, To, Re |
 
-They are files a person can read, like everything else on the table. Blank lines
+They are files a person can read, like everything else on the bus. Blank lines
 and `#` comments are ignored in all three.
 
 ```
@@ -2772,7 +2772,7 @@ and carry forever. The cursor cannot catch that: a v1 `OPEN` beside a counted
 cursor is exactly the state a healthy v2 reader is in. So the file says its own
 version, and an `OPEN` without it is `INBOX REFUSED`, exit 1, **naming
 `--full --advance`** — the same repair, and the same words, as an `OPEN` that
-went missing. `check` reports it as a `BUS FAIL` on the same file, so a table
+went missing. `check` reports it as a `BUS FAIL` on the same file, so a bus
 carrying one is not a silence only its own reader ever meets. The **cursor**
 format is untouched: a two-token cursor still reads, and this version writes no
 token an older one would refuse.
@@ -2783,14 +2783,14 @@ annotation, whereas a receipt is a log entry whose subject is when it was made �
 then `open=<n>`, how many notes the run that wrote it was carrying, and then
 `legacy=<date>`, the switch-day line that run read under. The two trailing tokens
 are read **by their prefix and not by their position**, which is what makes a new
-one addable without every cursor already on a table becoming unreadable: a cursor
+one addable without every cursor already on a bus becoming unreadable: a cursor
 written before `open=` existed has two tokens and is trusted, one written before
 `legacy=` has three, either may appear without the other, and their order does
 not matter. An UNKNOWN token is still a refusal, and so is a fifth — the
 tolerance is for a token this reader knows and the writer did not, never the
 other way round. `legacy=` is required to be a date **at the read**, on the same
 rule the commit is required to be hex there: a `CURSOR` is an ordinary file on a
-shared table and its contents become a decision. See **deleting one of the
+shared bus and its contents become a decision. See **deleting one of the
 three** below for why a cursor counts another file's contents, and **the
 switch-day line** for why it carries a date.
 `OPEN`'s own grammar is above. `INDEX`'s five fields are id, path, date,
@@ -2800,8 +2800,8 @@ escaped through `internal/oneline`, and an absent value is `-` rather than empty
 **The property, stated as a property.**
 
 > `inbox` parses exactly the **new** note files: the ones added or modified on
-> the table since this reader's cursor. It parses **no other note file** —
-> whatever the table's history holds, and whatever this reader is carrying open.
+> the bus since this reader's cursor. It parses **no other note file** —
+> whatever the bus's history holds, and whatever this reader is carrying open.
 
 Ten thousand notes and one new one is **one parse**. Ten thousand notes, five
 hundred of them open for this reader, and one new one is still **one parse**.
@@ -2812,7 +2812,7 @@ The **one** entry that still costs a parse per run is an `unreadable` one, and
 it costs one parse for itself and for nothing else. A file this tool cannot read
 has no `To:` line, so it cannot be listed as a note and cannot be dropped either;
 it is re-checked on every run until it parses or is receipted. That is the price
-of not losing it, it is bounded by how many broken files a table holds, and both
+of not losing it, it is bounded by how many broken files a bus holds, and both
 counts are printed.
 
 **The command that proves it**, and the shape of the proof:
@@ -2821,7 +2821,7 @@ counts are printed.
 go test -race ./cmd/nova-bus -run TestInboxParsesOnlyWhatIsNewSinceTheCursor
 ```
 
-A table of 10,000 generated notes, **500 of them open** for this reader, plus one
+A bus of 10,000 generated notes, **500 of them open** for this reader, plus one
 new one. The package counts every call to `ParseNote` (`bus.NoteParses`,
 instrumentation, read by nothing but a test), and the test asserts the **count**
 across one run is exactly 1 — twice, once with `--open` and once without, because
@@ -2888,12 +2888,12 @@ the note it answered, that note comes back into my open list and I am shown it
 again. The direction is the whole of what matters — a reader is asked twice, never
 told a note is answered when it is not and never shown one less than they are owed
 — and the settlement is a `--full` read, which derives the list from the whole
-table, where the reply is a note like any other.
+bus, where the reply is a note like any other.
 
 This is a **widening** of a limit that was already here, and the trade is worth
 stating as a trade. Before `OPEN v2` the catalogue was read whole on every run, so
 a reply `send` wrote kept closing its thread indefinitely and only a
-**hand-written** one — a reply typed in a browser, which this table's whole form
+**hand-written** one — a reply typed in a browser, which this bus's whole form
 exists to allow — had this shape. What that cost was a line scan of my entire
 sending history, on every run, forever. What it bought was not being asked twice
 about a note somebody edited after I had answered it. The second is smaller than
@@ -2913,7 +2913,7 @@ note.
 **An unreadable file is CARRIED**, as an `unreadable` entry, and is named on every
 run until it parses or is receipted. It used to be named once by a `--full` read
 and left off the open list, which meant no incremental run ever mentioned it
-again: a file somebody wrote, on the table, that its reader is told about exactly
+again: a file somebody wrote, on the bus, that its reader is told about exactly
 once and then never. It costs **one parse per run, for itself** — the only
 re-parse left in the read, said here rather than left to be measured. It leaves
 the list when the file parses, becoming an ordinary entry if it turns out to be
@@ -2932,14 +2932,14 @@ was being carried, and the notes still owed are dropped with `open=0` printed as
 though nothing were owed: a silence, which is the failure this tool exists to
 end. So the cursor carries `open=<n>`, the count it was written with, and a
 cursor claiming notes with no `OPEN` file beside it is `INBOX REFUSED`, exit 1,
-**naming `--full --advance`** — which rebuilds the open list from the whole table.
+**naming `--full --advance`** — which rebuilds the open list from the whole bus.
 A cursor with no count claims nothing and is trusted.
 
 **`OPEN` grows with what a reader owes, and a reader who never answers grows it
 without bound.** A line that receipts everything and replies to nothing keeps
 every note it was ever shown — heard is not answered — so the read drifts from
 O(new) toward O(open). Nothing prunes it and no threshold is enforced, because
-the number that is too large is a property of a table and not of this tool; both
+the number that is too large is a property of a bus and not of this tool; both
 counts are reported on every run, as `carrying=` on the `INBOX SCOPE` and `INBOX
 CURSOR` lines and as `open=` on `INBOX OK`, so the drift is visible before it is
 a problem. Answering, or a reply that closes several threads at once, is the
@@ -2947,7 +2947,7 @@ whole of the remedy.
 
 ### The switch-day line — `inbox --legacy-before`
 
-**The failure, measured on the day a real table adopted this tool.** The first
+**The failure, measured on the day a real bus adopted this tool.** The first
 `inbox --as Ada --full` reported **657 notes open**: 623 notes and 34 receipts,
 nearly all of them from months before there was anything to receipt them with.
 And because the open list is what lets the cursor move at all, every run after
@@ -2964,10 +2964,10 @@ flag takes and drawn on the same day. A note dated before it:
 - is **not listed**, on a `--full` read or any other — it appears only inside the
   count on one `INBOX LEGACY before=<date> notes=<n>` line;
 - is **not changed**. Nothing is deleted, nothing is marked answered, nothing is
-  written to anybody else's lane. The notes are still on the table, still
+  written to anybody else's lane. The notes are still on the bus, still
   readable in a browser, still found by `check --full`, still answerable by id or
   by path. What the line changes is one reader's own open list, which is the one
-  thing on the table that was theirs alone anyway.
+  thing on the bus that was theirs alone anyway.
 
 **The line lives in the cursor**, as `legacy=<date>`, so later reads honour it
 with no flag. A line that had to be retyped on every run is a line that would be
@@ -2979,7 +2979,7 @@ earlier line re-opens every note between the two dates, and it would arrive as a
 listing the reader had already settled with nothing saying why. Moving it LATER
 forgives more and needs nothing: the forgiven set only ever grows, which is the
 same property `check`'s flag has from the other side. `--full` is the way through
-because a full read derives the whole open list again from the table rather than
+because a full read derives the whole open list again from the bus rather than
 taking the cursor's word for it, so an earlier line there is a fact rather than a
 guess — and the refusal names that command.
 
@@ -2991,8 +2991,8 @@ to carry it.
 **The switch-day recipe**, in the order to run it:
 
 ```
-nova-bus check --table <dir> --full --legacy-before <the day you adopt it>
-nova-bus inbox --table <dir> --as <you> --receipt-max-words <n> \
+nova-bus check --bus <dir> --full --legacy-before <the day you adopt it>
+nova-bus inbox --bus <dir> --as <you> --receipt-max-words <n> \
   --full --legacy-before <the same day> \
   --advance --remote origin --branch main --attempts 3
 ```
@@ -3008,12 +3008,12 @@ parses plus O(open) bytes of one file** — its own `OPEN`, read and written who
 one short line per note this reader owes. These are the costs that are not parses
 and do grow with the record:
 
-- **a `--full` read walks and parses the whole table**, and reads my own lane's
+- **a `--full` read walks and parses the whole bus**, and reads my own lane's
   `INDEX` and `RECEIPTS` whole with it. That is the adoption run, the repair run
-  and CI on main, and it is O(the table) on purpose; the incremental read reads
+  and CI on main, and it is O(the bus) on purpose; the incremental read reads
   neither of those files on a run where they did not change;
 - **`check --since` reads EVERY lane's `INDEX`**, not just mine, because id
-  uniqueness and `Re:` resolution are claims across the table. That is O(all notes
+  uniqueness and `Re:` resolution are claims across the bus. That is O(all notes
   ever sent by anybody) in time and in memory, and calling it "a lookup over a few
   small files" — as an earlier revision of this section did — is true about the
   number of files and false about their size. It is still a line scan and still
@@ -3024,7 +3024,7 @@ and do grow with the record:
   path the run is allowed to write), and it costs a walk of the working tree;
 - **the diff's tree scan is O(files in the lanes that changed)**, not O(change).
   Git stops at every subtree whose object id is equal on both sides, which is what
-  makes the read cheap across a table of many lanes — but a lane is a FLAT
+  makes the read cheap across a bus of many lanes — but a lane is a FLAT
   directory of notes, so comparing the one lane a note landed in means comparing
   a tree with one entry per note that lane has ever sent. It is an id comparison
   per entry and not a file read, and it is the reason this section says the cost
@@ -3050,7 +3050,7 @@ and the lane walk STEPS OVER `CURSOR.tmp`, `OPEN.tmp`, `INDEX.tmp` and
 any other. An empty file is still REMOVED rather than renamed over, which is what
 makes "no `OPEN`" and "nothing open" one state on disk.
 
-**Why the cursor is a file on the table and not state on a bench.** It is pushed
+**Why the cursor is a file on the bus and not state on a bench.** It is pushed
 exactly the way a receipt is: same identity from the roster, same clean-checkout
 and branch-ahead refusals, same fetch-rebase-bounded-retry. A cursor kept in a
 dotfile would be lost the first time a line moved bench, and invisible to
@@ -3060,14 +3060,14 @@ line can conflict on it, and that conflict is refused and handed to a person, on
 the same rule as `RECEIPTS`.
 
 **When the cursor cannot be trusted, it is refused.** After a history rewrite —
-a rebase of the table, a force-push, a squash — the commit named is either gone
+a rebase of the bus, a force-push, a squash — the commit named is either gone
 or on a line nobody is on, and a diff taken from it reports changes that are not
 changes and misses notes that are. So `inbox` and `check` verify with
 `git rev-parse` that the commit exists and with `git merge-base --is-ancestor`
 that it is reachable from `HEAD`, and a cursor that is not is `INBOX REFUSED` /
 `BUS REFUSED`, exit 1, **naming `--full` as the way through**. A reader told
 "nothing new" by a broken cursor has been lied to in exactly the way this tool
-exists to stop. A `CURSOR` file is also an ordinary file on a shared table that
+exists to stop. A `CURSOR` file is also an ordinary file on a shared bus that
 anybody with push access can edit, so its contents are required to be 7–64
 lower-case hex digits *at the read*, before they can become a git argument: a
 cursor of `--upload-pack=…` is not a commit, it is an option to git.
@@ -3080,9 +3080,9 @@ read, ever.
 `inbox` without it writes nothing at all; with it, it writes and pushes the
 cursor and takes `--remote`, `--branch` and `--attempts`, refusing to guess any
 of them like every other flag here. The alternative — every `inbox` writes — would
-make a report edit the table without being asked, and would make the three push
+make a report edit the bus without being asked, and would make the three push
 flags mandatory on a run that is otherwise a pure read of a checkout: CI on main,
-a person looking at a table over a coffee, a run on a bench with no network. The
+a person looking at a bus over a coffee, a run on a bench with no network. The
 normal reading loop is `inbox --advance`, and the docs say so.
 
 **The catalogue, `from-<lane>/INDEX`.** One tab-separated line per note a lane has
@@ -3099,8 +3099,8 @@ filesystem, which is how a note written before ids is answered and stays
 answered. `receipt` appends nothing to it: a receipt is not a note, and
 `RECEIPTS` is already that lane's append-only index of receipts.
 
-**`send` still reads the whole table, on purpose.** Its refusals — this id is
-already on the table, this `Re:` names nothing — are claims about *everything*,
+**`send` still reads the whole bus, on purpose.** Its refusals — this id is
+already on the bus, this `Re:` names nothing — are claims about *everything*,
 it runs once per note, and it is already making a network round trip on the same
 invocation. Reading is the hot path and writing is not, so the catalogue is spent
 where it earns something. That is a decision and not an oversight, and the
@@ -3108,14 +3108,14 @@ catalogue is what would make the other choice available later.
 
 ### check — full, or since
 
-`check --full` walks the table: every rule below, over every note, plus the
+`check --full` walks the bus: every rule below, over every note, plus the
 catalogue in both directions. It is what CI on main runs and what a first
 adoption run wants.
 
 `check --as <name>` and `check --since <commit>` check only the lane files that
 changed since that reader's cursor or since that commit, with `Re:` resolution
 and id uniqueness answered from the catalogue — which means **every lane's
-`INDEX`, read whole**: those two are claims across the table and cannot be
+`INDEX`, read whole**: those two are claims across the bus and cannot be
 answered from one lane. It parses no note and opens one small file per lane, and
 it is O(all notes ever sent) in time and memory all the same. See the complexity
 accounting in the cursor section.
@@ -3128,10 +3128,10 @@ slow.
 `check` with **none** of the three is exit 2 and `refusing to guess`: a check with
 no baseline is not a check of nothing, it is a caller who has not said what they
 want checked, and there is no default here for the same reason there is no
-default table.
+default bus.
 
 What `--since` **cannot** assert, which is why the mode is in its own name: any
-property of the whole table. An unowned lane that nothing touched, a stray file
+property of the whole bus. An unowned lane that nothing touched, a stray file
 that has been there a month, a duplicate id between two notes neither of which
 changed and neither of which is catalogued — those are `--full` findings. Run
 `--full` on main; run `--since` in a loop.
@@ -3140,19 +3140,19 @@ changed and neither of which is catalogued — those are `--full` findings. Run
 
 Every note parses; every header is valid against the roster; every note sits in
 the lane its `From:` line names; every id is well formed, carries its own lane's
-slug, and is unique across the table; every `Re:` resolves to an id or to a path
+slug, and is unique across the bus; every `Re:` resolves to an id or to a path
 that exists (`Re: new` is a thread start, not a dangling reference); every
 receipt line parses and names something that exists; every `from-*` lane on disk
-has an owner in the roster; every `CURSOR`, `OPEN` and `INDEX` on the table
+has an owner in the roster; every `CURSOR`, `OPEN` and `INDEX` on the bus
 parses, because a malformed one is a reader who will refuse on their next run
-with nothing on the table saying why; and a lane holds notes, its `RECEIPTS`,
+with nothing on the bus saying why; and a lane holds notes, its `RECEIPTS`,
 `CURSOR`, `OPEN` and `INDEX`, a `README.md`, and nothing else. It reports
 **every** finding in one run, not the first.
 
 **A lane's `README.md` is not a note**, and until this was written it was read
 as one: it ends in `.md`, it sits in a lane, so the walk parsed it, failed, told
 every reader `INBOX UNREADABLE` about it forever, and failed `check` at every
-date — it was the one file on a real table the legacy tolerance could not
+date — it was the one file on a real bus the legacy tolerance could not
 forgive, because a README genuinely cannot say when it was written and genuinely
 is not a note. So a lane may hold exactly one non-note, non-state file, under
 exactly that name: the file a person opening the lane in a browser reads first.
@@ -3166,7 +3166,7 @@ Under `--full` it also holds the catalogue to the notes, in both directions. An
 not carry, is a `BUS FAIL`: that one could resolve a thread to the wrong note. A
 note with an id and **no** `INDEX` line is a `BUS WARN`, at any date — the notes
 are the record and the catalogue is a cache, and somebody who wrote a note by
-hand in a browser, which this table's whole form exists to allow, has not broken
+hand in a browser, which this bus's whole form exists to allow, has not broken
 anything. The warning says what it **costs**, because the cost is not the same
 everywhere: in somebody else's lane it is one lookup answered from the filesystem
 instead, and in **your own** lane it is a reply the incremental read cannot see
@@ -3177,15 +3177,15 @@ rewrites a file from every note, and it writes rather than commits, because a
 rewrite of shared state is a repair a person watches.
 
 **What it deliberately does not assert:** anything about a note's body. A body is
-prose, and prose is the part of a table no tool has an opinion about.
+prose, and prose is the part of a bus no tool has an opinion about.
 
-### check — adopting it on a table that already exists
+### check — adopting it on a bus that already exists
 
-A table written by hand for months and checked for the first time fails on its
+A bus written by hand for months and checked for the first time fails on its
 whole history at once: notes in shapes no tool checked, `Re:` lines naming files
 that were renamed before ids existed. A first run that is a wall of red nobody
 can act on gets the check turned off, which is worse than not having it. So
-there are two honest ways in, and a table must pick one:
+there are two honest ways in, and a bus must pick one:
 
 - **`--legacy-before <YYYY-MM-DD>`**, a UTC date. A finding about the HEADER of a
   note dated before it — it will not parse; its `From`, `To` or `Cc` names
@@ -3193,27 +3193,27 @@ there are two honest ways in, and a table must pick one:
   word; its `Re:` names nothing — is reported as `BUS WARN` and does **not** fail
   the run. Everything on or after that date, and every finding that is not about
   a header at any date, still `BUS FAIL`s. Without the flag there is no
-  tolerance: every finding fails, which is what CI on a table only this tool has
+  tolerance: every finding fails, which is what CI on a bus only this tool has
   written should use.
 - **A one-time sweep**: fix the old notes by hand and adopt the check with no
   flag at all.
 
 Either way, run `check --full --rebuild-index` once at adoption. Every note on
-the table that has an id gets a catalogue line, the `BUS WARN`s about missing
+the bus that has an id gets a catalogue line, the `BUS WARN`s about missing
 `INDEX` lines go, and the first `inbox --advance` for each reader gives them a
 cursor. From then on both verbs read the change and not the record.
 
 **How to find out which you are in for: run `check` once.** It reports every
 finding in one pass, so the count and the dates in it are the size of the sweep.
 If it is small, sweep. If it is a night's work, take the flag, set the date at
-the day the table adopted the tool, and let the forgiven set shrink as those
+the day the bus adopted the tool, and let the forgiven set shrink as those
 notes are answered or repaired — a date can only ever forgive fewer notes, never
 more.
 
 **What the tolerance covers is a note's HEADER, and the width of that was
 measured rather than argued.** An earlier revision forgave two findings only — a
 parse failure and a dangling `Re:` — on the reasoning that an unknown recipient
-is not a thing a history makes unavoidable. A dry run over a real table, with
+is not a thing a history makes unavoidable. A dry run over a real bus, with
 the line at the day it adopted the tool, then still failed **163 times**: 109
 notes with no `Subject:` line, 21 whose `To:` named somebody the roster does not
 hold, 16 whose `From:` did, 10 whose `Cc:` did, and a handful that would not
@@ -3224,25 +3224,25 @@ was WRITTEN, entire.
 
 It does not forgive where a file sits or whether an id is one: a note in the
 wrong lane, a malformed or duplicated id, a broken receipt line, an unowned lane
-and a stray file all fail at any date. None of those is a thing a table's history
+and a stray file all fail at any date. None of those is a thing a bus's history
 made unavoidable, and none is fixed by reading the note more kindly.
 
 And a note whose date cannot be read at all is never tolerated, because there is
 nothing to compare it against. **What counts as saying when it was written** is
 its `Date:` line, or a `YYYY-MM-DD` at the FRONT of its filename — which is
 wider, for this comparison only, than the UTC minute the rest of the tool orders
-by. A table written by hand names its notes several ways (`…T0041Z-slug.md`, the
+by. A bus written by hand names its notes several ways (`…T0041Z-slug.md`, the
 same with seconds, the same with the stamp accidentally pasted twice, and a plain
 `2026-09-06-slug.md`) and only the first is that minute; the other three still
 say their day in their first ten characters, and a line drawn on a date needs
 nothing more. The wider read is used by the tolerance and by `inbox`'s open list
 and by nothing else, deliberately: the note's moment orders the listing, fills a
 catalogue's `Date` field and prints `at=`, so widening THAT would rewrite records
-and put every `INDEX` line already on a table at odds with its note. A file with
+and put every `INDEX` line already on a bus at odds with its note. A file with
 no day anywhere — no `Date:` line and no date in its name — still fails at every
-date. On a real table exactly one file did: a `README.md` somebody
+date. On a real bus exactly one file did: a `README.md` somebody
 committed inside a lane — which turned out to be a finding about this tool rather
-than about the table, and is now a file a lane is allowed to hold. See **check —
+than about the bus, and is now a file a lane is allowed to hold. See **check —
 what it asserts**.
 
 ### Legacy compatibility
@@ -3260,14 +3260,14 @@ keeps working.
   that name would occupy the name with the failure. Left for the next version.
 - **No per-sender branch layout.** #35 offers it as the better fix — a race that
   cannot exist rather than one recovered from. The retry loop is the version that
-  works over the table as it stands today, and a table cannot change its layout
+  works over the bus as it stands today, and a bus cannot change its layout
   and adopt a tool in the same week.
 - **No daemon, no schedule, no network of its own.** The only process it starts
   is `git` — under a timeout, and one at a time per checkout.
 - **It settles a conflict in its OWN files and never in a note.** `INDEX`,
   `RECEIPTS`, `CURSOR` and `OPEN` are files this tool invented, in a layout it
   chose, and a conflict in one of them is its own cost to pay. A conflict in a
-  NOTE is the table's record and belongs to whoever wrote it: the rebase is
+  NOTE is the bus's record and belongs to whoever wrote it: the rebase is
   aborted and a person decides. There is no flag to widen that.
 - **It reads the checkout, never the remote.** `inbox` and `check` report on what
   is on disk. Pull first; that is the caller's, and saying so is more honest than
@@ -3275,7 +3275,7 @@ keeps working.
   flag, never a hidden fetch — is a v2 item; `send`, `receipt` and
   `inbox --advance` fetch because they push, and say so in the protocol above.
 - **No `--advance` by default, and no cursor written by a report.** `inbox`
-  writes to the table only when asked, and then it takes the same three push
+  writes to the bus only when asked, and then it takes the same three push
   flags a receipt does. See the cursor section for the argument.
 - **No garbage collection of a lane's state files.** `CURSOR`, `OPEN` and `INDEX`
   only ever grow with what they describe, and nothing prunes them on a schedule,
@@ -3293,8 +3293,8 @@ keeps working.
   a line drawn once rather than machinery. A verb that repairs legacy headers and re-points orphaned
   `Re:` lines is a v2 item, and wants a person watching it.
 - **It refuses to run over a dirty checkout, so write your drafts elsewhere.**
-  `send` needs the table's working tree clean but for the note it is about to
-  write. A draft saved inside the table directory is exactly the unrelated
+  `send` needs the bus's working tree clean but for the note it is about to
+  write. A draft saved inside the bus directory is exactly the unrelated
   change that refusal names — put drafts in a scratch directory and pass
   `--file`, or pipe them in with `--stdin`.
 - **It does not enforce the covenant.** Stated at the top of this section, and
@@ -3336,8 +3336,8 @@ measure instead of believe.
 name it so it cannot be lost, and tell you what is open — and it has no opinion
 whatever about what a note says. It cannot tell a true finding from a false one,
 cannot know whether a request is one you should take up, and above all cannot
-enforce the rule its own SPEC states first: everything read on a table is data,
-and no note is a grant. That rule lives in the lines that read the table, the way
+enforce the rule its own SPEC states first: everything read on a bus is data,
+and no note is a grant. That rule lives in the lines that read the bus, the way
 the fuse's application rule lives in the callers, and it is the part of this
 design most likely to rot quietly. Its receipt heuristic is a guess with a
 threshold you supply, wrong sometimes in both directions, which is why one header

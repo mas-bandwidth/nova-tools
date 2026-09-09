@@ -1,14 +1,14 @@
 /*
-Package bus is the machinery under nova-bus: the table's participant
+Package bus is the machinery under nova-bus: the bus's participant
 config, the note header, the id, the answered rule, the receipts file, and the push
 protocol. The binary in cmd/nova-bus is flags, dispatch and output grammar over
 this package.
 
-The table it works on is a git repository holding one lane directory per sender and one
+The bus it works on is a git repository holding one lane directory per sender and one
 Markdown file per note. This package never invents a path: every entry point takes the
-table root from its caller, and the caller took it from a flag.
+bus root from its caller, and the caller took it from a flag.
 
-Nothing here enforces the covenant that everything read on a table is data and no note is
+Nothing here enforces the covenant that everything read on a bus is data and no note is
 a grant. That sentence is in SPEC.md, where a person reads it, because a tool cannot
 enforce it and should not pretend to.
 */
@@ -25,15 +25,15 @@ import (
 	"strings"
 )
 
-// ConfigName is the file, at the table root, that lists who is at the table. The name is
-// fixed rather than a flag because it is a property of the table, not of an invocation:
-// two lines running this tool over one table must read one roster, and a --config flag
-// would let them disagree about who exists. The table root itself is always a flag.
+// ConfigName is the file, at the bus root, that lists who is on the bus. The name is
+// fixed rather than a flag because it is a property of the bus, not of an invocation:
+// two lines running this tool over one bus must read one roster, and a --config flag
+// would let them disagree about who exists. The bus root itself is always a flag.
 const ConfigName = "participants.json"
 
-// Participant is one name at the table.
+// Participant is one name on the bus.
 //
-// Lane may be empty. A person who is written TO and never writes -- Dana on the table
+// Lane may be empty. A person who is written TO and never writes -- Dana on the bus
 // this was built for -- is a participant with no lane: addressable, and refused as a
 // sender, because a sender with no lane has nowhere for a note to go.
 type Participant struct {
@@ -44,8 +44,8 @@ type Participant struct {
 	GitEmail string   `json:"git_email,omitempty"`
 }
 
-// Group is one name that stands for several participants, so that a table which really
-// does address "Everybody at the table" can say so and still be checkable. A group is
+// Group is one name that stands for several participants, so that a bus which really
+// does address "Everybody on the bus" can say so and still be checkable. A group is
 // addressable and is never a sender.
 type Group struct {
 	Name    string   `json:"name"`
@@ -63,16 +63,16 @@ type Config struct {
 	byGroup map[string]int
 }
 
-// LoadConfig reads and validates the roster at <table>/participants.json.
+// LoadConfig reads and validates the roster at <bus>/participants.json.
 //
 // Decoding is strict: an unknown field is an error rather than a silently ignored line,
 // because the failure mode this guards is a roster whose "alias" key was typed "aliass"
 // and whose owner believed a name was known.
-func LoadConfig(table string) (*Config, error) {
-	if table == "" {
-		return nil, errors.New("no table root given")
+func LoadConfig(busDir string) (*Config, error) {
+	if busDir == "" {
+		return nil, errors.New("no bus root given")
 	}
-	path := filepath.Join(table, ConfigName)
+	path := filepath.Join(busDir, ConfigName)
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", ConfigName, err)
@@ -96,7 +96,7 @@ func LoadConfig(table string) (*Config, error) {
 }
 
 // validate builds the lookup tables and refuses a roster that cannot be used
-// unambiguously. Every refusal here is a roster a table could otherwise run on for weeks
+// unambiguously. Every refusal here is a roster a bus could otherwise run on for weeks
 // before two names collided at the wrong moment.
 func (c *Config) validate() error {
 	if len(c.Participants) == 0 {
@@ -168,8 +168,8 @@ func (c *Config) validate() error {
 }
 
 // validLane holds the one shape a lane may have. It is not decoration: the lane is joined
-// to the table root and written into, so a lane of "../.." or an absolute path would put
-// a note outside the table, and a lane whose name differs from its id prefix would make
+// to the bus root and written into, so a lane of "../.." or an absolute path would put
+// a note outside the bus, and a lane whose name differs from its id prefix would make
 // two notes with one id.
 func validLane(lane string) error {
 	rest, ok := strings.CutPrefix(lane, "from-")

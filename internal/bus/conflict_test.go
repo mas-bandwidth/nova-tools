@@ -35,8 +35,8 @@ func TestUnionLinesKeepsBothSidesAndDoublesNothing(t *testing.T) {
 }
 
 // The attribute file, both ways: it is written when the rules are not there, and writing it
-// again changes nothing. It is APPENDED to a file the table already had rather than
-// replacing it, because that file belongs to the table and this tool owns two lines of it.
+// again changes nothing. It is APPENDED to a file the bus already had rather than
+// replacing it, because that file belongs to the bus and this tool owns two lines of it.
 func TestEnsureMergeAttributes(t *testing.T) {
 	root := t.TempDir()
 	wrote, err := EnsureMergeAttributes(root)
@@ -44,7 +44,7 @@ func TestEnsureMergeAttributes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !wrote {
-		t.Fatal("the first call wrote nothing; a table with no .gitattributes has no union rule")
+		t.Fatal("the first call wrote nothing; a bus with no .gitattributes has no union rule")
 	}
 	first, err := os.ReadFile(filepath.Join(root, AttributesName))
 	if err != nil {
@@ -71,7 +71,7 @@ func TestEnsureMergeAttributes(t *testing.T) {
 		t.Fatalf("the second call changed the file:\n%s\n---\n%s", first, again)
 	}
 
-	// A table that already has a .gitattributes of its own keeps it, and gains the rules.
+	// A bus that already has a .gitattributes of its own keeps it, and gains the rules.
 	other := t.TempDir()
 	if err := os.WriteFile(filepath.Join(other, AttributesName), []byte("*.md text\n"), 0o644); err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestEnsureMergeAttributes(t *testing.T) {
 	}
 	for _, want := range []string{"*.md text", "from-*/INDEX merge=union", "from-*/RECEIPTS merge=union"} {
 		if !strings.Contains(string(got), want) {
-			t.Fatalf("the table's own rule or the tool's is missing:\n%s", got)
+			t.Fatalf("the bus's own rule or the tool's is missing:\n%s", got)
 		}
 	}
 }

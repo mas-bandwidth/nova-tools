@@ -17,12 +17,12 @@ import (
 // where they live.
 //
 // THE PROBLEM. inbox and check walked every lane on every run, so the work of reading a
-// table grew with the table's whole history: the ten-thousandth note cost ten thousand
+// bus grew with the bus's whole history: the ten-thousandth note cost ten thousand
 // parses to find, and the cost of asking "what is new" rose forever while the answer
 // stayed one note. That is the property this file fixes. What a reader needs in order to
 // answer "what is new for me" is a place to stand -- the commit they last read to -- and a
 // memory of what they were shown and have not answered. Both are per reader, both must
-// survive a bench change, and both must be visible to everybody at the table for the same
+// survive a bench change, and both must be visible to everybody on the bus for the same
 // reason a receipt is: a state kept privately on one machine is a state nobody can check.
 // So they are files in the reader's OWN lane, committed and pushed exactly the way a
 // receipt is, under the same identity and the same fetch-rebase-retry.
@@ -34,10 +34,10 @@ import (
 //
 // CURSOR and OPEN are a reader's own bookkeeping. INDEX is a lane's catalogue, and it is
 // what makes a Re-by-id resolution and an id-uniqueness test a lookup over a few small
-// files rather than a walk over every note on the table.
+// files rather than a walk over every note on the bus.
 //
-// None of the three is authoritative about anything. A note is on the table because the
-// note is on the table; these files say only what one reader has already seen and what one
+// None of the three is authoritative about anything. A note is on the bus because the
+// note is on the bus; these files say only what one reader has already seen and what one
 // lane has already written, and every one of them can be rebuilt from the notes
 // (`check --full --rebuild-index`) or removed.
 //
@@ -67,8 +67,8 @@ var laneStateFiles = []string{ReceiptsName, CursorName, OpenName, IndexName}
 //
 // A README.md IS NOT A NOTE, and until this was written it was read as one: it ends in
 // `.md`, it sits in a lane, so the lane walk parsed it, it had no `From:` line, and every
-// reader on the table was told `INBOX UNREADABLE` about it forever while `check` failed the
-// whole table over it. On a real table it was the single file that failed at every
+// reader on the bus was told `INBOX UNREADABLE` about it forever while `check` failed the
+// whole bus over it. On a real bus it was the single file that failed at every
 // date -- the one finding the legacy tolerance could not forgive, because a README genuinely
 // cannot say when it was written and genuinely is not a note.
 //
@@ -113,7 +113,7 @@ func isLaneStateTemp(name string) bool {
 type Cursor struct {
 	// Commit is the commit the reader last read to. Empty when the lane has no CURSOR,
 	// which is the first run and is not an error: a reader with no cursor reads the whole
-	// table once and has one from then on.
+	// bus once and has one from then on.
 	Commit string
 	// Stamp is when they read it, for a person reading the file. Nothing computes from it.
 	Stamp string
@@ -140,7 +140,7 @@ type Cursor struct {
 	// that has to be retyped on every run is a line that will be forgotten on one, and the
 	// run that forgets it opens six hundred notes the reader had settled. The cursor is
 	// already the reader's place to stand; the date they are standing after belongs beside
-	// it, on the table, where everybody can see which notes they have taken as read.
+	// it, on the bus, where everybody can see which notes they have taken as read.
 	Legacy string
 }
 
@@ -150,11 +150,11 @@ func OpenPath(lane string) string   { return lane + "/" + OpenName }
 func IndexPath(lane string) string  { return lane + "/" + IndexName }
 
 // ReadCursor reads a lane's CURSOR. A lane with no CURSOR file returns the zero Cursor and
-// no error: that is a reader who has not read yet, not a table that is broken.
+// no error: that is a reader who has not read yet, not a bus that is broken.
 //
 // The commit is required to be plain hex HERE, at the read, rather than trusted because
 // this tool wrote it. The value goes on to become a git argument, and a CURSOR file is an
-// ordinary file on a shared table that anybody with push access can edit; a cursor of
+// ordinary file on a shared bus that anybody with push access can edit; a cursor of
 // `--upload-pack=...` is not a commit, it is an option to git, and this is the place that
 // is cheapest to say so.
 func ReadCursor(root, lane string) (Cursor, error) {
@@ -239,7 +239,7 @@ const (
 
 // LegacyDateLayout is the one shape a legacy line takes, in a cursor and in the two flags
 // that write one: a UTC calendar date, meaning midnight at its start. A date rather than a
-// timestamp because the thing being drawn is the day a table adopted this tool, and nobody
+// timestamp because the thing being drawn is the day a bus adopted this tool, and nobody
 // knows that to the second.
 const LegacyDateLayout = "2006-01-02"
 
@@ -292,7 +292,7 @@ const (
 	OpenNote OpenKind = "note"
 	// OpenReceipt is a bare acknowledgement, by the receipt heuristic or by a Kind line.
 	OpenReceipt OpenKind = "receipt"
-	// OpenUnreadable is a file on the table this tool could not parse. It is CARRIED
+	// OpenUnreadable is a file on the bus this tool could not parse. It is CARRIED
 	// rather than dropped: see the comment on OpenEntry.
 	OpenUnreadable OpenKind = "unreadable"
 )
@@ -356,7 +356,7 @@ func (e OpenEntry) Target() string {
 // as a note nobody sent and carry forever. The cursor could not catch it either: a v1 OPEN
 // beside a counted cursor is exactly the state a healthy v2 reader is in. So the file says
 // its own version on its first line, a file without it is refused at the read, and the
-// refusal names `--full --advance`, which writes the list again from the whole table. That
+// refusal names `--full --advance`, which writes the list again from the whole bus. That
 // is the same repair, and the same words, as an OPEN that went missing.
 const OpenHeader = "OPEN v2"
 
@@ -384,7 +384,7 @@ func ReadOpen(root, lane string) ([]OpenEntry, error) {
 	}
 	rows := records(string(raw))
 	if len(rows) == 0 || rows[0].text != OpenHeader {
-		return nil, fmt.Errorf("%s: this open list does not begin with %q, so it was written by a version of this tool whose entries were %s and cannot be read as the display lines this one prints from; read once with --full --advance, which writes the list again from the whole table",
+		return nil, fmt.Errorf("%s: this open list does not begin with %q, so it was written by a version of this tool whose entries were %s and cannot be read as the display lines this one prints from; read once with --full --advance, which writes the list again from the whole bus",
 			OpenPath(lane), OpenHeader, "<id or -> <path>")
 	}
 	var out []OpenEntry
@@ -496,7 +496,7 @@ const indexFields = 5
 // consequence is bounded: the thread resolves by path from the filesystem instead (see
 // Index.resolves), and a check reports the halves as dangling rather than resolving them
 // wrongly. Fixing it means escaping the separator as well as the field, which is a format
-// change to every INDEX on every table; it is not worth that for a filename nobody has
+// change to every INDEX on every bus; it is not worth that for a filename nobody has
 // written yet, and the day one is written this comment is where to start.
 func IndexLine(e IndexEntry) string {
 	return strings.Join([]string{
@@ -532,7 +532,7 @@ func IndexEntryFor(c *Config, n Note) IndexEntry {
 	}
 }
 
-// ReadLaneIndex reads one lane's INDEX. A lane with no INDEX has none, which is a table
+// ReadLaneIndex reads one lane's INDEX. A lane with no INDEX has none, which is a bus
 // that predates this file and is exactly what `check --full --rebuild-index` is for.
 func ReadLaneIndex(root, lane string) ([]IndexEntry, error) {
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(IndexPath(lane))))
@@ -568,7 +568,7 @@ func splitList(s string) []string {
 	return strings.Split(s, ";")
 }
 
-// Index is every lane's INDEX, read together: the table's catalogue.
+// Index is every lane's INDEX, read together: the bus's catalogue.
 //
 // It is what a resolution over ids costs instead of a walk. Reading it is one small file
 // per lane and one line per note SENT BY THIS TOOL -- no note is parsed, no body is read,
@@ -618,8 +618,8 @@ func (i *Index) ByPath(path string) (*IndexEntry, bool) { e, ok := i.byPath[path
 // It used to be documented and left there, and the scenario run showed what that cost: the
 // tool aborted cleanly and said so, and the bench was then WEDGED, because the person's own
 // `git pull --rebase` landed in a half-done rebase with `UU from-<lane>/INDEX` and nothing
-// on the table saying what to do next. So the conflict is settled instead, by union, in two
-// places -- the `merge=union` attribute this tool writes at the table root (attributes.go)
+// on the bus saying what to do next. So the conflict is settled instead, by union, in two
+// places -- the `merge=union` attribute this tool writes at the bus root (attributes.go)
 // and the tool's own resolution during its own rebase (conflict.go), because the attribute
 // only reaches a checkout once it has been pulled. Both sides' lines land, identical lines
 // once, and neither bench is left with anything to rescue.
@@ -628,7 +628,7 @@ func (i *Index) ByPath(path string) (*IndexEntry, bool) { e, ok := i.byPath[path
 // bench, or one file per note named by its id -- both trade a conflict that is now automatic
 // for a lane directory whose file count grows with its notes, which is the cost the
 // catalogue exists to avoid, and neither can be adopted without changing the layout of every
-// table already running this tool.
+// bus already running this tool.
 func AppendIndexLine(root string, e IndexEntry) error {
 	full := filepath.Join(root, filepath.FromSlash(IndexPath(e.Lane)))
 	if err := insideRoot(root, full); err != nil {
@@ -655,7 +655,7 @@ func AppendIndexLine(root string, e IndexEntry) error {
 //
 // A note with no id contributes no line. A legacy note is addressed by path, everywhere,
 // and putting it in a catalogue keyed on ids would be inventing an id for it.
-func RebuildLaneIndex(root string, c *Config, t *Table, lane string) (int, error) {
+func RebuildLaneIndex(root string, c *Config, t *Bus, lane string) (int, error) {
 	var entries []IndexEntry
 	for i := range t.Notes {
 		n := &t.Notes[i]
@@ -672,7 +672,7 @@ func RebuildLaneIndex(root string, c *Config, t *Table, lane string) (int, error
 	return len(entries), replaceLaneFile(root, IndexPath(lane), b.String())
 }
 
-// replaceLaneFile writes a lane state file whole, refusing to write outside the table for
+// replaceLaneFile writes a lane state file whole, refusing to write outside the bus for
 // the same reason Save does: every path reaching here was built from a validated lane, so
 // the assertion should be unreachable, which is exactly why it is made.
 //

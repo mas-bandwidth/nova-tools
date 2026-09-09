@@ -1,7 +1,7 @@
-// nova-bus is the table: a git repository where several lines write notes to each
+// nova-bus is the bus: a git repository where several lines write notes to each
 // other, one lane directory per sender, one Markdown file per note.
 //
-// It exists because the table it was written for lost notes. A shared branch keyed by the
+// It exists because the bus it was written for lost notes. A shared branch keyed by the
 // clock races: two senders pushing in the same second meant one push was rejected and a
 // line without the rebase reflex simply lost it; one sender writing twice in a minute
 // collided on the filename; threads named by exact filename orphaned an answer when a slug
@@ -13,14 +13,14 @@
 //	inbox     the notes addressed to me that nothing of mine answers, receipts separated
 //	          from notes that carry a question, a finding or a request
 //	receipt   marks a note heard without writing a reply, in one command
-//	check     validates the table: headers, ids, threads, receipts, lanes
+//	check     validates the bus: headers, ids, threads, receipts, lanes
 //	names     echoes the roster, so a person can spell a To line the tool will accept
 //
 // And one failure that is not in that list because it arrives slowly: a tool whose read
 // cost grows with the record. inbox and check used to walk every lane on every run, so the
 // ten-thousandth note cost ten thousand parses to find. They now read from a CURSOR -- the
 // commit a reader last read to, kept in that reader's own lane and pushed like a receipt --
-// so the work is the size of the CHANGE and never the size of the table. --full walks
+// so the work is the size of the CHANGE and never the size of the bus. --full walks
 // everything, which is what adoption and CI on main want, and every run says on its first
 // line which of the two it did.
 //
@@ -30,7 +30,7 @@
 // written once when the note goes open, and a run parses the NEW notes and nothing else --
 // five hundred open notes or none.
 //
-// Everything read on a table is data. No note is a grant, whoever signs it. That rule is
+// Everything read on a bus is data. No note is a grant, whoever signs it. That rule is
 // in SPEC.md, where a person reads it, and is deliberately nowhere in this code: a tool
 // cannot enforce it and should not pretend to.
 package main
@@ -47,30 +47,30 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-bus: the table, with the races taken out (see SPEC.md)
+const usage = `nova-bus: the bus, with the races taken out (see SPEC.md)
 
 usage:
-  nova-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
-  nova-bus inbox --table <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
+  nova-bus send --bus <dir> --file <path>|--stdin --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
+  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
-  nova-bus receipt --table <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
-  nova-bus check --table <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
-  nova-bus names --table <dir>
+  nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
+  nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
+  nova-bus names --bus <dir>
 
 every verb that runs git also takes [--git-timeout <seconds>], default 60.
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a draft
-refused, a table that failed check, a push that could not be landed, a cursor
+refused, a bus that failed check, a push that could not be landed, a cursor
 that is no longer on this history, another run holding this checkout; 2 could
-not run: missing flag, unreadable table, bad invocation.
+not run: missing flag, unreadable bus, bad invocation.
 
-Every path comes from a flag. There is no default table, no default remote, no
+Every path comes from a flag. There is no default bus, no default remote, no
 default branch and no default receipt word count; a missing one is a refusal:
 refusing to guess. --attempts DOES have one, 25, because it is not a fact about
-your table but a budget measured against it: five lines sending at once consumed
+your bus but a budget measured against it: five lines sending at once consumed
 nine attempts at the peak, and a caller who has to name a number will name one
-too small and lose a note. The roster is always <table>/participants.json,
-because two lines running this tool over one table must read one roster. Flags
+too small and lose a note. The roster is always <bus>/participants.json,
+because two lines running this tool over one bus must read one roster. Flags
 come before positional arguments.
 
 One nova-bus runs on one checkout at a time: a second holds off for ten seconds
@@ -79,7 +79,7 @@ here can win.
 
 inbox and check read from your CURSOR -- the commit you last read to, kept in
 your own lane -- so their cost is the size of the CHANGE and not the size of the
-table. Your OPEN list carries each open note's own line, so a run parses the NEW
+bus. Your OPEN list carries each open note's own line, so a run parses the NEW
 notes and nothing else, however many you are carrying. --full walks everything,
 which is what adoption and CI on main want. --advance moves your cursor and
 pushes it, the same way a receipt is pushed.
@@ -87,7 +87,7 @@ pushes it, the same way a receipt is pushed.
 inbox prints one INBOX OPEN line for what you are carrying; --open lists those
 entries too, from the open list and without opening a note.
 
---legacy-before draws the switch-day line on a table that existed before this
+--legacy-before draws the switch-day line on a bus that existed before this
 tool: check WARNS instead of failing on an older note's header, and inbox does
 not carry an older note on your open list, counting them on one INBOX LEGACY
 line instead. inbox records the date in your cursor, so later runs honour it
@@ -180,7 +180,7 @@ func (f *flags) parse(args []string, stderr io.Writer, required map[string]*stri
 // gitArgs checks the two flags that become git's own argv. A --remote or --branch
 // beginning with a dash is an OPTION to git rather than a name, and this tool would run
 // it; the charset narrows the rest. It prints its own refusal; exit 2 belongs to the
-// caller, because a flag this tool will not pass on is a bad invocation and not a table
+// caller, because a flag this tool will not pass on is a bad invocation and not a bus
 // that failed.
 func (f *flags) gitArgs(remote, branch string, stderr io.Writer) bool {
 	for _, c := range []struct {
@@ -209,7 +209,7 @@ func (f *flags) count(name string, value int, stderr io.Writer) bool {
 // the measurement that bought it. In the scenario run, five lines sent three notes each at
 // once with `--attempts 3`: fifteen were sent and SIX LANDED. With `--attempts 25` all
 // fifteen landed and the deepest any one of them went was nine attempts. A retry budget is
-// not a fact about a table that only its owner can supply -- it is the number of times this
+// not a fact about a bus that only its owner can supply -- it is the number of times this
 // tool will keep trying against a remote that is moving under it, and a caller made to
 // invent one invents a small one and loses notes. Twenty-five is nine with room, and the
 // backoff caps the whole of it at a person's wait rather than a schedule.
@@ -277,14 +277,14 @@ func printTranscript(stderr io.Writer, err error) {
 	fmt.Fprintf(stderr, "%s\n", tr)
 }
 
-// openTable loads the roster and reads the table, or prints the refusal.
-func openTable(verb, table string, stderr io.Writer) (*bus.Table, bool) {
-	c, err := bus.LoadConfig(table)
+// openTable loads the roster and reads the bus, or prints the refusal.
+func openBus(verb, busDir string, stderr io.Writer) (*bus.Bus, bool) {
+	c, err := bus.LoadConfig(busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-bus %s: %s\n", verb, oneline.Err(err))
 		return nil, false
 	}
-	t, err := bus.ReadTable(table, c)
+	t, err := bus.ReadBus(busDir, c)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-bus %s: %s\n", verb, oneline.Err(err))
 		return nil, false
@@ -296,16 +296,16 @@ func openTable(verb, table string, stderr io.Writer) (*bus.Table, bool) {
 
 func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("send")
-	table := f.fs.String("table", "", "the table's repository root (required)")
+	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	file := f.fs.String("file", "", "the draft to send")
 	useStdin := f.fs.Bool("stdin", false, "read the draft from standard input instead of --file")
 	remote := f.fs.String("remote", "", "the git remote to push to (required)")
-	branch := f.fs.String("branch", "", "the branch the table lives on (required)")
+	branch := f.fs.String("branch", "", "the branch the bus lives on (required)")
 	slug := f.fs.String("slug", "", "the human half of the filename (default: from the subject)")
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
-	noPush := f.fs.Bool("no-push", false, "commit but do not push; the note is NOT on the table until it is pushed")
-	if !f.parse(args, stderr, map[string]*string{"table": table, "remote": remote, "branch": branch}) {
+	noPush := f.fs.Bool("no-push", false, "commit but do not push; the note is NOT on the bus until it is pushed")
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "remote": remote, "branch": branch}) {
 		return 2
 	}
 	if !f.attempts(*attempts, stderr) {
@@ -339,17 +339,17 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		}
 		text = string(raw)
 	}
-	if err := bus.IsRepoRoot(*table); err != nil {
+	if err := bus.IsRepoRoot(*busDir); err != nil {
 		fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.Err(err))
 		return 2
 	}
-	release, err := bus.LockCheckout(*table, checkoutLockWait)
+	release, err := bus.LockCheckout(*busDir, checkoutLockWait)
 	if err != nil {
 		fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.Err(err))
 		return 1
 	}
 	defer release()
-	t, ok := openTable("send", *table, stderr)
+	t, ok := openBus("send", *busDir, stderr)
 	if !ok {
 		return 2
 	}
@@ -358,15 +358,15 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
-	if err := checkoutReady(*table, *branch, nil); err != nil {
+	if err := checkoutReady(*busDir, *branch, nil); err != nil {
 		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
-	if err := levelWithRemote(*table, *remote, *branch, *noPush); err != nil {
+	if err := levelWithRemote(*busDir, *remote, *branch, *noPush); err != nil {
 		fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.Err(err))
 		return 1
 	}
-	if err := prepared.Save(*table); err != nil {
+	if err := prepared.Save(*busDir); err != nil {
 		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
@@ -374,18 +374,18 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	// could lag the notes by a commit is one a reader between the two would resolve
 	// wrongly, and a note that landed without its line would be invisible to every later
 	// id lookup until somebody ran a rebuild.
-	if err := prepared.AppendIndex(*table); err != nil {
+	if err := prepared.AppendIndex(*busDir); err != nil {
 		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
-	// The union-merge rules, written once per table and committed with the note that first
+	// The union-merge rules, written once per bus and committed with the note that first
 	// needed them. INDEX and RECEIPTS are append-only, and without the rule two benches of
 	// one lane appending at the same end over one base conflict and the bench is wedged. It
-	// goes on the FIRST send rather than being asked of the table's owner because a table
-	// that has to be prepared by hand before it is safe is a table somebody will not
+	// goes on the FIRST send rather than being asked of the bus's owner because a bus
+	// that has to be prepared by hand before it is safe is a bus somebody will not
 	// prepare. See internal/bus/attributes.go.
 	paths := prepared.Paths()
-	wroteAttrs, err := bus.EnsureMergeAttributes(*table)
+	wroteAttrs, err := bus.EnsureMergeAttributes(*busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
 		return 1
@@ -393,7 +393,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	if wroteAttrs {
 		paths = append(paths, bus.AttributesName)
 	}
-	res, err := commit(*table, prepared.Sender, paths,
+	res, err := commit(*busDir, prepared.Sender, paths,
 		bus.WithTrailer(prepared.Message, bus.TrailerSend+" "+prepared.Note.Header.ID),
 		*remote, *branch, *attempts, *noPush)
 	if err != nil {
@@ -408,16 +408,16 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 
 func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("receipt")
-	table := f.fs.String("table", "", "the table's repository root (required)")
+	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	remote := f.fs.String("remote", "", "the git remote to push to (required)")
-	branch := f.fs.String("branch", "", "the branch the table lives on (required)")
+	branch := f.fs.String("branch", "", "the branch the bus lives on (required)")
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
-	noPush := f.fs.Bool("no-push", false, "commit but do not push; the receipt is NOT on the table until it is pushed")
+	noPush := f.fs.Bool("no-push", false, "commit but do not push; the receipt is NOT on the bus until it is pushed")
 	var notes stringList
 	f.fs.Var(&notes, "note", "a note to mark heard, by id or by path (required; repeatable)")
-	if !f.parse(args, stderr, map[string]*string{"table": table, "as": as, "remote": remote, "branch": branch}) {
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "remote": remote, "branch": branch}) {
 		return 2
 	}
 	if !f.attempts(*attempts, stderr) {
@@ -433,23 +433,23 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stderr, "nova-bus receipt: --note is required; refusing to guess\n")
 		return 2
 	}
-	if err := bus.IsRepoRoot(*table); err != nil {
+	if err := bus.IsRepoRoot(*busDir); err != nil {
 		fmt.Fprintf(stderr, "nova-bus receipt: %s\n", oneline.Err(err))
 		return 2
 	}
-	release, lockErr := bus.LockCheckout(*table, checkoutLockWait)
+	release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
 	if lockErr != nil {
 		fmt.Fprintf(stderr, "RECEIPT REFUSED: %s\n", oneline.Err(lockErr))
 		return 1
 	}
 	defer release()
-	t, ok := openTable("receipt", *table, stderr)
+	t, ok := openBus("receipt", *busDir, stderr)
 	if !ok {
 		return 2
 	}
 	me, found := t.Config.Lookup(*as)
 	if !found {
-		fmt.Fprintf(stderr, "nova-bus receipt: --as %q names no one at this table (known: %s)\n", *as, oneline.Escape(strings.Join(t.Config.KnownNames(), "; ")))
+		fmt.Fprintf(stderr, "nova-bus receipt: --as %q names no one on this bus (known: %s)\n", *as, oneline.Escape(strings.Join(t.Config.KnownNames(), "; ")))
 		return 2
 	}
 	plan, err := bus.PlanReceipts(t, me, notes, now)
@@ -464,19 +464,19 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stdout, "RECEIPT OK recorded=0 already=%d commit=- pushed=false attempts=0\n", len(plan.Already))
 		return 0
 	}
-	if err := checkoutReady(*table, *branch, []string{plan.Path}); err != nil {
+	if err := checkoutReady(*busDir, *branch, []string{plan.Path}); err != nil {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
-	if err := levelWithRemote(*table, *remote, *branch, *noPush); err != nil {
+	if err := levelWithRemote(*busDir, *remote, *branch, *noPush); err != nil {
 		fmt.Fprintf(stderr, "RECEIPT REFUSED: %s\n", oneline.Err(err))
 		return 1
 	}
-	if err := plan.Append(*table); err != nil {
+	if err := plan.Append(*busDir); err != nil {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
-	res, err := commit(*table, me, []string{plan.Path},
+	res, err := commit(*busDir, me, []string{plan.Path},
 		bus.WithTrailer(plan.Message(me), bus.TrailerReceipt),
 		*remote, *branch, *attempts, *noPush)
 	if err != nil {
@@ -491,19 +491,19 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("inbox")
-	table := f.fs.String("table", "", "the table's repository root (required)")
+	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	as := f.fs.String("as", "", "which participant you are (required)")
 	maxWords := f.fs.Int("receipt-max-words", 0, "a body under this many words may be a receipt (required, at least 1)")
-	full := f.fs.Bool("full", false, "walk the whole table instead of what changed since your cursor")
+	full := f.fs.Bool("full", false, "walk the whole bus instead of what changed since your cursor")
 	openList := f.fs.Bool("open", false, "list every open note, not only what is new; the default prints one INBOX OPEN line for them")
 	advance := f.fs.Bool("advance", false, "move your cursor to HEAD and push it, the way a receipt is pushed")
 	remote := f.fs.String("remote", "", "the git remote to push the cursor to (required with --advance)")
-	branch := f.fs.String("branch", "", "the branch the table lives on (required with --advance)")
+	branch := f.fs.String("branch", "", "the branch the bus lives on (required with --advance)")
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push the cursor before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "with --advance, commit the cursor but do not push it")
 	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD) are not carried on your open list, and are counted rather than listed")
-	if !f.parse(args, stderr, map[string]*string{"table": table, "as": as}) {
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
 		return 2
 	}
 	flagLegacy, ok := legacyDate("inbox", *legacyBefore, stderr)
@@ -516,12 +516,12 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
 		return 2
 	}
-	// --advance WRITES to the table, so it takes the same three flags a receipt takes and
+	// --advance WRITES to the bus, so it takes the same three flags a receipt takes and
 	// refuses to guess any of them. Without it, inbox writes nothing at all, which is what
 	// a report should do unless it was asked otherwise.
 	if *advance {
 		if strings.TrimSpace(*remote) == "" || strings.TrimSpace(*branch) == "" {
-			fmt.Fprint(stderr, "nova-bus inbox: --advance moves a cursor onto the table, so it needs --remote and --branch; refusing to guess\n")
+			fmt.Fprint(stderr, "nova-bus inbox: --advance moves a cursor onto the bus, so it needs --remote and --branch; refusing to guess\n")
 			return 2
 		}
 		if !f.attempts(*attempts, stderr) {
@@ -531,55 +531,55 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 	}
-	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --table at a
+	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --bus at a
 	// subdirectory of a bigger repository and the run refused with "participants.json: no
 	// such file" -- true, and the wrong sentence: the caller's mistake is the directory,
 	// not the roster, and the refusal that names the repository root is the one that fixes
 	// the invocation. The cheaper check is not the more useful one, so the more useful one
 	// runs first.
 	if !*full || *advance {
-		if err := bus.IsRepoRoot(*table); err != nil {
+		if err := bus.IsRepoRoot(*busDir); err != nil {
 			fmt.Fprintf(stderr, "nova-bus inbox: reading only what changed, and moving a cursor, need git; %s\n", oneline.Err(err))
 			return 2
 		}
-		release, lockErr := bus.LockCheckout(*table, checkoutLockWait)
+		release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
 		if lockErr != nil {
 			fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(lockErr))
 			return 1
 		}
 		defer release()
 	}
-	c, err := bus.LoadConfig(*table)
+	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
 		return 2
 	}
 	me, found := c.Lookup(*as)
 	if !found {
-		fmt.Fprintf(stderr, "nova-bus inbox: --as %q names no one at this table (known: %s)\n", *as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
+		fmt.Fprintf(stderr, "nova-bus inbox: --as %q names no one on this bus (known: %s)\n", *as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
 		return 2
 	}
 	if me.Lane == "" {
-		fmt.Fprintf(stderr, "nova-bus inbox: %q has no lane on this table, so nothing can answer for them\n", me.Name)
+		fmt.Fprintf(stderr, "nova-bus inbox: %q has no lane on this bus, so nothing can answer for them\n", me.Name)
 		return 2
 	}
 
 	scope := bus.Scope{Full: *full}
 	var res bus.InboxResult
 	var cursor bus.Cursor
-	// held is the cursor as it stands on the table, read for the SWITCH-DAY LINE it carries
+	// held is the cursor as it stands on the bus, read for the SWITCH-DAY LINE it carries
 	// as well as for the commit. A full run reads it too, and ignores a cursor it cannot
 	// read: `--full --advance` is the documented repair for a broken cursor, and a repair
 	// that refuses to run is not one. What a full run must not do is silently forget a line
 	// a reader drew months ago, which is what reading it here prevents.
 	held := bus.Cursor{}
 	if *full {
-		held, _ = bus.ReadCursor(*table, me.Lane)
+		held, _ = bus.ReadCursor(*busDir, me.Lane)
 	}
 	// The line this run reads under, whichever mode it is in.
 	var legacy bus.LegacyLine
 	if !*full {
-		cursor, err = bus.ReadCursor(*table, me.Lane)
+		cursor, err = bus.ReadCursor(*busDir, me.Lane)
 		if err != nil {
 			fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 			return 1
@@ -592,17 +592,17 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			scope.Full = true
 		} else {
 			// A line that MOVES EARLIER re-opens every note between the two dates, which
-			// on the table this was written for is hundreds -- and it would arrive as a
+			// on the bus this was written for is hundreds -- and it would arrive as a
 			// listing the reader has already settled, with nothing saying why. Moving it
 			// later forgives more and is fine; moving it earlier is a refusal that names
 			// the read which can honestly do it, because a --full run derives the whole
 			// open list again rather than taking the cursor's word for it.
 			if !flagLegacy.IsZero() && held.Legacy != "" && flagLegacy.Before(held.LegacyBefore()) {
-				fmt.Fprintf(stderr, "INBOX REFUSED: your cursor was written with legacy=%s and --legacy-before %s moves the line earlier, which would put the notes between the two dates back on your open list; read once with --full --legacy-before %s --advance, which builds the open list again from the whole table, or leave the flag off and the cursor's line stands\n",
+				fmt.Fprintf(stderr, "INBOX REFUSED: your cursor was written with legacy=%s and --legacy-before %s moves the line earlier, which would put the notes between the two dates back on your open list; read once with --full --legacy-before %s --advance, which builds the open list again from the whole bus, or leave the flag off and the cursor's line stands\n",
 					oneline.Field(held.Legacy), oneline.Field(flagLegacy.Format(bus.LegacyDateLayout)), oneline.Field(flagLegacy.Format(bus.LegacyDateLayout)))
 				return 1
 			}
-			ok, err := bus.IsAncestor(*table, cursor.Commit)
+			ok, err := bus.IsAncestor(*busDir, cursor.Commit)
 			if err != nil {
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 				return 1
@@ -617,24 +617,24 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			// why the cursor carries the count it was written with, and why a cursor
 			// that says it was carrying notes with no OPEN beside it is refused here
 			// instead of quietly reporting open=0 over the notes it dropped.
-			if cursor.Counted && cursor.Open > 0 && !bus.OpenPresent(*table, me.Lane) {
-				fmt.Fprintf(stderr, "INBOX REFUSED: your cursor %s says it was carrying %d notes and %s is not on the table, so a read from it would drop them and print open=0; read once with --full --advance, which rebuilds the open list from the whole table\n",
+			if cursor.Counted && cursor.Open > 0 && !bus.OpenPresent(*busDir, me.Lane) {
+				fmt.Fprintf(stderr, "INBOX REFUSED: your cursor %s says it was carrying %d notes and %s is not on the bus, so a read from it would drop them and print open=0; read once with --full --advance, which rebuilds the open list from the whole bus\n",
 					oneline.Field(cursor.Commit), cursor.Open, oneline.Field(bus.OpenPath(me.Lane)))
 				return 1
 			}
-			changed, err := bus.ChangedSince(*table, cursor.Commit)
+			changed, err := bus.ChangedSince(*busDir, cursor.Commit)
 			if err != nil {
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 				return 1
 			}
-			open, err := bus.ReadOpen(*table, me.Lane)
+			open, err := bus.ReadOpen(*busDir, me.Lane)
 			if err != nil {
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 				return 1
 			}
 			scope.From, scope.Changed = cursor.Commit, len(changed)
 			legacy = effectiveLegacy(flagLegacy, held)
-			res, err = bus.InboxSince(*table, c, me, changed, open, *maxWords, legacy)
+			res, err = bus.InboxSince(*busDir, c, me, changed, open, *maxWords, legacy)
 			if err != nil {
 				fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
 				return 2
@@ -642,7 +642,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 	if scope.Full {
-		t, err := bus.ReadTable(*table, c)
+		t, err := bus.ReadBus(*busDir, c)
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
 			return 2
@@ -653,11 +653,11 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		// RECEIPTS, and the unreadable files carried rather than named once and dropped. Every
 		// later incremental run prints from what this run writes.
 		res.Unreadable = t.Unreadable(me.Lane)
-		// EVERY note on the table that reaches no reader, named on a full read to every
+		// EVERY note on the bus that reaches no reader, named on a full read to every
 		// reader. A note whose To line resolves to nobody parses, so it is not unreadable,
 		// and it is in no inbox, so no listing has ever mentioned it: 22 of them on the
-		// family's real table. See internal/bus/unaddressed.go.
-		res.Unaddressed = t.UnaddressedOnTable()
+		// family's real bus. See internal/bus/unaddressed.go.
+		res.Unaddressed = t.UnaddressedOnBus()
 		res.Open, res.Legacy = bus.SplitLegacy(bus.OpenFromFull(t.Inbox(me, *maxWords), res.Unreadable), legacy)
 	}
 
@@ -676,7 +676,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			oneline.Field(legacy.Before.Format(bus.LegacyDateLayout)), res.Legacy)
 	}
 	// The files that would not parse are named next and are never silent. A note on the
-	// table that this tool cannot read is not a note that does not exist, and dropping it
+	// bus that this tool cannot read is not a note that does not exist, and dropping it
 	// from the listing was the same failure as a lost push with a quieter cause.
 	for _, n := range res.Unreadable {
 		fmt.Fprintf(stdout, "INBOX UNREADABLE path=%s: %s\n", oneline.Field(n.Path), oneline.Err(n.Parse.Err))
@@ -742,7 +742,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !*advance {
 		return 0
 	}
-	return advanceCursor(*table, me, res.Open, legacyToken(legacy), *remote, *branch, *attempts, *noPush, now, stdout, stderr)
+	return advanceCursor(*busDir, me, res.Open, legacyToken(legacy), *remote, *branch, *attempts, *noPush, now, stdout, stderr)
 }
 
 // effectiveLegacy is the line a run reads under: the flag when it is given, and otherwise
@@ -769,7 +769,7 @@ func legacyToken(l bus.LegacyLine) string {
 //
 // The same protocol and not a lighter one, on purpose. A cursor is a claim that everything
 // up to a commit has been read, and a claim only one bench can see is a claim nobody at the
-// table can check -- the same reason a receipt is a file and not a mood. So it refuses a
+// bus can check -- the same reason a receipt is a file and not a mood. So it refuses a
 // dirty checkout, refuses a branch ahead of the remote, commits naming its paths under the
 // roster's identity, and recovers a rejected push by fetching and rebasing.
 //
@@ -778,28 +778,28 @@ func legacyToken(l bus.LegacyLine) string {
 // next run shows them the same notes again -- which is the safe direction to fail in.
 //
 // The cursor also records the SWITCH-DAY LINE this run read under, so the next run honours
-// it without the flag and everybody at the table can see which notes this reader has taken
+// it without the flag and everybody on the bus can see which notes this reader has taken
 // as read.
-func advanceCursor(table string, me bus.Participant, open []bus.OpenEntry, legacy string, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
-	head, err := bus.HeadCommit(table)
+func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, legacy string, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
+	head, err := bus.HeadCommit(busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 		return 1
 	}
 	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane)}
-	if err := checkoutReady(table, branch, paths); err != nil {
+	if err := checkoutReady(busDir, branch, paths); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
-	if err := levelWithRemote(table, remote, branch, noPush); err != nil {
+	if err := levelWithRemote(busDir, remote, branch, noPush); err != nil {
 		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 		return 1
 	}
-	if err := bus.WriteOpen(table, me.Lane, open); err != nil {
+	if err := bus.WriteOpen(busDir, me.Lane, open); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.OpenPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
-	if err := bus.WriteCursor(table, me.Lane, head, len(open), legacy, now); err != nil {
+	if err := bus.WriteCursor(busDir, me.Lane, head, len(open), legacy, now); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
@@ -807,12 +807,12 @@ func advanceCursor(table string, me bus.Participant, open []bus.OpenEntry, legac
 	// nothing left open -- is staged as the deletion it is rather than left behind. A
 	// reader who never had one is a different case: there is nothing to record, and asking
 	// git to stage a path that is neither on disk nor in the index is exit 128.
-	staged, err := bus.StagePaths(table, paths)
+	staged, err := bus.StagePaths(busDir, paths)
 	if err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
-	res, err := commit(table, me, staged,
+	res, err := commit(busDir, me, staged,
 		bus.WithTrailer(me.Slug()+": read to "+head[:shortSHA], bus.TrailerCursor),
 		remote, branch, attempts, noPush)
 	if err != nil {
@@ -857,14 +857,14 @@ func legacyDate(verb, value string, stderr io.Writer) (time.Time, bool) {
 
 func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("check")
-	table := f.fs.String("table", "", "the table's repository root (required)")
-	full := f.fs.Bool("full", false, "walk the whole table: what CI on main and a first adoption run want")
+	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
+	full := f.fs.Bool("full", false, "walk the whole bus: what CI on main and a first adoption run want")
 	as := f.fs.String("as", "", "check what changed since this participant's cursor")
 	since := f.fs.String("since", "", "check what changed since this commit")
 	legacyBefore := f.fs.String("legacy-before", "", "a finding about the header of a note dated before this UTC date (YYYY-MM-DD) warns instead of failing")
 	rebuildIndex := f.fs.Bool("rebuild-index", false, "with --full, rewrite each lane's INDEX from the notes on disk")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
-	if !f.parse(args, stderr, map[string]*string{"table": table}) {
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir}) {
 		return 2
 	}
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
@@ -872,7 +872,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	}
 	// A check with no baseline is not a check of nothing, it is a caller who has not said
 	// what they want checked. There is no default here for the same reason there is no
-	// default table.
+	// default bus.
 	if !*full && strings.TrimSpace(*as) == "" && strings.TrimSpace(*since) == "" {
 		fmt.Fprint(stderr, "nova-bus check: give one of --full, --as <name> or --since <commit>; refusing to guess\n")
 		return 2
@@ -886,24 +886,24 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	opts := bus.CheckOptions{LegacyBefore: when}
-	// The root check comes BEFORE the roster: a --table pointing at a subdirectory of a
+	// The root check comes BEFORE the roster: a --bus pointing at a subdirectory of a
 	// bigger repository refused with "participants.json: no such file", which is true and
 	// is not the caller's mistake. See the same reordering in cmdInbox.
 	if !*full {
-		if err := bus.IsRepoRoot(*table); err != nil {
+		if err := bus.IsRepoRoot(*busDir); err != nil {
 			fmt.Fprintf(stderr, "nova-bus check: checking only what changed needs git; %s\n", oneline.Err(err))
 			return 2
 		}
 	}
 	if *rebuildIndex {
-		release, lockErr := bus.LockCheckout(*table, checkoutLockWait)
+		release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
 		if lockErr != nil {
 			fmt.Fprintf(stderr, "BUS REFUSED: %s\n", oneline.Err(lockErr))
 			return 1
 		}
 		defer release()
 	}
-	c, err := bus.LoadConfig(*table)
+	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.Err(err))
 		return 2
@@ -912,7 +912,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	from := ""
 	if !*full {
 		if strings.TrimSpace(*since) != "" {
-			from, err = bus.ResolveCommit(*table, *since)
+			from, err = bus.ResolveCommit(*busDir, *since)
 			if err != nil {
 				fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.Err(err))
 				return 2
@@ -920,14 +920,14 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 		} else {
 			me, ok := c.Lookup(*as)
 			if !ok {
-				fmt.Fprintf(stderr, "nova-bus check: --as %q names no one at this table (known: %s)\n", *as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
+				fmt.Fprintf(stderr, "nova-bus check: --as %q names no one on this bus (known: %s)\n", *as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
 				return 2
 			}
 			if me.Lane == "" {
-				fmt.Fprintf(stderr, "nova-bus check: %q has no lane on this table, so has no cursor\n", me.Name)
+				fmt.Fprintf(stderr, "nova-bus check: %q has no lane on this bus, so has no cursor\n", me.Name)
 				return 2
 			}
-			cursor, cerr := bus.ReadCursor(*table, me.Lane)
+			cursor, cerr := bus.ReadCursor(*busDir, me.Lane)
 			if cerr != nil {
 				fmt.Fprintf(stderr, "BUS REFUSED: %s\n", oneline.Err(cerr))
 				return 1
@@ -938,7 +938,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if from != "" {
-		ok, aerr := bus.IsAncestor(*table, from)
+		ok, aerr := bus.IsAncestor(*busDir, from)
 		if aerr != nil {
 			fmt.Fprintf(stderr, "BUS REFUSED: %s\n", oneline.Err(aerr))
 			return 1
@@ -952,14 +952,14 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	var problems []bus.Problem
 	var stats bus.CheckStats
 	if scope.Full {
-		t, terr := bus.ReadTable(*table, c)
+		t, terr := bus.ReadBus(*busDir, c)
 		if terr != nil {
 			fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.Err(terr))
 			return 2
 		}
 		if *rebuildIndex {
 			for _, lane := range c.Lanes() {
-				n, rerr := bus.RebuildLaneIndex(*table, c, t, lane)
+				n, rerr := bus.RebuildLaneIndex(*busDir, c, t, lane)
 				if rerr != nil {
 					fmt.Fprintf(stderr, "BUS FAIL %s: %s\n", oneline.Escape(bus.IndexPath(lane)), oneline.Err(rerr))
 					return 1
@@ -967,7 +967,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 				fmt.Fprintf(stdout, "BUS INDEX lane=%s notes=%d\n", oneline.Field(lane), n)
 			}
 		}
-		idx, ierr := bus.ReadIndex(*table, c)
+		idx, ierr := bus.ReadIndex(*busDir, c)
 		if ierr != nil {
 			fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.Err(ierr))
 			return 2
@@ -975,18 +975,18 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 		problems = append(t.CheckWith(opts), bus.CheckIndex(c, t, idx)...)
 		stats = bus.CheckStats{Notes: len(t.Notes), Lanes: len(c.Lanes()), Receipts: len(t.Receipts)}
 	} else {
-		changed, derr := bus.ChangedSince(*table, from)
+		changed, derr := bus.ChangedSince(*busDir, from)
 		if derr != nil {
 			fmt.Fprintf(stderr, "BUS REFUSED: %s\n", oneline.Err(derr))
 			return 1
 		}
-		idx, ierr := bus.ReadIndex(*table, c)
+		idx, ierr := bus.ReadIndex(*busDir, c)
 		if ierr != nil {
 			fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.Err(ierr))
 			return 2
 		}
 		scope.From, scope.Changed = from, len(changed)
-		problems, stats = bus.CheckSince(*table, c, idx, changed, opts)
+		problems, stats = bus.CheckSince(*busDir, c, idx, changed, opts)
 	}
 	fmt.Fprintf(stdout, "BUS SCOPE mode=%s cursor=%s changed=%d\n",
 		oneline.Field(scope.Mode()), oneline.Field(dash(from)), scope.Changed)
@@ -1017,11 +1017,11 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 
 func cmdNames(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("names")
-	table := f.fs.String("table", "", "the table's repository root (required)")
-	if !f.parse(args, stderr, map[string]*string{"table": table}) {
+	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir}) {
 		return 2
 	}
-	c, err := bus.LoadConfig(*table)
+	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-bus names: %s\n", oneline.Err(err))
 		return 2
@@ -1056,43 +1056,43 @@ func cmdNames(args []string, stdout, stderr io.Writer) int {
 
 // --------------------------------------------------------------------------- the shared
 
-// checkoutReady is the guard before anything is written: the table is on the branch the
+// checkoutReady is the guard before anything is written: the bus is on the branch the
 // caller named, and holds no changes but the ones this run is about to make. A rebase over
 // a dirty tree either refuses or sweeps somebody's unrelated work into a note's commit.
-func checkoutReady(table, branch string, allow []string) error {
-	on, err := bus.CurrentBranch(table)
+func checkoutReady(busDir, branch string, allow []string) error {
+	on, err := bus.CurrentBranch(busDir)
 	if err != nil {
 		return err
 	}
 	if on != branch {
-		return fmt.Errorf("the table's checkout is on branch %q, not %q", on, branch)
+		return fmt.Errorf("the bus's checkout is on branch %q, not %q", on, branch)
 	}
-	return bus.EnsureClean(table, allow)
+	return bus.EnsureClean(busDir, allow)
 }
 
 // levelWithRemote is the second guard, and it runs BEFORE the file is written: a push
 // publishes the branch, not the commit, so a checkout already holding commits this tool
-// did not make would send those to the table too, under a note's name, with nothing in the
+// did not make would send those to the bus too, under a note's name, with nothing in the
 // output saying so.
 //
 // Under --no-push there is nothing to publish and no reason to make the caller wait on a
 // fetch they did not ask for, so the guard is skipped. The commit then sits on a branch
 // that is already ahead, which is the state the caller chose by passing the flag; the note
-// is not on the table either way, and pushed=false says so.
-func levelWithRemote(table, remote, branch string, noPush bool) error {
+// is not on the bus either way, and pushed=false says so.
+func levelWithRemote(busDir, remote, branch string, noPush bool) error {
 	if noPush {
 		return nil
 	}
-	return bus.EnsureLevelWith(table, remote, branch)
+	return bus.EnsureLevelWith(busDir, remote, branch)
 }
 
 // commit is send's and receipt's shared tail: the same commit, the same push protocol, the
 // same identity rule. The identity comes from the roster and is passed with `git -c`; this
 // tool never writes a git config file.
-func commit(table string, who bus.Participant, paths []string, message, remote, branch string, attempts int, noPush bool) (bus.PushResult, error) {
+func commit(busDir string, who bus.Participant, paths []string, message, remote, branch string, attempts int, noPush bool) (bus.PushResult, error) {
 	id := bus.Identity{Name: who.GitName, Email: who.GitEmail}
 	if noPush {
-		return bus.CommitOnly(table, id, paths, message)
+		return bus.CommitOnly(busDir, id, paths, message)
 	}
-	return bus.CommitAndPush(table, id, paths, message, remote, branch, attempts)
+	return bus.CommitAndPush(busDir, id, paths, message, remote, branch, attempts)
 }

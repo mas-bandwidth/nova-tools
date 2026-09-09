@@ -9,7 +9,7 @@ import (
 )
 
 // The SHAPE, asserted field by field. `nova-bus <version> <goos>/<goarch> <go version>` is
-// what a person is asked to paste when two lines at one table disagree, so a run of it has
+// what a person is asked to paste when two lines on one bus disagree, so a run of it has
 // to be one line and four tokens -- and asserting only that the output "contains" the
 // version would pass over a line broken in two, which is the failure this verb's own
 // escaping exists to prevent.
@@ -69,7 +69,7 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 }
 
 func TestVersionRefusesFlagsAndArguments(t *testing.T) {
-	for _, args := range [][]string{{"--short"}, {"extra"}, {"--table", "."}} {
+	for _, args := range [][]string{{"--short"}, {"extra"}, {"--bus", "."}} {
 		var out, errOut bytes.Buffer
 		if code := cmdVersion(args, &out, &errOut); code != 2 {
 			t.Errorf("%v: exit %d, want 2", args, code)

@@ -23,7 +23,7 @@ import (
 // advance is the flags that move a reader's cursor, since every test below does it.
 func advance(checkout, who string, extra ...string) []string {
 	return append([]string{
-		"inbox", "--table", checkout, "--as", who, "--receipt-max-words", "40",
+		"inbox", "--bus", checkout, "--as", who, "--receipt-max-words", "40",
 		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3",
 	}, extra...)
 }
@@ -40,7 +40,7 @@ func read(t *testing.T, checkout, path string) string {
 // THE COMPLEXITY PROPERTY, proved, in the shape Dana asked for the second time. His first
 // requirement gave the cursor; the read was then O(new + open), because every open note was
 // re-opened to print its line. "O(new + open) is not great. Can we make it O(new)." This is
-// that, asserted: a table of ten thousand notes, five hundred of them OPEN for this reader,
+// that, asserted: a bus of ten thousand notes, five hundred of them OPEN for this reader,
 // one new note -- and the run parses ONE note file. Not 501. One.
 //
 // It is asserted twice, with and without `--open`, because printing the open list is a
@@ -49,7 +49,7 @@ func read(t *testing.T, checkout, path string) string {
 // and not by a walk of what is being carried.
 func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 
 	// 10,000 notes, of which 500 are addressed to Ada and will therefore be OPEN for him.
 	// The other 9,500 are Bo's business and the point is that Ada's read never touches
@@ -80,7 +80,7 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 		mustContain(t, "stdout", "INBOX SCOPE mode=full cursor=-").
 		mustContain(t, "stdout", "INBOX CURSOR commit=")
 	if full := bus.NoteParses() - before; full < history {
-		t.Fatalf("the full run parsed %d notes over a table of %d; the fixture is not what this test thinks it is\n%s", full, history, r.stdout)
+		t.Fatalf("the full run parsed %d notes over a bus of %d; the fixture is not what this test thinks it is\n%s", full, history, r.stdout)
 	}
 
 	// Answer the two notes the FIXTURE leaves open -- by hand, in Ada's own lane, which is
@@ -104,16 +104,16 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 
 	// THE DEFAULT READ. It writes nothing (no --advance), so the two reads below see the
 	// same change set, and it prints one line for the 500 rather than 500 lines.
-	quiet := []string{"inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40"}
+	quiet := []string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40"}
 	before = bus.NoteParses()
 	r = invoke(t, "", quiet...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d heard=0", carried+1)).
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OK as=Ada carrying=%d open=%d", carried+1, carried+1))
 	// ONE. Not one plus the open list, not one plus the history: one file opened and parsed,
-	// over a table of ten thousand and one with five hundred of them open.
+	// over a bus of ten thousand and one with five hundred of them open.
 	if got := bus.NoteParses() - before; got != 1 {
-		t.Fatalf("inbox parsed %d notes for one new note over a table of %d carrying %d; the read is not O(new)\n%s", got, history+1, carried, r.stdout)
+		t.Fatalf("inbox parsed %d notes for one new note over a bus of %d carrying %d; the read is not O(new)\n%s", got, history+1, carried, r.stdout)
 	}
 	if strings.Contains(r.stdout, "INBOX NOTE") {
 		t.Fatalf("the default read listed the open notes:\n%s", r.stdout)
@@ -158,7 +158,7 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 }
 
 // commitAs commits everything in the checkout under a roster name's identity and pushes it,
-// which is what a note arriving on the table looks like from a test's side.
+// which is what a note arriving on the bus looks like from a test's side.
 func commitAs(t *testing.T, checkout, who, message string) {
 	t.Helper()
 	gitIn(t, checkout, "add", "-A")
@@ -183,7 +183,7 @@ func openEntries(t *testing.T, checkout, lane string) int {
 // listed both times and gone the third.
 func TestOpenListSurvivesTheCursorMovingPastIt(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
 	// Both of Bo's notes are now carried, and the cursor is at HEAD. The entry carries
@@ -194,7 +194,7 @@ func TestOpenListSurvivesTheCursorMovingPastIt(t *testing.T) {
 	}
 	cursorOne := read(t, checkout, "from-ada/CURSOR")
 
-	// A second run, with NOTHING new on the table. The cursor has already moved past the
+	// A second run, with NOTHING new on the bus. The cursor has already moved past the
 	// note, so without the OPEN list this listing would be empty -- which is the failure
 	// the list exists to stop.
 	r := invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
@@ -211,7 +211,7 @@ func TestOpenListSurvivesTheCursorMovingPastIt(t *testing.T) {
 
 	// Now answer it. The reply names the note by id, so the third run drops it from OPEN
 	// and from the listing.
-	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
+	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	r = invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0)
 	if strings.Contains(r.stdout, "bo-abcdef012345") {
 		t.Fatalf("an answered note is still carried:\n%s", r.stdout)
@@ -230,9 +230,9 @@ func TestOpenListSurvivesTheCursorMovingPastIt(t *testing.T) {
 // writes is the flag in OPEN, which every later run reads for nothing.
 func TestHeardSurvivesTheCursor(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
-	invoke(t, "", "receipt", "--table", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
+	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX HEARD id=bo-abcdef012345")
@@ -248,7 +248,7 @@ func TestHeardSurvivesTheCursor(t *testing.T) {
 		mustContain(t, "stdout", "INBOX HEARD id=bo-abcdef012345").
 		mustContain(t, "stdout", "heard=1")
 	if got := bus.NoteParses() - before; got != 0 {
-		t.Fatalf("a run over an unchanged table parsed %d notes, want 0: heard is read from the open list", got)
+		t.Fatalf("a run over an unchanged bus parsed %d notes, want 0: heard is read from the open list", got)
 	}
 	// The default read says the same thing in one line, and RECEIPTS is still the durable
 	// record underneath it.
@@ -270,9 +270,9 @@ func TestHeardSurvivesTheCursor(t *testing.T) {
 // way this tool exists to stop.
 func TestACursorThatIsNotAnAncestorIsRefused(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	writeFile(t, checkout, "from-ada/CURSOR", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef 2026-09-09T12:00:00Z\n")
-	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "INBOX REFUSED: ").
 		mustContain(t, "stderr", "is not an ancestor of HEAD").
@@ -281,28 +281,28 @@ func TestACursorThatIsNotAnAncestorIsRefused(t *testing.T) {
 		t.Fatalf("the refusal is %d lines, want one:\n%q", n+1, r.stderr)
 	}
 	// --full is the fallback it names, and it works.
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full").
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX SCOPE mode=full")
 	// A cursor that is not a commit at all is refused where it is read, before it can
 	// become a git argument.
 	writeFile(t, checkout, "from-ada/CURSOR", "--upload-pack=id 2026-09-09T12:00:00Z\n")
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 1).mustContain(t, "stderr", "is not a commit")
 	// check reads the same cursor and refuses it the same way.
-	invoke(t, "", "check", "--table", checkout, "--as", "Ada").
+	invoke(t, "", "check", "--bus", checkout, "--as", "Ada").
 		mustCode(t, 1).mustContain(t, "stderr", "BUS REFUSED: ")
 }
 
-// A --table that is not the ROOT of its repository is refused by every verb that reads
+// A --bus that is not the ROOT of its repository is refused by every verb that reads
 // git, and this is the blocker the second read found. It used to run: `rev-parse
 // --is-inside-work-tree` is true anywhere under a repository, `git diff --name-only`
-// reports `table/from-bo/x.md` from the repository root, ChangedSince keeps only paths
+// reports `bus/from-bo/x.md` from the repository root, ChangedSince keeps only paths
 // beginning `from-`, and so `inbox --since` and `check --as` printed changed=0 and exited 0
-// over notes nobody had read. Exit 2, because a --table the tool will not work over is a
-// bad invocation and not a table that failed.
-func TestATableBelowTheRepositoryRootIsRefused(t *testing.T) {
+// over notes nobody had read. Exit 2, because a --bus the tool will not work over is a
+// bad invocation and not a bus that failed.
+func TestABusBelowTheRepositoryRootIsRefused(t *testing.T) {
 	hermetic(t)
-	bare := filepath.Join(t.TempDir(), "table.git")
+	bare := filepath.Join(t.TempDir(), "bus.git")
 	if err := os.MkdirAll(bare, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -310,36 +310,36 @@ func TestATableBelowTheRepositoryRootIsRefused(t *testing.T) {
 	checkout := filepath.Join(t.TempDir(), "checkout")
 	gitIn(t, filepath.Dir(checkout), "clone", "--quiet", bare, checkout)
 	gitIn(t, checkout, "checkout", "-q", "-B", "main")
-	// The table is one directory down, which is exactly how a table kept inside a bigger
+	// The bus is one directory down, which is exactly how a bus kept inside a bigger
 	// repository -- a docs tree, a monorepo -- would be pointed at.
-	nested := filepath.Join(checkout, "table")
+	nested := filepath.Join(checkout, "bus")
 	writeFile(t, nested, "participants.json", rosterJSON)
 	writeFile(t, nested, "from-bo/2026-09-07T0001Z-a-question-abcdef012345.md",
 		"From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: A question about the gate\n\nShould the gate run on the merge queue too?\n")
 	writeFile(t, nested, "from-bo/INDEX",
 		"bo-abcdef012345\tfrom-bo/2026-09-07T0001Z-a-question-abcdef012345.md\t2026-09-07T00:01:00Z\tAda\t-\n")
 	gitIn(t, checkout, "add", "-A")
-	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "a table one directory down")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "a bus one directory down")
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 
 	for _, args := range [][]string{
-		{"inbox", "--table", nested, "--as", "Ada", "--receipt-max-words", "40"},
-		{"check", "--table", nested, "--as", "Ada"},
-		{"check", "--table", nested, "--since", "HEAD"},
-		{"receipt", "--table", nested, "--as", "Ada", "--note", "bo-abcdef012345",
+		{"inbox", "--bus", nested, "--as", "Ada", "--receipt-max-words", "40"},
+		{"check", "--bus", nested, "--as", "Ada"},
+		{"check", "--bus", nested, "--since", "HEAD"},
+		{"receipt", "--bus", nested, "--as", "Ada", "--note", "bo-abcdef012345",
 			"--remote", "origin", "--branch", "main", "--attempts", "3"},
 	} {
 		invoke(t, "", args...).mustCode(t, 2).
 			mustContain(t, "stderr", "is not its root").
 			mustContain(t, "stderr", "empty change set over unread notes")
 	}
-	invoke(t, draft, "send", "--table", nested, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
+	invoke(t, draft, "send", "--bus", nested, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 2).mustContain(t, "stderr", "is not its root")
 	// The verbs that need no git still work over it, so the refusal is exactly as wide as
-	// the failure: a table below a repository root is readable, it just cannot be read
+	// the failure: a bus below a repository root is readable, it just cannot be read
 	// INCREMENTALLY, and the tool says which.
-	invoke(t, "", "check", "--table", nested, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
-	invoke(t, "", "inbox", "--table", nested, "--as", "Ada", "--receipt-max-words", "40", "--full").
+	invoke(t, "", "check", "--bus", nested, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
+	invoke(t, "", "inbox", "--bus", nested, "--as", "Ada", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX NOTE id=bo-abcdef012345")
 }
 
@@ -350,7 +350,7 @@ func TestATableBelowTheRepositoryRootIsRefused(t *testing.T) {
 // different and this is a refusal naming --full --advance.
 func TestACursorWhoseOpenListWentMissingIsRefused(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=2")
 	if line := read(t, checkout, "from-ada/CURSOR"); !strings.Contains(line, "open=2") {
 		t.Fatalf("the cursor does not record what it was carrying: %q", line)
@@ -358,29 +358,29 @@ func TestACursorWhoseOpenListWentMissingIsRefused(t *testing.T) {
 	if err := os.Remove(filepath.Join(checkout, "from-ada", "OPEN")); err != nil {
 		t.Fatal(err)
 	}
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "INBOX REFUSED: ").
 		mustContain(t, "stderr", "was carrying 2 notes").
 		mustContain(t, "stderr", "--full --advance")
 	// And the way through is the one it names: a full read rebuilds the open list from the
-	// whole table and both notes come back.
+	// whole bus and both notes come back.
 	invoke(t, "", advance(checkout, "Ada", "--full")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=full").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=2").
 		mustContain(t, "stdout", "carrying=2")
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX SCOPE mode=since")
 	// A reader with genuinely nothing open has no OPEN file either, and that is NOT the
 	// refused state: the count in their cursor is zero and nothing is compared.
-	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
+	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	invoke(t, "From: Ada\nTo: Bo\nRe: bo-111111111111\nSubject: That one too\n\nAnswered.\n",
-		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
+		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=0")
 	if _, err := os.Stat(filepath.Join(checkout, "from-ada", "OPEN")); !os.IsNotExist(err) {
 		t.Fatalf("an empty OPEN list was left on disk, so absent no longer means nothing open: %v", err)
 	}
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX OK as=Ada carrying=0 open=0")
 }
 
@@ -391,7 +391,7 @@ func TestACursorWhoseOpenListWentMissingIsRefused(t *testing.T) {
 // missed everything on the branch that was merged.
 func TestANoteThatArrivedThroughAMergeIsSeen(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
 
 	// Bo writes on a side branch while main moves on underneath her.
@@ -436,8 +436,8 @@ func TestANoteThatArrivedThroughAMergeIsSeen(t *testing.T) {
 // agrees with it in both directions.
 func TestSendAppendsToTheIndexAndCheckAgrees(t *testing.T) {
 	hermetic(t)
-	checkout, bare := table(t)
-	r := invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
+	checkout, bare := busDir(t)
+	r := invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0)
 	id := field(t, r.stdout, "id=")
 	path := field(t, r.stdout, "path=")
@@ -462,7 +462,7 @@ func TestSendAppendsToTheIndexAndCheckAgrees(t *testing.T) {
 	if !strings.Contains(files, "from-ada/INDEX") || !strings.Contains(files, path) {
 		t.Fatalf("the note and its index line are not in one commit:\n%s", files)
 	}
-	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).
+	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS OK").mustContain(t, "stdout", "warn=0")
 }
 
@@ -470,9 +470,9 @@ func TestSendAppendsToTheIndexAndCheckAgrees(t *testing.T) {
 // warns, and --rebuild-index writes it.
 func TestCheckFullAgainstTheIndex(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 
-	// A note written by hand, in a browser, the way this table's whole form allows. It has
+	// A note written by hand, in a browser, the way this bus's whole form allows. It has
 	// an id and no catalogue line: a WARN, at any date, because the notes are the record
 	// and the catalogue is a cache.
 	writeFile(t, checkout, "from-bo/2026-09-08T0300Z-by-hand-333333333333.md",
@@ -480,7 +480,7 @@ func TestCheckFullAgainstTheIndex(t *testing.T) {
 	// A WARN goes to STDOUT: the grammar puts only FAIL lines and refusals on stderr, and a
 	// warning is a finding a passing run reported. On stderr it made every forgiving run
 	// look like a failing one to anything reading the two streams apart.
-	r := invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).
+	r := invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS WARN from-bo/2026-09-08T0300Z-by-hand-333333333333.md").
 		mustContain(t, "stdout", "--rebuild-index").
 		mustContain(t, "stdout", "warn=1")
@@ -489,7 +489,7 @@ func TestCheckFullAgainstTheIndex(t *testing.T) {
 	}
 
 	// --rebuild-index writes it, and the warning goes.
-	invoke(t, "", "check", "--table", checkout, "--full", "--rebuild-index").mustCode(t, 0).
+	invoke(t, "", "check", "--bus", checkout, "--full", "--rebuild-index").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS INDEX lane=from-bo notes=3").
 		mustContain(t, "stdout", "BUS INDEX lane=from-ada notes=0").
 		mustContain(t, "stdout", "warn=0")
@@ -498,13 +498,13 @@ func TestCheckFullAgainstTheIndex(t *testing.T) {
 	// one could resolve a thread to the wrong note.
 	appendFile(t, checkout, "from-bo/INDEX",
 		"bo-444444444444\tfrom-bo/never-written.md\t2026-09-08T04:00:00Z\tAda\t-\n")
-	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
+	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
 		mustContain(t, "stderr", "BUS FAIL from-bo/INDEX:4").
-		mustContain(t, "stderr", "which is not a note on this table")
+		mustContain(t, "stderr", "which is not a note on this bus")
 
 	// And --rebuild-index is refused without --full, because it writes every lane's
 	// catalogue from every note in it.
-	invoke(t, "", "check", "--table", checkout, "--rebuild-index", "--as", "Ada").
+	invoke(t, "", "check", "--bus", checkout, "--rebuild-index", "--as", "Ada").
 		mustCode(t, 2).mustContain(t, "stderr", "needs --full")
 }
 
@@ -512,50 +512,50 @@ func TestCheckFullAgainstTheIndex(t *testing.T) {
 // find. It is the same per-note code with the lookups answered from the catalogue.
 func TestCheckSinceChecksOnlyWhatChanged(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	base := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
 
-	// Something already on the table that --full would fail on, committed BEFORE the
+	// Something already on the bus that --full would fail on, committed BEFORE the
 	// baseline: --since must not see it, and --full must.
 	writeFile(t, checkout, "from-bo/older-stranger.md", "From: Bo\nTo: Boe\nSubject: s\n\nbody\n")
 	gitIn(t, checkout, "add", "-A")
 	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "older")
 	after := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
 
-	invoke(t, "", "check", "--table", checkout, "--since", after).mustCode(t, 0).
+	invoke(t, "", "check", "--bus", checkout, "--since", after).mustCode(t, 0).
 		mustContain(t, "stdout", "BUS SCOPE mode=since").
 		mustContain(t, "stdout", "changed=0")
-	invoke(t, "", "check", "--table", checkout, "--since", base).mustCode(t, 1).
+	invoke(t, "", "check", "--bus", checkout, "--since", base).mustCode(t, 1).
 		mustContain(t, "stderr", "BUS FAIL from-bo/older-stranger.md").
 		mustContain(t, "stderr", `"Boe"`)
-	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
+	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
 		mustContain(t, "stderr", "BUS FAIL from-bo/older-stranger.md")
-	// A revision this checkout does not hold is a bad invocation, not a table that failed.
-	invoke(t, "", "check", "--table", checkout, "--since", "nosuchref").
+	// A revision this checkout does not hold is a bad invocation, not a bus that failed.
+	invoke(t, "", "check", "--bus", checkout, "--since", "nosuchref").
 		mustCode(t, 2).mustContain(t, "stderr", "names no commit")
 	// And a --since that would be an option to git never reaches git.
-	invoke(t, "", "check", "--table", checkout, "--since", "--upload-pack=id").
+	invoke(t, "", "check", "--bus", checkout, "--since", "--upload-pack=id").
 		mustCode(t, 2).mustContain(t, "stderr", "nova-bus check:")
 }
 
 // check refuses to guess a baseline, exactly the way every other flag here is refused.
 func TestCheckRefusesToGuessItsBaseline(t *testing.T) {
-	checkout, _ := table(t)
-	invoke(t, "", "check", "--table", checkout).mustCode(t, 2).
+	checkout, _ := busDir(t)
+	invoke(t, "", "check", "--bus", checkout).mustCode(t, 2).
 		mustContain(t, "stderr", "give one of --full, --as <name> or --since <commit>").
 		mustContain(t, "stderr", "refusing to guess")
 	// A reader with no cursor yet has no baseline, so --as falls back to a full run and
-	// SAYS so rather than reporting an empty change set as a clean table.
-	invoke(t, "", "check", "--table", checkout, "--as", "Ada").mustCode(t, 0).
+	// SAYS so rather than reporting an empty change set as a clean bus.
+	invoke(t, "", "check", "--bus", checkout, "--as", "Ada").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS SCOPE mode=full cursor=-")
 }
 
-// inbox without --advance writes NOTHING. A report that edits the table without being
+// inbox without --advance writes NOTHING. A report that edits the bus without being
 // asked is the surprise this repo does not do.
 func TestInboxWithoutAdvanceWritesNothing(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
+	checkout, _ := busDir(t)
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
 	if _, err := os.Stat(filepath.Join(checkout, "from-ada")); err == nil {
 		t.Fatalf("a plain inbox created the reader's lane")
 	}
@@ -563,15 +563,15 @@ func TestInboxWithoutAdvanceWritesNothing(t *testing.T) {
 		t.Fatalf("a plain inbox left the checkout dirty:\n%s", out)
 	}
 	// --advance without the flags it needs to push is refused by name.
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40", "--advance").
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--advance").
 		mustCode(t, 2).mustContain(t, "stderr", "needs --remote and --branch")
 }
 
-// The cursor is on the table, not on the bench: it is committed under the reader's own
+// The cursor is on the bus, not on the bench: it is committed under the reader's own
 // identity from the roster and pushed like a receipt.
 func TestTheCursorIsPushedLikeAReceipt(t *testing.T) {
 	hermetic(t)
-	checkout, bare := table(t)
+	checkout, bare := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX CURSOR commit=").
 		mustContain(t, "stdout", "pushed=true attempts=1")
@@ -584,7 +584,7 @@ func TestTheCursorIsPushedLikeAReceipt(t *testing.T) {
 	if who := strings.TrimSpace(gitIn(t, bare, "log", "-1", "--format=%an <%ae>", "main")); who != "Ada <ada@example.com>" {
 		t.Fatalf("the cursor was committed as %q, not the roster's identity for Ada", who)
 	}
-	// --no-push commits it and says the cursor is not on the table.
+	// --no-push commits it and says the cursor is not on the bus.
 	writeFile(t, checkout, "from-bo/2026-09-08T0500Z-another-555555555555.md",
 		"From: Bo\nTo: Ada\nDate: Tue Sep  8 05:00:00 UTC 2026\nId: bo-555555555555\nSubject: Another\n\nWhat about the Windows runner?\n")
 	gitIn(t, checkout, "add", "-A")
@@ -598,44 +598,44 @@ func TestTheCursorIsPushedLikeAReceipt(t *testing.T) {
 // does not try to read one as a note.
 func TestLaneStateFilesAreNotStrays(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
-	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
+	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
 	// A file that is none of them still is one.
 	writeFile(t, checkout, "from-ada/notes.txt", "a scratch file\n")
-	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
+	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
 		mustContain(t, "stderr", "BUS FAIL from-ada/notes.txt").
 		mustContain(t, "stderr", "RECEIPTS, CURSOR, OPEN, INDEX")
 	// A malformed state file is a finding, not a crash: a reader would otherwise refuse on
-	// their next run with nothing on the table saying why.
+	// their next run with nothing on the bus saying why.
 	if err := os.Remove(filepath.Join(checkout, "from-ada", "notes.txt")); err != nil {
 		t.Fatal(err)
 	}
 	writeFile(t, checkout, "from-ada/OPEN", bus.OpenHeader+"\nno-path-here\n")
-	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
+	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
 		mustContain(t, "stderr", "BUS FAIL from-ada/OPEN").
 		mustContain(t, "stderr", "an open entry is 8 tab-separated fields")
 }
 
 // A LANE'S README IS NOT A NOTE, and this is the finding a review named. It ends in
 // `.md` and sits in a lane, so the lane walk parsed it, failed, told every reader on the
-// table `INBOX UNREADABLE` about it forever, and failed `check` at every date -- the one
+// bus `INBOX UNREADABLE` about it forever, and failed `check` at every date -- the one
 // finding the legacy tolerance could not forgive, because a README cannot say when it was
 // written and is not a note whatever it says.
 func TestALanesReadmeIsNotANote(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	writeFile(t, checkout, "from-bo/README.md",
-		"# Bo's lane\n\nWhat I write about here, and how to reach me faster than the table.\n")
+		"# Bo's lane\n\nWhat I write about here, and how to reach me faster than the bus.\n")
 	commitAs(t, checkout, "Bo", "bo: a README for the lane")
 
 	// check passes over it, in both modes: not a note, not a stray.
-	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
-	invoke(t, "", "check", "--table", checkout, "--since", "HEAD~1").mustCode(t, 0).
+	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
+	invoke(t, "", "check", "--bus", checkout, "--since", "HEAD~1").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS SCOPE mode=since")
 	// And no reader is told it cannot be read, on either read.
 	for _, args := range [][]string{
-		{"inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full"},
+		{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full"},
 		advance(checkout, "Ada"),
 	} {
 		r := invoke(t, "", args...).mustCode(t, 0).mustContain(t, "stdout", "unreadable=0")
@@ -648,7 +648,7 @@ func TestALanesReadmeIsNotANote(t *testing.T) {
 	// is a stray too, and is not asserted here because half the machines this runs on cannot
 	// hold both spellings in one directory.)
 	writeFile(t, checkout, "from-bo/NOTES.md", "# not the one allowed name\n\nprose where a header goes.\n")
-	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
+	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
 		mustContain(t, "stderr", "BUS FAIL from-bo/NOTES.md")
 }
 
@@ -659,14 +659,14 @@ func TestALanesReadmeIsNotANote(t *testing.T) {
 // version and this is what happens when it does not.
 func TestAnOpenListFromBeforeV2IsRefusedAndFullAdvanceRepairsIt(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=2")
 
 	// The shape the previous version wrote, under the cursor it wrote beside.
 	writeFile(t, checkout, "from-ada/OPEN",
 		"bo-abcdef012345 from-bo/2026-09-07T0001Z-a-question-abcdef012345.md\n"+
 			"bo-111111111111 from-bo/2026-09-07T0002Z-heard-111111111111.md\n")
-	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "INBOX REFUSED: ").
 		mustContain(t, "stderr", bus.OpenHeader).
@@ -674,9 +674,9 @@ func TestAnOpenListFromBeforeV2IsRefusedAndFullAdvanceRepairsIt(t *testing.T) {
 	if n := strings.Count(strings.TrimRight(r.stderr, "\n"), "\n"); n != 0 {
 		t.Fatalf("the refusal is %d lines, want one:\n%q", n+1, r.stderr)
 	}
-	// check says the same thing about the same file, so a table carrying one is not a
+	// check says the same thing about the same file, so a bus carrying one is not a
 	// silence that only its own reader ever meets.
-	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
+	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 1).
 		mustContain(t, "stderr", "BUS FAIL from-ada/OPEN")
 
 	// And the way through is the one it names: nothing is lost, and the list comes back in
@@ -687,17 +687,17 @@ func TestAnOpenListFromBeforeV2IsRefusedAndFullAdvanceRepairsIt(t *testing.T) {
 	if got := read(t, checkout, "from-ada/OPEN"); !strings.HasPrefix(got, bus.OpenHeader+"\n") {
 		t.Fatalf("--full --advance did not write a v2 open list:\n%s", got)
 	}
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX OPEN carrying=2")
 }
 
 // A file this tool cannot read is carried on the open list until it parses or is receipted,
 // so an incremental run keeps naming it. It used to be named once by a --full read and left
 // off the list, which meant no later run ever mentioned it again: a note somebody wrote, on
-// the table, that its reader is told about once and then never.
+// the bus, that its reader is told about once and then never.
 func TestAnUnreadableFileIsCarriedAcrossRuns(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	writeFile(t, checkout, "from-bo/2026-09-07T0009Z-prose.md",
 		"Ada, the checkpoint is pushed and the suite passed: zero divergence.\n\nMore prose.\n")
 	commitAs(t, checkout, "Bo", "bo: a file that will not parse")
@@ -715,7 +715,7 @@ func TestAnUnreadableFileIsCarriedAcrossRuns(t *testing.T) {
 
 	// Receipting it is one way it leaves the list: a reader saying "I have seen this file"
 	// about something with no id to answer.
-	invoke(t, "", "receipt", "--table", checkout, "--as", "Ada",
+	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada",
 		"--note", "from-bo/2026-09-07T0009Z-prose.md",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
@@ -771,36 +771,36 @@ func appendFile(t *testing.T, root, path, content string) {
 	}
 }
 
-// The example table in testdata is the shape a person and an AI are both pointed at from
+// The example bus in testdata is the shape a person and an AI are both pointed at from
 // the README, so it is held to the tool rather than left to drift: it passes check --full
 // clean, and its listings are the ones the README prints.
 //
 // It is copied out and given a repository OF ITS OWN, which is the honest shape and is what
 // the example's own README now tells a reader to do. In the tree it ships in, it is a
 // directory inside a repository about tools, and every verb that reads git refuses a
-// --table that is not its repository's root.
-func TestTheExampleTableInTestdataIsWhatTheREADMESays(t *testing.T) {
+// --bus that is not its repository's root.
+func TestTheExampleBusInTestdataIsWhatTheREADMESays(t *testing.T) {
 	hermetic(t)
 	root := t.TempDir()
-	copyTree(t, filepath.Join("testdata", "example-table"), root)
+	copyTree(t, filepath.Join("testdata", "example-bus"), root)
 	gitIn(t, root, "init", "--quiet", "-b", "main")
 	gitIn(t, root, "add", "-A")
-	gitIn(t, root, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "commit", "-q", "-m", "the table")
+	gitIn(t, root, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "commit", "-q", "-m", "the bus")
 
-	invoke(t, "", "check", "--table", root, "--full").mustCode(t, 0).
+	invoke(t, "", "check", "--bus", root, "--full").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS OK notes=4 lanes=2 receipts=1 participants=3 warn=0")
-	invoke(t, "", "names", "--table", root).mustCode(t, 0).
+	invoke(t, "", "names", "--bus", root).mustCode(t, 0).
 		mustContain(t, "stdout", `NAMES NAME name="Dana" lane=-`).
 		mustContain(t, "stdout", "NAMES OK participants=3 groups=1 senders=2")
 	// Ada's listing: the thread is answered and gone, the Windows finding was receipted
 	// and is HEARD rather than closed, and the bare acknowledgement is last.
-	invoke(t, "", "inbox", "--table", root, "--as", "Ada", "--receipt-max-words", "40", "--full").
+	invoke(t, "", "inbox", "--bus", root, "--as", "Ada", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX HEARD id=bo-222222222222").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=1 notes=0 receipts=1 heard=1 unaddressed=0 unreadable=0")
 	// Bo's: the answer to her question is a note she owes nothing on until she reads
 	// it, and it is the one thing in her inbox.
-	invoke(t, "", "inbox", "--table", root, "--as", "Bo", "--receipt-max-words", "40", "--full").
+	invoke(t, "", "inbox", "--bus", root, "--as", "Bo", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX NOTE id=ada-0f1e2d3c4b5a from=Ada addr=to").
 		mustContain(t, "stdout", "INBOX OK as=Bo carrying=1 open=1")
@@ -808,14 +808,14 @@ func TestTheExampleTableInTestdataIsWhatTheREADMESays(t *testing.T) {
 	// notes" means when you can run it.
 	wantAda := read(t, root, "from-ada/INDEX")
 	wantBo := read(t, root, "from-bo/INDEX")
-	invoke(t, "", "check", "--table", root, "--full", "--rebuild-index").mustCode(t, 0)
+	invoke(t, "", "check", "--bus", root, "--full", "--rebuild-index").mustCode(t, 0)
 	if read(t, root, "from-ada/INDEX") != wantAda || read(t, root, "from-bo/INDEX") != wantBo {
-		t.Fatal("a rebuild changed the example table's catalogue, so the committed one is stale")
+		t.Fatal("a rebuild changed the example bus's catalogue, so the committed one is stale")
 	}
-	// As a repository root it is a table the git-reading verbs will work over, which is
+	// As a repository root it is a bus the git-reading verbs will work over, which is
 	// what its README tells a reader to make it. `--since HEAD` is the cheapest proof:
 	// the root test passes, the diff runs, and the change set over no change is empty.
-	invoke(t, "", "check", "--table", root, "--since", "HEAD").mustCode(t, 0).
+	invoke(t, "", "check", "--bus", root, "--since", "HEAD").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS SCOPE mode=since").
 		mustContain(t, "stdout", "changed=0")
 	// And the CURSOR it ships records what its OPEN list holds, so a reader arriving on it
@@ -856,11 +856,11 @@ func copyTree(t *testing.T, from, to string) {
 // every reader is trying to get to.
 func TestAFirstAdvanceWithNothingOpen(t *testing.T) {
 	hermetic(t)
-	checkout, bare := table(t)
+	checkout, bare := busDir(t)
 	// Ada answers the two the fixture leaves open, so nothing is carried.
-	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
+	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	invoke(t, "From: Ada\nTo: Bo\nRe: bo-111111111111\nSubject: That one too\n\nAnswered.\n",
-		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
+		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=0 open=0").
@@ -881,26 +881,26 @@ func TestAFirstAdvanceWithNothingOpen(t *testing.T) {
 
 // And the other direction: a reader who HAD an open list and now has none. The OPEN file
 // is tracked, so its removal must be staged or git brings it straight back.
-func TestAnOpenListThatEmptiesIsRemovedFromTheTable(t *testing.T) {
+func TestAnOpenListThatEmptiesIsRemovedFromTheBus(t *testing.T) {
 	hermetic(t)
-	checkout, bare := table(t)
+	checkout, bare := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
 	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); !strings.Contains(files, "from-ada/OPEN") {
 		t.Fatalf("the first advance did not publish an OPEN list:\n%s", files)
 	}
-	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
+	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	invoke(t, "From: Ada\nTo: Bo\nRe: bo-111111111111\nSubject: That one too\n\nAnswered.\n",
-		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
+		"send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=0")
 	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); strings.Contains(files, "from-ada/OPEN") {
-		t.Fatalf("an emptied OPEN list is still on the table:\n%s", files)
+		t.Fatalf("an emptied OPEN list is still on the bus:\n%s", files)
 	}
 	if out := gitIn(t, checkout, "status", "--porcelain"); strings.TrimSpace(out) != "" {
 		t.Fatalf("the checkout is dirty after an emptied OPEN list:\n%s", out)
 	}
 }
 
-// THE SWITCH DAY, end to end. The table this tool was written for had been running by hand
+// THE SWITCH DAY, end to end. The bus this tool was written for had been running by hand
 // for months when it adopted the tool, and the first `inbox --as Ada --full` reported
 // 657 notes open. Because the open list is what lets the cursor move, every run after it
 // reported the same 657 -- forever, until each was answered or receipted one at a time.
@@ -911,7 +911,7 @@ func TestAnOpenListThatEmptiesIsRemovedFromTheTable(t *testing.T) {
 // cursor, so the run after it does not have to be told again.
 func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
 	hermetic(t)
-	checkout, _ := table(t)
+	checkout, _ := busDir(t)
 	// Two notes from before the line and one after it, on top of the fixture's two, which
 	// are dated 2026-09-07 and are therefore also in front of the line.
 	writeFile(t, checkout, "from-bo/2026-08-01T0001Z-old-one-aaaaaaaaaaaa.md",
@@ -978,8 +978,8 @@ func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
 // The flag itself: a date it cannot read is a bad invocation rather than a guess, on the
 // same rule check's is.
 func TestInboxRefusesALegacyDateItCannotRead(t *testing.T) {
-	checkout, _ := table(t)
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40",
+	checkout, _ := busDir(t)
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--full", "--legacy-before", "last Tuesday").mustCode(t, 2).
 		mustContain(t, "stderr", "is not a UTC date")
 }

@@ -7,8 +7,8 @@ import (
 
 // The tolerances are enumerated in address.go and in SPEC.md. Every one of them is pinned
 // here, and so is the refusal, because a matcher that accepts everything is not a check.
-func TestResolveListToleratesTheShapesTheTableActuallyWrites(t *testing.T) {
-	c, err := LoadConfig(writeTable(t, nil))
+func TestResolveListToleratesTheShapesTheBusActuallyWrites(t *testing.T) {
+	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,10 +24,10 @@ func TestResolveListToleratesTheShapesTheTableActuallyWrites(t *testing.T) {
 		{"a parenthetical", "Ada (day shift, the west host, the shared account)", "Ada"},
 		{"a qualifier and a parenthetical", "Ada a1b2c3d4 (active line)", "Ada"},
 		{"stacked parentheticals", "Ada (day shift) (the west host)", "Ada"},
-		{"a group", "Everybody at the table", "Ada; Bo; Dana"},
-		{"a group and a name after an em dash", "Everybody at the table — Dana", "Ada; Bo; Dana"},
+		{"a group", "Everybody on the bus", "Ada; Bo; Dana"},
+		{"a group and a name after an em dash", "Everybody on the bus — Dana", "Ada; Bo; Dana"},
 		{"a for- phrase", "Bo; for Dana when they arrive", "Bo; Dana"},
-		{"a name twice, once through a group", "Everybody at the table; Ada", "Ada; Bo; Dana"},
+		{"a name twice, once through a group", "Everybody on the bus; Ada", "Ada; Bo; Dana"},
 		{"empty pieces", "Ada;; , ;Bo", "Ada; Bo"},
 	}
 	for _, tc := range cases {
@@ -44,7 +44,7 @@ func TestResolveListToleratesTheShapesTheTableActuallyWrites(t *testing.T) {
 }
 
 func TestResolveListRefusesAMisspelling(t *testing.T) {
-	c, err := LoadConfig(writeTable(t, nil))
+	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestResolveListRefusesAMisspelling(t *testing.T) {
 // The prefix rule takes the LONGEST known name, so a roster holding both "Bo" and
 // "Bo Quill" does not resolve "Bo Quill Two" to the shorter one.
 func TestLongestKnownNameWins(t *testing.T) {
-	c, err := LoadConfig(writeTable(t, nil))
+	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestLongestKnownNameWins(t *testing.T) {
 
 // A From line names exactly one sender. Two names is not a sender.
 func TestResolveOne(t *testing.T) {
-	c, err := LoadConfig(writeTable(t, nil))
+	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,7 +81,7 @@ func TestResolveOne(t *testing.T) {
 	if _, ok := c.ResolveOne("Ada; Bo"); ok {
 		t.Fatal("a From line naming two people resolved to a sender")
 	}
-	if _, ok := c.ResolveOne("Everybody at the table"); ok {
+	if _, ok := c.ResolveOne("Everybody on the bus"); ok {
 		t.Fatal("a group resolved to a sender; a group never writes")
 	}
 	if _, ok := c.ResolveOne(""); ok {
@@ -93,9 +93,9 @@ func TestResolveOne(t *testing.T) {
 // "Ada and Bo" begins with "Ada " -- and the note reached one of the two people it
 // was written to, with nothing anywhere saying the other had been dropped. That is the
 // silent wrong-reader failure this whole file exists to prevent, and it is pinned here in
-// every spelling the table uses.
+// every spelling the bus uses.
 func TestAndIsASeparatorNotAQualifier(t *testing.T) {
-	c, err := LoadConfig(writeTable(t, nil))
+	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +106,7 @@ func TestAndIsASeparatorNotAQualifier(t *testing.T) {
 		{"and after a semicolon list", "Ada; Bo and Dana", "Ada; Bo; Dana"},
 		{"capitalised", "Ada AND Bo", "Ada; Bo"},
 		{"an alias on the far side", "Ada and Bo Quill", "Ada; Bo"},
-		{"a group and a name", "Everybody at the table and Dana", "Ada; Bo; Dana"},
+		{"a group and a name", "Everybody on the bus and Dana", "Ada; Bo; Dana"},
 		{"inside a parenthetical, which is not a separator", "Ada (day shift and archivist)", "Ada"},
 	}
 	for _, tc := range cases {
@@ -121,7 +121,7 @@ func TestAndIsASeparatorNotAQualifier(t *testing.T) {
 		})
 	}
 	// And the qualifier still works: what follows a known name is a qualifier only when it
-	// is not itself a name this table knows.
+	// is not itself a name this bus knows.
 	got, unknown := c.ResolveList("Ada reads in place")
 	if len(unknown) > 0 || strings.Join(got, "; ") != "Ada" {
 		t.Fatalf(`ResolveList("Ada reads in place") = %v %v, want Ada: an instance qualifier is not a second reader`, got, unknown)
@@ -132,7 +132,7 @@ func TestAndIsASeparatorNotAQualifier(t *testing.T) {
 // resolved to the first. Whatever "Ada Bo" is, it is not a note to Ada, and a tool
 // that picked one of the two would be guessing about a reader.
 func TestAKnownNameFollowedByAKnownNameIsRefused(t *testing.T) {
-	c, err := LoadConfig(writeTable(t, nil))
+	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}

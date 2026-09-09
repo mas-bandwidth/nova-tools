@@ -9,7 +9,7 @@ import (
 )
 
 func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
-	root := writeTable(t, nil)
+	root := writeBus(t, nil)
 	// A lane with no CURSOR is a reader who has not read yet, and that is not an error.
 	got, err := ReadCursor(root, "from-ada")
 	if err != nil || got.Commit != "" {
@@ -71,7 +71,7 @@ func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 // OPEN v2: an entry carries the whole line the note prints as, so a later run can list it
 // without opening the note. The round trip is the proof that nothing in that line is lost.
 func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
-	root := writeTable(t, nil)
+	root := writeBus(t, nil)
 	if got, err := ReadOpen(root, "from-ada"); err != nil || got != nil {
 		t.Fatalf("a lane with no OPEN: %+v, %v", got, err)
 	}
@@ -149,7 +149,7 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 // counted cursor is exactly the state a healthy v2 reader is in. So the file says its own
 // version, and a file that does not is refused at the read, naming the repair.
 func TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead(t *testing.T) {
-	root := writeTable(t, nil)
+	root := writeBus(t, nil)
 	write(t, root, OpenPath("from-ada"), "bo-abcdef012345 from-bo/old.md\n")
 	_, err := ReadOpen(root, "from-ada")
 	if err == nil {
@@ -193,7 +193,7 @@ func TestIndexLineIsFiveFieldsAndCannotBeForged(t *testing.T) {
 		t.Fatalf("an absent Re was not written as a dash: %q", line)
 	}
 
-	root := writeTable(t, nil)
+	root := writeBus(t, nil)
 	if err := AppendIndexLine(root, e); err != nil {
 		t.Fatal(err)
 	}
@@ -216,7 +216,7 @@ func TestIndexLineIsFiveFieldsAndCannotBeForged(t *testing.T) {
 // The catalogue answers a thread by id without opening a note, and falls back to the
 // filesystem for the one thing it cannot hold: a note written before ids existed.
 func TestIndexResolvesByIdAndLegacyPath(t *testing.T) {
-	root := writeTable(t, map[string]string{
+	root := writeBus(t, map[string]string{
 		"from-bo/INDEX":        "bo-abcdef012345\tfrom-bo/new.md\t2026-09-07T00:01:00Z\tAda\t-\n",
 		"from-bo/new.md":       "From: Bo\nTo: Ada\nId: bo-abcdef012345\nSubject: s\n\nbody\n",
 		"from-bo/old-one.md":   "From: Bo\nTo: Ada\nSubject: s\n\nbody\n",
@@ -247,7 +247,7 @@ func TestIndexResolvesByIdAndLegacyPath(t *testing.T) {
 // note contributes no line: it is addressed by path, and giving it a catalogue entry keyed
 // on an id would be inventing the id.
 func TestRebuildLaneIndexFromTheNotes(t *testing.T) {
-	root := writeTable(t, map[string]string{
+	root := writeBus(t, map[string]string{
 		"from-bo/b.md":   "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:02:00 UTC 2026\nId: bo-111111111111\nRe: new\nSubject: b\n\nbody\n",
 		"from-bo/a.md":   "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: a\n\nbody\n",
 		"from-bo/old.md": "From: Bo\nTo: Ada\nSubject: old\n\nbody\n",
@@ -256,7 +256,7 @@ func TestRebuildLaneIndexFromTheNotes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	tab := loadTable(t, root)
+	tab := loadBus(t, root)
 	n, err := RebuildLaneIndex(root, c, tab, "from-bo")
 	if err != nil {
 		t.Fatal(err)
@@ -268,7 +268,7 @@ func TestRebuildLaneIndexFromTheNotes(t *testing.T) {
 	if len(lines) != 2 || !strings.HasPrefix(lines[0], "bo-abcdef012345\tfrom-bo/a.md\t") {
 		t.Fatalf("the rebuilt catalogue is:\n%s", strings.Join(lines, "\n"))
 	}
-	// And a rebuilt catalogue agrees with the table it was built from.
+	// And a rebuilt catalogue agrees with the bus it was built from.
 	idx, err := ReadIndex(root, c)
 	if err != nil {
 		t.Fatal(err)
@@ -282,7 +282,7 @@ func TestRebuildLaneIndexFromTheNotes(t *testing.T) {
 // The count is the claim: the notes it parses are the notes that CHANGED, and the one it is
 // carrying costs nothing at all.
 func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
-	root := writeTable(t, map[string]string{
+	root := writeBus(t, map[string]string{
 		"from-bo/old.md":        "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: old\n\nA question?\n",
 		"from-bo/new.md":        "From: Bo\nTo: Ada\nDate: Tue Sep  8 00:01:00 UTC 2026\nId: bo-111111111111\nSubject: new\n\nAnother question?\n",
 		"from-bo/not-for-me.md": "From: Bo\nTo: Dana\nDate: Tue Sep  8 00:02:00 UTC 2026\nId: bo-222222222222\nSubject: nope\n\nFor Dana.\n",
@@ -358,7 +358,7 @@ func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
 // it sets is the flag in OPEN -- which is what lets the next run say HEARD without reading
 // RECEIPTS at all. Heard is still not answered: the entry stays.
 func TestAReceiptInTheChangeSetSetsTheFlagInOpen(t *testing.T) {
-	root := writeTable(t, map[string]string{
+	root := writeBus(t, map[string]string{
 		"from-bo/old.md":    "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: old\n\nA question?\n",
 		"from-ada/RECEIPTS": "2026-09-09T12:34:56Z bo-abcdef012345\n",
 	})
@@ -401,7 +401,7 @@ func TestAReceiptInTheChangeSetSetsTheFlagInOpen(t *testing.T) {
 // receipted, and is named on every run in between. Dropping it after one mention is how the
 // first version lost it: a `--full` read said so once, and no incremental run ever did again.
 func TestAnUnreadableFileIsCarriedAndReChecked(t *testing.T) {
-	root := writeTable(t, map[string]string{
+	root := writeBus(t, map[string]string{
 		"from-bo/prose.md": "Ada, this is prose and no header at all.\n\nMore prose.\n",
 	})
 	c, err := LoadConfig(root)
@@ -462,7 +462,7 @@ func TestAnUnreadableFileIsCarriedAndReChecked(t *testing.T) {
 // note, which is the O(open) this design exists to remove. The direction is a stale line, not
 // a lost note.
 func TestAnOpenNoteWhoseFileVanishedIsCarriedUntilAFullRead(t *testing.T) {
-	root := writeTable(t, nil)
+	root := writeBus(t, nil)
 	c, err := LoadConfig(root)
 	if err != nil {
 		t.Fatal(err)
@@ -479,13 +479,13 @@ func TestAnOpenNoteWhoseFileVanishedIsCarriedUntilAFullRead(t *testing.T) {
 		t.Fatalf("a carried entry cost %d parses, want 0", got)
 	}
 	if len(res.Open) != 1 {
-		t.Fatalf("the entry was dropped without anything looking at the table: %+v", res.Open)
+		t.Fatalf("the entry was dropped without anything looking on the bus: %+v", res.Open)
 	}
-	// The full walk is what settles it: the note is not on the table, so it is not on the
+	// The full walk is what settles it: the note is not on the bus, so it is not on the
 	// list the full read writes.
-	tab := loadTable(t, root)
+	tab := loadBus(t, root)
 	if entries := OpenFromFull(tab.Inbox(me, 40), tab.Unreadable(me.Lane)); len(entries) != 0 {
-		t.Fatalf("a full read carried a note that is not on the table: %+v", entries)
+		t.Fatalf("a full read carried a note that is not on the bus: %+v", entries)
 	}
 }
 
@@ -506,7 +506,7 @@ func readFile(t *testing.T, root, path string) string {
 //
 // The direction is the whole point: re-show, never loss. A reader is asked twice, which is
 // tiresome; a reader is never told a note is answered when it is not, and never loses one.
-// The settlement is a `--full` read, which derives the list from the whole table, where the
+// The settlement is a `--full` read, which derives the list from the whole bus, where the
 // reply is a note like any other.
 //
 // This is a WIDENING of a limit that already existed: before OPEN v2 the catalogue was read
@@ -521,7 +521,7 @@ func TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt(t *testing.T) 
 			"Re: bo-abcdef012345\nSubject: yes\n\nYes.\n",
 		"from-ada/INDEX": "ada-333333333333\tfrom-ada/answer.md\t2026-09-07T01:00:00Z\tBo\tbo-abcdef012345\n",
 	}
-	root := writeTable(t, files)
+	root := writeBus(t, files)
 	c, err := LoadConfig(root)
 	if err != nil {
 		t.Fatal(err)
@@ -546,9 +546,9 @@ func TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt(t *testing.T) 
 		t.Fatalf("the re-show is not what the docs say it is: %+v", res.Open)
 	}
 
-	// And a full read settles it: the reply is on the table, so the note is answered and the
+	// And a full read settles it: the reply is on the bus, so the note is answered and the
 	// list a `--full --advance` writes does not hold it.
-	tab := loadTable(t, root)
+	tab := loadBus(t, root)
 	if entries := OpenFromFull(tab.Inbox(me, 40), tab.Unreadable(me.Lane)); len(entries) != 0 {
 		t.Fatalf("a full read did not settle an answered note: %+v", entries)
 	}
@@ -584,7 +584,7 @@ func TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt(t *testing.T) 
 // an in-place write would show the new content, or a truncated half of it, through the
 // same descriptor -- so it is a direct test of the mechanism and not of a symptom.
 func TestALaneStateFileIsReplacedByRenameAndLeavesNoPartialFile(t *testing.T) {
-	root := writeTable(t, nil)
+	root := writeBus(t, nil)
 	const lane = "from-ada"
 	first := "1111111111111111111111111111111111111111"
 	if err := WriteCursor(root, lane, first, 1, "", at("2026-09-09T12:00:00Z")); err != nil {
@@ -616,7 +616,7 @@ func TestALaneStateFileIsReplacedByRenameAndLeavesNoPartialFile(t *testing.T) {
 	if got.Commit != second || got.Open != 7 {
 		t.Fatalf("the new cursor reads as %+v", got)
 	}
-	// The temporary is gone. It is a step in a write, never a file on the table.
+	// The temporary is gone. It is a step in a write, never a file on the bus.
 	entries, err := os.ReadDir(filepath.Join(root, lane))
 	if err != nil {
 		t.Fatal(err)
@@ -636,7 +636,7 @@ func TestAStrandedTemporaryIsIgnoredByTheLaneWalk(t *testing.T) {
 	files["from-bo/CURSOR"] = "1111111111111111111111111111111111111111 2026-09-09T12:00:00Z open=0\n"
 	files["from-bo/CURSOR"+TempSuffix] = "22222222222222222222222222222222222222"
 	files["from-bo/OPEN"+TempSuffix] = "bo-abcdef012345 from-bo/half-a-l"
-	tab := loadTable(t, writeTable(t, files))
+	tab := loadBus(t, writeBus(t, files))
 	if n := len(tab.Notes); n != len(fixture()) {
 		t.Fatalf("the lane walk read %d notes, want %d: a temporary was read as a note", n, len(fixture()))
 	}
@@ -648,7 +648,7 @@ func TestAStrandedTemporaryIsIgnoredByTheLaneWalk(t *testing.T) {
 	// A file that merely ends in .tmp is NOT covered: only the four state files' own
 	// temporaries are, and a lane is still a lane that holds notes and nothing else.
 	files["from-bo/notes.tmp"] = "not a state file\n"
-	stray := loadTable(t, writeTable(t, files))
+	stray := loadBus(t, writeBus(t, files))
 	found := false
 	for _, p := range stray.Check() {
 		if p.Where == "from-bo/notes.tmp" {
@@ -665,7 +665,7 @@ func TestAStrandedTemporaryIsIgnoredByTheLaneWalk(t *testing.T) {
 // line that will be forgotten on one, and the run that forgets it opens every note behind
 // it at once.
 func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
-	root := writeTable(t, nil)
+	root := writeBus(t, nil)
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	if err := WriteCursor(root, "from-ada", sha, 2, "2026-09-01", at("2026-09-09T12:34:56Z")); err != nil {
 		t.Fatal(err)
@@ -717,13 +717,13 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 		}
 	}
 	// A line WriteCursor cannot write is refused before it reaches the file, so a cursor on
-	// the table is never a date nobody can read.
+	// the bus is never a date nobody can read.
 	if err := WriteCursor(root, "from-ada", sha, 0, "last Tuesday", at("2026-09-09T12:34:56Z")); err == nil {
 		t.Fatal("WriteCursor wrote a legacy line that is not a date")
 	}
 }
 
-// The line applied to a change set and to a full walk, which are the two reads a table
+// The line applied to a change set and to a full walk, which are the two reads a bus
 // gets, kept in one rule so they cannot draw it differently.
 func TestTheLegacyLineLeavesOldNotesOffTheOpenListInBothReads(t *testing.T) {
 	files := fixture()
@@ -731,11 +731,11 @@ func TestTheLegacyLineLeavesOldNotesOffTheOpenListInBothReads(t *testing.T) {
 To: Ada
 Date: Sat Aug  1 00:01:00 UTC 2026
 Id: bo-aaaaaaaaaaaa
-Subject: A note from before the table adopted the tool
+Subject: A note from before the bus adopted the tool
 
 The body.
 `
-	root := writeTable(t, files)
+	root := writeBus(t, files)
 	c, err := LoadConfig(root)
 	if err != nil {
 		t.Fatal(err)
@@ -769,7 +769,7 @@ The body.
 	res, err = InboxSince(root, c, me, nil,
 		[]OpenEntry{{ID: "bo-aaaaaaaaaaaa", Kind: OpenNote, From: "Bo", Addr: "to",
 			Date: "2026-08-01T00:01:00Z", Path: "from-bo/2026-08-01T0001Z-before-the-line.md",
-			Subject: "A note from before the table adopted the tool"}}, 40, line)
+			Subject: "A note from before the bus adopted the tool"}}, 40, line)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -786,8 +786,8 @@ The body.
 		t.Fatalf("an entry dated only by its filename was not covered by the line")
 	}
 
-	// The full read: the same rule, over the whole table, through the same function.
-	tab := loadTable(t, root)
+	// The full read: the same rule, over the whole bus, through the same function.
+	tab := loadBus(t, root)
 	keep, covered := SplitLegacy(OpenFromFull(tab.Inbox(me, 40), tab.Unreadable(me.Lane)), line)
 	if covered != 1 {
 		t.Fatalf("the full walk left %d notes off, want 1", covered)
@@ -805,7 +805,7 @@ The body.
 	// say when it was written cannot claim to predate anything, and the safe direction for
 	// a note nobody can date is to carry it.
 	files["from-bo/undated.md"] = "From: Bo\nTo: Ada\nSubject: No date line, and no minute in the filename\n\nThe body.\n"
-	undated := loadTable(t, writeTable(t, files))
+	undated := loadBus(t, writeBus(t, files))
 	all := OpenFromFull(undated.Inbox(me, 40), nil)
 	_, covered = SplitLegacy(all, LegacyLine{Before: at("2030-01-01T00:00:00Z")})
 	if covered != len(all)-1 {

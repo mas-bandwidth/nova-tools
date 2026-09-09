@@ -13,6 +13,6 @@
     {"name": "Dana"}
   ],
   "groups": [
-    {"name": "Everybody at the table", "members": ["Ada", "Bo", "Dana"]}
+    {"name": "Everybody on the bus", "members": ["Ada", "Bo", "Dana"]}
   ]
 }

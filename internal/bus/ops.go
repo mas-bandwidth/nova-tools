@@ -26,8 +26,8 @@ type Prepared struct {
 }
 
 // Prepare validates a draft, assigns its id and date, and works out where it goes. It
-// writes nothing: every refusal here happens before the table is touched.
-func Prepare(t *Table, text string, now time.Time, slugOverride string) (Prepared, error) {
+// writes nothing: every refusal here happens before the bus is touched.
+func Prepare(t *Bus, text string, now time.Time, slugOverride string) (Prepared, error) {
 	var p Prepared
 	c := t.Config
 	n, err := ParseNote("", text)
@@ -45,10 +45,10 @@ func Prepare(t *Table, text string, now time.Time, slugOverride string) (Prepare
 	}
 	sender, ok := c.ResolveOne(n.Header.From)
 	if !ok {
-		return p, fmt.Errorf("%s: %q names no one at this table", KeyFrom, n.Header.From)
+		return p, fmt.Errorf("%s: %q names no one on this bus", KeyFrom, n.Header.From)
 	}
 	if sender.Lane == "" {
-		return p, fmt.Errorf("%s: %q has no lane on this table, so has nowhere to send from", KeyFrom, sender.Name)
+		return p, fmt.Errorf("%s: %q has no lane on this bus, so has nowhere to send from", KeyFrom, sender.Name)
 	}
 	if strings.TrimSpace(NormalizeBody(n.Body)) == "" {
 		return p, errors.New("the note has no body")
@@ -58,7 +58,7 @@ func Prepare(t *Table, text string, now time.Time, slugOverride string) (Prepare
 			continue
 		}
 		if _, found := t.Resolve(re); !found {
-			return p, fmt.Errorf("%s: %q is neither an id on this table nor a note that exists; threads are named by id, and a slug is not a thread", KeyRe, re)
+			return p, fmt.Errorf("%s: %q is neither an id on this bus nor a note that exists; threads are named by id, and a slug is not a thread", KeyRe, re)
 		}
 	}
 	n.Header.Date = now.UTC().Format(DateLayout)
@@ -67,7 +67,7 @@ func Prepare(t *Table, text string, now time.Time, slugOverride string) (Prepare
 		return p, err
 	}
 	if other, clash := t.NoteByID(id); clash {
-		return p, fmt.Errorf("the id %q is already on this table, on %s: the same sender, the same second, the same recipients, the same subject and the same body is the same note", id, other.Path)
+		return p, fmt.Errorf("the id %q is already on this bus, on %s: the same sender, the same second, the same recipients, the same subject and the same body is the same note", id, other.Path)
 	}
 	n.Header.ID = id
 	slug := Slugify(n.Header.Subject, SlugMax)
@@ -103,8 +103,8 @@ func (p Prepared) AppendIndex(root string) error { return AppendIndexLine(root, 
 // ValidSlug holds the one shape the human half of a filename may have, and is what
 // --slug is checked against.
 //
-// It is not decoration. The slug is joined to the table root and written into, so an
-// override of "../../.ssh/authorized_keys" would put a note outside the table entirely,
+// It is not decoration. The slug is joined to the bus root and written into, so an
+// override of "../../.ssh/authorized_keys" would put a note outside the bus entirely,
 // and one of "a/b" would put it in a directory that is not a lane. The rule is the same
 // charset as a lane's slug -- lower-case letters, digits and hyphens -- expressed as a
 // ROUND TRIP through Slugify, so that the check and the generator cannot drift apart: an
@@ -125,9 +125,9 @@ func ValidSlug(slug string) error {
 }
 
 // Save puts a prepared note on disk. It refuses to overwrite: a note once written is not
-// rewritten, which is the table's own rule and not this tool's invention.
+// rewritten, which is the bus's own rule and not this tool's invention.
 //
-// It also refuses to write OUTSIDE the table root. Every path reaching here has been
+// It also refuses to write OUTSIDE the bus root. Every path reaching here has been
 // built from a validated lane and a validated slug, so this assertion should be
 // unreachable -- which is exactly why it is here: the cost of it is one Rel call per note
 // and the cost of being wrong about it is a tool that writes a file anywhere its input
@@ -154,16 +154,16 @@ func (p Prepared) Save(root string) error {
 	return f.Close()
 }
 
-// insideRoot refuses a path that leaves the table, whatever built it. filepath.Rel does
+// insideRoot refuses a path that leaves the bus, whatever built it. filepath.Rel does
 // the work: a relative path that begins with ".." is outside, and so is one Rel cannot
 // compute at all (a different volume on Windows).
 func insideRoot(root, full string) error {
 	rel, err := filepath.Rel(root, full)
 	if err != nil {
-		return fmt.Errorf("%s is not inside the table at %s", full, root)
+		return fmt.Errorf("%s is not inside the bus at %s", full, root)
 	}
 	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
-		return fmt.Errorf("%s is not inside the table at %s", full, root)
+		return fmt.Errorf("%s is not inside the bus at %s", full, root)
 	}
 	return nil
 }
@@ -184,14 +184,14 @@ type ReceiptPlan struct {
 // a reply is still receivable -- the two are different records and the answered rule
 // accepts either -- but a target already in this lane's RECEIPTS is reported and not
 // written twice.
-func PlanReceipts(t *Table, me Participant, targets []string, now time.Time) (ReceiptPlan, error) {
+func PlanReceipts(t *Bus, me Participant, targets []string, now time.Time) (ReceiptPlan, error) {
 	plan := ReceiptPlan{
 		Lane:  me.Lane,
 		Path:  me.Lane + "/" + ReceiptsName,
 		Stamp: now.UTC().Format(ReceiptStampLayout),
 	}
 	if me.Lane == "" {
-		return plan, fmt.Errorf("%q has no lane on this table, so has nowhere to record a receipt", me.Name)
+		return plan, fmt.Errorf("%q has no lane on this bus, so has nowhere to record a receipt", me.Name)
 	}
 	if len(targets) == 0 {
 		return plan, errors.New("no note named")
@@ -206,7 +206,7 @@ func PlanReceipts(t *Table, me Participant, targets []string, now time.Time) (Re
 	for _, target := range targets {
 		n, ok := t.Resolve(target)
 		if !ok {
-			return plan, fmt.Errorf("%q is neither an id on this table nor a note that exists", target)
+			return plan, fmt.Errorf("%q is neither an id on this bus nor a note that exists", target)
 		}
 		if n.Lane == me.Lane {
 			return plan, fmt.Errorf("%q is your own note; a receipt is for a note you heard from someone else", target)

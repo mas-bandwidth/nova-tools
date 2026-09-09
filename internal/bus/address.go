@@ -10,9 +10,9 @@ import (
 // knows.
 //
 // This is deliberately a SMALL, ENUMERATED set of tolerances rather than a fuzzy match.
-// Tables in this shape write "To: Bo Quill; Ada (active line)" and "To: Everybody at
-// the table — Dana, Ada (all instances), Bo", and a tool that refused those would
-// be refusing the table rather than checking it. It is also true that a matcher nobody can
+// Buses in this shape write "To: Bo Quill; Ada (active line)" and "To: Everybody at
+// the bus — Dana, Ada (all instances), Bo", and a tool that refused those would
+// be refusing the bus rather than checking it. It is also true that a matcher nobody can
 // predict is worse than one that refuses: a misspelling silently resolving to the wrong
 // reader is the failure this verb exists to stop. So every tolerance below is listed here,
 // listed in SPEC.md, and pinned by a test, and anything outside the list is refused with
@@ -24,7 +24,7 @@ import (
 //     "Ada (day shift, the west host, the shared account)" is one name and the comma inside the
 //     parenthetical is not a separator.
 //  2. Each piece is split again on an em dash or an en dash, so that a salutation like
-//     "Everybody at the table — Dana" names the group AND the person.
+//     "Everybody on the bus — Dana" names the group AND the person.
 //  3. It is split again on " and " and " & ", because "To: Ada and Bo" is two
 //     readers and resolving it to Ada alone -- which the prefix rule below did, since
 //     "Ada and Bo" begins with "Ada " -- is the silent wrong-reader failure this
@@ -180,7 +180,7 @@ var wordSeparators = []string{" and ", " & "}
 //
 // The split is parenthesis-aware. An earlier version used strings.FieldsFunc and broke
 // "Ada (day shift, the west host, the shared account)" -- the From line of most of the notes on the
-// table this was written for -- into three unresolvable pieces.
+// bus this was written for -- into three unresolvable pieces.
 func splitAddresses(line string) []string {
 	var fields []string
 	depth := 0

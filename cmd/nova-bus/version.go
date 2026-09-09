@@ -1,9 +1,9 @@
-// nova-bus version: which build is at the table.
+// nova-bus version: which build is on the bus.
 //
-// A table is several lines running this one tool over one repository, and every failure it
+// A bus is several lines running this one tool over one repository, and every failure it
 // exists to have closed is a failure of AGREEMENT -- an id scheme, a header, a push
 // protocol that two senders have to implement identically. So the first question after a
-// table misbehaves is which build each line is running, and until this verb existed the
+// bus misbehaves is which build each line is running, and until this verb existed the
 // honest answer was that nobody could say: the binary carried no statement of its own
 // origin, so "we are all on the same version" was a belief rather than a reading.
 //

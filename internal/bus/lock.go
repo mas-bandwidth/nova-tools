@@ -25,7 +25,7 @@ import (
 //
 // The lock is an flock on a file inside the git directory. Inside the git directory because
 // that is per-CHECKOUT: two linked worktrees of one repository are two checkouts and must
-// not block each other, and a lock at the table root would be a file on the table that
+// not block each other, and a lock at the bus root would be a file on the bus that
 // every reader would then have to know is not a note. An flock rather than an O_EXCL
 // sentinel because the kernel drops it when the process dies: a run killed with the lock
 // held leaves nothing for the next one to clear, which is the failure mode that makes
@@ -37,11 +37,11 @@ const LockName = "nova-bus.lock"
 // LockCheckout takes this checkout's lock, waiting up to wait for it, and returns the
 // release. The release is safe to call more than once.
 //
-// A table that is not a git checkout at all has nothing to lock and is not locked: the only
+// A bus that is not a git checkout at all has nothing to lock and is not locked: the only
 // verbs that reach one are the full reads, which write nothing, and refusing them for the
-// want of a `.git` would be refusing a table for a reason that is not about the table.
-func LockCheckout(table string, wait time.Duration) (func(), error) {
-	gd, err := GitDir(table)
+// want of a `.git` would be refusing a bus for a reason that is not about the bus.
+func LockCheckout(busDir string, wait time.Duration) (func(), error) {
+	gd, err := GitDir(busDir)
 	if err != nil {
 		return func() {}, nil
 	}

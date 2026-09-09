@@ -6,7 +6,7 @@ import (
 )
 
 func TestLoadConfigReadsTheRoster(t *testing.T) {
-	root := writeTable(t, nil)
+	root := writeBus(t, nil)
 	c, err := LoadConfig(root)
 	if err != nil {
 		t.Fatal(err)
@@ -23,7 +23,7 @@ func TestLoadConfigReadsTheRoster(t *testing.T) {
 	}
 }
 
-// Every refusal here is a roster a table could otherwise run on for weeks before two names
+// Every refusal here is a roster a bus could otherwise run on for weeks before two names
 // collided at the wrong moment.
 func TestLoadConfigRefuses(t *testing.T) {
 	cases := []struct {
@@ -42,7 +42,7 @@ func TestLoadConfigRefuses(t *testing.T) {
 			{"name":"Ada","lane":"from-ada","git_name":"R","git_email":"r@x"},
 			{"name":"Bo","lane":"from-ada","git_name":"S","git_email":"s@x"}]}`, "belongs to both"},
 		{"a lane that is not from-<slug>", `{"participants":[{"name":"R","lane":"notes","git_name":"R","git_email":"r@x"}]}`, "a lane is from-<slug>"},
-		{"a lane escaping the table", `{"participants":[{"name":"R","lane":"from-../../etc","git_name":"R","git_email":"r@x"}]}`, "lower-case letters"},
+		{"a lane escaping the bus", `{"participants":[{"name":"R","lane":"from-../../etc","git_name":"R","git_email":"r@x"}]}`, "lower-case letters"},
 		{"a lane with no git identity", `{"participants":[{"name":"R","lane":"from-r"}]}`, "needs git_name and git_email"},
 		{"a git identity with no lane", `{"participants":[{"name":"R","git_name":"R","git_email":"r@x"}]}`, "no lane"},
 		{"a group naming a stranger", `{"participants":[{"name":"R","lane":"from-r","git_name":"R","git_email":"r@x"}],
@@ -55,7 +55,7 @@ func TestLoadConfigRefuses(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			root := writeTable(t, map[string]string{ConfigName: tc.json})
+			root := writeBus(t, map[string]string{ConfigName: tc.json})
 			_, err := LoadConfig(root)
 			if err == nil {
 				t.Fatal("want a refusal, got none")
@@ -70,9 +70,9 @@ func TestLoadConfigRefuses(t *testing.T) {
 func TestLoadConfigRefusesAMissingRoster(t *testing.T) {
 	root := t.TempDir()
 	if _, err := LoadConfig(root); err == nil {
-		t.Fatal("a table with no roster loaded")
+		t.Fatal("a bus with no roster loaded")
 	}
 	if _, err := LoadConfig(""); err == nil {
-		t.Fatal("an empty table root loaded")
+		t.Fatal("an empty bus root loaded")
 	}
 }

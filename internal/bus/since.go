@@ -10,12 +10,12 @@ import (
 	"time"
 )
 
-// Reading a table without reading its history.
+// Reading a bus without reading its history.
 //
 // THE PROPERTY THIS FILE HOLDS. `inbox` parses exactly the NEW note files: the ones added
-// or modified on the table since this reader's cursor. It parses NO OTHER NOTE FILE,
-// whatever the table's history holds and whatever this reader is carrying open. Ten
-// thousand notes on the table and one new one is one parse; ten thousand notes, five
+// or modified on the bus since this reader's cursor. It parses NO OTHER NOTE FILE,
+// whatever the bus's history holds and whatever this reader is carrying open. Ten
+// thousand notes on the bus and one new one is one parse; ten thousand notes, five
 // hundred of them open, and one new one is still one parse.
 //
 // THAT IS THE SECOND HALF OF THE ANSWER TO THE REQUIREMENT, and the first version only
@@ -52,7 +52,7 @@ import (
 // is the O(open) this file exists to remove.
 //
 // WHAT AN INCREMENTAL RUN CANNOT SAY. It reports on the change set and on the open list,
-// so it names the unreadable files AMONG THOSE, not every unreadable file on the table. A
+// so it names the unreadable files AMONG THOSE, not every unreadable file on the bus. A
 // reader who wants the whole picture asks for it: `--full` walks everything and is what
 // adoption and CI on main use. The scope line says which of the two happened, on every
 // run, because a listing that does not say what it looked at is a listing a reader will
@@ -60,7 +60,7 @@ import (
 
 // Scope is what one run looked at, for the line that says so.
 type Scope struct {
-	// Full is set when the run walked the whole table.
+	// Full is set when the run walked the whole bus.
 	Full bool
 	// From is the commit an incremental run started at, or "" for a full one.
 	From string
@@ -90,7 +90,7 @@ type InboxResult struct {
 	Unreadable []*Note
 	// Unaddressed is the notes this run saw that reach no reader at all. On an incremental
 	// run it is the reader's OWN lane and nothing else -- the one place the reader can fix
-	// one -- and a full run fills it with every such note on the table. See unaddressed.go.
+	// one -- and a full run fills it with every such note on the bus. See unaddressed.go.
 	Unaddressed []Unaddressed
 	// New is how many notes this run added to the open list.
 	New int
@@ -122,7 +122,7 @@ func (r InboxResult) Counts() (notes, receipts, heard int) {
 // LegacyLine is the switch-day line: the UTC date before which a note is not carried on
 // this reader's open list.
 //
-// THE PROBLEM IT SOLVES, from the day a real table adopted this tool. The first
+// THE PROBLEM IT SOLVES, from the day a real bus adopted this tool. The first
 // `inbox --as Ada --full` reported 657 notes open -- 623 notes and 34 receipts, most of
 // them from months before anybody could have receipted them with this -- and because the
 // open list is what makes the cursor able to move, every run after it reported the same
@@ -131,10 +131,10 @@ func (r InboxResult) Counts() (notes, receipts, heard int) {
 //
 // So a line is drawn on a date: a note dated before it is not carried, is not listed, and
 // is counted on ONE line so that the reader knows exactly how much they took as read.
-// Nothing is deleted, nothing is marked answered, and no note anywhere on the table is
+// Nothing is deleted, nothing is marked answered, and no note anywhere on the bus is
 // changed -- the notes are still there, still readable, still findable by `check --full`
 // and by opening the lane in a browser. What the line changes is one reader's own open
-// list, which is the one thing on the table that was theirs alone anyway.
+// list, which is the one thing on the bus that was theirs alone anyway.
 //
 // A note whose date cannot be read AT ALL -- no parseable Date line, and no day at the
 // front of its filename either -- is never legacy, on the same rule the check tolerance
@@ -194,7 +194,7 @@ func (e OpenEntry) when() time.Time {
 func InboxSince(root string, c *Config, me Participant, changed []string, open []OpenEntry, maxWords int, legacy LegacyLine) (InboxResult, error) {
 	var res InboxResult
 	if me.Lane == "" {
-		return res, fmt.Errorf("%q has no lane on this table, so nothing can answer for them", me.Name)
+		return res, fmt.Errorf("%q has no lane on this bus, so nothing can answer for them", me.Name)
 	}
 	parsed := newNoteCache(root)
 
@@ -235,7 +235,7 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 		// A note of my own that reaches NOBODY is also my business, and it is the one thing
 		// about my own lane this listing says out loud, on every run and in every mode. See
 		// unaddressed.go: `send` cannot write one, so this is a note I typed by hand whose
-		// To line named nobody, and nothing else on the table would ever tell me.
+		// To line named nobody, and nothing else on the bus would ever tell me.
 		if reason, yes := UnaddressedReason(c, n); yes {
 			res.Unaddressed = append(res.Unaddressed, Unaddressed{Path: n.Path, Reason: reason})
 		}
@@ -273,7 +273,7 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 				res.Unreadable = append(res.Unreadable, &Note{
 					Path:  e.Path,
 					Lane:  laneOf(e.Path),
-					Parse: &ParseError{fmt.Errorf("this file was open and is no longer on the table: %w", err)},
+					Parse: &ParseError{fmt.Errorf("this file was open and is no longer on the bus: %w", err)},
 				})
 				continue
 			}
@@ -357,13 +357,13 @@ func SplitLegacy(entries []OpenEntry, legacy LegacyLine) (keep []OpenEntry, cove
 
 // OpenFromFull is the OPEN list a --full run implies: every note the full walk found still
 // open for this reader, plus every file it could not read. It is how a reader adopts the
-// cursor on a table that already exists, how `--full --advance` repairs an OPEN list that
+// cursor on a bus that already exists, how `--full --advance` repairs an OPEN list that
 // drifted, and the one place a heard flag is rebuilt from RECEIPTS rather than carried.
 //
 // THE UNREADABLE FILES ARE CARRIED, and until this was written they were not. A `--full`
 // read named them and then wrote an open list without them, so the next incremental run --
 // which sees only what changed -- never mentioned them again. A file somebody wrote, on the
-// table, that its reader is told about exactly once and then never again is the same failure
+// bus, that its reader is told about exactly once and then never again is the same failure
 // as a lost push with a slower fuse. They go on the list, they are re-checked, and they come
 // off it when they parse or are receipted.
 func OpenFromFull(items []InboxItem, unreadable []*Note) []OpenEntry {
@@ -505,7 +505,7 @@ func laneOf(path string) string {
 
 // isNotePath reports whether a changed path is a note rather than one of a lane's state
 // files or its README. A lane's state files change on almost every run and are not notes;
-// reading one as a note would report a parse failure to every reader on the table. A
+// reading one as a note would report a parse failure to every reader on the bus. A
 // README.md ends in .md and is not a note either, for the same reason and with a worse
 // symptom: it parsed as a broken note and was reported to every reader forever.
 func isNotePath(path string) bool {
@@ -523,10 +523,10 @@ func isNotePath(path string) bool {
 // noteChecker holds every finding that can be decided from ONE note plus two lookups, so
 // that the full walk and the incremental one cannot say different things about the same
 // file. They differ only in where the lookups come from: the full walk answers them from
-// the table it has just read, the incremental one from the catalogue.
+// the bus it has just read, the incremental one from the catalogue.
 type noteChecker struct {
 	c *Config
-	// resolves answers whether a Re target names something on this table.
+	// resolves answers whether a Re target names something on this bus.
 	resolves func(target string) bool
 	// idOwner answers which note already holds this id, if any.
 	idOwner func(id string) (path string, ok bool)
@@ -547,7 +547,7 @@ func (k *noteChecker) check(n *Note) []Problem {
 		ps = append(ps, Problem{Where: where, Reason: fmt.Sprintf(format, args...), Warn: k.opts.tolerates(n)})
 	}
 	// THE HEADER'S OWN FINDINGS ARE INSIDE THE TOLERANCE, and an earlier revision had them
-	// outside it. A dry run over a real table, with the line drawn at the day it
+	// outside it. A dry run over a real bus, with the line drawn at the day it
 	// adopted this tool, still failed 163 times: 109 notes with no Subject line, 21 whose
 	// To names somebody the roster does not know, 16 whose From does, 10 whose Cc does.
 	// Every one of them is a note written by hand before there was a roster to check
@@ -557,7 +557,7 @@ func (k *noteChecker) check(n *Note) []Problem {
 	// nothing about it; a note dated on or after it fails as before. The narrow findings
 	// stay narrow: a note in the wrong lane, a malformed or duplicated id, a broken receipt
 	// line, an unowned lane and a stray file all still FAIL at any date, because none of
-	// them is a thing a table's history made unavoidable.
+	// them is a thing a bus's history made unavoidable.
 	if err := n.Header.Validate(k.c); err != nil {
 		warn(n.Path, "%s", err)
 	}
@@ -581,7 +581,7 @@ func (k *noteChecker) check(n *Note) []Problem {
 		}
 		// A note with no INDEX line is a WARN and never a failure, at any date. The
 		// catalogue is a cache and the notes are the record: a person who wrote a note by
-		// hand in a browser -- which this table's whole form exists to allow -- has not
+		// hand in a browser -- which this bus's whole form exists to allow -- has not
 		// broken anything. A catalogue line that DISAGREES with a note is a different
 		// matter and does fail: see CheckIndex, where a wrong line could resolve a thread
 		// to the wrong note.
@@ -607,25 +607,25 @@ func (k *noteChecker) check(n *Note) []Problem {
 			continue
 		}
 		if !k.resolves(re) {
-			warn(atLine(n, KeyRe), "%s: %q is neither an id on this table nor a note that exists", KeyRe, re)
+			warn(atLine(n, KeyRe), "%s: %q is neither an id on this bus nor a note that exists", KeyRe, re)
 		}
 	}
 	return ps
 }
 
 // CheckSince validates only the lane files that changed since a commit, resolving threads
-// and ids through the INDEX instead of through the table.
+// and ids through the INDEX instead of through the bus.
 //
 // It asserts everything Check asserts that can be decided about one file plus the
 // catalogue. It also validates the lane state files that changed, because those are files
-// on the table like any other and a malformed OPEN is a reader who refuses on their next
-// run with nothing on the table saying why.
+// on the bus like any other and a malformed OPEN is a reader who refuses on their next
+// run with nothing on the bus saying why.
 //
 // What it CANNOT assert, and says so by being named `--since` rather than `check`: a
-// property of the WHOLE table. An unowned lane that nothing touched, a stray file that has
+// property of the WHOLE bus. An unowned lane that nothing touched, a stray file that has
 // been there a month, a duplicate id between two notes neither of which changed and
 // neither of which is in an INDEX -- those are found by `check --full`, which is what CI
-// on main runs and what a table runs before it trusts a first `--since`.
+// on main runs and what a bus runs before it trusts a first `--since`.
 func CheckSince(root string, c *Config, idx *Index, changed []string, o CheckOptions) ([]Problem, CheckStats) {
 	var ps []Problem
 	var stats CheckStats
@@ -698,7 +698,7 @@ func CheckSince(root string, c *Config, idx *Index, changed []string, o CheckOpt
 }
 
 // CheckStats is what a run looked at, for the OK line. A check that passed over two files
-// and one that passed over the whole table are not the same run, and the line says which.
+// and one that passed over the whole bus are not the same run, and the line says which.
 type CheckStats struct{ Notes, Lanes, Receipts int }
 
 // resolves answers a Re or receipt target from the catalogue, falling back to the one
@@ -744,7 +744,7 @@ func checkReceipts(root, lane string, resolves func(string) bool) ([]Problem, in
 			ps = append(ps, Problem{Where: where, Reason: fmt.Sprintf("%q is not a UTC stamp of the form %s", stamp, ReceiptStampLayout)})
 		}
 		if !resolves(target) {
-			ps = append(ps, Problem{Where: where, Reason: fmt.Sprintf("%q is neither an id on this table nor a note that exists", target)})
+			ps = append(ps, Problem{Where: where, Reason: fmt.Sprintf("%q is neither an id on this bus nor a note that exists", target)})
 		}
 	}
 	return ps, len(lines)
@@ -772,13 +772,13 @@ func checkLaneStateFile(root, lane, name string) []Problem {
 // id, is a catalogue that would resolve a thread to the wrong note; a note with an id and
 // no entry is a catalogue that would let a duplicate id through. `--rebuild-index` writes
 // both away, from the notes, which are the record either way.
-func CheckIndex(c *Config, t *Table, idx *Index) []Problem {
+func CheckIndex(c *Config, t *Bus, idx *Index) []Problem {
 	var ps []Problem
 	for _, e := range idx.Entries {
 		where := fmt.Sprintf("%s:%d", IndexPath(e.Lane), e.Line)
 		n, ok := t.NoteByPath(e.Path)
 		if !ok {
-			ps = append(ps, Problem{Where: where, Reason: fmt.Sprintf("names %q, which is not a note on this table", e.Path)})
+			ps = append(ps, Problem{Where: where, Reason: fmt.Sprintf("names %q, which is not a note on this bus", e.Path)})
 			continue
 		}
 		if n.Parse != nil {
