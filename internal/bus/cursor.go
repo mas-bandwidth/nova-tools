@@ -292,6 +292,56 @@ func ParseLegacyBefore(value string) (time.Time, error) {
 		strconv.Quote(truncate(value, 40)), LegacyDateLayout, LegacyInstantLayout)
 }
 
+// LegacyDateAtOrAfterToday is the shape of switch-day line that quietly empties an inbox,
+// and it is the reason this tool now says so out loud instead of listing nothing.
+//
+// THE FAILURE, from a friend's first week. A line drew its switch at a DATE -- the shape
+// v0.10.0's own first-advance guard handed out, tomorrow's -- and a date is midnight at its
+// START, so the line stood in front of everything anybody had written that day. His cursor
+// read `open=0 legacy=2026-09-10` and his inbox listed nothing, run after run, on a bus
+// that was busy. Nothing was broken and nothing was lost: every note was still on the bus,
+// behind a line he had drawn himself and had no way to see. What was missing was a
+// SENTENCE. The tool knew the line was a date, knew the date was still to come, and knew
+// the one command that would fix it, and it said none of the three.
+//
+// So this is the test the sentence is printed under, and it is a test about the LINE and
+// never about what a run found: an empty inbox is not evidence of anything, and a reader
+// whose line is drawn forward is owed the sentence on the busy runs too.
+//
+// It returns the day the line is drawn on, the last day that line hides -- the day BEFORE
+// it, because a date is midnight at its start -- and true, for a line that is BOTH:
+//
+//   - a bare DATE, and not an instant. An instant was drawn to the second by somebody who
+//     meant a moment; whatever it hides, they said where it stood.
+//   - standing at TODAY or later in UTC. A date at today took the whole of yesterday, a
+//     date at tomorrow takes the whole of today, and each was drawn at a day boundary for a
+//     switch that happens at a moment. A date already behind today is history properly
+//     drawn -- the day a bus adopted a tool, months ago, which nobody knows to the second --
+//     and there is nothing to say about it.
+//
+// Everything else is false, the empty line included.
+func LegacyDateAtOrAfterToday(text string, now time.Time) (drawn, hides time.Time, yes bool) {
+	if text == "" {
+		return time.Time{}, time.Time{}, false
+	}
+	// The INSTANT is read first, exactly as ParseLegacyBefore reads it, so a line that is
+	// an instant can never be mistaken for a date by a looser parse underneath it.
+	if _, err := time.Parse(LegacyInstantLayout, text); err == nil {
+		return time.Time{}, time.Time{}, false
+	}
+	day, err := time.Parse(LegacyDateLayout, text)
+	if err != nil {
+		return time.Time{}, time.Time{}, false
+	}
+	day = day.UTC()
+	u := now.UTC()
+	today := time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
+	if day.Before(today) {
+		return time.Time{}, time.Time{}, false
+	}
+	return day, day.AddDate(0, 0, -1), true
+}
+
 // OpenPresent reports whether a lane has an OPEN file at all, which is a different
 // question from whether it holds anything. See Cursor.Open.
 func OpenPresent(root, lane string) bool {

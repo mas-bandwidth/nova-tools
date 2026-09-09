@@ -1060,3 +1060,40 @@ func TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened(t *testing.T) {
 		t.Fatalf("the full walk left off notes=%d unreadable=%d, want 1 and 1", notes, unreadable)
 	}
 }
+
+// Which switch-day lines are worth saying something about, and which are not. The predicate
+// under the INBOX NOTE line: a bare DATE standing at today or later, and nothing else.
+func TestLegacyDateAtOrAfterTodayNamesOnlyAForwardDrawnDate(t *testing.T) {
+	now := at("2026-09-09T12:34:56Z")
+	for _, tc := range []struct {
+		line, drawn, hides string
+	}{
+		// A date at tomorrow takes the whole of today; a date at today took the whole of
+		// yesterday. Each was drawn at a day boundary for a switch that happens at a moment.
+		{"2026-09-10", "2026-09-10", "2026-09-09"},
+		{"2026-09-09", "2026-09-09", "2026-09-08"},
+		// Across a month boundary the day before is the day before, not "the zeroth".
+		{"2026-10-01", "2026-10-01", "2026-09-30"},
+		// And these say nothing: history properly drawn, a moment somebody meant, a line
+		// nobody wrote, and text that is not a line at all.
+		{"2026-09-08", "", ""},
+		{"2026-09-09T18:07:00Z", "", ""},
+		{"2026-09-10T00:00:00Z", "", ""},
+		{"", "", ""},
+		{"last Tuesday", "", ""},
+	} {
+		drawn, hides, yes := LegacyDateAtOrAfterToday(tc.line, now)
+		if yes != (tc.drawn != "") {
+			t.Fatalf("%q: reported %v", tc.line, yes)
+		}
+		if !yes {
+			continue
+		}
+		if got := drawn.Format(LegacyDateLayout); got != tc.drawn {
+			t.Fatalf("%q: drawn on %s, want %s", tc.line, got, tc.drawn)
+		}
+		if got := hides.Format(LegacyDateLayout); got != tc.hides {
+			t.Fatalf("%q: hides through %s, want %s", tc.line, got, tc.hides)
+		}
+	}
+}

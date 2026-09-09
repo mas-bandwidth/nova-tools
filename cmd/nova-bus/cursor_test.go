@@ -34,7 +34,7 @@ func advance(checkout, who string, extra ...string) []string {
 		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3",
 	}, extra...)
 	for _, a := range extra {
-		if a == "--legacy-before" || a == "--carry-history" || strings.HasPrefix(a, "--legacy-before=") {
+		if a == "--legacy-before" || a == "--legacy-now" || a == "--carry-history" || strings.HasPrefix(a, "--legacy-before=") {
 			return args
 		}
 	}
@@ -1231,13 +1231,16 @@ func TestAFirstAdvanceOverOldNotesIsRefused(t *testing.T) {
 		mustCode(t, 1).
 		mustContain(t, "stderr", "INBOX REFUSED: this is the first advance on from-ada/CURSOR").
 		mustContain(t, "stderr", "2 of the 2 notes it would carry are dated before now").
-		// The line to run, drawn at the INSTANT of the refusal rather than at tomorrow's
-		// DATE. The clock these tests run under is 2026-09-09T12:34:56Z, so the suggestion
-		// is that instant exactly: everything on the bus at that moment is history and
-		// everything sent after it -- including the rest of the switch day, which
-		// tomorrow's date would have swallowed whole -- is news.
-		mustContain(t, "stderr", `--full --legacy-before 2026-09-09T12:34:56Z --advance --remote "origin" --branch "main"`).
+		// The line to run, drawn at an INSTANT rather than at tomorrow's DATE, and handed
+		// over as --legacy-now rather than as a timestamp the reader has to carry across
+		// from a refusal they may read an hour later. Everything on the bus when they run
+		// it is history and everything sent after it -- including the rest of the switch
+		// day, which tomorrow's date would have swallowed whole -- is news.
+		mustContain(t, "stderr", `--full --legacy-now --advance --remote "origin" --branch "main"`).
 		mustContain(t, "stderr", "--carry-history")
+	if strings.Contains(r.stderr, "--legacy-before") {
+		t.Fatalf("the guard still hands over a timestamp to retype:\n%s", r.stderr)
+	}
 	// It refuses BEFORE the listing, because the listing is the cost being complained
 	// about: a first full read of that bus is a line per open note.
 	if r.stdout != "" {
@@ -1256,11 +1259,14 @@ func TestAFirstAdvanceOverOldNotesIsRefused(t *testing.T) {
 	// VERBATIM. The old notes are counted on the LEGACY line and carried by nobody, and
 	// the cursor records the instant exactly as it was given.
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
-		"--full", "--legacy-before", "2026-09-09T12:34:56Z",
+		"--full", "--legacy-now",
 		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-09T12:34:56Z notes=2").
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=0 open=0")
+	// --legacy-now is sugar for the instant and nothing else, so what lands in the cursor is
+	// the instant itself -- the same eight fields any other read leaves, honoured by every
+	// later run with no flag.
 	if cursor := read(t, checkout, "from-ada/CURSOR"); !strings.Contains(cursor, "legacy=2026-09-09T12:34:56Z") {
 		t.Fatalf("the cursor did not record the line the refusal named: %s", cursor)
 	}
@@ -1394,4 +1400,136 @@ func TestASmallOpenListGetsNoHint(t *testing.T) {
 	if strings.Contains(r.stdout, "INBOX HINT") {
 		t.Fatalf("a reader carrying 2 was hinted at:\n%s", r.stdout)
 	}
+}
+
+// FREDDY'S INBOX, WHICH LISTED NOTHING AND SAID NOTHING ABOUT WHY.
+//
+// He drew his switch-day line at a DATE, which v0.10.0's own first-advance guard handed him
+// as tomorrow's, and a date is midnight at its START: the line stood in front of every note
+// anybody wrote that day. His cursor read `... open=0 legacy=2026-09-10`, his inbox listed
+// nothing, and every note written to him was on the bus the whole time, behind a line he
+// had drawn himself and could not see. v0.10.1 fixed the line and wrote the recovery down.
+// It did not fix the silence: a recovery in a document is a recovery for whoever goes
+// looking, and from where he sat there was nothing to look for.
+//
+// So the tool says it, on every run, and hands over the whole command. Glenn: "Freddy has
+// difficulty with the nova-bus, I think it should be resolved. Let's be kind."
+func TestAForwardDrawnDateLineSaysSoAndNamesTheCommandThatFixesIt(t *testing.T) {
+	hermetic(t)
+	checkout, _ := busDir(t)
+	// The bus is busy this afternoon: a note sent after the fixed clock, 12:34:56Z.
+	writeFile(t, checkout, "from-bo/2026-09-09T1300Z-this-afternoon-dddddddddddd.md",
+		"From: Bo\nTo: Ada\nDate: Wed Sep  9 13:00:00 UTC 2026\nId: bo-dddddddddddd\nSubject: Sent this afternoon\n\nThe body.\n")
+	commitAs(t, checkout, "Bo", "bo: a note sent this afternoon")
+
+	// THE STATE FREDDY WAS IN: the line drawn at TOMORROW's date. The read that draws it
+	// says nothing -- there was no cursor when it started, so there was no line to warn
+	// about -- and it reports an inbox of nothing at all on a bus that has four notes.
+	r := invoke(t, "", advance(checkout, "Ada", "--full", "--legacy-before", "2026-09-10")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-10 notes=3").
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=0 open=0")
+	if strings.Contains(r.stdout, "INBOX NOTE your switch-day line") {
+		t.Fatalf("the run that DREW the line warned about a cursor that did not exist yet:\n%s", r.stdout)
+	}
+
+	// THE NEXT RUN, which is where he lived: nothing listed, and now a sentence saying
+	// exactly which day is hidden and exactly what to run. It is one line, it comes after
+	// INBOX SCOPE and before any listing, and the exit code is untouched -- a note, not a
+	// refusal.
+	want := `INBOX NOTE your switch-day line is the date 2026-09-10, which hides every note dated 2026-09-09 or earlier; draw it at an instant, once: nova-bus inbox --bus "` + checkout + `" --as "Ada" --receipt-max-words 40 --full --legacy-now --advance --remote "origin" --branch "main"`
+	r = invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=0 open=0").
+		mustContain(t, "stdout", want+"\n")
+	lines := strings.Split(strings.TrimRight(r.stdout, "\n"), "\n")
+	if len(lines) < 2 || !strings.HasPrefix(lines[0], "INBOX SCOPE ") || lines[1] != want {
+		t.Fatalf("the note is not the line straight after INBOX SCOPE:\n%s", r.stdout)
+	}
+
+	// `check --as` reads the same cursor, so it says the same thing. A reader polling check
+	// and seeing a clean bus is in the same trouble, and the sentence is the same sentence
+	// wherever it is met -- with the values check was never given printed as the
+	// placeholders they are.
+	invoke(t, "", "check", "--bus", checkout, "--as", "Ada").mustCode(t, 0).
+		mustContain(t, "stdout", `INBOX NOTE your switch-day line is the date 2026-09-10, which hides every note dated 2026-09-09 or earlier; draw it at an instant, once: nova-bus inbox --bus "`+checkout+`" --as "Ada" --receipt-max-words <n> --full --legacy-now --advance --remote "<remote>" --branch "<branch>"`)
+
+	// THE COMMAND THE NOTE NAMES, RUN. It draws the line at this run's instant, which is
+	// earlier than the date -- allowed under --full, which derives the whole open list from
+	// the bus again -- and this afternoon's note is his.
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--full", "--legacy-now",
+		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-09T12:34:56Z notes=2").
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=1 open=1")
+	// It round-trips into the cursor as an INSTANT, so the note has nothing left to say.
+	if cursor := read(t, checkout, "from-ada/CURSOR"); !strings.Contains(cursor, "legacy=2026-09-09T12:34:56Z") {
+		t.Fatalf("--legacy-now did not record this run's instant: %s", cursor)
+	}
+
+	// And the next flagless run is an ordinary inbox again: the note is gone, and a note
+	// written after the instant is listed as news.
+	writeFile(t, checkout, "from-bo/2026-09-09T1900Z-this-evening-eeeeeeeeeeee.md",
+		"From: Bo\nTo: Ada\nDate: Wed Sep  9 19:00:00 UTC 2026\nId: bo-eeeeeeeeeeee\nSubject: Sent this evening\n\nThe body.\n")
+	commitAs(t, checkout, "Bo", "bo: a note sent this evening")
+	r = invoke(t, "", advance(checkout, "Ada", "--open")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-09T12:34:56Z notes=0 unreadable=0").
+		mustContain(t, "stdout", "INBOX NOTE id=bo-eeeeeeeeeeee").
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=2")
+	if strings.Contains(r.stdout, "INBOX NOTE your switch-day line") {
+		t.Fatalf("an instant line was still complained about:\n%s", r.stdout)
+	}
+	invoke(t, "", "check", "--bus", checkout, "--as", "Ada").mustCode(t, 0)
+}
+
+// WHICH LINES THE NOTE IS ABOUT, one case each. It is a test about the LINE and never about
+// what a run found, so every case here runs over the same bus and differs only in the line
+// the cursor carries.
+func TestTheSwitchDayNoteFiresOnAForwardDateAndNothingElse(t *testing.T) {
+	hermetic(t)
+	checkout, _ := busDir(t)
+	const said = "INBOX NOTE your switch-day line is the date "
+	for _, tc := range []struct {
+		name, line, hides string
+		want              bool
+	}{
+		// The clock is 2026-09-09T12:34:56Z.
+		{"tomorrow", "2026-09-10", "2026-09-09", true},
+		// TODAY's date is the same mistake one day on: it was drawn at a day boundary for
+		// a switch that happened at a moment, and it took the whole of yesterday with it.
+		{"today", "2026-09-09", "2026-09-08", true},
+		// A date already behind today is history properly drawn -- the day a bus adopted a
+		// tool, which nobody knows to the second -- and there is nothing to say about it.
+		{"yesterday", "2026-09-08", "", false},
+		// An instant was drawn by somebody who meant a moment. Whatever it hides, they
+		// said where it stood.
+		{"an instant", "2026-09-09T18:07:00Z", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// --full each time: it derives the open list from the bus again, so a line may
+			// move in either direction between the cases.
+			invoke(t, "", advance(checkout, "Ada", "--full", "--legacy-before", tc.line)...).mustCode(t, 0)
+			r := invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
+			if got := strings.Contains(r.stdout, said); got != tc.want {
+				t.Fatalf("legacy=%s: note printed=%v, want %v:\n%s", tc.line, got, tc.want, r.stdout)
+			}
+			if tc.want && !strings.Contains(r.stdout, said+tc.line+", which hides every note dated "+tc.hides+" or earlier;") {
+				t.Fatalf("legacy=%s: the note names the wrong days:\n%s", tc.line, r.stdout)
+			}
+		})
+	}
+}
+
+// --legacy-now is sugar for one value and mutually exclusive with the two flags that answer
+// the same question. Both refusals are exit 2, a bad invocation, and both say why.
+func TestLegacyNowCannotBeGivenWithTheOtherAnswers(t *testing.T) {
+	checkout, _ := busDir(t)
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--full", "--legacy-now", "--legacy-before", "2026-09-01").
+		mustCode(t, 2).
+		mustContain(t, "stderr", "--legacy-now draws the switch-day line at this run's instant and --legacy-before draws it where you say; give one or the other")
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--legacy-now", "--carry-history",
+		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3").
+		mustCode(t, 2).
+		mustContain(t, "stderr", "--legacy-now draws a switch-day line and --carry-history says there is none to draw; give one or the other")
 }

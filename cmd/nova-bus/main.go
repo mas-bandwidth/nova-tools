@@ -54,7 +54,7 @@ const usage = `nova-bus: the bus, with the races taken out (see SPEC.md)
 usage:
   nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id>]
   nova-bus send --bus <dir> --file <path>|--stdin [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
-  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <date-or-instant>|--carry-history]
+  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
@@ -101,17 +101,25 @@ every run, and --full lists everything. It takes a UTC date (YYYY-MM-DD,
 midnight at its start) or an RFC 3339 UTC instant like 2026-09-09T18:07:00Z,
 and compares by INSTANT; switching TODAY wants the instant you switched,
 because a date still to come is midnight AFTER everything written today and
-would hide every one of those notes. inbox records the line in your cursor, so
-later runs honour it without the flag; moving it earlier is refused unless the
-read is --full.
+would hide every one of those notes. --legacy-now IS that instant, worked out
+for you: it is --legacy-before <this run's UTC instant> and nothing else, so
+the shape nobody can type is the shape that is one word. inbox records the line
+in your cursor, so later runs honour it without the flag; moving it earlier is
+refused unless the read is --full.
+
+If your cursor's line is a DATE standing at today or later, every inbox run --
+and check --as <you> -- prints one INBOX NOTE line saying which day it hides
+and the exact command that redraws it at an instant. It is a note and not a
+refusal: the run does what it was asked, and nothing moves until you run the
+command it names.
 
 Your FIRST --advance on a bus holding notes older than today is refused unless
-you have said what to do with them: --legacy-before <date-or-instant> takes the
-history as read, or --carry-history carries every old note on your open list.
-The refusal names the count and the exact line to run, and the line it hands you
-draws the switch-day line at the INSTANT it refused -- everything on the bus at
-that moment is history and everything after it is news. Every advance after the
-first needs neither, and a bus with no old notes needs neither ever.
+you have said what to do with them: --legacy-before <date-or-instant> or
+--legacy-now takes the history as read, or --carry-history carries every old
+note on your open list. The refusal names the count and the exact line to run,
+and the line it hands you carries --legacy-now -- everything on the bus at the
+moment you run it is history and everything after it is news. Every advance
+after the first needs neither, and a bus with no old notes needs neither ever.
 
 inbox REPORTS and exits 0 whether the inbox is empty or full; check is the gate.
 
@@ -155,7 +163,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "receipt":
 		return cmdReceipt(rest, stdout, stderr, now)
 	case "check":
-		return cmdCheck(rest, stdout, stderr)
+		return cmdCheck(rest, stdout, stderr, now)
 	case "names":
 		return cmdNames(rest, stdout, stderr)
 	case "version", "--version":
@@ -635,11 +643,30 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "with --advance, commit the cursor but do not push it")
 	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) are not carried on your open list, and are counted rather than listed")
+	legacyNow := f.fs.Bool("legacy-now", false, "draw the switch-day line at THIS run's UTC instant: exactly --legacy-before <now>, so everything already on the bus is history and everything after this moment is news")
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
 		return 2
 	}
-	flagLegacy, ok := legacyLine("inbox", *legacyBefore, stderr)
+	// --legacy-now IS --legacy-before, with the one value nobody can type worked out here:
+	// this run's own UTC instant, in the same RFC 3339 shape the flag takes and the cursor
+	// records. It is sugar and nothing else -- it goes through the same parse, lands in the
+	// same LegacyLine, and is written into the cursor as the instant it named, so a reader
+	// who runs it and a reader who pasted `date -u +%Y-%m-%dT%H:%M:%SZ` end up with the
+	// same line. It exists because the correct shape was a twenty-character timestamp a
+	// person had to produce before the run that needed it, and the friend this was written
+	// for did not produce it: he drew a date instead, and his inbox went quiet.
+	legacyValue := *legacyBefore
+	if *legacyNow {
+		// Two flags naming the same line say nothing about where it stands, whichever way
+		// round they disagree. This is exit 2, a bad invocation, like every other pair.
+		if strings.TrimSpace(*legacyBefore) != "" {
+			fmt.Fprint(stderr, "nova-bus inbox: --legacy-now draws the switch-day line at this run's instant and --legacy-before draws it where you say; give one or the other\n")
+			return 2
+		}
+		legacyValue = now.UTC().Format(bus.LegacyInstantLayout)
+	}
+	flagLegacy, ok := legacyLine("inbox", legacyValue, stderr)
 	if !ok {
 		return 2
 	}
@@ -647,6 +674,10 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// this reader does about the history that was on the bus before them -- and giving both
 	// says nothing about which. A line is drawn or it is not.
 	if *carryHistory && !flagLegacy.Before.IsZero() {
+		if *legacyNow {
+			fmt.Fprint(stderr, "nova-bus inbox: --legacy-now draws a switch-day line and --carry-history says there is none to draw; give one or the other\n")
+			return 2
+		}
 		fmt.Fprint(stderr, "nova-bus inbox: --legacy-before draws a switch-day line and --carry-history says there is none to draw; give one or the other\n")
 		return 2
 	}
@@ -834,17 +865,23 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		_, oldNotes, oldUnreadable := bus.SplitLegacy(res.Open, bus.LegacyLine{Before: utcDay(now)})
 		old := oldNotes + oldUnreadable
 		if old > 0 {
-			// THE SUGGESTED LINE IS THIS INSTANT, and it used to be tomorrow's DATE. A date
+			// THE SUGGESTED LINE IS AN INSTANT, and it used to be tomorrow's DATE. A date
 			// is midnight at its START, so tomorrow's date is a moment AFTER everything
 			// written today: the line this guard handed a stuck reader made the whole switch
 			// day legacy, and the notes they were being refused for carrying were joined by
-			// every note anybody sent while they were reading the refusal. Drawn at the
-			// instant of the refusal, everything on the bus at that moment is history and
-			// everything after it is news, which is the sentence this message actually makes.
-			switchAt := now.UTC().Format(bus.LegacyInstantLayout)
-			fmt.Fprintf(stderr, "INBOX REFUSED: this is the first advance on %s and %d of the %d notes it would carry are dated before now, so every run after it would print all %d again; draw the switch-day line at this instant with `nova-bus inbox --bus %s --as %s --receipt-max-words %d --full --legacy-before %s --advance --remote %s --branch %s`, which takes everything already on the bus as read and leaves you what arrives after that moment, or pass --carry-history to carry all %d\n",
+			// every note anybody sent while they were reading the refusal. Drawn at an
+			// instant, everything on the bus at that moment is history and everything after
+			// it is news, which is the sentence this message actually makes.
+			//
+			// It hands over --legacy-now rather than the timestamp it would print, and that
+			// is a second fix on top of the first. A pasted timestamp is a line drawn at the
+			// moment of the REFUSAL, which may be an hour before the reader gets round to
+			// running it; --legacy-now is drawn at the moment of the READ. And a command
+			// nobody has to retype correctly is a command nobody mistypes into a date, which
+			// is exactly what the reader this was written for did.
+			fmt.Fprintf(stderr, "INBOX REFUSED: this is the first advance on %s and %d of the %d notes it would carry are dated before now, so every run after it would print all %d again; draw the switch-day line at this instant with `nova-bus inbox --bus %s --as %s --receipt-max-words %d --full --legacy-now --advance --remote %s --branch %s`, which takes everything already on the bus as read and leaves you what arrives after that moment, or pass --carry-history to carry all %d\n",
 				oneline.Field(bus.CursorPath(me.Lane)), old, len(res.Open), len(res.Open),
-				oneline.Quote(*busDir), oneline.Quote(me.Name), *maxWords, oneline.Field(switchAt),
+				oneline.Quote(*busDir), oneline.Quote(me.Name), *maxWords,
 				oneline.Quote(*remote), oneline.Quote(*branch), len(res.Open))
 			return 1
 		}
@@ -854,6 +891,12 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// is a listing a reader will mistake for everything.
 	fmt.Fprintf(stdout, "INBOX SCOPE mode=%s cursor=%s changed=%d carrying=%d\n",
 		oneline.Field(scope.Mode()), oneline.Field(dash(cursor.Commit)), scope.Changed, len(res.Open))
+	// AND THEN, IF THIS READER'S LINE IS DRAWN FORWARD, THE SENTENCE THAT SAYS SO. It is
+	// printed from the cursor as it stands on the bus -- not from the flag this run was
+	// given -- because it is a fact about the state a reader is stuck in, and the run that
+	// is finally fixing it should say once what it is fixing. See the site below and
+	// bus.LegacyDateAtOrAfterToday.
+	printSwitchDayNote(stdout, held.Legacy, *busDir, me.Name, fmt.Sprintf("%d", *maxWords), *remote, *branch, now)
 	// The switch-day line, said as ONE line and next to the scope, because it is part of
 	// what this run looked at: `notes=` is how many notes it left off the open list for
 	// being older than the line, and `unreadable=` how many FILES it left off for the same
@@ -1057,6 +1100,51 @@ func dash(s string) string {
 	return s
 }
 
+// printSwitchDayNote prints the ONE line this whole change exists to print, and prints
+// nothing at all when there is nothing to say.
+//
+// THE SILENCE IT ENDS. A friend's cursor read `... open=0 legacy=2026-09-10` and his inbox
+// listed nothing, day after day, on a bus that was busy. Every note was there; his own
+// switch-day line stood in front of all of them, because a date is midnight at its START
+// and that date was tomorrow's. v0.10.1 made the line an instant and wrote the recovery
+// down, and a recovery written down is a recovery for whoever goes looking. He had no
+// reason to go looking: from where he sat the tool was working and nobody was writing to
+// him. THAT is the bug -- not the date, which he was entitled to draw, but a tool that knew
+// exactly what was wrong and exactly what to run, and said neither.
+//
+// So the note is printed on EVERY run whose cursor carries a forward-drawn date line,
+// incremental or full, busy or empty, and it carries the whole command with this run's own
+// values in it: nothing to work out, nothing to look up, one line to paste. It is a NOTE
+// and not a refusal -- exit codes are untouched and nothing moves without the flag. The
+// reader runs the command; the tool only names it.
+//
+// The values this run was not given are printed as the placeholders they are, because
+// `check` has no --receipt-max-words, --remote or --branch and a run without --advance has
+// no remote either. A quoted `"<remote>"` says "your remote goes here" in a slot that is
+// otherwise pasteable; inventing `origin` would be a guess, and this tool does not guess.
+//
+// The names and paths in it are QUOTED rather than field-escaped, exactly as the
+// first-advance guard quotes them, because this half of the sentence is meant to be pasted:
+// a bus directory holding a space is `--bus "/a bus/here"` and not `--bus /a\x20bus/here`.
+func printSwitchDayNote(stdout io.Writer, legacy, busDir, name, words, remote, branch string, now time.Time) {
+	drawn, hides, yes := bus.LegacyDateAtOrAfterToday(legacy, now)
+	if !yes {
+		return
+	}
+	fmt.Fprintf(stdout, "INBOX NOTE your switch-day line is the date %s, which hides every note dated %s or earlier; draw it at an instant, once: nova-bus inbox --bus %s --as %s --receipt-max-words %s --full --legacy-now --advance --remote %s --branch %s\n",
+		oneline.Field(drawn.Format(bus.LegacyDateLayout)), oneline.Field(hides.Format(bus.LegacyDateLayout)),
+		oneline.Quote(busDir), oneline.Quote(orPlaceholder(name, "<you>")), oneline.Field(words),
+		oneline.Quote(orPlaceholder(remote, "<remote>")), oneline.Quote(orPlaceholder(branch, "<branch>")))
+}
+
+// orPlaceholder is a value this run has, or the angle-bracket name of the value it does not.
+func orPlaceholder(value, placeholder string) string {
+	if value == "" {
+		return placeholder
+	}
+	return value
+}
+
 // legacyLine reads a --legacy-before flag: the empty string is no line, and anything that is
 // neither a UTC calendar date nor an RFC 3339 UTC instant is exit 2, a bad invocation rather
 // than a guess. Both verbs that take the flag read it here, and it reads through
@@ -1075,7 +1163,7 @@ func legacyLine(verb, value string, stderr io.Writer) (bus.LegacyLine, bool) {
 	return line, true
 }
 
-func cmdCheck(args []string, stdout, stderr io.Writer) int {
+func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("check")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	full := f.fs.Bool("full", false, "walk the whole bus: what CI on main and a first adoption run want")
@@ -1130,6 +1218,9 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	}
 	scope := bus.Scope{Full: *full}
 	from := ""
+	// The lane whose CURSOR this run read, and the switch-day line it found there, kept for
+	// the note printed below the scope line. They are "" for every other way of asking.
+	noteName, noteLegacy := "", ""
 	if !*full {
 		if strings.TrimSpace(*since) != "" {
 			from, err = bus.ResolveCommit(*busDir, *since)
@@ -1155,6 +1246,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 			// A reader with no cursor yet has no baseline, so this run is a full one. It
 			// is the same adoption path inbox takes, and it costs one full check once.
 			scope.Full, from = cursor.Commit == "", cursor.Commit
+			noteName, noteLegacy = me.Name, cursor.Legacy
 		}
 	}
 	if from != "" {
@@ -1210,6 +1302,15 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "BUS SCOPE mode=%s cursor=%s changed=%d\n",
 		oneline.Field(scope.Mode()), oneline.Field(dash(from)), scope.Changed)
+	// THE SAME SENTENCE, WHEREVER THE CURSOR IS READ. `check --as <you>` reads a lane's
+	// CURSOR for its commit, so it sees the drawn-forward line as plainly as `inbox` does,
+	// and a reader polling `check` and reading nothing is in exactly the trouble this note
+	// exists for. It is printed under `INBOX NOTE` here rather than under a `BUS` token of
+	// its own -- the one place this verb speaks in another verb's grammar, and on purpose:
+	// it is a fact about an INBOX cursor, it names an `inbox` command, and one grep finds
+	// it wherever it was met. The values `check` was never given are the placeholders they
+	// are; see printSwitchDayNote.
+	printSwitchDayNote(stdout, noteLegacy, *busDir, noteName, "<n>", "", "", now)
 	failed, warned := 0, 0
 	for _, p := range problems {
 		// A WARN GOES TO STDOUT, and it went to stderr. The grammar says which stream a

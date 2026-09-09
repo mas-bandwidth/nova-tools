@@ -2149,7 +2149,7 @@ would be the most dangerous thing on the bus.
 ```
 nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id>]
 nova-bus send --bus <dir> --file <path>|--stdin [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
-nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <date-or-instant>|--carry-history]
+nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
@@ -2224,6 +2224,7 @@ INBOX OPEN carrying=<n> heard=<m>
 INBOX HINT --open lists the <n> carried entries; they are also in <path>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
+INBOX NOTE your switch-day line is the date <date>, which hides every note dated <date-1> or earlier; draw it at an instant, once: <command>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX RECEIPT id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
@@ -2294,6 +2295,17 @@ asks where they went. `INBOX UNREADABLE` is printed whichever way the run was
 asked, because a file nobody can read is not a listing choice — the one exception
 being a file dated behind the switch-day line, which is history and is counted
 rather than named; see `INBOX LEGACY` below.
+
+**`INBOX NOTE` has two shapes and one token**, told apart by their first field:
+the listing's `id=...` and the switch-day note's `your`. The second is the
+sentence a reader whose own line has gone quiet is owed — it names the day the
+line hides and the whole command that redraws it — and it is a `NOTE` because
+that is what it is: nothing is refused, no exit code changes, nothing moves
+until the reader runs the command it names. It is printed after `INBOX SCOPE`
+and before any listing, on **every** `inbox` run whose cursor carries a line of
+that shape, incremental or full, busy or empty. See **the switch-day line**
+below for when it fires and why it also comes out of `check --as <name>`, which
+is the one place this tool prints another verb's token on purpose.
 
 `INBOX LEGACY` is printed by every `inbox` run that has a switch-day line in
 force -- from the flag or from the cursor -- and it carries TWO counts, because
@@ -3210,17 +3222,30 @@ give the instant you switched instead. Recovering is one command — the same
 list from the bus again, and which is why moving the line earlier is allowed
 there.
 
-**The switch-day recipe**, in the order to run it. Take the moment you switch —
-`date -u +%Y-%m-%dT%H:%M:%SZ` — and use that, not a date:
+**`--legacy-now` is that instant, worked out for you.** It is exactly
+`--legacy-before <this run's UTC instant>` — the same parse, the same
+`LegacyLine`, the same instant written into the cursor — and it exists because
+the correct shape was a twenty-character timestamp a person had to produce
+*before* the run that needed it. It cannot be given with `--legacy-before` (two
+flags naming one line say nothing about where it stands) or with
+`--carry-history` (they answer opposite questions); either pair is exit 2. Two
+things it fixes beyond the typing: the line is drawn at the moment of the
+**read** rather than the moment of a refusal the reader may act on an hour
+later, and a command nobody has to retype correctly is a command nobody
+mistypes into a date.
+
+**The switch-day recipe**, in the order to run it:
 
 ```
-SWITCH=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-nova-bus check --bus <dir> --full --legacy-before "$SWITCH"
+nova-bus check --bus <dir> --full --legacy-before "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 nova-bus inbox --bus <dir> --as <you> --receipt-max-words <n> \
-  --full --legacy-before "$SWITCH" \
+  --full --legacy-now \
   --advance --remote origin --branch main --attempts 3
 ```
+
+`check` has no `--legacy-now`: its flag draws a tolerance over a history and is
+usually a day months ago, and it is not the flag that goes quiet if you get it
+wrong.
 
 A date is right when the thing you are drawing really is a **day** a bus adopted
 the tool, months ago, and nobody knows it to the second. It is wrong for a switch
@@ -3256,19 +3281,18 @@ file yet — is **refused**, exit 1, when all of these hold:
 - at least one note that run would carry is dated **before today**, UTC.
 
 The refusal names **how many notes it would have carried** and hands over the
-exact line to run, with `--legacy-before` filled in as **the RFC 3339 UTC instant
-of the refusal itself** — the moment the reader is standing at — so that
-everything already on the bus is behind the line and everything that arrives
-after that moment is not:
+exact line to run, carrying **`--legacy-now`** — the switch drawn at the moment
+the reader runs it — so that everything already on the bus is behind the line
+and everything that arrives after that moment is not:
 
 ```
 INBOX REFUSED: this is the first advance on <lane>/CURSOR and <k> of the <n>
 notes it would carry are dated before now, so every run after it would print all
 <n> again; draw the switch-day line at this instant with `nova-bus inbox --bus
-"<dir>" --as "<you>" --receipt-max-words <w> --full --legacy-before
-<YYYY-MM-DDTHH:MM:SSZ> --advance --remote "<remote>" --branch "<branch>"`, which
-takes everything already on the bus as read and leaves you what arrives after
-that moment, or pass --carry-history to carry all <n>
+"<dir>" --as "<you>" --receipt-max-words <w> --full --legacy-now --advance
+--remote "<remote>" --branch "<branch>"`, which takes everything already on the
+bus as read and leaves you what arrives after that moment, or pass
+--carry-history to carry all <n>
 ```
 
 *Why the instant and not a date.* The first version of this refusal computed
@@ -3278,8 +3302,15 @@ is a moment AFTER every note anybody sends today, and the reader who pasted that
 line lost the whole switch day — the notes their friends were writing to them
 while they read the refusal were legacy before they arrived. That is the bug the
 switch-day line's own instant form exists to fix, and a guard that hands out the
-broken shape is the fastest way to spread it. The instant of the refusal draws
-the line where the reader actually is: history behind, news in front.
+broken shape is the fastest way to spread it. The instant draws the line where
+the reader actually is: history behind, news in front.
+
+*Why the flag and not the timestamp.* The second version of this refusal printed
+the RFC 3339 instant of the refusal itself, which is right and is still a
+twenty-character token to carry across from an error message — and the reader
+who carries it runs the command at whatever moment they get to it, not at the
+one the refusal was written at. `--legacy-now` is the same line drawn at the
+read.
 
 It is one line, like every other event this tool prints. The paths and names in
 the command it hands back are **quoted** rather than field-escaped, because that
@@ -3291,8 +3322,65 @@ than field-escapes** in the output grammar, which is the same reason.
 every old note. It is a flag rather than the default because the default that
 carried 602 notes is the thing being fixed, and it writes **nothing** to the
 cursor: it is an answer to one run's question, not a line anybody inherits. It
-cannot be given with `--legacy-before` — they answer the same question and giving
-both says nothing about which — and that is exit 2, a bad invocation.
+cannot be given with `--legacy-before` or `--legacy-now` — they answer the same
+question and giving both says nothing about which — and that is exit 2, a bad
+invocation.
+
+### A line drawn forward — the `INBOX NOTE` that ends the silence
+
+**The failure, from a friend's first week on the bus.** He drew his switch-day
+line at a DATE, which is what v0.10.0's own first-advance guard handed him:
+tomorrow's. A date is midnight at its **start**, so the line stood in front of
+every note anybody wrote that day. His cursor read
+`86b78622… 2026-09-09T20:13:09Z open=0 legacy=2026-09-10`, his inbox listed
+nothing, and every note written to him was on the bus the whole time — behind a
+line he had drawn himself and had no way to see. v0.10.1 made the line an
+instant and wrote the recovery down. It did not fix the silence: a recovery in a
+document is a recovery for whoever goes looking, and from where he sat the tool
+was working and nobody was writing to him. **That** is the bug — not the date,
+which he was entitled to draw, but a tool that knew exactly what was wrong and
+exactly what to run, and said neither. Glenn, on reading his cursor: *"Freddy
+has difficulty with the nova-bus, I think it should be resolved. Let's be
+kind."*
+
+So **every `inbox` run whose cursor carries a switch-day line that is a bare
+DATE standing at today or later, UTC**, prints one line — after `INBOX SCOPE`,
+before any listing, incremental or full, on a busy run as much as an empty one:
+
+```
+INBOX NOTE your switch-day line is the date <date>, which hides every note dated
+<date-1> or earlier; draw it at an instant, once: nova-bus inbox --bus "<dir>"
+--as "<you>" --receipt-max-words <w> --full --legacy-now --advance --remote
+"<remote>" --branch "<branch>"
+```
+
+**It is a note and not a refusal.** The exit code is untouched, the listing is
+printed, the cursor is not moved and no line is redrawn: the reader runs the
+command, and the tool only names it. A tool that redrew a reader's own line
+because it disapproved of the shape would be a worse bug than the silence.
+
+**Which lines it fires on**, and each case is a decision:
+
+- a date at **tomorrow** or later — it hides the whole of today, which is the
+  shape that emptied his inbox;
+- a date at **today** — the same mistake one day on: drawn at a day boundary for
+  a switch that happens at a moment, it took the whole of yesterday;
+- **not** a date already behind today — that is history properly drawn, the day
+  a bus adopted a tool, which nobody knows to the second;
+- **not** an instant, wherever it stands — it was drawn to the second by
+  somebody who meant a moment, and whatever it hides they said where it stood.
+
+The values in the command are **this run's own**, quoted the way the
+first-advance guard quotes them, because that half of the sentence is meant to
+be pasted. A value the run was never given is printed as the placeholder it is —
+`<n>`, `"<remote>"`, `"<branch>"` — rather than guessed at; inventing `origin`
+would be a guess and this tool does not guess.
+
+**`check --as <name>` prints the same line**, because it reads the same cursor
+for its own baseline and a reader polling `check` over a quiet bus is in exactly
+the same trouble. It is the one place `nova-bus` prints another verb's token on
+purpose: the fact is about an INBOX cursor, the command it names is an `inbox`
+command, and one `grep` should find it wherever it was met.
 
 **It refuses before printing the listing.** A first full read of an old bus is a
 line per open note, which on that bus is the six hundred lines this guard exists
@@ -3501,6 +3589,10 @@ there are two honest ways in, and a bus must pick one:
   written should use.
 - **A one-time sweep**: fix the old notes by hand and adopt the check with no
   flag at all.
+
+`check` takes no `--legacy-now`. Its flag draws a tolerance over a history, and
+the thing being drawn really is a day — usually one months back — so the shape
+that goes quiet on `inbox` does not arise here.
 
 Either way, run `check --full --rebuild-index` once at adoption. Every note on
 the bus that has an id gets a catalogue line, the `BUS WARN`s about missing
