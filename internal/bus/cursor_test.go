@@ -716,11 +716,22 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 			t.Fatalf("cursor %q read as %+v, %v", line, got, err)
 		}
 	}
-	// And a date that is not one is a refusal at the READ, like every other value on this
-	// line that becomes a decision later.
+	// An INSTANT token reads, and reads as itself and not as its day: this is the shape a
+	// bus switching TODAY writes, and a cursor holding one has to survive every later run.
+	write(t, root, CursorPath("from-ada"), sha+" 2026-09-09T12:34:56Z open=2 legacy=2026-09-09T18:07:00Z\n")
+	got, err = ReadCursor(root, "from-ada")
+	if err != nil || got.Legacy != "2026-09-09T18:07:00Z" || !got.LegacyBefore().Equal(at("2026-09-09T18:07:00Z")) {
+		t.Fatalf("a cursor with an instant line read as %+v, %v", got, err)
+	}
+	if line := got.LegacyLine(); line.Text != "2026-09-09T18:07:00Z" || !line.Before.Equal(at("2026-09-09T18:07:00Z")) {
+		t.Fatalf("the cursor's line was not carried as given: %+v", line)
+	}
+	// And a line that is neither shape is a refusal at the READ, like every other value on
+	// this line that becomes a decision later. An offset is not a UTC instant.
 	for _, bad := range []string{
 		sha + " 2026-09-09T12:34:56Z legacy=last-tuesday\n",
-		sha + " 2026-09-09T12:34:56Z legacy=2026-09-01T00:00:00Z\n",
+		sha + " 2026-09-09T12:34:56Z legacy=2026-09-01T00:00:00+10:00\n",
+		sha + " 2026-09-09T12:34:56Z legacy=2026-09-01T18:07Z\n",
 		sha + " 2026-09-09T12:34:56Z legacy=\n",
 	} {
 		write(t, root, CursorPath("from-ada"), bad)
@@ -729,9 +740,124 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 		}
 	}
 	// A line WriteCursor cannot write is refused before it reaches the file, so a cursor on
-	// the bus is never a date nobody can read.
+	// the bus is never a date nobody can read -- and an instant it CAN write goes down
+	// exactly as given rather than rounded to its day.
 	if err := WriteCursor(root, "from-ada", sha, 0, "last Tuesday", at("2026-09-09T12:34:56Z")); err == nil {
 		t.Fatal("WriteCursor wrote a legacy line that is not a date")
+	}
+	if err := WriteCursor(root, "from-ada", sha, 0, "2026-09-09T18:07:00Z", at("2026-09-09T12:34:56Z")); err != nil {
+		t.Fatal(err)
+	}
+	if line := readFile(t, root, CursorPath("from-ada")); !strings.Contains(line, "legacy=2026-09-09T18:07:00Z") {
+		t.Fatalf("an instant line was not written as given: %q", line)
+	}
+}
+
+// The bug a family of five found in their first hour: a line drawn at TOMORROW's date made
+// every note they wrote that afternoon legacy, because a date is midnight at its START and
+// midnight tomorrow is after everything written today. The line is a MOMENT, so an instant
+// draws it where they actually switched -- and a date still means exactly what it always
+// meant.
+func TestTheLegacyLineIsAMomentSoTheSwitchDayIsNotAllLegacy(t *testing.T) {
+	files := fixture()
+	files["from-bo/2026-09-09T1806Z-a-minute-before-the-switch.md"] = `From: Bo
+To: Ada
+Date: Wed Sep  9 18:06:00 UTC 2026
+Id: bo-bbbbbbbbbbbb
+Subject: Sent a minute before the switch
+
+The body.
+`
+	files["from-bo/2026-09-09T1808Z-a-minute-after-the-switch.md"] = `From: Bo
+To: Ada
+Date: Wed Sep  9 18:08:00 UTC 2026
+Id: bo-cccccccccccc
+Subject: Sent a minute after the switch
+
+The body.
+`
+	root := writeBus(t, files)
+	c, err := LoadConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := mustParticipant(t, c, "Ada")
+	changed := []string{
+		"from-bo/2026-09-09T1806Z-a-minute-before-the-switch.md",
+		"from-bo/2026-09-09T1808Z-a-minute-after-the-switch.md",
+	}
+
+	// The switch happened at 18:07. The note a minute before it is behind the line and the
+	// note a minute after it is on the open list, on the same afternoon and the same date.
+	instant, err := NewLegacyLine("2026-09-09T18:07:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if instant.Text != "2026-09-09T18:07:00Z" || !instant.Before.Equal(at("2026-09-09T18:07:00Z")) {
+		t.Fatalf("an instant line parsed as %+v", instant)
+	}
+	res, err := InboxSince(root, c, me, changed, nil, 40, instant)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Legacy != 1 || len(res.Open) != 1 || !strings.Contains(res.Open[0].Path, "1808Z") {
+		t.Fatalf("the line at 18:07 gave legacy=%d open=%+v, want the 18:06 note behind it and the 18:08 note listed", res.Legacy, res.Open)
+	}
+	// The same rule through the full walk, which is the read that WRITES the open list every
+	// later run inherits -- and is the read that reported zero on the real bus.
+	tab := loadBus(t, root)
+	all := OpenFromFull(tab.Inbox(me, 40), nil)
+	keep, covered := SplitLegacy(all, instant)
+	// Everything on this bus predates the switch except the 18:08 note, so exactly one
+	// entry survives and it is that one.
+	if covered != len(all)-1 {
+		t.Fatalf("the full walk left %d of %d notes off, want all but the 18:08 note", covered, len(all))
+	}
+	for _, e := range keep {
+		if strings.Contains(e.Path, "1806Z") {
+			t.Fatal("the full walk carried the note from before the switch")
+		}
+	}
+	var sawAfter bool
+	for _, e := range keep {
+		sawAfter = sawAfter || strings.Contains(e.Path, "1808Z")
+	}
+	if !sawAfter {
+		t.Fatal("the full walk left off a note sent AFTER the line, which is the bug this closes")
+	}
+
+	// A DATE is midnight at its start, unchanged: tomorrow's date takes both of today's
+	// notes, which is exactly what the family saw and is the honest reading of a date.
+	tomorrow, err := NewLegacyLine("2026-09-10")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !tomorrow.Before.Equal(at("2026-09-10T00:00:00Z")) {
+		t.Fatalf("a date line is not midnight at its start: %+v", tomorrow)
+	}
+	if _, covered := SplitLegacy(all, tomorrow); covered != len(all) {
+		t.Fatalf("tomorrow's date left %d of %d notes off, want all of them", covered, len(all))
+	}
+	// And TODAY's date is midnight this morning, so both of today's notes are carried.
+	today, err := NewLegacyLine("2026-09-09")
+	if err != nil {
+		t.Fatal(err)
+	}
+	keep, _ = SplitLegacy(all, today)
+	var before, after bool
+	for _, e := range keep {
+		before = before || strings.Contains(e.Path, "1806Z")
+		after = after || strings.Contains(e.Path, "1808Z")
+	}
+	if !before || !after {
+		t.Fatalf("today's date did not behave as midnight at its start: %+v", keep)
+	}
+
+	// The two shapes, and only the two: an instant must be UTC and to the second.
+	for _, bad := range []string{"last Tuesday", "2026-09-09T18:07:00+10:00", "2026-09-09T18:07Z", "2026-09-09 18:07:00Z", ""} {
+		if _, err := NewLegacyLine(bad); err == nil {
+			t.Fatalf("NewLegacyLine accepted %q", bad)
+		}
 	}
 }
 
