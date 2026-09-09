@@ -127,12 +127,16 @@ func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
 	checkout, _ := busDir(t)
 	settled(t, checkout)
 
-	const timeout = 600 * time.Millisecond
+	// Two seconds and not the few hundred milliseconds this needs on a quiet machine: the
+	// assertion under it is that the run POLLED MORE THAN ONCE, and one poll is a git
+	// fetch, which on a loaded CI runner is not instant. A window several polls wide keeps
+	// the assertion about the loop rather than about the runner.
+	const timeout = 2 * time.Second
 	start := time.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0)
 	took := time.Since(start)
 
-	r.mustContain(t, "stdout", "WAIT as=Ada timeout=600ms interval=100ms cursor=").
+	r.mustContain(t, "stdout", "WAIT as=Ada timeout=2s interval=100ms cursor=").
 		mustContain(t, "stdout", "WAIT TIMEOUT after=")
 	if strings.Contains(r.stdout, "INBOX ") {
 		t.Fatalf("a wait that found nothing printed a listing:\n%s", r.stdout)
