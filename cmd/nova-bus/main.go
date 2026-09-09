@@ -90,8 +90,12 @@ entries too, from the open list and without opening a note.
 --legacy-before draws the switch-day line on a bus that existed before this
 tool: check WARNS instead of failing on an older note's header, and inbox does
 not carry an older note on your open list, counting them on one INBOX LEGACY
-line instead. inbox records the date in your cursor, so later runs honour it
-without the flag; moving the line earlier is refused unless the read is --full.
+line instead -- notes= for the notes, unreadable= for the files that will not
+parse, which are not named one by one either once they are behind the line. A
+file dated on or after it, or with no readable date at all, is still named on
+every run, and --full lists everything. inbox records the date in your cursor,
+so later runs honour it without the flag; moving the line earlier is refused
+unless the read is --full.
 
 inbox REPORTS and exits 0 whether the inbox is empty or full; check is the gate.
 `
@@ -658,7 +662,12 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		// and it is in no inbox, so no listing has ever mentioned it: 22 of them on the
 		// family's real bus. See internal/bus/unaddressed.go.
 		res.Unaddressed = t.UnaddressedOnBus()
-		res.Open, res.Legacy = bus.SplitLegacy(bus.OpenFromFull(t.Inbox(me, *maxWords), res.Unreadable), legacy)
+		// The line still shapes the open list a full run WRITES -- an old note is not
+		// carried, and neither is an old file nobody can read -- but a full run LISTS
+		// everything it found, unreadable files included, whatever their date. That is what
+		// a full read is for: the whole picture, asked for on purpose, on the day you adopt
+		// the tool or the day something looks wrong. The quiet is the incremental run's.
+		res.Open, res.Legacy, res.LegacyUnreadable = bus.SplitLegacy(bus.OpenFromFull(t.Inbox(me, *maxWords), res.Unreadable), legacy)
 	}
 
 	// What was walked, said FIRST, because a listing that does not say what it looked at
@@ -667,17 +676,21 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		oneline.Field(scope.Mode()), oneline.Field(dash(cursor.Commit)), scope.Changed, len(res.Open))
 	// The switch-day line, said as ONE line and next to the scope, because it is part of
 	// what this run looked at: `notes=` is how many notes it left off the open list for
-	// being older than the line. They are never listed one by one -- the whole point of the
-	// line is that six hundred of them do not become a listing -- and this is the only
-	// place a reader is told the number, so it is printed whenever a line is in force, a
-	// count of zero included.
+	// being older than the line, and `unreadable=` how many FILES it left off for the same
+	// reason. They are never listed one by one -- the whole point of the line is that six
+	// hundred of them do not become a listing -- and this is the only place a reader is
+	// told either number, so it is printed whenever a line is in force, counts of zero
+	// included. Two numbers and not one, because they are two different facts: a note taken
+	// as read, and a file nobody could read in the first place.
 	if !legacy.Before.IsZero() {
-		fmt.Fprintf(stdout, "INBOX LEGACY before=%s notes=%d\n",
-			oneline.Field(legacy.Before.Format(bus.LegacyDateLayout)), res.Legacy)
+		fmt.Fprintf(stdout, "INBOX LEGACY before=%s notes=%d unreadable=%d\n",
+			oneline.Field(legacy.Before.Format(bus.LegacyDateLayout)), res.Legacy, res.LegacyUnreadable)
 	}
 	// The files that would not parse are named next and are never silent. A note on the
 	// bus that this tool cannot read is not a note that does not exist, and dropping it
-	// from the listing was the same failure as a lost push with a quieter cause.
+	// from the listing was the same failure as a lost push with a quieter cause. The one
+	// thing that is not named per file is a file dated BEHIND the switch-day line on an
+	// incremental run -- history, counted on the LEGACY line above; see bus.LegacyLine.
 	for _, n := range res.Unreadable {
 		fmt.Fprintf(stdout, "INBOX UNREADABLE path=%s: %s\n", oneline.Field(n.Path), oneline.Err(n.Parse.Err))
 	}

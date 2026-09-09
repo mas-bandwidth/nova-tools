@@ -2167,7 +2167,7 @@ SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
-INBOX LEGACY before=<date> notes=<n>
+INBOX LEGACY before=<date> notes=<n> unreadable=<m>
 INBOX OPEN carrying=<n> heard=<m>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
@@ -2220,15 +2220,20 @@ want the whole picture. Nothing is hidden either way: `carrying=` and `heard=`
 are on this line, the same counts are on `INBOX OK`, and the entries themselves
 are in `OPEN`, which is a file a person can open. `INBOX UNREADABLE` is printed
 whichever way the run was asked, because a file nobody can read is not a listing
-choice.
+choice — the one exception being a file dated behind the switch-day line, which
+is history and is counted rather than named; see `INBOX LEGACY` below.
 
 `INBOX LEGACY` is printed by every `inbox` run that has a switch-day line in
-force -- from the flag or from the cursor -- and `notes=` is how many notes that
-run left OFF the open list for being older than the line. It is a count and never
-a listing: the whole reason the line exists is that six hundred of them are not a
-listing anybody reads. Like `changed=`, it counts what THIS run looked at, so it
-is the whole bus under `--full` and the change set plus the open list under
-`--since`.
+force -- from the flag or from the cursor -- and it carries TWO counts, because
+they are two different facts. `notes=` is how many notes that run left OFF the
+open list for being older than the line; `unreadable=` is how many FILES it left
+off for the same reason -- files this tool cannot parse, dated behind the line,
+which are not named one by one either. A note taken as read and a file nobody
+could read in the first place are not the same news, and one number would say
+neither. Both are counts and never listings: the whole reason the line exists is
+that six hundred of them are not a listing anybody reads. Like `changed=`, they
+count what THIS run looked at, so they are the whole bus under `--full` and the
+change set plus the open list under `--since`.
 
 `REFUSED` is a `FAIL` with no path slot, because what it refuses is the state of
 the CHECKOUT rather than anything in the note: it is the branch-ahead guard
@@ -2236,6 +2241,10 @@ below, a cursor that is no longer on this history, or a `--legacy-before` that
 would move a reader's line earlier. `INBOX UNREADABLE` names a file on the bus this tool cannot parse — not
 necessarily one addressed to the caller, because a file with no `To:` line
 cannot say who it was for, and saying so is the honest half of not dropping it.
+The one file it does not name per run is one dated BEHIND the switch-day line on
+an incremental read: that is history, and it is counted on `INBOX LEGACY`
+instead. A file dated on or after the line, or with no readable date at all, is
+named on every run, and `--full` lists every unreadable file whatever its date.
 `INBOX UNADDRESSED` names a note that parses and reaches no reader at all; see
 above.
 
@@ -2933,6 +2942,19 @@ the list when the file parses, becoming an ordinary entry if it turns out to be
 addressed to me and going quietly if it is not, or when I receipt it, which is how
 a reader says *I have seen this file* about something with no id to answer.
 
+**Unless it is behind the switch-day line**, in which case it is not carried, not
+re-parsed and not named — it is counted, with the old notes, on `INBOX LEGACY`'s
+`unreadable=`. A live inbox printed fifteen `INBOX UNREADABLE` lines on every
+poll for notes written by hand days before that bus switched over: a markdown
+heading first, a `**To**`, a `Branch:` key, a sentence where the header goes.
+They are history, they will never be fixed, and naming them once per run buries
+the inbox they are printed above — the same listing-nobody-reads failure the line
+exists to stop, arriving by a third door. The line is drawn on such an entry
+BEFORE the parse it would otherwise cost, so the fifteen are not opened either. A
+file dated on or after the line, and a file whose date cannot be read at all, is
+carried and named exactly as above: the tool never quiets a note it cannot date,
+and never quiets a new one.
+
 **Deleting one of the three is not symmetric**, and an earlier revision of this
 document said it was. `CURSOR` alone: delete it and the next run is a full one,
 which is the adoption path and costs one full read. `INDEX` alone: delete it and
@@ -2974,8 +2996,8 @@ flag takes and drawn on the same day. A note dated before it:
 
 - is **not carried** on the reader's `OPEN` list, so the cursor is not dragging
   it along and no later run has to look at it;
-- is **not listed**, on a `--full` read or any other — it appears only inside the
-  count on one `INBOX LEGACY before=<date> notes=<n>` line;
+- is **not listed** — it appears only inside the count on one
+  `INBOX LEGACY before=<date> notes=<n> unreadable=<m>` line;
 - is **not changed**. Nothing is deleted, nothing is marked answered, nothing is
   written to anybody else's lane. The notes are still on the bus, still
   readable in a browser, still found by `check --full`, still answerable by id or
@@ -3001,6 +3023,18 @@ rule the check tolerance uses: a file that cannot say when it was written cannot
 claim to predate anything, and the safe direction for a note nobody can date is
 to carry it.
 
+**The line reaches the UNREADABLE files too**, and it did not at first. A file
+this tool cannot parse, dated behind the line by the same rule — the header
+`Date:` when it can be read, and otherwise a leading `YYYY-MM-DD` in the filename
+— is left off the open list, is not named, is not even opened, and is counted on
+`unreadable=`. A file dated on or after the line, or with no readable date at
+all, is named on every run as it always was. **`--full` lists every unreadable
+file on the bus whatever its date**, and this is the one place the line and the
+listing part company: a full read is the whole picture, asked for on purpose, and
+the quiet belongs to the incremental run a reader polls with. The count is on the
+`INBOX LEGACY` line of a full read too, because the open list a full read WRITES
+is still shaped by the line.
+
 **The switch-day recipe**, in the order to run it:
 
 ```
@@ -3013,7 +3047,10 @@ nova-bus inbox --bus <dir> --as <you> --receipt-max-words <n> \
 The first says what the history holds and forgives its headers; the second draws
 the line, gives you a cursor, and hands you an inbox that is what has arrived
 SINCE. Every run after that is `inbox --as <you> --advance …` with no flag at
-all.
+all, and **after the line the inbox is quiet**: not one line per old note, not
+one per old file nobody can parse, only the `INBOX LEGACY` counts and whatever
+has actually arrived. What the line never quiets is anything in front of it, or
+anything it cannot date.
 
 **What is still O(m), stated rather than left to be discovered.** The claim above
 is about *note files parsed*, and it holds exactly: an `inbox` run is **O(new)
