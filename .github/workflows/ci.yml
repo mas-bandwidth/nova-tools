@@ -84,8 +84,8 @@ jobs:
     # the properties asserted in the steps below. Everything else in this
     # repository — every other `nocode` flag and refusal path, every other
     # `links` property, every other `nova-check` subcommand, and the
-    # `nova-fuse`, `nova-memory` and `nova-self-talk` commands — is covered by
-    # package tests and by nothing else.
+    # `nova-fuse`, `nova-memory`, `nova-self-talk` and `nova-bus`
+    # commands — is covered by package tests and by nothing else.
     #
     # WINDOWS. The portable steps run there too. An earlier revision excluded
     # the whole job on the grounds that its fixtures need an executable bit,
@@ -273,3 +273,45 @@ jobs:
             *"deny-list file: open no-such-deny-list.txt"*) echo "ok: unreadable deny-list refused" ;;
             *) echo "wrong message: $out"; exit 1 ;;
           esac
+
+  release-dry-run:
+    # The cross-build in .github/workflows/release.yml, run on every pull request with
+    # nothing uploaded. It exists because that workflow's first run is triggered by a TAG,
+    # and a tag is the one thing in this repository that cannot be quietly amended: a
+    # target that stopped compiling would be found by the release itself, with the tag
+    # already pushed and half a set of binaries built. Here it is a red pull request.
+    #
+    # The target list is duplicated from release.yml on purpose -- a workflow cannot read
+    # another workflow's matrix -- so a platform added or dropped there belongs here in the
+    # same commit, and this job is worth nothing the moment the two lists disagree.
+    #
+    # One runner and a loop rather than a matrix of five, because Go cross-compiles from
+    # any host: five runners would each pay a checkout and a toolchain setup to save a few
+    # seconds of compiling. Build only, no tests -- the test job above is the tests, and
+    # this job's whole question is whether the compiler can reach each target.
+    #
+    # These two actions are PINNED BY SHA where the jobs above still name a tag. A tag is
+    # a mutable pointer, and this job is the one that shares its shape with the workflow
+    # holding contents:write; the jobs above are left alone rather than churned here.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # -trimpath here for the same reason the release passes it: build the way the shipped
+      # artifact is built, or this job is checking a configuration nobody ships.
+      GOFLAGS: -trimpath
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: every shipped tool compiles for every shipped platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          out="$(mktemp -d)"
+          for target in "linux amd64" "linux arm64" "darwin arm64" "darwin amd64" "windows amd64"; do
+            set -- $target
+            GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -o "$out/" ./cmd/...
+            echo "ok $1/$2"
+          done

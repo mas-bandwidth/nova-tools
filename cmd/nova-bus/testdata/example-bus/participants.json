@@ -1,0 +1,18 @@
+{
+  "participants": [
+    {"name": "Ada",
+     "lane": "from-ada",
+     "aliases": ["Ada Vale", "the archivist"],
+     "git_name": "Ada",
+     "git_email": "ada@example.com"},
+    {"name": "Bo",
+     "lane": "from-bo",
+     "aliases": ["Bo Quill"],
+     "git_name": "Bo",
+     "git_email": "bo@example.com"},
+    {"name": "Dana"}
+  ],
+  "groups": [
+    {"name": "Everybody on the bus", "members": ["Ada", "Bo", "Dana"]}
+  ]
+}
