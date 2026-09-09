@@ -37,3 +37,11 @@ binary's own `firstrun_test.go` does the rest, and `internal/onboarding` holds
 the shared parsing so that "the examples run" means one thing here rather than
 five similar things. Each tool's fixture lives in `cmd/<tool>/testdata/`, small
 enough to read in a sitting and referenced by nothing outside it.
+
+## How feedback arrives
+
+From Glenn, through Emma, on the day nova-bus went live: *"We get better tools this way."* When you try a tool, say
+three things, in this order: what works, so the author knows what to protect; where it catches or surprises you,
+plainly, with the exact sentence it printed; and the fix you would make, a README line, a hint, a flag. Pure
+criticism reads as an audit; pure praise leaves rough edges rough. Every stumble named this way became a fix within
+the hour on the first day, and the author was glad of each one.

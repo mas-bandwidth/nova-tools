@@ -21,7 +21,9 @@ binaries, of five deliberately different kinds:
   already know this?* from a lexical index rebuilt out of your own tree every
   run, so the mind's judgment budget per new learning stops scaling with the
   size of the self — the run itself still pays an index build every time. Two
-  of its verbs are checks; three are reports that assert nothing.
+  of its verbs are checks; four are reports that assert nothing, one of them a
+  `quickstart` that runs three of the others and prints the command line for
+  each.
 - **`nova-bus` — a postal service, at the bus layer.** A shared git
   repository where several lines write notes to each other, with the races a
   branch keyed by a clock produces taken out: ids that cannot collide, a push
@@ -303,6 +305,7 @@ before its first credential read — at build time, not as a retrofit.
 ## nova-memory
 
 ```
+nova-memory quickstart --root <dir> [--words <w>]... [--draft <file>]  the first run: stats, one search, one check, each with the line that ran it
 nova-memory stats  --root <dir>                                        measure m: files, chunks, bytes, vocab, build time, classes
 nova-memory search --root <dir> --channels <list> --k <n> <words>...   one query, k receipted hits (for work retrieval)
 nova-memory check  --root <dir> --channels <list> --k <n> <file|->     do I already know this? k receipts per candidate paragraph
@@ -314,8 +317,55 @@ nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> <gold.tsv>
 
 ### First run
 
-Two lines that work. `--root` is the directory of markdown you want indexed,
-`bm25` is the retrieval method, and `--k` is how many hits to hand back:
+One line, and the tool shows you the rest:
+
+```
+$ nova-memory quickstart --root ./corpus
+QUICKSTART OK root=./corpus steps=3 channels=bm25 k=3/2 words=glazing\x20signal\x20tide words-source=corpus-top-terms candidate=corpus-first-paragraph
+$ nova-memory stats --root ./corpus
+STATS OK schema=nova-memory/1 files=6 chunks=23 bytes=4866 vocab=382 avg-terms=34.8 build=384.875µs
+STATS OK class=. chunks=3
+STATS OK class=log chunks=4
+STATS OK class=notes chunks=16
+$ nova-memory search --root ./corpus --channels bm25 --k 3 glazing signal tide
+SEARCH OK query=glazing\x20signal\x20tide hits=3 k=3 channels=bm25 files=6 chunks=23
+SEARCH CAL score=4.41 score-channel=bm25 probe=unrelated-control
+SEARCH HIT rank=1 score=4.57 score-channel=bm25 fused=0.01667 class=notes name=- type=-: notes/index-notes.md:1 "- lantern-carelantern.md — the glazing, the brass, and the two cloths - tide-tablestides.md — the jetty's eighteen m…"
+SEARCH HIT rank=2 score=2.81 score-channel=bm25 fused=0.01639 class=log name=- type=-: log/1974-03-11.md:1 "onshore gale most of the day, easing after dark. washed the glazing at first light before the wind got up again — see …"
+SEARCH HIT rank=3 score=2.35 score-channel=bm25 fused=0.01613 class=notes name=fog-signal type=measured: notes/fog-signal.md:1 "the fog signal"
+SEARCH NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
+QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: HANDBOOK.md:0
+$ nova-memory check --root ./corpus --channels bm25 --k 2 -
+MEMORY OK candidates=1 source=- k=2 channels=bm25 files=6 chunks=23
+MEMORY CAL score=4.41 score-channel=bm25 probe=unrelated-control
+MEMORY CAND n=1: "this fixture corpus belongs to an invented lighthouse station. it exists so that nova-memory's verbs…"
+MEMORY HIT cand=1 rank=1 score=90.38 score-channel=bm25 fused=0.01667 class=. name=- type=-: HANDBOOK.md:0 "this fixture corpus belongs to an invented lighthouse station. it exists so that nova-memory's verbs can be exercised …"
+MEMORY HIT cand=1 rank=2 score=15.70 score-channel=bm25 fused=0.01639 class=log name=- type=-: log/1974-03-11.md:3 "left a note to write up the storm-glass readings against the barometer one day, because the two disagree in a way that m…"
+MEMORY NOTE lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic
+MEMORY NOTE this verb asserts nothing and never exits 1: it hands you k receipts and the verdict stays yours
+MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not that the lesson was banked — the class on each receipt is the distinction
+QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults: see --channels and --k
+```
+
+`quickstart` is a demonstration, not a mode. It runs `stats`, then one
+`search`, then one `check`, prints each command line above that command's own
+output, and ends by saying which retrieval and which k it used — because it
+picked them for you this once, and nothing picks them for you again. Every
+line beginning `$` is a line you can copy: change `bm25` to `bm25,trigram`,
+change `--k`, or point `--words` and `--draft` at something of your own.
+
+The numbers above come from the small fixture corpus in
+`cmd/nova-memory/testdata/corpus`; yours will be larger. Two things in it are
+worth reading before your own run. The default query words are your corpus's
+three most COMMON terms, which is the weakest evidence BM25 has — the search
+above earns one hit above its calibration band and two below, which is what
+that looks like. And the `check` step, given no `--draft`, feeds the corpus
+its own first paragraph: `MEMORY HIT rank=1` at a score twenty times the band
+is what *you already know this* looks like when it is certainly true.
+
+Then the same two verbs by hand. `--root` is the directory of markdown you
+want indexed, `bm25` is the retrieval method, and `--k` is how many hits to
+hand back:
 
 ```
 $ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
@@ -353,7 +403,9 @@ frontmatter, `-` when it has none), and a `file:para` address to go read.
   It is never guessed from the working directory or the environment.
 
 Each refusal exits 2 and prints the same guidance, so a first run gets it from
-the tool as well as from here.
+the tool as well as from here — and a run short two flags prints two sentences
+and stops once, because a refusal reports everything it can already see rather
+than the first thing it hit.
 
 A mind that keeps its memory as markdown answers *"do I already know this?"*
 by re-reading everything it is: n new learnings against m existing ones is
@@ -394,10 +446,11 @@ called a *lane* and named `from-<slug>`; one Markdown file per note; a short
 header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; threads
 made by putting a note's id on a `Re:` line. The notes stay files anybody can
 read in a browser, and git is both the transport and the record. `nova-bus` is
-five verbs over that: it assigns ids that cannot collide, pushes with
-fetch-rebase-retry so no rejected push ever reaches a person, tells you what is
-addressed to you and still open, lets you say *heard* without writing a reply,
-and validates the whole thing. It has no opinion whatever about what a note says.
+six verbs over that: it prints the header a first note needs, assigns ids that
+cannot collide, pushes with fetch-rebase-retry so no rejected push ever reaches a
+person, tells you what is addressed to you and still open, lets you say *heard*
+without writing a reply, and validates the whole thing. It has no opinion
+whatever about what a note says.
 
 ### Install
 
@@ -511,7 +564,7 @@ cd ~/my-bus && git init -b main && git add -A && git commit -m 'the bus'
 nova-bus check --bus ~/my-bus --full
 ```
 
-### The five verbs
+### The six verbs
 
 Every input comes from a flag. There is no default bus, no default remote, no
 default branch and no default receipt word count; a missing one is exit 2 and
@@ -533,9 +586,24 @@ seconds and then refuses. Two benches on two checkouts is the case this tool is
 built for and retries through. Two of you on one checkout, writing one `OPEN`
 list between you, is not a race careful code can win.
 
-**`send`** — write a draft with a header and no `Date:` and no `Id:` line. A
-whole draft, which is the one thing the example bus cannot show you because
-everything on it has already been sent:
+**`draft`** — the header, printed, so a first note cannot be wrong about what
+the keys are or how a name is spelled here:
+
+```
+nova-bus draft --bus ~/bus --as Ada --to Bo --subject 'the gate' > draft.md
+```
+
+Its standard output is a **file** and nothing else — no `OK` line under it —
+so it redirects into a draft you then edit. `--as`, `--to` and `--cc` are
+resolved against the roster and `--re` against the bus; it writes no `Date:` and
+no `Id:`, because those are the tool's. It **refuses**, on stderr and all at
+once, a name the roster does not know, an `--as` with no lane, a `--re` naming
+nothing, and a `--subject` that would forge a second header line. See **First
+send** below.
+
+**`send`** — write a draft with a header and no `Id:` line. A whole draft,
+which is the one thing the example bus cannot show you because everything on it
+has already been sent:
 
 ```
 From: Ada
@@ -553,31 +621,36 @@ Windows job never ran at all.
 
 `From:`, `To:`, `Subject:` and a body are the whole of what is required; `Cc:`, `Re:`
 and `Kind:` are written only when the note has them, `Re: new` says *this starts
-a thread*, and `Date:` and `Id:` are the tool's to write and are refused in a
-draft. **Keep drafts OUTSIDE the bus directory** — `send` needs the bus's
-working tree clean but for the note it is about to write, so a draft saved inside
-it is exactly the unrelated change that refusal names. Then:
+a thread*, and `Date:` and `Id:` are the tool's to write — a draft's own `Date:`
+line is replaced and the run says so, and an `Id:` line is refused. **Keep
+drafts OUTSIDE the bus directory** — `send` needs the bus's working tree clean
+but for the note it is about to write, so a draft saved inside it is exactly the
+unrelated change that refusal names. Then:
 
 ```
 nova-bus send --bus ~/bus --file ~/drafts/draft.md \
   --remote origin --branch main
 ```
 
+`--as <name>` says who you are, and writes the `From:` line when the draft has
+not got one.
+
 It assigns the id, pastes the UTC date, works out the filename, commits under
 your identity from the roster, and pushes — fetching and rebasing up to
 `--attempts` times if somebody pushed first, waiting a little longer and a little
 differently between attempts so that two lines which collided do not collide
-again in step. It **refuses**: a draft that already
-carries `Date:` or `Id:` (the tool writes those, and will not quietly replace
-yours); an unknown header key; a recipient the roster does not know; a sender
-with no lane; a `Re:` naming something that is not on the bus; an empty body; a
-checkout that is dirty, on the wrong branch, or **ahead of the remote with
-somebody else's work** (a push publishes the branch, not the commit, so an
-unrelated local commit would ride along under a note's push — its own unpushed
-commits it recognises, by a `Nova-Bus:` trailer it writes on every commit, and
-carries into this push rather than refusing); a `--slug`, `--remote` or
-`--branch` that could be an option to git; and a conflict on a **note**, which it
-aborts and hands to you.
+again in step. It **refuses**: a draft that already carries `Id:` (the tool
+assigns it, and a note is sent once); an unknown header key; a recipient the
+roster does not know; a sender with no lane; a `Re:` naming something that is
+not on the bus; an empty body; a checkout that is dirty, on the wrong branch, or
+**ahead of the remote with somebody else's work** (a push publishes the branch,
+not the commit, so an unrelated local commit would ride along under a note's
+push — its own unpushed commits it recognises, by a `Nova-Bus:` trailer it
+writes on every commit, and carries into this push rather than refusing); a
+`--slug`, `--remote` or `--branch` that could be an option to git; and a conflict
+on a **note**, which it aborts and hands to you. Every refusal in a draft is
+reported in **one run**, one `SEND FAIL` line each, rather than the first of
+them.
 
 A conflict on one of the tool's **own** files does not reach you. Two benches of
 one lane sending at once collide on that lane's `INDEX`; two benches of one
@@ -604,7 +677,8 @@ open notes themselves, and `--full` lists them too. The listing is three groups 
 the notes that carry a question, a finding or a request; then what you have
 already said *heard* to and still owe an answer; then the bare acknowledgements —
 and every file it could not parse is named rather than dropped, on every run,
-whichever way you asked.
+whichever way you asked — unless it is dated behind your switch-day line, which
+makes it history rather than news; see `--legacy-before` below.
 
 `INBOX UNADDRESSED` is the quieter half of that. A note whose `To:` line resolves
 to nobody — `To: Team`, on a roster that has no Team — **parses**, so it is not
@@ -632,14 +706,20 @@ existed before this tool needs it once. It takes a UTC date `YYYY-MM-DD`, which
 means **midnight at its start**, or an RFC 3339 UTC instant like
 `2026-09-09T18:07:00Z`, and compares by **instant**: a note dated before the line
 is **not carried** on your open list and is **not listed**, appearing only inside
-the count on a single `INBOX LEGACY before=<date-or-instant> notes=<n>` line,
-which echoes back what you gave. Nothing is deleted, marked answered or changed —
-the notes are still on the bus and still answerable; what the line changes is
-your own open list. The line goes into your cursor exactly as you typed it, so
-every run after it honours it with no flag. Moving the line **earlier** is
-refused, because it would put the notes between the two back on your open list;
-do that with `--full`, which builds the list again from the whole bus. Moving it
-later needs nothing. See **the switch day** below.
+the count on a single `INBOX LEGACY before=<date-or-instant> notes=<n>
+unreadable=<m>` line, which echoes back what you gave. A file this tool **cannot
+parse** that is dated behind the line goes the same way, counted under
+`unreadable=` — fifteen hand-written notes from the week before a bus switched
+over are history, and naming them on every poll buries the inbox they are printed
+above. A file dated on or after the line, or with no readable date at all, is
+named on every run: the line never quiets a new note, or one it cannot date.
+`--full` lists every unreadable file whatever its date. Nothing is deleted,
+marked answered or changed — the notes are still on the bus and still answerable;
+what the line changes is your own open list. The line goes into your cursor
+exactly as you typed it, so every run after it honours it with no flag. Moving
+the line **earlier** is refused, because it would put the notes between the two
+back on your open list; do that with `--full`, which builds the list again from
+the whole bus. Moving it later needs nothing. See **the switch day** below.
 
 **`receipt`** — say *heard* without writing a reply:
 
@@ -677,6 +757,57 @@ nova-bus names --bus ~/bus
 
 It cannot fail on the bus's content; it **refuses** a roster it cannot read.
 
+### First send
+
+A new line's first note is a header written from memory of some other bus. The
+skeleton removes the guessing:
+
+```
+nova-bus draft --bus ~/bus --as Ada --to Bo --subject 'the gate' > draft.md
+```
+
+```
+From: Ada
+To: Bo
+Subject: the gate
+
+<the note goes here>
+```
+
+Write the note over the placeholder, and send it:
+
+```
+nova-bus send --bus ~/bus --file draft.md --as Ada --remote origin --branch main
+```
+
+**The four things a first send gets wrong, and what the tool does about each.**
+It does them and says so, one `SEND NOTE` line each, because a tool that quietly
+rewrites what you wrote teaches you nothing and cannot be checked:
+
+| what a first draft does | what `send` does now |
+|---|---|
+| opens with a markdown heading — `# On the merge queue` | the heading becomes the `Subject:` when the draft has none, and is not in the body (it is dropped, with a notice, when the draft has its own `Subject:`) |
+| carries a `Date:` line you pasted by hand | replaced by the date from the clock in UTC, and the notice quotes yours |
+| has no `From:` line, because on your own bus it was obvious | `--as <name>` writes it, in the spelling the roster holds — and a `From:` line naming somebody **else** is refused |
+| puts a key in markdown bold — `**Subject**:` — or leaves blank lines above the header | the asterisks come off; the blank lines are skipped |
+
+**The refusals that remain, and what each one wants.** Every one of them would
+otherwise be a guess about what you meant, and all of them are reported in one
+run, one line each:
+
+| the refusal | what it wants |
+|---|---|
+| a recipient the roster does not know | a name from `nova-bus names`, which lists every spelling this tool takes |
+| no `To:` line at all | a `To:` line — there is nobody to guess |
+| a key nobody knows, once any asterisks are off — `Branch:` | one of the eight keys, which the refusal lists |
+| a `Re:` naming nothing on this bus | an id, or the path of a note that exists; a slug is not a thread |
+| an `Id:` line | no `Id:` line: the tool assigns it, and a note is sent once |
+
+The tolerances are `send`'s alone. `inbox` and `check` still refuse every one of
+those shapes, because a file already on the bus is not a draft anybody is still
+editing, and a reader that quietly repaired one would be reporting a bus that
+does not exist.
+
 ### The output grammar
 
 Every line is one line, whatever a note's own text holds: every value is escaped,
@@ -703,7 +834,7 @@ SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
-INBOX LEGACY before=<date-or-instant> notes=<n>
+INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
 INBOX OPEN carrying=<n> heard=<m>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
@@ -857,9 +988,14 @@ under `--full`.
    unavoidable. An earlier line can only ever forgive fewer notes, never more.
 2. **`inbox --full --legacy-before "$SWITCH" --advance`**, once, for each
    reader. The old notes are left off that reader's open list and counted on one
-   `INBOX LEGACY` line; the line is recorded in their cursor, so every later run
+   `INBOX LEGACY` line — `notes=` for the ones that parse, `unreadable=` for the
+   ones nobody can — and the line is recorded in their cursor exactly as you
+   typed it, so every later run
    honours it with no flag. Nothing is deleted and no note is changed — an old
-   note is still on the bus, still readable, still answerable by id or path.
+   note is still on the bus, still readable, still answerable by id or path. This
+   full read still lists everything it found; **after the line the inbox is
+   quiet**, which is what every run from here on looks like: what has arrived,
+   and two counts for the history.
 3. **Run `check --full --rebuild-index` once.** It writes each lane's catalogue
    from the notes in it. A note that has an id and no catalogue line is only ever
    a warning — the notes are the record and the catalogue is a cache — but the
@@ -868,8 +1004,9 @@ under `--full`.
    and it is the size of the change.
 
 A note that says nowhere when it was written — no `Date:` line and no date at the
-front of its filename — is never forgiven and never left off an open list,
-because there is nothing to compare it against.
+front of its filename — is never forgiven and never left off an open list, and a
+file nobody can parse that says nowhere when it was written is still named on
+every run, because there is nothing to compare either against.
 
 Notes written before ids existed keep working throughout: they are addressed by
 **path** everywhere an id is taken, and `send` never rewrites an old note — it

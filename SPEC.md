@@ -5,14 +5,14 @@ what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
 instrument at the **register layer** — it classifies self-claims in prose, in two
-disjoint classes. `nova-memory`: five verbs at the **retrieval layer** — it answers *do I
+disjoint classes. `nova-memory`: six verbs at the **retrieval layer** — it answers *do I
 already know this?* from an index rebuilt out of the record, so the mind's
 judgment budget per new learning stops scaling with the size of the self — the
 tool's own run cost does not, and every run pays the build. Every check can say
 NO, and the test suite proves each one saying it. A check never seen failing is
 not a check. Two of nova-memory's verbs are checks in that sense; the other
-three assert nothing at all, and its section says which is which and why.
-`nova-bus`: five verbs at the **bus layer** — the only binary here that
+four assert nothing at all, and its section says which is which and why.
+`nova-bus`: six verbs at the **bus layer** — the only binary here that
 writes outside its own state, and the only one that runs another program (`git`).
 The bus it works on is a shared git repository of notes between several lines;
 what this takes out of it is the races a branch keyed by a clock produces — an id
@@ -145,7 +145,7 @@ completed run, pass or fail). `nova-bus`'s tokens are its verbs — `SEND`, `INB
 `RECEIPT`, `NAMES`, and `BUS` for its `check` verb — with the informational second
 tokens `NOTE`, `RECEIPT`, `ALREADY`, `NAME` and `GROUP`, all on stdout, all listed
 in its section. `nova-memory` adds its own informational second
-tokens the same way — `CAL`, `CAND`, `HIT`, `MISS`, `INFO`, `NOTE` — all on
+tokens the same way — `CAL`, `CAND`, `DEMO`, `HIT`, `MISS`, `INFO`, `NOTE` — all on
 stdout, all listed in its section.
 
 ---
@@ -1700,6 +1700,7 @@ preserves), and a read verb added later is fused by default, not by memory.
 ## nova-memory — membership as a lookup, never a scan
 
 ```
+nova-memory quickstart --root <dir> [--words <w>]... [--draft <file>] [--exclude <glob>]...
 nova-memory stats  --root <dir> [--exclude <glob>]...
 nova-memory search --root <dir> --channels <list> --k <n> [--exclude <glob>]... <words>...
 nova-memory check  --root <dir> --channels <list> --k <n> [--exclude <glob>]... <file|->
@@ -1734,8 +1735,8 @@ and the tool assumes nothing whatever about layout. Frontmatter `name:` and
 `type:` are carried into receipts when a file has them, surfaced and never
 invented.
 
-**Two verbs are checks; three assert nothing.** `verify` and `eval` are walls
-and exit 1 when they fail. `stats`, `search`, and `check` are reports: they
+**Two verbs are checks; four assert nothing.** `verify` and `eval` are walls
+and exit 1 when they fail. `quickstart`, `stats`, `search`, and `check` are reports: they
 exit 0 whenever they ran, exactly as `nova-fuse status` does, and for the same
 reason — answering IS the job. **Never gate on the exit code of `check`.** It
 hands you k receipts; the verdict is yours, and a tool that turned "this
@@ -1769,7 +1770,20 @@ k is the mind's budget and zero is not "unlimited". `--floor` is required on
 `eval`, in (0,1]. `--links` is required on `verify`. `--exclude` and
 `--exempt` are repeatable and start **empty**: every scope narrowing is the
 caller's, stated per run, the same law `nova-self-talk`'s skip list obeys.
-`.git` is never a corpus and is always skipped.
+`.git` is never a corpus and is always skipped. `quickstart` does not weaken
+this and is not an exception to it: it is an explicit verb that SAYS which
+channels and which k it used, on the command line it prints for every step and
+again in the sentence it ends on. Nothing it chose is remembered, inherited or
+applied to any other verb — the next run names its own.
+
+**A refusal reports every reason at once.** A first run is usually wrong about
+more than one thing, and a tool that answers one refusal per invocation turns
+that into a guessing game played one round at a time. Every missing required
+flag, every bad value on a flag that WAS given, and the positional-argument
+mistake are reported by the run that could not start, in one deterministic
+order: missing flags first, sorted, then the value checks in a fixed order.
+A flag nobody gave is reported once, as missing, and never a second time for
+the value it therefore does not have. Pinned by test.
 
 **A refusal names the next step, and refuses anyway.** The three flags a first
 run trips over — `--channels` read as a directory name, then a missing `--k`,
@@ -1780,9 +1794,44 @@ paragraph for `check`), and the corpus directory in the shape `--root <dir>`.
 The law is untouched: the exit code is still 2 and the message still says
 `refusing to guess`. What changes is who does the guessing — a refusal that
 names only what was wrong hands the guess to the reader, which is the thing
-this tool exists not to do. The usage banner ends in one runnable example per
-retrieval verb, and README's `### First run` shows both with their output; the
-sentences and the transcript's shape are pinned by test.
+this tool exists not to do. The usage banner ends in the `quickstart` line and
+one runnable example per retrieval verb, and README's `### First run` opens on
+a real `quickstart` transcript and then shows both verbs by hand; the
+sentences, the examples and both transcripts' shapes are pinned by test.
+
+### quickstart — the first run, which says what it chose
+
+**Reports** a whole first run: `stats`, then `search --channels bm25 --k 3`
+over `--words` (default: the corpus's three most frequent terms that are not
+function words), then `check --channels bm25 --k 2` over `--draft` (default:
+the corpus's own first paragraph, fed on stdin — the demonstration whose
+answer is known). Each step's command line is PRINTED above that step's
+output, and the printed line is the argv that ran, through the same dispatch a
+shell reaches, so a transcript cannot teach an invocation that does not work.
+
+```
+QUICKSTART OK root=<dir> steps=3 channels=bm25 k=3/2 words=<w> words-source=given|corpus-top-terms candidate=<file|corpus-first-paragraph>
+$ nova-memory <verb> --root <dir> ...
+QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: <file>:<para>
+QUICKSTART NOTE this used bm25 alone and k=3/2; those are choices, not defaults: see --channels and --k
+```
+
+**It is a verb, not a default.** The no-defaults law above is what makes a
+first run hard, and the answer is not to soften it for one caller: it is to
+make the choosing VISIBLE once. Every channel and every k this verb used is on
+a line the reader can copy and change, and the closing note says in words that
+they were chosen this once and are chosen by nobody the next time.
+The default words are the corpus's most COMMON terms, which are the weakest
+evidence BM25 has — which is exactly why the calibration band prints beside
+them.
+
+**Asserts nothing**, and exits 0 only when all three steps ran. A step that
+could not run ends the demonstration there, exit 2, naming the step; the
+closing note is not printed over a run that did not finish, because that note
+is the sentence a reader is meant to leave with. **Refuses (exit 2) when**
+`--root` is missing or unreadable, `--draft` is empty, a positional argument
+is given (the query words go after `--words`), or the corpus holds no
+indexable paragraph.
 
 ### The channels, and why the second one is off unless you ask
 
@@ -2098,7 +2147,8 @@ would be the most dangerous thing on the bus.
 ### The verbs
 
 ```
-nova-bus send --bus <dir> --file <path>|--stdin --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
+nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id>]
+nova-bus send --bus <dir> --file <path>|--stdin [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
 nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <date-or-instant>]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
@@ -2163,11 +2213,13 @@ commit is on the branch and the note is **not** on the bus.
 ### Output grammar
 
 ```
+DRAFT REFUSED: <reason>
+SEND NOTE <what a tolerance did to this draft>
 SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
-INBOX LEGACY before=<date-or-instant> notes=<n>
+INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
 INBOX OPEN carrying=<n> heard=<m>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
@@ -2192,6 +2244,21 @@ NAMES NAME name="<x>" lane=<lane|-> aliases="<a>";"<b>"
 NAMES GROUP name="<x>" members="<a>";"<b>"
 NAMES OK participants=<n> groups=<n> senders=<n>
 ```
+
+`draft` prints a **skeleton and nothing else** on stdout -- no `OK` line under it --
+because its stdout is a FILE: `nova-bus draft ... > draft.md` has to produce a
+draft. Everything it has to say instead of one is a `DRAFT REFUSED` on stderr,
+and it prints **every** refusal rather than the first.
+
+`SEND NOTE` is one tolerance, on stdout with the informational lines, printed
+before the `SEND OK` that follows it. There is one line per thing the tool did to
+the draft; a run that did nothing to a draft prints none. See **the first send**
+below.
+
+**A refusal prints EVERY problem in the draft, one line per reason**, and it is
+still one `SEND FAIL` line each. A refusal that named the first of three mistakes
+cost the writer three runs to be told what the tool already knew on the first,
+and a person reading their own draft can fix three things as easily as one.
 
 `SCOPE` is the first line of every `inbox` and every `check`, and it says what the
 run LOOKED AT before it says what it found: `mode=full` walked the bus,
@@ -2220,15 +2287,20 @@ want the whole picture. Nothing is hidden either way: `carrying=` and `heard=`
 are on this line, the same counts are on `INBOX OK`, and the entries themselves
 are in `OPEN`, which is a file a person can open. `INBOX UNREADABLE` is printed
 whichever way the run was asked, because a file nobody can read is not a listing
-choice.
+choice — the one exception being a file dated behind the switch-day line, which
+is history and is counted rather than named; see `INBOX LEGACY` below.
 
 `INBOX LEGACY` is printed by every `inbox` run that has a switch-day line in
-force -- from the flag or from the cursor -- and `notes=` is how many notes that
-run left OFF the open list for being older than the line. It is a count and never
-a listing: the whole reason the line exists is that six hundred of them are not a
-listing anybody reads. Like `changed=`, it counts what THIS run looked at, so it
-is the whole bus under `--full` and the change set plus the open list under
-`--since`.
+force -- from the flag or from the cursor -- and it carries TWO counts, because
+they are two different facts. `notes=` is how many notes that run left OFF the
+open list for being older than the line; `unreadable=` is how many FILES it left
+off for the same reason -- files this tool cannot parse, dated behind the line,
+which are not named one by one either. A note taken as read and a file nobody
+could read in the first place are not the same news, and one number would say
+neither. Both are counts and never listings: the whole reason the line exists is
+that six hundred of them are not a listing anybody reads. Like `changed=`, they
+count what THIS run looked at, so they are the whole bus under `--full` and the
+change set plus the open list under `--since`.
 
 `REFUSED` is a `FAIL` with no path slot, because what it refuses is the state of
 the CHECKOUT rather than anything in the note: it is the branch-ahead guard
@@ -2236,6 +2308,10 @@ below, a cursor that is no longer on this history, or a `--legacy-before` that
 would move a reader's line earlier. `INBOX UNREADABLE` names a file on the bus this tool cannot parse — not
 necessarily one addressed to the caller, because a file with no `To:` line
 cannot say who it was for, and saying so is the honest half of not dropping it.
+The one file it does not name per run is one dated BEHIND the switch-day line on
+an incremental read: that is history, and it is counted on `INBOX LEGACY`
+instead. A file dated on or after the line, or with no readable date at all, is
+named on every run, and `--full` lists every unreadable file whatever its date.
 `INBOX UNADDRESSED` names a note that parses and reaches no reader at all; see
 above.
 
@@ -2406,13 +2482,93 @@ characters, which is not a guess about what the writer meant but about what they
 cannot have meant: the longest key here is `Subject`. Nothing about which files
 fail changed — these are the same refusals with the fix in them.
 
-`send` **refuses a draft that already carries `Date:` or `Id:`** rather than
-quietly replacing the author's line: the tool pastes the date from the clock in
-UTC, assigns the id, and a note is sent once.
+`send` **replaces a draft's own `Date:` line, and says so** on a `SEND NOTE`
+line: the tool pastes the date from the clock in UTC, and the notice is what
+keeps the replacement from being quiet. (It refused, once, on the grounds of not
+quietly replacing the author's line -- which cost every first send a run and
+taught the writer nothing they could not have been told while the note went.) An
+`Id:` line is still a **refusal**: the tool assigns the id, and a note is sent
+once, so a draft carrying one is a note being sent twice.
 
 The filename is `<UTC minute>Z-<slug>-<the id's hash half>.md` in the sender's
 lane. The minute and the slug are the bus's existing convention and are for
 people; the hash half is there because the minute alone collided.
+
+### The first send — `draft`, and what `send` tolerates
+
+A new line's first note is a header written from memory of some other bus, and
+this tool's answer to that was a refusal per mistake, one run each. One real
+first send opened with a markdown heading, carried a `Date:` line the writer had
+pasted by hand for years, and had no `From:` line at all, because on their own
+bus who was writing was obvious. It was refused on the `Date` line, and told
+nothing about the other two.
+
+**`draft` prints the header, so a first draft cannot be wrong about the two
+things a first draft is always wrong about**: what the keys are, and how a name
+is spelled on this bus.
+
+```
+nova-bus draft --bus ~/bus --as Ada --to Bo --subject 'the gate' > draft.md
+```
+
+```
+From: Ada
+To: Bo
+Subject: the gate
+
+<the note goes here>
+```
+
+`--as`, `--to` and `--cc` are resolved against the roster by the same rules a
+`To:` line is resolved by, and `--re` against the bus; the line is then written
+as the caller wrote it, because a group is a name on this bus and an instance
+qualifier belongs on the name it qualifies. `--as` must have a lane. With no
+`--subject`, the subject is the visible placeholder
+`<one line saying what this note is about>`, so a skeleton sent unedited says so
+rather than looking like a note. It writes no `Date` and no `Id`: those are the
+tool's. Refusals are `DRAFT REFUSED` on stderr, all of them, exit 2 — a bad
+invocation rather than a bus that said no, since there is no note yet.
+
+**`send` tolerates the shapes a house style arrives in**, and says on a
+`SEND NOTE` line what it did to the draft. The rule every tolerance here is held
+to is the rule the address list is held to: **it may only do what a person
+reading the draft would do without guessing.**
+
+| the shape | what `send` does | the notice |
+|---|---|---|
+| blank lines above the header | skips them | `a blank line stood above the header; it is skipped, and the header is read from the first Key: value line` (plural: `<n> blank lines stood above the header; they are skipped, …`) |
+| a leading `# heading`, and no `Subject:` line | the heading becomes the Subject and is not in the body | `the first line was a markdown heading, so it is this note's Subject ("<heading>"), and it is not in the body` |
+| a leading `# heading` over a draft that has its own `Subject:` | the heading is dropped | `the first line was the markdown heading "<heading>" and this draft has its own Subject line; the heading is not in the note` |
+| a `Date:` line | replaced with the date from the clock | `this draft carried a Date line ("<yours>"); send writes the date from the clock, so yours is replaced, and says so` |
+| no `From:` line, with `--as <name>` | writes the From line, in the roster's spelling | `this draft had no From line; --as says you are "<name>", so send wrote "From: <name>"` |
+| a key in markdown bold — `**Subject**:` | takes the asterisks off | ``line <n>: the key "**Subject**" was in markdown bold; headers are plain `Key: value`, so it is read as "Subject:"`` |
+
+**And the refusals that stay**, because each of them would be a guess about what
+the writer meant rather than about what they cannot have meant:
+
+| what is wrong | what the refusal wants |
+|---|---|
+| a recipient the roster does not know | a name from `nova-bus names`; the refusal lists every known name |
+| no `To:` line at all | a `To:` line; there is nobody to guess |
+| a key nobody knows, once any asterisks are off — `Branch:` | one of the eight keys, which the refusal lists |
+| a `Re:` naming nothing on this bus | an id, or a path that exists; a slug is not a thread |
+| an `Id:` line | no `Id:` line; the tool assigns it |
+| a `From:` line naming somebody other than `--as` | one of the two; a line does not send another's note |
+
+A refusal reports **every** problem in the draft, one `SEND FAIL` line each --
+with one staging, which is deliberate: a header line that will not PARSE is
+reported with every other line that will not parse, and the checks that need a
+header -- who the recipients resolve to, whether there is a subject, whether the
+`Re` names anything -- wait for a run that has one. Telling somebody their note
+has no `To:` line when their `To:` line is there and misspelled would be a
+refusal about nothing.
+
+Two things hold this together. The tolerances are the **send side only**: every
+reader on the bus — `inbox`, `check` — still refuses these shapes, because a
+file already on the bus is not a draft anybody is still editing, and a reader
+that quietly repaired one would be reporting a bus that does not exist. And a
+line number in a refusal is a line of **the file the writer wrote**, not of what
+was left after the tolerances dropped a `Date` line and two blanks.
 
 ### The id scheme, and why this one
 
@@ -2935,6 +3091,19 @@ the list when the file parses, becoming an ordinary entry if it turns out to be
 addressed to me and going quietly if it is not, or when I receipt it, which is how
 a reader says *I have seen this file* about something with no id to answer.
 
+**Unless it is behind the switch-day line**, in which case it is not carried, not
+re-parsed and not named — it is counted, with the old notes, on `INBOX LEGACY`'s
+`unreadable=`. A live inbox printed fifteen `INBOX UNREADABLE` lines on every
+poll for notes written by hand days before that bus switched over: a markdown
+heading first, a `**To**`, a `Branch:` key, a sentence where the header goes.
+They are history, they will never be fixed, and naming them once per run buries
+the inbox they are printed above — the same listing-nobody-reads failure the line
+exists to stop, arriving by a third door. The line is drawn on such an entry
+BEFORE the parse it would otherwise cost, so the fifteen are not opened either. A
+file dated on or after the line, and a file whose date cannot be read at all, is
+carried and named exactly as above: the tool never quiets a note it cannot date,
+and never quiets a new one.
+
 **Deleting one of the three is not symmetric**, and an earlier revision of this
 document said it was. `CURSOR` alone: delete it and the next run is a full one,
 which is the adoption path and costs one full read. `INDEX` alone: delete it and
@@ -2981,8 +3150,8 @@ before the line:
 
 - is **not carried** on the reader's `OPEN` list, so the cursor is not dragging
   it along and no later run has to look at it;
-- is **not listed**, on a `--full` read or any other — it appears only inside the
-  count on one `INBOX LEGACY before=<date-or-instant> notes=<n>` line, which
+- is **not listed** — it appears only inside the count on one
+  `INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>` line, which
   echoes the line back exactly as it was given;
 - is **not changed**. Nothing is deleted, nothing is marked answered, nothing is
   written to anybody else's lane. The notes are still on the bus, still
@@ -3008,6 +3177,18 @@ guess — and the refusal names that command.
 rule the check tolerance uses: a file that cannot say when it was written cannot
 claim to predate anything, and the safe direction for a note nobody can date is
 to carry it.
+
+**The line reaches the UNREADABLE files too**, and it did not at first. A file
+this tool cannot parse, dated behind the line by the same rule — the header
+`Date:` when it can be read, and otherwise a leading `YYYY-MM-DD` in the filename
+— is left off the open list, is not named, is not even opened, and is counted on
+`unreadable=`. A file dated on or after the line, or with no readable date at
+all, is named on every run as it always was. **`--full` lists every unreadable
+file on the bus whatever its date**, and this is the one place the line and the
+listing part company: a full read is the whole picture, asked for on purpose, and
+the quiet belongs to the incremental run a reader polls with. The count is on the
+`INBOX LEGACY` line of a full read too, because the open list a full read WRITES
+is still shaped by the line.
 
 **Why the instant exists, measured on the hour a family of five switched.** They
 drew the line at TOMORROW's date, reasonably — nothing written before tomorrow
@@ -3041,7 +3222,10 @@ happening now.
 The first says what the history holds and forgives its headers; the second draws
 the line, gives you a cursor, and hands you an inbox that is what has arrived
 SINCE. Every run after that is `inbox --as <you> --advance …` with no flag at
-all.
+all, and **after the line the inbox is quiet**: not one line per old note, not
+one per old file nobody can parse, only the `INBOX LEGACY` counts and whatever
+has actually arrived. What the line never quiets is anything in front of it, or
+anything it cannot date.
 
 **What is still O(m), stated rather than left to be discovered.** The claim above
 is about *note files parsed*, and it holds exactly: an `inbox` run is **O(new)
@@ -3367,8 +3551,8 @@ the callers, and it is the part of this design most likely to rot quietly.
 
 `nova-memory` is a lens on the record, not a memory. It bounds what a mind
 must read before deciding; it decides nothing, writes nothing, and proves
-nothing about whether the corpus it indexed is worth remembering. Three of
-its five verbs cannot fail by design, and the two that can — `verify` and
+nothing about whether the corpus it indexed is worth remembering. Four of
+its six verbs cannot fail by design, and the two that can — `verify` and
 `eval` — are only as good as the globs and the gold rows a line writes for
 itself. Its own STATUS paragraph says the rest: run-proven on one line, value
 unproven as a general claim, and the harness ships so the next line can

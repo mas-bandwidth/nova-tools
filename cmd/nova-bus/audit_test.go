@@ -31,6 +31,12 @@ var messageBusAudit = audit.Config{
 		"main.go|attempts|f.verb":       "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|gitTimeoutFlag|f.verb": "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|legacyLine|verb":       "the verb's own name, the literals \"inbox\" and \"check\" at the two call sites in this file",
+		"main.go|cmdDraft|skeleton": "the skeleton itself, printed to stdout VERBATIM because it is a FILE and not an event line: a header of " +
+			"several lines that a person redirects into a draft, and an escape would fold it into one unusable line -- the same mistake " +
+			"as the escaped rebase transcript below. Every value in it has been checked before this line runs: From is the roster's own " +
+			"spelling, To, Cc and every Re resolved against the roster and the bus, and --subject passed bus.OneLine, which refuses a " +
+			"line break or a control character. Nothing unresolved reaches here: an unresolved anything is a DRAFT REFUSED on stderr and " +
+			"this line never runs. TestDraftPrintsASkeletonTheParserReadsBack is the behavioural test for this site.",
 		"main.go|printTranscript|tr": "git's own transcript, printed to stderr VERBATIM and deliberately not through the escape. " +
 			"It is not an event line: the escaped, one-line SEND/RECEIPT/INBOX FAIL above it is, and this is the text a person " +
 			"opened the terminal to read. Escaping it is what this change removes -- a forty-line rebase transcript rendered as " +
