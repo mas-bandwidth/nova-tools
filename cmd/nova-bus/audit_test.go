@@ -33,6 +33,13 @@ var messageBusAudit = audit.Config{
 	Imports: []string{
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`, `"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
+		// version.go, and the reason each one cannot write past the escape: runtime
+		// answers GOOS, GOARCH and Version and holds no writer at all; runtime/debug
+		// is read here for ReadBuildInfo only, and its printing half (PrintStack,
+		// SetTraceback) writes to a stream this binary never hands it. Both values
+		// reach the line through oneline.Field like any other, which is why neither
+		// appears in Exempt above.
+		`"runtime"`, `"runtime/debug"`,
 	},
 	MinClassified: 140,
 }

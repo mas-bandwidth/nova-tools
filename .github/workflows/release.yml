@@ -1,0 +1,173 @@
+# Releases for nova-tools: a tag becomes binaries somebody else can run.
+#
+# Why this exists: `go install` is a fine way to get these tools and it is the first way
+# the README offers, but it needs a Go toolchain, and the people most likely to be handed
+# `nova-check` or `nova-bus` are being handed them to run against their own repository
+# rather than to build. Until now there was nothing to hand them: the only artifact of a
+# release was a tag, and a tag is a claim about source.
+#
+# THE TEST JOB RUNS FIRST AND THE RELEASE JOB NEEDS IT. A tag can be pushed to any commit,
+# including one no CI run ever saw and one that never passed on Windows -- and ci.yml's own
+# opening argument is that a claim of tested is what stops anyone checking. So the same
+# three-platform test job runs here on the tagged tree, and a red one means no release
+# exists at all rather than a release nobody vouched for.
+#
+# ONE RUNNER BUILDS EVERYTHING, rather than a matrix of five. Go cross-compiles from any
+# host with no toolchain to install, so the only thing a matrix would buy is parallelism,
+# and it would cost the property that matters here: SHA256SUMS is computed on the one
+# machine that holds every artifact, over the whole shipped set, in the same step that
+# uploads it. Assembling that file from five uploads would mean five artifact round-trips
+# and a merge step, each of which is a place for the checksum file and the binaries to
+# disagree about what shipped.
+#
+# The dry run of this same cross-build is a job in ci.yml, on every pull request, so a
+# target that stops compiling is a red PR rather than a red tag -- a tag being the one
+# thing here that cannot be quietly amended and pushed again.
+
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  # NOT cancel-in-progress: a cancelled release leaves a tag with a partial set of binaries
+  # attached, which is the one state worse than no release. Two tags are two groups.
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    # Deliberately the same shape as ci.yml's test job, on the tagged tree. Three operating
+    # systems for the reason stated there: the platforms genuinely differ, and the tests
+    # that cannot run on Windows skip there with that reason named.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: build
+        run: go build ./...
+
+      - name: vet
+        run: go vet ./...
+
+      - name: test
+        run: go test -race ./...
+
+  release:
+    needs: test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # The only job in this repository that writes anything. It is scoped to this job
+      # rather than the file, so the test job above -- which runs the tagged tree's own
+      # code -- has read only.
+      contents: write
+    env:
+      # Read once, from the ref that triggered the run, and passed to every step as an
+      # environment variable rather than interpolated into a shell line: a `${{ }}` inside
+      # a run block is pasted into the script before bash sees it, so a ref carrying shell
+      # syntax would be executed rather than quoted.
+      TAG: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+
+      - name: the tag has the shape the version stamp assumes
+        shell: bash
+        run: |
+          case "$TAG" in
+            v*) ;;
+            *) echo "refusing: $TAG is not a v-prefixed tag"; exit 1 ;;
+          esac
+
+      - name: build every shipped tool for every shipped platform
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          # cmd/*/ rather than a list, so a tool added to this repository ships without
+          # anyone remembering this file, and a tool that must NOT ship is excluded here
+          # in one visible place rather than by omission from a list nobody rereads.
+          built=0
+          for target in "linux amd64" "linux arm64" "darwin arm64" "darwin amd64" "windows amd64"; do
+            set -- $target
+            goos=$1; goarch=$2; ext=""
+            [ "$goos" = windows ] && ext=".exe"
+            for dir in cmd/*/; do
+              name=$(basename "$dir")
+              # -trimpath so the binary holds no path from this runner; -s -w because a
+              # symbol table nobody has the source layout for is only size. -X stamps the
+              # tag into main.version, which is read by `nova-bus version`; the linker
+              # ignores it silently for a tool that has no such var, which is why the
+              # assertion below runs the binary rather than trusting the flag.
+              GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build \
+                -trimpath -ldflags "-s -w -X main.version=${TAG}" \
+                -o "dist/${name}_${TAG}_${goos}_${goarch}${ext}" "./${dir%/}"
+              built=$((built + 1))
+            done
+          done
+          [ "$built" -gt 0 ] || { echo "cmd/ matched nothing: this release would ship an empty set"; exit 1; }
+          [ -f "dist/nova-bus_${TAG}_linux_amd64" ] || { echo "nova-bus is not in the shipped set"; exit 1; }
+          ls -l dist
+
+      - name: the binaries report the tag they were built from
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The runner is linux/amd64, so one of the artifacts is directly runnable here.
+          # This is the whole check on the -X stamp: the flag is silently ignored when the
+          # symbol is missing or renamed, so a release could otherwise carry binaries that
+          # answer `devel` while the release page says v1.2.3 -- and the one question this
+          # verb exists to answer is which build somebody is running.
+          bin="dist/nova-bus_${TAG}_linux_amd64"
+          set +e; out=$("$bin" version 2>&1); rc=$?; set -e
+          if [ "$rc" -ne 0 ]; then
+            echo "\`nova-bus version\` exited $rc: $out"
+            echo "if this says 'unknown subcommand', the verb is not wired into main.go's dispatch yet"
+            exit 1
+          fi
+          case "$out" in
+            "nova-bus $TAG linux/amd64 go"*) echo "ok: $out" ;;
+            *) echo "want 'nova-bus $TAG linux/amd64 go...', got: $out"; exit 1 ;;
+          esac
+
+      - name: SHA256SUMS over the whole shipped set
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Written outside dist/ and moved in, so the file cannot list itself, and
+          # verified immediately: a checksum file nobody has ever checked is a file whose
+          # first reader is the person it was supposed to reassure.
+          (cd dist && sha256sum -- *) > SHA256SUMS
+          mv SHA256SUMS dist/
+          (cd dist && sha256sum -c SHA256SUMS)
+          cat dist/SHA256SUMS
+
+      - name: create the release and attach every artifact
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # --verify-tag: gh will otherwise CREATE a tag that does not exist, which on a
+          # rerun with a typo'd ref would publish a release for a commit nobody tagged.
+          gh release create "$TAG" \
+            --verify-tag \
+            --title "$TAG" \
+            --generate-notes \
+            dist/*

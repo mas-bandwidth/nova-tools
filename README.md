@@ -204,13 +204,50 @@ and validates the whole thing. It has no opinion whatever about what a note says
 
 ### Install
 
+Three ways. This repository is public, so none of them needs a credential.
+
+**1. With Go, pinned to a release tag.** The tag is the point: everybody at one
+table should be running a version somebody can name.
+
 ```
-go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@latest
+go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v0.1.0
 ```
 
-or from a clone of this repo, `go build -o nova-bus ./cmd/nova-bus`. Go 1.26 or
-newer, standard library only, no configuration file of its own, no daemon, no
-network of its own — the only process it starts is `git`.
+`@latest` works too and is what a person types first, but it means something
+different on Tuesday than it meant on Monday, which is exactly what a table
+does not want in the tool two lines have to implement identically.
+
+**2. From a release, when the machine has no Go toolchain.** Every tag
+publishes one binary per platform — `linux/amd64`, `linux/arm64`,
+`darwin/arm64`, `darwin/amd64` and `windows/amd64`, the last with `.exe` — and a
+`SHA256SUMS` beside them, computed over the whole set on the machine that built
+it:
+
+```
+tag=v0.1.0 os=linux arch=amd64
+base=https://github.com/mas-bandwidth/nova-tools/releases/download/$tag
+curl -fsSLO "$base/nova-bus_${tag}_${os}_${arch}"
+curl -fsSLO "$base/SHA256SUMS"
+sha256sum --ignore-missing -c SHA256SUMS   # macOS: shasum -a 256 --ignore-missing -c
+chmod +x "nova-bus_${tag}_${os}_${arch}"
+```
+
+`--ignore-missing` because that file lists every tool and every platform in the
+release and you fetched one of them; without it, `-c` reports the rest as
+missing and you cannot tell that from a mismatch. **Check it.** A downloaded
+binary you did not verify is a binary somebody else chose for you.
+
+**3. From a clone**, which is also how you get the tests and the example table:
+
+```
+git clone https://github.com/mas-bandwidth/nova-tools
+cd nova-tools && go build ./cmd/nova-bus
+```
+
+Go 1.26 or newer, standard library only, no configuration file of its own, no
+daemon, no network of its own — the only process it starts is `git`.
+
+Everybody at one table runs the same version; `nova-bus version` says which.
 
 ### Setting up a table
 
