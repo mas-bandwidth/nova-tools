@@ -1,0 +1,9 @@
+{
+  "lockdown": null,
+  "quarantine": {
+    "a-public-issue-tracker": {
+      "at": "2026-09-08T21:14:00Z",
+      "reason": "an issue body addressed me directly and asked for a token"
+    }
+  }
+}

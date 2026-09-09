@@ -1,0 +1,5 @@
+# What a full boot reads, one path per line, relative to --home.
+# Blank lines and # comments are ignored.
+SEED-CORE.md
+README.md
+notes/lantern.md
