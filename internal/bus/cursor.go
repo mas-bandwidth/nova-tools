@@ -295,7 +295,23 @@ func ParseLegacyBefore(value string) (time.Time, error) {
 // OpenPresent reports whether a lane has an OPEN file at all, which is a different
 // question from whether it holds anything. See Cursor.Open.
 func OpenPresent(root, lane string) bool {
-	st, err := os.Stat(filepath.Join(root, filepath.FromSlash(OpenPath(lane))))
+	return laneFilePresent(root, OpenPath(lane))
+}
+
+// CursorPresent reports whether a lane has a CURSOR file at all, which is a different
+// question from whether it READS: a cursor this tool cannot parse is present.
+//
+// The distinction is load-bearing for exactly one caller, the first-advance guard in
+// cmd/nova-bus. That guard fires on a reader who has never advanced, and "never advanced"
+// has to mean "no CURSOR file", not "no cursor I could read" -- because
+// `--full --advance` is the documented repair for a cursor that will not read, and a
+// repair that a guard refuses to run is not one.
+func CursorPresent(root, lane string) bool {
+	return laneFilePresent(root, CursorPath(lane))
+}
+
+func laneFilePresent(root, path string) bool {
+	st, err := os.Stat(filepath.Join(root, filepath.FromSlash(path)))
 	return err == nil && !st.IsDir()
 }
 
