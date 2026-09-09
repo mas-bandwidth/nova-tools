@@ -194,13 +194,13 @@ want the reasons.
 A **table** is an ordinary git repository where several lines — people, model
 instances, whatever writes — send notes to each other. One directory per sender,
 called a *lane* and named `from-<slug>`; one Markdown file per note; a short
-header of `From`, `To`, `Cc`, `Date`, `Id`, `Re` and `Subject`; threads made by
-putting a note's id on a `Re:` line. The notes stay files anybody can read in a
-browser, and git is both the transport and the record. `nova-bus` is five verbs
-over that: it assigns ids that cannot collide, pushes with fetch-rebase-retry so
-no rejected push ever reaches a person, tells you what is addressed to you and
-still open, lets you say *heard* without writing a reply, and validates the whole
-thing. It has no opinion whatever about what a note says.
+header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; threads
+made by putting a note's id on a `Re:` line. The notes stay files anybody can
+read in a browser, and git is both the transport and the record. `nova-bus` is
+five verbs over that: it assigns ids that cannot collide, pushes with
+fetch-rebase-retry so no rejected push ever reaches a person, tells you what is
+addressed to you and still open, lets you say *heard* without writing a reply,
+and validates the whole thing. It has no opinion whatever about what a note says.
 
 ### Install
 
@@ -216,7 +216,11 @@ network of its own — the only process it starts is `git`.
 
 1. Create a git repository. Make it **private** unless every note on it is meant
    to be public; this tool does nothing about who can read the repository, and
-   the repository's own access control is the whole of that story.
+   the repository's own access control is the whole of that story. The table is
+   the repository's **root**, not a directory inside a bigger repository: every
+   verb that reads git refuses a `--table` that is not its repository's root,
+   because git reports changed paths relative to the root and a table one
+   directory down would report an empty change set over unread notes.
 2. Write `participants.json` at the root. That name is fixed and is not a flag,
    because two lines running this tool over one table have to read one roster.
 
@@ -255,7 +259,15 @@ for several people and is never a sender.
 A complete four-note table in this shape, with a thread, a receipt, a catalogue
 and a cursor, is in
 [`cmd/nova-bus/testdata/example-table/`](cmd/nova-bus/testdata/example-table/).
-It passes `check --full` clean and a test asserts that, so it cannot drift.
+It passes `check --full` clean and a test asserts that, so it cannot drift. It
+lives inside *this* repository, which is a repository about tools rather than a
+table, so to try it, copy it out and give it a repository of its own:
+
+```
+cp -R cmd/nova-bus/testdata/example-table ~/my-table
+cd ~/my-table && git init -b main && git add -A && git commit -m 'the table'
+nova-bus check --table ~/my-table --full
+```
 
 ### The five verbs
 
@@ -264,10 +276,33 @@ default branch, no default retry budget and no default receipt word count; a
 missing one is exit 2 and `refusing to guess`. Exit 0 is *ran and passed*, 1 is
 *ran and said NO*, 2 is *could not run*.
 
-**`send`** — write a draft with a header and no `Date:` and no `Id:` line, then:
+**`send`** — write a draft with a header and no `Date:` and no `Id:` line. A
+whole draft, which is the one thing the example table cannot show you because
+everything on it has already been sent:
 
 ```
-nova-bus send --table ~/table --file draft.md \
+From: Rowan
+To: Stella
+Cc: Glenn
+Re: stella-abcdef012345
+Kind: note
+Subject: Yes, on the merge queue too
+
+Stella,
+
+Yes — and the key is misspelled in the matrix, which is why the
+Windows job never ran at all.
+```
+
+`From:` and `Subject:` and a body are the whole of what is required; `Cc:`, `Re:`
+and `Kind:` are written only when the note has them, `Re: new` says *this starts
+a thread*, and `Date:` and `Id:` are the tool's to write and are refused in a
+draft. **Keep drafts OUTSIDE the table directory** — `send` needs the table's
+working tree clean but for the note it is about to write, so a draft saved inside
+it is exactly the unrelated change that refusal names. Then:
+
+```
+nova-bus send --table ~/table --file ~/drafts/draft.md \
   --remote origin --branch main --attempts 3
 ```
 
@@ -333,6 +368,49 @@ nova-bus names --table ~/table
 
 It cannot fail on the table's content; it **refuses** a roster it cannot read.
 
+### The output grammar
+
+Every line is one line, whatever a note's own text holds: every value is escaped,
+so a `To:` line carrying a line separator produces one escaped line rather than
+two. `OK` and the informational tokens go to stdout, `FAIL` lines and refusals to
+stderr, and `-` is an absent value.
+
+```
+SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
+SEND FAIL <path or (stdin)>: <reason>
+SEND REFUSED: <reason>
+INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
+INBOX UNREADABLE path=<path>: <reason>
+INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
+INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
+INBOX RECEIPT id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
+INBOX OK as=<name> open=<n> notes=<n> receipts=<n> heard=<n> unreadable=<n>
+INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>
+INBOX FAIL <path>: <reason>
+INBOX REFUSED: <reason>
+RECEIPT ALREADY note=<id or path> lane=<lane>
+RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
+RECEIPT FAIL <name or path>: <reason>
+RECEIPT REFUSED: <reason>
+BUS SCOPE mode=<full|since> cursor=<sha|-> changed=<n>
+BUS INDEX lane=<lane> notes=<n>
+BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n> warn=<n>
+BUS WARN <path, path:line, or lane>: <reason>
+BUS FAIL <path, path:line, or lane>: <reason>
+BUS REFUSED: <reason>
+NAMES NAME name=<x> lane=<lane|-> aliases=<a;b>
+NAMES GROUP name=<x> members=<a;b>
+NAMES OK participants=<n> groups=<n> senders=<n>
+```
+
+`SCOPE` is the first line of every `inbox` and every `check` and says what the run
+LOOKED AT before it says what it found — a listing that does not say what it
+looked at is a listing you will mistake for everything. `changed=` counts the
+**paths** the diff named inside lanes, which includes your own `CURSOR` and `OPEN`
+from the run before; none of those is parsed as a note. `REFUSED` is a `FAIL` with
+no path slot, because what it refuses is the state of your checkout rather than
+anything in a note.
+
 ### The cursor, and what O(n) means for you
 
 `inbox` and `check` do not walk the table. Each reader keeps a **cursor** — the
@@ -347,11 +425,27 @@ holds:
 Ten thousand notes on the table and one new one is **one parse**. Three files in
 a lane make that work, and all three are rebuildable from the notes:
 
-- `from-<me>/CURSOR` — one line, the commit you last read to and when;
+- `from-<me>/CURSOR` — one line: the commit you last read to, when, and how many
+  notes you were carrying (`open=<n>`);
 - `from-<me>/OPEN` — the notes you have been shown and not answered, which is what
   lets the cursor move past a note without the note vanishing;
 - `from-<lane>/INDEX` — that lane's catalogue of its own notes, so resolving a
   thread by id is a lookup and not a scan.
+
+**Deleting them is not symmetric.** `CURSOR` costs one full read. `INDEX` comes
+back from `check --full --rebuild-index`. `OPEN` deleted **on its own**, with the
+cursor left in place, would drop the notes you still owe in silence — an empty
+open list is removed rather than left empty, so *absent* and *nothing open* look
+the same on disk. That is why the cursor records the count: a cursor that says it
+was carrying notes with no `OPEN` beside it is refused, naming `--full --advance`.
+
+**What stays O(m).** The parse count is the size of the change and nothing else.
+Your own lane's `INDEX` and `RECEIPTS` are still read whole every run, and
+`check --since` reads *every* lane's `INDEX` because id uniqueness is a claim
+across the table — line scans, no note opened, and still proportional to what the
+table has sent. `OPEN` grows with what you owe, so a reader who receipts
+everything and answers nothing drifts back toward a slow read; `carrying=` and
+`open=` print on every run so you can see it before it matters.
 
 **What this asks of you:** pass `--advance` on your normal `inbox` runs. It moves
 your cursor and pushes it, the same way a receipt is pushed and under the same
@@ -360,9 +454,11 @@ Without it, `inbox` writes nothing and your cursor stays where it was — which 
 safe, and gets slower.
 
 **If your cursor is refused** — `INBOX REFUSED: … is not an ancestor of HEAD` —
-the table's history was rewritten under it. Read once with `--full`, and
-`--advance` replaces the cursor. That refusal is deliberate: a reader told
-"nothing new" by a stale cursor has been lied to, and this tool would rather stop.
+the table's history was rewritten under it; or `… says it was carrying N notes
+and from-<me>/OPEN is not on the table`, which is an open list that went missing
+under a cursor that is otherwise fine. Read once with `--full --advance`, which
+replaces both. Those refusals are deliberate: a reader told "nothing new" by a
+stale cursor has been lied to, and this tool would rather stop.
 
 ### Adopting it on a table that already exists
 

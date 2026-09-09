@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -37,7 +38,16 @@ import (
 // None of the three is authoritative about anything. A note is on the table because the
 // note is on the table; these files say only what one reader has already seen and what one
 // lane has already written, and every one of them can be rebuilt from the notes
-// (`check --full --rebuild-index`) or simply removed, which costs a reader one full run.
+// (`check --full --rebuild-index`) or removed.
+//
+// REMOVING THEM IS NOT SYMMETRIC, and the first version of this comment said it was.
+// Deleting CURSOR costs one full read and nothing else. Deleting INDEX costs a rebuild.
+// Deleting OPEN ALONE loses something: the cursor stays valid, so the next run is a cheap
+// one over a change set that no longer holds the notes this reader was carrying, and they
+// are dropped with `open=0` printed as though nothing were owed. That is why the cursor
+// carries the count it was written with (see Cursor.Open) and why an OPEN file that has
+// gone out from under a counted cursor is a refusal naming `--full --advance`, rather than
+// a silence.
 const (
 	// CursorName is the reader's place to stand: the commit they last read to.
 	CursorName = "CURSOR"
@@ -68,6 +78,20 @@ type Cursor struct {
 	Commit string
 	// Stamp is when they read it, for a person reading the file. Nothing computes from it.
 	Stamp string
+	// Open is how many notes the run that wrote this cursor was carrying, and Counted says
+	// whether the file carried the field at all.
+	//
+	// It is the ONE thing in this file that another file's absence is checked against, and
+	// it is here because deleting OPEN alone is otherwise silent. An empty OPEN list is
+	// REMOVED rather than left zero-length -- a reader with nothing open has no OPEN file --
+	// so "absent" and "nothing open" are the same state on disk and a reader who deleted
+	// OPEN while their cursor stayed valid would simply be told open=0 with the notes they
+	// owed gone. With the count in the cursor the two states are different: a cursor that
+	// says it was carrying two notes, beside no OPEN file, is a refusal naming
+	// `--full --advance`. A cursor written before this field has Counted false and is
+	// trusted, because there is nothing to compare.
+	Open    int
+	Counted bool
 }
 
 // CursorPath, OpenPath and IndexPath are the repo-relative paths of a lane's state files.
@@ -96,13 +120,43 @@ func ReadCursor(root, lane string) (Cursor, error) {
 		if i > 0 {
 			return Cursor{}, fmt.Errorf("%s: line %d: a cursor is one line", CursorPath(lane), r.line)
 		}
-		commit, stamp, _ := strings.Cut(r.text, " ")
-		if err := ValidCommitHex(commit); err != nil {
+		// Fields and not Cut, because the line is now up to three tokens and none of them
+		// holds a space: the commit, the RFC 3339 stamp, and `open=<n>`. A fourth token is
+		// a refusal rather than a guess, on the same rule as an INDEX line's field count.
+		fields := strings.Fields(r.text)
+		if len(fields) > cursorFields {
+			return Cursor{}, fmt.Errorf("%s: line %d: a cursor is <commit> [<stamp>] [open=<n>], got %d tokens", CursorPath(lane), r.line, len(fields))
+		}
+		if err := ValidCommitHex(fields[0]); err != nil {
 			return Cursor{}, fmt.Errorf("%s: line %d: %w", CursorPath(lane), r.line, err)
 		}
-		got = Cursor{Commit: commit, Stamp: strings.TrimSpace(stamp)}
+		got = Cursor{Commit: fields[0]}
+		if len(fields) > 1 {
+			got.Stamp = fields[1]
+		}
+		if len(fields) > 2 {
+			n, perr := strconv.Atoi(strings.TrimPrefix(fields[2], cursorOpenPrefix))
+			if !strings.HasPrefix(fields[2], cursorOpenPrefix) || perr != nil || n < 0 {
+				return Cursor{}, fmt.Errorf("%s: line %d: %q is not %s<n>", CursorPath(lane), r.line, truncate(fields[2], 40), cursorOpenPrefix)
+			}
+			got.Open, got.Counted = n, true
+		}
 	}
 	return got, nil
+}
+
+// cursorFields and cursorOpenPrefix are the shape of a cursor line: the commit, the stamp,
+// and how many notes the run that wrote it was carrying.
+const (
+	cursorFields     = 3
+	cursorOpenPrefix = "open="
+)
+
+// OpenPresent reports whether a lane has an OPEN file at all, which is a different
+// question from whether it holds anything. See Cursor.Open.
+func OpenPresent(root, lane string) bool {
+	st, err := os.Stat(filepath.Join(root, filepath.FromSlash(OpenPath(lane))))
+	return err == nil && !st.IsDir()
 }
 
 // WriteCursor replaces a lane's CURSOR. It is a REPLACE and not an append: a cursor is one
@@ -112,12 +166,18 @@ func ReadCursor(root, lane string) (Cursor, error) {
 //
 // The sha is written first and the stamp second, the other way round from a receipt line,
 // because a cursor's subject is the commit and the time is annotation for a person,
-// whereas a receipt is a log entry whose subject is when it was made.
-func WriteCursor(root, lane, commit string, now time.Time) error {
+// whereas a receipt is a log entry whose subject is when it was made. The third field is
+// how many notes this run was carrying; see Cursor.Open for why a count of another file's
+// contents lives here.
+func WriteCursor(root, lane, commit string, open int, now time.Time) error {
 	if err := ValidCommitHex(commit); err != nil {
 		return err
 	}
-	return replaceLaneFile(root, CursorPath(lane), commit+" "+now.UTC().Format(ReceiptStampLayout)+"\n")
+	if open < 0 {
+		return fmt.Errorf("a cursor cannot be carrying %d notes", open)
+	}
+	line := commit + " " + now.UTC().Format(ReceiptStampLayout) + " " + cursorOpenPrefix + strconv.Itoa(open) + "\n"
+	return replaceLaneFile(root, CursorPath(lane), line)
 }
 
 // OpenEntry is one note a reader has been shown and has not yet answered.
@@ -215,6 +275,17 @@ const indexFields = 5
 // record ending in an empty field ends in a TAB, and a trailing tab is invisible, is
 // stripped by half the editors a person might open this file in, and would turn a
 // five-field line into a four-field one that this reader then refuses.
+//
+// THE ONE EDGE THIS SHAPE DOES NOT CLOSE, named because a silent one is worse than a known
+// one: the To and Re lists are joined with ";" and split back on ";", so a LEGACY note
+// whose repo-relative PATH holds a semicolon -- the only value in either list that is not a
+// roster name or an id, and one written before this tool existed and therefore under no
+// rule of its own -- round-trips through the catalogue as two targets rather than one. The
+// consequence is bounded: the thread resolves by path from the filesystem instead (see
+// Index.resolves), and a check reports the halves as dangling rather than resolving them
+// wrongly. Fixing it means escaping the separator as well as the field, which is a format
+// change to every INDEX on every table; it is not worth that for a filename nobody has
+// written yet, and the day one is written this comment is where to start.
 func IndexLine(e IndexEntry) string {
 	return strings.Join([]string{
 		oneline.Escape(orDash(e.ID)),
@@ -321,9 +392,26 @@ func ReadIndex(root string, c *Config) (*Index, error) {
 func (i *Index) ByID(id string) (*IndexEntry, bool)     { e, ok := i.byID[id]; return e, ok }
 func (i *Index) ByPath(path string) (*IndexEntry, bool) { e, ok := i.byPath[path]; return e, ok }
 
-// AppendIndexLine adds one record to a lane's INDEX. Append-only, like RECEIPTS, and for
-// the same reason: a sender only ever adds to their own lane, so two senders writing at
-// once touch different files and cannot conflict.
+// AppendIndexLine adds one record to a lane's INDEX. Append-only, like RECEIPTS: a sender
+// only ever adds to their own lane, so two DIFFERENT senders writing at once touch
+// different files and cannot conflict.
+//
+// TWO BENCHES OF ONE LANE DO CONFLICT HERE, and an earlier version of this comment said
+// they could not. Append-only is not conflict-free: both benches add a line at the end of
+// the same file over the same base, git's three-way merge sees an edit/edit at that spot,
+// and the rebase in CommitAndPush stops. Before this file existed, two sessions of one line
+// sending different notes rebased CLEAN -- the note paths differed and nothing else was
+// touched -- so the catalogue widened the conflict surface, and honesty about that is worth
+// more than the sentence it replaces. INDEX now sits beside RECEIPTS and CURSOR in the push
+// protocol's list of files a conflict can land on (SPEC.md, the push protocol, step 5), and
+// the outcome is the same one: the rebase is aborted, the commit is left on the branch, the
+// run exits 1 saying the note is NOT on the table, and a person decides.
+//
+// It is documented rather than designed away. The shapes that would remove it -- one INDEX
+// file per bench, or one file per note named by its id -- both trade a conflict a person
+// resolves in a minute for a lane directory whose file count grows with its notes, which is
+// the cost the catalogue exists to avoid, and neither can be adopted without changing the
+// layout of every table already running this tool.
 func AppendIndexLine(root string, e IndexEntry) error {
 	full := filepath.Join(root, filepath.FromSlash(IndexPath(e.Lane)))
 	if err := insideRoot(root, full); err != nil {

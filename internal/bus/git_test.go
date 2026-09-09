@@ -211,6 +211,67 @@ func TestARebaseConflictAbortsAndSaysSo(t *testing.T) {
 	}
 }
 
+// The conflict surface the catalogue ADDED, pinned so nothing claims it away again. Two
+// benches of one lane sending DIFFERENT notes rebased clean before INDEX existed: the note
+// paths differ and nothing else was touched. Now both append a line at the end of one file
+// over one base, which is an edit/edit, and the rebase stops. Append-only is not
+// conflict-free, and the outcome is the one the protocol already states: abort, the commit
+// left on the branch, exit 1, a person decides.
+func TestTwoBenchesOfOneLaneConflictOnTheCatalogue(t *testing.T) {
+	hermetic(t)
+	bare := bareTable(t)
+	a := cloneTable(t, bare)
+	b := cloneTable(t, bare)
+
+	first := IndexEntry{ID: "rowan-aaaaaaaaaaaa", Path: "from-rowan/a.md", Date: "2026-09-07T00:01:00Z", To: []string{"Stella"}, Lane: "from-rowan"}
+	write(t, a, first.Path, noteText("Rowan", "one", "body"))
+	if err := AppendIndexLine(a, first); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CommitAndPush(a, testIdentity["Rowan"], []string{first.Path, IndexPath("from-rowan")}, "rowan: one", "origin", "main", 3); err != nil {
+		t.Fatal(err)
+	}
+
+	// The second bench cannot see the first: a DIFFERENT note, at a different path, whose
+	// only shared file is the lane's catalogue.
+	second := IndexEntry{ID: "rowan-bbbbbbbbbbbb", Path: "from-rowan/b.md", Date: "2026-09-07T00:02:00Z", To: []string{"Stella"}, Lane: "from-rowan"}
+	write(t, b, second.Path, noteText("Rowan", "two", "body"))
+	if err := AppendIndexLine(b, second); err != nil {
+		t.Fatal(err)
+	}
+	res, err := CommitAndPush(b, testIdentity["Rowan"], []string{second.Path, IndexPath("from-rowan")}, "rowan: two", "origin", "main", 3)
+	if err == nil {
+		t.Fatal("two benches of one lane appending different catalogue lines did not conflict; if this is now true the SPEC's list of conflict surfaces is wrong in the other direction")
+	}
+	if !strings.Contains(err.Error(), "conflicted") || !strings.Contains(err.Error(), "was NOT pushed") {
+		t.Fatalf("the refusal does not name the conflict and say the note is not on the table: %v", err)
+	}
+	// The abort is CLEAN: on a branch, no rebase in progress, no conflict markers left in
+	// the working tree, and this bench's own commit still there to be dealt with.
+	if _, berr := CurrentBranch(b); berr != nil {
+		t.Fatalf("the checkout was left mid-rebase: %v", berr)
+	}
+	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
+		if _, statErr := os.Stat(filepath.Join(b, ".git", dir)); !os.IsNotExist(statErr) {
+			t.Fatalf("a rebase is still in progress after the abort (.git/%s)", dir)
+		}
+	}
+	if err := EnsureClean(b, nil); err != nil {
+		t.Fatalf("the abort left the checkout dirty: %v", err)
+	}
+	if res.Commit == "" {
+		t.Fatal("the refusal names no commit, so a person has nothing to look at")
+	}
+	if _, cerr := git(b, "cat-file", "-e", res.Commit+"^{commit}"); cerr != nil {
+		t.Fatalf("the commit named in the refusal is not on the branch: %v", cerr)
+	}
+	// And the first bench's note is still the only one on the table: nothing was lost and
+	// nothing was overwritten.
+	if _, cerr := git(bare, "cat-file", "-e", "main:"+second.Path); cerr == nil {
+		t.Fatal("the conflicting note reached the remote")
+	}
+}
+
 func TestEnsureCleanRefusesAnUnrelatedChange(t *testing.T) {
 	hermetic(t)
 	bare := bareTable(t)
@@ -264,18 +325,66 @@ func TestCommitRefusesWithoutAnIdentityOrPaths(t *testing.T) {
 	}
 }
 
-func TestIsRepoAndCurrentBranch(t *testing.T) {
+func TestIsRepoRootAndCurrentBranch(t *testing.T) {
 	hermetic(t)
 	bare := bareTable(t)
 	clone := cloneTable(t, bare)
-	if err := IsRepo(clone); err != nil {
+	if err := IsRepoRoot(clone); err != nil {
 		t.Fatal(err)
 	}
 	if b, err := CurrentBranch(clone); err != nil || b != "main" {
 		t.Fatalf("CurrentBranch = %q %v", b, err)
 	}
-	if err := IsRepo(t.TempDir()); err == nil {
-		t.Fatal("a directory that is not a repository passed IsRepo")
+	if err := IsRepoRoot(t.TempDir()); err == nil {
+		t.Fatal("a directory that is not a repository passed IsRepoRoot")
+	}
+}
+
+// THE BLOCKER, at the level it is decided. A table one directory down inside a bigger
+// repository is INSIDE a work tree, so the old test passed it -- and then `git diff
+// --name-only` reported `table/from-stella/x.md`, the from- guard dropped it, and the run
+// said "nothing new" over unread notes. The refusal names the root git found, because that
+// is the one thing the caller needs in order to fix the invocation.
+func TestATableThatIsNotTheRepositoryRootIsRefused(t *testing.T) {
+	hermetic(t)
+	bare := bareTable(t)
+	clone := cloneTable(t, bare)
+	nested := filepath.Join(clone, "table")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, nested, ConfigName, rosterJSON)
+	err := IsRepoRoot(nested)
+	if err == nil {
+		t.Fatal("a table one directory inside a repository passed; a diff from its cursor would name paths it then drops, and report nothing new over unread notes")
+	}
+	if !strings.Contains(err.Error(), "is not its root") {
+		t.Fatalf("the refusal does not say what is wrong: %v", err)
+	}
+	// And it names the root, so the caller can point --table at it.
+	top, gerr := resolved(clone)
+	if gerr != nil {
+		t.Fatal(gerr)
+	}
+	if !strings.Contains(err.Error(), top) {
+		t.Fatalf("the refusal does not name the repository root %q: %v", top, err)
+	}
+	// The change set the old code would have reported over that table, for the record: git
+	// names the path from the repository root, and ChangedSince keeps only from-* paths.
+	write(t, nested, "from-stella/a.md", noteText("Stella", "one", "body"))
+	if _, err := CommitAndPush(clone, testIdentity["Stella"], []string{"table"}, "stella: a nested note", "origin", "main", 3); err != nil {
+		t.Fatal(err)
+	}
+	base, err := ResolveCommit(clone, "HEAD~1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := ChangedSince(clone, base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(changed) != 0 {
+		t.Fatalf("the nested note was reported as a lane path: %v", changed)
 	}
 }
 

@@ -233,7 +233,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		}
 		text = string(raw)
 	}
-	if err := bus.IsRepo(*table); err != nil {
+	if err := bus.IsRepoRoot(*table); err != nil {
 		fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.Err(err))
 		return 2
 	}
@@ -299,7 +299,7 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprint(stderr, "nova-bus receipt: --note is required; refusing to guess\n")
 		return 2
 	}
-	if err := bus.IsRepo(*table); err != nil {
+	if err := bus.IsRepoRoot(*table); err != nil {
 		fmt.Fprintf(stderr, "nova-bus receipt: %s\n", oneline.Err(err))
 		return 2
 	}
@@ -397,7 +397,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	var res bus.InboxResult
 	var cursor bus.Cursor
 	if !*full {
-		if err := bus.IsRepo(*table); err != nil {
+		if err := bus.IsRepoRoot(*table); err != nil {
 			fmt.Fprintf(stderr, "nova-bus inbox: reading only what changed needs git; %s\n", oneline.Err(err))
 			return 2
 		}
@@ -419,6 +419,17 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			}
 			if !ok {
 				fmt.Fprintf(stderr, "INBOX REFUSED: the cursor %s is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it\n", oneline.Field(cursor.Commit))
+				return 1
+			}
+			// The other way a cursor stops being trustworthy: the OPEN list it was
+			// written beside is gone. An empty OPEN list is REMOVED rather than left
+			// zero-length, so absent and nothing-open are one state on disk -- which is
+			// why the cursor carries the count it was written with, and why a cursor
+			// that says it was carrying notes with no OPEN beside it is refused here
+			// instead of quietly reporting open=0 over the notes it dropped.
+			if cursor.Counted && cursor.Open > 0 && !bus.OpenPresent(*table, me.Lane) {
+				fmt.Fprintf(stderr, "INBOX REFUSED: your cursor %s says it was carrying %d notes and %s is not on the table, so a read from it would drop them and print open=0; read once with --full --advance, which rebuilds the open list from the whole table\n",
+					oneline.Field(cursor.Commit), cursor.Open, oneline.Field(bus.OpenPath(me.Lane)))
 				return 1
 			}
 			changed, err := bus.ChangedSince(*table, cursor.Commit)
@@ -536,7 +547,7 @@ func advanceCursor(table string, me bus.Participant, open []bus.OpenEntry, remot
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.OpenPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
-	if err := bus.WriteCursor(table, me.Lane, head, now); err != nil {
+	if err := bus.WriteCursor(table, me.Lane, head, len(open), now); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
@@ -618,7 +629,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	scope := bus.Scope{Full: *full}
 	from := ""
 	if !*full {
-		if err := bus.IsRepo(*table); err != nil {
+		if err := bus.IsRepoRoot(*table); err != nil {
 			fmt.Fprintf(stderr, "nova-bus check: checking only what changed needs git; %s\n", oneline.Err(err))
 			return 2
 		}

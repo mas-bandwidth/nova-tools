@@ -153,17 +153,64 @@ func EnsureLevelWith(dir, remote, branch string) error {
 	return nil
 }
 
-// IsRepo reports whether dir is inside a git work tree, so a table root that is merely a
-// directory of Markdown is refused with that as the reason rather than with git's.
-func IsRepo(dir string) error {
-	out, err := git(dir, "rev-parse", "--is-inside-work-tree")
+// IsRepoRoot reports whether dir is the ROOT of a git work tree, so a table root that is
+// merely a directory of Markdown is refused with that as the reason rather than with
+// git's -- and so is a table that is a SUBDIRECTORY of somebody else's repository.
+//
+// THE FAILURE THIS CLOSES, which was silent and is the worst shape a failure here can
+// have. The first version asked git only `rev-parse --is-inside-work-tree`, which is true
+// anywhere under a repository. Point --table at `docs/table` inside a larger repo and
+// every verb ran: `git diff --name-only` reports paths relative to the REPOSITORY ROOT, so
+// a new note came back as `docs/table/from-stella/x.md`, the `from-` prefix guard in
+// ChangedSince dropped it, and `inbox --since` and `check --as` reported an EMPTY change
+// set and exited 0 over unread notes. Nothing in the output said the table had not been
+// looked at. That is precisely the lie this whole tool exists to stop, so a --table that
+// is not the root of its own repository is a refusal that names the root it found.
+//
+// The test is `git -C <table> rev-parse --show-toplevel` compared with --table, with
+// symlinks resolved on BOTH sides -- the repo's own idiom, from `nova-check nocode
+// --staged` (SPEC.md), and it is the same test for the same reason: never a test for
+// `.git` being a directory, which is false in a linked worktree and in a submodule, both
+// of which are legitimate places to keep a table. On this platform /var is a symlink to
+// /private/var, so a --table under TMPDIR would otherwise disagree with git about its own
+// name.
+func IsRepoRoot(dir string) error {
+	out, err := git(dir, "rev-parse", "--show-toplevel")
+	if err != nil {
+		return fmt.Errorf("%s is not a git work tree: %w", dir, err)
+	}
+	top := strings.TrimSpace(out)
+	if top == "" {
+		// A bare repository answers --is-inside-work-tree with false and prints nothing
+		// here; either way there is no work tree to hold a table.
+		return fmt.Errorf("%s is not a git work tree", dir)
+	}
+	want, err := resolved(dir)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(out) != "true" {
-		return fmt.Errorf("%s is not a git work tree", dir)
+	got, err := resolved(top)
+	if err != nil {
+		return err
+	}
+	if want != got {
+		return fmt.Errorf("%s is inside the git repository rooted at %s and is not its root; git reports changed paths relative to that root, so a table one directory down would report an empty change set over unread notes -- give --table %s, or make the table a repository of its own", dir, got, got)
 	}
 	return nil
+}
+
+// resolved is an absolute path with every symlink taken out, which is what makes two
+// spellings of one directory comparable.
+func resolved(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", dir, err)
+	}
+	full, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", dir, err)
+	}
+	return full, nil
 }
 
 // CurrentBranch is the checked-out branch, or an error on a detached HEAD.

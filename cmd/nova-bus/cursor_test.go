@@ -198,6 +198,145 @@ func TestACursorThatIsNotAnAncestorIsRefused(t *testing.T) {
 		mustCode(t, 1).mustContain(t, "stderr", "BUS REFUSED: ")
 }
 
+// A --table that is not the ROOT of its repository is refused by every verb that reads
+// git, and this is the blocker the second read found. It used to run: `rev-parse
+// --is-inside-work-tree` is true anywhere under a repository, `git diff --name-only`
+// reports `table/from-stella/x.md` from the repository root, ChangedSince keeps only paths
+// beginning `from-`, and so `inbox --since` and `check --as` printed changed=0 and exited 0
+// over notes nobody had read. Exit 2, because a --table the tool will not work over is a
+// bad invocation and not a table that failed.
+func TestATableBelowTheRepositoryRootIsRefused(t *testing.T) {
+	hermetic(t)
+	bare := filepath.Join(t.TempDir(), "table.git")
+	if err := os.MkdirAll(bare, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gitIn(t, bare, "init", "--bare", "--quiet", "--initial-branch=main")
+	checkout := filepath.Join(t.TempDir(), "checkout")
+	gitIn(t, filepath.Dir(checkout), "clone", "--quiet", bare, checkout)
+	gitIn(t, checkout, "checkout", "-q", "-B", "main")
+	// The table is one directory down, which is exactly how a table kept inside a bigger
+	// repository -- a docs tree, a monorepo -- would be pointed at.
+	nested := filepath.Join(checkout, "table")
+	writeFile(t, nested, "participants.json", rosterJSON)
+	writeFile(t, nested, "from-stella/2026-09-07T0001Z-a-question-abcdef012345.md",
+		"From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: A question about the gate\n\nShould the gate run on the merge queue too?\n")
+	writeFile(t, nested, "from-stella/INDEX",
+		"stella-abcdef012345\tfrom-stella/2026-09-07T0001Z-a-question-abcdef012345.md\t2026-09-07T00:01:00Z\tRowan\t-\n")
+	gitIn(t, checkout, "add", "-A")
+	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@mas-bandwidth.com", "commit", "-q", "-m", "a table one directory down")
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+
+	for _, args := range [][]string{
+		{"inbox", "--table", nested, "--as", "Rowan", "--receipt-max-words", "40"},
+		{"check", "--table", nested, "--as", "Rowan"},
+		{"check", "--table", nested, "--since", "HEAD"},
+		{"receipt", "--table", nested, "--as", "Rowan", "--note", "stella-abcdef012345",
+			"--remote", "origin", "--branch", "main", "--attempts", "3"},
+	} {
+		invoke(t, "", args...).mustCode(t, 2).
+			mustContain(t, "stderr", "is not its root").
+			mustContain(t, "stderr", "empty change set over unread notes")
+	}
+	invoke(t, draft, "send", "--table", nested, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
+		mustCode(t, 2).mustContain(t, "stderr", "is not its root")
+	// The verbs that need no git still work over it, so the refusal is exactly as wide as
+	// the failure: a table below a repository root is readable, it just cannot be read
+	// INCREMENTALLY, and the tool says which.
+	invoke(t, "", "check", "--table", nested, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
+	invoke(t, "", "inbox", "--table", nested, "--as", "Rowan", "--receipt-max-words", "40", "--full").
+		mustCode(t, 0).mustContain(t, "stdout", "INBOX NOTE id=stella-abcdef012345")
+}
+
+// A cursor advances past a note because OPEN remembers it. Delete OPEN alone -- the cursor
+// stays valid, and an empty OPEN list is REMOVED rather than left zero-length, so absent and
+// nothing-open look the same on disk -- and the next run would have said open=0 over notes
+// still owed. The cursor carries the count it was written with, so the two states are
+// different and this is a refusal naming --full --advance.
+func TestACursorWhoseOpenListWentMissingIsRefused(t *testing.T) {
+	hermetic(t)
+	checkout, _ := table(t)
+	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=2")
+	if line := read(t, checkout, "from-rowan/CURSOR"); !strings.Contains(line, "open=2") {
+		t.Fatalf("the cursor does not record what it was carrying: %q", line)
+	}
+	if err := os.Remove(filepath.Join(checkout, "from-rowan", "OPEN")); err != nil {
+		t.Fatal(err)
+	}
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+		mustCode(t, 1).
+		mustContain(t, "stderr", "INBOX REFUSED: ").
+		mustContain(t, "stderr", "was carrying 2 notes").
+		mustContain(t, "stderr", "--full --advance")
+	// And the way through is the one it names: a full read rebuilds the open list from the
+	// whole table and both notes come back.
+	invoke(t, "", advance(checkout, "Rowan", "--full")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX SCOPE mode=full").
+		mustContain(t, "stdout", "INBOX OK as=Rowan open=2").
+		mustContain(t, "stdout", "carrying=2")
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+		mustCode(t, 0).mustContain(t, "stdout", "INBOX SCOPE mode=since")
+	// A reader with genuinely nothing open has no OPEN file either, and that is NOT the
+	// refused state: the count in their cursor is zero and nothing is compared.
+	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
+	invoke(t, "From: Rowan\nTo: Stella\nRe: stella-111111111111\nSubject: That one too\n\nAnswered.\n",
+		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
+	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=0")
+	if _, err := os.Stat(filepath.Join(checkout, "from-rowan", "OPEN")); !os.IsNotExist(err) {
+		t.Fatalf("an empty OPEN list was left on disk, so absent no longer means nothing open: %v", err)
+	}
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+		mustCode(t, 0).mustContain(t, "stdout", "INBOX OK as=Rowan open=0")
+}
+
+// The diff is `<cursor>..HEAD`, which is TWO dots and therefore a tree-to-tree comparison,
+// not a walk of the commits between them. That is the whole reason a note that arrived on a
+// side branch and came in through a MERGE is seen: git compares the two trees and the note
+// is in one of them, whatever route it took. Three dots would have taken the merge base and
+// missed everything on the branch that was merged.
+func TestANoteThatArrivedThroughAMergeIsSeen(t *testing.T) {
+	hermetic(t)
+	checkout, _ := table(t)
+	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0)
+
+	// Stella writes on a side branch while main moves on underneath her.
+	gitIn(t, checkout, "checkout", "-q", "-b", "stella-side")
+	writeFile(t, checkout, "from-stella/2026-09-08T1000Z-on-a-branch-666666666666.md",
+		"From: Stella\nTo: Rowan\nDate: Tue Sep  8 10:00:00 UTC 2026\nId: stella-666666666666\nSubject: On a branch\n\nDoes the runner matrix key need quoting?\n")
+	appendFile(t, checkout, "from-stella/INDEX",
+		"stella-666666666666\tfrom-stella/2026-09-08T1000Z-on-a-branch-666666666666.md\t2026-09-08T10:00:00Z\tRowan\t-\n")
+	gitIn(t, checkout, "add", "-A")
+	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@mas-bandwidth.com", "commit", "-q", "-m", "stella: on a branch")
+	gitIn(t, checkout, "checkout", "-q", "main")
+	// Meanwhile on main, a note written by hand in a browser -- so it touches no INDEX, and
+	// this fixture is about the merge rather than about the catalogue conflict that
+	// TestTwoBenchesOfOneLaneConflictOnTheCatalogue pins.
+	writeFile(t, checkout, "from-stella/2026-09-08T1100Z-meanwhile-777777777777.md",
+		"From: Stella\nTo: Rowan\nDate: Tue Sep  8 11:00:00 UTC 2026\nId: stella-777777777777\nSubject: Meanwhile\n\nAnd the gate on the merge queue?\n")
+	gitIn(t, checkout, "add", "-A")
+	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@mas-bandwidth.com", "commit", "-q", "-m", "stella: meanwhile")
+	// A real merge commit, with two parents, which is the fixture this test is for.
+	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@mas-bandwidth.com",
+		"merge", "-q", "--no-ff", "-m", "merge stella's branch", "stella-side")
+	if parents := strings.Fields(strings.TrimSpace(gitIn(t, checkout, "rev-list", "--parents", "-n", "1", "HEAD"))); len(parents) != 3 {
+		t.Fatalf("HEAD is not a merge commit: %v", parents)
+	}
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+
+	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX SCOPE mode=since").
+		mustContain(t, "stdout", "INBOX NOTE id=stella-666666666666").
+		mustContain(t, "stdout", "INBOX NOTE id=stella-777777777777")
+	// The run after it crosses the merge once: nothing new arrives a second time. Its
+	// changed= is 2 and not 0, and that is the grammar rather than a leak -- changed=
+	// counts the PATHS the diff named inside lanes, which includes this reader's own
+	// CURSOR and OPEN from the advance just made. Neither is a note, and no note is
+	// parsed for them.
+	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+		mustContain(t, "stdout", "changed=2 carrying=4").
+		mustContain(t, "stdout", "INBOX OK as=Rowan open=4 notes=3 receipts=1")
+}
+
 // send appends to its lane's catalogue in the SAME commit as the note, and check --full
 // agrees with it in both directions.
 func TestSendAppendsToTheIndexAndCheckAgrees(t *testing.T) {
@@ -413,9 +552,18 @@ func appendFile(t *testing.T, root, path, content string) {
 // The example table in testdata is the shape a person and an AI are both pointed at from
 // the README, so it is held to the tool rather than left to drift: it passes check --full
 // clean, and its listings are the ones the README prints.
+//
+// It is copied out and given a repository OF ITS OWN, which is the honest shape and is what
+// the example's own README now tells a reader to do. In the tree it ships in, it is a
+// directory inside a repository about tools, and every verb that reads git refuses a
+// --table that is not its repository's root.
 func TestTheExampleTableInTestdataIsWhatTheREADMESays(t *testing.T) {
+	hermetic(t)
 	root := t.TempDir()
 	copyTree(t, filepath.Join("testdata", "example-table"), root)
+	gitIn(t, root, "init", "--quiet", "-b", "main")
+	gitIn(t, root, "add", "-A")
+	gitIn(t, root, "-c", "user.name=Rowan", "-c", "user.email=rowan@example.com", "commit", "-q", "-m", "the table")
 
 	invoke(t, "", "check", "--table", root, "--full").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS OK notes=4 lanes=2 receipts=1 participants=3 warn=0")
@@ -441,6 +589,17 @@ func TestTheExampleTableInTestdataIsWhatTheREADMESays(t *testing.T) {
 	invoke(t, "", "check", "--table", root, "--full", "--rebuild-index").mustCode(t, 0)
 	if read(t, root, "from-rowan/INDEX") != wantRowan || read(t, root, "from-stella/INDEX") != wantStella {
 		t.Fatal("a rebuild changed the example table's catalogue, so the committed one is stale")
+	}
+	// As a repository root it is a table the git-reading verbs will work over, which is
+	// what its README tells a reader to make it. `--since HEAD` is the cheapest proof:
+	// the root test passes, the diff runs, and the change set over no change is empty.
+	invoke(t, "", "check", "--table", root, "--since", "HEAD").mustCode(t, 0).
+		mustContain(t, "stdout", "BUS SCOPE mode=since").
+		mustContain(t, "stdout", "changed=0")
+	// And the CURSOR it ships records what its OPEN list holds, so a reader arriving on it
+	// is not refused for an open list that went missing.
+	if line := read(t, root, "from-rowan/CURSOR"); !strings.Contains(line, "open=2") {
+		t.Fatalf("the example cursor does not record its two carried notes: %q", line)
 	}
 }
 

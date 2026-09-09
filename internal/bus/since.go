@@ -98,6 +98,15 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 	// mine is opened. Without it a note I answered last month and that somebody EDITED
 	// today would come back into my open list, because the reply that closed it is behind
 	// the cursor and the edit is in front of it.
+	//
+	// THE GAP IN THAT, exactly: the catalogue holds the replies SEND wrote, and a reply
+	// written by hand -- in a browser, which this table's whole form exists to allow -- has
+	// no line in it. Such a reply closes its thread only while it is still in the change
+	// set; once the cursor moves past it, this run cannot see it, and an edit to the note it
+	// answered brings that note back into the open list. The failure direction is RE-SHOW
+	// and never loss: nothing is dropped, a reader is asked twice. `check --full` warns
+	// about every note with no INDEX line and `--rebuild-index` writes them, which is the
+	// repair; see the warning in noteChecker.check below.
 	answered := map[string]bool{}
 	mine, err := ReadLaneIndex(root, me.Lane)
 	if err != nil {
@@ -365,13 +374,22 @@ func (k *noteChecker) check(n *Note) []Problem {
 		// A note with no INDEX line is a WARN and never a failure, at any date. The
 		// catalogue is a cache and the notes are the record: a person who wrote a note by
 		// hand in a browser -- which this table's whole form exists to allow -- has not
-		// broken anything, they have cost an incremental check one lookup it cannot make.
-		// A catalogue line that DISAGREES with a note is a different matter and does fail:
-		// see CheckIndex, where a wrong line could resolve a thread to the wrong note.
+		// broken anything. A catalogue line that DISAGREES with a note is a different
+		// matter and does fail: see CheckIndex, where a wrong line could resolve a thread
+		// to the wrong note.
+		//
+		// The warning says what it COSTS, and the cost is not the same everywhere. In
+		// somebody else's lane it is one lookup an incremental check answers from the
+		// filesystem instead. In YOUR OWN lane it is a reply the incremental read cannot
+		// see: `answered` is built from your lane's INDEX plus your own files in the change
+		// set, so a reply you wrote by hand stops closing its thread the moment it falls
+		// behind your cursor, and an edit to the note it answered puts that note back in
+		// your open list. Never a lost note -- a re-shown one -- but a reader who cannot
+		// tell the two apart will answer twice.
 		if !k.indexed(n) {
 			ps = append(ps, Problem{
 				Where:  n.Path,
-				Reason: fmt.Sprintf("no line in %s names this note; check --full --rebuild-index writes one", IndexPath(n.Lane)),
+				Reason: fmt.Sprintf("no line in %s names this note; in your own lane that is a reply the incremental read cannot see once it falls behind your cursor, so a note it answers can re-appear as open; check --full --rebuild-index writes one", IndexPath(n.Lane)),
 				Warn:   true,
 			})
 		}
@@ -568,7 +586,7 @@ func CheckIndex(c *Config, t *Table, idx *Index) []Problem {
 		if _, ok := idx.ByID(n.Header.ID); !ok {
 			ps = append(ps, Problem{
 				Where:  n.Path,
-				Reason: fmt.Sprintf("no line in %s names this note; check --full --rebuild-index writes one", IndexPath(n.Lane)),
+				Reason: fmt.Sprintf("no line in %s names this note; in your own lane that is a reply the incremental read cannot see once it falls behind your cursor, so a note it answers can re-appear as open; check --full --rebuild-index writes one", IndexPath(n.Lane)),
 				Warn:   true,
 			})
 		}

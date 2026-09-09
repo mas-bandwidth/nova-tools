@@ -2106,6 +2106,20 @@ always `<table>/participants.json` — a property of the table rather than of an
 invocation, because two lines running this tool over one table must read one
 roster, and a `--config` flag would let them disagree about who exists.
 
+**`--table` is the ROOT of its own repository**, for every verb that reads git —
+`send`, `receipt`, `inbox` without `--full`, `check --as` and `check --since`.
+The test is `git -C <table> rev-parse --show-toplevel` compared with `--table`
+after resolving symlinks on both sides, which is the same test `nova-check nocode
+--staged` makes for the same reason: never a test for `.git` being a directory,
+which is false in a linked worktree and in a submodule. A table one directory
+down inside a bigger repository is exit 2 with the root git found named in the
+refusal, and this is a REFUSAL rather than a tolerance because the alternative was
+silent: `git diff --name-only` reports paths relative to the repository root, so a
+new note came back as `docs/table/from-stella/x.md`, the `from-` guard dropped it,
+and `inbox --since` and `check --as` printed `changed=0` and exited **0** over
+notes nobody had read. `--full` needs no git and works over such a directory, so
+the refusal is exactly as wide as the failure.
+
 `inbox` and `names` **report** and exit 0 whether the inbox is empty or full;
 `check` is the gate.
 
@@ -2115,7 +2129,7 @@ roster, and a `--config` flag would let them disagree about who exists.
 |------|---------|
 | 0 | the verb ran and passed |
 | 1 | the verb ran and said **NO**: a draft refused, a table that failed `check`, a push that could not be landed |
-| 2 | could not run: missing flag, unreadable table or roster, a table that is not a git work tree, bad invocation |
+| 2 | could not run: missing flag, unreadable table or roster, a `--table` that is not the ROOT of a git work tree, bad invocation |
 
 A `send` or `receipt` that exits 1 after committing says so in its refusal: the
 commit is on the branch and the note is **not** on the table.
@@ -2159,6 +2173,14 @@ mistake is the same shape as the lost push. `BUS OK`'s `notes=`, `lanes=` and
 `--full` and the change set under `--since`; a failing `check` prints its `SCOPE`
 line and no `OK` line.
 
+`changed=` is **how many paths inside lanes the diff named**, and that is paths
+and not notes: a lane's `RECEIPTS`, `CURSOR`, `OPEN` and `INDEX` are files in a
+lane like any other and are counted. So a second `inbox --advance` over a table
+nobody has touched reports `changed=2` — this reader's own `CURSOR` and `OPEN`,
+written by the run before it — and `notes=0`. Neither is parsed as a note. It is
+`changed=0` on a full run, where there is no diff. `carrying=` on the same line
+is the size of the open list this run will keep.
+
 `REFUSED` is a `FAIL` with no path slot, because what it refuses is the state of
 the CHECKOUT rather than anything in the note: it is the branch-ahead guard
 below, or a cursor that is no longer on this history. `INBOX UNREADABLE` names a file on the table this tool cannot parse — not
@@ -2182,7 +2204,7 @@ whose owner believes a name is known.
 {
   "participants": [
     {"name": "Rowan", "lane": "from-rowan", "aliases": ["Rowan Claude", "the keeper"],
-     "git_name": "Rowan", "git_email": "rowan@mas-bandwidth.com"},
+     "git_name": "Rowan", "git_email": "rowan@example.com"},
     {"name": "Glenn"}
   ],
   "groups": [{"name": "Everybody at the table", "members": ["Rowan", "Glenn"]}]
@@ -2409,12 +2431,28 @@ told is there.
    from the roster, passed with `git -c`.
 4. Push. On rejection: `git fetch <remote> <branch>`, `git rebase FETCH_HEAD`,
    push again — up to `--attempts` times.
-5. A rebase that **conflicts** is aborted and reported. On this layout two
-   senders' commits touch disjoint paths and cannot conflict, so a conflict is
-   always two sessions of ONE line, from two benches that cannot see each
-   other's checkout, touching one file: that line's own append-only `RECEIPTS`,
-   or — when both benches sent the same note in the same second — one note path,
-   as an add/add. Both are a person's decision, not this tool's.
+5. A rebase that **conflicts** is aborted and reported: the rebase is aborted,
+   the commit is left on the branch, the run exits 1 saying the note is **NOT**
+   on the table, and a person decides. Two DIFFERENT senders' commits touch
+   disjoint paths and cannot conflict, so a conflict is always two sessions of
+   ONE line, from two benches that cannot see each other's checkout, touching one
+   of that lane's own files. The surfaces, all four:
+   - `RECEIPTS` — append-only, two lines appended at the same end over one base;
+   - `INDEX` — the same shape, and `send` writes it in the same commit as the
+     note, so **two benches of one lane sending different notes now conflict
+     where before the catalogue existed they rebased clean**. That is a cost the
+     catalogue added and it is named here rather than left to be discovered;
+   - `CURSOR` — a replace rather than an append, so two benches' reads collide;
+   - one note path, as an add/add, when both benches sent the same note in the
+     same second and were therefore assigned the same id.
+
+   None of the four is this tool's decision. **`INDEX` is not made add-only per
+   bench**, which would remove the second one: the shapes that would do it — an
+   `INDEX.<bench>` file each, or one file per note named by its id — trade a
+   conflict a person clears in a minute for a lane directory whose file count
+   grows with its notes, which is the cost the catalogue exists to avoid, and
+   neither can be adopted without changing the layout of every table already
+   running this tool.
 6. Out of attempts: exit 1, saying the commit is on the branch and was **NOT**
    pushed.
 
@@ -2452,7 +2490,7 @@ and `#` comments are ignored in all three.
 
 ```
 from-rowan/CURSOR
-3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a 2026-09-09T14:05:00Z
+3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a 2026-09-09T14:05:00Z open=2
 
 from-rowan/OPEN
 stella-111111111111 from-stella/2026-09-09T1300Z-heard-111111111111.md
@@ -2462,9 +2500,13 @@ from-stella/INDEX   (tab-separated)
 stella-abcdef012345	from-stella/2026-09-07T0001Z-a-question-abcdef012345.md	2026-09-07T00:01:00Z	Rowan;Glenn	-
 ```
 
-`CURSOR` writes the sha first and the stamp second — the other way round from a
-receipt line — because a cursor's subject is the commit and the time is
-annotation, whereas a receipt is a log entry whose subject is when it was made.
+`CURSOR` writes the sha first, the stamp second — the other way round from a
+receipt line, because a cursor's subject is the commit and the time is
+annotation, whereas a receipt is a log entry whose subject is when it was made —
+and `open=<n>`, how many notes the run that wrote it was carrying, third. A
+cursor written before that field existed simply has two tokens and is trusted; a
+fourth token is a refusal. See **deleting one of the three** below for why a
+cursor counts another file's contents.
 `OPEN`'s first token is the id, or `-` for a legacy note, and the rest of the
 line is the path, which is the receipt line's trick and is there so a legacy
 filename holding a space still reads. `INDEX`'s five fields are id, path, date,
@@ -2535,6 +2577,73 @@ the `Re` targets of every note I have sent, so a note I answered last month and
 that somebody merely EDITED today does not come back into my open list because
 the reply that closed it is behind the cursor.
 
+**The limit of that, exactly: re-show, never loss.** The catalogue holds the
+replies `send` wrote. A reply written **by hand** — in a browser, which this
+table's whole form exists to allow — has no `INDEX` line, so `answered` cannot see
+it once it falls behind the cursor: `answered` is my lane's `INDEX` plus my own
+files in the change set, and a hand-written reply behind the cursor is in
+neither. An edit to the note it answered therefore puts that note back in my open
+list and I am shown it again. The direction is the whole of what matters — a
+reader is asked twice, never told a note is answered when it is not and never
+shown one less than they are owed — and the repair is the one `check` already
+names: `check --full` reports every note with no `INDEX` line as a `BUS WARN`,
+saying in its own text what a missing line costs in one's own lane, and
+`--rebuild-index` writes them.
+
+**Deleting one of the three is not symmetric**, and an earlier revision of this
+document said it was. `CURSOR` alone: delete it and the next run is a full one,
+which is the adoption path and costs one full read. `INDEX` alone: delete it and
+`check --full --rebuild-index` writes it back from the notes. **`OPEN` alone is
+different**, because an empty open list is *removed* rather than left
+zero-length — a reader with nothing open has no `OPEN` file — so *absent* and
+*nothing open* are one state on disk. Delete it and the cursor stays perfectly
+valid, the next run is a cheap one over a change set that no longer holds what
+was being carried, and the notes still owed are dropped with `open=0` printed as
+though nothing were owed: a silence, which is the failure this tool exists to
+end. So the cursor carries `open=<n>`, the count it was written with, and a
+cursor claiming notes with no `OPEN` file beside it is `INBOX REFUSED`, exit 1,
+**naming `--full --advance`** — which rebuilds the open list from the whole table.
+A cursor with no count claims nothing and is trusted.
+
+**`OPEN` grows with what a reader owes, and a reader who never answers grows it
+without bound.** A line that receipts everything and replies to nothing keeps
+every note it was ever shown — heard is not answered — so the read drifts from
+O(new) toward O(open). Nothing prunes it and no threshold is enforced, because
+the number that is too large is a property of a table and not of this tool; both
+counts are reported on every run, as `carrying=` on the `INBOX SCOPE` and `INBOX
+CURSOR` lines and as `open=` on `INBOX OK`, so the drift is visible before it is
+a problem. Answering, or a reply that closes several threads at once, is the
+whole of the remedy.
+
+**What is still O(m), stated rather than left to be discovered.** The claim above
+is about *note files parsed*, and it holds exactly. These are the costs that are
+not parses and do grow with the record:
+
+- **my own lane's `INDEX` and `RECEIPTS` are read whole**, every run: one line per
+  note I have sent and one per note I have ever heard. A line scan, no parse, one
+  file each — but O(my own history) in time and memory, not a constant;
+- **`check --since` reads EVERY lane's `INDEX`**, not just mine, because id
+  uniqueness and `Re:` resolution are claims across the table. That is O(all notes
+  ever sent by anybody) in time and in memory, and calling it "a lookup over a few
+  small files" — as an earlier revision of this section did — is true about the
+  number of files and false about their size. It is still a line scan and still
+  parses no note, and it is the honest ceiling of the incremental check;
+- **`git status --porcelain -z --untracked-files=all`** runs on every `send`,
+  every `receipt` and every `inbox --advance`. `-uall` is load-bearing (without it
+  git collapses an untracked lane to one entry and the new note never matches the
+  path the run is allowed to write), and it costs a walk of the working tree;
+- **the diff's tree scan is O(files in the lanes that changed)**, not O(change).
+  Git stops at every subtree whose object id is equal on both sides, which is what
+  makes the read cheap across a table of many lanes — but a lane is a FLAT
+  directory of notes, so comparing the one lane a note landed in means comparing
+  a tree with one entry per note that lane has ever sent. It is an id comparison
+  per entry and not a file read, and it is the reason this section says the cost
+  is the size of the change *in parses*.
+
+None of the four is a walk of the history and none of them opens a note. They are
+named here because a performance claim that hides its own exceptions is the same
+shape of lie as a listing that does not say what it looked at.
+
 **Why the cursor is a file on the table and not state on a bench.** It is pushed
 exactly the way a receipt is: same identity from the roster, same clean-checkout
 and branch-ahead refusals, same fetch-rebase-bounded-retry. A cursor kept in a
@@ -2599,10 +2708,16 @@ adoption run wants.
 
 `check --as <name>` and `check --since <commit>` check only the lane files that
 changed since that reader's cursor or since that commit, with `Re:` resolution
-and id uniqueness answered from the catalogue. The per-note rules are **the same
-code** in both modes, with the lookups pointed somewhere different, because two
-spellings of one rule drift and a check that says different things depending on
-how it was invoked is worse than one that is slow.
+and id uniqueness answered from the catalogue — which means **every lane's
+`INDEX`, read whole**: those two are claims across the table and cannot be
+answered from one lane. It parses no note and opens one small file per lane, and
+it is O(all notes ever sent) in time and memory all the same. See the complexity
+accounting in the cursor section.
+
+The per-note rules are **the same code** in both modes, with the lookups pointed
+somewhere different, because two spellings of one rule drift and a check that
+says different things depending on how it was invoked is worse than one that is
+slow.
 
 `check` with **none** of the three is exit 2 and `refusing to guess`: a check with
 no baseline is not a check of nothing, it is a caller who has not said what they
@@ -2634,7 +2749,11 @@ not carry, is a `BUS FAIL`: that one could resolve a thread to the wrong note. A
 note with an id and **no** `INDEX` line is a `BUS WARN`, at any date — the notes
 are the record and the catalogue is a cache, and somebody who wrote a note by
 hand in a browser, which this table's whole form exists to allow, has not broken
-anything. `--rebuild-index` writes every lane's catalogue from the notes in it
+anything. The warning says what it **costs**, because the cost is not the same
+everywhere: in somebody else's lane it is one lookup answered from the filesystem
+instead, and in **your own** lane it is a reply the incremental read cannot see
+once it falls behind your cursor, so a note that reply answers can re-appear as
+open. `--rebuild-index` writes every lane's catalogue from the notes in it
 and reports `BUS INDEX lane=<lane> notes=<n>`; it needs `--full`, because it
 rewrites a file from every note, and it writes rather than commits, because a
 rewrite of shared state is a repair a person watches.
@@ -2707,10 +2826,15 @@ keeps working.
   writes to the table only when asked, and then it takes the same three push
   flags a receipt does. See the cursor section for the argument.
 - **No garbage collection of a lane's state files.** `CURSOR`, `OPEN` and `INDEX`
-  only ever grow with what they describe, and all three can be deleted: a reader
-  who removes theirs pays one full read, and a lane that removes its catalogue
-  gets it back from `check --full --rebuild-index`. Nothing prunes them on a
-  schedule, because nothing here runs on a schedule.
+  only ever grow with what they describe, and nothing prunes them on a schedule,
+  because nothing here runs on a schedule. Deleting them is **not** symmetric and
+  the cursor section states the rule: `CURSOR` costs one full read, `INDEX` comes
+  back from `check --full --rebuild-index`, and `OPEN` deleted **on its own** —
+  while the cursor stays — would drop the notes a reader still owes in silence,
+  so the cursor records the count it was written with and a run that finds them
+  disagreeing is `INBOX REFUSED` naming `--full --advance`. Delete `OPEN` and
+  `CURSOR` together, or read once with `--full --advance`; either way it is one
+  full read and nothing is lost.
 - **No sweep verb.** `--legacy-before` is a TOLERANCE and not a repair: it
   forgives old notes, it does not fix them, and it is a line drawn once rather
   than machinery. A verb that repairs legacy headers and re-points orphaned
