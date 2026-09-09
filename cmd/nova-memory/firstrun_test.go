@@ -548,3 +548,67 @@ func TestARefusalReportsEveryReasonAtOnce(t *testing.T) {
 		})
 	}
 }
+
+// The echoed step is a line the reader is meant to PASTE, and the shell they
+// paste it into is the one on their own machine. The specimen is the Windows
+// path: rendered as a Go string literal every separator doubled, so the echo
+// named C:\\Users\\... — a path that does not exist, printed by the one verb
+// whose whole job is to be copied. Both platforms' rules are pinned here
+// rather than on the platform that happens to be running.
+func TestTheEchoedStepPastesBackIntoThatPlatformsShell(t *testing.T) {
+	cases := []struct {
+		name    string
+		windows bool
+		argv    []string
+		want    string
+	}{
+		{
+			name:    "a windows path is echoed verbatim, separators and all",
+			windows: true,
+			argv:    []string{"check", "--root", "corpus", `C:\Users\RUNNER~1\AppData\Local\Temp\Test1\001\draft.md`},
+			want:    `check --root corpus C:\Users\RUNNER~1\AppData\Local\Temp\Test1\001\draft.md`,
+		},
+		{
+			name:    "a windows path holding a space is double-quoted, which that shell takes literally",
+			windows: true,
+			argv:    []string{"check", `C:\Program Files\notes\draft.md`},
+			want:    `check "C:\Program Files\notes\draft.md"`,
+		},
+		{
+			name: "a posix path is echoed verbatim",
+			argv: []string{"check", "--root", "corpus", "/var/folders/t7/Test1/001/draft.md"},
+			want: "check --root corpus /var/folders/t7/Test1/001/draft.md",
+		},
+		{
+			name: "a posix argument holding a space is single-quoted, and keeps every character",
+			argv: []string{"search", "salt haze"},
+			want: `search 'salt haze'`,
+		},
+		{
+			name: "a posix argument the shell would act on is quoted rather than handed over",
+			argv: []string{"search", "$HOME", "a'b", `back\slash`},
+			want: `search '$HOME' 'a'\''b' 'back\slash'`,
+		},
+		{
+			name:    "an empty argument is still a word on both shells",
+			windows: true,
+			argv:    []string{"search", ""},
+			want:    `search ""`,
+		},
+		{
+			name: "a newline in an argument cannot break the echo in two",
+			argv: []string{"search", "one\ntwo"},
+			want: `search 'one\x0atwo'`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := commandLineFor(tc.argv, tc.windows); got != tc.want {
+				t.Errorf("commandLineFor(%q, windows=%v) =\n  %s\nwant\n  %s", tc.argv, tc.windows, got, tc.want)
+			}
+			if strings.Contains(commandLineFor(tc.argv, tc.windows), "\n") {
+				t.Error("the echoed line is more than one line")
+			}
+		})
+	}
+}

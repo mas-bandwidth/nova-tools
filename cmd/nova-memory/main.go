@@ -27,6 +27,7 @@ import (
 	"io"
 	"os"
 	"path"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -420,22 +421,69 @@ var quickstartFunctionWords = map[string]bool{
 	"would": true, "you": true, "your": true,
 }
 
-// commandLine renders a step's argv as a line a reader can copy. Each
-// argument goes through internal/oneline, so the echo is one line whatever an
-// argument holds; an argument carrying a space is Quoted rather than
-// Field-escaped, because this line's whole job is to be pasted back into a
-// shell — the nova-bus `names` lesson, where Field turned a value a person
-// was meant to copy into one they could not.
+// commandLine renders a step's argv as a line a reader can PASTE BACK into the
+// shell of the machine that printed it. Every argument goes through
+// oneline.Escape first, so the echo is one line whatever an argument holds —
+// Escape keeps a path's spaces and its backslashes, which is what a path is
+// made of. The quoting on top of that is the shell's, and WHICH shell is a
+// platform fact rather than a style: rendering an argument as a Go string
+// literal doubled every backslash in it, so on Windows the echoed check step
+// named a path that does not exist, in a line that does not paste. Nothing is
+// quoted that does not need it, so the ordinary case — a path of ordinary
+// characters — is echoed verbatim on every platform.
 func commandLine(argv []string) string {
+	return commandLineFor(argv, runtime.GOOS == "windows")
+}
+
+// commandLineFor is commandLine with the platform passed in, so both shells'
+// rules are testable from either one.
+func commandLineFor(argv []string, windows bool) string {
 	parts := make([]string, 0, len(argv))
 	for _, a := range argv {
-		if strings.ContainsAny(a, " \t\"\\") {
-			parts = append(parts, oneline.Quote(a))
-			continue
-		}
-		parts = append(parts, oneline.Field(a))
+		parts = append(parts, shellArg(a, windows))
 	}
 	return strings.Join(parts, " ")
+}
+
+// shellArg renders one argument for that platform's shell, and quotes only
+// when the argument holds something the shell would otherwise act on.
+func shellArg(s string, windows bool) string {
+	esc := oneline.Escape(s)
+	if esc != "" && !needsQuoting(esc, windows) {
+		return esc
+	}
+	if windows {
+		// cmd.exe and PowerShell both take a double-quoted argument literally,
+		// backslashes included, which is exactly what a Windows path needs. A
+		// double quote cannot appear in a Windows path at all; one arriving
+		// from --words is doubled, which is how that shell spells its own
+		// quote.
+		return `"` + strings.ReplaceAll(esc, `"`, `""`) + `"`
+	}
+	// A single-quoted POSIX word is literal up to its closing quote, so the
+	// backslashes, dollars and spaces inside it survive the paste. The one
+	// character it cannot hold is its own quote, which is closed, escaped and
+	// reopened.
+	return "'" + strings.ReplaceAll(esc, "'", `'\''`) + "'"
+}
+
+// needsQuoting is true for every character but the ones a shell hands to the
+// program unchanged. The list is deliberately short — anything unlisted is
+// quoted, which is never wrong, only noisier — and it differs by platform in
+// the two characters this bug was about: a backslash is a path separator on
+// Windows and an escape on a POSIX shell, and a tilde is an ordinary character
+// in a short Windows path (RUNNER~1) and an expansion on a POSIX one.
+func needsQuoting(s string, windows bool) bool {
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
+		case strings.ContainsRune(`-_./=+:,@`, r):
+		case windows && strings.ContainsRune(`\~`, r):
+		default:
+			return true
+		}
+	}
+	return false
 }
 
 // step echoes one command line and then RUNS it, through the same dispatch a

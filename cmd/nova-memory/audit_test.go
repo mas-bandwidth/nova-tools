@@ -24,8 +24,8 @@ var memoryAudit = audit.Config{
 	// hintFor is the fourth: it returns one of the package's own hint constants, or the
 	// empty string, and nothing else — a switch over a flag name, with no caller text in
 	// it. commandLine is the fifth: it puts every argument of an echoed quickstart step
-	// through oneline itself — Field, or Quote for one holding a space — and joins them
-	// with single spaces, so the echo is one line whatever an argument holds. The
+	// through oneline.Escape and then that platform's shell quoting, and joins them with
+	// single spaces, so the echo is one line whatever an argument holds. The
 	// classifier walks each body like the others, so every claim here is checked.
 	Escapers: []string{"hitLine", "scoreFields", "chanNames", "hintFor", "commandLine"},
 	// One entry per site, keyed by file, function and source text; sites with the same
@@ -46,7 +46,10 @@ var memoryAudit = audit.Config{
 		"main.go|cmdVerify|*links":                "validated above the site to be exactly gate or info",
 	},
 	Imports: []string{
-		`"bufio"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path"`, `"sort"`, `"strings"`, `"time"`,
+		// runtime is read for GOOS alone, in commandLine: which shell the echoed
+		// quickstart line has to paste into is a property of the machine printing it.
+		// It writes to no stream.
+		`"bufio"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path"`, `"runtime"`, `"sort"`, `"strings"`, `"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/memindex"`,
 	},
 	MinClassified: 30,
