@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -1436,7 +1437,11 @@ func TestAForwardDrawnDateLineSaysSoAndNamesTheCommandThatFixesIt(t *testing.T) 
 	// exactly which day is hidden and exactly what to run. It is one line, it comes after
 	// INBOX SCOPE and before any listing, and the exit code is untouched -- a note, not a
 	// refusal.
-	want := `INBOX NOTE your switch-day line is the date 2026-09-10, which hides every note dated 2026-09-09 or earlier; draw it at an instant, once: nova-bus inbox --bus "` + checkout + `" --as "Ada" --receipt-max-words 40 --full --legacy-now --advance --remote "origin" --branch "main"`
+	// The bus directory reaches the line through oneline.Quote, which is strconv.Quote: on
+	// Windows the path is full of backslashes and every one of them is escaped. The
+	// expectation is built the same way rather than by pasting the raw path in quotes,
+	// which is a test that passes on two platforms of the three.
+	want := `INBOX NOTE your switch-day line is the date 2026-09-10, which hides every note dated 2026-09-09 or earlier; draw it at an instant, once: nova-bus inbox --bus ` + strconv.Quote(checkout) + ` --as "Ada" --receipt-max-words 40 --full --legacy-now --advance --remote "origin" --branch "main"`
 	r = invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=0 open=0").
 		mustContain(t, "stdout", want+"\n")
@@ -1450,7 +1455,7 @@ func TestAForwardDrawnDateLineSaysSoAndNamesTheCommandThatFixesIt(t *testing.T) 
 	// wherever it is met -- with the values check was never given printed as the
 	// placeholders they are.
 	invoke(t, "", "check", "--bus", checkout, "--as", "Ada").mustCode(t, 0).
-		mustContain(t, "stdout", `INBOX NOTE your switch-day line is the date 2026-09-10, which hides every note dated 2026-09-09 or earlier; draw it at an instant, once: nova-bus inbox --bus "`+checkout+`" --as "Ada" --receipt-max-words <n> --full --legacy-now --advance --remote "<remote>" --branch "<branch>"`)
+		mustContain(t, "stdout", `INBOX NOTE your switch-day line is the date 2026-09-10, which hides every note dated 2026-09-09 or earlier; draw it at an instant, once: nova-bus inbox --bus `+strconv.Quote(checkout)+` --as "Ada" --receipt-max-words <n> --full --legacy-now --advance --remote "<remote>" --branch "<branch>"`)
 
 	// THE COMMAND THE NOTE NAMES, RUN. It draws the line at this run's instant, which is
 	// earlier than the date -- allowed under --full, which derives the whole open list from
