@@ -71,19 +71,24 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 	}
 }
 
-// The usage banner ends in one example per retrieval verb, and the examples are
-// RUN here rather than read: an example that has drifted out of the flag set
-// teaches the wrong invocation to exactly the reader who cannot tell.
+// The usage banner ends in the quickstart line and one example per retrieval
+// verb, and the examples are RUN here rather than read: an example that has
+// drifted out of the flag set teaches the wrong invocation to exactly the
+// reader who cannot tell. The quickstart line comes first because it is the
+// one a reader with nothing but a directory can type.
 func TestUsageBannerExamplesRun(t *testing.T) {
 	examples := usageExamples(t)
-	if len(examples) != 2 {
-		t.Fatalf("want one search example and one check example under `example:`, got %d: %q", len(examples), examples)
+	if len(examples) != 3 {
+		t.Fatalf("want a quickstart, a search and a check example under `example:`, got %d: %q", len(examples), examples)
 	}
-	if !strings.HasPrefix(examples[0], "nova-memory search ") {
-		t.Errorf("the first example is not a search: %q", examples[0])
+	if !strings.HasPrefix(examples[0], "nova-memory quickstart ") {
+		t.Errorf("the first example is not the quickstart: %q", examples[0])
 	}
-	if !strings.HasPrefix(examples[1], "nova-memory check ") {
-		t.Errorf("the second example is not a check: %q", examples[1])
+	if !strings.HasPrefix(examples[1], "nova-memory search ") {
+		t.Errorf("the second example is not a search: %q", examples[1])
+	}
+	if !strings.HasPrefix(examples[2], "nova-memory check ") {
+		t.Errorf("the third example is not a check: %q", examples[2])
 	}
 	draft := writeDraft(t)
 	for _, ex := range examples {
@@ -128,7 +133,8 @@ func usageExamples(t *testing.T) []string {
 // deliberately NOT compared: the block shows a real corpus's numbers, and
 // pinning those would make the README a fixture instead of a document.
 func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
-	lines := readmeFirstRun(t)
+	blocks := readmeFirstRun(t)
+	lines := blocks[len(blocks)-1]
 	draft := writeDraft(t)
 
 	var printed map[string]bool
@@ -191,8 +197,11 @@ func shape(line string) string {
 	return strings.Join(out, " ")
 }
 
-// readmeFirstRun returns the lines of the fenced transcript under `### First run`.
-func readmeFirstRun(t *testing.T) []string {
+// readmeFirstRun returns the fenced transcripts under `### First run`, one
+// slice of lines per block: the quickstart block first, the two-verb block
+// last. They are checked separately because they are two different promises —
+// one run that printed everything, and two runs a reader types themselves.
+func readmeFirstRun(t *testing.T) [][]string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
 	if err != nil {
@@ -206,10 +215,15 @@ func readmeFirstRun(t *testing.T) []string {
 	if !found {
 		body = tail
 	}
+	var blocks [][]string
 	var lines []string
 	fenced := false
 	for _, line := range strings.Split(body, "\n") {
 		if strings.HasPrefix(line, "```") {
+			if fenced && len(lines) > 0 {
+				blocks = append(blocks, lines)
+				lines = nil
+			}
 			fenced = !fenced
 			continue
 		}
@@ -217,10 +231,10 @@ func readmeFirstRun(t *testing.T) []string {
 			lines = append(lines, line)
 		}
 	}
-	if len(lines) == 0 {
-		t.Fatal("`### First run` holds no fenced transcript")
+	if len(blocks) < 2 {
+		t.Fatalf("`### First run` must hold a quickstart transcript and the two-verb transcript, got %d fenced blocks", len(blocks))
 	}
-	return lines
+	return blocks
 }
 
 // localize points an example or README command at the fixture corpus and at a
@@ -246,4 +260,291 @@ func writeDraft(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return path
+}
+
+// ---------------------------------------------------------------------------
+// quickstart — the first run, and what it promises in print
+
+// The three steps, in order, with the flags each one is echoed with. The
+// promise quickstart makes is that the line above an output IS the line that
+// produced it, so the echoes are checked as text and not as shapes: a
+// demonstration whose printed command differs from the command it ran teaches
+// an invocation that does not work.
+func TestQuickstartEchoesEveryCommandItRuns(t *testing.T) {
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus)
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
+	}
+	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+
+	if !strings.HasPrefix(lines[0], "QUICKSTART OK root=") {
+		t.Fatalf("the first line does not say what this run chose: %q", lines[0])
+	}
+	words := field(t, lines[0], "words")
+	if got := field(t, lines[0], "words-source"); got != "corpus-top-terms" {
+		t.Errorf("words-source = %q, want corpus-top-terms when --words was not given", got)
+	}
+	for _, w := range strings.Split(words, `\x20`) {
+		if quickstartFunctionWords[w] {
+			t.Errorf("the demonstration query offers %q, a function word, as one of this corpus's own terms", w)
+		}
+	}
+	if want := "QUICKSTART NOTE " + quickstartChoiceNote; lines[len(lines)-1] != want {
+		t.Errorf("the last line is\n  %s\nwant\n  %s", lines[len(lines)-1], want)
+	}
+
+	// Each echo, and the token the output under it must open with. The k
+	// values are the ones the closing note names, so a change to one that
+	// forgets the other fails here.
+	steps := []struct{ echo, token string }{
+		{"$ nova-memory stats --root " + corpus, "STATS"},
+		{"$ nova-memory search --root " + corpus + " --channels bm25 --k 3 " + strings.ReplaceAll(words, `\x20`, " "), "SEARCH"},
+		{"$ nova-memory check --root " + corpus + " --channels bm25 --k 2 -", "MEMORY"},
+	}
+	at := 0
+	for _, st := range steps {
+		i := indexOf(lines, st.echo)
+		if i < 0 {
+			t.Fatalf("quickstart never printed the command line\n  %s\ngot:\n%s", st.echo, stdout)
+		}
+		if i < at {
+			t.Errorf("the steps are out of order: %q came before the step above it", st.echo)
+		}
+		if i+1 >= len(lines) || !strings.HasPrefix(lines[i+1], st.token+" ") {
+			t.Errorf("the line under %q is not that command's output: %q", st.echo, lines[i+1])
+		}
+		at = i
+	}
+	// The candidate is named before the check that reads it, because a
+	// paragraph arriving on stdin is the one thing in the transcript a reader
+	// cannot see the source of.
+	demo := -1
+	for i, line := range lines {
+		if strings.HasPrefix(line, "QUICKSTART DEMO ") {
+			demo = i
+		}
+	}
+	if demo < 0 || demo >= indexOf(lines, steps[2].echo) {
+		t.Errorf("no QUICKSTART DEMO line above the check step:\n%s", stdout)
+	}
+	if !strings.Contains(quickstartChoiceNote, "not defaults") {
+		t.Error("the closing note no longer says the choices are not defaults, which is the whole point of the verb")
+	}
+}
+
+// --words and --draft are the caller's, and they must reach the echoed line:
+// a flag that changed the run without changing the printed command would make
+// the transcript a decoration.
+func TestQuickstartRunsTheWordsAndDraftItWasGiven(t *testing.T) {
+	draft := writeDraft(t)
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--words", "glazing", "--words", "brass", "--draft", draft)
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
+	}
+	lines := strings.Split(strings.TrimRight(stdout, "\n"), "\n")
+	if got := field(t, lines[0], "words-source"); got != "given" {
+		t.Errorf("words-source = %q, want given", got)
+	}
+	want := "$ nova-memory search --root " + corpus + " --channels bm25 --k 3 glazing brass"
+	if indexOf(lines, want) < 0 {
+		t.Errorf("quickstart never printed\n  %s\ngot:\n%s", want, stdout)
+	}
+	if want := "$ nova-memory check --root " + corpus + " --channels bm25 --k 2 " + draft; indexOf(lines, want) < 0 {
+		t.Errorf("quickstart never printed\n  %s\ngot:\n%s", want, stdout)
+	}
+	if strings.Contains(stdout, "QUICKSTART DEMO") {
+		t.Error("a run given its own --draft must not announce the corpus's first paragraph")
+	}
+}
+
+// Exit 0 means all three ran. A step that could not run ends the demonstration
+// there, and the closing note — the sentence a reader is meant to leave with —
+// is not printed over a run that did not finish.
+func TestQuickstartExitsTwoWhenAStepCouldNotRun(t *testing.T) {
+	empty := filepath.Join(t.TempDir(), "empty.md")
+	if err := os.WriteFile(empty, []byte("ok\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--draft", empty)
+	if exit != 2 {
+		t.Fatalf("exit = %d, want 2; stderr: %s", exit, stderr)
+	}
+	if !strings.Contains(stderr, "the check step could not run") {
+		t.Errorf("stderr does not name the step that failed: %q", stderr)
+	}
+	if strings.Contains(stdout, quickstartChoiceNote) {
+		t.Error("a quickstart that did not finish printed its closing note anyway")
+	}
+	if !strings.Contains(stdout, "SEARCH OK") {
+		t.Errorf("the steps that did run must still be on the page: %q", stdout)
+	}
+}
+
+// The README's quickstart transcript, held to the tool: the first line is RUN,
+// and every line under it must be a line that run printed. The echoed command
+// lines are compared as text, with the root normalized because the README
+// shows a reader's corpus and the test has its own; everything else is
+// compared by shape, so the fixture's scores stay the fixture's business.
+func TestREADMEFirstRunQuickstartBlockMatchesWhatTheToolPrints(t *testing.T) {
+	lines := readmeFirstRun(t)[0]
+	cmd, ok := strings.CutPrefix(lines[0], "$ nova-memory quickstart ")
+	if !ok {
+		t.Fatalf("`### First run` must open on the quickstart command, got %q", lines[0])
+	}
+	exit, stdout, stderr := runCLI(t, "", localize(append([]string{"quickstart"}, strings.Fields(cmd)...), "")...)
+	if exit != 0 {
+		t.Fatalf("the README quickstart does not run: exit %d, stderr: %s", exit, stderr)
+	}
+	printedShape, printedEcho := map[string]bool{}, map[string]bool{}
+	for _, out := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(out, "$ nova-memory ") {
+			printedEcho[rootless(out)] = true
+			continue
+		}
+		if s := shape(out); s != "" {
+			printedShape[s] = true
+		}
+	}
+	seen := map[string]int{}
+	for _, line := range lines[1:] {
+		if strings.HasPrefix(line, "$ nova-memory ") {
+			if !printedEcho[rootless(line)] {
+				t.Errorf("README shows the command line\n  %s\nwhich this quickstart never printed. Re-run it and paste what it said.", line)
+			}
+			seen["$ nova-memory"]++
+			continue
+		}
+		s := shape(line)
+		if s == "" {
+			continue
+		}
+		if !printedShape[s] {
+			t.Errorf("README line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
+		}
+		seen[strings.Join(strings.Fields(s)[:2], " ")]++
+	}
+	for prefix, want := range map[string]int{
+		"$ nova-memory": 3, "QUICKSTART DEMO": 1, "QUICKSTART NOTE": 1,
+		"SEARCH OK": 1, "SEARCH CAL": 1, "SEARCH HIT": 3,
+		"MEMORY OK": 1, "MEMORY CAL": 1, "MEMORY CAND": 1, "MEMORY HIT": 2,
+	} {
+		if seen[prefix] != want {
+			t.Errorf("the README quickstart transcript shows %d %s lines, want %d", seen[prefix], prefix, want)
+		}
+	}
+	if !strings.HasSuffix(strings.TrimSpace(lines[len(lines)-1]), quickstartChoiceNote) {
+		t.Errorf("the transcript does not end on the sentence the verb exists for: %q", lines[len(lines)-1])
+	}
+}
+
+// rootless replaces the argument of --root, so a command line the README shows
+// against a reader's corpus can be compared with the same line run against the
+// fixture.
+func rootless(line string) string {
+	toks := strings.Fields(line)
+	for i := 0; i < len(toks)-1; i++ {
+		if toks[i] == "--root" {
+			toks[i+1] = "<root>"
+		}
+	}
+	return strings.Join(toks, " ")
+}
+
+func indexOf(lines []string, want string) int {
+	for i, line := range lines {
+		if line == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// field reads one key=value field off an event line.
+func field(t *testing.T, line, key string) string {
+	t.Helper()
+	for _, tok := range strings.Fields(line) {
+		if k, v, ok := strings.Cut(tok, "="); ok && k == key {
+			return v
+		}
+	}
+	t.Fatalf("no %s= field on %q", key, line)
+	return ""
+}
+
+// ---------------------------------------------------------------------------
+// One run, every reason
+
+// A first run is usually wrong about more than one thing, and the tool that
+// answers one refusal at a time turns that into a guessing game played one
+// round per invocation. Every reason a run cannot start is reported by the run
+// that could not start.
+func TestARefusalReportsEveryReasonAtOnce(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "search missing both channels and k",
+			args: []string{"search", "--root", corpus, "x"},
+			want: []string{
+				"--channels is required", channelsHint,
+				"--k is required", kHint,
+			},
+		},
+		{
+			name: "search with a bad channel and a bad k, and no query",
+			args: []string{"search", "--root", corpus, "--channels", "journal", "--k", "0"},
+			want: []string{
+				`unknown channel "journal"`,
+				"--k must be a positive receipt budget",
+				"no query words given",
+			},
+		},
+		{
+			name: "check missing everything but the verb",
+			args: []string{"check"},
+			want: []string{
+				"--channels is required", channelsHint,
+				"--k is required", kHint,
+				"--root is required", rootHint,
+				"exactly one candidate file",
+			},
+		},
+		{
+			name: "eval with a bad channel, a bad k and a bad floor",
+			args: []string{"eval", "--root", corpus, "--channels", "journal", "--k", "-1", "--floor", "2", exampleGold},
+			want: []string{
+				`unknown channel "journal"`,
+				"--k must be a positive receipt budget",
+				"--floor must be in (0,1]",
+			},
+		},
+		// A missing flag says one thing, not two: the value of a flag nobody
+		// gave is not a second mistake the caller made.
+		{
+			name: "a missing channels flag does not also complain about its empty value",
+			args: []string{"search", "--root", corpus, "--k", "3", "x"},
+			want: []string{"--channels is required"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exit, stdout, stderr := runCLI(t, "", tc.args...)
+			if exit != 2 {
+				t.Fatalf("exit = %d, want 2; stderr: %s", exit, stderr)
+			}
+			if stdout != "" {
+				t.Errorf("a refusal must print nothing on stdout, got %q", stdout)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(stderr, w) {
+					t.Errorf("stderr does not report %q; one run must report them all, got:\n%s", w, stderr)
+				}
+			}
+			if strings.Contains(stderr, "--channels is required") && strings.Contains(stderr, "named no channels") {
+				t.Errorf("a missing --channels was reported twice, once as missing and once as empty:\n%s", stderr)
+			}
+		})
+	}
 }

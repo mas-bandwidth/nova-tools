@@ -38,12 +38,19 @@ import (
 const usage = `nova-memory: membership is a lookup, never a scan (see SPEC.md)
 
 usage:
+  nova-memory quickstart --root <dir> [--words <w>]... [--draft <file>] [--exclude <glob>]...
   nova-memory stats  --root <dir> [--exclude <glob>]...
   nova-memory search --root <dir> --channels <list> --k <n> [--exclude <glob>]... <words>...
   nova-memory check  --root <dir> --channels <list> --k <n> [--exclude <glob>]... <file|->
   nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                      [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
   nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--exclude <glob>]... <gold.tsv>
+
+quickstart is the first run and nothing else: it runs stats, then one search,
+then one check, PRINTING each command line above that command's output, so
+what you saw came from a line you can now edit and run yourself. It is not a
+default channel or a default k — it names both on every line it prints, and
+says so again at the end.
 
 flags:
   --root <dir>          the corpus root. Required, always: there is no
@@ -72,10 +79,22 @@ flags:
   --exempt <prefix>     verify only, repeatable: basename prefixes that are
                         listings, not entries, and are exempt from
                         --frontmatter. Nothing is exempt by default.
+  --words <w>           quickstart only, repeatable: the words the
+                        demonstration search runs. Default: the corpus's three
+                        most frequent terms that are not function words, named
+                        on the printed command line like any other choice.
+  --draft <file>        quickstart only: the candidate the demonstration check
+                        reads. Default: this corpus's own first paragraph, fed
+                        on stdin, which shows you what "you already know this"
+                        looks like when it is certainly true.
+
+A refusal reports every flag it can see at once — two missing flags are two
+sentences and one run, not two runs.
 
 exit codes: 0 ran and passed, 1 ran and failed, 2 could not run (bad invocation).
 
 example:
+  nova-memory quickstart --root ./corpus
   nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
   nova-memory check  --root ./corpus --channels bm25 --k 3 draft.md
 `
@@ -129,6 +148,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	switch args[0] {
+	case "quickstart":
+		return cmdQuickstart(args[1:], stdout, stderr)
 	case "stats":
 		return cmdStats(args[1:], stdout, stderr)
 	case "search":
@@ -163,19 +184,30 @@ func (m *multiFlag) Set(s string) error { *m = append(*m, s); return nil }
 // flag set, not inferred from the value, so "--k 0" is a different (and
 // differently worded) refusal from a missing --k.
 //
+// EVERY missing flag is reported, not the first: a first run that is two flags
+// short must learn that in one run. The returned set says which flags were
+// given, so a caller can check the VALUE of each flag it actually received and
+// add those refusals to the same run — "--channels is required" and
+// "--channels named a directory" must never both print about one invocation,
+// and neither must a bad --k hide a bad --channels.
+//
+// given is nil when the arguments could not be parsed at all: nothing after
+// that is knowable, so the caller stops rather than guessing which flags
+// arrived.
+//
 // Package flag is given no stream: its error text quotes the argument it
 // could not parse, raw, and its usage dump follows -- so an argument holding
 // a newline authored a whole line of stderr before any code in this file ran.
 // The refusal is printed here instead, escaped, and -h after a verb is refused
 // at exit 2 like any other unusable invocation.
-func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) (ok bool) {
+func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) (given map[string]bool, ok bool) {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
 		fmt.Fprintf(stderr, "nova-memory %s: %s\n\n%s", fs.Name(), oneline.Err(err), usage)
-		return false
+		return nil, false
 	}
-	given := map[string]bool{}
+	given = map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	sorted := append([]string(nil), required...)
 	sort.Strings(sorted) // deterministic order, not map or caller order
@@ -187,7 +219,7 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string
 			ok = false
 		}
 	}
-	return ok
+	return given, ok
 }
 
 // rootFlags carries the flags every verb needs to build an index.
@@ -232,21 +264,25 @@ func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time
 	return c, time.Since(t0), true
 }
 
-// channelSpec turns the required --channels list into channels. An unknown
-// name is a refusal, never a silent drop: a run that quietly used fewer
-// channels than asked reports a number that means something else.
-func channelSpec(c *memindex.Corpus, spec, verb string, stderr io.Writer) ([]memindex.Channel, bool) {
+// channelNames validates the --channels list and returns the names in it. An
+// unknown name is a refusal, never a silent drop: a run that quietly used
+// fewer channels than asked reports a number that means something else.
+//
+// It is deliberately separate from building the channels, and needs no
+// corpus, so a bad --channels is refused in the same run as a bad --k rather
+// than a build later — the reader who typed a directory name into --channels
+// is exactly the reader who should not have to run the tool three times to
+// find their three mistakes.
+func channelNames(spec, verb string, stderr io.Writer) ([]string, bool) {
 	if strings.TrimSpace(spec) == "" {
 		fmt.Fprintf(stderr, "nova-memory %s: --channels named no channels; refusing to guess\n  %s\n", verb, channelsHint)
 		return nil, false
 	}
-	var out []memindex.Channel
+	var out []string
 	for _, name := range strings.Split(spec, ",") {
-		switch strings.TrimSpace(name) {
-		case "bm25":
-			out = append(out, memindex.NewBM25(c))
-		case "trigram":
-			out = append(out, memindex.NewTrigram(c))
+		switch n := strings.TrimSpace(name); n {
+		case "bm25", "trigram":
+			out = append(out, n)
 		case "":
 			// A stray comma is a typo. Dropping it silently would run fewer
 			// channels than the caller asked for and report the number under
@@ -254,11 +290,25 @@ func channelSpec(c *memindex.Corpus, spec, verb string, stderr io.Writer) ([]mem
 			fmt.Fprintf(stderr, "nova-memory %s: --channels %q has an empty entry; refusing to guess\n", verb, spec)
 			return nil, false
 		default:
-			fmt.Fprintf(stderr, "nova-memory %s: unknown channel %q: %s\n", verb, strings.TrimSpace(name), channelsHint)
+			fmt.Fprintf(stderr, "nova-memory %s: unknown channel %q: %s\n", verb, n, channelsHint)
 			return nil, false
 		}
 	}
 	return out, true
+}
+
+// newChannels builds the channels for names channelNames already accepted, so
+// the only names reaching this switch are the two that exist.
+func newChannels(c *memindex.Corpus, names []string) []memindex.Channel {
+	out := make([]memindex.Channel, 0, len(names))
+	for _, name := range names {
+		if name == "trigram" {
+			out = append(out, memindex.NewTrigram(c))
+			continue
+		}
+		out = append(out, memindex.NewBM25(c))
+	}
+	return out
 }
 
 func chanNames(chans []memindex.Channel) string {
@@ -323,16 +373,228 @@ func hitLine(token, prefix string, rank int, h memindex.FileHit) string {
 }
 
 // ---------------------------------------------------------------------------
+// quickstart — the first run, which SAYS what it chose
+
+// The finished sentence a quickstart run ends on. The whole verb exists to
+// buy the reader this line honestly: they have now seen the tool work, and
+// they are told in the same breath that both numbers were picked for them
+// THIS ONCE and are picked by nobody at all on the next run.
+const quickstartChoiceNote = "this used bm25 alone and k=3/2; those are choices, not defaults: see --channels and --k"
+
+// quickstartK is the pair the demonstration runs on: 3 hits for one query,
+// 2 receipts per candidate paragraph — the low end of what the --k hint tells
+// a first run to use, so the output stays readable on a screen.
+const (
+	quickstartSearchK = "3"
+	quickstartCheckK  = "2"
+)
+
+// quickstartFunctionWords is a chooser for the demonstration QUERY and is not
+// a stopword list: nothing here is dropped from the index, from a query, or
+// from a score. memindex deliberately has no stopwords (it measured them
+// unnecessary), and this must not become one by the back door — it only keeps
+// "the" and "and" from being what the tool shows a stranger as their corpus's
+// three most characteristic words. The small cardinals are here for the same
+// reason as "the": they are quantifiers, and a corpus of measurements is full
+// of them.
+var quickstartFunctionWords = map[string]bool{
+	"one": true, "two": true, "three": true, "four": true, "five": true, "six": true,
+	"seven": true, "eight": true, "nine": true, "ten": true, "both": true, "another": true,
+	"about": true, "after": true, "again": true, "all": true, "also": true, "an": true,
+	"and": true, "any": true, "are": true, "as": true, "at": true, "be": true,
+	"because": true, "been": true, "before": true, "being": true, "but": true, "by": true,
+	"can": true, "could": true, "did": true, "do": true, "does": true, "each": true,
+	"even": true, "every": true, "for": true, "from": true, "had": true, "has": true,
+	"have": true, "he": true, "her": true, "here": true, "him": true, "his": true,
+	"how": true, "if": true, "in": true, "into": true, "is": true, "it": true,
+	"its": true, "just": true, "me": true, "more": true, "most": true, "much": true,
+	"must": true, "my": true, "no": true, "nor": true, "not": true, "of": true,
+	"off": true, "on": true, "once": true, "only": true, "or": true, "other": true,
+	"our": true, "out": true, "over": true, "own": true, "same": true,
+	"she": true, "should": true, "so": true, "some": true, "such": true, "than": true,
+	"that": true, "the": true, "their": true, "them": true, "then": true, "there": true,
+	"these": true, "they": true, "this": true, "those": true, "through": true, "to": true,
+	"too": true, "under": true, "until": true, "up": true, "us": true, "very": true,
+	"was": true, "we": true, "were": true, "what": true, "when": true, "where": true,
+	"which": true, "while": true, "who": true, "why": true, "will": true, "with": true,
+	"would": true, "you": true, "your": true,
+}
+
+// commandLine renders a step's argv as a line a reader can copy. Each
+// argument goes through internal/oneline, so the echo is one line whatever an
+// argument holds; an argument carrying a space is Quoted rather than
+// Field-escaped, because this line's whole job is to be pasted back into a
+// shell — the nova-bus `names` lesson, where Field turned a value a person
+// was meant to copy into one they could not.
+func commandLine(argv []string) string {
+	parts := make([]string, 0, len(argv))
+	for _, a := range argv {
+		if strings.ContainsAny(a, " \t\"\\") {
+			parts = append(parts, oneline.Quote(a))
+			continue
+		}
+		parts = append(parts, oneline.Field(a))
+	}
+	return strings.Join(parts, " ")
+}
+
+// step echoes one command line and then RUNS it, through the same dispatch a
+// caller reaches from a shell. Echoing and running from one argv is the point:
+// a printed command that was not what executed teaches an invocation that does
+// not work, to exactly the reader who cannot tell.
+func step(argv []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	fmt.Fprintf(stdout, "$ nova-memory %s\n", commandLine(argv))
+	return run(argv, stdin, stdout, stderr)
+}
+
+// stepFailed reports a step that could not run. quickstart exits 0 only when
+// all three ran: a partial demonstration that exited 0 would be teaching the
+// green, and the green is the one thing this tool is careful about.
+func stepFailed(verb string, code int, stderr io.Writer) int {
+	fmt.Fprintf(stderr, "nova-memory quickstart: the %s step could not run (exit %d); nothing further was attempted\n", verb, code)
+	return 2
+}
+
+// topTerms picks the demonstration query when the caller gave none: the terms
+// present in the most chunks, function words aside. They are the corpus's own
+// vocabulary rather than an invented query, which is the point — and because
+// common terms are the WEAKEST BM25 evidence, the words are printed on the
+// command line and named on the OK line, so what the reader sees is a real
+// query they can improve rather than a good one they must trust.
+//
+// The order is total — count, then the term itself — because Go randomizes
+// map iteration and two quickstart runs over one tree must print one thing.
+func topTerms(c *memindex.Corpus, n int) []string {
+	terms := make([]string, 0, len(c.DF))
+	for t := range c.DF {
+		if !quickstartFunctionWords[t] {
+			terms = append(terms, t)
+		}
+	}
+	sort.Slice(terms, func(i, j int) bool {
+		if c.DF[terms[i]] != c.DF[terms[j]] {
+			return c.DF[terms[i]] > c.DF[terms[j]]
+		}
+		return terms[i] < terms[j]
+	})
+	if len(terms) > n {
+		terms = terms[:n]
+	}
+	return terms
+}
+
+func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
+	fs := flag.NewFlagSet("quickstart", flag.ContinueOnError)
+	rf := addRootFlags(fs)
+	var words multiFlag
+	fs.Var(&words, "words", "word for the demonstration search, repeatable (default: the corpus's three most frequent non-function words)")
+	draft := fs.String("draft", "", "candidate file for the demonstration check (default: this corpus's own first paragraph)")
+	given, ok := parse(fs, args, stderr, "root")
+	if given == nil {
+		return 2
+	}
+	bad := !ok
+	if fs.NArg() > 0 {
+		fmt.Fprintf(stderr, "nova-memory quickstart: unexpected argument %q; the words for the search go after --words\n", fs.Arg(0))
+		bad = true
+	}
+	if given["draft"] && strings.TrimSpace(*draft) == "" {
+		fmt.Fprintln(stderr, "nova-memory quickstart: --draft names a candidate file; omit it to use this corpus's own first paragraph")
+		bad = true
+	}
+	if bad {
+		return 2
+	}
+
+	// Built once here, before any step, only to choose what the caller did not:
+	// the query words and the demonstration candidate. Each step below builds
+	// its own index, because each step is a command the reader can run alone
+	// and must behave identically when they do.
+	c, _, ok := rf.build("quickstart", stderr)
+	if !ok {
+		return 2
+	}
+	if len(c.Chunks) == 0 {
+		// memindex.Build refuses an empty corpus, so this is a guard and not a
+		// path — stated rather than assumed, because the alternative is an
+		// index panic on the friendliest verb in the tool.
+		fmt.Fprintln(stderr, "nova-memory quickstart: this corpus holds no indexable paragraph; there is nothing to demonstrate on")
+		return 2
+	}
+	wordsSource := "given"
+	if len(words) == 0 {
+		words, wordsSource = topTerms(c, 3), "corpus-top-terms"
+		if len(words) == 0 {
+			fmt.Fprintln(stderr, "nova-memory quickstart: this corpus has no term to demonstrate a search with; name some with --words")
+			return 2
+		}
+	}
+	candidate := "corpus-first-paragraph"
+	if *draft != "" {
+		candidate = *draft
+	}
+
+	// Flags first, then positionals: package flag stops at the first
+	// non-flag argument, and every echoed line has to be one a reader can run.
+	common := []string{"--root", *rf.root}
+	for _, e := range rf.excludes {
+		common = append(common, "--exclude", e)
+	}
+	fmt.Fprintf(stdout, "QUICKSTART OK root=%s steps=3 channels=bm25 k=%s/%s words=%s words-source=%s candidate=%s\n",
+		oneline.Field(*rf.root), quickstartSearchK, quickstartCheckK,
+		oneline.Field(strings.Join(words, " ")), oneline.Field(wordsSource), oneline.Field(candidate))
+
+	statsArgs := append([]string{"stats"}, common...)
+	if code := step(statsArgs, strings.NewReader(""), stdout, stderr); code != 0 {
+		return stepFailed("stats", code, stderr)
+	}
+
+	searchArgs := append([]string{"search"}, common...)
+	searchArgs = append(searchArgs, "--channels", "bm25", "--k", quickstartSearchK)
+	searchArgs = append(searchArgs, words...)
+	if code := step(searchArgs, strings.NewReader(""), stdout, stderr); code != 0 {
+		return stepFailed("search", code, stderr)
+	}
+
+	checkArgs := append([]string{"check"}, common...)
+	checkArgs = append(checkArgs, "--channels", "bm25", "--k", quickstartCheckK)
+	checkIn := strings.NewReader("")
+	if *draft != "" {
+		checkArgs = append(checkArgs, *draft)
+	} else {
+		// The demonstration with the answer known: a paragraph the corpus
+		// certainly holds, so a first run sees what "you already know this"
+		// looks like when it is true, and can compare it against the
+		// calibration band on the same screen.
+		checkArgs = append(checkArgs, "-")
+		checkIn = strings.NewReader(c.Chunks[0].Text)
+		fmt.Fprintf(stdout, "QUICKSTART DEMO no --draft given, so the candidate on stdin is this corpus's own first paragraph: %s:%d\n",
+			oneline.Escape(c.Chunks[0].File), c.Chunks[0].Para)
+	}
+	if code := step(checkArgs, checkIn, stdout, stderr); code != 0 {
+		return stepFailed("check", code, stderr)
+	}
+
+	fmt.Fprintf(stdout, "QUICKSTART NOTE %s\n", quickstartChoiceNote)
+	return 0
+}
+
+// ---------------------------------------------------------------------------
 // stats — m, measured
 
 func cmdStats(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("stats", flag.ContinueOnError)
 	rf := addRootFlags(fs)
-	if !parse(fs, args, stderr, "root") {
+	given, ok := parse(fs, args, stderr, "root")
+	if given == nil {
 		return 2
 	}
+	bad := !ok
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "nova-memory stats: unexpected argument %q\n", fs.Arg(0))
+		bad = true
+	}
+	if bad {
 		return 2
 	}
 	c, buildTime, ok := rf.build("stats", stderr)
@@ -362,14 +624,27 @@ func cmdSearch(args []string, stdout, stderr io.Writer) int {
 	rf := addRootFlags(fs)
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per query, positive (required)")
-	if !parse(fs, args, stderr, "root", "channels", "k") {
+	given, ok := parse(fs, args, stderr, "root", "channels", "k")
+	if given == nil {
 		return 2
 	}
-	if !checkK(*k, "search", stderr) {
-		return 2
+	// One run, every reason. A value is only judged when the flag carrying it
+	// was given, so a missing flag says one thing and not two.
+	bad := !ok
+	if given["k"] && !checkK(*k, "search", stderr) {
+		bad = true
+	}
+	var names []string
+	if given["channels"] {
+		if names, ok = channelNames(*channels, "search", stderr); !ok {
+			bad = true
+		}
 	}
 	if fs.NArg() == 0 {
 		fmt.Fprintln(stderr, "nova-memory search: no query words given; refusing to guess")
+		bad = true
+	}
+	if bad {
 		return 2
 	}
 	query := strings.Join(fs.Args(), " ")
@@ -377,10 +652,7 @@ func cmdSearch(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
-	chans, ok := channelSpec(c, *channels, "search", stderr)
-	if !ok {
-		return 2
-	}
+	chans := newChannels(c, names)
 	hits := memindex.Retrieve(c, chans, query, *k)
 	fmt.Fprintf(stdout, "SEARCH OK query=%s hits=%d k=%d channels=%s files=%d chunks=%d\n",
 		oneline.Field(query), len(hits), *k, chanNames(chans), len(c.Files), len(c.Chunks))
@@ -403,14 +675,25 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	rf := addRootFlags(fs)
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per candidate, positive (required)")
-	if !parse(fs, args, stderr, "root", "channels", "k") {
+	given, ok := parse(fs, args, stderr, "root", "channels", "k")
+	if given == nil {
 		return 2
 	}
-	if !checkK(*k, "check", stderr) {
-		return 2
+	bad := !ok
+	if given["k"] && !checkK(*k, "check", stderr) {
+		bad = true
+	}
+	var names []string
+	if given["channels"] {
+		if names, ok = channelNames(*channels, "check", stderr); !ok {
+			bad = true
+		}
 	}
 	if fs.NArg() != 1 {
 		fmt.Fprintln(stderr, "nova-memory check: name exactly one candidate file, or - for stdin; refusing to guess")
+		bad = true
+	}
+	if bad {
 		return 2
 	}
 
@@ -451,10 +734,7 @@ func cmdCheck(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
-	chans, ok := channelSpec(c, *channels, "check", stderr)
-	if !ok {
-		return 2
-	}
+	chans := newChannels(c, names)
 
 	fmt.Fprintf(stdout, "MEMORY OK candidates=%d source=%s k=%d channels=%s files=%d chunks=%d\n",
 		len(candidates), oneline.Field(name), *k, chanNames(chans), len(c.Files), len(c.Chunks))
@@ -491,21 +771,28 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&coverage, "coverage", "A:B glob pair, repeatable")
 	fs.Var(&front, "frontmatter", "glob whose files must carry a frontmatter name:, repeatable")
 	fs.Var(&exempt, "exempt", "basename prefix exempt from --frontmatter, repeatable (nothing is exempt by default)")
-	if !parse(fs, args, stderr, "root", "links") {
+	given, ok := parse(fs, args, stderr, "root", "links")
+	if given == nil {
 		return 2
 	}
+	bad := !ok
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "nova-memory verify: unexpected argument %q\n", fs.Arg(0))
-		return 2
+		bad = true
 	}
 	gateLinks := false
-	switch *links {
-	case "gate":
-		gateLinks = true
-	case "info":
-		gateLinks = false
-	default:
-		fmt.Fprintf(stderr, "nova-memory verify: --links must be gate or info (got %q); refusing to guess\n", *links)
+	if given["links"] {
+		switch *links {
+		case "gate":
+			gateLinks = true
+		case "info":
+			gateLinks = false
+		default:
+			fmt.Fprintf(stderr, "nova-memory verify: --links must be gate or info (got %q); refusing to guess\n", *links)
+			bad = true
+		}
+	}
+	if bad {
 		return 2
 	}
 	if len(coverage) == 0 && len(front) == 0 && !gateLinks {
@@ -582,18 +869,29 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per query, positive (required)")
 	floor := fs.Float64("floor", 0, "minimum recall@k in (0,1] (required)")
-	if !parse(fs, args, stderr, "root", "channels", "k", "floor") {
+	given, ok := parse(fs, args, stderr, "root", "channels", "k", "floor")
+	if given == nil {
 		return 2
 	}
-	if !checkK(*k, "eval", stderr) {
-		return 2
+	bad := !ok
+	if given["k"] && !checkK(*k, "eval", stderr) {
+		bad = true
 	}
-	if *floor <= 0 || *floor > 1 {
+	var names []string
+	if given["channels"] {
+		if names, ok = channelNames(*channels, "eval", stderr); !ok {
+			bad = true
+		}
+	}
+	if given["floor"] && (*floor <= 0 || *floor > 1) {
 		fmt.Fprintf(stderr, "nova-memory eval: --floor must be in (0,1] (got %g); a harness that cannot fail is not a measurement\n", *floor)
-		return 2
+		bad = true
 	}
 	if fs.NArg() != 1 {
 		fmt.Fprintln(stderr, "nova-memory eval: name exactly one gold file; refusing to guess")
+		bad = true
+	}
+	if bad {
 		return 2
 	}
 	rows, err := readGold(fs.Arg(0))
@@ -606,10 +904,7 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
-	chans, ok := channelSpec(c, *channels, "eval", stderr)
-	if !ok {
-		return 2
-	}
+	chans := newChannels(c, names)
 
 	hits := 0
 	var mrr float64
