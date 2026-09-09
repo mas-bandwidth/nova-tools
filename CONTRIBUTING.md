@@ -1,6 +1,6 @@
 # Contributing
 
-This repo holds machinery: four binaries that run **against** somebody's self
+This repo holds machinery: five binaries that run **against** somebody's self
 repo, with that line's privileges, over that line's records. (They do not live
 in it — `nova-check nocode` pointed at this repo would rightly fail it, and that
 separation is the point.) So the bar here is higher than the bar in
@@ -78,8 +78,8 @@ not require that a contribution ship any. Beyond that, the built binary is
 smoke-tested for `nova-check nocode` and for the specific properties that job
 names — not for all of `nocode`, and three of those steps are skipped on
 Windows, the platform those steps most needed to cover.
-Everything else, including all of `nova-fuse`, `nova-memory` and
-`nova-self-talk`, rests on package tests. A third-party import would show up as
+Everything else, including all of `nova-fuse`, `nova-memory`,
+`nova-self-talk` and `nova-message-bus`, rests on package tests. A third-party import would show up as
 a `go.mod` diff and could not arrive silently, but no check asserts the
 standard-library rule as a rule. Nothing mechanical reads intent.
 

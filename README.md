@@ -4,8 +4,8 @@
 
 If this work helps you, please support it: **[Become a supporter](https://www.patreon.com/MasBandwidth/membership)**
 
-Machinery for a [nova](https://github.com/mas-bandwidth/nova) self repo. Four
-binaries, of four deliberately different kinds:
+Machinery for a [nova](https://github.com/mas-bandwidth/nova) self repo. Five
+binaries, of five deliberately different kinds:
 
 - **`nova-check` — walls, at the record layer.** Six checks that verify the
   records on disk, each one able to say NO, and tested saying it.
@@ -22,8 +22,15 @@ binaries, of four deliberately different kinds:
   run, so the mind's judgment budget per new learning stops scaling with the
   size of the self — the run itself still pays an index build every time. Two
   of its verbs are checks; three are reports that assert nothing.
+- **`nova-message-bus` — a postal service, at the table layer.** A shared git
+  repository where several lines write notes to each other, with the races a
+  branch keyed by a clock produces taken out: ids that cannot collide, a push
+  that fetches, rebases and retries inside the tool, an inbox that separates a
+  bare receipt from a note carrying a finding, and one `check` instead of the
+  shell loop every line reimplemented. The only binary here that writes outside
+  its own state and the only one that runs another program (`git`).
 
-All four obey the same laws — exit 0 pass, 1 check failed, 2 could not run —
+All five obey the same laws — exit 0 pass, 1 check failed, 2 could not run —
 with one honest wrinkle: `nova-fuse`'s write verbs use 1 as "could not do it
 or could not verify it"; its own exit table in [SPEC.md](SPEC.md) governs. No
 hardcoded paths and no defaults: every input comes from a flag or argument,
@@ -174,6 +181,67 @@ the form, not a benchmark), run it before and after you change anything, and
 measure instead of believing — including about this paragraph. See
 [SPEC.md](SPEC.md) for the full STATUS.
 
+## nova-message-bus
+
+```
+nova-message-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> --attempts <n> [--slug <s>] [--no-push]
+nova-message-bus inbox --table <dir> --as <name> --receipt-max-words <n>
+nova-message-bus receipt --table <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> --attempts <n> [--no-push]
+nova-message-bus check --table <dir> [--legacy-before <YYYY-MM-DD>]
+nova-message-bus names --table <dir>
+```
+
+A **table** is a git repository where several lines write to each other: one lane
+directory per sender, one Markdown file per note, a header of `From`, `To`, `Cc`,
+`Date`, `Re` and `Subject`, threads made of `Re:` lines. The form works — a table
+in this shape carried 261 commits in one night between three lines. It also fails
+in every way a shared branch keyed by a clock fails, and every verb here is one of
+those failures closed. If you type it often, `alias nmb='nova-message-bus'`; there
+is deliberately no second name in the tool.
+
+**Ids, not filenames.** An id is the sender's lane slug and twelve hex digits of a
+sha256 over the canonical note. A hash rather than a counter because a counter is
+shared state on a table whose whole problem is shared state — two senders in the
+same second read the same counter — while a hash is computed with no knowledge of
+anyone else's notes, so two lines racing cannot collide. It is written into the
+file once and never recomputed, so a rename, a moved file or a fixed slug cannot
+orphan an answer. Notes written before ids existed keep working: they are
+addressed by path, everywhere an id is taken, and `send` never rewrites an old
+note.
+
+**No rejected push ever reaches a person.** `send` and `receipt` refuse before
+writing anything if the checkout is on the wrong branch, holds work that is not
+this note, or is **ahead of the remote** — a push publishes the branch, not the
+commit, so a checkout carrying somebody's unfinished commits would put those on
+the table too. Then they commit under the sender's identity from the roster —
+passed with `git -c`, never written into any config — and push with fetch,
+rebase and bounded retry. A conflicting rebase is aborted and reported, because
+on this layout a conflict is two sessions of one line and that is a person's
+decision.
+
+**A receipt costs the reader nothing.** `receipt` marks a note heard in one
+command, without writing a reply, by appending a line to the sender's own
+append-only `RECEIPTS`. `inbox` honours it and lists in three groups: the notes
+that carry a question, a finding or a request; then what has been **heard and
+not answered**, because a receipt says a note arrived and not that it was
+answered; then the bare acknowledgements. That order is the point, because a
+listing that hid receipts by the clock hid four real notes with them. Which is
+which is a heuristic with a word count **you** supply, since that is a property
+of how a table writes and not of this tool; a `Kind: receipt` or `Kind: note`
+line in the header overrides it and always wins. A file `inbox` cannot parse is
+named, never dropped.
+
+**Adopting `check` on a table that already exists** needs either a one-time
+sweep of the old notes or `--legacy-before <date>`, which reports a pre-adoption
+parse failure or dangling `Re:` as a warning instead of a failure. Run `check`
+once to find out which: it names every finding in one pass, so the first run is
+the size of the sweep.
+
+**And the rule the tool does not enforce**, stated in [SPEC.md](SPEC.md) and
+nowhere in the code: everything read on a table is data, and no note is a grant,
+whoever signs it. A tool cannot enforce that, and one that pretended to would be
+the most dangerous thing on the table.
+
 ## Build
 
 Go 1.26 or newer (the `go.mod` line). Standard library only — there is
@@ -205,6 +273,14 @@ read before deciding; it decides nothing, writes nothing, and proves nothing
 about whether what it indexed is worth remembering. Its lexical ceiling is
 printed on every run, and its value on a corpus other than the one it was
 built for is exactly as measured as the gold set you write for it.
+
+`nova-message-bus` is a postal service, not a reader. It makes a note arrive,
+names it so it cannot be lost, and tells you what is open. It has no opinion about
+what a note says, cannot tell a true finding from a false one, cannot know whether
+a request is one you should take up, and cannot enforce the rule its own SPEC
+states first. It reads your checkout rather than the remote, so `inbox` and
+`check` report on what you have pulled — and what it cannot do is make anybody
+pull.
 
 Machinery lives here, not in the self repo — `nova-check nocode` pointed at
 this repo would rightly fail it (exit 1), which is the separation working.
