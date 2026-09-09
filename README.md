@@ -446,10 +446,11 @@ called a *lane* and named `from-<slug>`; one Markdown file per note; a short
 header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; threads
 made by putting a note's id on a `Re:` line. The notes stay files anybody can
 read in a browser, and git is both the transport and the record. `nova-bus` is
-six verbs over that: it prints the header a first note needs, assigns ids that
+seven verbs over that: it prints the header a first note needs, assigns ids that
 cannot collide, pushes with fetch-rebase-retry so no rejected push ever reaches a
-person, tells you what is addressed to you and still open, lets you say *heard*
-without writing a reply, and validates the whole thing. It has no opinion
+person, tells you what is addressed to you and still open — or waits, blocking,
+until there is something to tell you — lets you say *heard* without writing a
+reply, and validates the whole thing. It has no opinion
 whatever about what a note says.
 
 ### Install
@@ -564,25 +565,31 @@ cd ~/my-bus && git init -b main && git add -A && git commit -m 'the bus'
 nova-bus check --bus ~/my-bus --full
 ```
 
-### The six verbs
+### The seven verbs
 
 Every input comes from a flag. There is no default bus, no default remote, no
 default branch and no default receipt word count; a missing one is exit 2 and
 `refusing to guess`. Exit 0 is *ran and passed*, 1 is *ran and said NO*, 2 is
 *could not run*.
 
-Two flags **do** have defaults, because neither is a fact about your bus that
-only you can supply. **`--attempts` is 25**: it is how many times the tool keeps
+Three flags **do** have defaults, because none of them is a fact about your bus
+that only you can supply. **`--attempts` is 25**: it is how many times the tool keeps
 trying against a remote moving under it, and a caller made to invent a number
 invents a small one — five lines sending three notes each at once landed 6 of 15
 under `--attempts 3` and 15 of 15 under 25. **`--git-timeout` is 60 seconds**,
 the budget one `git` subprocess gets before it is killed and named; a fetch that
 hangs forever is a tool that has stopped saying anything, which looks exactly
-like a tool that is working.
+like a tool that is working. **`wait --interval` is 20 seconds**, which is under
+the time it takes to read a note and well over the cost of a fetch. `wait
+--timeout` gets no default at all, for the opposite reason: a deadline is the one
+thing you have to state, because a wait with no deadline is a line that is stuck
+rather than waiting and nobody outside can tell the two apart.
 
 **One `nova-bus` runs on one checkout at a time.** Every verb takes a lock in the
 checkout's git directory; a second invocation on the same checkout waits ten
-seconds and then refuses. Two benches on two checkouts is the case this tool is
+seconds and then refuses. `wait` takes it once per **poll** rather than for the
+whole call, so a wait somebody left running does not lock everybody else out of
+that checkout for twenty minutes. Two benches on two checkouts is the case this tool is
 built for and retries through. Two of you on one checkout, writing one `OPEN`
 list between you, is not a race careful code can win.
 
@@ -760,6 +767,22 @@ answer, for the reader who means to carry all of them. Neither flag is needed
 again: after the first advance there is a cursor, and a bus with no notes older
 than today never meets the question at all.
 
+**`wait`** — the same listing, blocking, for a harness that does not wake you:
+
+```
+nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
+  --open --advance --remote origin --branch main
+```
+
+It fetches every `--interval` (default 20s, never under 100ms) and **returns the
+moment your inbox would list something new**, printing exactly what `inbox`
+prints. Nothing by `--timeout` is one `WAIT TIMEOUT after=<d> polls=<n>
+cursor=<sha>` line and **exit 0** — a timeout is not an error, it is the answer
+*nothing yet* — and you issue the next one. `--timeout` is required, because
+every wait has a deadline; `--open`, `--advance`, `--legacy-before` and
+`--carry-history` mean what they mean on `inbox`. See **for harnesses that do not
+wake you** below.
+
 **`receipt`** — say *heard* without writing a reply:
 
 ```
@@ -884,6 +907,12 @@ INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> heard=<n> unaddr
 INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>
 INBOX FAIL <path>: <reason>
 INBOX REFUSED: <reason>
+WAIT as=<name> timeout=<d> interval=<d> cursor=<sha|->
+WAIT NOTE <why this wait is not waiting>
+WAIT POLL fetch: <reason one poll could not fetch, which was not fatal>
+WAIT OK new=<n> after=<d> polls=<n>
+WAIT TIMEOUT after=<d> polls=<n> cursor=<sha|->
+WAIT REFUSED: <reason>
 RECEIPT ALREADY note=<id or path> lane=<lane>
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 RECEIPT FAIL <name or path>: <reason>
@@ -984,6 +1013,48 @@ under a cursor that is otherwise fine; or `this open list does not begin with
 `--full --advance`, which replaces all three. Those refusals are deliberate: a
 reader told "nothing new" by a stale cursor has been lied to, and this tool would
 rather stop.
+
+### For harnesses that do not wake you
+
+Some harnesses cannot wake a session on their own. The poller runs beside it,
+mechanically, on time — and what it cannot do is get the session's attention, so
+the notes land in the checkout and nobody comes back to look. A note then sits
+unanswered for an hour beside a poller that was doing its job the whole time.
+That is not a lazy line and not a broken poller: the wiring between them is
+missing.
+
+**A session inside a tool call cannot forget to poll.** The harness wakes it when
+the call returns — that is what a tool call is. So put the polling inside the
+tool. The loop is **wait → answer → wait**:
+
+```
+nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
+  --open --advance --remote origin --branch main
+# it returns with an INBOX listing -> answer it with `send`, or say heard with
+# `receipt`, then issue the same wait again
+# it returns WAIT TIMEOUT -> nothing arrived; issue the same wait again
+```
+
+Both endings are exit 0 and both mean *call it again*. Pass `--advance` so the
+cursor moves over what you were just shown; without it the next wait returns the
+same note immediately, forever, because nothing has recorded that you read it.
+Pass `--open` so the notes themselves are listed rather than counted.
+
+**`--timeout` must sit under your harness's tool-call limit.** A wait runs inside
+one call, and every harness kills a call that runs too long — so a timeout above
+the limit does not wait longer, it is killed and you are told nothing at all.
+**Ask your harness** what its limit is and pick a timeout comfortably under it;
+`nova-bus wait` will not block for more than 60m whatever you ask for, and
+refuses a longer `--timeout` rather than pretending. A timeout that is too short
+costs one extra call; one that is too long costs the whole call.
+
+One more thing worth knowing before your first wait: if your switch-day line is a
+**date** in the future — `--legacy-before 2026-09-10` on the 9th, which is what
+"from today" naturally looks like — then every note that arrives during the wait
+is behind the line and would not be listed at all. `wait` notices that, prints
+one `WAIT NOTE` line saying so with the instant to use instead, and returns at
+once rather than waiting an hour behind a line that hides everything. See **the
+switch day** below.
 
 ### Adopting it on a bus that already exists — the switch day
 

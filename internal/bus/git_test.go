@@ -882,3 +882,61 @@ func TestPushBackoffGrowsIsJitteredAndIsCapped(t *testing.T) {
 		t.Fatalf("fifty draws gave %d distinct waits; a fixed delay leaves two benches that collided colliding again", len(seen))
 	}
 }
+
+// The read half of the protocol, which `wait` polls with: a fetch, and the checkout moved
+// onto what arrived when moving it is a fast-forward.
+//
+// Every read in this tool reads the WORKING TREE, so a poll that fetched and stopped there
+// would wait beside a bus full of notes. And a poll runs with nobody watching, so the move
+// is a fast-forward and never a merge or a rebase: the three shapes below are the three
+// answers, and only one of them touches the checkout.
+func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
+	hermetic(t)
+	bare := bareBus(t)
+	reader := cloneBus(t, bare)
+	writer := cloneBus(t, bare)
+
+	// Nothing has happened: the fetch runs and the checkout stays where it is.
+	moved, err := FetchAndFastForward(reader, "origin", "main")
+	if err != nil || moved {
+		t.Fatalf("a quiet bus: moved=%t err=%v, want false and no error", moved, err)
+	}
+
+	// A note lands from somebody else: the reader is BEHIND and is fast-forwarded onto it.
+	write(t, writer, "from-bo/note.md", noteText("Bo", "the gate", "Is it on the queue?"))
+	if _, err := CommitAndPush(writer, testIdentity["Bo"], []string{"from-bo/note.md"}, "bo: the gate", "origin", "main", 3); err != nil {
+		t.Fatalf("the other bench could not send: %v", err)
+	}
+	moved, err = FetchAndFastForward(reader, "origin", "main")
+	if err != nil || !moved {
+		t.Fatalf("a note on the bus: moved=%t err=%v, want true and no error", moved, err)
+	}
+	if _, err := os.Stat(filepath.Join(reader, "from-bo", "note.md")); err != nil {
+		t.Fatalf("the checkout was not moved onto the note: %v", err)
+	}
+
+	// A commit of the reader's OWN that has not been pushed: it is AHEAD, there is nothing
+	// on the bus it has not got, and the poll leaves its work alone.
+	write(t, reader, "from-ada/mine.md", noteText("Ada", "mine", "Not pushed yet."))
+	commitByHand(t, reader, "from-ada/mine.md", "ada: not pushed")
+	moved, err = FetchAndFastForward(reader, "origin", "main")
+	if err != nil || moved {
+		t.Fatalf("a checkout ahead: moved=%t err=%v, want false and no error", moved, err)
+	}
+
+	// And when the two have both moved, a poll will not merge or rebase to reconcile them:
+	// it says so, and names the recovery.
+	write(t, writer, "from-bo/second.md", noteText("Bo", "second", "And another."))
+	if _, err := CommitAndPush(writer, testIdentity["Bo"], []string{"from-bo/second.md"}, "bo: second", "origin", "main", 3); err != nil {
+		t.Fatalf("the other bench could not send: %v", err)
+	}
+	moved, err = FetchAndFastForward(reader, "origin", "main")
+	if err == nil {
+		t.Fatalf("a diverged checkout was fast-forwarded anyway: moved=%t", moved)
+	}
+	for _, want := range []string{"both moved", "git pull --rebase"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal does not say %q: %v", want, err)
+		}
+	}
+}

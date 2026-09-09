@@ -289,14 +289,7 @@ func EnsureLevelWith(dir, remote, branch string) error {
 	if _, err := git(dir, "fetch", remote, branch); err != nil {
 		return fmt.Errorf("the fetch that would say whether this branch is level with %s/%s failed: %w", remote, branch, err)
 	}
-	// The remote-tracking ref is what a person reads in `git status`, so it is what the
-	// refusal names. It exists whenever the remote was configured by `git clone`; when it
-	// does not exist -- a remote added by hand with no fetch refspec -- FETCH_HEAD is the
-	// same commit and this run just wrote it.
-	ref := remote + "/" + branch
-	if _, err := git(dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
-		ref = "FETCH_HEAD"
-	}
+	ref := trackingRef(dir, remote, branch)
 	out, err := git(dir, "rev-list", "--count", ref+"..HEAD")
 	if err != nil {
 		return err
@@ -320,6 +313,84 @@ func EnsureLevelWith(dir, remote, branch string) error {
 			remote, branch, ahead, len(foreign), strings.Join(foreign, ", "), pullRebaseAdvice)
 	}
 	return nil
+}
+
+// trackingRef is the ref a fetch of remote/branch just wrote, as a person would name it.
+//
+// The remote-tracking ref is what a person reads in `git status`, so it is what a refusal
+// names. It exists whenever the remote was configured by `git clone`; when it does not --
+// a remote added by hand with no fetch refspec -- FETCH_HEAD is the same commit and the
+// fetch before this call just wrote it.
+func trackingRef(dir, remote, branch string) string {
+	ref := remote + "/" + branch
+	if _, err := git(dir, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
+		return "FETCH_HEAD"
+	}
+	return ref
+}
+
+// FetchAndFastForward fetches remote/branch and moves this CHECKOUT onto what arrived,
+// when that move is a fast-forward. It reports whether the checkout moved.
+//
+// It is the read half of the push protocol above, and `wait` is what needs it. A verb that
+// blocks until a note arrives has to go and look, and looking means the fetch AND the
+// checkout: every read in this tool -- the diff from a cursor, the parse of a new note, the
+// open list -- reads the working tree, never a remote-tracking ref. A poll that fetched
+// and stopped there would wait forever beside a bus full of notes.
+//
+// A FAST-FORWARD AND NEVER A MERGE OR A REBASE. This is a read. A read that rewrote a
+// bench's own commits, or left a conflict in a checkout somebody is working in, is not a
+// read, and `wait` may run for the better part of an hour with nobody watching it. So:
+//
+//   - the checkout is already at what arrived, or holds only commits the remote also has:
+//     nothing to do, moved=false;
+//   - the checkout is BEHIND: `git merge --ff-only`, which touches no commit and which git
+//     itself refuses if it would clobber a change in the working tree;
+//   - the checkout is AHEAD, holding commits of its own that are not on the bus: nothing to
+//     do either. There is nothing on the bus this checkout has not already got, and a send
+//     that could not land is the caller's to land, not a poll's.
+//   - the two have DIVERGED: a refusal naming the recovery, because a run that read a
+//     history nobody else has would report an inbox nobody else can see.
+func FetchAndFastForward(dir, remote, branch string) (bool, error) {
+	if err := ValidGitArg("remote", remote); err != nil {
+		return false, err
+	}
+	if err := ValidGitArg("branch", branch); err != nil {
+		return false, err
+	}
+	if _, err := git(dir, "fetch", remote, branch); err != nil {
+		return false, fmt.Errorf("the fetch that would say whether anything has arrived on %s/%s failed: %w", remote, branch, err)
+	}
+	ref := trackingRef(dir, remote, branch)
+	target, err := ResolveCommit(dir, ref)
+	if err != nil {
+		return false, err
+	}
+	head, err := HeadCommit(dir)
+	if err != nil {
+		return false, err
+	}
+	if head == target {
+		return false, nil
+	}
+	behind, err := isAncestorOf(dir, head, target)
+	if err != nil {
+		return false, err
+	}
+	if !behind {
+		ahead, err := isAncestorOf(dir, target, head)
+		if err != nil {
+			return false, err
+		}
+		if ahead {
+			return false, nil
+		}
+		return false, fmt.Errorf("this checkout and %s have both moved since they last agreed, so nothing here can be fast-forwarded onto the bus's history; %s", ref, pullRebaseAdvice)
+	}
+	if _, err := git(dir, "merge", "--ff-only", ref); err != nil {
+		return false, fmt.Errorf("this checkout is behind %s and the fast-forward onto it failed: %w", ref, err)
+	}
+	return true, nil
 }
 
 // IsRepoRoot reports whether dir is the ROOT of a git work tree, so a bus root that is

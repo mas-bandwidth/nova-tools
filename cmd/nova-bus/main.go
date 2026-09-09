@@ -14,6 +14,8 @@
 //	          rebase and bounded retry INSIDE the tool, so no rejected push reaches a person
 //	inbox     the notes addressed to me that nothing of mine answers, receipts separated
 //	          from notes that carry a question, a finding or a request
+//	wait      the same listing, blocking: it polls the bus INSIDE the tool call and returns
+//	          the moment something arrives, so a session that cannot be woken cannot forget
 //	receipt   marks a note heard without writing a reply, in one command
 //	check     validates the bus: headers, ids, threads, receipts, lanes
 //	names     echoes the roster, so a person can spell a To line the tool will accept
@@ -38,6 +40,7 @@
 package main
 
 import (
+	"bytes"
 	"flag"
 	"fmt"
 	"io"
@@ -56,6 +59,9 @@ usage:
   nova-bus send --bus <dir> --file <path>|--stdin [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
   nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
+  nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
+        [--interval <duration>] [--open] [--legacy-before <date-or-instant>|--carry-history]
+        [--advance [--attempts <n>] [--no-push]]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
   nova-bus names --bus <dir>
@@ -123,6 +129,17 @@ after the first needs neither, and a bus with no old notes needs neither ever.
 
 inbox REPORTS and exits 0 whether the inbox is empty or full; check is the gate.
 
+wait is inbox on a clock, for a harness that does not wake you: it fetches every
+--interval (default 20s) and RETURNS the moment your inbox would list something
+new, printing exactly what inbox prints. Nothing by --timeout is a WAIT TIMEOUT line
+and exit 0 -- not an error, the answer "nothing yet" -- and you issue the next
+one. --timeout is required, because every wait has a deadline, and is at most
+60m: a wait runs inside your harness's tool call, so ask your harness what its
+limit is and sit under it. The loop is wait, answer, wait:
+
+  nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
+    --advance --remote origin --branch main
+
 A FIRST SEND, end to end. draft prints a skeleton and NOTHING else, so its
 standard output is a file:
 
@@ -162,6 +179,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdInbox(rest, stdout, stderr, now)
 	case "receipt":
 		return cmdReceipt(rest, stdout, stderr, now)
+	case "wait":
+		return cmdWait(rest, stdout, stderr, now)
 	case "check":
 		return cmdCheck(rest, stdout, stderr, now)
 	case "names":
@@ -291,6 +310,24 @@ const defaultGitTimeoutSeconds = 60
 // checkoutLockWait is how long a second run on one checkout waits for the first. It is a
 // var so a test can shorten it; nothing else replaces it.
 var checkoutLockWait = 10 * time.Second
+
+// lockCheckout is the one-run-per-checkout guard as a verb takes it: the release, or the
+// exit code it has already printed. token is the verb's own event token.
+//
+// It is a function because `wait` takes and RELEASES this lock once per poll rather than
+// holding it for the whole call. A wait is minutes long by design, and a lock held for
+// minutes would refuse every other run on that checkout for as long as somebody is
+// listening -- which is the opposite of what a tool that makes waiting cheap is for. The
+// lock covers what it has always covered: one poll's fetch, listing and cursor, which is
+// exactly one `inbox` run's worth of work.
+func lockCheckout(token, busDir string, stderr io.Writer) (func(), int) {
+	release, err := bus.LockCheckout(busDir, checkoutLockWait)
+	if err != nil {
+		fmt.Fprintf(stderr, "%s REFUSED: %s\n", token, oneline.Err(err))
+		return nil, 1
+	}
+	return release, 0
+}
 
 // quoteList renders names a person will PASTE -- into a To line -- each quoted and joined
 // by the ";" that line's own separator is. An empty list is the grammar's "-".
@@ -702,40 +739,99 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 	}
+	o := inboxOpts{
+		busDir: *busDir, as: *as, maxWords: *maxWords,
+		full: *full, openList: *openList, advance: *advance,
+		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
+		legacy: flagLegacy, carryHistory: *carryHistory,
+	}
 	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --bus at a
 	// subdirectory of a bigger repository and the run refused with "participants.json: no
 	// such file" -- true, and the wrong sentence: the caller's mistake is the directory,
 	// not the roster, and the refusal that names the repository root is the one that fixes
 	// the invocation. The cheaper check is not the more useful one, so the more useful one
 	// runs first.
-	if !*full || *advance {
-		if err := bus.IsRepoRoot(*busDir); err != nil {
+	if !o.full || o.advance {
+		if err := bus.IsRepoRoot(o.busDir); err != nil {
 			fmt.Fprintf(stderr, "nova-bus inbox: reading only what changed, and moving a cursor, need git; %s\n", oneline.Err(err))
 			return 2
 		}
-		release, lockErr := bus.LockCheckout(*busDir, checkoutLockWait)
-		if lockErr != nil {
-			fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(lockErr))
-			return 1
+		release, code := lockCheckout("INBOX", o.busDir, stderr)
+		if code != 0 {
+			return code
 		}
 		defer release()
 	}
-	c, err := bus.LoadConfig(*busDir)
+	code, r := inboxListing(o, stdout, stderr, now)
+	if code != 0 || !o.advance {
+		return code
+	}
+	return advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, stdout, stderr)
+}
+
+// inboxOpts is one listing's whole invocation, read from the flags and checked.
+//
+// It is a struct because there are now TWO verbs that produce an inbox listing -- `inbox`,
+// and `wait`, which is `inbox` on a clock -- and a listing assembled twice is two inboxes
+// that will disagree about something on the day one of them is changed. Everything below
+// this line is written once and both verbs run it.
+type inboxOpts struct {
+	busDir, as     string
+	maxWords       int
+	full, openList bool
+	advance        bool
+	remote, branch string
+	attempts       int
+	noPush         bool
+	// legacy is the --legacy-before line as the flag gave it, or the zero line for no flag.
+	// What a run actually reads under is effectiveLegacy of this and the cursor's own.
+	legacy       bus.LegacyLine
+	carryHistory bool
+}
+
+// inboxReading is what one listing found, for the caller that has to act on it: `inbox`
+// advances a cursor over it, and `wait` decides from it whether to stop waiting.
+type inboxReading struct {
+	// Me is the reader, resolved against the roster.
+	Me bus.Participant
+	// Open is the open list this run derived, which is what an --advance writes back.
+	Open []bus.OpenEntry
+	// Legacy is the switch-day line this run READ UNDER: the flag, or the cursor's.
+	Legacy bus.LegacyLine
+	// Cursor is the commit this run read from, and "" for a full read.
+	Cursor string
+	// Full says the run walked the whole bus.
+	Full bool
+	// New is how many notes this run would show a reader as NEWS: the notes it put on the
+	// open list that were not on it before, and on a full read -- a reader with no cursor,
+	// who has been shown nothing yet -- the whole open list. It is what `wait` returns on,
+	// and it is deliberately not the size of the open list on an incremental run: a reader
+	// carrying five hundred settled notes is not a reader with news.
+	New int
+}
+
+// inboxListing is the whole of an inbox report: what to read, what it found, and every
+// line of it printed. It writes nothing to the bus -- moving the cursor is advanceCursor,
+// which its caller runs after it -- and it takes no lock: the caller holds the checkout,
+// because `wait` holds it across a poll's fetch as well as its listing.
+func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, inboxReading) {
+	var r inboxReading
+	c, err := bus.LoadConfig(o.busDir)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
-		return 2
+		return 2, r
 	}
-	me, found := c.Lookup(*as)
+	me, found := c.Lookup(o.as)
 	if !found {
-		fmt.Fprintf(stderr, "nova-bus inbox: --as %q names no one on this bus (known: %s)\n", *as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
-		return 2
+		fmt.Fprintf(stderr, "nova-bus inbox: --as %q names no one on this bus (known: %s)\n", o.as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
+		return 2, r
 	}
 	if me.Lane == "" {
 		fmt.Fprintf(stderr, "nova-bus inbox: %q has no lane on this bus, so nothing can answer for them\n", me.Name)
-		return 2
+		return 2, r
 	}
 
-	scope := bus.Scope{Full: *full}
+	scope := bus.Scope{Full: o.full}
 	var res bus.InboxResult
 	var cursor bus.Cursor
 	// held is the cursor as it stands on the bus, read for the SWITCH-DAY LINE it carries
@@ -744,16 +840,16 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// that refuses to run is not one. What a full run must not do is silently forget a line
 	// a reader drew months ago, which is what reading it here prevents.
 	held := bus.Cursor{}
-	if *full {
-		held, _ = bus.ReadCursor(*busDir, me.Lane)
+	if o.full {
+		held, _ = bus.ReadCursor(o.busDir, me.Lane)
 	}
 	// The line this run reads under, whichever mode it is in.
 	var legacy bus.LegacyLine
-	if !*full {
-		cursor, err = bus.ReadCursor(*busDir, me.Lane)
+	if !o.full {
+		cursor, err = bus.ReadCursor(o.busDir, me.Lane)
 		if err != nil {
 			fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
-			return 1
+			return 1, r
 		}
 		held = cursor
 		if cursor.Commit == "" {
@@ -768,19 +864,19 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			// later forgives more and is fine; moving it earlier is a refusal that names
 			// the read which can honestly do it, because a --full run derives the whole
 			// open list again rather than taking the cursor's word for it.
-			if !flagLegacy.Before.IsZero() && held.Legacy != "" && flagLegacy.Before.Before(held.LegacyBefore()) {
+			if !o.legacy.Before.IsZero() && held.Legacy != "" && o.legacy.Before.Before(held.LegacyBefore()) {
 				fmt.Fprintf(stderr, "INBOX REFUSED: your cursor was written with legacy=%s and --legacy-before %s moves the line earlier, which would put the notes between the two back on your open list; read once with --full --legacy-before %s --advance, which builds the open list again from the whole bus, or leave the flag off and the cursor's line stands\n",
-					oneline.Field(held.Legacy), oneline.Field(flagLegacy.Text), oneline.Field(flagLegacy.Text))
-				return 1
+					oneline.Field(held.Legacy), oneline.Field(o.legacy.Text), oneline.Field(o.legacy.Text))
+				return 1, r
 			}
-			ok, err := bus.IsAncestor(*busDir, cursor.Commit)
+			ok, err := bus.IsAncestor(o.busDir, cursor.Commit)
 			if err != nil {
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
-				return 1
+				return 1, r
 			}
 			if !ok {
 				fmt.Fprintf(stderr, "INBOX REFUSED: the cursor %s is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it\n", oneline.Field(cursor.Commit))
-				return 1
+				return 1, r
 			}
 			// The other way a cursor stops being trustworthy: the OPEN list it was
 			// written beside is gone. An empty OPEN list is REMOVED rather than left
@@ -788,37 +884,37 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			// why the cursor carries the count it was written with, and why a cursor
 			// that says it was carrying notes with no OPEN beside it is refused here
 			// instead of quietly reporting open=0 over the notes it dropped.
-			if cursor.Counted && cursor.Open > 0 && !bus.OpenPresent(*busDir, me.Lane) {
+			if cursor.Counted && cursor.Open > 0 && !bus.OpenPresent(o.busDir, me.Lane) {
 				fmt.Fprintf(stderr, "INBOX REFUSED: your cursor %s says it was carrying %d notes and %s is not on the bus, so a read from it would drop them and print open=0; read once with --full --advance, which rebuilds the open list from the whole bus\n",
 					oneline.Field(cursor.Commit), cursor.Open, oneline.Field(bus.OpenPath(me.Lane)))
-				return 1
+				return 1, r
 			}
-			changed, err := bus.ChangedSince(*busDir, cursor.Commit)
+			changed, err := bus.ChangedSince(o.busDir, cursor.Commit)
 			if err != nil {
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
-				return 1
+				return 1, r
 			}
-			open, err := bus.ReadOpen(*busDir, me.Lane)
+			open, err := bus.ReadOpen(o.busDir, me.Lane)
 			if err != nil {
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
-				return 1
+				return 1, r
 			}
 			scope.From, scope.Changed = cursor.Commit, len(changed)
-			legacy = effectiveLegacy(flagLegacy, held)
-			res, err = bus.InboxSince(*busDir, c, me, changed, open, *maxWords, legacy)
+			legacy = effectiveLegacy(o.legacy, held)
+			res, err = bus.InboxSince(o.busDir, c, me, changed, open, o.maxWords, legacy)
 			if err != nil {
 				fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
-				return 2
+				return 2, r
 			}
 		}
 	}
 	if scope.Full {
-		t, err := bus.ReadBus(*busDir, c)
+		t, err := bus.ReadBus(o.busDir, c)
 		if err != nil {
 			fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
-			return 2
+			return 2, r
 		}
-		legacy = effectiveLegacy(flagLegacy, held)
+		legacy = effectiveLegacy(o.legacy, held)
 		// A full read is the one that DERIVES the open list rather than inheriting it: the
 		// display line of every open note, the heard flag of every receipted one rebuilt from
 		// RECEIPTS, and the unreadable files carried rather than named once and dropped. Every
@@ -834,7 +930,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		// everything it found, unreadable files included, whatever their date. That is what
 		// a full read is for: the whole picture, asked for on purpose, on the day you adopt
 		// the tool or the day something looks wrong. The quiet is the incremental run's.
-		res.Open, res.Legacy, res.LegacyUnreadable = bus.SplitLegacy(bus.OpenFromFull(t.Inbox(me, *maxWords), res.Unreadable), legacy)
+		res.Open, res.Legacy, res.LegacyUnreadable = bus.SplitLegacy(bus.OpenFromFull(t.Inbox(me, o.maxWords), res.Unreadable), legacy)
 	}
 
 	// THE FIRST ADVANCE ON A LANE, on a bus that is older than this reader's cursor.
@@ -861,7 +957,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// It refuses BEFORE the listing is printed. A first full read of an old bus prints a
 	// line per open note, which on that bus is the six hundred lines this guard exists to
 	// stop; printing them and then refusing would charge the reader for them anyway.
-	if *advance && !*carryHistory && legacy.Before.IsZero() && !bus.CursorPresent(*busDir, me.Lane) {
+	if o.advance && !o.carryHistory && legacy.Before.IsZero() && !bus.CursorPresent(o.busDir, me.Lane) {
 		_, oldNotes, oldUnreadable := bus.SplitLegacy(res.Open, bus.LegacyLine{Before: utcDay(now)})
 		old := oldNotes + oldUnreadable
 		if old > 0 {
@@ -881,9 +977,9 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			// is exactly what the reader this was written for did.
 			fmt.Fprintf(stderr, "INBOX REFUSED: this is the first advance on %s and %d of the %d notes it would carry are dated before now, so every run after it would print all %d again; draw the switch-day line at this instant with `nova-bus inbox --bus %s --as %s --receipt-max-words %d --full --legacy-now --advance --remote %s --branch %s`, which takes everything already on the bus as read and leaves you what arrives after that moment, or pass --carry-history to carry all %d\n",
 				oneline.Field(bus.CursorPath(me.Lane)), old, len(res.Open), len(res.Open),
-				oneline.Quote(*busDir), oneline.Quote(me.Name), *maxWords,
-				oneline.Quote(*remote), oneline.Quote(*branch), len(res.Open))
-			return 1
+				oneline.Quote(o.busDir), oneline.Quote(me.Name), o.maxWords,
+				oneline.Quote(o.remote), oneline.Quote(o.branch), len(res.Open))
+			return 1, r
 		}
 	}
 
@@ -896,7 +992,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// given -- because it is a fact about the state a reader is stuck in, and the run that
 	// is finally fixing it should say once what it is fixing. See the site below and
 	// bus.LegacyDateAtOrAfterToday.
-	printSwitchDayNote(stdout, held.Legacy, *busDir, me.Name, fmt.Sprintf("%d", *maxWords), *remote, *branch, now)
+	printSwitchDayNote(stdout, held.Legacy, o.busDir, me.Name, fmt.Sprintf("%d", o.maxWords), o.remote, o.branch, now)
 	// The switch-day line, said as ONE line and next to the scope, because it is part of
 	// what this run looked at: `notes=` is how many notes it left off the open list for
 	// being older than the line, and `unreadable=` how many FILES it left off for the same
@@ -933,7 +1029,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// carried, `--open` prints the entries, and `--full` lists everything because a full read
 	// is what a person asks for when they want the whole picture. Nothing is hidden either
 	// way: the counts are on the OK line, and the entries are in OPEN, which is a file.
-	if *openList || scope.Full {
+	if o.openList || scope.Full {
 		// Three groups, in this order: the notes that carry something, the ones already
 		// heard but not answered, and the bare acknowledgements. The listing that hid four
 		// real notes among the receipts is the reason they are separated rather than
@@ -983,10 +1079,13 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// BOTH, under the same names, beside the decomposition that makes them add up.
 	fmt.Fprintf(stdout, "INBOX OK as=%s carrying=%d open=%d notes=%d receipts=%d heard=%d unaddressed=%d unreadable=%d\n",
 		oneline.Field(me.Name), len(res.Open), notes+receipts, notes, receipts, heard, len(res.Unaddressed), len(res.Unreadable))
-	if !*advance {
-		return 0
+	r.Me, r.Open, r.Legacy, r.Cursor, r.Full = me, res.Open, legacy, cursor.Commit, scope.Full
+	// What this run would show a reader as news; see inboxReading.New.
+	r.New = res.New
+	if scope.Full {
+		r.New = len(res.Open)
 	}
-	return advanceCursor(*busDir, me, res.Open, legacyToken(legacy), *remote, *branch, *attempts, *noPush, now, stdout, stderr)
+	return 0, r
 }
 
 // effectiveLegacy is the line a run reads under: the flag when it is given, and otherwise
@@ -1075,6 +1174,284 @@ func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, lega
 // one more flag and does not need telling, and a reader carrying hundreds is the one who
 // asks where they went.
 const openListHint = 50
+
+// ---------------------------------------------------------------------------- the wait
+
+// cmdWait is `inbox`, on a clock, INSIDE one tool call.
+//
+// THE FAILURE THIS CLOSES, and it is not a failure of the bus. A line reading this bus
+// through a harness that does not wake it has a poller running beside its session,
+// mechanically, on time. What the poller cannot do is get the session's attention: the
+// notes land in the checkout and the session, being non-deterministic about housekeeping,
+// does not always come back and look. So a note can sit answered by nobody for an hour
+// beside a poller that has been doing its job the whole time.
+//
+// A SESSION INSIDE A TOOL CALL CANNOT FORGET. That is the whole idea here: the harness
+// itself wakes the session when the call returns, on every harness there is, because that
+// is what a tool call is. So the polling moves INSIDE the tool -- one blocking verb, which
+// returns the moment there is something to read and says so when there is not.
+//
+// It is `inbox` and not a second reader: the same rules about what is addressed to you,
+// the same open list, the same switch-day line, the same lines on stdout, so the caller's
+// next action is the one an inbox listing always implies. The only things it adds are a
+// clock and a fetch. inboxListing is the shared body; there is no second inbox to keep in
+// step with this one.
+//
+// EVERY WAIT HAS A DEADLINE, which is why --timeout is required and has no default: an
+// asynchronous wait with no deadline is a line that is stuck rather than waiting, and
+// nobody outside can tell the two apart. A timeout is not an error -- it is the answer
+// "nothing yet", exit 0, and the caller issues the next one.
+func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
+	f := newFlags("wait")
+	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
+	as := f.fs.String("as", "", "which participant you are (required)")
+	maxWords := f.fs.Int("receipt-max-words", 0, "a body under this many words may be a receipt (required, at least 1)")
+	timeout := f.fs.Duration("timeout", 0, "how long to wait before returning WAIT TIMEOUT (required; a duration like 25m, at most "+maxWaitTimeout.String()+")")
+	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
+	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
+	advance := f.fs.Bool("advance", false, "move your cursor to HEAD and push it when this wait returns, the way inbox --advance does")
+	remote := f.fs.String("remote", "", "the git remote to fetch the bus from (required: a wait that cannot fetch cannot notice anything)")
+	branch := f.fs.String("branch", "", "the branch the bus lives on (required)")
+	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push the cursor before giving up")
+	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
+	noPush := f.fs.Bool("no-push", false, "with --advance, commit the cursor but do not push it")
+	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD, midnight at its start) or UTC instant (RFC 3339, e.g. 2026-09-09T18:07:00Z) are not carried on your open list, and are counted rather than listed")
+	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
+	// --remote and --branch are required here and conditional on inbox, because a wait
+	// FETCHES: that is the difference between waiting and sleeping. A wait that read only
+	// what its checkout already held would wait out its whole timeout beside a bus full of
+	// notes, and this tool does not guess a remote.
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "remote": remote, "branch": branch}) {
+		return 2
+	}
+	flagLegacy, ok := legacyLine("wait", *legacyBefore, stderr)
+	if !ok {
+		return 2
+	}
+	if *carryHistory && !flagLegacy.Before.IsZero() {
+		fmt.Fprint(stderr, "nova-bus wait: --legacy-before draws a switch-day line and --carry-history says there is none to draw; give one or the other\n")
+		return 2
+	}
+	if !f.count("receipt-max-words", *maxWords, stderr) {
+		return 2
+	}
+	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
+		return 2
+	}
+	if !f.attempts(*attempts, stderr) {
+		return 2
+	}
+	if !f.gitArgs(*remote, *branch, stderr) {
+		return 2
+	}
+	if *timeout <= 0 {
+		fmt.Fprint(stderr, "nova-bus wait: --timeout is required and is a duration like 25m; every wait has a deadline, and one with no deadline is a line that is stuck rather than waiting; refusing to guess\n")
+		return 2
+	}
+	// THE CEILING IS ABOUT THE HARNESS AND NOT ABOUT THE BUS. This verb is meant to be
+	// called from inside a tool call, and every harness kills a tool call that runs too
+	// long -- so a wait longer than the harness's limit does not wait longer, it is killed,
+	// and the caller is told nothing at all. An hour is above every limit we know of and
+	// below anything anybody would call a hang.
+	if *timeout > maxWaitTimeout {
+		fmt.Fprintf(stderr, "nova-bus wait: --timeout %s is longer than %s, which is as long as this verb will block; a wait runs inside your harness's tool call and every harness kills one that runs too long, so a longer timeout is not a longer wait, it is a call that is killed with nothing said; ask your harness for its limit, sit under it, and issue the next wait when this one returns\n",
+			oneline.Field(timeout.String()), oneline.Field(maxWaitTimeout.String()))
+		return 2
+	}
+	if *interval < minWaitInterval {
+		fmt.Fprintf(stderr, "nova-bus wait: --interval %s is shorter than %s, and every poll is a git fetch against somebody's server; refusing to fetch faster than that\n",
+			oneline.Field(interval.String()), oneline.Field(minWaitInterval.String()))
+		return 2
+	}
+	// A wait always runs git, so the root check is unconditional -- see the same check, and
+	// the same reason for the order it is in, in cmdInbox.
+	if err := bus.IsRepoRoot(*busDir); err != nil {
+		fmt.Fprintf(stderr, "nova-bus wait: a wait fetches the bus and reads what changed since your cursor, which need git; %s\n", oneline.Err(err))
+		return 2
+	}
+	c, err := bus.LoadConfig(*busDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-bus wait: %s\n", oneline.Err(err))
+		return 2
+	}
+	me, found := c.Lookup(*as)
+	if !found {
+		fmt.Fprintf(stderr, "nova-bus wait: --as %q names no one on this bus (known: %s)\n", *as, oneline.Escape(strings.Join(c.KnownNames(), "; ")))
+		return 2
+	}
+	if me.Lane == "" {
+		fmt.Fprintf(stderr, "nova-bus wait: %q has no lane on this bus, so nothing can answer for them\n", me.Name)
+		return 2
+	}
+	o := inboxOpts{
+		busDir: *busDir, as: *as, maxWords: *maxWords,
+		openList: *openList, advance: *advance,
+		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
+		legacy: flagLegacy, carryHistory: *carryHistory,
+	}
+	// The cursor as it stands, for the line that says this call BEGAN. A cursor that will
+	// not read is not refused here: the first poll's listing refuses it, in the sentence
+	// inbox already refuses it in.
+	held, _ := bus.ReadCursor(*busDir, me.Lane)
+	// One line at the start, before anything is waited on, so that a transcript shows the
+	// call began and what it was told to do. A tool call that prints nothing for twenty
+	// minutes and then prints everything is, while it runs, indistinguishable from one
+	// that has hung.
+	fmt.Fprintf(stdout, "WAIT as=%s timeout=%s interval=%s cursor=%s\n",
+		oneline.Field(me.Name), oneline.Field(timeout.String()), oneline.Field(interval.String()), oneline.Field(dash(held.Commit)))
+	return waitLoop(o, *timeout, *interval, stdout, stderr, now)
+}
+
+// defaultWaitInterval is how long a wait leaves between polls when the caller names no
+// interval. It is a default, unlike --timeout, on the same test the tool's other two
+// defaults pass: it is not a fact about a bus that only its owner can supply. Twenty
+// seconds is under the time it takes to read a note and well over the cost of a fetch.
+const defaultWaitInterval = 20 * time.Second
+
+// maxWaitTimeout is as long as `wait` will block, and it is a fact about HARNESSES rather
+// than about buses; see the refusal above.
+const maxWaitTimeout = 60 * time.Minute
+
+// minWaitInterval is as fast as a wait will poll, because a poll is a git fetch.
+const minWaitInterval = 100 * time.Millisecond
+
+// waitLoop is the clock: poll, and either return what arrived or sleep and poll again
+// until the deadline. It is apart from the flags so that what it does is readable without
+// them.
+//
+// THE FIRST POLL HAPPENS IMMEDIATELY, before any sleep, because the commonest case is a
+// note that is already there -- the caller answered the last one and came straight back --
+// and making them wait an interval for news the bus already had would be a tool inventing
+// latency.
+func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Writer, now time.Time) int {
+	start := time.Now()
+	deadline := start.Add(timeout)
+	// The moment this call cannot see past: a switch-day line drawn after it hides
+	// everything that could possibly arrive during this wait.
+	horizon := now.Add(timeout)
+	polls := 0
+	cursor := ""
+	for {
+		polls++
+		elapsed := time.Since(start).Round(time.Millisecond)
+		pollNow := now.Add(elapsed)
+		keep := func(r inboxReading) bool { return r.New > 0 || hiddenWholeWait(r.Legacy, horizon) }
+		code, r, lines := waitPoll(o, polls == 1, pollNow, keep, stderr)
+		if r.Cursor != "" {
+			cursor = r.Cursor
+		}
+		if code != 0 {
+			// The listing this poll had already printed, if it printed one, under the
+			// refusal that is on stderr: a reader who was shown their inbox has been shown
+			// it, whatever happened after.
+			fmt.Fprint(stdout, lines)
+			return code
+		}
+		if keep(r) {
+			// Why this wait is not waiting, when the answer is not "a note arrived": the
+			// reader's own switch-day line is drawn after everything this call could see,
+			// so no note written during it would be listed. Telling them costs one line;
+			// not telling them costs an hour of waiting for something that cannot happen.
+			if hiddenWholeWait(r.Legacy, horizon) {
+				fmt.Fprintf(stdout, "WAIT NOTE %s\n", oneline.Escape(hiddenReason(r.Legacy, pollNow)))
+			}
+			fmt.Fprintf(stdout, "WAIT OK new=%d after=%s polls=%d\n", r.New, oneline.Field(elapsed.String()), polls)
+			fmt.Fprint(stdout, lines)
+			return 0
+		}
+		// A line drawn in the future that does NOT cover the whole wait is no reason to
+		// stop, and is still worth a sentence: the notes written before it will not be
+		// listed, and a reader who did not mean to draw it there would otherwise find that
+		// out by being told about none of them.
+		if polls == 1 && !r.Legacy.Before.IsZero() && r.Legacy.Before.After(pollNow) {
+			fmt.Fprintf(stdout, "WAIT NOTE %s\n", oneline.Escape(hiddenReason(r.Legacy, pollNow)))
+		}
+		left := time.Until(deadline)
+		if left <= 0 {
+			break
+		}
+		// The last sleep is the short one, so the LAST poll lands ON the deadline rather
+		// than before it: a note that arrives in the final interval is a note this call
+		// saw, and stopping early would hand it to the next call for no reason.
+		if left < interval {
+			time.Sleep(left)
+			continue
+		}
+		time.Sleep(interval)
+	}
+	// A TIMEOUT IS NOT AN ERROR. Nothing arrived, and nothing was written -- no cursor
+	// moves on a wait that found nothing, because there is nothing to record having read --
+	// and the caller's move is to issue the next wait. Exit 0, with the counts that say the
+	// tool was awake the whole time.
+	fmt.Fprintf(stdout, "WAIT TIMEOUT after=%s polls=%d cursor=%s\n",
+		oneline.Field(time.Since(start).Round(time.Millisecond).String()), polls, oneline.Field(dash(cursor)))
+	return 0
+}
+
+// waitPoll is ONE poll, under the checkout lock: the fetch, the listing, and -- only on the
+// poll that returns -- the cursor. It hands its lines back rather than printing them,
+// because a poll that found nothing prints nothing: twenty polls of a quiet bus are not
+// twenty listings.
+//
+// The lock is taken and released here rather than around the loop; see lockCheckout.
+func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bool, stderr io.Writer) (int, inboxReading, string) {
+	release, code := lockCheckout("WAIT", o.busDir, stderr)
+	if code != 0 {
+		return code, inboxReading{}, ""
+	}
+	defer release()
+	// THE FETCH IS THE POLL. Every read in this tool reads the working tree, so a poll that
+	// fetched and left the checkout where it was would never see anything; see
+	// bus.FetchAndFastForward, which moves it only when moving it is a fast-forward.
+	if _, err := bus.FetchAndFastForward(o.busDir, o.remote, o.branch); err != nil {
+		if first {
+			// The first poll's fetch failing is the invocation being wrong -- a remote that
+			// is not there, a branch nobody has, a checkout that has diverged -- and the
+			// caller should hear that now rather than in an hour.
+			fmt.Fprintf(stderr, "WAIT REFUSED: %s\n", oneline.Err(err))
+			return 1, inboxReading{}, ""
+		}
+		// A later one is the network, or somebody's server, and it is not this reader's to
+		// fix. It is said out loud and the wait goes on: the deadline still bounds the
+		// whole thing, and a wait that gave up on one failed fetch is a wait nobody can
+		// rely on.
+		fmt.Fprintf(stderr, "WAIT POLL fetch: %s\n", oneline.Err(err))
+	}
+	var buf bytes.Buffer
+	code, r := inboxListing(o, &buf, stderr, now)
+	if code != 0 {
+		return code, r, buf.String()
+	}
+	if !keep(r) {
+		return 0, r, ""
+	}
+	if o.advance {
+		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
+	}
+	return code, r, buf.String()
+}
+
+// hiddenWholeWait reports whether a switch-day line is drawn after every moment this call
+// could see, so that nothing arriving during it would be listed.
+//
+// THE TRAP IT NAMES. A line given as a DATE is midnight at that date's start, so a line of
+// tomorrow's date -- which is what a reader who wanted "from today" naturally types -- is a
+// moment after everything anybody writes today. Every note that arrives during the wait is
+// then history: not carried, not listed, counted on INBOX LEGACY and nowhere else. The wait
+// would run its whole timeout beside a bus that was answering it, which is the exact shape
+// of failure this verb exists to end. So it is reported, and the wait returns instead of
+// waiting on a line that hides everything.
+func hiddenWholeWait(legacy bus.LegacyLine, horizon time.Time) bool {
+	return !legacy.Before.IsZero() && legacy.Before.After(horizon)
+}
+
+// hiddenReason is that sentence, with the line the reader is standing behind and the line
+// they probably meant: an INSTANT, which is what a switch-day line drawn today has to be.
+func hiddenReason(legacy bus.LegacyLine, now time.Time) string {
+	at := now.UTC().Format(bus.LegacyInstantLayout)
+	return fmt.Sprintf("your switch-day line is %s, which is after a note written now (%s), so a note arriving during this wait would be taken as history rather than listed; a line drawn today has to be an INSTANT -- read once with `--full --legacy-before %s --advance` to draw it at this moment, or leave it where it is and wait for what comes after it",
+		legacy.Text, at, at)
+}
 
 // utcDay is the UTC calendar day a moment falls in, at its start. It is what the first-advance
 // guard asks its question against: a bus with notes dated before TODAY has a history somebody
