@@ -579,8 +579,9 @@ invents a small one — five lines sending three notes each at once landed 6 of 
 under `--attempts 3` and 15 of 15 under 25. **`--git-timeout` is 60 seconds**,
 the budget one `git` subprocess gets before it is killed and named; a fetch that
 hangs forever is a tool that has stopped saying anything, which looks exactly
-like a tool that is working. **`wait --interval` is 20 seconds**, which is under
-the time it takes to read a note and well over the cost of a fetch. `wait
+like a tool that is working. **`wait --interval` is 10 seconds**, which is under
+the time it takes to read a note and well over the cost of a fetch, and short
+enough that two lines answering each other are not sitting out a round trip. `wait
 --timeout` gets no default at all, for the opposite reason: a deadline is the one
 thing you have to state, because a wait with no deadline is a line that is stuck
 rather than waiting and nobody outside can tell the two apart.
@@ -736,13 +737,13 @@ shape that is one word. It cannot be given with `--legacy-before` or with
 `--carry-history`; either pair is exit 2.
 
 And if your cursor's line is a **date standing at today or later**, every run —
-`inbox` in either mode, and `check --as <you>` — prints one `INBOX NOTE` line
-saying which day it hides and handing you the whole command that redraws it at
-an instant:
+`inbox` in either mode, `wait`, and `check --as <you>` — prints one `INBOX
+SWITCH` line saying which day it hides and handing you the whole command that
+redraws it at an instant:
 
 ```
-INBOX NOTE your switch-day line is the date 2026-09-10, which hides every note
-dated 2026-09-09 or earlier; draw it at an instant, once: nova-bus inbox --bus
+INBOX SWITCH your switch-day line is the date 2026-09-10, which hides every
+note dated 2026-09-09 or earlier; draw it at an instant, once: nova-bus inbox --bus
 "~/bus" --as "Ada" --receipt-max-words 40 --full --legacy-now --advance --remote
 "origin" --branch "main"
 ```
@@ -774,7 +775,7 @@ nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
   --open --advance --remote origin --branch main
 ```
 
-It fetches every `--interval` (default 20s, never under 100ms) and **returns the
+It fetches every `--interval` (default 10s, never under 100ms) and **returns the
 moment your inbox would list something new**, printing exactly what `inbox`
 prints. Nothing by `--timeout` is one `WAIT TIMEOUT after=<d> polls=<n>
 cursor=<sha>` line and **exit 0** — a timeout is not an error, it is the answer
@@ -900,6 +901,7 @@ INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
 INBOX OPEN carrying=<n> heard=<m>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
+INBOX SWITCH your switch-day line is the date <date>, which hides every note dated <date-1> or earlier; draw it at an instant, once: <command>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX RECEIPT id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
@@ -1051,10 +1053,12 @@ costs one extra call; one that is too long costs the whole call.
 One more thing worth knowing before your first wait: if your switch-day line is a
 **date** in the future — `--legacy-before 2026-09-10` on the 9th, which is what
 "from today" naturally looks like — then every note that arrives during the wait
-is behind the line and would not be listed at all. `wait` notices that, prints
-one `WAIT NOTE` line saying so with the instant to use instead, and returns at
-once rather than waiting an hour behind a line that hides everything. See **the
-switch day** below.
+is behind the line and would not be listed at all. `wait` notices that and
+returns at once rather than waiting an hour behind a line that hides everything,
+and it says so in **one** line: the `INBOX SWITCH` its listing already prints,
+which carries the whole command that redraws the line. `WAIT NOTE` is left for
+the case with no canned remedy — a line drawn forward as an **instant**, which
+somebody set to the second on purpose. See **the switch day** below.
 
 ### Adopting it on a bus that already exists — the switch day
 
@@ -1082,7 +1086,7 @@ is that instant and is why the `inbox` step above needs no `$SWITCH` at all.
 
 **If it has already happened to you, the tool tells you so and hands you the
 fix.** Any run over a cursor whose line is a date standing at today or later
-prints the `INBOX NOTE` line shown under `--legacy-before` above; the command in
+prints the `INBOX SWITCH` line shown under `--legacy-before` above; the command in
 it is `inbox --full --legacy-now --advance`, which builds your open list from the
 whole bus and is why moving the line earlier is allowed under `--full`.
 

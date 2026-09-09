@@ -1062,7 +1062,7 @@ func TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened(t *testing.T) {
 }
 
 // Which switch-day lines are worth saying something about, and which are not. The predicate
-// under the INBOX NOTE line: a bare DATE standing at today or later, and nothing else.
+// under the INBOX SWITCH line: a bare DATE standing at today or later, and nothing else.
 func TestLegacyDateAtOrAfterTodayNamesOnlyAForwardDrawnDate(t *testing.T) {
 	now := at("2026-09-09T12:34:56Z")
 	for _, tc := range []struct {

@@ -114,7 +114,7 @@ in your cursor, so later runs honour it without the flag; moving it earlier is
 refused unless the read is --full.
 
 If your cursor's line is a DATE standing at today or later, every inbox run --
-and check --as <you> -- prints one INBOX NOTE line saying which day it hides
+and check --as <you> -- prints one INBOX SWITCH line saying which day it hides
 and the exact command that redraws it at an instant. It is a note and not a
 refusal: the run does what it was asked, and nothing moves until you run the
 command it names.
@@ -130,7 +130,7 @@ after the first needs neither, and a bus with no old notes needs neither ever.
 inbox REPORTS and exits 0 whether the inbox is empty or full; check is the gate.
 
 wait is inbox on a clock, for a harness that does not wake you: it fetches every
---interval (default 20s) and RETURNS the moment your inbox would list something
+--interval (default 10s) and RETURNS the moment your inbox would list something
 new, printing exactly what inbox prints. Nothing by --timeout is a WAIT TIMEOUT line
 and exit 0 -- not an error, the answer "nothing yet" -- and you issue the next
 one. --timeout is required, because every wait has a deadline, and is at most
@@ -802,6 +802,11 @@ type inboxReading struct {
 	Cursor string
 	// Full says the run walked the whole bus.
 	Full bool
+	// SwitchDay says this listing PRINTED the INBOX SWITCH line: the reader's cursor
+	// carries a forward-drawn date line, and the listing has already handed them the
+	// command that redraws it. `wait` reads it so that the one sentence about a line
+	// drawn forward is said once, by the listing, and not again by the clock around it.
+	SwitchDay bool
 	// New is how many notes this run would show a reader as NEWS: the notes it put on the
 	// open list that were not on it before, and on a full read -- a reader with no cursor,
 	// who has been shown nothing yet -- the whole open list. It is what `wait` returns on,
@@ -992,7 +997,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// given -- because it is a fact about the state a reader is stuck in, and the run that
 	// is finally fixing it should say once what it is fixing. See the site below and
 	// bus.LegacyDateAtOrAfterToday.
-	printSwitchDayNote(stdout, held.Legacy, o.busDir, me.Name, fmt.Sprintf("%d", o.maxWords), o.remote, o.branch, now)
+	r.SwitchDay = printSwitchDayNote(stdout, held.Legacy, o.busDir, me.Name, fmt.Sprintf("%d", o.maxWords), o.remote, o.branch, now)
 	// The switch-day line, said as ONE line and next to the scope, because it is part of
 	// what this run looked at: `notes=` is how many notes it left off the open list for
 	// being older than the line, and `unreadable=` how many FILES it left off for the same
@@ -1304,9 +1309,13 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 
 // defaultWaitInterval is how long a wait leaves between polls when the caller names no
 // interval. It is a default, unlike --timeout, on the same test the tool's other two
-// defaults pass: it is not a fact about a bus that only its owner can supply. Twenty
-// seconds is under the time it takes to read a note and well over the cost of a fetch.
-const defaultWaitInterval = 20 * time.Second
+// defaults pass: it is not a fact about a bus that only its owner can supply. Ten seconds
+// is under the time it takes to read a note and well over the cost of a fetch, and it is
+// the number Glenn asked for after watching the family's lines wait on each other: "the
+// polling should be 10 sec". A shorter interval is a shorter round trip between two lines
+// that are answering each other, and a git fetch of a bus this size is cheap enough that
+// the round trip is what the number should be chosen for.
+const defaultWaitInterval = 10 * time.Second
 
 // maxWaitTimeout is as long as `wait` will block, and it is a fact about HARNESSES rather
 // than about buses; see the refusal above.
@@ -1352,7 +1361,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 			// reader's own switch-day line is drawn after everything this call could see,
 			// so no note written during it would be listed. Telling them costs one line;
 			// not telling them costs an hour of waiting for something that cannot happen.
-			if hiddenWholeWait(r.Legacy, horizon) {
+			if hiddenWholeWait(r.Legacy, horizon) && !r.SwitchDay {
 				fmt.Fprintf(stdout, "WAIT NOTE %s\n", oneline.Escape(hiddenReason(r.Legacy, pollNow)))
 			}
 			fmt.Fprintf(stdout, "WAIT OK new=%d after=%s polls=%d\n", r.New, oneline.Field(elapsed.String()), polls)
@@ -1363,7 +1372,7 @@ func waitLoop(o inboxOpts, timeout, interval time.Duration, stdout, stderr io.Wr
 		// stop, and is still worth a sentence: the notes written before it will not be
 		// listed, and a reader who did not mean to draw it there would otherwise find that
 		// out by being told about none of them.
-		if polls == 1 && !r.Legacy.Before.IsZero() && r.Legacy.Before.After(pollNow) {
+		if polls == 1 && !r.Legacy.Before.IsZero() && r.Legacy.Before.After(pollNow) && !r.SwitchDay {
 			fmt.Fprintf(stdout, "WAIT NOTE %s\n", oneline.Escape(hiddenReason(r.Legacy, pollNow)))
 		}
 		left := time.Until(deadline)
@@ -1447,6 +1456,14 @@ func hiddenWholeWait(legacy bus.LegacyLine, horizon time.Time) bool {
 
 // hiddenReason is that sentence, with the line the reader is standing behind and the line
 // they probably meant: an INSTANT, which is what a switch-day line drawn today has to be.
+//
+// ONE SENTENCE PER LINE DRAWN FORWARD, and where two verbs could both say it, the shared
+// listing says it. A forward-drawn DATE is the shape with a remedy, and inboxListing prints
+// that remedy -- INBOX SWITCH, with the whole command in it -- on every listing `wait`
+// returns; both WAIT NOTE sites above stand down when it did (inboxReading.SwitchDay). What
+// is left for WAIT NOTE is the case the listing has nothing to say about: a line drawn
+// forward as an INSTANT, which somebody set to the second on purpose and which no canned
+// command can fix for them.
 func hiddenReason(legacy bus.LegacyLine, now time.Time) string {
 	at := now.UTC().Format(bus.LegacyInstantLayout)
 	return fmt.Sprintf("your switch-day line is %s, which is after a note written now (%s), so a note arriving during this wait would be taken as history rather than listed; a line drawn today has to be an INSTANT -- read once with `--full --legacy-before %s --advance` to draw it at this moment, or leave it where it is and wait for what comes after it",
@@ -1489,11 +1506,18 @@ func dash(s string) string {
 // him. THAT is the bug -- not the date, which he was entitled to draw, but a tool that knew
 // exactly what was wrong and exactly what to run, and said neither.
 //
-// So the note is printed on EVERY run whose cursor carries a forward-drawn date line,
+// So the line is printed on EVERY run whose cursor carries a forward-drawn date line,
 // incremental or full, busy or empty, and it carries the whole command with this run's own
 // values in it: nothing to work out, nothing to look up, one line to paste. It is a NOTE
 // and not a refusal -- exit codes are untouched and nothing moves without the flag. The
 // reader runs the command; the tool only names it.
+//
+// IT HAS A TOKEN OF ITS OWN, and it wanted one. This sentence first went out under
+// `INBOX NOTE`, which is already the token for a listed note -- `INBOX NOTE id=<id> ...` --
+// and every line parser on this bus reads field 3 of an `INBOX NOTE` as `id=`. A second
+// shape under one token is a grammar that cannot be parsed without reading the whole line,
+// so the remedy is `INBOX SWITCH` and `INBOX NOTE` keeps its one meaning. It is also the
+// better name: it says what the line is about.
 //
 // The values this run was not given are printed as the placeholders they are, because
 // `check` has no --receipt-max-words, --remote or --branch and a run without --advance has
@@ -1503,15 +1527,16 @@ func dash(s string) string {
 // The names and paths in it are QUOTED rather than field-escaped, exactly as the
 // first-advance guard quotes them, because this half of the sentence is meant to be pasted:
 // a bus directory holding a space is `--bus "/a bus/here"` and not `--bus /a\x20bus/here`.
-func printSwitchDayNote(stdout io.Writer, legacy, busDir, name, words, remote, branch string, now time.Time) {
+func printSwitchDayNote(stdout io.Writer, legacy, busDir, name, words, remote, branch string, now time.Time) bool {
 	drawn, hides, yes := bus.LegacyDateAtOrAfterToday(legacy, now)
 	if !yes {
-		return
+		return false
 	}
-	fmt.Fprintf(stdout, "INBOX NOTE your switch-day line is the date %s, which hides every note dated %s or earlier; draw it at an instant, once: nova-bus inbox --bus %s --as %s --receipt-max-words %s --full --legacy-now --advance --remote %s --branch %s\n",
+	fmt.Fprintf(stdout, "INBOX SWITCH your switch-day line is the date %s, which hides every note dated %s or earlier; draw it at an instant, once: nova-bus inbox --bus %s --as %s --receipt-max-words %s --full --legacy-now --advance --remote %s --branch %s\n",
 		oneline.Field(drawn.Format(bus.LegacyDateLayout)), oneline.Field(hides.Format(bus.LegacyDateLayout)),
 		oneline.Quote(busDir), oneline.Quote(orPlaceholder(name, "<you>")), oneline.Field(words),
 		oneline.Quote(orPlaceholder(remote, "<remote>")), oneline.Quote(orPlaceholder(branch, "<branch>")))
+	return true
 }
 
 // orPlaceholder is a value this run has, or the angle-bracket name of the value it does not.
@@ -1682,7 +1707,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// THE SAME SENTENCE, WHEREVER THE CURSOR IS READ. `check --as <you>` reads a lane's
 	// CURSOR for its commit, so it sees the drawn-forward line as plainly as `inbox` does,
 	// and a reader polling `check` and reading nothing is in exactly the trouble this note
-	// exists for. It is printed under `INBOX NOTE` here rather than under a `BUS` token of
+	// exists for. It is printed under `INBOX SWITCH` here rather than under a `BUS` token of
 	// its own -- the one place this verb speaks in another verb's grammar, and on purpose:
 	// it is a fact about an INBOX cursor, it names an `inbox` command, and one grep finds
 	// it wherever it was met. The values `check` was never given are the placeholders they

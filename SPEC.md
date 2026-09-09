@@ -2172,7 +2172,7 @@ default remote, no default branch and no default receipt word count. A missing o
 is exit 2 and `refusing to guess`.
 
 The exceptions are `--attempts`, which defaults to **25**, `--git-timeout`, which
-defaults to **60 seconds**, and `wait --interval`, which defaults to **20
+defaults to **60 seconds**, and `wait --interval`, which defaults to **10
 seconds**. None of the three is a fact about a bus that only its owner can
 supply, which is the test the rule is really making: the receipt word
 count is a property of how a bus writes and the bus root is a property of the
@@ -2232,7 +2232,7 @@ INBOX OPEN carrying=<n> heard=<m>
 INBOX HINT --open lists the <n> carried entries; they are also in <path>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
-INBOX NOTE your switch-day line is the date <date>, which hides every note dated <date-1> or earlier; draw it at an instant, once: <command>
+INBOX SWITCH your switch-day line is the date <date>, which hides every note dated <date-1> or earlier; draw it at an instant, once: <command>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX RECEIPT id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
@@ -2310,16 +2310,26 @@ asked, because a file nobody can read is not a listing choice — the one except
 being a file dated behind the switch-day line, which is history and is counted
 rather than named; see `INBOX LEGACY` below.
 
-**`INBOX NOTE` has two shapes and one token**, told apart by their first field:
-the listing's `id=...` and the switch-day note's `your`. The second is the
-sentence a reader whose own line has gone quiet is owed — it names the day the
-line hides and the whole command that redraws it — and it is a `NOTE` because
-that is what it is: nothing is refused, no exit code changes, nothing moves
-until the reader runs the command it names. It is printed after `INBOX SCOPE`
-and before any listing, on **every** `inbox` run whose cursor carries a line of
-that shape, incremental or full, busy or empty. See **the switch-day line**
-below for when it fires and why it also comes out of `check --as <name>`, which
-is the one place this tool prints another verb's token on purpose.
+**`INBOX SWITCH` is the sentence a reader whose own line has gone quiet is
+owed**: it names the day the line hides and the whole command that redraws it at
+an instant. Nothing is refused, no exit code changes, and nothing moves until
+the reader runs the command it names. It is printed after `INBOX SCOPE` and
+before any listing, on **every** `inbox` run whose cursor carries a line of that
+shape, incremental or full, busy or empty. See **the switch-day line** below for
+when it fires and why it also comes out of `check --as <name>`, which is the one
+place this tool prints another verb's token on purpose.
+
+**It has a token of its own, and `INBOX NOTE` keeps its one meaning.** The
+sentence first went out under `INBOX NOTE`, which is already the listing's token
+— `INBOX NOTE id=<id> ...` — and every line parser here reads field 3 of an
+`INBOX NOTE` as `id=`. Two shapes under one token is a grammar that cannot be
+parsed without reading the whole line, so the remedy is `INBOX SWITCH`: one
+token, one shape, and a name that says what the line is about.
+
+`WAIT NOTE` says nothing where `INBOX SWITCH` has spoken. A `wait` returning on
+a forward-drawn line prints the listing's `INBOX SWITCH` and not a second
+sentence of its own; what is left for `WAIT NOTE` is the line that has no canned
+remedy, an INSTANT drawn forward on purpose. See **`wait`** below.
 
 `INBOX LEGACY` is printed by every `inbox` run that has a switch-day line in
 force -- from the flag or from the cursor -- and it carries TWO counts, because
@@ -3340,7 +3350,7 @@ cannot be given with `--legacy-before` or `--legacy-now` — they answer the sam
 question and giving both says nothing about which — and that is exit 2, a bad
 invocation.
 
-### A line drawn forward — the `INBOX NOTE` that ends the silence
+### A line drawn forward — the `INBOX SWITCH` that ends the silence
 
 **The failure, from a friend's first week on the bus.** He drew his switch-day
 line at a DATE, which is what v0.10.0's own first-advance guard handed him:
@@ -3362,8 +3372,8 @@ DATE standing at today or later, UTC**, prints one line — after `INBOX SCOPE`,
 before any listing, incremental or full, on a busy run as much as an empty one:
 
 ```
-INBOX NOTE your switch-day line is the date <date>, which hides every note dated
-<date-1> or earlier; draw it at an instant, once: nova-bus inbox --bus "<dir>"
+INBOX SWITCH your switch-day line is the date <date>, which hides every note
+dated <date-1> or earlier; draw it at an instant, once: nova-bus inbox --bus "<dir>"
 --as "<you>" --receipt-max-words <w> --full --legacy-now --advance --remote
 "<remote>" --branch "<branch>"
 ```
@@ -3395,6 +3405,14 @@ for its own baseline and a reader polling `check` over a quiet bus is in exactly
 the same trouble. It is the one place `nova-bus` prints another verb's token on
 purpose: the fact is about an INBOX cursor, the command it names is an `inbox`
 command, and one `grep` should find it wherever it was met.
+
+**`wait` prints it too, and prints nothing else about the line.** A wait's
+listing is `inbox`'s listing, so a wait that returns on a forward-drawn date
+carries this line inside it. Its own `WAIT NOTE` about a line drawn into the
+future stands down when it does: two sentences about one line, one of them
+without the command, is the noise this line exists to replace. What `WAIT NOTE`
+still says is the case with no canned remedy — a line drawn forward as an
+INSTANT, which somebody set to the second on purpose.
 
 **It refuses before printing the listing.** A first full read of an old bus is a
 line per open note, which on that bus is the six hundred lines this guard exists
@@ -3571,7 +3589,7 @@ A wait runs inside a tool call, and every harness kills a call that runs too
 long — so a timeout above the harness's limit does not wait longer, it is killed
 with nothing said at all. A longer one is refused, with that sentence and the
 advice to ask your harness what its limit is and sit under it. `--interval`
-defaults to 20 seconds and will not go below 100ms, because a poll is a `git
+defaults to 10 seconds and will not go below 100ms, because a poll is a `git
 fetch` against somebody's server.
 
 **One `WAIT` line at the start**, before anything is waited on, so a transcript
