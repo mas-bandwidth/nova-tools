@@ -60,6 +60,35 @@ func (n Note) When() time.Time {
 	return time.Time{}
 }
 
+// legacyDay is the note's DAY, for the switch-day line and for nothing else: When when it
+// can be read, and otherwise a leading YYYY-MM-DD in the filename.
+//
+// WHY THE LINE READS A DATE THE REST OF THE TOOL DOES NOT. The rule the tolerance rests on
+// is that a file which cannot say when it was written cannot claim to predate anything.
+// That is right, and the first version of it read too little: a table written by hand for
+// months names its notes four ways -- `2026-09-09T0041Z-slug.md`, the same with seconds,
+// the same with the stamp accidentally doubled, and a plain `2026-09-06-slug.md` -- and
+// only the first is the minute When parses. Every one of the other three still says its
+// DAY, in the first ten characters, which is all a line drawn on a date needs. On the
+// family's own table those three shapes are 87 notes, and refusing to read their day
+// meant refusing to forgive a note that says plainly when it was written.
+//
+// It is deliberately NOT folded into When. When orders the listing, fills a catalogue's
+// Date field and prints `at=`, so widening it would rewrite records and make every INDEX
+// line already on a table disagree with its note. The line needs a day and takes one here.
+func (n Note) legacyDay() time.Time {
+	if when := n.When(); !when.IsZero() {
+		return when
+	}
+	base := filepath.Base(n.Path)
+	if len(base) >= len(LegacyDateLayout) {
+		if t, err := time.Parse(LegacyDateLayout, base[:len(LegacyDateLayout)]); err == nil {
+			return t.UTC()
+		}
+	}
+	return time.Time{}
+}
+
 // ReadTable reads every lane the roster declares, plus every from-* directory on disk, so
 // that a lane nobody owns is visible to check rather than invisible to everything.
 //
@@ -127,8 +156,11 @@ func (t *Table) readLane(lane string) error {
 		}
 		// A lane's other state files -- CURSOR, OPEN, INDEX -- are read by the verbs that
 		// need them, not here. They are not notes and they are not strays; a full check
-		// validates each one's own format.
-		if isLaneStateFile(name) {
+		// validates each one's own format. A state file's stranded temporary is stepped
+		// over on the same rule: it is this tool's own leftover from a run that was killed
+		// between the write and the rename, and reporting it as a stray would make a check
+		// fail over a file the next write replaces.
+		if isLaneStateFile(name) || isLaneStateTemp(name) {
 			continue
 		}
 		if !strings.HasSuffix(name, ".md") {
@@ -364,8 +396,10 @@ type Problem struct {
 // CheckOptions is what a check run tolerates. The zero value tolerates nothing, which is
 // what CI on a table that has only ever been written by this tool should use.
 type CheckOptions struct {
-	// LegacyBefore, when non-zero, is the moment before which a note's parse failure or
-	// dangling Re line is a WARN rather than a FAIL.
+	// LegacyBefore, when non-zero, is the moment before which a finding about a note's
+	// HEADER -- it will not parse, its From, To or Cc names somebody the roster does not
+	// know, it has no Subject, its Kind is neither word, its Re names nothing -- is a WARN
+	// rather than a FAIL.
 	//
 	// THE ADOPTION PROBLEM, which this exists for and nothing else. A table that has been
 	// running for months was written by people, by hand, in a shape no tool checked. Point
@@ -375,12 +409,15 @@ type CheckOptions struct {
 	// tool: everything after it is held to the rule, everything before it is reported and
 	// forgiven.
 	//
-	// It is a DATE and not a switch, so the forgiven set can only shrink, and it is
-	// narrow: only two findings are tolerated, both of them about a note nobody can read
-	// or a thread that points at nothing. An unknown recipient, a note in the wrong lane,
-	// a malformed or duplicated id, a broken receipt line, an unowned lane and a stray
-	// file all still FAIL at any date, because none of them is a thing the table's history
-	// made unavoidable.
+	// It is a DATE and not a switch, so the forgiven set can only shrink. What it forgives
+	// is a note's HEADER and nothing else, and the width of that was measured rather than
+	// argued: a dry run over the family's real table with the line at its adoption day
+	// still failed 163 times -- 109 missing Subject lines, 47 To, From and Cc lines naming
+	// people the roster did not yet hold, and a few notes that would not parse at all --
+	// which is the wall of red the tolerance exists to prevent. A note in the wrong lane, a
+	// malformed or duplicated id, a broken receipt line, an unowned lane and a stray file
+	// all still FAIL at any date, because none of THOSE is a thing a table's history made
+	// unavoidable: they are facts about where a file sits, not about how it was written.
 	//
 	// A note whose date cannot be read AT ALL -- no parseable Date line and no UTC minute
 	// in its filename -- is never tolerated, because there is nothing to compare. That is
@@ -394,7 +431,7 @@ func (o CheckOptions) tolerates(n *Note) bool {
 	if o.LegacyBefore.IsZero() {
 		return false
 	}
-	when := n.When()
+	when := n.legacyDay()
 	if when.IsZero() {
 		return false
 	}
@@ -414,8 +451,8 @@ func (o CheckOptions) tolerates(n *Note) bool {
 // What it deliberately does not assert: anything about a note's body. A body is prose,
 // and prose is the part of the table no tool has an opinion about.
 //
-// Two of its findings can be TOLERATED for old notes rather than failed; see CheckOptions.
-// Check itself tolerates nothing.
+// Its findings about a note's HEADER can be TOLERATED for old notes rather than failed;
+// see CheckOptions. Check itself tolerates nothing.
 func (t *Table) Check() []Problem { return t.CheckWith(CheckOptions{}) }
 
 // CheckWith is Check with a stated tolerance. See CheckOptions.
@@ -424,9 +461,9 @@ func (t *Table) CheckWith(o CheckOptions) []Problem {
 	add := func(where, format string, args ...any) {
 		ps = append(ps, Problem{Where: where, Reason: fmt.Sprintf(format, args...)})
 	}
-	// warn is add for the two findings the legacy tolerance can forgive. It is a separate
-	// call rather than a flag on add so that every tolerated site is visible in this
-	// function as a different verb.
+	// warn is add for the findings the legacy tolerance can forgive. It is a separate call
+	// rather than a flag on add so that every tolerated site is visible in this function as
+	// a different verb.
 	warn := func(n *Note, where, format string, args ...any) {
 		ps = append(ps, Problem{Where: where, Reason: fmt.Sprintf(format, args...), Warn: o.tolerates(n)})
 	}

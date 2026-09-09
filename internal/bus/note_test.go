@@ -442,10 +442,10 @@ func TestAProseFirstLineFailsWithAShortQuotedKey(t *testing.T) {
 	if err == nil {
 		t.Fatal("a note whose first line is prose parsed")
 	}
-	if !strings.Contains(err.Error(), "unknown header key") {
+	if !strings.Contains(err.Error(), "not a header key") {
 		t.Fatalf("the refusal does not say what is wrong: %v", err)
 	}
-	if len(err.Error()) > 120 {
+	if len(err.Error()) > 200 {
 		t.Fatalf("the refusal is %d characters; it pastes the paragraph back:\n%v", len(err.Error()), err)
 	}
 	if !strings.Contains(err.Error(), "...") {
@@ -458,5 +458,57 @@ func TestAProseFirstLineFailsWithAShortQuotedKey(t *testing.T) {
 	_, err = ParseNote("from-stella/x.md", "From: Rowan\nSbuject: s\n\nbody\n")
 	if err == nil || !strings.Contains(err.Error(), `unknown header key "Sbuject"`) {
 		t.Fatalf("a short key was not quoted whole: %v", err)
+	}
+}
+
+// THE THREE SHAPES A READ OF THE REAL TABLE FOUND, and what each refusal now has to say.
+// A note that will not parse is a note its reader is shown as UNREADABLE and can do
+// nothing about unless the line says which of the three it is: a key in markdown bold, a
+// key nobody knows, or a body sentence standing where the header goes. The failure is
+// unchanged in all three -- only the sentence after it.
+func TestAnUnreadableNoteSaysWhatToDoAboutIt(t *testing.T) {
+	cases := []struct {
+		name, text string
+		want       []string
+	}{
+		{
+			name: "a key in markdown bold",
+			text: "From: Stella\n**To**: Rowan\nSubject: s\n\nbody\n",
+			want: []string{"line 2", `"**To**"`, "headers are plain `Key: value`, not markdown bold", `"To:"`},
+		},
+		{
+			name: "a key nobody knows",
+			text: "From: Stella\nTo: Rowan\nBranch: main\nSubject: s\n\nbody\n",
+			want: []string{"line 3", `unknown header key "Branch"`, "the keys are From, To, Cc, Date, Id, Re, Subject, Kind"},
+		},
+		{
+			name: "a body sentence where the header goes",
+			text: "From: Stella\nTo: Rowan\nSubject: s\nRowan, our notes crossed: yours arrived while I was writing mine.\n\nbody\n",
+			want: []string{"line 4", "not a header key", "the header ends at the first blank line; put a blank line after the last header"},
+		},
+		{
+			name: "a body sentence with no colon in it at all",
+			text: "From: Stella\nTo: Rowan\nSubject: s\nRowan, our notes crossed again\n\nbody\n",
+			want: []string{"line 4", "not a header line", "the header ends at the first blank line; put a blank line after the last header"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseNote("from-stella/x.md", tc.text)
+			if err == nil {
+				t.Fatal("the note parsed; these four shapes are still failures")
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("the refusal does not say %q:\n%v", want, err)
+				}
+			}
+		})
+	}
+	// And the tolerances are untouched: a bullet in front of a bold key is still read as a
+	// bullet, so the refusal is about the bold and not about the bullet.
+	_, err := ParseNote("from-stella/x.md", "- From: Stella\n- **To**: Rowan\n- Subject: s\n\nbody\n")
+	if err == nil || !strings.Contains(err.Error(), "not markdown bold") {
+		t.Fatalf("a bulleted bold key: %v", err)
 	}
 }

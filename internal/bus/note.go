@@ -27,6 +27,11 @@ const (
 	KeyKind    = "Kind"
 )
 
+// KnownKeys is the header's whole vocabulary, in the order send writes it. It is a list
+// rather than a set because a refusal names it: a writer told only that their key is
+// unknown has to go and find the eight that are not, and the eight fit on the line.
+var KnownKeys = []string{KeyFrom, KeyTo, KeyCc, KeyDate, KeyID, KeyRe, KeySubject, KeyKind}
+
 // KindReceipt and KindNote are the two values of the optional Kind line, which overrides
 // the receipt heuristic in either direction.
 const (
@@ -110,6 +115,14 @@ type Note struct {
 //
 // A note whose first line is prose still fails, and should: there is no honest way to
 // tell a From line from a sentence that happens to hold a colon.
+//
+// WHAT THE REFUSALS SAY. A read of the family's own table found three shapes behind
+// nearly every unreadable note, and a refusal that only says a file will not parse leaves
+// the writer to guess which. So each of the three names its repair: a key in markdown
+// bold (`**To**:`) is told that headers are plain `Key: value`; an unknown key (`Branch:`)
+// is given the eight keys there are; and a body sentence standing in the header position
+// is told the header ends at the first blank line. The failure is unchanged -- these are
+// the same refusals with the fix in them.
 func ParseNote(path, text string) (Note, error) {
 	noteParses.Add(1)
 	n := Note{Path: path}
@@ -144,7 +157,21 @@ func ParseNote(path, text string) (Note, error) {
 		}
 		key, value, ok := strings.Cut(line, ":")
 		if !ok || key == "" || strings.TrimSpace(key) != key {
-			return n, fmt.Errorf("line %d: not a header line (a header is Key: value, and ends at the first blank line)", i+1)
+			return n, fmt.Errorf("line %d: not a header line (a header is Key: value): %s", i+1, blankLineAdvice)
+		}
+		// A key nobody could have meant as a key is a BODY SENTENCE standing where the
+		// header is, which on the real table is the commonest unreadable shape there is:
+		// somebody wrote a paragraph, and a colon or a dash inside it made the first
+		// clause look like a key. Saying "unknown header key" to that is true and useless,
+		// so it says the thing that fixes it instead.
+		if isProseKey(key) {
+			return n, fmt.Errorf("line %d: %q is a sentence, not a header key: %s", i+1, truncate(key, maxQuotedKey), blankLineAdvice)
+		}
+		// A key in markdown bold -- `**To**: Rowan` -- is a table people also read in a
+		// browser writing what it reads. It is one substitution away from correct and the
+		// refusal says which.
+		if plain, bold := unbold(key); bold {
+			return n, fmt.Errorf("line %d: %q: headers are plain `Key: value`, not markdown bold; write %q", i+1, truncate(key, maxQuotedKey), plain+":")
 		}
 		value = strings.TrimSpace(value)
 		switch key {
@@ -166,7 +193,11 @@ func ParseNote(path, text string) (Note, error) {
 			// whole paragraph up to its first colon as the "key", and a refusal that
 			// pasted it back would be one unreadable line per note in a check over a
 			// table of them.
-			return n, fmt.Errorf("line %d: unknown header key %q", i+1, truncate(key, maxQuotedKey))
+			//
+			// The known keys are NAMED. `Branch:` is a real line off the real table, and
+			// a writer told only that their key is unknown has to go and find the eight
+			// that are not; they fit on the line, so they are on it.
+			return n, fmt.Errorf("line %d: unknown header key %q (the keys are %s)", i+1, truncate(key, maxQuotedKey), strings.Join(KnownKeys, ", "))
 		}
 		h.lines[key] = i + 1
 		switch key {
@@ -194,6 +225,36 @@ func ParseNote(path, text string) (Note, error) {
 	}
 	n.Header = h
 	return n, nil
+}
+
+// blankLineAdvice is the one sentence that fixes every note whose header ran on into its
+// body, which is most of the unreadable notes on a table people wrote by hand. It is
+// shared by the two refusals that mean it so the two cannot say it differently.
+const blankLineAdvice = "the header ends at the first blank line; put a blank line after the last header"
+
+// isProseKey reports whether what stands where a key should stand is a sentence. A header
+// key is one word: it holds no space, and it is short. Both halves are needed -- a
+// paragraph up to its first colon holds spaces, and a colon that never arrives leaves a
+// whole line -- and neither is a guess about what the writer meant, only about what they
+// cannot have meant.
+func isProseKey(key string) bool {
+	return strings.ContainsAny(key, " \t") || len(key) > maxKeyLen
+}
+
+// maxKeyLen is the longest a header key can be before it is prose. The longest key this
+// tool knows is "Subject", at seven; the margin is for a key somebody invents, which gets
+// the unknown-key refusal and its list rather than the sentence one.
+const maxKeyLen = 20
+
+// unbold takes markdown emphasis off a key and says whether there was any. `**To**`,
+// `**To` and `*To*` all arrive on a table whose notes are read in a browser, and all
+// three are one substitution from a header.
+func unbold(key string) (string, bool) {
+	plain := strings.Trim(key, "*")
+	if plain == "" || plain == key {
+		return key, false
+	}
+	return plain, true
 }
 
 // LineOf reports the 1-based line a key was read at, or 0.

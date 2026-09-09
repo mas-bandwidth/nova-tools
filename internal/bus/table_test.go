@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -455,21 +456,106 @@ Re lines named filenames once, and a rename orphaned this one.
 	if !failed["from-stella/2026-09-08T0001Z-new-prose.md"] {
 		t.Fatalf("a note written after the cutoff was tolerated; failed=%v", failed)
 	}
-	// The tolerance is NARROW. A finding that is not a parse failure or a dangling Re
-	// fails at any date, because none of the others is a thing the table's history made
-	// unavoidable.
-	files2 := fixture()
-	files2["from-stella/2026-09-01T0003Z-stranger.md"] = `From: Stella
-To: Nobody At All
-Date: Tue Sep  1 00:03:00 UTC 2026
-Subject: A note to somebody the roster does not know
+}
+
+// The four header findings the family's real table failed 163 times on, with the line
+// drawn at its adoption day: a missing Subject, and a To, a From and a Cc naming somebody
+// the roster does not hold. Every one of them is a note written by hand before there was a
+// roster to check against, so every one of them warns on the old side of the line and
+// fails on the new side. The message text is unchanged in both directions -- only whether
+// it fails.
+func TestTheHeaderFindingsAreInsideTheLegacyTolerance(t *testing.T) {
+	const (
+		old = "2026-09-01T0009Z"
+		new = "2026-09-08T0009Z"
+	)
+	kinds := []struct {
+		name, header, want string
+	}{
+		{"no subject", "From: Stella\nTo: Rowan\nDate: %s\n", "no Subject line, or an empty one"},
+		{"To names no one", "From: Stella\nTo: Nobody At All\nDate: %s\nSubject: s\n", `To: "Nobody At All" names no one at this table`},
+		{"From names no one", "From: Nobody At All\nTo: Rowan\nDate: %s\nSubject: s\n", `From: "Nobody At All" names no one at this table`},
+		{"Cc names no one", "From: Stella\nTo: Rowan\nCc: Nobody At All\nDate: %s\nSubject: s\n", `Cc: "Nobody At All" names no one at this table`},
+	}
+	before := at("2026-09-05T00:00:00Z")
+	for _, k := range kinds {
+		t.Run(k.name, func(t *testing.T) {
+			files := fixture()
+			oldPath := "from-stella/" + old + "-" + Slugify(k.name, 40) + ".md"
+			newPath := "from-stella/" + new + "-" + Slugify(k.name, 40) + ".md"
+			files[oldPath] = fmt.Sprintf(k.header, "Tue Sep  1 00:09:00 UTC 2026") + "\nbody\n"
+			files[newPath] = fmt.Sprintf(k.header, "Tue Sep  8 00:09:00 UTC 2026") + "\nbody\n"
+			tab := loadTable(t, writeTable(t, files))
+
+			ps := tab.CheckWith(CheckOptions{LegacyBefore: before})
+			var oldP, newP *Problem
+			for i := range ps {
+				switch ps[i].Where {
+				case oldPath:
+					oldP = &ps[i]
+				case newPath:
+					newP = &ps[i]
+				}
+			}
+			if oldP == nil || newP == nil {
+				t.Fatalf("the planted findings are missing: old=%v new=%v", oldP, newP)
+			}
+			if !strings.Contains(oldP.Reason, k.want) || !strings.Contains(newP.Reason, k.want) {
+				t.Fatalf("the message changed: old=%q new=%q, want both to name %q", oldP.Reason, newP.Reason, k.want)
+			}
+			if !oldP.Warn {
+				t.Fatalf("a note dated before the line still FAILS on %s: %s", k.name, oldP.Reason)
+			}
+			if newP.Warn {
+				t.Fatalf("a note dated after the line was tolerated on %s: %s", k.name, newP.Reason)
+			}
+			// And with no line at all, both fail.
+			for _, p := range tab.Check() {
+				if p.Warn {
+					t.Fatalf("Check() tolerated %s without being asked to: %s", p.Where, p.Reason)
+				}
+			}
+		})
+	}
+}
+
+// The tolerance is still narrow where it was narrow. What it forgives is how a note was
+// WRITTEN; where a file sits, and whether an id is one, are not things a table's history
+// made unavoidable, so they fail at any date.
+func TestTheLegacyToleranceStillFailsOnWhatIsNotAHeader(t *testing.T) {
+	files := fixture()
+	// A note in the wrong lane, a malformed id, and a stray file -- all dated well before
+	// any line anybody would draw.
+	files["from-rowan/2026-09-01T0004Z-wrong-lane.md"] = `From: Stella
+To: Rowan
+Date: Tue Sep  1 00:04:00 UTC 2026
+Subject: A note of Stella's, sitting in Rowan's lane
 
 body
 `
-	tab2 := loadTable(t, writeTable(t, files2))
-	for _, p := range tab2.CheckWith(CheckOptions{LegacyBefore: before}) {
-		if p.Warn {
-			t.Fatalf("an unknown recipient was tolerated as legacy: %s: %s", p.Where, p.Reason)
+	files["from-stella/2026-09-01T0005Z-bad-id.md"] = `From: Stella
+To: Rowan
+Date: Tue Sep  1 00:05:00 UTC 2026
+Id: stella-NOTHEXATALL
+Subject: An id that is not one
+
+body
+`
+	files["from-stella/notes.txt"] = "a stray file\n"
+	tab := loadTable(t, writeTable(t, files))
+	failed := map[string]bool{}
+	for _, p := range tab.CheckWith(CheckOptions{LegacyBefore: at("2030-01-01T00:00:00Z")}) {
+		if !p.Warn {
+			failed[p.Where] = true
+		}
+	}
+	for _, where := range []string{
+		"from-rowan/2026-09-01T0004Z-wrong-lane.md:1",
+		"from-stella/2026-09-01T0005Z-bad-id.md:4",
+		"from-stella/notes.txt",
+	} {
+		if !failed[where] {
+			t.Fatalf("%s was tolerated as legacy; failed=%v", where, failed)
 		}
 	}
 }
@@ -483,5 +569,53 @@ func TestLegacyToleranceNeedsADateItCanRead(t *testing.T) {
 		if p.Where == "from-stella/undated-prose.md" && p.Warn {
 			t.Fatal("a note with no readable date was tolerated as old")
 		}
+	}
+}
+
+// ...but a note that says its DAY in its filename has said when it was written, whatever
+// shape the rest of the name is in. A table written by hand for months names its notes
+// four ways and only one of them is the minute When parses; the other three still begin
+// with the day, and a line drawn on a date needs nothing more than that. The line reads
+// them; nothing else does.
+func TestTheLegacyLineReadsTheDayAtTheFrontOfAFilename(t *testing.T) {
+	shapes := []string{
+		"2026-09-01T0001Z-the-minute-this-tool-writes.md",
+		"2026-09-01T000102Z-the-same-with-seconds.md",
+		"2026-09-01T2026-09-01T000102Z-the-stamp-pasted-twice.md",
+		"2026-09-01-just-the-day.md",
+	}
+	files := fixture()
+	for _, name := range shapes {
+		// No Date line at all, and no Subject either -- the finding under test.
+		files["from-stella/"+name] = "From: Stella\nTo: Rowan\n\nbody\n"
+	}
+	// The same note, dated after the line by its filename, still fails.
+	files["from-stella/2026-09-08-after-the-line.md"] = "From: Stella\nTo: Rowan\n\nbody\n"
+	tab := loadTable(t, writeTable(t, files))
+	warned, failed := map[string]bool{}, map[string]bool{}
+	for _, p := range tab.CheckWith(CheckOptions{LegacyBefore: at("2026-09-05T00:00:00Z")}) {
+		if p.Warn {
+			warned[p.Where] = true
+		} else {
+			failed[p.Where] = true
+		}
+	}
+	for _, name := range shapes {
+		if !warned["from-stella/"+name] {
+			t.Fatalf("%s names its day and was not tolerated; warned=%v failed=%v", name, warned, failed)
+		}
+	}
+	if !failed["from-stella/2026-09-08-after-the-line.md"] {
+		t.Fatalf("a note whose filename names a day AFTER the line was tolerated; failed=%v", failed)
+	}
+	// And the day is read for the line only. What the listing orders by is unchanged: a
+	// note whose Date line cannot be read and whose filename is not the minute still has no
+	// moment, so no catalogue line and no at= field is invented for it.
+	n, ok := tab.NoteByPath("from-stella/2026-09-01-just-the-day.md")
+	if !ok {
+		t.Fatal("the note is not on the table")
+	}
+	if !n.When().IsZero() {
+		t.Fatalf("When() now reads a day it did not read before (%v); ordering, INDEX Date and at= would change with it", n.When())
 	}
 }

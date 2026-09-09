@@ -61,6 +61,12 @@ const (
 // nothing else; anything else is a stray and check says so.
 var laneStateFiles = []string{ReceiptsName, CursorName, OpenName, IndexName}
 
+// TempSuffix is what replaceLaneFile writes through before it renames. A run killed
+// between the write and the rename leaves one behind, so the name is reserved rather than
+// random: the lane walk steps over `CURSOR.tmp` instead of reporting it as a stray file,
+// and a person who finds one can delete it knowing what it was.
+const TempSuffix = ".tmp"
+
 func isLaneStateFile(name string) bool {
 	for _, s := range laneStateFiles {
 		if name == s {
@@ -68,6 +74,14 @@ func isLaneStateFile(name string) bool {
 		}
 	}
 	return false
+}
+
+// isLaneStateTemp reports whether a name is a lane state file's stranded temporary. Only
+// those four names: a `notes.tmp` somebody left in a lane is a stray like any other, and
+// this is not a general licence to leave files in a lane.
+func isLaneStateTemp(name string) bool {
+	base, cut := strings.CutSuffix(name, TempSuffix)
+	return cut && isLaneStateFile(base)
 }
 
 // Cursor is one reader's place to stand.
@@ -92,6 +106,17 @@ type Cursor struct {
 	// trusted, because there is nothing to compare.
 	Open    int
 	Counted bool
+
+	// Legacy is the switch-day line this reader read under, as the UTC date it was given:
+	// notes dated before it are not carried on the open list. It is "" on a cursor written
+	// with no line, which is every cursor written before this field existed.
+	//
+	// It is IN THE CURSOR rather than in a flag the reader must remember because a line
+	// that has to be retyped on every run is a line that will be forgotten on one, and the
+	// run that forgets it opens six hundred notes the reader had settled. The cursor is
+	// already the reader's place to stand; the date they are standing after belongs beside
+	// it, on the table, where everybody can see which notes they have taken as read.
+	Legacy string
 }
 
 // CursorPath, OpenPath and IndexPath are the repo-relative paths of a lane's state files.
@@ -120,12 +145,20 @@ func ReadCursor(root, lane string) (Cursor, error) {
 		if i > 0 {
 			return Cursor{}, fmt.Errorf("%s: line %d: a cursor is one line", CursorPath(lane), r.line)
 		}
-		// Fields and not Cut, because the line is now up to three tokens and none of them
-		// holds a space: the commit, the RFC 3339 stamp, and `open=<n>`. A fourth token is
-		// a refusal rather than a guess, on the same rule as an INDEX line's field count.
+		// Fields and not Cut, because the line is now up to four tokens and none of them
+		// holds a space: the commit, the RFC 3339 stamp, `open=<n>` and `legacy=<date>`. A
+		// fifth token is a refusal rather than a guess, on the same rule as an INDEX line's
+		// field count.
+		//
+		// The two trailing tokens are read BY THEIR PREFIX and not by their position, which
+		// is what makes a new one addable without every older cursor becoming unreadable:
+		// a cursor written before `open=` existed has two tokens and is trusted, and one
+		// written before `legacy=` has three. An unknown token is still a refusal -- the
+		// tolerance is for tokens this reader knows and the writer did not, never the other
+		// way round.
 		fields := strings.Fields(r.text)
 		if len(fields) > cursorFields {
-			return Cursor{}, fmt.Errorf("%s: line %d: a cursor is <commit> [<stamp>] [open=<n>], got %d tokens", CursorPath(lane), r.line, len(fields))
+			return Cursor{}, fmt.Errorf("%s: line %d: a cursor is <commit> [<stamp>] [%s<n>] [%s<date>], got %d tokens", CursorPath(lane), r.line, cursorOpenPrefix, cursorLegacyPrefix, len(fields))
 		}
 		if err := ValidCommitHex(fields[0]); err != nil {
 			return Cursor{}, fmt.Errorf("%s: line %d: %w", CursorPath(lane), r.line, err)
@@ -134,23 +167,56 @@ func ReadCursor(root, lane string) (Cursor, error) {
 		if len(fields) > 1 {
 			got.Stamp = fields[1]
 		}
-		if len(fields) > 2 {
-			n, perr := strconv.Atoi(strings.TrimPrefix(fields[2], cursorOpenPrefix))
-			if !strings.HasPrefix(fields[2], cursorOpenPrefix) || perr != nil || n < 0 {
-				return Cursor{}, fmt.Errorf("%s: line %d: %q is not %s<n>", CursorPath(lane), r.line, truncate(fields[2], 40), cursorOpenPrefix)
+		for _, tok := range fields[2:] {
+			switch {
+			case strings.HasPrefix(tok, cursorOpenPrefix):
+				n, perr := strconv.Atoi(strings.TrimPrefix(tok, cursorOpenPrefix))
+				if perr != nil || n < 0 {
+					return Cursor{}, fmt.Errorf("%s: line %d: %q is not %s<n>", CursorPath(lane), r.line, truncate(tok, 40), cursorOpenPrefix)
+				}
+				got.Open, got.Counted = n, true
+			case strings.HasPrefix(tok, cursorLegacyPrefix):
+				date := strings.TrimPrefix(tok, cursorLegacyPrefix)
+				if _, perr := time.Parse(LegacyDateLayout, date); perr != nil {
+					return Cursor{}, fmt.Errorf("%s: line %d: %q is not %s<date> of the form %s", CursorPath(lane), r.line, truncate(tok, 40), cursorLegacyPrefix, LegacyDateLayout)
+				}
+				got.Legacy = date
+			default:
+				return Cursor{}, fmt.Errorf("%s: line %d: %q is neither %s<n> nor %s<date>", CursorPath(lane), r.line, truncate(tok, 40), cursorOpenPrefix, cursorLegacyPrefix)
 			}
-			got.Open, got.Counted = n, true
 		}
 	}
 	return got, nil
 }
 
-// cursorFields and cursorOpenPrefix are the shape of a cursor line: the commit, the stamp,
-// and how many notes the run that wrote it was carrying.
+// LegacyBefore is the cursor's switch-day line as a moment, or the zero time when it has
+// none. It parses what ReadCursor already validated, so a caller that has a Cursor never
+// has to know the layout.
+func (c Cursor) LegacyBefore() time.Time {
+	if c.Legacy == "" {
+		return time.Time{}
+	}
+	when, err := time.Parse(LegacyDateLayout, c.Legacy)
+	if err != nil {
+		return time.Time{}
+	}
+	return when.UTC()
+}
+
+// cursorFields and the two token prefixes are the shape of a cursor line: the commit, the
+// stamp, how many notes the run that wrote it was carrying, and the switch-day line it
+// read under.
 const (
-	cursorFields     = 3
-	cursorOpenPrefix = "open="
+	cursorFields       = 4
+	cursorOpenPrefix   = "open="
+	cursorLegacyPrefix = "legacy="
 )
+
+// LegacyDateLayout is the one shape a legacy line takes, in a cursor and in the two flags
+// that write one: a UTC calendar date, meaning midnight at its start. A date rather than a
+// timestamp because the thing being drawn is the day a table adopted this tool, and nobody
+// knows that to the second.
+const LegacyDateLayout = "2006-01-02"
 
 // OpenPresent reports whether a lane has an OPEN file at all, which is a different
 // question from whether it holds anything. See Cursor.Open.
@@ -169,15 +235,24 @@ func OpenPresent(root, lane string) bool {
 // whereas a receipt is a log entry whose subject is when it was made. The third field is
 // how many notes this run was carrying; see Cursor.Open for why a count of another file's
 // contents lives here.
-func WriteCursor(root, lane, commit string, open int, now time.Time) error {
+// The fourth field is the switch-day line this reader read under, written only when there
+// is one: a cursor with no legacy line is three tokens, which is exactly what every cursor
+// written before the line existed already is.
+func WriteCursor(root, lane, commit string, open int, legacy string, now time.Time) error {
 	if err := ValidCommitHex(commit); err != nil {
 		return err
 	}
 	if open < 0 {
 		return fmt.Errorf("a cursor cannot be carrying %d notes", open)
 	}
-	line := commit + " " + now.UTC().Format(ReceiptStampLayout) + " " + cursorOpenPrefix + strconv.Itoa(open) + "\n"
-	return replaceLaneFile(root, CursorPath(lane), line)
+	line := commit + " " + now.UTC().Format(ReceiptStampLayout) + " " + cursorOpenPrefix + strconv.Itoa(open)
+	if legacy != "" {
+		if _, err := time.Parse(LegacyDateLayout, legacy); err != nil {
+			return fmt.Errorf("a cursor's %s is a UTC date of the form %s, got %q", cursorLegacyPrefix, LegacyDateLayout, truncate(legacy, 40))
+		}
+		line += " " + cursorLegacyPrefix + legacy
+	}
+	return replaceLaneFile(root, CursorPath(lane), line+"\n")
 }
 
 // OpenEntry is one note a reader has been shown and has not yet answered.
@@ -463,6 +538,18 @@ func RebuildLaneIndex(root string, c *Config, t *Table, lane string) (int, error
 // nothing open has no OPEN file and a lane with no notes has no INDEX -- the same state a
 // lane starts in, rather than a second spelling of it that every reader would have to
 // know about.
+//
+// IT WRITES THROUGH A TEMPORARY AND RENAMES, and an earlier version wrote the file in
+// place. Every file that reaches here is a file another run refuses on: a CURSOR whose
+// commit will not read is `INBOX REFUSED`, an OPEN that is half a line is a reader whose
+// next run stops, an INDEX cut in two is a catalogue that resolves a thread to nothing. A
+// write in place makes all three reachable by killing the tool in the microsecond between
+// truncate and write -- a laptop lid, a CI timeout, a ctrl-C -- and the file it leaves is
+// not the old one and not the new one. A rename is atomic on every filesystem this runs
+// on, so a kill leaves the OLD file, entire, which is a state every reader here already
+// handles. The temporary is in the SAME DIRECTORY, because a rename across filesystems is
+// not a rename, and it is named `<file>.tmp` rather than randomly so that a stranded one
+// is a single predictable name a person can see and the lane walk can step over.
 func replaceLaneFile(root, path, content string) error {
 	full := filepath.Join(root, filepath.FromSlash(path))
 	if err := insideRoot(root, full); err != nil {
@@ -477,7 +564,17 @@ func replaceLaneFile(root, path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(full, []byte(content), 0o644)
+	tmp := full + TempSuffix
+	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp, full); err != nil {
+		// The rename is the commit point. If it fails there is no half-written file to
+		// leave behind, so the temporary goes rather than staying as a stray.
+		os.Remove(tmp)
+		return err
+	}
+	return nil
 }
 
 // record is one meaningful line of a lane state file, with the 1-based line number it was

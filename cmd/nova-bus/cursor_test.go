@@ -677,3 +677,87 @@ func TestAnOpenListThatEmptiesIsRemovedFromTheTable(t *testing.T) {
 		t.Fatalf("the checkout is dirty after an emptied OPEN list:\n%s", out)
 	}
 }
+
+// THE SWITCH DAY, end to end. The table this tool was written for had been running by hand
+// for months when it adopted the tool, and the first `inbox --as Rowan --full` reported
+// 657 notes open. Because the open list is what lets the cursor move, every run after it
+// reported the same 657 -- forever, until each was answered or receipted one at a time.
+// Nobody was going to do that, and a listing nobody reads hides the one new note in it.
+//
+// So the line is drawn on a date: the notes behind it are not carried, not listed, and
+// counted on one line; the notes in front of it are the inbox. The date goes into the
+// cursor, so the run after it does not have to be told again.
+func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
+	hermetic(t)
+	checkout, _ := table(t)
+	// Two notes from before the line and one after it, on top of the fixture's two, which
+	// are dated 2026-09-07 and are therefore also in front of the line.
+	writeFile(t, checkout, "from-stella/2026-08-01T0001Z-old-one-aaaaaaaaaaaa.md",
+		"From: Stella\nTo: Rowan\nDate: Sat Aug  1 00:01:00 UTC 2026\nId: stella-aaaaaaaaaaaa\nSubject: One from the months before the tool\n\nThe body.\n")
+	writeFile(t, checkout, "from-stella/2026-08-02T0001Z-old-two-bbbbbbbbbbbb.md",
+		"From: Stella\nTo: Rowan\nDate: Sun Aug  2 00:01:00 UTC 2026\nId: stella-bbbbbbbbbbbb\nSubject: Another from the months before the tool\n\nThe body.\n")
+	gitIn(t, checkout, "add", "-A")
+	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@mas-bandwidth.com", "commit", "-q", "-m", "the months before")
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+
+	// The switch-day read: full, with the line, advancing.
+	r := invoke(t, "", advance(checkout, "Rowan", "--full", "--legacy-before", "2026-09-01")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=2").
+		mustContain(t, "stdout", "INBOX OK as=Rowan open=2")
+	for _, old := range []string{"stella-aaaaaaaaaaaa", "stella-bbbbbbbbbbbb"} {
+		if strings.Contains(r.stdout, old) {
+			t.Fatalf("a note behind the line was listed one by one:\n%s", r.stdout)
+		}
+	}
+	// The open list is the notes in front of the line and nothing else, and the cursor
+	// carries the date so the next run needs no flag.
+	if open := read(t, checkout, "from-rowan/OPEN"); strings.Contains(open, "aaaaaaaaaaaa") || strings.Contains(open, "bbbbbbbbbbbb") {
+		t.Fatalf("the open list carries a note from behind the line:\n%s", open)
+	}
+	if cursor := read(t, checkout, "from-rowan/CURSOR"); !strings.Contains(cursor, "legacy=2026-09-01") {
+		t.Fatalf("the cursor did not record the line: %s", cursor)
+	}
+
+	// The second read, with no flag at all: quiet. It honours the line from the cursor,
+	// says so, and names none of the old notes.
+	r = invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX SCOPE mode=since").
+		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=0").
+		mustContain(t, "stdout", "INBOX OK as=Rowan open=2")
+	for _, old := range []string{"stella-aaaaaaaaaaaa", "stella-bbbbbbbbbbbb"} {
+		if strings.Contains(r.stdout, old) {
+			t.Fatalf("the second read brought the old notes back:\n%s", r.stdout)
+		}
+	}
+
+	// A line that moves EARLIER would put the notes between the two dates back on the open
+	// list, which is a listing the reader has already settled arriving with nothing saying
+	// why. It is refused, and the refusal names the read that can honestly do it.
+	invoke(t, "", advance(checkout, "Rowan", "--legacy-before", "2026-08-02")...).mustCode(t, 1).
+		mustContain(t, "stderr", "moves the line earlier").
+		mustContain(t, "stderr", "--full --legacy-before 2026-08-02 --advance")
+
+	// Moving it LATER forgives more and needs no --full: the forgiven set only grows, and
+	// nothing comes back.
+	invoke(t, "", advance(checkout, "Rowan", "--legacy-before", "2026-09-08")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-08 notes=2").
+		mustContain(t, "stdout", "INBOX OK as=Rowan open=0")
+
+	// And --full is the way through, exactly as the refusal said: with the earlier line the
+	// old notes are the reader's again, counted at zero because none is behind it.
+	r = invoke(t, "", advance(checkout, "Rowan", "--full", "--legacy-before", "2026-08-01")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX LEGACY before=2026-08-01 notes=0").
+		mustContain(t, "stdout", "INBOX OK as=Rowan open=4")
+	if !strings.Contains(r.stdout, "stella-aaaaaaaaaaaa") {
+		t.Fatalf("a --full read with an earlier line did not bring the old notes back:\n%s", r.stdout)
+	}
+}
+
+// The flag itself: a date it cannot read is a bad invocation rather than a guess, on the
+// same rule check's is.
+func TestInboxRefusesALegacyDateItCannotRead(t *testing.T) {
+	checkout, _ := table(t)
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40",
+		"--full", "--legacy-before", "last Tuesday").mustCode(t, 2).
+		mustContain(t, "stderr", "is not a UTC date")
+}

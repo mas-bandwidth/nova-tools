@@ -73,6 +73,49 @@ type InboxResult struct {
 	Open []OpenEntry
 	// New is how many notes this run added to the open list.
 	New int
+	// Legacy is how many notes this run left off the open list because they are dated
+	// before the switch-day line. They are counted and never listed one by one; see
+	// LegacyLine.
+	Legacy int
+}
+
+// LegacyLine is the switch-day line: the UTC date before which a note is not carried on
+// this reader's open list.
+//
+// THE PROBLEM IT SOLVES, from the day the family's own table adopted this tool. The first
+// `inbox --as Rowan --full` reported 657 notes open -- 623 notes and 34 receipts, most of
+// them from months before anybody could have receipted them with this -- and because the
+// open list is what makes the cursor able to move, every run after it reported the same
+// 657, forever, until each one was answered or receipted one at a time. Nobody was going
+// to do that, and a listing nobody reads is a listing that hides the one new note in it.
+//
+// So a line is drawn on a date: a note dated before it is not carried, is not listed, and
+// is counted on ONE line so that the reader knows exactly how much they took as read.
+// Nothing is deleted, nothing is marked answered, and no note anywhere on the table is
+// changed -- the notes are still there, still readable, still findable by `check --full`
+// and by opening the lane in a browser. What the line changes is one reader's own open
+// list, which is the one thing on the table that was theirs alone anyway.
+//
+// A note whose date cannot be read AT ALL -- no parseable Date line, and no day at the
+// front of its filename either -- is never legacy, on the same rule the check tolerance
+// uses: a file that cannot say when it was written cannot claim to predate anything, and
+// the safe direction for a note nobody can date is to carry it. See Note.legacyDay for
+// what counts as saying it.
+type LegacyLine struct {
+	// Before is the moment, or the zero time for no line at all.
+	Before time.Time
+}
+
+// covers reports whether a note is on the old side of the line.
+func (l LegacyLine) covers(n *Note) bool {
+	if l.Before.IsZero() {
+		return false
+	}
+	when := n.legacyDay()
+	if when.IsZero() {
+		return false
+	}
+	return when.Before(l.Before)
 }
 
 // InboxSince computes a reader's listing from a change set and their OPEN list, and never
@@ -84,7 +127,7 @@ type InboxResult struct {
 // The cursor advances past a note the run after it arrives, so without a memory the note
 // would fall out of every later listing while still being owed an answer; the OPEN list IS
 // that memory, and it is the reason the cursor is allowed to move at all.
-func InboxSince(root string, c *Config, me Participant, changed []string, open []OpenEntry, maxWords int) (InboxResult, error) {
+func InboxSince(root string, c *Config, me Participant, changed []string, open []OpenEntry, maxWords int, legacy LegacyLine) (InboxResult, error) {
 	var res InboxResult
 	if me.Lane == "" {
 		return res, fmt.Errorf("%q has no lane on this table, so nothing can answer for them", me.Name)
@@ -199,6 +242,14 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 			final = append(final, e)
 			continue
 		}
+		// The switch-day line, applied in ONE place so that a note it covers is left off
+		// the open list whether it arrived in this change set or has been carried since
+		// before the line was drawn. Leaving it off is the whole of what happens to it: it
+		// is counted, and the note is untouched.
+		if legacy.covers(n) {
+			res.Legacy++
+			continue
+		}
 		final = append(final, e)
 		res.Items = append(res.Items, item(c, n, me, heard[e.Target()] || heard[e.Path], maxWords))
 	}
@@ -206,6 +257,26 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 	sortInbox(res.Items)
 	sort.Slice(res.Unreadable, func(i, j int) bool { return res.Unreadable[i].Path < res.Unreadable[j].Path })
 	return res, nil
+}
+
+// SplitLegacy is the switch-day line applied to a FULL walk's listing: the notes that stay,
+// and how many were left off. It is the same rule InboxSince applies to a change set, kept
+// in one place so the two reads cannot draw the line differently -- which matters most on
+// the one run where it is drawn, because a `--full` read is what writes the open list every
+// later run inherits.
+func SplitLegacy(items []InboxItem, legacy LegacyLine) (keep []InboxItem, covered int) {
+	if legacy.Before.IsZero() {
+		return items, 0
+	}
+	keep = make([]InboxItem, 0, len(items))
+	for _, it := range items {
+		if legacy.covers(it.Note) {
+			covered++
+			continue
+		}
+		keep = append(keep, it)
+	}
+	return keep, covered
 }
 
 // OpenFromFull is the OPEN list a --full run implies: every note the full walk found still
@@ -350,8 +421,20 @@ func (k *noteChecker) check(n *Note) []Problem {
 	warn := func(where, format string, args ...any) {
 		ps = append(ps, Problem{Where: where, Reason: fmt.Sprintf(format, args...), Warn: k.opts.tolerates(n)})
 	}
+	// THE HEADER'S OWN FINDINGS ARE INSIDE THE TOLERANCE, and an earlier revision had them
+	// outside it. A dry run over the family's real table, with the line drawn at the day it
+	// adopted this tool, still failed 163 times: 109 notes with no Subject line, 21 whose
+	// To names somebody the roster does not know, 16 whose From does, 10 whose Cc does.
+	// Every one of them is a note written by hand before there was a roster to check
+	// against, which is exactly what this tolerance is for -- and a first run that fails
+	// 163 times is the wall of red the tolerance exists to prevent, whatever the findings
+	// in it are called. So a note dated before the line WARNS on its header and fails on
+	// nothing about it; a note dated on or after it fails as before. The narrow findings
+	// stay narrow: a note in the wrong lane, a malformed or duplicated id, a broken receipt
+	// line, an unowned lane and a stray file all still FAIL at any date, because none of
+	// them is a thing a table's history made unavoidable.
 	if err := n.Header.Validate(k.c); err != nil {
-		add(n.Path, "%s", err)
+		warn(n.Path, "%s", err)
 	}
 	if sender, ok := k.c.ResolveOne(n.Header.From); ok && sender.Lane != n.Lane {
 		add(atLine(n, KeyFrom), "%s names %q, whose lane is %q", KeyFrom, sender.Name, sender.Lane)
@@ -460,6 +543,11 @@ func CheckSince(root string, c *Config, idx *Index, changed []string, o CheckOpt
 		}
 		if isLaneStateFile(base) {
 			ps = append(ps, checkLaneStateFile(root, lane, base)...)
+			continue
+		}
+		// A state file's stranded temporary is stepped over here exactly as the full walk
+		// steps over it, so the two modes cannot say different things about one file.
+		if isLaneStateTemp(base) {
 			continue
 		}
 		if !isNotePath(path) {

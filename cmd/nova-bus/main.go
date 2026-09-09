@@ -45,7 +45,7 @@ const usage = `nova-bus: the family's table, with the races taken out (see SPEC.
 
 usage:
   nova-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> --attempts <n> [--slug <s>] [--no-push]
-  nova-bus inbox --table <dir> --as <name> --receipt-max-words <n> [--full]
+  nova-bus inbox --table <dir> --as <name> --receipt-max-words <n> [--full] [--legacy-before <YYYY-MM-DD>]
         [--advance --remote <name> --branch <name> --attempts <n> [--no-push]]
   nova-bus receipt --table <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> --attempts <n> [--no-push]
   nova-bus check --table <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
@@ -66,6 +66,12 @@ inbox and check read from your CURSOR -- the commit you last read to, kept in
 your own lane -- so their cost is the size of the CHANGE and not the size of the
 table. --full walks everything, which is what adoption and CI on main want.
 --advance moves your cursor and pushes it, the same way a receipt is pushed.
+
+--legacy-before draws the switch-day line on a table that existed before this
+tool: check WARNS instead of failing on an older note's header, and inbox does
+not carry an older note on your open list, counting them on one INBOX LEGACY
+line instead. inbox records the date in your cursor, so later runs honour it
+without the flag; moving the line earlier is refused unless the read is --full.
 
 inbox REPORTS and exits 0 whether the inbox is empty or full; check is the gate.
 `
@@ -357,7 +363,12 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	branch := f.fs.String("branch", "", "the branch the table lives on (required with --advance)")
 	attempts := f.fs.Int("attempts", 0, "how many times to push before giving up (required with --advance, at least 1)")
 	noPush := f.fs.Bool("no-push", false, "with --advance, commit the cursor but do not push it")
+	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD) are not carried on your open list, and are counted rather than listed")
 	if !f.parse(args, stderr, map[string]*string{"table": table, "as": as}) {
+		return 2
+	}
+	flagLegacy, ok := legacyDate("inbox", *legacyBefore, stderr)
+	if !ok {
 		return 2
 	}
 	if !f.count("receipt-max-words", *maxWords, stderr) {
@@ -396,6 +407,17 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	scope := bus.Scope{Full: *full}
 	var res bus.InboxResult
 	var cursor bus.Cursor
+	// held is the cursor as it stands on the table, read for the SWITCH-DAY LINE it carries
+	// as well as for the commit. A full run reads it too, and ignores a cursor it cannot
+	// read: `--full --advance` is the documented repair for a broken cursor, and a repair
+	// that refuses to run is not one. What a full run must not do is silently forget a line
+	// a reader drew months ago, which is what reading it here prevents.
+	held := bus.Cursor{}
+	if *full {
+		held, _ = bus.ReadCursor(*table, me.Lane)
+	}
+	// The line this run reads under, whichever mode it is in.
+	var legacy bus.LegacyLine
 	if !*full {
 		if err := bus.IsRepoRoot(*table); err != nil {
 			fmt.Fprintf(stderr, "nova-bus inbox: reading only what changed needs git; %s\n", oneline.Err(err))
@@ -406,12 +428,24 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 			return 1
 		}
+		held = cursor
 		if cursor.Commit == "" {
 			// A reader with no cursor has no place to stand, so the first run is a full
 			// one and --advance gives them a cursor from then on. That is the adoption
 			// path, and it costs exactly one full read, ever.
 			scope.Full = true
 		} else {
+			// A line that MOVES EARLIER re-opens every note between the two dates, which
+			// on the table this was written for is hundreds -- and it would arrive as a
+			// listing the reader has already settled, with nothing saying why. Moving it
+			// later forgives more and is fine; moving it earlier is a refusal that names
+			// the read which can honestly do it, because a --full run derives the whole
+			// open list again rather than taking the cursor's word for it.
+			if !flagLegacy.IsZero() && held.Legacy != "" && flagLegacy.Before(held.LegacyBefore()) {
+				fmt.Fprintf(stderr, "INBOX REFUSED: your cursor was written with legacy=%s and --legacy-before %s moves the line earlier, which would put the notes between the two dates back on your open list; read once with --full --legacy-before %s --advance, which builds the open list again from the whole table, or leave the flag off and the cursor's line stands\n",
+					oneline.Field(held.Legacy), oneline.Field(flagLegacy.Format(bus.LegacyDateLayout)), oneline.Field(flagLegacy.Format(bus.LegacyDateLayout)))
+				return 1
+			}
 			ok, err := bus.IsAncestor(*table, cursor.Commit)
 			if err != nil {
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
@@ -443,7 +477,8 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 				return 1
 			}
 			scope.From, scope.Changed = cursor.Commit, len(changed)
-			res, err = bus.InboxSince(*table, c, me, changed, open, *maxWords)
+			legacy = effectiveLegacy(flagLegacy, held)
+			res, err = bus.InboxSince(*table, c, me, changed, open, *maxWords, legacy)
 			if err != nil {
 				fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
 				return 2
@@ -456,7 +491,8 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			fmt.Fprintf(stderr, "nova-bus inbox: %s\n", oneline.Err(err))
 			return 2
 		}
-		res.Items = t.Inbox(me, *maxWords)
+		legacy = effectiveLegacy(flagLegacy, held)
+		res.Items, res.Legacy = bus.SplitLegacy(t.Inbox(me, *maxWords), legacy)
 		res.Unreadable = t.Unreadable(me.Lane)
 		res.Open = bus.OpenFromFull(res.Items)
 	}
@@ -465,6 +501,16 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// is a listing a reader will mistake for everything.
 	fmt.Fprintf(stdout, "INBOX SCOPE mode=%s cursor=%s changed=%d carrying=%d\n",
 		oneline.Field(scope.Mode()), oneline.Field(dash(cursor.Commit)), scope.Changed, len(res.Open))
+	// The switch-day line, said as ONE line and next to the scope, because it is part of
+	// what this run looked at: `notes=` is how many notes it left off the open list for
+	// being older than the line. They are never listed one by one -- the whole point of the
+	// line is that six hundred of them do not become a listing -- and this is the only
+	// place a reader is told the number, so it is printed whenever a line is in force, a
+	// count of zero included.
+	if !legacy.Before.IsZero() {
+		fmt.Fprintf(stdout, "INBOX LEGACY before=%s notes=%d\n",
+			oneline.Field(legacy.Before.Format(bus.LegacyDateLayout)), res.Legacy)
+	}
 	// The files that would not parse are named next and are never silent. A note on the
 	// table that this tool cannot read is not a note that does not exist, and dropping it
 	// from the listing was the same failure as a lost push with a quieter cause.
@@ -513,7 +559,26 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !*advance {
 		return 0
 	}
-	return advanceCursor(*table, me, res.Open, *remote, *branch, *attempts, *noPush, now, stdout, stderr)
+	return advanceCursor(*table, me, res.Open, legacyToken(legacy), *remote, *branch, *attempts, *noPush, now, stdout, stderr)
+}
+
+// effectiveLegacy is the line a run reads under: the flag when it is given, and otherwise
+// the line this reader's cursor was already written with. A line that had to be retyped on
+// every run is a line that would be forgotten on one, and the run that forgot it would open
+// every note behind it at once.
+func effectiveLegacy(flag time.Time, held bus.Cursor) bus.LegacyLine {
+	if !flag.IsZero() {
+		return bus.LegacyLine{Before: flag}
+	}
+	return bus.LegacyLine{Before: held.LegacyBefore()}
+}
+
+// legacyToken is the line as a cursor records it, or "" for no line at all.
+func legacyToken(l bus.LegacyLine) string {
+	if l.Before.IsZero() {
+		return ""
+	}
+	return l.Before.Format(bus.LegacyDateLayout)
 }
 
 // advanceCursor writes this reader's CURSOR and OPEN, commits them under their own
@@ -528,7 +593,11 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 // It runs AFTER the listing is printed. A reader who was shown their inbox and whose push
 // then failed has still been shown their inbox; the cursor simply has not moved, and the
 // next run shows them the same notes again -- which is the safe direction to fail in.
-func advanceCursor(table string, me bus.Participant, open []bus.OpenEntry, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
+//
+// The cursor also records the SWITCH-DAY LINE this run read under, so the next run honours
+// it without the flag and everybody at the table can see which notes this reader has taken
+// as read.
+func advanceCursor(table string, me bus.Participant, open []bus.OpenEntry, legacy string, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
 	head, err := bus.HeadCommit(table)
 	if err != nil {
 		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
@@ -547,7 +616,7 @@ func advanceCursor(table string, me bus.Participant, open []bus.OpenEntry, remot
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.OpenPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
-	if err := bus.WriteCursor(table, me.Lane, head, len(open), now); err != nil {
+	if err := bus.WriteCursor(table, me.Lane, head, len(open), legacy, now); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
@@ -584,10 +653,21 @@ func dash(s string) string {
 	return s
 }
 
-// legacyDateLayout is the one shape --legacy-before takes: a UTC calendar date, meaning
-// midnight at its start. A date rather than a timestamp because the thing being drawn is
-// the day a table adopted this tool, and nobody knows that to the second.
-const legacyDateLayout = "2006-01-02"
+// legacyDate reads a --legacy-before flag: the empty string is no line, and anything that
+// is not a UTC calendar date is exit 2, a bad invocation rather than a guess. Both verbs
+// that take the flag read it here so the two cannot accept different spellings of a day.
+func legacyDate(verb, value string, stderr io.Writer) (time.Time, bool) {
+	if strings.TrimSpace(value) == "" {
+		return time.Time{}, true
+	}
+	when, err := time.Parse(bus.LegacyDateLayout, value)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-bus %s: --legacy-before %s is not a UTC date of the form %s\n",
+			verb, oneline.Field(value), bus.LegacyDateLayout)
+		return time.Time{}, false
+	}
+	return when.UTC(), true
+}
 
 func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("check")
@@ -595,7 +675,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	full := f.fs.Bool("full", false, "walk the whole table: what CI on main and a first adoption run want")
 	as := f.fs.String("as", "", "check what changed since this participant's cursor")
 	since := f.fs.String("since", "", "check what changed since this commit")
-	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD) warn instead of failing, for a parse failure or a dangling Re")
+	legacyBefore := f.fs.String("legacy-before", "", "a finding about the header of a note dated before this UTC date (YYYY-MM-DD) warns instead of failing")
 	rebuildIndex := f.fs.Bool("rebuild-index", false, "with --full, rewrite each lane's INDEX from the notes on disk")
 	if !f.parse(args, stderr, map[string]*string{"table": table}) {
 		return 2
@@ -611,16 +691,11 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stderr, "nova-bus check: --rebuild-index writes each lane's INDEX from every note in it, so it needs --full\n")
 		return 2
 	}
-	var opts bus.CheckOptions
-	if *legacyBefore != "" {
-		when, err := time.Parse(legacyDateLayout, *legacyBefore)
-		if err != nil {
-			fmt.Fprintf(stderr, "nova-bus check: --legacy-before %s is not a UTC date of the form %s\n",
-				oneline.Field(*legacyBefore), legacyDateLayout)
-			return 2
-		}
-		opts.LegacyBefore = when.UTC()
+	when, ok := legacyDate("check", *legacyBefore, stderr)
+	if !ok {
+		return 2
 	}
+	opts := bus.CheckOptions{LegacyBefore: when}
 	c, err := bus.LoadConfig(*table)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.Err(err))

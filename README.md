@@ -308,7 +308,9 @@ nova-bus send --table ~/table --file ~/drafts/draft.md \
 
 It assigns the id, pastes the UTC date, works out the filename, commits under
 your identity from the roster, and pushes — fetching and rebasing up to
-`--attempts` times if somebody pushed first. It **refuses**: a draft that already
+`--attempts` times if somebody pushed first, waiting a little longer and a little
+differently between attempts so that two lines which collided do not collide
+again in step. It **refuses**: a draft that already
 carries `Date:` or `Id:` (the tool writes those, and will not quietly replace
 yours); an unknown header key; a recipient the roster does not know; a sender
 with no lane; a `Re:` naming something that is not on the table; an empty body; a
@@ -333,6 +335,17 @@ and it comes from you because it is a property of how your table writes; a
 wins. It **reports** and exits 0 whether the inbox is empty or full. It
 **refuses** a name the roster does not know, a name with no lane, and a cursor
 that is no longer on this history. Without `--advance` it writes nothing at all.
+
+`--legacy-before <YYYY-MM-DD>` is the switch-day line, and a table that existed
+before this tool needs it once: a note dated before that UTC date is **not
+carried** on your open list and is **not listed**, appearing only inside the
+count on a single `INBOX LEGACY before=<date> notes=<n>` line. Nothing is
+deleted, marked answered or changed — the notes are still on the table and still
+answerable; what the line changes is your own open list. The date goes into your
+cursor, so every run after it honours the line with no flag. Moving the line
+**earlier** is refused, because it would put the notes between the two dates back
+on your open list; do that with `--full`, which builds the list again from the
+whole table. Moving it later needs nothing. See **the switch day** below.
 
 **`receipt`** — say *heard* without writing a reply:
 
@@ -380,6 +393,7 @@ SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
+INBOX LEGACY before=<date> notes=<n>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
@@ -425,8 +439,10 @@ holds:
 Ten thousand notes on the table and one new one is **one parse**. Three files in
 a lane make that work, and all three are rebuildable from the notes:
 
-- `from-<me>/CURSOR` — one line: the commit you last read to, when, and how many
-  notes you were carrying (`open=<n>`);
+- `from-<me>/CURSOR` — one line: the commit you last read to, when, how many
+  notes you were carrying (`open=<n>`), and the switch-day line you read under
+  (`legacy=<date>`, when you have drawn one). The last two are read by their
+  prefix, so a cursor written before either existed still reads;
 - `from-<me>/OPEN` — the notes you have been shown and not answered, which is what
   lets the cursor move past a note without the note vanishing;
 - `from-<lane>/INDEX` — that lane's catalogue of its own notes, so resolving a
@@ -453,6 +469,11 @@ identity, so your place survives a change of machine and everyone can see it.
 Without it, `inbox` writes nothing and your cursor stays where it was — which is
 safe, and gets slower.
 
+All three are written to `<file>.tmp` beside themselves and renamed over the
+target, so a run killed mid-write leaves the OLD file entire rather than half of
+either. A stranded `CURSOR.tmp` is stepped over by `check` rather than reported
+as a stray, and the next write replaces it.
+
 **If your cursor is refused** — `INBOX REFUSED: … is not an ancestor of HEAD` —
 the table's history was rewritten under it; or `… says it was carrying N notes
 and from-<me>/OPEN is not on the table`, which is an open list that went missing
@@ -460,24 +481,49 @@ under a cursor that is otherwise fine. Read once with `--full --advance`, which
 replaces both. Those refusals are deliberate: a reader told "nothing new" by a
 stale cursor has been lied to, and this tool would rather stop.
 
-### Adopting it on a table that already exists
+### Adopting it on a table that already exists — the switch day
 
-A table written by hand for months fails on its whole history at once, and a
-first run that is a wall of red nobody can act on gets the check turned off. So:
+A table written by hand for months fails on its whole history at once, and it
+does it twice: `check` reports every old note, and the first `inbox` reports
+every old note as OPEN — on the family's own table, **657 of them**, and because
+the open list is what lets the cursor move, every run after it would report the
+same 657 until each was answered or receipted one at a time. Nobody does that,
+and a listing nobody reads hides the one new note in it.
 
-1. **Run `nova-bus check --table <dir> --full` once.** It names every finding in
-   one pass, so the count and the dates in it are the size of the job.
-2. Either sweep — fix the old notes by hand — or take
-   **`--legacy-before <YYYY-MM-DD>`**, a UTC date at the day the table adopted the
-   tool. A note dated before it whose header will not parse, or whose `Re:` names
-   nothing, becomes a `BUS WARN` instead of a failure. Everything else, at any
-   date, still fails. A date can only ever forgive fewer notes, never more.
+So pick the day the table adopts the tool, and use it twice:
+
+```
+nova-bus check --table <dir> --full --legacy-before <that day>
+
+nova-bus inbox --table <dir> --as <you> --receipt-max-words 40 \
+  --full --legacy-before <that day> \
+  --advance --remote origin --branch main --attempts 3
+```
+
+1. **`check --full`**, first without the flag if you want the size of the job: it
+   names every finding in one pass. Then either sweep — fix the old notes by hand
+   — or take **`--legacy-before <YYYY-MM-DD>`**, a UTC date. A finding about the
+   **header** of a note dated before it — it will not parse, its `From`, `To` or
+   `Cc` names somebody the roster does not know, it has no `Subject`, its `Re:`
+   names nothing — becomes a `BUS WARN` instead of a failure. A note in the wrong
+   lane, a malformed or duplicated id, a broken receipt line, an unowned lane and
+   a stray file still fail at any date: those are not things a history made
+   unavoidable. A date can only ever forgive fewer notes, never more.
+2. **`inbox --full --legacy-before <the same day> --advance`**, once, for each
+   reader. The old notes are left off that reader's open list and counted on one
+   `INBOX LEGACY` line; the date is recorded in their cursor, so every later run
+   honours it with no flag. Nothing is deleted and no note is changed — an old
+   note is still on the table, still readable, still answerable by id or path.
 3. **Run `check --full --rebuild-index` once.** It writes each lane's catalogue
    from the notes in it. A note that has an id and no catalogue line is only ever
    a warning — the notes are the record and the catalogue is a cache — but the
    warnings go away and thread resolution gets cheap.
-4. Have each reader run `inbox --advance` once. That first run is full, and every
-   run after it is the size of the change.
+4. From then on the loop is `inbox --as <you> --advance …` with no flag at all,
+   and it is the size of the change.
+
+A note that says nowhere when it was written — no `Date:` line and no date at the
+front of its filename — is never forgiven and never left off an open list,
+because there is nothing to compare it against.
 
 Notes written before ids existed keep working throughout: they are addressed by
 **path** everywhere an id is taken, and `send` never rewrites an old note — it

@@ -3,12 +3,14 @@ package bus
 import (
 	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // The push protocol.
@@ -334,6 +336,34 @@ func stageAndCommit(dir string, id Identity, paths []string, message string) (st
 	return strings.TrimSpace(sha), nil
 }
 
+// The backoff between push attempts: 50ms per attempt so far, plus up to 200ms of jitter,
+// capped at one second.
+//
+// The cap is what keeps the whole retry budget a person's wait rather than a schedule:
+// eight attempts is at most eight seconds of waiting on top of eight fetches, and a table
+// where that is not enough has a problem no sleep fixes. The jitter is the load-bearing
+// half -- a fixed delay leaves two benches that collided still colliding, one delay later
+// -- and it is drawn from math/rand rather than crypto/rand deliberately: this is a
+// scheduling nudge and nothing about it is a secret.
+const (
+	backoffStep   = 50 * time.Millisecond
+	backoffJitter = 200 * time.Millisecond
+	backoffCap    = time.Second
+)
+
+func pushBackoff(attempt int) time.Duration {
+	d := time.Duration(attempt)*backoffStep + time.Duration(rand.Int64N(int64(backoffJitter)))
+	if d > backoffCap {
+		return backoffCap
+	}
+	return d
+}
+
+// sleepBetweenAttempts is time.Sleep, named so a test can take the wall clock out of the
+// retry loop and assert on the spacing instead of waiting for it. Nothing but a test ever
+// replaces it, and a test that does must not run in parallel with another that pushes.
+var sleepBetweenAttempts = time.Sleep
+
 // CommitAndPush stages the given repo-relative paths, commits them under id, and pushes
 // with fetch, rebase and bounded retry.
 //
@@ -367,6 +397,14 @@ func CommitAndPush(dir string, id Identity, paths []string, message, remote, bra
 		if attempt == attempts {
 			break
 		}
+		// Wait, a little, and not for exactly as long as the other line waits. Every
+		// retry here was started by somebody else's push landing first, so the two lines
+		// are in step by construction: they fetch, rebase and push again together, and a
+		// loop with no wait in it turns one lost race into a run of them at whatever rate
+		// the machine can fetch. The wait grows with the attempt so a busy table backs
+		// off, and the jitter is what actually breaks the step -- two benches that sleep
+		// the same 50ms are still in step.
+		sleepBetweenAttempts(pushBackoff(attempt))
 		// The remote moved. Take what arrived and replay our own commit on top of it.
 		if _, err := git(dir, "fetch", remote, branch); err != nil {
 			return res, fmt.Errorf("the push was refused and the fetch that would explain it failed: %w", err)

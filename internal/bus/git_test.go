@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // hermetic makes git in this test process ignore the machine's own configuration. Setting
@@ -529,5 +530,77 @@ func TestEnsureCleanReadsARenameAsThePairItIs(t *testing.T) {
 	}
 	if err := EnsureClean(clone, nil); err == nil {
 		t.Fatal("a rename whose old path is three characters long was reported as a clean checkout")
+	}
+}
+
+// THE RETRY LOOP WAITS BETWEEN ATTEMPTS, and it did not before. Every retry here was
+// started by somebody else's push landing first, so the two lines are in step by
+// construction: they fetch, rebase and push again together. A loop with no wait in it
+// turns one lost race into a run of them at whatever rate the machine can fetch, and two
+// benches that wait the SAME amount are still in step -- so the wait is randomised as
+// well as bounded.
+//
+// The sleeper is injected because the assertion is about spacing and not about waiting: a
+// test that actually slept would be a test that takes a second to say what a recorded
+// duration says at once.
+func TestThePushRetryWaitsBetweenAttempts(t *testing.T) {
+	hermetic(t)
+	var slept []time.Duration
+	real := sleepBetweenAttempts
+	sleepBetweenAttempts = func(d time.Duration) { slept = append(slept, d) }
+	t.Cleanup(func() { sleepBetweenAttempts = real })
+
+	bare := bareTable(t)
+	mine := cloneTable(t, bare)
+	theirs := cloneTable(t, bare)
+	write(t, theirs, "from-stella/b.md", noteText("Stella", "theirs", "body"))
+	if _, err := CommitAndPush(theirs, testIdentity["Stella"], []string{"from-stella/b.md"}, "stella: theirs", "origin", "main", 3); err != nil {
+		t.Fatal(err)
+	}
+	write(t, mine, "from-rowan/a.md", noteText("Rowan", "mine", "body"))
+	res, err := CommitAndPush(mine, testIdentity["Rowan"], []string{"from-rowan/a.md"}, "rowan: mine", "origin", "main", 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Pushed || res.Attempts != 2 {
+		t.Fatalf("res = %+v, want pushed on the second attempt", res)
+	}
+	// One rejected push, so one wait: before the fetch that takes what arrived, and never
+	// after the push that lands.
+	if len(slept) != 1 {
+		t.Fatalf("the loop waited %d times for one rejected push, want 1: %v", len(slept), slept)
+	}
+	if slept[0] < backoffStep || slept[0] > backoffStep+backoffJitter {
+		t.Fatalf("waited %v after the first attempt, want between %v and %v", slept[0], backoffStep, backoffStep+backoffJitter)
+	}
+}
+
+// The backoff itself: it grows with the attempt, it is never the same twice in a row for
+// long, and it is capped so that a retry budget stays a person's wait rather than a
+// schedule.
+func TestPushBackoffGrowsIsJitteredAndIsCapped(t *testing.T) {
+	for _, attempt := range []int{1, 2, 3, 8} {
+		lo := time.Duration(attempt) * backoffStep
+		for range 50 {
+			d := pushBackoff(attempt)
+			if d < lo || d > lo+backoffJitter || d > backoffCap {
+				t.Fatalf("pushBackoff(%d) = %v, want between %v and %v and at most %v", attempt, d, lo, lo+backoffJitter, backoffCap)
+			}
+		}
+	}
+	// The cap holds however many attempts a caller asks for.
+	for _, attempt := range []int{20, 1000} {
+		if d := pushBackoff(attempt); d != backoffCap {
+			t.Fatalf("pushBackoff(%d) = %v, want the cap %v", attempt, d, backoffCap)
+		}
+	}
+	// And it is jittered: fifty draws at one attempt are not one value. (The chance of a
+	// false failure is the chance that fifty draws from 200ms of nanoseconds coincide.)
+	seen := map[time.Duration]bool{}
+	for range 50 {
+		seen[pushBackoff(1)] = true
+	}
+	if len(seen) < 2 {
+		t.Fatalf("fifty draws gave %d distinct waits; a fixed delay leaves two benches that collided colliding again", len(seen))
 	}
 }

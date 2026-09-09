@@ -2086,7 +2086,7 @@ would be the most dangerous thing on the table.
 
 ```
 nova-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> --attempts <n> [--slug <s>] [--no-push]
-nova-bus inbox --table <dir> --as <name> --receipt-max-words <n> [--full]
+nova-bus inbox --table <dir> --as <name> --receipt-max-words <n> [--full] [--legacy-before <YYYY-MM-DD>]
       [--advance --remote <name> --branch <name> --attempts <n> [--no-push]]
 nova-bus receipt --table <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> --attempts <n> [--no-push]
 nova-bus check --table <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
@@ -2141,6 +2141,7 @@ SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
+INBOX LEGACY before=<date> notes=<n>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
@@ -2181,9 +2182,18 @@ written by the run before it — and `notes=0`. Neither is parsed as a note. It 
 `changed=0` on a full run, where there is no diff. `carrying=` on the same line
 is the size of the open list this run will keep.
 
+`INBOX LEGACY` is printed by every `inbox` run that has a switch-day line in
+force -- from the flag or from the cursor -- and `notes=` is how many notes that
+run left OFF the open list for being older than the line. It is a count and never
+a listing: the whole reason the line exists is that six hundred of them are not a
+listing anybody reads. Like `changed=`, it counts what THIS run looked at, so it
+is the whole table under `--full` and the change set plus the open list under
+`--since`.
+
 `REFUSED` is a `FAIL` with no path slot, because what it refuses is the state of
 the CHECKOUT rather than anything in the note: it is the branch-ahead guard
-below, or a cursor that is no longer on this history. `INBOX UNREADABLE` names a file on the table this tool cannot parse — not
+below, a cursor that is no longer on this history, or a `--legacy-before` that
+would move a reader's line earlier. `INBOX UNREADABLE` names a file on the table this tool cannot parse — not
 necessarily one addressed to the caller, because a file with no `To:` line
 cannot say who it was for, and saying so is the honest half of not dropping it.
 `BUS WARN` is a finding inside the legacy tolerance: reported, and not a failure.
@@ -2295,6 +2305,22 @@ to tell a `From` line from a sentence that happens to hold a colon. The refusal
 quotes at most the first 40 characters of what it took for a key, because a
 paragraph up to its first colon is not a key and a check over a table of them
 would otherwise print a paragraph per note.
+
+**Each refusal says what to do about it**, because a reader shown `INBOX
+UNREADABLE` can act on it only if the line says which mistake it is. A read of
+the family's real table found three shapes behind nearly every unreadable note,
+and each now names its own repair:
+
+| what is on the line | what the refusal says |
+|---|---|
+| a key in markdown bold — `**To**: Rowan` | headers are plain `Key: value`, not markdown bold; and it writes out `To:` |
+| a key nobody knows — `Branch: main` | unknown header key, **and the eight keys there are** |
+| a body sentence where the header goes, with a colon somewhere in it or none at all | the header ends at the first blank line; put a blank line after the last header |
+
+A key is taken for a sentence when it holds a space or runs past twenty
+characters, which is not a guess about what the writer meant but about what they
+cannot have meant: the longest key here is `Subject`. Nothing about which files
+fail changed — these are the same refusals with the fix in them.
 
 `send` **refuses a draft that already carries `Date:` or `Id:`** rather than
 quietly replacing the author's line: the tool pastes the date from the clock in
@@ -2429,8 +2455,20 @@ told is there.
 3. Write the file; `git add` and `git commit` **naming the paths**, so anything
    else that happens to be staged is not swept in, under the sender's identity
    from the roster, passed with `git -c`.
-4. Push. On rejection: `git fetch <remote> <branch>`, `git rebase FETCH_HEAD`,
-   push again — up to `--attempts` times.
+4. Push. On rejection: **wait**, then `git fetch <remote> <branch>`,
+   `git rebase FETCH_HEAD`, push again — up to `--attempts` times. The wait is
+   **50ms per attempt so far plus up to 200ms of jitter, capped at one second**,
+   and it is not decoration. Every retry here was started by somebody else's push
+   landing first, so the two lines are in step by construction: they fetch,
+   rebase and push again together, and a loop with no wait in it turns one lost
+   race into a run of them at whatever rate the machine can fetch. The JITTER is
+   the load-bearing half — two benches that wait the same 50ms are still in step
+   — and the cap is what keeps a retry budget a person's wait rather than a
+   schedule: eight attempts is at most eight seconds of waiting on top of eight
+   fetches, and a table where that is not enough has a problem no sleep fixes.
+   The wait is drawn from `math/rand` and not `crypto/rand`, deliberately: it is
+   a scheduling nudge and nothing about it is a secret. A test injects the
+   sleeper and asserts the spacing, so nothing here waits on a clock.
 5. A rebase that **conflicts** is aborted and reported: the rebase is aborted,
    the commit is left on the branch, the run exits 1 saying the note is **NOT**
    on the table, and a person decides. Two DIFFERENT senders' commits touch
@@ -2490,7 +2528,7 @@ and `#` comments are ignored in all three.
 
 ```
 from-rowan/CURSOR
-3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a 2026-09-09T14:05:00Z open=2
+3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a 2026-09-09T14:05:00Z open=2 legacy=2026-09-10
 
 from-rowan/OPEN
 stella-111111111111 from-stella/2026-09-09T1300Z-heard-111111111111.md
@@ -2503,10 +2541,19 @@ stella-abcdef012345	from-stella/2026-09-07T0001Z-a-question-abcdef012345.md	2026
 `CURSOR` writes the sha first, the stamp second — the other way round from a
 receipt line, because a cursor's subject is the commit and the time is
 annotation, whereas a receipt is a log entry whose subject is when it was made —
-and `open=<n>`, how many notes the run that wrote it was carrying, third. A
-cursor written before that field existed simply has two tokens and is trusted; a
-fourth token is a refusal. See **deleting one of the three** below for why a
-cursor counts another file's contents.
+then `open=<n>`, how many notes the run that wrote it was carrying, and then
+`legacy=<date>`, the switch-day line that run read under. The two trailing tokens
+are read **by their prefix and not by their position**, which is what makes a new
+one addable without every cursor already on a table becoming unreadable: a cursor
+written before `open=` existed has two tokens and is trusted, one written before
+`legacy=` has three, either may appear without the other, and their order does
+not matter. An UNKNOWN token is still a refusal, and so is a fifth — the
+tolerance is for a token this reader knows and the writer did not, never the
+other way round. `legacy=` is required to be a date **at the read**, on the same
+rule the commit is required to be hex there: a `CURSOR` is an ordinary file on a
+shared table and its contents become a decision. See **deleting one of the
+three** below for why a cursor counts another file's contents, and **the
+switch-day line** for why it carries a date.
 `OPEN`'s first token is the id, or `-` for a legacy note, and the rest of the
 line is the path, which is the receipt line's trick and is there so a legacy
 filename holding a space still reads. `INDEX`'s five fields are id, path, date,
@@ -2615,6 +2662,63 @@ CURSOR` lines and as `open=` on `INBOX OK`, so the drift is visible before it is
 a problem. Answering, or a reply that closes several threads at once, is the
 whole of the remedy.
 
+### The switch-day line — `inbox --legacy-before`
+
+**The failure, measured on the day the family's own table adopted this tool.**
+The first `inbox --as Rowan --full` reported **657 notes open**: 623 notes and 34
+receipts, nearly all of them from months before there was anything to receipt
+them with. And because the open list is what lets the cursor move at all, every
+run after it reported the same 657 — forever, until each one was answered or
+receipted one at a time. Nobody was going to do that, and a listing nobody reads
+is a listing that hides the one new note in it. That is the same failure as a
+lost push, arriving as noise instead of as silence.
+
+So `inbox` takes **`--legacy-before <YYYY-MM-DD>`**, the same shape `check`'s
+flag takes and drawn on the same day. A note dated before it:
+
+- is **not carried** on the reader's `OPEN` list, so the cursor is not dragging
+  it along and no later run has to look at it;
+- is **not listed**, on a `--full` read or any other — it appears only inside the
+  count on one `INBOX LEGACY before=<date> notes=<n>` line;
+- is **not changed**. Nothing is deleted, nothing is marked answered, nothing is
+  written to anybody else's lane. The notes are still on the table, still
+  readable in a browser, still found by `check --full`, still answerable by id or
+  by path. What the line changes is one reader's own open list, which is the one
+  thing on the table that was theirs alone anyway.
+
+**The line lives in the cursor**, as `legacy=<date>`, so later reads honour it
+with no flag. A line that had to be retyped on every run is a line that would be
+forgotten on one, and the run that forgot it would re-open six hundred notes the
+reader had settled — the failure this closes, arriving by a different door.
+
+**Moving the line EARLIER is refused**, exit 1, unless the read is `--full`. An
+earlier line re-opens every note between the two dates, and it would arrive as a
+listing the reader had already settled with nothing saying why. Moving it LATER
+forgives more and needs nothing: the forgiven set only ever grows, which is the
+same property `check`'s flag has from the other side. `--full` is the way through
+because a full read derives the whole open list again from the table rather than
+taking the cursor's word for it, so an earlier line there is a fact rather than a
+guess — and the refusal names that command.
+
+**A note whose date cannot be read at all is never behind the line**, on the same
+rule the check tolerance uses: a file that cannot say when it was written cannot
+claim to predate anything, and the safe direction for a note nobody can date is
+to carry it.
+
+**The switch-day recipe**, in the order to run it:
+
+```
+nova-bus check --table <dir> --full --legacy-before <the day you adopt it>
+nova-bus inbox --table <dir> --as <you> --receipt-max-words <n> \
+  --full --legacy-before <the same day> \
+  --advance --remote origin --branch main --attempts 3
+```
+
+The first says what the history holds and forgives its headers; the second draws
+the line, gives you a cursor, and hands you an inbox that is what has arrived
+SINCE. Every run after that is `inbox --as <you> --advance …` with no flag at
+all.
+
 **What is still O(m), stated rather than left to be discovered.** The claim above
 is about *note files parsed*, and it holds exactly. These are the costs that are
 not parses and do grow with the record:
@@ -2643,6 +2747,22 @@ not parses and do grow with the record:
 None of the four is a walk of the history and none of them opens a note. They are
 named here because a performance claim that hides its own exceptions is the same
 shape of lie as a listing that does not say what it looked at.
+
+**The three are written by RENAME, never in place.** Every one of them is a file
+another run refuses on: a `CURSOR` whose commit will not read stops a reader, an
+`OPEN` cut in half stops them, an `INDEX` cut in half resolves a thread to
+nothing. A write in place makes all three reachable by killing the tool between
+the truncate and the write — a lid, a CI timeout, a ctrl-C — and what it leaves
+is neither the old file nor the new one. So the content goes to `<file>.tmp` in
+the SAME directory (a rename across filesystems is not a rename) and is renamed
+over the target, which is atomic: a kill leaves the OLD file, entire, which is a
+state every reader already handles. The temporary's name is fixed rather than
+random so that a stranded one is a single predictable name a person can see —
+and the lane walk STEPS OVER `CURSOR.tmp`, `OPEN.tmp`, `INDEX.tmp` and
+`RECEIPTS.tmp` rather than reporting them as stray files, in `--full` and
+`--since` alike. Only those four names: a `notes.tmp` in a lane is a stray like
+any other. An empty file is still REMOVED rather than renamed over, which is what
+makes "no `OPEN`" and "nothing open" one state on disk.
 
 **Why the cursor is a file on the table and not state on a bench.** It is pushed
 exactly the way a receipt is: same identity from the roster, same clean-checkout
@@ -2769,10 +2889,12 @@ that were renamed before ids existed. A first run that is a wall of red nobody
 can act on gets the check turned off, which is worse than not having it. So
 there are two honest ways in, and a table must pick one:
 
-- **`--legacy-before <YYYY-MM-DD>`**, a UTC date. A note dated before it whose
-  header will not parse, or whose `Re:` names nothing, is reported as `BUS WARN`
-  and does **not** fail the run. Everything after that date, and every other
-  finding at any date, still `BUS FAIL`s. Without the flag there is no
+- **`--legacy-before <YYYY-MM-DD>`**, a UTC date. A finding about the HEADER of a
+  note dated before it — it will not parse; its `From`, `To` or `Cc` names
+  somebody the roster does not know; it has no `Subject`; its `Kind` is neither
+  word; its `Re:` names nothing — is reported as `BUS WARN` and does **not** fail
+  the run. Everything on or after that date, and every finding that is not about
+  a header at any date, still `BUS FAIL`s. Without the flag there is no
   tolerance: every finding fails, which is what CI on a table only this tool has
   written should use.
 - **A one-time sweep**: fix the old notes by hand and adopt the check with no
@@ -2790,13 +2912,39 @@ the day the table adopted the tool, and let the forgiven set shrink as those
 notes are answered or repaired — a date can only ever forgive fewer notes, never
 more.
 
-The tolerance is deliberately narrow. Only two findings can be forgiven, both of
-them about a note nobody can read or a thread that points at nothing. An unknown
-recipient, a note in the wrong lane, a malformed or duplicated id, a broken
-receipt line, an unowned lane and a stray file all fail at any date: none of them
-is a thing the table's history made unavoidable. And a note whose date cannot be
-read at all — no parseable `Date:` line and no UTC minute in its filename — is
-never tolerated, because there is nothing to compare it against.
+**What the tolerance covers is a note's HEADER, and the width of that was
+measured rather than argued.** An earlier revision forgave two findings only — a
+parse failure and a dangling `Re:` — on the reasoning that an unknown recipient
+is not a thing a history makes unavoidable. A dry run over the family's real
+table, with the line at the day it adopted the tool, then still failed **163
+times**: 109 notes with no `Subject:` line, 21 whose `To:` named somebody the
+roster does not hold, 16 whose `From:` did, 10 whose `Cc:` did, and a handful
+that would not parse. Every one of them was written by hand before there was a
+roster to check against, and 163 failures is exactly the wall of red the
+tolerance exists to prevent, whatever the findings in it are called. So the line
+forgives how a note was WRITTEN, entire.
+
+It does not forgive where a file sits or whether an id is one: a note in the
+wrong lane, a malformed or duplicated id, a broken receipt line, an unowned lane
+and a stray file all fail at any date. None of those is a thing a table's history
+made unavoidable, and none is fixed by reading the note more kindly.
+
+And a note whose date cannot be read at all is never tolerated, because there is
+nothing to compare it against. **What counts as saying when it was written** is
+its `Date:` line, or a `YYYY-MM-DD` at the FRONT of its filename — which is
+wider, for this comparison only, than the UTC minute the rest of the tool orders
+by. A table written by hand names its notes several ways (`…T0041Z-slug.md`, the
+same with seconds, the same with the stamp accidentally pasted twice, and a plain
+`2026-09-06-slug.md`) and only the first is that minute; the other three still
+say their day in their first ten characters, and a line drawn on a date needs
+nothing more. The wider read is used by the tolerance and by `inbox`'s open list
+and by nothing else, deliberately: the note's moment orders the listing, fills a
+catalogue's `Date` field and prints `at=`, so widening THAT would rewrite records
+and put every `INDEX` line already on a table at odds with its note. A file with
+no day anywhere — no `Date:` line and no date in its name — still fails at every
+date, and on the family's table exactly one file does: a `README.md` somebody
+committed inside a lane, which is a finding a person should act on rather than a
+note the history made unavoidable.
 
 ### Legacy compatibility
 
@@ -2835,9 +2983,10 @@ keeps working.
   disagreeing is `INBOX REFUSED` naming `--full --advance`. Delete `OPEN` and
   `CURSOR` together, or read once with `--full --advance`; either way it is one
   full read and nothing is lost.
-- **No sweep verb.** `--legacy-before` is a TOLERANCE and not a repair: it
-  forgives old notes, it does not fix them, and it is a line drawn once rather
-  than machinery. A verb that repairs legacy headers and re-points orphaned
+- **No sweep verb.** `--legacy-before` is a TOLERANCE and not a repair, in both
+  verbs: `check`'s forgives an old note's header, `inbox`'s leaves an old note
+  off one reader's open list, and neither fixes anything or touches a note. It is
+  a line drawn once rather than machinery. A verb that repairs legacy headers and re-points orphaned
   `Re:` lines is a v2 item, and wants a person watching it.
 - **It refuses to run over a dirty checkout, so write your drafts elsewhere.**
   `send` needs the table's working tree clean but for the note it is about to
