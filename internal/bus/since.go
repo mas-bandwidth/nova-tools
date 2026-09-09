@@ -12,29 +12,43 @@ import (
 
 // Reading a table without reading its history.
 //
-// THE PROPERTY THIS FILE HOLDS. `inbox` parses new + open note files, where `new` is the
-// number of note files added or modified on the table since this reader's cursor and
-// `open` is the number of notes this reader has already been shown and has not yet
-// answered. It parses NO OTHER NOTE FILE, whatever the table's history holds. Ten thousand
-// notes on the table and one new one is one parse, and the same is true at a hundred
-// thousand: the cost of a read is the size of the change, never the size of the record.
+// THE PROPERTY THIS FILE HOLDS. `inbox` parses exactly the NEW note files: the ones added
+// or modified on the table since this reader's cursor. It parses NO OTHER NOTE FILE,
+// whatever the table's history holds and whatever this reader is carrying open. Ten
+// thousand notes on the table and one new one is one parse; ten thousand notes, five
+// hundred of them open, and one new one is still one parse.
 //
-// That is what Glenn asked for -- "O(n) where n is the number of new messages to be read,
-// instead of O(m) where m is all messages sent so far" -- and the three pieces that make
-// it true are the three files in cursor.go:
+// THAT IS THE SECOND HALF OF THE ANSWER TO GLENN, and the first version only had the
+// first. He asked for "O(n) where n is the number of new messages to be read, instead of
+// O(m) where m is all messages sent so far", and the cursor gave that -- but the read was
+// then O(new + open), because every open note was re-opened and re-parsed on every run to
+// print its line and to decide whether it had been heard. His answer to that: "O(new +
+// open) is not great. Can we make it O(new)." It can, and this is how:
 //
 //   - the CURSOR gives the diff a place to start, so git names the changed paths instead of
 //     this tool walking every lane;
 //   - the OPEN list carries the notes that are still owed a reply ACROSS runs, so the
-//     cursor can advance past a note without the note disappearing. Without it, either the
-//     cursor could never move past an unanswered note (and the read would be O(history)
-//     again the first slow week) or an unanswered note would be shown once and lost;
+//     cursor can advance past a note without the note disappearing -- and since OPEN v2 it
+//     carries each note's DISPLAY LINE and its heard flag, so a carried note is printed
+//     from the list and never opened again;
 //   - the INDEX makes a thread resolution and an id-uniqueness test a lookup rather than
 //     a scan, for the verbs that need one.
 //
-// And RECEIPTS is read whole on every run. That is one file per reader, of one short line
-// per note that reader has ever heard -- a line scan and never a parse -- and reading it
-// whole is what makes "heard" survive a cursor that has moved past the receipt.
+// So CLOSING IS DRIVEN BY THE NEW NOTES, and by nothing else. A new note of mine carrying
+// `Re: <id or path>` closes the open entry it names; a receipt of mine, which reaches this
+// run as my own RECEIPTS file in the change set, marks its entry heard. Both are inside the
+// walk of what changed. Neither my lane's INDEX nor my RECEIPTS is read whole on a run
+// where they did not change, which is what the first version did on every run.
+//
+// WHAT THAT COSTS, stated here rather than left to be found. `answered` is now built from
+// the change set alone, so a reply of mine that has fallen BEHIND my cursor cannot close a
+// thread on a later run: if somebody edits the note it answered, that note comes back into
+// my open list and I am shown it again. The direction is re-show and never loss -- a reader
+// is asked twice, never told a note is answered when it is not -- and a `--full --advance`
+// settles it. An open note whose FILE was deleted stays on the list, printed from the
+// snapshot in OPEN, until a `--full` read rebuilds the list without it: a deletion is not in
+// the change set (`--diff-filter=AM`) and finding one would cost a stat per open note, which
+// is the O(open) this file exists to remove.
 //
 // WHAT AN INCREMENTAL RUN CANNOT SAY. It reports on the change set and on the open list,
 // so it names the unreadable files AMONG THOSE, not every unreadable file on the table. A
@@ -61,22 +75,43 @@ func (s Scope) Mode() string {
 	return "since"
 }
 
-// InboxResult is one incremental inbox run.
+// InboxResult is one inbox run, incremental or full.
 type InboxResult struct {
-	// Items is what to print: the notes that were open before this run and are still
-	// open, plus the notes that are new to this reader, newest first.
-	Items []InboxItem
-	// Unreadable is the files in the change set (and the open list) that would not parse.
-	Unreadable []*Note
-	// Open is the OPEN list to write back: the survivors, in the order they were already
-	// in, then what this run added.
+	// Open is BOTH what to print and what to write back: the survivors, in the order they
+	// were already in, then what this run added. One list and not two, because an entry
+	// carries its own display line now -- a second list would be the same rows in a
+	// different order, and two spellings of one thing drift.
 	Open []OpenEntry
+	// Unreadable is the files in the change set, and the unreadable entries on the open
+	// list, that would not parse THIS RUN, with the reason. The reason is not stored in
+	// OPEN -- an entry records only that it is unreadable -- so it is carried out here for
+	// the run that produced it.
+	Unreadable []*Note
 	// New is how many notes this run added to the open list.
 	New int
 	// Legacy is how many notes this run left off the open list because they are dated
 	// before the switch-day line. They are counted and never listed one by one; see
 	// LegacyLine.
 	Legacy int
+}
+
+// Notes, Receipts and Heard are the three counts on the OK line, taken from the open list
+// rather than from a second walk. A heard note is in neither of the first two: I have
+// answered the sender's question about whether it arrived, and the open count is what is
+// still waiting on me.
+func (r InboxResult) Counts() (notes, receipts, heard int) {
+	for _, e := range r.Open {
+		switch {
+		case e.Kind == OpenUnreadable:
+		case e.Heard:
+			heard++
+		case e.Kind == OpenReceipt:
+			receipts++
+		default:
+			notes++
+		}
+	}
+	return notes, receipts, heard
 }
 
 // LegacyLine is the switch-day line: the UTC date before which a note is not carried on
@@ -106,16 +141,40 @@ type LegacyLine struct {
 	Before time.Time
 }
 
-// covers reports whether a note is on the old side of the line.
-func (l LegacyLine) covers(n *Note) bool {
-	if l.Before.IsZero() {
+// covers reports whether a day is on the old side of the line. A zero day is never covered:
+// a file that cannot say when it was written cannot claim to predate anything.
+func (l LegacyLine) covers(day time.Time) bool {
+	if l.Before.IsZero() || day.IsZero() {
 		return false
 	}
-	when := n.legacyDay()
-	if when.IsZero() {
-		return false
+	return day.Before(l.Before)
+}
+
+// day is an open entry's day, for the switch-day line and for nothing else, and it is read
+// WITHOUT opening the note: the entry's recorded moment when it has one, and otherwise the
+// YYYY-MM-DD at the front of its filename. That is exactly Note.legacyDay -- the entry's
+// Date field is Note.When rendered -- so the line falls in the same place whether it is
+// drawn over a change set, over a carried entry, or over a full walk.
+func (e OpenEntry) day() time.Time {
+	if when := e.when(); !when.IsZero() {
+		return when
 	}
-	return when.Before(l.Before)
+	return filenameDay(e.Path)
+}
+
+// when is the entry's own moment, for ordering the listing: Note.When as it stood when the
+// note went open, and the zero time for a note that had none. Unlike day it does NOT fall
+// back to the filename, because the listing's order is the one Note.When gives and widening
+// it here would put an entry in a different place from the note it stands for.
+func (e OpenEntry) when() time.Time {
+	if e.Date == "" {
+		return time.Time{}
+	}
+	when, err := time.Parse(ReceiptStampLayout, e.Date)
+	if err != nil {
+		return time.Time{}
+	}
+	return when.UTC()
 }
 
 // InboxSince computes a reader's listing from a change set and their OPEN list, and never
@@ -134,35 +193,31 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 	}
 	parsed := newNoteCache(root)
 
-	// What have I answered? Two sources, and both are cheap.
+	// ONE WALK OF THE CHANGE SET, and everything this run knows comes out of it.
 	//
-	// My own lane's CATALOGUE first: one line per note I have sent, carrying that note's
-	// Re targets, so every thread I have ever answered is a line scan away and no note of
-	// mine is opened. Without it a note I answered last month and that somebody EDITED
-	// today would come back into my open list, because the reply that closed it is behind
-	// the cursor and the edit is in front of it.
+	// What have I answered? A note of MY OWN in the change set, carrying a Re line. That is
+	// every reply I have written since my cursor, whether `send` wrote it or I typed it in a
+	// browser -- the two are the same file and this does not care which.
 	//
-	// THE GAP IN THAT, exactly: the catalogue holds the replies SEND wrote, and a reply
-	// written by hand -- in a browser, which this table's whole form exists to allow -- has
-	// no line in it. Such a reply closes its thread only while it is still in the change
-	// set; once the cursor moves past it, this run cannot see it, and an edit to the note it
-	// answered brings that note back into the open list. The failure direction is RE-SHOW
-	// and never loss: nothing is dropped, a reader is asked twice. `check --full` warns
-	// about every note with no INDEX line and `--rebuild-index` writes them, which is the
-	// repair; see the warning in noteChecker.check below.
+	// What have I heard? My own RECEIPTS, and only when it is IN THE CHANGE SET, which is
+	// exactly the runs on which I have receipted something since my cursor. It is read whole
+	// then -- one short line per note I have ever heard, a line scan and never a parse -- and
+	// the flags it sets are written into OPEN, so the next run knows what was heard without
+	// reading the file at all. That is the difference between this and the first version,
+	// which read RECEIPTS whole on every run for a fact that changes about once a day.
 	answered := map[string]bool{}
-	mine, err := ReadLaneIndex(root, me.Lane)
-	if err != nil {
-		return res, err
-	}
-	for _, e := range mine {
-		for _, re := range e.Re {
-			answered[re] = true
-		}
-	}
-	// Then my own changed files, which cover the reply written since the catalogue was
-	// last appended to -- and every reply written by hand, which is in no catalogue at all.
+	heard := map[string]bool{}
 	for _, path := range changed {
+		if path == me.Lane+"/"+ReceiptsName {
+			targets, err := readReceiptTargets(root, me.Lane)
+			if err != nil {
+				return res, err
+			}
+			for target := range targets {
+				heard[target] = true
+			}
+			continue
+		}
 		if laneOf(path) != me.Lane || !isNotePath(path) {
 			continue
 		}
@@ -176,28 +231,61 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 			answered[re] = true
 		}
 	}
+	settled := func(e OpenEntry) bool { return answered[e.Target()] || answered[e.Path] }
+	told := func(e OpenEntry) bool { return heard[e.Target()] || heard[e.Path] }
 
-	// RECEIPTS is read whole for the same reason: one short line per note I have ever
-	// heard, a line scan and never a parse, and reading it whole is what makes "heard"
-	// outlive a cursor that has moved past the receipt.
-	heard, herr := readReceiptTargets(root, me.Lane)
-	if herr != nil {
-		return res, herr
-	}
-
-	// The survivors, in the order they were already in.
+	// The survivors, in the order they were already in, PRINTED FROM THE LIST. A readable
+	// entry costs nothing here: no open, no parse, no stat. It carries its own line.
 	var keep []OpenEntry
 	inOpen := map[string]bool{}
 	for _, e := range open {
-		if answered[e.Target()] || answered[e.Path] {
+		if settled(e) {
 			continue
+		}
+		if e.Kind == OpenUnreadable {
+			// THE ONE ENTRY THAT COSTS A PARSE PER RUN, and it is carried on purpose. A file
+			// this tool cannot read has no `To:` line, so it cannot be listed as a note and it
+			// cannot be dropped either -- dropping it is how the first version lost it: named
+			// once on a `--full` read, absent from OPEN, and never mentioned again by any
+			// incremental run. So it is carried as an `unreadable` entry and re-checked, which
+			// costs ONE parse per unreadable entry per run and nothing for anybody else's
+			// notes. It leaves the list when the file parses -- becoming an ordinary entry if
+			// it turns out to be addressed to me, and going quietly if it is not -- or when I
+			// receipt it, which is how a reader says "I have seen this file" about something
+			// with no id to answer.
+			if told(e) {
+				continue
+			}
+			n, err := parsed.get(e.Path)
+			if err != nil {
+				res.Unreadable = append(res.Unreadable, &Note{
+					Path:  e.Path,
+					Lane:  laneOf(e.Path),
+					Parse: &ParseError{fmt.Errorf("this file was open and is no longer on the table: %w", err)},
+				})
+				continue
+			}
+			if n.Parse != nil {
+				res.Unreadable = append(res.Unreadable, n)
+				inOpen[e.Path] = true
+				keep = append(keep, e)
+				continue
+			}
+			if !addressedTo(c, n, me) || answered[n.Header.ID] {
+				continue
+			}
+			// Its id is only knowable now that it parses, so the heard flag is asked for by
+			// id here: the path was already asked for above, and answered no.
+			e = openEntryFor(c, n, me, heard[n.Header.ID], maxWords)
+		} else if told(e) {
+			e.Heard = true
 		}
 		inOpen[e.Path] = true
 		keep = append(keep, e)
 	}
 
 	// What is new: a changed note outside my lane, addressed to me, that I am not already
-	// carrying and have not already answered.
+	// carrying and have not already answered. This is the whole of what this run parses.
 	var fresh []OpenEntry
 	for _, path := range changed {
 		if laneOf(path) == me.Lane || !isNotePath(path) || inOpen[path] {
@@ -209,6 +297,8 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 		}
 		if n.Parse != nil {
 			res.Unreadable = append(res.Unreadable, n)
+			inOpen[path] = true
+			fresh = append(fresh, OpenEntry{Kind: OpenUnreadable, Path: path})
 			continue
 		}
 		if !addressedTo(c, n, me) {
@@ -218,81 +308,83 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 			continue
 		}
 		inOpen[path] = true
-		fresh = append(fresh, OpenEntry{ID: n.Header.ID, Path: path})
+		fresh = append(fresh, openEntryFor(c, n, me, heard[n.Header.ID] || heard[path], maxWords))
 	}
 	sort.Slice(fresh, func(i, j int) bool { return fresh[i].Path < fresh[j].Path })
 	res.New = len(fresh)
 
-	// Render. An open entry whose file has gone is dropped from the list and NAMED: a note
-	// I was shown and can no longer read is a fact about the table, and dropping it in
-	// silence is the failure the unreadable listing exists to end.
-	var final []OpenEntry
-	for _, e := range append(keep, fresh...) {
-		n, err := parsed.get(e.Path)
-		if err != nil {
-			res.Unreadable = append(res.Unreadable, &Note{
-				Path:  e.Path,
-				Lane:  laneOf(e.Path),
-				Parse: &ParseError{fmt.Errorf("this note was open and is no longer on the table: %w", err)},
-			})
-			continue
-		}
-		if n.Parse != nil {
-			res.Unreadable = append(res.Unreadable, n)
-			final = append(final, e)
-			continue
-		}
-		// The switch-day line, applied in ONE place so that a note it covers is left off
-		// the open list whether it arrived in this change set or has been carried since
-		// before the line was drawn. Leaving it off is the whole of what happens to it: it
-		// is counted, and the note is untouched.
-		if legacy.covers(n) {
-			res.Legacy++
-			continue
-		}
-		final = append(final, e)
-		res.Items = append(res.Items, item(c, n, me, heard[e.Target()] || heard[e.Path], maxWords))
-	}
-	res.Open = final
-	sortInbox(res.Items)
+	// The switch-day line, applied in ONE place so that a note it covers is left off the
+	// open list whether it arrived in this change set or has been carried since before the
+	// line was drawn. Leaving it off is the whole of what happens to it: it is counted, and
+	// the note is untouched.
+	res.Open, res.Legacy = SplitLegacy(append(keep, fresh...), legacy)
 	sort.Slice(res.Unreadable, func(i, j int) bool { return res.Unreadable[i].Path < res.Unreadable[j].Path })
 	return res, nil
 }
 
-// SplitLegacy is the switch-day line applied to a FULL walk's listing: the notes that stay,
-// and how many were left off. It is the same rule InboxSince applies to a change set, kept
-// in one place so the two reads cannot draw the line differently -- which matters most on
-// the one run where it is drawn, because a `--full` read is what writes the open list every
-// later run inherits.
-func SplitLegacy(items []InboxItem, legacy LegacyLine) (keep []InboxItem, covered int) {
+// SplitLegacy is the switch-day line applied to an open list: the entries that stay, and how
+// many were left off. Both reads go through it -- the incremental one over what it kept and
+// added, the full one over what the walk found -- so the two cannot draw the line
+// differently, which matters most on the one run where it is drawn, because a `--full` read
+// is what writes the open list every later run inherits.
+func SplitLegacy(entries []OpenEntry, legacy LegacyLine) (keep []OpenEntry, covered int) {
 	if legacy.Before.IsZero() {
-		return items, 0
+		return entries, 0
 	}
-	keep = make([]InboxItem, 0, len(items))
-	for _, it := range items {
-		if legacy.covers(it.Note) {
+	keep = make([]OpenEntry, 0, len(entries))
+	for _, e := range entries {
+		if legacy.covers(e.day()) {
 			covered++
 			continue
 		}
-		keep = append(keep, it)
+		keep = append(keep, e)
 	}
 	return keep, covered
 }
 
 // OpenFromFull is the OPEN list a --full run implies: every note the full walk found still
-// open for this reader. It is how a reader adopts the cursor on a table that already
-// exists, and how `--full --advance` repairs an OPEN list that drifted.
-func OpenFromFull(items []InboxItem) []OpenEntry {
-	out := make([]OpenEntry, 0, len(items))
+// open for this reader, plus every file it could not read. It is how a reader adopts the
+// cursor on a table that already exists, how `--full --advance` repairs an OPEN list that
+// drifted, and the one place a heard flag is rebuilt from RECEIPTS rather than carried.
+//
+// THE UNREADABLE FILES ARE CARRIED, and until this was written they were not. A `--full`
+// read named them and then wrote an open list without them, so the next incremental run --
+// which sees only what changed -- never mentioned them again. A file somebody wrote, on the
+// table, that its reader is told about exactly once and then never again is the same failure
+// as a lost push with a slower fuse. They go on the list, they are re-checked, and they come
+// off it when they parse or are receipted.
+func OpenFromFull(items []InboxItem, unreadable []*Note) []OpenEntry {
+	out := make([]OpenEntry, 0, len(items)+len(unreadable))
 	for _, it := range items {
-		out = append(out, OpenEntry{ID: it.Note.Header.ID, Path: it.Note.Path})
+		kind := OpenNote
+		if it.Receipt {
+			kind = OpenReceipt
+		}
+		date := ""
+		if when := it.Note.When(); !when.IsZero() {
+			date = when.Format(ReceiptStampLayout)
+		}
+		out = append(out, OpenEntry{
+			ID:      it.Note.Header.ID,
+			Kind:    kind,
+			Heard:   it.Heard,
+			From:    it.From,
+			Addr:    it.Address,
+			Date:    date,
+			Path:    it.Note.Path,
+			Subject: it.Note.Header.Subject,
+		})
+	}
+	for _, n := range unreadable {
+		out = append(out, OpenEntry{Kind: OpenUnreadable, Path: n.Path})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
 }
 
-// item builds one listing row.
-func item(c *Config, n *Note, me Participant, heard bool, maxWords int) InboxItem {
+// openEntryFor builds the open entry for a note this run parsed: everything a later run
+// needs in order to print it without opening it again.
+func openEntryFor(c *Config, n *Note, me Participant, heard bool, maxWords int) OpenEntry {
 	to, _ := n.Header.Recipients(c)
 	addr := "cc"
 	if contains(to, me.Name) {
@@ -302,12 +394,23 @@ func item(c *Config, n *Note, me Participant, heard bool, maxWords int) InboxIte
 	if p, ok := c.ResolveOne(n.Header.From); ok {
 		from = p.Name
 	}
-	return InboxItem{
-		Note:    n,
-		From:    from,
-		Address: addr,
-		Receipt: IsReceipt(*n, maxWords),
+	kind := OpenNote
+	if IsReceipt(*n, maxWords) {
+		kind = OpenReceipt
+	}
+	date := ""
+	if when := n.When(); !when.IsZero() {
+		date = when.Format(ReceiptStampLayout)
+	}
+	return OpenEntry{
+		ID:      n.Header.ID,
+		Kind:    kind,
 		Heard:   heard,
+		From:    from,
+		Addr:    addr,
+		Date:    date,
+		Path:    n.Path,
+		Subject: n.Header.Subject,
 	}
 }
 
@@ -316,16 +419,20 @@ func addressedTo(c *Config, n *Note, me Participant) bool {
 	return contains(to, me.Name) || contains(cc, me.Name)
 }
 
-// sortInbox is the one ordering, newest first, shared by the full and the incremental
-// listing so the two cannot drift.
-func sortInbox(items []InboxItem) {
-	sort.SliceStable(items, func(i, j int) bool {
-		a, b := items[i].Note.When(), items[j].Note.When()
+// SortForListing puts an open list in the order it is PRINTED in -- newest first, path
+// descending to break a tie -- on a copy of the caller's slice, because the order the list
+// is WRITTEN in is the order its entries arrived in and a run must not reshuffle a file to
+// print it.
+func SortForListing(entries []OpenEntry) []OpenEntry {
+	out := append([]OpenEntry(nil), entries...)
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i].when(), out[j].when()
 		if !a.Equal(b) {
 			return a.After(b)
 		}
-		return items[i].Note.Path > items[j].Note.Path
+		return out[i].Path > out[j].Path
 	})
+	return out
 }
 
 // noteCache parses each path at most once per run, so a note that is both in the change
@@ -384,13 +491,18 @@ func laneOf(path string) string {
 }
 
 // isNotePath reports whether a changed path is a note rather than one of a lane's state
-// files. A lane's state files change on almost every run and are not notes; reading one as
-// a note would report a parse failure to every reader on the table.
+// files or its README. A lane's state files change on almost every run and are not notes;
+// reading one as a note would report a parse failure to every reader on the table. A
+// README.md ends in .md and is not a note either, for the same reason and with a worse
+// symptom: it parsed as a broken note and was reported to every reader forever.
 func isNotePath(path string) bool {
 	if !strings.HasSuffix(path, ".md") {
 		return false
 	}
-	return strings.Count(path, "/") == 1 && strings.HasPrefix(path, "from-")
+	if strings.Count(path, "/") != 1 || !strings.HasPrefix(path, "from-") {
+		return false
+	}
+	return !isLaneDoc(filepath.Base(path))
 }
 
 // ------------------------------------------------------------------------ check, likewise
@@ -546,12 +658,13 @@ func CheckSince(root string, c *Config, idx *Index, changed []string, o CheckOpt
 			continue
 		}
 		// A state file's stranded temporary is stepped over here exactly as the full walk
-		// steps over it, so the two modes cannot say different things about one file.
-		if isLaneStateTemp(base) {
+		// steps over it, so the two modes cannot say different things about one file. So is
+		// the lane's README, which is not a note and is not a stray.
+		if isLaneStateTemp(base) || isLaneDoc(base) {
 			continue
 		}
 		if !isNotePath(path) {
-			add(path, "a lane holds notes (*.md), its %s, and nothing else", strings.Join(laneStateFiles, ", "))
+			add(path, "a lane holds notes (*.md), its %s, and nothing else", strings.Join(laneAllowedFiles, ", "))
 			continue
 		}
 		n, err := parsed.get(path)

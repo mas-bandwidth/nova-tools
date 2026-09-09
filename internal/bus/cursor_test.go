@@ -68,15 +68,21 @@ func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 	}
 }
 
-func TestOpenListRoundTripsAndKeepsItsOrder(t *testing.T) {
+// OPEN v2: an entry carries the whole line the note prints as, so a later run can list it
+// without opening the note. The round trip is the proof that nothing in that line is lost.
+func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 	root := writeTable(t, nil)
 	if got, err := ReadOpen(root, "from-rowan"); err != nil || got != nil {
 		t.Fatalf("a lane with no OPEN: %+v, %v", got, err)
 	}
 	want := []OpenEntry{
-		{ID: "stella-abcdef012345", Path: "from-stella/b.md"},
-		{ID: "", Path: "from-stella/a legacy note.md"},
-		{ID: "stella-111111111111", Path: "from-stella/c.md"},
+		{ID: "stella-abcdef012345", Kind: OpenNote, From: "Stella", Addr: "to",
+			Date: "2026-09-07T00:01:00Z", Path: "from-stella/b.md", Subject: "A question about the gate"},
+		{ID: "", Kind: OpenNote, From: "Stella", Addr: "cc",
+			Path: "from-stella/a legacy note.md", Subject: "Written before there were ids"},
+		{ID: "stella-111111111111", Kind: OpenReceipt, Heard: true, From: "Stella", Addr: "to",
+			Date: "2026-09-09T13:00:00Z", Path: "from-stella/c.md", Subject: "Heard"},
+		{Kind: OpenUnreadable, Path: "from-stella/prose.md"},
 	}
 	if err := WriteOpen(root, "from-rowan", want); err != nil {
 		t.Fatal(err)
@@ -96,22 +102,72 @@ func TestOpenListRoundTripsAndKeepsItsOrder(t *testing.T) {
 			t.Fatalf("entry %d round-tripped as %+v, wrote %+v", i, got[i], want[i])
 		}
 	}
-	// A legacy note is written "-" and its path may hold spaces, so the first token is the
-	// id and the REST of the line is the path -- the same shape a receipt line has.
-	if line := readFile(t, root, OpenPath("from-rowan")); !strings.Contains(line, "- from-stella/a legacy note.md\n") {
-		t.Fatalf("the legacy entry is %q", line)
+	raw := readFile(t, root, OpenPath("from-rowan"))
+	// The version header is the first line, and it is what stops a v1 list being read as a
+	// v2 one -- see TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead.
+	if !strings.HasPrefix(raw, OpenHeader+"\n") {
+		t.Fatalf("the open list does not begin with its version header: %q", raw)
 	}
-	// Nothing open REMOVES the file, rather than leaving a zero-length second spelling of
-	// the state a lane starts in.
+	// A legacy note's id is "-", a path holding a space rides in its own tab-separated
+	// field, and every line is the same eight fields.
+	for _, line := range strings.Split(strings.TrimRight(raw, "\n"), "\n")[1:] {
+		if n := strings.Count(line, "\t"); n != openFields-1 {
+			t.Fatalf("the line holds %d tabs, want %d: %q", n, openFields-1, line)
+		}
+	}
+	if !strings.Contains(raw, "-\tnote\t-\tStella\tcc\t-\tfrom-stella/a legacy note.md\t") {
+		t.Fatalf("the legacy entry is not <-> <kind> <heard> ... : %q", raw)
+	}
+	// Nothing open REMOVES the file, rather than leaving the header alone in it: absent and
+	// nothing-open are one state on disk, which is what the cursor's count is checked
+	// against.
 	if err := WriteOpen(root, "from-rowan", nil); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(OpenPath("from-rowan")))); !os.IsNotExist(err) {
 		t.Fatalf("an empty OPEN list left a file behind: %v", err)
 	}
-	write(t, root, OpenPath("from-rowan"), "no-path\n")
-	if _, err := ReadOpen(root, "from-rowan"); err == nil {
-		t.Fatal("an entry with no path was accepted")
+	// And every shape that is not an entry is refused where it is read, rather than being
+	// guessed at into a listing.
+	for _, bad := range []string{
+		OpenHeader + "\nno-path\n",
+		OpenHeader + "\n-\tnote\t-\tStella\tto\t-\t\t-\n",
+		OpenHeader + "\n-\twibble\t-\tStella\tto\t-\tfrom-stella/a.md\t-\n",
+		OpenHeader + "\n-\tnote\tyes\tStella\tto\t-\tfrom-stella/a.md\t-\n",
+		OpenHeader + "\nstella-nothex\tnote\t-\tStella\tto\t-\tfrom-stella/a.md\t-\n",
+	} {
+		write(t, root, OpenPath("from-rowan"), bad)
+		if _, err := ReadOpen(root, "from-rowan"); err == nil {
+			t.Fatalf("an open list of %q was accepted", bad)
+		}
+	}
+}
+
+// THE VERSION HANDSHAKE, in both directions. A v1 open list -- `<id or -> <path>` -- read as
+// v2 would be one field: a path with no kind, no date and no subject, printed as a note
+// nobody sent and carried forever. The cursor cannot catch it, because a v1 OPEN beside a
+// counted cursor is exactly the state a healthy v2 reader is in. So the file says its own
+// version, and a file that does not is refused at the read, naming the repair.
+func TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead(t *testing.T) {
+	root := writeTable(t, nil)
+	write(t, root, OpenPath("from-rowan"), "stella-abcdef012345 from-stella/old.md\n")
+	_, err := ReadOpen(root, "from-rowan")
+	if err == nil {
+		t.Fatal("a v1 open list was read as a v2 one")
+	}
+	for _, want := range []string{OpenHeader, "--full --advance"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal does not name %q: %v", want, err)
+		}
+	}
+	// And a list this version wrote reads back, which is the other half of the handshake.
+	if err := WriteOpen(root, "from-rowan", []OpenEntry{
+		{ID: "stella-abcdef012345", Kind: OpenNote, From: "Stella", Addr: "to", Path: "from-stella/old.md"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ReadOpen(root, "from-rowan"); err != nil || len(got) != 1 {
+		t.Fatalf("a v2 open list did not read back: %+v, %v", got, err)
 	}
 }
 
@@ -222,8 +278,10 @@ func TestRebuildLaneIndexFromTheNotes(t *testing.T) {
 	}
 }
 
-// InboxSince over a change set, with the OPEN list doing the remembering.
-func TestInboxSinceUsesOpenAndTouchesNothingElse(t *testing.T) {
+// InboxSince over a change set, with the OPEN list doing the remembering AND the printing.
+// The count is the claim: the notes it parses are the notes that CHANGED, and the one it is
+// carrying costs nothing at all.
+func TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen(t *testing.T) {
 	root := writeTable(t, map[string]string{
 		"from-stella/old.md":        "From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: old\n\nA question?\n",
 		"from-stella/new.md":        "From: Stella\nTo: Rowan\nDate: Tue Sep  8 00:01:00 UTC 2026\nId: stella-111111111111\nSubject: new\n\nAnother question?\n",
@@ -235,68 +293,199 @@ func TestInboxSinceUsesOpenAndTouchesNothingElse(t *testing.T) {
 		t.Fatal(err)
 	}
 	me := mustParticipant(t, c, "Rowan")
+	carried := OpenEntry{ID: "stella-abcdef012345", Kind: OpenNote, Heard: true, From: "Stella", Addr: "to",
+		Date: "2026-09-07T00:01:00Z", Path: "from-stella/old.md", Subject: "old"}
 
 	before := NoteParses()
 	res, err := InboxSince(root, c, me,
 		[]string{"from-stella/new.md", "from-stella/not-for-me.md"},
-		[]OpenEntry{{ID: "stella-abcdef012345", Path: "from-stella/old.md"}}, 40, LegacyLine{})
+		[]OpenEntry{carried}, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Three files opened: the two that changed, and the one being carried. The note that
-	// did not change and is not open -- there is none here, but the count is the claim --
-	// is never touched.
-	if got := NoteParses() - before; got != 3 {
-		t.Fatalf("parsed %d notes for 2 changed and 1 open, want 3", got)
+	// TWO files opened: the two that changed. The one being carried is printed from its own
+	// entry, and RECEIPTS is not in the change set so it is not read either.
+	if got := NoteParses() - before; got != 2 {
+		t.Fatalf("parsed %d notes for 2 changed and 1 open, want 2: the read is not O(new)", got)
 	}
-	if len(res.Items) != 2 {
-		t.Fatalf("listed %d items, want the new one and the carried one: %+v", len(res.Items), res.Items)
+	if len(res.Open) != 2 {
+		t.Fatalf("open = %+v, want the new one and the carried one", res.Open)
 	}
-	// Newest first, and the carried one is marked heard because RECEIPTS records it: heard
-	// is not answered, and the receipt outlives the cursor because RECEIPTS is read whole.
-	if res.Items[0].Note.Path != "from-stella/new.md" {
-		t.Fatalf("the listing is not newest first: %s", res.Items[0].Note.Path)
+	// Newest first when it is PRINTED, arrival order in the file.
+	rows := SortForListing(res.Open)
+	if rows[0].Path != "from-stella/new.md" || rows[0].Subject != "new" || rows[0].From != "Stella" {
+		t.Fatalf("the listing is not newest first, or a new entry lost its display line: %+v", rows[0])
 	}
-	if !res.Items[1].Heard {
-		t.Fatalf("the receipted note is not marked heard")
+	if !rows[1].Heard {
+		t.Fatalf("the carried entry lost its heard flag: %+v", rows[1])
 	}
-	if res.New != 1 || len(res.Open) != 2 {
-		t.Fatalf("new=%d open=%d, want 1 and 2", res.New, len(res.Open))
+	if notes, receipts, heard := res.Counts(); notes != 1 || receipts != 0 || heard != 1 {
+		t.Fatalf("counts are notes=%d receipts=%d heard=%d, want 1, 0, 1", notes, receipts, heard)
+	}
+	if res.New != 1 {
+		t.Fatalf("new=%d, want 1", res.New)
 	}
 
-	// Now a reply of mine, in the change set, closes the carried one.
+	// Now a reply of mine, in the change set, closes the carried one -- by id.
 	write(t, root, "from-rowan/answer.md", "From: Rowan\nTo: Stella\nDate: Wed Sep  9 00:01:00 UTC 2026\nId: rowan-333333333333\nRe: stella-abcdef012345\nSubject: yes\n\nYes.\n")
 	res, err = InboxSince(root, c, me,
 		[]string{"from-rowan/answer.md"},
-		[]OpenEntry{
-			{ID: "stella-abcdef012345", Path: "from-stella/old.md"},
-			{ID: "stella-111111111111", Path: "from-stella/new.md"},
-		}, 40, LegacyLine{})
+		[]OpenEntry{carried, {ID: "stella-111111111111", Kind: OpenNote, From: "Stella", Addr: "to",
+			Date: "2026-09-08T00:01:00Z", Path: "from-stella/new.md", Subject: "new"}}, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(res.Open) != 1 || res.Open[0].ID != "stella-111111111111" {
 		t.Fatalf("the answered note is still open: %+v", res.Open)
 	}
+
+	// And a LEGACY note is closed the same way, by its path: a reply written before there
+	// were ids names the file, and that still has to close the entry that names the file.
+	write(t, root, "from-stella/before-ids.md", "From: Stella\nTo: Rowan\nSubject: before ids\n\nA question?\n")
+	write(t, root, "from-rowan/answer.md", "From: Rowan\nTo: Stella\nDate: Wed Sep  9 00:02:00 UTC 2026\nId: rowan-444444444444\nRe: from-stella/before-ids.md\nSubject: yes\n\nYes.\n")
+	res, err = InboxSince(root, c, me, []string{"from-rowan/answer.md"},
+		[]OpenEntry{{Kind: OpenNote, From: "Stella", Addr: "to", Path: "from-stella/before-ids.md", Subject: "before ids"}},
+		40, LegacyLine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Open) != 0 {
+		t.Fatalf("a path-addressed Re did not close the path entry it names: %+v", res.Open)
+	}
 }
 
-// An open note whose file has gone is NAMED and dropped, never dropped in silence.
-func TestInboxSinceNamesAnOpenNoteThatVanished(t *testing.T) {
+// A receipt reaches an incremental run as MY OWN RECEIPTS FILE in the change set, and what
+// it sets is the flag in OPEN -- which is what lets the next run say HEARD without reading
+// RECEIPTS at all. Heard is still not answered: the entry stays.
+func TestAReceiptInTheChangeSetSetsTheFlagInOpen(t *testing.T) {
+	root := writeTable(t, map[string]string{
+		"from-stella/old.md":  "From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: old\n\nA question?\n",
+		"from-rowan/RECEIPTS": "2026-09-09T12:34:56Z stella-abcdef012345\n",
+	})
+	c, err := LoadConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := mustParticipant(t, c, "Rowan")
+	carried := OpenEntry{ID: "stella-abcdef012345", Kind: OpenNote, From: "Stella", Addr: "to",
+		Date: "2026-09-07T00:01:00Z", Path: "from-stella/old.md", Subject: "old"}
+
+	// RECEIPTS is NOT in the change set: the flag is whatever the entry says, and nothing
+	// reads the file. That is the whole saving, and it is also the limit -- a receipt this
+	// run cannot see is a receipt the next run applies.
+	res, err := InboxSince(root, c, me, nil, []OpenEntry{carried}, 40, LegacyLine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Open) != 1 || res.Open[0].Heard {
+		t.Fatalf("a receipt outside the change set was read anyway: %+v", res.Open)
+	}
+	// In the change set, it sets the flag, and the entry stays open.
+	before := NoteParses()
+	res, err = InboxSince(root, c, me, []string{"from-rowan/RECEIPTS"}, []OpenEntry{carried}, 40, LegacyLine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := NoteParses() - before; got != 0 {
+		t.Fatalf("reading RECEIPTS parsed %d notes; it is a line scan", got)
+	}
+	if len(res.Open) != 1 || !res.Open[0].Heard {
+		t.Fatalf("a receipt in the change set did not set the heard flag: %+v", res.Open)
+	}
+	if _, _, heard := res.Counts(); heard != 1 {
+		t.Fatalf("a heard entry is not counted as heard: %+v", res.Open)
+	}
+}
+
+// A file this tool cannot read is CARRIED as an unreadable entry until it parses or is
+// receipted, and is named on every run in between. Dropping it after one mention is how the
+// first version lost it: a `--full` read said so once, and no incremental run ever did again.
+func TestAnUnreadableFileIsCarriedAndReChecked(t *testing.T) {
+	root := writeTable(t, map[string]string{
+		"from-stella/prose.md": "Rowan, this is prose and no header at all.\n\nMore prose.\n",
+	})
+	c, err := LoadConfig(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	me := mustParticipant(t, c, "Rowan")
+
+	res, err := InboxSince(root, c, me, []string{"from-stella/prose.md"}, nil, 40, LegacyLine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Unreadable) != 1 || len(res.Open) != 1 || res.Open[0].Kind != OpenUnreadable {
+		t.Fatalf("an unreadable file was not carried: unreadable=%d open=%+v", len(res.Unreadable), res.Open)
+	}
+	// The run after it, with NOTHING in the change set, still names it -- and that costs one
+	// parse, for this entry and nobody else's note.
+	before := NoteParses()
+	res, err = InboxSince(root, c, me, nil, res.Open, 40, LegacyLine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := NoteParses() - before; got != 1 {
+		t.Fatalf("re-checking one unreadable entry parsed %d notes, want 1", got)
+	}
+	if len(res.Unreadable) != 1 || len(res.Open) != 1 {
+		t.Fatalf("the unreadable entry was dropped in silence: %+v", res)
+	}
+	// Somebody fixes the file. It becomes an ordinary entry, with its display line.
+	write(t, root, "from-stella/prose.md", "From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: Now it parses\n\nA question?\n")
+	res, err = InboxSince(root, c, me, nil, res.Open, 40, LegacyLine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Unreadable) != 0 || len(res.Open) != 1 || res.Open[0].Kind != OpenNote || res.Open[0].Subject != "Now it parses" {
+		t.Fatalf("a file that now parses did not become an ordinary entry: %+v", res)
+	}
+	// And a file that never parses leaves the list when it is RECEIPTED, which is how a
+	// reader says "I have seen this" about a file with no id to answer.
+	write(t, root, "from-stella/prose.md", "Rowan, prose again.\n\nMore prose.\n")
+	write(t, root, "from-rowan/RECEIPTS", "2026-09-09T12:34:56Z from-stella/prose.md\n")
+	res, err = InboxSince(root, c, me, []string{"from-stella/prose.md"}, nil, 40, LegacyLine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	res, err = InboxSince(root, c, me, []string{"from-rowan/RECEIPTS"}, res.Open, 40, LegacyLine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.Open) != 0 || len(res.Unreadable) != 0 {
+		t.Fatalf("a receipted unreadable file is still carried: %+v", res)
+	}
+}
+
+// An open note whose file has gone is CARRIED, printed from the snapshot in OPEN, until a
+// --full read rebuilds the list without it. That is a deliberate limit and not an oversight:
+// a deletion is not in the change set at all, and finding one would cost a stat per open
+// note, which is the O(open) this design exists to remove. The direction is a stale line, not
+// a lost note.
+func TestAnOpenNoteWhoseFileVanishedIsCarriedUntilAFullRead(t *testing.T) {
 	root := writeTable(t, nil)
 	c, err := LoadConfig(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	res, err := InboxSince(root, c, mustParticipant(t, c, "Rowan"), nil,
-		[]OpenEntry{{ID: "stella-abcdef012345", Path: "from-stella/gone.md"}}, 40, LegacyLine{})
+	me := mustParticipant(t, c, "Rowan")
+	gone := OpenEntry{ID: "stella-abcdef012345", Kind: OpenNote, From: "Stella", Addr: "to",
+		Date: "2026-09-07T00:01:00Z", Path: "from-stella/gone.md", Subject: "gone"}
+	before := NoteParses()
+	res, err := InboxSince(root, c, me, nil, []OpenEntry{gone}, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Unreadable) != 1 || !strings.Contains(res.Unreadable[0].Parse.Err.Error(), "no longer on the table") {
-		t.Fatalf("a vanished open note was not named: %+v", res.Unreadable)
+	if got := NoteParses() - before; got != 0 {
+		t.Fatalf("a carried entry cost %d parses, want 0", got)
 	}
-	if len(res.Open) != 0 || len(res.Items) != 0 {
-		t.Fatalf("a vanished open note is still carried: %+v", res.Open)
+	if len(res.Open) != 1 {
+		t.Fatalf("the entry was dropped without anything looking at the table: %+v", res.Open)
+	}
+	// The full walk is what settles it: the note is not on the table, so it is not on the
+	// list the full read writes.
+	tab := loadTable(t, root)
+	if entries := OpenFromFull(tab.Inbox(me, 40), tab.Unreadable(me.Lane)); len(entries) != 0 {
+		t.Fatalf("a full read carried a note that is not on the table: %+v", entries)
 	}
 }
 
@@ -309,44 +498,28 @@ func readFile(t *testing.T, root, path string) string {
 	return string(raw)
 }
 
-// A note I answered long ago, and that somebody EDITED today, does not come back into my
-// open list. The reply that closed it is behind the cursor, so the change set cannot see
-// it -- my own lane's catalogue can, in a line scan, which is what it is there for.
-func TestANoteAnsweredBeforeTheCursorStaysAnswered(t *testing.T) {
-	root := writeTable(t, map[string]string{
+// THE LIMIT OF CLOSING FROM THE CHANGE SET ALONE, stated as a test so nobody has to
+// discover it. A reply of mine closes its thread while it is in the change set. Once it is
+// behind my cursor this run cannot see it -- `answered` is built from what CHANGED and from
+// nothing else, which is what makes the read O(new) -- so an EDIT to the note it answered
+// puts that note back in my open list and I am shown it again.
+//
+// The direction is the whole point: re-show, never loss. A reader is asked twice, which is
+// tiresome; a reader is never told a note is answered when it is not, and never loses one.
+// The settlement is a `--full` read, which derives the list from the whole table, where the
+// reply is a note like any other.
+//
+// This is a WIDENING of a limit that already existed: before OPEN v2 the catalogue was read
+// whole on every run, so a reply `send` wrote kept closing its thread and only a HAND-written
+// one had this shape. The trade is named in SPEC.md's cost paragraph: one line scan of my
+// whole history, on every run, forever, against being asked twice about a note somebody
+// edited after I answered it.
+func TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt(t *testing.T) {
+	files := map[string]string{
 		"from-stella/old.md": "From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: old\n\nA question?\n",
 		"from-rowan/answer.md": "From: Rowan\nTo: Stella\nDate: Mon Sep  7 01:00:00 UTC 2026\nId: rowan-333333333333\n" +
 			"Re: stella-abcdef012345\nSubject: yes\n\nYes.\n",
 		"from-rowan/INDEX": "rowan-333333333333\tfrom-rowan/answer.md\t2026-09-07T01:00:00Z\tStella\tstella-abcdef012345\n",
-	})
-	c, err := LoadConfig(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	// The only thing in the change set is the answered note itself, edited.
-	res, err := InboxSince(root, c, mustParticipant(t, c, "Rowan"), []string{"from-stella/old.md"}, nil, 40, LegacyLine{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Items) != 0 || len(res.Open) != 0 {
-		t.Fatalf("an edit to an already-answered note reopened it: items=%d open=%+v", len(res.Items), res.Open)
-	}
-}
-
-// The limit of that, stated as a test so nobody has to discover it. The catalogue holds the
-// replies SEND wrote; a reply written BY HAND -- in a browser, which this table's whole form
-// exists to allow -- has no line in it, and once it falls behind the cursor the incremental
-// read cannot see it. An edit to the note it answered therefore RE-SHOWS that note.
-//
-// The direction is the whole point: re-show, never loss. A reader is asked twice, which is
-// tiresome; a reader is never told a note is answered when it is not, and never loses one.
-// And the repair is the one check --full names: a catalogue line for the hand-written reply.
-func TestAHandWrittenReplyBehindTheCursorReShowsTheNote(t *testing.T) {
-	files := map[string]string{
-		"from-stella/old.md": "From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: old\n\nA question?\n",
-		// A reply with no INDEX line: nobody ran send, somebody typed it.
-		"from-rowan/answer.md": "From: Rowan\nTo: Stella\nDate: Mon Sep  7 01:00:00 UTC 2026\nId: rowan-333333333333\n" +
-			"Re: stella-abcdef012345\nSubject: yes\n\nYes.\n",
 	}
 	root := writeTable(t, files)
 	c, err := LoadConfig(root)
@@ -355,39 +528,33 @@ func TestAHandWrittenReplyBehindTheCursorReShowsTheNote(t *testing.T) {
 	}
 	me := mustParticipant(t, c, "Rowan")
 
-	// While the reply is still in the change set it closes the thread, exactly as a
-	// catalogued one would.
+	// While the reply is in the change set it closes the thread.
 	res, err := InboxSince(root, c, me, []string{"from-stella/old.md", "from-rowan/answer.md"}, nil, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Items) != 0 {
-		t.Fatalf("a reply in the change set did not close its thread: %+v", res.Items)
+	if len(res.Open) != 0 {
+		t.Fatalf("a reply in the change set did not close its thread: %+v", res.Open)
 	}
 
-	// Once it is behind the cursor, it is invisible to this run, and the edited note is
-	// shown again. Shown -- not lost: it is in the listing and in the open list.
+	// Once it is behind the cursor, the edited note is shown again. Shown -- not lost.
 	res, err = InboxSince(root, c, me, []string{"from-stella/old.md"}, nil, 40, LegacyLine{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(res.Items) != 1 || res.Items[0].Note.Header.ID != "stella-abcdef012345" || len(res.Open) != 1 {
-		t.Fatalf("the re-show is not what the docs say it is: items=%+v open=%+v", res.Items, res.Open)
+	if len(res.Open) != 1 || res.Open[0].ID != "stella-abcdef012345" {
+		t.Fatalf("the re-show is not what the docs say it is: %+v", res.Open)
 	}
 
-	// The repair check --full names, applied: one catalogue line for the hand-written
-	// reply, and the thread is closed again from a line scan.
-	write(t, root, "from-rowan/INDEX", "rowan-333333333333\tfrom-rowan/answer.md\t2026-09-07T01:00:00Z\tStella\tstella-abcdef012345\n")
-	res, err = InboxSince(root, c, me, []string{"from-stella/old.md"}, nil, 40, LegacyLine{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(res.Items) != 0 || len(res.Open) != 0 {
-		t.Fatalf("a catalogue line for the hand-written reply did not close the thread: %+v", res.Items)
-	}
-
-	// And check says so, in a warning that names what it costs in one's own lane.
+	// And a full read settles it: the reply is on the table, so the note is answered and the
+	// list a `--full --advance` writes does not hold it.
 	tab := loadTable(t, root)
+	if entries := OpenFromFull(tab.Inbox(me, 40), tab.Unreadable(me.Lane)); len(entries) != 0 {
+		t.Fatalf("a full read did not settle an answered note: %+v", entries)
+	}
+
+	// The catalogue warning still says what a missing INDEX line costs, because the
+	// catalogue is still what `check --since` resolves a thread through.
 	if err := os.Remove(filepath.Join(root, "from-rowan", "INDEX")); err != nil {
 		t.Fatal(err)
 	}
@@ -401,8 +568,8 @@ func TestAHandWrittenReplyBehindTheCursorReShowsTheNote(t *testing.T) {
 			found = p.Reason
 		}
 	}
-	if !strings.Contains(found, "re-appear as open") || !strings.Contains(found, "--rebuild-index") {
-		t.Fatalf("the warning does not say what a missing catalogue line costs in one's own lane: %q", found)
+	if !strings.Contains(found, "--rebuild-index") {
+		t.Fatalf("the warning does not name the repair: %q", found)
 	}
 }
 
@@ -587,11 +754,6 @@ The body.
 	if res.Legacy != 1 {
 		t.Fatalf("counted %d notes behind the line, want 1", res.Legacy)
 	}
-	for _, it := range res.Items {
-		if strings.Contains(it.Note.Path, "before-the-line") {
-			t.Fatal("a note behind the line is in the listing")
-		}
-	}
 	for _, e := range res.Open {
 		if strings.Contains(e.Path, "before-the-line") {
 			t.Fatal("a note behind the line is carried on the open list")
@@ -601,29 +763,42 @@ The body.
 		t.Fatalf("open = %+v, want only the note on the new side of the line", res.Open)
 	}
 	// A note already ON the open list from before the line was drawn leaves it too: the
-	// rule is about the note's date and not about how it arrived.
+	// rule is about the note's date and not about how it arrived -- and the date is read
+	// from the ENTRY, so no note is opened to draw the line over a carried one.
+	before := NoteParses()
 	res, err = InboxSince(root, c, me, nil,
-		[]OpenEntry{{ID: "stella-aaaaaaaaaaaa", Path: "from-stella/2026-08-01T0001Z-before-the-line.md"}}, 40, line)
+		[]OpenEntry{{ID: "stella-aaaaaaaaaaaa", Kind: OpenNote, From: "Stella", Addr: "to",
+			Date: "2026-08-01T00:01:00Z", Path: "from-stella/2026-08-01T0001Z-before-the-line.md",
+			Subject: "A note from before the table adopted the tool"}}, 40, line)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(res.Open) != 0 || res.Legacy != 1 {
 		t.Fatalf("a carried note behind the line stayed: open=%+v legacy=%d", res.Open, res.Legacy)
 	}
+	if got := NoteParses() - before; got != 0 {
+		t.Fatalf("drawing the line over a carried entry parsed %d notes, want 0", got)
+	}
+	// An entry with NO recorded date still falls on the same side as its note, because the
+	// day in its filename is read exactly as Note.legacyDay reads it.
+	_, covered := SplitLegacy([]OpenEntry{{Kind: OpenNote, Path: "from-stella/2026-08-01T0001Z-before-the-line.md"}}, line)
+	if covered != 1 {
+		t.Fatalf("an entry dated only by its filename was not covered by the line")
+	}
 
-	// The full read: the same rule, over the whole table.
+	// The full read: the same rule, over the whole table, through the same function.
 	tab := loadTable(t, root)
-	keep, covered := SplitLegacy(tab.Inbox(me, 40), line)
+	keep, covered := SplitLegacy(OpenFromFull(tab.Inbox(me, 40), tab.Unreadable(me.Lane)), line)
 	if covered != 1 {
 		t.Fatalf("the full walk left %d notes off, want 1", covered)
 	}
-	for _, it := range keep {
-		if strings.Contains(it.Note.Path, "before-the-line") {
-			t.Fatal("the full walk listed a note behind the line")
+	for _, e := range keep {
+		if strings.Contains(e.Path, "before-the-line") {
+			t.Fatal("the full walk carried a note behind the line")
 		}
 	}
 	// With no line at all, nothing is left off and the listing is what it always was.
-	if _, covered := SplitLegacy(tab.Inbox(me, 40), LegacyLine{}); covered != 0 {
+	if _, covered := SplitLegacy(OpenFromFull(tab.Inbox(me, 40), nil), LegacyLine{}); covered != 0 {
 		t.Fatalf("a run with no line left %d notes off", covered)
 	}
 	// A note whose date cannot be read AT ALL is never behind the line: a file that cannot
@@ -631,8 +806,9 @@ The body.
 	// a note nobody can date is to carry it.
 	files["from-stella/undated.md"] = "From: Stella\nTo: Rowan\nSubject: No date line, and no minute in the filename\n\nThe body.\n"
 	undated := loadTable(t, writeTable(t, files))
-	_, covered = SplitLegacy(undated.Inbox(me, 40), LegacyLine{Before: at("2030-01-01T00:00:00Z")})
-	if covered != len(undated.Inbox(me, 40))-1 {
-		t.Fatalf("an undated note was taken as older than the line: %d of %d left off", covered, len(undated.Inbox(me, 40)))
+	all := OpenFromFull(undated.Inbox(me, 40), nil)
+	_, covered = SplitLegacy(all, LegacyLine{Before: at("2030-01-01T00:00:00Z")})
+	if covered != len(all)-1 {
+		t.Fatalf("an undated note was taken as older than the line: %d of %d left off", covered, len(all))
 	}
 }

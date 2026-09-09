@@ -24,8 +24,8 @@ func hermetic(t *testing.T) {
 }
 
 var testIdentity = map[string]Identity{
-	"Rowan":  {Name: "Rowan", Email: "rowan@mas-bandwidth.com"},
-	"Stella": {Name: "Stella", Email: "stella@mas-bandwidth.com"},
+	"Rowan":  {Name: "Rowan", Email: "rowan@example.com"},
+	"Stella": {Name: "Stella", Email: "stella@example.com"},
 }
 
 // bareTable builds a bare repository holding a table with a roster on branch main, and
@@ -90,7 +90,7 @@ func TestCommitAndPushLandsANote(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.TrimSpace(who) != "Rowan <rowan@mas-bandwidth.com>" {
+	if strings.TrimSpace(who) != "Rowan <rowan@example.com>" {
 		t.Fatalf("the commit is authored by %q", strings.TrimSpace(who))
 	}
 }
@@ -429,7 +429,7 @@ func TestARejectedPushRecoversOnTheSecondAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "Rowan <rowan@mas-bandwidth.com>|Rowan <rowan@mas-bandwidth.com>"; strings.TrimSpace(who) != want {
+	if want := "Rowan <rowan@example.com>|Rowan <rowan@example.com>"; strings.TrimSpace(who) != want {
 		t.Fatalf("the replayed commit is author|committer %q, want %q: the identity comes from the roster on every invocation that records one", strings.TrimSpace(who), want)
 	}
 }

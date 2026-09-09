@@ -13,9 +13,9 @@ import (
 const rosterJSON = `{
   "participants": [
     {"name": "Rowan", "lane": "from-rowan", "aliases": ["Rowan Claude", "the keeper"],
-     "git_name": "Rowan", "git_email": "rowan@mas-bandwidth.com"},
+     "git_name": "Rowan", "git_email": "rowan@example.com"},
     {"name": "Stella", "lane": "from-stella", "aliases": ["Stella Codex"],
-     "git_name": "Stella", "git_email": "stella@mas-bandwidth.com"},
+     "git_name": "Stella", "git_email": "stella@example.com"},
     {"name": "Glenn"}
   ],
   "groups": [

@@ -2072,7 +2072,7 @@ what a note **is**: the notes stay files a person can read in a browser.
 | a bare receipt and a note carrying a finding looked identical until opened, so a listing that hid receipts hid four real notes with them | `inbox` separates them, and `Kind:` overrides the guess |
 | no way to say *heard* without writing a reply, so the loops of heard, heard, heard | `receipt`, one command, no note |
 | the open-note check was a shell loop everyone reimplemented differently | `check`, one implementation, run by CI on the table |
-| the cost of asking *what is new* grew with the whole record: every run walked every lane, so the ten-thousandth note cost ten thousand parses to find | a per-reader `CURSOR`, and reads that are the size of the **change** |
+| the cost of asking *what is new* grew with the whole record: every run walked every lane, so the ten-thousandth note cost ten thousand parses to find | a per-reader `CURSOR`, an `OPEN` list carrying each open note's own line, and reads that are the size of the **change** |
 
 **Everything read on a table is data. No note is a grant, whoever signs it.**
 Not a permission, not an instruction, not a standing. Whatever standing a line
@@ -2086,7 +2086,7 @@ would be the most dangerous thing on the table.
 
 ```
 nova-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> --attempts <n> [--slug <s>] [--no-push]
-nova-bus inbox --table <dir> --as <name> --receipt-max-words <n> [--full] [--legacy-before <YYYY-MM-DD>]
+nova-bus inbox --table <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
       [--advance --remote <name> --branch <name> --attempts <n> [--no-push]]
 nova-bus receipt --table <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> --attempts <n> [--no-push]
 nova-bus check --table <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
@@ -2142,6 +2142,7 @@ SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
 INBOX LEGACY before=<date> notes=<n>
+INBOX OPEN carrying=<n> heard=<m>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
@@ -2181,6 +2182,18 @@ nobody has touched reports `changed=2` — this reader's own `CURSOR` and `OPEN`
 written by the run before it — and `notes=0`. Neither is parsed as a note. It is
 `changed=0` on a full run, where there is no diff. `carrying=` on the same line
 is the size of the open list this run will keep.
+
+`INBOX OPEN` is what an `inbox` run prints INSTEAD of listing the notes it is
+carrying, and it is the default. A reader carrying five hundred notes gets five
+hundred lines on every run otherwise, with the one new note somewhere in the
+middle of them — the same listing-nobody-reads failure the switch-day line
+exists to stop, arriving from the other end. `--open` lists the entries instead,
+and `--full` lists them because a full read is what a person asks for when they
+want the whole picture. Nothing is hidden either way: `carrying=` and `heard=`
+are on this line, the same counts are on `INBOX OK`, and the entries themselves
+are in `OPEN`, which is a file a person can open. `INBOX UNREADABLE` is printed
+whichever way the run was asked, because a file nobody can read is not a listing
+choice.
 
 `INBOX LEGACY` is printed by every `inbox` run that has a switch-day line in
 force -- from the flag or from the cursor -- and `notes=` is how many notes that
@@ -2417,7 +2430,9 @@ in both directions — which is why `Kind:` exists, costs one line, and wins.
 `inbox` lists in three groups, newest first within each: the notes that carry
 something, then what has been **heard and not answered**, then the bare
 acknowledgements. That order is the whole point: the listing that hid receipts
-by clock hid four real notes with them.
+by clock hid four real notes with them. It lists them under `--open` and under
+`--full`; the default prints one `INBOX OPEN` line for what is being carried, and
+the reason is in the output grammar above.
 
 **Heard is not answered**, and the middle group exists because collapsing them
 lost the state the table's people are in most often. A note I receipted is a
@@ -2433,6 +2448,12 @@ the caller — it has no `To:` line to read — and it does not pretend to. Drop
 them, which is what it used to do, was the same failure as a lost push with a
 quieter cause: a note somebody wrote, on the table, that its reader is never
 told is there.
+
+**And it is named on every run, not once.** An unreadable file goes on the
+caller's `OPEN` list as an `unreadable` entry and is re-checked until it parses or
+is receipted. Naming it on a `--full` read and leaving it off the list — which is
+what the first version did — was the same failure with a slower fuse: told once,
+and then never again by any incremental run.
 
 ### The push protocol
 
@@ -2508,7 +2529,8 @@ success: the note is not on the table until it is pushed.
 
 Glenn's requirement, verbatim: *"Make sure the bus tool is O(n) where n is the
 number of new messages to be read, instead of O(m) where m is all messages sent
-so far. This way it maintains performance over time."*
+so far. This way it maintains performance over time."* And, on reading the
+version that answered it: *"O(new + open) is not great. Can we make it O(new)."*
 
 The first version walked every lane on every `inbox` and every `check`. That is
 correct and it rots: the cost of asking **what is new** rose with the whole
@@ -2517,10 +2539,19 @@ used, which is the one failure mode a tool for a growing table cannot have. Thre
 files fix it, all of them in a lane, all of them rebuildable from the notes, none
 of them authoritative about anything.
 
+The second requirement is the other half, and it is what `OPEN v2` below is for.
+The first version's read was `new + open` parses, because every note on the open
+list was re-opened on every run — to print its sender, its date and its subject,
+and to decide whether it was a receipt. A reader carrying five hundred notes paid
+five hundred parses to be told nothing new, forever, and *forever* is the word:
+the open list is the one thing here that does not shrink on its own. So each
+entry now carries the line its note prints as, written **once**, when the note
+goes open. A run parses the notes that are NEW and nothing else.
+
 | file | whose | what it holds |
 |---|---|---|
 | `from-<me>/CURSOR` | one reader's | one line: the commit I last read to, and when |
-| `from-<me>/OPEN` | one reader's | one line per note I have been shown and have not answered |
+| `from-<me>/OPEN` | one reader's | one line per note I have been shown and have not answered — its whole display line, and whether I have heard it |
 | `from-<lane>/INDEX` | one lane's | one line per note that lane has sent: id, path, date, To, Re |
 
 They are files a person can read, like everything else on the table. Blank lines
@@ -2530,13 +2561,56 @@ and `#` comments are ignored in all three.
 from-rowan/CURSOR
 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a 2026-09-09T14:05:00Z open=2 legacy=2026-09-10
 
-from-rowan/OPEN
-stella-111111111111 from-stella/2026-09-09T1300Z-heard-111111111111.md
-- from-stella/a-note-written-before-ids.md
+from-rowan/OPEN   (tab-separated, after a version line)
+OPEN v2
+stella-111111111111	receipt	-	Stella	to	2026-09-09T13:00:00Z	from-stella/2026-09-09T1300Z-heard-111111111111.md	Heard
+stella-222222222222	note	heard	Stella	to	2026-09-09T14:00:00Z	from-stella/2026-09-09T1400Z-the-windows-runner-222222222222.md	The Windows runner skips three steps
+-	note	-	Stella	cc	-	from-stella/a-note-written-before-ids.md	Written before there were ids
+-	unreadable	-	-	-	-	from-stella/2026-09-07T0009Z-prose.md	-
 
 from-stella/INDEX   (tab-separated)
 stella-abcdef012345	from-stella/2026-09-07T0001Z-a-question-abcdef012345.md	2026-09-07T00:01:00Z	Rowan;Glenn	-
 ```
+
+**The `OPEN v2` grammar.** The first meaningful line is exactly `OPEN v2` and
+nothing else. Every line after it is one entry, **eight tab-separated fields**,
+each rendered through `internal/oneline` so a subject holding a tab or a newline
+cannot make one record look like two, and an absent value written `-` rather than
+left empty so no line ends in an invisible tab. That is the same shape, and the
+same two reasons, as an `INDEX` line.
+
+```
+<id|->  <kind>  <heard|->  <from|->  <addr|->  <date|->  <path>  <subject|->
+```
+
+- **id** — the note's id, or `-` for a legacy note, which is addressed by path;
+- **kind** — `note`, `receipt` or `unreadable`, decided when the note went open.
+  `receipt` is the receipt heuristic's answer or a `Kind:` line's, taken once:
+  the body is not read again, so the threshold that classified an entry is the
+  one it keeps until a `--full` read;
+- **heard** — `heard` when my `RECEIPTS` records the note, `-` otherwise. Heard
+  is still not answered: the entry stays and leaves the open count;
+- **from** — the resolved sender's name; **addr** — `to` or `cc`;
+- **date** — the note's moment, RFC 3339 in UTC, or `-` for a note with none;
+- **path** — repo-relative, always present, and the only field an `unreadable`
+  entry has;
+- **subject** — the note's subject.
+
+Nothing computes from those fields but the switch-day line, which reads **date**
+(falling back to a `YYYY-MM-DD` at the front of the filename, exactly as the note
+itself is dated for that comparison). The rest are the listing.
+
+**The version line is load-bearing and is the one refusal this format adds.** A
+v1 entry was `<id or -> <path>`; read as a v2 line it is one field — a path with
+no kind, no date and no subject — which a run would print as a note nobody sent
+and carry forever. The cursor cannot catch that: a v1 `OPEN` beside a counted
+cursor is exactly the state a healthy v2 reader is in. So the file says its own
+version, and an `OPEN` without it is `INBOX REFUSED`, exit 1, **naming
+`--full --advance`** — the same repair, and the same words, as an `OPEN` that
+went missing. `check` reports it as a `BUS FAIL` on the same file, so a table
+carrying one is not a silence only its own reader ever meets. The **cursor**
+format is untouched: a two-token cursor still reads, and this version writes no
+token an older one would refuse.
 
 `CURSOR` writes the sha first, the stamp second — the other way round from a
 receipt line, because a cursor's subject is the commit and the time is
@@ -2554,23 +2628,27 @@ rule the commit is required to be hex there: a `CURSOR` is an ordinary file on a
 shared table and its contents become a decision. See **deleting one of the
 three** below for why a cursor counts another file's contents, and **the
 switch-day line** for why it carries a date.
-`OPEN`'s first token is the id, or `-` for a legacy note, and the rest of the
-line is the path, which is the receipt line's trick and is there so a legacy
-filename holding a space still reads. `INDEX`'s five fields are id, path, date,
+`OPEN`'s own grammar is above. `INDEX`'s five fields are id, path, date,
 resolved recipients (`To` then `Cc`, `;`-joined), and `Re` targets; each is
 escaped through `internal/oneline`, and an absent value is `-` rather than empty.
 
 **The property, stated as a property.**
 
-> `inbox` parses **new + open** note files, where *new* is the number of note
-> files added or modified on the table since this reader's cursor and *open* is
-> the number of notes this reader has already been shown and has not yet
-> answered. It parses **no other note file**, whatever the table's history holds.
+> `inbox` parses exactly the **new** note files: the ones added or modified on
+> the table since this reader's cursor. It parses **no other note file** —
+> whatever the table's history holds, and whatever this reader is carrying open.
 
-Ten thousand notes and one new one is **one parse**, and the same is true at a
-hundred thousand. `n` in Glenn's sentence is *new*; `open` is bounded by what one
-reader owes rather than by what the table holds, and it shrinks every time
-somebody answers something.
+Ten thousand notes and one new one is **one parse**. Ten thousand notes, five
+hundred of them open for this reader, and one new one is still **one parse**.
+`n` in Glenn's sentence is *new*, and *open* is no longer added to it: an open
+note costs the bytes of its line in one file and nothing else.
+
+The **one** entry that still costs a parse per run is an `unreadable` one, and
+it costs one parse for itself and for nothing else. A file this tool cannot read
+has no `To:` line, so it cannot be listed as a note and cannot be dropped either;
+it is re-checked on every run until it parses or is receipted. That is the price
+of not losing it, it is bounded by how many broken files a table holds, and both
+counts are printed.
 
 **The command that proves it**, and the shape of the proof:
 
@@ -2578,12 +2656,16 @@ somebody answers something.
 go test -race ./cmd/nova-bus -run TestInboxParsesOnlyWhatIsNewSinceTheCursor
 ```
 
-A table of 10,000 generated notes plus one new one. The package counts every call
-to `ParseNote` (`bus.NoteParses`, instrumentation, read by nothing but a test),
-and the test asserts the **count** across one run is exactly 1. It asserts a
-count and never a wall time, deliberately: a timing assertion on a shared runner
-is a flake, and on a fast enough machine it passes over a quadratic
-implementation, which is the failure it was written to catch.
+A table of 10,000 generated notes, **500 of them open** for this reader, plus one
+new one. The package counts every call to `ParseNote` (`bus.NoteParses`,
+instrumentation, read by nothing but a test), and the test asserts the **count**
+across one run is exactly 1 — twice, once with `--open` and once without, because
+printing the open list is a choice and neither choice may cost a parse — and then
+once more from the other side: a reply that **closes** an open entry is also
+exactly 1, so closing is driven by the new notes rather than by a walk of what is
+carried. It asserts a count and never a wall time, deliberately: a timing
+assertion on a shared runner is a flake, and on a fast enough machine it passes
+over a quadratic implementation, which is the failure it was written to catch.
 
 **How `inbox --as <me>` spends that budget.** It reads `CURSOR`; validates that
 the commit is an ancestor of `HEAD`; runs
@@ -2594,9 +2676,25 @@ git diff --name-only -z --diff-filter=AM --no-renames <cursor>..HEAD -- ':(glob)
 
 which costs the size of the change and not the length of the history, because git
 stops at every subtree whose object id is equal on both sides; parses only the
-files that names; reads `OPEN` and `RECEIPTS`; prints **OPEN ∪ new**; and then,
-under `--advance`, writes the new `OPEN`, moves `CURSOR` to `HEAD`, and commits
-and pushes both.
+files that names; reads `OPEN`; prints **OPEN ∪ new**; and then, under
+`--advance`, writes the new `OPEN`, moves `CURSOR` to `HEAD`, and commits and
+pushes both.
+
+**Closing is driven by the new notes, and by nothing else.** One walk of the
+change set answers both questions a run has to answer about what it is carrying:
+
+- a note of **mine** in the change set carrying `Re: <id or path>` closes the
+  open entry it names — by id, or by path, which is how a note written before ids
+  is answered and stays answered;
+- my own **`RECEIPTS`** in the change set — which is exactly the runs on which I
+  have receipted something since my cursor — is read whole, a line scan, and sets
+  the `heard` flag on the entries it names. `RECEIPTS` stays the durable record
+  and `receipt` still appends to it; what changed is that it is not re-read on
+  every run for a fact that changes about once a day, and a `--full` read
+  rebuilds every flag from it.
+
+Neither my lane's `INDEX` nor my `RECEIPTS` is read on a run where they did not
+change. The first version read both whole, every run, forever.
 
 Every part of that git command line is load-bearing and each one was a bug
 first. `--diff-filter=AM` because a deleted note is not a new note.
@@ -2614,28 +2712,48 @@ it arrives. Without a memory, either the cursor could never move past an
 unanswered note — and the read would be O(history) again by the first slow week —
 or an unanswered note would be shown once and then vanish while still being owed
 a reply. `OPEN` is that memory and is the reason the cursor is allowed to move at
-all: a note enters it when it is first shown, leaves it when a reply of mine
-carries its id or its path on a `Re:` line, and is *kept* when I merely receipted
-it, because heard is not answered. `RECEIPTS` is read whole on every run — one
-short line per note I have ever heard, a line scan and never a parse — which is
-what makes **heard** outlive a cursor that has moved past the receipt. My own
-lane's `INDEX` is read whole for the same reason and at the same cost: it carries
-the `Re` targets of every note I have sent, so a note I answered last month and
-that somebody merely EDITED today does not come back into my open list because
-the reply that closed it is behind the cursor.
+all: a note enters it when it is first shown — carrying the line it prints as —
+leaves it when a reply of mine carries its id or its path on a `Re:` line, and is
+*kept* when I merely receipted it, because heard is not answered.
 
-**The limit of that, exactly: re-show, never loss.** The catalogue holds the
-replies `send` wrote. A reply written **by hand** — in a browser, which this
-table's whole form exists to allow — has no `INDEX` line, so `answered` cannot see
-it once it falls behind the cursor: `answered` is my lane's `INDEX` plus my own
-files in the change set, and a hand-written reply behind the cursor is in
-neither. An edit to the note it answered therefore puts that note back in my open
-list and I am shown it again. The direction is the whole of what matters — a
-reader is asked twice, never told a note is answered when it is not and never
-shown one less than they are owed — and the repair is the one `check` already
-names: `check --full` reports every note with no `INDEX` line as a `BUS WARN`,
-saying in its own text what a missing line costs in one's own lane, and
-`--rebuild-index` writes them.
+**The limit of that, exactly: re-show, never loss.** `answered` is built from the
+change set alone, which is what makes the read O(new). So a reply of mine that has
+fallen **behind my cursor** cannot close a thread on a later run: if somebody edits
+the note it answered, that note comes back into my open list and I am shown it
+again. The direction is the whole of what matters — a reader is asked twice, never
+told a note is answered when it is not and never shown one less than they are owed
+— and the settlement is a `--full` read, which derives the list from the whole
+table, where the reply is a note like any other.
+
+This is a **widening** of a limit that was already here, and the trade is worth
+stating as a trade. Before `OPEN v2` the catalogue was read whole on every run, so
+a reply `send` wrote kept closing its thread indefinitely and only a
+**hand-written** one — a reply typed in a browser, which this table's whole form
+exists to allow — had this shape. What that cost was a line scan of my entire
+sending history, on every run, forever. What it bought was not being asked twice
+about a note somebody edited after I had answered it. The second is smaller than
+the first, and only the first grows.
+
+The catalogue is still what `check --since` resolves a thread through, and
+`check --full` still reports every note with no `INDEX` line as a `BUS WARN`,
+saying what a missing line costs, with `--rebuild-index` as the repair.
+
+**An open note whose FILE was deleted stays on the list**, printed from the
+snapshot in `OPEN`, until a `--full` read rebuilds the list without it. A deletion
+is not in the change set at all (`--diff-filter=AM`), and finding one would cost a
+stat per open note, which is the O(open) this design exists to remove. Nothing in
+this tool deletes a note; what a reader gets is a stale line rather than a missing
+note.
+
+**An unreadable file is CARRIED**, as an `unreadable` entry, and is named on every
+run until it parses or is receipted. It used to be named once by a `--full` read
+and left off the open list, which meant no incremental run ever mentioned it
+again: a file somebody wrote, on the table, that its reader is told about exactly
+once and then never. It costs **one parse per run, for itself** — the only
+re-parse left in the read, said here rather than left to be measured. It leaves
+the list when the file parses, becoming an ordinary entry if it turns out to be
+addressed to me and going quietly if it is not, or when I receipt it, which is how
+a reader says *I have seen this file* about something with no id to answer.
 
 **Deleting one of the three is not symmetric**, and an earlier revision of this
 document said it was. `CURSOR` alone: delete it and the next run is a full one,
@@ -2720,12 +2838,15 @@ SINCE. Every run after that is `inbox --as <you> --advance …` with no flag at
 all.
 
 **What is still O(m), stated rather than left to be discovered.** The claim above
-is about *note files parsed*, and it holds exactly. These are the costs that are
-not parses and do grow with the record:
+is about *note files parsed*, and it holds exactly: an `inbox` run is **O(new)
+parses plus O(open) bytes of one file** — its own `OPEN`, read and written whole,
+one short line per note this reader owes. These are the costs that are not parses
+and do grow with the record:
 
-- **my own lane's `INDEX` and `RECEIPTS` are read whole**, every run: one line per
-  note I have sent and one per note I have ever heard. A line scan, no parse, one
-  file each — but O(my own history) in time and memory, not a constant;
+- **a `--full` read walks and parses the whole table**, and reads my own lane's
+  `INDEX` and `RECEIPTS` whole with it. That is the adoption run, the repair run
+  and CI on main, and it is O(the table) on purpose; the incremental read reads
+  neither of those files on a run where they did not change;
 - **`check --since` reads EVERY lane's `INDEX`**, not just mine, because id
   uniqueness and `Re:` resolution are claims across the table. That is O(all notes
   ever sent by anybody) in time and in memory, and calling it "a lookup over a few
@@ -2744,8 +2865,8 @@ not parses and do grow with the record:
   per entry and not a file read, and it is the reason this section says the cost
   is the size of the change *in parses*.
 
-None of the four is a walk of the history and none of them opens a note. They are
-named here because a performance claim that hides its own exceptions is the same
+Only the first of the four opens a note, and it is the run that is *asked* to.
+They are named here because a performance claim that hides its own exceptions is the same
 shape of lie as a listing that does not say what it looked at.
 
 **The three are written by RENAME, never in place.** Every one of them is a file
@@ -2860,8 +2981,20 @@ receipt line parses and names something that exists; every `from-*` lane on disk
 has an owner in the roster; every `CURSOR`, `OPEN` and `INDEX` on the table
 parses, because a malformed one is a reader who will refuse on their next run
 with nothing on the table saying why; and a lane holds notes, its `RECEIPTS`,
-`CURSOR`, `OPEN` and `INDEX`, and nothing else. It reports **every** finding in
-one run, not the first.
+`CURSOR`, `OPEN` and `INDEX`, a `README.md`, and nothing else. It reports
+**every** finding in one run, not the first.
+
+**A lane's `README.md` is not a note**, and until this was written it was read as
+one: it ends in `.md`, it sits in a lane, so the walk parsed it, failed, told
+every reader `INBOX UNREADABLE` about it forever, and failed `check` at every
+date — it was the one file on the family's own table the legacy tolerance could
+not forgive, because a README genuinely cannot say when it was written and
+genuinely is not a note. So a lane may hold exactly one non-note, non-state file,
+under exactly that name: the file a person opening the lane in a browser reads
+first. It is not a note, not a stray, and never in a listing. The list is ONE name
+and is not a general licence — a `NOTES.md` in a lane is a stray like any other,
+because a tolerance whose width is *whatever looks like documentation* is not a
+rule.
 
 Under `--full` it also holds the catalogue to the notes, in both directions. An
 `INDEX` line naming a note that is not there, or giving it an id the note does
@@ -2942,9 +3075,10 @@ and by nothing else, deliberately: the note's moment orders the listing, fills a
 catalogue's `Date` field and prints `at=`, so widening THAT would rewrite records
 and put every `INDEX` line already on a table at odds with its note. A file with
 no day anywhere — no `Date:` line and no date in its name — still fails at every
-date, and on the family's table exactly one file does: a `README.md` somebody
-committed inside a lane, which is a finding a person should act on rather than a
-note the history made unavoidable.
+date. On the family's table exactly one file did: a `README.md` somebody
+committed inside a lane — which turned out to be a finding about this tool rather
+than about the table, and is now a file a lane is allowed to hold. See **check —
+what it asserts**.
 
 ### Legacy compatibility
 

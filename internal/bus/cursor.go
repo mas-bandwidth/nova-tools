@@ -28,7 +28,8 @@ import (
 // receipt is, under the same identity and the same fetch-rebase-retry.
 //
 //	CURSOR  one line: the commit this reader last read to, and when they read it.
-//	OPEN    one line per note this reader has been shown and has not yet answered.
+//	OPEN    one line per note this reader has been shown and has not yet answered,
+//	        carrying the line that note prints as -- see OpenEntry.
 //	INDEX   one line per note this lane has SENT: id, path, date, To, Re.
 //
 // CURSOR and OPEN are a reader's own bookkeeping. INDEX is a lane's catalogue, and it is
@@ -57,9 +58,33 @@ const (
 	IndexName = "INDEX"
 )
 
-// laneStateFiles is every non-note file a lane may hold. A lane holds notes, these, and
-// nothing else; anything else is a stray and check says so.
+// laneStateFiles is every state file a lane may hold. A lane holds notes, these, its
+// README, and nothing else; anything else is a stray and check says so.
 var laneStateFiles = []string{ReceiptsName, CursorName, OpenName, IndexName}
+
+// LaneDocName is the one file in a lane that is neither a note nor a state file and is
+// still allowed there.
+//
+// A README.md IS NOT A NOTE, and until this was written it was read as one: it ends in
+// `.md`, it sits in a lane, so the lane walk parsed it, it had no `From:` line, and every
+// reader on the table was told `INBOX UNREADABLE` about it forever while `check` failed the
+// whole table over it. On the family's own table it was the single file that failed at every
+// date -- the one finding the legacy tolerance could not forgive, because a README genuinely
+// cannot say when it was written and genuinely is not a note.
+//
+// So a lane may hold exactly one non-note, non-state file: `README.md`, the file a person
+// opening the lane in a browser reads first. It is stepped over by the lane walk, by the
+// incremental check and by the change-set read alike. The list is ONE name and is not a
+// general licence: a `NOTES.md` or a `readme.md` in a lane is a stray like any other,
+// because a tolerance whose width is "whatever looks like documentation" is not a rule.
+const LaneDocName = "README.md"
+
+// laneAllowedFiles is what check's refusal names when it finds something else: the state
+// files and the README, in the order a person meets them.
+var laneAllowedFiles = append(append([]string{}, laneStateFiles...), LaneDocName)
+
+// isLaneDoc reports whether a name is the one allowed non-note document in a lane.
+func isLaneDoc(name string) bool { return name == LaneDocName }
 
 // TempSuffix is what replaceLaneFile writes through before it renames. A run killed
 // between the write and the rename leaves one behind, so the name is reserved rather than
@@ -255,16 +280,59 @@ func WriteCursor(root, lane, commit string, open int, legacy string, now time.Ti
 	return replaceLaneFile(root, CursorPath(lane), line+"\n")
 }
 
-// OpenEntry is one note a reader has been shown and has not yet answered.
+// OpenKind is what one open entry IS, decided once when the note went open and recorded,
+// so that a later run can print the entry without opening the note again.
+type OpenKind string
+
+const (
+	// OpenNote is a note that carries something: a question, a finding, a request.
+	OpenNote OpenKind = "note"
+	// OpenReceipt is a bare acknowledgement, by the receipt heuristic or by a Kind line.
+	OpenReceipt OpenKind = "receipt"
+	// OpenUnreadable is a file on the table this tool could not parse. It is CARRIED
+	// rather than dropped: see the comment on OpenEntry.
+	OpenUnreadable OpenKind = "unreadable"
+)
+
+func validOpenKind(k OpenKind) bool {
+	return k == OpenNote || k == OpenReceipt || k == OpenUnreadable
+}
+
+// OpenEntry is one note a reader has been shown and has not yet answered -- and, since
+// OPEN v2, the whole of the line that note prints as.
 //
-// It carries the PATH as well as the id so that rendering the open list costs one file
-// open per open note and no lookup anywhere: the whole point of this machinery is that
-// reading the inbox does not touch the table's history, and an id that had to be resolved
-// through somebody else's INDEX would put a scan back in the middle of it.
+// WHY THE ENTRY CARRIES THE DISPLAY AND NOT JUST THE PATH. Glenn's requirement, verbatim:
+// "O(new + open) is not great. Can we make it O(new)." Under v1 an entry was `<id> <path>`,
+// so every run re-opened and re-parsed every open note -- to print its sender, its date and
+// its subject, and to decide whether it was a receipt. A reader carrying five hundred notes
+// paid five hundred parses to be told nothing new. The fix is to write the display line ONCE,
+// when the note goes open, and to print later runs' open list from this file: a read is then
+// the size of what is NEW in parses, plus the bytes of one small file.
+//
+// What that costs, named rather than discovered: these fields are a SNAPSHOT taken when the
+// note went open. A note whose subject is edited afterwards keeps the subject it had when it
+// arrived, until an edit puts it back in the change set (which re-parses it) or a `--full`
+// read rewrites the list. That is the same direction every other cache here fails in: a
+// reader sees what they were shown, never less than they are owed.
 type OpenEntry struct {
 	// ID is the note's id, or "" for a legacy note, which is addressed by path.
 	ID string
-	// Path is repo-relative and is always present.
+	// Kind is what the note is, decided when it went open.
+	Kind OpenKind
+	// Heard is set when this reader's RECEIPTS records the note. Heard is not answered: a
+	// heard note stays on the list and leaves the open count, and the flag lives HERE so
+	// that RECEIPTS does not have to be read whole on a run that changed nothing.
+	Heard bool
+	// From is the resolved sender's name, Addr is "to" or "cc", Date is the note's moment
+	// as RFC 3339 in UTC (or "" when it has none), and Subject is its subject. All four are
+	// for the listing and nothing computes from them but the switch-day line, which reads
+	// Date. They are "" on an unreadable entry, which has no header to read them from.
+	From    string
+	Addr    string
+	Date    string
+	Subject string
+	// Path is repo-relative and is always present. It is the only field an unreadable entry
+	// has, and it is what every entry is ultimately identified by.
 	Path string
 }
 
@@ -277,11 +345,32 @@ func (e OpenEntry) Target() string {
 	return e.Path
 }
 
-// ReadOpen reads a lane's OPEN list. A lane with no OPEN file has nothing open.
+// OpenHeader is the first line of an OPEN file, and the whole of the version handshake.
 //
-// The line is `<id or -> <path>`: the first token holds no spaces, so the rest of the line
-// is the path and a legacy filename with a space in it still reads correctly. That is the
-// same shape a RECEIPTS line has, for the same reason.
+// It is here because the format CHANGED under readers that already have one: a v1 entry is
+// `<id or -> <path>`, a v2 entry is eight tab-separated fields, and a v1 line read as v2
+// would be one field -- a path with no id, no kind and no date, which a run would then print
+// as a note nobody sent and carry forever. The cursor could not catch it either: a v1 OPEN
+// beside a counted cursor is exactly the state a healthy v2 reader is in. So the file says
+// its own version on its first line, a file without it is refused at the read, and the
+// refusal names `--full --advance`, which writes the list again from the whole table. That
+// is the same repair, and the same words, as an OPEN that went missing.
+const OpenHeader = "OPEN v2"
+
+// openFields is how many tab-separated fields an open entry has:
+//
+//	<id|->  <kind>  <heard|->  <from|->  <addr|->  <date|->  <path>  <subject|->
+//
+// Tabs and one-line escaping, the same as INDEX and for the same reason: a subject holding
+// a tab or a newline cannot make one record look like two. An absent value is "-" and never
+// empty, so no line ends in an invisible tab.
+const openFields = 8
+
+// openHeardToken is what the heard flag looks like when it is set. A word rather than a 1,
+// because the file is read by people as often as by this tool.
+const openHeardToken = "heard"
+
+// ReadOpen reads a lane's OPEN list. A lane with no OPEN file has nothing open.
 func ReadOpen(root, lane string) ([]OpenEntry, error) {
 	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(OpenPath(lane))))
 	if errors.Is(err, os.ErrNotExist) {
@@ -290,34 +379,79 @@ func ReadOpen(root, lane string) ([]OpenEntry, error) {
 	if err != nil {
 		return nil, err
 	}
+	rows := records(string(raw))
+	if len(rows) == 0 || rows[0].text != OpenHeader {
+		return nil, fmt.Errorf("%s: this open list does not begin with %q, so it was written by a version of this tool whose entries were %s and cannot be read as the display lines this one prints from; read once with --full --advance, which writes the list again from the whole table",
+			OpenPath(lane), OpenHeader, "<id or -> <path>")
+	}
 	var out []OpenEntry
-	for _, r := range records(string(raw)) {
-		id, path, ok := strings.Cut(r.text, " ")
-		path = strings.TrimSpace(path)
-		if !ok || path == "" {
-			return nil, fmt.Errorf("%s: line %d: an open entry is <id or -> <path>", OpenPath(lane), r.line)
+	for _, r := range rows[1:] {
+		fields := strings.Split(r.text, "\t")
+		if len(fields) != openFields {
+			return nil, fmt.Errorf("%s: line %d: an open entry is %d tab-separated fields (id, kind, heard, from, addr, date, path, subject), got %d", OpenPath(lane), r.line, openFields, len(fields))
 		}
-		if id == "-" {
-			id = ""
-		} else if err := ValidID(id); err != nil {
-			return nil, fmt.Errorf("%s: line %d: %w", OpenPath(lane), r.line, err)
+		e := OpenEntry{
+			ID:      undash(fields[0]),
+			Kind:    OpenKind(fields[1]),
+			Heard:   fields[2] == openHeardToken,
+			From:    undash(fields[3]),
+			Addr:    undash(fields[4]),
+			Date:    undash(fields[5]),
+			Path:    undash(fields[6]),
+			Subject: undash(fields[7]),
 		}
-		out = append(out, OpenEntry{ID: id, Path: path})
+		if e.Path == "" {
+			return nil, fmt.Errorf("%s: line %d: an open entry names no path", OpenPath(lane), r.line)
+		}
+		if !validOpenKind(e.Kind) {
+			return nil, fmt.Errorf("%s: line %d: %q is not one of %s, %s, %s", OpenPath(lane), r.line, truncate(fields[1], 40), OpenNote, OpenReceipt, OpenUnreadable)
+		}
+		if fields[2] != openHeardToken && fields[2] != "-" {
+			return nil, fmt.Errorf("%s: line %d: the heard flag is %q or -, got %q", OpenPath(lane), r.line, openHeardToken, truncate(fields[2], 40))
+		}
+		if e.ID != "" {
+			if err := ValidID(e.ID); err != nil {
+				return nil, fmt.Errorf("%s: line %d: %w", OpenPath(lane), r.line, err)
+			}
+		}
+		out = append(out, e)
 	}
 	return out, nil
+}
+
+// OpenLine renders one open entry.
+func OpenLine(e OpenEntry) string {
+	heard := "-"
+	if e.Heard {
+		heard = openHeardToken
+	}
+	return strings.Join([]string{
+		oneline.Escape(orDash(e.ID)),
+		oneline.Escape(orDash(string(e.Kind))),
+		heard,
+		oneline.Escape(orDash(e.From)),
+		oneline.Escape(orDash(e.Addr)),
+		oneline.Escape(orDash(e.Date)),
+		oneline.Escape(orDash(e.Path)),
+		oneline.Escape(orDash(e.Subject)),
+	}, "\t")
 }
 
 // WriteOpen replaces a lane's OPEN list, in the order given. Callers keep the survivors in
 // the order they were already in and append what is new, so the file's diff between two
 // runs is the notes that actually opened and closed.
+//
+// Nothing open still REMOVES the file rather than leaving the header alone in it: absent and
+// nothing-open are one state on disk, which is the invariant the cursor's `open=` count is
+// checked against.
 func WriteOpen(root, lane string, entries []OpenEntry) error {
+	if len(entries) == 0 {
+		return replaceLaneFile(root, OpenPath(lane), "")
+	}
 	var b strings.Builder
+	b.WriteString(OpenHeader + "\n")
 	for _, e := range entries {
-		id := e.ID
-		if id == "" {
-			id = "-"
-		}
-		b.WriteString(id + " " + e.Path + "\n")
+		b.WriteString(OpenLine(e) + "\n")
 	}
 	return replaceLaneFile(root, OpenPath(lane), b.String())
 }

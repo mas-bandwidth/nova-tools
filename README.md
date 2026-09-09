@@ -326,15 +326,19 @@ nova-bus inbox --table ~/table --as Rowan --receipt-max-words 40 \
   --advance --remote origin --branch main --attempts 3
 ```
 
-It lists in three groups — the notes that carry a question, a finding or a
-request; then what you have already said *heard* to and still owe an answer; then
-the bare acknowledgements — and names every file it could not parse rather than
-dropping it. `--receipt-max-words` is the threshold for guessing which is which,
-and it comes from you because it is a property of how your table writes; a
-`Kind: receipt` or `Kind: note` line in a header overrides the guess and always
+By default it prints one `INBOX OPEN carrying=<n> heard=<m>` line for what you are
+carrying, plus anything new and anything it could not read. **`--open`** lists the
+open notes themselves, and `--full` lists them too. The listing is three groups —
+the notes that carry a question, a finding or a request; then what you have
+already said *heard* to and still owe an answer; then the bare acknowledgements —
+and every file it could not parse is named rather than dropped, on every run,
+whichever way you asked. `--receipt-max-words` is the threshold for guessing which
+is which, and it comes from you because it is a property of how your table writes;
+a `Kind: receipt` or `Kind: note` line in a header overrides the guess and always
 wins. It **reports** and exits 0 whether the inbox is empty or full. It
-**refuses** a name the roster does not know, a name with no lane, and a cursor
-that is no longer on this history. Without `--advance` it writes nothing at all.
+**refuses** a name the roster does not know, a name with no lane, a cursor that is
+no longer on this history, and an `OPEN` list written by a version before this
+one. Without `--advance` it writes nothing at all.
 
 `--legacy-before <YYYY-MM-DD>` is the switch-day line, and a table that existed
 before this tool needs it once: a note dated before that UTC date is **not
@@ -368,8 +372,10 @@ nova-bus check --table ~/table --full
 Every note parses, every header resolves against the roster, every note sits in
 the lane its `From:` names, every id is well formed and unique, every `Re:` and
 every receipt names something that exists, every lane has an owner and holds
-nothing but notes and its state files. It reports **every** finding in one run,
-not the first, and asserts **nothing** about a note's body. It **refuses** to
+nothing but notes, its state files and a `README.md` — which is the one non-note
+document a lane may hold, and is not read as a note by anything. It reports
+**every** finding in one run, not the first, and asserts **nothing** about a
+note's body. It **refuses** to
 guess what to check: give it `--full`, `--as <name>` or `--since <commit>`.
 
 **`names`** — echo the roster, so you can spell a `To:` line the tool will
@@ -394,6 +400,7 @@ SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
 INBOX LEGACY before=<date> notes=<n>
+INBOX OPEN carrying=<n> heard=<m>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
@@ -432,21 +439,32 @@ commit they last read to — in their own lane, and a run reads `git diff` from
 there, so the work is the size of what changed and not the size of what the table
 holds:
 
-> `inbox` parses **new + open** note files: the notes added or modified since
-> your cursor, plus the notes you have already been shown and have not yet
-> answered. It parses no other note file, whatever the history holds.
+> `inbox` parses exactly the **new** note files: the ones added or modified since
+> your cursor. It parses no other note file — whatever the history holds, and
+> whatever you are carrying open.
 
-Ten thousand notes on the table and one new one is **one parse**. Three files in
-a lane make that work, and all three are rebuildable from the notes:
+Ten thousand notes on the table and one new one is **one parse**. Ten thousand
+notes, five hundred of them open for you, and one new one is still **one parse**:
+each open note carries its own line, so listing what you are carrying opens
+nothing. Three files in a lane make that work, and all three are rebuildable from
+the notes:
 
 - `from-<me>/CURSOR` — one line: the commit you last read to, when, how many
   notes you were carrying (`open=<n>`), and the switch-day line you read under
   (`legacy=<date>`, when you have drawn one). The last two are read by their
   prefix, so a cursor written before either existed still reads;
 - `from-<me>/OPEN` — the notes you have been shown and not answered, which is what
-  lets the cursor move past a note without the note vanishing;
+  lets the cursor move past a note without the note vanishing. Since **`OPEN v2`**
+  each entry is the note's whole display line — `<id|->`, kind, heard flag, from,
+  addr, date, path, subject, tab-separated under a first line reading `OPEN v2` —
+  so a later run prints it without opening the note. A file that would not parse
+  is carried here too, as an `unreadable` entry, and is re-checked until it parses
+  or you receipt it;
 - `from-<lane>/INDEX` — that lane's catalogue of its own notes, so resolving a
   thread by id is a lookup and not a scan.
+
+An `OPEN` written by a version before v2 has no version line, and is **refused**
+rather than misread: `--full --advance` writes it again.
 
 **Deleting them is not symmetric.** `CURSOR` costs one full read. `INDEX` comes
 back from `check --full --rebuild-index`. `OPEN` deleted **on its own**, with the
@@ -455,13 +473,21 @@ open list is removed rather than left empty, so *absent* and *nothing open* look
 the same on disk. That is why the cursor records the count: a cursor that says it
 was carrying notes with no `OPEN` beside it is refused, naming `--full --advance`.
 
-**What stays O(m).** The parse count is the size of the change and nothing else.
-Your own lane's `INDEX` and `RECEIPTS` are still read whole every run, and
-`check --since` reads *every* lane's `INDEX` because id uniqueness is a claim
-across the table — line scans, no note opened, and still proportional to what the
-table has sent. `OPEN` grows with what you owe, so a reader who receipts
-everything and answers nothing drifts back toward a slow read; `carrying=` and
-`open=` print on every run so you can see it before it matters.
+**What stays O(m).** A read is O(new) parses plus O(open) *bytes* of one file —
+your own `OPEN`. Your `RECEIPTS` is read only on a run where you receipted
+something, and your lane's `INDEX` only on a `--full` read. What still grows with
+the record: a `--full` read itself, which walks and parses the table; and
+`check --since`, which reads *every* lane's `INDEX` because id uniqueness is a
+claim across the table — a line scan, no note opened, and still proportional to
+what the table has sent. `OPEN` grows with what you owe, so a reader who receipts
+everything and answers nothing carries more and more; that is now bytes rather
+than parses, and `carrying=` and `open=` print on every run so you can see it.
+
+**The price of that, said plainly.** Closing is driven by what is NEW: a reply of
+yours closes a thread while it is in the change set, and once it is behind your
+cursor it cannot. So if somebody edits a note you answered long ago, you are shown
+that note again. You are asked twice; you are never told a note is answered when
+it is not, and you never lose one. A `--full --advance` settles it.
 
 **What this asks of you:** pass `--advance` on your normal `inbox` runs. It moves
 your cursor and pushes it, the same way a receipt is pushed and under the same
@@ -477,9 +503,11 @@ as a stray, and the next write replaces it.
 **If your cursor is refused** — `INBOX REFUSED: … is not an ancestor of HEAD` —
 the table's history was rewritten under it; or `… says it was carrying N notes
 and from-<me>/OPEN is not on the table`, which is an open list that went missing
-under a cursor that is otherwise fine. Read once with `--full --advance`, which
-replaces both. Those refusals are deliberate: a reader told "nothing new" by a
-stale cursor has been lied to, and this tool would rather stop.
+under a cursor that is otherwise fine; or `this open list does not begin with
+"OPEN v2"`, which is an open list from a version before this one. Read once with
+`--full --advance`, which replaces all three. Those refusals are deliberate: a
+reader told "nothing new" by a stale cursor has been lied to, and this tool would
+rather stop.
 
 ### Adopting it on a table that already exists — the switch day
 

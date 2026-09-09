@@ -13,9 +13,9 @@ import (
 const rosterJSON = `{
   "participants": [
     {"name": "Rowan", "lane": "from-rowan", "aliases": ["Rowan Claude", "the keeper"],
-     "git_name": "Rowan", "git_email": "rowan@mas-bandwidth.com"},
+     "git_name": "Rowan", "git_email": "rowan@example.com"},
     {"name": "Stella", "lane": "from-stella", "aliases": ["Stella Codex"],
-     "git_name": "Stella", "git_email": "stella@mas-bandwidth.com"},
+     "git_name": "Stella", "git_email": "stella@example.com"},
     {"name": "Glenn"}
   ],
   "groups": [{"name": "Everybody at the table", "members": ["Rowan", "Stella", "Glenn"]}]
@@ -88,7 +88,7 @@ func table(t *testing.T) (checkout, bare string) {
 		"stella-111111111111\tfrom-stella/2026-09-07T0002Z-heard-111111111111.md\t2026-09-07T00:02:00Z\tRowan\t-",
 	}, "\n")+"\n")
 	gitIn(t, checkout, "add", "-A")
-	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@mas-bandwidth.com", "commit", "-q", "-m", "the table")
+	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@example.com", "commit", "-q", "-m", "the table")
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 	return checkout, bare
 }
@@ -197,7 +197,7 @@ func TestSendLandsANoteAndCheckPasses(t *testing.T) {
 		t.Fatalf("the note is not on the remote:\n%s", files)
 	}
 	// The commit is the sender's identity, from the roster.
-	if who := strings.TrimSpace(gitIn(t, bare, "log", "-1", "--format=%an <%ae>", "main")); who != "Rowan <rowan@mas-bandwidth.com>" {
+	if who := strings.TrimSpace(gitIn(t, bare, "log", "-1", "--format=%an <%ae>", "main")); who != "Rowan <rowan@example.com>" {
 		t.Fatalf("the note was committed as %q", who)
 	}
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")

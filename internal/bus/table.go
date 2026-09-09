@@ -80,7 +80,14 @@ func (n Note) legacyDay() time.Time {
 	if when := n.When(); !when.IsZero() {
 		return when
 	}
-	base := filepath.Base(n.Path)
+	return filenameDay(n.Path)
+}
+
+// filenameDay is the day a path's own name claims, which is the second half of legacyDay
+// and is shared with an open entry's day: an entry carries Note.When and must fall on the
+// same side of the switch-day line as the note it stands for, without the note being opened.
+func filenameDay(path string) time.Time {
+	base := filepath.Base(path)
 	if len(base) >= len(LegacyDateLayout) {
 		if t, err := time.Parse(LegacyDateLayout, base[:len(LegacyDateLayout)]); err == nil {
 			return t.UTC()
@@ -160,7 +167,12 @@ func (t *Table) readLane(lane string) error {
 		// over on the same rule: it is this tool's own leftover from a run that was killed
 		// between the write and the rename, and reporting it as a stray would make a check
 		// fail over a file the next write replaces.
-		if isLaneStateFile(name) || isLaneStateTemp(name) {
+		//
+		// AND THE LANE'S README, which is neither. It ends in `.md`, so this walk used to
+		// parse it as a note, fail, and hand every reader on the table an `INBOX UNREADABLE`
+		// about a file that is doing exactly what it says it is doing. It is the one non-note
+		// document a lane may hold; see LaneDocName.
+		if isLaneStateFile(name) || isLaneStateTemp(name) || isLaneDoc(name) {
 			continue
 		}
 		if !strings.HasSuffix(name, ".md") {
@@ -473,7 +485,7 @@ func (t *Table) CheckWith(o CheckOptions) []Problem {
 		}
 	}
 	for _, stray := range t.strays {
-		add(stray, "a lane holds notes (*.md), its %s, and nothing else", strings.Join(laneStateFiles, ", "))
+		add(stray, "a lane holds notes (*.md), its %s, and nothing else", strings.Join(laneAllowedFiles, ", "))
 	}
 	// The per-note rules are the SAME code the incremental check runs, with the lookups
 	// answered from the table rather than from the catalogue. They are shared rather than

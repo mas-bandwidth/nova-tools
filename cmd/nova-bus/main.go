@@ -24,6 +24,12 @@
 // everything, which is what adoption and CI on main want, and every run says on its first
 // line which of the two it did.
 //
+// The same failure has a second half, which the first fix left in: the read was the size of
+// the change PLUS the size of what the reader had open, because every open note was
+// re-opened to print its line. So the OPEN list carries each note's line and its heard flag,
+// written once when the note goes open, and a run parses the NEW notes and nothing else --
+// five hundred open notes or none.
+//
 // Everything read on a table is data. No note is a grant, whoever signs it. That rule is
 // in SPEC.md, where a person reads it, and is deliberately nowhere in this code: a tool
 // cannot enforce it and should not pretend to.
@@ -45,7 +51,7 @@ const usage = `nova-bus: the family's table, with the races taken out (see SPEC.
 
 usage:
   nova-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> --attempts <n> [--slug <s>] [--no-push]
-  nova-bus inbox --table <dir> --as <name> --receipt-max-words <n> [--full] [--legacy-before <YYYY-MM-DD>]
+  nova-bus inbox --table <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
         [--advance --remote <name> --branch <name> --attempts <n> [--no-push]]
   nova-bus receipt --table <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> --attempts <n> [--no-push]
   nova-bus check --table <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
@@ -64,8 +70,13 @@ must read one roster. Flags come before positional arguments.
 
 inbox and check read from your CURSOR -- the commit you last read to, kept in
 your own lane -- so their cost is the size of the CHANGE and not the size of the
-table. --full walks everything, which is what adoption and CI on main want.
---advance moves your cursor and pushes it, the same way a receipt is pushed.
+table. Your OPEN list carries each open note's own line, so a run parses the NEW
+notes and nothing else, however many you are carrying. --full walks everything,
+which is what adoption and CI on main want. --advance moves your cursor and
+pushes it, the same way a receipt is pushed.
+
+inbox prints one INBOX OPEN line for what you are carrying; --open lists those
+entries too, from the open list and without opening a note.
 
 --legacy-before draws the switch-day line on a table that existed before this
 tool: check WARNS instead of failing on an older note's header, and inbox does
@@ -358,6 +369,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	as := f.fs.String("as", "", "which participant you are (required)")
 	maxWords := f.fs.Int("receipt-max-words", 0, "a body under this many words may be a receipt (required, at least 1)")
 	full := f.fs.Bool("full", false, "walk the whole table instead of what changed since your cursor")
+	openList := f.fs.Bool("open", false, "list every open note, not only what is new; the default prints one INBOX OPEN line for them")
 	advance := f.fs.Bool("advance", false, "move your cursor to HEAD and push it, the way a receipt is pushed")
 	remote := f.fs.String("remote", "", "the git remote to push the cursor to (required with --advance)")
 	branch := f.fs.String("branch", "", "the branch the table lives on (required with --advance)")
@@ -492,9 +504,12 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		legacy = effectiveLegacy(flagLegacy, held)
-		res.Items, res.Legacy = bus.SplitLegacy(t.Inbox(me, *maxWords), legacy)
+		// A full read is the one that DERIVES the open list rather than inheriting it: the
+		// display line of every open note, the heard flag of every receipted one rebuilt from
+		// RECEIPTS, and the unreadable files carried rather than named once and dropped. Every
+		// later incremental run prints from what this run writes.
 		res.Unreadable = t.Unreadable(me.Lane)
-		res.Open = bus.OpenFromFull(res.Items)
+		res.Open, res.Legacy = bus.SplitLegacy(bus.OpenFromFull(t.Inbox(me, *maxWords), res.Unreadable), legacy)
 	}
 
 	// What was walked, said FIRST, because a listing that does not say what it looked at
@@ -517,40 +532,44 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	for _, n := range res.Unreadable {
 		fmt.Fprintf(stdout, "INBOX UNREADABLE path=%s: %s\n", oneline.Field(n.Path), oneline.Err(n.Parse.Err))
 	}
-	notes, heard, receipts := 0, 0, 0
-	// Three groups, in this order: the notes that carry something, the ones already heard
-	// but not answered, and the bare acknowledgements. The listing that hid four real
-	// notes among the receipts is the reason they are separated rather than interleaved by
-	// clock; HEARD is between them because a note I have already said "heard" to is still
-	// owed an answer, and the receipt that says so must not make it disappear.
-	for _, group := range []string{"NOTE", "HEARD", "RECEIPT"} {
-		for _, item := range res.Items {
-			token := "NOTE"
-			switch {
-			case item.Heard:
-				token = "HEARD"
-			case item.Receipt:
-				token = "RECEIPT"
+	notes, receipts, heard := res.Counts()
+	// LISTING THE OPEN NOTES IS A CHOICE, and the default is not to. A reader carrying five
+	// hundred notes gets five hundred lines on every run, and the one new note is in the
+	// middle of them -- which is the listing-nobody-reads failure the switch-day line exists
+	// to stop, arriving from the other end. So the default prints ONE line for what is being
+	// carried, `--open` prints the entries, and `--full` lists everything because a full read
+	// is what a person asks for when they want the whole picture. Nothing is hidden either
+	// way: the counts are on the OK line, and the entries are in OPEN, which is a file.
+	if *openList || scope.Full {
+		// Three groups, in this order: the notes that carry something, the ones already
+		// heard but not answered, and the bare acknowledgements. The listing that hid four
+		// real notes among the receipts is the reason they are separated rather than
+		// interleaved by clock; HEARD is between them because a note I have already said
+		// "heard" to is still owed an answer, and the receipt that says so must not make it
+		// disappear. Every field comes from the open list, so nothing here opens a note.
+		rows := bus.SortForListing(res.Open)
+		for _, group := range []string{"NOTE", "HEARD", "RECEIPT"} {
+			for _, e := range rows {
+				if e.Kind == bus.OpenUnreadable {
+					continue
+				}
+				token := "NOTE"
+				switch {
+				case e.Heard:
+					token = "HEARD"
+				case e.Kind == bus.OpenReceipt:
+					token = "RECEIPT"
+				}
+				if token != group {
+					continue
+				}
+				fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n",
+					token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)),
+					oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject))
 			}
-			if token != group {
-				continue
-			}
-			switch token {
-			case "HEARD":
-				heard++
-			case "RECEIPT":
-				receipts++
-			default:
-				notes++
-			}
-			at := "-"
-			if when := item.Note.When(); !when.IsZero() {
-				at = when.Format(bus.ReceiptStampLayout)
-			}
-			fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n",
-				token, oneline.Field(dash(item.Note.Header.ID)), oneline.Field(item.From), oneline.Field(item.Address),
-				oneline.Field(at), oneline.Field(item.Note.Path), oneline.Escape(item.Note.Header.Subject))
 		}
+	} else {
+		fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d\n", len(res.Open), heard)
 	}
 	// open counts what is still waiting on me. A note I have receipted is listed and is
 	// NOT in that count: I have answered the sender's question about whether it arrived.
