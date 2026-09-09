@@ -446,7 +446,9 @@ nova-bus inbox --bus ~/bus --as Ada --receipt-max-words 40 \
 By default it prints one `INBOX OPEN carrying=<n> heard=<m>` line for what you are
 carrying, plus anything new, anything it could not read, and anything on the
 bus that reaches **nobody**. **`--open`** lists the
-open notes themselves, and `--full` lists them too. The listing is three groups —
+open notes themselves, and `--full` lists them too. Past 50 carried, the plain
+run adds one `INBOX HINT` line naming the flag that lists them and the file they
+are already in, because that is the reader who wonders where they went. The listing is three groups —
 the notes that carry a question, a finding or a request; then what you have
 already said *heard* to and still owe an answer; then the bare acknowledgements —
 and every file it could not parse is named rather than dropped, on every run,
@@ -483,6 +485,17 @@ cursor, so every run after it honours the line with no flag. Moving the line
 **earlier** is refused, because it would put the notes between the two dates back
 on your open list; do that with `--full`, which builds the list again from the
 whole bus. Moving it later needs nothing. See **the switch day** below.
+
+Your **first** `--advance` on a bus holding notes older than today is **refused**
+until you say what to do with them — because the flag above has to be known about
+before the run that needs it, and the run that needs it is the first one. A line
+that did not know ran its first read with no flag on a bus of 1,900 notes, put
+602 old ones on its open list, and printed all 602 on every poll from then on.
+The refusal names the count it would have carried and hands you the exact line to
+run, with the date computed as tomorrow; **`--carry-history`** is the other
+answer, for the reader who means to carry all of them. Neither flag is needed
+again: after the first advance there is a cursor, and a bus with no notes older
+than today never meets the question at all.
 
 **`receipt`** — say *heard* without writing a reply:
 
@@ -690,6 +703,17 @@ nova-bus inbox --bus <dir> --as <you> --receipt-max-words 40 \
    `INBOX LEGACY` line; the date is recorded in their cursor, so every later run
    honours it with no flag. Nothing is deleted and no note is changed — an old
    note is still on the bus, still readable, still answerable by id or path.
+
+   **This step is not optional and the tool says so.** A reader's first
+   `--advance` over notes older than today is refused unless it carries
+   `--legacy-before` or **`--carry-history`**, and the refusal names how many
+   notes it would have carried and the exact line to run. The step used to be
+   documentation, and a line that ran `inbox --full --advance` without it took
+   602 old notes onto its open list and printed all 602 on every poll after that.
+   `--carry-history` is the honest way to say you meant it; it writes nothing
+   into the cursor, and the two flags cannot be given together. An `inbox`
+   **without** `--advance` is never refused — that is the read you use to see the
+   size of the job before you choose.
 3. **Run `check --full --rebuild-index` once.** It writes each lane's catalogue
    from the notes in it. A note that has an id and no catalogue line is only ever
    a warning — the notes are the record and the catalogue is a cache — but the

@@ -51,7 +51,7 @@ const usage = `nova-bus: the bus, with the races taken out (see SPEC.md)
 
 usage:
   nova-bus send --bus <dir> --file <path>|--stdin --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
-  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
+  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
@@ -85,13 +85,20 @@ which is what adoption and CI on main want. --advance moves your cursor and
 pushes it, the same way a receipt is pushed.
 
 inbox prints one INBOX OPEN line for what you are carrying; --open lists those
-entries too, from the open list and without opening a note.
+entries too, from the open list and without opening a note. Past 50 carried, the
+plain run adds one INBOX HINT line saying so.
 
 --legacy-before draws the switch-day line on a bus that existed before this
 tool: check WARNS instead of failing on an older note's header, and inbox does
 not carry an older note on your open list, counting them on one INBOX LEGACY
 line instead. inbox records the date in your cursor, so later runs honour it
 without the flag; moving the line earlier is refused unless the read is --full.
+
+Your FIRST --advance on a bus holding notes older than today is refused unless
+you have said what to do with them: --legacy-before <date> takes the history as
+read, or --carry-history carries every old note on your open list. The refusal
+names the count and the exact line to run. Every advance after the first needs
+neither, and a bus with no old notes needs neither ever.
 
 inbox REPORTS and exits 0 whether the inbox is empty or full; check is the gate.
 `
@@ -503,11 +510,19 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "with --advance, commit the cursor but do not push it")
 	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD) are not carried on your open list, and are counted rather than listed")
+	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
 		return 2
 	}
 	flagLegacy, ok := legacyDate("inbox", *legacyBefore, stderr)
 	if !ok {
+		return 2
+	}
+	// The two answers to the first-advance guard are answers to the SAME question -- what
+	// this reader does about the history that was on the bus before them -- and giving both
+	// says nothing about which. A line is drawn or it is not.
+	if *carryHistory && !flagLegacy.IsZero() {
+		fmt.Fprint(stderr, "nova-bus inbox: --legacy-before draws a switch-day line and --carry-history says there is none to draw; give one or the other\n")
 		return 2
 	}
 	if !f.count("receipt-max-words", *maxWords, stderr) {
@@ -661,6 +676,42 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		res.Open, res.Legacy = bus.SplitLegacy(bus.OpenFromFull(t.Inbox(me, *maxWords), res.Unreadable), legacy)
 	}
 
+	// THE FIRST ADVANCE ON A LANE, on a bus that is older than this reader's cursor.
+	//
+	// THE FAILURE, from a live line. Its first run was
+	// `inbox --full --advance` with no switch-day line, on a bus holding about 1,900 notes.
+	// It worked exactly as written: 602 old notes went onto the open list, the cursor was
+	// written beside them, and every poll from then on printed the same 602 carried notes,
+	// forever, because an open note only comes off the list when something answers it.
+	// Glenn, reading the polls: "lots of spam there. do we need so much spam? it costs $$$".
+	// Every one of those lines was paid for, on every run, by a reader who had never said
+	// they meant to carry the history.
+	//
+	// The switch-day line already existed and would have prevented all of it. What did not
+	// exist was anything making the reader MEET it: the flag had to be known about before
+	// the run that needed it, and the run that needed it is by definition the first one.
+	// So the first advance on a lane is the one place this tool asks. It fires only when
+	// all four are true -- an --advance, no CURSOR file on this lane, no line in force, and
+	// notes on the open list dated before today -- and it names the number it would have
+	// carried and the exact line to run. `--carry-history` is the other answer, for the
+	// reader who means it, and it is a flag rather than a default because the default that
+	// carried 602 notes is the one being fixed.
+	//
+	// It refuses BEFORE the listing is printed. A first full read of an old bus prints a
+	// line per open note, which on that bus is the six hundred lines this guard exists to
+	// stop; printing them and then refusing would charge the reader for them anyway.
+	if *advance && !*carryHistory && legacy.Before.IsZero() && !bus.CursorPresent(*busDir, me.Lane) {
+		_, old := bus.SplitLegacy(res.Open, bus.LegacyLine{Before: utcDay(now)})
+		if old > 0 {
+			tomorrow := utcDay(now).AddDate(0, 0, 1).Format(bus.LegacyDateLayout)
+			fmt.Fprintf(stderr, "INBOX REFUSED: this is the first advance on %s and %d of the %d notes it would carry are dated before today, so every run after it would print all %d again; draw the switch-day line with `nova-bus inbox --bus %s --as %s --receipt-max-words %d --full --legacy-before %s --advance --remote %s --branch %s`, which takes the history as read and leaves you what arrives from now on, or pass --carry-history to carry all %d\n",
+				oneline.Field(bus.CursorPath(me.Lane)), old, len(res.Open), len(res.Open),
+				oneline.Quote(*busDir), oneline.Quote(me.Name), *maxWords, oneline.Field(tomorrow),
+				oneline.Quote(*remote), oneline.Quote(*branch), len(res.Open))
+			return 1
+		}
+	}
+
 	// What was walked, said FIRST, because a listing that does not say what it looked at
 	// is a listing a reader will mistake for everything.
 	fmt.Fprintf(stdout, "INBOX SCOPE mode=%s cursor=%s changed=%d carrying=%d\n",
@@ -727,6 +778,14 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	} else {
 		fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d\n", len(res.Open), heard)
+		// And, past the point where a reader would have to count the line themselves, where
+		// the entries are. The count alone is the right default at any size -- see the
+		// comment above -- but a reader carrying hundreds is the one who wants to look, and
+		// the flag that shows them is not guessable from a line that only holds a number.
+		if len(res.Open) > openListHint {
+			fmt.Fprintf(stdout, "INBOX HINT --open lists the %d carried entries; they are also in %s\n",
+				len(res.Open), oneline.Field(bus.OpenPath(me.Lane)))
+		}
 	}
 	// THE TWO NUMBERS, and why they are both here under the names they are printed under
 	// elsewhere. `carrying=` on the SCOPE and OPEN lines is the size of the OPEN LIST -- every
@@ -823,6 +882,20 @@ func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, lega
 	fmt.Fprintf(stdout, "INBOX CURSOR commit=%s carrying=%d pushed=%t attempts=%d\n",
 		oneline.Field(head), len(open), res.Pushed, res.Attempts)
 	return 0
+}
+
+// openListHint is how many carried entries a plain run prints the INBOX HINT line above.
+// It is a threshold on NOISE and not on cost: a reader carrying a handful can see them with
+// one more flag and does not need telling, and a reader carrying hundreds is the one who
+// asks where they went.
+const openListHint = 50
+
+// utcDay is the UTC calendar day a moment falls in, at its start -- the shape a switch-day
+// line takes. It is here rather than inline because the guard compares against it and then
+// prints the day AFTER it, and the two have to be the same day.
+func utcDay(now time.Time) time.Time {
+	u := now.UTC()
+	return time.Date(u.Year(), u.Month(), u.Day(), 0, 0, 0, 0, time.UTC)
 }
 
 // shortSHA is how much of a commit a cursor's commit MESSAGE carries. The message is for a

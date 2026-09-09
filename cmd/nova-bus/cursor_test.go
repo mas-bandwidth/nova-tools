@@ -21,11 +21,24 @@ import (
 // a quadratic implementation.
 
 // advance is the flags that move a reader's cursor, since every test below does it.
+//
+// It carries --carry-history, because the fixture bus is dated two days before the fixed
+// clock and a FIRST advance over notes older than today is refused unless the reader says
+// what to do with them (see TestAFirstAdvanceOverOldNotesIsRefused). These tests mean the
+// answer "carry them": they are about the cursor and the open list, and every count they
+// assert is a count of notes carried. The flag is dropped when the caller draws a
+// switch-day line of its own, which is the other answer and cannot be given with this one.
 func advance(checkout, who string, extra ...string) []string {
-	return append([]string{
+	args := append([]string{
 		"inbox", "--bus", checkout, "--as", who, "--receipt-max-words", "40",
 		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3",
 	}, extra...)
+	for _, a := range extra {
+		if a == "--legacy-before" || a == "--carry-history" || strings.HasPrefix(a, "--legacy-before=") {
+			return args
+		}
+	}
+	return append(args, "--carry-history")
 }
 
 func read(t *testing.T, checkout, path string) string {
@@ -982,4 +995,170 @@ func TestInboxRefusesALegacyDateItCannotRead(t *testing.T) {
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--full", "--legacy-before", "last Tuesday").mustCode(t, 2).
 		mustContain(t, "stderr", "is not a UTC date")
+}
+
+// THE FIRST ADVANCE ON A LANE, and the 602 notes that made it a question the tool asks.
+//
+// A live line ran `inbox --full --advance` as its first read, on a bus of about 1,900
+// notes, with no switch-day line -- because the line is a flag you have to know about
+// before the run that needs it, and the run that needs it is the first one. It worked as
+// written: 602 old notes went onto the open list, the cursor was written beside them, and
+// every poll after it printed the same 602 carried notes. Glenn, reading the polls: "lots
+// of spam there. do we need so much spam? it costs $$$".
+//
+// So the first advance on a lane, over notes older than today, is refused until the reader
+// says which they mean. The refusal names the count and hands them the line to run.
+func TestAFirstAdvanceOverOldNotesIsRefused(t *testing.T) {
+	hermetic(t)
+	checkout, bare := busDir(t)
+	// The fixture's two notes are dated 2026-09-07 and the clock is 2026-09-09.
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3").
+		mustCode(t, 1).
+		mustContain(t, "stderr", "INBOX REFUSED: this is the first advance on from-ada/CURSOR").
+		mustContain(t, "stderr", "2 of the 2 notes it would carry are dated before today").
+		// The line to run, with TOMORROW's date computed for the reader, so that every note
+		// on the bus today is behind it and what arrives from now on is not.
+		mustContain(t, "stderr", `--full --legacy-before 2026-09-10 --advance --remote "origin" --branch "main"`).
+		mustContain(t, "stderr", "--carry-history")
+	// It refuses BEFORE the listing, because the listing is the cost being complained
+	// about: a first full read of that bus is a line per open note.
+	if r.stdout != "" {
+		t.Fatalf("the refusal printed a listing anyway:\n%s", r.stdout)
+	}
+	// And it wrote nothing: no cursor, no open list, nothing pushed.
+	for _, p := range []string{"from-ada/CURSOR", "from-ada/OPEN"} {
+		if _, err := os.Stat(filepath.Join(checkout, filepath.FromSlash(p))); !os.IsNotExist(err) {
+			t.Fatalf("%s exists after a refused advance: %v", p, err)
+		}
+	}
+	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); strings.Contains(files, "from-ada/") {
+		t.Fatalf("a refused advance pushed something:\n%s", files)
+	}
+	// The first answer, which is the one the refusal recommends: draw the line. The old
+	// notes are counted on the LEGACY line and carried by nobody.
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--full", "--legacy-before", "2026-09-10",
+		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-10 notes=2").
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=0 open=0")
+	if cursor := read(t, checkout, "from-ada/CURSOR"); !strings.Contains(cursor, "legacy=2026-09-10") {
+		t.Fatalf("the cursor did not record the line the refusal named: %s", cursor)
+	}
+}
+
+// The other answer: the reader who means to carry the history says so, once, and the guard
+// never asks again -- it is a question about a FIRST advance, and after it there is a
+// cursor.
+func TestAFirstAdvanceCarriesTheHistoryWhenAsked(t *testing.T) {
+	hermetic(t)
+	checkout, _ := busDir(t)
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--carry-history",
+		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=2")
+	if open := read(t, checkout, "from-ada/OPEN"); !strings.Contains(open, "bo-abcdef012345") {
+		t.Fatalf("--carry-history did not carry the old notes:\n%s", open)
+	}
+	// It is not a switch-day line and does not become one: nothing is written to the cursor
+	// that a later run would honour.
+	if cursor := read(t, checkout, "from-ada/CURSOR"); strings.Contains(cursor, "legacy=") {
+		t.Fatalf("--carry-history wrote a legacy line into the cursor: %s", cursor)
+	}
+	// The second advance needs neither flag: there is a cursor now.
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=2")
+}
+
+// The guard is about a HISTORY, so a bus that has none does not meet it. A line joining a
+// bus whose notes are all from today advances with no flag at all, which is what a bus
+// started with this tool looks like forever.
+func TestAFirstAdvanceOnABusWithNoOldNotesNeedsNeither(t *testing.T) {
+	hermetic(t)
+	checkout, _ := busDir(t)
+	// Take the fixture's two old notes off the bus and leave one note dated today.
+	for _, p := range []string{"from-bo/2026-09-07T0001Z-a-question-abcdef012345.md", "from-bo/2026-09-07T0002Z-heard-111111111111.md"} {
+		if err := os.Remove(filepath.Join(checkout, filepath.FromSlash(p))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(t, checkout, "from-bo/2026-09-09T0900Z-today-cccccccccccc.md",
+		"From: Bo\nTo: Ada\nDate: Wed Sep  9 09:00:00 UTC 2026\nId: bo-cccccccccccc\nSubject: Written today\n\nDoes the guard fire on a bus with no history?\n")
+	writeFile(t, checkout, "from-bo/INDEX",
+		"bo-cccccccccccc\tfrom-bo/2026-09-09T0900Z-today-cccccccccccc.md\t2026-09-09T09:00:00Z\tAda\t-\n")
+	gitIn(t, checkout, "add", "-A")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "a bus with no history")
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=1 open=1")
+}
+
+// The two answers answer the same question, so giving both says nothing about which.
+func TestTheTwoAnswersToTheFirstAdvanceCannotBothBeGiven(t *testing.T) {
+	checkout, _ := busDir(t)
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--carry-history", "--legacy-before", "2026-09-10",
+		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3").
+		mustCode(t, 2).
+		mustContain(t, "stderr", "give one or the other")
+}
+
+// The other half of the same complaint, from the other end: a reader carrying a lot is told
+// the number and where the entries are, rather than being handed the entries. The count
+// alone is already the default at any size; the HINT is the line that says the flag.
+func TestAPlainInboxHintsWhereTheCarriedEntriesAre(t *testing.T) {
+	hermetic(t)
+	checkout, _ := busDir(t)
+	for i := 0; i < 60; i++ {
+		id := fmt.Sprintf("bo-d%011d", i)
+		writeFile(t, checkout, fmt.Sprintf("from-bo/2026-09-09T10%02dZ-many-%s.md", i, id),
+			fmt.Sprintf("From: Bo\nTo: Ada\nDate: Wed Sep  9 10:%02d:00 UTC 2026\nId: %s\nSubject: One of many %d\n\nA note that will sit open.\n", i, id, i))
+	}
+	gitIn(t, checkout, "add", "-A")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "many notes")
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=62 open=62")
+
+	// The plain run: the count, and one line saying how to see them.
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0").
+		mustContain(t, "stdout", "INBOX HINT --open lists the 62 carried entries; they are also in from-ada/OPEN")
+	if strings.Contains(r.stdout, "INBOX NOTE ") {
+		t.Fatalf("a plain run listed the carried entries:\n%s", r.stdout)
+	}
+	if n := strings.Count(r.stdout, "\n"); n > 4 {
+		t.Fatalf("a plain run carrying 62 printed %d lines:\n%s", n, r.stdout)
+	}
+	// --open is the answer the hint gives, and it does not repeat the hint.
+	r = invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open").
+		mustCode(t, 0)
+	if strings.Contains(r.stdout, "INBOX HINT") {
+		t.Fatalf("--open printed the hint at the reader who took it:\n%s", r.stdout)
+	}
+	// 61 notes and the fixture's one bare acknowledgement, which is 62 entries listed.
+	if n := strings.Count(r.stdout, "INBOX NOTE ") + strings.Count(r.stdout, "INBOX RECEIPT "); n != 62 {
+		t.Fatalf("--open listed %d entries, want 62:\n%s", n, r.stdout)
+	}
+}
+
+// And a reader carrying a handful is not told: the flag is guessable from a short listing,
+// and a hint on every run is the noise this is about.
+func TestASmallOpenListGetsNoHint(t *testing.T) {
+	hermetic(t)
+	checkout, _ := busDir(t)
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
+		mustCode(t, 0).mustContain(t, "stdout", "INBOX OPEN carrying=2 heard=0")
+	if strings.Contains(r.stdout, "INBOX HINT") {
+		t.Fatalf("a reader carrying 2 was hinted at:\n%s", r.stdout)
+	}
 }

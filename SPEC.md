@@ -2099,7 +2099,7 @@ would be the most dangerous thing on the bus.
 
 ```
 nova-bus send --bus <dir> --file <path>|--stdin --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
-nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
+nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>|--carry-history]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
@@ -2169,6 +2169,7 @@ SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
 INBOX LEGACY before=<date> notes=<n>
 INBOX OPEN carrying=<n> heard=<m>
+INBOX HINT --open lists the <n> carried entries; they are also in <path>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
@@ -2218,9 +2219,12 @@ exists to stop, arriving from the other end. `--open` lists the entries instead,
 and `--full` lists them because a full read is what a person asks for when they
 want the whole picture. Nothing is hidden either way: `carrying=` and `heard=`
 are on this line, the same counts are on `INBOX OK`, and the entries themselves
-are in `OPEN`, which is a file a person can open. `INBOX UNREADABLE` is printed
-whichever way the run was asked, because a file nobody can read is not a listing
-choice.
+are in `OPEN`, which is a file a person can open. Past **50** carried, the plain
+run adds one `INBOX HINT` line naming the flag that lists them and the file they
+are in — a threshold on noise and not on cost: a reader carrying a handful can
+find `--open` from a short listing, and a reader carrying hundreds is the one who
+asks where they went. `INBOX UNREADABLE` is printed whichever way the run was
+asked, because a file nobody can read is not a listing choice.
 
 `INBOX LEGACY` is printed by every `inbox` run that has a switch-day line in
 force -- from the flag or from the cursor -- and `notes=` is how many notes that
@@ -2232,8 +2236,9 @@ is the whole bus under `--full` and the change set plus the open list under
 
 `REFUSED` is a `FAIL` with no path slot, because what it refuses is the state of
 the CHECKOUT rather than anything in the note: it is the branch-ahead guard
-below, a cursor that is no longer on this history, or a `--legacy-before` that
-would move a reader's line earlier. `INBOX UNREADABLE` names a file on the bus this tool cannot parse — not
+below, a cursor that is no longer on this history, a `--legacy-before` that
+would move a reader's line earlier, or a FIRST `--advance` over a history nobody
+has said what to do with (see **the first advance** below). `INBOX UNREADABLE` names a file on the bus this tool cannot parse — not
 necessarily one addressed to the caller, because a file with no `To:` line
 cannot say who it was for, and saying so is the honest half of not dropping it.
 `INBOX UNADDRESSED` names a note that parses and reaches no reader at all; see
@@ -2261,8 +2266,9 @@ Every field value is rendered through `internal/oneline`, so the one-line
 guarantee in the Conventions above holds here too, and a note whose `To:` line
 carries U+2028 produces one escaped line rather than two.
 
-**`NAMES` quotes rather than field-escapes**, and it is the one place in this
-grammar that does. `oneline.Field` escapes every whitespace character so a
+**`NAMES` quotes rather than field-escapes**, and so does the command a
+first-advance refusal hands back: the two places in this grammar where a value is
+meant to be PASTED rather than scanned. `oneline.Field` escapes every whitespace character so a
 `key=value` field is one token — which is right everywhere else and was wrong
 here: `names` exists to tell a person how to spell a `To:` line this tool will
 accept, and it printed `name=Ada\x20Claude`, which `send` refuses. `oneline.Quote`
@@ -3014,6 +3020,64 @@ The first says what the history holds and forgives its headers; the second draws
 the line, gives you a cursor, and hands you an inbox that is what has arrived
 SINCE. Every run after that is `inbox --as <you> --advance …` with no flag at
 all.
+
+**The recipe is not optional, and the tool now says so.** *Why this is a refusal
+and not a paragraph:* the recipe above was documentation, and documentation is
+read by whoever went looking for it. A line adopting the tool ran its first read
+as `inbox --full --advance` with no line at all, on a bus of about **1,900
+notes**. It did exactly what it was told: **602** old notes went onto that
+reader's open list, the cursor was written beside them, and every poll from then
+on printed the same 602 carried notes — because an open note comes off the list
+only when something answers it. Glenn, reading the polls: *"lots of spam there.
+do we need so much spam? it costs $$$"*. Every one of those lines was paid for,
+on every run, by a reader who had never said they meant to carry the history.
+The flag that would have prevented all of it had to be known about **before** the
+run that needed it, and the run that needed it is by definition the first one.
+
+So the **FIRST `--advance` on a lane** — the one where the lane has no `CURSOR`
+file yet — is **refused**, exit 1, when all of these hold:
+
+- no switch-day line is in force, from the flag or from a cursor (there is no
+  cursor, so this means no `--legacy-before`);
+- `--carry-history` was not given;
+- at least one note that run would carry is dated **before today**, UTC.
+
+The refusal names **how many notes it would have carried** and hands over the
+exact line to run, with the date computed as **tomorrow**, so that everything on
+the bus today is behind the line and everything that arrives from now on is not:
+
+```
+INBOX REFUSED: this is the first advance on <lane>/CURSOR and <k> of the <n>
+notes it would carry are dated before today, so every run after it would print
+all <n> again; draw the switch-day line with `nova-bus inbox --bus "<dir>" --as
+"<you>" --receipt-max-words <w> --full --legacy-before <tomorrow> --advance
+--remote "<remote>" --branch "<branch>"`, which takes the history as read and
+leaves you what arrives from now on, or pass --carry-history to carry all <n>
+```
+
+It is one line, like every other event this tool prints. The paths and names in
+the command it hands back are **quoted** rather than field-escaped, because that
+half of the sentence is meant to be PASTED: a bus directory holding a space is
+`--bus "/a bus/here"` and not `--bus /a\x20bus/here`. See **`NAMES` quotes rather
+than field-escapes** in the output grammar, which is the same reason.
+
+**`--carry-history`** is the other answer, for the reader who means to carry
+every old note. It is a flag rather than the default because the default that
+carried 602 notes is the thing being fixed, and it writes **nothing** to the
+cursor: it is an answer to one run's question, not a line anybody inherits. It
+cannot be given with `--legacy-before` — they answer the same question and giving
+both says nothing about which — and that is exit 2, a bad invocation.
+
+**It refuses before printing the listing.** A first full read of an old bus is a
+line per open note, which on that bus is the six hundred lines this guard exists
+to stop; printing them and then refusing would charge the reader for them anyway.
+Nothing is written and nothing is pushed: the reader re-runs with an answer.
+
+**Every advance after the first needs neither flag**, because there is a cursor;
+and a bus with no notes older than today needs neither ever, which is what a bus
+started with this tool looks like for its whole life. `inbox` WITHOUT `--advance`
+is never refused by this: the read that shows you the size of the job is the one
+you run before you choose.
 
 **What is still O(m), stated rather than left to be discovered.** The claim above
 is about *note files parsed*, and it holds exactly: an `inbox` run is **O(new)
