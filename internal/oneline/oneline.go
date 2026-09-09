@@ -14,6 +14,9 @@ Three renderings, one escape form:
 	Field   one token: Escape, and then every whitespace character and every "=" as well,
 	        so the value of a key=value field is a single whitespace-free token holding no
 	        "=" -- a key=value search can only ever match a field the tool wrote.
+	Quote   one line, and PASTEABLE: a double-quoted Go string literal. For the values a
+	        person copies out of the output and types back in -- a roster name holding a
+	        space, which Field would render \x20 and nobody could paste.
 	Err     Escape over an error's text, with nil spelled the way fmt would spell it.
 
 The escape form is \xNN for a code point below U+0080 and \uNNNN above it, lower-case hex in
@@ -27,6 +30,7 @@ package oneline
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -101,6 +105,26 @@ func Field(s string) string {
 	}
 	return b.String()
 }
+
+// Quote renders a value a person is meant to COPY: a roster name, which may hold a space
+// and is pasted back into a To: line.
+//
+// FIELD IS WRONG FOR THOSE, and it was used for them. Field escapes every whitespace
+// character, so `nova-bus names` printed `Rowan\x20Claude` -- one token a scanner can
+// read, and a name nobody can paste into the header of a note. The whole purpose of that
+// verb is to tell a person how to spell a To line this tool will accept, and it was
+// telling them something the tool would refuse.
+//
+// The one-line guarantee is kept by a different route rather than dropped. strconv.Quote
+// escapes every control character and every rune Go considers unprintable -- U+2028 and
+// U+2029, which are Zl and Zp and end a line for a Unicode-aware reader, and the bidi
+// controls, which are Cf -- as well as the double quote and the backslash themselves. So
+// the result is one line whatever the value holds, the delimiters say where the value
+// starts and stops even when it holds a space, and unlike Escape it is INJECTIVE: a
+// backslash is escaped too, so what is between the quotes is the value and nothing else.
+// A list of these is joined with ";" between the closing quote and the next opening one,
+// which is what a To line's own separator is.
+func Quote(s string) string { return strconv.Quote(s) }
 
 // Err renders an error into the reason slot of an event, a refusal or a note. An error's
 // text carries whatever the path that produced it carried, so an argument holding a

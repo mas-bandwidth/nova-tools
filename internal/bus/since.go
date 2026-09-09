@@ -87,6 +87,10 @@ type InboxResult struct {
 	// OPEN -- an entry records only that it is unreadable -- so it is carried out here for
 	// the run that produced it.
 	Unreadable []*Note
+	// Unaddressed is the notes this run saw that reach no reader at all. On an incremental
+	// run it is the reader's OWN lane and nothing else -- the one place the reader can fix
+	// one -- and a full run fills it with every such note on the table. See unaddressed.go.
+	Unaddressed []Unaddressed
 	// New is how many notes this run added to the open list.
 	New int
 	// Legacy is how many notes this run left off the open list because they are dated
@@ -227,6 +231,13 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 			// simply answers nothing.
 			continue
 		}
+		// A note of my own that reaches NOBODY is also my business, and it is the one thing
+		// about my own lane this listing says out loud, on every run and in every mode. See
+		// unaddressed.go: `send` cannot write one, so this is a note I typed by hand whose
+		// To line named nobody, and nothing else on the table would ever tell me.
+		if reason, yes := UnaddressedReason(c, n); yes {
+			res.Unaddressed = append(res.Unaddressed, Unaddressed{Path: n.Path, Reason: reason})
+		}
 		for _, re := range n.Header.Re {
 			answered[re] = true
 		}
@@ -319,6 +330,7 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 	// the note is untouched.
 	res.Open, res.Legacy = SplitLegacy(append(keep, fresh...), legacy)
 	sort.Slice(res.Unreadable, func(i, j int) bool { return res.Unreadable[i].Path < res.Unreadable[j].Path })
+	sort.Slice(res.Unaddressed, func(i, j int) bool { return res.Unaddressed[i].Path < res.Unaddressed[j].Path })
 	return res, nil
 }
 

@@ -50,23 +50,32 @@ import (
 const usage = `nova-bus: the family's table, with the races taken out (see SPEC.md)
 
 usage:
-  nova-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> --attempts <n> [--slug <s>] [--no-push]
+  nova-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
   nova-bus inbox --table <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
-        [--advance --remote <name> --branch <name> --attempts <n> [--no-push]]
-  nova-bus receipt --table <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> --attempts <n> [--no-push]
+        [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
+  nova-bus receipt --table <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus check --table <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
   nova-bus names --table <dir>
 
+every verb that runs git also takes [--git-timeout <seconds>], default 60.
+
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a draft
 refused, a table that failed check, a push that could not be landed, a cursor
-that is no longer on this history; 2 could not run: missing flag, unreadable
-table, bad invocation.
+that is no longer on this history, another run holding this checkout; 2 could
+not run: missing flag, unreadable table, bad invocation.
 
 Every path comes from a flag. There is no default table, no default remote, no
-default branch, no default retry budget and no default receipt word count; a
-missing one is a refusal: refusing to guess. The roster is always
-<table>/participants.json, because two lines running this tool over one table
-must read one roster. Flags come before positional arguments.
+default branch and no default receipt word count; a missing one is a refusal:
+refusing to guess. --attempts DOES have one, 25, because it is not a fact about
+your table but a budget measured against it: five lines sending at once consumed
+nine attempts at the peak, and a caller who has to name a number will name one
+too small and lose a note. The roster is always <table>/participants.json,
+because two lines running this tool over one table must read one roster. Flags
+come before positional arguments.
+
+One nova-bus runs on one checkout at a time: a second holds off for ten seconds
+and then refuses, because two runs writing one OPEN list is not a race any care
+here can win.
 
 inbox and check read from your CURSOR -- the commit you last read to, kept in
 your own lane -- so their cost is the size of the CHANGE and not the size of the
@@ -194,6 +203,80 @@ func (f *flags) count(name string, value int, stderr io.Writer) bool {
 	return true
 }
 
+// defaultAttempts is the retry budget when the caller names none.
+//
+// THE ONE FLAG THAT GETS A DEFAULT, and it is a departure from the rule above, so here is
+// the measurement that bought it. In the scenario run, five lines sent three notes each at
+// once with `--attempts 3`: fifteen were sent and SIX LANDED. With `--attempts 25` all
+// fifteen landed and the deepest any one of them went was nine attempts. A retry budget is
+// not a fact about a table that only its owner can supply -- it is the number of times this
+// tool will keep trying against a remote that is moving under it, and a caller made to
+// invent one invents a small one and loses notes. Twenty-five is nine with room, and the
+// backoff caps the whole of it at a person's wait rather than a schedule.
+const defaultAttempts = 25
+
+// attempts checks the retry budget. Unlike count it has a default, so a zero here is a
+// caller who asked for one and asked for none.
+func (f *flags) attempts(value int, stderr io.Writer) bool {
+	if value < 1 {
+		fmt.Fprintf(stderr, "nova-bus %s: --attempts is a number of tries and is at least 1, got %d\n", f.verb, value)
+		return false
+	}
+	return true
+}
+
+// gitTimeoutFlag sets the per-subprocess budget every git this run starts is held to. A
+// hung fetch is a tool that has stopped saying anything, which is indistinguishable from a
+// tool that is working.
+func (f *flags) gitTimeoutFlag(seconds int, stderr io.Writer) bool {
+	if seconds < 1 {
+		fmt.Fprintf(stderr, "nova-bus %s: --git-timeout is a whole number of seconds and at least 1, got %d\n", f.verb, seconds)
+		return false
+	}
+	if err := bus.SetGitTimeout(time.Duration(seconds) * time.Second); err != nil {
+		fmt.Fprintf(stderr, "nova-bus %s: %s\n", f.verb, oneline.Err(err))
+		return false
+	}
+	return true
+}
+
+// defaultGitTimeoutSeconds is DefaultGitTimeout as the flag spells it.
+const defaultGitTimeoutSeconds = 60
+
+// checkoutLockWait is how long a second run on one checkout waits for the first. It is a
+// var so a test can shorten it; nothing else replaces it.
+var checkoutLockWait = 10 * time.Second
+
+// quoteList renders names a person will PASTE -- into a To line -- each quoted and joined
+// by the ";" that line's own separator is. An empty list is the grammar's "-".
+func quoteList(names []string) string {
+	if len(names) == 0 {
+		return "-"
+	}
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, oneline.Quote(n))
+	}
+	return strings.Join(out, ";")
+}
+
+// printTranscript puts git's own output on stderr, VERBATIM, under the one actionable line
+// that has already been printed and escaped.
+//
+// THE FAILURE THIS CLOSES: a `SEND FAIL` on a rebase conflict used to carry git's whole
+// transcript inside the reason, rendered through the one-line escape, so forty lines of git
+// arrived as one line of `\x0d\x0a` and nobody could read any of it. The one-line guarantee
+// is about the EVENT line -- the line above this, which a scanner reads -- and a transcript
+// is not an event. It is the thing a person opens the terminal to read, and it is printed
+// as git wrote it.
+func printTranscript(stderr io.Writer, err error) {
+	tr := strings.TrimRight(bus.Transcript(err), "\n")
+	if tr == "" {
+		return
+	}
+	fmt.Fprintf(stderr, "%s\n", tr)
+}
+
 // openTable loads the roster and reads the table, or prints the refusal.
 func openTable(verb, table string, stderr io.Writer) (*bus.Table, bool) {
 	c, err := bus.LoadConfig(table)
@@ -219,12 +302,16 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	remote := f.fs.String("remote", "", "the git remote to push to (required)")
 	branch := f.fs.String("branch", "", "the branch the table lives on (required)")
 	slug := f.fs.String("slug", "", "the human half of the filename (default: from the subject)")
-	attempts := f.fs.Int("attempts", 0, "how many times to push before giving up (required, at least 1)")
+	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
+	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "commit but do not push; the note is NOT on the table until it is pushed")
 	if !f.parse(args, stderr, map[string]*string{"table": table, "remote": remote, "branch": branch}) {
 		return 2
 	}
-	if !f.count("attempts", *attempts, stderr) {
+	if !f.attempts(*attempts, stderr) {
+		return 2
+	}
+	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
 		return 2
 	}
 	if !f.gitArgs(*remote, *branch, stderr) {
@@ -256,6 +343,12 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.Err(err))
 		return 2
 	}
+	release, err := bus.LockCheckout(*table, checkoutLockWait)
+	if err != nil {
+		fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.Err(err))
+		return 1
+	}
+	defer release()
 	t, ok := openTable("send", *table, stderr)
 	if !ok {
 		return 2
@@ -285,9 +378,27 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
 		return 1
 	}
-	res, err := commit(*table, prepared.Sender, prepared.Paths(), prepared.Message, *remote, *branch, *attempts, *noPush)
+	// The union-merge rules, written once per table and committed with the note that first
+	// needed them. INDEX and RECEIPTS are append-only, and without the rule two benches of
+	// one lane appending at the same end over one base conflict and the bench is wedged. It
+	// goes on the FIRST send rather than being asked of the table's owner because a table
+	// that has to be prepared by hand before it is safe is a table somebody will not
+	// prepare. See internal/bus/attributes.go.
+	paths := prepared.Paths()
+	wroteAttrs, err := bus.EnsureMergeAttributes(*table)
+	if err != nil {
+		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(bus.AttributesName), oneline.Err(err))
+		return 1
+	}
+	if wroteAttrs {
+		paths = append(paths, bus.AttributesName)
+	}
+	res, err := commit(*table, prepared.Sender, paths,
+		bus.WithTrailer(prepared.Message, bus.TrailerSend+" "+prepared.Note.Header.ID),
+		*remote, *branch, *attempts, *noPush)
 	if err != nil {
 		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(prepared.Path), oneline.Err(err))
+		printTranscript(stderr, err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d\n",
@@ -301,14 +412,18 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 	as := f.fs.String("as", "", "which participant you are (required)")
 	remote := f.fs.String("remote", "", "the git remote to push to (required)")
 	branch := f.fs.String("branch", "", "the branch the table lives on (required)")
-	attempts := f.fs.Int("attempts", 0, "how many times to push before giving up (required, at least 1)")
+	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
+	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "commit but do not push; the receipt is NOT on the table until it is pushed")
 	var notes stringList
 	f.fs.Var(&notes, "note", "a note to mark heard, by id or by path (required; repeatable)")
 	if !f.parse(args, stderr, map[string]*string{"table": table, "as": as, "remote": remote, "branch": branch}) {
 		return 2
 	}
-	if !f.count("attempts", *attempts, stderr) {
+	if !f.attempts(*attempts, stderr) {
+		return 2
+	}
+	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
 		return 2
 	}
 	if !f.gitArgs(*remote, *branch, stderr) {
@@ -322,6 +437,12 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "nova-bus receipt: %s\n", oneline.Err(err))
 		return 2
 	}
+	release, lockErr := bus.LockCheckout(*table, checkoutLockWait)
+	if lockErr != nil {
+		fmt.Fprintf(stderr, "RECEIPT REFUSED: %s\n", oneline.Err(lockErr))
+		return 1
+	}
+	defer release()
 	t, ok := openTable("receipt", *table, stderr)
 	if !ok {
 		return 2
@@ -355,9 +476,12 @@ func cmdReceipt(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
 		return 1
 	}
-	res, err := commit(*table, me, []string{plan.Path}, plan.Message(me), *remote, *branch, *attempts, *noPush)
+	res, err := commit(*table, me, []string{plan.Path},
+		bus.WithTrailer(plan.Message(me), bus.TrailerReceipt),
+		*remote, *branch, *attempts, *noPush)
 	if err != nil {
 		fmt.Fprintf(stderr, "RECEIPT FAIL %s: %s\n", oneline.Escape(plan.Path), oneline.Err(err))
+		printTranscript(stderr, err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "RECEIPT OK recorded=%d already=%d commit=%s pushed=%t attempts=%d\n",
@@ -375,7 +499,8 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	advance := f.fs.Bool("advance", false, "move your cursor to HEAD and push it, the way a receipt is pushed")
 	remote := f.fs.String("remote", "", "the git remote to push the cursor to (required with --advance)")
 	branch := f.fs.String("branch", "", "the branch the table lives on (required with --advance)")
-	attempts := f.fs.Int("attempts", 0, "how many times to push before giving up (required with --advance, at least 1)")
+	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push the cursor before giving up")
+	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	noPush := f.fs.Bool("no-push", false, "with --advance, commit the cursor but do not push it")
 	legacyBefore := f.fs.String("legacy-before", "", "notes dated before this UTC date (YYYY-MM-DD) are not carried on your open list, and are counted rather than listed")
 	if !f.parse(args, stderr, map[string]*string{"table": table, "as": as}) {
@@ -388,6 +513,9 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.count("receipt-max-words", *maxWords, stderr) {
 		return 2
 	}
+	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
+		return 2
+	}
 	// --advance WRITES to the table, so it takes the same three flags a receipt takes and
 	// refuses to guess any of them. Without it, inbox writes nothing at all, which is what
 	// a report should do unless it was asked otherwise.
@@ -396,12 +524,30 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 			fmt.Fprint(stderr, "nova-bus inbox: --advance moves a cursor onto the table, so it needs --remote and --branch; refusing to guess\n")
 			return 2
 		}
-		if !f.count("attempts", *attempts, stderr) {
+		if !f.attempts(*attempts, stderr) {
 			return 2
 		}
 		if !f.gitArgs(*remote, *branch, stderr) {
 			return 2
 		}
+	}
+	// THE ROOT CHECK COMES BEFORE THE ROSTER, and it did not. Point --table at a
+	// subdirectory of a bigger repository and the run refused with "participants.json: no
+	// such file" -- true, and the wrong sentence: the caller's mistake is the directory,
+	// not the roster, and the refusal that names the repository root is the one that fixes
+	// the invocation. The cheaper check is not the more useful one, so the more useful one
+	// runs first.
+	if !*full || *advance {
+		if err := bus.IsRepoRoot(*table); err != nil {
+			fmt.Fprintf(stderr, "nova-bus inbox: reading only what changed, and moving a cursor, need git; %s\n", oneline.Err(err))
+			return 2
+		}
+		release, lockErr := bus.LockCheckout(*table, checkoutLockWait)
+		if lockErr != nil {
+			fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(lockErr))
+			return 1
+		}
+		defer release()
 	}
 	c, err := bus.LoadConfig(*table)
 	if err != nil {
@@ -433,10 +579,6 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// The line this run reads under, whichever mode it is in.
 	var legacy bus.LegacyLine
 	if !*full {
-		if err := bus.IsRepoRoot(*table); err != nil {
-			fmt.Fprintf(stderr, "nova-bus inbox: reading only what changed needs git; %s\n", oneline.Err(err))
-			return 2
-		}
 		cursor, err = bus.ReadCursor(*table, me.Lane)
 		if err != nil {
 			fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
@@ -511,6 +653,11 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		// RECEIPTS, and the unreadable files carried rather than named once and dropped. Every
 		// later incremental run prints from what this run writes.
 		res.Unreadable = t.Unreadable(me.Lane)
+		// EVERY note on the table that reaches no reader, named on a full read to every
+		// reader. A note whose To line resolves to nobody parses, so it is not unreadable,
+		// and it is in no inbox, so no listing has ever mentioned it: 22 of them on the
+		// family's real table. See internal/bus/unaddressed.go.
+		res.Unaddressed = t.UnaddressedOnTable()
 		res.Open, res.Legacy = bus.SplitLegacy(bus.OpenFromFull(t.Inbox(me, *maxWords), res.Unreadable), legacy)
 	}
 
@@ -533,6 +680,14 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// from the listing was the same failure as a lost push with a quieter cause.
 	for _, n := range res.Unreadable {
 		fmt.Fprintf(stdout, "INBOX UNREADABLE path=%s: %s\n", oneline.Field(n.Path), oneline.Err(n.Parse.Err))
+	}
+	// And the notes that PARSE and reach nobody, which is the quieter half of the same
+	// failure: a file this tool cannot read is at least reported, and a note addressed to a
+	// name the roster does not hold was in no listing at all. Whichever way the run was
+	// asked, for the same reason UNREADABLE is: a note nobody is shown is not a listing
+	// choice.
+	for _, u := range res.Unaddressed {
+		fmt.Fprintf(stdout, "INBOX UNADDRESSED path=%s: %s\n", oneline.Field(u.Path), oneline.Escape(u.Reason))
 	}
 	notes, receipts, heard := res.Counts()
 	// LISTING THE OPEN NOTES IS A CHOICE, and the default is not to. A reader carrying five
@@ -573,10 +728,17 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	} else {
 		fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d\n", len(res.Open), heard)
 	}
-	// open counts what is still waiting on me. A note I have receipted is listed and is
-	// NOT in that count: I have answered the sender's question about whether it arrived.
-	fmt.Fprintf(stdout, "INBOX OK as=%s open=%d notes=%d receipts=%d heard=%d unreadable=%d\n",
-		oneline.Field(me.Name), notes+receipts, notes, receipts, heard, len(res.Unreadable))
+	// THE TWO NUMBERS, and why they are both here under the names they are printed under
+	// elsewhere. `carrying=` on the SCOPE and OPEN lines is the size of the OPEN LIST -- every
+	// entry on it, the heard and the unreadable included -- and `open=` is what is still
+	// WAITING ON ME, which is the notes and the bare receipts and nothing else. A note I
+	// have receipted is on the list and out of that count: I have answered the sender's
+	// question about whether it arrived, and not their note. The two therefore differ, by
+	// exactly heard + unreadable, and on one real run they read `carrying=658` and
+	// `open=657` on two lines with no third line saying why. So the OK line now carries
+	// BOTH, under the same names, beside the decomposition that makes them add up.
+	fmt.Fprintf(stdout, "INBOX OK as=%s carrying=%d open=%d notes=%d receipts=%d heard=%d unaddressed=%d unreadable=%d\n",
+		oneline.Field(me.Name), len(res.Open), notes+receipts, notes, receipts, heard, len(res.Unaddressed), len(res.Unreadable))
 	if !*advance {
 		return 0
 	}
@@ -650,9 +812,12 @@ func advanceCursor(table string, me bus.Participant, open []bus.OpenEntry, legac
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
 		return 1
 	}
-	res, err := commit(table, me, staged, me.Slug()+": read to "+head[:shortSHA], remote, branch, attempts, noPush)
+	res, err := commit(table, me, staged,
+		bus.WithTrailer(me.Slug()+": read to "+head[:shortSHA], bus.TrailerCursor),
+		remote, branch, attempts, noPush)
 	if err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
+		printTranscript(stderr, err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "INBOX CURSOR commit=%s carrying=%d pushed=%t attempts=%d\n",
@@ -698,7 +863,11 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	since := f.fs.String("since", "", "check what changed since this commit")
 	legacyBefore := f.fs.String("legacy-before", "", "a finding about the header of a note dated before this UTC date (YYYY-MM-DD) warns instead of failing")
 	rebuildIndex := f.fs.Bool("rebuild-index", false, "with --full, rewrite each lane's INDEX from the notes on disk")
+	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
 	if !f.parse(args, stderr, map[string]*string{"table": table}) {
+		return 2
+	}
+	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
 		return 2
 	}
 	// A check with no baseline is not a check of nothing, it is a caller who has not said
@@ -717,6 +886,23 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	opts := bus.CheckOptions{LegacyBefore: when}
+	// The root check comes BEFORE the roster: a --table pointing at a subdirectory of a
+	// bigger repository refused with "participants.json: no such file", which is true and
+	// is not the caller's mistake. See the same reordering in cmdInbox.
+	if !*full {
+		if err := bus.IsRepoRoot(*table); err != nil {
+			fmt.Fprintf(stderr, "nova-bus check: checking only what changed needs git; %s\n", oneline.Err(err))
+			return 2
+		}
+	}
+	if *rebuildIndex {
+		release, lockErr := bus.LockCheckout(*table, checkoutLockWait)
+		if lockErr != nil {
+			fmt.Fprintf(stderr, "BUS REFUSED: %s\n", oneline.Err(lockErr))
+			return 1
+		}
+		defer release()
+	}
 	c, err := bus.LoadConfig(*table)
 	if err != nil {
 		fmt.Fprintf(stderr, "nova-bus check: %s\n", oneline.Err(err))
@@ -725,10 +911,6 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 	scope := bus.Scope{Full: *full}
 	from := ""
 	if !*full {
-		if err := bus.IsRepoRoot(*table); err != nil {
-			fmt.Fprintf(stderr, "nova-bus check: checking only what changed needs git; %s\n", oneline.Err(err))
-			return 2
-		}
 		if strings.TrimSpace(*since) != "" {
 			from, err = bus.ResolveCommit(*table, *since)
 			if err != nil {
@@ -810,16 +992,20 @@ func cmdCheck(args []string, stdout, stderr io.Writer) int {
 		oneline.Field(scope.Mode()), oneline.Field(dash(from)), scope.Changed)
 	failed, warned := 0, 0
 	for _, p := range problems {
-		// A WARN is a finding that was tolerated, so it goes where the findings go. Its
-		// COUNT is on the OK line, on stdout, because a run that passed with fifty
-		// forgiven notes and one that passed clean are not the same run.
-		token := "BUS FAIL"
+		// A WARN GOES TO STDOUT, and it went to stderr. The grammar says which stream a
+		// line is on and the rule is one sentence: FAIL lines and refusals to stderr,
+		// everything else to stdout. A WARN is neither -- it is a finding that was
+		// TOLERATED, reported by a run that passed -- so putting it on stderr made every
+		// clean-but-forgiving run look like a failing one to anything reading the streams
+		// apart, which is what CI does. It is an informational line and it is now where the
+		// informational lines are.
 		if p.Warn {
-			token, warned = "BUS WARN", warned+1
-		} else {
-			failed++
+			warned++
+			fmt.Fprintf(stdout, "BUS WARN %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
+			continue
 		}
-		fmt.Fprintf(stderr, "%s %s: %s\n", token, oneline.Escape(p.Where), oneline.Escape(p.Reason))
+		failed++
+		fmt.Fprintf(stderr, "BUS FAIL %s: %s\n", oneline.Escape(p.Where), oneline.Escape(p.Reason))
 	}
 	if failed > 0 {
 		return 1
@@ -840,16 +1026,29 @@ func cmdNames(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "nova-bus names: %s\n", oneline.Err(err))
 		return 2
 	}
+	// THE NAMES ARE QUOTED, NOT FIELD-ESCAPED, and this verb exists for exactly the reason
+	// that matters. `names` is what a person runs to find out how to spell a To line this
+	// tool will accept -- and under oneline.Field, which escapes every space so that a
+	// key=value field is one token, "Rowan Claude" printed as `Rowan\x20Claude`. Paste that
+	// into a To line and `send` refuses it. The verb whose whole job is to tell you the
+	// spelling was telling you one the tool does not take.
+	//
+	// oneline.Quote keeps the one-line guarantee by another route (see its comment): the
+	// quotes delimit the value, so a space inside one is not the end of a field, and every
+	// character that could break or reorder a line is still escaped. A list is each name
+	// quoted and joined by the ";" a To line separates on, so `aliases="Rowan Claude";"the
+	// keeper"` is two names a person can lift straight out. The lane is a slug and stays a
+	// field: it holds no space by construction and is not something anybody pastes.
 	for _, p := range c.Participants {
 		lane := p.Lane
 		if lane == "" {
 			lane = "-"
 		}
 		fmt.Fprintf(stdout, "NAMES NAME name=%s lane=%s aliases=%s\n",
-			oneline.Field(p.Name), oneline.Field(lane), oneline.Field(strings.Join(p.Aliases, ";")))
+			oneline.Quote(p.Name), oneline.Field(lane), quoteList(p.Aliases))
 	}
 	for _, g := range c.Groups {
-		fmt.Fprintf(stdout, "NAMES GROUP name=%s members=%s\n", oneline.Field(g.Name), oneline.Field(strings.Join(g.Members, ";")))
+		fmt.Fprintf(stdout, "NAMES GROUP name=%s members=%s\n", oneline.Quote(g.Name), quoteList(g.Members))
 	}
 	fmt.Fprintf(stdout, "NAMES OK participants=%d groups=%d senders=%d\n", len(c.Participants), len(c.Groups), len(c.Senders()))
 	return 0

@@ -70,7 +70,7 @@ SELFTALK FAIL <file>: STANDING: <claim>
 SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
 SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
 SEND FAIL <path or (stdin)>: <reason>
-INBOX OK as=<name> open=<n> notes=<n> receipts=<n>
+INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> ...
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n>
 BUS FAIL <path, path:line, or lane>: <reason>
@@ -2085,12 +2085,14 @@ would be the most dangerous thing on the table.
 ### The verbs
 
 ```
-nova-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> --attempts <n> [--slug <s>] [--no-push]
+nova-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
 nova-bus inbox --table <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
-      [--advance --remote <name> --branch <name> --attempts <n> [--no-push]]
-nova-bus receipt --table <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> --attempts <n> [--no-push]
+      [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
+nova-bus receipt --table <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
 nova-bus check --table <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
 nova-bus names --table <dir>
+
+every verb that runs git also takes [--git-timeout <seconds>], default 60
 ```
 
 The binary is `nova-bus`, and that is its only name: no second binary, no alias
@@ -2099,9 +2101,20 @@ names is two tools in a bug report. (It was drafted as `nova-message-bus`; the
 name it ships under is the one Glenn asked for, and the longer one survives
 nowhere, including in the id preimage below.)
 
-**No guessed anything.** There is no default table, no default remote, no
-default branch, no default retry budget and no default receipt word count. A
-missing one is exit 2 and `refusing to guess`. The one fixed name is the roster,
+**No guessed anything, with two named exceptions.** There is no default table, no
+default remote, no default branch and no default receipt word count. A missing one
+is exit 2 and `refusing to guess`.
+
+The exceptions are `--attempts`, which defaults to **25**, and `--git-timeout`,
+which defaults to **60 seconds**. Neither is a fact about a table that only its
+owner can supply, which is the test the rule is really making: the receipt word
+count is a property of how a table writes and the table root is a property of the
+invocation, but a retry budget is how many times this tool keeps trying against a
+remote moving under it, and a subprocess timeout is how long it waits before
+saying so. A caller made to invent either invents a bad one — the scenario landed
+6 of 15 notes at `--attempts 3` and 15 of 15 at 25 — and the cost of the rule
+there is notes lost rather than a guess corrected. The one fixed name is the
+roster,
 always `<table>/participants.json` — a property of the table rather than of an
 invocation, because two lines running this tool over one table must read one
 roster, and a `--config` flag would let them disagree about who exists.
@@ -2144,10 +2157,11 @@ INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
 INBOX LEGACY before=<date> notes=<n>
 INBOX OPEN carrying=<n> heard=<m>
 INBOX UNREADABLE path=<path>: <reason>
+INBOX UNADDRESSED path=<path>: <reason>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX RECEIPT id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
-INBOX OK as=<name> open=<n> notes=<n> receipts=<n> heard=<n> unreadable=<n>
+INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> heard=<n> unaddressed=<n> unreadable=<n>
 INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>
 INBOX FAIL <path>: <reason>
 INBOX REFUSED: <reason>
@@ -2161,8 +2175,8 @@ BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n> warn=<n>
 BUS WARN <path, path:line, or lane>: <reason>
 BUS FAIL <path, path:line, or lane>: <reason>
 BUS REFUSED: <reason>
-NAMES NAME name=<x> lane=<lane|-> aliases=<a;b>
-NAMES GROUP name=<x> members=<a;b>
+NAMES NAME name="<x>" lane=<lane|-> aliases="<a>";"<b>"
+NAMES GROUP name="<x>" members="<a>";"<b>"
 NAMES OK participants=<n> groups=<n> senders=<n>
 ```
 
@@ -2209,13 +2223,49 @@ below, a cursor that is no longer on this history, or a `--legacy-before` that
 would move a reader's line earlier. `INBOX UNREADABLE` names a file on the table this tool cannot parse — not
 necessarily one addressed to the caller, because a file with no `To:` line
 cannot say who it was for, and saying so is the honest half of not dropping it.
+`INBOX UNADDRESSED` names a note that parses and reaches no reader at all; see
+above.
+
 `BUS WARN` is a finding inside the legacy tolerance: reported, and not a failure.
+It goes to **stdout**, with the rest of the informational lines. It used to go to
+stderr, against the rule below, and the cost was real: anything reading the two
+streams apart — which is what CI does — saw every clean-but-forgiving run as a
+failing one.
+
+`INBOX SCOPE`'s and `INBOX OPEN`'s `carrying=` and `INBOX OK`'s `open=` are two
+different counts and used to be printed on two lines with nothing saying so: one
+real run read `carrying=658` and `open=657`. **`carrying=` is the whole open
+list** — the notes, the bare receipts, the heard and the unreadable — and
+**`open=` is what is still waiting on you**, which is the notes and the receipts
+and nothing else, because a note you have receipted has had the sender's question
+about whether it arrived answered. They differ by exactly `heard + unreadable`.
+Both are now on `INBOX OK`, under the names they carry elsewhere, beside the
+decomposition that makes them add up.
 
 `OK` and the informational tokens go to stdout; `FAIL` lines and refusals go to
 stderr. `id=-` is a note with no `Id:` line — a legacy note, addressed by path.
 Every field value is rendered through `internal/oneline`, so the one-line
 guarantee in the Conventions above holds here too, and a note whose `To:` line
 carries U+2028 produces one escaped line rather than two.
+
+**`NAMES` quotes rather than field-escapes**, and it is the one place in this
+grammar that does. `oneline.Field` escapes every whitespace character so a
+`key=value` field is one token — which is right everywhere else and was wrong
+here: `names` exists to tell a person how to spell a `To:` line this tool will
+accept, and it printed `name=Rowan\x20Claude`, which `send` refuses. `oneline.Quote`
+is a double-quoted Go string literal: it escapes every control character, every
+unprintable rune (U+2028, U+2029 and the bidi controls among them) and the quote
+and backslash themselves, so it is one line whatever the value holds — and unlike
+the escape it is injective, so what is between the quotes is the name and nothing
+else. A list is each value quoted and joined by `;`, which is a `To:` line's own
+separator, so `aliases="Rowan Claude";"the keeper"` can be lifted straight out.
+
+**A refusal that carries git's own transcript prints the transcript under the
+event line**, on stderr, verbatim. `SEND FAIL` on a rebase conflict used to carry
+git's whole rebase output *inside* the reason, rendered through the one-line
+escape: forty lines arriving as one line of `\x0d\x0a`, which nobody could read.
+The one-line guarantee is about the EVENT line, which a scanner reads; a
+transcript is what a person opened the terminal for.
 
 ### The roster
 
@@ -2455,6 +2505,31 @@ is receipted. Naming it on a `--full` read and leaving it off the list — which
 what the first version did — was the same failure with a slower fuse: told once,
 and then never again by any incremental run.
 
+**A note addressed to NOBODY is never silent either**, and it was — for the
+quietest reason on this list. A note whose `To:` line resolves to no one the
+roster holds *parses*, so it is not unreadable; and it is in nobody's inbox, so
+no listing mentioned it. On the family's real table there were **22** of them:
+`To: Team`, and `From: Stella, Go table-wire task …` where the comma after the
+name is an address separator and the From line therefore named two senders and
+resolved to none. Written by somebody, on the table, and shown to no one.
+
+They are printed as `INBOX UNADDRESSED path=<path>: <reason>` and counted in
+`unaddressed=`, and where depends on whose they are:
+
+- on `--full`, **every** such note on the table, to **every** reader, because a
+  full read says what is on the table rather than what is new for me;
+- **always** in the reader's own lane, on every run whatever its mode, because
+  that is the one person who can repair the header. A line sees its own
+  unaddressed notes every run until it fixes them.
+
+Partly unaddressed is not unaddressed: `To: Rowan, Team` reaches Rowan, is in his
+inbox, and is not reported — only a note whose whole address resolves to an empty
+list has no reader. It is a report and never a failure; `check` is the gate and
+says the same thing about the header in its own words. `send` refuses an unknown
+recipient, so nothing this tool writes can become one of these: they are the
+legacy notes and the ones typed by hand in a browser, which is exactly the
+writing this table's form exists to allow.
+
 ### The push protocol
 
 `send` and `receipt` share it exactly:
@@ -2463,16 +2538,33 @@ and then never again by any incremental run.
    branch `--branch` names, and hold no changes but the one this run is about to
    make. The retry rebases, and a rebase over a dirty tree either refuses or
    sweeps somebody's unrelated work into a note's commit.
-2. **Fetch, and refuse a branch that is ahead.** `git push` publishes the
-   BRANCH, not the commit just made. A checkout carrying commits this tool did
-   not make would put all of them on the table under a note's push — somebody
-   else's unfinished work, published by a tool they did not run, with nothing in
-   the output saying so. So: `git fetch <remote> <branch>`, then
-   `git rev-list --count <remote>/<branch>..HEAD` must be **0**, or the run
-   exits 1 with `SEND REFUSED` / `RECEIPT REFUSED` and the count. This is before
-   anything is staged, so the refusal costs one fetch and leaves the checkout
-   exactly as it was found. `--no-push` skips it: there is nothing to publish,
-   and no reason to make a caller wait on a fetch they declined.
+2. **Fetch, and refuse a branch that is ahead of it with somebody ELSE's work.**
+   `git push` publishes the BRANCH, not the commit just made. A checkout carrying
+   commits this tool did not make would put all of them on the table under a
+   note's push — somebody else's unfinished work, published by a tool they did
+   not run, with nothing in the output saying so. So: `git fetch <remote>
+   <branch>`, then `git rev-list --count <remote>/<branch>..HEAD`; if it is not
+   0, `git log` over that range decides which of them **this tool made**.
+
+   Every commit this tool makes carries a git trailer — `Nova-Bus: send <id>`,
+   `Nova-Bus: receipt`, `Nova-Bus: cursor`, and `Nova-Bus: commit` for anything
+   else — and the guard reads it. A commit carrying it is one of ours, left on
+   the branch by a push that could not land, and the next push **carries** it. A
+   commit **without** it is the unfinished work the guard exists for, and is a
+   refusal: exit 1, `SEND REFUSED` / `RECEIPT REFUSED`, the total, how many are
+   not ours and their short shas.
+
+   THE WEDGE THIS CLOSES. Five lines sent three notes each at once with
+   `--attempts 3`: fifteen sent, six landed, and the three lines that lost the
+   race were then stuck — their next `send` refused with *"branch is ahead of
+   origin/main by 1 commits the tool did not make"*, about a commit the tool had
+   made. The guard could not tell its own unpushed work from a person's, so it
+   refused the one recovery it exists to perform. A tool that loses a race and
+   then will not run is worse than one that never retried.
+
+   This is before anything is staged, so the refusal costs one fetch and leaves
+   the checkout exactly as it was found. `--no-push` skips it: there is nothing
+   to publish, and no reason to make a caller wait on a fetch they declined.
 3. Write the file; `git add` and `git commit` **naming the paths**, so anything
    else that happens to be staged is not swept in, under the sender's identity
    from the roster, passed with `git -c`.
@@ -2490,30 +2582,95 @@ and then never again by any incremental run.
    The wait is drawn from `math/rand` and not `crypto/rand`, deliberately: it is
    a scheduling nudge and nothing about it is a secret. A test injects the
    sleeper and asserts the spacing, so nothing here waits on a clock.
-5. A rebase that **conflicts** is aborted and reported: the rebase is aborted,
-   the commit is left on the branch, the run exits 1 saying the note is **NOT**
-   on the table, and a person decides. Two DIFFERENT senders' commits touch
-   disjoint paths and cannot conflict, so a conflict is always two sessions of
-   ONE line, from two benches that cannot see each other's checkout, touching one
-   of that lane's own files. The surfaces, all four:
-   - `RECEIPTS` — append-only, two lines appended at the same end over one base;
-   - `INDEX` — the same shape, and `send` writes it in the same commit as the
-     note, so **two benches of one lane sending different notes now conflict
-     where before the catalogue existed they rebased clean**. That is a cost the
-     catalogue added and it is named here rather than left to be discovered;
-   - `CURSOR` — a replace rather than an append, so two benches' reads collide;
-   - one note path, as an add/add, when both benches sent the same note in the
-     same second and were therefore assigned the same id.
+5. **A rebase that conflicts is SETTLED where the conflict is in this tool's own
+   files, and refused where it is not.** No conflict may wedge a line.
 
-   None of the four is this tool's decision. **`INDEX` is not made add-only per
-   bench**, which would remove the second one: the shapes that would do it — an
-   `INDEX.<bench>` file each, or one file per note named by its id — trade a
-   conflict a person clears in a minute for a lane directory whose file count
-   grows with its notes, which is the cost the catalogue exists to avoid, and
-   neither can be adopted without changing the layout of every table already
+   Two DIFFERENT senders' commits touch disjoint paths and cannot conflict, so a
+   conflict is always two sessions of ONE line, from two benches that cannot see
+   each other's checkout, touching one of that lane's own files. The surfaces,
+   all five, and what happens to each:
+
+   | file | shape | settlement |
+   |---|---|---|
+   | `RECEIPTS` | append-only; two lines at the same end over one base | **union**: ours in order, then the lines of theirs ours does not hold, identical lines once |
+   | `INDEX` | the same shape, written in the note's own commit | **union**, the same |
+   | `CURSOR` | a replace, so two benches' reads collide | the **further read** wins: the cursor whose commit is a descendant of the other, and failing that the later stamp |
+   | `OPEN` | a replace, beside the cursor | **re-derived from the winning cursor's side**, never merged: an open list belongs to a cursor, and unioning two would carry notes the winning read has closed |
+   | one note path | an add/add, when two benches sent one note in one second | **refused.** Which of the two is the note is a person's decision |
+
+   The settlement is made **twice over**, and both halves are needed:
+
+   - **`.gitattributes` at the table root.** The first `send` on a table writes
+     `from-*/INDEX merge=union` and `from-*/RECEIPTS merge=union` there if they
+     are not already present, and commits them with the note. Union is git's own
+     built-in driver and is exactly right for an append-only line file: on a
+     conflict it keeps both sides' lines. This half helps the person who is
+     **not running this tool** — their own `git pull --rebase` gets the same
+     settlement.
+   - **The tool's own resolution**, in `internal/bus/conflict.go`, which runs
+     whether or not the attribute has reached this checkout. It has to: the
+     attribute arrives only once it has been committed and pulled, so the first
+     send on a table, and every bench that has not pulled since, rebases without
+     it. A fix that works only after everybody has it is a fix that does not work
+     on the day it is needed.
+
+   On the one conflict it will not settle, the rebase is aborted, the commit is
+   left on the branch, the run exits 1 saying the note is **NOT** on the table,
+   and a person decides. **The abort is checked rather than assumed**: `git
+   rebase --abort` can itself fail — a rebase state directory that cannot be
+   removed — and the run used to return with the checkout still mid-rebase, so
+   every later verb refused for a reason that was true and unhelpful. The state
+   directory is looked for after the attempt, and a checkout still in a rebase is
+   its own refusal naming its own recovery.
+
+   The refusal is **one line plus a transcript**, and it used to be one line
+   *containing* a transcript: git's whole rebase output, rendered through the
+   one-line escape, arrived as `\x0d\x0a` between every word of forty lines and
+   nobody could read any of it. The one-line guarantee is about the EVENT line.
+   The actionable line is escaped like every other; git's own words follow it on
+   stderr, verbatim.
+
+   **`INDEX` is still not made add-only per bench.** The shapes that would do it
+   — an `INDEX.<bench>` file each, or one file per note named by its id — trade a
+   conflict that is now settled automatically for a lane directory whose file
+   count grows with its notes, which is the cost the catalogue exists to avoid,
+   and neither can be adopted without changing the layout of every table already
    running this tool.
 6. Out of attempts: exit 1, saying the commit is on the branch and was **NOT**
    pushed.
+
+**Every refusal that offers a recovery offers one that works.** The advice was
+`push or drop them first`, and a bare `git push` cannot land a branch that is
+ahead of a remote which has itself moved — which is the exact state every one of
+these refusals is about. It is `git pull --rebase && git push` now, and a test
+runs the two commands against the state the refusal names.
+
+**`--attempts` defaults to 25**, and it is the one flag here with a default. It
+is not a fact about a table that only its owner can supply; it is how many times
+this tool will keep trying against a remote that is moving under it, and a caller
+made to invent a number invents a small one. The scenario measured it: five lines
+sending three notes each at once landed **6 of 15** at `--attempts 3` and **15 of
+15** at `--attempts 25`, with nine attempts consumed at the peak.
+
+**Every git subprocess runs under a timeout**, 60 seconds by default and
+`--git-timeout <seconds>` otherwise. A fetch to a remote that accepts the
+connection and then says nothing hangs forever, and every guard here is
+downstream of a subprocess that returns; a tool a person is waiting on that has
+stopped saying anything is indistinguishable from one that is working. The call
+is killed and the refusal names it.
+
+**One nova-bus runs on one checkout at a time.** Every verb takes an flock on
+`<git dir>/nova-bus.lock` and holds it to the end; a second invocation on the
+same checkout waits ten seconds and then refuses with a sentence. This is not the
+race the retry loop is for — that is two benches on two checkouts, which is the
+case this tool was built for. This is two of ME on one checkout, writing one
+`OPEN` list and one index between them, which is not a race any care in this code
+can win. It is an flock rather than a sentinel file because the kernel drops it
+when the process dies, so a run killed with the lock held leaves nothing for the
+next one to clear. It is in the git directory rather than at the table root
+because that is per-checkout: two linked worktrees of one repository are two
+checkouts and must not block each other, and a lock file on the table is one more
+file every reader has to know is not a note.
 
 `--remote` and `--branch` become `git`'s own argv, so both are checked against a
 conservative charset — letters, digits, `-`, `_`, `/`, `.` — and neither may
@@ -3098,7 +3255,12 @@ keeps working.
   works over the table as it stands today, and a table cannot change its layout
   and adopt a tool in the same week.
 - **No daemon, no schedule, no network of its own.** The only process it starts
-  is `git`.
+  is `git` — under a timeout, and one at a time per checkout.
+- **It settles a conflict in its OWN files and never in a note.** `INDEX`,
+  `RECEIPTS`, `CURSOR` and `OPEN` are files this tool invented, in a layout it
+  chose, and a conflict in one of them is its own cost to pay. A conflict in a
+  NOTE is the table's record and belongs to whoever wrote it: the rebase is
+  aborted and a person decides. There is no flag to widen that.
 - **It reads the checkout, never the remote.** `inbox` and `check` report on what
   is on disk. Pull first; that is the caller's, and saying so is more honest than
   a fetch hidden inside a report. A `--fetch` for those two verbs — an explicit

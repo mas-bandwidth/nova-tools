@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -67,13 +69,76 @@ func (g *gitError) Error() string {
 	return fmt.Sprintf("git %s: %v: %s", strings.Join(g.args, " "), g.err, out)
 }
 
+// DefaultGitTimeout is how long ONE git subprocess may run before this tool stops waiting
+// on it, kills it, and refuses naming the call.
+//
+// THE FAILURE IT CLOSES: a git that never returns. A fetch or a push to a remote that
+// accepts the connection and then says nothing hangs forever, and every guard in this file
+// -- the branch-ahead refusal, the retry budget, the lock -- is downstream of a subprocess
+// that returns. A tool a person is waiting on that has stopped saying anything is
+// indistinguishable from a tool that is working, which is the same shape as every other
+// silence this file exists to end. Sixty seconds is a fetch of a table's whole history on
+// a slow link and far more than any local call; --git-timeout moves it.
+const DefaultGitTimeout = 60 * time.Second
+
+// killGrace is how long a killed git has to close its pipes before this tool stops reading
+// them. See the comment at cmd.WaitDelay below.
+const killGrace = 2 * time.Second
+
+// gitTimeoutNanos is the budget in force, as an atomic so that setting it from main and
+// reading it from a push goroutine is not a race. Zero means unset and reads as the
+// default, so nothing has to run before the first call.
+var gitTimeoutNanos atomic.Int64
+
+func gitTimeout() time.Duration {
+	if n := gitTimeoutNanos.Load(); n > 0 {
+		return time.Duration(n)
+	}
+	return DefaultGitTimeout
+}
+
+// SetGitTimeout sets the per-subprocess budget. It is called once, from the flags, before
+// anything runs git.
+func SetGitTimeout(d time.Duration) error {
+	if d <= 0 {
+		return fmt.Errorf("--git-timeout must be a positive number of seconds, got %s", d)
+	}
+	gitTimeoutNanos.Store(int64(d))
+	return nil
+}
+
+// gitEnv is what every git this tool starts runs under.
+//
+// GIT_EDITOR and GIT_SEQUENCE_EDITOR are here for the same reason GIT_TERMINAL_PROMPT is:
+// `git rebase --continue`, which the conflict settlement below reaches, opens the commit
+// message in an editor, and an editor opened under a tool whose output is a grammar is a
+// hang rather than a message. `true` accepts the message git already has.
+var gitEnv = []string{
+	"GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "GIT_OPTIONAL_LOCKS=0",
+	"GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true",
+}
+
 func git(dir string, args ...string) (string, error) {
 	full := append([]string{"-C", dir}, args...)
-	cmd := exec.Command("git", full...)
+	budget := gitTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", full...)
 	// A push that needs a credential must FAIL rather than block a tool a person is
 	// waiting on, and a pager must never open under a tool whose output is a grammar.
-	cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "GIT_OPTIONAL_LOCKS=0")
+	cmd.Env = append(cmd.Environ(), gitEnv...)
+	// WaitDelay is what makes the budget real. Killing the process on the deadline is not
+	// enough on its own: CombinedOutput reads the pipe until it CLOSES, and git's own
+	// children -- an ssh, a credential helper, a pager -- inherit that pipe and hold it
+	// open after git is gone, so a killed call still blocked for as long as its child chose
+	// to live. WaitDelay closes the pipes a bounded time after the kill and lets the call
+	// return. The grace is for git's own last words, which are the reason the output is
+	// captured at all.
+	cmd.WaitDelay = killGrace
 	out, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return string(out), fmt.Errorf("git %s did not finish within %s and was killed; nothing was left half-done by this tool, and a longer budget is --git-timeout <seconds>", strings.Join(args, " "), budget)
+	}
 	if err != nil {
 		return string(out), &gitError{args: full, err: err, output: string(out)}
 	}
@@ -123,6 +188,97 @@ func ValidGitArg(what, s string) error {
 // The fetch is also the run's first fetch, which is why it is here rather than in the
 // retry loop: the push protocol's first attempt is then made against a remote this
 // checkout has already seen.
+// The trailer every commit this tool makes carries, and the whole of how a later run knows
+// its own work.
+//
+// THE WEDGE IT CLOSES, from the scenario run that found it. Five lines sent three notes
+// each at once with a budget of three attempts. Fifteen were sent and six landed; the three
+// lines that lost the race were then WEDGED, because their failed push had left its commit
+// on the branch and the next `send` refused with "branch is ahead of origin/main by 1
+// commits the tool did not make". The tool HAD made it. The guard could not tell its own
+// unpushed commit from somebody else's unfinished work, so it refused the one recovery it
+// was built to perform, and a person had to push by hand -- which is the failure this whole
+// tool exists to end, arriving from inside it.
+//
+// So every commit is stamped, and the guard reads the stamp. A commit in the ahead range
+// carrying `Nova-Bus:` is one of ours, left behind by a push that could not land, and the
+// next push CARRIES it: a push publishes the branch, and the branch is exactly the notes
+// this tool has written and not yet landed. A commit WITHOUT the trailer is the thing the
+// guard was always for -- somebody's half-finished work that a note's push would publish
+// under a name they did not run -- and it is still a refusal.
+//
+// The trailer is a git trailer rather than a marker in the subject because `git log
+// --format=%B` shows it, `git interpret-trailers` reads it, and a person reading the log
+// sees a line that says what made the commit.
+const (
+	// TrailerKey is the trailer's key.
+	TrailerKey = "Nova-Bus"
+	// TrailerSend, TrailerReceipt and TrailerCursor are the three things this tool commits.
+	// A send carries the note's id after the word, so the log says which note.
+	TrailerSend    = "send"
+	TrailerReceipt = "receipt"
+	TrailerCursor  = "cursor"
+	// TrailerCommit is what stageAndCommit stamps a message that arrived without one, so
+	// that no commit this tool makes can be mistaken for a person's.
+	TrailerCommit = "commit"
+)
+
+// WithTrailer puts the trailer on a commit message, as its own paragraph at the end.
+func WithTrailer(message, what string) string {
+	return strings.TrimRight(message, "\n") + "\n\n" + TrailerKey + ": " + what + "\n"
+}
+
+// HasTrailer reports whether a commit message carries the trailer. It scans every line
+// rather than only the last paragraph, because a rebase, a cherry-pick or a person editing
+// a message can add lines under it, and a commit this tool made does not stop being one.
+func HasTrailer(message string) bool {
+	for _, line := range strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), TrailerKey+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// notOurs lists the commits in ref..HEAD that this tool did not make, shortest form first,
+// at most a handful so that a refusal stays a line a person reads.
+func notOurs(dir, ref string) ([]string, error) {
+	// -z separates the entries, so a commit message holding a blank line -- which every
+	// message with a trailer does -- cannot look like the end of one.
+	out, err := git(dir, "log", "-z", "--format=%H%n%B", ref+"..HEAD")
+	if err != nil {
+		return nil, err
+	}
+	var foreign []string
+	for _, rec := range strings.Split(out, "\x00") {
+		if strings.TrimSpace(rec) == "" {
+			continue
+		}
+		sha, body, _ := strings.Cut(strings.TrimLeft(rec, "\n"), "\n")
+		sha = strings.TrimSpace(sha)
+		if HasTrailer(body) {
+			continue
+		}
+		if len(sha) > shortSHAHex {
+			sha = sha[:shortSHAHex]
+		}
+		foreign = append(foreign, sha)
+	}
+	return foreign, nil
+}
+
+// shortSHAHex is how much of a commit a refusal names: enough to `git show`.
+const shortSHAHex = 12
+
+// pullRebaseAdvice is the recovery every refusal in this file that gives one gives.
+//
+// It was `push or drop them first`, and a bare `git push` is advice that DOES NOT WORK:
+// the state the refusal is about is a branch that is ahead of a remote which has itself
+// moved, so the push it recommends is rejected exactly as the tool's own was. A refusal
+// whose recovery fails is worse than one that offers none, because the person now believes
+// they have tried the fix.
+const pullRebaseAdvice = "land them with `git pull --rebase && git push`, or drop them, and run this again"
+
 func EnsureLevelWith(dir, remote, branch string) error {
 	if err := ValidGitArg("remote", remote); err != nil {
 		return err
@@ -149,8 +305,19 @@ func EnsureLevelWith(dir, remote, branch string) error {
 	if err != nil {
 		return fmt.Errorf("git rev-list --count printed %q, which is not a count", strings.TrimSpace(out))
 	}
-	if ahead > 0 {
-		return fmt.Errorf("branch is ahead of %s/%s by %d commits the tool did not make; push or drop them first", remote, branch, ahead)
+	if ahead == 0 {
+		return nil
+	}
+	// Which of them are OURS. A commit carrying the trailer is one this tool made and could
+	// not land, and carrying it into this push is the recovery rather than the refusal; only
+	// a commit without the trailer is the unfinished work the guard exists for.
+	foreign, err := notOurs(dir, ref)
+	if err != nil {
+		return fmt.Errorf("the branch is ahead of %s/%s by %d commits and the log that would say which of them this tool made failed: %w", remote, branch, ahead, err)
+	}
+	if len(foreign) > 0 {
+		return fmt.Errorf("branch is ahead of %s/%s by %d commits, %d of which the tool did not make (%s); %s",
+			remote, branch, ahead, len(foreign), strings.Join(foreign, ", "), pullRebaseAdvice)
 	}
 	return nil
 }
@@ -321,6 +488,14 @@ func stageAndCommit(dir string, id Identity, paths []string, message string) (st
 	if strings.TrimSpace(id.Name) == "" || strings.TrimSpace(id.Email) == "" {
 		return "", errors.New("no git identity for this sender")
 	}
+	// EVERY commit this tool makes carries the trailer, and this is the one place that is
+	// enforced rather than asked for. A caller that named its own -- send, receipt, the
+	// cursor -- keeps it; a caller that did not gets the generic one, so there is no path
+	// through this function that leaves a commit the branch-ahead guard would later mistake
+	// for somebody else's work.
+	if !HasTrailer(message) {
+		message = WithTrailer(message, TrailerCommit)
+	}
 	add := append([]string{"add", "--"}, paths...)
 	if _, err := git(dir, add...); err != nil {
 		return "", err
@@ -410,17 +585,24 @@ func CommitAndPush(dir string, id Identity, paths []string, message, remote, bra
 			return res, fmt.Errorf("the push was refused and the fetch that would explain it failed: %w", err)
 		}
 		if _, err := git(dir, append(identityArgs(id), "rebase", "FETCH_HEAD")...); err != nil {
-			// Two senders' commits touch disjoint paths, so a conflict here is always
-			// two sessions of ONE line, from benches that cannot see each other: that
-			// line's own RECEIPTS, or -- when both benches sent the same note in the
-			// same second, and so were assigned the same id -- one note path, as an
-			// add/add. Either way it is a person's decision, and either way the answer
-			// is a refusal rather than two notes with one id. Leave the checkout as it
-			// was found, with the commit still on the branch.
-			if _, abortErr := git(dir, "rebase", "--abort"); abortErr != nil {
-				return res, fmt.Errorf("the rebase conflicted and could not be aborted: %w", abortErr)
+			// A conflict here is two sessions of ONE line, from benches that cannot see
+			// each other, and the FILES it lands on are this tool's own: that lane's
+			// RECEIPTS or INDEX, which are append-only and whose union is both sides'
+			// lines; that reader's CURSOR and OPEN, where one of the two reads is further
+			// along than the other. NO CONFLICT MAY WEDGE A LINE, so the tool settles
+			// those itself -- see conflict.go -- and only a conflict on a NOTE, which is
+			// two benches that sent the same note in the same second and were assigned one
+			// id, is a person's decision. That one is aborted and reported.
+			if settleErr := settleRebase(dir, id); settleErr != nil {
+				if abortErr := abortRebase(dir); abortErr != nil {
+					return res, abortErr
+				}
+				return res, &ConflictError{
+					Reason: fmt.Sprintf("the rebase over what arrived conflicted on %s, which this tool will not settle for you; your commit %s is on the branch and was NOT pushed; recover with `git pull --rebase`, fix the files it names, `git rebase --continue`, then `git push`",
+						oneLineOf(settleErr.Error()), res.Commit),
+					Output: transcriptOf(err),
+				}
 			}
-			return res, fmt.Errorf("the rebase over what arrived conflicted; your commit %s is on the branch and was NOT pushed: %w", res.Commit, err)
 		}
 		sha, err := git(dir, "rev-parse", "HEAD")
 		if err != nil {
@@ -428,7 +610,7 @@ func CommitAndPush(dir string, id Identity, paths []string, message, remote, bra
 		}
 		res.Commit = strings.TrimSpace(sha)
 	}
-	return res, fmt.Errorf("the push was refused %d times; your commit %s is on the branch and was NOT pushed", res.Attempts, res.Commit)
+	return res, fmt.Errorf("the push was refused %d times; your commit %s is on the branch and was NOT pushed; the next run of this tool will carry it, or land it now with `git pull --rebase && git push`", res.Attempts, res.Commit)
 }
 
 // --------------------------------------------------------------- reading only what moved
@@ -525,12 +707,31 @@ func IsAncestor(dir, commit string) (bool, error) {
 	if err := ValidCommitHex(commit); err != nil {
 		return false, err
 	}
-	if _, err := git(dir, "rev-parse", "--verify", "--quiet", commit+"^{commit}"); err != nil {
-		return false, nil
+	return isAncestorOf(dir, commit, "HEAD")
+}
+
+// isAncestorOf is `git merge-base --is-ancestor`, with exit 1 read as the answer NO rather
+// than as a failure. It takes both ends because the conflict settlement asks it about two
+// cursors, neither of which is HEAD.
+func isAncestorOf(dir, ancestor, descendant string) (bool, error) {
+	for _, rev := range []string{ancestor, descendant} {
+		if rev == "HEAD" {
+			continue
+		}
+		if _, err := git(dir, "rev-parse", "--verify", "--quiet", rev+"^{commit}"); err != nil {
+			return false, nil
+		}
 	}
-	cmd := exec.Command("git", "-C", dir, "merge-base", "--is-ancestor", commit, "HEAD")
-	cmd.Env = append(cmd.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "GIT_OPTIONAL_LOCKS=0")
-	if err := cmd.Run(); err != nil {
+	budget := gitTimeout()
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", dir, "merge-base", "--is-ancestor", ancestor, descendant)
+	cmd.Env = append(cmd.Environ(), gitEnv...)
+	err := cmd.Run()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return false, fmt.Errorf("git merge-base --is-ancestor did not finish within %s and was killed; a longer budget is --git-timeout <seconds>", budget)
+	}
+	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 1 {
 			return false, nil

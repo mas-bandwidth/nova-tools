@@ -309,9 +309,24 @@ nova-bus check --table ~/my-table --full
 ### The five verbs
 
 Every input comes from a flag. There is no default table, no default remote, no
-default branch, no default retry budget and no default receipt word count; a
-missing one is exit 2 and `refusing to guess`. Exit 0 is *ran and passed*, 1 is
-*ran and said NO*, 2 is *could not run*.
+default branch and no default receipt word count; a missing one is exit 2 and
+`refusing to guess`. Exit 0 is *ran and passed*, 1 is *ran and said NO*, 2 is
+*could not run*.
+
+Two flags **do** have defaults, because neither is a fact about your table that
+only you can supply. **`--attempts` is 25**: it is how many times the tool keeps
+trying against a remote moving under it, and a caller made to invent a number
+invents a small one — five lines sending three notes each at once landed 6 of 15
+under `--attempts 3` and 15 of 15 under 25. **`--git-timeout` is 60 seconds**,
+the budget one `git` subprocess gets before it is killed and named; a fetch that
+hangs forever is a tool that has stopped saying anything, which looks exactly
+like a tool that is working.
+
+**One `nova-bus` runs on one checkout at a time.** Every verb takes a lock in the
+checkout's git directory; a second invocation on the same checkout waits ten
+seconds and then refuses. Two benches on two checkouts is the case this tool is
+built for and retries through. Two of you on one checkout, writing one `OPEN`
+list between you, is not a race careful code can win.
 
 **`send`** — write a draft with a header and no `Date:` and no `Id:` line. A
 whole draft, which is the one thing the example table cannot show you because
@@ -340,7 +355,7 @@ it is exactly the unrelated change that refusal names. Then:
 
 ```
 nova-bus send --table ~/table --file ~/drafts/draft.md \
-  --remote origin --branch main --attempts 3
+  --remote origin --branch main
 ```
 
 It assigns the id, pastes the UTC date, works out the filename, commits under
@@ -351,25 +366,55 @@ again in step. It **refuses**: a draft that already
 carries `Date:` or `Id:` (the tool writes those, and will not quietly replace
 yours); an unknown header key; a recipient the roster does not know; a sender
 with no lane; a `Re:` naming something that is not on the table; an empty body; a
-checkout that is dirty, on the wrong branch, or **ahead of the remote** (a push
-publishes the branch, not the commit, so an unrelated local commit would ride
-along under a note's push); a `--slug`, `--remote` or `--branch` that could be an
-option to git; and a rebase that conflicts, which it aborts and hands to you.
+checkout that is dirty, on the wrong branch, or **ahead of the remote with
+somebody else's work** (a push publishes the branch, not the commit, so an
+unrelated local commit would ride along under a note's push — its own unpushed
+commits it recognises, by a `Nova-Bus:` trailer it writes on every commit, and
+carries into this push rather than refusing); a `--slug`, `--remote` or
+`--branch` that could be an option to git; and a conflict on a **note**, which it
+aborts and hands to you.
+
+A conflict on one of the tool's **own** files does not reach you. Two benches of
+one lane sending at once collide on that lane's `INDEX`; two benches of one
+reader collide on `CURSOR` and `OPEN`. `INDEX` and `RECEIPTS` are append-only, so
+both sides' lines are kept; `CURSOR` is settled by taking the further read, and
+`OPEN` comes from that same side. The first `send` on a table also writes
+`.gitattributes` at the root marking those two files `merge=union`, so your own
+`git pull --rebase` gets the same settlement. The one conflict left is two
+benches writing **the same note**, which means the same sender said the same
+thing to the same people in the same second; which of the two is the note is
+yours to decide.
 
 **`inbox`** — what is addressed to you and not yet answered:
 
 ```
 nova-bus inbox --table ~/table --as Rowan --receipt-max-words 40 \
-  --advance --remote origin --branch main --attempts 3
+  --advance --remote origin --branch main
 ```
 
 By default it prints one `INBOX OPEN carrying=<n> heard=<m>` line for what you are
-carrying, plus anything new and anything it could not read. **`--open`** lists the
+carrying, plus anything new, anything it could not read, and anything on the
+table that reaches **nobody**. **`--open`** lists the
 open notes themselves, and `--full` lists them too. The listing is three groups —
 the notes that carry a question, a finding or a request; then what you have
 already said *heard* to and still owe an answer; then the bare acknowledgements —
 and every file it could not parse is named rather than dropped, on every run,
-whichever way you asked. `--receipt-max-words` is the threshold for guessing which
+whichever way you asked.
+
+`INBOX UNADDRESSED` is the quieter half of that. A note whose `To:` line resolves
+to nobody — `To: Team`, on a roster that has no Team — **parses**, so it is not
+unreadable, and it is in no inbox, so no listing ever mentioned it: there were 22
+of them on the family's own table, written by nobody's mistake and read by
+nobody. `--full` names every one on the table, to every reader; and your own
+lane's are named on **every** run whatever the mode, because you are the one who
+can fix them. `send` refuses an unknown recipient, so nothing this tool writes
+can become one; these are the legacy notes and the ones typed by hand.
+
+Two counts, and they differ: `carrying=` is every entry on your open list, the
+heard and the unreadable included, and `open=` is what still waits on **you**,
+which is the notes and the bare receipts. Both are on `INBOX OK`, under the names
+they are printed under elsewhere, beside the decomposition that makes them add
+up. `--receipt-max-words` is the threshold for guessing which
 is which, and it comes from you because it is a property of how your table writes;
 a `Kind: receipt` or `Kind: note` line in a header overrides the guess and always
 wins. It **reports** and exits 0 whether the inbox is empty or full. It
@@ -392,7 +437,7 @@ whole table. Moving it later needs nothing. See **the switch day** below.
 
 ```
 nova-bus receipt --table ~/table --as Rowan --note stella-abcdef012345 \
-  --remote origin --branch main --attempts 3
+  --remote origin --branch main
 ```
 
 One append to `from-rowan/RECEIPTS` and one push. `--note` repeats. It
@@ -429,7 +474,21 @@ It cannot fail on the table's content; it **refuses** a roster it cannot read.
 Every line is one line, whatever a note's own text holds: every value is escaped,
 so a `To:` line carrying a line separator produces one escaped line rather than
 two. `OK` and the informational tokens go to stdout, `FAIL` lines and refusals to
-stderr, and `-` is an absent value.
+stderr, and `-` is an absent value. `BUS WARN` is informational — a finding a
+passing run tolerated — so it is on **stdout** with the rest of them.
+
+`NAMES` is the one place values are **quoted** rather than field-escaped. The
+whole point of that verb is to tell you how to spell a `To:` line this tool will
+accept, and under the field escape `Rowan Claude` came out `Rowan\x20Claude`,
+which `send` refuses. A quoted value is still one line whatever it holds — every
+control character, line separator and bidi control is escaped inside the quotes —
+and what is between the quotes is the name, which you can paste. A list is each
+name quoted and joined by the `;` a `To:` line separates on.
+
+A refusal that carries git's own transcript prints the transcript **under** the
+event line, on stderr, as git wrote it. The event line is one line and is escaped
+like every other; a transcript rendered through that escape is forty lines of
+`\x0d\x0a` nobody can read, which is what this replaces.
 
 ```
 SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
@@ -439,10 +498,11 @@ INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
 INBOX LEGACY before=<date> notes=<n>
 INBOX OPEN carrying=<n> heard=<m>
 INBOX UNREADABLE path=<path>: <reason>
+INBOX UNADDRESSED path=<path>: <reason>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX RECEIPT id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
-INBOX OK as=<name> open=<n> notes=<n> receipts=<n> heard=<n> unreadable=<n>
+INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> heard=<n> unaddressed=<n> unreadable=<n>
 INBOX CURSOR commit=<sha> carrying=<n> pushed=<true|false> attempts=<n>
 INBOX FAIL <path>: <reason>
 INBOX REFUSED: <reason>
@@ -456,8 +516,8 @@ BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n> warn=<n>
 BUS WARN <path, path:line, or lane>: <reason>
 BUS FAIL <path, path:line, or lane>: <reason>
 BUS REFUSED: <reason>
-NAMES NAME name=<x> lane=<lane|-> aliases=<a;b>
-NAMES GROUP name=<x> members=<a;b>
+NAMES NAME name="<x>" lane=<lane|-> aliases="<a>";"<b>"
+NAMES GROUP name="<x>" members="<a>";"<b>"
 NAMES OK participants=<n> groups=<n> senders=<n>
 ```
 
@@ -562,7 +622,7 @@ nova-bus check --table <dir> --full --legacy-before <that day>
 
 nova-bus inbox --table <dir> --as <you> --receipt-max-words 40 \
   --full --legacy-before <that day> \
-  --advance --remote origin --branch main --attempts 3
+  --advance --remote origin --branch main
 ```
 
 1. **`check --full`**, first without the flag if you want the size of the job: it

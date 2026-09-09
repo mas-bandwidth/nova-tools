@@ -3,6 +3,7 @@ package oneline
 import (
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"unicode"
@@ -169,5 +170,51 @@ func TestErrRendersTheTextAndSpellsNilLikeFmt(t *testing.T) {
 	err := errors.New("open a\nFUSE OK lockdown=clear: no such file")
 	if got, want := Err(err), `open a\x0aFUSE OK lockdown=clear: no such file`; got != want {
 		t.Errorf("Err = %q, want %q", got, want)
+	}
+}
+
+// Quote is the third rendering, and it exists because Field was wrong for the one kind of
+// value a person is meant to COPY. Both properties are asserted: what is between the quotes
+// is the value as it is spelled, and the result is still one line whatever the value holds.
+//
+// The line separators and bidi controls come through u, like everywhere else in this file:
+// an invisible control in a source file is exactly the thing a reader could not see.
+func TestQuoteIsPasteableAndStillOneLine(t *testing.T) {
+	// The specimen: a roster name with a space in it, which Field renders \x20 and nobody
+	// can paste back into a To line.
+	if got, want := Quote("Rowan Claude"), `"Rowan Claude"`; got != want {
+		t.Fatalf("Quote(%q) = %s, want %s", "Rowan Claude", got, want)
+	}
+	if Field("Rowan Claude") == Quote("Rowan Claude") {
+		t.Fatal("Quote is Field; the whole point is that Field escapes the space")
+	}
+	// Non-ASCII that a person types stays as it is: this is not an ASCII escape.
+	if got, want := Quote("Zo\u00eb"), "\"Zo\u00eb\""; got != want {
+		t.Fatalf("Quote = %s, want %s", got, want)
+	}
+	// ONE LINE, whatever it holds. Every character that could end a line for a reader that
+	// follows Unicode, or reorder one for a reader that follows bidi, is escaped inside the
+	// quotes -- and so are the quote and the backslash, which is what makes this injective
+	// where Escape is not.
+	breaks := u(0x2028) + u(0x2029) + "\n\r"
+	for _, s := range []string{
+		"a\nb", "a\r\nb", "a\tb", "a b",
+		"a" + u(0x2028) + "b", "a" + u(0x2029) + "b",
+		"a" + u(0x202e) + "b", "a" + u(0x2066) + "b",
+		"a\"b", "a" + bs + "b", "a\x00b",
+	} {
+		got := Quote(s)
+		if strings.ContainsAny(got, breaks) {
+			t.Fatalf("Quote(%q) = %s, which is more than one line", s, got)
+		}
+		if !strings.HasPrefix(got, `"`) || !strings.HasSuffix(got, `"`) {
+			t.Fatalf("Quote(%q) = %s, which is not delimited", s, got)
+		}
+		// It round-trips, which Escape deliberately does not -- and that is what proves the
+		// delimiters do not lie: a quote inside the value is escaped, or this fails.
+		back, err := strconv.Unquote(got)
+		if err != nil || back != s {
+			t.Fatalf("Quote(%q) = %s, which unquotes to %q %v", s, got, back, err)
+		}
 	}
 }

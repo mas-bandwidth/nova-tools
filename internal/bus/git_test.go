@@ -181,11 +181,11 @@ func TestPushGivesUpInsideTheBudgetAndSaysTheNoteIsNotOnTheTable(t *testing.T) {
 	}
 }
 
-// The one case the rebase must not paper over: a real conflict. On this layout that is
-// always two sessions of ONE line from two benches -- appending to that line's own
-// RECEIPTS, as here, or writing the same note path when both benches sent the same note in
-// the same second. The tool aborts, says so, and leaves the checkout usable.
-func TestARebaseConflictAbortsAndSaysSo(t *testing.T) {
+// NO CONFLICT MAY WEDGE A LINE, at the file the whole tool used to stop on. Two benches of
+// one line append to that line's own RECEIPTS at the same end over one base -- an edit/edit
+// -- and the rebase stops. The tool settles it by union, because a RECEIPTS is a log and
+// two lines appended to a log are both true, and BOTH receipts land.
+func TestTwoBenchesReceiptingAtOnceBothLand(t *testing.T) {
 	hermetic(t)
 	bare := bareTable(t)
 	a := cloneTable(t, bare)
@@ -195,30 +195,37 @@ func TestARebaseConflictAbortsAndSaysSo(t *testing.T) {
 	if _, err := CommitAndPush(a, testIdentity["Rowan"], []string{"from-rowan/RECEIPTS"}, "rowan: receipt", "origin", "main", 3); err != nil {
 		t.Fatal(err)
 	}
+	// The second bench cannot see the first.
 	write(t, b, "from-rowan/RECEIPTS", "2026-09-07T00:02:00Z stella-bbbbbbbbbbbb\n")
-	_, err := CommitAndPush(b, testIdentity["Rowan"], []string{"from-rowan/RECEIPTS"}, "rowan: another receipt", "origin", "main", 3)
-	if err == nil {
-		t.Fatal("a conflicting rebase reported success")
+	res, err := CommitAndPush(b, testIdentity["Rowan"], []string{"from-rowan/RECEIPTS"}, "rowan: another receipt", "origin", "main", 3)
+	if err != nil {
+		t.Fatalf("a conflict this tool settles wedged the line instead: %v", err)
 	}
-	if !strings.Contains(err.Error(), "conflicted") {
-		t.Fatalf("the refusal does not name the conflict: %v", err)
+	if !res.Pushed {
+		t.Fatalf("res = %+v, want pushed", res)
 	}
-	// The rebase was aborted, so the checkout is on a branch and not mid-rebase.
-	if _, err := CurrentBranch(b); err != nil {
-		t.Fatalf("the checkout was left mid-rebase: %v", err)
+	landed, err := git(bare, "show", "main:from-rowan/RECEIPTS")
+	if err != nil {
+		t.Fatal(err)
 	}
-	if _, statErr := os.Stat(filepath.Join(b, ".git", "rebase-merge")); !os.IsNotExist(statErr) {
-		t.Fatal("a rebase is still in progress after the abort")
+	for _, want := range []string{"stella-aaaaaaaaaaaa", "stella-bbbbbbbbbbbb"} {
+		if !strings.Contains(landed, want) {
+			t.Fatalf("the union dropped a receipt; the remote holds:\n%s", landed)
+		}
 	}
+	if strings.Contains(landed, "<<<") {
+		t.Fatalf("conflict markers reached the table:\n%s", landed)
+	}
+	assertSettled(t, b)
 }
 
-// The conflict surface the catalogue ADDED, pinned so nothing claims it away again. Two
-// benches of one lane sending DIFFERENT notes rebased clean before INDEX existed: the note
-// paths differ and nothing else was touched. Now both append a line at the end of one file
-// over one base, which is an edit/edit, and the rebase stops. Append-only is not
-// conflict-free, and the outcome is the one the protocol already states: abort, the commit
-// left on the branch, exit 1, a person decides.
-func TestTwoBenchesOfOneLaneConflictOnTheCatalogue(t *testing.T) {
+// The conflict surface the catalogue ADDED, and the one the scenario run found wedging a
+// bench. Two benches of one lane sending DIFFERENT notes rebased clean before INDEX
+// existed; once the catalogue was written in the note's own commit they collided on it, the
+// tool aborted, and the person's own `git pull --rebase` then landed in a half-done rebase
+// with `UU from-rowan/INDEX` and nothing saying what to do. Both notes and both catalogue
+// lines now land, and the checkout is left in a state a person can keep working in.
+func TestTwoBenchesOfOneLaneSettleTheCatalogue(t *testing.T) {
 	hermetic(t)
 	bare := bareTable(t)
 	a := cloneTable(t, bare)
@@ -241,24 +248,128 @@ func TestTwoBenchesOfOneLaneConflictOnTheCatalogue(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err := CommitAndPush(b, testIdentity["Rowan"], []string{second.Path, IndexPath("from-rowan")}, "rowan: two", "origin", "main", 3)
-	if err == nil {
-		t.Fatal("two benches of one lane appending different catalogue lines did not conflict; if this is now true the SPEC's list of conflict surfaces is wrong in the other direction")
+	if err != nil {
+		t.Fatalf("the catalogue conflict wedged the bench instead of being settled: %v", err)
 	}
-	if !strings.Contains(err.Error(), "conflicted") || !strings.Contains(err.Error(), "was NOT pushed") {
-		t.Fatalf("the refusal does not name the conflict and say the note is not on the table: %v", err)
+	if !res.Pushed {
+		t.Fatalf("res = %+v, want pushed", res)
 	}
-	// The abort is CLEAN: on a branch, no rebase in progress, no conflict markers left in
-	// the working tree, and this bench's own commit still there to be dealt with.
-	if _, berr := CurrentBranch(b); berr != nil {
-		t.Fatalf("the checkout was left mid-rebase: %v", berr)
-	}
-	for _, dir := range []string{"rebase-merge", "rebase-apply"} {
-		if _, statErr := os.Stat(filepath.Join(b, ".git", dir)); !os.IsNotExist(statErr) {
-			t.Fatalf("a rebase is still in progress after the abort (.git/%s)", dir)
+	// Both notes are on the table, and the catalogue names both.
+	for _, p := range []string{first.Path, second.Path} {
+		if _, cerr := git(bare, "cat-file", "-e", "main:"+p); cerr != nil {
+			t.Fatalf("%s is not on the remote", p)
 		}
 	}
-	if err := EnsureClean(b, nil); err != nil {
-		t.Fatalf("the abort left the checkout dirty: %v", err)
+	landed, err := git(bare, "show", "main:"+IndexPath("from-rowan"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{first.ID, second.ID} {
+		if !strings.Contains(landed, want) {
+			t.Fatalf("the catalogue lost %s:\n%s", want, landed)
+		}
+	}
+	assertSettled(t, b)
+}
+
+// A CURSOR is a REPLACE and not an append, so a union of two of them would be nonsense.
+// Two benches of one reader advancing at once are settled by taking the further read -- the
+// cursor whose commit is a descendant of the other -- and the OPEN list is taken from that
+// same side, because an open list belongs to a cursor and merging two would carry notes the
+// winning read has already closed.
+func TestTwoBenchesOfOneReaderSettleTheCursor(t *testing.T) {
+	hermetic(t)
+	bare := bareTable(t)
+	a := cloneTable(t, bare)
+	b := cloneTable(t, bare)
+
+	// A commit on the table both benches can see, and a second only the first has read to.
+	write(t, a, "from-stella/a.md", noteText("Stella", "one", "body"))
+	if _, err := CommitAndPush(a, testIdentity["Stella"], []string{"from-stella/a.md"}, "stella: one", "origin", "main", 3); err != nil {
+		t.Fatal(err)
+	}
+	behind, err := HeadCommit(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(a, "fetch", "origin", "main"); err != nil {
+		t.Fatal(err)
+	}
+	ahead, err := HeadCommit(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The FURTHER read, pushed first.
+	if err := WriteCursor(a, "from-rowan", ahead, 1, "", at("2026-09-09T12:00:00Z")); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteOpen(a, "from-rowan", []OpenEntry{{ID: "stella-aaaaaaaaaaaa", Kind: OpenNote, From: "Stella", Addr: "to", Path: "from-stella/a.md", Subject: "one"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CommitAndPush(a, testIdentity["Rowan"], []string{CursorPath("from-rowan"), OpenPath("from-rowan")}, "rowan: read to "+ahead[:12], "origin", "main", 3); err != nil {
+		t.Fatal(err)
+	}
+
+	// The bench that is BEHIND, which cannot see any of that, pushes its own read second.
+	if err := WriteCursor(b, "from-rowan", behind, 0, "", at("2026-09-09T11:00:00Z")); err != nil {
+		t.Fatal(err)
+	}
+	res, err := CommitAndPush(b, testIdentity["Rowan"], []string{CursorPath("from-rowan")}, "rowan: read to "+behind[:12], "origin", "main", 3)
+	if err != nil {
+		t.Fatalf("two benches of one reader wedged the line: %v", err)
+	}
+	if !res.Pushed {
+		t.Fatalf("res = %+v, want pushed", res)
+	}
+	landedCursor, err := git(bare, "show", "main:"+CursorPath("from-rowan"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(landedCursor, ahead) {
+		t.Fatalf("the settlement kept the SHORTER read; a cursor that goes backwards re-opens everything between the two:\n%s", landedCursor)
+	}
+	// And the open list came with it, rather than being merged with the other side's.
+	landedOpen, err := git(bare, "show", "main:"+OpenPath("from-rowan"))
+	if err != nil {
+		t.Fatalf("the winning cursor's open list is not on the table: %v", err)
+	}
+	if !strings.Contains(landedOpen, "from-stella/a.md") {
+		t.Fatalf("the open list does not belong to the cursor beside it:\n%s", landedOpen)
+	}
+	assertSettled(t, b)
+}
+
+// The one conflict this tool will NOT settle, and the refusal it gives instead. Two benches
+// wrote the SAME note path, which means they sent the same note in the same second and were
+// assigned one id; which of the two is the note is a person's decision. The rebase is
+// aborted, the commit is left on the branch, and the checkout is usable.
+func TestAConflictOnANoteIsRefusedAndTheAbortIsClean(t *testing.T) {
+	hermetic(t)
+	bare := bareTable(t)
+	a := cloneTable(t, bare)
+	b := cloneTable(t, bare)
+
+	write(t, a, "from-rowan/same.md", noteText("Rowan", "one", "the first bench wrote this"))
+	if _, err := CommitAndPush(a, testIdentity["Rowan"], []string{"from-rowan/same.md"}, "rowan: one", "origin", "main", 3); err != nil {
+		t.Fatal(err)
+	}
+	write(t, b, "from-rowan/same.md", noteText("Rowan", "one", "the second bench wrote this"))
+	res, err := CommitAndPush(b, testIdentity["Rowan"], []string{"from-rowan/same.md"}, "rowan: one again", "origin", "main", 3)
+	if err == nil {
+		t.Fatal("two benches writing one note path was settled; which of the two is the note is not this tool's decision")
+	}
+	for _, want := range []string{"conflicted", "from-rowan/same.md", "was NOT pushed", "git pull --rebase"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	// The reason is ONE LINE and the transcript is carried beside it, not inside it.
+	if strings.Contains(err.Error(), "\n") {
+		t.Fatalf("the refusal is more than one line: %q", err.Error())
+	}
+	if Transcript(err) == "" {
+		t.Fatal("the refusal carries no transcript, so a person has git's own words nowhere")
 	}
 	if res.Commit == "" {
 		t.Fatal("the refusal names no commit, so a person has nothing to look at")
@@ -266,10 +377,36 @@ func TestTwoBenchesOfOneLaneConflictOnTheCatalogue(t *testing.T) {
 	if _, cerr := git(b, "cat-file", "-e", res.Commit+"^{commit}"); cerr != nil {
 		t.Fatalf("the commit named in the refusal is not on the branch: %v", cerr)
 	}
-	// And the first bench's note is still the only one on the table: nothing was lost and
-	// nothing was overwritten.
-	if _, cerr := git(bare, "cat-file", "-e", "main:"+second.Path); cerr == nil {
-		t.Fatal("the conflicting note reached the remote")
+	assertSettled(t, b)
+	// And the first bench's note is untouched on the table.
+	landed, err := git(bare, "show", "main:from-rowan/same.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(landed, "the first bench wrote this") {
+		t.Fatalf("the conflicting note overwrote the one on the table:\n%s", landed)
+	}
+}
+
+// assertSettled is the state every one of the tests above ends in: on a branch, no rebase
+// in progress under either backend, and a clean tree. A bench left in any other state is a
+// bench a person has to rescue, which is the wedge these tests are about.
+func assertSettled(t *testing.T, dir string) {
+	t.Helper()
+	if _, err := CurrentBranch(dir); err != nil {
+		t.Fatalf("the checkout was left mid-rebase: %v", err)
+	}
+	gd, err := GitDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"rebase-merge", "rebase-apply"} {
+		if _, statErr := os.Stat(filepath.Join(gd, name)); !os.IsNotExist(statErr) {
+			t.Fatalf("a rebase is still in progress (%s)", name)
+		}
+	}
+	if err := EnsureClean(dir, nil); err != nil {
+		t.Fatalf("the checkout was left dirty: %v", err)
 	}
 }
 
@@ -436,8 +573,10 @@ func TestARejectedPushRecoversOnTheSecondAttempt(t *testing.T) {
 
 // A push publishes the BRANCH. A checkout carrying commits this tool did not make would
 // send those to the table under a note's name, so the run refuses before it stages
-// anything and says how many are in the way.
-func TestSendRefusesABranchAheadOfTheRemote(t *testing.T) {
+// anything and says how many are in the way -- and the advice it gives is advice that
+// WORKS. A bare `git push` was what it used to say, and a bare push against a remote that
+// has moved is rejected exactly as this tool's own was.
+func TestSendRefusesABranchAheadOfTheRemoteWithSomebodyElsesWork(t *testing.T) {
 	hermetic(t)
 	bare := bareTable(t)
 	clone := cloneTable(t, bare)
@@ -446,19 +585,138 @@ func TestSendRefusesABranchAheadOfTheRemote(t *testing.T) {
 	if err := EnsureLevelWith(clone, "origin", "main"); err != nil {
 		t.Fatalf("a checkout level with its remote was refused: %v", err)
 	}
-	// Somebody's unrelated work, committed here and not pushed.
+	// Somebody's unrelated work, committed here by hand -- so it carries no trailer -- and
+	// not pushed.
 	write(t, clone, "notes-to-self.txt", "half a thought\n")
-	if _, err := CommitOnly(clone, testIdentity["Rowan"], []string{"notes-to-self.txt"}, "wip"); err != nil {
-		t.Fatal(err)
-	}
+	commitByHand(t, clone, "notes-to-self.txt", "wip")
 	err := EnsureLevelWith(clone, "origin", "main")
 	if err == nil {
 		t.Fatal("a branch holding an unrelated local commit passed; a push would have published it")
 	}
-	for _, want := range []string{"ahead of origin/main", "by 1 commits", "push or drop them first"} {
+	for _, want := range []string{"ahead of origin/main", "by 1 commits", "1 of which the tool did not make", "git pull --rebase && git push"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("the refusal does not say %q: %v", want, err)
 		}
+	}
+	// THE ADVICE HAS TO WORK. Somebody else pushes while this checkout is ahead, which is
+	// the state a bare `git push` cannot get out of -- and the sentence's own recovery does.
+	other := cloneTable(t, bare)
+	write(t, other, "from-stella/b.md", noteText("Stella", "theirs", "body"))
+	if _, err := CommitAndPush(other, testIdentity["Stella"], []string{"from-stella/b.md"}, "stella: theirs", "origin", "main", 3); err != nil {
+		t.Fatal(err)
+	}
+	if out, perr := git(clone, "push", "origin", "HEAD:refs/heads/main"); perr == nil {
+		t.Fatalf("the fixture is not the state the advice is about: a bare push succeeded\n%s", out)
+	}
+	if out, rerr := git(clone, "-c", "user.name=Rowan", "-c", "user.email=rowan@example.com", "pull", "--rebase", "origin", "main"); rerr != nil {
+		t.Fatalf("`git pull --rebase`, which the refusal recommends, failed: %v\n%s", rerr, out)
+	}
+	if out, perr := git(clone, "push", "origin", "HEAD:refs/heads/main"); perr != nil {
+		t.Fatalf("`git push` after the rebase, which the refusal recommends, failed: %v\n%s", perr, out)
+	}
+	if err := EnsureLevelWith(clone, "origin", "main"); err != nil {
+		t.Fatalf("the advice ran to the end and the checkout is still refused: %v", err)
+	}
+}
+
+// THE WEDGE, closed. A push this tool could not land leaves its own commit on the branch,
+// and the branch-ahead guard used to refuse the next run over it: "1 commits the tool did
+// not make", about a commit the tool had made. Three of five lines were stuck there in the
+// scenario run, each needing a person to push by hand -- which is the failure the whole
+// tool exists to end, arriving from inside it. The trailer is how a run knows its own work,
+// and the next push CARRIES it.
+func TestAnUnpushedCommitOfOurOwnIsCarriedRatherThanRefused(t *testing.T) {
+	hermetic(t)
+	bare := bareTable(t)
+	mine := cloneTable(t, bare)
+	theirs := cloneTable(t, bare)
+
+	// A push that cannot land: somebody else got there first and the budget is one attempt.
+	write(t, theirs, "from-stella/b.md", noteText("Stella", "theirs", "body"))
+	if _, err := CommitAndPush(theirs, testIdentity["Stella"], []string{"from-stella/b.md"}, "stella: theirs", "origin", "main", 3); err != nil {
+		t.Fatal(err)
+	}
+	write(t, mine, "from-rowan/a.md", noteText("Rowan", "mine", "body"))
+	lost, err := CommitAndPush(mine, testIdentity["Rowan"], []string{"from-rowan/a.md"},
+		WithTrailer("rowan: mine", TrailerSend+" rowan-aaaaaaaaaaaa"), "origin", "main", 1)
+	if err == nil {
+		t.Fatal("the fixture did not lose its push")
+	}
+	if !strings.Contains(err.Error(), "git pull --rebase && git push") {
+		t.Fatalf("the refusal offers no recovery that works: %v", err)
+	}
+	if lost.Commit == "" {
+		t.Fatal("the lost push named no commit")
+	}
+
+	// The next run. This is where the tool used to refuse to run at all.
+	if err := EnsureLevelWith(mine, "origin", "main"); err != nil {
+		t.Fatalf("the guard refused this tool's OWN unpushed commit, which is the wedge: %v", err)
+	}
+	write(t, mine, "from-rowan/c.md", noteText("Rowan", "next", "body"))
+	res, err := CommitAndPush(mine, testIdentity["Rowan"], []string{"from-rowan/c.md"},
+		WithTrailer("rowan: next", TrailerSend+" rowan-cccccccccccc"), "origin", "main", 25)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Pushed {
+		t.Fatalf("res = %+v, want pushed", res)
+	}
+	// BOTH notes are on the table: the one whose push was lost was carried by this one.
+	for _, p := range []string{"from-rowan/a.md", "from-rowan/c.md", "from-stella/b.md"} {
+		if _, cerr := git(bare, "cat-file", "-e", "main:"+p); cerr != nil {
+			t.Fatalf("%s is not on the remote; the lost note was not carried", p)
+		}
+	}
+}
+
+// commitByHand makes a commit the way a PERSON does: raw git, no trailer, so the
+// branch-ahead guard sees work this tool did not make.
+func commitByHand(t *testing.T, dir, path, message string) {
+	t.Helper()
+	if out, err := git(dir, "add", "--", path); err != nil {
+		t.Fatalf("git add: %v %s", err, out)
+	}
+	if out, err := git(dir, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "-q", "-m", message); err != nil {
+		t.Fatalf("git commit: %v %s", err, out)
+	}
+}
+
+// Every commit this tool makes carries the trailer, whether or not the caller named one --
+// which is what makes the guard above able to tell its own work from a person's.
+func TestEveryCommitCarriesTheTrailer(t *testing.T) {
+	hermetic(t)
+	bare := bareTable(t)
+	clone := cloneTable(t, bare)
+	write(t, clone, "from-rowan/a.md", noteText("Rowan", "one", "body"))
+	if _, err := CommitOnly(clone, testIdentity["Rowan"], []string{"from-rowan/a.md"}, "rowan: one"); err != nil {
+		t.Fatal(err)
+	}
+	body, err := git(clone, "log", "-1", "--format=%B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !HasTrailer(body) {
+		t.Fatalf("a commit made through this tool carries no %s trailer:\n%s", TrailerKey, body)
+	}
+	// A caller that named its own keeps it, and it is not doubled.
+	write(t, clone, "from-rowan/b.md", noteText("Rowan", "two", "body"))
+	if _, err := CommitOnly(clone, testIdentity["Rowan"], []string{"from-rowan/b.md"}, WithTrailer("rowan: two", TrailerSend+" rowan-bbbbbbbbbbbb")); err != nil {
+		t.Fatal(err)
+	}
+	body, err = git(clone, "log", "-1", "--format=%B")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(body, TrailerKey+":"); n != 1 {
+		t.Fatalf("the message carries %d trailers, want 1:\n%s", n, body)
+	}
+	if !strings.Contains(body, TrailerSend+" rowan-bbbbbbbbbbbb") {
+		t.Fatalf("the caller's own trailer was replaced:\n%s", body)
+	}
+	// And a message with no trailer is not one of ours.
+	if HasTrailer("rowan: a note somebody wrote by hand") {
+		t.Fatal("a message with no trailer was read as this tool's own")
 	}
 }
 

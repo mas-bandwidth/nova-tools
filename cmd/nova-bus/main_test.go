@@ -155,8 +155,7 @@ func TestRefusingToGuess(t *testing.T) {
 		{"send without --table", []string{"send", "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3"}, "--table is required"},
 		{"send without --remote", []string{"send", "--table", checkout, "--stdin", "--branch", "main", "--attempts", "3"}, "--remote is required"},
 		{"send without --branch", []string{"send", "--table", checkout, "--stdin", "--remote", "origin", "--attempts", "3"}, "--branch is required"},
-		{"send without --attempts", []string{"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main"}, "--attempts must be given"},
-		{"send with attempts 0", []string{"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "0"}, "--attempts must be given"},
+		{"send with attempts 0", []string{"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "0"}, "--attempts is a number of tries and is at least 1"},
 		{"send with neither --file nor --stdin", []string{"send", "--table", checkout, "--remote", "origin", "--branch", "main", "--attempts", "3"}, "exactly one of --file and --stdin"},
 		{"send with both", []string{"send", "--table", checkout, "--stdin", "--file", "x.md", "--remote", "origin", "--branch", "main", "--attempts", "3"}, "exactly one of --file and --stdin"},
 		{"inbox without --as", []string{"inbox", "--table", checkout, "--receipt-max-words", "40"}, "--as is required"},
@@ -204,7 +203,7 @@ func TestSendLandsANoteAndCheckPasses(t *testing.T) {
 	// And the question it answers is no longer open.
 	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=1 notes=0 receipts=1")
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=1 open=1 notes=0 receipts=1")
 }
 
 func TestSendFromAFile(t *testing.T) {
@@ -276,7 +275,7 @@ func TestInboxSeparatesNotesFromReceiptsAndPutsNotesFirst(t *testing.T) {
 	r := invoke(t, "", "inbox", "--table", checkout, "--as", "the keeper", "--receipt-max-words", "40").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX NOTE id=stella-abcdef012345 from=Stella addr=to").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=2 notes=1 receipts=1")
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=2 open=2 notes=1 receipts=1")
 	noteAt := strings.Index(r.stdout, "INBOX NOTE")
 	receiptAt := strings.Index(r.stdout, "INBOX RECEIPT")
 	if noteAt < 0 || receiptAt < 0 || noteAt > receiptAt {
@@ -352,9 +351,9 @@ func TestCheckRefusesATableWithNoRoster(t *testing.T) {
 func TestNamesEchoesTheRoster(t *testing.T) {
 	checkout, _ := table(t)
 	invoke(t, "", "names", "--table", checkout).mustCode(t, 0).
-		mustContain(t, "stdout", "NAMES NAME name=Rowan lane=from-rowan aliases=Rowan\\x20Claude;the\\x20keeper").
-		mustContain(t, "stdout", "NAMES NAME name=Glenn lane=-").
-		mustContain(t, "stdout", "NAMES GROUP name=Everybody\\x20at\\x20the\\x20table").
+		mustContain(t, "stdout", `NAMES NAME name="Rowan" lane=from-rowan aliases="Rowan Claude";"the keeper"`).
+		mustContain(t, "stdout", `NAMES NAME name="Glenn" lane=- aliases=-`).
+		mustContain(t, "stdout", `NAMES GROUP name="Everybody at the table" members="Rowan";"Stella";"Glenn"`).
 		mustContain(t, "stdout", "NAMES OK participants=3 groups=1 senders=2")
 }
 
@@ -390,8 +389,8 @@ func TestSendRefusesWhenTheBranchIsAheadOfTheRemote(t *testing.T) {
 	r := invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "SEND REFUSED: ").
-		mustContain(t, "stderr", "ahead of origin/main by 1 commits the tool did not make").
-		mustContain(t, "stderr", "push or drop them first")
+		mustContain(t, "stderr", "ahead of origin/main by 1 commits, 1 of which the tool did not make").
+		mustContain(t, "stderr", "git pull --rebase && git push")
 	if strings.Contains(r.stdout, "SEND OK") {
 		t.Fatalf("a refused send reported success: %s", r.stdout)
 	}
@@ -497,8 +496,11 @@ func TestCheckLegacyBefore(t *testing.T) {
 
 	// With it, the old one warns, the new one still fails, and the run still fails.
 	r = invoke(t, "", "check", "--table", checkout, "--full", "--legacy-before", "2026-09-05").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS WARN from-stella/2026-09-01T0001Z-old-prose.md").
+		mustContain(t, "stdout", "BUS WARN from-stella/2026-09-01T0001Z-old-prose.md").
 		mustContain(t, "stderr", "BUS FAIL from-stella/2026-09-08T0001Z-new-prose.md")
+	if strings.Contains(r.stderr, "BUS WARN") {
+		t.Fatalf("a warning reached stderr, where only failures and refusals go:\n%s", r.stderr)
+	}
 	if n := strings.Count(r.stderr, "BUS FAIL"); n != 1 {
 		t.Fatalf("check failed %d findings, want only the one after the cutoff:\n%s", n, r.stderr)
 	}

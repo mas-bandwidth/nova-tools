@@ -109,7 +109,7 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	r = invoke(t, "", quiet...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
 		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN carrying=%d heard=0", carried+1)).
-		mustContain(t, "stdout", fmt.Sprintf("INBOX OK as=Rowan open=%d", carried+1))
+		mustContain(t, "stdout", fmt.Sprintf("INBOX OK as=Rowan carrying=%d open=%d", carried+1, carried+1))
 	// ONE. Not one plus the open list, not one plus the history: one file opened and parsed,
 	// over a table of ten thousand and one with five hundred of them open.
 	if got := bus.NoteParses() - before; got != 1 {
@@ -201,7 +201,7 @@ func TestOpenListSurvivesTheCursorMovingPastIt(t *testing.T) {
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
 		mustContain(t, "stdout", "INBOX NOTE id=stella-abcdef012345 from=Stella addr=to at=2026-09-07T00:01:00Z").
 		mustContain(t, "stdout", "A question about the gate").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=2")
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=2 open=2")
 	if strings.Contains(r.stdout, "changed=0") && !strings.Contains(r.stdout, "carrying=2") {
 		t.Fatalf("the second run lost what the first was carrying:\n%s", r.stdout)
 	}
@@ -367,7 +367,7 @@ func TestACursorWhoseOpenListWentMissingIsRefused(t *testing.T) {
 	// whole table and both notes come back.
 	invoke(t, "", advance(checkout, "Rowan", "--full")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=full").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=2").
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=2 open=2").
 		mustContain(t, "stdout", "carrying=2")
 	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX SCOPE mode=since")
@@ -381,7 +381,7 @@ func TestACursorWhoseOpenListWentMissingIsRefused(t *testing.T) {
 		t.Fatalf("an empty OPEN list was left on disk, so absent no longer means nothing open: %v", err)
 	}
 	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
-		mustCode(t, 0).mustContain(t, "stdout", "INBOX OK as=Rowan open=0")
+		mustCode(t, 0).mustContain(t, "stdout", "INBOX OK as=Rowan carrying=0 open=0")
 }
 
 // The diff is `<cursor>..HEAD`, which is TWO dots and therefore a tree-to-tree comparison,
@@ -429,7 +429,7 @@ func TestANoteThatArrivedThroughAMergeIsSeen(t *testing.T) {
 	// parsed for them.
 	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
 		mustContain(t, "stdout", "changed=2 carrying=4").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=4 notes=3 receipts=1")
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=4 open=4 notes=3 receipts=1")
 }
 
 // send appends to its lane's catalogue in the SAME commit as the note, and check --full
@@ -477,10 +477,16 @@ func TestCheckFullAgainstTheIndex(t *testing.T) {
 	// and the catalogue is a cache.
 	writeFile(t, checkout, "from-stella/2026-09-08T0300Z-by-hand-333333333333.md",
 		"From: Stella\nTo: Rowan\nDate: Tue Sep  8 03:00:00 UTC 2026\nId: stella-333333333333\nSubject: By hand\n\nWritten in a browser, with no tool in sight.\n")
-	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).
-		mustContain(t, "stderr", "BUS WARN from-stella/2026-09-08T0300Z-by-hand-333333333333.md").
-		mustContain(t, "stderr", "--rebuild-index").
+	// A WARN goes to STDOUT: the grammar puts only FAIL lines and refusals on stderr, and a
+	// warning is a finding a passing run reported. On stderr it made every forgiving run
+	// look like a failing one to anything reading the two streams apart.
+	r := invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).
+		mustContain(t, "stdout", "BUS WARN from-stella/2026-09-08T0300Z-by-hand-333333333333.md").
+		mustContain(t, "stdout", "--rebuild-index").
 		mustContain(t, "stdout", "warn=1")
+	if strings.Contains(r.stderr, "BUS WARN") {
+		t.Fatalf("a warning reached stderr, where only failures and refusals go:\n%s", r.stderr)
+	}
 
 	// --rebuild-index writes it, and the warning goes.
 	invoke(t, "", "check", "--table", checkout, "--full", "--rebuild-index").mustCode(t, 0).
@@ -677,7 +683,7 @@ func TestAnOpenListFromBeforeV2IsRefusedAndFullAdvanceRepairsIt(t *testing.T) {
 	// the new shape with both notes on it.
 	invoke(t, "", advance(checkout, "Rowan", "--full")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=full").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=2")
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=2 open=2")
 	if got := read(t, checkout, "from-rowan/OPEN"); !strings.HasPrefix(got, bus.OpenHeader+"\n") {
 		t.Fatalf("--full --advance did not write a v2 open list:\n%s", got)
 	}
@@ -784,20 +790,20 @@ func TestTheExampleTableInTestdataIsWhatTheREADMESays(t *testing.T) {
 	invoke(t, "", "check", "--table", root, "--full").mustCode(t, 0).
 		mustContain(t, "stdout", "BUS OK notes=4 lanes=2 receipts=1 participants=3 warn=0")
 	invoke(t, "", "names", "--table", root).mustCode(t, 0).
-		mustContain(t, "stdout", "NAMES NAME name=Glenn lane=-").
+		mustContain(t, "stdout", `NAMES NAME name="Glenn" lane=-`).
 		mustContain(t, "stdout", "NAMES OK participants=3 groups=1 senders=2")
 	// Rowan's listing: the thread is answered and gone, the Windows finding was receipted
 	// and is HEARD rather than closed, and the bare acknowledgement is last.
 	invoke(t, "", "inbox", "--table", root, "--as", "Rowan", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX HEARD id=stella-222222222222").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=1 notes=0 receipts=1 heard=1 unreadable=0")
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=2 open=1 notes=0 receipts=1 heard=1 unaddressed=0 unreadable=0")
 	// Stella's: the answer to her question is a note she owes nothing on until she reads
 	// it, and it is the one thing in her inbox.
 	invoke(t, "", "inbox", "--table", root, "--as", "Stella", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX NOTE id=rowan-0f1e2d3c4b5a from=Rowan addr=to").
-		mustContain(t, "stdout", "INBOX OK as=Stella open=1")
+		mustContain(t, "stdout", "INBOX OK as=Stella carrying=1 open=1")
 	// And a rebuild over it changes nothing, which is what "the catalogue agrees with the
 	// notes" means when you can run it.
 	wantRowan := read(t, root, "from-rowan/INDEX")
@@ -857,7 +863,7 @@ func TestAFirstAdvanceWithNothingOpen(t *testing.T) {
 		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
 
 	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=0").
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=0 open=0").
 		mustContain(t, "stdout", "INBOX CURSOR commit=").
 		mustContain(t, "stdout", "carrying=0 pushed=true")
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
@@ -870,7 +876,7 @@ func TestAFirstAdvanceWithNothingOpen(t *testing.T) {
 	// The next run reads from it, and is a `since` run over no change at all.
 	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=0")
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=0 open=0")
 }
 
 // And the other direction: a reader who HAD an open list and now has none. The OPEN file
@@ -919,7 +925,7 @@ func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
 	// The switch-day read: full, with the line, advancing.
 	r := invoke(t, "", advance(checkout, "Rowan", "--full", "--legacy-before", "2026-09-01")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=2").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=2")
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=2 open=2")
 	for _, old := range []string{"stella-aaaaaaaaaaaa", "stella-bbbbbbbbbbbb"} {
 		if strings.Contains(r.stdout, old) {
 			t.Fatalf("a note behind the line was listed one by one:\n%s", r.stdout)
@@ -939,7 +945,7 @@ func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
 	r = invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-01 notes=0").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=2")
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=2 open=2")
 	for _, old := range []string{"stella-aaaaaaaaaaaa", "stella-bbbbbbbbbbbb"} {
 		if strings.Contains(r.stdout, old) {
 			t.Fatalf("the second read brought the old notes back:\n%s", r.stdout)
@@ -957,13 +963,13 @@ func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
 	// nothing comes back.
 	invoke(t, "", advance(checkout, "Rowan", "--legacy-before", "2026-09-08")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-08 notes=2").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=0")
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=0 open=0")
 
 	// And --full is the way through, exactly as the refusal said: with the earlier line the
 	// old notes are the reader's again, counted at zero because none is behind it.
 	r = invoke(t, "", advance(checkout, "Rowan", "--full", "--legacy-before", "2026-08-01")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-08-01 notes=0").
-		mustContain(t, "stdout", "INBOX OK as=Rowan open=4")
+		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=4 open=4")
 	if !strings.Contains(r.stdout, "stella-aaaaaaaaaaaa") {
 		t.Fatalf("a --full read with an earlier line did not bring the old notes back:\n%s", r.stdout)
 	}

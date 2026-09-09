@@ -252,8 +252,11 @@ func OpenPresent(root, lane string) bool {
 
 // WriteCursor replaces a lane's CURSOR. It is a REPLACE and not an append: a cursor is one
 // value that moves, unlike RECEIPTS, which is a log. That is also why two benches of one
-// line can conflict on it, and why the push protocol's rebase-conflict refusal covers this
-// file exactly as it covers RECEIPTS: it is a person's decision which read is the real one.
+// line can conflict on it -- and why the settlement in conflict.go cannot union this file
+// the way it unions RECEIPTS. Two cursors are two claims about how far one reader has read,
+// so the FURTHER read wins: the one whose commit is a descendant of the other's, and failing
+// that the later stamp. The OPEN list beside it is taken from the same side, because an open
+// list is the list that belongs to a cursor.
 //
 // The sha is written first and the stamp second, the other way round from a receipt line,
 // because a cursor's subject is the commit and the time is annotation for a person,
@@ -605,22 +608,27 @@ func (i *Index) ByPath(path string) (*IndexEntry, bool) { e, ok := i.byPath[path
 // only ever adds to their own lane, so two DIFFERENT senders writing at once touch
 // different files and cannot conflict.
 //
-// TWO BENCHES OF ONE LANE DO CONFLICT HERE, and an earlier version of this comment said
-// they could not. Append-only is not conflict-free: both benches add a line at the end of
-// the same file over the same base, git's three-way merge sees an edit/edit at that spot,
-// and the rebase in CommitAndPush stops. Before this file existed, two sessions of one line
-// sending different notes rebased CLEAN -- the note paths differed and nothing else was
-// touched -- so the catalogue widened the conflict surface, and honesty about that is worth
-// more than the sentence it replaces. INDEX now sits beside RECEIPTS and CURSOR in the push
-// protocol's list of files a conflict can land on (SPEC.md, the push protocol, step 5), and
-// the outcome is the same one: the rebase is aborted, the commit is left on the branch, the
-// run exits 1 saying the note is NOT on the table, and a person decides.
+// TWO BENCHES OF ONE LANE DO CONFLICT HERE, and both of them land anyway. Append-only is
+// not conflict-free: both benches add a line at the end of the same file over the same base,
+// git's three-way merge sees an edit/edit at that spot, and the rebase in CommitAndPush
+// stops. Before this file existed, two sessions of one line sending different notes rebased
+// CLEAN -- the note paths differed and nothing else was touched -- so the catalogue widened
+// the conflict surface.
 //
-// It is documented rather than designed away. The shapes that would remove it -- one INDEX
-// file per bench, or one file per note named by its id -- both trade a conflict a person
-// resolves in a minute for a lane directory whose file count grows with its notes, which is
-// the cost the catalogue exists to avoid, and neither can be adopted without changing the
-// layout of every table already running this tool.
+// It used to be documented and left there, and the scenario run showed what that cost: the
+// tool aborted cleanly and said so, and the bench was then WEDGED, because the person's own
+// `git pull --rebase` landed in a half-done rebase with `UU from-<lane>/INDEX` and nothing
+// on the table saying what to do next. So the conflict is settled instead, by union, in two
+// places -- the `merge=union` attribute this tool writes at the table root (attributes.go)
+// and the tool's own resolution during its own rebase (conflict.go), because the attribute
+// only reaches a checkout once it has been pulled. Both sides' lines land, identical lines
+// once, and neither bench is left with anything to rescue.
+//
+// The shapes that would remove the conflict rather than settle it -- one INDEX file per
+// bench, or one file per note named by its id -- both trade a conflict that is now automatic
+// for a lane directory whose file count grows with its notes, which is the cost the
+// catalogue exists to avoid, and neither can be adopted without changing the layout of every
+// table already running this tool.
 func AppendIndexLine(root string, e IndexEntry) error {
 	full := filepath.Join(root, filepath.FromSlash(IndexPath(e.Lane)))
 	if err := insideRoot(root, full); err != nil {

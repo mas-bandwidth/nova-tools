@@ -27,10 +27,24 @@ var messageBusAudit = audit.Config{
 		"main.go|count|name":                      "a required flag's name, a literal at both call sites in this file",
 		"main.go|openTable|verb":                  "the verb's own name, a literal at every call site in this file; two sites",
 		"main.go|cmdInbox|token":                  "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
-		"main.go|cmdCheck|token":                  "the event's two tokens, the literals BUS FAIL and BUS WARN assigned above the site",
 		"main.go|gitArgs|f.verb":                  "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|attempts|f.verb":                 "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|gitTimeoutFlag|f.verb":           "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|legacyDate|verb":                 "the verb's own name, the literals \"inbox\" and \"check\" at the two call sites in this file",
 		"main.go|legacyDate|bus.LegacyDateLayout": "a constant in internal/bus: the date layout a legacy line is written in, which holds no runtime text",
+		"main.go|printTranscript|tr": "git's own transcript, printed to stderr VERBATIM and deliberately not through the escape. " +
+			"It is not an event line: the escaped, one-line SEND/RECEIPT/INBOX FAIL above it is, and this is the text a person " +
+			"opened the terminal to read. Escaping it is what this change removes -- a forty-line rebase transcript rendered as " +
+			"one line of \\x0d\\x0a, which nobody could read and which taught nobody anything. " +
+			"TestARebaseConflictPrintsOneActionableLineAndTheTranscriptRaw is the behavioural test for this site.",
+	},
+	Escapers: []string{
+		// Quote is oneline's third rendering: a double-quoted Go string literal, which
+		// escapes every control character, every unprintable rune (U+2028, U+2029 and the
+		// bidi controls among them) and the quote and backslash, so it is one line whatever
+		// the value holds. quoteList is this package's own wrapper over it and its body is
+		// walked by the same classifier.
+		"oneline.Quote", "quoteList",
 	},
 	Imports: []string{
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`, `"time"`,
