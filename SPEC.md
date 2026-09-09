@@ -1753,6 +1753,19 @@ k is the mind's budget and zero is not "unlimited". `--floor` is required on
 caller's, stated per run, the same law `nova-self-talk`'s skip list obeys.
 `.git` is never a corpus and is always skipped.
 
+**A refusal names the next step, and refuses anyway.** The three flags a first
+run trips over — `--channels` read as a directory name, then a missing `--k`,
+then a missing `--root` — each print, beside the refusal, what the flag IS and
+what to put there: a retrieval method (`bm25` or `trigram`, and bm25 alone is
+the usual start), the number of hits (3 to 5 for `search`, 2 or 3 per
+paragraph for `check`), and the corpus directory in the shape `--root <dir>`.
+The law is untouched: the exit code is still 2 and the message still says
+`refusing to guess`. What changes is who does the guessing — a refusal that
+names only what was wrong hands the guess to the reader, which is the thing
+this tool exists not to do. The usage banner ends in one runnable example per
+retrieval verb, and README's `### First run` shows both with their output; the
+sentences and the transcript's shape are pinned by test.
+
 ### The channels, and why the second one is off unless you ask
 
 `bm25` is Lucene-smoothed BM25 (k1=1.2, b=0.75) over posting lists: a query

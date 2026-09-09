@@ -21,7 +21,10 @@ var memoryAudit = audit.Config{
 	// These three build text from values classified at their own Sprintf or accepted from
 	// a fixed set: hitLine and scoreFields are walked by the same classifier, and chanNames
 	// joins names that channelSpec accepted from the two channels that exist.
-	Escapers: []string{"hitLine", "scoreFields", "chanNames"},
+	// hintFor is the fourth: it returns one of the package's own hint constants, or the
+	// empty string, and nothing else — a switch over a flag name, with no caller text in
+	// it. The classifier walks its body like the others, so the claim is checked.
+	Escapers: []string{"hitLine", "scoreFields", "chanNames", "hintFor"},
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{

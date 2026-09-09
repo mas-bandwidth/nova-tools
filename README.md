@@ -149,6 +149,49 @@ nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> <gold.tsv>
                                                                        known-answer harness: recall@k and MRR, fails below the floor
 ```
 
+### First run
+
+Two lines that work. `--root` is the directory of markdown you want indexed,
+`bm25` is the retrieval method, and `--k` is how many hits to hand back:
+
+```
+$ nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
+SEARCH OK query=lantern\x20glazing\x20brass hits=3 k=3 channels=bm25 files=1268 chunks=33161
+SEARCH CAL score=4.41 score-channel=bm25 probe=unrelated-control
+SEARCH HIT rank=1 score=11.02 score-channel=bm25 fused=0.01667 class=notes name=lantern-care type=measured: notes/lantern.md:1 "the lantern glazing collects a salt haze on every onshore wind…"
+SEARCH HIT rank=2 score=7.41 score-channel=bm25 fused=0.01639 class=notes name=- type=-: notes/index-notes.md:1 "- lantern-care — the glazing, the brass, and the two cloths…"
+SEARCH HIT rank=3 score=4.40 score-channel=bm25 fused=0.01613 class=log name=- type=-: log/1974-03-11.md:1 "washed the glazing at first light before the wind got up again…"
+
+$ nova-memory check --root ./corpus --channels bm25 --k 3 draft.md
+MEMORY OK candidates=1 source=draft.md k=3 channels=bm25 files=1268 chunks=33161
+MEMORY CAL score=4.41 score-channel=bm25 probe=unrelated-control
+MEMORY CAND n=1: "the lantern glazing is cleaned with two cloths, one for the brass and one for the glass…"
+MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=notes name=lantern-care type=measured: notes/lantern.md:1 "the lantern glazing collects a salt haze on every onshore wind…"
+```
+
+Both runs also end in `NOTE` lines: the standing admission that this index is
+lexical only, and that `check` never judges.
+
+**Reading the output.** `CAL` is the score an unrelated control probe gets on
+*your* corpus, this run — the band a raw score means nothing below. A `HIT`
+means something only when its `score=` is clearly above `CAL`; a hit level with
+the band is what unrelated text looks like. Each receipt then carries `class=`
+(the top-level directory the chunk came from, so a dated log reads as
+different evidence from a distilled note), `name=` and `type=` (the file's
+frontmatter, `-` when it has none), and a `file:para` address to go read.
+
+**The three refusals a first run hits, and what each wants.**
+
+- `--channels` is a **retrieval method**, not a directory: `bm25` or
+  `trigram`, and `bm25` alone is the usual start. No folder name is a channel.
+- `--k` is the **number of hits** to return: 3 to 5 for `search`, 2 or 3 per
+  paragraph for `check`. There is no default — k is your reading budget.
+- `--root` is your **corpus directory**, written out every run: `--root <dir>`.
+  It is never guessed from the working directory or the environment.
+
+Each refusal exits 2 and prints the same guidance, so a first run gets it from
+the tool as well as from here.
+
 A mind that keeps its memory as markdown answers *"do I already know this?"*
 by re-reading everything it is: n new learnings against m existing ones is
 O(n·m), and m grows every day, so a fixed budget buys a shrinking n — and the
