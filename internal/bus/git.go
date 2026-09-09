@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // The push protocol.
@@ -61,8 +63,20 @@ type gitError struct {
 	output string
 }
 
+// gitOutputCap is how much of git's own output an error's text may carry.
+//
+// The one-line guarantee was already kept here -- oneline.Escape folds whatever git wrote
+// onto a single line -- but ONE LINE IS NOT ONE BOUNDED LINE. git is a tool that can be
+// verbose on failure: a rebase that touched many files, a push refused with a paragraph
+// of advice, a fetch that listed every ref. All of it arrives through CombinedOutput and
+// all of it used to reach the caller's stream as one arbitrarily long line, which in a
+// harness is a line nobody can page past. A kilobyte is git's first several lines, which
+// is where the reason always is; the rest is marked and dropped, so a reader knows there
+// was more and can run the same git themselves.
+const gitOutputCap = 1024
+
 func (g *gitError) Error() string {
-	out := strings.TrimSpace(g.output)
+	out := oneline.Cap(strings.TrimSpace(g.output), gitOutputCap)
 	if out == "" {
 		return fmt.Sprintf("git %s: %v", strings.Join(g.args, " "), g.err)
 	}

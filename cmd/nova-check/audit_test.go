@@ -26,7 +26,8 @@ var checkAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; two sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|parseFlags|fs.Name()":      "the verb's own name, chosen by this file at every flag.NewFlagSet; two sites",
+		"main.go|parseFlags|fs.Name()":      "the verb's own name, chosen by this file at every flag.NewFlagSet",
+		"main.go|checkFailMax|fs.Name()":    "the verb's own name, chosen by this file at every flag.NewFlagSet",
 		"main.go|requireFlags|fs.Name()":    "the verb's own name, chosen by this file at every flag.NewFlagSet",
 		"main.go|requireFlags|name":         "a required flag's name, a key of the map this file's callers build from literals",
 		"main.go|cmdAttest|att.SHA256":      "sixty-four hex digits from encoding/hex over a SHA-256 sum",
@@ -35,6 +36,12 @@ var checkAudit = audit.Config{
 	},
 	Imports: []string{
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"sort"`, `"strings"`,
+		// bounded prints the capped FAIL listings and the one MORE line that stands for
+		// what they did not print. Every line reaching it is rendered by a fmt.Sprintf in
+		// THIS package, which the classifier walks like any other print site, and bounded
+		// puts its own two fields -- the kind and the remedy -- through oneline before
+		// writing them. It writes to the stream the caller hands it and to nothing else.
+		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/check"`,
 	},
 	MinClassified: 30,

@@ -35,7 +35,7 @@ func TestRefusesToGuess(t *testing.T) {
 		args       []string
 		wantStderr string
 	}{
-		{"no subcommand", nil, "usage"},
+		{"no subcommand", nil, "run: nova-memory help"},
 		{"unknown subcommand", []string{"frobnicate"}, "unknown subcommand"},
 
 		{"stats without root", []string{"stats"}, "--root is required"},
@@ -694,8 +694,18 @@ func TestEvalOnTheShippedExampleGold(t *testing.T) {
 	if !strings.Contains(stdout, "EVAL OK recall@3=1.000 floor=0.800 rows=7 hits=7") {
 		t.Errorf("stdout = %q, want the measured OK line", stdout)
 	}
-	if !strings.Contains(stdout, "EVAL HIT rank=") {
-		t.Errorf("per-row receipts are missing from %q", stdout)
+	// THE HIT IS NOT LISTED. It was: seven rows, seven EVAL HIT lines, on the run where
+	// every one of them said the same thing the OK line already says. At five hundred
+	// rows that was 36 KB of "this worked". The hits are a count now, and a run with no
+	// misses is one line.
+	if strings.Contains(stdout, "EVAL HIT") {
+		t.Errorf("a passing row is listed rather than counted: %q", stdout)
+	}
+	if !strings.Contains(stdout, "misses=0 shown=0") {
+		t.Errorf("the OK line does not carry the miss count: %q", stdout)
+	}
+	if n := strings.Count(stdout, "\n"); n != 1 {
+		t.Errorf("a clean seven-row eval printed %d lines, want 1:\n%s", n, stdout)
 	}
 }
 

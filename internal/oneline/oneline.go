@@ -149,3 +149,61 @@ func breaksALine(r rune) bool { return r == 0x2028 || r == 0x2029 }
 func reordersALine(r rune) bool {
 	return (r >= 0x202a && r <= 0x202e) || (r >= 0x2066 && r <= 0x2069)
 }
+
+// TailBytes is the ceiling this repo puts on a free-text tail: a subject, a quoted
+// sentence, a finding's detail. Five hundred bytes is a long sentence and a short
+// paragraph -- enough that a tail is never cut in practice, short enough that one
+// pathological value cannot be the whole of a reader's context.
+const TailBytes = 500
+
+// Cap shortens a free-text tail to about n bytes and SAYS SO, which is the half that
+// makes it safe.
+//
+// Escape and Field bound a value's LINES and never its LENGTH: they are documented as
+// never shortening anything, and that is right for what they are -- a reason a person
+// cannot read is not a record. But it leaves the other half of the one-line promise
+// unmade. One line is not one bounded line, and a stored subject, a ledger row or an
+// embedded git output can be a megabyte on a single line, which is a listing's whole
+// budget spent on one entry that nobody chose to read.
+//
+// So the ceiling is here, separate, applied by the caller to the tails where a runaway
+// value is possible, and it leaves a mark: `...+<dropped>B`. The mark is the point. An
+// ellipsis alone could be the author's own; the byte count cannot, so a reader who meets
+// a cut tail knows that they met a cut tail and knows what it would cost to see the rest.
+// The mark holds no whitespace and no "=", so a capped value is still one token through
+// Field.
+//
+// Cap runs BEFORE Escape, never after: it cuts on a rune boundary, so what Escape then
+// sees is well-formed wherever the input was, and an escape sequence can never be cut in
+// half. Cap never returns nothing from something -- a ceiling too small to hold the mark
+// and one rune is raised to hold them, because this package does not shorten a record
+// out of existence.
+func Cap(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	// The mark's width depends on how much is dropped, and how much is dropped depends
+	// on the mark's width. The knot is cut with the widest the mark can possibly be,
+	// which costs at most a few bytes of the budget and never overruns it.
+	widest := len(mark(len(s)))
+	budget := n - widest
+	if budget < 1 {
+		budget = 1
+	}
+	cut := budget
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	if cut == 0 {
+		// The first rune alone is wider than the budget. Keep it whole: a cut inside a
+		// rune is a byte Escape would render \xNN, which reads as corruption rather than
+		// as a ceiling.
+		_, size := utf8.DecodeRuneInString(s)
+		cut = size
+	}
+	return s[:cut] + mark(len(s)-cut)
+}
+
+// mark renders the cut marker. It is one function so that Cap's width arithmetic and the
+// bytes it finally writes cannot disagree.
+func mark(dropped int) string { return fmt.Sprintf("...+%dB", dropped) }

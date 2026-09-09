@@ -103,15 +103,19 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 }
 
 // usageExamples returns the command lines under the banner's `example:` heading.
+//
+// It asks for the banner, because a bare invocation no longer IS one: a refusal now costs
+// one line and names the door (`run: nova-memory help`), and this reads what is behind
+// that door -- which is also a test that the door opens.
 func usageExamples(t *testing.T) []string {
 	t.Helper()
-	exit, _, stderr := runCLI(t, "")
-	if exit != 2 {
-		t.Fatalf("a bare invocation must be exit 2, got %d", exit)
+	exit, stdout, stderr := runCLI(t, "", "help")
+	if exit != 0 {
+		t.Fatalf("`nova-memory help` must be exit 0, got %d; stderr: %s", exit, stderr)
 	}
-	_, tail, found := strings.Cut(stderr, "\nexample:\n")
+	_, tail, found := strings.Cut(stdout, "\nexample:\n")
 	if !found {
-		t.Fatalf("the usage banner has no `example:` section:\n%s", stderr)
+		t.Fatalf("the usage banner has no `example:` section:\n%s", stdout)
 	}
 	var out []string
 	for _, line := range strings.Split(tail, "\n") {

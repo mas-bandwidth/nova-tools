@@ -32,6 +32,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -45,7 +46,9 @@ usage:
   nova-memory check  --root <dir> --channels <list> --k <n> [--exclude <glob>]... <file|->
   nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                      [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
-  nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--exclude <glob>]... <gold.tsv>
+                     [--fail-max <n>]
+  nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--exclude <glob>]...
+                     [--fail-max <n>] <gold.tsv>
 
 quickstart is the first run and nothing else: it runs stats, then one search,
 then one check, PRINTING each command line above that command's output, so
@@ -80,7 +83,14 @@ flags:
   --exempt <prefix>     verify only, repeatable: basename prefixes that are
                         listings, not entries, and are exempt from
                         --frontmatter. Nothing is exempt by default.
-  --words <w>           quickstart only, repeatable: the words the
+  --fail-max <n>        verify and eval only: how many finding lines to PRINT
+                        before one MORE line stands for the rest. Default 20,
+                        and 0 means all. The count is never capped -- the
+                        summary line carries the total whether the run passed
+                        or failed -- because a reader who wanted the number
+                        should not have to pay for the list. verify caps each
+                        KIND separately, so ten thousand wikilink findings
+                        cannot bury the one frontmatter finding. the words the
                         demonstration search runs. Default: the corpus's three
                         most frequent terms that are not function words, named
                         on the printed command line like any other choice.
@@ -141,12 +151,29 @@ const calibrationProbe = "the quarterly marketing budget for the regional office
 // like a green from a complete one.
 const noteLexical = "lexical only — a paraphrase sharing almost no vocabulary with the corpus will not surface in any lexical top-k, and no channel here is semantic"
 
+// failMaxRemedy is the second half of every MORE line this binary prints. A cap with no
+// remedy is censorship; a cap with one is an index, so the line that says what was not
+// shown says in the same breath how to see it.
+const failMaxRemedy = "--fail-max <n> raises the ceiling, --fail-max 0 prints every finding"
+
+// refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
+// door to the usage rather than the usage itself.
+//
+// It used to be the whole 62-line banner, on every flag typo -- 3,908 bytes to say that
+// a dash was in the wrong place. That is the wrong trade twice over: a reader who
+// mistyped a flag knows what the flags are and wanted the one sentence, and a reader who
+// does not know can type the four words at the end of the line. The usage is still there,
+// still complete, and now it is asked for.
+func refuse(stderr io.Writer, where, what string) int {
+	fmt.Fprintf(stderr, "nova-memory%s: %s; run: nova-memory help\n", oneline.Escape(where), oneline.Escape(what))
+	return 2
+}
+
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
 
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
-		return 2
+		return refuse(stderr, "", "no verb given; quickstart is the first run")
 	}
 	switch args[0] {
 	case "quickstart":
@@ -165,8 +192,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
-		fmt.Fprintf(stderr, "nova-memory: unknown subcommand %q\n\n%s", args[0], usage)
-		return 2
+		return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", args[0]))
 	}
 }
 
@@ -205,7 +231,7 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(stderr, "nova-memory %s: %s\n\n%s", fs.Name(), oneline.Err(err), usage)
+		refuse(stderr, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes))
 		return nil, false
 	}
 	given = map[string]bool{}
@@ -819,6 +845,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&coverage, "coverage", "A:B glob pair, repeatable")
 	fs.Var(&front, "frontmatter", "glob whose files must carry a frontmatter name:, repeatable")
 	fs.Var(&exempt, "exempt", "basename prefix exempt from --frontmatter, repeatable (nothing is exempt by default)")
+	failMax := fs.Int("fail-max", bounded.Default, "finding lines to print per kind before one MORE line stands for the rest; 0 prints all")
 	given, ok := parse(fs, args, stderr, "root", "links")
 	if given == nil {
 		return 2
@@ -839,6 +866,13 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "nova-memory verify: --links must be gate or info (got %q); refusing to guess\n", *links)
 			bad = true
 		}
+	}
+	if given["fail-max"] && *failMax < 0 {
+		// Zero already means "all". A negative ceiling is neither a number of lines nor
+		// a way of asking for every line, so it is a typo with two readings and gets
+		// neither.
+		fmt.Fprintf(stderr, "nova-memory verify: --fail-max must be a line ceiling of zero or more (got %d); 0 means print them all\n", *failMax)
+		bad = true
 	}
 	if bad {
 		return 2
@@ -894,17 +928,32 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		info = wl
 	}
 
+	// EACH KIND IS CAPPED SEPARATELY. A flat cap over the concatenated findings would
+	// mean that on a corpus with ten thousand unresolved wikilinks the twenty lines a
+	// reader gets are twenty wikilinks, and the one frontmatter finding -- the finding
+	// they did not already know about -- is the line the cap ate.
+	infos := bounded.Grouped(stdout, *failMax, "VERIFY", failMaxRemedy)
 	for _, f := range info {
-		fmt.Fprintf(stdout, "VERIFY INFO %s: %s\n", f.Kind, oneline.Escape(f.Detail))
+		infos.Line(f.Kind, fmt.Sprintf("VERIFY INFO %s: %s", f.Kind, oneline.Escape(oneline.Cap(f.Detail, oneline.TailBytes))))
 	}
-	if len(gating) > 0 {
-		for _, f := range gating {
-			fmt.Fprintf(stderr, "VERIFY FAIL %s %s\n", f.Kind, oneline.Escape(f.Detail))
-		}
+	infos.More()
+
+	fails := bounded.Grouped(stderr, *failMax, "VERIFY", failMaxRemedy)
+	for _, f := range gating {
+		fails.Line(f.Kind, fmt.Sprintf("VERIFY FAIL %s %s", f.Kind, oneline.Escape(oneline.Cap(f.Detail, oneline.TailBytes))))
+	}
+	fails.More()
+
+	// THE COUNT LINE PRINTS ON FAILURE TOO. It did not: a failing run gave N lines and
+	// never N, so a reader who wanted to know how bad it was had to count the output --
+	// and the output was capped from here on, which would have made counting it a lie.
+	if fails.Total() > 0 {
+		fmt.Fprintf(stderr, "VERIFY FAIL gating=%d shown=%d info=%d coverage=%d frontmatter=%d links=%s\n",
+			fails.Total(), fails.Shown(), infos.Total(), len(coverage), len(front), *links)
 		return 1
 	}
-	fmt.Fprintf(stdout, "VERIFY OK gating=0 info=%d coverage=%d frontmatter=%d links=%s\n",
-		len(info), len(coverage), len(front), *links)
+	fmt.Fprintf(stdout, "VERIFY OK gating=0 info=%d shown=%d coverage=%d frontmatter=%d links=%s\n",
+		infos.Total(), infos.Shown(), len(coverage), len(front), *links)
 	return 0
 }
 
@@ -917,6 +966,7 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	channels := fs.String("channels", "", "comma-separated retrieval channels (required)")
 	k := fs.Int("k", 0, "receipts per query, positive (required)")
 	floor := fs.Float64("floor", 0, "minimum recall@k in (0,1] (required)")
+	failMax := fs.Int("fail-max", bounded.Default, "MISS lines to print before one MORE line stands for the rest; 0 prints all")
 	given, ok := parse(fs, args, stderr, "root", "channels", "k", "floor")
 	if given == nil {
 		return 2
@@ -933,6 +983,10 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	}
 	if given["floor"] && (*floor <= 0 || *floor > 1) {
 		fmt.Fprintf(stderr, "nova-memory eval: --floor must be in (0,1] (got %g); a harness that cannot fail is not a measurement\n", *floor)
+		bad = true
+	}
+	if given["fail-max"] && *failMax < 0 {
+		fmt.Fprintf(stderr, "nova-memory eval: --fail-max must be a line ceiling of zero or more (got %d); 0 means print them all\n", *failMax)
 		bad = true
 	}
 	if fs.NArg() != 1 {
@@ -954,6 +1008,12 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 	}
 	chans := newChannels(c, names)
 
+	// THE HIT IS THE GOOD CASE AND IT WAS THE OUTPUT. A five-hundred-row harness printed
+	// five hundred lines to say a number the summary line already carries; on a passing
+	// run every one of them said "this worked". So the hits are a count, and only the
+	// misses -- the rows a reader can act on -- are listed, capped like every other
+	// listing here.
+	misses := bounded.Capped(stdout, *failMax, "EVAL", "miss", failMaxRemedy)
 	hits := 0
 	var mrr float64
 	for _, row := range rows {
@@ -972,20 +1032,22 @@ func cmdEval(args []string, stdout, stderr io.Writer) int {
 		if rank != 0 {
 			hits++
 			mrr += 1.0 / float64(rank)
-			fmt.Fprintf(stdout, "EVAL HIT rank=%d query=%s\n", rank, oneline.Field(row.query))
-		} else {
-			fmt.Fprintf(stdout, "EVAL MISS query=%s expected=%s\n", oneline.Field(row.query), oneline.Field(strings.Join(row.expected, ",")))
+			continue
 		}
+		misses.Line(fmt.Sprintf("EVAL MISS query=%s expected=%s",
+			oneline.Field(oneline.Cap(row.query, oneline.TailBytes)),
+			oneline.Field(oneline.Cap(strings.Join(row.expected, ","), oneline.TailBytes))))
 	}
+	misses.More()
 	recall := float64(hits) / float64(len(rows))
 	mrr /= float64(len(rows))
 	if recall < *floor {
-		fmt.Fprintf(stderr, "EVAL FAIL recall@%d=%.3f below floor %.3f (%d/%d, mrr=%.3f, channels=%s)\n",
-			*k, recall, *floor, hits, len(rows), mrr, chanNames(chans))
+		fmt.Fprintf(stderr, "EVAL FAIL recall@%d=%.3f below floor %.3f (%d/%d, misses=%d shown=%d, mrr=%.3f, channels=%s)\n",
+			*k, recall, *floor, hits, len(rows), misses.Total(), misses.Shown(), mrr, chanNames(chans))
 		return 1
 	}
-	fmt.Fprintf(stdout, "EVAL OK recall@%d=%.3f floor=%.3f rows=%d hits=%d mrr=%.3f channels=%s\n",
-		*k, recall, *floor, len(rows), hits, mrr, chanNames(chans))
+	fmt.Fprintf(stdout, "EVAL OK recall@%d=%.3f floor=%.3f rows=%d hits=%d misses=%d shown=%d mrr=%.3f channels=%s\n",
+		*k, recall, *floor, len(rows), hits, misses.Total(), misses.Shown(), mrr, chanNames(chans))
 	return 0
 }
 

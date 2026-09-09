@@ -18,6 +18,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
 )
@@ -25,7 +26,8 @@ import (
 const usage = `nova-self-talk: the self-talk register, classified (see SPEC.md)
 
 usage:
-  nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... <file>...
+  nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
+  nova-self-talk help
 
 Two disjoint classes.
 
@@ -50,6 +52,14 @@ writer's, and this tool never makes it.
                           and NEVER a reason to soften a rule (repeatable).
                           For your rule documents. No basename is special by
                           default: one repo's filenames are not this tool's.
+  --max <n>               how many finding lines to PRINT, per class, before
+                          one MORE line stands for the rest. Default 20, and 0
+                          means all. The closing line carries the totals
+                          whichever way the run went, so a scan that found six
+                          hundred says six hundred without printing six
+                          hundred. DATED claims are never listed at all: they
+                          are the WELCOME case -- a measurement, a record --
+                          and they print as one count.
 
 Flags come before files. Exit codes: 0 no findings, 1 findings, 2 could not
 run (bad invocation, unreadable file).
@@ -94,6 +104,17 @@ const note = "SELFTALK NOTE catches known SHAPES only: register, irony and quote
 	"context are invisible to grammar, and a quoted verdict is a true positive on the grammar " +
 	"and a false one on the meaning. A green clears the known shapes, never the file.\n"
 
+// maxRemedy is the second half of every MORE line this binary prints. A cap with no
+// remedy is censorship; a cap with one is an index.
+const maxRemedy = "--max <n> raises the ceiling, --max 0 prints every finding"
+
+// refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
+// door to the usage rather than the usage itself. It was the whole 40-line banner.
+func refuse(stderr io.Writer, what, hint string) int {
+	fmt.Fprintf(stderr, "nova-self-talk: %s; run: nova-self-talk help\n%s", oneline.Escape(what), hintFor(hint))
+	return 2
+}
+
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 // baseList is the value type behind both repeatable basename flags, --skip
@@ -130,6 +151,12 @@ func set(l baseList) map[string]bool {
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
+	// `help` is a word rather than a flag because the refusals now name it: a one-line
+	// refusal that ends in `run: nova-self-talk help` has to be telling the truth.
+	if len(args) == 1 && args[0] == "help" {
+		fmt.Fprint(stdout, usage)
+		return 0
+	}
 	fs := flag.NewFlagSet("nova-self-talk", flag.ContinueOnError)
 	// Package flag is given no stream: its error text quotes the argument it could
 	// not parse, raw, so an argument holding a newline authored a whole line of
@@ -140,19 +167,22 @@ func run(args []string, stdout, stderr io.Writer) int {
 	var skips, ruleDocs baseList
 	fs.Var(&skips, "skip", "basename to skip, repeatable (nothing is skipped by default)")
 	fs.Var(&ruleDocs, "rule-doc", "basename whose findings print under the rule-document banner, repeatable (empty by default)")
+	max := fs.Int("max", bounded.Default, "finding lines to print per class before one MORE line stands for the rest; 0 prints all")
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
 			fmt.Fprint(stdout, usage)
 			return 0
 		}
-		fmt.Fprintf(stderr, "nova-self-talk: %s\n%s", oneline.Err(err), hintFor("basename"))
-		return 2
+		return refuse(stderr, oneline.Cap(err.Error(), oneline.TailBytes), "basename")
+	}
+	if *max < 0 {
+		// Zero already means "all", so a negative ceiling is a typo with two readings
+		// and gets neither.
+		return refuse(stderr, fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 means print them all", *max), "")
 	}
 	files := fs.Args()
 	if len(files) == 0 {
-		fmt.Fprint(stderr, usage)
-		fmt.Fprintf(stderr, "nova-self-talk: no files named; refusing to guess\n%s", hintFor("files"))
-		return 2
+		return refuse(stderr, "no files named; refusing to guess", "files")
 	}
 
 	skipped, pinned := set(skips), set(ruleDocs)
@@ -177,14 +207,20 @@ func run(args []string, stdout, stderr io.Writer) int {
 		contents[i] = string(b)
 	}
 	if !readable {
-		fmt.Fprintf(stderr, "nova-self-talk: NOTHING was scanned, which is not a green\n%s", hintFor("files"))
-		return 2
+		return refuse(stderr, "NOTHING was scanned, which is not a green", "files")
 	}
 
-	scanned, claims, standing, installed := 0, 0, 0, 0
+	// THE TWO CLASSES ARE CAPPED SEPARATELY, for the same reason the classes exist: six
+	// hundred STANDING claims must not be able to eat the one INSTALLATION finding, which
+	// is the one the first class cannot see and the reader is least likely to know about.
+	fails := bounded.Grouped(stderr, *max, "SELFTALK", maxRemedy)
+	skipLines := bounded.Capped(stdout, *max, "SELFTALK", "skip", maxRemedy)
+	banners := bounded.Capped(stdout, *max, "SELFTALK", "ruledoc", maxRemedy)
+
+	scanned, claims, standing, installed, dated := 0, 0, 0, 0, 0
 	for i, f := range files {
 		if skipped[selftalk.Base(f)] {
-			fmt.Fprintf(stdout, "SELFTALK SKIP %s (--skip)\n", oneline.Escape(f))
+			skipLines.Line(fmt.Sprintf("SELFTALK SKIP %s (--skip)", oneline.Escape(f)))
 			continue
 		}
 		scanned++
@@ -193,26 +229,44 @@ func run(args []string, stdout, stderr io.Writer) int {
 			claims++
 			if c.Verdict == selftalk.Standing {
 				standing++
-				fmt.Fprintf(stderr, "SELFTALK FAIL %s: %s: %s\n", oneline.Escape(f), c.Verdict, oneline.Escape(c.Text))
-			} else {
-				fmt.Fprintf(stdout, "SELFTALK %s %s: %s\n", c.Verdict, oneline.Escape(f), oneline.Escape(c.Text))
+				fails.Line("standing", fmt.Sprintf("SELFTALK FAIL %s: %s: %s",
+					oneline.Escape(f), c.Verdict, oneline.Escape(oneline.Cap(c.Text, oneline.TailBytes))))
+				continue
 			}
+			// A DATED CLAIM IS THE WELCOME CASE, and it was half the output: six hundred
+			// of them quoted a whole sentence each to say, six hundred times, that the
+			// writer had done the thing this tool asks for. It is a count now. Nothing
+			// is lost that the file does not already hold, and a run that dated
+			// everything went from 78K tokens to one line.
+			dated++
 		}
 		found := selftalk.ScanInstallation(text)
 		// The banner prints ONCE per file that has findings, before them, so a
 		// reader cannot meet a finding in a rule document without meeting the
 		// sentence that says what it is for.
 		if len(found) > 0 && pinned[selftalk.Base(f)] {
-			fmt.Fprintf(stdout, "SELFTALK RULEDOC %s: %s\n", oneline.Escape(f), selftalk.RuleDocumentBanner)
+			banners.Line(fmt.Sprintf("SELFTALK RULEDOC %s: %s", oneline.Escape(f), selftalk.RuleDocumentBanner))
 		}
 		for _, i := range found {
 			installed++
-			fmt.Fprintf(stderr, "SELFTALK FAIL %s:%d: INSTALLATION %s: %s\n", oneline.Escape(f), i.Line, i.Shape, oneline.Escape(i.Text))
+			fails.Line("installation", fmt.Sprintf("SELFTALK FAIL %s:%d: INSTALLATION %s: %s",
+				oneline.Escape(f), i.Line, i.Shape, oneline.Escape(oneline.Cap(i.Text, oneline.TailBytes))))
 		}
 	}
+	skipLines.More()
+	banners.More()
+	fails.More()
 
-	if standing == 0 && installed == 0 {
-		fmt.Fprintf(stdout, "SELFTALK OK files=%d claims=%d standing=0 installations=0\n", scanned, claims)
+	if dated > 0 {
+		fmt.Fprintf(stdout, "SELFTALK DATED n=%d files=%d\n", dated, scanned)
+	}
+	// THE COUNT LINE PRINTS ON FAILURE TOO. It printed only on a clean run, so a scan
+	// that found six hundred things gave six hundred lines and never the number.
+	if standing > 0 || installed > 0 {
+		fmt.Fprintf(stdout, "SELFTALK FAIL files=%d claims=%d standing=%d installations=%d dated=%d shown=%d\n",
+			scanned, claims, standing, installed, dated, fails.Shown())
+	} else {
+		fmt.Fprintf(stdout, "SELFTALK OK files=%d claims=%d standing=0 installations=0 dated=%d\n", scanned, claims, dated)
 	}
 	fmt.Fprint(stdout, note)
 	if standing > 0 || installed > 0 {

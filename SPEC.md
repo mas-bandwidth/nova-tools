@@ -50,14 +50,17 @@ check, second token is `OK` or `FAIL`:
 ```
 ATTEST OK files=<n> bytes=<n> sha256=<64 hex>
 ATTEST FAIL <path>: <reason>
+ATTEST FAIL failed=<n> shown=<n> manifest=<file>
 LINKS OK files=<n> links=<n>
 LINKS FAIL <file>:<line>: <target> (<reason>)
 LINKS FAIL <file>: unreadable (<why>)
+LINKS FAIL files=<n> links=<n> broken=<n> shown=<n>
 KERNEL OK bytes=<n> budget=<n>
 KERNEL OK tokens=<n> budget=<n> bytes=<n> divisor=<r>
 KERNEL FAIL <file>: <reason>
 NOCODE OK files=<n> clean
 NOCODE FAIL <path>: <reason>
+NOCODE FAIL files=<n> findings=<n> shown=<n> deny-list=<source>
 FLOORS OK floors=<n>
 FLOORS FAIL <path>: <reason>
 CORPUS OK anchors=<n> floor=<n> ledger=<file>
@@ -65,15 +68,18 @@ CORPUS FAIL <home>: ABSENT: "<fragment>" (given <when>, <who>) — <repair>
 CORPUS FAIL <home>: <reason>
 CORPUS FAIL ledger: <reason>
 CORPUS FAIL ledger:<line>: <reason>
-SELFTALK OK files=<n> claims=<n> standing=0 installations=0
+CORPUS FAIL anchors=<n> floor=<n> failed=<n> shown=<n> malformed=<n> ledger=<file>
+SELFTALK OK files=<n> claims=<n> standing=0 installations=0 dated=<n>
 SELFTALK FAIL <file>: STANDING: <claim>
 SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>
+SELFTALK FAIL files=<n> claims=<n> standing=<n> installations=<n> dated=<n> shown=<n>
 SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
 SEND FAIL <path or (stdin)>: <reason>
 INBOX OK as=<name> carrying=<n> open=<n> notes=<n> receipts=<n> ...
 RECEIPT OK recorded=<n> already=<n> commit=<sha|-> pushed=<true|false> attempts=<n>
 BUS OK notes=<n> lanes=<n> receipts=<n> participants=<n>
 BUS FAIL <path, path:line, or lane>: <reason>
+<TOKEN> MORE kind=<kind> shown=<n> total=<t> <remedy>
 ```
 
 `OK` lines go to stdout; `FAIL` lines and refusals go to stderr.
@@ -122,6 +128,65 @@ never which of the two was stored. And an escaped line does not paste back: a
 path printed with `\x0a` in it will not reproduce the path, and nothing is
 shell-quoted.
 
+**Every listing is a cap and a count.** One line per event is a promise about
+each line; it is not a promise about how MANY, and at a large state the second
+number is the one that hurts. A corpus with 5,000 entries and no frontmatter
+answered `nova-memory verify` with 10,000 `VERIFY FAIL` lines and no total —
+about 197,000 tokens to learn one number. An unchecked self repo answered
+`nova-check quickstart`, the FIRST thing a stranger types, with 1,400 lines for
+two lines of verdict. A line reading a 674-entry open list on a 260K-context
+model died reading it. So:
+
+- **A listing has a ceiling.** Every verb that prints one finding per unit of
+  state takes a `--fail-max <n>` (`nova-check`, `nova-memory`) or `--max <n>`
+  (`nova-self-talk`, `nova-fuse status`), **defaulting to 20**. It prints at
+  most that many item lines, in the order the verb produced them — a cap is a
+  prefix, never a sample.
+- **`0` means all.** A ceiling a caller cannot lift is a tool deciding what its
+  user may see. A negative one is refused, because `0` already means "all" and
+  a negative number is a typo with two readings.
+- **One MORE line stands for the rest**, and it names the remedy:
+  `<TOKEN> MORE kind=<kind> shown=<n> total=<t> <remedy>`, where the remedy is
+  the flag that lifts the ceiling or the file that holds the whole list. A cap
+  with no remedy is censorship; a cap with one is an index. Nothing is elided,
+  nothing is printed: below the ceiling there is no MORE line at all.
+- **The cap is per KIND where a verb runs several checks into one stream.**
+  `nova-memory verify` caps `wikilink`, `coverage` and `frontmatter`
+  separately, and `nova-self-talk` caps `standing` and `installation`
+  separately, because a flat cap over a concatenated list means the loud kind
+  eats the quiet one — and the quiet one is the finding the reader did not
+  already know about.
+- **THE COUNT LINE PRINTS ON FAILURE AS WELL AS SUCCESS.** It did not:
+  `links`, `nocode`, `verify` and `bus check` printed their `files=`, `links=`,
+  `gating=` line only when they passed, so a failing run gave N lines and never
+  N. Every count is the truth about the STATE, not about the output — the
+  listing is capped, the counting never is.
+- **A dated self-talk claim is counted, not quoted.** It is the WELCOME case: a
+  measurement, a record, already in the file. `SELFTALK DATED n=<k> files=<n>`,
+  one line however many there are. So is a passing `eval` row — `EVAL HIT` is
+  gone, and `hits=` in the summary is what it said.
+- **An unusable invocation costs ONE line.** A flag typo, an unknown verb or a
+  bare invocation prints `<tool>[ <verb>]: <what was wrong>; run: <tool> help`
+  and never the usage banner, which is 32 to 102 lines depending on the binary.
+  `<tool> help` prints it, on stdout, exit 0. Where this repo's guidance law
+  requires a refusal to say what the input WANTS, the hint follows on one
+  further line.
+
+The shape is one implementation, `internal/bounded`, used by every binary, so
+that the promise is made in one place and met in the same way — as the escape
+is.
+
+**A line is bounded as well as single.** `internal/oneline`'s `Escape` and
+`Field` never shorten anything, which is right for what they are, and it left
+the other half unmade: a stored subject, a ledger row or an embedded `git`
+output can be a megabyte on one line. So free-text tails are capped by their
+caller, at 500 bytes (`oneline.TailBytes`) for a subject, a quoted sentence or
+a finding's detail, and at 1 KB for the `git` output an error carries. A cut
+leaves a mark that a reader can tell from an author's own ellipsis and that a
+scanner reads as part of the same token: `...+<dropped>B`. The cut is on a rune
+boundary, before the escape, so an escape sequence is never halved, and a tail
+is never shortened to nothing.
+
 **One exemption, by name:** `nova-fuse path` prints its argument bare — a
 value, not an event — so nothing may scan `path` output for grammar. Every
 other line of every binary keeps the guarantee, and each binary's section
@@ -136,7 +201,8 @@ binary's own grammar and exit table, in its section below, govern); note in
 particular that `nova-fuse status` exits 0 even when a fuse is blown, because
 answering is `status`'s whole job and `check` is the gate.
 `nova-self-talk` adds four informational second tokens, all on stdout:
-`SELFTALK DATED <file>: <claim>` (a dated record, welcome),
+`SELFTALK DATED n=<k> files=<n>` (how many dated records were found — the
+welcome case, counted rather than quoted, and printed only when there is one),
 `SELFTALK SKIP <file> (--skip)` (skipped at the caller's request),
 `SELFTALK RULEDOC <file>: <banner>` (printed once above the findings of a file
 the caller named with `--rule-doc`), and
@@ -145,7 +211,7 @@ completed run, pass or fail). `nova-bus`'s tokens are its verbs — `SEND`, `INB
 `RECEIPT`, `NAMES`, and `BUS` for its `check` verb — with the informational second
 tokens `NOTE`, `RECEIPT`, `ALREADY`, `NAME` and `GROUP`, all on stdout, all listed
 in its section. `nova-memory` adds its own informational second
-tokens the same way — `CAL`, `CAND`, `DEMO`, `HIT`, `MISS`, `INFO`, `NOTE` — all on
+tokens the same way — `CAL`, `CAND`, `DEMO`, `HIT`, `MISS`, `INFO`, `MORE`, `NOTE` — all on
 stdout, all listed in its section.
 
 ---
@@ -162,17 +228,25 @@ refusal or a note, renders through `internal/oneline`; `ledger=` on
 `CORPUS OK` is a field and prints as one token; `deny-list=` names one of
 three constants from the deny-list machinery and is not caller text. The flag
 parser is given no stream, so an unknown flag after a verb is this tool's own
-one-line refusal followed by the usage, at exit 2, `-h` included. Pinned by
+one-line refusal — `nova-check <verb>: <what was wrong>; run: nova-check help`,
+and nothing else — at exit 2, `-h` included. Pinned by
 `TestNoCallerPathCanForgeALine` and by the source audit every binary runs
 (`internal/oneline/audit`), which classifies every printed argument as
 quoted, numeric, literal, escaped or exempted with a stated reason, and fails
 on a new raw one.
 
 
+**Every listing here takes `--fail-max <n>`** — `quickstart`, `attest`,
+`links`, `nocode`, `corpus` — default 20, `0` for all, and each prints its
+count line on failure as well as on success. `quickstart` passes its own
+ceiling down to both checks it runs, which is the whole point: it is the FIRST
+thing a stranger types, and uncapped it answered a 1,000-file repo with 1,400
+lines for two lines of verdict.
+
 ### attest — did the full self actually load
 
 ```
-nova-check attest --home <dir> --manifest <file>
+nova-check attest --home <dir> --manifest <file> [--fail-max <n>]
 ```
 
 The manifest is the boot contract: the list of files a full boot must read, one
@@ -234,7 +308,7 @@ content semantics; anything about the session that pastes the line.
 ### links — every internal reference resolves
 
 ```
-nova-check links --dir <dir>
+nova-check links --dir <dir> [--fail-max <n>]
 ```
 
 **Asserts.** Every relative link target in every `.md` file under `--dir`
@@ -365,6 +439,7 @@ would be right for exactly one model); compressibility or density.
 nova-check nocode --dir <dir>                      audit a whole tree
 nova-check nocode --staged --dir <repo>            advisory over the index (specified, not yet built)
 nova-check nocode --print-deny-list                print the list in force
+    [--fail-max <n>]        FAIL lines to print before one MORE line (default 20, 0 = all)
     [--allow <prefix>]      where machinery may live (repeatable, empty by default)
     [--deny-ext <list|@file>]   replace the floor deny-list wholesale
     [--deny-ext-add <list|@file>]  extend the floor deny-list
@@ -966,7 +1041,7 @@ pointer to §6 resolves (`links` covers references).
 ### corpus — the material a line has chosen never to lose silently
 
 ```
-nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
+nova-check corpus --ledger <file> --root <dir> --min-anchors <n> [--fail-max <n>]
 ```
 
 **Why it exists.** Every other check here finds something that is *present* in
@@ -1172,8 +1247,18 @@ four-column table indented after a blank line is not checked. Indented rows
 ## nova-self-talk — the self-talk register, classified
 
 ```
-nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... <file>...
+nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
+nova-self-talk help
 ```
+
+**`--max <n>`, default 20, `0` for all.** At most n finding lines per CLASS —
+`standing` and `installation` capped separately, so six hundred of the first
+cannot eat the one of the second the first class is blind to — then one
+`SELFTALK MORE kind=<class> shown=<n> total=<t> <remedy>` line per elided
+class. A **dated** claim is never listed: it is the welcome case, and it prints
+as `SELFTALK DATED n=<k> files=<n>`, one line however many there are. The count
+line prints whichever way the run went. Uncapped, 1,200 claims were 1,201 lines
+and about 78,000 tokens, half of it the good news at length.
 
 A second binary, deliberately **not** a `nova-check` subcommand. The five
 checks above are walls: a record passes or it does not. This is an **advisory
@@ -1428,6 +1513,7 @@ FUSE FAIL quarantine=<stored-name> since=<t>: <reason> (…)
 STATUS OK lockdown=clear quarantines=<n>
 STATUS OK lockdown=blown since=<t> quarantines=<n>: <reason>
 STATUS OK quarantine=<name> since=<t>: <reason>
+STATUS MORE kind=quarantine shown=<n> total=<t> <remedy>
 LOCKDOWN OK since=<t>: <reason> (…)      LOCKDOWN FAIL <reason>
 QUARANTINE OK <name> since=<t>: <reason> (…)   QUARANTINE FAIL <name>: <reason>
 LIFT OK quarantine=<name> was since=<t>: <reason>
@@ -1544,13 +1630,20 @@ blown": the claim must not outrun the measurement.
 ### status — the report
 
 ```
-nova-fuse status --box <path>
+nova-fuse status --box <path> [--max <n>]
 ```
 
 **Asserts** nothing. Reports what is blown and since when, and exits 0
 whenever the box was readable, blown or not — answering IS the job. **Never
 gate on the exit code of `status`; `check` is the gate.** Refuses (exit 2)
-when `--box` is missing or the box is unreadable.
+when `--box` is missing, the box is unreadable, or `--max` is negative.
+
+**`--max <n>`, default 20, `0` for all.** The `quarantines=<n>` count on the
+first line is **never** capped — it is the number this verb exists to report.
+Under it are at most n `STATUS OK quarantine=…` lines in the box's own order,
+then one `STATUS MORE kind=quarantine shown=<n> total=<t> <remedy>` line if any
+were elided. Three hundred quarantined surfaces used to be three hundred and
+one lines, on the one verb whose job is to be glanced at.
 
 ### lockdown — blow the hard fuse
 
@@ -1706,7 +1799,9 @@ nova-memory search --root <dir> --channels <list> --k <n> [--exclude <glob>]... 
 nova-memory check  --root <dir> --channels <list> --k <n> [--exclude <glob>]... <file|->
 nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                    [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
-nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--exclude <glob>]... <gold.tsv>
+                   [--fail-max <n>]
+nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--exclude <glob>]...
+                   [--fail-max <n>] <gold.tsv>
 ```
 
 **The problem it attacks.** A mind that keeps its memory as markdown answers
@@ -1747,7 +1842,7 @@ editorial decision it exists to inform.
 `type=` are the corpus's own text and are fields, one token each, so a
 frontmatter `name: x lockdown=clear` cannot pose as a field on a receipt; so
 are `check`'s `source=`, `eval`'s `expected=`, and the caller's own `query=`
-on `SEARCH OK`, `EVAL HIT` and `EVAL MISS`, which is argv and so the one slot
+on `SEARCH OK` and `EVAL MISS`, which is argv and so the one slot
 a caller controls outright (a query of `quokka class=poison` prints as
 `query=quokka\x20class\x3dpoison`, never as a second `class=` field). A receipt's fields end
 at the `: ` after `type=`; the `<file>:<para>` and the Go-quoted snippet that follow are the
@@ -1999,8 +2094,19 @@ rather than a verdict of "nothing was already known".
 ```
 VERIFY INFO <kind>: <detail>
 VERIFY FAIL <kind> <detail>
-VERIFY OK gating=0 info=<n> coverage=<n> frontmatter=<n> links=<gate|info>
+VERIFY MORE kind=<kind> shown=<n> total=<t> <remedy>
+VERIFY FAIL gating=<n> shown=<n> info=<n> coverage=<n> frontmatter=<n> links=<gate|info>
+VERIFY OK gating=0 info=<n> shown=<n> coverage=<n> frontmatter=<n> links=<gate|info>
 ```
+
+**`--fail-max <n>`, default 20, `0` for all.** At most n finding lines PER
+KIND, then one `VERIFY MORE` line per kind that elided anything. Per kind
+because a corpus with 10,000 unresolved wikilinks and one missing frontmatter
+`name:` would otherwise spend the whole ceiling on wikilinks and never print
+the finding the author did not already know about. The `gating=` count is
+never capped and now prints on failure as well as success: this verb's
+uncapped output was the largest single cost in the repo, about 197,000 tokens
+at 5,000 entries, and it gave N lines and never N.
 
 `<kind>` is one of `coverage`, `backlink`, `frontmatter`, `wikilink`. It
 **over-reports by design**: it finds, the author decides.
@@ -2012,9 +2118,11 @@ reads the corpus) and does **not** narrow `--coverage` or `--frontmatter`
 drop files from a coverage or frontmatter check, write a narrower glob; do not
 expect `--exclude` to do it.
 
-**Says NO when** any gating finding exists — one `VERIFY FAIL` line per
-finding on stderr, exit 1, and no OK line. Informational findings print and do
-not touch the exit code.
+**Says NO when** any gating finding exists — up to `--fail-max` `VERIFY FAIL`
+lines per kind on stderr, one `VERIFY MORE` line per elided kind, a
+`VERIFY FAIL gating=<n> shown=<n> …` count line, exit 1, and no OK line.
+Informational findings print (capped the same way) and do not touch the exit
+code.
 
 **Refuses (exit 2) when** `--root` or `--links` is missing, `--links` is
 neither `gate` nor `info`, a `--coverage` value is not `A:B`, a glob on either
@@ -2033,11 +2141,17 @@ substrings appears in the path of some hit within top-k. It reports recall@k
 and MRR and **fails below `--floor`**.
 
 ```
-EVAL HIT rank=<n> query=<q>
 EVAL MISS query=<q> expected=<list>
-EVAL OK recall@<k>=<x> floor=<x> rows=<n> hits=<n> mrr=<x> channels=<list>
-EVAL FAIL recall@<k>=<x> below floor <x> (<hits>/<rows>, mrr=<x>, channels=<list>)
+EVAL MORE kind=miss shown=<n> total=<t> <remedy>
+EVAL OK recall@<k>=<x> floor=<x> rows=<n> hits=<n> misses=<n> shown=<n> mrr=<x> channels=<list>
+EVAL FAIL recall@<k>=<x> below floor <x> (<hits>/<rows>, misses=<n> shown=<n>, mrr=<x>, channels=<list>)
 ```
+
+**MISSES ONLY, and capped at `--fail-max` (default 20, `0` for all).** There is
+no `EVAL HIT` line. It existed, and on a 500-row harness it was 500 lines
+saying, once per passing row, what `hits=` in the summary says in one field —
+the good case, printed at length. A miss is a row a reader can act on; a hit is
+a number.
 
 **Why it is a first-class verb and not a test fixture.** Tuning any parameter
 without it is noise, and a regression in retrieval is otherwise completely
