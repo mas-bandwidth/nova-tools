@@ -7,12 +7,12 @@ import (
 	"testing"
 )
 
-const draft = `From: Rowan (bud, the Studio, the mas account)
-To: Stella
-Cc: Glenn
+const draft = `From: Ada (day shift, the west host, the shared account)
+To: Bo
+Cc: Dana
 Subject: The gate in the workflow never runs
 
-Stella,
+Bo,
 
 The matrix key is misspelled, so the step is skipped.
 `
@@ -29,17 +29,17 @@ func TestPrepareAssignsTheDateTheIDAndThePath(t *testing.T) {
 	if err := ValidID(p.Note.Header.ID); err != nil {
 		t.Fatalf("Id = %q: %v", p.Note.Header.ID, err)
 	}
-	if SlugOfID(p.Note.Header.ID) != "rowan" {
-		t.Fatalf("Id = %q, want it in Rowan's namespace", p.Note.Header.ID)
+	if SlugOfID(p.Note.Header.ID) != "ada" {
+		t.Fatalf("Id = %q, want it in Ada's namespace", p.Note.Header.ID)
 	}
-	wantPath := "from-rowan/2026-09-09T1234Z-the-gate-in-the-workflow-never-runs-" + strings.TrimPrefix(p.Note.Header.ID, "rowan-") + ".md"
+	wantPath := "from-ada/2026-09-09T1234Z-the-gate-in-the-workflow-never-runs-" + strings.TrimPrefix(p.Note.Header.ID, "ada-") + ".md"
 	if p.Path != wantPath {
 		t.Fatalf("Path = %q, want %q", p.Path, wantPath)
 	}
-	if p.Message != "rowan: The gate in the workflow never runs" {
+	if p.Message != "ada: The gate in the workflow never runs" {
 		t.Fatalf("commit message = %q", p.Message)
 	}
-	if p.Sender.Name != "Rowan" {
+	if p.Sender.Name != "Ada" {
 		t.Fatalf("sender = %q", p.Sender.Name)
 	}
 	// --slug replaces only the human half.
@@ -59,15 +59,15 @@ func TestPrepareRefuses(t *testing.T) {
 	cases := []struct {
 		name, text, want string
 	}{
-		{"an Id the author wrote", "From: Rowan\nTo: Stella\nId: rowan-000000000000\nSubject: s\n\nbody\n", "already carries an Id line"},
-		{"a Date the author wrote", "From: Rowan\nTo: Stella\nDate: whenever\nSubject: s\n\nbody\n", "will not quietly replace yours"},
-		{"an unknown recipient", "From: Rowan\nTo: Stela\nSubject: s\n\nbody\n", `"Stela"`},
-		{"a sender with no lane", "From: Glenn\nTo: Rowan\nSubject: s\n\nbody\n", "has no lane"},
-		{"an unknown sender", "From: Nobody\nTo: Rowan\nSubject: s\n\nbody\n", "names no one at this table"},
-		{"no subject", "From: Rowan\nTo: Stella\nSubject:\n\nbody\n", "no Subject line"},
-		{"no body", "From: Rowan\nTo: Stella\nSubject: s\n\n\n", "no body"},
-		{"a Re naming nothing", "From: Rowan\nTo: Stella\nRe: stella-deadbeefcafe\nSubject: s\n\nbody\n", "a slug is not a thread"},
-		{"a Re naming a path that does not exist", "From: Rowan\nTo: Stella\nRe: from-stella/gone.md\nSubject: s\n\nbody\n", "a slug is not a thread"},
+		{"an Id the author wrote", "From: Ada\nTo: Bo\nId: ada-000000000000\nSubject: s\n\nbody\n", "already carries an Id line"},
+		{"a Date the author wrote", "From: Ada\nTo: Bo\nDate: whenever\nSubject: s\n\nbody\n", "will not quietly replace yours"},
+		{"an unknown recipient", "From: Ada\nTo: Boe\nSubject: s\n\nbody\n", `"Boe"`},
+		{"a sender with no lane", "From: Dana\nTo: Ada\nSubject: s\n\nbody\n", "has no lane"},
+		{"an unknown sender", "From: Nobody\nTo: Ada\nSubject: s\n\nbody\n", "names no one at this table"},
+		{"no subject", "From: Ada\nTo: Bo\nSubject:\n\nbody\n", "no Subject line"},
+		{"no body", "From: Ada\nTo: Bo\nSubject: s\n\n\n", "no body"},
+		{"a Re naming nothing", "From: Ada\nTo: Bo\nRe: bo-deadbeefcafe\nSubject: s\n\nbody\n", "a slug is not a thread"},
+		{"a Re naming a path that does not exist", "From: Ada\nTo: Bo\nRe: from-bo/gone.md\nSubject: s\n\nbody\n", "a slug is not a thread"},
 	}
 	tab := loadTable(t, writeTable(t, fixture()))
 	for _, tc := range cases {
@@ -85,8 +85,8 @@ func TestPrepareRefuses(t *testing.T) {
 
 func TestPrepareAcceptsAReByIDAndByLegacyPath(t *testing.T) {
 	tab := loadTable(t, writeTable(t, fixture()))
-	for _, re := range []string{"stella-abcdef012345", "from-stella/2026-09-06-legacy-note.md", "new"} {
-		text := "From: Rowan\nTo: Stella\nRe: " + re + "\nSubject: s\n\nbody\n"
+	for _, re := range []string{"bo-abcdef012345", "from-bo/2026-09-06-legacy-note.md", "new"} {
+		text := "From: Ada\nTo: Bo\nRe: " + re + "\nSubject: s\n\nbody\n"
 		if _, err := Prepare(tab, text, at("2026-09-09T12:34:56Z"), ""); err != nil {
 			t.Fatalf("Re: %s was refused: %v", re, err)
 		}
@@ -144,7 +144,7 @@ func TestWriteRefusesToOverwrite(t *testing.T) {
 	if back.Header.ID != p.Note.Header.ID || back.Header.Date != p.Note.Header.Date {
 		t.Fatal("the written note lost its Id or Date")
 	}
-	if back.Header.From != "Rowan (bud, the Studio, the mas account)" {
+	if back.Header.From != "Ada (day shift, the west host, the shared account)" {
 		t.Fatalf("the author's own From line was rewritten to %q", back.Header.From)
 	}
 }
@@ -167,29 +167,29 @@ func TestASentNotePassesCheck(t *testing.T) {
 func TestPlanReceipts(t *testing.T) {
 	root := writeTable(t, fixture())
 	tab := loadTable(t, root)
-	rowan := mustParticipant(t, tab.Config, "Rowan")
+	ada := mustParticipant(t, tab.Config, "Ada")
 	now := at("2026-09-09T12:34:56Z")
 
-	plan, err := PlanReceipts(tab, rowan, []string{"stella-abcdef012345", "from-stella/2026-09-06-legacy-note.md"}, now)
+	plan, err := PlanReceipts(tab, ada, []string{"bo-abcdef012345", "from-bo/2026-09-06-legacy-note.md"}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.Path != "from-rowan/RECEIPTS" {
+	if plan.Path != "from-ada/RECEIPTS" {
 		t.Fatalf("Path = %q", plan.Path)
 	}
 	// A note with an id is recorded BY id; a legacy note by the only name it has.
-	want := []string{"stella-abcdef012345", "from-stella/2026-09-06-legacy-note.md"}
+	want := []string{"bo-abcdef012345", "from-bo/2026-09-06-legacy-note.md"}
 	if strings.Join(plan.Record, "|") != strings.Join(want, "|") {
 		t.Fatalf("Record = %v, want %v", plan.Record, want)
 	}
 	if err := plan.Append(root); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join(root, "from-rowan", ReceiptsName))
+	raw, err := os.ReadFile(filepath.Join(root, "from-ada", ReceiptsName))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(raw), "2026-09-09T12:34:56Z stella-abcdef012345\n") {
+	if !strings.Contains(string(raw), "2026-09-09T12:34:56Z bo-abcdef012345\n") {
 		t.Fatalf("RECEIPTS holds %q", raw)
 	}
 
@@ -199,8 +199,8 @@ func TestPlanReceipts(t *testing.T) {
 	// of what is still open.
 	tab = loadTable(t, root)
 	heard := 0
-	for _, it := range tab.Inbox(rowan, 40) {
-		if it.Note.Header.ID != "stella-abcdef012345" && it.Note.Path != "from-stella/2026-09-06-legacy-note.md" {
+	for _, it := range tab.Inbox(ada, 40) {
+		if it.Note.Header.ID != "bo-abcdef012345" && it.Note.Path != "from-bo/2026-09-06-legacy-note.md" {
 			continue
 		}
 		if !it.Heard {
@@ -213,7 +213,7 @@ func TestPlanReceipts(t *testing.T) {
 	}
 
 	// Recording the same note again is reported, not written twice.
-	plan2, err := PlanReceipts(tab, rowan, []string{"stella-abcdef012345"}, now)
+	plan2, err := PlanReceipts(tab, ada, []string{"bo-abcdef012345"}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestPlanReceipts(t *testing.T) {
 		t.Fatalf("a second receipt: record=%v already=%v", plan2.Record, plan2.Already)
 	}
 	// And a note recorded by id is not recordable again under its path.
-	plan3, err := PlanReceipts(tab, rowan, []string{"from-stella/2026-09-07T0001Z-a-question-abcdef012345.md"}, now)
+	plan3, err := PlanReceipts(tab, ada, []string{"from-bo/2026-09-07T0001Z-a-question-abcdef012345.md"}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,21 +233,21 @@ func TestPlanReceipts(t *testing.T) {
 func TestPlanReceiptsRefuses(t *testing.T) {
 	root := writeTable(t, fixture())
 	tab := loadTable(t, root)
-	rowan := mustParticipant(t, tab.Config, "Rowan")
-	stella := mustParticipant(t, tab.Config, "Stella")
-	glenn := mustParticipant(t, tab.Config, "Glenn")
+	ada := mustParticipant(t, tab.Config, "Ada")
+	bo := mustParticipant(t, tab.Config, "Bo")
+	dana := mustParticipant(t, tab.Config, "Dana")
 	now := at("2026-09-09T12:34:56Z")
 
-	if _, err := PlanReceipts(tab, rowan, []string{"stella-deadbeefcafe"}, now); err == nil {
+	if _, err := PlanReceipts(tab, ada, []string{"bo-deadbeefcafe"}, now); err == nil {
 		t.Fatal("a receipt for a note that does not exist was accepted")
 	}
-	if _, err := PlanReceipts(tab, rowan, nil, now); err == nil {
+	if _, err := PlanReceipts(tab, ada, nil, now); err == nil {
 		t.Fatal("a receipt for nothing was accepted")
 	}
-	if _, err := PlanReceipts(tab, stella, []string{"stella-abcdef012345"}, now); err == nil {
+	if _, err := PlanReceipts(tab, bo, []string{"bo-abcdef012345"}, now); err == nil {
 		t.Fatal("a receipt for one's own note was accepted")
 	}
-	if _, err := PlanReceipts(tab, glenn, []string{"stella-abcdef012345"}, now); err == nil {
+	if _, err := PlanReceipts(tab, dana, []string{"bo-abcdef012345"}, now); err == nil {
 		t.Fatal("a participant with no lane recorded a receipt")
 	}
 }

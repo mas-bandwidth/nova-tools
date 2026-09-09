@@ -51,37 +51,37 @@ func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
 	const carried = 500
 	var index strings.Builder
 	for i := range history {
-		id := fmt.Sprintf("stella-%012x", i+0x100000)
-		path := fmt.Sprintf("from-stella/2026-08-%02dT%02d%02dZ-bulk-%s.md", i%28+1, i/60%24, i%60, id[len(id)-12:])
-		to := "Stella"
+		id := fmt.Sprintf("bo-%012x", i+0x100000)
+		path := fmt.Sprintf("from-bo/2026-08-%02dT%02d%02dZ-bulk-%s.md", i%28+1, i/60%24, i%60, id[len(id)-12:])
+		to := "Bo"
 		if i < carried {
-			to = "Rowan"
+			to = "Ada"
 		}
 		writeFile(t, checkout, path, fmt.Sprintf(
-			"From: Stella\nTo: %s\nDate: Sat Aug %2d 00:00:00 UTC 2026\nId: %s\nSubject: bulk %d\n\nA note in the history.\n",
+			"From: Bo\nTo: %s\nDate: Sat Aug %2d 00:00:00 UTC 2026\nId: %s\nSubject: bulk %d\n\nA note in the history.\n",
 			to, i%28+1, id, i))
 		fmt.Fprintf(&index, "%s\t%s\t2026-08-%02dT00:00:00Z\t%s\t-\n", id, path, i%28+1, to)
 	}
-	appendFile(t, checkout, "from-stella/INDEX", index.String())
-	commitAs(t, checkout, "Stella", "ten thousand notes")
+	appendFile(t, checkout, "from-bo/INDEX", index.String())
+	commitAs(t, checkout, "Bo", "ten thousand notes")
 
-	// The one full read a reader ever pays for, which gives Rowan a cursor and an open list
+	// The one full read a reader ever pays for, which gives Ada a cursor and an open list
 	// of five hundred. It is NOT timed: a full walk is the size of the table by definition
 	// and always was, which is why the cursor exists.
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0)
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
 
 	// One new note, so every incremental verb below has something to find.
-	writeFile(t, checkout, "from-stella/2026-09-08T0900Z-one-more-222222222222.md",
-		"From: Stella\nTo: Rowan\nDate: Tue Sep  8 09:00:00 UTC 2026\nId: stella-222222222222\nSubject: One more\n\nIs the gate on the merge queue?\n")
-	appendFile(t, checkout, "from-stella/INDEX",
-		"stella-222222222222\tfrom-stella/2026-09-08T0900Z-one-more-222222222222.md\t2026-09-08T09:00:00Z\tRowan\t-\n")
-	commitAs(t, checkout, "Stella", "one more")
+	writeFile(t, checkout, "from-bo/2026-09-08T0900Z-one-more-222222222222.md",
+		"From: Bo\nTo: Ada\nDate: Tue Sep  8 09:00:00 UTC 2026\nId: bo-222222222222\nSubject: One more\n\nIs the gate on the merge queue?\n")
+	appendFile(t, checkout, "from-bo/INDEX",
+		"bo-222222222222\tfrom-bo/2026-09-08T0900Z-one-more-222222222222.md\t2026-09-08T09:00:00Z\tAda\t-\n")
+	commitAs(t, checkout, "Bo", "one more")
 	head := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD~1"))
 
 	timed := func(name string, bound time.Duration, args ...string) {
 		t.Helper()
 		start := time.Now()
-		r := invoke(t, draftFrom("Rowan", "Timing "+name, "One note, over ten thousand."), args...)
+		r := invoke(t, draftFrom("Ada", "Timing "+name, "One note, over ten thousand."), args...)
 		took := time.Since(start)
 		if r.code != 0 {
 			t.Fatalf("%s: exit %d\nstdout: %s\nstderr: %s", name, r.code, r.stdout, r.stderr)
@@ -94,12 +94,12 @@ func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
 	}
 
 	timed("names", timingBound, "names", "--table", checkout)
-	timed("inbox", timingBound, "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40")
-	timed("inbox --open", timingBound, "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40", "--open")
+	timed("inbox", timingBound, "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40")
+	timed("inbox --open", timingBound, "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open")
 	timed("check --since", timingBound, "check", "--table", checkout, "--since", head)
-	timed("check --as", timingBound, "check", "--table", checkout, "--as", "Rowan")
-	timed("inbox --advance", pushBound, advance(checkout, "Rowan")...)
-	timed("receipt", pushBound, "receipt", "--table", checkout, "--as", "Rowan", "--note", "stella-222222222222",
+	timed("check --as", timingBound, "check", "--table", checkout, "--as", "Ada")
+	timed("inbox --advance", pushBound, advance(checkout, "Ada")...)
+	timed("receipt", pushBound, "receipt", "--table", checkout, "--as", "Ada", "--note", "bo-222222222222",
 		"--remote", "origin", "--branch", "main")
 	timed("send", pushBound, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main")
 }

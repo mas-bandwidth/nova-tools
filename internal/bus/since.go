@@ -18,12 +18,13 @@ import (
 // thousand notes on the table and one new one is one parse; ten thousand notes, five
 // hundred of them open, and one new one is still one parse.
 //
-// THAT IS THE SECOND HALF OF THE ANSWER TO GLENN, and the first version only had the
-// first. He asked for "O(n) where n is the number of new messages to be read, instead of
-// O(m) where m is all messages sent so far", and the cursor gave that -- but the read was
-// then O(new + open), because every open note was re-opened and re-parsed on every run to
-// print its line and to decide whether it had been heard. His answer to that: "O(new +
-// open) is not great. Can we make it O(new)." It can, and this is how:
+// THAT IS THE SECOND HALF OF THE ANSWER TO THE REQUIREMENT, and the first version only
+// had the first. The requirement was "O(n) where n is the number of new messages to be
+// read, instead of O(m) where m is all messages sent so far", and the cursor gave that --
+// but the read was then O(new + open), because every open note was re-opened and
+// re-parsed on every run to print its line and to decide whether it had been heard. The
+// answer to that: "O(new + open) is not great. Can we make it O(new)." It can, and this
+// is how:
 //
 //   - the CURSOR gives the diff a place to start, so git names the changed paths instead of
 //     this tool walking every lane;
@@ -121,8 +122,8 @@ func (r InboxResult) Counts() (notes, receipts, heard int) {
 // LegacyLine is the switch-day line: the UTC date before which a note is not carried on
 // this reader's open list.
 //
-// THE PROBLEM IT SOLVES, from the day the family's own table adopted this tool. The first
-// `inbox --as Rowan --full` reported 657 notes open -- 623 notes and 34 receipts, most of
+// THE PROBLEM IT SOLVES, from the day a real table adopted this tool. The first
+// `inbox --as Ada --full` reported 657 notes open -- 623 notes and 34 receipts, most of
 // them from months before anybody could have receipted them with this -- and because the
 // open list is what makes the cursor able to move, every run after it reported the same
 // 657, forever, until each one was answered or receipted one at a time. Nobody was going
@@ -546,7 +547,7 @@ func (k *noteChecker) check(n *Note) []Problem {
 		ps = append(ps, Problem{Where: where, Reason: fmt.Sprintf(format, args...), Warn: k.opts.tolerates(n)})
 	}
 	// THE HEADER'S OWN FINDINGS ARE INSIDE THE TOLERANCE, and an earlier revision had them
-	// outside it. A dry run over the family's real table, with the line drawn at the day it
+	// outside it. A dry run over a real table, with the line drawn at the day it
 	// adopted this tool, still failed 163 times: 109 notes with no Subject line, 21 whose
 	// To names somebody the roster does not know, 16 whose From does, 10 whose Cc does.
 	// Every one of them is a note written by hand before there was a roster to check

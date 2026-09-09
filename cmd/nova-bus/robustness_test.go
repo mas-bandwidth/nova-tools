@@ -12,14 +12,14 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
-// The findings of one scenario run over a copy of the family's real table, each closed and
+// The findings of one scenario run over a copy of a real table, each closed and
 // each pinned here from both sides: the failure does not happen, and the behaviour it was
 // protecting still does.
 
 // draftFrom is one note's whole text, so that two benches sending in the same second get
 // two different ids -- the id is a hash over the note, and these differ in the body.
 func draftFrom(who, subject, body string) string {
-	return "From: " + who + "\nTo: Stella\nSubject: " + subject + "\n\n" + body + "\n"
+	return "From: " + who + "\nTo: Bo\nSubject: " + subject + "\n\n" + body + "\n"
 }
 
 // ---------------------------------------------------------------- 1. the wedged line
@@ -34,13 +34,13 @@ func TestASendThatLostItsPushDoesNotWedgeTheNextOne(t *testing.T) {
 	other := cloneOf(t, bare)
 
 	// Somebody else lands first, so a one-attempt push cannot.
-	writeFile(t, other, "from-stella/2026-09-08T0000Z-theirs-999999999999.md",
-		"From: Stella\nTo: Rowan\nDate: Tue Sep  8 00:00:00 UTC 2026\nId: stella-999999999999\nSubject: Theirs\n\nA note from the other bench.\n")
+	writeFile(t, other, "from-bo/2026-09-08T0000Z-theirs-999999999999.md",
+		"From: Bo\nTo: Ada\nDate: Tue Sep  8 00:00:00 UTC 2026\nId: bo-999999999999\nSubject: Theirs\n\nA note from the other bench.\n")
 	gitIn(t, other, "add", "-A")
-	gitIn(t, other, "-c", "user.name=Stella", "-c", "user.email=stella@example.com", "commit", "-q", "-m", "stella: theirs")
+	gitIn(t, other, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "bo: theirs")
 	gitIn(t, other, "push", "-q", "origin", "HEAD:refs/heads/main")
 
-	lost := invoke(t, draftFrom("Rowan", "The one that lost", "This push cannot land."),
+	lost := invoke(t, draftFrom("Ada", "The one that lost", "This push cannot land."),
 		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "1").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "was NOT pushed").
@@ -50,15 +50,15 @@ func TestASendThatLostItsPushDoesNotWedgeTheNextOne(t *testing.T) {
 	}
 
 	// THE NEXT RUN. This is where the tool refused to run at all.
-	invoke(t, draftFrom("Rowan", "The one after it", "This one must run."),
+	invoke(t, draftFrom("Ada", "The one after it", "This one must run."),
 		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "SEND OK id=rowan-")
+		mustContain(t, "stdout", "SEND OK id=ada-")
 
-	// Both of Rowan's notes are on the table: the second carried the first.
+	// Both of Ada's notes are on the table: the second carried the first.
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	if n := strings.Count(files, "from-rowan/2026-09-09T1234Z-the-one-"); n != 2 {
-		t.Fatalf("%d of Rowan's two notes reached the table:\n%s", n, files)
+	if n := strings.Count(files, "from-ada/2026-09-09T1234Z-the-one-"); n != 2 {
+		t.Fatalf("%d of Ada's two notes reached the table:\n%s", n, files)
 	}
 
 	// The other way: a commit a PERSON made is still refused, because a push publishes the
@@ -66,7 +66,7 @@ func TestASendThatLostItsPushDoesNotWedgeTheNextOne(t *testing.T) {
 	writeFile(t, checkout, "notes-to-self.txt", "half a thought\n")
 	gitIn(t, checkout, "add", "notes-to-self.txt")
 	gitIn(t, checkout, "-c", "user.name=Someone", "-c", "user.email=someone@example.com", "commit", "-q", "-m", "wip")
-	invoke(t, draftFrom("Rowan", "After somebody elses work", "Should be refused."),
+	invoke(t, draftFrom("Ada", "After somebody elses work", "Should be refused."),
 		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "SEND REFUSED: ").
@@ -80,7 +80,7 @@ func TestTheRetryBudgetHasAMeasuredDefault(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
 	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").
-		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=rowan-")
+		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=ada-")
 	if defaultAttempts < 25 {
 		t.Fatalf("the default budget is %d; five lines sending at once consumed nine attempts at the peak and three landed under a budget of three", defaultAttempts)
 	}
@@ -108,7 +108,7 @@ func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
 				defer wg.Done()
 				subject := fmt.Sprintf("Round %d from bench %d", round, i)
 				body := fmt.Sprintf("Bench %d, round %d, sent at once with the other.", i, round)
-				results[i] = invoke(t, draftFrom("Rowan", subject, body),
+				results[i] = invoke(t, draftFrom("Ada", subject, body),
 					"send", "--table", dir, "--stdin", "--remote", "origin", "--branch", "main")
 			}(i, dir)
 		}
@@ -122,13 +122,13 @@ func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
 
 	// 20/20 on the table.
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	if n := strings.Count(files, "from-rowan/2026-09-09T1234Z-round-"); n != rounds*2 {
+	if n := strings.Count(files, "from-ada/2026-09-09T1234Z-round-"); n != rounds*2 {
 		t.Fatalf("%d of %d notes reached the table:\n%s", n, rounds*2, files)
 	}
 	// And the catalogue names every one of them: the union kept both sides' lines every
 	// time, rather than one bench's replacing the other's.
-	index := gitIn(t, bare, "show", "main:from-rowan/INDEX")
-	if n := strings.Count(index, "from-rowan/2026-09-09T1234Z-round-"); n != rounds*2 {
+	index := gitIn(t, bare, "show", "main:from-ada/INDEX")
+	if n := strings.Count(index, "from-ada/2026-09-09T1234Z-round-"); n != rounds*2 {
 		t.Fatalf("the catalogue holds %d of %d lines:\n%s", n, rounds*2, index)
 	}
 	if strings.Contains(index, "<<<") {
@@ -170,48 +170,48 @@ func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
 func TestANoteAddressedToNobodyIsNamed(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	const toNobody = "from-stella/2026-09-08T0100Z-team.md"
+	const toNobody = "from-bo/2026-09-08T0100Z-team.md"
 	writeFile(t, checkout, toNobody,
-		"From: Stella\nTo: Team\nDate: Tue Sep  8 01:00:00 UTC 2026\nSubject: The wire task\n\nA note addressed to a name no roster holds.\n")
-	commitAs(t, checkout, "Stella", "stella: a note to nobody")
+		"From: Bo\nTo: Team\nDate: Tue Sep  8 01:00:00 UTC 2026\nSubject: The wire task\n\nA note addressed to a name no roster holds.\n")
+	commitAs(t, checkout, "Bo", "bo: a note to nobody")
 
 	// EVERY reader sees it on a full read, because it is a fact about the table.
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40", "--full").
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX UNADDRESSED path="+toNobody+": ").
 		mustContain(t, "stdout", `"Team"`).
 		mustContain(t, "stdout", "unaddressed=1")
 
 	// AND ITS OWN SENDER SEES IT ON EVERY RUN, whatever the mode, because that is the one
-	// person who can fix it. Stella reads incrementally from a cursor.
-	invoke(t, "", advance(checkout, "Stella")...).mustCode(t, 0)
-	writeFile(t, checkout, "from-stella/2026-09-08T0200Z-also-team.md",
-		"From: Stella\nTo: Team\nDate: Tue Sep  8 02:00:00 UTC 2026\nSubject: Also the wire task\n\nAnother one to nobody.\n")
-	commitAs(t, checkout, "Stella", "stella: another to nobody")
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Stella", "--receipt-max-words", "40").
+	// person who can fix it. Bo reads incrementally from a cursor.
+	invoke(t, "", advance(checkout, "Bo")...).mustCode(t, 0)
+	writeFile(t, checkout, "from-bo/2026-09-08T0200Z-also-team.md",
+		"From: Bo\nTo: Team\nDate: Tue Sep  8 02:00:00 UTC 2026\nSubject: Also the wire task\n\nAnother one to nobody.\n")
+	commitAs(t, checkout, "Bo", "bo: another to nobody")
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Bo", "--receipt-max-words", "40").
 		mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX SCOPE mode=since").
-		mustContain(t, "stdout", "INBOX UNADDRESSED path=from-stella/2026-09-08T0200Z-also-team.md: ")
+		mustContain(t, "stdout", "INBOX UNADDRESSED path=from-bo/2026-09-08T0200Z-also-team.md: ")
 
 	// The other way: an ordinary note reaches somebody and is NOT reported as unaddressed,
 	// and neither is one that reaches somebody as well as nobody.
-	writeFile(t, checkout, "from-stella/2026-09-08T0300Z-partly.md",
-		"From: Stella\nTo: Rowan, Team\nDate: Tue Sep  8 03:00:00 UTC 2026\nSubject: Partly addressed\n\nThis one reaches Rowan.\n")
-	commitAs(t, checkout, "Stella", "stella: partly addressed")
-	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40", "--full").mustCode(t, 0)
-	if strings.Contains(r.stdout, "2026-09-08T0300Z-partly.md: ") && strings.Contains(r.stdout, "INBOX UNADDRESSED path=from-stella/2026-09-08T0300Z-partly.md") {
-		t.Fatalf("a note that reaches Rowan was reported as reaching nobody:\n%s", r.stdout)
+	writeFile(t, checkout, "from-bo/2026-09-08T0300Z-partly.md",
+		"From: Bo\nTo: Ada, Team\nDate: Tue Sep  8 03:00:00 UTC 2026\nSubject: Partly addressed\n\nThis one reaches Ada.\n")
+	commitAs(t, checkout, "Bo", "bo: partly addressed")
+	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full").mustCode(t, 0)
+	if strings.Contains(r.stdout, "2026-09-08T0300Z-partly.md: ") && strings.Contains(r.stdout, "INBOX UNADDRESSED path=from-bo/2026-09-08T0300Z-partly.md") {
+		t.Fatalf("a note that reaches Ada was reported as reaching nobody:\n%s", r.stdout)
 	}
-	if !strings.Contains(r.stdout, "INBOX NOTE id=- from=Stella addr=to at=2026-09-08T03:00:00Z path=from-stella/2026-09-08T0300Z-partly.md") {
-		t.Fatalf("the partly-addressed note is not in Rowan's inbox:\n%s", r.stdout)
+	if !strings.Contains(r.stdout, "INBOX NOTE id=- from=Bo addr=to at=2026-09-08T03:00:00Z path=from-bo/2026-09-08T0300Z-partly.md") {
+		t.Fatalf("the partly-addressed note is not in Ada's inbox:\n%s", r.stdout)
 	}
 }
 
 // ---------------------------------------------------------------- 5. the output, read by a person
 
 // The verb whose whole job is to tell a person how to spell a To line was printing names
-// nobody could paste: oneline.Field escapes every space, so "Rowan Claude" came out
-// `Rowan\x20Claude` and `send` refuses that. The names are quoted now, and the proof is
+// nobody could paste: oneline.Field escapes every space, so "Ada Vale" came out
+// `Ada\x20Claude` and `send` refuses that. The names are quoted now, and the proof is
 // that what comes out of `names` goes into a draft the tool accepts.
 func TestNamesPrintsSomethingASendWillAccept(t *testing.T) {
 	hermetic(t)
@@ -221,13 +221,13 @@ func TestNamesPrintsSomethingASendWillAccept(t *testing.T) {
 		t.Fatalf("a name came out with its spaces escaped, which nobody can paste into a To line:\n%s", r.stdout)
 	}
 	// Lift an alias straight out of the output, quotes and all, and send to it.
-	const want = `aliases="Rowan Claude"`
+	const want = `aliases="Ada Vale"`
 	if !strings.Contains(r.stdout, want) {
 		t.Fatalf("the aliases are not quoted as %s:\n%s", want, r.stdout)
 	}
-	invoke(t, "From: Stella\nTo: Rowan Claude\nSubject: Pasted from names\n\nThe spelling came out of the names verb.\n",
+	invoke(t, "From: Bo\nTo: Ada Vale\nSubject: Pasted from names\n\nThe spelling came out of the names verb.\n",
 		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").
-		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=stella-")
+		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=bo-")
 	// The one-line guarantee still holds: every line of the output is one line.
 	for _, line := range strings.Split(strings.TrimRight(r.stdout, "\n"), "\n") {
 		if !strings.HasPrefix(line, "NAMES ") {
@@ -245,20 +245,20 @@ func TestARebaseConflictPrintsOneActionableLineAndTheTranscriptRaw(t *testing.T)
 	second := cloneOf(t, checkoutRemote(t, checkout))
 
 	// ONE NOTE PATH FROM TWO BENCHES, with different bytes in it. The id is a hash over the
-	// note's RESOLVED recipients, so "Stella" and "Stella Codex" are one recipient and these
+	// note's RESOLVED recipients, so "Bo" and "Bo Codex" are one recipient and these
 	// two drafts are assigned one id -- and the To line itself is the author's own words and
 	// is round-tripped verbatim, so the two files differ. Same path, different content, from
 	// two benches that cannot see each other: which of the two is the note is a person's
 	// decision and this tool will not make it.
 	const subject = "The very same note"
 	const body = "Written twice in one second by two benches."
-	mine := "From: Rowan\nTo: Stella\nSubject: " + subject + "\n\n" + body + "\n"
-	theirs := "From: Rowan\nTo: Stella Codex\nSubject: " + subject + "\n\n" + body + "\n"
+	mine := "From: Ada\nTo: Bo\nSubject: " + subject + "\n\n" + body + "\n"
+	theirs := "From: Ada\nTo: Bo Codex\nSubject: " + subject + "\n\n" + body + "\n"
 	invoke(t, mine, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").mustCode(t, 0)
 	r := invoke(t, theirs, "send", "--table", second, "--stdin", "--remote", "origin", "--branch", "main").mustCode(t, 1)
 
 	lines := strings.Split(strings.TrimRight(r.stderr, "\n"), "\n")
-	if !strings.HasPrefix(lines[0], "SEND FAIL from-rowan/") {
+	if !strings.HasPrefix(lines[0], "SEND FAIL from-ada/") {
 		t.Fatalf("the first line of stderr is not the event line:\n%s", r.stderr)
 	}
 	for _, want := range []string{"conflicted", "was NOT pushed", "git pull --rebase"} {
@@ -291,8 +291,8 @@ func TestASubdirectoryTableIsRefusedByItsRootAndNotByItsRoster(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, args := range [][]string{
-		{"check", "--table", nested, "--as", "Rowan"},
-		{"inbox", "--table", nested, "--as", "Rowan", "--receipt-max-words", "40"},
+		{"check", "--table", nested, "--as", "Ada"},
+		{"inbox", "--table", nested, "--as", "Ada", "--receipt-max-words", "40"},
 	} {
 		r := invoke(t, "", args...).mustCode(t, 2).
 			mustContain(t, "stderr", "is not its root").
@@ -305,7 +305,7 @@ func TestASubdirectoryTableIsRefusedByItsRootAndNotByItsRoster(t *testing.T) {
 	// which is then the true reason.
 	bareRoot := t.TempDir()
 	gitIn(t, bareRoot, "init", "--quiet", "-b", "main")
-	invoke(t, "", "check", "--table", bareRoot, "--as", "Rowan").
+	invoke(t, "", "check", "--table", bareRoot, "--as", "Ada").
 		mustCode(t, 2).mustContain(t, "stderr", "participants.json")
 }
 
@@ -316,16 +316,16 @@ func TestASubdirectoryTableIsRefusedByItsRootAndNotByItsRoster(t *testing.T) {
 func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	invoke(t, "", "receipt", "--table", checkout, "--as", "Rowan", "--note", "stella-abcdef012345",
+	invoke(t, "", "receipt", "--table", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
 		"--remote", "origin", "--branch", "main").mustCode(t, 0)
 	// A cursor first, so the read below is the incremental one a person actually runs.
-	invoke(t, "", advance(checkout, "Rowan")...).mustCode(t, 0)
-	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").mustCode(t, 0)
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
+	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
 	// Two notes on the list, one of them heard: carrying counts it, open does not.
 	for _, want := range []string{
 		"INBOX SCOPE mode=since",
 		"INBOX OPEN carrying=2 heard=1",
-		"INBOX OK as=Rowan carrying=2 open=1 notes=0 receipts=1 heard=1 unaddressed=0 unreadable=0",
+		"INBOX OK as=Ada carrying=2 open=1 notes=0 receipts=1 heard=1 unaddressed=0 unreadable=0",
 	} {
 		if !strings.Contains(r.stdout, want) {
 			t.Fatalf("stdout does not contain %q:\n%s", want, r.stdout)
@@ -396,7 +396,7 @@ func TestASecondInvocationOnOneCheckoutRefuses(t *testing.T) {
 
 	// The other way: with nothing holding it, the same send runs.
 	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main").
-		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=rowan-")
+		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=ada-")
 }
 
 // ---------------------------------------------------------------- helpers

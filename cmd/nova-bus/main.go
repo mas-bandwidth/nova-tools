@@ -47,7 +47,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-bus: the family's table, with the races taken out (see SPEC.md)
+const usage = `nova-bus: the table, with the races taken out (see SPEC.md)
 
 usage:
   nova-bus send --table <dir> --file <path>|--stdin --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
@@ -1029,14 +1029,14 @@ func cmdNames(args []string, stdout, stderr io.Writer) int {
 	// THE NAMES ARE QUOTED, NOT FIELD-ESCAPED, and this verb exists for exactly the reason
 	// that matters. `names` is what a person runs to find out how to spell a To line this
 	// tool will accept -- and under oneline.Field, which escapes every space so that a
-	// key=value field is one token, "Rowan Claude" printed as `Rowan\x20Claude`. Paste that
+	// key=value field is one token, "Ada Vale" printed as `Ada\x20Claude`. Paste that
 	// into a To line and `send` refuses it. The verb whose whole job is to tell you the
 	// spelling was telling you one the tool does not take.
 	//
 	// oneline.Quote keeps the one-line guarantee by another route (see its comment): the
 	// quotes delimit the value, so a space inside one is not the end of a field, and every
 	// character that could break or reorder a line is still escaped. A list is each name
-	// quoted and joined by the ";" a To line separates on, so `aliases="Rowan Claude";"the
+	// quoted and joined by the ";" a To line separates on, so `aliases="Ada Vale";"the
 	// keeper"` is two names a person can lift straight out. The lane is a slug and stays a
 	// field: it holds no space by construction and is not something anybody pastes.
 	for _, p := range c.Participants {

@@ -2098,7 +2098,7 @@ every verb that runs git also takes [--git-timeout <seconds>], default 60
 The binary is `nova-bus`, and that is its only name: no second binary, no alias
 shipped in the tool, no short form it also answers to. A tool that answers to two
 names is two tools in a bug report. (It was drafted as `nova-message-bus`; the
-name it ships under is the one Glenn asked for, and the longer one survives
+name it ships under is the one that was asked for, and the longer one survives
 nowhere, including in the id preimage below.)
 
 **No guessed anything, with two named exceptions.** There is no default table, no
@@ -2128,7 +2128,7 @@ which is false in a linked worktree and in a submodule. A table one directory
 down inside a bigger repository is exit 2 with the root git found named in the
 refusal, and this is a REFUSAL rather than a tolerance because the alternative was
 silent: `git diff --name-only` reports paths relative to the repository root, so a
-new note came back as `docs/table/from-stella/x.md`, the `from-` guard dropped it,
+new note came back as `docs/table/from-bo/x.md`, the `from-` guard dropped it,
 and `inbox --since` and `check --as` printed `changed=0` and exited **0** over
 notes nobody had read. `--full` needs no git and works over such a directory, so
 the refusal is exactly as wide as the failure.
@@ -2252,13 +2252,13 @@ carries U+2028 produces one escaped line rather than two.
 grammar that does. `oneline.Field` escapes every whitespace character so a
 `key=value` field is one token — which is right everywhere else and was wrong
 here: `names` exists to tell a person how to spell a `To:` line this tool will
-accept, and it printed `name=Rowan\x20Claude`, which `send` refuses. `oneline.Quote`
+accept, and it printed `name=Ada\x20Claude`, which `send` refuses. `oneline.Quote`
 is a double-quoted Go string literal: it escapes every control character, every
 unprintable rune (U+2028, U+2029 and the bidi controls among them) and the quote
 and backslash themselves, so it is one line whatever the value holds — and unlike
 the escape it is injective, so what is between the quotes is the name and nothing
 else. A list is each value quoted and joined by `;`, which is a `To:` line's own
-separator, so `aliases="Rowan Claude";"the keeper"` can be lifted straight out.
+separator, so `aliases="Ada Vale";"the archivist"` can be lifted straight out.
 
 **A refusal that carries git's own transcript prints the transcript under the
 event line**, on stderr, verbatim. `SEND FAIL` on a rebase conflict used to carry
@@ -2276,15 +2276,24 @@ whose owner believes a name is known.
 ```json
 {
   "participants": [
-    {"name": "Rowan", "lane": "from-rowan", "aliases": ["Rowan Claude", "the keeper"],
-     "git_name": "Rowan", "git_email": "rowan@example.com"},
-    {"name": "Glenn"}
+    {"name": "Ada", "lane": "from-ada", "aliases": ["Ada Vale", "the archivist"],
+     "git_name": "Ada", "git_email": "ada@example.com"},
+    {"name": "Bo", "lane": "from-bo", "aliases": ["Bo Quill"],
+     "git_name": "Bo", "git_email": "bo@example.com"},
+    {"name": "Cy", "lane": "from-cy",
+     "git_name": "Cy", "git_email": "cy@example.com"},
+    {"name": "Dana"}
   ],
-  "groups": [{"name": "Everybody at the table", "members": ["Rowan", "Glenn"]}]
+  "groups": [{"name": "Everybody at the table",
+              "members": ["Ada", "Bo", "Cy", "Dana"]}]
 }
 ```
 
-A participant with **no lane** is addressable and never a sender: the person at
+The roster takes **any number** of participants — people, model instances,
+whatever writes — and the tool has no opinion about how many there are or what
+they are called; a table has one lane per sender and none for the rest.
+
+A participant with **no lane** is addressable and never a sender: the one at
 the table who is written to and does not write. A lane is `from-<slug>` where the
 slug is lower-case letters, digits and hyphens — checked, because the lane is
 joined to the table root and written into, and because the slug is the first half
@@ -2294,8 +2303,8 @@ a git config file**, global or local.
 
 **Address lines.** A `To:` or `Cc:` line is resolved against the roster, with a
 small ENUMERATED set of tolerances. Tables in this shape write
-`To: Stella Codex; Rowan (active bud)` and
-`To: Everybody at the table — Glenn, Rowan (all instances), Stella`, and a tool
+`To: Bo Quill; Ada (active line)` and
+`To: Everybody at the table — Dana, Ada (all instances), Bo`, and a tool
 that refused those would be refusing the table rather than checking it. In
 order:
 
@@ -2306,8 +2315,8 @@ order:
 4. drop a leading `for `;
 5. drop trailing parentheticals, repeatedly;
 6. what remains must **equal** a known name, alias or group, case-insensitively,
-   or **begin with one followed by a space** — the instance qualifier, so `Rowan
-   a1b2c3d4` and `Rowan Claude` are both Rowan. The longest known name wins,
+   or **begin with one followed by a space** — the instance qualifier, so `Ada
+   a1b2c3d4` and `Ada Vale` are both Ada. The longest known name wins,
    and the prefix rule **refuses** rather than resolves when what follows the
    known name is itself a known name;
 7. a group expands to its members.
@@ -2318,13 +2327,12 @@ this exists to stop, so the list above is the whole of the tolerance and every
 item in it is pinned by a test.
 
 Rules 3 and the second half of 6 are one fix and are worth stating as one.
-Without them `To: Rowan and Stella` resolved to **Rowan alone** — the token
-begins with `Rowan `, so the instance qualifier swallowed the second reader —
-and the note arrived at one of the two people it was written to with nothing
-anywhere saying the other had been dropped. A word separator is now a separator;
-a qualifier is a qualifier only when it is not itself somebody's name; and
-`Rowan Stella`, which is neither, is refused rather than delivered to the first
-of them.
+Without them `To: Ada and Bo` resolved to **Ada alone** — the token begins with
+`Ada `, so the instance qualifier swallowed the second reader — and the note
+arrived at one of the two people it was written to with nothing anywhere saying
+the other had been dropped. A word separator is now a separator; a qualifier is
+a qualifier only when it is not itself somebody's name; and `Ada Bo`, which is
+neither, is refused rather than delivered to the first of them.
 
 ### The header
 
@@ -2332,12 +2340,12 @@ Written by `send` in this order; the author's own text is preserved in every
 line but `Date` and `Id`.
 
 ```
-From: Rowan (bud, the Studio, the mas account)
-To: Stella
-Cc: Glenn
+From: Ada (day shift, the west host, the shared account)
+To: Bo
+Cc: Dana
 Date: Wed Sep  9 12:34:56 UTC 2026
-Id: rowan-3f9a1c2b8d40
-Re: stella-abcdef012345
+Id: ada-3f9a1c2b8d40
+Re: bo-abcdef012345
 Kind: note
 Subject: Yes, on the merge queue too
 ```
@@ -2370,13 +2378,13 @@ paragraph up to its first colon is not a key and a check over a table of them
 would otherwise print a paragraph per note.
 
 **Each refusal says what to do about it**, because a reader shown `INBOX
-UNREADABLE` can act on it only if the line says which mistake it is. A read of
-the family's real table found three shapes behind nearly every unreadable note,
-and each now names its own repair:
+UNREADABLE` can act on it only if the line says which mistake it is. A read of a
+real table found three shapes behind nearly every unreadable note, and each now
+names its own repair:
 
 | what is on the line | what the refusal says |
 |---|---|
-| a key in markdown bold — `**To**: Rowan` | headers are plain `Key: value`, not markdown bold; and it writes out `To:` |
+| a key in markdown bold — `**To**: Ada` | headers are plain `Key: value`, not markdown bold; and it writes out `To:` |
 | a key nobody knows — `Branch: main` | unknown header key, **and the eight keys there are** |
 | a body sentence where the header goes, with a colon somewhere in it or none at all | the header ends at the first blank line; put a blank line after the last header |
 
@@ -2428,8 +2436,8 @@ genuinely meant twice, the date in the preimage separates them by the second.
   assigned, both files are written at the same path, and the second push's
   rebase hits an add/add conflict on that one path, which is aborted and
   reported. A refusal in both cases, and never two notes with one id.
-- **Resolved recipients, not the spelling.** So that a note addressed to `Rowan
-  Claude` and one addressed to `Rowan a1b2c3d4` are not different notes at the id
+- **Resolved recipients, not the spelling.** So that a note addressed to `Ada
+  Vale` and one addressed to `Ada a1b2c3d4` are not different notes at the id
   layer while being the same note to every reader.
 - **Rename-proof by construction.** The id is written into the file at send and
   is never recomputed. Renaming the file, moving it, or fixing its slug changes
@@ -2456,7 +2464,7 @@ a note is not answered in its own sender's lane.
 note is pushed:
 
 ```
-2026-09-09T12:34:56Z rowan-3f9a1c2b8d40
+2026-09-09T12:34:56Z ada-3f9a1c2b8d40
 ```
 
 RFC 3339 in UTC — which holds no spaces, so the rest of the line is the target
@@ -2508,8 +2516,8 @@ and then never again by any incremental run.
 **A note addressed to NOBODY is never silent either**, and it was — for the
 quietest reason on this list. A note whose `To:` line resolves to no one the
 roster holds *parses*, so it is not unreadable; and it is in nobody's inbox, so
-no listing mentioned it. On the family's real table there were **22** of them:
-`To: Team`, and `From: Stella, Go table-wire task …` where the comma after the
+no listing mentioned it. On a real table there were **22** of them:
+`To: Team`, and `From: Bo, Go table-wire task …` where the comma after the
 name is an address separator and the From line therefore named two senders and
 resolved to none. Written by somebody, on the table, and shown to no one.
 
@@ -2522,7 +2530,7 @@ They are printed as `INBOX UNADDRESSED path=<path>: <reason>` and counted in
   that is the one person who can repair the header. A line sees its own
   unaddressed notes every run until it fixes them.
 
-Partly unaddressed is not unaddressed: `To: Rowan, Team` reaches Rowan, is in his
+Partly unaddressed is not unaddressed: `To: Ada, Team` reaches Ada, is in Ada's
 inbox, and is not reported — only a note whose whole address resolves to an empty
 list has no reader. It is a report and never a failure; `check` is the gate and
 says the same thing about the header in its own words. `send` refuses an unknown
@@ -2684,7 +2692,7 @@ success: the note is not on the table until it is pushed.
 
 ### The cursor, the open list and the catalogue — reads that stay O(new)
 
-Glenn's requirement, verbatim: *"Make sure the bus tool is O(n) where n is the
+The requirement, verbatim: *"Make sure the bus tool is O(n) where n is the
 number of new messages to be read, instead of O(m) where m is all messages sent
 so far. This way it maintains performance over time."* And, on reading the
 version that answered it: *"O(new + open) is not great. Can we make it O(new)."*
@@ -2715,18 +2723,18 @@ They are files a person can read, like everything else on the table. Blank lines
 and `#` comments are ignored in all three.
 
 ```
-from-rowan/CURSOR
+from-ada/CURSOR
 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a 2026-09-09T14:05:00Z open=2 legacy=2026-09-10
 
-from-rowan/OPEN   (tab-separated, after a version line)
+from-ada/OPEN   (tab-separated, after a version line)
 OPEN v2
-stella-111111111111	receipt	-	Stella	to	2026-09-09T13:00:00Z	from-stella/2026-09-09T1300Z-heard-111111111111.md	Heard
-stella-222222222222	note	heard	Stella	to	2026-09-09T14:00:00Z	from-stella/2026-09-09T1400Z-the-windows-runner-222222222222.md	The Windows runner skips three steps
--	note	-	Stella	cc	-	from-stella/a-note-written-before-ids.md	Written before there were ids
--	unreadable	-	-	-	-	from-stella/2026-09-07T0009Z-prose.md	-
+bo-111111111111	receipt	-	Bo	to	2026-09-09T13:00:00Z	from-bo/2026-09-09T1300Z-heard-111111111111.md	Heard
+bo-222222222222	note	heard	Bo	to	2026-09-09T14:00:00Z	from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md	The Windows runner skips three steps
+-	note	-	Bo	cc	-	from-bo/a-note-written-before-ids.md	Written before there were ids
+-	unreadable	-	-	-	-	from-bo/2026-09-07T0009Z-prose.md	-
 
-from-stella/INDEX   (tab-separated)
-stella-abcdef012345	from-stella/2026-09-07T0001Z-a-question-abcdef012345.md	2026-09-07T00:01:00Z	Rowan;Glenn	-
+from-bo/INDEX   (tab-separated)
+bo-abcdef012345	from-bo/2026-09-07T0001Z-a-question-abcdef012345.md	2026-09-07T00:01:00Z	Ada;Dana	-
 ```
 
 **The `OPEN v2` grammar.** The first meaningful line is exactly `OPEN v2` and
@@ -2797,7 +2805,7 @@ escaped through `internal/oneline`, and an absent value is `-` rather than empty
 
 Ten thousand notes and one new one is **one parse**. Ten thousand notes, five
 hundred of them open for this reader, and one new one is still **one parse**.
-`n` in Glenn's sentence is *new*, and *open* is no longer added to it: an open
+`n` in that sentence is *new*, and *open* is no longer added to it: an open
 note costs the bytes of its line in one file and nothing else.
 
 The **one** entry that still costs a parse per run is an `unreadable` one, and
@@ -2939,14 +2947,14 @@ whole of the remedy.
 
 ### The switch-day line — `inbox --legacy-before`
 
-**The failure, measured on the day the family's own table adopted this tool.**
-The first `inbox --as Rowan --full` reported **657 notes open**: 623 notes and 34
-receipts, nearly all of them from months before there was anything to receipt
-them with. And because the open list is what lets the cursor move at all, every
-run after it reported the same 657 — forever, until each one was answered or
-receipted one at a time. Nobody was going to do that, and a listing nobody reads
-is a listing that hides the one new note in it. That is the same failure as a
-lost push, arriving as noise instead of as silence.
+**The failure, measured on the day a real table adopted this tool.** The first
+`inbox --as Ada --full` reported **657 notes open**: 623 notes and 34 receipts,
+nearly all of them from months before there was anything to receipt them with.
+And because the open list is what lets the cursor move at all, every run after
+it reported the same 657 — forever, until each one was answered or receipted one
+at a time. Nobody was going to do that, and a listing nobody reads is a listing
+that hides the one new note in it. That is the same failure as a lost push,
+arriving as noise instead of as silence.
 
 So `inbox` takes **`--legacy-before <YYYY-MM-DD>`**, the same shape `check`'s
 flag takes and drawn on the same day. A note dated before it:
@@ -3141,15 +3149,15 @@ with nothing on the table saying why; and a lane holds notes, its `RECEIPTS`,
 `CURSOR`, `OPEN` and `INDEX`, a `README.md`, and nothing else. It reports
 **every** finding in one run, not the first.
 
-**A lane's `README.md` is not a note**, and until this was written it was read as
-one: it ends in `.md`, it sits in a lane, so the walk parsed it, failed, told
+**A lane's `README.md` is not a note**, and until this was written it was read
+as one: it ends in `.md`, it sits in a lane, so the walk parsed it, failed, told
 every reader `INBOX UNREADABLE` about it forever, and failed `check` at every
-date — it was the one file on the family's own table the legacy tolerance could
-not forgive, because a README genuinely cannot say when it was written and
-genuinely is not a note. So a lane may hold exactly one non-note, non-state file,
-under exactly that name: the file a person opening the lane in a browser reads
-first. It is not a note, not a stray, and never in a listing. The list is ONE name
-and is not a general licence — a `NOTES.md` in a lane is a stray like any other,
+date — it was the one file on a real table the legacy tolerance could not
+forgive, because a README genuinely cannot say when it was written and genuinely
+is not a note. So a lane may hold exactly one non-note, non-state file, under
+exactly that name: the file a person opening the lane in a browser reads first.
+It is not a note, not a stray, and never in a listing. The list is ONE name and
+is not a general licence — a `NOTES.md` in a lane is a stray like any other,
 because a tolerance whose width is *whatever looks like documentation* is not a
 rule.
 
@@ -3205,14 +3213,14 @@ more.
 **What the tolerance covers is a note's HEADER, and the width of that was
 measured rather than argued.** An earlier revision forgave two findings only — a
 parse failure and a dangling `Re:` — on the reasoning that an unknown recipient
-is not a thing a history makes unavoidable. A dry run over the family's real
-table, with the line at the day it adopted the tool, then still failed **163
-times**: 109 notes with no `Subject:` line, 21 whose `To:` named somebody the
-roster does not hold, 16 whose `From:` did, 10 whose `Cc:` did, and a handful
-that would not parse. Every one of them was written by hand before there was a
-roster to check against, and 163 failures is exactly the wall of red the
-tolerance exists to prevent, whatever the findings in it are called. So the line
-forgives how a note was WRITTEN, entire.
+is not a thing a history makes unavoidable. A dry run over a real table, with
+the line at the day it adopted the tool, then still failed **163 times**: 109
+notes with no `Subject:` line, 21 whose `To:` named somebody the roster does not
+hold, 16 whose `From:` did, 10 whose `Cc:` did, and a handful that would not
+parse. Every one of them was written by hand before there was a roster to check
+against, and 163 failures is exactly the wall of red the tolerance exists to
+prevent, whatever the findings in it are called. So the line forgives how a note
+was WRITTEN, entire.
 
 It does not forgive where a file sits or whether an id is one: a note in the
 wrong lane, a malformed or duplicated id, a broken receipt line, an unowned lane
@@ -3232,7 +3240,7 @@ and by nothing else, deliberately: the note's moment orders the listing, fills a
 catalogue's `Date` field and prints `at=`, so widening THAT would rewrite records
 and put every `INDEX` line already on a table at odds with its note. A file with
 no day anywhere — no `Date:` line and no date in its name — still fails at every
-date. On the family's table exactly one file did: a `README.md` somebody
+date. On a real table exactly one file did: a `README.md` somebody
 committed inside a lane — which turned out to be a finding about this tool rather
 than about the table, and is now a file a lane is allowed to hold. See **check —
 what it asserts**.

@@ -15,20 +15,20 @@ func TestResolveListToleratesTheShapesTheTableActuallyWrites(t *testing.T) {
 	cases := []struct {
 		name, line, want string
 	}{
-		{"one name", "Stella", "Stella"},
-		{"semicolons", "Rowan; Stella", "Rowan; Stella"},
-		{"commas", "Rowan, Stella", "Rowan; Stella"},
-		{"an alias", "Stella Codex", "Stella"},
-		{"case", "sTeLLa", "Stella"},
-		{"an instance qualifier", "Rowan a1b2c3d4", "Rowan"},
-		{"a parenthetical", "Rowan (bud, the Studio, the mas account)", "Rowan"},
-		{"a qualifier and a parenthetical", "Rowan a1b2c3d4 (active bud)", "Rowan"},
-		{"stacked parentheticals", "Rowan (bud) (the Studio)", "Rowan"},
-		{"a group", "Everybody at the table", "Rowan; Stella; Glenn"},
-		{"a group and a name after an em dash", "Everybody at the table — Glenn", "Rowan; Stella; Glenn"},
-		{"a for- phrase", "Stella; for Glenn when he arrives", "Stella; Glenn"},
-		{"a name twice, once through a group", "Everybody at the table; Rowan", "Rowan; Stella; Glenn"},
-		{"empty pieces", "Rowan;; , ;Stella", "Rowan; Stella"},
+		{"one name", "Bo", "Bo"},
+		{"semicolons", "Ada; Bo", "Ada; Bo"},
+		{"commas", "Ada, Bo", "Ada; Bo"},
+		{"an alias", "Bo Quill", "Bo"},
+		{"case", "bO", "Bo"},
+		{"an instance qualifier", "Ada a1b2c3d4", "Ada"},
+		{"a parenthetical", "Ada (day shift, the west host, the shared account)", "Ada"},
+		{"a qualifier and a parenthetical", "Ada a1b2c3d4 (active line)", "Ada"},
+		{"stacked parentheticals", "Ada (day shift) (the west host)", "Ada"},
+		{"a group", "Everybody at the table", "Ada; Bo; Dana"},
+		{"a group and a name after an em dash", "Everybody at the table — Dana", "Ada; Bo; Dana"},
+		{"a for- phrase", "Bo; for Dana when they arrive", "Bo; Dana"},
+		{"a name twice, once through a group", "Everybody at the table; Ada", "Ada; Bo; Dana"},
+		{"empty pieces", "Ada;; , ;Bo", "Ada; Bo"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -48,7 +48,7 @@ func TestResolveListRefusesAMisspelling(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range []string{"Stela", "Rowna a1b2c3d4", "Rowan; Stela", "Everybody", "the keepers"} {
+	for _, line := range []string{"Boe", "Adda a1b2c3d4", "Ada; Boe", "Everybody", "the archivists"} {
 		got, unknown := c.ResolveList(line)
 		if len(unknown) == 0 {
 			t.Fatalf("ResolveList(%q) = %v with nothing unresolved; a near miss must be refused, never guessed at", line, got)
@@ -56,16 +56,16 @@ func TestResolveListRefusesAMisspelling(t *testing.T) {
 	}
 }
 
-// The prefix rule takes the LONGEST known name, so a roster holding both "Stella" and
-// "Stella Codex" does not resolve "Stella Codex Two" to the shorter one.
+// The prefix rule takes the LONGEST known name, so a roster holding both "Bo" and
+// "Bo Quill" does not resolve "Bo Quill Two" to the shorter one.
 func TestLongestKnownNameWins(t *testing.T) {
 	c, err := LoadConfig(writeTable(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, unknown := c.ResolveList("Stella Codex on the Air")
-	if len(unknown) > 0 || len(got) != 1 || got[0] != "Stella" {
-		t.Fatalf("got %v unresolved %v, want [Stella]", got, unknown)
+	got, unknown := c.ResolveList("Bo Quill on the Air")
+	if len(unknown) > 0 || len(got) != 1 || got[0] != "Bo" {
+		t.Fatalf("got %v unresolved %v, want [Bo]", got, unknown)
 	}
 }
 
@@ -75,10 +75,10 @@ func TestResolveOne(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p, ok := c.ResolveOne("Rowan (bud, the Studio, the mas account)"); !ok || p.Name != "Rowan" {
-		t.Fatalf("ResolveOne = %+v %v, want Rowan", p, ok)
+	if p, ok := c.ResolveOne("Ada (day shift, the west host, the shared account)"); !ok || p.Name != "Ada" {
+		t.Fatalf("ResolveOne = %+v %v, want Ada", p, ok)
 	}
-	if _, ok := c.ResolveOne("Rowan; Stella"); ok {
+	if _, ok := c.ResolveOne("Ada; Bo"); ok {
 		t.Fatal("a From line naming two people resolved to a sender")
 	}
 	if _, ok := c.ResolveOne("Everybody at the table"); ok {
@@ -89,8 +89,8 @@ func TestResolveOne(t *testing.T) {
 	}
 }
 
-// "To: Rowan and Stella" is two readers. The prefix rule resolved it to Rowan ALONE --
-// "Rowan and Stella" begins with "Rowan " -- and the note reached one of the two people it
+// "To: Ada and Bo" is two readers. The prefix rule resolved it to Ada ALONE --
+// "Ada and Bo" begins with "Ada " -- and the note reached one of the two people it
 // was written to, with nothing anywhere saying the other had been dropped. That is the
 // silent wrong-reader failure this whole file exists to prevent, and it is pinned here in
 // every spelling the table uses.
@@ -100,14 +100,14 @@ func TestAndIsASeparatorNotAQualifier(t *testing.T) {
 		t.Fatal(err)
 	}
 	cases := []struct{ name, line, want string }{
-		{"and", "Rowan and Stella", "Rowan; Stella"},
-		{"ampersand", "Rowan & Stella", "Rowan; Stella"},
-		{"comma and", "Rowan, Stella, and Glenn", "Rowan; Stella; Glenn"},
-		{"and after a semicolon list", "Rowan; Stella and Glenn", "Rowan; Stella; Glenn"},
-		{"capitalised", "Rowan AND Stella", "Rowan; Stella"},
-		{"an alias on the far side", "Rowan and Stella Codex", "Rowan; Stella"},
-		{"a group and a name", "Everybody at the table and Glenn", "Rowan; Stella; Glenn"},
-		{"inside a parenthetical, which is not a separator", "Rowan (bud and keeper)", "Rowan"},
+		{"and", "Ada and Bo", "Ada; Bo"},
+		{"ampersand", "Ada & Bo", "Ada; Bo"},
+		{"comma and", "Ada, Bo, and Dana", "Ada; Bo; Dana"},
+		{"and after a semicolon list", "Ada; Bo and Dana", "Ada; Bo; Dana"},
+		{"capitalised", "Ada AND Bo", "Ada; Bo"},
+		{"an alias on the far side", "Ada and Bo Quill", "Ada; Bo"},
+		{"a group and a name", "Everybody at the table and Dana", "Ada; Bo; Dana"},
+		{"inside a parenthetical, which is not a separator", "Ada (day shift and archivist)", "Ada"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -122,28 +122,28 @@ func TestAndIsASeparatorNotAQualifier(t *testing.T) {
 	}
 	// And the qualifier still works: what follows a known name is a qualifier only when it
 	// is not itself a name this table knows.
-	got, unknown := c.ResolveList("Rowan reads in place")
-	if len(unknown) > 0 || strings.Join(got, "; ") != "Rowan" {
-		t.Fatalf(`ResolveList("Rowan reads in place") = %v %v, want Rowan: an instance qualifier is not a second reader`, got, unknown)
+	got, unknown := c.ResolveList("Ada reads in place")
+	if len(unknown) > 0 || strings.Join(got, "; ") != "Ada" {
+		t.Fatalf(`ResolveList("Ada reads in place") = %v %v, want Ada: an instance qualifier is not a second reader`, got, unknown)
 	}
 }
 
 // Two known names in ONE token, with no separator between them, is refused rather than
-// resolved to the first. Whatever "Rowan Stella" is, it is not a note to Rowan, and a tool
+// resolved to the first. Whatever "Ada Bo" is, it is not a note to Ada, and a tool
 // that picked one of the two would be guessing about a reader.
 func TestAKnownNameFollowedByAKnownNameIsRefused(t *testing.T) {
 	c, err := LoadConfig(writeTable(t, nil))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, line := range []string{"Rowan Stella", "Rowan Stella Codex", "Stella Glenn", "Rowan the keeper"} {
+	for _, line := range []string{"Ada Bo", "Ada Bo Quill", "Bo Dana", "Ada the archivist"} {
 		got, unknown := c.ResolveList(line)
 		if len(unknown) == 0 {
 			t.Fatalf("ResolveList(%q) = %v with nothing unresolved; two names in one token is a refusal", line, got)
 		}
 	}
 	// A From line naming two people is not a sender, in either spelling.
-	for _, line := range []string{"Rowan and Stella", "Rowan Stella"} {
+	for _, line := range []string{"Ada and Bo", "Ada Bo"} {
 		if p, ok := c.ResolveOne(line); ok {
 			t.Fatalf("ResolveOne(%q) = %q; a note has one writer", line, p.Name)
 		}

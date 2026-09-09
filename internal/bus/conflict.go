@@ -12,7 +12,7 @@ import (
 
 // NO CONFLICT MAY WEDGE A LINE.
 //
-// THE FAILURE, from the scenario run over a copy of the family's real table. Two benches of
+// THE FAILURE, from the scenario run over a copy of a real table. Two benches of
 // one lane sent at once. Their commits touched one file the other could not see -- the
 // lane's INDEX, appended at the same end over one base -- so the rebase stopped, the tool
 // aborted it cleanly and said so, and the bench was then stuck: the obvious repair, a

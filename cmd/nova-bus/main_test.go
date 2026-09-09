@@ -12,13 +12,13 @@ import (
 
 const rosterJSON = `{
   "participants": [
-    {"name": "Rowan", "lane": "from-rowan", "aliases": ["Rowan Claude", "the keeper"],
-     "git_name": "Rowan", "git_email": "rowan@example.com"},
-    {"name": "Stella", "lane": "from-stella", "aliases": ["Stella Codex"],
-     "git_name": "Stella", "git_email": "stella@example.com"},
-    {"name": "Glenn"}
+    {"name": "Ada", "lane": "from-ada", "aliases": ["Ada Vale", "the archivist"],
+     "git_name": "Ada", "git_email": "ada@example.com"},
+    {"name": "Bo", "lane": "from-bo", "aliases": ["Bo Quill"],
+     "git_name": "Bo", "git_email": "bo@example.com"},
+    {"name": "Dana"}
   ],
-  "groups": [{"name": "Everybody at the table", "members": ["Rowan", "Stella", "Glenn"]}]
+  "groups": [{"name": "Everybody at the table", "members": ["Ada", "Bo", "Dana"]}]
 }`
 
 func now() time.Time {
@@ -63,7 +63,7 @@ func writeFile(t *testing.T, root, path, content string) {
 }
 
 // table builds a bare remote and one checkout of it, with a roster and two notes from
-// Stella already on the table: one carrying a question, one a bare acknowledgement.
+// Bo already on the table: one carrying a question, one a bare acknowledgement.
 func table(t *testing.T) (checkout, bare string) {
 	t.Helper()
 	bare = filepath.Join(t.TempDir(), "table.git")
@@ -75,20 +75,20 @@ func table(t *testing.T) (checkout, bare string) {
 	gitIn(t, filepath.Dir(checkout), "clone", "--quiet", bare, checkout)
 	gitIn(t, checkout, "checkout", "-q", "-B", "main")
 	writeFile(t, checkout, "participants.json", rosterJSON)
-	writeFile(t, checkout, "from-stella/2026-09-07T0001Z-a-question-abcdef012345.md",
-		"From: Stella Codex\nTo: Rowan\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: stella-abcdef012345\nSubject: A question about the gate\n\nShould the gate run on the merge queue too?\n")
-	writeFile(t, checkout, "from-stella/2026-09-07T0002Z-heard-111111111111.md",
-		"From: Stella\nTo: Rowan\nDate: Mon Sep  7 00:02:00 UTC 2026\nId: stella-111111111111\nSubject: Heard\n\nHeard, thank you.\n")
+	writeFile(t, checkout, "from-bo/2026-09-07T0001Z-a-question-abcdef012345.md",
+		"From: Bo Quill\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: A question about the gate\n\nShould the gate run on the merge queue too?\n")
+	writeFile(t, checkout, "from-bo/2026-09-07T0002Z-heard-111111111111.md",
+		"From: Bo\nTo: Ada\nDate: Mon Sep  7 00:02:00 UTC 2026\nId: bo-111111111111\nSubject: Heard\n\nHeard, thank you.\n")
 	// The lane's catalogue, which send would have written. A table whose notes are not in
 	// an INDEX is a table check --full warns about, so the fixture is a table in the shape
 	// this tool leaves one in -- and TestCheckFullWarnsAboutANoteWithNoIndexLine covers the
 	// other shape deliberately.
-	writeFile(t, checkout, "from-stella/INDEX", strings.Join([]string{
-		"stella-abcdef012345\tfrom-stella/2026-09-07T0001Z-a-question-abcdef012345.md\t2026-09-07T00:01:00Z\tRowan\t-",
-		"stella-111111111111\tfrom-stella/2026-09-07T0002Z-heard-111111111111.md\t2026-09-07T00:02:00Z\tRowan\t-",
+	writeFile(t, checkout, "from-bo/INDEX", strings.Join([]string{
+		"bo-abcdef012345\tfrom-bo/2026-09-07T0001Z-a-question-abcdef012345.md\t2026-09-07T00:01:00Z\tAda\t-",
+		"bo-111111111111\tfrom-bo/2026-09-07T0002Z-heard-111111111111.md\t2026-09-07T00:02:00Z\tAda\t-",
 	}, "\n")+"\n")
 	gitIn(t, checkout, "add", "-A")
-	gitIn(t, checkout, "-c", "user.name=Stella", "-c", "user.email=stella@example.com", "commit", "-q", "-m", "the table")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "the table")
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 	return checkout, bare
 }
@@ -127,13 +127,13 @@ func (r result) mustContain(t *testing.T, stream, want string) result {
 	return r
 }
 
-const draft = `From: Rowan (bud, the Studio, the mas account)
-To: Stella
-Cc: Glenn
-Re: stella-abcdef012345
+const draft = `From: Ada (day shift, the west host, the shared account)
+To: Bo
+Cc: Dana
+Re: bo-abcdef012345
 Subject: Yes, on the merge queue too
 
-Stella,
+Bo,
 
 Yes, and the key is misspelled in the matrix.
 `
@@ -159,8 +159,8 @@ func TestRefusingToGuess(t *testing.T) {
 		{"send with neither --file nor --stdin", []string{"send", "--table", checkout, "--remote", "origin", "--branch", "main", "--attempts", "3"}, "exactly one of --file and --stdin"},
 		{"send with both", []string{"send", "--table", checkout, "--stdin", "--file", "x.md", "--remote", "origin", "--branch", "main", "--attempts", "3"}, "exactly one of --file and --stdin"},
 		{"inbox without --as", []string{"inbox", "--table", checkout, "--receipt-max-words", "40"}, "--as is required"},
-		{"inbox without --receipt-max-words", []string{"inbox", "--table", checkout, "--as", "Rowan"}, "--receipt-max-words must be given"},
-		{"receipt without --note", []string{"receipt", "--table", checkout, "--as", "Rowan", "--remote", "origin", "--branch", "main", "--attempts", "3"}, "--note is required"},
+		{"inbox without --receipt-max-words", []string{"inbox", "--table", checkout, "--as", "Ada"}, "--receipt-max-words must be given"},
+		{"receipt without --note", []string{"receipt", "--table", checkout, "--as", "Ada", "--remote", "origin", "--branch", "main", "--attempts", "3"}, "--note is required"},
 		{"check without --table", []string{"check", "--full"}, "--table is required"},
 		{"names without --table", []string{"names"}, "--table is required"},
 		{"a positional argument", []string{"check", "--table", checkout, "--full", "extra"}, "takes no positional arguments"},
@@ -185,25 +185,25 @@ func TestSendLandsANoteAndCheckPasses(t *testing.T) {
 	checkout, bare := table(t)
 	r := invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "SEND OK id=rowan-").
+		mustContain(t, "stdout", "SEND OK id=ada-").
 		mustContain(t, "stdout", "pushed=true attempts=1")
-	if !strings.Contains(r.stdout, "path=from-rowan/2026-09-09T1234Z-yes-on-the-merge-queue-too-") {
+	if !strings.Contains(r.stdout, "path=from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-") {
 		t.Fatalf("the path is not the table's naming convention plus the id: %s", r.stdout)
 	}
 	// It is on the REMOTE, not merely committed.
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	if !strings.Contains(files, "from-rowan/2026-09-09T1234Z-yes-on-the-merge-queue-too-") {
+	if !strings.Contains(files, "from-ada/2026-09-09T1234Z-yes-on-the-merge-queue-too-") {
 		t.Fatalf("the note is not on the remote:\n%s", files)
 	}
 	// The commit is the sender's identity, from the roster.
-	if who := strings.TrimSpace(gitIn(t, bare, "log", "-1", "--format=%an <%ae>", "main")); who != "Rowan <rowan@example.com>" {
+	if who := strings.TrimSpace(gitIn(t, bare, "log", "-1", "--format=%an <%ae>", "main")); who != "Ada <ada@example.com>" {
 		t.Fatalf("the note was committed as %q", who)
 	}
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "BUS OK")
 	// And the question it answers is no longer open.
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=1 open=1 notes=0 receipts=1")
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=1 open=1 notes=0 receipts=1")
 }
 
 func TestSendFromAFile(t *testing.T) {
@@ -214,7 +214,7 @@ func TestSendFromAFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	invoke(t, "", "send", "--table", checkout, "--file", path, "--remote", "origin", "--branch", "main", "--attempts", "3").
-		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=rowan-")
+		mustCode(t, 0).mustContain(t, "stdout", "SEND OK id=ada-")
 }
 
 func TestSendNoPushCommitsAndSaysTheNoteIsNotOnTheTable(t *testing.T) {
@@ -223,7 +223,7 @@ func TestSendNoPushCommitsAndSaysTheNoteIsNotOnTheTable(t *testing.T) {
 	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3", "--no-push").
 		mustCode(t, 0).mustContain(t, "stdout", "pushed=false")
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
-	if strings.Contains(files, "from-rowan/") {
+	if strings.Contains(files, "from-ada/") {
 		t.Fatalf("--no-push pushed:\n%s", files)
 	}
 }
@@ -233,12 +233,12 @@ func TestSendRefusesAndWritesNothing(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
 	cases := []struct{ name, draft, want string }{
-		{"an unknown recipient", "From: Rowan\nTo: Stela\nSubject: s\n\nbody\n", `"Stela"`},
-		{"an unknown sender", "From: Nobody\nTo: Rowan\nSubject: s\n\nbody\n", "names no one at this table"},
-		{"a sender with no lane", "From: Glenn\nTo: Rowan\nSubject: s\n\nbody\n", "has no lane"},
-		{"an author-written Id", "From: Rowan\nTo: Stella\nId: rowan-000000000000\nSubject: s\n\nbody\n", "already carries an Id line"},
-		{"a Re naming a slug", "From: Rowan\nTo: Stella\nRe: from-stella/renamed.md\nSubject: s\n\nbody\n", "a slug is not a thread"},
-		{"a misspelled header key", "From: Rowan\nTo: Stella\nSbuject: s\n\nbody\n", `unknown header key "Sbuject"`},
+		{"an unknown recipient", "From: Ada\nTo: Boe\nSubject: s\n\nbody\n", `"Boe"`},
+		{"an unknown sender", "From: Nobody\nTo: Ada\nSubject: s\n\nbody\n", "names no one at this table"},
+		{"a sender with no lane", "From: Dana\nTo: Ada\nSubject: s\n\nbody\n", "has no lane"},
+		{"an author-written Id", "From: Ada\nTo: Bo\nId: ada-000000000000\nSubject: s\n\nbody\n", "already carries an Id line"},
+		{"a Re naming a slug", "From: Ada\nTo: Bo\nRe: from-bo/renamed.md\nSubject: s\n\nbody\n", "a slug is not a thread"},
+		{"a misspelled header key", "From: Ada\nTo: Bo\nSbuject: s\n\nbody\n", `unknown header key "Sbuject"`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -246,7 +246,7 @@ func TestSendRefusesAndWritesNothing(t *testing.T) {
 				mustCode(t, 1).
 				mustContain(t, "stderr", "SEND FAIL (stdin): ").
 				mustContain(t, "stderr", tc.want)
-			if entries, err := os.ReadDir(filepath.Join(checkout, "from-rowan")); err == nil && len(entries) > 0 {
+			if entries, err := os.ReadDir(filepath.Join(checkout, "from-ada")); err == nil && len(entries) > 0 {
 				t.Fatalf("a refused draft left %d files in the lane", len(entries))
 			}
 		})
@@ -259,7 +259,7 @@ func TestARefusalIsOneLineWhateverTheDraftHolds(t *testing.T) {
 	checkout, _ := table(t)
 	// U+2028 ends a line for every reader that follows Unicode rather than counting
 	// newlines, so an unresolved recipient holding one could otherwise forge a second line.
-	r := invoke(t, "From: Rowan\nTo: Stella\u2028Nobody\nSubject: s\n\nbody\n",
+	r := invoke(t, "From: Ada\nTo: Bo\u2028Nobody\nSubject: s\n\nbody\n",
 		"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 1)
 	if !strings.Contains(r.stderr, `\u2028`) {
@@ -272,10 +272,10 @@ func TestARefusalIsOneLineWhateverTheDraftHolds(t *testing.T) {
 
 func TestInboxSeparatesNotesFromReceiptsAndPutsNotesFirst(t *testing.T) {
 	checkout, _ := table(t)
-	r := invoke(t, "", "inbox", "--table", checkout, "--as", "the keeper", "--receipt-max-words", "40").
+	r := invoke(t, "", "inbox", "--table", checkout, "--as", "the archivist", "--receipt-max-words", "40").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX NOTE id=stella-abcdef012345 from=Stella addr=to").
-		mustContain(t, "stdout", "INBOX OK as=Rowan carrying=2 open=2 notes=1 receipts=1")
+		mustContain(t, "stdout", "INBOX NOTE id=bo-abcdef012345 from=Bo addr=to").
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2 open=2 notes=1 receipts=1")
 	noteAt := strings.Index(r.stdout, "INBOX NOTE")
 	receiptAt := strings.Index(r.stdout, "INBOX RECEIPT")
 	if noteAt < 0 || receiptAt < 0 || noteAt > receiptAt {
@@ -285,28 +285,28 @@ func TestInboxSeparatesNotesFromReceiptsAndPutsNotesFirst(t *testing.T) {
 
 func TestInboxRefusesANameItDoesNotKnow(t *testing.T) {
 	checkout, _ := table(t)
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowna", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Adda", "--receipt-max-words", "40").
 		mustCode(t, 2).mustContain(t, "stderr", "names no one at this table")
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Glenn", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Dana", "--receipt-max-words", "40").
 		mustCode(t, 2).mustContain(t, "stderr", "has no lane")
 }
 
 func TestReceiptMarksHeardAndInboxHonoursIt(t *testing.T) {
 	hermetic(t)
 	checkout, bare := table(t)
-	invoke(t, "", "receipt", "--table", checkout, "--as", "Rowan", "--note", "stella-abcdef012345",
+	invoke(t, "", "receipt", "--table", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0).mustContain(t, "stdout", "RECEIPT OK recorded=1 already=0")
-	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); !strings.Contains(files, "from-rowan/RECEIPTS") {
+	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); !strings.Contains(files, "from-ada/RECEIPTS") {
 		t.Fatalf("the receipt is not on the remote:\n%s", files)
 	}
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).mustContain(t, "stdout", "open=1 notes=0 receipts=1")
 	// Twice is reported, not written twice, and needs no commit.
-	invoke(t, "", "receipt", "--table", checkout, "--as", "Rowan", "--note", "stella-abcdef012345",
+	invoke(t, "", "receipt", "--table", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "RECEIPT ALREADY note=stella-abcdef012345").
+		mustContain(t, "stdout", "RECEIPT ALREADY note=bo-abcdef012345").
 		mustContain(t, "stdout", "RECEIPT OK recorded=0 already=1 commit=- pushed=false attempts=0")
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0)
 }
@@ -314,21 +314,21 @@ func TestReceiptMarksHeardAndInboxHonoursIt(t *testing.T) {
 func TestReceiptRefuses(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	invoke(t, "", "receipt", "--table", checkout, "--as", "Rowan", "--note", "stella-deadbeefcafe",
+	invoke(t, "", "receipt", "--table", checkout, "--as", "Ada", "--note", "bo-deadbeefcafe",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 1).mustContain(t, "stderr", "RECEIPT FAIL")
-	invoke(t, "", "receipt", "--table", checkout, "--as", "Rowna", "--note", "stella-abcdef012345",
+	invoke(t, "", "receipt", "--table", checkout, "--as", "Adda", "--note", "bo-abcdef012345",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 2).mustContain(t, "stderr", "names no one at this table")
 }
 
 func TestCheckFailsAndNamesEveryFinding(t *testing.T) {
 	checkout, _ := table(t)
-	writeFile(t, checkout, "from-rowan/broken.md", "From: Rowan\nthis is prose\n\nbody\n")
-	writeFile(t, checkout, "from-rowan/stranger.md", "From: Rowan\nTo: Stela\nSubject: s\n\nbody\n")
+	writeFile(t, checkout, "from-ada/broken.md", "From: Ada\nthis is prose\n\nbody\n")
+	writeFile(t, checkout, "from-ada/stranger.md", "From: Ada\nTo: Boe\nSubject: s\n\nbody\n")
 	r := invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1).
-		mustContain(t, "stderr", "BUS FAIL from-rowan/broken.md: ").
-		mustContain(t, "stderr", "BUS FAIL from-rowan/stranger.md")
+		mustContain(t, "stderr", "BUS FAIL from-ada/broken.md: ").
+		mustContain(t, "stderr", "BUS FAIL from-ada/stranger.md")
 	if n := strings.Count(r.stderr, "BUS FAIL"); n < 2 {
 		t.Fatalf("check reported %d findings over two broken files:\n%s", n, r.stderr)
 	}
@@ -351,9 +351,9 @@ func TestCheckRefusesATableWithNoRoster(t *testing.T) {
 func TestNamesEchoesTheRoster(t *testing.T) {
 	checkout, _ := table(t)
 	invoke(t, "", "names", "--table", checkout).mustCode(t, 0).
-		mustContain(t, "stdout", `NAMES NAME name="Rowan" lane=from-rowan aliases="Rowan Claude";"the keeper"`).
-		mustContain(t, "stdout", `NAMES NAME name="Glenn" lane=- aliases=-`).
-		mustContain(t, "stdout", `NAMES GROUP name="Everybody at the table" members="Rowan";"Stella";"Glenn"`).
+		mustContain(t, "stdout", `NAMES NAME name="Ada" lane=from-ada aliases="Ada Vale";"the archivist"`).
+		mustContain(t, "stdout", `NAMES NAME name="Dana" lane=- aliases=-`).
+		mustContain(t, "stdout", `NAMES GROUP name="Everybody at the table" members="Ada";"Bo";"Dana"`).
 		mustContain(t, "stdout", "NAMES OK participants=3 groups=1 senders=2")
 }
 
@@ -395,7 +395,7 @@ func TestSendRefusesWhenTheBranchIsAheadOfTheRemote(t *testing.T) {
 		t.Fatalf("a refused send reported success: %s", r.stdout)
 	}
 	// Nothing was written and nothing was published.
-	if entries, err := os.ReadDir(filepath.Join(checkout, "from-rowan")); err == nil && len(entries) > 0 {
+	if entries, err := os.ReadDir(filepath.Join(checkout, "from-ada")); err == nil && len(entries) > 0 {
 		t.Fatalf("a refused send left %d files in the lane", len(entries))
 	}
 	if files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main"); strings.Contains(files, "notes-to-self.txt") {
@@ -410,7 +410,7 @@ func TestRemoteAndBranchThatCouldBeOptionsAreRefused(t *testing.T) {
 	cases := [][]string{
 		{"send", "--table", checkout, "--stdin", "--remote", "--upload-pack=touch /tmp/pwned", "--branch", "main", "--attempts", "3"},
 		{"send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "--exec=id", "--attempts", "3"},
-		{"receipt", "--table", checkout, "--as", "Rowan", "--note", "stella-abcdef012345", "--remote", "origin;id", "--branch", "main", "--attempts", "3"},
+		{"receipt", "--table", checkout, "--as", "Ada", "--note", "bo-abcdef012345", "--remote", "origin;id", "--branch", "main", "--attempts", "3"},
 	}
 	for _, args := range cases {
 		invoke(t, draft, args...).mustCode(t, 2).mustContain(t, "stderr", "nova-bus ")
@@ -430,7 +430,7 @@ func TestSendRefusesASlugThatIsNotASlug(t *testing.T) {
 		}
 	}
 	// Nothing reached the lane, and nothing reached the table root either.
-	if entries, err := os.ReadDir(filepath.Join(checkout, "from-rowan")); err == nil && len(entries) > 0 {
+	if entries, err := os.ReadDir(filepath.Join(checkout, "from-ada")); err == nil && len(entries) > 0 {
 		t.Fatalf("a refused --slug left %d files in the lane", len(entries))
 	}
 	// A slug that is a slug still works.
@@ -442,14 +442,14 @@ func TestSendRefusesASlugThatIsNotASlug(t *testing.T) {
 // step over it in silence, which is the same failure as a lost push with a quieter cause.
 func TestInboxNamesTheNotesItCannotRead(t *testing.T) {
 	checkout, _ := table(t)
-	writeFile(t, checkout, "from-stella/2026-09-07T0009Z-prose.md",
-		"Rowan, the checkpoint is pushed and the suite passed: zero divergence.\n\nMore prose.\n")
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+	writeFile(t, checkout, "from-bo/2026-09-07T0009Z-prose.md",
+		"Ada, the checkpoint is pushed and the suite passed: zero divergence.\n\nMore prose.\n")
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX UNREADABLE path=from-stella/2026-09-07T0009Z-prose.md: ").
+		mustContain(t, "stdout", "INBOX UNREADABLE path=from-bo/2026-09-07T0009Z-prose.md: ").
 		mustContain(t, "stdout", "unreadable=1")
 	// The reason is short: a paragraph up to its first colon is not a header key.
-	invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+	invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).mustContain(t, "stdout", "...")
 }
 
@@ -458,11 +458,11 @@ func TestInboxNamesTheNotesItCannotRead(t *testing.T) {
 func TestInboxShowsWhatWasHeardButNotAnswered(t *testing.T) {
 	hermetic(t)
 	checkout, _ := table(t)
-	invoke(t, "", "receipt", "--table", checkout, "--as", "Rowan", "--note", "stella-abcdef012345",
+	invoke(t, "", "receipt", "--table", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
 		"--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
-	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").
+	r := invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX HEARD id=stella-abcdef012345 from=Stella addr=to").
+		mustContain(t, "stdout", "INBOX HEARD id=bo-abcdef012345 from=Bo addr=to").
 		mustContain(t, "stdout", "heard=1")
 	// It is out of the open count, and between the notes and the bare receipts.
 	if !strings.Contains(r.stdout, "open=1 notes=0 receipts=1 heard=1") {
@@ -474,8 +474,8 @@ func TestInboxShowsWhatWasHeardButNotAnswered(t *testing.T) {
 	}
 	// And a note that was actually REPLIED to is gone, not merely heard.
 	invoke(t, draft, "send", "--table", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").mustCode(t, 0)
-	r = invoke(t, "", "inbox", "--table", checkout, "--as", "Rowan", "--receipt-max-words", "40").mustCode(t, 0)
-	if strings.Contains(r.stdout, "stella-abcdef012345") {
+	r = invoke(t, "", "inbox", "--table", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
+	if strings.Contains(r.stdout, "bo-abcdef012345") {
 		t.Fatalf("an answered note is still listed:\n%s", r.stdout)
 	}
 }
@@ -483,10 +483,10 @@ func TestInboxShowsWhatWasHeardButNotAnswered(t *testing.T) {
 // The adoption path: a table written by hand for months, checked for the first time.
 func TestCheckLegacyBefore(t *testing.T) {
 	checkout, _ := table(t)
-	writeFile(t, checkout, "from-stella/2026-09-01T0001Z-old-prose.md",
-		"Rowan, this note predates the tool entirely.\n\nbody\n")
-	writeFile(t, checkout, "from-stella/2026-09-08T0001Z-new-prose.md",
-		"Rowan, this one does not.\n\nbody\n")
+	writeFile(t, checkout, "from-bo/2026-09-01T0001Z-old-prose.md",
+		"Ada, this note predates the tool entirely.\n\nbody\n")
+	writeFile(t, checkout, "from-bo/2026-09-08T0001Z-new-prose.md",
+		"Ada, this one does not.\n\nbody\n")
 
 	// Without the flag, both fail and the run fails.
 	r := invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 1)
@@ -496,8 +496,8 @@ func TestCheckLegacyBefore(t *testing.T) {
 
 	// With it, the old one warns, the new one still fails, and the run still fails.
 	r = invoke(t, "", "check", "--table", checkout, "--full", "--legacy-before", "2026-09-05").mustCode(t, 1).
-		mustContain(t, "stdout", "BUS WARN from-stella/2026-09-01T0001Z-old-prose.md").
-		mustContain(t, "stderr", "BUS FAIL from-stella/2026-09-08T0001Z-new-prose.md")
+		mustContain(t, "stdout", "BUS WARN from-bo/2026-09-01T0001Z-old-prose.md").
+		mustContain(t, "stderr", "BUS FAIL from-bo/2026-09-08T0001Z-new-prose.md")
 	if strings.Contains(r.stderr, "BUS WARN") {
 		t.Fatalf("a warning reached stderr, where only failures and refusals go:\n%s", r.stderr)
 	}
@@ -506,7 +506,7 @@ func TestCheckLegacyBefore(t *testing.T) {
 	}
 
 	// With only the old one left, the run passes and SAYS how much it forgave.
-	if err := os.Remove(filepath.Join(checkout, "from-stella", "2026-09-08T0001Z-new-prose.md")); err != nil {
+	if err := os.Remove(filepath.Join(checkout, "from-bo", "2026-09-08T0001Z-new-prose.md")); err != nil {
 		t.Fatal(err)
 	}
 	invoke(t, "", "check", "--table", checkout, "--full", "--legacy-before", "2026-09-05").mustCode(t, 0).
@@ -514,7 +514,7 @@ func TestCheckLegacyBefore(t *testing.T) {
 		mustContain(t, "stdout", "warn=1")
 	// A clean table says warn=0, so a run that forgave nothing and one that forgave fifty
 	// notes are not the same line.
-	if err := os.Remove(filepath.Join(checkout, "from-stella", "2026-09-01T0001Z-old-prose.md")); err != nil {
+	if err := os.Remove(filepath.Join(checkout, "from-bo", "2026-09-01T0001Z-old-prose.md")); err != nil {
 		t.Fatal(err)
 	}
 	invoke(t, "", "check", "--table", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "warn=0")

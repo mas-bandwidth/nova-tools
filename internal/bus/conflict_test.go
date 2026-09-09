@@ -107,7 +107,7 @@ func TestAnAbortThatFailsIsRefusedWithTheRecovery(t *testing.T) {
 		if out, err := git(dir, "add", "-A"); err != nil {
 			t.Fatalf("add: %v %s", err, out)
 		}
-		if out, err := git(dir, append(identityArgs(testIdentity["Rowan"]), "commit", "-q", "-m", message)...); err != nil {
+		if out, err := git(dir, append(identityArgs(testIdentity["Ada"]), "commit", "-q", "-m", message)...); err != nil {
 			t.Fatalf("commit: %v %s", err, out)
 		}
 	}
@@ -121,7 +121,7 @@ func TestAnAbortThatFailsIsRefusedWithTheRecovery(t *testing.T) {
 	}
 	commit("mine\n", "mine")
 	// A rebase that conflicts, so the checkout is genuinely mid-rebase.
-	if _, err := git(dir, append(identityArgs(testIdentity["Rowan"]), "rebase", "other")...); err == nil {
+	if _, err := git(dir, append(identityArgs(testIdentity["Ada"]), "rebase", "other")...); err == nil {
 		t.Fatal("the fixture did not conflict")
 	}
 	where, still := inRebase(dir)

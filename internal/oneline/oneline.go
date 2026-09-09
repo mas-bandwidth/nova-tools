@@ -110,7 +110,7 @@ func Field(s string) string {
 // and is pasted back into a To: line.
 //
 // FIELD IS WRONG FOR THOSE, and it was used for them. Field escapes every whitespace
-// character, so `nova-bus names` printed `Rowan\x20Claude` -- one token a scanner can
+// character, so `nova-bus names` printed `Ada\x20Vale` -- one token a scanner can
 // read, and a name nobody can paste into the header of a note. The whole purpose of that
 // verb is to tell a person how to spell a To line this tool will accept, and it was
 // telling them something the tool would refuse.

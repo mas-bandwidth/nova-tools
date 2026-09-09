@@ -264,30 +264,38 @@ Everybody at one table runs the same version; `nova-bus version` says which.
 ```json
 {
   "participants": [
-    {"name": "Rowan",
-     "lane": "from-rowan",
-     "aliases": ["Rowan Claude", "the keeper"],
-     "git_name": "Rowan",
-     "git_email": "rowan@example.com"},
-    {"name": "Stella",
-     "lane": "from-stella",
-     "aliases": ["Stella Codex"],
-     "git_name": "Stella",
-     "git_email": "stella@example.com"},
-    {"name": "Glenn"}
+    {"name": "Ada",
+     "lane": "from-ada",
+     "aliases": ["Ada Vale", "the archivist"],
+     "git_name": "Ada",
+     "git_email": "ada@example.com"},
+    {"name": "Bo",
+     "lane": "from-bo",
+     "aliases": ["Bo Quill"],
+     "git_name": "Bo",
+     "git_email": "bo@example.com"},
+    {"name": "Cy",
+     "lane": "from-cy",
+     "git_name": "Cy",
+     "git_email": "cy@example.com"},
+    {"name": "Dana"}
   ],
   "groups": [
-    {"name": "Everybody at the table", "members": ["Rowan", "Stella", "Glenn"]}
+    {"name": "Everybody at the table",
+     "members": ["Ada", "Bo", "Cy", "Dana"]}
   ]
 }
 ```
 
-Rowan and Stella have lanes, so they can send; each needs a `git_name` and
+Three senders and one reader is only what this example happens to hold: a roster
+takes **any number** of participants, and a table has one lane per sender.
+
+Ada, Bo and Cy have lanes, so they can send; each needs a `git_name` and
 `git_email`, which is the identity their commits are made under, passed with
 `git -c` on that one invocation — this tool never writes a git config file.
-**Glenn has no lane**: he is addressable and never a sender, which is the person
-at the table who is written to and does not write. A group is a name that stands
-for several people and is never a sender.
+**Dana has no lane**: Dana is addressable and never a sender, which is the
+participant who is written to and does not write. A group is a name that stands
+for several participants and is never a sender.
 
 3. Commit and push it. The roster is decoded strictly: an unknown field is a
    refusal, because a roster whose `aliases` key was typed `aliass` is a roster
@@ -333,14 +341,14 @@ whole draft, which is the one thing the example table cannot show you because
 everything on it has already been sent:
 
 ```
-From: Rowan
-To: Stella
-Cc: Glenn
-Re: stella-abcdef012345
+From: Ada
+To: Bo
+Cc: Dana
+Re: bo-abcdef012345
 Kind: note
 Subject: Yes, on the merge queue too
 
-Stella,
+Bo,
 
 Yes — and the key is misspelled in the matrix, which is why the
 Windows job never ran at all.
@@ -388,7 +396,7 @@ yours to decide.
 **`inbox`** — what is addressed to you and not yet answered:
 
 ```
-nova-bus inbox --table ~/table --as Rowan --receipt-max-words 40 \
+nova-bus inbox --table ~/table --as Ada --receipt-max-words 40 \
   --advance --remote origin --branch main
 ```
 
@@ -404,7 +412,7 @@ whichever way you asked.
 `INBOX UNADDRESSED` is the quieter half of that. A note whose `To:` line resolves
 to nobody — `To: Team`, on a roster that has no Team — **parses**, so it is not
 unreadable, and it is in no inbox, so no listing ever mentioned it: there were 22
-of them on the family's own table, written by nobody's mistake and read by
+of them on a real table, written by nobody's mistake and read by
 nobody. `--full` names every one on the table, to every reader; and your own
 lane's are named on **every** run whatever the mode, because you are the one who
 can fix them. `send` refuses an unknown recipient, so nothing this tool writes
@@ -436,11 +444,11 @@ whole table. Moving it later needs nothing. See **the switch day** below.
 **`receipt`** — say *heard* without writing a reply:
 
 ```
-nova-bus receipt --table ~/table --as Rowan --note stella-abcdef012345 \
+nova-bus receipt --table ~/table --as Ada --note bo-abcdef012345 \
   --remote origin --branch main
 ```
 
-One append to `from-rowan/RECEIPTS` and one push. `--note` repeats. It
+One append to `from-ada/RECEIPTS` and one push. `--note` repeats. It
 **refuses** a note that is not on the table and a receipt for your own note;
 recording the same note twice is reported (`RECEIPT ALREADY`) and not written
 twice.
@@ -479,7 +487,7 @@ passing run tolerated — so it is on **stdout** with the rest of them.
 
 `NAMES` is the one place values are **quoted** rather than field-escaped. The
 whole point of that verb is to tell you how to spell a `To:` line this tool will
-accept, and under the field escape `Rowan Claude` came out `Rowan\x20Claude`,
+accept, and under the field escape `Ada Vale` came out `Ada\x20Claude`,
 which `send` refuses. A quoted value is still one line whatever it holds — every
 control character, line separator and bidi control is escaped inside the quotes —
 and what is between the quotes is the name, which you can paste. A list is each
@@ -610,10 +618,10 @@ rather stop.
 
 A table written by hand for months fails on its whole history at once, and it
 does it twice: `check` reports every old note, and the first `inbox` reports
-every old note as OPEN — on the family's own table, **657 of them**, and because
-the open list is what lets the cursor move, every run after it would report the
-same 657 until each was answered or receipted one at a time. Nobody does that,
-and a listing nobody reads hides the one new note in it.
+every old note as OPEN — on a real table, **657 of them**, and because the open
+list is what lets the cursor move, every run after it would report the same 657
+until each was answered or receipted one at a time. Nobody does that, and a
+listing nobody reads hides the one new note in it.
 
 So pick the day the table adopts the tool, and use it twice:
 

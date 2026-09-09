@@ -69,8 +69,8 @@ func (n Note) When() time.Time {
 // months names its notes four ways -- `2026-09-09T0041Z-slug.md`, the same with seconds,
 // the same with the stamp accidentally doubled, and a plain `2026-09-06-slug.md` -- and
 // only the first is the minute When parses. Every one of the other three still says its
-// DAY, in the first ten characters, which is all a line drawn on a date needs. On the
-// family's own table those three shapes are 87 notes, and refusing to read their day
+// DAY, in the first ten characters, which is all a line drawn on a date needs. On a real
+// table those three shapes are 87 notes, and refusing to read their day
 // meant refusing to forgive a note that says plainly when it was written.
 //
 // It is deliberately NOT folded into When. When orders the listing, fills a catalogue's
@@ -423,7 +423,7 @@ type CheckOptions struct {
 	//
 	// It is a DATE and not a switch, so the forgiven set can only shrink. What it forgives
 	// is a note's HEADER and nothing else, and the width of that was measured rather than
-	// argued: a dry run over the family's real table with the line at its adoption day
+	// argued: a dry run over a real table with the line at its adoption day
 	// still failed 163 times -- 109 missing Subject lines, 47 To, From and Cc lines naming
 	// people the roster did not yet hold, and a few notes that would not parse at all --
 	// which is the wall of red the tolerance exists to prevent. A note in the wrong lane, a

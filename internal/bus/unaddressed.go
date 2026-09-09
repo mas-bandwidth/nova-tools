@@ -8,10 +8,10 @@ import (
 
 // The notes that are addressed to NOBODY, and why they needed a line of their own.
 //
-// THE FAILURE, from the scenario run over a copy of the family's real table: 22 notes were
+// THE FAILURE, from the scenario run over a copy of a real table: 22 notes were
 // in no inbox and were not reported as unreadable either, so nobody at the table was ever
 // told they existed. They parsed perfectly. What they were was addressed to nobody -- `To:
-// Team`, a name no roster held; and `From: Stella, Go table-wire task ...`, where the comma
+// Team`, a name no roster held; and `From: Bo, Go table-wire task ...`, where the comma
 // after the name is an address separator, so the From line named two senders and resolved
 // to none. A note like that falls out of every listing for a reason each half of the tool
 // thinks is somebody else's business: `inbox` skips it because it is not addressed to ME,
@@ -48,7 +48,7 @@ type Unaddressed struct {
 //
 // The test is the one the inbox itself uses: the note's To and Cc, resolved against the
 // roster, name NOBODY. Not "names somebody the roster does not know" -- a note to
-// "Stella, Team" reaches Stella and is in her inbox, and telling her it went nowhere would
+// "Bo, Team" reaches Bo and is in her inbox, and telling her it went nowhere would
 // be false. Only a note whose whole address resolves to an empty list has no reader.
 func UnaddressedReason(c *Config, n *Note) (string, bool) {
 	if n == nil || n.Parse != nil {

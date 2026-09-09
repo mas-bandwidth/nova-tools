@@ -182,10 +182,10 @@ func TestErrRendersTheTextAndSpellsNilLikeFmt(t *testing.T) {
 func TestQuoteIsPasteableAndStillOneLine(t *testing.T) {
 	// The specimen: a roster name with a space in it, which Field renders \x20 and nobody
 	// can paste back into a To line.
-	if got, want := Quote("Rowan Claude"), `"Rowan Claude"`; got != want {
-		t.Fatalf("Quote(%q) = %s, want %s", "Rowan Claude", got, want)
+	if got, want := Quote("Ada Vale"), `"Ada Vale"`; got != want {
+		t.Fatalf("Quote(%q) = %s, want %s", "Ada Vale", got, want)
 	}
-	if Field("Rowan Claude") == Quote("Rowan Claude") {
+	if Field("Ada Vale") == Quote("Ada Vale") {
 		t.Fatal("Quote is Field; the whole point is that Field escapes the space")
 	}
 	// Non-ASCII that a person types stays as it is: this is not an ASCII escape.
