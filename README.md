@@ -701,22 +701,25 @@ wins. It **reports** and exits 0 whether the inbox is empty or full. It
 no longer on this history, and an `OPEN` list written by a version before this
 one. Without `--advance` it writes nothing at all.
 
-`--legacy-before <YYYY-MM-DD>` is the switch-day line, and a bus that existed
-before this tool needs it once: a note dated before that UTC date is **not
-carried** on your open list and is **not listed**, appearing only inside the
-count on a single `INBOX LEGACY before=<date> notes=<n> unreadable=<m>` line. A
-file this tool **cannot parse** that is dated behind the line goes the same way,
-counted under `unreadable=` — fifteen hand-written notes from the week before a
-bus switched over are history, and naming them on every poll buries the inbox
-they are printed above. A file dated on or after the line, or with no readable
-date at all, is named on every run: the line never quiets a new note, or one it
-cannot date. `--full` lists everything whatever its date. Nothing is
-deleted, marked answered or changed — the notes are still on the bus and still
-answerable; what the line changes is your own open list. The date goes into your
-cursor, so every run after it honours the line with no flag. Moving the line
-**earlier** is refused, because it would put the notes between the two dates back
-on your open list; do that with `--full`, which builds the list again from the
-whole bus. Moving it later needs nothing. See **the switch day** below.
+`--legacy-before <date-or-instant>` is the switch-day line, and a bus that
+existed before this tool needs it once. It takes a UTC date `YYYY-MM-DD`, which
+means **midnight at its start**, or an RFC 3339 UTC instant like
+`2026-09-09T18:07:00Z`, and compares by **instant**: a note dated before the line
+is **not carried** on your open list and is **not listed**, appearing only inside
+the count on a single `INBOX LEGACY before=<date-or-instant> notes=<n>
+unreadable=<m>` line, which echoes back what you gave. A file this tool **cannot
+parse** that is dated behind the line goes the same way, counted under
+`unreadable=` — fifteen hand-written notes from the week before a bus switched
+over are history, and naming them on every poll buries the inbox they are printed
+above. A file dated on or after the line, or with no readable date at all, is
+named on every run: the line never quiets a new note, or one it cannot date.
+`--full` lists every unreadable file whatever its date. Nothing is deleted,
+marked answered or changed — the notes are still on the bus and still answerable;
+what the line changes is your own open list. The line goes into your cursor
+exactly as you typed it, so every run after it honours it with no flag. Moving
+the line **earlier** is refused, because it would put the notes between the two
+back on your open list; do that with `--full`, which builds the list again from
+the whole bus. Moving it later needs nothing. See **the switch day** below.
 
 **`receipt`** — say *heard* without writing a reply:
 
@@ -831,7 +834,7 @@ SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
-INBOX LEGACY before=<date> notes=<n> unreadable=<m>
+INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
 INBOX OPEN carrying=<n> heard=<m>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
@@ -884,8 +887,9 @@ the notes:
 
 - `from-<me>/CURSOR` — one line: the commit you last read to, when, how many
   notes you were carrying (`open=<n>`), and the switch-day line you read under
-  (`legacy=<date>`, when you have drawn one). The last two are read by their
-  prefix, so a cursor written before either existed still reads;
+  (`legacy=<date-or-instant>`, when you have drawn one, exactly as you gave it).
+  The last two are read by their prefix, so a cursor written before either
+  existed still reads;
 - `from-<me>/OPEN` — the notes you have been shown and not answered, which is what
   lets the cursor move past a note without the note vanishing. Since **`OPEN v2`**
   each entry is the note's whole display line — `<id|->`, kind, heard flag, from,
@@ -951,29 +955,42 @@ list is what lets the cursor move, every run after it would report the same 657
 until each was answered or receipted one at a time. Nobody does that, and a
 listing nobody reads hides the one new note in it.
 
-So pick the day the bus adopts the tool, and use it twice:
+So take **the moment you switch** — `date -u +%Y-%m-%dT%H:%M:%SZ` — and use it
+twice:
 
 ```
-nova-bus check --bus <dir> --full --legacy-before <that day>
+SWITCH=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+nova-bus check --bus <dir> --full --legacy-before "$SWITCH"
 
 nova-bus inbox --bus <dir> --as <you> --receipt-max-words 40 \
-  --full --legacy-before <that day> \
+  --full --legacy-before "$SWITCH" \
   --advance --remote origin --branch main
 ```
 
+Use an **instant** and not a date if you are switching today: a date is midnight
+at its start, so a date still to come — tomorrow's, say — is after everything
+written today and hides every note you have sent since the switch. If it has
+already happened to you, the fix is one command: run the `inbox --full
+--legacy-before "$SWITCH" --advance` above again with the instant, which builds
+your open list from the whole bus and is why moving the line earlier is allowed
+under `--full`.
+
 1. **`check --full`**, first without the flag if you want the size of the job: it
    names every finding in one pass. Then either sweep — fix the old notes by hand
-   — or take **`--legacy-before <YYYY-MM-DD>`**, a UTC date. A finding about the
+   — or take **`--legacy-before <date-or-instant>`**, a UTC date (midnight at its
+   start) or an RFC 3339 UTC instant. A finding about the
    **header** of a note dated before it — it will not parse, its `From`, `To` or
    `Cc` names somebody the roster does not know, it has no `Subject`, its `Re:`
    names nothing — becomes a `BUS WARN` instead of a failure. A note in the wrong
    lane, a malformed or duplicated id, a broken receipt line, an unowned lane and
    a stray file still fail at any date: those are not things a history made
-   unavoidable. A date can only ever forgive fewer notes, never more.
-2. **`inbox --full --legacy-before <the same day> --advance`**, once, for each
+   unavoidable. An earlier line can only ever forgive fewer notes, never more.
+2. **`inbox --full --legacy-before "$SWITCH" --advance`**, once, for each
    reader. The old notes are left off that reader's open list and counted on one
    `INBOX LEGACY` line — `notes=` for the ones that parse, `unreadable=` for the
-   ones nobody can — and the date is recorded in their cursor, so every later run
+   ones nobody can — and the line is recorded in their cursor exactly as you
+   typed it, so every later run
    honours it with no flag. Nothing is deleted and no note is changed — an old
    note is still on the bus, still readable, still answerable by id or path. This
    full read still lists everything it found; **after the line the inbox is

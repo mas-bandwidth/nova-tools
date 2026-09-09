@@ -527,7 +527,7 @@ func TestCheckLegacyBefore(t *testing.T) {
 		t.Fatal(err)
 	}
 	invoke(t, "", "check", "--bus", checkout, "--full").mustCode(t, 0).mustContain(t, "stdout", "warn=0")
-	// A date it cannot read is a bad invocation, not a guess.
+	// A line it cannot read is a bad invocation, not a guess.
 	invoke(t, "", "check", "--bus", checkout, "--full", "--legacy-before", "last Tuesday").
-		mustCode(t, 2).mustContain(t, "stderr", "is not a UTC date")
+		mustCode(t, 2).mustContain(t, "stderr", "neither a UTC date")
 }

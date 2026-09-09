@@ -2149,10 +2149,10 @@ would be the most dangerous thing on the bus.
 ```
 nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id>]
 nova-bus send --bus <dir> --file <path>|--stdin [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
-nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
+nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <date-or-instant>]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
-nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <YYYY-MM-DD>] [--rebuild-index]
+nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
 nova-bus names --bus <dir>
 
 every verb that runs git also takes [--git-timeout <seconds>], default 60
@@ -2219,7 +2219,7 @@ SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
-INBOX LEGACY before=<date> notes=<n> unreadable=<m>
+INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
 INBOX OPEN carrying=<n> heard=<m>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
@@ -2893,7 +2893,7 @@ and `#` comments are ignored in all three.
 
 ```
 from-ada/CURSOR
-3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a 2026-09-09T14:05:00Z open=2 legacy=2026-09-10
+3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a 2026-09-09T14:05:00Z open=2 legacy=2026-09-09T18:07:00Z
 
 from-ada/OPEN   (tab-separated, after a version line)
 OPEN v2
@@ -2950,16 +2950,18 @@ token an older one would refuse.
 receipt line, because a cursor's subject is the commit and the time is
 annotation, whereas a receipt is a log entry whose subject is when it was made —
 then `open=<n>`, how many notes the run that wrote it was carrying, and then
-`legacy=<date>`, the switch-day line that run read under. The two trailing tokens
+`legacy=<date-or-instant>`, the switch-day line that run read under, stored
+EXACTLY as it was given so a line drawn to the second is not rounded to its day. The two trailing tokens
 are read **by their prefix and not by their position**, which is what makes a new
 one addable without every cursor already on a bus becoming unreadable: a cursor
 written before `open=` existed has two tokens and is trusted, one written before
 `legacy=` has three, either may appear without the other, and their order does
 not matter. An UNKNOWN token is still a refusal, and so is a fifth — the
 tolerance is for a token this reader knows and the writer did not, never the
-other way round. `legacy=` is required to be a date **at the read**, on the same
-rule the commit is required to be hex there: a `CURSOR` is an ordinary file on a
-shared bus and its contents become a decision. See **deleting one of the
+other way round. `legacy=` is required to be a UTC date or an RFC 3339 UTC
+instant **at the read**, on the same rule the commit is required to be hex
+there: a `CURSOR` is an ordinary file on a shared bus and its contents become a
+decision. See **deleting one of the
 three** below for why a cursor counts another file's contents, and **the
 switch-day line** for why it carries a date.
 `OPEN`'s own grammar is above. `INDEX`'s five fields are id, path, date,
@@ -3138,21 +3140,27 @@ at a time. Nobody was going to do that, and a listing nobody reads is a listing
 that hides the one new note in it. That is the same failure as a lost push,
 arriving as noise instead of as silence.
 
-So `inbox` takes **`--legacy-before <YYYY-MM-DD>`**, the same shape `check`'s
-flag takes and drawn on the same day. A note dated before it:
+So `inbox` takes **`--legacy-before <date-or-instant>`**, the same shape
+`check`'s flag takes and drawn at the same moment: a UTC date `YYYY-MM-DD`,
+which means **midnight at its start**, or an RFC 3339 UTC instant like
+`2026-09-09T18:07:00Z`. The comparison is by **instant** either way, against the
+note's own date — its `Date:` header, else the UTC minute in its filename, else
+the leading `YYYY-MM-DD` in its filename at that day's midnight. A note dated
+before the line:
 
 - is **not carried** on the reader's `OPEN` list, so the cursor is not dragging
   it along and no later run has to look at it;
 - is **not listed** — it appears only inside the count on one
-  `INBOX LEGACY before=<date> notes=<n> unreadable=<m>` line;
+  `INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>` line, which
+  echoes the line back exactly as it was given;
 - is **not changed**. Nothing is deleted, nothing is marked answered, nothing is
   written to anybody else's lane. The notes are still on the bus, still
   readable in a browser, still found by `check --full`, still answerable by id or
   by path. What the line changes is one reader's own open list, which is the one
   thing on the bus that was theirs alone anyway.
 
-**The line lives in the cursor**, as `legacy=<date>`, so later reads honour it
-with no flag. A line that had to be retyped on every run is a line that would be
+**The line lives in the cursor**, as `legacy=<date-or-instant>` and exactly as
+it was typed, so later reads honour it with no flag. A line that had to be retyped on every run is a line that would be
 forgotten on one, and the run that forgot it would re-open six hundred notes the
 reader had settled — the failure this closes, arriving by a different door.
 
@@ -3182,14 +3190,34 @@ the quiet belongs to the incremental run a reader polls with. The count is on th
 `INBOX LEGACY` line of a full read too, because the open list a full read WRITES
 is still shaped by the line.
 
-**The switch-day recipe**, in the order to run it:
+**Why the instant exists, measured on the hour a family of five switched.** They
+drew the line at TOMORROW's date, reasonably — nothing written before tomorrow
+was written under the tool, so the open list would start at zero. It did, and it
+stayed at zero: a date is midnight at its **start**, so every note any of them
+sent that same afternoon was dated before tomorrow's midnight and was therefore
+legacy. Five lines writing to each other all day, and not one note on anybody's
+open list, not even under `--full`. **A `--legacy-before` date in the future
+hides every note written today**, because midnight tomorrow is after all of them;
+give the instant you switched instead. Recovering is one command — the same
+`--full --legacy-before <instant> --advance` read, which derives the whole open
+list from the bus again, and which is why moving the line earlier is allowed
+there.
+
+**The switch-day recipe**, in the order to run it. Take the moment you switch —
+`date -u +%Y-%m-%dT%H:%M:%SZ` — and use that, not a date:
 
 ```
-nova-bus check --bus <dir> --full --legacy-before <the day you adopt it>
+SWITCH=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+nova-bus check --bus <dir> --full --legacy-before "$SWITCH"
 nova-bus inbox --bus <dir> --as <you> --receipt-max-words <n> \
-  --full --legacy-before <the same day> \
+  --full --legacy-before "$SWITCH" \
   --advance --remote origin --branch main --attempts 3
 ```
+
+A date is right when the thing you are drawing really is a **day** a bus adopted
+the tool, months ago, and nobody knows it to the second. It is wrong for a switch
+happening now.
 
 The first says what the history holds and forgives its headers; the second draws
 the line, gives you a cursor, and hands you an inbox that is what has arrived
@@ -3384,8 +3412,9 @@ that were renamed before ids existed. A first run that is a wall of red nobody
 can act on gets the check turned off, which is worse than not having it. So
 there are two honest ways in, and a bus must pick one:
 
-- **`--legacy-before <YYYY-MM-DD>`**, a UTC date. A finding about the HEADER of a
-  note dated before it — it will not parse; its `From`, `To` or `Cc` names
+- **`--legacy-before <date-or-instant>`**, a UTC date — midnight at its start —
+  or an RFC 3339 UTC instant like `2026-09-09T18:07:00Z`, compared by instant. A
+  finding about the HEADER of a note dated before it — it will not parse; its `From`, `To` or `Cc` names
   somebody the roster does not know; it has no `Subject`; its `Kind` is neither
   word; its `Re:` names nothing — is reported as `BUS WARN` and does **not** fail
   the run. Everything on or after that date, and every finding that is not about

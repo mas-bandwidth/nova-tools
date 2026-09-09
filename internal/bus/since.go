@@ -125,8 +125,9 @@ func (r InboxResult) Counts() (notes, receipts, heard int) {
 	return notes, receipts, heard
 }
 
-// LegacyLine is the switch-day line: the UTC date before which a note is not carried on
-// this reader's open list.
+// LegacyLine is the switch-day line: the MOMENT before which a note is not carried on this
+// reader's open list, given either as a UTC date -- which is midnight at its start -- or as
+// an RFC 3339 UTC instant.
 //
 // THE PROBLEM IT SOLVES, from the day a real bus adopted this tool. The first
 // `inbox --as Ada --full` reported 657 notes open -- 623 notes and 34 receipts, most of
@@ -160,10 +161,28 @@ func (r InboxResult) Counts() (notes, receipts, heard int) {
 type LegacyLine struct {
 	// Before is the moment, or the zero time for no line at all.
 	Before time.Time
+	// Text is the line EXACTLY as it was given -- the date, or the instant -- which is what
+	// a cursor records and what `INBOX LEGACY before=` echoes. It is carried rather than
+	// rendered from Before because a line drawn to the second and read back as a day is a
+	// different line, and because what a reader checks their open list against is what they
+	// typed. It is "" when there is no line.
+	Text string
 }
 
-// covers reports whether a day is on the old side of the line. A zero day is never covered:
-// a file that cannot say when it was written cannot claim to predate anything.
+// NewLegacyLine reads a switch-day line in either shape and keeps the text it was given.
+func NewLegacyLine(value string) (LegacyLine, error) {
+	when, err := ParseLegacyBefore(value)
+	if err != nil {
+		return LegacyLine{}, err
+	}
+	return LegacyLine{Before: when, Text: value}, nil
+}
+
+// covers reports whether a note's moment is on the old side of the line. The comparison is
+// by INSTANT and not by day, in both directions: the line is a moment (a date is midnight at
+// its start) and so is the note's date, so a line drawn at 18:07 leaves 18:06 behind and
+// carries 18:08. A zero moment is never covered: a file that cannot say when it was written
+// cannot claim to predate anything.
 func (l LegacyLine) covers(day time.Time) bool {
 	if l.Before.IsZero() || day.IsZero() {
 		return false
