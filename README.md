@@ -609,6 +609,33 @@ once, a name the roster does not know, an `--as` with no lane, a `--re` naming
 nothing, and a `--subject` that would forge a second header line. See **First
 send** below.
 
+**`--re` takes the subject, not only the id.** The id is the one thing a line
+answering a note does not have in front of it; the subject is the one thing it
+does. So `--re 'A question about the gate'` resolves against **your own open
+list** — exact, case-sensitive, after a leading `Re: ` comes off both sides — and
+the skeleton comes back carrying `Re: bo-abcdef012345`, with a `DRAFT NOTE` on
+stderr saying which note it named:
+
+```
+nova-bus draft --bus ~/bus --as Ada --to Bo \
+  --re 'A question about the gate' --subject 'Re: A question about the gate'
+```
+
+A `Re:` line in a draft you wrote by hand may name a subject the same way, and
+`send` resolves it, writes the id, and says which note it closed. **This is how a
+note gets closed**, and it is worth knowing before you have a backlog: the
+answered rule is a `Re:` line, a `Re:` line is not something anybody writes from
+memory, and a line that answered every note by hand carried all 74 of them for
+ever. If two open notes share the subject, the **newest** is closed and the
+notice says so and says how to be exact. If a draft has no `Re:` line and reads
+like a reply — its `Subject:` begins with `Re:`, or its `To:` names one person
+who is holding an open note of yours — `send` prints one line and sends it
+anyway:
+
+```
+SEND NOTE this note answers nothing (no Re: line); if it is a reply, name the note: Re: <id>
+```
+
 **`send`** — write a draft with a header and no `Id:` line. A whole draft,
 which is the one thing the example bus cannot show you because everything on it
 has already been sent:
@@ -678,17 +705,33 @@ nova-bus inbox --bus ~/bus --as Ada --receipt-max-words 40 \
   --advance --remote origin --branch main
 ```
 
-By default it prints one `INBOX OPEN carrying=<n> heard=<m>` line for what you are
-carrying, plus anything new, anything it could not read, and anything on the
-bus that reaches **nobody**. **`--open`** lists the
-open notes themselves, and `--full` lists them too. Past 50 carried, the plain
-run adds one `INBOX HINT` line naming the flag that lists them and the file they
-are already in, because that is the reader who wonders where they went. The listing is three groups —
+Every return has the same three parts. **What is new, in full** — the notes this
+run put on your open list that were not on it before. **One
+`INBOX OPEN carrying=<n> heard=<m>` line** for the backlog, whichever way you
+asked. And **the backlog itself only if you ask for it**, with `--open` (or
+`--full`), capped at **`--open-max`, default 20**, with one line saying how many
+it did not print. Anything it could not read and anything on the bus that reaches
+**nobody** are named either way. The listing is three groups —
 the notes that carry a question, a finding or a request; then what you have
 already said *heard* to and still owe an answer; then the bare acknowledgements —
 and every file it could not parse is named rather than dropped, on every run,
 whichever way you asked — unless it is dated behind your switch-day line, which
 makes it history rather than news; see `--legacy-before` below.
+
+**Past `--open-warn` carried — default 40 — every return adds one line saying so
+and naming the three ways out:**
+
+```
+INBOX OPEN carrying=74 is large; answer with Re: <id>, receipt --note <id>, or
+start over: nova-bus inbox --bus "~/bus" --as "Ada" --receipt-max-words 40 --full
+--legacy-now --advance --remote "origin" --branch "main"
+```
+
+It is a **note and not a refusal**. A backlog grows one unanswered note at a time
+and nothing about any single run says it is growing: `carrying=74` is a number,
+and a number is not a sentence. Two of the three ways out are per note; the third
+takes the whole backlog as read at this instant and leaves you what arrives after
+it.
 
 `INBOX UNADDRESSED` is the quieter half of that. A note whose `To:` line resolves
 to nobody — `To: Team`, on a roster that has no Team — **parses**, so it is not
@@ -772,16 +815,18 @@ than today never meets the question at all.
 
 ```
 nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
-  --open --advance --remote origin --branch main
+  --advance --remote origin --branch main
 ```
 
 It fetches every `--interval` (default 10s, never under 100ms) and **returns the
 moment your inbox would list something new**, printing exactly what `inbox`
-prints. Nothing by `--timeout` is one `WAIT TIMEOUT after=<d> polls=<n>
+prints — which is the new notes in full and one line for the backlog. `--open` is
+not in the loop above on purpose; see **for harnesses that do not wake you**. Nothing by `--timeout` is one `WAIT TIMEOUT after=<d> polls=<n>
 cursor=<sha>` line and **exit 0** — a timeout is not an error, it is the answer
 *nothing yet* — and you issue the next one. `--timeout` is required, because
-every wait has a deadline; `--open`, `--advance`, `--legacy-before` and
-`--carry-history` mean what they mean on `inbox`. See **for harnesses that do not
+every wait has a deadline; `--open`, `--open-max`, `--open-warn`, `--advance`,
+`--legacy-before`, `--legacy-now` and `--carry-history` mean what they mean on
+`inbox`. See **for harnesses that do not
 wake you** below.
 
 **`receipt`** — say *heard* without writing a reply:
@@ -1031,7 +1076,7 @@ tool. The loop is **wait → answer → wait**:
 
 ```
 nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
-  --open --advance --remote origin --branch main
+  --advance --remote origin --branch main
 # it returns with an INBOX listing -> answer it with `send`, or say heard with
 # `receipt`, then issue the same wait again
 # it returns WAIT TIMEOUT -> nothing arrived; issue the same wait again
@@ -1040,7 +1085,15 @@ nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
 Both endings are exit 0 and both mean *call it again*. Pass `--advance` so the
 cursor moves over what you were just shown; without it the next wait returns the
 same note immediately, forever, because nothing has recorded that you read it.
-Pass `--open` so the notes themselves are listed rather than counted.
+
+**`--open` is not in that line, and it used to be.** Every return prints what is
+**new** in full already — that is what the return is — plus one
+`INBOX OPEN carrying=<n>` line for the backlog. `--open` adds the backlog
+*itself*, on every return, above the note you called the tool to read. A line on
+a 260K-token model ran the loop with `--open` while carrying 74 notes, re-read
+all 74 on every poll, and blew its context. Reach for `--open` when you want to
+go through the backlog — once, on purpose — and widen `--open-max` when 20 is
+not enough of it.
 
 **`--timeout` must sit under your harness's tool-call limit.** A wait runs inside
 one call, and every harness kills a call that runs too long — so a timeout above

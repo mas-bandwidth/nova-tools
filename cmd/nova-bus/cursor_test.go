@@ -129,21 +129,34 @@ func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	if got := bus.NoteParses() - before; got != 1 {
 		t.Fatalf("inbox parsed %d notes for one new note over a bus of %d carrying %d; the read is not O(new)\n%s", got, history+1, carried, r.stdout)
 	}
-	if strings.Contains(r.stdout, "INBOX NOTE") {
-		t.Fatalf("the default read listed the open notes:\n%s", r.stdout)
+	// The NEW note, in full, and NOTHING else from the list of 500. That is the whole of
+	// what a default return is: the news, and one line for the backlog.
+	r.mustContain(t, "stdout", "INBOX NOTE id=bo-222222222222 from=Bo addr=to at=2026-09-08T09:00:00Z")
+	if n := strings.Count(r.stdout, "INBOX NOTE "); n != 1 {
+		t.Fatalf("the default read printed %d note lines for one new note, want 1:\n%s", n, r.stdout)
 	}
 
-	// THE SAME READ WITH --open. It prints all 501 entries, every field of them out of the
-	// open list, and it still parses ONE.
+	// THE SAME READ WITH --open. It prints the carried entries, every field of them out of
+	// the open list, and it still parses ONE -- capped at --open-max, with one line saying
+	// how many it did not print.
 	before = bus.NoteParses()
 	r = invoke(t, "", append(append([]string{}, quiet...), "--open")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX NOTE id=bo-222222222222 from=Bo addr=to at=2026-09-08T09:00:00Z").
-		mustContain(t, "stdout", "One more")
+		mustContain(t, "stdout", "One more").
+		mustContain(t, "stdout", fmt.Sprintf("INBOX OPEN listed=20 and %d more (--open-max to widen)", carried+1-20))
 	if got := bus.NoteParses() - before; got != 1 {
 		t.Fatalf("inbox --open parsed %d notes, want 1: printing the open list must not open a note\n%s", got, r.stdout)
 	}
-	if n := strings.Count(r.stdout, "INBOX NOTE"); n != carried+1 {
-		t.Fatalf("--open listed %d notes, want %d", n, carried+1)
+	if n := strings.Count(r.stdout, "INBOX NOTE "); n != 20 {
+		t.Fatalf("--open listed %d notes, want the 20 --open-max allows", n)
+	}
+	// And the whole of it, for the reader who asks for the whole of it.
+	r = invoke(t, "", append(append([]string{}, quiet...), "--open", "--open-max", "10000")...).mustCode(t, 0)
+	if n := strings.Count(r.stdout, "INBOX NOTE "); n != carried+1 {
+		t.Fatalf("--open --open-max 10000 listed %d notes, want %d", n, carried+1)
+	}
+	if strings.Contains(r.stdout, "--open-max to widen") {
+		t.Fatalf("a listing that printed everything still said there was more:\n%s", r.stdout)
 	}
 
 	// Move the cursor over it, then close one entry with a REPLY. Closing is driven by the
@@ -1350,10 +1363,17 @@ func TestTheTwoAnswersToTheFirstAdvanceCannotBothBeGiven(t *testing.T) {
 		mustContain(t, "stderr", "give one or the other")
 }
 
-// The other half of the same complaint, from the other end: a reader carrying a lot is told
-// the number and where the entries are, rather than being handed the entries. The count
-// alone is already the default at any size; the HINT is the line that says the flag.
-func TestAPlainInboxHintsWhereTheCarriedEntriesAre(t *testing.T) {
+// FREDDY'S OTHER INBOX: THE ONE THAT CARRIED SEVENTY-FOUR NOTES AND GREW.
+//
+// A line on a 260K-token model read `wait --open` in a loop. Every return re-printed the
+// whole carried list on top of whatever was new; none of his hand-written replies carried a
+// Re line, so nothing he answered ever closed; and no line anywhere said the list was large
+// or how to empty it. `carrying=` went 0, 12, 40, 74, and then he blew his context. Glenn:
+// "This seems like a footgun, can you maybe make nova-bus behavior better in this case?"
+//
+// This is the output discipline, over a lane carrying sixty: what a default return prints,
+// what --open prints, what --open-max does to it, and where the large-list line starts.
+func TestALongOpenListIsCountedListedOnAskAndCappedWhenListed(t *testing.T) {
 	hermetic(t)
 	checkout, _ := busDir(t)
 	for i := 0; i < 60; i++ {
@@ -1367,39 +1387,104 @@ func TestAPlainInboxHintsWhereTheCarriedEntriesAre(t *testing.T) {
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
 		mustContain(t, "stdout", "INBOX OK as=Ada carrying=62 open=62")
 
-	// The plain run: the count, and one line saying how to see them.
-	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
-		mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0").
-		mustContain(t, "stdout", "INBOX HINT --open lists the 62 carried entries; they are also in from-ada/OPEN")
+	// THE DEFAULT RETURN: one OPEN line, no list at all, and the large-list line.
+	plain := []string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40"}
+	r := invoke(t, "", plain...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0")
 	if strings.Contains(r.stdout, "INBOX NOTE ") {
-		t.Fatalf("a plain run listed the carried entries:\n%s", r.stdout)
+		t.Fatalf("a default return listed the carried entries:\n%s", r.stdout)
 	}
-	if n := strings.Count(r.stdout, "\n"); n > 4 {
-		t.Fatalf("a plain run carrying 62 printed %d lines:\n%s", n, r.stdout)
+	if n := strings.Count(r.stdout, "INBOX OPEN carrying=62 heard="); n != 1 {
+		t.Fatalf("a default return printed %d OPEN carrying lines, want exactly 1:\n%s", n, r.stdout)
 	}
-	// --open is the answer the hint gives, and it does not repeat the hint.
-	r = invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open").
-		mustCode(t, 0)
-	if strings.Contains(r.stdout, "INBOX HINT") {
-		t.Fatalf("--open printed the hint at the reader who took it:\n%s", r.stdout)
+
+	// --open LISTS, capped at twenty, with one line saying how many it did not print.
+	r = invoke(t, "", append(append([]string{}, plain...), "--open")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OPEN carrying=62 heard=0").
+		mustContain(t, "stdout", "INBOX OPEN listed=20 and 42 more (--open-max to widen)")
+	if n := strings.Count(r.stdout, "INBOX NOTE ") + strings.Count(r.stdout, "INBOX RECEIPT "); n != 20 {
+		t.Fatalf("--open listed %d entries, want 20:\n%s", n, r.stdout)
 	}
-	// 61 notes and the fixture's one bare acknowledgement, which is 62 entries listed.
-	if n := strings.Count(r.stdout, "INBOX NOTE ") + strings.Count(r.stdout, "INBOX RECEIPT "); n != 62 {
-		t.Fatalf("--open listed %d entries, want 62:\n%s", n, r.stdout)
+
+	// --open-max is the cap, and it is the caller's.
+	r = invoke(t, "", append(append([]string{}, plain...), "--open", "--open-max", "5")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OPEN listed=5 and 57 more (--open-max to widen)")
+	if n := strings.Count(r.stdout, "INBOX NOTE ") + strings.Count(r.stdout, "INBOX RECEIPT "); n != 5 {
+		t.Fatalf("--open --open-max 5 listed %d entries, want 5:\n%s", n, r.stdout)
 	}
+	// Widened past the list, it says nothing about more, because there is no more.
+	r = invoke(t, "", append(append([]string{}, plain...), "--open", "--open-max", "62")...).mustCode(t, 0)
+	if strings.Contains(r.stdout, "--open-max to widen") {
+		t.Fatalf("a listing that printed all 62 still said there was more:\n%s", r.stdout)
+	}
+	// A cap of nothing at all is a bad invocation, not a listing of nothing.
+	invoke(t, "", append(append([]string{}, plain...), "--open", "--open-max", "0")...).
+		mustCode(t, 2).mustContain(t, "stderr", "--open-max must be given and at least 1")
 }
 
-// And a reader carrying a handful is not told: the flag is guessable from a short listing,
-// and a hint on every run is the noise this is about.
-func TestASmallOpenListGetsNoHint(t *testing.T) {
+// THE LARGE-LIST LINE, AT ITS EDGE. It is a threshold, so the run that matters is the one
+// either side of it: 41 carried says so, 40 does not, and --open-warn moves the line.
+func TestTheLargeListLineFiresPastTheWarnThresholdAndNotAtIt(t *testing.T) {
+	hermetic(t)
+	checkout, _ := busDir(t)
+	// The fixture leaves Ada carrying 2, so 39 more makes 41 and 38 more makes 40.
+	write := func(n int) {
+		for i := 0; i < n; i++ {
+			id := fmt.Sprintf("bo-e%011d", i)
+			writeFile(t, checkout, fmt.Sprintf("from-bo/2026-09-09T11%02dZ-edge-%s.md", i, id),
+				fmt.Sprintf("From: Bo\nTo: Ada\nDate: Wed Sep  9 11:%02d:00 UTC 2026\nId: %s\nSubject: Edge %d\n\nA note that will sit open.\n", i, id, i))
+		}
+		gitIn(t, checkout, "add", "-A")
+		gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "edge notes")
+		gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+	}
+	write(38)
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=40 open=40")
+	plain := []string{"inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40"}
+	r := invoke(t, "", plain...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OPEN carrying=40 heard=0")
+	if strings.Contains(r.stdout, "is large") {
+		t.Fatalf("carrying 40 is not past a threshold of 40:\n%s", r.stdout)
+	}
+
+	// One more, and the line fires -- with this run's own values in the command it names.
+	writeFile(t, checkout, "from-bo/2026-09-09T1159Z-edge-bo-ffffffffffff.md",
+		"From: Bo\nTo: Ada\nDate: Wed Sep  9 11:59:00 UTC 2026\nId: bo-ffffffffffff\nSubject: The forty-first\n\nOne past the line.\n")
+	gitIn(t, checkout, "add", "-A")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "one more")
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+	r = invoke(t, "", append(append([]string{}, plain...), "--advance", "--remote", "origin", "--branch", "main", "--attempts", "3")...).
+		mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OPEN carrying=41 heard=0").
+		mustContain(t, "stdout", fmt.Sprintf(`INBOX OPEN carrying=41 is large; answer with Re: <id>, receipt --note <id>, or start over: nova-bus inbox --bus %q --as "Ada" --receipt-max-words 40 --full --legacy-now --advance --remote "origin" --branch "main"`, checkout))
+	if n := strings.Count(r.stdout, "is large"); n != 1 {
+		t.Fatalf("the large-list line was printed %d times, want 1:\n%s", n, r.stdout)
+	}
+	// It is a NOTE and not a refusal: the run did what it was asked and the cursor moved.
+	r.mustContain(t, "stdout", "INBOX CURSOR commit=")
+
+	// The threshold is the caller's, in both directions.
+	invoke(t, "", append(append([]string{}, plain...), "--open-warn", "41")...).mustCode(t, 0)
+	if r := invoke(t, "", append(append([]string{}, plain...), "--open-warn", "41")...); strings.Contains(r.stdout, "is large") {
+		t.Fatalf("--open-warn 41 fired at 41:\n%s", r.stdout)
+	}
+	invoke(t, "", append(append([]string{}, plain...), "--open-warn", "0")...).
+		mustCode(t, 0).mustContain(t, "stdout", "is large")
+	invoke(t, "", append(append([]string{}, plain...), "--open-warn", "-1")...).
+		mustCode(t, 2).mustContain(t, "stderr", "--open-warn counts entries, so it is 0 or more")
+}
+
+// And a reader carrying a handful is told nothing about it: the line is about a backlog,
+// and a sentence about two notes on every run is the noise this is about.
+func TestASmallOpenListIsNotCalledLarge(t *testing.T) {
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
 	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0).mustContain(t, "stdout", "INBOX OPEN carrying=2 heard=0")
-	if strings.Contains(r.stdout, "INBOX HINT") {
-		t.Fatalf("a reader carrying 2 was hinted at:\n%s", r.stdout)
+	if strings.Contains(r.stdout, "is large") {
+		t.Fatalf("a reader carrying 2 was told their list is large:\n%s", r.stdout)
 	}
 }
 

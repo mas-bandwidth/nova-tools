@@ -335,3 +335,43 @@ func TestWaitSaysWhyAnInstantDrawnForwardHidesTheWholeWait(t *testing.T) {
 		t.Fatalf("the wait sat out its timeout behind a line that hides everything:\n%s", r.stdout)
 	}
 }
+
+// A WAIT RETURN, WITHOUT --open, OVER A BACKLOG. This is the loop the README now
+// recommends, and the whole of what it prints: the note that woke it, in full, and one
+// line for the backlog it did not print. With --open in that loop, a line carrying
+// seventy-four re-read all seventy-four on every poll.
+func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
+	hermetic(t)
+	checkout, bare := busDir(t)
+	// No switch-day line: Ada is carrying the fixture's two, which is the backlog.
+	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=2")
+
+	other := bench(t, bare)
+	note(t, other, "bo-333333333333", "mid wait")
+	pushed := make(chan error, 1)
+	go func() {
+		time.Sleep(250 * time.Millisecond)
+		pushed <- push(other)
+	}()
+
+	args := []string{
+		"wait", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--timeout", "30s", "--interval", "100ms",
+		"--remote", "origin", "--branch", "main", "--attempts", "3",
+	}
+	r := invoke(t, "", args...).mustCode(t, 0)
+	if err := <-pushed; err != nil {
+		t.Fatal(err)
+	}
+	r.mustContain(t, "stdout", "WAIT OK new=1").
+		mustContain(t, "stdout", "INBOX NOTE id=bo-333333333333").
+		mustContain(t, "stdout", "INBOX OPEN carrying=3 heard=0")
+	// ONE note line: the one that woke it. Not the two it was already carrying.
+	if n := strings.Count(r.stdout, "INBOX NOTE ") + strings.Count(r.stdout, "INBOX RECEIPT "); n != 1 {
+		t.Fatalf("a wait return without --open printed %d listing lines, want the 1 new note:\n%s", n, r.stdout)
+	}
+	if n := strings.Count(r.stdout, "INBOX OPEN carrying="); n != 1 {
+		t.Fatalf("a wait return printed %d OPEN carrying lines, want exactly 1:\n%s", n, r.stdout)
+	}
+}

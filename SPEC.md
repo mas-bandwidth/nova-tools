@@ -2148,9 +2148,10 @@ would be the most dangerous thing on the bus.
 ### The verbs
 
 ```
-nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id>]
+nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>]
 nova-bus send --bus <dir> --file <path>|--stdin [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
-nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
+nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open [--open-max <n>]] [--open-warn <n>]
+      [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
       [--interval <duration>] [--open] [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
@@ -2223,13 +2224,17 @@ commit is on the branch and the note is **not** on the bus.
 ```
 DRAFT REFUSED: <reason>
 SEND NOTE <what a tolerance did to this draft>
+SEND NOTE this note answers nothing (no Re: line); if it is a reply, name the note: Re: <id>
+SEND NOTE Re: subject matched <n> notes; closed the newest <id>; name the id to be exact
+DRAFT NOTE <what --re resolved, on stderr, because draft's stdout is a file>
 SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
 INBOX SCOPE mode=<full|since> cursor=<sha|-> changed=<n> carrying=<n>
 INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
 INBOX OPEN carrying=<n> heard=<m>
-INBOX HINT --open lists the <n> carried entries; they are also in <path>
+INBOX OPEN listed=<n> and <k> more (--open-max to widen)
+INBOX OPEN carrying=<n> is large; answer with Re: <id>, receipt --note <id>, or start over: <command>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
 INBOX SWITCH your switch-day line is the date <date>, which hides every note dated <date-1> or earlier; draw it at an instant, once: <command>
@@ -2293,19 +2298,47 @@ written by the run before it — and `notes=0`. Neither is parsed as a note. It 
 `changed=0` on a full run, where there is no diff. `carrying=` on the same line
 is the size of the open list this run will keep.
 
-`INBOX OPEN` is what an `inbox` run prints INSTEAD of listing the notes it is
-carrying, and it is the default. A reader carrying five hundred notes gets five
-hundred lines on every run otherwise, with the one new note somewhere in the
-middle of them — the same listing-nobody-reads failure the switch-day line
-exists to stop, arriving from the other end. `--open` lists the entries instead,
-and `--full` lists them because a full read is what a person asks for when they
-want the whole picture. Nothing is hidden either way: `carrying=` and `heard=`
-are on this line, the same counts are on `INBOX OK`, and the entries themselves
-are in `OPEN`, which is a file a person can open. Past **50** carried, the plain
-run adds one `INBOX HINT` line naming the flag that lists them and the file they
-are in — a threshold on noise and not on cost: a reader carrying a handful can
-find `--open` from a short listing, and a reader carrying hundreds is the one who
-asks where they went. `INBOX UNREADABLE` is printed whichever way the run was
+**Every `inbox` and `wait` return has the same three parts, in this order: what
+is NEW, in full; one `INBOX OPEN carrying=<n> heard=<m>` line; and the carried
+list only if you asked for it.**
+
+*What is new, in full.* The notes this run put on the open list that were not on
+it before, under `INBOX NOTE`, `INBOX HEARD` and `INBOX RECEIPT`, in the usual
+three groups. This is what a poll is for and it is printed on every run in every
+mode. It used to be printed on none of them: the choice was one summary line or
+the whole carried list, so a reader who wanted to see what had just arrived asked
+for `--open` and got every note they had ever failed to answer, above the one
+they were looking for, on every return.
+
+*`INBOX OPEN carrying=<n> heard=<m>`*, exactly once, whichever way the run was
+asked. A reader carrying five hundred notes gets five hundred lines on every run
+otherwise, with the new note somewhere in the middle of them — the same
+listing-nobody-reads failure the switch-day line exists to stop, arriving from
+the other end. Nothing is hidden: the same counts are on `INBOX OK`, and the
+entries themselves are in `OPEN`, which is a file a person can open.
+
+*The carried list, under `--open`* — and under `--full`, because a full read is
+what a person asks for when they want the whole picture. **It is capped at
+`--open-max`, default 20**, and a listing that stopped early ends with one
+`INBOX OPEN listed=<n> and <k> more (--open-max to widen)` line. The cap is the
+footgun itself, closed: a flag whose cost grows with the backlog, reached for by
+the reader with the biggest backlog, printed into a context window that has no
+way to refuse it. The cap counts entries PRINTED, so a capped listing is the
+first `<n>` of the order a full one would have printed — the notes first and the
+bare acknowledgements last, which is the right end to lose.
+
+**Past `--open-warn` carried, default 40, every return adds one line saying the
+list is large and the three ways out**: `INBOX OPEN carrying=<n> is large; answer
+with Re: <id>, receipt --note <id>, or start over: <command>`, where the command
+is `inbox … --full --legacy-now --advance` with this run's own values in it,
+quoted the way `INBOX SWITCH` quotes them. Two of the three are per note and the
+third is the whole backlog at once. It is a **note and not a refusal**: the run
+does what it was asked, exit codes are untouched, and nothing moves until the
+reader runs the command it names. A backlog grows one unanswered note at a time
+and no single run says it is growing — `carrying=74` is a number, and a number is
+not a sentence.
+
+`INBOX UNREADABLE` is printed whichever way the run was
 asked, because a file nobody can read is not a listing choice — the one exception
 being a file dated behind the switch-day line, which is history and is counted
 rather than named; see `INBOX LEGACY` below.
@@ -2563,8 +2596,11 @@ Subject: the gate
 ```
 
 `--as`, `--to` and `--cc` are resolved against the roster by the same rules a
-`To:` line is resolved by, and `--re` against the bus; the line is then written
-as the caller wrote it, because a group is a name on this bus and an instance
+`To:` line is resolved by, and `--re` against the bus and then against your own
+open list — an id, a path, or the exact subject of a note you are carrying, which
+comes back in the skeleton as the **id**, with a `DRAFT NOTE` on stderr saying
+which note it named. The address lines are then written
+as the caller wrote them, because a group is a name on this bus and an instance
 qualifier belongs on the name it qualifies. `--as` must have a lane. With no
 `--subject`, the subject is the visible placeholder
 `<one line saying what this note is about>`, so a skeleton sent unedited says so
@@ -2585,6 +2621,9 @@ reading the draft would do without guessing.**
 | a `Date:` line | replaced with the date from the clock | `this draft carried a Date line ("<yours>"); send writes the date from the clock, so yours is replaced, and says so` |
 | no `From:` line, with `--as <name>` | writes the From line, in the roster's spelling | `this draft had no From line; --as says you are "<name>", so send wrote "From: <name>"` |
 | a key in markdown bold — `**Subject**:` | takes the asterisks off | ``line <n>: the key "**Subject**" was in markdown bold; headers are plain `Key: value`, so it is read as "Subject:"`` |
+| a `Re:` naming a SUBJECT rather than an id | resolves it to the newest open note on your list with that subject, and writes the id | `Re named the subject "<subject>" rather than an id; it is the open note <id> from <name>, and this note closes it` |
+| a `Re:` subject matching two open notes | closes the newest | `Re: subject matched <n> notes; closed the newest <id>; name the id to be exact` |
+| no `Re:` line at all, on a draft that reads like a reply | nothing; it is sent as written | `this note answers nothing (no Re: line); if it is a reply, name the note: Re: <id>` |
 
 **And the refusals that stay**, because each of them would be a guess about what
 the writer meant rather than about what they cannot have meant:
@@ -2594,7 +2633,7 @@ the writer meant rather than about what they cannot have meant:
 | a recipient the roster does not know | a name from `nova-bus names`; the refusal lists every known name |
 | no `To:` line at all | a `To:` line; there is nobody to guess |
 | a key nobody knows, once any asterisks are off — `Branch:` | one of the eight keys, which the refusal lists |
-| a `Re:` naming nothing on this bus | an id, or a path that exists; a slug is not a thread |
+| a `Re:` naming nothing on this bus | an id, a path that exists, or the exact subject of a note on your open list; a slug is not a thread |
 | an `Id:` line | no `Id:` line; the tool assigns it |
 | a `From:` line naming somebody other than `--as` | one of the two; a line does not send another's note |
 
@@ -2670,6 +2709,33 @@ It measures whether a note has had a reply, never whether the work in it is
 finished — the distinction the bus was already making, kept. It is per reader:
 a note is not answered in its own sender's lane.
 
+**And it has one failure mode, which cost one line seventy-four notes.** The rule
+is a `Re:` line, and a `Re:` line is not something anybody writes from memory: a
+line answering by hand writes an ordinary note, the note answers nothing, and the
+note it was answering stays open for ever. He answered everything and
+`carrying=` went 0, 12, 40, 74. Three things close that gap, and none of them is
+a new rule — the answered rule above is untouched:
+
+- **`draft --re <id-or-path-or-subject>`** writes the `Re:` line for you. The id
+  is the one thing a line answering a note does not have in front of it; the
+  subject is the one thing it does.
+- **A `Re:` line may name a SUBJECT.** A target that resolves to no id and no
+  path on the bus is matched against **this sender's own open list**: exact,
+  case-sensitive, after a leading `Re: ` comes off both sides. The newest match
+  is resolved to its id, the id is what is written into the note, and a
+  `SEND NOTE` says which note was closed. Two matches is a thread somebody
+  re-raised: the newest is closed and the notice says so and says how to be
+  exact. No match is the refusal it always was.
+- **A draft that reads like a reply and names nothing is told so** — its
+  `Subject:` begins with `Re:`, or its `To:` names exactly one person who is
+  holding an open note of yours. One `SEND NOTE`, and the note is sent as
+  written: a note that answers nothing is the commonest thing on the bus.
+
+Case-sensitivity is deliberate on the match and deliberately absent on the
+trigger. `the gate` and `The Gate` are two notes on a busy lane and a tool that
+folded them would close the wrong one and say it had closed the right one; a
+`RE:` in a subject is worth one line a reader can ignore.
+
 ### The receipt rule
 
 `receipt` appends one line to `from-<me>/RECEIPTS` and pushes it the same way a
@@ -2700,9 +2766,9 @@ in both directions — which is why `Kind:` exists, costs one line, and wins.
 `inbox` lists in three groups, newest first within each: the notes that carry
 something, then what has been **heard and not answered**, then the bare
 acknowledgements. That order is the whole point: the listing that hid receipts
-by clock hid four real notes with them. It lists them under `--open` and under
-`--full`; the default prints one `INBOX OPEN` line for what is being carried, and
-the reason is in the output grammar above.
+by clock hid four real notes with them. Every run lists what is NEW that way;
+`--open` and `--full` list the whole carried backlog that way too, capped at
+`--open-max`. The reason is in the output grammar above.
 
 **Heard is not answered**, and the middle group exists because collapsing them
 lost the state the bus's people are in most often. A note I receipted is a

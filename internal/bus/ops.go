@@ -84,13 +84,19 @@ func PrepareDraft(t *Bus, text string, now time.Time, slugOverride, as string) (
 	if strings.TrimSpace(NormalizeBody(n.Body)) == "" {
 		problems = append(problems, errors.New("the note has no body"))
 	}
-	for _, re := range n.Header.Re {
-		if re == "new" {
-			continue
-		}
-		if _, found := t.Resolve(re); !found {
-			problems = append(problems, fmt.Errorf("%s: %q is neither an id on this bus nor a note that exists; threads are named by id, and a slug is not a thread", KeyRe, re))
-		}
+	// THE RE LINES, WHICH ARE HOW A NOTE CLOSES ANOTHER. A target that names an id or a
+	// path on the bus is what a Re line has always been. A target that names NOTHING used
+	// to be the end of it; it is now tried as the SUBJECT of a note on this sender's own
+	// open list, because the id is the one thing a line answering by hand does not have in
+	// front of it and the subject is the one thing it does. Every resolution says so on a
+	// notice, and a subject naming nothing is the refusal it always was. See reply.go.
+	reNotices, reProblems := resolveReSubjects(t, sender, &n.Header)
+	problems = append(problems, reProblems...)
+	tol.notices = append(tol.notices, reNotices...)
+	// And, for a draft with no Re line at all that reads like a reply, one sentence saying
+	// what it will not do. It is a note and never a refusal; see answersNothingNotice.
+	if notice := answersNothingNotice(c, t, sender, n.Header); notice != "" {
+		tol.notices = append(tol.notices, notice)
 	}
 	if slugOverride != "" {
 		if err := ValidSlug(slugOverride); err != nil {
