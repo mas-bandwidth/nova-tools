@@ -23,43 +23,82 @@ type Prepared struct {
 	// opening a single note.
 	Index   IndexEntry
 	Message string // the commit message
+
+	// Notices is what the send-side tolerances did to the draft on the way here, one
+	// sentence each, in the order they were done. A tolerance nobody is told about is a
+	// tool quietly rewriting what a person wrote, so send prints every one of these.
+	Notices []string
 }
 
 // Prepare validates a draft, assigns its id and date, and works out where it goes. It
 // writes nothing: every refusal here happens before the bus is touched.
+//
+// It is PrepareDraft with nobody named by --as, which is what a caller with a draft that
+// already carries its own From line has.
 func Prepare(t *Bus, text string, now time.Time, slugOverride string) (Prepared, error) {
+	return PrepareDraft(t, text, now, slugOverride, "")
+}
+
+// PrepareDraft is Prepare with the send-side tolerances and the caller's own name.
+//
+// TWO THINGS IT DOES THAT THE OLD ONE DID NOT, and both come from one new line's first
+// send. It TOLERATES the four shapes a house style arrives in -- see tolerate in draft.go,
+// where each is written out with the reason it is not a guess -- and it says on a notice
+// what it did. And it COLLECTS: a draft with three mistakes in it is three lines of
+// refusal from one run, not one line three times, because the person at the terminal is
+// reading their own draft and not playing twenty questions with a tool.
+//
+// What it still refuses is what it cannot read without guessing: a recipient the roster
+// does not know, a header with no To line at all, a key nobody knows, a Re naming nothing.
+// Those are the same refusals they always were, with the rest of the run's findings beside
+// them.
+func PrepareDraft(t *Bus, text string, now time.Time, slugOverride, as string) (Prepared, error) {
 	var p Prepared
 	c := t.Config
-	n, err := ParseNote("", text)
-	if err != nil {
-		return p, err
+	tol := tolerate(c, text, as)
+	n, parseProblems := parseLines("", tol.lines, tol.at, 0)
+	problems := append(tol.problems, parseProblems...)
+	// A header that would not PARSE has no From, To or Subject to check, and a run that
+	// went on to check them would report a missing To line to somebody whose To line is
+	// there and misspelled. The line-level findings are all reported; the rest waits for a
+	// header.
+	if len(parseProblems) > 0 {
+		return p, problemsOf(problems)
 	}
 	if n.Header.ID != "" {
-		return p, fmt.Errorf("this draft already carries an %s line (%q); send assigns the id, and a note is sent once", KeyID, n.Header.ID)
+		problems = append(problems, fmt.Errorf("this draft already carries an %s line (%q); send assigns the id, and a note is sent once", KeyID, n.Header.ID))
 	}
-	if n.Header.Date != "" {
-		return p, fmt.Errorf("this draft already carries a %s line (%q); send pastes the date from the clock, and will not quietly replace yours -- remove the line", KeyDate, n.Header.Date)
+	header := n.Header.Problems(c)
+	for i, e := range header {
+		// The one refusal send says more about than a reader does: there is a flag that
+		// writes this line, and a person who does not know that writes it by hand forever.
+		if errors.Is(e, ErrNoFrom) {
+			header[i] = fmt.Errorf("%w: write one, or pass --as <name> and send writes it for you", e)
+		}
 	}
-	if err := n.Header.Validate(c); err != nil {
-		return p, err
-	}
-	sender, ok := c.ResolveOne(n.Header.From)
-	if !ok {
-		return p, fmt.Errorf("%s: %q names no one on this bus", KeyFrom, n.Header.From)
-	}
-	if sender.Lane == "" {
-		return p, fmt.Errorf("%s: %q has no lane on this bus, so has nowhere to send from", KeyFrom, sender.Name)
+	problems = append(problems, header...)
+	sender, senderKnown := c.ResolveOne(n.Header.From)
+	if senderKnown && sender.Lane == "" {
+		problems = append(problems, fmt.Errorf("%s: %q has no lane on this bus, so has nowhere to send from", KeyFrom, sender.Name))
 	}
 	if strings.TrimSpace(NormalizeBody(n.Body)) == "" {
-		return p, errors.New("the note has no body")
+		problems = append(problems, errors.New("the note has no body"))
 	}
 	for _, re := range n.Header.Re {
 		if re == "new" {
 			continue
 		}
 		if _, found := t.Resolve(re); !found {
-			return p, fmt.Errorf("%s: %q is neither an id on this bus nor a note that exists; threads are named by id, and a slug is not a thread", KeyRe, re)
+			problems = append(problems, fmt.Errorf("%s: %q is neither an id on this bus nor a note that exists; threads are named by id, and a slug is not a thread", KeyRe, re))
 		}
+	}
+	if slugOverride != "" {
+		if err := ValidSlug(slugOverride); err != nil {
+			problems = append(problems, err)
+		}
+	}
+	if len(problems) > 0 {
+		return p, problemsOf(problems)
 	}
 	n.Header.Date = now.UTC().Format(DateLayout)
 	id, err := AssignID(c, sender, n.Header, n.Body, n.Header.Date)
@@ -72,9 +111,6 @@ func Prepare(t *Bus, text string, now time.Time, slugOverride string) (Prepared,
 	n.Header.ID = id
 	slug := Slugify(n.Header.Subject, SlugMax)
 	if slugOverride != "" {
-		if err := ValidSlug(slugOverride); err != nil {
-			return p, err
-		}
 		slug = slugOverride
 	}
 	n.Lane = sender.Lane
@@ -88,6 +124,7 @@ func Prepare(t *Bus, text string, now time.Time, slugOverride string) (Prepared,
 		Path:    n.Path,
 		Index:   IndexEntryFor(c, n),
 		Message: sender.Slug() + ": " + n.Header.Subject,
+		Notices: tol.notices,
 	}, nil
 }
 

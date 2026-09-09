@@ -12,7 +12,7 @@ tool's own run cost does not, and every run pays the build. Every check can say
 NO, and the test suite proves each one saying it. A check never seen failing is
 not a check. Two of nova-memory's verbs are checks in that sense; the other
 four assert nothing at all, and its section says which is which and why.
-`nova-bus`: five verbs at the **bus layer** — the only binary here that
+`nova-bus`: six verbs at the **bus layer** — the only binary here that
 writes outside its own state, and the only one that runs another program (`git`).
 The bus it works on is a shared git repository of notes between several lines;
 what this takes out of it is the races a branch keyed by a clock produces — an id
@@ -2147,7 +2147,8 @@ would be the most dangerous thing on the bus.
 ### The verbs
 
 ```
-nova-bus send --bus <dir> --file <path>|--stdin --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
+nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id>]
+nova-bus send --bus <dir> --file <path>|--stdin [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
 nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
@@ -2212,6 +2213,8 @@ commit is on the branch and the note is **not** on the bus.
 ### Output grammar
 
 ```
+DRAFT REFUSED: <reason>
+SEND NOTE <what a tolerance did to this draft>
 SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false> attempts=<n>
 SEND FAIL <path or (stdin)>: <reason>
 SEND REFUSED: <reason>
@@ -2241,6 +2244,21 @@ NAMES NAME name="<x>" lane=<lane|-> aliases="<a>";"<b>"
 NAMES GROUP name="<x>" members="<a>";"<b>"
 NAMES OK participants=<n> groups=<n> senders=<n>
 ```
+
+`draft` prints a **skeleton and nothing else** on stdout -- no `OK` line under it --
+because its stdout is a FILE: `nova-bus draft ... > draft.md` has to produce a
+draft. Everything it has to say instead of one is a `DRAFT REFUSED` on stderr,
+and it prints **every** refusal rather than the first.
+
+`SEND NOTE` is one tolerance, on stdout with the informational lines, printed
+before the `SEND OK` that follows it. There is one line per thing the tool did to
+the draft; a run that did nothing to a draft prints none. See **the first send**
+below.
+
+**A refusal prints EVERY problem in the draft, one line per reason**, and it is
+still one `SEND FAIL` line each. A refusal that named the first of three mistakes
+cost the writer three runs to be told what the tool already knew on the first,
+and a person reading their own draft can fix three things as easily as one.
 
 `SCOPE` is the first line of every `inbox` and every `check`, and it says what the
 run LOOKED AT before it says what it found: `mode=full` walked the bus,
@@ -2455,13 +2473,93 @@ characters, which is not a guess about what the writer meant but about what they
 cannot have meant: the longest key here is `Subject`. Nothing about which files
 fail changed — these are the same refusals with the fix in them.
 
-`send` **refuses a draft that already carries `Date:` or `Id:`** rather than
-quietly replacing the author's line: the tool pastes the date from the clock in
-UTC, assigns the id, and a note is sent once.
+`send` **replaces a draft's own `Date:` line, and says so** on a `SEND NOTE`
+line: the tool pastes the date from the clock in UTC, and the notice is what
+keeps the replacement from being quiet. (It refused, once, on the grounds of not
+quietly replacing the author's line -- which cost every first send a run and
+taught the writer nothing they could not have been told while the note went.) An
+`Id:` line is still a **refusal**: the tool assigns the id, and a note is sent
+once, so a draft carrying one is a note being sent twice.
 
 The filename is `<UTC minute>Z-<slug>-<the id's hash half>.md` in the sender's
 lane. The minute and the slug are the bus's existing convention and are for
 people; the hash half is there because the minute alone collided.
+
+### The first send — `draft`, and what `send` tolerates
+
+A new line's first note is a header written from memory of some other bus, and
+this tool's answer to that was a refusal per mistake, one run each. One real
+first send opened with a markdown heading, carried a `Date:` line the writer had
+pasted by hand for years, and had no `From:` line at all, because on their own
+bus who was writing was obvious. It was refused on the `Date` line, and told
+nothing about the other two.
+
+**`draft` prints the header, so a first draft cannot be wrong about the two
+things a first draft is always wrong about**: what the keys are, and how a name
+is spelled on this bus.
+
+```
+nova-bus draft --bus ~/bus --as Ada --to Bo --subject 'the gate' > draft.md
+```
+
+```
+From: Ada
+To: Bo
+Subject: the gate
+
+<the note goes here>
+```
+
+`--as`, `--to` and `--cc` are resolved against the roster by the same rules a
+`To:` line is resolved by, and `--re` against the bus; the line is then written
+as the caller wrote it, because a group is a name on this bus and an instance
+qualifier belongs on the name it qualifies. `--as` must have a lane. With no
+`--subject`, the subject is the visible placeholder
+`<one line saying what this note is about>`, so a skeleton sent unedited says so
+rather than looking like a note. It writes no `Date` and no `Id`: those are the
+tool's. Refusals are `DRAFT REFUSED` on stderr, all of them, exit 2 — a bad
+invocation rather than a bus that said no, since there is no note yet.
+
+**`send` tolerates the shapes a house style arrives in**, and says on a
+`SEND NOTE` line what it did to the draft. The rule every tolerance here is held
+to is the rule the address list is held to: **it may only do what a person
+reading the draft would do without guessing.**
+
+| the shape | what `send` does | the notice |
+|---|---|---|
+| blank lines above the header | skips them | `a blank line stood above the header; it is skipped, and the header is read from the first Key: value line` (plural: `<n> blank lines stood above the header; they are skipped, …`) |
+| a leading `# heading`, and no `Subject:` line | the heading becomes the Subject and is not in the body | `the first line was a markdown heading, so it is this note's Subject ("<heading>"), and it is not in the body` |
+| a leading `# heading` over a draft that has its own `Subject:` | the heading is dropped | `the first line was the markdown heading "<heading>" and this draft has its own Subject line; the heading is not in the note` |
+| a `Date:` line | replaced with the date from the clock | `this draft carried a Date line ("<yours>"); send writes the date from the clock, so yours is replaced, and says so` |
+| no `From:` line, with `--as <name>` | writes the From line, in the roster's spelling | `this draft had no From line; --as says you are "<name>", so send wrote "From: <name>"` |
+| a key in markdown bold — `**Subject**:` | takes the asterisks off | ``line <n>: the key "**Subject**" was in markdown bold; headers are plain `Key: value`, so it is read as "Subject:"`` |
+
+**And the refusals that stay**, because each of them would be a guess about what
+the writer meant rather than about what they cannot have meant:
+
+| what is wrong | what the refusal wants |
+|---|---|
+| a recipient the roster does not know | a name from `nova-bus names`; the refusal lists every known name |
+| no `To:` line at all | a `To:` line; there is nobody to guess |
+| a key nobody knows, once any asterisks are off — `Branch:` | one of the eight keys, which the refusal lists |
+| a `Re:` naming nothing on this bus | an id, or a path that exists; a slug is not a thread |
+| an `Id:` line | no `Id:` line; the tool assigns it |
+| a `From:` line naming somebody other than `--as` | one of the two; a line does not send another's note |
+
+A refusal reports **every** problem in the draft, one `SEND FAIL` line each --
+with one staging, which is deliberate: a header line that will not PARSE is
+reported with every other line that will not parse, and the checks that need a
+header -- who the recipients resolve to, whether there is a subject, whether the
+`Re` names anything -- wait for a run that has one. Telling somebody their note
+has no `To:` line when their `To:` line is there and misspelled would be a
+refusal about nothing.
+
+Two things hold this together. The tolerances are the **send side only**: every
+reader on the bus — `inbox`, `check` — still refuses these shapes, because a
+file already on the bus is not a draft anybody is still editing, and a reader
+that quietly repaired one would be reporting a bus that does not exist. And a
+line number in a refusal is a line of **the file the writer wrote**, not of what
+was left after the tolerances dropped a `Date` line and two blanks.
 
 ### The id scheme, and why this one
 

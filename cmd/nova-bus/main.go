@@ -8,6 +8,8 @@
 // was retyped; and a bare receipt and a note carrying a finding looked identical until
 // opened. Every verb here is one of those failures closed:
 //
+//	draft     prints the header a note needs, with the names checked against the roster,
+//	          so that a line's first send is not a header written from memory
 //	send      assigns an id that cannot collide, pastes the date, and pushes with fetch,
 //	          rebase and bounded retry INSIDE the tool, so no rejected push reaches a person
 //	inbox     the notes addressed to me that nothing of mine answers, receipts separated
@@ -50,7 +52,8 @@ import (
 const usage = `nova-bus: the bus, with the races taken out (see SPEC.md)
 
 usage:
-  nova-bus send --bus <dir> --file <path>|--stdin --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
+  nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id>]
+  nova-bus send --bus <dir> --file <path>|--stdin [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
   nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <YYYY-MM-DD>]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
@@ -94,6 +97,21 @@ line instead. inbox records the date in your cursor, so later runs honour it
 without the flag; moving the line earlier is refused unless the read is --full.
 
 inbox REPORTS and exits 0 whether the inbox is empty or full; check is the gate.
+
+A FIRST SEND, end to end. draft prints a skeleton and NOTHING else, so its
+standard output is a file:
+
+  nova-bus draft --bus ~/bus --as Ada --to Bo --subject 'the gate' > draft.md
+  $EDITOR draft.md
+  nova-bus send --bus ~/bus --file draft.md --as Ada --remote origin --branch main
+
+send tolerates the shapes a first draft arrives in rather than refusing them, and
+prints a SEND NOTE line for each: a markdown heading above the header becomes the
+Subject, a Date line is replaced by the tool's own, --as writes a missing From
+line, blank lines above the header are skipped, and a **Key**: in markdown bold
+loses its asterisks. It still refuses what it cannot read without guessing -- a
+recipient the roster does not know, no To line at all, a key nobody knows, a Re
+naming nothing -- and it reports EVERY problem in the draft in one run.
 `
 
 func main() {
@@ -111,6 +129,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
+	case "draft":
+		return cmdDraft(rest, stdout, stderr)
 	case "send":
 		return cmdSend(rest, stdin, stdout, stderr, now)
 	case "inbox":
@@ -294,6 +314,89 @@ func openBus(verb, busDir string, stderr io.Writer) (*bus.Bus, bool) {
 
 // ------------------------------------------------------------------------------- verbs
 
+// cmdDraft prints the header a note needs and nothing else.
+//
+// WHY A VERB AND NOT A PARAGRAPH IN THE README. A line's first send is a header they are
+// writing from memory of some other bus, and the tool's answer to a header written from
+// memory was a refusal per mistake. The skeleton is the same header send writes, with the
+// names already checked against the roster, so the first draft cannot be wrong about the
+// two things a first draft is always wrong about: what the keys are, and how a name is
+// spelled here.
+//
+// Its standard output is a FILE: the skeleton, alone, with no OK line under it, so
+// `nova-bus draft ... > draft.md` is a draft. Refusals go to stderr like every other
+// verb's, and every one of them is printed rather than the first.
+func cmdDraft(args []string, stdout, stderr io.Writer) int {
+	f := newFlags("draft")
+	busDir := f.fs.String("bus", "", "the bus's repository root (required: the roster lives in it)")
+	as := f.fs.String("as", "", "which participant you are (required)")
+	to := f.fs.String("to", "", "who the note is to, as a To line: names, aliases or a group, separated by ; (required)")
+	cc := f.fs.String("cc", "", "who else is to see it, as a Cc line")
+	subject := f.fs.String("subject", "", "the subject line (default: a placeholder you must replace)")
+	var re stringList
+	f.fs.Var(&re, "re", "an id this note answers, or `new` to start a thread (repeatable)")
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "to": to}) {
+		return 2
+	}
+	c, err := bus.LoadConfig(*busDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.Err(err))
+		return 2
+	}
+	// Collected, like send's: a draft asked for with a misspelled name and a Re that is
+	// not on the bus is two mistakes and one run.
+	var problems []error
+	if err := bus.OneLine("--subject", *subject); err != nil {
+		problems = append(problems, err)
+	}
+	me, known := c.Lookup(*as)
+	switch {
+	case !known:
+		problems = append(problems, fmt.Errorf("--as %q names no one on this bus (known: %s)", *as, strings.Join(c.KnownNames(), "; ")))
+	case me.Lane == "":
+		problems = append(problems, fmt.Errorf("--as %q has no lane on this bus, so has nowhere to send from", me.Name))
+	}
+	for _, line := range []struct{ flag, value string }{{"--to", *to}, {"--cc", *cc}} {
+		if strings.TrimSpace(line.value) == "" {
+			continue
+		}
+		names, unknown := c.ResolveList(line.value)
+		if len(unknown) > 0 {
+			problems = append(problems, fmt.Errorf("%s: %s names no one on this bus (known: %s)", line.flag, strings.Join(bus.UnknownNames(unknown), ", "), strings.Join(c.KnownNames(), "; ")))
+			continue
+		}
+		if len(names) == 0 {
+			problems = append(problems, fmt.Errorf("%s: no recipients", line.flag))
+		}
+	}
+	// A Re is checked against the BUS and not the roster, so this is the one thing here
+	// that opens the notes -- and only when a --re was given.
+	if len(re) > 0 {
+		t, terr := bus.ReadBus(*busDir, c)
+		if terr != nil {
+			fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.Err(terr))
+			return 2
+		}
+		for _, r := range re {
+			if r == "new" {
+				continue
+			}
+			if _, found := t.Resolve(r); !found {
+				problems = append(problems, fmt.Errorf("--re %q is neither an id on this bus nor a note that exists; threads are named by id, and a slug is not a thread", r))
+			}
+		}
+	}
+	if len(problems) > 0 {
+		for _, reason := range problems {
+			fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.Err(reason))
+		}
+		return 2
+	}
+	skeleton := bus.Skeleton{From: me.Name, To: *to, Cc: *cc, Re: re, Subject: *subject}.Render()
+	fmt.Fprint(stdout, skeleton)
+	return 0
+}
+
 func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("send")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
@@ -301,6 +404,7 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	useStdin := f.fs.Bool("stdin", false, "read the draft from standard input instead of --file")
 	remote := f.fs.String("remote", "", "the git remote to push to (required)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required)")
+	as := f.fs.String("as", "", "which participant you are; supplies the From line when the draft has none, and is refused if the draft's From line names anybody else")
 	slug := f.fs.String("slug", "", "the human half of the filename (default: from the subject)")
 	attempts := f.fs.Int("attempts", defaultAttempts, "how many times to push before giving up")
 	gitSeconds := f.fs.Int("git-timeout", defaultGitTimeoutSeconds, "how long one git subprocess may take before this run gives up on it")
@@ -353,10 +457,21 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	if !ok {
 		return 2
 	}
-	prepared, err := bus.Prepare(t, text, now, *slug)
+	prepared, err := bus.PrepareDraft(t, text, now, *slug, *as)
 	if err != nil {
-		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		// EVERY reason, one line each. A refusal that named the first of three mistakes in
+		// a draft cost the writer three runs to find the other two, and the tool had read
+		// all three before it printed anything.
+		for _, reason := range bus.Reasons(err) {
+			fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
+		}
 		return 1
+	}
+	// What the tolerances did, before anything is written, one line each. A tool that
+	// quietly rewrites what a person wrote teaches nobody anything and cannot be checked;
+	// these lines are the whole difference between a tolerance and a guess.
+	for _, notice := range prepared.Notices {
+		fmt.Fprintf(stdout, "SEND NOTE %s\n", oneline.Escape(notice))
 	}
 	if err := checkoutReady(*busDir, *branch, nil); err != nil {
 		fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))

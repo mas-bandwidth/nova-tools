@@ -60,7 +60,6 @@ func TestPrepareRefuses(t *testing.T) {
 		name, text, want string
 	}{
 		{"an Id the author wrote", "From: Ada\nTo: Bo\nId: ada-000000000000\nSubject: s\n\nbody\n", "already carries an Id line"},
-		{"a Date the author wrote", "From: Ada\nTo: Bo\nDate: whenever\nSubject: s\n\nbody\n", "will not quietly replace yours"},
 		{"an unknown recipient", "From: Ada\nTo: Boe\nSubject: s\n\nbody\n", `"Boe"`},
 		{"a sender with no lane", "From: Dana\nTo: Ada\nSubject: s\n\nbody\n", "has no lane"},
 		{"an unknown sender", "From: Nobody\nTo: Ada\nSubject: s\n\nbody\n", "names no one on this bus"},
