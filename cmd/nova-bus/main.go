@@ -112,6 +112,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdCheck(rest, stdout, stderr)
 	case "names":
 		return cmdNames(rest, stdout, stderr)
+	case "version", "--version":
+		return cmdVersion(rest, stdout, stderr)
 	}
 	fmt.Fprintf(stderr, "nova-bus: unknown subcommand %q\n\n%s", cmd, usage)
 	return 2
