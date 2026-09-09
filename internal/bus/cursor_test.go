@@ -591,10 +591,10 @@ func TestALaneStateFileIsReplacedByRenameAndLeavesNoPartialFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	full := filepath.Join(root, filepath.FromSlash(CursorPath(lane)))
-	held, err := os.Open(full)
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The descriptor is taken the way a reader that is not in the writer's way takes one:
+	// on Windows that means asking for the delete share, or this test's own handle is what
+	// makes the rename it is testing fail. See openHeld.
+	held := openHeld(t, full)
 	defer held.Close()
 
 	second := "2222222222222222222222222222222222222222"

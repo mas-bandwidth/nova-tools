@@ -51,6 +51,16 @@ func TestAGitThatHangsIsKilledAndNamed(t *testing.T) {
 
 	// The other way: a budget that is not exceeded is not a refusal. A git that answers
 	// quickly answers.
+	//
+	// On a budget of its own, and a generous one, because THIS half is not about the
+	// deadline. Starting a subprocess out of this test binary is not free -- a fork of a
+	// race-instrumented process is a fork of everything it has mapped -- and under
+	// `-race -count=N` that alone has overrun 300ms here, which failed the test with the
+	// refusal that the OTHER half exists to prove happens. A wall-clock margin that has to
+	// hold for a fork is a wall clock in a test, so it is made wide enough not to be one.
+	if err := SetGitTimeout(30 * time.Second); err != nil {
+		t.Fatal(err)
+	}
 	quick := "#!/bin/sh\necho fine\n"
 	if err := os.WriteFile(filepath.Join(fake, "git"), []byte(quick), 0o755); err != nil {
 		t.Fatal(err)

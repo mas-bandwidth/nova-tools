@@ -32,11 +32,20 @@ func now() time.Time {
 // hermetic makes git ignore the machine's own configuration, so these tests do not depend
 // on the ~/.gitconfig of whoever runs them -- including a commit.gpgsign that would
 // otherwise make them hang on a key.
+// The global config is a file of our own rather than a missing one, and it turns off git's
+// auto-maintenance: `git receive-pack` starts `git gc --auto` after every push and does not
+// wait for it, and a git that detaches that child before deciding whether there is work to
+// do leaves it running in a fixture the test is about to remove. See the same comment on
+// internal/bus's hermetic, where the race was found.
 func hermetic(t *testing.T) {
 	t.Helper()
-	none := filepath.Join(t.TempDir(), "no-such-gitconfig")
-	t.Setenv("GIT_CONFIG_GLOBAL", none)
-	t.Setenv("GIT_CONFIG_SYSTEM", none)
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "gitconfig")
+	if err := os.WriteFile(cfg, []byte("[gc]\n\tauto = 0\n\tautoDetach = false\n[maintenance]\n\tauto = false\n[receive]\n\tautoGc = false\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_TERMINAL_PROMPT", "0")
 }

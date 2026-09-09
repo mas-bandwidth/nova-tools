@@ -14,14 +14,34 @@ import (
 // -- the tool never does -- it is the test refusing to depend on whatever the person
 // running it has in ~/.gitconfig, including a commit.gpgsign that would otherwise make
 // these tests hang on a key.
+//
+// The global config is a file of OUR OWN rather than a missing one, and what it turns off
+// is git's AUTO-MAINTENANCE -- the only thing git starts that the process that started it
+// does not wait for. `git receive-pack` runs `git gc --auto` in the receiving repository
+// after every push and returns without it, and a git new enough to detach that child
+// BEFORE it decides whether there is any work leaves a process alive in the bare
+// repository after the push this tool made has already returned. The test then finishes,
+// t.TempDir removes the fixture, and RemoveAll is racing a writer inside
+// bus.git/objects/pack: the run fails with "directory not empty" naming a test whose every
+// assertion passed. Nothing in this package is about housekeeping, so there is none, and
+// the one detached process git can start is not started.
 func hermetic(t *testing.T) {
 	t.Helper()
-	none := filepath.Join(t.TempDir(), "no-such-gitconfig")
-	t.Setenv("GIT_CONFIG_GLOBAL", none)
-	t.Setenv("GIT_CONFIG_SYSTEM", none)
+	dir := t.TempDir()
+	cfg := filepath.Join(dir, "gitconfig")
+	if err := os.WriteFile(cfg, []byte(noMaintenanceConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
+	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
 	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
 	t.Setenv("GIT_TERMINAL_PROMPT", "0")
 }
+
+// noMaintenanceConfig is the whole of that global config: no auto-gc anywhere, and if some
+// git runs one anyway it runs in the foreground, where the call that started it waits for
+// it and nothing outlives the test.
+const noMaintenanceConfig = "[gc]\n\tauto = 0\n\tautoDetach = false\n[maintenance]\n\tauto = false\n[receive]\n\tautoGc = false\n"
 
 var testIdentity = map[string]Identity{
 	"Ada": {Name: "Ada", Email: "ada@example.com"},

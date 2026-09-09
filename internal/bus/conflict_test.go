@@ -97,6 +97,55 @@ func TestEnsureMergeAttributes(t *testing.T) {
 // attempt, and the refusal carries the recovery that works on the state it found.
 func TestAnAbortThatFailsIsRefusedWithTheRecovery(t *testing.T) {
 	hermetic(t)
+	dir, where := conflictedRebase(t)
+
+	// Make the abort fail: git cannot remove the entries of a directory it cannot write.
+	if err := os.Chmod(where, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.Chmod(where, 0o700) })
+
+	err := abortRebase(dir)
+	if err == nil {
+		t.Fatal("an abort that failed reported success; the checkout is still in a rebase and every later verb will refuse for the wrong reason")
+	}
+	for _, want := range []string{"could not be aborted", "STILL in a rebase", where, "git rebase --abort", "git reset --hard ORIG_HEAD"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("the refusal does not say %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "\n") {
+		t.Fatalf("the refusal is more than one line: %q", err.Error())
+	}
+
+	// The other way, and on a fixture of its own: an abort with nothing in its way works
+	// and says nothing.
+	//
+	// A FRESH ONE rather than this checkout with the obstacle taken back off, because
+	// taking it off does not undo the abort that failed under it, and what that abort left
+	// behind is not the same on every platform. A directory a process cannot write is one
+	// whose entries git could not delete on unix -- the rebase state is untouched and the
+	// second abort has something to abort -- while on Windows a read-only directory is one
+	// git empties and then cannot REMOVE, so the failed abort has already thrown the state
+	// away and left the bare directory, which no chmod puts back and no `git rebase
+	// --abort` will touch. Making the second half depend on the wreckage of the first tests
+	// the wreckage; a conflicted rebase of its own tests the abort.
+	clean, _ := conflictedRebase(t)
+	if err := abortRebase(clean); err != nil {
+		t.Fatalf("an abort that worked was reported as a failure: %v", err)
+	}
+	if _, still := inRebase(clean); still {
+		t.Fatal("the checkout is still in a rebase after a successful abort")
+	}
+	if _, err := CurrentBranch(clean); err != nil {
+		t.Fatalf("the checkout is not on a branch after the abort: %v", err)
+	}
+}
+
+// conflictedRebase builds a checkout that is genuinely mid-rebase on a conflict, and
+// returns it together with the rebase state directory git left behind.
+func conflictedRebase(t *testing.T) (string, string) {
+	t.Helper()
 	dir := t.TempDir()
 	if out, err := git(dir, "init", "--quiet", "-b", "main"); err != nil {
 		t.Fatalf("init: %v %s", err, out)
@@ -128,39 +177,7 @@ func TestAnAbortThatFailsIsRefusedWithTheRecovery(t *testing.T) {
 	if !still {
 		t.Fatal("the fixture is not in a rebase")
 	}
-
-	// Make the abort fail: git cannot remove the entries of a directory it cannot write.
-	if err := os.Chmod(where, 0o500); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.Chmod(where, 0o700) })
-
-	err := abortRebase(dir)
-	if err == nil {
-		t.Fatal("an abort that failed reported success; the checkout is still in a rebase and every later verb will refuse for the wrong reason")
-	}
-	for _, want := range []string{"could not be aborted", "STILL in a rebase", where, "git rebase --abort", "git reset --hard ORIG_HEAD"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("the refusal does not say %q: %v", want, err)
-		}
-	}
-	if strings.Contains(err.Error(), "\n") {
-		t.Fatalf("the refusal is more than one line: %q", err.Error())
-	}
-
-	// The other way: with the directory writable again, the abort works and says nothing.
-	if err := os.Chmod(where, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := abortRebase(dir); err != nil {
-		t.Fatalf("an abort that worked was reported as a failure: %v", err)
-	}
-	if _, still := inRebase(dir); still {
-		t.Fatal("the checkout is still in a rebase after a successful abort")
-	}
-	if _, err := CurrentBranch(dir); err != nil {
-		t.Fatalf("the checkout is not on a branch after the abort: %v", err)
-	}
+	return dir, where
 }
 
 // The recovery a refusal offers is a sentence a person types, so the sentence is read back
