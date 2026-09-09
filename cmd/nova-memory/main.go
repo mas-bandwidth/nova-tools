@@ -74,7 +74,40 @@ flags:
                         --frontmatter. Nothing is exempt by default.
 
 exit codes: 0 ran and passed, 1 ran and failed, 2 could not run (bad invocation).
+
+example:
+  nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazing brass
+  nova-memory check  --root ./corpus --channels bm25 --k 3 draft.md
 `
+
+// The three hints below turn this binary's three most-hit refusals into a next
+// step. The no-guessing law is unchanged — a missing flag is still exit 2 and
+// still says "refusing to guess" — but a refusal that only names what was
+// wrong leaves a first-time caller to guess what the flag wanted, which is the
+// same guessing the tool refuses to do, moved onto the reader. Each hint says
+// what the flag IS and what a first run should put there.
+const (
+	rootHint = `--root <dir> is your corpus directory, the tree to index; it is never guessed from the working directory or the environment, so write it out every run`
+	// The same sentence serves the missing flag and the unknown name, because
+	// naming a directory is exactly how the flag gets misread.
+	channelsHint = `--channels names a retrieval method, not a directory; the channels are bm25 and trigram, and bm25 alone is the usual start`
+	kHint        = `--k is the number of hits to return and is required (search: 3 to 5; check: 2 or 3 per paragraph)`
+)
+
+// hintFor returns the already-indented hint line for a required flag, newline
+// included, or "" for a flag whose own usage entry is the whole story. It
+// returns package constants only, which is why printing its result is safe.
+func hintFor(name string) string {
+	switch name {
+	case "root":
+		return "  " + rootHint + "\n"
+	case "channels":
+		return "  " + channelsHint + "\n"
+	case "k":
+		return "  " + kHint + "\n"
+	}
+	return ""
+}
 
 // calibrationProbe is a fixed, corpus-unrelated English sentence, scored once
 // per run so every report carries a LIVE negative band — "unrelated text
@@ -150,6 +183,7 @@ func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string
 	for _, name := range sorted {
 		if !given[name] {
 			fmt.Fprintf(stderr, "nova-memory %s: --%s is required; refusing to guess\n", fs.Name(), name)
+			fmt.Fprint(stderr, hintFor(name))
 			ok = false
 		}
 	}
@@ -203,7 +237,7 @@ func (r *rootFlags) build(name string, stderr io.Writer) (*memindex.Corpus, time
 // channels than asked reports a number that means something else.
 func channelSpec(c *memindex.Corpus, spec, verb string, stderr io.Writer) ([]memindex.Channel, bool) {
 	if strings.TrimSpace(spec) == "" {
-		fmt.Fprintf(stderr, "nova-memory %s: --channels named no channels; refusing to guess\n", verb)
+		fmt.Fprintf(stderr, "nova-memory %s: --channels named no channels; refusing to guess\n  %s\n", verb, channelsHint)
 		return nil, false
 	}
 	var out []memindex.Channel
@@ -220,7 +254,7 @@ func channelSpec(c *memindex.Corpus, spec, verb string, stderr io.Writer) ([]mem
 			fmt.Fprintf(stderr, "nova-memory %s: --channels %q has an empty entry; refusing to guess\n", verb, spec)
 			return nil, false
 		default:
-			fmt.Fprintf(stderr, "nova-memory %s: unknown channel %q (have: bm25, trigram)\n", verb, strings.TrimSpace(name))
+			fmt.Fprintf(stderr, "nova-memory %s: unknown channel %q: %s\n", verb, strings.TrimSpace(name), channelsHint)
 			return nil, false
 		}
 	}
