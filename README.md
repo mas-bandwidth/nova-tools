@@ -354,7 +354,7 @@ Yes — and the key is misspelled in the matrix, which is why the
 Windows job never ran at all.
 ```
 
-`From:` and `Subject:` and a body are the whole of what is required; `Cc:`, `Re:`
+`From:`, `To:`, `Subject:` and a body are the whole of what is required; `Cc:`, `Re:`
 and `Kind:` are written only when the note has them, `Re: new` says *this starts
 a thread*, and `Date:` and `Id:` are the tool's to write and are refused in a
 draft. **Keep drafts OUTSIDE the bus directory** — `send` needs the bus's
