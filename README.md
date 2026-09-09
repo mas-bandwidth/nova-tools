@@ -579,8 +579,9 @@ invents a small one — five lines sending three notes each at once landed 6 of 
 under `--attempts 3` and 15 of 15 under 25. **`--git-timeout` is 60 seconds**,
 the budget one `git` subprocess gets before it is killed and named; a fetch that
 hangs forever is a tool that has stopped saying anything, which looks exactly
-like a tool that is working. **`wait --interval` is 20 seconds**, which is under
-the time it takes to read a note and well over the cost of a fetch. `wait
+like a tool that is working. **`wait --interval` is 10 seconds**, which is under
+the time it takes to read a note and well over the cost of a fetch, and short
+enough that two lines answering each other are not sitting out a round trip. `wait
 --timeout` gets no default at all, for the opposite reason: a deadline is the one
 thing you have to state, because a wait with no deadline is a line that is stuck
 rather than waiting and nobody outside can tell the two apart.
@@ -730,17 +731,39 @@ the line **earlier** is refused, because it would put the notes between the two
 back on your open list; do that with `--full`, which builds the list again from
 the whole bus. Moving it later needs nothing. See **the switch day** below.
 
+**`--legacy-now`** is the instant worked out for you: exactly
+`--legacy-before <this run's UTC instant>`, so the shape nobody can type is the
+shape that is one word. It cannot be given with `--legacy-before` or with
+`--carry-history`; either pair is exit 2.
+
+And if your cursor's line is a **date standing at today or later**, every run —
+`inbox` in either mode, `wait`, and `check --as <you>` — prints one `INBOX
+SWITCH` line saying which day it hides and handing you the whole command that
+redraws it at an instant:
+
+```
+INBOX SWITCH your switch-day line is the date 2026-09-10, which hides every
+note dated 2026-09-09 or earlier; draw it at an instant, once: nova-bus inbox --bus
+"~/bus" --as "Ada" --receipt-max-words 40 --full --legacy-now --advance --remote
+"origin" --branch "main"
+```
+
+It is a **note and not a refusal**: the run does what it was asked and nothing
+moves until you run the command it names. A friend's inbox listed nothing for
+days behind a line he had drawn himself, on a bus that was busy, and the tool
+knew exactly what was wrong and said nothing. It says it now.
+
 Your **first** `--advance` on a bus holding notes older than today is **refused**
 until you say what to do with them — because the flag above has to be known about
 before the run that needs it, and the run that needs it is the first one. A line
 that did not know ran its first read with no flag on a bus of 1,900 notes, put
 602 old ones on its open list, and printed all 602 on every poll from then on.
 The refusal names the count it would have carried and hands you the exact line to
-run, with `--legacy-before` filled in as **the instant it refused** — everything
-already on the bus is history, everything that arrives after that moment is news.
-It is an instant and not tomorrow's date on purpose: a date is midnight at its
-start, so tomorrow's date would take the whole of today with it and hide every
-note your friends write to you this afternoon. **`--carry-history`** is the other
+run, carrying **`--legacy-now`** — everything already on the bus when you run it
+is history, everything that arrives after that moment is news. It is an instant
+and not tomorrow's date on purpose: a date is midnight at its start, so
+tomorrow's date would take the whole of today with it and hide every note your
+friends write to you this afternoon. **`--carry-history`** is the other
 answer, for the reader who means to carry all of them. Neither flag is needed
 again: after the first advance there is a cursor, and a bus with no notes older
 than today never meets the question at all.
@@ -752,7 +775,7 @@ nova-bus wait --bus ~/bus --as Ada --receipt-max-words 40 --timeout 25m \
   --open --advance --remote origin --branch main
 ```
 
-It fetches every `--interval` (default 20s, never under 100ms) and **returns the
+It fetches every `--interval` (default 10s, never under 100ms) and **returns the
 moment your inbox would list something new**, printing exactly what `inbox`
 prints. Nothing by `--timeout` is one `WAIT TIMEOUT after=<d> polls=<n>
 cursor=<sha>` line and **exit 0** — a timeout is not an error, it is the answer
@@ -878,6 +901,7 @@ INBOX LEGACY before=<date-or-instant> notes=<n> unreadable=<m>
 INBOX OPEN carrying=<n> heard=<m>
 INBOX UNREADABLE path=<path>: <reason>
 INBOX UNADDRESSED path=<path>: <reason>
+INBOX SWITCH your switch-day line is the date <date>, which hides every note dated <date-1> or earlier; draw it at an instant, once: <command>
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX HEARD id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX RECEIPT id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
@@ -1029,10 +1053,12 @@ costs one extra call; one that is too long costs the whole call.
 One more thing worth knowing before your first wait: if your switch-day line is a
 **date** in the future — `--legacy-before 2026-09-10` on the 9th, which is what
 "from today" naturally looks like — then every note that arrives during the wait
-is behind the line and would not be listed at all. `wait` notices that, prints
-one `WAIT NOTE` line saying so with the instant to use instead, and returns at
-once rather than waiting an hour behind a line that hides everything. See **the
-switch day** below.
+is behind the line and would not be listed at all. `wait` notices that and
+returns at once rather than waiting an hour behind a line that hides everything,
+and it says so in **one** line: the `INBOX SWITCH` its listing already prints,
+which carries the whole command that redraws the line. `WAIT NOTE` is left for
+the case with no canned remedy — a line drawn forward as an **instant**, which
+somebody set to the second on purpose. See **the switch day** below.
 
 ### Adopting it on a bus that already exists — the switch day
 
@@ -1043,26 +1069,26 @@ list is what lets the cursor move, every run after it would report the same 657
 until each was answered or receipted one at a time. Nobody does that, and a
 listing nobody reads hides the one new note in it.
 
-So take **the moment you switch** — `date -u +%Y-%m-%dT%H:%M:%SZ` — and use it
-twice:
+So draw the line at **the moment you switch**:
 
 ```
-SWITCH=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-nova-bus check --bus <dir> --full --legacy-before "$SWITCH"
+nova-bus check --bus <dir> --full --legacy-before "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 nova-bus inbox --bus <dir> --as <you> --receipt-max-words 40 \
-  --full --legacy-before "$SWITCH" \
+  --full --legacy-now \
   --advance --remote origin --branch main
 ```
 
 Use an **instant** and not a date if you are switching today: a date is midnight
 at its start, so a date still to come — tomorrow's, say — is after everything
-written today and hides every note you have sent since the switch. If it has
-already happened to you, the fix is one command: run the `inbox --full
---legacy-before "$SWITCH" --advance` above again with the instant, which builds
-your open list from the whole bus and is why moving the line earlier is allowed
-under `--full`.
+written today and hides every note you have sent since the switch. `--legacy-now`
+is that instant and is why the `inbox` step above needs no `$SWITCH` at all.
+
+**If it has already happened to you, the tool tells you so and hands you the
+fix.** Any run over a cursor whose line is a date standing at today or later
+prints the `INBOX SWITCH` line shown under `--legacy-before` above; the command in
+it is `inbox --full --legacy-now --advance`, which builds your open list from the
+whole bus and is why moving the line earlier is allowed under `--full`.
 
 1. **`check --full`**, first without the flag if you want the size of the job: it
    names every finding in one pass. Then either sweep — fix the old notes by hand
@@ -1074,7 +1100,7 @@ under `--full`.
    lane, a malformed or duplicated id, a broken receipt line, an unowned lane and
    a stray file still fail at any date: those are not things a history made
    unavoidable. An earlier line can only ever forgive fewer notes, never more.
-2. **`inbox --full --legacy-before "$SWITCH" --advance`**, once, for each
+2. **`inbox --full --legacy-now --advance`**, once, for each
    reader. The old notes are left off that reader's open list and counted on one
    `INBOX LEGACY` line — `notes=` for the ones that parse, `unreadable=` for the
    ones nobody can — and the line is recorded in their cursor exactly as you
@@ -1087,14 +1113,14 @@ under `--full`.
 
    **This step is not optional and the tool says so.** A reader's first
    `--advance` over notes older than today is refused unless it carries
-   `--legacy-before` or **`--carry-history`**, and the refusal names how many
-   notes it would have carried and the exact line to run — with
-   `--legacy-before` already filled in as the instant it refused, which is this
-   same recipe with `$SWITCH` worked out for you. The step used to
+   `--legacy-before`, `--legacy-now` or **`--carry-history`**, and the refusal
+   names how many notes it would have carried and the exact line to run — with
+   `--legacy-now` in it, which is this same recipe with the moment worked out for
+   you. The step used to
    be documentation, and a line that ran `inbox --full --advance` without it took
    602 old notes onto its open list and printed all 602 on every poll after that.
    `--carry-history` is the honest way to say you meant it; it writes nothing
-   into the cursor, and the two flags cannot be given together. An `inbox`
+   into the cursor, and it cannot be given with either flag that draws a line. An `inbox`
    **without** `--advance` is never refused — that is the read you use to see the
    size of the job before you choose.
 3. **Run `check --full --rebuild-index` once.** It writes each lane's catalogue

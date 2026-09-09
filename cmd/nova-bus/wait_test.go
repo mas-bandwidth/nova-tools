@@ -120,6 +120,26 @@ func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
 	}
 }
 
+// THE DEFAULT INTERVAL IS TEN SECONDS, and it is pinned here because it is a number
+// somebody chose rather than a number that fell out. Glenn, watching two lines answer each
+// other through this verb: "the polling should be 10 sec". A poll is a git fetch, and the
+// interval is what stands between one line writing a note and the other one seeing it, so
+// it is chosen for the round trip and not for the fetch.
+//
+// It is asserted on the WAIT line, which is where a caller who named no interval is told
+// what they got. --timeout is short: what is under test is the number, not the sleeping.
+func TestTheDefaultWaitIntervalIsTenSeconds(t *testing.T) {
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	invoke(t, "", "wait", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--timeout", "1s", "--remote", "origin", "--branch", "main").
+		mustCode(t, 0).
+		mustContain(t, "stdout", "WAIT as=Ada timeout=1s interval=10s cursor=").
+		mustContain(t, "stdout", "WAIT TIMEOUT after=")
+}
+
 // Nothing arrives: the wait stops when it said it would, says so, and exits 0. A timeout
 // is the answer "nothing yet", not an error -- the caller issues the next one.
 func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
@@ -258,6 +278,11 @@ func TestWaitAdvancesTheCursorExactlyAsInboxDoes(t *testing.T) {
 // today: every note that arrived during a wait would be history, and the wait would run
 // its whole timeout beside a bus that was answering it. The reader is TOLD, on one line,
 // and the call returns instead of waiting on a line that can hide nothing else.
+//
+// ONE line, and it is the LISTING's. A forward-drawn date is the shape with a remedy, and
+// the listing a wait prints already carries that remedy in full -- INBOX SWITCH, with the
+// command in it. `wait` saying the same thing again in a sentence without the command
+// would be two lines about one line, which is the noise this is meant to end.
 func TestWaitReturnsAtOnceWhenTheCursorsLineHidesTheWholeWait(t *testing.T) {
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -268,14 +293,45 @@ func TestWaitReturnsAtOnceWhenTheCursorsLineHidesTheWholeWait(t *testing.T) {
 	r := invoke(t, "", waitFlags(checkout, "Ada", "30s")...).mustCode(t, 0)
 	took := time.Since(start)
 
-	r.mustContain(t, "stdout", "WAIT NOTE your switch-day line is 2026-09-10").
-		mustContain(t, "stdout", "a line drawn today has to be an INSTANT").
+	r.mustContain(t, "stdout", "INBOX SWITCH your switch-day line is the date 2026-09-10, which hides every note dated 2026-09-09 or earlier; draw it at an instant, once: nova-bus inbox --bus ").
+		mustContain(t, "stdout", "--legacy-now --advance --remote \"origin\" --branch \"main\"").
 		mustContain(t, "stdout", "WAIT OK new=0").
 		mustContain(t, "stdout", "INBOX LEGACY before=2026-09-10")
+	if strings.Contains(r.stdout, "WAIT NOTE") {
+		t.Fatalf("the wait said the listing's sentence a second time, without the command:\n%s", r.stdout)
+	}
+	if n := strings.Count(r.stdout, "your switch-day line"); n != 1 {
+		t.Fatalf("the line drawn forward was mentioned %d times, want 1:\n%s", n, r.stdout)
+	}
 	if strings.Contains(r.stdout, "WAIT TIMEOUT") {
 		t.Fatalf("the wait sat out its timeout behind a line that hides everything:\n%s", r.stdout)
 	}
 	if took > 10*time.Second {
 		t.Fatalf("the wait took %s to say the line hides everything; it is meant to say so at once", took)
+	}
+}
+
+// AND THE CASE WITH NO CANNED REMEDY, which is what WAIT NOTE is left for. A line drawn
+// forward as an INSTANT was set to the second by somebody who meant a moment, so there is
+// no command to hand them and inboxListing says nothing about it -- but it hides the whole
+// wait exactly as a date does, and a reader owed that fact is owed it whatever shape their
+// line is in.
+func TestWaitSaysWhyAnInstantDrawnForwardHidesTheWholeWait(t *testing.T) {
+	hermetic(t)
+	checkout, _ := busDir(t)
+	// This evening, on the fixed clock of 2026-09-09T12:34:56Z: after now, and after
+	// anything a thirty-second wait could see.
+	invoke(t, "", advance(checkout, "Ada", "--legacy-before", "2026-09-09T18:07:00Z")...).mustCode(t, 0)
+
+	r := invoke(t, "", waitFlags(checkout, "Ada", "30s")...).mustCode(t, 0)
+
+	r.mustContain(t, "stdout", "WAIT NOTE your switch-day line is 2026-09-09T18:07:00Z").
+		mustContain(t, "stdout", "a line drawn today has to be an INSTANT").
+		mustContain(t, "stdout", "WAIT OK new=0")
+	if strings.Contains(r.stdout, "INBOX SWITCH") {
+		t.Fatalf("the listing handed a remedy for a line somebody drew to the second:\n%s", r.stdout)
+	}
+	if strings.Contains(r.stdout, "WAIT TIMEOUT") {
+		t.Fatalf("the wait sat out its timeout behind a line that hides everything:\n%s", r.stdout)
 	}
 }
