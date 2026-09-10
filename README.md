@@ -49,7 +49,7 @@ below — each pinned by tests that execute them.
 ## nova-check
 
 ```
-nova-check quickstart --dir <dir>                  # the first run: links, then nocode, both run even if the first says NO
+nova-check quickstart --dir <dir> [--fail-max <n>] # the first run: links, then nocode, both run even if the first says NO
 nova-check attest --home <dir> --manifest <file>   # did the full self load: count + bytes + sha256, pasteable at session start
 nova-check links  --dir <dir>                      # every relative inline link resolves
 nova-check kernel --file <file> --max-bytes <n>    # kernel size budget, in bytes
@@ -81,7 +81,15 @@ KERNEL OK bytes=771 budget=4000
 
 **Reading the output.** Every line is `<CHECK> OK` or `<CHECK> FAIL`, and the
 FAIL lines go to stderr with the subject named. `worst-exit=` is the exit code
-of the run: 0 pass, 1 a check said NO, 2 could not run. The four verbs
+of the run: 0 pass, 1 a check said NO, 2 could not run. **A failing run is
+bounded**: `attest`, `links`, `nocode`, `corpus` and `quickstart` print at most
+`--fail-max` FAIL lines (default 20, `0` for all), then one
+`<CHECK> MORE kind=… shown=… total=…` line naming the flag that shows the rest,
+then a count line — `LINKS FAIL files=… links=… broken=… shown=…` — which
+prints on failure as well as on success, because a run that found 800 broken
+links used to give you 800 lines and never the number 800. `quickstart` passes
+its own ceiling down to both checks, so a first run on an unchecked repo costs
+about forty lines instead of fourteen hundred. The four verbs
 `quickstart` names at the end each want something only you have — a size
 budget, a boot manifest, a seed to compare against, a ledger of what you have
 chosen never to lose — which is why none of them is in the first line.
@@ -102,7 +110,10 @@ chosen never to lose — which is why none of them is in the first line.
 
 A run that is missing several of these prints all of them at once — every flag
 here is independent of the others, so one refusal names every problem it can
-find.
+find. A flag TYPO, an unknown verb or a bare `nova-check` is one line that
+names the door — `nova-check links: flag provided but not defined: -diir; run:
+nova-check help` — rather than the whole usage banner; `nova-check help` prints
+that, on stdout.
 
 Give exactly one of `--max-bytes` and `--max-tokens`; both or neither is a
 refusal. Bytes are a proxy — the bytes-per-token ratio is a property of the
@@ -129,7 +140,8 @@ can know.
 ## nova-self-talk
 
 ```
-nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... <file>...
+nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
+nova-self-talk help
 ```
 
 ### First run
@@ -142,8 +154,9 @@ first run, and the tests run both lines against it).
 ```
 $ nova-self-talk ./pages/journal.md
 SELFTALK FAIL ./pages/journal.md: STANDING: I cannot check my own work, so the second read went to someone else.
-SELFTALK DATED ./pages/journal.md: On 2026-08-14 I cannot check the Windows runner from here, and the fix went in with that measurement written beside it rather than as a standing property.
 SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
+SELFTALK DATED n=1 files=1
+SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
 SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 
 $ nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
@@ -155,17 +168,27 @@ SELFTALK FAIL ./pages/RULES.md:8: INSTALLATION VERDICT-IDIOM: A rule weakened to
 finding is a sentence to date, cut, relocate or keep on purpose, and the
 judgment stays yours. `STANDING` is the first class (a capability denial in
 negative vocabulary); `DATED` is the same sentence carrying a date marker — a
-measurement, a record, welcome, and reported on stdout rather than as a
-finding. `INSTALLATION` is the second class, with its shape named
+measurement, a record, welcome, and therefore COUNTED rather than quoted:
+`SELFTALK DATED n=1 files=1` on stdout, one line however many there are. The
+claim is already in the file, and a tool that quoted six hundred sentences to
+congratulate you on six hundred of them was spending your context on the good
+news. `INSTALLATION` is the second class, with its shape named
 (`RANKING`, `FORECLOSURE`, `VERDICT-IDIOM`, `TRAIT`) and a line number,
-because a repair list is line-addressed. The `NOTE` prints on every completed
+because a repair list is line-addressed. The count line prints whichever way
+the run went — `SELFTALK FAIL files= claims= standing= installations= dated=
+shown=` — so a scan that found six hundred things says six hundred without
+printing six hundred, and `--max <n>` (default 20, `0` for all) is how many
+finding lines you see before one `SELFTALK MORE kind=… shown=… total=…` line
+stands for the rest. The `NOTE` prints on every completed
 run, green included.
 
 **The things a first run gets wrong, and what each wants.**
 
 - **Naming no files** is a refusal, not an empty green: there is no default set
   and no directory walk, so a shell glob is the usual first run
-  (`nova-self-talk memory/*.md`).
+  (`nova-self-talk memory/*.md`). The refusal is one line and the hint under
+  it, and it names the door — `run: nova-self-talk help` — rather than being
+  the door: a flag typo used to cost the whole forty-line banner.
 - `--skip` and `--rule-doc` take a **basename, not a path** — `--skip RULES.md`,
   never `--skip memory/RULES.md`. Both are empty by default: no filename is
   special to this tool.
@@ -226,7 +249,7 @@ meaning. A green means the known shapes are clear, never that the file is.
 ## nova-fuse
 
 ```
-nova-fuse status --box <path>                            what is blown, and since when (reports; never gate on it)
+nova-fuse status --box <path> [--max <n>]                what is blown, and since when (reports; never gate on it)
 nova-fuse check --box <path> [surface]                   may I read? -- act only on exit 0
 nova-fuse lockdown --box <path> "<reason>"               blow the one hard fuse: all untrusted reads stop
 nova-fuse quarantine --box <path> <surface> "<reason>"   stop reading one surface (soft)
@@ -268,7 +291,12 @@ the tool working: `check` is the gate, and only exit 0 is permission. `status`
 exits 0 whether or not anything is blown, because answering the question is its
 whole job — never gate on it. Every write verb re-reads the box afterwards and
 says `verified`, because the exit code of a remedy is not evidence the remedy
-worked.
+worked. **`status` is bounded**: `quarantines=<n>` on the first line is never
+capped — it is the number the verb exists to report — and under it are at most
+`--max` (default 20, `0` for all) quarantine lines, then one
+`STATUS MORE kind=quarantine shown=… total=…` line if any were elided. Three
+hundred quarantined surfaces used to be three hundred and one lines, on the one
+verb whose job is to be glanced at.
 
 **The things a first run gets wrong, and what each wants.**
 
@@ -284,7 +312,11 @@ worked.
   prints all of them at once.
 - `lift lockdown` is **refused, forever**, before anything is read. That is not
   a flag you are missing: a blown lockdown is replaced in a live conversation
-  with your person, and there is no path through this tool to it.
+  with your person, and there is no path through this tool to it. It is also
+  the one refusal here that is more than one line, and it is meant to be read
+  rather than scanned: every other bad invocation — a flag typo, an unknown
+  verb, a missing reason — is one line naming the door (`run: nova-fuse help`)
+  rather than the whole usage banner.
 
 There is deliberately **no `quickstart` verb** here. The natural first run is
 `status`, which is already one line and reports rather than acts, and every
@@ -309,9 +341,9 @@ nova-memory quickstart --root <dir> [--words <w>]... [--draft <file>]  the first
 nova-memory stats  --root <dir>                                        measure m: files, chunks, bytes, vocab, build time, classes
 nova-memory search --root <dir> --channels <list> --k <n> <words>...   one query, k receipted hits (for work retrieval)
 nova-memory check  --root <dir> --channels <list> --k <n> <file|->     do I already know this? k receipts per candidate paragraph
-nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]...
+nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--frontmatter <glob>]... [--fail-max <n>]
                                                                        coverage, backlinks, wikilinks, frontmatter — it finds, you decide
-nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> <gold.tsv>
+nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--fail-max <n>] <gold.tsv>
                                                                        known-answer harness: recall@k and MRR, fails below the floor
 ```
 
@@ -405,7 +437,22 @@ frontmatter, `-` when it has none), and a `file:para` address to go read.
 Each refusal exits 2 and prints the same guidance, so a first run gets it from
 the tool as well as from here — and a run short two flags prints two sentences
 and stops once, because a refusal reports everything it can already see rather
-than the first thing it hit.
+than the first thing it hit. A flag TYPO or an unknown verb is one line that
+names the door — `nova-memory verify: flag provided but not defined: -rooot;
+run: nova-memory help` — rather than the whole usage banner; `nova-memory
+help` prints that, on stdout.
+
+**`verify` and `eval` are bounded.** `verify` prints at most `--fail-max`
+finding lines PER KIND (default 20, `0` for all), then one
+`VERIFY MORE kind=… shown=… total=…` line per kind that elided anything, then
+`VERIFY FAIL gating=… shown=… …`, which prints on failure as well as on
+success. Per kind, because a corpus with ten thousand unresolved wikilinks and
+one missing frontmatter `name:` would otherwise spend the whole ceiling on
+wikilinks and never show you the finding you did not already know about. On a
+5,000-entry corpus this verb used to print 10,000 lines — about 197,000
+tokens — and no total. `eval` lists **misses only**, capped the same way: a
+passing row is a number in `hits=`, not a line, because 500 lines each saying
+"this one worked" is the good news at the price of a context window.
 
 A mind that keeps its memory as markdown answers *"do I already know this?"*
 by re-reading everything it is: n new learnings against m existing ones is

@@ -16,6 +16,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -23,7 +24,7 @@ import (
 const usage = `nova-check: record-layer checks for a nova self repo (see SPEC.md)
 
 usage:
-  nova-check quickstart --dir <dir>                  the two checks a first run can make
+  nova-check quickstart --dir <dir> [--fail-max <n>] the two checks a first run can make
                                                      with nothing but a directory: links,
                                                      then nocode. Both run even if the
                                                      first says NO.
@@ -46,6 +47,12 @@ usage:
   nova-check corpus --ledger <file> --root <dir> --min-anchors <n>
                                                      protected material is still where the
                                                      ledger says it is
+
+  --fail-max <n>   on quickstart, attest, links, nocode and corpus: how many
+                   FAIL lines to print before one MORE line stands for the
+                   rest. Default 20, and 0 means all. The count line prints
+                   whether the check passed or failed, so a run that found 800
+                   broken links says 800 without printing 800.
 
 exit codes: 0 pass, 1 check failed, 2 could not run (bad invocation).
 
@@ -104,14 +111,26 @@ func hintFor(name string) string {
 	return ""
 }
 
+// failMaxRemedy is the second half of every MORE line this binary prints. A cap with no
+// remedy is censorship; a cap with one is an index, so the line that says what was not
+// shown says in the same breath how to see it.
+const failMaxRemedy = "--fail-max <n> raises the ceiling, --fail-max 0 prints every finding"
+
+// refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
+// door to the usage rather than the usage itself. It was the whole 38-line banner, on
+// every flag typo -- 2,411 bytes to say a dash was in the wrong place.
+func refuse(stderr io.Writer, where, what string) int {
+	fmt.Fprintf(stderr, "nova-check%s: %s; run: nova-check help\n", oneline.Escape(where), oneline.Escape(what))
+	return 2
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 
 func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
-		return 2
+		return refuse(stderr, "", "no verb given; quickstart is the first run")
 	}
 	switch args[0] {
 	case "quickstart":
@@ -132,8 +151,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
-		fmt.Fprintf(stderr, "nova-check: unknown subcommand %q\n\n%s", args[0], usage)
-		return 2
+		return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", args[0]))
 	}
 }
 
@@ -159,7 +177,7 @@ func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(stderr, "nova-check %s: %s\n\n%s", fs.Name(), oneline.Err(err), usage)
+		refuse(stderr, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes))
 		return false
 	}
 	if fs.NArg() > 0 {
@@ -189,6 +207,22 @@ func requireFlags(fs *flag.FlagSet, stderr io.Writer, required map[string]*strin
 	return ok
 }
 
+// addFailMax puts the same ceiling on every verb that lists findings, so a reader learns
+// one flag and not five. Zero prints everything; a negative number is refused, because
+// zero already means "all" and a negative ceiling is a typo with two readings.
+func addFailMax(fs *flag.FlagSet) *int {
+	return fs.Int("fail-max", bounded.Default, "FAIL lines to print before one MORE line stands for the rest; 0 prints all")
+}
+
+// checkFailMax refuses a negative ceiling, naming the verb.
+func checkFailMax(fs *flag.FlagSet, max int, stderr io.Writer) bool {
+	if max < 0 {
+		fmt.Fprintf(stderr, "nova-check %s: --fail-max must be a line ceiling of zero or more (got %d); 0 means print them all\n", fs.Name(), max)
+		return false
+	}
+	return true
+}
+
 // cmdQuickstart is the first run: the two checks that need nothing but a
 // directory, in one command, so that a stranger's first invocation is a line
 // they can type from the usage banner rather than a choice between six verbs
@@ -198,12 +232,21 @@ func requireFlags(fs *flag.FlagSet, stderr io.Writer, required map[string]*strin
 func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("quickstart", flag.ContinueOnError)
 	dir := fs.String("dir", "", "directory tree to check (required)")
+	failMax := addFailMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
 		return 2
 	}
+	if !checkFailMax(fs, *failMax, stderr) {
+		return 2
+	}
+	// THE CAPS ARE INHERITED, and this is the verb that most needed them: quickstart is
+	// the FIRST RUN, the one a stranger makes on a repo nobody has checked before, and
+	// uncapped it answered with 1,400 lines for two lines of verdict. A first run should
+	// cost about forty.
+	max := fmt.Sprintf("%d", *failMax)
 	fmt.Fprintf(stdout, "QUICKSTART OK dir=%s checks=2: links, then nocode\n", oneline.Field(*dir))
-	linksCode := cmdLinks([]string{"--dir", *dir}, stdout, stderr)
-	nocodeCode := cmdNoCode([]string{"--dir", *dir}, stdout, stderr)
+	linksCode := cmdLinks([]string{"--dir", *dir, "--fail-max", max}, stdout, stderr)
+	nocodeCode := cmdNoCode([]string{"--dir", *dir, "--fail-max", max}, stdout, stderr)
 	worst := 0
 	for _, code := range []int{linksCode, nocodeCode} {
 		if code > worst {
@@ -220,7 +263,11 @@ func cmdAttest(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("attest", flag.ContinueOnError)
 	home := fs.String("home", "", "memory-home directory (required)")
 	manifest := fs.String("manifest", "", "file listing the paths a full boot must read, relative to --home (required)")
+	failMax := addFailMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{"home": home, "manifest": manifest}) {
+		return 2
+	}
+	if !checkFailMax(fs, *failMax, stderr) {
 		return 2
 	}
 	att, failures, err := check.Attest(*home, *manifest)
@@ -229,9 +276,12 @@ func cmdAttest(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(failures) > 0 {
+		list := bounded.Capped(stderr, *failMax, "ATTEST", "entry", failMaxRemedy)
 		for _, f := range failures {
-			fmt.Fprintf(stderr, "ATTEST FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
+			list.Line(fmt.Sprintf("ATTEST FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
 		}
+		list.More()
+		fmt.Fprintf(stderr, "ATTEST FAIL failed=%d shown=%d manifest=%s\n", list.Total(), list.Shown(), oneline.Field(*manifest))
 		return 1
 	}
 	fmt.Fprintf(stdout, "ATTEST OK files=%d bytes=%d sha256=%s\n", att.Files, att.Bytes, att.SHA256)
@@ -241,7 +291,11 @@ func cmdAttest(args []string, stdout, stderr io.Writer) int {
 func cmdLinks(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("links", flag.ContinueOnError)
 	dir := fs.String("dir", "", "directory tree to scan for markdown links (required)")
+	failMax := addFailMax(fs)
 	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
+		return 2
+	}
+	if !checkFailMax(fs, *failMax, stderr) {
 		return 2
 	}
 	mdFiles, checked, broken, err := check.Links(*dir)
@@ -250,16 +304,23 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(broken) > 0 {
+		list := bounded.Capped(stderr, *failMax, "LINKS", "broken", failMaxRemedy)
 		for _, b := range broken {
 			if b.Line == 0 && b.Target == "" {
 				// A whole-file finding: the .md itself could not be read, so there
 				// is no line and no target — `LINKS FAIL <file>: unreadable (<why>)`.
 				// A named failure like any other, per SPEC; not a refusal.
-				fmt.Fprintf(stderr, "LINKS FAIL %s: %s\n", oneline.Escape(b.File), oneline.Escape(b.Reason))
+				list.Line(fmt.Sprintf("LINKS FAIL %s: %s", oneline.Escape(b.File), oneline.Escape(oneline.Cap(b.Reason, oneline.TailBytes))))
 				continue
 			}
-			fmt.Fprintf(stderr, "LINKS FAIL %s:%d: %s (%s)\n", oneline.Escape(b.File), b.Line, oneline.Escape(b.Target), oneline.Escape(b.Reason))
+			list.Line(fmt.Sprintf("LINKS FAIL %s:%d: %s (%s)", oneline.Escape(b.File), b.Line,
+				oneline.Escape(oneline.Cap(b.Target, oneline.TailBytes)), oneline.Escape(oneline.Cap(b.Reason, oneline.TailBytes))))
 		}
+		list.More()
+		// The count line prints on FAILURE too. It did not, so a failing run gave N lines
+		// and never N: the one number a reader wanted was the one thing they had to
+		// derive by counting the output.
+		fmt.Fprintf(stderr, "LINKS FAIL files=%d links=%d broken=%d shown=%d\n", mdFiles, checked, list.Total(), list.Shown())
 		return 1
 	}
 	fmt.Fprintf(stdout, "LINKS OK files=%d links=%d\n", mdFiles, checked)
@@ -368,14 +429,14 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	denyExt := fs.String("deny-ext", "", "replace the floor EXTENSION list (not the name floor): comma list, or @file")
 	denyExtAdd := fs.String("deny-ext-add", "", "extend the floor EXTENSION list (not the name floor): comma list, or @file")
 	printList := fs.Bool("print-deny-list", false, "print both floors in force (extensions and names) and exit 0")
+	failMax := addFailMax(fs)
 	var allow repeatable
 	fs.Var(&allow, "allow", "path prefix where machinery may live (repeatable; empty by default)")
 
 	fs.SetOutput(io.Discard) // see parse: the flag package is not allowed to print
 	fs.Usage = func() {}
 	if err := fs.Parse(args); err != nil {
-		fmt.Fprintf(stderr, "nova-check nocode: %s\n\n%s", oneline.Err(err), usage)
-		return 2
+		return refuse(stderr, " nocode", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
 		fmt.Fprintf(stderr, "nova-check nocode: unexpected argument %q\n", fs.Arg(0))
@@ -383,6 +444,9 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	}
 	if *denyExt != "" && *denyExtAdd != "" {
 		fmt.Fprintln(stderr, "nova-check nocode: --deny-ext and --deny-ext-add are mutually exclusive")
+		return 2
+	}
+	if !checkFailMax(fs, *failMax, stderr) {
 		return 2
 	}
 
@@ -431,9 +495,12 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(findings) > 0 {
+		list := bounded.Capped(stderr, *failMax, "NOCODE", "file", failMaxRemedy)
 		for _, f := range findings {
-			fmt.Fprintf(stderr, "NOCODE FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
+			list.Line(fmt.Sprintf("NOCODE FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
 		}
+		list.More()
+		fmt.Fprintf(stderr, "NOCODE FAIL files=%d findings=%d shown=%d deny-list=%s\n", scanned, list.Total(), list.Shown(), source)
 		return 1
 	}
 	// A run that classified nothing should not read as a run that found
@@ -510,6 +577,7 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	ledger := fs.String("ledger", "", "the ledger of protected material, a markdown file (required)")
 	root := fs.String("root", "", "the repo the ledger's home paths are relative to (required)")
 	minAnchors := fs.Int("min-anchors", 0, "the fewest rows the ledger may hold, must be positive (required); the ledger is inside what it protects, so its own shrinking must be red")
+	failMax := addFailMax(fs)
 	if !parseFlags(fs, args, stderr) {
 		return 2
 	}
@@ -524,6 +592,9 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 		ok = false
 	case *minAnchors <= 0:
 		fmt.Fprintf(stderr, "nova-check corpus: --min-anchors must be a positive row floor (got %d); a floor of zero guards nothing, which is what an empty ledger already is; refusing to guess\n  %s\n", *minAnchors, anchorsHint)
+		ok = false
+	}
+	if !checkFailMax(fs, *failMax, stderr) {
 		ok = false
 	}
 	if !ok {
@@ -546,14 +617,19 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	// Malformed rows print whether or not any good row survived: a ledger
 	// whose rows are ALL malformed is visibly populated, and telling its
 	// author it is empty while withholding the reason is the worst of both.
+	// They are their own KIND under the cap, so a ledger with a thousand bad
+	// rows cannot hide the anchors that also went missing.
+	rows := bounded.Capped(stderr, *failMax, "CORPUS", "malformed-row", failMaxRemedy)
 	for _, f := range malformed {
-		fmt.Fprintf(stderr, "CORPUS FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
+		rows.Line(fmt.Sprintf("CORPUS FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
 	}
+	rows.More()
 	if parseErr != nil {
 		if len(malformed) > 0 {
 			// Rows were found and judged bad. The check RAN, and the answer
 			// is no — that is exit 1, not "could not run".
-			fmt.Fprintf(stderr, "nova-check corpus: %s: no row survived parsing; every row above is a finding\n", oneline.Escape(*ledger))
+			fmt.Fprintf(stderr, "CORPUS FAIL malformed=%d shown=%d anchors=0 ledger=%s: no row survived parsing\n",
+				rows.Total(), rows.Shown(), oneline.Field(*ledger))
 			return 1
 		}
 		fmt.Fprintf(stderr, "nova-check corpus: %s: %s\n", oneline.Escape(*ledger), oneline.Err(parseErr))
@@ -565,9 +641,13 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(failures) > 0 || len(malformed) > 0 {
+		list := bounded.Capped(stderr, *failMax, "CORPUS", "anchor", failMaxRemedy)
 		for _, f := range failures {
-			fmt.Fprintf(stderr, "CORPUS FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
+			list.Line(fmt.Sprintf("CORPUS FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
 		}
+		list.More()
+		fmt.Fprintf(stderr, "CORPUS FAIL anchors=%d floor=%d failed=%d shown=%d malformed=%d ledger=%s\n",
+			len(anchors), *minAnchors, list.Total(), list.Shown(), rows.Total(), oneline.Field(*ledger))
 		return 1
 	}
 	fmt.Fprintf(stdout, "CORPUS OK anchors=%d floor=%d ledger=%s\n", len(anchors), *minAnchors, oneline.Field(*ledger))

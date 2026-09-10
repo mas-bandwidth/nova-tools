@@ -200,7 +200,7 @@ func TestUsageErrorsExitTwo(t *testing.T) {
 		args []string
 		want string
 	}{
-		{"no command", nil, "usage"},
+		{"no command", nil, "run: nova-fuse help"},
 		{"unknown command", []string{"defuse"}, "unknown subcommand"},
 		{"lockdown with no reason", []string{"lockdown", "--box", box}, "needs a reason"},
 		{"lockdown with a blank reason", []string{"lockdown", "--box", box, "   "}, "needs a reason"},
@@ -1329,11 +1329,18 @@ var fuseAudit = audit.Config{
 	Exempt: map[string]string{
 		"main.go|cmdPath|box":           "`path` hands back the caller-supplied argument unescaped; SPEC.md exempts it by name and states that no caller may scan path output for grammar, because it will print one if the argument is one",
 		"main.go|liftQuarantine|listed": "built immediately above from oneline.Escape over every stored name; pinned by TestTheQuarantinedNowListingCannotForgeALine, because the classifier cannot see inside the loop",
-		"main.go|parseBox|name":         "the verb's own name, chosen by this file at every call site",
+		"main.go|parseBoxWith|name":     "the verb's own name, chosen by this file at every call site",
 	},
 	Shadows: []string{"fuse", "OneLine", "Fold", "why", "since"},
 	Imports: []string{
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"sort"`, `"strings"`, `"time"`,
+		// bounded prints the capped quarantine listing and the one MORE line that stands
+		// for what it did not print. Every line reaching it is rendered by a fmt.Sprintf
+		// in THIS package, which the classifier walks like any other print site, and
+		// bounded puts its own two fields -- the kind and the remedy -- through oneline
+		// before writing them. It writes to the stream the caller hands it and nowhere
+		// else.
+		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`,
 	},
 	MinClassified: 40,

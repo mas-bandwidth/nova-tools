@@ -32,6 +32,13 @@ var selfTalkAudit = audit.Config{
 	},
 	Imports: []string{
 		`"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
+		// bounded prints the capped finding listings and the one MORE line that stands
+		// for what they did not print. Every line reaching it is rendered by a
+		// fmt.Sprintf in THIS package, which the classifier walks like any other print
+		// site, and bounded puts its own two fields -- the kind and the remedy -- through
+		// oneline before writing them. It writes to the stream the caller hands it and
+		// to nothing else.
+		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/selftalk"`,
 	},
 	MinClassified: 10,

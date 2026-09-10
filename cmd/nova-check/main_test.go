@@ -19,7 +19,7 @@ func TestRunRefusesToGuess(t *testing.T) {
 		args       []string
 		wantStderr string
 	}{
-		{"no subcommand", nil, "usage"},
+		{"no subcommand", nil, "run: nova-check help"},
 		{"unknown subcommand", []string{"frobnicate"}, "unknown subcommand"},
 		{"attest without home", []string{"attest", "--manifest", "m.txt"}, "--home is required"},
 		{"attest without manifest", []string{"attest", "--home", "."}, "--manifest is required"},

@@ -43,13 +43,16 @@ func localize(args []string) []string {
 
 func examples(t *testing.T) []string {
 	t.Helper()
-	exit, _, stderr := runCheck(t)
-	if exit != 2 {
-		t.Fatalf("a bare invocation must print usage and exit 2, got %d", exit)
+	// The banner is asked for, because a bare invocation no longer IS one: a refusal now
+	// costs one line and names the door (`run: nova-check help`). Reading it through that
+	// door is also a test that the door opens.
+	exit, stdout, stderr := runCheck(t, "help")
+	if exit != 0 {
+		t.Fatalf("`nova-check help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)
 	}
-	lines, err := onboarding.ExampleLines(stderr, "nova-check")
+	lines, err := onboarding.ExampleLines(stdout, "nova-check")
 	if err != nil {
-		t.Fatalf("%s\n\n%s", err, stderr)
+		t.Fatalf("%s\n\n%s", err, stdout)
 	}
 	return lines
 }

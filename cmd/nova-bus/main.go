@@ -172,6 +172,17 @@ recipient the roster does not know, no To line at all, a key nobody knows, a Re
 naming nothing -- and it reports EVERY problem in the draft in one run.
 `
 
+// refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
+// door to the usage rather than the usage itself. It was the whole 102-line banner, on
+// every flag typo -- 6,473 bytes, about 1.6K tokens, to say that a dash was in the wrong
+// place. THE THREE SITES BELOW ARE THE ONLY ONES THIS CHANGE TOUCHES in this binary: the
+// bare invocation, the unknown verb, and the flag parse error. Everything else nova-bus
+// prints is another line's work.
+func refuse(stderr io.Writer, where, what string) int {
+	fmt.Fprintf(stderr, "nova-bus%s: %s; run: nova-bus help\n", oneline.Escape(where), oneline.Escape(what))
+	return 2
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, time.Now().UTC()))
 }
@@ -179,8 +190,7 @@ func main() {
 // run is the whole tool, with its streams and clock injected so the tests can drive it.
 func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
-		return 2
+		return refuse(stderr, "", "no verb given; `inbox --as <name>` is the one that only looks")
 	}
 	cmd, rest := args[0], args[1:]
 	switch cmd {
@@ -204,8 +214,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "nova-bus: unknown subcommand %q\n\n%s", cmd, usage)
-	return 2
+	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
 }
 
 // ------------------------------------------------------------------------------- flags
@@ -241,7 +250,7 @@ func (f *flags) parse(args []string, stderr io.Writer, required map[string]*stri
 	if err := f.fs.Parse(args); err != nil {
 		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
 		// invocation: exit 2, never 0.
-		fmt.Fprintf(stderr, "nova-bus %s: %s\n\n%s", f.verb, oneline.Err(err), usage)
+		refuse(stderr, " "+f.verb, oneline.Cap(err.Error(), oneline.TailBytes))
 		return false
 	}
 	if n := f.fs.NArg(); n > 0 {

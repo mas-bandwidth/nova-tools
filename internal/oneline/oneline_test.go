@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"unicode"
+	"unicode/utf8"
 )
 
 // u spells a code point as a string, and esc spells its escaped form, without putting
@@ -216,5 +217,95 @@ func TestQuoteIsPasteableAndStillOneLine(t *testing.T) {
 		if err != nil || back != s {
 			t.Fatalf("Quote(%q) = %s, which unquotes to %q %v", s, got, back, err)
 		}
+	}
+}
+
+// Under the ceiling nothing happens at all: the overwhelming majority of tails are short,
+// and a mark on one that was never cut would be a lie about the record.
+func TestCapLeavesAnythingUnderTheCeilingAlone(t *testing.T) {
+	for _, s := range []string{"", "a", strings.Repeat("x", TailBytes-1), strings.Repeat("x", TailBytes)} {
+		if got := Cap(s, TailBytes); got != s {
+			t.Errorf("Cap(%d bytes) changed it to %d bytes", len(s), len(got))
+		}
+	}
+}
+
+// The mark is the point: a reader who meets a cut tail must be able to tell that it was
+// cut, and by how much, from the line alone.
+func TestCapMarksWhatItDropped(t *testing.T) {
+	s := strings.Repeat("x", 1000)
+	got := Cap(s, 100)
+	if len(got) > 100 {
+		t.Errorf("Cap(1000, 100) returned %d bytes", len(got))
+	}
+	if !strings.HasPrefix(got, "xxxx") {
+		t.Errorf("the head of the tail is gone: %q", got[:20])
+	}
+	i := strings.Index(got, "...+")
+	if i < 0 {
+		t.Fatalf("no mark in %q", got)
+	}
+	var n int
+	if _, err := fmt.Sscanf(got[i:], "...+%dB", &n); err != nil {
+		t.Fatalf("mark %q does not parse: %v", got[i:], err)
+	}
+	if i+n != 1000 {
+		t.Errorf("kept %d bytes and claims %d dropped, which is %d of a 1000-byte tail", i, n, i+n)
+	}
+}
+
+// The mark holds no whitespace and no "=", so a capped value is still ONE token when it
+// goes on to Field. A mark that broke that would turn a capped subject into two fields.
+func TestCapMarkSurvivesFieldAsOneToken(t *testing.T) {
+	got := Field(Cap(strings.Repeat("y", 2000), 40))
+	if strings.ContainsAny(got, " \t=") {
+		t.Errorf("a capped value is not one token through Field: %q", got)
+	}
+	if !strings.Contains(got, "...+") {
+		t.Errorf("Field mangled the mark: %q", got)
+	}
+}
+
+// Cap runs before Escape and cuts on a rune boundary, so what Escape sees is well-formed
+// wherever the input was: a cut inside a rune would print as \xNN and read as corruption
+// rather than as a ceiling.
+func TestCapCutsOnARuneBoundary(t *testing.T) {
+	// Three-byte runes, so most byte offsets are mid-rune.
+	s := strings.Repeat("一", 400)
+	for n := 8; n < 120; n++ {
+		got := Cap(s, n)
+		head := got[:strings.Index(got, "...+")]
+		if !utf8.ValidString(head) {
+			t.Fatalf("Cap(_, %d) cut inside a rune: %q", n, head)
+		}
+		if strings.Contains(Escape(got), `\x`) {
+			t.Fatalf("Cap(_, %d) produced bytes Escape had to escape: %q", n, Escape(got))
+		}
+	}
+}
+
+// This package does not shorten a record out of existence, and a ceiling below the mark's
+// own width is the one case where honouring the number exactly would.
+func TestCapNeverReturnsNothingFromSomething(t *testing.T) {
+	for _, n := range []int{-100, -1, 0, 1, 2, 5} {
+		if got := Cap("一 a long tail that will certainly be cut", n); got == "" {
+			t.Errorf("Cap(_, %d) returned nothing", n)
+		}
+	}
+}
+
+// A tail that is invalid UTF-8 arrives here from an error's text, which passed through no
+// decoder. Cap must still cut somewhere Escape can render, and must not loop.
+func TestCapOnInvalidUTF8(t *testing.T) {
+	s := strings.Repeat("\xff\xfe", 500)
+	got := Cap(s, 60)
+	if len(got) > 60 {
+		t.Errorf("returned %d bytes for a 60-byte ceiling", len(got))
+	}
+	if !strings.Contains(got, "...+") {
+		t.Errorf("no mark: %q", got)
+	}
+	if strings.Contains(Escape(got), "\n") {
+		t.Errorf("Escape over a capped invalid tail is not one line")
 	}
 }

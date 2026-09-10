@@ -20,7 +20,8 @@ import (
 //
 // Two of the five points are repo-wide facts and are checked here:
 //
-//	(a) the bare command prints usage, and the usage ends in an `example:` block
+//	(a) `<tool> help` prints usage ending in an `example:` block, and a bare
+//	    command refuses in ONE line that names that door
 //	(c) README.md carries a `### First run` inside that tool's `## <tool>` section
 //
 // The rest are per-binary and live in each command's own firstrun_test.go,
@@ -64,14 +65,37 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 				t.Errorf("%v\n(ONBOARDING.md point 3: every tool's README section opens with `%s`)", firstRunErr, onboarding.FirstRunHeading)
 			}
 
-			// (a) The bare command prints usage, and it ends in runnable lines.
-			exit, stdout, stderr := runBare(t, root, tool)
+			// (a), first half: the bare command REFUSES in one line and names the
+			// door. It used to be the banner itself, which cost between 1,900 and
+			// 6,500 bytes to say that no arguments is not an invocation — and cost
+			// the same on every flag typo, which is the common case.
+			exit, stdout, stderr := runBare(t, root, tool, nil)
 			if exit != 2 {
 				t.Errorf("a bare `%s` exits %d, want 2 (could not run — no arguments is not an invocation)", tool, exit)
 			}
-			banner := stderr
-			if banner == "" {
-				banner = stdout
+			if stdout != "" {
+				t.Errorf("a bare `%s` wrote to stdout: %q; a refusal belongs on stderr", tool, stdout)
+			}
+			// One line, or two: point 2 says a refusal must state what the input
+			// WANTS, and where that guidance is a sentence of its own it follows on
+			// one indented line. Two is the ceiling, and the second line has to be
+			// the hint rather than more of the banner.
+			lines := strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")
+			switch {
+			case len(lines) > 2:
+				t.Errorf("a bare `%s` printed %d lines, want 1 (or 2 with its hint); the banner is behind `%s help`, not in front of every mistake:\n%s", tool, len(lines), tool, stderr)
+			case len(lines) == 2 && !strings.HasPrefix(lines[1], "  "):
+				t.Errorf("a bare `%s` printed a second line that is not an indented hint:\n%s", tool, stderr)
+			}
+			if want := "run: " + tool + " help"; !strings.Contains(stderr, want) {
+				t.Errorf("a bare `%s` names no door; it must contain %q:\n%s", tool, want, stderr)
+			}
+
+			// (a), second half: the door opens, on stdout, at exit 0, and what is
+			// behind it ends in runnable lines.
+			exit, banner, helpErr := runBare(t, root, tool, []string{"help"})
+			if exit != 0 {
+				t.Errorf("`%s help` exits %d, want 0; stderr: %s", tool, exit, helpErr)
 			}
 			examples, err := onboarding.ExampleLines(banner, tool)
 			if err != nil {
@@ -89,10 +113,10 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 	}
 }
 
-// runBare builds the command and runs it with no arguments. It is BUILT rather
-// than called as a package, because what this test is about is what a stranger
-// meets at a shell prompt.
-func runBare(t *testing.T, root, tool string) (exit int, stdout, stderr string) {
+// runBare builds the command and runs it with the arguments given (none, or
+// `help`). It is BUILT rather than called as a package, because what this test
+// is about is what a stranger meets at a shell prompt.
+func runBare(t *testing.T, root, tool string, args []string) (exit int, stdout, stderr string) {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), tool)
 	if runtime.GOOS == "windows" {
@@ -103,7 +127,7 @@ func runBare(t *testing.T, root, tool string) (exit int, stdout, stderr string) 
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building %s: %v\n%s", tool, err, out)
 	}
-	cmd := exec.Command(bin)
+	cmd := exec.Command(bin, args...)
 	cmd.Dir = root
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb

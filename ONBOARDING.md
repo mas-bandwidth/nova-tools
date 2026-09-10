@@ -5,10 +5,21 @@ of these tools for the first time today, and both stumbles were ours: a usage
 banner with no runnable line in it, and a refusal that named what was wrong
 without saying what it wanted. Every binary under `cmd/` meets all five points.
 
-1. **The bare command prints usage, and the usage ends in an `example:` block
-   whose lines actually run.** Not sketches — commands a stranger can paste. A
-   line that runs answers 0 or 1; exit 2 is "could not run", and an example
-   exiting 2 is a broken example.
+1. **`<tool> help` prints usage, the usage ends in an `example:` block whose
+   lines actually run, and a bare command NAMES that door in one line.** Not
+   sketches — commands a stranger can paste. A line that runs answers 0 or 1;
+   exit 2 is "could not run", and an example exiting 2 is a broken example.
+
+   The bare command used to BE the banner, and that half is now the other way
+   round: an invocation the tool cannot run prints one line —
+   `<tool>[ <verb>]: <what was wrong>; run: <tool> help` — and exits 2, while
+   `<tool> help` prints the banner on stdout and exits 0. The reason is the same
+   newcomer: a flag typo cost between 1,900 and 6,500 bytes of banner to say
+   that a dash was in the wrong place, and a harness reading a tool's stderr
+   pays that on every typo. The door has to be named on the refusal, in words
+   the reader can type, or this is just a tool that stopped explaining itself.
+   Point 2 still governs the words: where the guidance is a sentence of its own
+   it follows on one indented line, and two lines is the ceiling.
 2. **Every refusal says what the flag or input WANTS, not only what was wrong,
    and one run reports every problem it can find.** The no-guessing law is
    unchanged: a missing flag is still a refusal, never a default. But a refusal

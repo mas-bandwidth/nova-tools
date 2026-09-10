@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -34,7 +35,7 @@ import (
 const usage = `nova-fuse: the ingestion fuse -- lockdown and quarantine (see SPEC.md)
 
 usage:
-  nova-fuse status --box <path>                            what is blown, and since when (REPORTS; never gate on it)
+  nova-fuse status --box <path> [--max <n>]                what is blown, and since when (REPORTS; never gate on it)
   nova-fuse check --box <path> [surface]                   may I read? -- the gate; act only on exit 0
   nova-fuse lockdown --box <path> "<reason>"               blow the one hard fuse: all untrusted reads stop
   nova-fuse quarantine --box <path> <surface> "<reason>"   stop reading one surface (soft)
@@ -47,6 +48,11 @@ exit codes: 0 clear, or done and verified by re-reading the box; 1 blown
 (check), or could not do it / could not verify it; 2 could not run -- missing
 flag, unreadable box (treated as BLOWN, never as clear), bad invocation, or
 a lift this tool refuses by design.
+
+status lists at most --max quarantines (default 20, and 0 means all) after its
+count line, then one STATUS MORE kind=quarantine shown=<n> total=<t> line
+standing for the rest. THE COUNT IS NEVER CAPPED: quarantines=<t> on the first
+line is the truth about the box however few surfaces are listed under it.
 
 The box path always comes from --box. There is no default and no environment
 variable; a missing --box is a refusal: refusing to guess. Flags come before
@@ -82,6 +88,22 @@ func hintFor(name string) string {
 	return ""
 }
 
+// maxRemedy is the second half of the one MORE line this binary prints. A cap with no
+// remedy is censorship; a cap with one is an index.
+const maxRemedy = "--max <n> raises the ceiling, --max 0 lists every quarantine"
+
+// refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
+// door to the usage rather than the usage itself. It was the whole 32-line banner, on
+// every flag typo -- 1,927 bytes to say a dash was in the wrong place, and a surface
+// name beginning with a dash is the realistic shape here.
+//
+// The one refusal in this file that is NOT one line is `lift lockdown`, and it is meant
+// to be read rather than scanned.
+func refuse(stderr io.Writer, where, what string) int {
+	fmt.Fprintf(stderr, "nova-fuse%s: %s; run: nova-fuse help\n", oneline.Escape(where), oneline.Escape(what))
+	return 2
+}
+
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, time.Now().UTC()))
 }
@@ -90,8 +112,7 @@ func main() {
 // main() is then too small to hold a bug.
 func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, usage)
-		return 2
+		return refuse(stderr, "", "no verb given; `status --box <path>` is the one that only looks")
 	}
 	cmd, rest := args[0], args[1:]
 
@@ -121,8 +142,7 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case "path":
 		return cmdPath(rest, stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "nova-fuse: unknown subcommand %q\n\n%s", cmd, usage)
-	return 2
+	return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", cmd))
 }
 
 // parseBox runs a verb's flag set and enforces the no-guessing rule: the box path must
@@ -138,6 +158,13 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 // used to say --box and stop, and the second run then learned it also wanted a
 // surface and a reason.
 func parseBox(name string, args []string, stderr io.Writer) (box string, positional []string, boxOK, parsed bool) {
+	return parseBoxWith(name, args, stderr, nil)
+}
+
+// parseBoxWith is parseBox with a hook for a verb that has a flag of its own, so that a
+// second flag never means a second parser -- and therefore never a second place where
+// package flag could be handed a stream to print an argument through.
+func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag.FlagSet)) (box string, positional []string, boxOK, parsed bool) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	// PACKAGE FLAG IS NOT ALLOWED TO PRINT. Its error text quotes the argument it could not
 	// parse, and its usage dump follows -- so with a stream to write to, an argument
@@ -150,11 +177,14 @@ func parseBox(name string, args []string, stderr io.Writer) (box string, positio
 	// package default is one line away from printing again if that ever changes.
 	fs.Usage = func() {}
 	boxFlag := fs.String("box", "", "path to the fuse box JSON file (required; no default)")
+	if extra != nil {
+		extra(fs)
+	}
 	if err := fs.Parse(args); err != nil {
 		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
 		// invocation: exit 2, never 0. `check` answers PERMISSION with 0, and a surface
 		// named "-h" must not be able to reach that answer.
-		fmt.Fprintf(stderr, "nova-fuse %s: %s\n\n%s", name, oneline.Err(err), usage)
+		refuse(stderr, " "+name, oneline.Cap(err.Error(), oneline.TailBytes))
 		return "", nil, false, false
 	}
 	for _, arg := range fs.Args() {
@@ -179,8 +209,7 @@ func parseBox(name string, args []string, stderr io.Writer) (box string, positio
 // there is -- a conversation.
 func cmdLift(rest []string, stdout, stderr io.Writer) int {
 	if len(rest) == 0 {
-		fmt.Fprintf(stderr, "nova-fuse lift: takes a power first: `lift quarantine --box <path> <surface>` -- and `lift lockdown` is refused by design\n\n%s", usage)
-		return 2
+		return refuse(stderr, " lift", "takes a power first: `lift quarantine --box <path> <surface>` -- and `lift lockdown` is refused by design")
 	}
 	switch rest[0] {
 	case "lockdown":
@@ -202,7 +231,7 @@ func cmdLift(rest []string, stdout, stderr io.Writer) int {
 		if len(positional) != 1 || fuse.Surface(positional[0]) == "" {
 			// Printed even when --box was missing too: the two are independent,
 			// and one run should name both.
-			fmt.Fprintf(stderr, "nova-fuse lift quarantine: needs exactly one surface: `lift quarantine --box <path> <surface>`\n\n%s", usage)
+			refuse(stderr, " lift quarantine", "needs exactly one surface: `lift quarantine --box <path> <surface>`")
 			ok = false
 		}
 		if !ok {
@@ -210,8 +239,7 @@ func cmdLift(rest []string, stdout, stderr io.Writer) int {
 		}
 		return liftQuarantine(box, positional[0], stdout, stderr)
 	}
-	fmt.Fprintf(stderr, "nova-fuse lift: does not know %q -- lift takes a power first: `lift quarantine --box <path> <surface>` (`lift lockdown` is refused by design)\n\n%s", rest[0], usage)
-	return 2
+	return refuse(stderr, " lift", fmt.Sprintf("does not know %q -- lift takes a power first: `lift quarantine --box <path> <surface>` (`lift lockdown` is refused by design)", rest[0]))
 }
 
 // liftQuarantine rescinds ONE quarantine: the soft dial, turned the other way. Same
@@ -287,12 +315,20 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 // answering the question IS the job -- and it exits 2 when it could not read, because
 // then it did not answer at all. Never gate on the exit code of status; check is the gate.
 func cmdStatus(rest []string, stdout, stderr io.Writer) int {
-	box, positional, ok, parsed := parseBox("status", rest, stderr)
+	var max int
+	box, positional, ok, parsed := parseBoxWith("status", rest, stderr, func(fs *flag.FlagSet) {
+		fs.IntVar(&max, "max", bounded.Default, "quarantine lines to list before one MORE line stands for the rest; 0 lists all")
+	})
 	if !parsed {
 		return 2
 	}
 	if len(positional) > 0 {
-		fmt.Fprintf(stderr, "nova-fuse status: unexpected argument %q\n\n%s", positional[0], usage)
+		refuse(stderr, " status", fmt.Sprintf("unexpected argument %q", positional[0]))
+		ok = false
+	}
+	if max < 0 {
+		// Zero already means "all", so a negative ceiling is a typo with two readings.
+		fmt.Fprintf(stderr, "nova-fuse status: --max must be a line ceiling of zero or more (got %d); 0 lists them all\n", max)
 		ok = false
 	}
 	if !ok {
@@ -312,10 +348,16 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 	} else {
 		fmt.Fprintf(stdout, "STATUS OK lockdown=clear quarantines=%d\n", len(names))
 	}
+	// THE COUNT IS NEVER CAPPED and the listing always is. quarantines= above is the truth
+	// about the box; the lines below are a sample of it in the box's own order, and the
+	// MORE line says how big the sample was. Three hundred quarantined surfaces used to
+	// be three hundred and one lines, on a verb whose whole job is to be glanced at.
+	list := bounded.Capped(stdout, max, "STATUS", "quarantine", maxRemedy)
 	for _, n := range names {
 		f := b.Quarantine[n]
-		fmt.Fprintf(stdout, "STATUS OK quarantine=%s since=%s: %s\n", oneline.Field(n), since(f), why(f))
+		list.Line(fmt.Sprintf("STATUS OK quarantine=%s since=%s: %s", oneline.Field(n), since(f), why(f)))
 	}
+	list.More()
 	return 0
 }
 
@@ -327,13 +369,13 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(positional) > 1 {
-		fmt.Fprintf(stderr, "nova-fuse check: takes at most one surface, got %q too\n\n%s", positional[1], usage)
+		refuse(stderr, " check", fmt.Sprintf("takes at most one surface, got %q too", positional[1]))
 		ok = false
 	}
 	surface := ""
 	if len(positional) == 1 {
 		if fuse.Surface(positional[0]) == "" {
-			fmt.Fprintf(stderr, "nova-fuse check: surface must not be blank; omit it to check lockdown only\n\n%s", usage)
+			refuse(stderr, " check", "surface must not be blank; omit it to check lockdown only")
 			ok = false
 		}
 		surface = positional[0]
@@ -392,7 +434,7 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	reason := keepableReason(strings.Join(positional, " "))
 	if reason == "" {
 		// Printed even when --box was missing too: one run, every problem.
-		fmt.Fprintf(stderr, "nova-fuse lockdown: needs a reason: `lockdown --box <path> \"<reason>\"`\n\n%s", usage)
+		refuse(stderr, " lockdown", "needs a reason: `lockdown --box <path> \"<reason>\"`")
 		ok = false
 	}
 	if !ok {
@@ -447,7 +489,7 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if surface == "" || reason == "" {
 		// Printed even when --box was missing too: one run, every problem.
-		fmt.Fprintf(stderr, "nova-fuse quarantine: needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`\n\n%s", usage)
+		refuse(stderr, " quarantine", "needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`")
 		ok = false
 	}
 	if !ok {
@@ -496,7 +538,7 @@ func cmdPath(rest []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if len(positional) > 0 {
-		fmt.Fprintf(stderr, "nova-fuse path: unexpected argument %q\n\n%s", positional[0], usage)
+		refuse(stderr, " path", fmt.Sprintf("unexpected argument %q", positional[0]))
 		ok = false
 	}
 	if !ok {
@@ -523,11 +565,15 @@ func stamp(now time.Time) string { return now.UTC().Format(time.RFC3339) }
 // reason is the free-text tail of its line and renders through Escape; the stamp is the
 // value of a since= field and renders through Field, which also escapes whitespace and
 // "=", so that a hand-written stamp cannot pose as a second field on the line.
+// why renders a fuse's stored reason. It is CAPPED as well as escaped: a reason is
+// free text a caller typed, one line however long, and status prints one of these per
+// quarantined surface -- so an unbounded reason is an unbounded line inside a bounded
+// listing, which is the same hole one level down.
 func why(f fuse.Fuse) string {
 	if strings.TrimSpace(f.Reason) == "" {
 		return "NO REASON RECORDED"
 	}
-	return oneline.Escape(f.Reason)
+	return oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))
 }
 
 func since(f fuse.Fuse) string {

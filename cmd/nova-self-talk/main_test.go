@@ -63,8 +63,14 @@ func TestDatedClaimIsReportedAndExitsZero(t *testing.T) {
 	if got := run([]string{f}, &stdout, &stderr); got != 0 {
 		t.Errorf("want exit 0 for a dated record, got %d\nstderr: %s", got, stderr.String())
 	}
-	if !strings.Contains(stdout.String(), "SELFTALK DATED "+f+": ") {
-		t.Errorf("stdout = %q, want a SELFTALK DATED line", stdout.String())
+	// A DATED CLAIM IS COUNTED, NOT QUOTED. It was quoted: one whole sentence per dated
+	// claim, which on a file that had done the right thing six hundred times was six
+	// hundred lines of congratulation. The claim is in the file; the tool says how many.
+	if strings.Contains(stdout.String(), "SELFTALK DATED "+f) {
+		t.Errorf("a dated claim is quoted rather than counted: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "SELFTALK DATED n=1 files=1") {
+		t.Errorf("stdout = %q, want the dated COUNT line", stdout.String())
 	}
 	if !strings.Contains(stdout.String(), "SELFTALK OK files=1 claims=1 standing=0") {
 		t.Errorf("stdout = %q, want claims=1 standing=0 in the OK line", stdout.String())

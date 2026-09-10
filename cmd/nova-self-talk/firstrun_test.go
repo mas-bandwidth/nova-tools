@@ -41,13 +41,16 @@ func localize(args []string) []string {
 
 func examples(t *testing.T) []string {
 	t.Helper()
-	exit, _, stderr := runSelfTalk(t)
-	if exit != 2 {
-		t.Fatalf("a bare invocation must print usage and exit 2, got %d", exit)
+	// The banner is asked for, because a bare invocation no longer IS one: a refusal now
+	// costs one line and the hint under it, and names the door (`run: nova-self-talk
+	// help`). Reading it through that door is also a test that the door opens.
+	exit, stdout, stderr := runSelfTalk(t, "help")
+	if exit != 0 {
+		t.Fatalf("`nova-self-talk help` must print the usage and exit 0, got %d; stderr: %s", exit, stderr)
 	}
-	lines, err := onboarding.ExampleLines(stderr, "nova-self-talk")
+	lines, err := onboarding.ExampleLines(stdout, "nova-self-talk")
 	if err != nil {
-		t.Fatalf("%s\n\n%s", err, stderr)
+		t.Fatalf("%s\n\n%s", err, stdout)
 	}
 	return lines
 }
@@ -169,7 +172,11 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 		seen[strings.Join(strings.Fields(s)[:2], " ")]++
 	}
 	for prefix, want := range map[string]int{
-		"SELFTALK FAIL": 3, "SELFTALK DATED": 1, "SELFTALK NOTE": 1, "SELFTALK RULEDOC": 1,
+		// Four FAIL lines: two findings and the count line in the first transcript, one
+		// finding in the second. The count line is one of them on purpose -- it is the
+		// line that was missing on a failing run, and a README that did not show it
+		// would be teaching the shape this change exists to fix.
+		"SELFTALK FAIL": 4, "SELFTALK DATED": 1, "SELFTALK NOTE": 1, "SELFTALK RULEDOC": 1,
 	} {
 		if seen[prefix] != want {
 			t.Errorf("README First run shows %d %s lines, want %d", seen[prefix], prefix, want)
