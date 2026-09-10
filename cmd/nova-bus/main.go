@@ -55,12 +55,14 @@ import (
 const usage = `nova-bus: the bus, with the races taken out (see SPEC.md)
 
 usage:
-  nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id>]
+  nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>]
   nova-bus send --bus <dir> --file <path>|--stdin [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
-  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open] [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
+  nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open [--open-max <n>]] [--open-warn <n>]
+        [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
-        [--interval <duration>] [--open] [--legacy-before <date-or-instant>|--carry-history]
+        [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
+        [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
@@ -93,9 +95,23 @@ notes and nothing else, however many you are carrying. --full walks everything,
 which is what adoption and CI on main want. --advance moves your cursor and
 pushes it, the same way a receipt is pushed.
 
-inbox prints one INBOX OPEN line for what you are carrying; --open lists those
-entries too, from the open list and without opening a note. Past 50 carried, the
-plain run adds one INBOX HINT line saying so.
+EVERY inbox and wait return has the same three parts. What is NEW, in full, on
+every run in every mode -- that is what a poll is for. Then exactly one
+INBOX OPEN carrying=<n> heard=<m> line for the backlog. Then, only if you asked
+with --open (or --full), the carried list itself, from the open list and without
+opening a note, capped at --open-max (default 20) with one line saying how many
+it did not print. Past --open-warn carried (default 40), every return adds one
+line saying the list is large and the three ways out of it -- answer a note by
+naming it, receipt it, or draw the switch-day line now and start over.
+
+A note is closed by a Re: line naming it, and a Re: line is not a thing anybody
+writes from memory: a line that answered every note by hand carried all 74 of
+them for ever, because none of its answers named anything. So draft --re takes
+an id, a path, OR the exact subject of a note on your open list and writes the id
+for you; a Re: line in a draft may name that subject too, and send resolves it to
+the newest match, writes the id, and says which note it closed; and a draft that
+reads like a reply and names nothing gets one SEND NOTE saying so. None of the
+three refuses anything.
 
 --legacy-before draws the switch-day line on a bus that existed before this
 tool: check WARNS instead of failing on an older note's header, and inbox does
@@ -258,6 +274,17 @@ func (f *flags) gitArgs(remote, branch string, stderr io.Writer) bool {
 	return true
 }
 
+// atLeastZero reads an integer flag whose floor is zero rather than one, which is the
+// floor a THRESHOLD has: --open-warn 0 says "tell me on every run", and that is a thing a
+// reader may reasonably mean. A negative one is not, and is a bad invocation.
+func (f *flags) atLeastZero(name string, value int, stderr io.Writer) bool {
+	if value < 0 {
+		fmt.Fprintf(stderr, "nova-bus %s: --%s counts entries, so it is 0 or more, got %d\n", f.verb, name, value)
+		return false
+	}
+	return true
+}
+
 // count reads a required positive integer flag.
 func (f *flags) count(name string, value int, stderr io.Writer) bool {
 	if value < 1 {
@@ -396,7 +423,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer) int {
 	cc := f.fs.String("cc", "", "who else is to see it, as a Cc line")
 	subject := f.fs.String("subject", "", "the subject line (default: a placeholder you must replace)")
 	var re stringList
-	f.fs.Var(&re, "re", "an id this note answers, or `new` to start a thread (repeatable)")
+	f.fs.Var(&re, "re", "an id, a path, or the SUBJECT of a note on your open list that this note answers, or `new` to start a thread (repeatable)")
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "to": to}) {
 		return 2
 	}
@@ -433,19 +460,45 @@ func cmdDraft(args []string, stdout, stderr io.Writer) int {
 	}
 	// A Re is checked against the BUS and not the roster, so this is the one thing here
 	// that opens the notes -- and only when a --re was given.
+	//
+	// IT ALSO TAKES A SUBJECT, which is the whole reason this flag is worth reaching for.
+	// A line answering a note has the note in front of it: its sender, its subject, its
+	// text. What it does not have is the id, which lives on a header line it has to go and
+	// find. So `--re "the merge queue"` resolves against this line's own open list and the
+	// skeleton comes back carrying `Re: <id>` -- the id written by the tool that knows it,
+	// into the draft, once, instead of by a person, into every reply, from memory. The
+	// refusals below and the notices go to stderr, because stdout here is a FILE.
 	if len(re) > 0 {
 		t, terr := bus.ReadBus(*busDir, c)
 		if terr != nil {
 			fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.Err(terr))
 			return 2
 		}
-		for _, r := range re {
+		var open []bus.OpenEntry
+		if known && me.Lane != "" {
+			if entries, oerr := bus.ReadOpen(*busDir, me.Lane); oerr == nil {
+				open = entries
+			}
+		}
+		for i, r := range re {
 			if r == "new" {
 				continue
 			}
-			if _, found := t.Resolve(r); !found {
-				problems = append(problems, fmt.Errorf("--re %q is neither an id on this bus nor a note that exists; threads are named by id, and a slug is not a thread", r))
+			if _, found := t.Resolve(r); found {
+				continue
 			}
+			matches := bus.MatchOpenSubject(open, r)
+			if len(matches) == 0 {
+				problems = append(problems, fmt.Errorf("--re %q is not an id on this bus, not a note that exists, and not the subject of a note on your open list; threads are named by id, and a slug is not a thread", r))
+				continue
+			}
+			re[i] = matches[0].Target()
+			if len(matches) > 1 {
+				fmt.Fprintf(stderr, "DRAFT NOTE --re: subject matched %d notes; the skeleton names the newest %s; name the id to be exact\n", len(matches), oneline.Field(re[i]))
+				continue
+			}
+			fmt.Fprintf(stderr, "DRAFT NOTE --re named the subject %s rather than an id; the skeleton names the open note %s from %s\n",
+				oneline.Quote(r), oneline.Field(re[i]), oneline.Field(dash(matches[0].From)))
 		}
 	}
 	if len(problems) > 0 {
@@ -673,6 +726,8 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	maxWords := f.fs.Int("receipt-max-words", 0, "a body under this many words may be a receipt (required, at least 1)")
 	full := f.fs.Bool("full", false, "walk the whole bus instead of what changed since your cursor")
 	openList := f.fs.Bool("open", false, "list every open note, not only what is new; the default prints one INBOX OPEN line for them")
+	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
+	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
 	advance := f.fs.Bool("advance", false, "move your cursor to HEAD and push it, the way a receipt is pushed")
 	remote := f.fs.String("remote", "", "the git remote to push the cursor to (required with --advance)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required with --advance)")
@@ -721,6 +776,12 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.count("receipt-max-words", *maxWords, stderr) {
 		return 2
 	}
+	if !f.count("open-max", *openMax, stderr) {
+		return 2
+	}
+	if !f.atLeastZero("open-warn", *openWarn, stderr) {
+		return 2
+	}
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
 		return 2
 	}
@@ -741,7 +802,7 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	o := inboxOpts{
 		busDir: *busDir, as: *as, maxWords: *maxWords,
-		full: *full, openList: *openList, advance: *advance,
+		full: *full, openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
 	}
@@ -779,6 +840,12 @@ type inboxOpts struct {
 	busDir, as     string
 	maxWords       int
 	full, openList bool
+	// openMax is how many carried entries a listing run prints before it says how many it
+	// did not, and openWarn is how large the open list gets before every return says so.
+	// Both are on the struct rather than read at the print site because `wait` is `inbox`
+	// on a clock and a flag one verb honoured and the other did not is two inboxes.
+	openMax        int
+	openWarn       int
 	advance        bool
 	remote, branch string
 	attempts       int
@@ -1027,51 +1094,60 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 		fmt.Fprintf(stdout, "INBOX UNADDRESSED path=%s: %s\n", oneline.Field(u.Path), oneline.Escape(u.Reason))
 	}
 	notes, receipts, heard := res.Counts()
-	// LISTING THE OPEN NOTES IS A CHOICE, and the default is not to. A reader carrying five
+	// WHAT IS NEW, IN FULL, ON EVERY RUN. This is the listing a poll is FOR, and until now
+	// there was no way to get it on its own: the choice was one summary line, or the whole
+	// carried list. So a reader who wanted to see the note that had just arrived asked for
+	// `--open` and got every note they had ever failed to answer, on every return, above the
+	// one they were looking for. A line on a 260K-token model did exactly that with 74
+	// carried notes and blew its context. News and backlog are different questions, and the
+	// news is the one every run answers.
+	//
+	// It is skipped on a run that is about to list the WHOLE open list -- `--open`, or a
+	// full read -- because the new entries are in that list and printing them twice is the
+	// same noise from the other end.
+	listCarried := o.openList || scope.Full
+	if !listCarried {
+		printOpenEntries(stdout, res.Fresh, len(res.Fresh))
+	}
+	// THEN ONE LINE FOR THE BACKLOG, whichever way the run was asked. It was printed only on
+	// the runs that did NOT list, which meant the two shapes of return had no line in common
+	// and a reader parsing `--open` output could not find the count at all. One line, always,
+	// under one name.
+	fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d\n", len(res.Open), heard)
+	// LISTING THE CARRIED NOTES IS A CHOICE, and the default is not to. A reader carrying five
 	// hundred notes gets five hundred lines on every run, and the one new note is in the
 	// middle of them -- which is the listing-nobody-reads failure the switch-day line exists
-	// to stop, arriving from the other end. So the default prints ONE line for what is being
-	// carried, `--open` prints the entries, and `--full` lists everything because a full read
-	// is what a person asks for when they want the whole picture. Nothing is hidden either
-	// way: the counts are on the OK line, and the entries are in OPEN, which is a file.
-	if o.openList || scope.Full {
-		// Three groups, in this order: the notes that carry something, the ones already
-		// heard but not answered, and the bare acknowledgements. The listing that hid four
-		// real notes among the receipts is the reason they are separated rather than
-		// interleaved by clock; HEARD is between them because a note I have already said
-		// "heard" to is still owed an answer, and the receipt that says so must not make it
-		// disappear. Every field comes from the open list, so nothing here opens a note.
+	// to stop, arriving from the other end. So `--open` prints the entries, and `--full` lists
+	// them too because a full read is what a person asks for when they want the whole picture.
+	// Nothing is hidden either way: the counts are on the OK line, and the entries are in
+	// OPEN, which is a file.
+	//
+	// AND IT IS CAPPED. `--open` on a long list was the footgun itself: a flag whose cost
+	// grows with the backlog, asked for by the reader with the biggest backlog, printed into
+	// a context window that has no way to refuse it. --open-max is the cap, it has a default
+	// so that nobody has to know about it before the run that needed it, and the line under
+	// the listing says how many were left and which flag widens it.
+	if listCarried {
 		rows := bus.SortForListing(res.Open)
-		for _, group := range []string{"NOTE", "HEARD", "RECEIPT"} {
-			for _, e := range rows {
-				if e.Kind == bus.OpenUnreadable {
-					continue
-				}
-				token := "NOTE"
-				switch {
-				case e.Heard:
-					token = "HEARD"
-				case e.Kind == bus.OpenReceipt:
-					token = "RECEIPT"
-				}
-				if token != group {
-					continue
-				}
-				fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n",
-					token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)),
-					oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject))
-			}
+		shown := printOpenEntries(stdout, rows, o.openMax)
+		if more := countListable(rows) - shown; more > 0 {
+			fmt.Fprintf(stdout, "INBOX OPEN listed=%d and %d more (--open-max to widen)\n", shown, more)
 		}
-	} else {
-		fmt.Fprintf(stdout, "INBOX OPEN carrying=%d heard=%d\n", len(res.Open), heard)
-		// And, past the point where a reader would have to count the line themselves, where
-		// the entries are. The count alone is the right default at any size -- see the
-		// comment above -- but a reader carrying hundreds is the one who wants to look, and
-		// the flag that shows them is not guessable from a line that only holds a number.
-		if len(res.Open) > openListHint {
-			fmt.Fprintf(stdout, "INBOX HINT --open lists the %d carried entries; they are also in %s\n",
-				len(res.Open), oneline.Field(bus.OpenPath(me.Lane)))
-		}
+	}
+	// AND, PAST A SIZE, THE LINE THAT SAYS THE LIST IS LARGE AND HOW TO EMPTY IT. A backlog
+	// grows one unanswered note at a time and nothing about any single run says it is
+	// growing: `carrying=74` is a number, and a number is not a sentence. The line that
+	// carried 74 was answering every one of those notes by hand -- and none of the answers
+	// carried a Re line, so none of them closed anything, and nothing anywhere said so.
+	//
+	// It is a NOTE and not a refusal, like INBOX SWITCH above and for the same reason: the
+	// run does what it was asked, and the three ways out are named with this run's own
+	// values in them. Two of them are per note -- answer it, or say heard -- and the third
+	// is the whole backlog at once, which is the switch-day line drawn now.
+	if len(res.Open) > o.openWarn {
+		fmt.Fprintf(stdout, "INBOX OPEN carrying=%d is large; answer with Re: <id>, receipt --note <id>, or start over: nova-bus inbox --bus %s --as %s --receipt-max-words %d --full --legacy-now --advance --remote %s --branch %s\n",
+			len(res.Open), oneline.Quote(o.busDir), oneline.Quote(me.Name), o.maxWords,
+			oneline.Quote(orPlaceholder(o.remote, "<remote>")), oneline.Quote(orPlaceholder(o.branch, "<branch>")))
 	}
 	// THE TWO NUMBERS, and why they are both here under the names they are printed under
 	// elsewhere. `carrying=` on the SCOPE and OPEN lines is the size of the OPEN LIST -- every
@@ -1174,11 +1250,73 @@ func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, lega
 	return 0
 }
 
-// openListHint is how many carried entries a plain run prints the INBOX HINT line above.
-// It is a threshold on NOISE and not on cost: a reader carrying a handful can see them with
-// one more flag and does not need telling, and a reader carrying hundreds is the one who
-// asks where they went.
-const openListHint = 50
+// defaultOpenMax is how many carried entries `--open` prints before it says how many it
+// did not. Twenty is a screen: enough that a reader with an ordinary backlog sees all of
+// it, and few enough that a reader with a big one is not paying for the whole of it on
+// every return. It is a DEFAULT rather than a required flag, on the same test the tool's
+// other defaults pass -- it is not a fact about a bus that only its owner can supply --
+// and the line under the listing names the flag that widens it.
+const defaultOpenMax = 20
+
+// defaultOpenWarn is how large a backlog gets before every return says so. Forty is above
+// what a working line carries between reads and below the seventy-four that broke one, so
+// the line fires while a backlog is still answerable and not after it is hopeless.
+const defaultOpenWarn = 40
+
+// printOpenEntries prints an open list in the order it is listed in -- the notes that carry
+// something, then what has been heard and still owes an answer, then the bare
+// acknowledgements -- and stops after max of them. It returns how many it printed.
+//
+// Three groups, in that order, because the listing that hid four real notes among the
+// receipts is the reason they are separated rather than interleaved by clock. HEARD is
+// between them because a note I have already said "heard" to is still owed an answer, and
+// the receipt that says so must not make it disappear. Every field comes from the open
+// list, so nothing here opens a note.
+//
+// The cap counts PRINTED entries and not entries considered, so a capped listing is the
+// first max of the same order a full one would have printed: the notes first, and the bare
+// acknowledgements last, which is the right end to lose.
+func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int) int {
+	shown := 0
+	for _, group := range []string{"NOTE", "HEARD", "RECEIPT"} {
+		for _, e := range entries {
+			if e.Kind == bus.OpenUnreadable {
+				continue
+			}
+			token := "NOTE"
+			switch {
+			case e.Heard:
+				token = "HEARD"
+			case e.Kind == bus.OpenReceipt:
+				token = "RECEIPT"
+			}
+			if token != group {
+				continue
+			}
+			if shown >= max {
+				return shown
+			}
+			fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n",
+				token, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)),
+				oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject))
+			shown++
+		}
+	}
+	return shown
+}
+
+// countListable is how many entries printOpenEntries would print with no cap: the whole
+// list bar the unreadable entries, which have no header to print a line from and are named
+// on their own INBOX UNREADABLE lines instead.
+func countListable(entries []bus.OpenEntry) int {
+	n := 0
+	for _, e := range entries {
+		if e.Kind != bus.OpenUnreadable {
+			n++
+		}
+	}
+	return n
+}
 
 // ---------------------------------------------------------------------------- the wait
 
@@ -1214,6 +1352,8 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	timeout := f.fs.Duration("timeout", 0, "how long to wait before returning WAIT TIMEOUT (required; a duration like 25m, at most "+maxWaitTimeout.String()+")")
 	interval := f.fs.Duration("interval", defaultWaitInterval, "how long between polls")
 	openList := f.fs.Bool("open", false, "list every open note when this wait returns, not only what is new")
+	openMax := f.fs.Int("open-max", defaultOpenMax, "with --open, how many carried entries to print before saying how many more there are")
+	openWarn := f.fs.Int("open-warn", defaultOpenWarn, "how many carried entries before every return adds one line saying the list is large and how to empty it")
 	advance := f.fs.Bool("advance", false, "move your cursor to HEAD and push it when this wait returns, the way inbox --advance does")
 	remote := f.fs.String("remote", "", "the git remote to fetch the bus from (required: a wait that cannot fetch cannot notice anything)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required)")
@@ -1238,6 +1378,12 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 2
 	}
 	if !f.count("receipt-max-words", *maxWords, stderr) {
+		return 2
+	}
+	if !f.count("open-max", *openMax, stderr) {
+		return 2
+	}
+	if !f.atLeastZero("open-warn", *openWarn, stderr) {
 		return 2
 	}
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
@@ -1290,7 +1436,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	o := inboxOpts{
 		busDir: *busDir, as: *as, maxWords: *maxWords,
-		openList: *openList, advance: *advance,
+		openList: *openList, openMax: *openMax, openWarn: *openWarn, advance: *advance,
 		remote: *remote, branch: *branch, attempts: *attempts, noPush: *noPush,
 		legacy: flagLegacy, carryHistory: *carryHistory,
 	}

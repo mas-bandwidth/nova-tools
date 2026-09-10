@@ -94,6 +94,16 @@ type InboxResult struct {
 	Unaddressed []Unaddressed
 	// New is how many notes this run added to the open list.
 	New int
+	// Fresh is those notes THEMSELVES, in listing order: the entries this run put on the
+	// open list that were not on it before, and nothing that was already there.
+	//
+	// It exists because a default run used to print no note at all. The listing was a
+	// choice between one summary line and the WHOLE carried list, so a reader who wanted to
+	// see the note that had just arrived had to ask for every note they had ever failed to
+	// answer -- which is how a line on a small-context model came to re-read seventy-four
+	// carried notes on every poll to find the one new one. News and backlog are different
+	// questions, and this is the answer to the first of them.
+	Fresh []OpenEntry
 	// Legacy is how many notes this run left off the open list because they are dated
 	// before the switch-day line. They are counted and never listed one by one; see
 	// LegacyLine.
@@ -386,7 +396,18 @@ func InboxSince(root string, c *Config, me Participant, changed []string, open [
 	// line was drawn. Leaving it off is the whole of what happens to it: it is counted, and
 	// the note is untouched.
 	var coveredUnreadable int
-	res.Open, res.Legacy, coveredUnreadable = SplitLegacy(append(keep, fresh...), legacy)
+	// The line is drawn on the two halves separately and joined afterwards, which is the
+	// same list in the same order -- SplitLegacy is a filter and keeps what it keeps in
+	// place -- and leaves this run holding the NEW entries that survived it. Fresh is what
+	// the listing prints as news, so an entry the line covered must not be in it: a note
+	// taken as read is not news, and printing it would undo the line for the one run that
+	// mattered.
+	keptOld, oldLegacy, oldUnreadable := SplitLegacy(keep, legacy)
+	keptFresh, freshLegacy, freshUnreadable := SplitLegacy(fresh, legacy)
+	res.Fresh = SortForListing(keptFresh)
+	res.Open = append(keptOld, keptFresh...)
+	res.Legacy = oldLegacy + freshLegacy
+	coveredUnreadable = oldUnreadable + freshUnreadable
 	// Zero on this path: the line was drawn on the unreadable entries above, before the
 	// parse each one costs. It is added rather than asserted because the two counts belong
 	// to SplitLegacy, and a caller that quietly dropped half of what it was handed is how
