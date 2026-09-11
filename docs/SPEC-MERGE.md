@@ -186,6 +186,20 @@ the day it was learned.
     four Java conflicts each cost a child an afternoon working out the next
     step; #948's "first failing line" was a status line, and the real log had
     been removed with the clone.)
+18. **The evidence is for the merge, not for the head.** A green gate for
+    an entry's head proves the head against the base it was merged with at
+    gate time; the base moves with every merge, so that evidence expires the
+    moment another entry lands. Before each merge the tool gates the exact
+    commit it is about to create: the entry's head merged onto the base as it
+    stands now (in the lane's clone, never pushed), and merges only on that
+    gate; a green gate recorded for the head alone is a candidate, not a
+    verdict. When the base has not moved since the head's gate (the gate's
+    recorded base sha equals the current base), the recorded gate is that
+    commit and no second gate runs. Every gate record therefore carries the
+    base sha it was taken against. (2026-09-11: #956 ruled the compressed
+    float's step into the digest and #942, gated a minute earlier against the
+    base without it, merged one minute later and turned the tip red on four
+    tests; three more entries were then gated red against that tip.)
 
 ## The verbs
 
@@ -909,6 +923,10 @@ check never seen failing is not a check).
     matching line in the summary, a step without prints `no marker, see
     <path>` with an existing path, and a source test finds no free-text search
     for `FAIL` or `error` in the summariser.
+18. Two entries A and B both gated green against base X; A merges (base is
+   now X+A); B is not merged on its recorded gate: a gate of B merged onto
+   X+A runs first, and when that gate is red B is RED with the base sha named
+   and A stays merged; when the base has not moved, no second gate runs.
 
 ## The work list
 
