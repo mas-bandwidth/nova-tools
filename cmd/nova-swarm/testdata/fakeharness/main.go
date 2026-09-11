@@ -38,6 +38,14 @@ func main() {
 			fmt.Println("fake harness: the key is present, length", len(env)-len("FAKE_KEY="))
 		}
 	}
+	// FAKE-LAUNCHES records one line per real invocation, before any directive can exit,
+	// so a test can prove how many times the machinery retried a task.
+	if _, ok := directive(prompt, "FAKE-LAUNCHES"); ok && job != "" {
+		if f, err := os.OpenFile(filepath.Join(job, "launches"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintln(f, "launch")
+			f.Close()
+		}
+	}
 
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
@@ -46,6 +54,13 @@ func main() {
 	}
 	if arg, ok := directive(prompt, "FAKE-USAGE"); ok {
 		writeUsage(data, arg)
+	}
+	// A provider 429 cannot ride the exit status: POSIX truncates 429 to 173. So the fake
+	// prints the status the way a real harness does and exits non-zero, after its usage row
+	// so `cost` has the numbers a rate-limited attempt did burn.
+	if _, ok := directive(prompt, "FAKE-429"); ok {
+		fmt.Println("fake harness: error: the provider answered HTTP 429 Too Many Requests (rate limit)")
+		os.Exit(1)
 	}
 	if _, ok := directive(prompt, "FAKE-BADUSAGE"); ok {
 		_ = os.MkdirAll(data, 0o755)

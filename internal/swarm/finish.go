@@ -49,6 +49,18 @@ func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (
 		}
 	}
 
+	// RATE LIMITS ARE THE DISPATCHER'S BUSINESS. A provider's 429 is not a failed task:
+	// hold the slot, wait the interval the provider named or --backoff, and retry the SAME
+	// task once. The status is read from the harness's own output because POSIX truncates
+	// 429 to 173, and the row records the code the provider named.
+	limited := false
+	if harnessLog, readLogErr := os.ReadFile(r.jobDir + "/harness.log"); readLogErr == nil {
+		limited = RateLimited(harnessLog)
+	}
+	if limited {
+		rec.RC, end = 429, EndFailed
+	}
+
 	raw, readErr := os.ReadFile(ResultPath(r.jobDir))
 	report := Report{Class: ClassNoResult}
 	if readErr == nil {
@@ -94,8 +106,12 @@ func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (
 	// Rule 7's one automatic re-queue is decided BEFORE the files move, because the new
 	// task's text is the old task's text and it is read from where the old task still is.
 	requeued := false
-	if end == EndKilled {
+	switch {
+	case end == EndKilled:
 		requeued = in.requeue(sc, now)
+	case limited && sc.Requeued < 1:
+		in.waitBackoff(r.jobDir)
+		requeued = in.retry429(sc, now)
 	}
 
 	fin, usagePath := in.settle(sc, r.jobDir, rec, end, now)
@@ -165,6 +181,46 @@ func (in RunInput) requeue(sc Sidecar, now time.Time) bool {
 	next := sc
 	next.ID = NewID(now, sc.Label)
 	next.From, next.Requeued, next.Reaped = sc.ID, 1, 1
+	next.Job, next.Slot, next.Started, next.Ended, next.End, next.Class = "", 0, "", "", "", ""
+	if err := in.Pool.Add(text, next); err != nil {
+		return false
+	}
+	return true
+}
+
+// waitBackoff holds the slot for the interval a 429 asks for: the provider's own if its
+// output names one, otherwise --backoff. A wait past the cap is capped, because the
+// machinery never waits forever.
+func (in RunInput) waitBackoff(jobDir string) {
+	delay := Backoff(1, in.Backoff)
+	if raw, err := os.ReadFile(jobDir + "/harness.log"); err == nil {
+		if named, ok := ProviderRetryAfter(raw); ok {
+			delay = named
+		}
+	}
+	switch {
+	case delay <= 0:
+		return
+	case delay > MaxBackoff:
+		delay = MaxBackoff
+	}
+	time.Sleep(delay)
+}
+
+// retry429 is the rate-limit retry: the same task text as a new attempt, marked so a second
+// 429 is final. Unlike rule 7's re-queue it leaves Reaped alone, because the retry may
+// still be reaped at a deadline of its own.
+func (in RunInput) retry429(sc Sidecar, now time.Time) bool {
+	if sc.Requeued >= 1 {
+		return false
+	}
+	text, err := in.Pool.Text(Running, sc.ID)
+	if err != nil {
+		return false
+	}
+	next := sc
+	next.ID = NewID(now, sc.Label)
+	next.From, next.Requeued = sc.ID, 1
 	next.Job, next.Slot, next.Started, next.Ended, next.End, next.Class = "", 0, "", "", "", ""
 	if err := in.Pool.Add(text, next); err != nil {
 		return false

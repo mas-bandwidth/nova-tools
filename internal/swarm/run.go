@@ -33,6 +33,7 @@ type RunInput struct {
 	Max            int
 	LaunchTimeout  time.Duration
 	UsageInterval  time.Duration
+	Backoff        time.Duration // the wait before retrying a 429; zero takes the default
 	Stdout, Stderr io.Writer
 	Now            func() time.Time
 	Supervisor     string // this binary, re-invoked as `supervise`

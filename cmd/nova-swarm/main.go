@@ -40,7 +40,7 @@ const usage = `nova-swarm: a pool of one-task workers, with the ways a swarm fai
 usage:
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
-  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--launch-timeout <s>] [--usage-interval <s>]
+  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file>   (spawned by run; refused by hand)
   nova-swarm status    --pool <dir> [--max <n>]
   nova-swarm stop      --pool <dir>
@@ -394,8 +394,12 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	max := maxFlag(f.fs)
 	launchTimeout := f.fs.Int("launch-timeout", 10, "")
 	usageInterval := f.fs.Int("usage-interval", 5, "")
+	backoff := f.fs.Int("backoff", int(swarm.DefaultBackoff/time.Second), "")
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	if *backoff < 1 {
+		f.add("--backoff wants a positive number of seconds to wait before retrying a provider's 429; zero or less is not a wait")
 	}
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	f.wantCount(*workers, "workers", "how many workers run at once, at most 64")
@@ -461,6 +465,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		Pool: p, Worker: w, Key: key, Workers: *workers, Hours: *hours, Max: *max,
 		LaunchTimeout: time.Duration(*launchTimeout) * time.Second,
 		UsageInterval: time.Duration(*usageInterval) * time.Second,
+		Backoff:       time.Duration(*backoff) * time.Second,
 		Stdout:        stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
 		Supervisor: self, WorkerFile: *worker,
 	})

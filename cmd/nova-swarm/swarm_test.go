@@ -385,6 +385,82 @@ func TestANoteReachesARunningWorker(t *testing.T) {
 	mustContain(t, "the run", stdout, "notes=1/1")
 }
 
+// Rule 13, the rate-limit half: a provider's 429 is not a failed task. The dispatcher
+// holds the slot, waits the backoff, and retries the SAME task once; a second 429 fails it
+// with rc=429 in its sidecar and its cost row.
+func TestA429IsRetriedOnceAndThenFailed(t *testing.T) {
+	b := newBench(t)
+	id := b.add("a provider that is rate limited\nFAKE-429\nFAKE-LAUNCHES\nFAKE-USAGE 10 5 - - -\n")
+
+	exit, stdout, stderr := b.run("--backoff", "1")
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	// Retried once and no third time: two attempts, each a RUN DONE.
+	if n := strings.Count(stdout, "RUN DONE id="); n != 2 {
+		t.Fatalf("a 429 wants exactly two attempts (one retry), got %d:\n%s", n, stdout)
+	}
+	mustContain(t, "the retry", stdout, "rc=429")
+	mustContain(t, "the retry", stdout, "dest=failed")
+
+	// The retry is a new attempt carrying from=<first>; its sidecar and its cost row both
+	// carry rc=429.
+	var retry string
+	entries, err := os.ReadDir(filepath.Join(b.pool, "failed"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		raw, err := os.ReadFile(filepath.Join(b.pool, "failed", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var sc struct {
+			RC   int    `json:"rc"`
+			From string `json:"from"`
+		}
+		if err := json.Unmarshal(raw, &sc); err != nil {
+			t.Fatal(err)
+		}
+		if sc.From == id && sc.RC == 429 {
+			retry = strings.TrimSuffix(e.Name(), ".json")
+		}
+	}
+	if retry == "" {
+		t.Fatalf("the retry wants a sidecar with from=%s and rc=429 under failed/", id)
+	}
+	row, err := os.ReadFile(filepath.Join(b.pool, "usage", retry+".tsv"))
+	if err != nil {
+		t.Fatalf("the retry's cost row is missing: %v", err)
+	}
+	if !strings.Contains(string(row), "\t429\t") {
+		t.Errorf("the retry's cost row wants rc=429:\n%s", row)
+	}
+}
+
+// A retry is a second attempt with its own usage row, and `cost` sums each attempt once:
+// two rows of 10 in and 5 out are 20 and 10, never 40 and 20.
+func TestTwoAttemptsSumOnceEach(t *testing.T) {
+	b := newBench(t)
+	b.add("a provider that is rate limited\nFAKE-429\nFAKE-USAGE 10 5 - - -\n")
+
+	exit, stdout, stderr := b.run("--backoff", "1")
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	exit, stdout, stderr = b.swarm("cost", "--pool", b.pool)
+	if exit != 0 {
+		t.Fatalf("cost exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "cost", stdout, "COST OK tasks=2 in=20 out=10")
+	if n := strings.Count(stdout, "COST TASK "); n != 2 {
+		t.Errorf("two attempts want two COST TASK rows, got %d:\n%s", n, stdout)
+	}
+}
+
 // grepTree reports the first file under dir holding needle, or "".
 func grepTree(t *testing.T, dir, needle string) string {
 	t.Helper()
