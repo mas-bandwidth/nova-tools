@@ -1,0 +1,73 @@
+;; nova-sandbox — darwin sandbox-exec profile, TEMPLATE.
+;;
+;; SPEC-SANDBOX rule 15: the policy is generated, never hand-edited. This file is
+;; the generator's input and the only copy of the profile text; docs/SPEC-SANDBOX.md
+;; describes it and does not restate it.
+;;
+;; Caller paths never enter the text: they arrive as -D NAME=<resolved path> and are
+;; read back as (param "NAME"). Every param named below MUST be passed with -D —
+;; an unfilled param is `invalid data type of path filter; expected pattern, got
+;; boolean` at exit 65, not a weaker wall.
+;;
+;; A line whose whole content is a marker is replaced by the generator:
+;;
+;;   @@OPTROOTS@@   one (allow file-read* (subpath "<root>")) per OPTIONAL root that
+;;                  EXISTS on this machine (/opt/homebrew, /opt/local, and the
+;;                  directory of the resolved command when it is under neither).
+;;                  An absent root is skipped, never refused.
+;;   @@ANCESTORS@@  one (allow file-read-metadata (literal "<dir>")) per proper
+;;                  ancestor of every --read, --write, --cwd and --tmp path, "/"
+;;                  excluded (it is granted file-read* above). Without these,
+;;                  mkdir(2)/stat(2) on a leading component of an absolute path
+;;                  inside the write set is denied and `mkdir -p`, `git init` and
+;;                  `git clone` by absolute path die at /private or /Users.
+;;                  file-read-metadata is stat only: LISTING an ancestor stays denied.
+;;   @@READS@@      one (allow file-read* (subpath (param "READn"))) per --read, n from 0.
+;;   @@WRITES@@     one (allow file-read* file-write* (subpath (param "WRITEn"))) per
+;;                  --write, n from 0.
+;;   @@NET@@        (allow network*) — the line is emitted EMPTY under --net-deny.
+;;
+;; HOME is not a root and gets no grant of its own: rule 9 requires HOME to resolve
+;; inside a --write, so it is already covered by that path's WRITEn grant. The
+;; (param "HOME") line below is the assertion of that, passed with -D HOME=<data home>
+;; and identical to one of the WRITEn paths.
+
+(version 1)
+(deny default)
+
+;; exec and signal are TWO clauses. Folding them into
+;; (allow process-exec* process-fork signal (target self)) applies the target filter
+;; to the exec too and denies it: execvp() ... Operation not permitted, exit 71.
+(allow process-exec* process-fork)
+(allow signal (target self) (target children))
+
+(allow sysctl-read)
+(allow mach-lookup)
+
+;; The symlinks macOS puts in / are granted as literals on the LINK. (literal "/")
+;; grants the root directory only; a subpath grant on /var or /tmp is not wanted.
+;; Without these, `cat /etc/hosts` is denied and every /bin/sh -c dies on
+;; "Error opening /private/var/select/sh".
+(allow file-read* (literal "/") (literal "/etc") (literal "/tmp") (literal "/var"))
+
+(allow file-read* (subpath "/System"))
+(allow file-read* (subpath "/usr"))
+(allow file-read* (subpath "/bin"))
+(allow file-read* (subpath "/sbin"))
+(allow file-read* (subpath "/Library"))
+(allow file-read* (subpath "/private/etc"))
+(allow file-read* (subpath "/private/var/select"))
+(allow file-read* (subpath "/dev"))
+@@OPTROOTS@@
+
+@@ANCESTORS@@
+
+@@READS@@
+
+@@WRITES@@
+;; rule 9: HOME is inside a --write and is passed for the record.
+(allow file-read* file-write* (subpath (param "HOME")))
+
+(allow file-write* (literal "/dev/null") (literal "/dev/tty"))
+
+@@NET@@
