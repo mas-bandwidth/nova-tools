@@ -388,3 +388,22 @@ func writesACommit(words []string) bool {
 	}
 	return false
 }
+
+// The lane's .gitignore names no sentinel lock file.
+//
+// Rule 1, docs/SPEC-MERGE.md: "One state file, one lock. ... an OS lock the kernel
+// releases on death ... never a sentinel file or a directory". The Windows fix deleted the
+// sentinel writer, and the pattern for the file it used to leave behind stayed in the
+// ignore list -- a rule that reads as though a sentinel is still expected.
+func TestTheLanesIgnoreListNamesNoSentinel(t *testing.T) {
+	for _, leftover := range []string{".held", ".lock.d", ".lockdir"} {
+		if strings.Contains(GitIgnore, leftover) {
+			t.Errorf("the lane's .gitignore names %q; the lock is an OS lock the kernel releases on death, never a sentinel file or a directory (rule 1)", leftover)
+		}
+	}
+	// The lock files git and this tool really write are still ignored, so a lane
+	// mid-verb is clean.
+	if !strings.Contains(GitIgnore, "*.lock") {
+		t.Error("the lane's .gitignore no longer ignores *.lock; a git status in a lane that is mid-verb would not be clean")
+	}
+}

@@ -642,6 +642,5 @@ const GitIgnore = `# nova-merge: the tracked files are the records and nothing e
 /slots/
 /stop
 *.lock
-*.lock.held
 *.log
 `
