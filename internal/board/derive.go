@@ -64,6 +64,11 @@ type Card struct {
 	Row         bool
 	Probed      bool
 
+	// Age and Taken are rendered here because they are derivations from the injected
+	// clock, and the printing side has no clock of its own.
+	Age   string
+	Taken string
+
 	Events []Event // the card's events in the fold order, quarantined ones excluded
 }
 
@@ -293,6 +298,11 @@ func foldCard(id string, events []Event, b *Board, now time.Time, stale time.Dur
 	}
 	card.Events = folded
 
+	card.Age = Dur(now.Sub(card.Since))
+	card.Taken = "-"
+	if card.HasTake {
+		card.Taken = Dur(now.Sub(card.TakenAt))
+	}
 	if card.Open() {
 		card.Stale = stale > 0 && now.Sub(card.LatestAt) > stale
 		if by, err := time.Parse(time.RFC3339, card.By); err == nil {
@@ -300,6 +310,15 @@ func foldCard(id string, events []Event, b *Board, now time.Time, stale time.Dur
 		}
 	}
 	return card
+}
+
+// Dur renders an age. A clock a hair behind another line's reads as zero rather than as a
+// negative number, which is a number no reader has a use for.
+func Dur(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	return d.Round(time.Second).String()
 }
 
 // lessByKey is the documented total order: (at, as, id, verb, the line's bytes). An event

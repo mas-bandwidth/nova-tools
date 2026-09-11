@@ -1,0 +1,2 @@
+BOARD v1
+card a40d97cfb89da5110e6c7863d4fdaf7e as=rowan at=2026-09-10T11:00:00Z override=false hash=d3ebc55ade20 owner=rowan by=2126-01-01T00:00:00Z default=rowan\x20probes\x20it\x20himself thing=every-field leg=cpp: fixed tables: the C++ leg writes every field
