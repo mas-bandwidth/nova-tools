@@ -25,7 +25,10 @@ ten before that. The form works, and every way it failed is in the table.
 | 5 of 67 were wrong because a rule was paraphrased from memory | **quote every rule verbatim with `file:line`** |
 | a worker that died at the deadline had found things and written none of them | **append each finding the moment it exists**, never at the end |
 | one worker read 40 files and finished nothing | a **file budget** in the task, and batch 3 went from 0 to 2 of 3 complete |
-| a result file was rewritten while triage was reading it | triage reads by **mtime watermark** and copies before parsing |
+| a result file was rewritten while triage was reading it | a report is **published by rename**: whole revisions, `RESULT.md.tmp` renamed over `RESULT.md`; the tool reads only the renamed file, identifies a revision by its content hash, and never by an mtime (rule 16) |
+| a bounded review that found nothing was counted as a plan, so a worker was rewarded for finding something (**Stella's read, 2026-09-11**) | completion evidence is the head's `findings: <n>` line, separate from the count: `findings: 0` is **`clean`**, a report with no head is `plan-only` (rule 8) |
+| a dispatcher killed with workers alive released the pool lock, and a second dispatcher could reuse a slot whose data home still had a writer | slots are **durable ownership** on disk: a restart adopts a live worker by its pid file, reclaims a slot whose pid is dead, and **quarantines** a slot it cannot decide (rule 17) |
+| usage lived inside the directory `reclaim` removes | the **usage file** `<pool>/usage/<job>.tsv` is written by `finalize` outside the reclaimable subtree, before anything moves, and `reclaim` refuses without it (rule 12) |
 | 3 of 7 runs in batch 2 ended with a plan and no findings: a scratch-file refusal outside the job directory ended the run (**2026-09-11**, found that afternoon) | a refused read or write **does not end the run**; the prompt says so, the harness log is read for refusals, and `plan-only` is a named failure the tool detects |
 | a worker reaped at its deadline was moved to `failed/` and nothing ran its task again | a job reaped at its deadline is **re-queued once**, marked, and a second reap fails it |
 | the batch numbers in this spec were counted by a person reading 67 reports | `triage` counts every batch: findings, new, duplicate, plan-only, no-result, and a reader's accurate and wrong, on **one bounded line** |
@@ -103,13 +106,24 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
    silent past its deadline is reaped and its job is re-queued once, with
    `requeued=1` in the new task's sidecar; a job reaped a second time goes to
    `failed/` with `reaped=2` and is not re-queued again.
-8. **Results are counted per batch, on one line.** `triage` classifies every
-   report as `ok`, `no-result` or `plan-only`, and prints one `TRIAGE BATCH`
-   line: `findings=<n> new=<n> dup=<n> unquoted=<n> plan_only=<n>
-   no_result=<n> accurate=<n|-> wrong=<n|->`. `plan-only` is a report with no
-   finding lines, and the tool detects it. `accurate` and `wrong` are a
-   reader's verdicts recorded by `nova-swarm verdict`; a dash means nobody has
-   recorded one, and a dash is never a zero.
+8. **Results are counted per batch, on one line, and completion is evidence
+   separate from the finding count.** `triage` classifies every report as
+   `ok`, `clean`, `plan-only` or `no-result`, and prints one `TRIAGE BATCH`
+   line: `findings=<n> new=<n> dup=<n> unquoted=<n> clean=<n> plan_only=<n>
+   no_result=<n> accurate=<n|-> wrong=<n|->`. The evidence of completion is
+   the report's `## Head`, whose first line is `findings: <n>` (the
+   template below); a worker writes the head when the work is done and not
+   before. `ok` is a head with `findings: <n>`, `n > 0`; **`clean`** is a head
+   with `findings: 0` — a bounded review that finished and found nothing, or
+   a `probe-row` that finished with `not done` and its reason, which its
+   template calls a complete task; `plan-only` is a `RESULT.md` with **no
+   head**, whatever else it holds; `no-result` is no `RESULT.md` at all. A
+   `clean` report lands in `done/`, counts as complete on `RUN OK`, and is
+   never a failure: the tool must not pay a worker for finding something, and
+   a classifier that equated no findings with no work did exactly that. The
+   count of finding lines is a separate number and never decides the class.
+   `accurate` and `wrong` are a reader's verdicts recorded by `nova-swarm
+   verdict`; a dash means nobody has recorded one, and a dash is never a zero.
 9. **N workers are N processes.** Each worker has its own job directory and its
    own report file. No file is written by two workers. The coordinator merges
    the reports once, at the end: scatter, then merge, and the merge is the
@@ -140,20 +154,40 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `RESULT.md`, one `RUN DONE` or one `RUN VIOLATION`, and never a second
     notification. (2026-09-11: children stopped mid-task to wait on their own
     background tasks, then reported twice.)
-12. **Usage is copied into the job record before the directory is reclaimed.**
-    When the worker exits, the dispatcher copies the provider's own usage into
-    the sidecar: `model`, `tokens_in`, `tokens_out`, `reasoning` and `repo`,
-    the last being the repository the job worked in. For OpenCode the source
-    is the SQLite database in the data home the dispatcher exported for that
-    job (`XDG_DATA_HOME`, per job, so one job's usage is one database), read
-    once, read-only. A field the provider did not report is a dash, never a
-    zero. A job directory is reclaimed only by `reclaim`, and a `reclaim` of a
-    directory whose sidecar has no usage line is refused on one line,
-    `RECLAIM REFUSED id=<id>: no usage in sidecar`, because the evidence is
-    inside the thing about to be removed. `cost` reads the sidecar and nothing
-    else, so it answers after the directory is gone. (2026-09-11: DeepSeek's
-    usage for two batches lived in per-worker data directories that were
-    reclaimed with the jobs, and nothing survived.)
+12. **Usage is written to a file outside the reclaimable subtree, by
+    `finalize`, before anything else happens to the job.** The **usage file**
+    is `<pool>/usage/<job>.tsv`, one per job id, one header line and one row,
+    tab-separated, these columns in this order: `job`, `attempt`, `from`,
+    `started`, `ended`, `end`, `rc`, `provider`, `model`, `repo`,
+    `tokens_in`, `tokens_out`, `cache_write`, `cache_read`, `reasoning`,
+    `usd`. `attempt` is `1` for a fresh job and `2` for the one automatic
+    re-queue (rule 7), `from` is the earlier job id or `-`, `started` and
+    `ended` are UTC stamps the tool wrote, `end` is one of `done`, `killed`,
+    `budget`, `violation`, `failed`, and `rc` is the worker's exit code. A
+    field the provider did not report is the literal `-`, never `0`; `0` is
+    written only when the provider reported zero. For OpenCode the source is
+    the SQLite database in the data home the dispatcher exported for that job
+    (`XDG_DATA_HOME`, per job, so one job's usage is one database), read
+    once, read-only; the five token columns are `nova-tokens`'s five types
+    (SPEC-TOKENS rule 14 reads this file, and reads `-` as unknown, never as
+    zero). `finalize` is the runner's step after every end — exit, reap,
+    budget, violation — once the process group is dead: it writes
+    `<pool>/usage/<job>.tsv.tmp`, fsyncs it and renames it into place, and
+    **only then** moves the job's files to `done/` or `failed/`, and only
+    then prints the job's `RUN` line. The usage file is written once and
+    never rewritten; a job's second attempt is a new job id with its own
+    file, so `cost` sums each attempt once and a retry never double-counts.
+    A job whose runner died before `finalize` (rule 17) is finalized by the
+    next dispatcher on start, or by hand with `finalize --pool <dir> --task
+    <id>`, which is refused if the job's process group is still alive.
+    `reclaim` removes a job directory, and a `reclaim` of a job with no usage
+    file is refused on one line, `RECLAIM REFUSED id=<id>: no usage file at
+    <path>`, because the evidence would be inside the thing about to be
+    removed. `cost` reads `<pool>/usage/` and nothing else, so it answers
+    after the directory is gone; a killed attempt's partial usage stands in
+    its own row. (2026-09-11: DeepSeek's usage for two batches lived in
+    per-worker data directories that were reclaimed with the jobs, and
+    nothing survived.)
 
 13. **The swarm's own tokens are budgeted per job, and the machinery ends the
     job at the budget.** Every job carries `--tokens <n>` (no default) beside
@@ -191,6 +225,50 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     are de-duplicated by (file, line, rule) before `triage` prints them, and
     the duplicate count is printed, because a coordinator reading the same
     finding five times is five times the tokens for one fact.
+16. **A report is published by rename, and the tool reads only what was
+    published.** The worker's report is `<job>/RESULT.md`, and every write of
+    it is a whole revision: the prompt says, in one sentence with the two
+    commands, write the whole file to `<job>/RESULT.md.tmp` and rename it over
+    `<job>/RESULT.md`. `rename` is atomic within a directory, so a reader
+    sees the previous revision or the new one and never a prefix. The runner
+    and `triage` read `RESULT.md` only, never `RESULT.md.tmp`, and there is no
+    mtime anywhere in the tool: a revision's identity is the SHA-256 of its
+    bytes, and `<pool>/triage.json` records, per job id, the hash of the
+    revision last folded into a page. A `RESULT.md` whose hash is not the
+    recorded one is new and is folded; a file whose hash **changes between
+    the read and the end of the parse** — a writer that ignored the protocol
+    and appended in place — is not folded this run, prints `TRIAGE SKIPPED
+    id=<id>: changed while read`, and is folded by the next run when it holds
+    still; nothing is recorded as consumed unless the bytes recorded are the
+    bytes in the page. After the job's process group is dead, a leftover
+    `RESULT.md.tmp` is left where it is as data, never renamed by the tool and
+    never read, and the job's `RUN` line carries `unpublished=true`; the
+    published revision is what is counted. (Stella, 2026-09-11: a copy taken
+    during an append is a prefix, and two revisions can share an mtime.)
+17. **A dispatcher that dies leaves durable ownership, and the next one
+    recovers it or quarantines it.** A slot is a file, `<pool>/slots/<n>`,
+    written in the same step that allocates the slot and before the child
+    starts, holding `{job, pid, pgid, pid_started}` where `pid_started` is the
+    process start stamp the kernel reports for that pid; each job also holds
+    `<job>/pid` with the same four fields. The pool lock is a kernel lock and
+    dies with its holder. On start, before it claims any pending task, a
+    dispatcher reads every slot file and decides each one: the pid is alive
+    **and** its start stamp matches the file — **adopt**: the job is watched
+    from here, its deadline computed from the recorded start, and it ends
+    with the same `RUN DONE`, `RUN KILLED` or `RUN VIOLATION` it would have
+    had, printed by this dispatcher; the pid is dead and no process in the
+    recorded group is alive — **reclaim**: `finalize` runs for the job, its
+    files move as rule 12 says, and the slot is freed; anything else — a pid
+    alive with a different start stamp (pid reuse), a dead leader with a
+    survivor in the group, an unreadable slot file, a slot file with no
+    matching `<job>/pid` — is **quarantined**: the slot is never allocated
+    for the rest of this run, `RUN QUARANTINE slot=<n> id=<id|->: <reason>`
+    is printed once, and `STATUS OK` carries `quarantined=<n>` until a person
+    ends the survivor and removes the slot file. A slot is never decided by
+    a directory scan, a timer or an age. (Stella, 2026-09-11: killing the
+    dispatcher released its lock while workers still ran, and a second
+    dispatcher could reuse their slots and their data homes — the
+    2026-09-10 failure by a third route.)
 
 ## The verbs
 
@@ -205,8 +283,15 @@ nova-swarm triage   --pool <dir> [--dir <dir>]... [--since <stamp>] [--all] [--n
 nova-swarm template --name <read-pr|probe-row|fix-card>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
+nova-swarm finalize --pool <dir> --task <id>
 nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
 ```
+
+`finalize` writes the usage file for one ended job whose runner died before
+doing it (rules 12 and 17); it is refused while the job's process group is
+alive, and it is a no-op with `FINALIZE OK` if the file already exists. `run`
+does the same thing for every ended job it adopts or reclaims, so the verb is
+for a person and never for a loop.
 
 `--files <n>` is the file budget (rule 4). It has no default: a budget this
 tool supplied would be a guess about somebody else's task. Zero is refused,
@@ -243,7 +328,7 @@ verb that acts.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: a task queued, a pool drained, a page written |
-| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named |
+| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot |
 | 2 | could not run: missing flag, unreadable pool, unreadable worker description, a key file that is absent or empty, `--workers` above the cap, bad invocation |
 
 **A failed task is not a failed `run`.** A worker that exits non-zero moves its
@@ -264,29 +349,35 @@ ADD OK id=<id> label=<label> template=<name|-> deadline=<d> pending=<n>
 ADD REFUSED: <reason>
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> deadline=<d> job=<path>
-RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|no-result|plan-only> findings=<n> refusals=<n> notes=<sent>/<read|-> dest=<done|failed>
+RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
+RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed> usage=<path>
+RUN QUARANTINE slot=<n> id=<id|->: <reason>
+RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only> findings=<n> refusals=<n> notes=<sent>/<read|-> unpublished=<true|false> dest=<done|failed>
 RUN VIOLATION id=<id> slot=<n> background=<n> dest=failed: <reason>
-RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> requeued=<true|false> reaped=<1|2>
+RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> unpublished=<true|false> requeued=<true|false> reaped=<1|2>
 RUN MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
 RUN OK started=<n> done=<n> failed=<n> killed=<n> pending=<n> after=<d>
 RUN NOTE <the one remedy line>
 RUN REFUSED: <reason>
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
-STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n>
-TRIAGE REPORT at=<stamp> job=<name> items=<n> red=<n> green=<n> notdone=<n>: <head>
-TRIAGE DEGRADED at=<stamp> job=<name> lines=<n>: <first heading>
+STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
+TRIAGE REPORT id=<id> rev=<sha12> job=<name> result=<ok|clean|plan-only> items=<n> red=<n> green=<n> notdone=<n>: <head>
+TRIAGE DEGRADED id=<id> rev=<sha12> job=<name> lines=<n>: <first heading>
+TRIAGE SKIPPED id=<id>: changed while read
 TRIAGE MORE kind=<report> shown=<n> total=<t> --max 0
-TRIAGE BATCH reports=<n> findings=<n> new=<n> dup=<n> unquoted=<n> plan_only=<n> no_result=<n> accurate=<n|-> wrong=<n|->
-TRIAGE OK reports=<n> template=<n> degraded=<n> items=<n> red=<n> green=<n> notdone=<n> page=<path>
+TRIAGE BATCH reports=<n> findings=<n> new=<n> dup=<n> unquoted=<n> clean=<n> plan_only=<n> no_result=<n> accurate=<n|-> wrong=<n|->
+TRIAGE OK reports=<n> template=<n> degraded=<n> skipped=<n> items=<n> red=<n> green=<n> notdone=<n> page=<path>
 TRIAGE REFUSED: <reason>
 VERDICT OK id=<id> who=<name> accurate=<n> wrong=<n>
 VERDICT REFUSED: <reason>
-COST TASK id=<id> in=<n> out=<n> reasoning=<n|-> usd=<n.nnnn> model=<model> repo=<repo|->
-COST OK tasks=<n> in=<n> out=<n> usd=<n.nnnn> window=<stamp>..<stamp>
+COST TASK id=<id> attempt=<n> end=<word> in=<n|-> out=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> usd=<n.nnnn|-> model=<model> repo=<repo|->
+COST OK tasks=<n> in=<n> out=<n> cache_write=<n> cache_read=<n> reasoning=<n> dashes=<in>,<out>,<cw>,<cr>,<r> usd=<n.nnnn> window=<stamp>..<stamp>
 REQUEUE OK id=<id> from=<old-id> changed=<true>
 NOTE OK id=<id> notes=<n>
 NOTE REFUSED: <reason>
-RECLAIM OK id=<id> freed=<bytes>
+FINALIZE OK id=<id> usage=<path> existed=<true|false>
+FINALIZE REFUSED id=<id>: <reason>
+RECLAIM OK id=<id> freed=<bytes> usage=<path>
 RECLAIM REFUSED id=<id>: <reason>
 STOP OK pool=<dir> running=<n>
 ```
@@ -312,9 +403,11 @@ this spec's own numbers table was assembled from by hand, printed by the tool
 instead. `findings` is every finding line across the batch's reports; `new` is
 findings not marked `dup:`; `dup` is findings marked `dup:` plus findings that
 match an owed item and were not marked; `unquoted` is findings with no verbatim
-rule beside them; `plan_only` and `no_result` are reports. `accurate` and
-`wrong` sum the recorded verdicts, and print a dash when no verdict exists for
-any report in the batch. The line never grows with the batch.
+rule beside them; `clean`, `plan_only` and `no_result` are reports (rule 8:
+`clean` is a head saying `findings: 0`, `plan_only` is no head, `no_result` is
+no file). `accurate` and `wrong` sum the recorded verdicts, and print a dash
+when no verdict exists for any report in the batch. The line never grows with
+the batch.
 
 ## The key, read as data
 
@@ -370,9 +463,15 @@ running and does one task's work is worse than a pool of one, because the number
 is believed.
 
 **A slot is held by exactly one worker and released only when that worker's
-process is reaped.** The dispatcher keeps the slot → task map and the task →
-pid map; a slot is freed in the same step that reaps the pid, never on a timer
-and never by a scan of directories. See **the races**.
+process is reaped.** The slot → task and task → pid maps are files,
+`<pool>/slots/<n>` and `<job>/pid`, each holding `{job, pid, pgid,
+pid_started}` (rule 17); the slot file is written in the same step that
+allocates the slot, before the child starts, and removed in the same step that
+reaps the pid, never on a timer and never by a scan of directories. The files
+are the ownership, not a cache of it: a dispatcher that starts over a pool with
+slot files present adopts, reclaims or quarantines each one before it claims a
+task, and a quarantined slot stays out of the map for the whole run. See **the
+races**.
 
 **The refresh is one way, and it is a copy rather than a mount or a link.** A
 worker that could write back into the home copy could change the next worker's
@@ -449,7 +548,10 @@ draft could not explain.
 The prompt also says, in one line each: **there is no bus** — do not try to send
 anything to anybody; **do not loop, poll or wait for replies**; write what you
 are about to do at the top of `RESULT.md` **before** doing it, append as you go,
-and stop.
+and stop; **every write of `RESULT.md` is whole: write it to `RESULT.md.tmp`
+and rename it over `RESULT.md`** (rule 16), with the two commands spelled out;
+and **when the work is done, write the `## Head` with `findings: <n>` — `0` is a
+complete answer** (rule 8).
 
 ## The task templates
 
@@ -478,7 +580,9 @@ below. Each condition names the failure it closes.
    did not open.
    [batch 3: with a budget, 2 of 3 tasks complete; without, 0 of 3]
 5. A RESULT.md CONTAINING ONLY A PLAN IS A FAILED TASK. The plan belongs at
-   the top, before the work; the findings are the work.
+   the top, before the work; the findings are the work. A finished read that
+   found nothing is NOT a failed task: write the `## Head` with `findings: 0`.
+   Never report a finding to have something to report.
 6. Check the board before reporting: a card that already names this is a `dup:`.
 ```
 
@@ -523,6 +627,8 @@ One shape, printed by `nova-swarm template --name result`, and the shape
 # <task>
 
 ## Head
+findings: <n>
+notes read: <n>
 <one paragraph: what was asked, what the state is now, and the single most
 important fact.>
 
@@ -544,6 +650,13 @@ important fact.>
 <one sentence a coordinator can paste into the board.>
 ```
 
+**The head's first line is `findings: <n>`, and it is the completion
+evidence (rule 8).** It is written when the work is done; a report without it is
+`plan-only`, a report with `findings: 0` is `clean`. The number is the worker's
+own count and `triage` prints its own beside it; they may disagree, and the
+worker's decides the class while the tool's decides `findings=` on the batch
+line.
+
 **`state` is one of exactly three words**: `red`, `green`, `not done`. A
 fourth word is a report a coordinator has to interpret, and a coordinator reading
 forty reports interprets nothing.
@@ -555,29 +668,40 @@ lose the one finding the worker got out before it died.
 
 ## `triage` — one page
 
-`triage` walks the job directories, takes every `RESULT.md` **newer than the
-watermark**, prints one line each, and writes **one page**:
+`triage` walks the job directories, takes every `RESULT.md` **whose revision
+hash is not the one recorded for that job**, prints one line each, and writes
+**one page**:
 
 ```
 <pool>/reports/<UTC>.md
 ```
 
-The page carries, per report: its heading, its path, its mtime, its **Per item**
-table and its **Left owed** list, in mtime order, oldest first. The terminal
-gets one line per report and then the counts — `reports`, `template`,
-`degraded`, `items`, `red`, `green`, `notdone` — and the page's path. That is
+The page carries, per report: its job id, its revision hash, its heading, its
+path, its **Per item** table and its **Left owed** list, in job-id order
+(the id begins with the job's UTC stamp), oldest first. The terminal gets one
+line per report and then the counts — `reports`, `template`, `degraded`,
+`skipped`, `items`, `red`, `green`, `notdone` — and the page's path. That is
 the whole of the terminal output, capped at `--max`, because the page is the
 artifact and the terminal is an index to it.
 
-**The watermark is state**, `<pool>/triage.json`, holding `last`, `last_iso`,
-`runs` and `last_count`, written atomically. `--all` ignores it, `--since`
-overrides it, `--no-state` does not advance it. A triage with no watermark
-reprints the night.
+**The consumed set is state**, `<pool>/triage.json`, holding `version`, `runs`,
+`last_iso`, `last_count` and `consumed`, a map of job id to the SHA-256 of the
+revision last folded into a page, written atomically through a temporary file
+and a rename. `--all` ignores it, `--since <stamp>` restricts the walk to jobs
+whose id stamp is at or after `<stamp>`, `--no-state` does not advance it. A
+triage with no state reprints the night. There is no mtime in this tool: two
+revisions with one mtime are two hashes, and an mtime a filesystem rounds is
+not an identity (rule 16).
 
-**A report is copied before it is parsed.** This closes the third race below: a
-worker appending to `RESULT.md` while triage reads it produced a page with half
-a table in it. The copy is into the pool's own scratch, it is the copy that is
-parsed, and the mtime recorded is the copy's source mtime.
+**A report is read as one revision, and a revision that moved is not
+consumed.** The tool reads `RESULT.md` into memory, hashes the bytes, parses
+that buffer, and hashes the file again before recording anything; a second
+hash that differs from the first is `TRIAGE SKIPPED id=<id>: changed while
+read`, the report is not in the page, `consumed` is not advanced for it, and
+the next run takes it whole. The worker's own protocol (rule 16: write
+`RESULT.md.tmp`, rename) makes a torn read impossible; the double hash makes a
+worker that ignored the protocol visible rather than half-quoted.
+`RESULT.md.tmp` is never opened by `triage`.
 
 ## The board link
 
@@ -598,11 +722,15 @@ that also announced would be two tools in a bug report.
 
 ## Cost per task, and rate limits
 
-`cost` reports, per task and per window: **input tokens, output tokens, and
-dollars**, with the model named. The numbers come from the harness's own
-accounting, recorded into the task's sidecar file when the worker exits; a task
-whose harness reported nothing prints `in=- out=- usd=-` rather than a zero,
-because a zero is a measurement and a dash is an absence.
+`cost` reports, per task and per window: **the five token types and
+dollars**, with the model, the attempt and the way the job ended named. The
+numbers come from the harness's own accounting, recorded into the job's usage
+file `<pool>/usage/<job>.tsv` by `finalize` when the job ends (rule 12); a
+task whose harness reported nothing prints `in=- out=- usd=-` rather than a
+zero, because a zero is a measurement and a dash is an absence, and `COST OK`
+carries `dashes=` so a total with an absence in it is never read as complete.
+`cost` reads `<pool>/usage/` and nothing under `done/`, `failed/` or
+`running/`, which is why it answers after `reclaim`.
 
 This exists because **a fleet can burn a session**: one fleet ran about 9M
 tokens, and three parallel workflows hit the limit in 20 minutes (Glenn,
@@ -631,8 +759,10 @@ a requeue with the same text is a retry, and a retry of a task that failed for
 what it said will fail the same way. The remedy that worked in batch 3 was a
 **file budget added to the text**, not a second attempt at the same sentence.
 
-The old task's files stay where they are. Nothing is deleted, ever: a pool is a
-record.
+The old task's files stay where they are. `requeue` deletes nothing; the one
+verb that removes anything is `reclaim`, and it removes a job directory only
+after the job's usage file exists (rule 12). Reports in `reports/` and usage
+files in `usage/` are never deleted by any verb: a pool is a record.
 
 ## The numbers from today
 
@@ -684,16 +814,33 @@ corpse. The dispatcher's own exit does not wait forever on it — `--hours` is a
 deadline for the dispatcher too, and a surviving child is named in `RUN OK` so a
 person can end it.
 
-**A result file rewritten mid-triage.** Closed by copying before parsing; see
-**triage**. The copy also makes the watermark honest: a report appended to after
-triage read it has a newer mtime than the watermark and is picked up by the next
-triage, which is correct — it changed.
+**A result file rewritten mid-triage.** Closed by publication by rename (rule
+16): the worker writes whole revisions and renames them into place, so a read
+sees one revision entire; and by the double hash in **triage**: a file whose
+bytes change between the read and the record is skipped, not consumed, and
+taken whole next time. Two revisions in one second are two hashes. A copy
+taken during an append would be a prefix, and a watermark by mtime would let
+the second of two same-stamp revisions be certified consumed without appearing
+in a page; neither exists here.
 
 **Two dispatchers on one pool.** Both would move the same pending task into
 `running/`. The move is the claim (`rename` is atomic within a directory, and a
 dispatcher that loses the rename simply takes the next task), and on top of that
-`run` holds a lock on the pool directory for its whole life and a second `run`
-exits 2 naming the holder.
+`run` holds a kernel lock on `<pool>/run.lock` for its whole life and a second
+`run` exits 2 naming the holder.
+
+**A dispatcher that dies with workers alive.** The kernel lock dies with it and
+a second `run` can start; the slot map is on disk (rule 17), so the second
+`run` adopts every worker whose pid and start stamp match its slot file,
+reclaims every slot whose whole process group is gone (running `finalize` for
+the job first), and quarantines everything it cannot decide: a reused pid, a
+dead leader with a live survivor, an unreadable file. A quarantined slot is not
+in the map, is named on `STATUS OK quarantined=`, and is a person's to clear.
+Nothing about a slot is ever inferred from a directory listing or an age. The
+dispatcher is not a lifecycle container for its children — a child in its own
+process group outlives a SIGKILL of its parent by design, so that a dispatcher
+crash does not throw away twenty minutes of a worker's reading — which is
+exactly why the ownership must be durable.
 
 **A task file read after it was moved.** The dispatcher reads the task text
 **after** the rename into `running/`, from the path it renamed to, never from the
@@ -718,7 +865,11 @@ pending path it no longer owns.
 - **It does not judge accuracy.** `accurate` and `wrong` are a reader's
   verdicts, recorded by `verdict`, and a batch line with no verdict prints a
   dash.
-- **It does not delete anything.** A pool is a record.
+- **It deletes one thing, deliberately: a job directory, under `reclaim`,
+  after the job's usage file exists** (rule 12). Reports, usage files, slot
+  files of a quarantined slot and the pool's own state are never deleted by
+  any verb. A pool is a record, and the record is the part outside the
+  reclaimable subtree.
 - **It does not spawn a task chip or any other follow-up** (Glenn, 2026-09-10:
   **no task chips**; follow-ups go to the queue).
 
@@ -748,10 +899,15 @@ places where this spec is deliberately **not** a transcription:
    shell process per running task, and the dispatcher's own five-second poll on
    top. Here it is one process watching every child.
 8. **A `RESULT.md` containing only a plan counts as success** if the worker
-   exited 0. Here `run` classifies a result as `ok`, `no-result` or `plan-only`
-   — the last two move to `failed/` — because **a `RESULT.md` with only a plan is
-   a failed task**, and only the tool can see that at the moment it happens.
-9. **`triage` parses the live `RESULT.md`.** Here it copies first.
+   exited 0. Here `run` classifies a result as `ok`, `clean`, `no-result` or
+   `plan-only` — the last two move to `failed/` — because **a `RESULT.md` with
+   only a plan is a failed task**, and only the tool can see that at the
+   moment it happens; and a finished read with `findings: 0` is `clean` and
+   in `done/`, because a classifier that failed it would be paying for
+   findings (rule 8).
+9. **`triage` parses the live `RESULT.md`.** Here the worker publishes whole
+   revisions by rename, the tool reads only the renamed file, identifies a
+   revision by its hash, and skips a file that moved under it (rule 16).
 10. **The conditions that made batch 2 work live in the task text a person
     retypes.** Here they are templates in the binary, so they are not retyped and
     not forgotten — which is the single highest-value thing in this spec.
@@ -783,7 +939,7 @@ places where this spec is deliberately **not** a transcription:
 19. **`run-worker.sh`'s per-worker data directory is reclaimed with the
     job.** The harness's usage database lived there, and today's DeepSeek
     batches have no surviving usage at all. Here rule 12: usage into the
-    sidecar first, and a reclaim with no usage line is refused.
+    `<pool>/usage/<job>.tsv` first, written by `finalize` before the job moves, and a reclaim with no usage file is refused.
 20. **There is no path a message can take to a running worker.** A child that
     was doing the wrong thing could only be killed. Here rule 10: the note
     file, appended by the tool, counted in the report.
@@ -791,6 +947,13 @@ places where this spec is deliberately **not** a transcription:
     spawned background tasks, stopped to wait on them, and reported twice.
     Here rule 11: one process group, checked at exit, `RUN VIOLATION` and
     quarantine.
+22. **The slot map lives in the dispatcher's memory, and a dispatcher killed
+    with workers alive leaves a pool the next dispatcher reads as empty.**
+    Here rule 17: slot files and pid files, adopt, reclaim or quarantine
+    before the first claim.
+23. **Usage, when it is copied at all, goes into the job's own directory.**
+    Here rule 12: `<pool>/usage/<job>.tsv`, written by `finalize` before the
+    job's files move, and `reclaim` refuses without it.
 
 ## Tests this spec demands
 
@@ -820,10 +983,17 @@ be seen red before it is trusted.
    one; a worker that sleeps past its deadline is killed, `requeued=true
    reaped=1`, runs again, is killed again, `requeued=false reaped=2`, and lands
    in `failed/`; the dispatcher exits at `--hours` with the injected clock.
-8. Seven reports, three of them plan-only, one with a recorded verdict:
-   `TRIAGE BATCH` is exactly one line, its counts are the seven reports'
-   counts, `accurate` and `wrong` are the verdict's numbers; with no verdict
-   both print `-`; a report with no finding lines is `plan_only`.
+8. `TestCompletionIsEvidenceNotCount`: eight jobs — three with findings, one
+   completed review with `findings: 0` and no finding lines, one completed
+   `probe-row` with `findings: 0` and one item `not done` with its reason,
+   one report with a plan and no head, one with no head and one finding
+   line appended before the kill, and one with no `RESULT.md` — give
+   `TRIAGE BATCH reports=7 clean=2 plan_only=2 no_result=1` on exactly one
+   line, `findings=` counts the appended line of the headless report, the
+   two `clean` jobs are in `done/` and `RUN OK` counts them done, the two
+   `plan-only` are in `failed/`; with one recorded verdict `accurate` and
+   `wrong` are its numbers and with none both print `-`; a mutation that
+   classifies `findings: 0` as `plan-only` turns the test red.
 9. N workers are N child processes, each with its own job directory and its
    own report file; a tripwire on every path a child opens for writing finds
    no path opened by two children; the merge into the page runs once, after
@@ -839,13 +1009,23 @@ be seen red before it is trusted.
     a worker that forks and waits for its child is not a violation; the prompt
     contains the one-process sentence; every job prints exactly one of `RUN
     DONE` or `RUN VIOLATION`.
-12. A fake harness that writes a usage row into the job's data home: after
-    exit the sidecar carries `model`, `tokens_in`, `tokens_out`, `reasoning`
-    and `repo` equal to the row; `reclaim` on that job removes the directory
-    and prints `RECLAIM OK`; `reclaim` on a job whose sidecar has no usage
-    line is `RECLAIM REFUSED` exit 1 and the directory is intact; `cost`
-    prints the numbers from the sidecar after the directory is gone; a
-    provider that reported no reasoning count prints `reasoning=-`.
+12. `TestUsageOutlivesTheJob`: a fake harness that writes a usage row into the
+    job's data home: after exit `<pool>/usage/<job>.tsv` exists, with the
+    sixteen columns in order, `tokens_in`, `tokens_out`, `cache_write`,
+    `cache_read`, `reasoning`, `model` and `repo` equal to the row, `end=done`
+    and `attempt=1`, and its mtime is older than the job's move into `done/`
+    (the file is written before anything moves); `reclaim` on that job
+    removes the directory and prints `RECLAIM OK usage=<path>`; `reclaim` on
+    a job with no usage file is `RECLAIM REFUSED … no usage file` exit 1 and
+    the directory is intact; `cost` prints the numbers after the directory
+    is gone; a provider that reported no cache counts prints `cache_write=-
+    cache_read=-` and `COST OK dashes=0,0,1,1,0`; a job killed at its deadline
+    has a row with `end=killed` and whatever partial usage the database held;
+    its re-queue is a second file with `attempt=2 from=<old-id>`, and `COST
+    OK tasks=2` sums each once; a dispatcher killed with an injected kill
+    point between the child's exit and `finalize` leaves no usage file, the
+    next `run` writes it on start and prints `RUN RECLAIM … usage=<path>`,
+    and `finalize --task` on a job whose group is alive is `FINALIZE REFUSED`.
 13. `TestBudgetEndsTheJobAndKeepsFindings`: a fake harness that appends a
     finding then a usage row past `--tokens`: the job ends with `RUN BUDGET`,
     the finding stands in `RESULT.md`, and a job under budget is untouched.
@@ -853,9 +1033,38 @@ be seen red before it is trusted.
     tasks queues three jobs from files with no prompt text on the command
     line; `triage --batch` on their results prints counts first, at most
     `--max` findings, then `TRIAGE MORE`, and never a transcript line.
-15. `TestResultShapeIsMechanical`: a `RESULT.md` missing the head is `RUN
-    MALFORMED` with the line number and is not folded; two jobs reporting
+15. `TestResultShapeIsMechanical`: a `RESULT.md` whose head lacks the
+    `findings: <n>` line, or whose item table has a fourth state word, is
+    `RUN MALFORMED` with the line number and is not folded (a report with no
+    head at all is `plan-only`, test 8, never malformed); two jobs reporting
     one (file, line, rule) fold to one finding with `dup=1` printed.
+16. `TestAReportIsARevision`: a fake worker that publishes three revisions
+    by writing `RESULT.md.tmp` and renaming, the third while `triage` is
+    between its first hash and its parse (injected pause): the page holds
+    revision two or three entire and never a prefix, and the revision not
+    in the page is folded by the next run; two revisions renamed into place
+    inside one second with the filesystem's mtime resolution forced equal
+    are two `rev=` hashes and both appear in pages; a fake worker that
+    appends in place during the pause gives `TRIAGE SKIPPED id=<id>: changed
+    while read`, nothing recorded in `consumed` for it, and the whole file in
+    the next page; `triage` never opens `RESULT.md.tmp` (a tripwire on every
+    path opened); a worker killed with a `RESULT.md.tmp` on disk ends `RUN
+    KILLED … unpublished=true` and the tmp file is still there afterwards,
+    unread; the source tripwire finds no `ModTime` in the package.
+17. `TestADeadDispatcherIsRecoveredOrQuarantined`: a dispatcher SIGKILLed
+    with one worker alive, one worker exited but not finalized, and one
+    worker whose leader is dead and whose group has a survivor, then `run`
+    again on the same pool: the live worker is adopted (`RUN ADOPT` with its
+    original start stamp, its deadline honoured from that stamp, exactly one
+    `RUN DONE` for it, printed by the second dispatcher, and its slot never
+    handed to a pending task while it lives), the exited job is finalized
+    and reclaimed (`RUN RECLAIM … usage=<path>`, its slot then allocated to
+    a pending task), the third slot is `RUN QUARANTINE` with the reason,
+    never allocated, `STATUS OK quarantined=1`, and the `run` exits 1 at its
+    end; a slot file whose pid is alive with a different start stamp is
+    quarantined; the tripwire finds no `pgrep`, no `ps` and no match on a
+    command line; a second `run` while the first is alive is still exit 2
+    naming the holder.
 
 ## The work list
 
@@ -868,20 +1077,25 @@ independent problem at once, a `### First run` in `README.md`, a `quickstart`
 verb, and tests that pin all three by executing them.
 
 1. **`internal/swarm/pool.go`** — the pool directory: `pending/`, `running/`,
-   `done/`, `failed/`, `reports/`, `scratch/`, the task id scheme (UTC stamp,
-   label, random half, so two adds in one second cannot collide — `nova-bus`'s id
-   lesson), the sidecar file with `files`, `requeued`, `reaped`, `from` and the
-   verdict, the atomic claim by rename, the pool lock, the one automatic
-   re-queue of a reaped job. Tests: two claimants, one winner; an id collision
-   is impossible by construction; demanded test 7.
+   `done/`, `failed/`, `reports/`, `scratch/`, `slots/`, `usage/`, the task id
+   scheme (UTC stamp, label, random half, so two adds in one second cannot
+   collide — `nova-bus`'s id lesson), the sidecar file with `files`,
+   `requeued`, `reaped`, `from` and the verdict, the atomic claim by rename,
+   the kernel lock on `run.lock`, the one automatic re-queue of a reaped job,
+   and `finalize`: the usage file written through `.tmp` and rename before
+   any move (rule 12). Tests: two claimants, one winner; an id collision is
+   impossible by construction; demanded tests 7 and 12.
 2. **`internal/swarm/key.go`** — the key file read as data: first line, the two
    strip rules, whitespace out, empty refused with the creating command. Tests:
    a key never appears in any returned string; a file with a second line is read
    as one line; `export VAR=` and a bare key both work; mode warnings.
-3. **`internal/swarm/slot.go`** — the slot map: allocate-and-record in one step,
-   free-on-reap in one step, retire a slot whose child survived. Tests: `n`
-   workers against `n-1` slots never double-hold; a surviving child's slot is
-   never reallocated.
+3. **`internal/swarm/slot.go`** — the slot map as files: allocate-and-record
+   (`<pool>/slots/<n>` and `<job>/pid`, with pid, pgid and the kernel's start
+   stamp) in one step, free-on-reap in one step, retire a slot whose child
+   survived, and the start-up pass: adopt, reclaim or quarantine every slot
+   file before the first claim (rule 17). Tests: `n` workers against `n-1`
+   slots never double-hold; a surviving child's slot is never reallocated; a
+   reused pid is quarantined, not adopted; demanded test 17.
 4. **`internal/swarm/worker.go`** — the worker description (strict decode: an
    unknown field is a refusal), the slot refresh (one way, copy), the harness
    config written with the variable's **name**, the prompt assembly, the
@@ -901,19 +1115,23 @@ verb, and tests that pin all three by executing them.
 7. **`internal/swarm/result.go`** — the `RESULT.md` parser: the three states,
    the Per item and Gates tables, `Left owed`, `One line`, the finding lines
    with their `dup:` marks and their verbatim quotes, the owed-list match, the
-   `plan-only` and `no-result` classifications, and the degrade path. Tests: a
-   malformed report degrades rather than failing; a plan-only report is
-   classified as one; a fourth state word is a parse finding, not a silent
-   fifth bucket; demanded tests 1, 2 and 3.
-8. **`internal/swarm/triage.go`** — the watermark state, copy-before-parse, the
-   page writer, the counts, the one `TRIAGE BATCH` line, the verdict sums with
-   the dash for absence. Tests: a report appended to during triage does not
-   produce half a table; the watermark advances once per run; `--no-state`
-   does not advance it; demanded tests 8 and 9.
-9. **`internal/swarm/cost.go`** — the sidecar's token and dollar accounting, the
-   window, the absence-is-a-dash rule, and the 429 backoff. Tests: a task with
-   no accounting prints dashes; a 429 is retried once and then failed with its
-   code.
+   head's `findings: <n>` line as completion evidence, the `ok`, `clean`,
+   `plan-only` and `no-result` classifications, and the degrade path. Tests:
+   a malformed report degrades rather than failing; `findings: 0` with a head
+   is `clean` and a plan with no head is `plan-only`; a fourth state word is a
+   parse finding, not a silent fifth bucket; demanded tests 1, 2, 3 and 8.
+8. **`internal/swarm/triage.go`** — the consumed map keyed by job id and
+   revision hash, read-hash-parse-rehash, `TRIAGE SKIPPED`, the page writer,
+   the counts, the one `TRIAGE BATCH` line, the verdict sums with the dash for
+   absence; no mtime anywhere. Tests: a report rewritten during triage is
+   skipped and taken whole next run; the consumed map advances once per run;
+   `--no-state` does not advance it; `RESULT.md.tmp` is never opened;
+   demanded tests 9 and 16.
+9. **`internal/swarm/cost.go`** — the usage file reader over `<pool>/usage/`,
+   the sixteen columns, the window, the absence-is-a-dash rule with the
+   `dashes=` tuple, one row per attempt, and the 429 backoff. Tests: a task
+   with no accounting prints dashes; a 429 is retried once and then failed
+   with its code; two attempts sum once each; demanded test 12.
 10. **`cmd/nova-swarm/main.go`** — the verbs, including `verdict`, the flag
     parsing with this repo's one-line refusals, `--files` required and zero
     refused, the output grammar exactly as above, `--max` on every listing.
