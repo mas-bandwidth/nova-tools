@@ -55,6 +55,7 @@ usage:
         (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
   nova-board check (--issue ... | --dir ...) --words <text> [--max <n>] [--all]
   nova-board quickstart (--issue ... | --dir ...) --stale <duration>
+  nova-board version                 which build this is: <version> <goos>/<goarch> <go version>
 
 every verb that runs gh also takes [--gh-timeout <seconds>], default 60.
 
@@ -162,6 +163,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reader) 
 		return cmdCheck(rest, stdout, stderr, now)
 	case "quickstart":
 		return cmdQuickstart(rest, stdout, stderr, now)
+	case "version", "--version":
+		return cmdVersion(rest, stdout, stderr)
 	}
 	return refuse(stderr, "", fmt.Sprintf("unknown verb %q", verb))
 }

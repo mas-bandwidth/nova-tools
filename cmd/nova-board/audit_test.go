@@ -30,7 +30,12 @@ var boardAudit = audit.Config{
 		// path/filepath joins the board directory and a card's file name for the ADD NOTE
 		// that says what a --dir add left unlanded. It builds a string and writes nothing:
 		// the joined path goes out through oneline.Field like every other value here.
-		`"crypto/rand"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strings"`, `"time"`,
+		//
+		// runtime and runtime/debug are version.go, and neither can write past the escape:
+		// runtime answers GOOS, GOARCH and Version and holds no writer at all;
+		// runtime/debug is read once for this binary's own build information and every
+		// field of it goes out through oneline.Field.
+		`"crypto/rand"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"runtime"`, `"runtime/debug"`, `"strings"`, `"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/board"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 	},
