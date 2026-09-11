@@ -69,6 +69,7 @@ type List struct {
 	remedy string
 	shown  int
 	total  int
+	err    error
 }
 
 // Capped returns a List that writes to w, prints at most max lines, and stands the rest
@@ -97,9 +98,22 @@ func (l *List) Line(line string) {
 	if l.max > 0 && l.shown >= l.max {
 		return
 	}
+	// SHOWN MEANS IT REACHED THE STREAM. A writer that failed -- a closed pipe,
+	// a reader that has gone, a full disk -- has not shown anything, and a
+	// caller whose delivery record follows Shown() would mark a line delivered
+	// that nobody ever read. So the error is not discarded: the line is counted
+	// in Total, which is the truth about the state, and not in Shown, which is
+	// the truth about the output.
+	if _, err := fmt.Fprintf(l.w, "%s\n", oneline.Escape(strings.TrimSuffix(line, "\n"))); err != nil {
+		l.err = err
+		return
+	}
 	l.shown++
-	fmt.Fprintf(l.w, "%s\n", oneline.Escape(strings.TrimSuffix(line, "\n")))
 }
+
+// Err is the first write error this listing hit, or nil. A caller that records
+// what it has delivered asks this before it writes that record down.
+func (l *List) Err() error { return l.err }
 
 // More prints the one line that stands for everything Line counted and did not print,
 // and prints nothing at all when nothing was elided -- a MORE line saying total equals
@@ -186,6 +200,13 @@ func (g *Group) Total() int {
 
 // Elided is Total minus Shown across every kind.
 func (g *Group) Elided() int { return g.Total() - g.Shown() }
+
+// List is one kind's list, or nil when this group has not seen that kind. It is
+// here for a verb whose MORE line carries a field this package does not print
+// -- nova-wake's carries n=<elided>, which its spec requires -- so that such a
+// verb can reuse the per-kind capping and still write its own summary, rather
+// than hand-rolling a second map of lists beside this one.
+func (g *Group) List(kind string) *List { return g.lists[kind] }
 
 // Kinds returns the kinds seen, in first-seen order.
 func (g *Group) Kinds() []string { return append([]string(nil), g.order...) }
