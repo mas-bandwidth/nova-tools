@@ -1,0 +1,173 @@
+package merge
+
+import (
+	"fmt"
+	"sort"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+)
+
+// Work list 12, rule 23: A READER IS HANDED THE SMALLEST SUFFICIENT PACKET, AND IT IS
+// POINTERS, NEVER THE DIFF.
+//
+// Stella, 2026-09-11: the smallest sufficient review packet is the diff since my reviewed
+// sha, the unresolved finding ids with their dispositions, and links to the whole; my
+// first pass loaded too much history. So the tool prints the RANGE and never the diff,
+// the summary path and never the log: the reader opens exactly what changed and nothing
+// the coordinator retyped. It is derived from the fold and the host, writes nothing and
+// takes no lock.
+
+// Packet prints one bounded block per entry that needs a read from who.
+func (p *Pass) Packet(who string, only string, all bool) int {
+	baseSHA, _ := p.BaseSHA()
+	entries := p.State.Entries()
+	blocks := 0
+	total := 0
+	// THE FOLD'S REFUSALS ARE THE PACKET'S REFUSALS. The packet was computed from the
+	// folded lists alone and the fold's problems were dropped, so a truncated hold beside
+	// two valid approves simply vanished: the reader was handed the entry with no note
+	// and without whatever that file said, while `run` and `status` on the same lane
+	// blocked it as malformed_record. A report that authorises a read against a record
+	// the fold refuses is the silent half of the failure the refusal exists to close.
+	for _, pr := range p.Problems {
+		fmt.Fprintf(p.Stderr, "FOLD REFUSED file=%s: %s\n",
+			oneline.Field(pr.File), oneline.Escape(oneline.Cap(pr.Reason, oneline.TailBytes)))
+	}
+	// A record file whose path names no entry leaves the SCOPE indeterminate: there is no
+	// entry to withhold instead, so nothing is handed over. `packet` REPORTS and exits 0
+	// whatever the lane holds (the verb sentences), so the news is the line, not the code.
+	for _, pr := range p.Problems {
+		if pr.Entry == "" {
+			fmt.Fprintf(p.Stderr, "PACKET STOPPED reason=malformed_record file=%s: %s; this path names no entry, so no entry in this lane can be handed over; re-record it with the verb that wrote it\n",
+				oneline.Field(pr.File), oneline.Escape(oneline.Cap(pr.Reason, oneline.TailBytes)))
+			fmt.Fprintf(p.Stdout, "PACKET OK entries=0 holds=0\n")
+			return 0
+		}
+	}
+	holdList := bounded.Capped(p.Stdout, p.Max, "PACKET", "hold",
+		fmt.Sprintf("nova-merge packet --lane %s --who %s --all --max 0", p.Lane, who))
+	for _, e := range entries {
+		if !all && e.ID() != only {
+			continue
+		}
+		// An entry one of those refusals names is blocked for `run` and for `status`, and
+		// it is withheld here for the same reason: the file nobody could read may be the
+		// hold this reader is being asked to answer.
+		if pr, ok := p.problemFor(e.ID()); ok {
+			fmt.Fprintf(p.Stderr, "PACKET NOTE entry=%s who=%s: %s\n",
+				oneline.Field(e.ID()), oneline.Field(who),
+				oneline.Escape(fmt.Sprintf("this entry is blocked by a record the fold refused (malformed_record file=%s), so it is not handed to a reader; nova-merge status --lane %s", pr.File, p.Lane)))
+			continue
+		}
+		c := p.plan(e, baseSHA)
+		// AN ENTRY PASSED OVER SAYS WHY. `packet --pr N` on an entry that IS in the lane
+		// printed entries=0 and no reason, and --all silently meant "the ones with
+		// needs_read=yes" -- so a coordinator saw one entry of three and concluded the
+		// rest needed no read.
+		if !p.needsReadFrom(e, who) {
+			fmt.Fprintf(p.Stderr, "PACKET NOTE entry=%s who=%s: %s\n",
+				oneline.Field(e.ID()), oneline.Field(who), oneline.Escape(p.skipReason(e, who)))
+			continue
+		}
+		blocks++
+		last := lastReadBy(e, who)
+		rng := fmt.Sprintf("%s...%s", p.State.Base, Short(e.OID))
+		if last != "" {
+			rng = fmt.Sprintf("%s..%s", Short(last), Short(e.OID))
+		}
+		holds := unresolvedHolds(e)
+		total += len(holds)
+		fmt.Fprintf(p.Stdout, "PACKET ENTRY entry=%s head=%s last_read=%s range=%s holds=%d gate=%s checks=%s url=%s\n",
+			oneline.Field(e.ID()), oneline.Field(dashIfEmpty(Short(e.OID))),
+			oneline.Field(dashIfEmpty(Short(last))), oneline.Field(rng), len(holds),
+			dashIfEmpty(c.Gate.Kind), c.Checks.Field(), oneline.Field(dashIfEmpty(c.URL)))
+		for _, h := range holds {
+			holdList.Line(fmt.Sprintf("PACKET HOLD who=%s head=%s: %s",
+				oneline.Field(h.Who), oneline.Field(Short(h.Head)), oneline.Cap(h.Note, oneline.TailBytes)))
+		}
+	}
+	holdList.More()
+	fmt.Fprintf(p.Stdout, "PACKET OK entries=%d holds=%d\n", blocks, total)
+	return 0
+}
+
+// problemFor is the fold's refusal that names this entry, if there is one.
+func (p *Pass) problemFor(id string) (FoldProblem, bool) {
+	for _, pr := range p.Problems {
+		if pr.Entry == id {
+			return pr, true
+		}
+	}
+	return FoldProblem{}, false
+}
+
+// skipReason is the sentence behind PACKET NOTE: which half of the one condition this
+// entry failed, in the words the lane's own state uses.
+func (p *Pass) skipReason(e *Entry, who string) string {
+	if e.NeedsRead != "yes" {
+		return fmt.Sprintf("needs_read=no, so this entry asks nobody for a read; nova-merge add --lane %s %s --needs-read sets it", p.Lane, selector(e))
+	}
+	return fmt.Sprintf("%s has already approved head %s, which is this entry's current head", who, dashIfEmpty(Short(e.OID)))
+}
+
+// needsReadFrom is the one condition: needs_read=yes, and no approve by that name for the
+// entry's CURRENT oid.
+func (p *Pass) needsReadFrom(e *Entry, who string) bool {
+	if e.NeedsRead != "yes" {
+		return false
+	}
+	for _, r := range e.Reads {
+		if sameLine(r.Who, who) && r.Head == e.OID && e.OID != "" && r.Verdict == "approve" {
+			return false
+		}
+	}
+	return true
+}
+
+// lastReadBy is the sha this reader last RECORDED for, whatever the verdict: the left
+// half of the range, so the reader opens the commits since the sha they read.
+func lastReadBy(e *Entry, who string) string {
+	best := ""
+	at := ""
+	for _, r := range e.Reads {
+		if sameLine(r.Who, who) && r.At > at {
+			at, best = r.At, r.Head
+		}
+	}
+	return best
+}
+
+// unresolvedHolds is the FINDINGS a reader must act on, and a finding is a hold record
+// rather than a reader: two holds recorded by one line on one head are two things to fix,
+// and a packet that folded them to one would hand the reader half of what was said.
+//
+// What the fold does decide is whether they are still open: per (who, head) the newest
+// record settles the pair, so a line that later recorded an approve for that head has
+// resolved every hold it left there, and none of them is in the packet.
+func unresolvedHolds(e *Entry) []Read {
+	newest := map[string]Read{}
+	for _, r := range e.Reads {
+		key := r.Who + "\x00" + r.Head
+		cur, seen := newest[key]
+		if !seen || r.At > cur.At || (r.At == cur.At && r.Verdict == "hold") {
+			newest[key] = r
+		}
+	}
+	var out []Read
+	for _, r := range e.Reads {
+		if r.Verdict != "hold" {
+			continue
+		}
+		if settled := newest[r.Who+"\x00"+r.Head]; settled.Verdict == "hold" {
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].At != out[j].At {
+			return out[i].At < out[j].At
+		}
+		return out[i].Who < out[j].Who
+	})
+	return out
+}
