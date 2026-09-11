@@ -197,14 +197,31 @@ is the day it was learned.
     number is a person's, typed by hand, and the parser accepts it from a
     person only.
 
+21. **A harness that shows nothing is counted from the provider's side, and
+    never apportioned.** Emma's harness (Antigravity, Gemini) and Johnny's
+    (Grok) record no token counts anywhere a tool can read (Emma's read of
+    this spec, 2026-09-11). For them the source is `--provider
+    <label>=<file>`: a billing export the account holder downloads (Google
+    Cloud, xAI), one row per (day, model, type, count) after the tool's
+    parser for that provider's shape, with the parser's name in the
+    `sources` column. Its repo is the fixed word `unattributed`: the tool
+    never splits a provider total across repos by any proportion, because a
+    split nobody measured is a number nobody can defend ("never invent a
+    split"). A friend's daily note may still carry the repos touched that
+    day as text; `fold` records them beside the day as `TOKENS TOUCHED
+    who=<name> repos=<list>` and adds no numbers to them. A `report` on such
+    a harness prints `TOKENS UNREADABLE` per source and exits 1 (rule 20),
+    and that line is the friend's whole duty.
+
 ## The verbs
 
 ```
 nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
+                    [--provider <label>=<file>]...
                     [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
 nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
-                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--codex <label>=<dir>]...
+                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <label>=<file>]...
                     [--note <path>] [--scratch <dir>] [--timeout <seconds>]
 nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
 nova-tokens check   --out <dir> [--max <n>]
@@ -437,6 +454,16 @@ gone with the directory; it goes through the same attribution function with
 the recorded name as its only path, so a name the rules file does not know
 is `other`, never a seventh bucket. The day is the job's end stamp. A sidecar
 with no usage line is `nousage=<n>`.
+
+### `--provider <label>=<file>`: a billing export
+
+For a harness that records nothing (rule 21). The file is the provider's own
+export, unmodified; the label names the provider and the parser (`google`,
+`xai`); an export whose shape the parser does not know is `TOKENS UNREADABLE`
+with the first unparsed line quoted, never a guess. Rows land with repo
+`unattributed` and the model as the export names it. The export's own day
+boundary is used as it stands and the tool says which timezone the provider
+uses in `TOKENS SOURCE`.
 
 ### `--bus <dir>`: friends' self-reports
 
@@ -739,6 +766,10 @@ seen red before it is trusted.
     `report` whose every source is unreadable prints no lines and exits 1;
     a `report` line never contains `~`; `--note` writes exactly the printed
     lines and nothing else.
+21. A fixture Google export and a fixture xAI export fold to rows with repo
+   `unattributed` and the parser name in `sources`; an export with one
+   unknown column is `TOKENS UNREADABLE` quoting that line; a friend's note
+   naming repos touched yields `TOKENS TOUCHED` and changes no count.
 
 ## The work list
 
