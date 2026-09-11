@@ -563,7 +563,7 @@ RUN POOL workers=<n> hours=<h> worker=<name> model=<model> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path>
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
-RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false>
+RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false>
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
