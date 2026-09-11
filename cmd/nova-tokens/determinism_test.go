@@ -88,13 +88,13 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 	repos := reposFile(t, dir)
 	export := write(t, filepath.Join(dir, "xai.csv"), strings.Join([]string{
 		"# timezone: America/Los_Angeles",
-		"date,model,input_tokens,output_tokens",
+		"date,model,input,output",
 		"2026-09-11,grok-4,900,80",
 		"",
 	}, "\n"))
 	note := filepath.Join(dir, "note.txt")
 	r := invoke(t, "report", "--who", "johnny", "--day", "2026-09-11", "--repos", repos,
-		"--provider", "xai="+export, "--note", note)
+		"--provider", "xai:johnny="+export, "--note", note)
 	wantExit(t, r, 0)
 	for _, line := range lines(r.stdout) {
 		if f := strings.Split(line, "\t"); len(f) != 7 || f[6] != "day_basis=America/Los_Angeles" {
@@ -114,7 +114,7 @@ func TestAZonedReportCrossesTheBusWithoutBeingCalledUTC(t *testing.T) {
 	wantContains(t, lineWith(f.stdout, "TOKENS DAY"), "nonutc=1")
 
 	direct := mkdir(t, filepath.Join(dir, "out-direct"))
-	wantExit(t, invoke(t, "fold", "--out", direct, "--day", "2026-09-11", "--repos", repos, "--provider", "xai="+export), 0)
+	wantExit(t, invoke(t, "fold", "--out", direct, "--day", "2026-09-11", "--repos", repos, "--provider", "xai:johnny="+export), 0)
 
 	cells := func(text string) string {
 		var keep []string

@@ -45,9 +45,9 @@ const usage = `nova-tokens: token spend, folded per day, keyed by (day, model, r
 usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
-                      [--provider <label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
+                      [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
   nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
-                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <label>=<file>]...
+                      [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
   nova-tokens check   --out <dir> [--max <n>]
@@ -220,7 +220,7 @@ const (
 	wantsDay     = "one UTC day as YYYY-MM-DD, or --all for every day the sources name"
 	wantsWho     = "the name this report is from, as the bus knows it"
 	wantsMonth   = "one month as YYYY-MM"
-	wantsSources = "--claude <label>=<dir>, --opencode <label>=<file>, --swarm <label>=<pool>, --bus <dir> or --provider <label>=<file>"
+	wantsSources = "--claude <label>=<dir>, --opencode <label>=<file>, --swarm <label>=<pool>, --bus <dir> or --provider <kind>:<label>=<file> (kind one of google, openai, xai)"
 	wantsScratch = "a directory this run may copy the OpenCode database into"
 )
 
@@ -259,19 +259,36 @@ func (s *sourceFlags) check(r *refusals) {
 	for _, l := range []*labelled{&s.claude, &s.opencode, &s.swarm, &s.provider} {
 		for _, it := range l.items {
 			any = true
-			if !validLabel(it.label) {
+			// A provider's label is `<kind>:<label>`; every other flag's is the label
+			// itself. Uniqueness is on the label -- the friend or the bench -- across
+			// every kind, because the sources column names one of them per source.
+			name := it.label
+			if l.kind == "provider" {
+				if _, after, ok := strings.Cut(it.label, ":"); ok {
+					name = after
+				}
+			}
+			if l.kind != "provider" && !validLabel(it.label) {
 				r.add("--" + l.kind + " " + it.label + "=: a label is [a-z0-9-]+, at most 32 characters")
 				continue
 			}
-			if seen[it.label] {
-				r.add("the label " + it.label + " is used twice; two sources with one label would make the sources column a lie")
+			if seen[name] {
+				r.add("the label " + name + " is used twice; two sources with one label would make the sources column a lie")
 			}
-			seen[it.label] = true
+			seen[name] = true
 			if strings.TrimSpace(it.value) == "" {
 				r.add("--" + l.kind + " " + it.label + "= has no path; it wants <label>=<path>")
 			}
-			if l.kind == "provider" && !tokens.KnownParser(it.label) {
-				r.add("--provider " + it.label + ": the label names the parser, and it wants one of " + strings.Join(tokens.Parsers, ", "))
+			if l.kind == "provider" {
+				kind, name, ok := strings.Cut(it.label, ":")
+				switch {
+				case !ok:
+					r.add("--provider " + it.label + "=: it wants <kind>:<label>=<path>, the kind one of " + strings.Join(tokens.Parsers, ", ") + " and the label the friend whose export it is, so that two friends' exports from one provider are two sources")
+				case !tokens.KnownParser(kind):
+					r.add("--provider " + it.label + ": the kind names the parser, and it wants one of " + strings.Join(tokens.Parsers, ", "))
+				case !validLabel(name):
+					r.add("--provider " + it.label + "=: a label is [a-z0-9-]+, at most 32 characters")
+				}
 			}
 		}
 	}
@@ -309,7 +326,8 @@ func (s *sourceFlags) read(rules *tokens.Rules, now time.Time) []*tokens.Source 
 		out = append(out, tokens.ReadSwarm(it.label, it.value, rules))
 	}
 	for _, it := range s.provider.items {
-		out = append(out, tokens.ReadProvider(it.label, it.value, rules))
+		kind, name, _ := strings.Cut(it.label, ":")
+		out = append(out, tokens.ReadProvider(kind, name, it.value, rules))
 	}
 	if s.bus != "" {
 		out = append(out, tokens.ReadBus(s.bus, rules, now)...)

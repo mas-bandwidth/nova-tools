@@ -104,7 +104,7 @@ func largestFoldState(t *testing.T) (tmp, out string, args []string) {
 	// (day, model, repo) keys is a row of two bases.
 	var utc, zoned []string
 	utc = append(utc, "timestamp,model,input_tokens")
-	zoned = append(zoned, "# timezone: America/Los_Angeles", "date,model,input_tokens")
+	zoned = append(zoned, "# timezone: America/Los_Angeles", "date,model,input")
 	for i := range overflow {
 		utc = append(utc, fmt.Sprintf("%sT12:00:00Z,mixed-%d,%d", day(i), i, 100+i))
 		zoned = append(zoned, fmt.Sprintf("%s,mixed-%d,%d", day(i), i, 200+i))
@@ -139,7 +139,7 @@ func largestFoldState(t *testing.T) (tmp, out string, args []string) {
 
 	args = []string{"--out", out, "--all", "--repos", repos,
 		"--claude", "one=" + claudeDirs[0], "--claude", "two=" + claudeDirs[1], "--claude", "three=" + claudeDirs[2],
-		"--swarm", "pool=" + pool, "--provider", "google=" + g, "--provider", "xai=" + x, "--bus", bus}
+		"--swarm", "pool=" + pool, "--provider", "google:emma=" + g, "--provider", "xai:johnny=" + x, "--bus", bus}
 	return dir, out, args
 }
 

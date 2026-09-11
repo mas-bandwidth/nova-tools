@@ -1053,23 +1053,23 @@ func TestRule21AProviderExportIsUnattributedAndNeverSplit(t *testing.T) {
 		"2026-09-11T10:30:00-07:00,gemini-2.5-pro,200,20",
 		"",
 	}, "\n"))
-	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--provider", "google="+g)
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--provider", "google:emma="+g)
 	wantExit(t, r, 0)
-	wantContains(t, read(t, filepath.Join(out, "2026-09-12.tsv")), "gemini-2.5-pro\tunattributed\t100\t10\t-\t-\t-\t0\tutc\tprovider:google")
-	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "gemini-2.5-pro\tunattributed\t200\t20\t-\t-\t-\t0\tutc\tprovider:google")
+	wantContains(t, read(t, filepath.Join(out, "2026-09-12.tsv")), "gemini-2.5-pro\tunattributed\t100\t10\t-\t-\t-\t0\tutc\tgoogle:emma")
+	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "gemini-2.5-pro\tunattributed\t200\t20\t-\t-\t-\t0\tutc\tgoogle:emma")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "reports=input,output")
 
 	// xAI: per-day totals in a declared zone.
 	out2 := mkdir(t, filepath.Join(dir, "out2"))
 	x := write(t, filepath.Join(dir, "xai.csv"), strings.Join([]string{
 		"# timezone: America/Los_Angeles",
-		"date,model,input_tokens,output_tokens,reasoning_tokens",
+		"date,model,input,output,reasoning",
 		"2026-09-11,grok-4,9912340,301122,55",
 		"",
 	}, "\n"))
-	r = invoke(t, "fold", "--out", out2, "--all", "--repos", repos, "--provider", "xai="+x)
+	r = invoke(t, "fold", "--out", out2, "--all", "--repos", repos, "--provider", "xai:johnny="+x)
 	wantExit(t, r, 0)
-	wantContains(t, read(t, filepath.Join(out2, "2026-09-11.tsv")), "grok-4\tunattributed\t9912340\t301122\t-\t-\t55\t0\tAmerica/Los_Angeles\tprovider:xai")
+	wantContains(t, read(t, filepath.Join(out2, "2026-09-11.tsv")), "grok-4\tunattributed\t9912340\t301122\t-\t-\t55\t0\tAmerica/Los_Angeles\txai:johnny")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "day_basis=America/Los_Angeles")
 	wantContains(t, lineWith(r.stdout, "TOKENS DAY"), "nonutc=1")
 	s := invoke(t, "sum", "--out", out2, "--month", "2026-09")
@@ -1078,16 +1078,50 @@ func TestRule21AProviderExportIsUnattributedAndNeverSplit(t *testing.T) {
 
 	// An export with neither timestamps nor a zone.
 	out3 := mkdir(t, filepath.Join(dir, "out3"))
-	n := write(t, filepath.Join(dir, "nozone.csv"), "date,model,input_tokens\n2026-09-11,grok-4,5\n")
-	r = invoke(t, "fold", "--out", out3, "--all", "--repos", repos, "--provider", "xai="+n)
+	n := write(t, filepath.Join(dir, "nozone.csv"), "date,model,input\n2026-09-11,grok-4,5\n")
+	r = invoke(t, "fold", "--out", out3, "--all", "--repos", repos, "--provider", "xai:johnny="+n)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS UNREADABLE")
 
 	// An unknown column is unreadable, quoting the line.
 	u := write(t, filepath.Join(dir, "odd.csv"), "date,model,widgets\n2026-09-11,grok-4,5\n")
-	r = invoke(t, "fold", "--out", out3, "--all", "--repos", repos, "--provider", "xai="+u)
+	r = invoke(t, "fold", "--out", out3, "--all", "--repos", repos, "--provider", "xai:johnny="+u)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "widgets")
+
+	// ONE PARSER PER EXPORT SHAPE, chosen by the label's kind. The spec's --provider
+	// section: "the label names the provider and the parser (google, xai); an export
+	// whose shape the parser does not know is TOKENS UNREADABLE with the first unparsed
+	// line quoted, never a guess." A union of every provider's column names folded the
+	// Google export above under xai's name, green -- the column that makes a number
+	// traceable naming a parser that did not read it.
+	out4 := mkdir(t, filepath.Join(dir, "out4"))
+	r = invoke(t, "fold", "--out", out4, "--all", "--repos", repos, "--provider", "xai:johnny="+g)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS UNREADABLE")
+	wantContains(t, r.stderr, "the xai parser does not know the column input_tokens")
+	if _, err := os.Stat(filepath.Join(out4, "2026-09-11.tsv")); err == nil {
+		t.Error("a Google export folded under the xai parser")
+	}
+	// And the third parser the work list names reads its own shape.
+	o := write(t, filepath.Join(dir, "openai.csv"), "timestamp,model,prompt_tokens,completion_tokens,cached_tokens\n2026-09-11T10:00:00Z,gpt-5,11,22,33\n")
+	out5 := mkdir(t, filepath.Join(dir, "out5"))
+	r = invoke(t, "fold", "--out", out5, "--all", "--repos", repos, "--provider", "openai:stella="+o)
+	wantExit(t, r, 0)
+	wantContains(t, read(t, filepath.Join(out5, "2026-09-11.tsv")), "gpt-5\tunattributed\t11\t22\t-\t33\t-\t0\tutc\topenai:stella")
+
+	// Two friends' exports from ONE provider are two sources, which a label that WAS the
+	// parser name could not express.
+	out6 := mkdir(t, filepath.Join(dir, "out6"))
+	g2 := write(t, filepath.Join(dir, "google2.csv"), "timestamp,model,input_tokens\n2026-09-11T10:00:00Z,gemini-2.5-pro,4\n")
+	r = invoke(t, "fold", "--out", out6, "--all", "--repos", repos, "--provider", "google:emma="+g2, "--provider", "google:freddy="+g2)
+	wantExit(t, r, 0)
+	wantContains(t, read(t, filepath.Join(out6, "2026-09-11.tsv")), "google:emma,google:freddy")
+
+	// A --provider with no kind, and one whose kind names no parser, are refusals.
+	for _, bad := range []string{"emma=" + g2, "gerbil:emma=" + g2} {
+		wantExit(t, invoke(t, "fold", "--out", out6, "--all", "--repos", repos, "--provider", bad), 2)
+	}
 }
 
 func TestRule17AMixedRowIsRefused(t *testing.T) {
@@ -1095,8 +1129,8 @@ func TestRule17AMixedRowIsRefused(t *testing.T) {
 	out := mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
 	g := write(t, filepath.Join(dir, "google.csv"), "timestamp,model,input_tokens\n2026-09-11T10:00:00Z,m,5\n")
-	x := write(t, filepath.Join(dir, "xai.csv"), "# timezone: America/Los_Angeles\ndate,model,input_tokens\n2026-09-11,m,7\n")
-	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--provider", "google="+g, "--provider", "xai="+x)
+	x := write(t, filepath.Join(dir, "xai.csv"), "# timezone: America/Los_Angeles\ndate,model,input\n2026-09-11,m,7\n")
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--provider", "google:emma="+g, "--provider", "xai:johnny="+x)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS MIXED date=2026-09-11 model=m repo=unattributed")
 	wantContains(t, r.stderr, "mixed=1")

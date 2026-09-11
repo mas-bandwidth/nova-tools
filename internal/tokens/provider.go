@@ -2,6 +2,7 @@ package tokens
 
 import (
 	"encoding/csv"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,29 +16,15 @@ import (
 // the tool never splits a provider total across repos by any proportion, because a split
 // nobody measured is a number nobody can defend.
 
-// Parsers are the export shapes this tool knows. A label that is not one of them is a bad
-// invocation rather than an unreadable file: the caller named a parser that does not exist.
-var Parsers = []string{"google", "xai", "openai"}
+// Parsers are the export shapes this tool knows, one per provider. A label that is not
+// one of them is a bad invocation rather than an unreadable file: the caller named a
+// parser that does not exist.
+var Parsers = []string{"google", "openai", "xai"}
 
-// KnownParser reports whether a --provider label names a parser.
+// KnownParser reports whether a --provider kind names a parser.
 func KnownParser(name string) bool {
-	for _, p := range Parsers {
-		if p == name {
-			return true
-		}
-	}
-	return false
-}
-
-// exportColumns maps an export's own column names onto the five types. An export column
-// that is not here and is not a timestamp, a date or a model is a shape the parser does
-// not know, and that is TOKENS UNREADABLE rather than a guess.
-var exportColumns = map[string]Type{
-	"input_tokens": Input, "prompt_tokens": Input, "input": Input,
-	"output_tokens": Output, "completion_tokens": Output, "output": Output,
-	"cache_write_tokens": CacheWrite, "cache_creation_tokens": CacheWrite, "cache_write": CacheWrite,
-	"cache_read_tokens": CacheRead, "cached_tokens": CacheRead, "cache_read": CacheRead,
-	"reasoning_tokens": Reasoning, "reasoning": Reasoning,
+	_, ok := shapes[name]
+	return ok
 }
 
 // zoneDeclaration is the comment an export of per-day totals carries to say which zone its
@@ -45,10 +32,72 @@ var exportColumns = map[string]Type{
 // UTC days by any arithmetic and is refused rather than assumed.
 const zoneDeclaration = "# timezone:"
 
-// ReadProvider reads one billing export.
-func ReadProvider(label, path string, _ *Rules) *Source {
-	s := &Source{Label: Label(KindProvider, label), Kind: KindProvider, Path: path, Basis: UTC}
+// A shape is ONE provider's export, and the parser is chosen by the kind the caller
+// declared: `--provider google:emma=<file>` says this file is Google's export and Emma
+// downloaded it. One union of every provider's column names would accept a Google export
+// declared as xAI and write `provider:xai` beside numbers that parser never read -- the
+// column that makes a number traceable naming the wrong source (measured 2026-09-11).
+//
+// The names are the ones this family has seen; a real export that spells a column
+// differently is TOKENS UNREADABLE naming the parser and the column, which is a question
+// for the table and never a guess by this tool.
+type shape struct {
+	// columns are the type columns THIS export carries, and nothing else.
+	columns map[string]Type
+	// stamp, date and model are the three names that are not counts.
+	stamp, date, model string
+}
+
+var shapes = map[string]shape{
+	"google": {
+		columns: map[string]Type{
+			"input_tokens": Input, "output_tokens": Output, "cache_write_tokens": CacheWrite,
+			"cache_read_tokens": CacheRead, "reasoning_tokens": Reasoning,
+		},
+		stamp: "timestamp", date: "date", model: "model",
+	},
+	"openai": {
+		columns: map[string]Type{
+			"prompt_tokens": Input, "completion_tokens": Output,
+			"cache_creation_tokens": CacheWrite, "cached_tokens": CacheRead, "reasoning_tokens": Reasoning,
+		},
+		stamp: "timestamp", date: "date", model: "model",
+	},
+	"xai": {
+		columns: map[string]Type{
+			"input": Input, "output": Output, "cache_write": CacheWrite,
+			"cache_read": CacheRead, "reasoning": Reasoning,
+		},
+		stamp: "timestamp", date: "date", model: "model",
+	},
+}
+
+// ParserColumns is the sorted list of column names one parser reads, for a refusal that
+// says what the file WANTS and not only what was wrong.
+func ParserColumns(kind string) []string {
+	sh, ok := shapes[kind]
+	if !ok {
+		return nil
+	}
+	out := []string{sh.model}
+	for name := range sh.columns {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return append([]string{sh.stamp + " or " + sh.date}, out...)
+}
+
+// ReadProvider reads one billing export with the parser its kind names. The label on
+// every row it feeds is `<kind>:<name>` -- `google:emma`, as the spec's own day-file
+// example writes it -- so two friends' exports from one provider are two sources.
+func ReadProvider(kind, name, path string, _ *Rules) *Source {
+	s := &Source{Label: Label(kind, name), Kind: KindProvider, Path: path, Basis: UTC}
 	s.Stat.Files = 1
+	sh, known := shapes[kind]
+	if !known {
+		s.unreadable(path, "there is no "+kind+" parser; --provider wants <kind>:<label>=<path> with kind one of "+strings.Join(Parsers, ", "))
+		return s
+	}
 
 	raw, err := readSource(path)
 	if err != nil {
@@ -72,26 +121,26 @@ func ReadProvider(label, path string, _ *Rules) *Source {
 	rd.FieldsPerRecord = -1
 	records, err := rd.ReadAll()
 	if err != nil || len(records) == 0 {
-		s.unreadable(path, "the export is not the comma-separated shape the "+label+" parser reads")
+		s.unreadable(path, "the export is not the comma-separated shape the "+kind+" parser reads")
 		return s
 	}
 	header := records[0]
 	stampCol, dateCol, modelCol := -1, -1, -1
 	types := map[int]Type{}
 	var reports []Type
-	for i, name := range header {
-		name = strings.TrimSpace(name)
+	for i, col := range header {
+		col = strings.TrimSpace(col)
 		switch {
-		case name == "timestamp":
+		case col == sh.stamp:
 			stampCol = i
-		case name == "date":
+		case col == sh.date:
 			dateCol = i
-		case name == "model":
+		case col == sh.model:
 			modelCol = i
 		default:
-			t, ok := exportColumns[name]
+			t, ok := sh.columns[col]
 			if !ok {
-				s.unreadable(path, "the "+label+" parser does not know the column "+name+" in: "+strings.Join(header, ","))
+				s.unreadable(path, "the "+kind+" parser does not know the column "+col+" in: "+strings.Join(header, ",")+"; it reads "+strings.Join(ParserColumns(kind), ", ")+", and a file of another provider's shape is declared by ITS kind")
 				return s
 			}
 			types[i] = t
