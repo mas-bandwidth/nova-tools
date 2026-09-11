@@ -1,7 +1,6 @@
 package merge
 
 import (
-	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -251,5 +250,3 @@ func dashIfEmpty(s string) string {
 	}
 	return s
 }
-
-var errStop = errors.New("stopped")

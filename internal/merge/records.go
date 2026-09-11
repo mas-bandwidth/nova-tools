@@ -195,14 +195,14 @@ func (r *Records) outbox() ([]Item, error) {
 	}
 	sort.Strings(names)
 	var items []Item
-	var summaries []Item
 	for _, name := range names {
 		body, err := os.ReadFile(filepath.Join(r.Lane, OutboxDir, name))
 		if err != nil {
 			return nil, err
 		}
 		if strings.HasSuffix(name, ".summary") {
-			summaries = append(summaries, Item{Path: "", Body: body})
+			// A summary is carried beside its record below, under the record's own
+			// name; on its own it names no path in the branch.
 			continue
 		}
 		dest, err := destinationOf(body)

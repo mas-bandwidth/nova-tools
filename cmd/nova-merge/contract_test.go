@@ -31,6 +31,8 @@ func TestEveryOtherVerbRefusesADirectoryThatIsNotALane(t *testing.T) {
 		{"add", "--lane", empty, "--pr", "1"},
 		{"add-branch", "--lane", empty, "--branch", "b"},
 		{"read", "--lane", empty, "--pr", "1", "--who", "emma", "--head", strings.Repeat("a", 40), "--verdict", "approve"},
+		{"gate", "--lane", empty, "--pr", "1", "--head", strings.Repeat("a", 40), "--base-sha", strings.Repeat("b", 40),
+			"--merge", strings.Repeat("c", 40), "--verdict", "green", "--summary", l.summary("not-a-lane")},
 		{"run", "--lane", empty, "--once"},
 		{"status", "--lane", empty},
 		{"dry-run", "--lane", empty},

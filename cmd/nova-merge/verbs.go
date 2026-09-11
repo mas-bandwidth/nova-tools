@@ -262,7 +262,6 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 	recs := merge.NewRecords(*f.lane, st.LaneBranch, "origin", merge.NewGit(*f.lane, f.dur(), deps.Runner), f.dur())
 	merge.Appendf(*f.lane, deps.Now(), "READ entry=%s who=%s head=%s verdict=%s file=%s", id, *who, *head, *verdict, file)
 	pushErr := recs.Deliver(sub, []merge.Item{{Path: file, Body: body}})
-	current, approvals, holds, stale := standingOf(st, id, *head)
 	if pushErr != nil {
 		fmt.Fprintf(stderr, "READ FAIL entry=%s who=%s head=%s file=%s pushed=false: %s; re-run the same verb to push it\n",
 			oneline.Field(id), oneline.Field(*who), oneline.Field(merge.Short(*head)), oneline.Field(file),
@@ -274,7 +273,7 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 		// is a NOTE and never a lost record: the next run folds it.
 		fmt.Fprintf(stderr, "READ NOTE the record is pushed and this lane could not fold the branch afterwards: %s; the next run folds it\n", oneline.Err(err))
 	}
-	current, approvals, holds, stale = standingOf(st, id, *head)
+	current, approvals, holds, stale := standingOf(st, id, *head)
 	fmt.Fprintf(stdout, "READ OK entry=%s who=%s verdict=%s head=%s current=%s approvals=%d holds=%d stale=%d file=%s pushed=true\n",
 		oneline.Field(id), oneline.Field(*who), oneline.Field(*verdict), oneline.Field(merge.Short(*head)),
 		current, approvals, holds, stale, oneline.Field(file))
