@@ -233,13 +233,13 @@ func TestLinksNestedFourBacktickFenceHidesInnerThree(t *testing.T) {
 	})
 	_, checked, broken, err := Links(dir)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Links: %s", brief(err.Error()))
 	}
 	if checked != 0 {
 		t.Errorf("checked = %d, want 0: a link inside a four-backtick fence is illustration", checked)
 	}
 	if len(broken) != 0 {
-		t.Errorf("broken = %v, want none: the nested three-backtick example is not a link", broken)
+		t.Errorf("broken = %s, want none: the nested three-backtick example is not a link", brief(fmt.Sprint(broken)))
 	}
 }
 
@@ -254,13 +254,13 @@ func TestLinksUnclosedFenceDoesNotSwallowRealBrokenLink(t *testing.T) {
 	})
 	_, checked, broken, err := Links(dir)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("Links: %s", brief(err.Error()))
 	}
 	if checked != 1 {
 		t.Errorf("checked = %d, want 1: the link below the closed four-fence must be checked", checked)
 	}
 	if len(broken) != 1 || broken[0].Target != "missing.md" {
-		t.Errorf("broken = %v, want the real missing.md reported", broken)
+		t.Errorf("broken = %s, want the real missing.md reported", brief(fmt.Sprint(broken)))
 	}
 }
 
