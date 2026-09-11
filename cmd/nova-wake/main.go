@@ -43,7 +43,7 @@ usage:
     at least one source, named:
         [--bus <dir> --as <name> --receipt-max-words <n>]
         [--refresh --remote <name> --branch <name>]   fetch each poll, move no cursor
-        [--advance-cursor --remote <name> --branch <name>]   not in this build; use --refresh
+        [--advance-cursor --remote <name> --branch <name>]   fetch and move YOUR cursor
         [--line <name> ...]  a line to watch for silence, needs --bus (repeatable)
         [--offline-after <duration>]   how long silent is offline; default 10m
         [--entry <owner>/<repo>#<n> ... --entry-interval <duration>]   an entry and its checks
@@ -383,7 +383,20 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 		if *as == "" {
 			return refused(stderr, "--advance-cursor without --as: the --as name IS the claim, and a watcher may not advance a cursor that is not the window's own")
 		}
-		return refused(stderr, "--advance-cursor is not in this build; use --refresh")
+		if *remote == "" || *branch == "" {
+			return refused(stderr, "--advance-cursor without --remote and --branch: the advance is the one write-side call this tool makes, and it pushes")
+		}
+		// One advancing watcher per (bus, as), for the WHOLE call: two calls
+		// over one pair interleave, each consuming the notes the other should
+		// have relayed, and each returns a partial listing that looks complete.
+		releaseCursor, cursorHolder, cerr := wake.LockAdvance(*busDir, *as)
+		if cerr != nil {
+			return refused(stderr, oneline.Err(cerr))
+		}
+		if releaseCursor == nil {
+			return refused(stderr, "another nova-wake is advancing "+*as+"'s cursor on this bus (pid "+cursorHolder+"); one advancing watcher per bus and name, because a cursor two runs move is a claim neither of them can make")
+		}
+		defer releaseCursor()
 	}
 
 	timeout := time.Duration(*ghTimeout) * time.Second
@@ -449,7 +462,10 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 		stdout: stdout, stderr: stderr, clock: clock, st: st, statePath: *state,
 		maxLines: *maxLines, finalOnly: *finalOnly, baseline: *baseline,
 		cold: st.Cold() && !*baseline, sources: sources, bus: busSrc, lines: lineView,
-		busDir: *busDir, timeout: timeout, advance: false,
+		busDir: *busDir, timeout: timeout, advance: *advance,
+	}
+	if *advance {
+		w.advancer = &wake.Advancer{Bus: busSrc, Clock: clock}
 	}
 	if quickstart {
 		fmt.Fprintf(stdout, "WAKE NOTE quickstart chose --baseline, --interval %s and --max %s, so a first run returns with the world listed once rather than blocking; --on-deadline %s is the word it echoes back\n",
@@ -459,7 +475,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 		oneline.Field(wake.Stamp(now)), oneline.Field(dash(*as)), oneline.Field(wake.Dur(max)),
 		oneline.Field(wake.Dur(every)), oneline.Field(*onDeadline), oneline.Field(sourceList(*busDir, entries, reports)),
 		oneline.Field(*state), w.cold, oneline.Field(busVersion), st.Pending())
-	if *busDir != "" && !*refresh {
+	if *busDir != "" && !*refresh && !*advance {
 		w.note("bus checkout is read as it stands; nothing fetches without --advance-cursor; freshness is head-at=")
 	}
 	return w.loop(ctx, now, max, *onDeadline)
@@ -546,6 +562,7 @@ type watcher struct {
 	busDir         string
 	timeout        time.Duration
 	advance        bool
+	advancer       *wake.Advancer
 
 	head, headAt string
 	// refusal holds the keys of lines this call read from a poll that ENDED
@@ -579,6 +596,10 @@ func (w *watcher) note(text string) {
 func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, onDeadline string) int {
 	deadline := start.Add(max)
 	w.changed = map[string]int{}
+	// Step 4, before anything else is polled: a call that finds the marker
+	// spools every unprinted note off the reader's OWN OPEN list, because a
+	// plain inbox does not re-list a note the cursor has passed.
+	w.recoverAdvance(ctx, start)
 	for {
 		now := w.clock.Now()
 		// The deadline is read BEFORE anything is polled, so that --max is the
@@ -616,6 +637,13 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 		w.save()
 		printed, news := w.printQueue(now)
 		_ = printed
+		// Steps 2 and 3: the cursor waits behind the print, and a poll advances
+		// only when this tool's bus queue holds nothing after it.
+		if w.advanceOrDefer(ctx, now) {
+			// The injected kill of test 11: the process died between the
+			// advance returning and the write of its output.
+			return 0
+		}
 
 		switch {
 		case broken != "":
@@ -786,20 +814,23 @@ func (w *watcher) save() {
 // printed= mark. The marks are written AFTER the print and never before, so a
 // kill at any boundary leaves the entry pending.
 func (w *watcher) printQueue(now time.Time) (int, int) {
-	caps := map[string]*bounded.List{}
-	order := []string{}
+	// One cap PER KIND, from internal/bounded, because a flat cap over a
+	// concatenated stream means the loud kind eats the quiet one and the quiet
+	// one is the finding the window did not already know about: forty churning
+	// entries must not hide one note. The MORE lines are written here rather
+	// than by bounded.Group.More, because this tool's grammar carries n=<k> --
+	// the lines this poll did not print, every one of them pending.
+	g := bounded.Grouped(w.stdout, w.maxLines, "WAKE", "")
 	var printed []wake.Record
 	for _, r := range w.st.Queue() {
 		kind := wake.CapKind(w.kindOf(r.Key))
-		l, ok := caps[kind]
-		if !ok {
-			l = bounded.Capped(w.stdout, w.maxLines, "WAKE", kind, remedyFor(kind))
-			caps[kind] = l
-			order = append(order, kind)
+		l := g.List(kind)
+		before := 0
+		if l != nil {
+			before = l.Shown()
 		}
-		before := l.Shown()
-		l.Line(wake.Render(w.kindOf(r.Key), r.Key, r.Value, now))
-		if l.Shown() > before {
+		g.Line(kind, wake.Render(w.kindOf(r.Key), r.Key, r.Value, now))
+		if g.List(kind).Shown() > before {
 			printed = append(printed, r)
 		}
 	}
@@ -807,17 +838,11 @@ func (w *watcher) printQueue(now time.Time) (int, int) {
 	// the bus cap on each of them, so a run of many polls over a refusing bus
 	// still prints at most --max-lines bus lines per poll.
 	for _, line := range w.standing {
-		l, ok := caps["bus"]
-		if !ok {
-			l = bounded.Capped(w.stdout, w.maxLines, "WAKE", "bus", remedyFor("bus"))
-			caps["bus"] = l
-			order = append(order, "bus")
-		}
-		l.Line(line)
+		g.Line("bus", line)
 	}
 	w.standing = nil
-	for _, kind := range order {
-		l := caps[kind]
+	for _, kind := range g.Kinds() {
+		l := g.List(kind)
 		if l.Elided() > 0 {
 			fmt.Fprintf(w.stdout, "WAKE MORE kind=%s shown=%d total=%d n=%d %s\n",
 				oneline.Field(kind), l.Shown(), l.Total(), l.Elided(), oneline.Escape(remedyFor(kind)))
@@ -834,6 +859,54 @@ func (w *watcher) printQueue(now time.Time) (int, int) {
 		w.save()
 	}
 	return len(printed), news
+}
+
+// recoverAdvance is step 4 of the advance transaction, run once at the start of
+// a call that finds bus:advance=inflight: a plain inbox for carrying=, then the
+// whole carried list off the reader's own OPEN list, spooled before anything
+// else -- because a plain inbox does not re-list a note the cursor has passed.
+func (w *watcher) recoverAdvance(ctx context.Context, now time.Time) {
+	if w.advancer == nil || !wake.Interrupted(w.st) {
+		return
+	}
+	res, note, err := w.advancer.Recover(ctx, w.st)
+	w.observe("bus", res, now)
+	w.save()
+	if err != nil {
+		fmt.Fprintf(w.stderr, "WAKE POLL bus: %s\n", oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)))
+		return
+	}
+	if note != "" {
+		w.note(note)
+	}
+}
+
+// advanceOrDefer is steps 2 and 3. Mail consumed is mail spooled; mail spooled
+// is mail printed, under the cap like everything else; and a cap that elides a
+// note DEFERS THE FETCH rather than losing the note. It answers whether the
+// injected kill of test 11 landed.
+func (w *watcher) advanceOrDefer(ctx context.Context, now time.Time) bool {
+	if w.advancer == nil || !w.firstPoll {
+		return false
+	}
+	if n := wake.BusQueued(w.st); n > 0 {
+		w.note(fmt.Sprintf("bus advance deferred: pending=%d bus notes unprinted; nothing fetches until they print", n))
+		return false
+	}
+	res, killed, err := w.advancer.Advance(ctx, w.st, w.head, w.save)
+	if killed {
+		return true
+	}
+	w.observe("bus", res, now)
+	w.save()
+	if err != nil {
+		fmt.Fprintf(w.stderr, "WAKE POLL bus: %s\n", oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)))
+		return false
+	}
+	// Cleared ONLY after the advance's output is durable.
+	wake.ClearAdvance(w.st)
+	w.save()
+	return false
 }
 
 // remedyFor names the flag that lifts the ceiling, or the file that holds the

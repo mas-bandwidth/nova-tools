@@ -750,14 +750,66 @@ func TestNewMailReachesTheCheckoutThroughTheAdvance(t *testing.T) {
 		}
 	})
 
-	t.Run("--advance-cursor is not in this build", func(t *testing.T) {
-		fakes(t)
+	// Work list item 3a, and test 12's advancing half: "a note is pushed from
+	// the other clone while one watcher runs alone with --advance-cursor and is
+	// relayed WITHIN TWO POLLS". New mail reaches the checkout through the
+	// fetch inside `inbox --advance`'s push and is listed by the NEXT inbox.
+	t.Run("--advance-cursor relays new mail within two advancing polls", func(t *testing.T) {
+		busDir, _ := fakes(t)
+		write(t, filepath.Join(busDir, "out.1"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+		// The advance: its push fetched, and it lists nothing new itself.
+		write(t, filepath.Join(busDir, "out.2"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+		// The next plain inbox lists what the push brought down.
+		write(t, filepath.Join(busDir, "out"),
+			"INBOX NOTE id=new001 from=Stella addr=to at=2026-09-11T11:09:00Z path=from-stella/new.md: pushed by the other clone\n")
 		state := filepath.Join(t.TempDir(), "wake.state")
-		r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		r := wakeRun(t, "watch", "--state", state, "--max", "20s", "--on-deadline", "report",
 			"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
 			"--advance-cursor", "--remote", "origin", "--branch", "main")
-		if r.exit != 2 || !strings.Contains(r.stderr, "not in this build; use --refresh") {
-			t.Errorf("exit = %d; %s", r.exit, r.stderr)
+		if r.exit != 0 {
+			t.Fatalf("exit = %d; %s", r.exit, r.all())
+		}
+		if !strings.Contains(r.stdout, "WAKE BUS id=new001") {
+			t.Errorf("the note was not relayed within two advancing polls:\n%s", r.all())
+		}
+		advances := 0
+		for _, c := range calls(t, busDir) {
+			if advanced(c) {
+				advances++
+				if !strings.Contains(c, "--remote origin") || !strings.Contains(c, "--branch main") {
+					t.Errorf("the advance is the one write-side call and it pushes: %q", c)
+				}
+			}
+		}
+		if advances == 0 {
+			t.Errorf("nothing advanced:\n%s", strings.Join(calls(t, busDir), "\n"))
+		}
+	})
+
+	// "The cursor never moves past a note this tool has not spooled, and never
+	// moves while a note is unprinted." A call holding unprinted mail prints up
+	// to the cap, returns, and DOES NOT ADVANCE.
+	t.Run("--advance-cursor defers behind unprinted notes", func(t *testing.T) {
+		busDir, _ := fakes(t)
+		write(t, filepath.Join(busDir, "out"), strings.Join([]string{
+			"INBOX NOTE id=aaa111 from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/a.md: one",
+			"INBOX NOTE id=bbb222 from=Johnny addr=to at=2026-09-11T11:01:00Z path=from-johnny/b.md: two",
+		}, "\n")+"\n")
+		state := filepath.Join(t.TempDir(), "wake.state")
+		args := []string{"watch", "--state", state, "--max", "20s", "--on-deadline", "report",
+			"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+			"--advance-cursor", "--remote", "origin", "--branch", "main", "--max-lines", "1"}
+		r := wakeRun(t, args...)
+		if n := countLines(r.stdout, "WAKE NOTE bus advance deferred"); n != 1 {
+			t.Errorf("%d deferred notes, want exactly one per call that holds unprinted mail:\n%s", n, r.stdout)
+		}
+		for _, c := range calls(t, busDir) {
+			if advanced(c) {
+				t.Errorf("the cursor moved past a note this tool has not printed: %q", c)
+			}
+		}
+		if !strings.Contains(r.stdout, "pending=1") {
+			t.Errorf("the verdict does not carry what the window has not been shown:\n%s", r.stdout)
 		}
 	})
 

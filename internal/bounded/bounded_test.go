@@ -187,3 +187,22 @@ func TestGroupOutputIsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// A verb whose MORE line carries a field this package does not print still gets
+// the per-kind capping from here rather than hand-rolling a second map.
+func TestAGroupHandsBackEachKindsList(t *testing.T) {
+	var out strings.Builder
+	g := Grouped(&out, 1, "WAKE", "--max-lines 0 prints them all")
+	g.Line("bus", "WAKE BUS id=a")
+	g.Line("bus", "WAKE BUS id=b")
+	g.Line("entry", "WAKE ENTRY one")
+	if l := g.List("bus"); l == nil || l.Shown() != 1 || l.Total() != 2 || l.Elided() != 1 {
+		t.Errorf("the bus list is %+v; a caller needs its own kind's numbers to write its own summary line", l)
+	}
+	if l := g.List("entry"); l == nil || l.Elided() != 0 {
+		t.Errorf("the entry list elided something it should not have: %+v", l)
+	}
+	if g.List("report") != nil {
+		t.Error("a kind this group never saw must not be invented")
+	}
+}

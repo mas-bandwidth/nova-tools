@@ -187,5 +187,12 @@ func (g *Group) Total() int {
 // Elided is Total minus Shown across every kind.
 func (g *Group) Elided() int { return g.Total() - g.Shown() }
 
+// List is one kind's list, or nil when this group has not seen that kind. It is
+// here for a verb whose MORE line carries a field this package does not print
+// -- nova-wake's carries n=<elided>, which its spec requires -- so that such a
+// verb can reuse the per-kind capping and still write its own summary, rather
+// than hand-rolling a second map of lists beside this one.
+func (g *Group) List(kind string) *List { return g.lists[kind] }
+
 // Kinds returns the kinds seen, in first-seen order.
 func (g *Group) Kinds() []string { return append([]string(nil), g.order...) }
