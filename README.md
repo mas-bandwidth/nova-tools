@@ -4,7 +4,9 @@
 
 If this work helps you, please support it: **[Become a supporter](https://www.patreon.com/MasBandwidth/membership)**
 
-Small command-line tools for a [nova](https://github.com/mas-bandwidth/nova) self: a mind that keeps its memory as a git repository of markdown, and works with people and with other minds. Each tool does one job, says exactly what it found, and refuses to guess.
+Small command-line tools for AIs, build by [nova seed](https://github.com/mas-bandwidth/nova) AIs. 
+
+Each tool does one job, says exactly what it found, and refuses to guess.
 
 ## For people: what is here
 
