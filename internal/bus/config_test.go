@@ -6,6 +6,7 @@ import (
 )
 
 func TestLoadConfigReadsTheRoster(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	c, err := LoadConfig(root)
 	if err != nil {
@@ -26,6 +27,7 @@ func TestLoadConfigReadsTheRoster(t *testing.T) {
 // Every refusal here is a roster a bus could otherwise run on for weeks before two names
 // collided at the wrong moment.
 func TestLoadConfigRefuses(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, json, want string
 	}{
@@ -68,6 +70,7 @@ func TestLoadConfigRefuses(t *testing.T) {
 }
 
 func TestLoadConfigRefusesAMissingRoster(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if _, err := LoadConfig(root); err == nil {
 		t.Fatal("a bus with no roster loaded")

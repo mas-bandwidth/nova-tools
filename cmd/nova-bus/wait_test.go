@@ -82,6 +82,7 @@ func push(dir string) error {
 // THE POINT OF THE VERB: a note pushed by somebody else, mid-call, ends the wait. The
 // caller is inside a tool call the whole time and gets the listing the moment it is true.
 func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	settled(t, checkout)
@@ -129,6 +130,7 @@ func TestWaitReturnsWhenANoteArrivesDuringTheWait(t *testing.T) {
 // It is asserted on the WAIT line, which is where a caller who named no interval is told
 // what they got. --timeout is short: what is under test is the number, not the sleeping.
 func TestTheDefaultWaitIntervalIsTenSeconds(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	settled(t, checkout)
@@ -143,14 +145,17 @@ func TestTheDefaultWaitIntervalIsTenSeconds(t *testing.T) {
 // Nothing arrives: the wait stops when it said it would, says so, and exits 0. A timeout
 // is the answer "nothing yet", not an error -- the caller issues the next one.
 func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	settled(t, checkout)
 
 	// Two seconds and not the few hundred milliseconds this needs on a quiet machine: the
-	// assertion under it is that the run POLLED MORE THAN ONCE, and one poll is a git
-	// fetch, which on a loaded CI runner is not instant. A window several polls wide keeps
-	// the assertion about the loop rather than about the runner.
+	// assertion under it is that the run did not come back BEFORE its deadline, and a
+	// deadline long enough to be told apart from the work around it is what makes that
+	// about the timeout rather than about the runner. It used to say the assertion was
+	// that the run polled more than once; that claim is a wall clock and now lives behind
+	// the perf tag, which is what the note further down is about.
 	const timeout = 2 * time.Second
 	start := time.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0)
@@ -164,12 +169,22 @@ func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
 	if took < timeout {
 		t.Fatalf("the wait returned after %s, before its %s deadline", took, timeout)
 	}
-	// It polled, more than once, and said how many times: a tool that returns "nothing"
-	// without saying it looked is indistinguishable from one that did not look.
+	// It polled and said how many times: a tool that returns "nothing" without saying it
+	// looked is indistinguishable from one that did not look.
+	//
+	// AT LEAST ONE, and not at least two, which is what this asserted until 2026-09-11.
+	// "More than one poll in two seconds at a hundred milliseconds" is a claim about how
+	// fast a git fetch is on the machine running the test, and under the load of `go test
+	// ./...` it is false: one fetch took the whole two seconds and the run reported
+	// polls=1, correctly (#63). That claim is a wall clock wearing a count's clothes, so it
+	// did not get deleted -- it moved to TestAWaitPollsMoreThanOnceBeforeItsDeadline in
+	// timing_test.go, behind `-tags perf`, with every other assertion here that depends on
+	// what else the machine is doing. What is left is the part that is true on any machine:
+	// the run looked, and it said so.
 	line := r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):]
 	polls := field(t, line, "polls=")
-	if n, err := strconv.Atoi(polls); err != nil || n < 2 {
-		t.Fatalf("polls=%q, want at least 2 over %s at 100ms:\n%s", polls, timeout, r.stdout)
+	if n, err := strconv.Atoi(polls); err != nil || n < 1 {
+		t.Fatalf("polls=%q, want at least 1 over %s at 100ms:\n%s", polls, timeout, r.stdout)
 	}
 	// And it names the cursor it waited from, which is the one it started at: a wait that
 	// found nothing writes nothing.
@@ -182,6 +197,7 @@ func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
 // The ceiling is about HARNESSES and not about buses: a tool call that runs too long is
 // killed with nothing said, so a timeout longer than the limit is not a longer wait.
 func TestWaitRefusesATimeoutLongerThanAToolCall(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	r := invoke(t, "", waitFlags(checkout, "Ada", "61m")...).mustCode(t, 2)
@@ -195,6 +211,7 @@ func TestWaitRefusesATimeoutLongerThanAToolCall(t *testing.T) {
 // Every wait has a deadline. One with no deadline is a line that is stuck rather than
 // waiting, and nobody outside can tell the two apart.
 func TestWaitRefusesWithNoTimeoutAtAll(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", "wait", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
@@ -206,6 +223,7 @@ func TestWaitRefusesWithNoTimeoutAtAll(t *testing.T) {
 // full of notes, so the FIRST poll's fetch failing is a refusal now rather than silence
 // for an hour.
 func TestWaitRefusesOnTheFirstPollWhenTheFetchFails(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	settled(t, checkout)
@@ -219,6 +237,7 @@ func TestWaitRefusesOnTheFirstPollWhenTheFetchFails(t *testing.T) {
 // promise is not "it also writes a cursor" -- it is that a line can wait instead of poll
 // and nothing else about their reading changes.
 func TestWaitAdvancesTheCursorExactlyAsInboxDoes(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	byInbox, byWait := "", ""
 	openByInbox, openByWait := "", ""
@@ -284,6 +303,7 @@ func TestWaitAdvancesTheCursorExactlyAsInboxDoes(t *testing.T) {
 // command in it. `wait` saying the same thing again in a sentence without the command
 // would be two lines about one line, which is the noise this is meant to end.
 func TestWaitReturnsAtOnceWhenTheCursorsLineHidesTheWholeWait(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	// Tomorrow, on the fixed clock: the line a reader draws when they mean "from today".
@@ -317,6 +337,7 @@ func TestWaitReturnsAtOnceWhenTheCursorsLineHidesTheWholeWait(t *testing.T) {
 // wait exactly as a date does, and a reader owed that fact is owed it whatever shape their
 // line is in.
 func TestWaitSaysWhyAnInstantDrawnForwardHidesTheWholeWait(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	// This evening, on the fixed clock of 2026-09-09T12:34:56Z: after now, and after
@@ -341,6 +362,7 @@ func TestWaitSaysWhyAnInstantDrawnForwardHidesTheWholeWait(t *testing.T) {
 // line for the backlog it did not print. With --open in that loop, a line carrying
 // seventy-four re-read all seventy-four on every poll.
 func TestAWaitReturnsTheNewNoteInFullAndOneLineForTheBacklog(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	// No switch-day line: Ada is carrying the fixture's two, which is the backlog.

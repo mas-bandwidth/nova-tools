@@ -14,6 +14,7 @@ import (
 // that did not happen and a rewrite nobody was told about are the two ways this could be
 // wrong.
 func TestSendTolerancesPrintANoticeAndLandTheNote(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, draft, as string
 		notice          string
@@ -100,6 +101,7 @@ func TestSendTolerancesPrintANoticeAndLandTheNote(t *testing.T) {
 
 // The refusals that stay, and the sentence each of them says.
 func TestSendStillRefusesWhatItCannotGuessAtTheBinary(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ name, draft, want string }{
 		{"a recipient not on the roster", "From: Ada\nTo: Boe\nSubject: s\n\nbody\n", `To: "Boe" names no one on this bus`},
 		{"no To line at all", "From: Ada\nSubject: s\n\nbody\n", "no To line"},
@@ -124,6 +126,7 @@ func TestSendStillRefusesWhatItCannotGuessAtTheBinary(t *testing.T) {
 // Every problem in ONE run, one line each. Three runs to find three mistakes is the
 // failure this closes.
 func TestARefusalNamesEveryProblemOnItsOwnLine(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	r := invoke(t, "From: Ada\nTo: Boe\nRe: bo-deadbeefcafe\nSubject:\n\n\n",
@@ -148,6 +151,7 @@ func TestARefusalNamesEveryProblemOnItsOwnLine(t *testing.T) {
 // The draft verb: its stdout is a FILE, and the file is a note this tool's own parser
 // reads back and this tool's own send accepts.
 func TestDraftPrintsASkeletonTheParserReadsBack(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	r := invoke(t, "", "draft", "--bus", checkout, "--as", "the archivist",
@@ -176,6 +180,7 @@ func TestDraftPrintsASkeletonTheParserReadsBack(t *testing.T) {
 
 // The draft verb refuses what it cannot spell for you, and refuses all of it at once.
 func TestDraftRefusesEveryNameItCannotResolve(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	r := invoke(t, "", "draft", "--bus", checkout, "--as", "Adda", "--to", "Boe", "--re", "nothing-here").mustCode(t, 2)
