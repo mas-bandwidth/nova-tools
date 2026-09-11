@@ -241,8 +241,29 @@ func TestTheRefusalsOwnRemedyUnwedgesThePool(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("requeue exited %d: %s%s", exit, stdout, stderr)
 	}
+	// THE LINE IS ITS GRAMMAR AND NOTHING ELSE (SPEC-SWARM.md:593): `REQUEUE OK id=<id>
+	// from=<old-id> changed=<true>`. It carried `was=` and `replaced=`, two tokens in no
+	// grammar line and no rule sentence, and a reader of this tool reads the grammar.
+	line := ""
+	for _, l := range strings.Split(stdout, "\n") {
+		if strings.HasPrefix(l, "REQUEUE OK ") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatalf("no REQUEUE OK line:\n%s", stdout)
+	}
+	fields := strings.Fields(line)[2:]
+	keys := make([]string, 0, len(fields))
+	for _, f := range fields {
+		k, _, _ := strings.Cut(f, "=")
+		keys = append(keys, k)
+	}
+	if got, want := strings.Join(keys, " "), "id from changed"; got != want {
+		t.Errorf("REQUEUE OK carries %q, and its grammar carries %q:\n%s", got, want, line)
+	}
 	mustContain(t, "requeue", stdout, "from="+metered)
-	mustContain(t, "requeue", stdout, "replaced=true")
+	mustContain(t, "requeue", stdout, "changed=true")
 
 	// THE POOL IS NOT WEDGED: one pending task, not two, and the refused one is kept where
 	// a person can see what happened to it.

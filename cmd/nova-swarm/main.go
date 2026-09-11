@@ -48,7 +48,7 @@ usage:
   nova-swarm verdict   --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
   nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>]
   nova-swarm result    --pool <dir> --id <job>
-  nova-swarm template  --name read-pr|probe-row|fix-card|result
+  nova-swarm template  --name read-pr|probe-row|fix-card|result|worker
   nova-swarm cost      --pool <dir> [--since <stamp>] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
   nova-swarm finalize  --pool <dir> --task <id>
@@ -715,8 +715,12 @@ func cmdRequeue(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 			oneline.Field(*task), oneline.Field(sc.ID), oneline.Escape(p.Path(swarm.Aborted)))
 		return 1
 	}
-	fmt.Fprintf(stdout, "REQUEUE OK id=%s from=%s was=%s replaced=%t changed=true\n",
-		oneline.Field(sc.ID), oneline.Field(*task), oneline.Field(old), replaced)
+	// THE GRAMMAR IS THE LINE (SPEC-SWARM.md:593): `REQUEUE OK id=<id> from=<old-id>
+	// changed=<true>`. `was=` and `replaced=` were in no grammar line and no rule sentence,
+	// and the refusal above is the only path where the replacement did not happen -- so
+	// `replaced=` was a field that could only ever read true.
+	fmt.Fprintf(stdout, "REQUEUE OK id=%s from=%s changed=true\n",
+		oneline.Field(sc.ID), oneline.Field(*task))
 	return 0
 }
 
@@ -831,7 +835,9 @@ func cmdTemplate(args []string, stdout, stderr io.Writer) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	f.want(*name, "name", "one of read-pr, probe-row, fix-card, result")
+	// THE BANNER AND THE REFUSAL NAME THE SAME SET. The list was typed twice and the
+	// tool answered to a fifth name (`worker`) that neither copy mentioned.
+	f.want(*name, "name", "one of "+strings.Join(swarm.TemplateNames(), ", "))
 	if f.refused(stderr) {
 		return 2
 	}

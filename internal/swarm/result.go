@@ -140,6 +140,7 @@ func ParseReport(data []byte) Report {
 	lines := strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n")
 	section := ""
 	inHead := false
+	headSeen := false
 	headLine := 0
 	for i, raw := range lines {
 		n := i + 1
@@ -155,12 +156,24 @@ func ParseReport(data []byte) Report {
 			section = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(line, "## ")))
 			inHead = section == "head"
 			if inHead {
-				r.HasHead, headLine = true, n
+				r.HasHead, headLine, headSeen = true, n, false
 			}
 			continue
 		}
 		trimmed := strings.TrimSpace(line)
 		if inHead {
+			// RULE 8'S FIRST LINE (SPEC-SWARM.md:117): the evidence of completion is the
+			// report's `## Head`, "whose first line is `findings: <n>`". FIRST. A head
+			// that opened with `notes read:`, `repo:` or `rev:` was read here as a
+			// complete report, so the one shape a coordinator classifies on was not the
+			// shape the parser required, and completion evidence could sit anywhere in
+			// the head. A shape the parser bends is not a shape.
+			if trimmed != "" && !headSeen {
+				headSeen = true
+				if !strings.HasPrefix(trimmed, "findings:") {
+					return malformed(r, n)
+				}
+			}
 			switch {
 			case trimmed == "":
 			case strings.HasPrefix(trimmed, "findings:"):
@@ -243,8 +256,26 @@ func ParseReport(data []byte) Report {
 				r.OneLine = trimmed
 			}
 		case "findings":
-			if strings.HasPrefix(trimmed, "- ") {
+			switch {
+			case strings.HasPrefix(trimmed, "- "):
 				r.FindingLines = append(r.FindingLines, parseFinding(n, strings.TrimSpace(strings.TrimPrefix(trimmed, "- "))))
+			case trimmed != "" && len(r.FindingLines) > 0:
+				// RULE 2'S "OR THE NEXT" (SPEC-SWARM.md:82-84): "A finding line carries
+				// the rule it rests on, quoted word for word, with `file:line`, on the
+				// same line or the next." The parser read ONE line per finding, so a
+				// finding that wrapped its quote onto the following line had no rule and
+				// no file: it was counted `unquoted`, it got no de-duplication key
+				// (rule 15), and it was folded into nobody's page. The parser discarded
+				// the exact evidence rule 2 exists to demand.
+				//
+				// The NEXT line, and no further; and only for a finding that did not
+				// already carry both, so a complete claim is never re-read from the line
+				// below it. This is the whole of the widening: the parser gains no
+				// opinion, it reads the second line rule 2 always allowed.
+				last := &r.FindingLines[len(r.FindingLines)-1]
+				if last.Line == n-1 && !last.Quoted() {
+					last.carry(trimmed)
+				}
 			}
 		}
 	}
@@ -319,6 +350,20 @@ func parseFinding(line int, text string) Finding {
 	f.Rule = lastBacktickSpan(f.Text)
 	f.File, f.FileLine = fileAndLine(f.Text)
 	return f
+}
+
+// carry folds rule 2's "or the next" line into the finding above it: the quote and the
+// `file:line` that did not fit on the bullet. It fills only what is EMPTY, and it keeps the
+// continuation in the finding's text so a coordinator's page shows the evidence beside the
+// claim it rests on.
+func (f *Finding) carry(text string) {
+	if f.Rule == "" {
+		f.Rule = lastBacktickSpan(text)
+	}
+	if f.File == "" {
+		f.File, f.FileLine = fileAndLine(text)
+	}
+	f.Text += " " + text
 }
 
 func cutPrefixFold(s, prefix string) (string, bool) {

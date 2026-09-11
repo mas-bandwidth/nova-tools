@@ -299,7 +299,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0;\nstdout:\n%s", exit, stdout)
 		}
-		mustContain(t, "stdout", stdout, "RUN RECLAIM slot=1 id="+taskID+" end=unlaunched usage=-")
+		mustContain(t, "stdout", stdout, "RUN RECLAIM slot=1 id="+taskID+" end=unlaunched dest=- usage=-")
 		mustContain(t, "stdout", stdout, "RUN START id="+taskID)
 		mustContain(t, "stdout", stdout, "RUN DONE id="+taskID)
 	})
@@ -511,7 +511,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0;\nstdout:\n%s", exit, stdout)
 		}
-		mustContain(t, "stdout", stdout, "RUN RECLAIM slot=1 id="+taskID+" end=unlaunched usage=-")
+		mustContain(t, "stdout", stdout, "RUN RECLAIM slot=1 id="+taskID+" end=unlaunched dest=- usage=-")
 		mustContain(t, "stdout", stdout, "RUN START id="+taskID)
 		mustContain(t, "stdout", stdout, "RUN DONE id="+taskID)
 	})
@@ -549,7 +549,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		if exit != 0 {
 			t.Fatalf("exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 		}
-		mustContain(t, "stdout", stdout, "RUN RECLAIM slot=1 id="+taskID+" end=unlaunched usage=-")
+		mustContain(t, "stdout", stdout, "RUN RECLAIM slot=1 id="+taskID+" end=unlaunched dest=- usage=-")
 		mustContain(t, "stdout", stdout, "RUN START id="+taskID)
 		mustContain(t, "stdout", stdout, "RUN DONE id="+taskID)
 	})

@@ -92,6 +92,95 @@ func TestTheParserClassifiesWithoutAnOpinion(t *testing.T) {
 	}
 }
 
+// RULE 8, VERBATIM (SPEC-SWARM.md:117): the evidence of completion is "the report's `##
+// Head`, whose first line is `findings: <n>`". FIRST. A head that opened with `notes read:`
+// or `repo:` was read as `ok` here, so the one shape a coordinator classifies on was not
+// the shape the parser required, and a report could bury its completion evidence anywhere
+// in the head.
+func TestTheHeadsFirstLineIsTheFindingCount(t *testing.T) {
+	good := "# t\n\n## Head\nfindings: 1\nnotes read: 1\nrepo: o/n\nrev: abc\na paragraph.\n"
+	if got := ParseReport([]byte(good)); got.Class != ClassOK {
+		t.Fatalf("findings: first is the shape rule 8 names, got %s", got.Class)
+	}
+	// Every other opener is malformed, and the malformed line is the line that is wrong.
+	for _, first := range []string{"notes read: 1", "repo: o/n", "rev: abc", "a paragraph."} {
+		body := "# t\n\n## Head\n" + first + "\nfindings: 1\nrepo: o/n\nrev: abc\n"
+		got := ParseReport([]byte(body))
+		if got.Class != ClassMalformed {
+			t.Errorf("a head opening %q is malformed, got %s", first, got.Class)
+			continue
+		}
+		if got.MalformedLine != 4 {
+			t.Errorf("the malformed line for %q wants 4, got %d", first, got.MalformedLine)
+		}
+		if len(got.FindingLines) != 0 {
+			t.Errorf("a malformed report yields NO finding, ever: %q kept %d", first, len(got.FindingLines))
+		}
+	}
+	// A blank line between the heading and the count is whitespace, not a first line.
+	if got := ParseReport([]byte("# t\n\n## Head\n\nfindings: 0\n")); got.Class != ClassClean {
+		t.Errorf("a blank line before findings: is not a first line, got %s", got.Class)
+	}
+}
+
+// RULE 2, VERBATIM (SPEC-SWARM.md:82-84): "Every claim quotes its rule verbatim, beside the
+// line. A finding line carries the rule it rests on, quoted word for word, with
+// `file:line`, on the same line or the next."
+//
+// OR THE NEXT. The parser read one line per finding and nothing else, so a finding that
+// wrapped its quote onto the following line had no Rule and no File: it was counted
+// `unquoted`, it got no de-duplication key, and it was folded into nobody's page. The
+// parser discarded the exact evidence rule 2 exists to demand.
+func TestAFindingCarriesItsQuoteOnTheSameLineOrTheNext(t *testing.T) {
+	head := "# t\n\n## Head\nfindings: %s\nrepo: o/n\nrev: abc\na paragraph.\n\n## Findings\n"
+
+	// The next line carries the quote and the file:line.
+	wrapped := ParseReport([]byte(sprintf(head, "1") +
+		"- the reclaim line omits a field the grammar names\n" +
+		"  `RUN RECLAIM slot=<n> id=<id> end=<...> dest=<done|failed|->` internal/swarm/run.go:147\n"))
+	if len(wrapped.FindingLines) != 1 {
+		t.Fatalf("the continuation is part of the finding above it, not a second finding: got %d", len(wrapped.FindingLines))
+	}
+	f := wrapped.FindingLines[0]
+	if !f.Quoted() {
+		t.Errorf("a finding whose quote is on the next line IS quoted (rule 2): %+v", f)
+	}
+	if f.File != "internal/swarm/run.go" || f.FileLine != "147" {
+		t.Errorf("the file:line on the next line is the finding's file:line, got %q:%q", f.File, f.FileLine)
+	}
+	if f.Rule != "RUN RECLAIM slot=<n> id=<id> end=<...> dest=<done|failed|->" {
+		t.Errorf("the rule quoted on the next line is the finding's rule, got %q", f.Rule)
+	}
+	if _, ok := f.Key("o/n", "abc"); !ok {
+		t.Error("a finding quoted on the next line has a de-duplication key like any other (rule 15)")
+	}
+
+	// ONLY the next. A quote two lines below is not what rule 2 allows, and a finding with
+	// no quote is still counted unquoted -- the parser gains no opinion here.
+	far := ParseReport([]byte(sprintf(head, "1") +
+		"- a claim with no quote beside it\n" +
+		"\n" +
+		"  `THE RULE` internal/x.go:10\n"))
+	if len(far.FindingLines) != 1 || far.FindingLines[0].Quoted() {
+		t.Errorf("rule 2 says the same line or the NEXT, and nothing below that: %+v", far.FindingLines)
+	}
+
+	// A finding that quoted its rule on its own line is NOT re-read from the line below it.
+	own := ParseReport([]byte(sprintf(head, "2") +
+		"- a complete claim `THE RULE` internal/a.go:1\n" +
+		"  `A DIFFERENT RULE` internal/b.go:2\n" +
+		"- a second claim `RULE TWO` internal/c.go:3\n"))
+	if len(own.FindingLines) != 2 {
+		t.Fatalf("two bullets are two findings, got %d", len(own.FindingLines))
+	}
+	if own.FindingLines[0].File != "internal/a.go" || own.FindingLines[0].Rule != "THE RULE" {
+		t.Errorf("a finding complete on its own line keeps its own quote, got %+v", own.FindingLines[0])
+	}
+	if own.FindingLines[1].File != "internal/c.go" {
+		t.Errorf("the second bullet is the second finding, got %+v", own.FindingLines[1])
+	}
+}
+
 // Rule 15's normalization: ./internal/x.go:10 and internal\x.go:10 are one file.
 func TestAPathIsNormalizedBeforeTheCompare(t *testing.T) {
 	a := parseFinding(1, "something `RULE` ./internal/x.go:10")

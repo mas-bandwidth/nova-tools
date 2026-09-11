@@ -144,7 +144,12 @@ func Run(in RunInput) int {
 				_ = p.Claim(sc.ID, Running, Pending)
 			}
 			_ = p.Free(n)
-			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=unlaunched usage=-\n", n, oneline.Field(d.File.Job))
+			// ONE GRAMMAR LINE HAS ONE SHAPE (SPEC-SWARM.md:566): `RUN RECLAIM … end=<…>
+			// dest=<done|failed|-> usage=<path|->`. The reclaim above prints `dest=`; this
+			// one did not, so the same line came out two ways and a reader parsing it by
+			// field found the field missing. An unlaunched task goes back to pending/,
+			// which is neither done nor failed: the dash the grammar names for exactly that.
+			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=unlaunched dest=%s usage=-\n", n, oneline.Field(d.File.Job), Dash)
 		default:
 			said = true
 			quarantined[n] = true

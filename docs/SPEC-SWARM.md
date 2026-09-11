@@ -568,7 +568,7 @@ RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
 RUN MALFORMED id=<id> slot=<n> line=<n> dest=failed
-RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only|malformed> findings=<n> refusals=<n> notes=<sent>/<read|-> unpublished=<true|false> budget=<spent|n+|->/<n> dest=<done|failed>
+RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only|malformed> findings=<n> refusals=<n> notes=<sent>/<read|-> unpublished=<true|false> budget=<spent|n+|->/<n> dest=<done|failed> [log=<one bounded line of what the harness said>]
 RUN VIOLATION id=<id> slot=<n> background=<n> dest=failed: <reason>
 RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> unpublished=<true|false> budget=<spent|n+|->/<n> survived=<true|false> requeued=<true|false> reaped=<1|2>
 RUN MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0

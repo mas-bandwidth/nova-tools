@@ -486,6 +486,52 @@ func TestAReapedJobRunsOnceMore(t *testing.T) {
 	}
 	mustContain(t, "the run", stdout, "RUN OK started=2 done=0 failed=0 killed=2 pending=0")
 	mustContain(t, "the remedy line", stdout, "RUN NOTE a worker was killed at its deadline twice")
+
+	// RULE 7, VERBATIM (SPEC-SWARM.md:109-111): "A worker silent past its deadline is
+	// reaped and its job is re-queued once, with `requeued=1` in the new task's sidecar; a
+	// job reaped a second time goes to `failed/` with `reaped=2` and is not re-queued
+	// again." IN THE SIDECAR. The line printed `reaped=2` and the durable record in
+	// failed/ still said `reaped=1`, so the one thing that outlives the run -- the file a
+	// person reads tomorrow -- did not carry the count the rule names. A line is not a
+	// record.
+	first := b.sidecar(id)
+	if first.Reaped != 1 {
+		t.Errorf("the first attempt's sidecar wants reaped=1, got %d", first.Reaped)
+	}
+	second := swarmSidecar{}
+	for _, name := range mustReadDirNames(t, filepath.Join(b.pool, "failed")) {
+		if !strings.HasSuffix(name, ".json") || strings.HasPrefix(name, id) {
+			continue
+		}
+		second = b.sidecar(strings.TrimSuffix(name, ".json"))
+	}
+	if second.ID == "" {
+		t.Fatal("the second attempt has no sidecar in failed/")
+	}
+	if second.From != id {
+		t.Errorf("the re-queued attempt carries from=%s, got %q", id, second.From)
+	}
+	if second.Requeued != 1 {
+		t.Errorf("rule 7 wants requeued=1 in the new task's sidecar, got %d", second.Requeued)
+	}
+	if second.Reaped != 2 {
+		t.Errorf("a job reaped a second time goes to failed/ with reaped=2; its sidecar says %d", second.Reaped)
+	}
+}
+
+// mustReadDirNames is one directory listing, named, so a test reads a pool the way a person
+// does and fails on the read rather than on a nil slice three lines later.
+func mustReadDirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := make([]string, 0, len(entries))
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
 }
 
 // Rule 10: the note file, appended by the tool, counted in the report.
@@ -794,6 +840,9 @@ type swarmSidecar struct {
 	End       string `json:"end,omitempty"`
 	RC        int    `json:"rc"`
 	Class     string `json:"class,omitempty"`
+	Reaped    int    `json:"reaped,omitempty"`
+	Requeued  int    `json:"requeued,omitempty"`
+	From      string `json:"from,omitempty"`
 }
 
 // D2 (the real run, 2026-09-11): two jobs ended `RUN DONE … dest=failed` and `RUN OK`

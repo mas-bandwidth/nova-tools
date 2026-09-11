@@ -87,6 +87,15 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	}
 	dest := destinationFor(end, report.Class, rec.RC)
 	sc.Class, sc.End, sc.RC, sc.Ended, sc.Notes = report.Class, end, rec.RC, Stamp(now), notesSent
+	// RULE 7, VERBATIM (SPEC-SWARM.md:109-111): "a job reaped a second time goes to
+	// `failed/` with `reaped=2`". IN THE SIDECAR, which is the record that outlives the
+	// run. The count was carried only by the printed line (`sc.Reaped+1`) and the durable
+	// file in failed/ still said `reaped=1`, so the fact a person reads tomorrow was one
+	// less than the fact the run said out loud. The reap is counted HERE, once, and the
+	// line and the file read the same number.
+	if end == EndKilled {
+		sc.Reaped++
+	}
 	if survivors > 0 {
 		sc.Violation = "background"
 	}
@@ -144,7 +153,7 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		// the kill. Before this both ends printed RUN VIOLATION over one another.
 		return fmt.Sprintf("RUN KILLED id=%s slot=%d after=%s deadline=%s findings=%d unpublished=%t budget=%s survived=%t requeued=%t reaped=%d",
 			oneline.Field(sc.ID), r.slot, after, trimDuration(r.deadline), findings, unpublished, budget,
-			survivors > 0, requeued, sc.Reaped+1), EndKilled, dest
+			survivors > 0, requeued, sc.Reaped), EndKilled, dest
 	case report.Class == ClassMalformed:
 		return fmt.Sprintf("RUN MALFORMED id=%s slot=%d line=%d dest=failed",
 			oneline.Field(sc.ID), r.slot, report.MalformedLine), EndFailed, dest
@@ -198,7 +207,9 @@ func (in RunInput) settle(sc Sidecar, jobDir string, rec ExitRecord, end string,
 // never the case where the task was too big, which a second identical run would only prove
 // twice.
 func (in RunInput) requeue(sc Sidecar, now time.Time) bool {
-	if sc.Reaped >= 1 {
+	// sc.Reaped already counts THIS reap, so 1 is the first one and the retry rule 7 allows,
+	// and 2 is the second, which goes to failed/ and is not re-queued again.
+	if sc.Reaped >= 2 {
 		return false
 	}
 	text, err := in.Pool.Text(Running, sc.ID)
@@ -207,7 +218,7 @@ func (in RunInput) requeue(sc Sidecar, now time.Time) bool {
 	}
 	next := sc
 	next.ID = NewID(now, sc.Label)
-	next.From, next.Requeued, next.Reaped = sc.ID, 1, 1
+	next.From, next.Requeued, next.Reaped = sc.ID, 1, sc.Reaped
 	next.Job, next.Slot, next.Started, next.Ended, next.End, next.Class = "", 0, "", "", "", ""
 	if err := in.Pool.Add(text, next); err != nil {
 		return false

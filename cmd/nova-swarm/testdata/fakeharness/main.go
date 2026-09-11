@@ -25,9 +25,6 @@ func main() {
 	// test 11 was a RACE against a child that was already dying, and under three parallel
 	// benches it lost and the violation went unseen.
 	if os.Getenv("FAKE_BACKGROUND_CHILD") == "1" {
-		if job := os.Getenv("NOVA_SWARM_JOB"); job != "" {
-			_ = os.WriteFile(filepath.Join(job, "background.pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644)
-		}
 		time.Sleep(60 * time.Second)
 		return
 	}
@@ -119,6 +116,19 @@ func main() {
 		child.Env = append(os.Environ(), "FAKE_BACKGROUND_CHILD=1")
 		_ = child.Start()
 		// The child outlives this process, which is exactly the violation rule 11 names.
+		//
+		// THE PARENT RECORDS THE PID, not the child. The child wrote its own, and on a
+		// loaded macOS runner it was reaped by the dispatcher's survivor kill before it
+		// was ever scheduled to write the file -- so demanded test 11 read a
+		// background.pid that did not exist and went red for a reason that was not about
+		// the tool (CI 34646003119, test (macos-latest)). `child.Start()` has already
+		// returned the pid the test wants, so writing it HERE, before this process exits,
+		// orders the file ahead of every reader by construction: the dispatcher cannot
+		// see this parent exit until after this write. No sleep, no retry, no timing.
+		if child.Process != nil && job != "" {
+			_ = os.WriteFile(filepath.Join(job, "background.pid"),
+				[]byte(strconv.Itoa(child.Process.Pid)+"\n"), 0o644)
+		}
 	}
 	// The other half of rule 11: a worker that forks and WAITS for its child leaves nothing
 	// alive in its group, and is no violation at all.
