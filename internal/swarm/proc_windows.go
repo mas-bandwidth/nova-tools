@@ -1,17 +1,19 @@
-//go:build !unix && !windows
+//go:build windows
 
 package swarm
 
 import (
+	"errors"
 	"os"
 	"os/exec"
+	"syscall"
 )
 
-// The process layer where there is no process group to speak of. Windows is a platform
-// this repo publishes a binary for, and the honest shape here is a degraded one rather
-// than a pretended one: a job is its child process, the group is that process, and the
-// survivor check can see nothing beyond it. Every claim this file makes is narrower than
-// the unix one, and the places that matter say so on the line they print.
+// The process layer on Windows.
+// Windows is a platform this repo publishes a binary for, and the honest shape here is a
+// degraded one rather than a pretended one: a job is its child process, the group is that
+// process, and the survivor check can see nothing beyond it. Every claim this file makes is
+// narrower than the unix one, and the places that matter say so on the line they print.
 
 func ownGroup(cmd *exec.Cmd) {}
 
@@ -20,11 +22,17 @@ func Alive(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
-	p, err := os.FindProcess(pid)
+	h, err := syscall.OpenProcess(syscall.PROCESS_QUERY_INFORMATION|syscall.SYNCHRONIZE, false, uint32(pid))
+	if err != nil {
+		// ERROR_ACCESS_DENIED (5) means the process exists and is alive, but we cannot query it.
+		return errors.Is(err, syscall.Errno(5))
+	}
+	defer syscall.CloseHandle(h)
+	event, err := syscall.WaitForSingleObject(h, 0)
 	if err != nil {
 		return false
 	}
-	return p.Signal(os.Signal(nil)) == nil
+	return event == syscall.WAIT_TIMEOUT
 }
 
 // TerminateGroup asks the process to stop.

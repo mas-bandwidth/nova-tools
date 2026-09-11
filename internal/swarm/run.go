@@ -311,6 +311,7 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), 1
 	}
 	slot, jobDir := got, jobDirFor(got)
+	CheckKillPoint("after-reserve")
 	if err := in.prepare(sc, text, slot, jobDir); err != nil {
 		_ = p.Free(slot)
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), 1
@@ -337,6 +338,8 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		_ = p.Free(slot)
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: the supervisor would not start: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), 1
 	}
+	_ = os.WriteFile(filepath.Join(jobDir, "supervisor.pid"), []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
+	CheckKillPoint("after-spawn")
 	go func() { _ = cmd.Wait() }()
 
 	// (4) THE HANDSHAKE, holding run.lock and no other lock while it waits.
@@ -348,6 +351,9 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	for waited < timeout {
 		sf, err := p.ReadSlot(slot)
 		if err == nil && sf.State == SlotLaunched && sf.Nonce == nonce {
+			CheckKillPoint("after-identify")
+			CheckKillPoint("after-handshake")
+			CheckKillPoint("after-release")
 			r := &running{sc: sc, slot: slot, nonce: nonce, jobDir: jobDir, started: in.Now(), deadline: taskDeadline(sc, in.Worker)}
 			return r, fmt.Sprintf("RUN START id=%s slot=%d pid=%d pgid=%d started=%s deadline=%s tokens=%s job=%s",
 				oneline.Field(sc.ID), slot, sf.Pid, sf.Pgid, oneline.Field(Stamp(r.started)),

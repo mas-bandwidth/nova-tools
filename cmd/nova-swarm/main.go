@@ -510,12 +510,15 @@ func cmdSupervise(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !ok {
 		return 2
 	}
-	// `supervise` is run's child and nobody's verb. A hand-typed one is refused, and the
-	// test for "is a dispatcher alive" is the pool lock itself: if this process can take
-	// it, nobody holds it.
+	// `supervise` is run's child and nobody's verb. A hand-typed one is refused.
+	// If run.lock is not held, verify that our slot is actually reserved, orphaned, or launched
+	// with our nonce before proceeding (which allows an orphaned child to complete identification or abort per rule 18).
 	if release, err := p.TakeLock(swarm.RunLock, 0); err == nil {
 		release()
-		return refuse(stderr, " supervise", "no `nova-swarm run` holds this pool's lock, and supervise is run's child rather than a verb; it wants to be spawned by `nova-swarm run --pool <dir> --workers <n> --hours <h> --worker <file>`")
+		sf, err := p.ReadSlot(*slot)
+		if err != nil || *nonce == "" || sf.Nonce != *nonce || (sf.State != swarm.SlotReserved && sf.State != swarm.SlotOrphaned && sf.State != swarm.SlotLaunched) {
+			return refuse(stderr, " supervise", "no `nova-swarm run` holds this pool's lock, and supervise is run's child rather than a verb; it wants to be spawned by `nova-swarm run --pool <dir> --workers <n> --hours <h> --worker <file>`")
+		}
 	}
 	w, problems := swarm.LoadWorker(*worker)
 	if len(problems) > 0 {

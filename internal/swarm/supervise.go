@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -44,6 +45,9 @@ func Supervise(in SuperviseInput) int {
 	jobDir := in.Worker.JobDir(in.Slot, in.Task)
 	self := os.Getpid()
 
+	CheckPausePoint("before-identify")
+	CheckKillPoint("before-identify")
+
 	// (3) IDENTIFY, before doing anything else. The write lands only if the slot file still
 	// reads reserved with the nonce this supervisor was handed.
 	identity := SlotFile{
@@ -69,7 +73,11 @@ func Supervise(in SuperviseInput) int {
 	if err != nil {
 		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness log could not be opened: " + redactedReason(err)})
 	}
-	cmd := exec.Command(in.Worker.Harness, harnessArgs(in.Worker, jobDir)...)
+	harness := in.Worker.Harness
+	if resolved, err := exec.LookPath(harness); err == nil {
+		harness = resolved
+	}
+	cmd := exec.Command(harness, harnessArgs(in.Worker, jobDir)...)
 	cmd.Dir = in.Worker.SlotDir(in.Slot)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	cmd.Env = childEnv(in.Worker, in.Slot, in.Task, in.Key)
@@ -84,9 +92,11 @@ func Supervise(in SuperviseInput) int {
 		PidStarted: identity.PidStarted, Nonce: in.Nonce, Started: Stamp(started),
 	})
 	_ = p.UpdateSlot(in.Slot, in.Nonce, func(sf SlotFile) SlotFile { sf.JobPgid = jobPgid; return sf })
+	CheckKillPoint("supervisor-after-release")
 
 	record := watch(in, cmd, jobDir, jobPgid, started)
 	logFile.Close()
+	CheckKillPoint("between-exit-and-exit-json")
 	return endWith(in, jobDir, started, record)
 }
 
@@ -200,6 +210,7 @@ func abort(in SuperviseInput, jobDir string, cause error) int {
 	_ = WriteJSON(AbortedPath(jobDir), AbortedRecord{
 		Nonce: in.Nonce, Reason: cause.Error(), At: Stamp(in.Now()), Survivors: survivors,
 	})
+	CheckKillPoint("between-aborted-and-exit")
 	fmt.Fprintf(in.Stderr, "SUPERVISE ABORTED slot=%d id=%s: reservation changed\n", in.Slot, in.Task)
 	return 2
 }
@@ -275,10 +286,22 @@ func expandHarnessArg(a string, w Worker, prompt string) string {
 // it runs. No path this tool uses comes from the environment (SPEC.md, no guessing); PATH is
 // here because a harness is a program and a program is found on one.
 func childEnv(w Worker, slot int, id, key string) []string {
+	pathVal := os.Getenv("PATH")
+	if pathVal == "" {
+		pathVal = os.Getenv("Path")
+	}
 	env := []string{
-		"PATH=" + os.Getenv("PATH"),
+		"PATH=" + pathVal,
 		"XDG_DATA_HOME=" + w.DataHome(slot, id),
 		"NOVA_SWARM_JOB=" + w.JobDir(slot, id),
+	}
+	if runtime.GOOS == "windows" {
+		env = append(env, "Path="+pathVal)
+		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC"} {
+			if v := os.Getenv(k); v != "" {
+				env = append(env, k+"="+v)
+			}
+		}
 	}
 	if w.EnvVar != "" && key != "" {
 		env = append(env, w.EnvVar+"="+key)

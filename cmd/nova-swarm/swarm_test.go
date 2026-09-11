@@ -26,13 +26,14 @@ import (
 
 // bench is one pool, one worker description, one key file and a fake harness on PATH.
 type bench struct {
-	t       *testing.T
-	dir     string
-	pool    string
-	binary  string
-	worker  string
-	keyFile string
-	path    string
+	t        *testing.T
+	dir      string
+	pool     string
+	binary   string
+	worker   string
+	keyFile  string
+	path     string
+	extraEnv []string
 }
 
 const fakeKey = "sk-fake-0123456789-not-a-key"
@@ -164,7 +165,14 @@ func (b *bench) swarm(args ...string) (exit int, stdout, stderr string) {
 	b.t.Helper()
 	cmd := exec.Command(b.binary, args...)
 	cmd.Dir = b.dir
-	cmd.Env = []string{"PATH=" + b.path, "HOME=" + b.dir}
+	cmd.Env = append([]string{"PATH=" + b.path, "Path=" + b.path, "HOME=" + b.dir}, b.extraEnv...)
+	if runtime.GOOS == "windows" {
+		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC"} {
+			if v := os.Getenv(k); v != "" {
+				cmd.Env = append(cmd.Env, k+"="+v)
+			}
+		}
+	}
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	var exitErr *exec.ExitError
@@ -673,6 +681,9 @@ func (b *bench) rewriteWorker(edit func(map[string]any)) {
 // prints exactly one of `RUN DONE` or `RUN VIOLATION`. And SPEC-SWARM.md:541: a run that
 // ended with a quarantined slot exits 1.
 func TestABackgroundedChildIsAViolationAndIsNotTriaged(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no process groups; background process detection is Unix-only")
+	}
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a worker that leaves a process behind\nFAKE-FINDINGS 2\nFAKE-BACKGROUND\n")
