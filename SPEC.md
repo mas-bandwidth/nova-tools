@@ -1,6 +1,6 @@
 # nova-tools — specification
 
-Five binaries. `nova-check`: six checks, all at the **record layer** — they verify
+Ten binaries. `nova-check`: six checks, all at the **record layer** — they verify
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
@@ -21,6 +21,25 @@ inbox that separates a bare receipt from a note carrying a finding, and one
 `check` instead of the shell loop every line reimplemented — plus a per-reader
 cursor, so that the cost of reading a bus is the size of what changed and not
 the size of what it holds.
+
+`nova-wake`: one binary at the **attention layer** — one blocking call that
+returns the moment a bus inbox, an entry's checks or a report file has changed,
+and otherwise at the deadline the caller named, so a window pays one turn per
+change rather than one per tick. `nova-merge`: one binary at the **merge
+layer** — it lands an ordered lane of entries, pull requests or branches with no
+pull request at all, onto one base branch, one at a time, and refuses to land
+anything whose evidence it cannot name. `nova-board`: five verbs at the
+**owed-work layer** — what a group of lines owes, as an append-only log of cards
+that are appended, taken and closed but never edited or deleted, with `check`
+as the verb that earns it. `nova-tokens`: one binary at the **accounting
+layer** — it folds token spend from declared sources into one file per day, keyed
+by (day, model, repo), and sums those day files into a month; it reads sources,
+and never estimates. `nova-swarm`: one binary at the **worker layer** — a pool
+of one-task workers, any provider and any model through one harness, each with
+its own working directory, data home, job directory and deadline, held by the
+machinery rather than by the worker. Each of those five has its own normative
+spec under `docs/`, named in its section below; this file states the count, the
+layer and the Conventions they all keep.
 
 This spec is normative. If the code and this document disagree, one of them has a
 bug, and the tests decide which.
@@ -139,7 +158,10 @@ model died reading it. So:
 
 - **A listing has a ceiling.** Every verb that prints one finding per unit of
   state takes a `--fail-max <n>` (`nova-check`, `nova-memory`) or `--max <n>`
-  (`nova-self-talk`, `nova-fuse status`), **defaulting to 20**. It prints at
+  (`nova-self-talk`, `nova-fuse status`, `nova-merge`, `nova-board`,
+  `nova-tokens`, `nova-swarm`), **defaulting to 20** — `nova-wake` spells the
+  same ceiling `--max-lines <n>`, per kind per poll, defaulting to 40, because
+  its `--max` is already the duration it blocks for. It prints at
   most that many item lines, in the order the verb produced them — a cap is a
   prefix, never a sample.
 - **`0` means all.** A ceiling a caller cannot lift is a tool deciding what its
@@ -213,6 +235,11 @@ tokens `NOTE`, `RECEIPT`, `ALREADY`, `NAME` and `GROUP`, all on stdout, all list
 in its section. `nova-memory` adds its own informational second
 tokens the same way — `CAL`, `CAND`, `DEMO`, `HIT`, `MISS`, `INFO`, `MORE`, `NOTE` — all on
 stdout, all listed in its section.
+The five binaries specified under `docs/` keep the same shape and take the same
+first token from their own verb — `WATCH` is spelled `WAKE`, and `nova-board`'s
+`check` is `BOARD`, `nova-tokens`'s `fold` is `TOKENS` — with `NOTE` and `MORE`
+as informational second tokens throughout; each `docs/SPEC-*.md` carries that
+binary's own grammar and exit table, and governs where it says more than this.
 
 ---
 
@@ -4009,6 +4036,78 @@ keeps working.
   nowhere in the code.
 
 ---
+
+## nova-wake — one turn per change, not one per tick
+
+One binary at the **attention layer**. It blocks inside a tool call and returns
+the moment a bus inbox, the checks on a named entry, a report file or a watched
+line's silence has moved, and otherwise at the deadline the caller named.
+Everything it prints is data: a note it relays is not an instruction.
+
+Verbs: `watch`, `serve`, `quickstart`, `version`, `help`.
+
+Its governing text is **[docs/SPEC-WAKE.md](docs/SPEC-WAKE.md)**, which is
+normative; the Conventions above apply to it unchanged and are not restated
+there, and nothing it says is restated here.
+
+## nova-merge — an ordered lane onto one base
+
+One binary at the **merge layer**. It lands an ordered lane of entries — pull
+requests, or branches with no pull request at all — onto one base branch, one at
+a time, and it refuses to land anything whose evidence it cannot name. An entry
+merely waiting on its checks is not a failure.
+
+Verbs: `init`, `add`, `add-branch`, `read`, `gate`, `run`, `status`, `dry-run`,
+`packet`, `quickstart`, `stop`.
+
+Its governing text is **[docs/SPEC-MERGE.md](docs/SPEC-MERGE.md)**, which is
+normative; the Conventions above apply to it unchanged and are not restated
+there, and nothing it says is restated here.
+
+## nova-board — what a group of lines owes
+
+Five verbs at the **owed-work layer**. A board is one card per item, appended
+when it is noticed, taken by whoever picks it up, closed with a sentence saying
+how; nothing is ever edited and nothing is ever deleted, so the open list is
+derived from the log rather than stored. `check` exits 1 when it MATCHES, which
+is the NO a board owes a filer: this is already here, do not file it again.
+
+Verbs: `list`, `add`, `take`, `close`, `check`, plus `quickstart` and `version`.
+
+Its governing text is **[docs/SPEC-BOARD.md](docs/SPEC-BOARD.md)**, which is
+normative; the Conventions above apply to it unchanged and are not restated
+there, and nothing it says is restated here.
+
+## nova-tokens — spend, folded per day
+
+One binary at the **accounting layer**. It folds token spend from declared
+sources into one file per day, keyed exactly by `(day, model, repo)`, with the
+five token types kept apart, and sums those day files into a month. It reads
+sources: it never estimates, never fills a gap and never removes a file. A
+declared source is a claim that the report covers it, so an unreadable one is
+exit 1 — and the day files still land.
+
+Verbs: `fold`, `report`, `sum`, `check`, `sources`, `version`.
+
+Its governing text is **[docs/SPEC-TOKENS.md](docs/SPEC-TOKENS.md)**, which is
+normative; the Conventions above apply to it unchanged and are not restated
+there, and nothing it says is restated here.
+
+## nova-swarm — a pool of one-task workers
+
+One binary at the **worker layer**. It runs a pool of one-task workers — any
+provider, any model, through one harness — each with its own working directory,
+its own data home, its own job directory and its own deadline, held by the
+machinery rather than by the worker.
+
+Verbs: `add`, `batch`, `run`, `supervise`, `status`, `stop`, `requeue`,
+`verdict`, `triage`, `result`, `template`, `cost`, `note`, `finalize`,
+`reclaim`, `quickstart`.
+
+Its governing text is **[docs/SPEC-SWARM.md](docs/SPEC-SWARM.md)**, which is
+normative; the Conventions above apply to it unchanged and are not restated
+there, and nothing it says is restated here.
+
 
 ## What this harness is not
 
