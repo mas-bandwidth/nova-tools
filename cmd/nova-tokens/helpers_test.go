@@ -181,16 +181,22 @@ esac
 	return logPath
 }
 
-// swarmHeader is SPEC-SWARM rule 12's sixteen columns, in order.
+// swarmHeader is transcribed from SPEC-SWARM.md rule 12, whose sentence reads: "one
+// header line and one row, tab-separated, these columns in this order: `job`, `attempt`,
+// `from`, `started`, `ended`, `end`, `rc`, `provider`, `model`, `repo`, `tokens_in`,
+// `tokens_out`, `cache_write`, `cache_read`, `reasoning`, `usd`." It is written from that
+// text and NEVER from tokens.SwarmColumns: a fixture copied from the constant it is
+// meant to check is a test that cannot fail.
 var swarmHeader = []string{
-	"job", "task", "attempt", "model", "repo", "started", "ended", "seconds",
-	"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "cost", "exit", "note",
+	"job", "attempt", "from", "started", "ended", "end", "rc", "provider",
+	"model", "repo", "tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd",
 }
 
-func swarmRow(job, task, attempt, model, repo, ended string, in, out, cw, cr, rsn string) string {
+// swarmRow writes one row in swarmHeader's order, the way SPEC-SWARM's finalize writes it.
+func swarmRow(job, attempt, from, model, repo, ended string, in, out, cw, cr, rsn string) string {
 	return strings.Join([]string{
-		job, task, attempt, model, repo, ended, ended, "12",
-		in, out, cw, cr, rsn, "-", "0", "-",
+		job, attempt, from, ended, ended, "done", "0", "deepseek",
+		model, repo, in, out, cw, cr, rsn, "-",
 	}, "\t")
 }
 

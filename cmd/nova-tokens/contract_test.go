@@ -164,7 +164,7 @@ func TestNothingUnderDoneOrFailedIsOpened(t *testing.T) {
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	pool := mkdir(t, filepath.Join(dir, "pool"))
-	swarmUsage(t, pool, "j1", swarmRow("j1", "t", "1", "m", "schema", "2026-09-11T10:00:00Z", "1", "2", "3", "4", "5"))
+	swarmUsage(t, pool, "j1", swarmRow("j1", "1", "-", "m", "schema", "2026-09-11T10:00:00Z", "1", "2", "3", "4", "5"))
 	secret := write(t, filepath.Join(pool, "done", "j2", "usage.tsv"), "nothing here may be opened\n")
 	if err := os.Chmod(secret, 0o000); err != nil {
 		t.Fatal(err)

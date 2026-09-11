@@ -96,7 +96,7 @@ func largestFoldState(t *testing.T) (tmp, out string, args []string) {
 
 	pool := mkdir(t, filepath.Join(dir, "pool"))
 	for i := range overflow {
-		swarmUsage(t, pool, fmt.Sprintf("j%02d", i), swarmRow(fmt.Sprintf("j%02d", i), "t", "1",
+		swarmUsage(t, pool, fmt.Sprintf("j%02d", i), swarmRow(fmt.Sprintf("j%02d", i), "1", "-",
 			fmt.Sprintf("model-%d", i%20), fmt.Sprintf("repo%d", i%10), day(i)+"T11:00:00Z", "5", "6", "7", "8", "9"))
 	}
 

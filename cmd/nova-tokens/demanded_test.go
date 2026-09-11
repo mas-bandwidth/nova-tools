@@ -10,6 +10,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
 // ---------------------------------------------------------------- rule 1: every path is a flag
@@ -626,9 +628,13 @@ func TestRule14TheSwarmUsageFilesAreASource(t *testing.T) {
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	pool := mkdir(t, filepath.Join(dir, "pool"))
-	swarmUsage(t, pool, "j1", swarmRow("j1", "t1", "1", "deepseek-v3", "serialize", "2026-09-11T10:00:00Z", "1000", "20", "-", "5", "0"))
-	swarmUsage(t, pool, "j2", swarmRow("j2", "t1", "2", "deepseek-v3", "serialize", "2026-09-11T11:00:00Z", "7", "8", "9", "10", "11"))
-	swarmUsage(t, pool, "j3", swarmRow("j3", "t3", "1", "deepseek-v3", "cathedral", "2026-09-11T12:00:00Z", "1", "1", "1", "1", "1"))
+	// The reader's own sixteen names are SPEC-SWARM's, so a file the swarm writes reads.
+	if got := strings.Join(tokens.SwarmColumns, ","); got != strings.Join(swarmHeader, ",") {
+		t.Fatalf("SwarmColumns is not SPEC-SWARM rule 12's sixteen names in order:\n got %s\nwant %s", got, strings.Join(swarmHeader, ","))
+	}
+	swarmUsage(t, pool, "j1", swarmRow("j1", "1", "-", "deepseek-v3", "serialize", "2026-09-11T10:00:00Z", "1000", "20", "-", "5", "0"))
+	swarmUsage(t, pool, "j2", swarmRow("j2", "2", "j1", "deepseek-v3", "serialize", "2026-09-11T11:00:00Z", "7", "8", "9", "10", "11"))
+	swarmUsage(t, pool, "j3", swarmRow("j3", "1", "-", "deepseek-v3", "cathedral", "2026-09-11T12:00:00Z", "1", "1", "1", "1", "1"))
 	// reclaimed job directories, and one with no usage file
 	mkdir(t, filepath.Join(pool, "done", "j4"))
 	write(t, filepath.Join(pool, "done", "j4", "secret.txt"), "nothing here may be opened\n")
@@ -653,7 +659,7 @@ func TestRule14TheSwarmUsageFilesAreASource(t *testing.T) {
 	write(t, filepath.Join(short, "usage", "j9.tsv"), strings.Join(swarmHeader[:15], "\t")+"\n")
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--swarm", "d="+short)
 	wantExit(t, r, 1)
-	wantContains(t, r.stderr, "note")
+	wantContains(t, r.stderr, swarmHeader[15])
 	wantContains(t, r.stderr, "TOKENS UNPARSED")
 }
 

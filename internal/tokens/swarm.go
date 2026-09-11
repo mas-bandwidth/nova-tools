@@ -20,11 +20,14 @@ import (
 // Nothing under done/, failed/ or running/ is OPENED. A job directory there with no usage
 // file is counted by its NAME alone, so the answer is the same before and after reclaim.
 
-// SwarmColumns are the sixteen SPEC-SWARM rule 12 names, in order. A header that is not
-// these is refused by name.
+// SwarmColumns are the sixteen SPEC-SWARM rule 12 names, in order, transcribed from its
+// sentence: "these columns in this order: `job`, `attempt`, `from`, `started`, `ended`,
+// `end`, `rc`, `provider`, `model`, `repo`, `tokens_in`, `tokens_out`, `cache_write`,
+// `cache_read`, `reasoning`, `usd`." A header that is not these is refused by name. The
+// reader looks every cell up BY NAME, so this list is the whole contract with the swarm.
 var SwarmColumns = []string{
-	"job", "task", "attempt", "model", "repo", "started", "ended", "seconds",
-	"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "cost", "exit", "note",
+	"job", "attempt", "from", "started", "ended", "end", "rc", "provider",
+	"model", "repo", "tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning", "usd",
 }
 
 // swarmTypes maps the usage row's own column names onto the five types.
