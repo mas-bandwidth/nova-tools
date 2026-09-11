@@ -155,9 +155,18 @@ the day it was learned.
     bounded, jittered time (rule 2), prints one line while it waits, `GATE
     WAIT slots=<n>/<n> waited=<d>`, and exits 2 naming the holders if the wait
     runs out. The leg fan-out inside one gate is capped by `--legs <n>`, no
-    default, so one gate cannot spend the whole budget on its own. The
-    machine's budget is the tool's to hold, because no caller can see the
-    other callers. (2026-09-11: every caller fanned out, load reached 235 and
+    default, so one gate cannot spend the whole budget on its own. Both are
+    bounded: `--slots` and `--legs` are refused below 1 and above **64** (the
+    cap `nova-swarm --workers` carries, Glenn 2026-09-10), on one line naming
+    the flag and the cap, because a caller who typed 500 has a belief about
+    the machine that a clamp would not correct. **No leg process starts
+    before the slot is held**: the slot lock is taken in the gate runner's
+    entry, before the first leg is spawned, and there is no code path from a
+    `RUN NOTE` command or a hand-typed gate to a leg that skips it; a gate
+    runner is the only thing that runs legs, and it holds a slot or it
+    refuses. The machine's budget is the tool's to hold, because no caller
+    can see the other callers. (2026-09-11: every caller fanned out, load
+    reached 235 and
     then 422 on 32 cores, and green tests became 30 second timeouts.)
 15. **Below `main` the local gate is the candidate evidence; on `main` the
     hosted lane is; the verdict on every base is rule 18.** When the lane's
@@ -1083,7 +1092,12 @@ check never seen failing is not a check).
     with SIGKILL mid-gate frees its slot at once and the waiter takes it with
     no age computed; a gate with `--legs 2` over nine legs never has more than
     two leg processes alive, checked by a fake leg that records its start and
-    end; `--slots` or `--legs` missing is exit 2 naming the flag.
+    end; `--slots` or `--legs` missing is exit 2 naming the flag; `--slots 0`,
+    `--slots 65`, `--legs 0` and `--legs 65` are each exit 2 naming the flag
+    and the cap of 64, before any slot is touched; a fake leg that records
+    whether `<slots-dir>/<k>` was locked at the instant it started finds it
+    locked on every leg of every gate, and a mutation that spawns the first
+    leg before the slot lock turns the test red.
 15. Base is not `main`, hosted red for the head, green gate for `(head, base
     sha)`: the entry merges and `MERGE OK` carries `hosted_red=<names>` with
     the failing check names and `admitted=gate`; base is `main`, same
