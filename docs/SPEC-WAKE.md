@@ -44,7 +44,7 @@ nova-wake watch --state <file> --max <duration> --on-deadline <word> --interval 
       [--line <name> ... [--offline-after <duration>]]
       [--entry <repo>#<n> ... --entry-interval <duration>] [--final-only] [--gh-timeout <seconds>]
       [--reports <dir> ...]
-nova-wake serve --bus <dir> --as <name> --on-note <command> --interval <duration> --state <file> --hours <h> [--git-timeout <seconds>]
+nova-wake serve --bus <dir> --as <name> --on-note <command> --interval <duration> --state <file> --hours <h> [--receipt --remote <name> --branch <name>] [--git-timeout <seconds>]
 nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
 nova-wake help
 ```
@@ -561,7 +561,11 @@ spec forbids**.
     exit on its own. It ends at `--hours` or a `stop` file and prints
     `WAKE SERVE fired=<n> queued=<n> idle=<duration>` on exit. What the
     command is (a `claude -p`, an `opencode run`, a `grok` invocation) is
-    the line's business, never the tool's. While a line has no work, its
+    the line's business, never the tool's. With `--receipt`, `serve` sends
+    the bus receipt for the note the moment it fires the wake, so the model
+    never spends a turn on "Heard": a receipt is the machinery's, a reply is
+    the mind's. (2026-09-11: one line sent 26 "Heard" receipts by hand, a
+    turn each, and the coordinator read every one.) While a line has no work, its
     cost is one fetch per interval and zero tokens; while it has work, one
     wake per note and no poll inside the turn.
 
