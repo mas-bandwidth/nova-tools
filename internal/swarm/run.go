@@ -288,8 +288,15 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine map[int]
 	sc.Job, sc.Slot, sc.Started = jobDir, slot, Stamp(in.Now())
 	_ = p.WriteSidecar(Running, sc)
 
-	cmd := exec.Command(in.Supervisor, "supervise", "--pool", p.Dir, "--task", sc.ID,
-		"--slot", strconv.Itoa(slot), "--nonce", nonce, "--worker", in.WorkerFile)
+	// The SUPERVISOR is the process that samples usage, so the interval has to reach it:
+	// before this, `--usage-interval` was decoded, carried into RunInput and dropped at the
+	// fork, and every job sampled at the supervisor's own default.
+	supervisorArgs := []string{"supervise", "--pool", p.Dir, "--task", sc.ID,
+		"--slot", strconv.Itoa(slot), "--nonce", nonce, "--worker", in.WorkerFile}
+	if in.UsageInterval > 0 {
+		supervisorArgs = append(supervisorArgs, "--usage-interval", strconv.Itoa(int(in.UsageInterval.Seconds())))
+	}
+	cmd := exec.Command(in.Supervisor, supervisorArgs...)
 	cmd.Stdout, cmd.Stderr = nil, nil
 	if log, err := os.OpenFile(filepath.Join(jobDir, "supervisor.log"), os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644); err == nil {
 		cmd.Stdout, cmd.Stderr = log, log

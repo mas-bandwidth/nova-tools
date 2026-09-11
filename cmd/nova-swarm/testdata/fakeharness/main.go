@@ -65,6 +65,17 @@ func main() {
 		}
 	}
 
+	// FAKE-PUBLISH-FIRST publishes the revision BEFORE the directives that spend, sleep or
+	// get this worker killed. It is how a budget, an unverifiable source and a deadline are
+	// tested against a worker that had already found something: rule 3's append-as-found
+	// worker, seen from the machinery's side.
+	published := false
+	if _, ok := directive(prompt, "FAKE-PUBLISH-FIRST"); ok {
+		findings, _ := number(prompt, "FAKE-FINDINGS")
+		publish(job, prompt, findings, notesRead(job, prompt))
+		published = true
+	}
+
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
 			fmt.Printf("fake harness: read of /etc/somewhere: permission denied (refused)\n")
@@ -104,6 +115,27 @@ func main() {
 		time.Sleep(60 * time.Second)
 		return
 	}
+	notes := notesRead(job, prompt)
+	if n, ok := number(prompt, "FAKE-SLEEP"); ok {
+		time.Sleep(time.Duration(n) * time.Second)
+	}
+	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
+		os.Exit(0)
+	}
+	findings, _ := number(prompt, "FAKE-FINDINGS")
+	if !published {
+		publish(job, prompt, findings, notes)
+	}
+	if n, ok := number(prompt, "FAKE-RC"); ok {
+		os.Exit(n)
+	}
+}
+
+// notesRead is how many notes this worker read before it wrote its report.
+func notesRead(job, prompt string) int {
+	if _, ok := directive(prompt, "FAKE-NONOTES"); ok {
+		return -1
+	}
 	notes := 0
 	if job != "" {
 		if body, err := os.ReadFile(filepath.Join(job, "note")); err == nil {
@@ -113,20 +145,7 @@ func main() {
 			}
 		}
 	}
-	if _, ok := directive(prompt, "FAKE-NONOTES"); ok {
-		notes = -1
-	}
-	if n, ok := number(prompt, "FAKE-SLEEP"); ok {
-		time.Sleep(time.Duration(n) * time.Second)
-	}
-	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
-		os.Exit(0)
-	}
-	findings, _ := number(prompt, "FAKE-FINDINGS")
-	publish(job, prompt, findings, notes)
-	if n, ok := number(prompt, "FAKE-RC"); ok {
-		os.Exit(n)
-	}
+	return notes
 }
 
 func publish(job, prompt string, findings, notes int) {

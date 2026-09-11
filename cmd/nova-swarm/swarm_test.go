@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1287,4 +1288,141 @@ func (b *bench) usageRow(id string) map[string]string {
 		}
 	}
 	return row
+}
+
+// DEMANDED TEST 13 (SPEC-SWARM.md:1307). A BUDGET ENDS THE JOB AND KEEPS THE FINDINGS.
+//
+// The budget is a STOP CONDITION ON OBSERVATIONS, not a ceiling on spend: usage arrives
+// after the tokens are gone, so the overshoot is bounded by one sample and the row carries
+// the true final sum. What must never happen is the thing the prototype did -- end the job
+// and lose what it had already found.
+func TestBudgetEndsTheJobAndKeepsFindings(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	over := b.add("a worker that publishes a finding and then spends past its budget\nFAKE-PUBLISH-FIRST\nFAKE-FINDINGS 1\nFAKE-USAGE 30000 0 - - -\nFAKE-SLEEP 30\n",
+		"--tokens", "1000")
+	under := b.add("a worker that stays well under its budget\nFAKE-PUBLISH-FIRST\nFAKE-FINDINGS 1\nFAKE-USAGE 10 5 - - -\n",
+		"--tokens", "1000")
+
+	exit, stdout, stderr := b.run("--workers", "2", "--usage-interval", "1")
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN BUDGET id="+over)
+	mustContain(t, "the run", stdout, "of=1000 findings=1")
+	// The `spent=` on the line is AT LEAST the budget: the sample that stopped the job is
+	// the one that saw the budget passed.
+	spent := field(t, stdout, "spent=")
+	if n, err := strconv.Atoi(spent); err != nil || n < 1000 {
+		t.Errorf("RUN BUDGET wants spent= at least the budget, got %q", spent)
+	}
+	// THE FINDING STANDS. The report the worker had published is copied, whole, findings
+	// and all -- the budget ended the job, it did not throw the work away.
+	copied, err := os.ReadFile(filepath.Join(b.pool, "reports", over, "RESULT.md"))
+	if err != nil {
+		t.Fatalf("a budgeted job keeps its published report: %v", err)
+	}
+	mustContain(t, "the kept report", string(copied), "- finding 1:")
+	row := b.usageRow(over)
+	if row["end"] != "budget" {
+		t.Errorf("the usage row of a budgeted job wants end=budget, got %q", row["end"])
+	}
+	if row["tokens_in"] != "30000" {
+		t.Errorf("the row carries the FINAL sum the source held, not the sum at the stop: got in=%q", row["tokens_in"])
+	}
+
+	// A job under its budget is untouched.
+	mustContain(t, "the run", stdout, "RUN DONE id="+under)
+	if strings.Contains(stdout, "RUN BUDGET id="+under) {
+		t.Errorf("a job under its budget is not ended by it:\n%s", stdout)
+	}
+	if got := b.usageRow(under)["end"]; got != "done" {
+		t.Errorf("the job under budget wants end=done, got %q", got)
+	}
+}
+
+// Demanded test 13: `--tokens unmetered` prints `budget=unmetered` and runs to its
+// deadline. A caller who says the budget is not this tool's business says it ONCE, in a
+// word, and a number is never guessed from it.
+func TestAnUnmeteredJobRunsToItsDeadline(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a worker with no token budget at all\nFAKE-FINDINGS 1\nFAKE-USAGE 999999 999999 - - -\n",
+		"--tokens", "unmetered")
+	exit, stdout, stderr := b.run("--usage-interval", "1")
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN DONE id="+id)
+	mustContain(t, "the run", stdout, "budget=unmetered")
+	if strings.Contains(stdout, "RUN BUDGET") {
+		t.Errorf("an unmetered job has no budget to end it:\n%s", stdout)
+	}
+	if got := b.usageRow(id)["end"]; got != "done" {
+		t.Errorf("an unmetered job that finished wants end=done, got %q", got)
+	}
+}
+
+// Demanded test 13: a worker description that says `usage: none` beside a PENDING NUMERIC
+// budget is exit 2 BEFORE any worker starts, naming the task -- a budget nothing can
+// observe is a promise this tool cannot keep -- and beside `unmetered` tasks it runs.
+func TestANumericBudgetWithNoUsageSourceIsRefused(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	metered := b.add("a task carrying a number nothing can watch\nFAKE-FINDINGS 1\n", "--tokens", "5000")
+	b.rewriteWorker(func(d map[string]any) { d["usage"] = "none" })
+
+	exit, stdout, stderr := b.run()
+	if exit != 2 {
+		t.Fatalf("`usage: none` beside a numeric budget exits %d, want 2:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, metered)
+	mustContain(t, "the refusal", stderr, "usage: none")
+	mustContain(t, "the refusal", stderr, "--tokens unmetered")
+	if strings.Contains(stdout, "RUN START") {
+		t.Errorf("the refusal comes before any worker starts:\n%s", stdout)
+	}
+
+	// The same description beside an unmetered task RUNS: the refusal is about the promise,
+	// not about the source.
+	for _, suffix := range []string{".task", ".json"} {
+		if err := os.Remove(filepath.Join(b.pool, "pending", metered+suffix)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unmetered := b.add("a task that asks for no budget\nFAKE-FINDINGS 1\n", "--tokens", "unmetered")
+	exit, stdout, stderr = b.run()
+	if exit != 0 {
+		t.Fatalf("`usage: none` beside unmetered tasks runs; exit %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN DONE id="+unmetered)
+	mustContain(t, "the run", stdout, "budget=unmetered")
+}
+
+// Demanded test 13, the half that matters most: a usage source that ERRORS is not a source
+// that reports nothing. Three consecutive failures end the job `RUN BUDGET-UNVERIFIABLE
+// samples=3` with the findings kept, because a numeric budget the tool has stopped being
+// able to see is a budget the caller believes is enforced and is not.
+func TestAnUnreadableUsageSourceEndsTheJobUnverifiable(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("a file mode that refuses its owner is a unix fact")
+	}
+	b := newBench(t)
+	id := b.add("a worker whose usage source cannot be read\nFAKE-PUBLISH-FIRST\nFAKE-FINDINGS 2\nFAKE-BADUSAGE\nFAKE-SLEEP 30\n",
+		"--tokens", "5000")
+	exit, stdout, stderr := b.run("--usage-interval", "1")
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN BUDGET-UNVERIFIABLE id="+id)
+	mustContain(t, "the run", stdout, "samples=3 findings=2")
+	if got := b.usageRow(id)["end"]; got != "budget-unverifiable" {
+		t.Errorf("the row of an unverifiable job wants end=budget-unverifiable, got %q", got)
+	}
+	copied, err := os.ReadFile(filepath.Join(b.pool, "reports", id, "RESULT.md"))
+	if err != nil {
+		t.Fatalf("the findings are KEPT when the budget cannot be verified: %v", err)
+	}
+	mustContain(t, "the kept report", string(copied), "- finding 2:")
 }
