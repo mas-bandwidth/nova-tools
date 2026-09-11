@@ -108,7 +108,7 @@ func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr i
 	// The pass wrote its verdicts onto the entries; the lane's own order and those
 	// verdicts are what state.json holds, and the write is one read-modify-write under
 	// the state lock.
-	_ = merge.Update(lane, merge.LockWait, func(s *merge.State) error {
+	_ = merge.Update(lane, f.dur(), func(s *merge.State) error {
 		s.PRs, s.Branches = st.PRs, st.Branches
 		return nil
 	})

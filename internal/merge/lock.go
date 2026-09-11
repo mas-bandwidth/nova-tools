@@ -24,9 +24,12 @@ import (
 // synchronise and collide again) and then exits 2 naming the holder's pid, which the
 // holder wrote inside the file after taking it.
 
-// LockWait is the bounded wait a writer gives the lock before refusing. It is a wait for
-// one read-modify-write of a JSON file, which is microseconds of work, so ten seconds is
-// a holder that has died in a way the kernel could not see or a machine under a load the
+// LockWait is the DEFAULT bounded wait, and it is the default of the --timeout flag and
+// nothing else: rule 2 says a verb that cannot take the lock within ITS --timeout exits 2
+// and says who holds it, so every verb passes its own --timeout and this constant is what
+// a caller with no flag to pass -- a test, a helper -- uses. It is a wait for one
+// read-modify-write of a JSON file, which is microseconds of work, so ten seconds is a
+// holder that has died in a way the kernel could not see or a machine under a load the
 // caller wants to hear about.
 const LockWait = 10 * time.Second
 

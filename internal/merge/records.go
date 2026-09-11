@@ -138,15 +138,21 @@ type Item struct {
 // A kill at any boundary -- before add, after commit, after a rejected push, after a
 // landed push and before the confirming fetch -- is repaired by re-running the same verb,
 // which finds the outbox and restarts the loop.
+// THE OUTBOX IS WRITTEN BEFORE THE LOCK IS TAKEN. The outbox is outside the branch and
+// untracked, so writing it needs no checkout; and a Deliver that took the lock first and
+// lost the wait printed `READ FAIL ... file=<path> pushed=false: ...; re-run the same verb
+// to push it` naming a file that was never written -- a remedy that cannot work, about a
+// record that does not exist. Written first, the refusal is true: the record is in the
+// outbox and the same verb pushes it.
 func (r *Records) Deliver(sub Submission, items []Item) error {
+	if err := r.writeOutbox(sub, items); err != nil {
+		return err
+	}
 	release, err := r.LockCheckout()
 	if err != nil {
 		return err
 	}
 	defer release()
-	if err := r.writeOutbox(sub, items); err != nil {
-		return err
-	}
 	return r.flush()
 }
 

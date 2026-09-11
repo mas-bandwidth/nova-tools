@@ -168,7 +168,7 @@ func cmdAdd(args []string, stdout, stderr io.Writer, deps Deps, isBranch bool) i
 	if *needsRead {
 		yn = "yes"
 	}
-	err := merge.Update(*f.lane, merge.LockWait, func(s *merge.State) error {
+	err := merge.Update(*f.lane, f.dur(), func(s *merge.State) error {
 		e := &merge.Entry{NeedsRead: yn, Reads: []merge.Read{}, State: merge.StateNew}
 		if isBranch {
 			e.Branch = *branch
@@ -436,7 +436,7 @@ func foldInto(lane string, st *merge.State, recs *merge.Records, timeout time.Du
 	if folded == nil {
 		return pulled, nil, nil
 	}
-	_ = merge.Update(lane, merge.LockWait, func(s *merge.State) error {
+	_ = merge.Update(lane, timeout, func(s *merge.State) error {
 		s.Apply(folded)
 		st.PRs, st.Branches, st.Gates = s.PRs, s.Branches, s.Gates
 		return nil
