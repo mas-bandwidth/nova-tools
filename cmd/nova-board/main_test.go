@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -436,6 +437,111 @@ func TestTheShellGuardPairRunsAgainstAFreshBoard(t *testing.T) {
 	if exit != 2 {
 		t.Errorf("check with no backend exits %d, want 2 (could not run); stderr %q", exit, stderr)
 	}
+}
+
+// quickstart --issue must print a pair that RUNS. --gh-timeout is REQUIRED under --issue
+// (rule 8 has no exception for it), so a pair printed without it is two commands that both
+// exit 2 for the one reader most likely to paste them: the first one. The --dir pair is run
+// in TestTheShellGuardPairRunsAgainstAFreshBoard; this is the --issue pair, against the
+// recorded gh.
+//
+// WHAT THIS CANNOT COVER: no shell runs here, so the guard's `|| { ... }` arm is asserted as
+// text and by the exit code the command hands it, not by sh; and `--as <your-name>` is a
+// placeholder a reader fills in, so the add runs with a name in its place. Everything else —
+// the verb, both backend flags, --words, --text, --by and --default — runs exactly as printed.
+func TestQuickstartUnderIssuePrintsARunnablePair(t *testing.T) {
+	b := newBench(t)
+	fakeGH(t)
+	const issue = "mas-bandwidth/schema#876"
+	if exit, _, stderr := b.run("add", "--issue", issue, "--gh-timeout", "60", "--as", "rowan",
+		"--text", "the Windows runner skips three steps", "--by", "4h",
+		"--default", "rowan files it on the schema board as a known gap"); exit != 0 {
+		t.Fatalf("seeding the issue board: exit %d: %s", exit, stderr)
+	}
+	exit, stdout, stderr := b.run("quickstart", "--issue", issue, "--gh-timeout", "60", "--stale", "10m")
+	if exit != 0 {
+		t.Fatalf("quickstart --issue: exit %d: %s", exit, stderr)
+	}
+	check, add := quickstartPair(t, stdout)
+	for _, line := range []string{check, add} {
+		if !strings.Contains(line, "--gh-timeout 60") {
+			t.Errorf("a printed --issue line carries no --gh-timeout, so the reader who pastes it gets exit 2:\n  %s", line)
+		}
+	}
+	// n=1, as printed, minus the shell guard this process cannot run.
+	const guard = " || { [ $? -eq 1 ] && exit 0; exit 2; }"
+	if !strings.HasSuffix(check, guard) {
+		t.Fatalf("the check line does not end in the guard:\n  %s", check)
+	}
+	exit, stdout, stderr = b.run(shellWords(t, strings.TrimSuffix(check, guard))[1:]...)
+	if exit != 1 {
+		t.Errorf("the printed check must find this board's own words and exit 1, the guard's stop arm: exit %d, %q %q", exit, stdout, stderr)
+	}
+	// n=2, as printed, with a name where the reader puts theirs.
+	exit, stdout, stderr = b.run(shellWords(t, strings.ReplaceAll(add, "<your-name>", "ada"))[1:]...)
+	if exit != 0 || !strings.Contains(stdout, "ADD OK") {
+		t.Errorf("the printed add does not run: exit %d, %q %q", exit, stdout, stderr)
+	}
+}
+
+// quickstartPair pulls the two pasteable lines back out of quickstart's output, undoing the
+// quoting they were printed with.
+func quickstartPair(t *testing.T, stdout string) (check, add string) {
+	t.Helper()
+	for _, line := range strings.Split(stdout, "\n") {
+		prefix, rest, ok := strings.Cut(line, ": ")
+		if !ok || !strings.HasPrefix(prefix, "QUICKSTART LINE ") {
+			continue
+		}
+		unquoted, err := strconv.Unquote(rest)
+		if err != nil {
+			t.Fatalf("a printed line is not quoted the way nova-bus quotes: %q: %v", rest, err)
+		}
+		switch {
+		case strings.Contains(prefix, "n=1"):
+			check = unquoted
+		case strings.Contains(prefix, "n=2"):
+			add = unquoted
+		}
+	}
+	if check == "" || add == "" {
+		t.Fatalf("quickstart printed no pair:\n%s", stdout)
+	}
+	return check, add
+}
+
+// shellWords splits one of the printed lines the way a shell would: double quotes group, and
+// a backslash inside them escapes the next byte. That is the whole of what quote() emits, so
+// anything else appearing here is a bug in this helper rather than in the tool.
+func shellWords(t *testing.T, line string) []string {
+	t.Helper()
+	var out []string
+	var cur strings.Builder
+	inWord, quoted := false, false
+	for i := 0; i < len(line); i++ {
+		c := line[i]
+		switch {
+		case quoted && c == '\\' && i+1 < len(line):
+			i++
+			cur.WriteByte(line[i])
+		case c == '"':
+			quoted = !quoted
+			inWord = true
+		case !quoted && c == ' ':
+			if inWord {
+				out = append(out, cur.String())
+				cur.Reset()
+				inWord = false
+			}
+		default:
+			cur.WriteByte(c)
+			inWord = true
+		}
+	}
+	if inWord {
+		out = append(out, cur.String())
+	}
+	return out
 }
 
 // Work list 7's test, named for the mnemonic.

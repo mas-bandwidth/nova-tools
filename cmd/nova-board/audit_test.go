@@ -35,7 +35,11 @@ var boardAudit = audit.Config{
 		// runtime answers GOOS, GOARCH and Version and holds no writer at all;
 		// runtime/debug is read once for this binary's own build information and every
 		// field of it goes out through oneline.Field.
-		`"crypto/rand"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"runtime"`, `"runtime/debug"`, `"strings"`, `"time"`,
+		//
+		// strconv renders ONE int, the --gh-timeout seconds quickstart prints inside its
+		// pasteable pair. It holds no writer either, and the digits it returns are joined
+		// into a line that goes out through oneline.Quote like the rest of that pair.
+		`"crypto/rand"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"runtime"`, `"runtime/debug"`, `"strconv"`, `"strings"`, `"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/board"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 	},

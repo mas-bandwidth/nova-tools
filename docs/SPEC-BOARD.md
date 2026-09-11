@@ -340,8 +340,8 @@ already on the board, do not file it**. So the rule every reader and fixer follo
 is one line of shell:
 
 ```sh
-nova-board check --issue mas-bandwidth/schema#876 --words "windows runner skips" || { [ $? -eq 1 ] && exit 0; exit 2; }
-nova-board add   --issue mas-bandwidth/schema#876 --as rowan --text "the Windows runner skips three steps" \
+nova-board check --issue mas-bandwidth/schema#876 --gh-timeout 60 --words "windows runner skips" || { [ $? -eq 1 ] && exit 0; exit 2; }
+nova-board add   --issue mas-bandwidth/schema#876 --gh-timeout 60 --as rowan --text "the Windows runner skips three steps" \
                  --by 4h --default "rowan files it on the schema board as a known gap"
 ```
 
@@ -690,7 +690,11 @@ Each is proven able to fail by a mutation before it is trusted.
    `stale=true`, counted on `BOARD OK` and on its owner's line, still listed
    under `--open`; one second under `--stale` is not stale; `close` without
    `--stale` is exit 2 naming it; the example pair under **Exit codes** is run
-   verbatim against a fresh board and files one card; against a card taken by
+   against a fresh board and files one card — with `--dir` in place of the
+   example's `--issue`, because that issue is a real thread and no test of this
+   tool reaches the network; the `--issue` shape of the pair, `--gh-timeout` and
+   all, is run against the recorded `gh` in
+   `TestQuickstartUnderIssuePrintsARunnablePair`; against a card taken by
    another line one second ago, `close --stale 10m` by a second line is
    `CLOSE REFUSED` exit 1 and the same with `--anyway` appends `override=true`;
    against a take eleven minutes old it closes without `--anyway` and appends

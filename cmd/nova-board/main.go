@@ -36,6 +36,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -656,10 +657,10 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer, now time.Time) int {
 	printBoard(stdout, b, kind, source, false, false, "", bounded.Default)
 	words, text := quickstartWords(b)
 	fmt.Fprintf(stdout, "QUICKSTART LINE n=1 what=check: %s\n", oneline.Quote(
-		"nova-board check "+backendFlag(kind, source)+" --words "+quote(words)+
+		"nova-board check "+backendFlag(kind, source, f.ghTimeout)+" --words "+quote(words)+
 			" || { [ $? -eq 1 ] && exit 0; exit 2; }"))
 	fmt.Fprintf(stdout, "QUICKSTART LINE n=2 what=add: %s\n", oneline.Quote(
-		"nova-board add "+backendFlag(kind, source)+" --as <your-name> --text "+quote(text)+
+		"nova-board add "+backendFlag(kind, source, f.ghTimeout)+" --as <your-name> --text "+quote(text)+
 			" --by 4h --default "+quote("the filer files it as a known gap")))
 	fmt.Fprintf(stdout, "QUICKSTART NOTE check EXITS 1 WHEN IT MATCHES, so the guard reads \"if it is already there, stop\"; the exit-2 arm tells a NO from a board that could not be read\n")
 	fmt.Fprintf(stdout, "QUICKSTART NOTE --stale %s is this family's number and this run passed it in words: there is no default duration here, and --by and --default are required on every card\n",
@@ -953,9 +954,14 @@ func quickstartWords(b *board.Board) (words, text string) {
 	return "the thing you are about to file", "the thing you are about to file"
 }
 
-func backendFlag(kind, source string) string {
+// backendFlag is the backend half of the pair quickstart prints, and it carries EVERY flag
+// that backend requires: --gh-timeout is required under --issue (see backend, rule 8), so a
+// printed `--issue` line without it is a line that exits 2 for the reader who pastes it. A
+// printed command that does not run is worse than no printed command, because the reader
+// believes the tool before they believe themselves.
+func backendFlag(kind, source string, ghTimeout int) string {
 	if kind == "issue" {
-		return "--issue " + source
+		return "--issue " + source + " --gh-timeout " + strconv.Itoa(ghTimeout)
 	}
 	return "--dir " + source
 }
