@@ -298,3 +298,14 @@ func Head(ctx context.Context, dir string, timeout time.Duration) (sha, at strin
 	}
 	return f[0], f[1]
 }
+
+// Classify is rule 7 over a transcript the caller has already read: every line
+// suppressed, relayed or standing, every line counted, and the DEFAULT CASE
+// PRINTS. It is exported so that `serve` runs this classifier and not a second
+// one -- the 2026-09-10 hurt was a reader that kept only the tokens it knew
+// about, and one classifier is one place for that to be right.
+func (b *Bus) Classify(out string) Result {
+	var res Result
+	b.classify(out, &res)
+	return res
+}

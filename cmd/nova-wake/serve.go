@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
@@ -101,6 +102,14 @@ func cmdServe(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 			p.add("--interval "+*interval+" is below the "+wake.Dur(IntervalFloor)+" floor", "  the interval matches the latency a person will accept, never the second\n")
 		}
 	}
+	if *redeliver == "" && (*remote == "" || *branch == "") {
+		// Rule 10: serve FETCHES THE BUS EVERY --interval. A plain `inbox`
+		// reads the checkout and never the remote, so a serve with no remote
+		// sits on a standing checkout forever -- the false-quiet failure this
+		// verb exists to end. The fetch is not an option --receipt turns on.
+		p.add("serve fetches the bus every --interval and needs --remote and --branch",
+			"  a fetch is how mail on the remote reaches the checkout; nova-bus wait takes the checkout lock, fetches and fast-forwards\n")
+	}
 	if *receipt && (*remote == "" || *branch == "") {
 		p.add("--receipt needs --remote and --branch", "  a receipt is pushed, the same way nova-bus pushes one\n")
 	}
@@ -126,11 +135,30 @@ func cmdServe(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 			"; repair it, or pass a new --state path and accept a cold start on purpose")
 	}
 
+	// The pin is checked here for the same reason watch checks it: serve's
+	// whole promise is that mail on the remote reaches the checkout through
+	// nova-bus, and a nova-bus that stopped fetching would leave a serve that
+	// looks perfectly healthy and is blind.
+	switch found, verr := wake.BusVersion(context.Background(), time.Duration(*gitTimeout)*time.Second); {
+	case verr != nil:
+		// A program missing from PATH is a failed poll and not a refusal.
+	case found != wake.PinnedBusVersion:
+		return refused(stderr, "nova-bus "+found+"; this tool is written against "+wake.PinnedBusVersion+" and its fetch is a property of the push")
+	}
+
 	s := &server{
 		stdout: stdout, stderr: stderr, clock: clock, st: st, statePath: *state,
 		bus: *busDir, as: *as, onNote: *onNote, batchMax: *batchMax,
 		idempotent: *idempotent, receipt: *receipt, remote: *remote, branch: *branch,
 		words: *words, timeout: time.Duration(*gitTimeout) * time.Second,
+		inOrder: map[string]bool{},
+	}
+	s.busSrc = &wake.Bus{
+		Dir: *busDir, As: *as, ReceiptMaxWords: *words, Timeout: s.timeout,
+		Seen: func(line string) bool { _, ok := st.Get("bus:line:" + line); return ok },
+		// The one suppression serve's own state decides: a note this receiver
+		// already holds a delivery record for has been handed to the mind.
+		Printed: func(id string) bool { _, ok := st.Get(serveKey(id)); return ok },
 	}
 	ctx := context.Background()
 	if *redeliver != "" {
@@ -156,6 +184,16 @@ type server struct {
 	fired, notes, redelivered, uncertain, cc int
 	maxWait                                  time.Duration
 	saidBlocked                              bool
+
+	// busSrc is the WATCH verb's classifier, reused rather than re-spelled:
+	// rule 7 is about the bus source and serve reads the same bus with the
+	// same program. Its counts are this run's WAKE SOURCE line.
+	busSrc *wake.Bus
+	// order is bus order -- the order the ids were listed in, which is not the
+	// order they sort in. Every poll re-lists what this receiver still
+	// carries, so a restart recovers it.
+	order   []string
+	inOrder map[string]bool
 }
 
 // serveKey is one note's delivery record.
@@ -181,10 +219,14 @@ func (s *server) loop(ctx context.Context, every, hours time.Duration) int {
 		if _, err := os.Stat(stop); err == nil {
 			break
 		}
-		s.poll(ctx, now)
+		due := now.Add(every)
+		s.poll(ctx, now, every)
 		s.dispatch(ctx, now)
 		s.save()
-		s.clock.Sleep(every)
+		// The cadence is the interval, and `wait` has already spent part of it
+		// blocking: sleeping the whole interval on top of a blocking fetch
+		// would fetch every two.
+		s.clock.Sleep(due.Sub(s.clock.Now()))
 	}
 	// queued= and uncertain= are read off the STATE at the exit rather than
 	// counted as they happened: what the reader needs at the end is what is
@@ -199,6 +241,7 @@ func (s *server) loop(ctx context.Context, every, hours time.Duration) int {
 			uncertain++
 		}
 	}
+	s.sourceLine(ctx)
 	fmt.Fprintf(s.stdout, "WAKE SERVE fired=%d notes=%d redelivered=%d uncertain=%d queued=%d cc=%d max_wait=%s idle=%s\n",
 		s.fired, s.notes, s.redelivered, uncertain, queued, s.cc,
 		oneline.Field(wake.Dur(s.maxWait)), oneline.Field(wake.Dur(s.clock.Now().Sub(start))))
@@ -219,13 +262,17 @@ func (s *server) recover(ctx context.Context) {
 		s.uncertain++
 		fmt.Fprintf(s.stdout, "WAKE UNCERTAIN id=%s attempt=%d: dispatch interrupted; %s\n",
 			oneline.Field(id), attempt, oneline.Escape(s.remedy(id)))
-		if s.idempotent {
+		if s.idempotent && attempt == 1 {
 			// The caller's declaration of a STRONGER RECEIVER CONTRACT: the
 			// command de-duplicates by id, durably, tolerates a second
 			// invocation beside a live first one, and its exit 0 for an id is a
 			// terminal acknowledgement that the work for that id has completed.
 			// So the interrupted attempt is run once more, before anything
 			// queued, and the queue waits for THIS retry's delivered rc=0.
+			//
+			// ONLY attempt=1. "An interrupted attempt=2 is uncertain and
+			// blocks all the same, so nothing fires forever and nothing goes
+			// quiet" -- never a third automatic run.
 			s.runBatch(ctx, []string{id}, attempt+1, true)
 		}
 	}
@@ -246,47 +293,97 @@ func (s *server) blocked() string {
 
 // poll reads the bus once and records what it found. It never starts the
 // command to look.
-func (s *server) poll(ctx context.Context, now time.Time) {
-	out, err := s.runBus(ctx, s.busArgs())
-	if err != nil {
-		fmt.Fprintf(s.stderr, "WAKE POLL bus: %s\n", oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)))
-		return
+//
+// RULE 7 IS NOT THE WATCH VERB'S ALONE. Every line the bus source reads is
+// classified as suppressed, relayed or standing, and every line is counted; a
+// line this tool cannot classify is a line this tool PRINTS. A serve that kept
+// only `INBOX NOTE ` would be the grep of 2026-09-10 rebuilt in the other verb:
+// an hour over a bus refusing every read, ending `fired=0` and exit 0.
+func (s *server) poll(ctx context.Context, now time.Time, budget time.Duration) {
+	out, code, err := s.runBus(ctx, s.busArgs(budget))
+	// The lines are classified whether or not the poll ended badly: a run that
+	// dropped an INBOX REFUSED line because nova-bus exited 2 is the false
+	// quiet arriving by the other road.
+	res := s.busSrc.Classify(out)
+	list := bounded.Capped(s.stdout, bounded.Default, "WAKE", "bus",
+		"the bus said more than a poll prints; nova-bus inbox --bus <dir> --as <name> lists the whole of it")
+	for _, it := range res.Items {
+		switch it.Kind {
+		case wake.KindBus:
+			s.recordNote(it, now)
+		case wake.KindBusLine:
+			// The first sighting of an unrecognised line is news, and it is
+			// remembered so the next hour of the same sentence stands rather
+			// than waking the line again.
+			s.st.Set(it.Key, "seen")
+			list.Line("WAKE BUS LINE " + strings.TrimPrefix(it.Key, "bus:line:"))
+		}
 	}
-	for _, line := range strings.Split(out, "\n") {
-		if !strings.HasPrefix(line, "INBOX NOTE ") {
-			continue
-		}
-		id, addr := noteAddr(line)
-		if id == "" {
-			continue
-		}
-		if _, seen := s.st.Get(serveKey(id)); seen {
-			continue
-		}
-		s.notes++
-		// To: WAKES; Cc: DOES NOT. To means must act, cc means should know, and
-		// a broadcast to five is five turns. A cc note is recorded, counted,
-		// and read by the line at its next natural turn.
-		if addr == "cc" {
-			s.st.Set(serveKey(id), wake.Compose("cc", wake.Stamp(now)))
-			s.cc++
-			continue
-		}
-		s.st.Set(serveKey(id), wake.Compose("queued", wake.Stamp(now)))
+	// Shown every time, woken on once.
+	for _, line := range res.Standing {
+		list.Line(line)
+	}
+	list.More()
+	switch {
+	case err != nil:
+		fmt.Fprintf(s.stderr, "WAKE POLL bus: %s\n", oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)))
+	case code != 0:
+		// nova-bus said NO, which is an answer: its lines were read above, and
+		// the exit is said out loud rather than turned into a quiet nil.
+		fmt.Fprintf(s.stderr, "WAKE POLL bus: nova-bus exit=%d\n", code)
 	}
 	s.save()
 }
 
-func (s *server) busArgs() []string {
-	args := []string{"inbox", "--bus", s.bus, "--as", s.as, "--receipt-max-words", strconv.Itoa(s.words)}
-	if s.remote != "" && s.branch != "" {
-		// A fetch, and no cursor moved: wait takes the checkout lock,
-		// fetches and fast-forwards.
-		args = []string{"wait", "--bus", s.bus, "--as", s.as,
-			"--receipt-max-words", strconv.Itoa(s.words), "--timeout", "1s",
-			"--remote", s.remote, "--branch", s.branch}
+// recordNote turns one classified INBOX NOTE into this receiver's delivery
+// record. To: WAKES; Cc: DOES NOT. To means must act, cc means should know, and
+// a broadcast to five is five turns.
+func (s *server) recordNote(it wake.Item, now time.Time) {
+	id := it.ID
+	if id == "" {
+		return
 	}
-	return args
+	s.remember(id)
+	s.notes++
+	if p := wake.Decompose(it.Value); len(p) > 1 && p[1] == "cc" {
+		s.st.Set(serveKey(id), wake.Compose("cc", wake.Stamp(now)))
+		s.cc++
+		return
+	}
+	s.st.Set(serveKey(id), wake.Compose("queued", wake.Stamp(now)))
+}
+
+// remember keeps BUS ORDER: the order the bus listed the ids in, which is not
+// the order they sort in.
+func (s *server) remember(id string) {
+	if s.inOrder[id] {
+		return
+	}
+	s.inOrder[id] = true
+	s.order = append(s.order, id)
+}
+
+// sourceLine is rule 7's four counts, once per run, before the exit line. They
+// add up: read equals the sum of the other three. A bus that printed nothing
+// and a bus that printed sixty REFUSED lines must not look the same.
+func (s *server) sourceLine(ctx context.Context) {
+	read, suppress, relay, standing := s.busSrc.Counts()
+	head, headAt := wake.Head(ctx, s.bus, s.timeout)
+	fmt.Fprintf(s.stdout, "WAKE SOURCE bus read=%d suppressed=%d relayed=%d standing=%d head=%s head-at=%s\n",
+		read, suppress, relay, standing, oneline.Field(dash(head)), oneline.Field(dash(headAt)))
+}
+
+// busArgs is rule 10's fetch: serve FETCHES THE BUS EVERY --interval, because a
+// git fetch costs no tokens and mail that landed on the remote reaches the
+// checkout no other way. It is `wait` WITHOUT --advance -- wait takes the
+// checkout lock, fetches, fast-forwards and returns the moment the inbox would
+// list something new or at its timeout -- so no cursor moves and nothing is
+// consumed. The timeout is DERIVED FROM THE INTERVAL this run was given and is
+// never a guessed second.
+func (s *server) busArgs(budget time.Duration) []string {
+	return []string{"wait", "--bus", s.bus, "--as", s.as,
+		"--receipt-max-words", strconv.Itoa(s.words), "--timeout", wake.Dur(budget),
+		"--remote", s.remote, "--branch", s.branch}
 }
 
 // dispatch hands every queued id to ONE invocation, in bus order, at most
@@ -412,7 +509,7 @@ func (s *server) sendReceipts(ctx context.Context, ids []string) {
 		args = append(args, "--note", id)
 	}
 	args = append(args, "--remote", s.remote, "--branch", s.branch)
-	if _, err := s.runBus(ctx, args); err != nil {
+	if _, _, err := s.runBus(ctx, args); err != nil {
 		fmt.Fprintf(s.stderr, "WAKE POLL receipt: %s\n", oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)))
 	}
 }
@@ -441,8 +538,18 @@ func (s *server) remedy(id string) string {
 // is the order the ids were first seen, and is what the queue numbers keep.
 func (s *server) ids() []string {
 	var out []string
+	seen := map[string]bool{}
+	for _, id := range s.order {
+		if _, ok := s.st.Get(serveKey(id)); ok {
+			out = append(out, id)
+			seen[id] = true
+		}
+	}
+	// A restart has records before it has a listing. State order is SORTED
+	// order, which is not bus order -- the first poll re-lists what this
+	// receiver still carries and puts them right.
 	for _, k := range s.st.Keys() {
-		if id, ok := strings.CutPrefix(k, "serve:"); ok {
+		if id, ok := strings.CutPrefix(k, "serve:"); ok && !seen[id] {
 			out = append(out, id)
 		}
 	}
@@ -486,42 +593,25 @@ func (s *server) save() {
 
 // runBus starts nova-bus under the timeout. It is the same one program the
 // watch verb starts, with the same read of stdout and stderr together.
-func (s *server) runBus(ctx context.Context, args []string) (string, error) {
+func (s *server) runBus(ctx context.Context, args []string) (string, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "nova-bus", args...)
 	raw, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
-		return string(raw), fmt.Errorf("nova-bus timed out after %s", wake.Dur(s.timeout))
+		return string(raw), 0, fmt.Errorf("nova-bus timed out after %s", wake.Dur(s.timeout))
 	}
 	if err != nil {
 		var ee *exec.ExitError
 		if asExitErr(err, &ee) {
-			// nova-bus said NO, which is an answer: its lines are read.
-			return string(raw), nil
+			// nova-bus said NO, which is an answer: its lines are read AND
+			// classified, and the exit code is handed back rather than
+			// swallowed into a nil the caller reads as success.
+			return string(raw), ee.ExitCode(), nil
 		}
-		return string(raw), fmt.Errorf("nova-bus could not be run: %s", oneLine(err.Error()))
+		return string(raw), 0, fmt.Errorf("nova-bus could not be run: %s", oneLine(err.Error()))
 	}
-	return string(raw), nil
-}
-
-// noteAddr reads an INBOX NOTE line's id and its addr= field. The command is
-// handed the id and nothing else, so nothing else of the line is kept.
-func noteAddr(line string) (id, addr string) {
-	head, _, _ := strings.Cut(line, ": ")
-	for _, tok := range strings.Fields(head) {
-		k, v, ok := strings.Cut(tok, "=")
-		if !ok {
-			continue
-		}
-		switch k {
-		case "id":
-			id = v
-		case "addr":
-			addr = v
-		}
-	}
-	return id, addr
+	return string(raw), 0, nil
 }
 
 func asExitErr(err error, out **exec.ExitError) bool {
