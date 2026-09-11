@@ -448,8 +448,19 @@ What a first run gets wrong, and what each one wants:
 - **A second watch on one `--state`.** Two runs each write the whole map, so the
   later write erases what the earlier one learned. One state file per watch.
 
-Without `--advance-cursor` — which is specified and deliberately not in this
-build — nothing here fetches: the bus checkout is read as it stands, and every
-`WAKE SOURCE bus` line carries `head=` and `head-at=` so you can see it stand
-still. `--refresh --remote <name> --branch <name>` fetches through `nova-bus
-wait` and moves no cursor.
+By default nothing here fetches: the bus checkout is read as it stands, and
+every `WAKE SOURCE bus` line carries `head=` and `head-at=` so you can see it
+stand still. Two flags change that, and never both at once — one fetch per poll,
+never two:
+
+- `--refresh --remote <name> --branch <name>` fetches through `nova-bus wait`
+  and **moves no cursor**. Nothing is consumed, so any number of watchers may
+  run. This is the one to reach for.
+- `--advance-cursor --as <name> --remote <name> --branch <name>` fetches through
+  the push inside `nova-bus inbox --advance` and **moves your own cursor**, so
+  new mail is relayed within two advancing polls. It advances only behind a
+  print: a call holding unprinted notes prints up to the cap, says `WAKE NOTE
+  bus advance deferred`, and does not fetch until they have printed. A cursor is
+  a claim about what a reader has been shown, so it needs `--as`, it is one
+  advancing watcher per bus and name, and there is no flag that advances
+  somebody else's.

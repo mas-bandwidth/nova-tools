@@ -1084,3 +1084,100 @@ func TestASecondAdvancingWatcherOnOnePairRefuses(t *testing.T) {
 		t.Errorf("the lock outlived its holder: exit %d\n%s", r.exit, r.all())
 	}
 }
+
+// The advance lock may not sit in the bus WORKTREE. `nova-bus inbox --advance`
+// refuses a dirty checkout, and an untracked dotfile is dirty -- so a lock at
+// the bus root makes the one write-side call this tool has refuse every time,
+// and the watcher is blind while looking perfectly healthy. internal/bus says
+// it in its own words: a lock belongs in the git directory, which is
+// per-checkout, "and a lock at the bus root would be a file on the bus".
+func TestTheAdvanceLockDoesNotDirtyTheBus(t *testing.T) {
+	busDir := t.TempDir()
+	gitRun(t, busDir, "init", "--quiet", "-b", "main")
+	write(t, filepath.Join(busDir, "participants.json"), "{}\n")
+	gitRun(t, busDir, "add", "-A")
+	gitRun(t, busDir, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "-m", "the bus")
+
+	release, holder, err := wake.LockAdvance(busDir, "Rowan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if release == nil {
+		t.Fatalf("the lock could not be taken (held by %s)", holder)
+	}
+	defer release()
+
+	out := gitRun(t, busDir, "status", "--porcelain", "--untracked-files=all")
+	if strings.TrimSpace(out) != "" {
+		t.Errorf("the advance lock dirtied the bus checkout, and `inbox --advance` refuses a dirty checkout:\n%s", out)
+	}
+	// And it still locks: a second taker is refused.
+	if again, _, err := wake.LockAdvance(busDir, "Rowan"); err != nil || again != nil {
+		t.Errorf("the lock stopped locking: it was taken a second time (err=%v)", err)
+	}
+}
+
+func gitRun(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, raw)
+	}
+	return string(raw)
+}
+
+// "A source fails when the bus's nova-bus exits other than 0 or times out", and
+// the third consecutive failure ends the watch. An advance that fails every
+// call is a watcher that never fetches -- the rule-12 blindness -- and it must
+// reach WAKE BROKEN rather than printing WAKE POLL forever.
+func TestAFailingAdvanceReachesBroken(t *testing.T) {
+	busDir, _ := fakes(t)
+	write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+	// The polls succeed; every advance -- the even-numbered call -- fails.
+	for _, n := range []string{"2", "4", "6", "8"} {
+		write(t, filepath.Join(busDir, "exit."+n), "1\n")
+	}
+	state := filepath.Join(t.TempDir(), "wake.state")
+	r := wakeRun(t, "watch", "--state", state, "--max", "60s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+		"--advance-cursor", "--remote", "origin", "--branch", "main")
+	if !strings.HasPrefix(lastLine(r.stdout), "WAKE BROKEN source=bus failures=3") {
+		t.Errorf("an advance that fails every call ends %q; a watcher that cannot fetch is not watching, and a WAKE QUIET from it would be a lie", lastLine(r.stdout))
+	}
+	if r.exit != 2 {
+		t.Errorf("exit = %d, want 2", r.exit)
+	}
+}
+
+// The refusal set is what a poll that could not be read produced, and it is
+// about THAT POLL. A source that failed once and then answered must have its
+// real change counted: a later poll's news is news.
+func TestASourceThatRecoversHasItsChangeCounted(t *testing.T) {
+	_, ghDir := fakes(t)
+	// Unreadable on the first poll -- every entry, so the source itself fails.
+	write(t, filepath.Join(ghDir, "1.exit"), "1\n")
+	write(t, filepath.Join(ghDir, "1.stderr"), "gh: could not reach the forge\n")
+	write(t, filepath.Join(ghDir, "1.json"), `{"state":"MERGED","statusCheckRollup":[]}`)
+	state := filepath.Join(t.TempDir(), "wake.state")
+	args := []string{"watch", "--state", state, "--max", "30s", "--on-deadline", "report",
+		"--interval", "5s", "--entry", "mas-bandwidth/nova-tools#1", "--entry-interval", "5s"}
+
+	clock := wake.NewFake(at)
+	clock.OnSleep = func(time.Time) {
+		// The forge comes back between the first poll and the second.
+		os.Remove(filepath.Join(ghDir, "1.exit"))
+	}
+	var out, errb bytes.Buffer
+	exit := runWith(args, &out, &errb, clock)
+	if exit != 0 {
+		t.Fatalf("exit = %d:\n%s%s", exit, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "WAKE ENTRY mas-bandwidth/nova-tools#1 state=MERGED") {
+		t.Fatalf("the entry's real state never printed:\n%s", out.String())
+	}
+	last := lastLine(out.String())
+	if !strings.HasPrefix(last, "WAKE CHANGE") || !strings.Contains(last, "entries=1") {
+		t.Errorf("the verdict is %q; a source that failed once and then answered has its change counted -- the refusal is about the poll that failed, not about the key forever", last)
+	}
+}

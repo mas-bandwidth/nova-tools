@@ -571,6 +571,8 @@ type watcher struct {
 	// rule-8 streak rather than returning the call as news at after=0s, which
 	// is the tick loop this tool exists to delete.
 	refusal       map[string]bool
+	busRead       bool
+	busFail       bool
 	failing       map[string]bool
 	notes         map[string]bool
 	changed       map[string]int
@@ -607,6 +609,7 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 		// watch that polled at its deadline would make one more call against
 		// somebody else's server for an answer it has no time to print.
 		reached := !now.Before(deadline)
+		w.busRead, w.busFail = false, false
 		broken := ""
 		if !reached {
 			for _, s := range w.sources {
@@ -639,12 +642,30 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 		_ = printed
 		// Steps 2 and 3: the cursor waits behind the print, and a poll advances
 		// only when this tool's bus queue holds nothing after it.
+		// The advance is the bus source too, and its streak is read AFTER it
+		// has had its turn: an advance that fails every call must reach three
+		// and say BROKEN rather than running to the deadline as quiet.
+		if broken == "" {
+			if n, _, _ := w.st.Streak("bus"); n >= 3 {
+				broken = "bus"
+			}
+		}
 		if w.advanceOrDefer(ctx, now) {
 			// The injected kill of test 11: the process died between the
 			// advance returning and the write of its output.
 			return 0
 		}
+		if w.busRead && !w.busFail {
+			// Both halves answered.
+			delete(w.failing, "bus")
+			w.st.ClearFail("bus")
+		}
 
+		if broken == "" {
+			if n, _, _ := w.st.Streak("bus"); n >= 3 {
+				broken = "bus"
+			}
+		}
 		switch {
 		case broken != "":
 			n, since, reason := w.st.Streak(broken)
@@ -701,10 +722,7 @@ func (w *watcher) poll(ctx context.Context, src wake.Source, now time.Time) {
 	// dropped an INBOX REFUSED line because nova-bus exited 1 would be the grep
 	// that gave the window thirty minutes of false quiet. What a FAILED poll's
 	// lines are not is NEWS.
-	if err != nil {
-		w.markRefusal(res)
-	}
-	w.observe(src.Name(), res, now)
+	w.observe(src.Name(), res, now, err != nil)
 	if err != nil {
 		if w.failing == nil {
 			w.failing = map[string]bool{}
@@ -716,18 +734,31 @@ func (w *watcher) poll(ctx context.Context, src wake.Source, now time.Time) {
 		return
 	}
 	delete(w.failing, src.Name())
+	if w.advancer != nil && w.bus != nil && src.Name() == w.bus.Name() {
+		// The bus source's poll is not over: its advance runs after the print,
+		// and a read that worked beside an advance that did not is not a
+		// success of this source. The streak is cleared once both halves have
+		// had their turn.
+		w.busRead = true
+		return
+	}
 	w.st.ClearFail(src.Name())
 }
 
 // markRefusal remembers the keys a failed poll produced, so that printing them
-// does not end the call as a change.
-func (w *watcher) markRefusal(res wake.Result) {
+// does not end the call as a change -- and FORGETS them the moment a poll that
+// could be read produces the same key, because the refusal is about that poll
+// and not about the key forever. A source that failed once and then answered
+// has its real change counted.
+func (w *watcher) markRefusal(key string, failed bool) {
 	if w.refusal == nil {
 		w.refusal = map[string]bool{}
 	}
-	for _, it := range res.Items {
-		w.refusal[it.Key] = true
+	if failed {
+		w.refusal[key] = true
+		return
 	}
+	delete(w.refusal, key)
 }
 
 func (w *watcher) pollLines(ctx context.Context, now time.Time) {
@@ -736,14 +767,15 @@ func (w *watcher) pollLines(ctx context.Context, now time.Time) {
 		fmt.Fprintf(w.stderr, "WAKE POLL lines: %s\n", oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)))
 		return
 	}
-	w.observe("lines", res, now)
+	w.observe("lines", res, now, false)
 }
 
 // observe is the one comparison, in one place: the observed value against the
 // stored newest one, byte for byte.
-func (w *watcher) observe(source string, res wake.Result, now time.Time) {
+func (w *watcher) observe(source string, res wake.Result, now time.Time, failed bool) {
 	w.standing = append(w.standing, res.Standing...)
 	for _, it := range res.Items {
+		w.markRefusal(it.Key, failed)
 		value, display := it.Value, it.Value
 		switch it.Kind {
 		case wake.KindBus:
@@ -870,10 +902,10 @@ func (w *watcher) recoverAdvance(ctx context.Context, now time.Time) {
 		return
 	}
 	res, note, err := w.advancer.Recover(ctx, w.st)
-	w.observe("bus", res, now)
+	w.observe("bus", res, now, err != nil)
 	w.save()
 	if err != nil {
-		fmt.Fprintf(w.stderr, "WAKE POLL bus: %s\n", oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)))
+		w.busFailed(err, now)
 		return
 	}
 	if note != "" {
@@ -897,16 +929,34 @@ func (w *watcher) advanceOrDefer(ctx context.Context, now time.Time) bool {
 	if killed {
 		return true
 	}
-	w.observe("bus", res, now)
+	w.observe("bus", res, now, err != nil)
 	w.save()
 	if err != nil {
-		fmt.Fprintf(w.stderr, "WAKE POLL bus: %s\n", oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)))
+		w.busFailed(err, now)
 		return false
 	}
 	// Cleared ONLY after the advance's output is durable.
 	wake.ClearAdvance(w.st)
 	w.save()
 	return false
+}
+
+// busFailed counts an advance or a recovery that could not be run toward the
+// bus source's streak. "A source fails when the bus's nova-bus exits other than
+// 0 or times out" -- and an advance that fails every call is a watcher that
+// never fetches, which is the blindness rule 12 names. Printing WAKE POLL and
+// clearing the streak on the next successful READ would let that watcher run to
+// its deadline and say QUIET, which would be a lie.
+func (w *watcher) busFailed(err error, now time.Time) {
+	if w.failing == nil {
+		w.failing = map[string]bool{}
+	}
+	w.failing["bus"] = true
+	w.busFail = true
+	n, since, _ := w.st.Fail("bus", oneLine(err.Error()), now)
+	fmt.Fprintf(w.stderr, "WAKE POLL bus: %s (failure %d of 3 in a row, since %s)\n",
+		oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)), n, oneline.Field(since))
+	w.save()
 }
 
 // remedyFor names the flag that lifts the ceiling, or the file that holds the

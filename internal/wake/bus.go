@@ -114,7 +114,7 @@ func (b *Bus) Poll(ctx context.Context, now time.Time) (Result, error) {
 	if b.Refresh {
 		args = b.waitArgs(b.waitBudget())
 	}
-	out, code, err := b.run(ctx, args...)
+	out, code, err := b.runWithin(ctx, b.processBudget(), args...)
 	if err == nil && code == 0 {
 		b.firstPoll = true
 	}
@@ -164,8 +164,28 @@ func (b *Bus) waitArgs(t time.Duration) []string {
 // run starts nova-bus under the timeout and reads its stdout and stderr
 // TOGETHER, line by line: rule 7 is about every line the source produced, and a
 // tool that read only stdout would be the grep that dropped the REFUSED line.
+// processBudget is how long the PROCESS may take, as against how long the wait
+// inside it may block. Under --refresh the poll is told to block for the time to
+// the earliest due source, and killing the process at --gh-timeout would kill
+// the fetch this tool asked for: a legal `--refresh --interval 2m` was SIGKILLed
+// at 60s on every poll, and three of those BROKEN a perfectly healthy watch.
+// --gh-timeout is the budget for a forge call and is the slack on top here.
+func (b *Bus) processBudget() time.Duration {
+	budget := b.Timeout + 15*time.Second
+	if b.Refresh {
+		if wait := b.waitBudget(); wait+b.Timeout > budget {
+			budget = wait + b.Timeout
+		}
+	}
+	return budget
+}
+
 func (b *Bus) run(ctx context.Context, args ...string) (string, int, error) {
-	ctx, cancel := context.WithTimeout(ctx, b.Timeout+15*time.Second)
+	return b.runWithin(ctx, b.Timeout+15*time.Second, args...)
+}
+
+func (b *Bus) runWithin(ctx context.Context, budget time.Duration, args ...string) (string, int, error) {
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "nova-bus", args...)
 	var out bytes.Buffer

@@ -298,3 +298,34 @@ func TestALinesLastSignIsNotCappedByACommitCount(t *testing.T) {
 		t.Error("the --line view caps its git log at a commit count; the rule names no cap, and a line older than the cap reads as one with no sign at all")
 	}
 }
+
+// A poll may BLOCK for the budget it was given, and the process that runs it
+// must outlive that block. Under --refresh the wait is told to return at the
+// time to the earliest due source -- at most --interval -- while the process
+// was killed at --gh-timeout+15s, so a legal `--refresh --interval 2m` was
+// SIGKILLed at 60s on every poll and three of those BROKEN a healthy watch.
+// --gh-timeout is the budget for a forge call, and here it is the slack on top.
+func TestThePollProcessOutlivesTheWaitItAskedFor(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		refresh bool
+		every   time.Duration
+		timeout time.Duration
+		atLeast time.Duration
+	}{
+		{"a refresh whose interval dwarfs the gh timeout", true, 2 * time.Minute, 45 * time.Second, 2 * time.Minute},
+		{"a refresh inside the gh timeout", true, 5 * time.Second, 45 * time.Second, 45 * time.Second},
+		{"a plain inbox poll, which blocks for nothing", false, 2 * time.Minute, 45 * time.Second, 45 * time.Second},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			b := &Bus{Every_: tc.every, Timeout: tc.timeout, Refresh: tc.refresh}
+			got := b.processBudget()
+			if got < tc.atLeast {
+				t.Errorf("the process budget is %s, under the %s this poll may block for: the wait is killed and every poll prints WAKE POLL", got, tc.atLeast)
+			}
+			if tc.refresh && got < b.waitBudget() {
+				t.Errorf("the process budget %s is under the wait budget %s it asked for", got, b.waitBudget())
+			}
+		})
+	}
+}

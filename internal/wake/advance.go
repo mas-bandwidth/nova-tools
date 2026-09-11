@@ -64,7 +64,21 @@ type Advancer struct {
 // The lock lives beside the bus it names, which is a directory the caller gave:
 // nothing here guesses a path, and nothing here writes to /tmp (rule 4).
 func LockAdvance(busDir, as string) (release func(), holder string, err error) {
-	lock := filepath.Join(busDir, ".nova-wake-advance-"+safeName(as)+".lock")
+	// NOT IN THE WORKTREE. `nova-bus inbox --advance` -- the one write-side call
+	// this tool makes -- refuses a checkout that holds changes that are not the
+	// note it is writing, and an untracked dotfile is such a change: a lock at
+	// the bus root makes every advance fail, so the watcher never fetches and
+	// looks perfectly healthy while it is blind. internal/bus puts nova-bus's
+	// own lock in the git directory for the neighbouring reason ("a lock at the
+	// bus root would be a file on the bus that every reader would then have to
+	// know is not a note"), and the git directory is per-CHECKOUT, which is the
+	// scope (bus, as) means. A bus that is not a git checkout has no git
+	// directory and no worktree to dirty, so the lock sits beside it there.
+	dir := busDir
+	if gd, gerr := bus.GitDir(busDir); gerr == nil && gd != "" {
+		dir = gd
+	}
+	lock := filepath.Join(dir, "nova-wake-advance-"+safeName(as)+".lock")
 	// internal/bus's LockFile, the ONE lock implementation in this repo since
 	// Emma exported it: an flock the kernel drops when the process dies, an
 	// O_EXCL sentinel where there is no flock. A second advancing watcher does
