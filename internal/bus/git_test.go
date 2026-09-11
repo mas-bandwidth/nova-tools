@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -9,33 +10,67 @@ import (
 	"time"
 )
 
-// hermetic makes git in this test process ignore the machine's own configuration. Setting
-// an environment variable here is not the tool reading the environment to decide behavior
-// -- the tool never does -- it is the test refusing to depend on whatever the person
-// running it has in ~/.gitconfig, including a commit.gpgsign that would otherwise make
-// these tests hang on a key.
+// TestMain sets the hermetic git environment ONCE, for the whole process, and hermetic is
+// what each test says to declare that it depends on it.
 //
-// The global config is a file of OUR OWN rather than a missing one, and what it turns off
-// is git's AUTO-MAINTENANCE -- the only thing git starts that the process that started it
-// does not wait for. `git receive-pack` runs `git gc --auto` in the receiving repository
-// after every push and returns without it, and a git new enough to detach that child
-// BEFORE it decides whether there is any work leaves a process alive in the bare
-// repository after the push this tool made has already returned. The test then finishes,
-// t.TempDir removes the fixture, and RemoveAll is racing a writer inside
-// bus.git/objects/pack: the run fails with "directory not empty" naming a test whose every
-// assertion passed. Nothing in this package is about housekeeping, so there is none, and
-// the one detached process git can start is not started.
+// It used to be four t.Setenv calls inside hermetic, which is the right shape for a test
+// that runs alone and the one shape a parallel test may not have: t.Setenv panics in any
+// test that has called t.Parallel. Every git test in this package pays an init, a clone, a
+// commit and a push, and that one call made all of them run one after another. The
+// environment set here is identical and set where nothing is running yet.
+//
+// What it is FOR is unchanged, and the second half of it was a real race. git ignores the
+// machine's own configuration, so these tests do not depend on the ~/.gitconfig of whoever
+// runs them -- including a commit.gpgsign that would make them hang on a key. And the
+// global config is a file of our own rather than a missing one, because it turns off git's
+// auto-maintenance, which is a child process git starts and does not wait for. `git
+// receive-pack` runs `git gc --auto` in the receiving repository after every push and
+// returns without it, and a git new enough to detach that child BEFORE it decides whether
+// there is any work leaves a process alive in the bare repository after the push this tool
+// made has already returned. The test then finishes, t.TempDir removes the fixture, and
+// RemoveAll is racing a writer inside bus.git/objects/pack: the run fails with "directory
+// not empty" naming a test whose every assertion passed. Nothing in this package is about
+// housekeeping, so there is none, and the one detached process git can start is not started.
+//
+// The directory holding that config is the ONE thing in this package outside t.TempDir, and
+// it has to be: it must exist before the first test starts and outlive the last one. It is
+// created under the same TMPDIR t.TempDir uses, holds one file this process wrote, and is
+// removed before the process exits on every path including a failing run.
+func TestMain(m *testing.M) {
+	os.Exit(func() int {
+		dir, err := os.MkdirTemp("", "nova-bus-internal-test-gitconfig-")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "hermetic git config: %v\n", err)
+			return 2
+		}
+		defer os.RemoveAll(dir)
+		cfg := filepath.Join(dir, "gitconfig")
+		if err := os.WriteFile(cfg, []byte(noMaintenanceConfig), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "hermetic git config: %v\n", err)
+			return 2
+		}
+		os.Setenv("GIT_CONFIG_GLOBAL", cfg)
+		os.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
+		os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+		os.Setenv("GIT_TERMINAL_PROMPT", "0")
+		return m.Run()
+	}())
+}
+
+// hermetic is the call each git-running test keeps, and it asserts what TestMain set rather
+// than setting it. Kept as a call rather than deleted so the dependency stays written at
+// every site that has it, and so a future TestMain that stopped doing this would fail
+// loudly here instead of silently reading the runner's ~/.gitconfig.
 func hermetic(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
-	cfg := filepath.Join(dir, "gitconfig")
-	if err := os.WriteFile(cfg, []byte(noMaintenanceConfig), 0o644); err != nil {
-		t.Fatal(err)
+	// All four, not just the first: three of them are what keeps a machine's system
+	// config, its ~/.gitconfig and its credential prompt out of these tests, and an
+	// assertion on one of four would pass over a TestMain that set one of four.
+	for _, key := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"} {
+		if os.Getenv(key) == "" {
+			t.Fatalf("%s is not set: the hermetic git environment is TestMain's, in this package, and it sets four", key)
+		}
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("GIT_TERMINAL_PROMPT", "0")
 }
 
 // noMaintenanceConfig is the whole of that global config: no auto-gc anywhere, and if some
@@ -86,6 +121,7 @@ func noteText(from, subject, body string) string {
 }
 
 func TestCommitAndPushLandsANote(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -119,6 +155,7 @@ func TestCommitAndPushLandsANote(t *testing.T) {
 // issue records, one of them was rejected and lost. Here, both must land, and neither may
 // lose its note.
 func TestTwoSendersPushingAtOnceBothLand(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	ada := cloneBus(t, bare)
@@ -174,6 +211,7 @@ func TestTwoSendersPushingAtOnceBothLand(t *testing.T) {
 }
 
 func TestPushGivesUpInsideTheBudgetAndSaysTheNoteIsNotOnTheBus(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	mine := cloneBus(t, bare)
@@ -206,6 +244,7 @@ func TestPushGivesUpInsideTheBudgetAndSaysTheNoteIsNotOnTheBus(t *testing.T) {
 // -- and the rebase stops. The tool settles it by union, because a RECEIPTS is a log and
 // two lines appended to a log are both true, and BOTH receipts land.
 func TestTwoBenchesReceiptingAtOnceBothLand(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	a := cloneBus(t, bare)
@@ -246,6 +285,7 @@ func TestTwoBenchesReceiptingAtOnceBothLand(t *testing.T) {
 // with `UU from-ada/INDEX` and nothing saying what to do. Both notes and both catalogue
 // lines now land, and the checkout is left in a state a person can keep working in.
 func TestTwoBenchesOfOneLaneSettleTheCatalogue(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	a := cloneBus(t, bare)
@@ -298,6 +338,7 @@ func TestTwoBenchesOfOneLaneSettleTheCatalogue(t *testing.T) {
 // same side, because an open list belongs to a cursor and merging two would carry notes the
 // winning read has already closed.
 func TestTwoBenchesOfOneReaderSettleTheCursor(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	a := cloneBus(t, bare)
@@ -365,6 +406,7 @@ func TestTwoBenchesOfOneReaderSettleTheCursor(t *testing.T) {
 // assigned one id; which of the two is the note is a person's decision. The rebase is
 // aborted, the commit is left on the branch, and the checkout is usable.
 func TestAConflictOnANoteIsRefusedAndTheAbortIsClean(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	a := cloneBus(t, bare)
@@ -431,6 +473,7 @@ func assertSettled(t *testing.T, dir string) {
 }
 
 func TestEnsureCleanRefusesAnUnrelatedChange(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -452,6 +495,7 @@ func TestEnsureCleanRefusesAnUnrelatedChange(t *testing.T) {
 }
 
 func TestCommitOnlyDoesNotPush(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -469,6 +513,7 @@ func TestCommitOnlyDoesNotPush(t *testing.T) {
 }
 
 func TestCommitRefusesWithoutAnIdentityOrPaths(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -484,6 +529,7 @@ func TestCommitRefusesWithoutAnIdentityOrPaths(t *testing.T) {
 }
 
 func TestIsRepoRootAndCurrentBranch(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -504,6 +550,7 @@ func TestIsRepoRootAndCurrentBranch(t *testing.T) {
 // said "nothing new" over unread notes. The refusal names the root git found, because that
 // is the one thing the caller needs in order to fix the invocation.
 func TestABusThatIsNotTheRepositoryRootIsRefused(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -552,6 +599,7 @@ func TestABusThatIsNotTheRepositoryRootIsRefused(t *testing.T) {
 // is already on the remote before mine is made, so my first push MUST be rejected and my
 // second MUST succeed, and the attempt count is the proof that the recovery ran.
 func TestARejectedPushRecoversOnTheSecondAttempt(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	mine := cloneBus(t, bare)
@@ -597,6 +645,7 @@ func TestARejectedPushRecoversOnTheSecondAttempt(t *testing.T) {
 // WORKS. A bare `git push` was what it used to say, and a bare push against a remote that
 // has moved is rejected exactly as this tool's own was.
 func TestSendRefusesABranchAheadOfTheRemoteWithSomebodyElsesWork(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -646,6 +695,7 @@ func TestSendRefusesABranchAheadOfTheRemoteWithSomebodyElsesWork(t *testing.T) {
 // tool exists to end, arriving from inside it. The trailer is how a run knows its own work,
 // and the next push CARRIES it.
 func TestAnUnpushedCommitOfOurOwnIsCarriedRatherThanRefused(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	mine := cloneBus(t, bare)
@@ -705,6 +755,7 @@ func commitByHand(t *testing.T, dir, path, message string) {
 // Every commit this tool makes carries the trailer, whether or not the caller named one --
 // which is what makes the guard above able to tell its own work from a person's.
 func TestEveryCommitCarriesTheTrailer(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -743,6 +794,7 @@ func TestEveryCommitCarriesTheTrailer(t *testing.T) {
 // The two flags that become git's own argv. A value beginning with a dash is an OPTION to
 // git, not a name, and this tool would run it.
 func TestRemoteAndBranchAreRefusedWhenTheyCouldBeOptions(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bad := []string{"--upload-pack=touch /tmp/pwned", "-o", "origin;rm -rf /", "origin main", "ori\ngin", ""}
 	for _, s := range bad {
@@ -772,6 +824,7 @@ func TestRemoteAndBranchAreRefusedWhenTheyCouldBeOptions(t *testing.T) {
 // record reports a file that does not exist -- or, when the old path is short, drops the
 // change entirely and calls a dirty checkout clean.
 func TestEnsureCleanReadsARenameAsThePairItIs(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -857,6 +910,7 @@ func TestThePushRetryWaitsBetweenAttempts(t *testing.T) {
 // long, and it is capped so that a retry budget stays a person's wait rather than a
 // schedule.
 func TestPushBackoffGrowsIsJitteredAndIsCapped(t *testing.T) {
+	t.Parallel()
 	for _, attempt := range []int{1, 2, 3, 8} {
 		lo := time.Duration(attempt) * backoffStep
 		for range 50 {
@@ -891,6 +945,7 @@ func TestPushBackoffGrowsIsJitteredAndIsCapped(t *testing.T) {
 // is a fast-forward and never a merge or a rebase: the three shapes below are the three
 // answers, and only one of them touches the checkout.
 func TestFetchAndFastForwardMovesTheCheckoutOnlyWhenItCan(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	reader := cloneBus(t, bare)

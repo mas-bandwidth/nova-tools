@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -29,25 +30,69 @@ func now() time.Time {
 	return t.UTC()
 }
 
-// hermetic makes git ignore the machine's own configuration, so these tests do not depend
-// on the ~/.gitconfig of whoever runs them -- including a commit.gpgsign that would
-// otherwise make them hang on a key.
-// The global config is a file of our own rather than a missing one, and it turns off git's
-// auto-maintenance: `git receive-pack` starts `git gc --auto` after every push and does not
-// wait for it, and a git that detaches that child before deciding whether there is work to
-// do leaves it running in a fixture the test is about to remove. See the same comment on
-// internal/bus's hermetic, where the race was found.
+// TestMain sets the hermetic git environment ONCE, for the whole process, and hermetic is
+// what each test says to declare that it depends on it.
+//
+// It used to be four t.Setenv calls inside hermetic, which is the right shape for a test
+// that runs alone and the one shape a parallel test may not have: t.Setenv panics in any
+// test that has called t.Parallel, because the environment is process-wide and restoring it
+// per test is not a thing that can be done while another test is reading it. Every test in
+// this package shells out to git, so that one call made the whole package serial -- 96
+// tests, each paying a git init, a clone, a commit and a push, one after another. The
+// environment set here is identical and set in the one place where nothing is running yet.
+//
+// What it is FOR is unchanged: git ignores the machine's own configuration, so these tests
+// do not depend on the ~/.gitconfig of whoever runs them -- including a commit.gpgsign that
+// would otherwise make them hang on a key. The global config is a file of our own rather
+// than a missing one, and it turns off git's auto-maintenance: `git receive-pack` starts
+// `git gc --auto` after every push and does not wait for it, and a git that detaches that
+// child before deciding whether there is work to do leaves it running in a fixture the test
+// is about to remove. See the same comment on internal/bus's, where the race was found.
+//
+// The directory holding that config is the ONE thing in this package outside t.TempDir, and
+// it has to be: it must exist before the first test starts and outlive the last one. It is
+// created under the same TMPDIR t.TempDir uses, it holds one file this process wrote, and
+// it is removed before the process exits on every path including a failing run.
+func TestMain(m *testing.M) {
+	os.Exit(func() int {
+		dir, err := os.MkdirTemp("", "nova-bus-test-gitconfig-")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "hermetic git config: %v\n", err)
+			return 2
+		}
+		defer os.RemoveAll(dir)
+		cfg := filepath.Join(dir, "gitconfig")
+		if err := os.WriteFile(cfg, []byte(noMaintenanceConfig), 0o644); err != nil {
+			fmt.Fprintf(os.Stderr, "hermetic git config: %v\n", err)
+			return 2
+		}
+		os.Setenv("GIT_CONFIG_GLOBAL", cfg)
+		os.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
+		os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+		os.Setenv("GIT_TERMINAL_PROMPT", "0")
+		return m.Run()
+	}())
+}
+
+// noMaintenanceConfig is the whole of that global config: no auto-gc anywhere, and if some
+// git runs one anyway it runs in the foreground, where the call that started it waits for
+// it and nothing outlives the test.
+const noMaintenanceConfig = "[gc]\n\tauto = 0\n\tautoDetach = false\n[maintenance]\n\tauto = false\n[receive]\n\tautoGc = false\n"
+
+// hermetic is the call each git-running test keeps, and it asserts what TestMain set rather
+// than setting it. Kept as a call rather than deleted so that the dependency stays written
+// at every site that has it, and so that a future TestMain that stopped doing this would
+// fail loudly here instead of silently reading the runner's ~/.gitconfig.
 func hermetic(t *testing.T) {
 	t.Helper()
-	dir := t.TempDir()
-	cfg := filepath.Join(dir, "gitconfig")
-	if err := os.WriteFile(cfg, []byte("[gc]\n\tauto = 0\n\tautoDetach = false\n[maintenance]\n\tauto = false\n[receive]\n\tautoGc = false\n"), 0o644); err != nil {
-		t.Fatal(err)
+	// All four, not just the first: three of them are what keeps a machine's system
+	// config, its ~/.gitconfig and its credential prompt out of these tests, and an
+	// assertion on one of four would pass over a TestMain that set one of four.
+	for _, key := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"} {
+		if os.Getenv(key) == "" {
+			t.Fatalf("%s is not set: the hermetic git environment is TestMain's, in this package, and it sets four", key)
+		}
 	}
-	t.Setenv("GIT_CONFIG_GLOBAL", cfg)
-	t.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
-	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
-	t.Setenv("GIT_TERMINAL_PROMPT", "0")
 }
 
 func gitIn(t *testing.T, dir string, args ...string) string {
@@ -148,6 +193,7 @@ Yes, and the key is misspelled in the matrix.
 `
 
 func TestUsageAndUnknownVerb(t *testing.T) {
+	t.Parallel()
 	invoke(t, "").mustCode(t, 2).mustContain(t, "stderr", "nova-bus:")
 	invoke(t, "", "help").mustCode(t, 0).mustContain(t, "stdout", "usage:")
 	invoke(t, "", "wibble").mustCode(t, 2).mustContain(t, "stderr", `unknown subcommand "wibble"`)
@@ -155,6 +201,7 @@ func TestUsageAndUnknownVerb(t *testing.T) {
 
 // Every required flag, refused by name. A missing one is never a guess.
 func TestRefusingToGuess(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	cases := []struct {
 		name string
@@ -185,11 +232,13 @@ func TestRefusingToGuess(t *testing.T) {
 // -h on a verb is an unusable invocation, not a success. A caller gating on exit 0 must
 // never see one from a flag it mistyped.
 func TestVerbHelpIsRefusedNotAnswered(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	invoke(t, "", "check", "--bus", checkout, "--full", "-h").mustCode(t, 2)
 }
 
 func TestSendLandsANoteAndCheckPasses(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	r := invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
@@ -216,6 +265,7 @@ func TestSendLandsANoteAndCheckPasses(t *testing.T) {
 }
 
 func TestSendFromAFile(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	path := filepath.Join(t.TempDir(), "draft.md")
@@ -227,6 +277,7 @@ func TestSendFromAFile(t *testing.T) {
 }
 
 func TestSendNoPushCommitsAndSaysTheNoteIsNotOnTheBus(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3", "--no-push").
@@ -239,6 +290,7 @@ func TestSendNoPushCommitsAndSaysTheNoteIsNotOnTheBus(t *testing.T) {
 
 // A refusal is exit 1 and a SEND FAIL line, and the bus is untouched.
 func TestSendRefusesAndWritesNothing(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	cases := []struct{ name, draft, want string }{
@@ -264,6 +316,7 @@ func TestSendRefusesAndWritesNothing(t *testing.T) {
 
 // The one-line guarantee, at the place a caller's own text reaches a refusal.
 func TestARefusalIsOneLineWhateverTheDraftHolds(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	// U+2028 ends a line for every reader that follows Unicode rather than counting
@@ -280,6 +333,7 @@ func TestARefusalIsOneLineWhateverTheDraftHolds(t *testing.T) {
 }
 
 func TestInboxSeparatesNotesFromReceiptsAndPutsNotesFirst(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "the archivist", "--receipt-max-words", "40").
 		mustCode(t, 0).
@@ -293,6 +347,7 @@ func TestInboxSeparatesNotesFromReceiptsAndPutsNotesFirst(t *testing.T) {
 }
 
 func TestInboxRefusesANameItDoesNotKnow(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Adda", "--receipt-max-words", "40").
 		mustCode(t, 2).mustContain(t, "stderr", "names no one on this bus")
@@ -301,6 +356,7 @@ func TestInboxRefusesANameItDoesNotKnow(t *testing.T) {
 }
 
 func TestReceiptMarksHeardAndInboxHonoursIt(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
@@ -321,6 +377,7 @@ func TestReceiptMarksHeardAndInboxHonoursIt(t *testing.T) {
 }
 
 func TestReceiptRefuses(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-deadbeefcafe",
@@ -332,6 +389,7 @@ func TestReceiptRefuses(t *testing.T) {
 }
 
 func TestCheckFailsAndNamesEveryFinding(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	writeFile(t, checkout, "from-ada/broken.md", "From: Ada\nthis is prose\n\nbody\n")
 	writeFile(t, checkout, "from-ada/stranger.md", "From: Ada\nTo: Boe\nSubject: s\n\nbody\n")
@@ -354,10 +412,12 @@ func TestCheckFailsAndNamesEveryFinding(t *testing.T) {
 }
 
 func TestCheckRefusesABusWithNoRoster(t *testing.T) {
+	t.Parallel()
 	invoke(t, "", "check", "--bus", t.TempDir(), "--full").mustCode(t, 2).mustContain(t, "stderr", "participants.json")
 }
 
 func TestNamesEchoesTheRoster(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	invoke(t, "", "names", "--bus", checkout).mustCode(t, 0).
 		mustContain(t, "stdout", `NAMES NAME name="Ada" lane=from-ada aliases="Ada Vale";"the archivist"`).
@@ -369,6 +429,7 @@ func TestNamesEchoesTheRoster(t *testing.T) {
 // send refuses to run over a checkout that is not on the branch named, or that holds
 // somebody's unrelated work, because the retry loop rebases.
 func TestSendRefusesAWrongBranchOrADirtyCheckout(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "trunk", "--attempts", "3").
@@ -379,6 +440,7 @@ func TestSendRefusesAWrongBranchOrADirtyCheckout(t *testing.T) {
 }
 
 func TestSendRefusesABusThatIsNotARepository(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	writeFile(t, root, "participants.json", rosterJSON)
 	invoke(t, draft, "send", "--bus", root, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
@@ -389,6 +451,7 @@ func TestSendRefusesABusThatIsNotARepository(t *testing.T) {
 // make, before it writes the note, because otherwise a note's push publishes somebody
 // else's unfinished work and nothing in the output says so.
 func TestSendRefusesWhenTheBranchIsAheadOfTheRemote(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	writeFile(t, checkout, "notes-to-self.txt", "half a thought\n")
@@ -415,6 +478,7 @@ func TestSendRefusesWhenTheBranchIsAheadOfTheRemote(t *testing.T) {
 // --remote and --branch become git's own argv. A value beginning with a dash is an option
 // to git, not a name, and this tool would have run it.
 func TestRemoteAndBranchThatCouldBeOptionsAreRefused(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	cases := [][]string{
 		{"send", "--bus", checkout, "--stdin", "--remote", "--upload-pack=touch /tmp/pwned", "--branch", "main", "--attempts", "3"},
@@ -429,6 +493,7 @@ func TestRemoteAndBranchThatCouldBeOptionsAreRefused(t *testing.T) {
 // --slug is the one piece of a note's path a caller supplies. It was written into the
 // filename unchecked, so "../x" wrote outside the lane.
 func TestSendRefusesASlugThatIsNotASlug(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	for _, slug := range []string{"../x", "a/b", "a\nb", " "} {
@@ -450,6 +515,7 @@ func TestSendRefusesASlugThatIsNotASlug(t *testing.T) {
 // A note on the bus that will not parse is not a note that does not exist. inbox used to
 // step over it in silence, which is the same failure as a lost push with a quieter cause.
 func TestInboxNamesTheNotesItCannotRead(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	writeFile(t, checkout, "from-bo/2026-09-07T0009Z-prose.md",
 		"Ada, the checkpoint is pushed and the suite passed: zero divergence.\n\nMore prose.\n")
@@ -465,6 +531,7 @@ func TestInboxNamesTheNotesItCannotRead(t *testing.T) {
 // Heard is not answered. A note I receipted and never replied to is still owed an answer,
 // and the receipt that says it arrived must not make it disappear from the listing.
 func TestInboxShowsWhatWasHeardButNotAnswered(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
@@ -491,6 +558,7 @@ func TestInboxShowsWhatWasHeardButNotAnswered(t *testing.T) {
 
 // The adoption path: a bus written by hand for months, checked for the first time.
 func TestCheckLegacyBefore(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	writeFile(t, checkout, "from-bo/2026-09-01T0001Z-old-prose.md",
 		"Ada, this note predates the tool entirely.\n\nbody\n")

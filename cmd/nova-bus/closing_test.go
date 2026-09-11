@@ -30,6 +30,7 @@ func openBoth(t *testing.T, checkout string) {
 // The id is the one thing a line answering a note does not have in front of it. --re takes
 // the subject instead and the skeleton comes back carrying the id.
 func TestDraftReTakesTheSubjectOfAnOpenNoteAndWritesTheID(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	openBoth(t, checkout)
@@ -71,6 +72,7 @@ func TestDraftReTakesTheSubjectOfAnOpenNoteAndWritesTheID(t *testing.T) {
 // The same thing at send, where a draft written by hand actually arrives. The Re line names
 // a subject; the note that lands names the id; and the note it answers comes off the list.
 func TestSendResolvesAReSubjectToTheOpenNoteAndClosesIt(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	openBoth(t, checkout)
@@ -102,6 +104,7 @@ func TestSendResolvesAReSubjectToTheOpenNoteAndClosesIt(t *testing.T) {
 // Two open notes with one subject is a thread somebody re-raised. The newest is the turn
 // being answered; the tool closes it, says which, and says how to be exact.
 func TestAReSubjectMatchingTwoNotesClosesTheNewestAndSaysSo(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	for i, id := range []string{"bo-aaaa11112222", "bo-bbbb33334444"} {
@@ -134,6 +137,7 @@ func TestAReSubjectMatchingTwoNotesClosesTheNewestAndSaysSo(t *testing.T) {
 // names nothing is told so -- and sent anyway, because a note that answers nothing is the
 // commonest thing on the bus and refusing one would be absurd.
 func TestSendSaysWhenADraftThatLooksLikeAReplyAnswersNothing(t *testing.T) {
+	t.Parallel()
 	const notice = "SEND NOTE this note answers nothing (no Re: line); if it is a reply, name the note: Re: <id>"
 	cases := []struct {
 		name, draft string
@@ -197,6 +201,7 @@ func TestSendSaysWhenADraftThatLooksLikeAReplyAnswersNothing(t *testing.T) {
 // refusals it always got and no notice about anything. Nothing here may make a send that
 // worked stop working.
 func TestAReSubjectOnALaneWithNoOpenListIsTheRefusalItAlwaysWas(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "From: Ada\nTo: Bo\nRe: A question about the gate\nSubject: s\n\nbody\n",
