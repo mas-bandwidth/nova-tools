@@ -80,9 +80,11 @@ outcome it accepts that is not a success — and is the one check worth requirin
 so a matrix leg that is renamed, added or skipped cannot quietly leave branch
 protection. One job does
 not run on a commit at all: `perf`, on a nightly schedule and on one runner,
-builds `-tags perf` and runs every package one test at a time — every wall-clock
-test behind that tag, wherever it lives, because a list of test names in a
-workflow goes stale silently and so does a list of packages. A bound in seconds
+builds `-tags perf` and runs `./...` one test at a time — every wall-clock test
+behind that tag in a package `./...` reaches, which is this module's own and
+neither a nested module nor anything under a `testdata` directory. It is written
+that way rather than as a list because a list of test names in a workflow goes
+stale silently and so does a list of packages. A bound in seconds
 is evidence about the machine as much as about the tool, so it is not a gate on
 anybody's pull request. So it runs whatever tests exist and does
 not require that a contribution ship any. Beyond that, the built binary is

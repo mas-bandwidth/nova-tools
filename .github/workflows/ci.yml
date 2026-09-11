@@ -461,9 +461,10 @@ jobs:
         # THE GATE, and the reason every step above carries `if: ${{ !cancelled() }}`.
         #
         # A step that fails stops the ones after it from running by default, so a broken
-        # second assertion used to hide assertions three to six: the job went red, somebody
-        # fixed the one failure it named, and the next run found the next one. Six red steps
-        # in one run is six facts; one red step and five skipped is one fact and a queue.
+        # second assertion used to hide assertions three to seven: the job went red,
+        # somebody fixed the one failure it named, and the next run found the next one.
+        # Seven red steps in one run is seven facts; one red step and six skipped is one
+        # fact and a queue.
         # `!cancelled()` runs them all anyway -- and keeps honouring a real cancellation --
         # and this step is where the job's verdict is stated in one place, naming every
         # outcome rather than only the first bad one.
@@ -594,20 +595,33 @@ jobs:
         run: go vet -tags perf ./...
 
       - name: the wall-clock tests, one at a time
-        # THE WHOLE REPOSITORY under the tag, not a -run naming one test and not one package. This step used to name
+        # EVERY PACKAGE `./...` REACHES, under the tag -- not a -run naming one test and not
+        # one package named here. This step used to name
         # TestEveryVerbIsUnderASecondOnTenThousandNotes, and the second wall-clock test
         # added in the same pull request -- TestAWaitPollsMoreThanOnceBeforeItsDeadline --
         # therefore ran NOWHERE: behind a tag the per-commit jobs do not build, and behind a
         # -run the nightly did not match. A list of test names in a workflow is a list that
         # goes stale silently, and so is a list of packages: the TAG decides what is extra,
-        # and `./...` decides where it may live. A perf-tagged test added to another package
-        # tomorrow runs here without anybody editing this line.
+        # and `./...` decides where it may live.
         #
-        # `-p 1 -parallel 1` because these are wall clocks. The rest of the package now runs
-        # its tests in parallel, and a bound in seconds measured while twelve siblings are
-        # spawning git processes measures the siblings. One at a time on an idle nightly
-        # runner is the condition the numbers in timing_test.go were written against.
-        run: go test -tags perf -count=1 -v -p 1 -parallel 1 ./...
+        # THE SCOPE IS `./...` AND NOT "WHEREVER IT LIVES", which is the honest version of a
+        # sentence this file carried for three commits. `./...` is this module's packages:
+        # it does not descend into a nested module and it does not reach a package under a
+        # testdata directory, both of which the go command excludes by design. A perf-tagged
+        # test in either of those places would run nowhere and nothing here would say so.
+        # There is no such package today; if one is ever added, this line is what has to
+        # change, and this paragraph is why.
+        #
+        # `-p 1 -parallel 1` because these are wall clocks. The packages now run their tests
+        # in parallel, and a bound in seconds measured while twelve siblings are spawning
+        # git processes measures the siblings. One at a time on an idle nightly runner is
+        # the condition the numbers in timing_test.go were written against.
+        #
+        # `-timeout 25m` under the job's 30: a serial run of the whole suite that gets stuck
+        # should fail as a TEST timeout, which names the test it was in and dumps every
+        # goroutine, rather than as a job cancellation, which names nothing. The gap is five
+        # minutes so the panic has room to print.
+        run: go test -tags perf -count=1 -v -p 1 -parallel 1 -timeout 25m ./...
 
   ci-ok:
     # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
