@@ -111,3 +111,22 @@ MEMORY CAL score=4.41 score-channel=bm25 probe=unrelated-control
 MEMORY CAND n=1: "the lantern glazing is cleaned with two cloths, one for the brass and one for the glass…"
 MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=notes name=lantern-care type=measured: notes/lantern.md:1 "the lantern glazing collects a salt haze on every onshore wind…"
 ```
+
+## nova-wake
+
+Fixture: `cmd/nova-wake/testdata/example-reports`.
+
+### First run
+
+```
+$ nova-wake quickstart --state ./wake.state --reports ./reports
+WAKE NOTE quickstart chose --baseline, --interval 5s and --max 5s, so a first run returns with the world listed once rather than blocking; --on-deadline report is the word it echoes back
+WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
+WAKE REPORT path=reports/first-job/RESULT.md lines=8 bytes=220 new
+WAKE REPORT path=reports/second-job/RESULT.md lines=7 bytes=199 new
+WAKE CHANGE after=0s polls=1 bus=0 entries=0 reports=2 lines=0 pending=0
+
+$ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
+WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
+WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default taken
+```
