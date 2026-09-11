@@ -22,6 +22,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -166,9 +167,34 @@ func (i *Issue) Append(line string) error {
 	return err
 }
 
+// ghBinary is the program runGH executes. It is a value and not the bare word "gh"
+// because a test must be able to name ITS OWN recorded gh by an absolute path.
+//
+// WHY THE PATH AND NOT PATH. Putting a fake first on $PATH is a LOOKUP, and a lookup has
+// a platform in it: on Windows a program built without the executable suffix is not a
+// program the lookup will find, so the fake was skipped, the search fell through to the
+// runner's real gh, and a test reached the network — which CONTRIBUTING forbids, and
+// which the tool cannot notice from the inside because a real gh fails like any other
+// failing subprocess. Naming the path leaves nothing to the lookup, on any platform.
+//
+// The default is still the bare name, because for a PERSON gh is whatever their PATH
+// says it is, and this tool has no business preferring one install over theirs.
+var ghBinary atomic.Value // string
+
+func init() { ghBinary.Store("gh") }
+
+// SetGHBinary points this backend at one gh and returns the restore, for a test to hand
+// to t.Cleanup. It is exported for the tests of the command that drives this backend
+// in-process; nothing in the tool itself calls it.
+func SetGHBinary(path string) (restore func()) {
+	previous := ghBinary.Load().(string)
+	ghBinary.Store(path)
+	return func() { ghBinary.Store(previous) }
+}
+
 // runGH is the real subprocess.
 func runGH(ctx context.Context, stdin string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "gh", args...)
+	cmd := exec.CommandContext(ctx, ghBinary.Load().(string), args...)
 	cmd.Stdin = strings.NewReader(stdin)
 	cmd.Env = append(cmd.Environ(), "GH_PAGER=cat", "GH_PROMPT_DISABLED=1", "NO_COLOR=1")
 	cmd.WaitDelay = killGrace

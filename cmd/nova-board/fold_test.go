@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/board"
 )
 
 // --------------------------------------------------------------------------------- 3
@@ -333,9 +335,6 @@ func TestAnIdRetryIsTheSameFilingOrARefusal(t *testing.T) {
 // the network. An overridden close shows override=true from both, with no git metadata and
 // no comment author read: the read side derives from as= and override= and nothing else.
 func TestTheTwoBackendsRenderIdenticalListings(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake gh is built and put on PATH; the exe suffix makes this a different test")
-	}
 	b := newBench(t)
 	id := b.add(plain("rowan", "a card closed over somebody's live take")...)
 	if exit, _, stderr := b.atTime(b.now.Add(time.Minute), b.board("take", "--as", "ada", "--card", id, "--stale", "10m")...); exit != 0 {
@@ -365,9 +364,6 @@ func TestTheTwoBackendsRenderIdenticalListings(t *testing.T) {
 // A whole add/take/close cycle through the issue backend, so that the gh argv is asserted:
 // an event's text goes in on STDIN and is never an argument.
 func TestTheIssueBackendWritesThroughStdinAndReadsTheWholeThread(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake gh is built and put on PATH")
-	}
 	b := newBench(t)
 	store, argv := fakeGH(t)
 	exit, stdout, stderr := b.run("add", "--issue", "mas-bandwidth/schema#876", "--as", "rowan",
@@ -458,20 +454,50 @@ func issueListing(t *testing.T, b *bench, lines []string, args ...string) string
 	return stdout
 }
 
-// fakeGH builds the recorded gh, puts it on PATH, and returns the thread's store and the
-// argv log. Nothing here reaches the network.
+// fakeGH builds the recorded gh, POINTS THE BACKEND AT IT BY PATH, and returns the
+// thread's store and the argv log. Nothing here reaches the network.
+//
+// THE EXECUTABLE SUFFIX IS PART OF THE NAME. A fake built as plain "gh" is not a program
+// Windows will run; the lookup passed over it, found the runner's real gh, and two tests
+// talked to github.com from CI until they were refused for a missing token. So the suffix
+// comes from runtime.GOOS, and the backend is handed the absolute path rather than asked
+// to look anything up.
+//
+// Belt and braces, in three layers, because a test that silently reaches the real gh is a
+// test that proves nothing and says so to nobody:
+//
+//  1. the backend is INJECTED with this binary's path, so no lookup happens at all;
+//  2. this directory is still FIRST on PATH, for any lookup a child process might do;
+//  3. a real gh reached from here would fail locally instead of talking to github.com —
+//     the host is under the reserved .invalid TLD, which resolves nowhere, and the config
+//     directory is an empty one, so no stored credential is found; and
+//  4. the TRIPWIRE: the fake records every argv it is called with, and a run that leaves
+//     that log empty means some OTHER gh served the call, which fails the test by name.
 func fakeGH(t *testing.T) (store, argv string) {
 	t.Helper()
 	bin := t.TempDir()
-	build := exec.Command("go", "build", "-o", filepath.Join(bin, "gh"), "./testdata/fakegh/main.go")
+	prog := filepath.Join(bin, "gh")
+	if runtime.GOOS == "windows" {
+		prog += ".exe"
+	}
+	build := exec.Command("go", "build", "-o", prog, "./testdata/fakegh/main.go")
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the fake gh: %v\n%s", err, out)
 	}
 	store = filepath.Join(t.TempDir(), "thread.txt")
 	argv = filepath.Join(filepath.Dir(store), "argv.txt")
+	t.Cleanup(board.SetGHBinary(prog))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("NOVA_BOARD_FAKE_GH_STORE", store)
 	t.Setenv("NOVA_BOARD_FAKE_GH_ARGV", argv)
+	t.Setenv("GH_HOST", "nova-board-tests.invalid")
+	t.Setenv("GH_CONFIG_DIR", t.TempDir())
+	t.Setenv("GH_TOKEN", "the-recorded-gh-is-the-only-gh-these-tests-may-run")
+	t.Cleanup(func() {
+		if raw, err := os.ReadFile(argv); err != nil || strings.TrimSpace(string(raw)) == "" {
+			t.Errorf("the recorded gh at %s was never called; some other gh served this test's calls, and a test that reaches the real one touches the network", prog)
+		}
+	})
 	return store, argv
 }
 
@@ -579,9 +605,6 @@ func (b *bench) with(rnd io.Reader, args ...string) (int, string, string) {
 // card would be the silent deduplication The races forbids, and the count falling for a
 // reason other than work.
 func TestABrokenRandomSourceIsRefusedInBothBackends(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake gh is built and put on PATH")
-	}
 	t.Run("dir", func(t *testing.T) {
 		b := newBench(t)
 		exit, stdout, stderr := b.with(stuck{0xab}, b.board("add", "--as", "rowan", "--text", "the first filing",
@@ -633,9 +656,6 @@ func TestABrokenRandomSourceIsRefusedInBothBackends(t *testing.T) {
 // above may not cost the ordinary concurrent filing: a board that refused one of two real
 // filings would be the count failing to climb while a review was arriving.
 func TestTwoProcessesUnderIssueBothFile(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake gh is built and put on PATH")
-	}
 	b := newBench(t)
 	fakeGH(t)
 	var wg sync.WaitGroup
