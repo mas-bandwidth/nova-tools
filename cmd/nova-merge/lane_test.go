@@ -163,6 +163,13 @@ func TestThePacketIsPointersNotDiff(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Demanded 23's last clause is THE STATE LOCK WAS NEVER TAKEN, and taking that lock
+	// CREATES its file (lock.go opens it with O_CREATE before it tries the kernel). The
+	// verbs above have left one, so it goes now and its absence afterwards is the
+	// assertion. It used to be an `if` that ran `_ = raw` and asserted nothing.
+	if err := os.Remove(filepath.Join(l.lane, merge.StateLock)); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
+	}
 	exit, stdout, stderr := l.run("packet", "--lane", l.lane, "--who", "emma", "--all")
 	if exit != 0 {
 		t.Fatalf("packet reports and exits 0: %d\n%s\n%s", exit, stdout, stderr)
@@ -186,12 +193,9 @@ func TestThePacketIsPointersNotDiff(t *testing.T) {
 	if string(before) != string(after) {
 		t.Error("packet is derived from the fold and the host: it writes nothing")
 	}
-	if _, err := os.Stat(filepath.Join(l.lane, merge.StateLock)); err == nil {
-		if raw, _ := os.ReadFile(filepath.Join(l.lane, merge.StateLock)); strings.Contains(string(raw), "pid=") {
-			// The lock file exists from earlier verbs; what matters is that packet did
-			// not write it, which the byte comparison of the state already proves.
-			_ = raw
-		}
+	if _, err := os.Stat(filepath.Join(l.lane, merge.StateLock)); !os.IsNotExist(err) {
+		raw, _ := os.ReadFile(filepath.Join(l.lane, merge.StateLock))
+		t.Errorf("packet takes no lock (rule 23), and taking the state lock creates its file: stat says %v, holding %q", err, raw)
 	}
 	// --max 1 prints one hold and a MORE line.
 	_, stdout, _ = l.run("packet", "--lane", l.lane, "--who", "emma", "--all", "--max", "1")
