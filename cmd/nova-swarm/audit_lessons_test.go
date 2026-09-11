@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -180,13 +181,23 @@ func TestTemplateWorkerPrintsADescriptionThisToolAccepts(t *testing.T) {
 	}
 	// It is not prose: it is a description this tool reads. Filled in with this bench's own
 	// fake harness and key, `run` accepts it.
+	//
+	// THE PATHS GO IN AS JSON, not as bytes. A Windows temp dir substituted raw put
+	// `C:\Users\RUNNER~1\...` inside a JSON string, where `\U` is an escape JSON does not
+	// have -- so this test made a file the tool was RIGHT to refuse, and read the refusal
+	// as the tool failing to run its own template (CI 34646003119, test (windows-latest)).
+	// The tool was never wrong here; the test wrote invalid JSON.
 	filled := strings.NewReplacer(
 		"<the harness command on PATH>", "fake-harness",
 		"<the model id>", "fake-model",
 		"<the NAME of the variable the provider reads>", "FAKE_KEY",
-		"<the path of a file holding one line, mode 0600>", b.keyFile,
-		"<the home copy of this worker's own directory>", filepath.Join(b.dir, "worker-home"),
+		"<the path of a file holding one line, mode 0600>", jsonInner(t, b.keyFile),
+		"<the home copy of this worker's own directory>", jsonInner(t, filepath.Join(b.dir, "worker-home")),
 	).Replace(stdout)
+	// The bytes this test writes ARE JSON, and it says so before it blames the tool.
+	if !json.Valid([]byte(filled)) {
+		t.Fatalf("this test built a description that is not JSON:\n%s", filled)
+	}
 	path := filepath.Join(b.dir, "from-template.json")
 	write(t, path, filled)
 	b.add("a task the template's worker runs\nFAKE-FINDINGS 1\n")
@@ -317,4 +328,17 @@ func TestRequeueRefusesATaskThatIsStillRunning(t *testing.T) {
 	}
 	mustContain(t, "the refusal", got, "REQUEUE REFUSED")
 	mustContain(t, "the refusal", got, "nova-swarm stop")
+}
+
+// jsonInner is a string as it appears INSIDE a JSON string literal: the marshalled form
+// with its own quotes removed. A test that substitutes a path into a JSON template writes
+// JSON or it writes nothing -- on Unix the difference never showed, because a path with no
+// backslash in it is its own escape.
+func jsonInner(t *testing.T, s string) string {
+	t.Helper()
+	raw, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw[1 : len(raw)-1])
 }
