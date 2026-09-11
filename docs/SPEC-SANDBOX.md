@@ -125,9 +125,13 @@ near the end.
    on `darwin` and `windows` the grant is withheld and the line says
    `net=denied`; on `linux` below Landlock **ABI 4** (kernel 6.7) the tool
    prints `SANDBOX REFUSED reason=net_unenforceable` and **the command does not
-   run**. The named workaround is loud and is in the argv where `ps` shows it:
-   drop `--net-deny`, take `net=nopromise`, and the filesystem wall still
-   stands. There is no `SANDBOX NOTE` that proceeds with a weaker wall than the
+   run**. The named workaround is to drop `--net-deny` and take
+   `net=nopromise`, with the filesystem wall still standing — and the
+   loudness of it is **`net=nopromise` on the `SANDBOX OK` line**, printed
+   before the command starts and in every log that holds the run. An absent
+   flag is not loud in the argv; the word on the line is what a reader sees,
+   and it is the same word whether the caller never wanted a denial or gave
+   one up. There is no `SANDBOX NOTE` that proceeds with a weaker wall than the
    caller asked for — that is the silent sandbox rule 1 exists to prevent.
    Landlock restricts only TCP `bind`/`connect` even at ABI 4; UDP is not
    restricted at any ABI, and `net=denied` on linux means exactly TCP.
@@ -237,7 +241,7 @@ near the end.
 ## The verbs
 
 ```
-nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>] [--tmp <dir>] [--no-sandbox] -- <command> <args...>
+nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] [--no-sandbox] -- <command> <args...>
 nova-sandbox probe   --write <dir>... [--read <dir>...] --secret <path> [--net-deny] [--max <n>]
 nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>]    (alias: --print-policy)
 nova-sandbox fence   --out <file> [--webfetch allow|deny]
@@ -275,7 +279,8 @@ range, and this is a deliberate, recorded departure from the conventions
 |------|---------|
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
 | 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial was asked for and is not available (`reason=net_unenforceable`), no `--write`, a relative or missing path, a path in both lists, a `--cwd` outside the write set, a `HOME` outside both lists
-(`reason=home_outside`), a missing `--` |
+(`reason=home_outside`), on windows a missing `--name` (`reason=no_name`) or an
+absent caller-owned grant (`reason=acl_missing`), a missing `--` |
 | 126 | the command was resolved but could not be executed: it is not executable, **or** the backend rejected the exec |
 | 127 | the command could not be resolved on the caller's `PATH` |
 | 128+N | the wrapped command was killed by signal `N` |
@@ -329,7 +334,7 @@ which is the thing asked for and goes to stdout.
 SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> read=<n> write=<n> net=<denied|nopromise> cwd=<dir> cmd=<name>
 SANDBOX UNSANDBOXED cmd=<name> read=<n> write=<n>: no OS containment; every read and write this command makes is yours
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
-SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|bad_read|bad_write|bad_cwd|home_outside|no_command|not_found|not_executable>: <text>
+SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|bad_read|bad_write|bad_cwd|home_outside|acl_missing|no_name|no_command|not_found|not_executable>: <text>
 PROBE STEP name=<write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
 PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise>
 PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|no_sandbox|net_unenforceable>: <text>
@@ -553,12 +558,38 @@ failed version query, and all three are `SANDBOX REFUSED reason=no_sandbox`
 AppContainer is the isolation Edge and Store applications run under, and it is
 creatable by an unprivileged user.
 
-1. `CreateAppContainerProfile` (`userenv.dll`) once per pool or per line, with a
-   stable container name derived from the caller's name; if the profile already
+0. The container name is **`--name <container>`**, a flag, and on `windows` it
+   is required: `nova-sandbox --name <container> --read ... --write ... -- cmd`.
+   The previous revision said the name was "derived from the caller's name",
+   and there is no caller name in the argv and no config file to hold one
+   (**what it deliberately does not do**). It is argv, where `ps` shows it,
+   like everything else this tool decides by. The swarm passes its pool id;
+   a solo line passes the line's name. On `darwin` and `linux` `--name` is
+   accepted and ignored, so one caller builds one argv for three platforms.
+1. `CreateAppContainerProfile` (`userenv.dll`) once per pool or per line, with
+   the name from `--name`; if the profile already
    exists the call returns `HRESULT_FROM_WIN32(ERROR_ALREADY_EXISTS)` and
    `DeriveAppContainerSidFromAppContainerName` gives the SID. The profile is
    deleted with `DeleteAppContainerProfile` when its owner is torn down.
-2. For each `--write`, grant the container SID read+write by ACL:
+2. **Who adds the ACEs: `--acl <tool|caller>`, default `tool`.** N workers of
+   one pool name the same `--read` directories, and with each tool adding and
+   removing its own ACEs the first worker to exit removes a grant the other
+   workers are still reading through — the previous revision's step 4 had
+   exactly that bug. The fix chosen is **ownership, not a reference count**:
+   with `--acl caller` the tool adds nothing and removes nothing; it checks
+   that the container SID already holds the right grant on every `--read` and
+   `--write` and refuses `SANDBOX REFUSED reason=acl_missing` naming the
+   directory if it does not. The **dispatcher** (or the solo line's launcher)
+   adds the grants once when it creates the pool and removes them once at pool
+   end, and it is the process that knows when the last worker is gone. A
+   reference count in a file was rejected: it needs shared state with its own
+   crash story, and a tool killed mid-run leaves a stale count exactly where
+   it would have left a stale ACE — two hazards for the price of one. With
+   `--acl tool` (the default, for a single run with no pool) the tool adds and
+   removes its own grants as below, and concurrent runs on one directory are
+   the caller's problem to avoid.
+
+   For each `--write`, grant the container SID read+write by ACL:
    `GetNamedSecurityInfoW`, `SetEntriesInAclW` with an `EXPLICIT_ACCESS`
    carrying `GENERIC_READ|GENERIC_WRITE|GENERIC_EXECUTE` and
    `CONTAINER_INHERIT_ACE|OBJECT_INHERIT_ACE`, then `SetNamedSecurityInfoW`.
@@ -570,10 +601,12 @@ creatable by an unprivileged user.
    whose capability array holds `WinCapabilityInternetClientSid`
    (`CreateWellKnownSid`) **unless `--net-deny` is passed**, then
    `CreateProcessW` with `EXTENDED_STARTUPINFO_PRESENT`, and wait.
-4. Remove every ACE the tool added, after the wait. An ACE left behind outlives
-   the run and is a standing grant to the container SID on a directory that is
-   no longer sandboxed; if the tool is killed before it can clean up, the grant
-   persists. The cleanup and that hazard are both in the tests.
+4. Under `--acl tool`, remove every ACE the tool added, after the wait. An ACE
+   left behind outlives the run and is a standing grant to the container SID
+   on a directory that is no longer sandboxed; if the tool is killed before it
+   can clean up, the grant persists. Under `--acl caller` the tool removes
+   nothing and the pool owner's teardown does it. The cleanup, the hazard and
+   the concurrent case are all in the tests.
 
 Everything else on disk is denied to the container SID by default. `%WINDIR%`
 and `%ProgramFiles%` are readable through the built-in *ALL APPLICATION
@@ -727,14 +760,68 @@ instead of it.
 ## Measured on the machine, 2026-09-11 (macOS 26.6.2, arm64)
 
 These were claims and are now facts, and the verification list below is shorter
-for it: `sandbox-exec` is present, exits 0 and writes nothing to stderr that
-pollutes a wrapped command's output; `-D key=value` reaches `(param "NAME")`
-with `-f`; `--` is accepted before the command; `file-read*`, `file-write*`,
-`subpath` and `network*` are valid in a `(version 1)` profile; a write outside
-the granted paths is denied; an exit status of 3 and a `SIGKILL` death (137)
-pass through the wrap unchanged; the single-clause exec/signal grant breaks
-`exec`; `/private/var/db/dyld` does not exist; `(literal "/")` and `/dev` are
-required for `/bin/echo` and for Node.
+for it.
+
+From the first round: `sandbox-exec` is present, exits 0 and writes nothing to
+stderr that pollutes a wrapped command's output; `-D key=value` reaches
+`(param "NAME")` with `-f`; `--` is accepted before the command; `file-read*`,
+`file-write*`, `subpath` and `network*` are valid in a `(version 1)` profile; a
+write outside the granted paths is denied; an exit status of 3 and a `SIGKILL`
+death (137) pass through the wrap unchanged; the single-clause exec/signal
+grant breaks `exec` and `sandbox-exec` reports that failure as exit **71**;
+`/private/var/db/dyld` does not exist; `(literal "/")` is required — without it
+`/bin/echo` dies with `SIGABRT` (134) — and `/dev` is required for a plain
+`2>/dev/null`, which is the redirection the shell performs before the command
+runs. (The earlier sentence "`(literal \"/\")` and `/dev` are required for
+`/bin/echo` and for Node" claimed a per-item necessity neither run showed:
+Node was measured to run with the list complete, not to need each entry.)
+
+From the second round, under the same profile: `sandbox-exec`'s wrap is
+**exec in place** — the wrapped `sh` reports a `PPID` equal to the caller's own
+pid, so no extra process sits between the tool and the command; with `(allow
+signal (target self))` alone, `sh -c 'sleep 30 & kill $!'` prints `kill:
+Operation not permitted`, and with `(target self) (target children)` the same
+line exits 0; `cat /etc/hosts` and `ls /tmp` are denied by `(literal "/")`
+alone while `/private/etc/hosts` is readable, and every `/bin/sh -c ...` dies
+with `Error opening /private/var/select/sh`, all four fixed by the `/etc`,
+`/tmp`, `/var` literals and `/private/var/select`; with the caller's `HOME`
+inherited, `git -C <dir> status` is `fatal: unable to access
+'/Users/<user>/.gitconfig': Operation not permitted`, and with `HOME` set to a
+directory inside the write set it exits 0 (as does `GIT_CONFIG_GLOBAL` +
+`XDG_CONFIG_HOME` pointed inside, for git alone); `/usr/bin/git` — the Xcode
+shim — fails inside the wall on `/var/db/xcode_select_link` while
+`/opt/homebrew/bin/git` works; a wrapped `/bin/cat` whose stdout is a file
+outside every named path is denied while `/bin/echo` writing the same
+descriptor succeeds.
+
+## Commands for a reader
+
+A reader on another machine, or on another model, checks this document by
+running it rather than by trusting it. Four commands, and what each answers:
+
+```
+# 1. darwin: the profile of this spec, the signal clause, the symlink roots,
+#    and exec-in-place, in one line. Expect: PPID == this shell's pid,
+#    the first line of /etc/hosts, and no "Operation not permitted".
+sandbox-exec -f p.sb -D WRITE0=$PWD/w -- /bin/sh -c 'echo $PPID; cat /etc/hosts; sleep 9 & kill $!'
+
+# 2. linux: the Landlock ABI, without Go. syscall 444 is
+#    landlock_create_ruleset; flag 1 is LANDLOCK_CREATE_RULESET_VERSION.
+python3 -c 'import ctypes;l=ctypes.CDLL(None,use_errno=True);print("landlock abi",l.syscall(444,0,0,1))'
+cat /sys/kernel/security/lsm        # landlock must appear in the list
+
+# 3. windows: who holds what on a directory, before, during and after a run —
+#    the ACE lifetime of the windows section and of test 22.
+icacls <dir>
+
+# 4. darwin: the dyld cache path this spec says is absent on macOS 26.
+ls /private/var/db/dyld
+```
+
+Command 1 wants a `p.sb` holding the profile of the **macOS** section above and
+a `w` directory beside it; run it inside a scratch directory, never in a tree
+you mind. A reader who gets a different answer to any of the four has found a
+defect in this document, and the document changes.
 
 ## To verify at build
 
@@ -895,13 +982,22 @@ And one for each thing the rules above assert but no test yet reached:
     `SANDBOX NOTE` is printed after the command has started, on every platform
     (the linux body cannot, and the others must not diverge), and that the
     usage banner carries the `--read` remedy sentence.
-22. windows: the ACEs the tool adds appear on the `--write` and `--read`
-    directories while the command runs, with the read-only grant carrying no
-    write right, and are **removed** after it ends. A second test documents the
-    hazard rather than hiding it: when the tool is killed with the command
-    still running, the ACE persists, and the test asserts the persisting grant
-    so that the next person to change the cleanup path sees what they are
-    changing.
+22. windows, and it is **multi-worker**: under `--acl tool` the ACEs the tool
+    adds appear on the `--write` and `--read` directories while the command
+    runs, with the read-only grant carrying no write right, and are
+    **removed** after it ends. Then three concurrent runs share one `--read`
+    directory and exit at different times: under `--acl tool` the first exit
+    removes the grant the other two are still reading through, and the test
+    asserts that failure, because it is why the swarm does not use the
+    default; under `--acl caller`, with the grant added by the test standing
+    in for the dispatcher, the ACE is present for all three from first start
+    to last exit and is still present afterwards, and a run whose grant is
+    missing is `SANDBOX REFUSED reason=acl_missing`. A `--name` is required on
+    windows and a missing one is a refusal naming the flag. A last test
+    documents the hazard rather than hiding it: when the tool is killed under
+    `--acl tool` with the command still running, the ACE persists, and the
+    test asserts the persisting grant so that the next person to change the
+    cleanup path sees what they are changing.
 23. In `nova-swarm`: `run` with a failing probe prints `RUN REFUSED
     reason=sandbox_probe` and starts no worker; `run` on a machine with no
     backend prints `RUN REFUSED reason=no_sandbox` and starts no worker; both
@@ -953,9 +1049,10 @@ them.
    `landlock_restrict_self`, `syscall.Exec`, the ABI 6 scopes, and the
    `net_unenforceable` refusal. Tests: 1, 3, 7, 12, 17; **to verify** items
    3–4, and item 3 decides whether this package is standard-library-only.
-4. **`internal/sandbox/wrap_windows.go`** — profile create/derive/delete, the
-   read-only and read-write ACL grants, the `SECURITY_CAPABILITIES` launch, the
-   wait, and cleanup of the grants the tool added. Tests: 1, 3, 7, 22;
+4. **`internal/sandbox/wrap_windows.go`** — profile create/derive/delete from
+   `--name`, the read-only and read-write ACL grants under `--acl tool`, the
+   grant **check** under `--acl caller`, the `SECURITY_CAPABILITIES` launch,
+   the wait, and cleanup of the grants the tool added. Tests: 1, 3, 7, 22;
    **to verify** items 5–6.
 5. **`internal/sandbox/exec.go`** — the transparent wrapper: no shell,
    inherited stdio, the platform's wait-or-exec choice, signal forwarding where
