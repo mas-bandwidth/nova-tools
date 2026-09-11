@@ -190,7 +190,7 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 // deliberately NOT compared: pinning those would make the README a fixture
 // instead of a document.
 func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
