@@ -368,14 +368,18 @@ go build ./...
 go test ./...
 ```
 
-`go test ./...` is the whole per-commit suite and finishes in about a minute. One file is
-held back from it by a build tag: `cmd/nova-bus/timing_test.go`, which asserts a WALL-CLOCK
-bound over a ten-thousand-note bus and therefore answers differently depending on what else
-the machine is doing. CI runs it on a nightly schedule; run it yourself with
+`go test ./...` is the whole per-commit suite and finishes in about a minute. Some tests are
+held back from it by a build tag -- today that is `cmd/nova-bus/timing_test.go`, whose two
+tests assert WALL-CLOCK bounds and
+therefore answer differently depending on what else the machine is doing. CI runs them on a
+nightly schedule; run them yourself with
 
 ```
-go test -tags perf -run TestEveryVerbIsUnderASecondOnTenThousandNotes ./cmd/nova-bus
+go test -tags perf -p 1 -parallel 1 ./...
 ```
+
+The tag rather than a test name, and one test at a time: the rest of the suite runs its
+tests in parallel, and a bound in seconds measured beside them measures them.
 
 The property that file guards crudely — a read costs the size of the change — is proved
 exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complexity property.

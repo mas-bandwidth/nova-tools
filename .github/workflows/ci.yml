@@ -81,6 +81,31 @@ jobs:
       - name: test
         run: go test -race ./...
 
+  build-windows:
+    # `go build ./...` and `go vet ./...` ON WINDOWS, which the fan-out would otherwise have
+    # dropped: the `test` job carries them and the `test` job is ubuntu and macOS now, while
+    # `test-windows` runs `go test -race` per package and nothing else. CONTRIBUTING.md
+    # promises all three on all three platforms, and two of them had quietly become a
+    # two-platform promise -- `internal/onboarding` and `internal/oneline/audit` have no
+    # test files, so nothing would have compiled them on Windows at all, and `go test`'s
+    # built-in vet is the high-confidence subset rather than `go vet`.
+    #
+    # Its own job rather than a step in one of the shards: a shard is a matrix leg, so a
+    # step added to "the first one" runs in all of them or in none, and this is work that
+    # should happen once, beside them, not before them.
+    if: github.event_name != 'schedule'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: build
+        run: go build ./...
+      - name: vet
+        run: go vet ./...
+
   windows-packages:
     # The list the Windows fan-out runs on, READ OUT OF THE SOURCE rather than written
     # down. It is `go list` filtered to packages that have tests, printed as JSON for the
@@ -106,6 +131,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # GOOS=windows, because this list is what WINDOWS will run and `go list` answers
+          # for the platform it is asked about: a package whose test files are all
+          # windows-tagged would be missing from a Linux answer and would never run on the
+          # platform it is written for, and one whose tests are all `!windows` would be a
+          # vacuous green. It needs no Windows runner -- listing is not building.
+          #
           # SPLITS is the only hand-written number here, and it is a TUNING number rather
           # than a coverage one: a package absent from it runs as one job, which costs
           # speed and never coverage. cmd/nova-bus measured 6m33s as a single Windows job
@@ -119,7 +150,7 @@ jobs:
             for g in $(seq 1 "$n"); do
               entries+=("{\"package\":\"$pkg\",\"group\":\"$g\",\"groups\":\"$n\"}")
             done
-          done < <(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... |
+          done < <(GOOS=windows go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... |
             sed 's#^github.com/mas-bandwidth/nova-tools/##')
           packages=$(printf '%s\n' "${entries[@]}" | jq -s -c '.')
           echo "$packages"
@@ -173,7 +204,9 @@ jobs:
             go test -race "$pkg"
             exit 0
           fi
-          names=$(go test -list '.*' "$pkg" | grep -E '^(Test|Fuzz)' | sort |
+          # Test, Fuzz AND Example: `go test` runs examples with an output comment, and a
+          # function kind missing from this filter is in no group and therefore runs nowhere.
+          names=$(go test -list '.*' "$pkg" | grep -E '^(Test|Fuzz|Example)' | sort |
             awk -v g="$group" -v n="$groups" 'NR % n == g % n')
           if [ -z "$names" ]; then
             echo "group $group of $groups over $pkg selected no tests; the split is wrong, not green"
@@ -225,12 +258,14 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: download the cross-built binaries
+        id: download
         uses: actions/download-artifact@v4
         with:
           name: cross-built-binaries
           path: dist
 
       - name: take this runner's shipped binary
+        id: take_binary
         # THE BINARY THAT WOULD SHIP, not one built here. This step used to be `go build -o
         # "$BIN" ./cmd/nova-check`, which is a different binary from the released one --
         # different flags, no -trimpath, CGO as the host has it -- so the job whose whole
@@ -437,7 +472,13 @@ jobs:
         run: |
           set -uo pipefail
           bad=0
+          # The two PREREQUISITE steps are in this list as well as the seven assertions: a
+          # gate that claims to state every outcome and silently omits the two steps that
+          # produce the binary is a gate with a blind spot exactly where a green would be
+          # most misleading.
           for pair in \
+            "download the shipped binaries:${{ steps.download.outcome }}" \
+            "take this runner's binary:${{ steps.take_binary.outcome }}" \
             "a clean prose tree passes:${{ steps.clean_tree.outcome }}" \
             "a symlinked --dir (nocode):${{ steps.symlink_nocode.outcome }}" \
             "a symlinked --dir (links):${{ steps.symlink_links.outcome }}" \
@@ -537,7 +578,9 @@ jobs:
     # night where an unrelated flake means no perf evidence at all.
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Thirty rather than twenty: `-p 1 -parallel 1` over every package is the whole suite
+    # run one test at a time, which is the point and is not fast.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -551,19 +594,20 @@ jobs:
         run: go vet -tags perf ./...
 
       - name: the wall-clock tests, one at a time
-        # THE WHOLE PACKAGE, not a -run naming one test. This step used to name
+        # THE WHOLE REPOSITORY under the tag, not a -run naming one test and not one package. This step used to name
         # TestEveryVerbIsUnderASecondOnTenThousandNotes, and the second wall-clock test
         # added in the same pull request -- TestAWaitPollsMoreThanOnceBeforeItsDeadline --
         # therefore ran NOWHERE: behind a tag the per-commit jobs do not build, and behind a
         # -run the nightly did not match. A list of test names in a workflow is a list that
-        # goes stale silently, so there is not one: the tag decides what is extra and the
-        # package decides what runs.
+        # goes stale silently, and so is a list of packages: the TAG decides what is extra,
+        # and `./...` decides where it may live. A perf-tagged test added to another package
+        # tomorrow runs here without anybody editing this line.
         #
         # `-p 1 -parallel 1` because these are wall clocks. The rest of the package now runs
         # its tests in parallel, and a bound in seconds measured while twelve siblings are
         # spawning git processes measures the siblings. One at a time on an idle nightly
         # runner is the condition the numbers in timing_test.go were written against.
-        run: go test -tags perf -count=1 -v -p 1 -parallel 1 ./cmd/nova-bus
+        run: go test -tags perf -count=1 -v -p 1 -parallel 1 ./...
 
   ci-ok:
     # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
@@ -580,8 +624,10 @@ jobs:
     #
     # `if: always()` so it reports when something it needs went red, rather than being
     # skipped along with it; the explicit per-job check below is what makes it red, because
-    # a skipped or cancelled need is not a passed one.
-    needs: [test, windows-packages, test-windows, smoke, release-dry-run]
+    # a skipped or cancelled need is not a passed one. `perf` is the single stated exception
+    # and the reason it is in `needs` at all: skipped on a push, where it has nothing to
+    # say, and counted on a workflow_dispatch, where it ran.
+    needs: [test, build-windows, windows-packages, test-windows, smoke, release-dry-run, perf]
     if: always() && github.event_name != 'schedule'
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -593,13 +639,20 @@ jobs:
           bad=0
           for pair in \
             "test:${{ needs.test.result }}" \
+            "build-windows:${{ needs.build-windows.result }}" \
             "windows-packages:${{ needs.windows-packages.result }}" \
             "test-windows:${{ needs.test-windows.result }}" \
             "smoke:${{ needs.smoke.result }}" \
-            "release-dry-run:${{ needs.release-dry-run.result }}"
+            "release-dry-run:${{ needs.release-dry-run.result }}" \
+            "perf:${{ needs.perf.result }}"
           do
             job="${pair%:*}"; result="${pair##*:}"
             echo "$result	$job"
+            # perf is the one job allowed to be SKIPPED here and only here: it runs on a
+            # schedule and on workflow_dispatch, so on a push or a pull request there is
+            # nothing for it to report. On a dispatch it runs, and a red one reddens this.
+            # Every other job must have actually succeeded -- skipped is not passed.
+            if [ "$job" = "perf" ] && [ "$result" = "skipped" ]; then continue; fi
             [ "$result" = "success" ] || bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }

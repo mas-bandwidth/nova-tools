@@ -75,17 +75,19 @@ builds, runs `go vet`, and runs `go test -race`, each on Linux, macOS and
 Windows; `gofmt` is checked on one runner, because formatting is a property of
 the source rather than of the platform. Windows runs one job per
 package rather than one job for the whole suite, and `ci-ok` is the aggregate: it
-needs every other job and is the one check worth requiring, so a matrix leg that
-is renamed, added or skipped cannot quietly leave branch protection. One job does
+needs every other job — `perf` included, where a skip on a push is the one
+outcome it accepts that is not a success — and is the one check worth requiring,
+so a matrix leg that is renamed, added or skipped cannot quietly leave branch
+protection. One job does
 not run on a commit at all: `perf`, on a nightly schedule and on one runner,
-builds `-tags perf` and runs `cmd/nova-bus` one test at a time — every wall-clock
-test behind that tag, which is two today and is whatever the tag holds tomorrow,
-because a list of test names in a workflow goes stale silently. A bound in seconds
+builds `-tags perf` and runs every package one test at a time — every wall-clock
+test behind that tag, wherever it lives, because a list of test names in a
+workflow goes stale silently and so does a list of packages. A bound in seconds
 is evidence about the machine as much as about the tool, so it is not a gate on
 anybody's pull request. So it runs whatever tests exist and does
 not require that a contribution ship any. Beyond that, the built binary is
 smoke-tested for `nova-check nocode` and for the specific properties that job
-names — not for all of `nocode`, and three of those steps are skipped on
+names — not for all of `nocode`, and four of those steps are skipped on
 Windows, the platform those steps most needed to cover.
 Everything else, including all of `nova-fuse`, `nova-memory`, `nova-self-talk`
 and `nova-bus`, rests on package tests. A third-party import would show up as

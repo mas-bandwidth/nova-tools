@@ -20,11 +20,15 @@
 // a big bus, which is a thing no count can see -- so the net is kept, in the one place a
 // wall clock belongs.
 //
-// How to run it:
+// How to run it -- the TAG, never a test name, which is the whole lesson of this file: a
+// second wall-clock test was added below and a -run naming the first one ran it nowhere.
 //
-//	go test -tags perf -count=1 -run TestEveryVerbIsUnderASecondOnTenThousandNotes ./cmd/nova-bus
+//	go test -tags perf -count=1 -p 1 -parallel 1 ./...
 //
-// and .github/workflows/ci.yml runs exactly that on a nightly schedule.
+// `-p 1 -parallel 1` because these are wall clocks and the rest of the suite is parallel
+// now: a bound in seconds measured beside a dozen siblings spawning git processes measures
+// the siblings. .github/workflows/ci.yml's `perf` job runs exactly that on a nightly
+// schedule and on workflow_dispatch.
 
 package main
 
