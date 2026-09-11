@@ -179,7 +179,7 @@ func ReadBus(dir string, rules *Rules, at time.Time) []*Source {
 		}
 		sort.Strings(files)
 		for _, path := range files {
-			raw, err := os.ReadFile(path)
+			raw, err := readSource(path)
 			if err != nil {
 				s.unreadable(path, err.Error())
 				continue

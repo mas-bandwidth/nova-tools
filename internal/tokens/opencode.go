@@ -199,7 +199,7 @@ func HaveSQLite() error {
 }
 
 func copyFile(from, to string) error {
-	src, err := os.Open(from)
+	src, err := openSource(from)
 	if err != nil {
 		return err
 	}

@@ -2,7 +2,6 @@ package tokens
 
 import (
 	"encoding/csv"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -51,7 +50,7 @@ func ReadProvider(label, path string, _ *Rules) *Source {
 	s := &Source{Label: Label(KindProvider, label), Kind: KindProvider, Path: path, Basis: UTC}
 	s.Stat.Files = 1
 
-	raw, err := os.ReadFile(path)
+	raw, err := readSource(path)
 	if err != nil {
 		s.unreadable(path, err.Error())
 		return s

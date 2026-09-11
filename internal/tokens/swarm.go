@@ -56,7 +56,7 @@ func ReadSwarm(label, pool string, rules *Rules) *Source {
 	seen := map[string]bool{}
 	for _, path := range files {
 		s.Stat.Files++
-		f, err := os.Open(path)
+		f, err := openSource(path)
 		if err != nil {
 			s.unreadable(path, err.Error())
 			continue
