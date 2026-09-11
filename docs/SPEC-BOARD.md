@@ -343,7 +343,7 @@ reassigned, and the owner who comes back sees their own take in the log.
 
 ## The rules of the last two days
 
-Eight rules, 2026-09-09 to 2026-09-11. Each came from a hurt and each is written so
+Nine rules, 2026-09-09 to 2026-09-11. Each came from a hurt and each is written so
 a test can be built from it. Where a rule changes a sentence above, that sentence
 has been changed to match, and this section is the reason. Where a rule names a
 prototype behaviour, it is listed by number in **What the prototype does that this
@@ -438,6 +438,18 @@ spec forbids**.
    no default paths. A board found through `$HOME` is a board a line writes to by
    accident.)
 
+9. **The tool stamps; `add` has no `--at`.** Every stamp in an event line is
+   written by the tool from its own clock at the moment of the append, RFC 3339
+   in UTC: `since` is the `add` event's stamp and nothing a filer typed. There is
+   no `--at`, `--since` or `--stamp` flag on any verb, and `add` refuses one as
+   an unknown flag. A time a filer writes inside `--text` is text: it is carried,
+   it is never parsed, and it never orders, ages or dates a card. `--by` is the
+   one time a caller supplies, and it is a deadline, a fact about the work and
+   not about when the tool wrote; it is stored as given and is never used as
+   `since`. A board whose stamps are the tool's is a board two lines order the
+   same way. (2026-09-11: a person stamped notes two hours ahead of the clock,
+   and every list that ordered by the typed time put them in the future.)
+
 ## Tests this spec demands
 
 One test per rule above, named for the rule, beside the tests the work list names.
@@ -474,6 +486,12 @@ Each is proven able to fail by a mutation before it is trusted.
    environment (`BOARD_REPO`, `BOARD_ISSUE`, `BOARD_OWNER`, `BOARD_WINDOW`,
    `BOARD_CACHE_TTL`, `BOARD_MAXROWS`, `BOARD_NO_CACHE`) changes nothing; the
    source tripwire finds no `os.TempDir` and no literal `/tmp`.
+9. `TestTheToolStampsAndAddHasNoAt`: `add --at <stamp>` is exit 2 as an unknown
+   flag, and so are `--since` and `--stamp`; a card whose `--text` begins with a
+   stamp two hours ahead of the injected clock has `since=` equal to the clock,
+   sorts by it, and its event line's stamp equals the clock; `--by` given as a
+   stamp is stored as given and does not change `since`; the source tripwire
+   finds no time parse over the text tail.
 
 ## Known limits
 

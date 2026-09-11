@@ -122,7 +122,7 @@ cold start on purpose.
 ## Output grammar
 
 ```
-WAKE as=<name|-> max=<d> interval=<d> sources=<bus,entries,reports> state=<file> cold=<true|false>
+WAKE at=<stamp> as=<name|-> max=<d> interval=<d> sources=<bus,entries,reports> state=<file> cold=<true|false>
 WAKE CHANGE after=<d> polls=<n> bus=<n> entries=<n> reports=<n> lines=<n>
 WAKE QUIET after=<d> polls=<n> default=<word>: deadline, default taken
 WAKE BROKEN source=<bus|entries|reports> failures=<n> since=<stamp>: <reason>
@@ -434,7 +434,7 @@ a window told it never does not.
 
 ## The rules of the last two days
 
-Eight rules, 2026-09-09 to 2026-09-11. Each came from a hurt and each is written so
+Nine rules, 2026-09-09 to 2026-09-11. Each came from a hurt and each is written so
 a test can be built from it. Where a rule changes a sentence above, that sentence
 has been changed to match, and this section is the reason. Where a rule names a
 prototype behaviour, it is listed by number in **What the prototype does that this
@@ -529,6 +529,18 @@ spec forbids**.
    every `--reports` directory is unreadable. Three is fixed and not a flag: it is
    a fact about the tool, not about the window.
 
+9. **The tool stamps; a typed time is never trusted.** Every stamp `nova-wake`
+   prints or stores is the tool's own clock, read at the moment of writing, RFC
+   3339 in UTC: the `at=` on the opening line, `since=` on `WAKE BROKEN`, and
+   every stamp in the state file. A time that reaches this tool inside text, in
+   a note's body, a report's contents or a caller's flag, is data and is never
+   used to order, age or deduplicate anything. Bus notes are ordered by the
+   bus's own commit stamp, which is a tool's stamp; a line's last sign is its
+   newest commit's stamp and never a date in that commit's subject. There is no
+   flag that sets a stamp and none will be added. (2026-09-11: a person stamped
+   notes two hours ahead of the clock, and every reader that ordered by the
+   typed time put them in the future.)
+
 ## Tests this spec demands
 
 One test per rule above, named for the rule, beside the tests the work list names.
@@ -567,6 +579,13 @@ Each is proven able to fail by a mutation before it is trusted.
    row ends the watch with `WAKE BROKEN source=bus failures=3`, exit 2; two
    failures then a success is two `WAKE POLL` lines and the watch goes on to its
    deadline.
+9. `TestTheToolStampsAndATypedTimeIsData`: with an injected clock, the opening
+   `WAKE` line's `at=` and `WAKE BROKEN`'s `since=` equal the clock and not the
+   wall; a bus note whose subject and body carry a time two hours ahead is
+   ordered by its commit stamp; a `--line` whose newest commit's subject carries
+   a future date is judged by the commit stamp; the source tripwire finds no
+   flag named `--at`, `--stamp` or `--now`, and no time parse over a note's body
+   or a report's text.
 
 ## Known limits
 
