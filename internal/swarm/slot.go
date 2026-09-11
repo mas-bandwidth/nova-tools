@@ -162,6 +162,43 @@ func (p *Pool) Reserve(n int, job, jobDir, nonce string, runnerPid int, now time
 	})
 }
 
+// claimFree is allocation as ONE step against one authority: the scan for the lowest
+// numbered free slot and the reservation that claims it happen under the SAME slots.lock,
+// so two callers racing for the last free slot cannot both win it. The slot files are the
+// authority; a slot whose file exists in any state is held. The quarantine set is passed in
+// because a slot released badly enough to quarantine may have no file left to skip, and it
+// is read on the dispatcher's single goroutine. jobDir resolves a slot to the job directory
+// the reservation records, so the number chosen and the directory written are decided
+// together, under the lock.
+func (p *Pool) claimFree(workers int, quarantine map[int]bool, job, nonce string, runnerPid int, now time.Time, jobDir func(slot int) string) (int, error) {
+	release, err := p.TakeLock(SlotsLock, SlotsWait)
+	if err != nil {
+		return 0, err
+	}
+	defer release()
+	for n := 1; n <= workers; n++ {
+		if quarantine[n] {
+			continue
+		}
+		if _, err := os.Stat(p.slotPath(n)); err == nil {
+			continue
+		}
+		dir := ""
+		if jobDir != nil {
+			dir = jobDir(n)
+		}
+		if err := writeSlot(p.slotPath(n), SlotFile{
+			Job: job, JobDir: dir, State: SlotReserved, Nonce: nonce,
+			RunnerPid: runnerPid, RunnerStarted: StartStamp(runnerPid),
+			ReservedAt: now.UTC().Format(time.RFC3339),
+		}); err != nil {
+			return 0, err
+		}
+		return n, nil
+	}
+	return 0, fmt.Errorf("no free slot among %d: every one holds a file", workers)
+}
+
 // Identify is the supervisor's compare-and-swap (rule 18, step 3): under slots.lock, read
 // the slot file, require that it STILL reads `reserved` with the nonce this supervisor was
 // handed, and only then rename the identity into place. On any other content the supervisor

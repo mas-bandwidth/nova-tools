@@ -900,7 +900,7 @@ func cmdReclaim(args []string, stdout, stderr io.Writer) int {
 		freed, usagePath, err := p.Reclaim(id, sc.Job)
 		if err != nil {
 			fmt.Fprintf(stderr, "RECLAIM REFUSED id=%s: %s; nova-swarm finalize --pool %s --task %s\n",
-				oneline.Field(id), oneline.Err(err), p.Dir, oneline.Field(id))
+				oneline.Field(id), oneline.Err(err), oneline.Escape(p.Dir), oneline.Field(id))
 			worst = 1
 			continue
 		}

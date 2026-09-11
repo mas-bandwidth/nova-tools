@@ -165,7 +165,7 @@ func Run(in RunInput) int {
 			if err != nil || !claimed {
 				break
 			}
-			r, line, code := in.launch(sc, text, slot)
+			r, line, code := in.launch(sc, text, slot, quarantined)
 			switch code {
 			case 0:
 				started++
@@ -256,16 +256,18 @@ func freeSlot(p *Pool, workers int, quarantined map[int]bool, watching map[int]*
 
 // launch is rule 18's transaction, from this side: reserve, spawn, wait for the identity,
 // and kill what did not identify itself.
-func (in RunInput) launch(sc Sidecar, text []byte, slot int) (*running, string, int) {
+func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine map[int]bool) (*running, string, int) {
 	p := in.Pool
-	jobDir := in.Worker.JobDir(slot, sc.ID)
 	nonce, err := Nonce()
 	if err != nil {
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(err.Error())), 1
 	}
-	if err := p.Reserve(slot, sc.ID, jobDir, nonce, os.Getpid(), in.Now()); err != nil {
+	jobDirFor := func(n int) string { return in.Worker.JobDir(n, sc.ID) }
+	got, err := p.claimFree(in.Workers, quarantine, sc.ID, nonce, os.Getpid(), in.Now(), jobDirFor)
+	if err != nil {
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), 1
 	}
+	slot, jobDir := got, jobDirFor(got)
 	if err := in.prepare(sc, text, slot, jobDir); err != nil {
 		_ = p.Free(slot)
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), 1

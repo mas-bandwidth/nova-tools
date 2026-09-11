@@ -326,7 +326,7 @@ func ResultByID(p *Pool, id string, stdout, stderr io.Writer) int {
 	sc, ok := p.findSidecar(id)
 	if !ok {
 		fmt.Fprintf(stderr, "RESULT REFUSED: no task %s in %s; `nova-swarm status --pool %s` lists what is here\n",
-			oneline.Field(id), oneline.Field(p.Dir), p.Dir)
+			oneline.Field(id), oneline.Field(p.Dir), oneline.Field(p.Dir))
 		return 1
 	}
 	raw, from, err := p.ReportBytes(sc)
