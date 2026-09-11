@@ -318,9 +318,9 @@ range, and this is a deliberate, recorded departure from the conventions
 | code | meaning |
 |------|---------|
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
-| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), no `--write`, a relative or missing path, a path in both lists, a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` |
+| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), no `--write`, a relative or missing path, a path in both lists, a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`) |
 | 126 | the command could not be executed **and the tool was still there to say so**: on `linux` `syscall.Exec` returned an error, on `windows` `CreateProcessW` failed. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
-| 127 | the command could not be resolved on the caller's `PATH` |
+| 127 | the command could not be resolved on the caller's `PATH`: `SANDBOX REFUSED reason=not_found`, printed like every other refusal of the tool's own |
 | 128+N | the wrapped command was killed by signal `N` |
 
 The reservation is ambiguous, as it is in `env(1)`: a wrapped command that
@@ -1114,16 +1114,23 @@ And one for each thing the rules above assert but no test yet reached:
     or `-`, and `net=enforceable|unenforceable`; with the backend forced
     unavailable it prints `backend=none` and still **exits 0**, because it is a
     question, not an attempt.
-19. Exit `126`: a command that exists but is not executable. Exit `127`: a
-    command that is on no `PATH` entry. A command that itself exits 126 or 127
-    gives the same number with **no** `SANDBOX REFUSED` line, and the test
-    asserts the stderr difference, which is the only way to tell them apart.
-    darwin, the measured case: a profile under which `sandbox-exec` cannot
-    exec the command (the single-clause exec/signal grant is one such) gives
-    exit **126** and one `SANDBOX REFUSED reason=sandbox_failed`, **not** the
-    backend's raw 71 — a mutation that passes 71 through turns the test red —
-    while a wrapped command that genuinely exits 71 still exits 71 with no
-    refusal line, asserted in the same test.
+19. Exit `125`: a command that exists but is not executable — the pre-flight
+    stats the path rule 5 resolved, **outside the wall and before any profile
+    exists**, and refuses `SANDBOX REFUSED reason=not_executable`. Exit `127`:
+    a command on no `PATH` entry, with one `SANDBOX REFUSED reason=not_found`.
+    A command that itself exits 125, 126 or 127 gives the same number with
+    **no** `SANDBOX REFUSED` line, and the test asserts the stderr difference,
+    which is the only way to tell them apart. darwin, the measured case: the
+    tool does **not** map the backend's exec failure, because it `exec`s in
+    place and cannot see it. A profile under which `sandbox-exec` cannot exec
+    the command (the single-clause exec/signal grant is one such) exits **71**
+    raw, carrying `sandbox-exec`'s own `execvp() of '<cmd>' failed: Operation
+    not permitted` on the inherited stderr and **no** `SANDBOX REFUSED` line;
+    a wrapped command that genuinely exits 71 exits 71 the same way, and the
+    test asserts that the two are indistinguishable — a mutation that turns
+    either 71 into a 126, or prints a refusal line beside it, turns the test
+    red. The refusal that does fire on darwin is the pre-flight's 125
+    `reason=not_executable`, asserted in the same test, before the wrap.
 20. darwin: the generated profile file is created under the first `--write`
     with mode `0600` (the test stats it while the command runs) and is **gone**
     after the command ends, on a clean exit and on a signal death alike.
