@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -313,5 +314,31 @@ func TestAttestRefusals(t *testing.T) {
 	}
 	if _, _, err := Attest(home, filepath.Join(home, "no-such-manifest")); err == nil {
 		t.Error("nonexistent manifest should be an error")
+	}
+}
+
+// TestRecordLayerCheckCount verifies the comment in attest.go matches the actual
+// number of record-layer checks in this package. This prevents the comment
+// from going stale silently when checks are added or removed.
+func TestRecordLayerCheckCount(t *testing.T) {
+	const (
+		attestGo        = "attest.go"
+		expectedComment = "six record-layer checks"
+	)
+	// Read attest.go and verify the comment line.
+	attest, err := os.ReadFile(attestGo)
+	if err != nil {
+		t.Fatalf("cannot read %s: %v", attestGo, err)
+	}
+	lines := strings.Split(string(attest), "\n")
+	found := false
+	for _, line := range lines {
+		if strings.Contains(line, expectedComment) {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("comment in %s does not contain %q; got: %q", attestGo, expectedComment, lines[0])
 	}
 }
