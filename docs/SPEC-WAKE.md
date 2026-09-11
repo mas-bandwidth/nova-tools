@@ -44,8 +44,8 @@ test named):
 |---|---|---|
 | two watchers advancing one bus cursor | one advancing watcher per `(bus, as)`: an exclusive kernel lock, the second is `WAKE REFUSED` exit 2 naming the holder | 12 |
 | two runs writing one state file | one writer per `--state`: an exclusive kernel lock on `<state>.lock` for the whole call, the second is `WAKE REFUSED` exit 2 naming the holder and the fix | 4 |
-| mail consumed by a probe and not relayed | `--advance-cursor` off by default, only for the window's own `--as`, and only behind the print | 12 |
-| a harness kill between observing and printing | closed in the safe direction by ordering (rule 11): a kill anywhere leaves the entry pending, a repeated wake and never a lost one | 11 |
+| mail consumed by a probe and not relayed | `--advance-cursor` off by default, only for the window's own `--as`, and only behind an empty bus queue: the advance is a spooled transaction and consumed mail is bounded by this tool's own pending queue, never by anything `nova-bus` re-lists | 5, 12 |
+| a harness kill between observing and printing | closed in the safe direction by ordering (rule 11): a kill anywhere leaves the entry pending, a repeated wake and never a lost one; the advance's own kill point is recovered through `inbox --open` | 11 |
 
 ## The verb
 
@@ -101,7 +101,10 @@ all under a timeout, all one at a time. `git` is started only against the bus
 checkout, read-only: for `--line` (rule 2 below) and for the checkout's head,
 which is the freshness the `WAKE SOURCE bus` line shows (**How the checkout
 receives mail**). `nova-bus` is started once before the opening line as
-`nova-bus version`, and then once per bus poll as `inbox`. It opens no socket
+`nova-bus version`; once per bus poll as `inbox` without `--advance`; a second
+time on a poll that advances, as `inbox --advance`; and once, as `inbox
+--open`, at the start of a call that finds an advance interrupted (**The bus
+inbox**). It opens no socket
 of its own, resolves no host, and has no opinion about what a bus or a forge is
 beyond what those two programs tell it. A source whose program is missing from `PATH` is a **change**
 on the first poll, not a refusal — see **Sources** — because a window that cannot
@@ -153,11 +156,16 @@ WAKE NOTE <something true about this run that is not a change>
 WAKE POLL <source>: <reason one poll failed, which was not fatal>
 WAKE MORE kind=<bus|entry|report> shown=<n> total=<t> n=<k> <remedy>
 WAKE REFUSED: <reason>
+WAKE FIRED id=<id> rc=<n|-> redelivered=<0|1>[: <reason>]
+WAKE SERVE fired=<n> redelivered=<n> abandoned=<n> queued=<n> idle=<duration>
 ```
 
+The last two are `serve`'s (rule 10); everything above them is `watch`'s.
+
 `WAKE CHANGE`, `WAKE QUIET` and `WAKE BROKEN` are the **last** line and the three
-possible verdicts, and `pending=<n>` on each of the first two is how many changes
-this run observed and did **not** print, which the next call replays (**Delivery
+possible verdicts, and `pending=<n>` on each of the first two is the length of
+the delivery queue — every observation this run or an earlier one made and
+has **not** printed, which the next call prints first (**Delivery
 is the printed line**, rule 11); the opening `WAKE` line is the **first**, printed before anything is
 waited on, so a transcript shows the call began and what it was told to do — a
 tool call that prints nothing for twenty minutes and then prints everything is,
@@ -193,10 +201,14 @@ together, line by line.
 **Classification is by first tokens, and the default case prints.** A line
 beginning `INBOX NOTE` whose id carries no `printed=` mark in the state file is a
 change, always, and is relayed as `WAKE BUS`; a note this tool has already
-printed — `nova-bus` v0.10.3 lists every open note on every call, `OPEN ∪ new`,
-until the reader answers it — is **suppressed** and counted, because the window
-has been shown it, and that mark is written only after the line was printed
-(rule 11). The bookkeeping tokens — `INBOX OPEN`, `INBOX OK`, `INBOX CURSOR`,
+printed is **suppressed** and counted, because the window has been shown it,
+and that mark is written only after the line was printed (rule 11). A plain
+`inbox` lists a note **once**: on every poll while the cursor stands behind it,
+and never again once `--advance` has moved the cursor past it — measured, below
+— so the suppression does its work on a run without `--advance-cursor`, where
+every poll re-lists the same new notes, and on a recovery read under `--open`,
+and nowhere else. **This spec does not depend on `nova-bus` re-listing
+anything.** The bookkeeping tokens — `INBOX OPEN`, `INBOX OK`, `INBOX CURSOR`,
 `INBOX SCOPE`, `INBOX LEGACY` — are counted and not printed, because they say
 the same thing every poll. **Every other line this tool does not recognise is printed verbatim,
 under `WAKE BUS LINE`, and wakes the window.** That includes `INBOX REFUSED`,
@@ -243,17 +255,48 @@ Therefore:
   call — not per poll, unlike `nova-bus wait`, because the thing being protected
   is a cursor this run is moving rather than a checkout it is reading — and a
   second watcher over the same pair is `WAKE REFUSED`, exit 2, naming the holder.
-- **The cursor never moves past a note this tool has not printed.** `--advance`
-  is passed to `nova-bus` on a poll **only** when the state file holds no pending
-  bus entry — no note observed and not yet marked `printed=` (rule 11). A poll
-  with pending notes runs `inbox` without `--advance`, prints up to the cap,
-  marks what it printed, and the advance waits for the next poll. `nova-bus`
-  moves a cursor to `HEAD` and nowhere else, so this is the only way to keep
-  the cursor behind the print; a note the advancing call itself lists for the
-  first time is written to the state as pending from that call's output before
-  anything is printed, and is replayed if not shown. Mail consumed is therefore
-  mail printed, and it is printed **under the cap** like everything else
-  (**Bounded output**).
+- **The cursor never moves past a note this tool has not spooled, and never
+  moves while a note is unprinted.** Measured on 2026-09-11 against `nova-bus
+  v0.10.3` on a synthetic bare bus with two clones (**How the checkout receives
+  mail**): a plain `inbox` lists a note while the cursor stands behind it, and
+  once `--advance` has moved the cursor past it the note is on the reader's
+  `OPEN` list and a plain `inbox` prints `INBOX OPEN carrying=<n>` and **no**
+  `NOTE` line for it; only `--open --open-max <n>` lists it, `--open-max` must
+  be at least 1, and past `--open-max` it prints `INBOX OPEN listed=<k> and
+  <m> more`. So the cursor is not a thing this tool may move and then read
+  behind. **Consumed mail is bounded by this tool's own pending queue**
+  (**State**) and by nothing `nova-bus` does, and a poll with `--advance-cursor`
+  is a transaction in four steps:
+  1. `inbox` **without** `--advance`. Every `INBOX NOTE` not marked printed is
+     appended to the queue and the state is written (rule 11, step 1) before
+     anything is printed.
+  2. Print up to the cap; delete each printed record and mark it. If any bus
+     record remains in the queue after this — the cap elided some, or the poll
+     found more than it could print — **this poll does not advance**, and the
+     advance waits for a poll whose queue holds no bus record after its print.
+  3. When the queue holds no bus record: write `bus:advance` =
+     `inflight|<stamp>|<checkout head>` to the state, **then** run `inbox
+     --advance --remote --branch`, classify its output exactly as in step 1 —
+     normally it lists nothing new, because nothing fetched between step 1 and
+     now; when it does, those notes are appended to the queue — write the state,
+     and only then clear `bus:advance`. The marker is written before the advance
+     and cleared after its output is durable, so a kill between the two leaves
+     the marker.
+  4. A call that finds `bus:advance=inflight` at its start runs `inbox` plainly,
+     reads `carrying=<n>` from its `INBOX OPEN` line, and if `n>0` runs `inbox
+     --open --open-max <n>` once — `n`, never a fixed number, because `nova-bus`
+     caps the listed `OPEN` at `--open-max` (default 20) and a fixed number
+     would recover a fixed number — appends every listed note not marked
+     printed to the queue, writes the state, clears the marker and says `WAKE
+     NOTE bus advance was interrupted; recovered <k> notes from OPEN`. The
+     recovery is complete and not paginated: `--open-max` takes any positive
+     number, measured to 100000, and `n` is the whole carried list.
+
+  `nova-bus` moves a cursor to `HEAD` and nowhere else, so this is the only way
+  to keep the cursor behind the print. Mail consumed is mail spooled; mail
+  spooled is mail printed, **under the cap** like everything else (**Bounded
+  output**); and a cap that elides a note defers the fetch rather than losing
+  the note.
 - A run **without** `--advance-cursor` consumes nothing and fetches nothing
   (**How the checkout receives mail**). A note it prints is marked printed and
   wakes once; the default is the one that cannot lose mail.
@@ -271,9 +314,25 @@ fetches before it writes and fetches-and-rebases when it is rejected (SPEC.md,
 remote reaches the checkout through that push and is listed by the **next**
 `inbox`. Measured on 2026-09-11 against `nova-bus v0.10.3`: a note pushed to a
 bare remote by another clone was listed on the second `inbox --advance` after it
-landed, never the first. So, with `--advance-cursor`, new mail is relayed within
-**two** polls, and that is a promise about `nova-bus`'s push and not about its
-read — which is why the version is pinned:
+landed, never the first. Measured the same day, on the same fixture, the other
+half of the dependency: after `--advance` moved the cursor past that note, a
+plain `inbox` printed `INBOX OPEN carrying=1` and no `NOTE` line; `--open
+--open-max 10` listed it; `--open-max 0` was refused, exit 2; with 45 notes
+carried, `--open` alone listed 20 and said `and 25 more`, and `--open-max
+100000` listed all 45. (Stella measured it first, `bus-probe.json` beside her
+second read; the author repeated it on a fresh synthetic remote before this
+sentence was written.) So, with `--advance-cursor`, new mail is relayed within
+**two advancing polls**, and a poll advances only when this tool's bus queue is
+empty after its print (**The bus inbox**). A call holding unprinted mail prints
+up to the cap, returns, and does not advance; the next call advances if the
+queue drained. The promise, stated whole: **mail is relayed within two polls
+of the window having been shown everything it was already owed**, and while it
+has not been, every verdict carries `pending=<n>` and the call prints, once,
+`WAKE NOTE bus advance deferred: pending=<n> bus notes unprinted; nothing
+fetches until they print`. The freshness promise is not made over a backlog,
+and the tool says so rather than pretending. The two-poll half is a promise
+about `nova-bus`'s push and not about its read — which is why the version is
+pinned:
 
 - **The pinned version is `v0.10.3`.** Before the opening line the tool runs
   `nova-bus version` and reads the second token of its first line. A version
@@ -387,17 +446,34 @@ is the answer to *why did it not wake*.
 One file, named by `--state`, holding a flat map of key to value: one entry per
 watched thing, namespaced by source — `bus:line:<bytes>`, `bus:note:<id>`,
 `entry:<repo>#<n>`, `report:<path>`, `line:<name>` — plus one `fail:<source>`
-per source. It is written **after every poll**, through a temporary file in
+per source, the **delivery queue** `queue:<n>` with its counter `queue:next`,
+and the advance marker `bus:advance`. It is written **after every poll**, through a temporary file in
 the same directory and an atomic rename, so a call killed by the harness mid-poll
 leaves either the previous state or the new one and never half of either.
 
-**Every watched entry holds two things: what was observed and what was
-printed.** The stored form is `<value>|printed=<id|->`, where `<value>` is the
+**Every watched entry holds two things — the newest observation and what was
+printed — and every unprinted observation is a queue record.** The stored form
+of a watched key is `<value>|printed=<id|->`, where `<value>` is the
 newest observed state value and `<id>` is the **delivery id** of the value the
 window was last shown: a note's own id for a `bus:note:` entry, and for every
 other key the first twelve hex characters of SHA-256 over `<key>\x00<value>`.
-An entry is **pending** when its value's delivery id differs from `printed=`,
-and a pending entry is a change on every call until it is printed (rule 11).
+A poll whose observed value differs from the stored newest value **appends** a
+record `queue:<n>` = `<delivery id>|<key>|<value>`, `<n>` taken from
+`queue:next` and never reused, and then replaces the newest; it never replaces
+an unprinted value, because the unprinted value is in the queue and a queue
+record leaves only by being printed. An entry is **pending** while any queue
+record names its key; `pending=<n>` on the opening line and the verdict is the
+queue's length. Printing takes records in `<n>` order — oldest first, within
+the per-kind cap — and a record is deleted, and `printed=<its id>` written,
+only after its line reached stdout (rule 11, step 3). **Nothing coalesces.** A
+second red observed while the first is unprinted is a second record and a
+second line; red then green with the red unprinted prints red, then green, in
+that order; sixty entry transitions elided over three calls print as sixty
+lines. The one thing that keeps an observation out of the queue is
+`--final-only`, which keeps a non-final entry value out at observation time,
+because that is what the flag asked for. A key or value holding `|` is stored
+with it escaped as `%7C` and unescaped on load, and the round-trip test covers
+a report path that carries one.
 `fail:<source>` is `<n>|<since stamp>|<reason>`: the source's consecutive-failure
 streak, written on every failed poll, cleared on the first success, and read at
 the start of the next call — so the streak spans calls (rule 8).
@@ -409,11 +485,20 @@ the start of the next call — so the streak spans calls (rule 8).
   is `|` and not a tab, and a stored value compares equal to a freshly computed
   one byte for byte. The second lesson of 2026-09-11 is this sentence; the test
   that pins it writes, reloads, polls again and asserts quiet.
-- **It is bounded.** The `bus:line:` sighting memory and the `bus:note:` printed
-  marks are the two parts that grow with things that happen rather than with
-  things being watched, so each is an LRU of **300** entries with the least
-  recently *seen* evicted first; an evicted note is a change again, which is the
-  safe direction. The prototype
+- **It is bounded where it grows with events, and unbounded where a bound
+  would lose a delivery.** The `bus:line:` sighting memory and the **delivered**
+  `bus:note:` marks — entries whose `printed=` equals their value's id and
+  which no queue record names — are the two parts that grow with things that
+  happen rather than with things being watched, so each is an LRU of **300**
+  entries with the least recently *seen* evicted first; an evicted note is a
+  change again, which is the safe direction. **The queue is never evicted and
+  never truncated**, and a `bus:note:` entry a queue record names is not a
+  candidate for eviction whatever its age: a pending record leaves the state
+  only by being printed, so a backlog of 3,000 notes is 3,000 records in the
+  file and `--max-lines` lines per call until drained, and the file's size is
+  the honest cost of a window that has not read its mail. Pending is unbounded
+  in the state and bounded in the output (`WAKE MORE`), never the other way
+  round. The prototype
   deleted **all** of them once the count passed 300, which turns every standing
   error back into a change at once — a thundering false wake at exactly the moment
   the bus was noisiest.
@@ -441,8 +526,8 @@ five notes to stay quiet would be exactly the failure in **The races** below,
 caused deliberately. So a bus `INBOX NOTE` is a change on the first poll of a
 cold run as on any other, and `--baseline` does not apply to it. **Never swallow
 mail to make a quiet first poll.** A bus read *without* `--advance-cursor`
-consumes nothing, and reports the same note on every poll until it is answered —
-also not swallowed.
+consumes nothing, and lists the same note on every poll while the cursor stands
+behind it — also not swallowed, and suppressed once printed.
 
 An unrecognised bus line on a cold first poll is a change for the same reason: it
 is unrepeatable news about a bus that may be broken right now.
@@ -473,9 +558,12 @@ file; for reports, the directory.
 earlier draft exempted notes consumed by `--advance-cursor` from the cap, on the
 argument that polling again cannot return a note the cursor has passed. Two facts
 make that exemption unnecessary and its cost — 200 mail lines under a promise of
-`4 * --max-lines + 10` — dishonest. First, a note the cursor passed is not gone:
-`nova-bus` carries it on the reader's `OPEN` list and lists it on every later
-`inbox` until the reader answers it. Second, the cursor is not advanced on a poll
+`4 * --max-lines + 10` — dishonest. First, a note the cursor passed is in this
+tool's own queue before the cursor moves, because the advance is a spooled
+transaction (**The bus inbox**) and the queue is never evicted (**State**). It
+is **not** on any list `nova-bus` prints by default — measured: a plain `inbox`
+does not re-list a note the cursor has passed — and nothing here depends on it
+being. Second, the cursor is not advanced on a poll
 while any note is pending, and a note is pending until this tool has printed it
 (**The bus inbox**, rule 11). So past the cap the line is `WAKE MORE kind=bus
 shown=<n> total=<t> n=<k> pending; the next call prints them, the cursor waits`,
@@ -522,13 +610,18 @@ closed in the **safe** direction deliberately, by rule 11: observed state is
 written first, item lines are printed second, `printed=` marks are written
 third, and a kill at any boundary leaves the entry pending, so the duplicate is a
 repeated wake and never a lost one. A window told the same news twice reads twice;
-a window told it never does not. The one residual is named: with
+a window told it never does not. The one residual is named and closed: with
 `--advance-cursor`, a kill between `nova-bus inbox --advance` returning and the
-pending write of its output loses this tool's record that the cursor moved; the
-notes are still on the reader's `OPEN` list, which `nova-bus inbox` lists on
-every call, so the next poll observes them again. That residual is not left to
-the prose: test 11 kills at exactly that point and asserts every note the
-advance consumed is printed by the next call. **This race is closed by
+write of its output would lose this tool's record of any note that call listed
+first, and — measured, **How the checkout receives mail** — a plain `inbox`
+does not re-list a note the cursor has passed, so nothing would bring it back
+on its own. So the advance is wrapped: `bus:advance=inflight` is written before
+it and cleared after its output is durable, and a call that finds the marker
+runs `inbox --open --open-max <carrying>` and spools every unprinted note
+before anything else (**The bus inbox**, step 4). That is not left to the
+prose: test 11 kills at exactly that point, with a backlog above `nova-bus`'s
+default `OPEN` display cap of 20, and asserts every note the advance consumed
+is printed by the following calls. **This race is closed by
 ordering, not by refusal.** A refusal before the state write (lesson 63's
 shape) would be the wrong tool here: there is nothing to refuse, because the
 kill is the harness's and arrives at any instruction; the only choice the tool
@@ -667,36 +760,65 @@ spec forbids**.
     runs as its own process outside any session, fetches the bus every
     `--interval` (a git fetch costs no tokens; the interval matches the
     latency a person will accept, never the second), and for each new note
-    addressed to `<name>` runs `<command> <note-id>` exactly once: the id is
-    written to the state file before the command starts, so a restart never
-    fires twice, and a command still running holds the next note in a queue,
-    because the harness is one and cannot take two turns at once. The
-    command's exit code is recorded per note as `WAKE FIRED id=<id> rc=<n>`;
-    the tool never reads the command's output and never retries a non-zero
-    exit on its own. It ends at `--hours` or a `stop` file and prints
-    `WAKE SERVE fired=<n> queued=<n> idle=<duration>` on exit. What the
-    command is (a `claude -p`, an `opencode run`, a `grok` invocation) is
-    the line's business, never the tool's. With `--receipt`, `serve` sends
-    the bus receipt for the note the moment it fires the wake, so the model
-    never spends a turn on "Heard": a receipt is the machinery's, a reply is
-    the mind's. (2026-09-11: one line sent 26 "Heard" receipts by hand, a
-    turn each, and the coordinator read every one.) While a line has no work, its
-    cost is one fetch per interval and zero tokens; while it has work, one
-    wake per note and no poll inside the turn.
+    addressed to `<name>` runs `<command> <note-id>` **at least once, at most
+    twice, and never twice silently**. A note's delivery is three durable
+    states under `serve:<id>` in the state file, each written through the
+    same temp-file-and-rename as everything else: `queued|<stamp>` when the
+    note is first seen; `dispatching|<stamp>|attempt=<n>` written **before**
+    the spawn; `delivered|<stamp>|rc=<n>|redelivered=<0|1>` written **after**
+    the command exits, with its exit code. A restart that finds `queued`
+    runs it. One that finds `dispatching attempt=1` runs it once more, as
+    `attempt=2`, and its `WAKE FIRED` line says `redelivered=1` — because a
+    kill between the write and the spawn would otherwise suppress a command
+    that never ran, and a kill between the spawn and the `delivered` write
+    would otherwise run it twice with nothing said. One that finds
+    `dispatching attempt=2` runs it **no** more: it writes
+    `abandoned|<stamp>` and prints `WAKE FIRED id=<id> rc=- redelivered=1:
+    abandoned after two dispatches`, so nothing fires forever and nothing
+    goes quiet. An earlier draft wrote the id once before the spawn and
+    called that exactly-once; Stella's second read showed it was
+    at-most-once with a lost launch in the gap. The handoff is therefore
+    **at-least-once with the duplicate marked**: the command receives the id
+    and nothing else, must be safe to receive it twice, and a receiver that
+    cannot tolerate a duplicate reads `redelivered=` in the serve transcript.
+    A command still running holds the next note as `queued`, because the
+    harness is one and cannot take two turns at once. The command's exit
+    code is recorded per note as `WAKE FIRED id=<id> rc=<n>
+    redelivered=<0|1>`; the tool never reads the command's output and never
+    retries a non-zero exit on its own. It ends at `--hours` or a `stop` file
+    and prints `WAKE SERVE fired=<n> redelivered=<n> abandoned=<n> queued=<n>
+    idle=<duration>` on exit. What the command is (a `claude -p`, an
+    `opencode run`, a `grok` invocation) is the line's business, never the
+    tool's, and whether it runs at all is the line's person's: starting a
+    `serve` under a name is that name's decision and nobody else's. With
+    `--receipt`, `serve` sends the bus receipt for the note **after**
+    `delivered` is written with `rc=0`, never at fire time and never for a
+    non-zero exit: a receipt is the machinery's claim that the note was
+    handed to the mind and the mind returned, and a receipt sent before the
+    command returned would claim a handoff a kill could still lose. A note
+    whose command failed stays on the open list unreceipted, which is where a
+    note nobody has dealt with belongs. So the model never spends a turn on
+    "Heard": a receipt is the machinery's, a reply is the mind's.
+    (2026-09-11: one line sent 26 "Heard" receipts by hand, a turn each, and
+    the coordinator read every one.) While a line has no work, its cost is
+    one fetch per interval and zero tokens; while it has work, one wake per
+    note and no poll inside the turn.
 
 11. **Delivery is the printed line, not the state write.** A change is
     *delivered* when its line has been written to stdout, and nothing else —
     not the poll that observed it, not the state write that recorded it, not
-    a cursor that moved past it. The order on every poll is fixed: (1) write
-    the observed values, (2) print the item lines, up to the cap, (3) write
-    `printed=<id>` for each line that reached stdout, (4) print the verdict.
-    An entry whose observed value has not been printed is **pending**, stays
-    pending across calls, is counted as `pending=<n>` on the opening line and
-    the verdict, and is printed by the next call before anything newer — so a
-    line elided by the cap is shown by the next call or by a wider
-    `--max-lines`, and a call killed at any of the three boundaries replays
-    rather than loses. A duplicate line is the cost and it is paid on
-    purpose. (Stella, 2026-09-11, second read: a cursor is a claim about what
+    a cursor that moved past it. The order on every poll is fixed: (1)
+    append every observed value to the queue and write the state — an
+    observation never overwrites an unprinted one, (2) print the item lines
+    from the head of the queue, up to the cap, (3) delete each printed record
+    and write `printed=<id>` for each line that reached stdout, (4) print the
+    verdict. An entry with a queue record is **pending**, stays pending
+    across calls, is counted as `pending=<n>` on the opening line and the
+    verdict, is never evicted (**State**), and is printed by the next call
+    before anything newer — so a line elided by the cap is shown by the next
+    call or by a wider `--max-lines`, and a call killed at any of the three
+    boundaries replays rather than loses. A duplicate line is the cost and it
+    is paid on purpose. (Stella, 2026-09-11, second read: a cursor is a claim about what
     a reader has been shown, and an entry already in state that the cap
     elided was never shown.)
 
@@ -704,9 +826,10 @@ spec forbids**.
     nothing else this tool does.** Stated in full under **How the checkout
     receives mail**: the fetch is inside `nova-bus`'s push, the version is
     pinned at `v0.10.3` and checked before the opening line, mail is relayed
-    within two polls under `--advance-cursor`, and without it the tool
-    fetches nothing and prints `head-at=` so the standing checkout is
-    visible. (Stella, 2026-09-11, second read: a perfectly functioning
+    within two **advancing** polls under `--advance-cursor` — a poll advances
+    only behind an empty bus queue, and a call that defers the advance says
+    so — and without it the tool fetches nothing and prints `head-at=` so the
+    standing checkout is visible. (Stella, 2026-09-11, second read: a perfectly functioning
     watcher can remain quiet while remote mail arrives.)
 
 ## Tests this spec demands
@@ -737,10 +860,15 @@ Each is proven able to fail by a mutation before it is trusted.
    10` lines, measured in lines and bytes on stdout plus stderr, and no printed
    line contains a note's body or a report's contents; the same with
    `--advance-cursor` on, where the bus prints `--max-lines` notes and one `WAKE
-   MORE kind=bus ... n=160`, the state holds 160 pending notes, the cursor has
-   not moved, and five further calls drain them in order, the cursor moving on
-   the sixth; a bus refusing for twelve polls prints at most `--max-lines` bus
-   lines on each poll.
+   MORE kind=bus ... n=160`, the state holds 160 queue records, the cursor has
+   not moved, four further calls drain them in order and the cursor moves on
+   the fifth, after its print, with `nova-bus` asserted to have received
+   `--advance` exactly once; each of the first four calls prints `WAKE NOTE
+   bus advance deferred` once; a backlog of 3,000 notes leaves 3,000 queue
+   records after the first call with none evicted and `bus:note:` marks of
+   300 older delivered notes evicted around them; a mutation that lets the
+   LRU take a pending entry turns the test red; a bus refusing for twelve
+   polls prints at most `--max-lines` bus lines on each poll.
 6. `TestWhatWokeYouIsNamed`: every `WAKE BUS`, `WAKE ENTRY`, `WAKE REPORT` and
    `WAKE LINE` line in a mixed run carries its identity field, and `something
    changed` appears nowhere on stdout or stderr.
@@ -764,13 +892,24 @@ Each is proven able to fail by a mutation before it is trusted.
    a future date is judged by the commit stamp; the source tripwire finds no
    flag named `--at`, `--stamp` or `--now`, and no time parse over a note's body
    or a report's text.
-10. `TestServeFiresOncePerNoteAndSpendsNothingIdle`: a fixture bus with two
-    notes for the name and one for another name; `serve` with a fake
-    `--on-note` that records its argument runs it exactly twice, with the
-    two ids, never for the third; killed and restarted on the same state it
-    fires zero more; a note arriving while the command runs is fired after
-    it returns, never beside it; an hour with no note fires nothing and the
-    exit line says `fired=0`.
+10. `TestServeDeliversAtLeastOnceAndMarksTheDuplicate`: a fixture bus with
+    two notes for the name and one for another name; `serve` with a fake
+    `--on-note` that records its argument runs it for the two ids, never for
+    the third; killed with an injected kill point **after** `dispatching` is
+    written and **before** the spawn, the restart runs the command once,
+    `WAKE FIRED ... redelivered=1`, and the fake records one call; killed
+    **after** the spawn and **before** `delivered`, the restart runs it
+    again, `redelivered=1`, and the fake records two calls; killed after
+    `delivered`, the restart fires zero more; a state holding `dispatching
+    attempt=2` is not run, is written `abandoned`, and prints `WAKE FIRED
+    id=<id> rc=- redelivered=1: abandoned after two dispatches`; the exit line
+    counts `redelivered=` and `abandoned=`; a note arriving while the command
+    runs is `queued` and fired after it returns, never beside it; with
+    `--receipt` a receipt is sent only after `delivered rc=0`, and a command
+    exiting 3 gets `WAKE FIRED rc=3` and no receipt; an hour with no note
+    fires nothing and the exit line says `fired=0`; a mutation that writes
+    `delivered` before the spawn, and one that skips a `dispatching` entry on
+    restart, each turn the test red.
 11. `TestDeliveryIsThePrintedLine`: 60 entry changes under `--max-lines 40`
     print 40 and `WAKE MORE kind=entry ... n=20`, the verdict says
     `pending=20`, and the next call with `--max-lines 0` prints exactly those
@@ -779,16 +918,28 @@ Each is proven able to fail by a mutation before it is trusted.
     in each case the next call prints every line the killed call had not
     marked and nothing it had; with an injected stdout that fails mid-write,
     no `printed=` mark is written for the failed line; a mutation that writes
-    `printed=` before the print turns the test red; with `--advance-cursor`
-    and a fixture bus of five notes, the loop is killed with an injected kill
-    point between `nova-bus inbox --advance` returning and the observed
-    write, and the next call prints all five `WAKE BUS` lines — the residual
-    named in **The races** is a repeated wake, never a lost one; a mutation
-    that skips notes already on the reader's `OPEN` list turns the test red.
+    `printed=` before the print turns the test red; one entry observed red,
+    then green, across two polls with the red still unprinted, prints two
+    `WAKE ENTRY` lines for it, red first, and a mutation that overwrites the
+    unprinted value turns the test red; with `--advance-cursor` and a fixture
+    bus of 25 notes — above `nova-bus`'s default `OPEN` display cap of 20 —
+    against the real installed `nova-bus`, the loop is killed with an
+    injected kill point between `nova-bus inbox --advance` returning and the
+    write of its output; the state then holds `bus:advance=inflight`; the
+    next call is asserted to run `inbox --open --open-max 25`, `25` being
+    the `carrying=` it read and not a constant, prints the `WAKE NOTE ...
+    recovered 25 notes from OPEN` line, and the following calls print all 25
+    `WAKE BUS` lines — the residual named in **The races** is a repeated
+    wake, never a lost one; a mutation that passes a fixed `--open-max 20`,
+    and one that clears the marker before the output is written, each turn
+    the test red.
 12. `TestNewMailReachesTheCheckoutThroughTheAdvance`: a bare remote and two
     clones; a note is pushed from the other clone while one watcher runs alone
-    with `--advance-cursor` and is relayed within two polls; the same without
-    `--advance-cursor` is not relayed, `head=` and `head-at=` on `WAKE SOURCE
+    with `--advance-cursor` and is relayed within two polls; a second note
+    pushed while the watcher holds unprinted notes is not relayed until they
+    have printed, the deferring call prints `WAKE NOTE bus advance deferred`
+    once, and the note is relayed within two polls of the queue draining; the
+    same without `--advance-cursor` is not relayed, `head=` and `head-at=` on `WAKE SOURCE
     bus` do not move, and the `WAKE NOTE` about fetching is printed once; a
     fake `nova-bus` answering `nova-bus v0.10.4` is `WAKE REFUSED` naming both
     versions, exit 2, before the opening line.
@@ -818,10 +969,16 @@ Each is proven able to fail by a mutation before it is trusted.
   nothing in this window*, not *nothing happened*. It is a report and not a
   guarantee, as `WAIT TIMEOUT` is — and without `--advance-cursor` it means
   *the checkout as it stands said nothing*, which `head-at=` makes visible.
-- **Two polls of latency on mail, and a pinned `nova-bus`.** New mail arrives
-  through the push inside `inbox --advance` and is listed by the following
-  `inbox`; a `nova-bus` other than `v0.10.3` is refused until this document is
-  re-measured against it.
+- **Two advancing polls of latency on mail, none while mail is unread, and a
+  pinned `nova-bus`.** New mail arrives through the push inside `inbox
+  --advance` and is listed by the following `inbox`; a poll advances only
+  behind an empty bus queue, so a window that has been shown more than it has
+  read is not fetched for until it reads; a `nova-bus` other than `v0.10.3`
+  is refused until this document is re-measured against it.
+- **A `serve` command can run twice.** After a kill between the `dispatching`
+  write and the `delivered` write, the restart runs the command once more and
+  marks the line `redelivered=1`; a command that cannot bear a duplicate reads
+  that field (rule 10). Never more than twice, and never silently.
 
 ## What it deliberately does not do
 
@@ -858,13 +1015,17 @@ Standard library only, no third-party imports, no hardcoded paths, and the repo'
 shared packages used rather than re-spelled.
 
 1. **`internal/wake/state.go`** — the state map: load, save through a temp file and
-   rename, the `|` composition, the `printed=<id>` half of every value and the
-   pending predicate, `fail:<source>` streaks, the 300-entry LRUs over
-   `bus:line:` and `bus:note:` keys, and an
+   rename, the `|` composition with `%7C` escaping, the `printed=<id>` half of every value, the
+   `queue:<n>` records and `queue:next`, the pending predicate as *a record
+   names this key*, `bus:advance`, `fail:<source>` streaks, the 300-entry
+   LRUs over `bus:line:` and **delivered** `bus:note:` keys with pending keys
+   exempt, and an
    exclusive lock on `<state>.lock` reusing `internal/bus`'s lock (`lock.go`,
    `lock_unix.go`, `lock_other.go`) rather than a second lock implementation.
    Tests: round-trip quiet on a second poll (the 2026-09-11 lesson), eviction
-   order, an unparsable file is an error and not a cold start, a killed write
+   order with a pending record surviving 300 newer delivered ones, an
+   observation appended behind an unprinted one and never over it, an
+   unparsable file is an error and not a cold start, a killed write
    leaves the old file intact.
 2. **`internal/wake/source.go`** — the `Source` interface: `Poll(ctx) ([]Item,
    error)` returning items that each carry a state key, a state value and a
@@ -874,11 +1035,14 @@ shared packages used rather than re-spelled.
 3. **`internal/wake/bus.go`** — run `nova-bus inbox` under a timeout; classify by
    first tokens with a **suppress** list and a printing default case; the standing
    vs first-sighting split; the `--advance-cursor` guard (`--as` required, lock
-   held for the call, `--advance` passed only with no pending note, the
+   held for the call, the four-step transaction — plain `inbox`, spool, print,
+   `--advance` only behind an empty bus queue under the `bus:advance` marker —
+   and the `inbox --open --open-max <carrying>` recovery, the
    `nova-bus version` pin, `head=`/`head-at=` from `git log -1`). Tests: an
    `INBOX REFUSED` wakes and is relayed verbatim; a repeat is `STANDING` and does
    not wake; an unknown future token prints; `--advance-cursor` without `--as` is
-   exit 2; a note past the cap is pending, not lost, and the cursor waits.
+   exit 2; a note past the cap is pending, not lost, and the cursor waits; the
+   recovery's `--open-max` equals `carrying=` and is never a constant.
 4. **`internal/wake/entry.go`** — the `gh` call per entry, the bucket rule, the
    five-field value, batching at 8, `unreadable:<reason>` as a value, and
    `--final-only`'s FINAL predicate as a pure function over the value. Tests:
@@ -916,6 +1080,12 @@ shared packages used rather than re-spelled.
     opening line and the verdict, `--entry-interval` with a per-source due time,
     the pid in `<state>.lock`, the `WAKE SOURCE` counts, and the three-in-a-row
     `WAKE BROKEN`. Tests: the eight in **Tests this spec demands**.
+12. **`internal/wake/serve.go`** — the `serve` loop: the fetch per interval,
+    the `serve:<id>` states `queued`, `dispatching attempt=<n>`, `delivered
+    rc=<n> redelivered=<0|1>` and `abandoned`, each written before or after
+    the step it names and never during it, the one-more-run on restart, the
+    receipt after `delivered rc=0` and never before, the `stop` file and
+    `--hours`. Tests: test 10, with the kill points injected.
 
 ## What the prototype does that this spec forbids
 
