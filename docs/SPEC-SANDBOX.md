@@ -132,7 +132,10 @@ near the end.
    Landlock restricts only TCP `bind`/`connect` even at ABI 4; UDP is not
    restricted at any ABI, and `net=denied` on linux means exactly TCP.
 8. **Temp is inside the wall.** The tool creates
-   `<first --write>/.nova-sandbox-tmp` if it does not exist and sets `TMPDIR`,
+   `<first --write>/.nova-sandbox-tmp` if it does not exist — the one
+   directory the tool creates, inside the write set, its name chosen by the
+   tool and never by a caller; **what it deliberately does not do** is about
+   the paths it is *handed* — and sets `TMPDIR`,
    `TMP` and `TEMP` to it in the child's environment, because a deny-by-default
    policy makes the inherited per-user temp directory unwritable and a
    toolchain whose first scratch write fails looks like a broken sandbox rather
@@ -182,7 +185,17 @@ near the end.
 12. **The exec verb is transparent, and what happens to the tool's own process
     is stated per platform.** Everything after `--` is executed verbatim —
     **never** through a shell, so no argument is re-parsed and no quote is
-    re-interpreted. stdin, stdout and stderr are inherited unchanged. The
+    re-interpreted. stdin, stdout and stderr are inherited unchanged — and the caller owns what
+    they point at. A descriptor the caller opened **before** the wrap is not
+    made reachable by having been opened: measured, a wrapped `/bin/cat` whose
+    stdout is a file outside every named path is denied, while `/bin/echo`
+    writing the same descriptor succeeds, because the two reach the file
+    differently and only one of them is checked by the policy. **The rule: the
+    caller's stdout and stderr for a wrapped command are either a pipe the
+    caller drains, or a path inside the write set.** `nova-swarm`'s
+    `supervise` takes the pipe: it already reads the harness's output line by
+    line, and its per-job log file is written by the supervisor outside the
+    wall, never handed to the child as a descriptor onto an unnamed path. The
     child's exit status is the tool's exit status, and a death by signal `N`
     gives exit `128+N`. Per platform:
     - **linux:** the tool restricts *itself* (`runtime.LockOSThread`,
@@ -263,7 +276,7 @@ range, and this is a deliberate, recorded departure from the conventions
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
 | 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial was asked for and is not available (`reason=net_unenforceable`), no `--write`, a relative or missing path, a path in both lists, a `--cwd` outside the write set, a `HOME` outside both lists
 (`reason=home_outside`), a missing `--` |
-| 126 | the command was resolved but could not be executed (not executable, or the backend failed to start it) |
+| 126 | the command was resolved but could not be executed: it is not executable, **or** the backend rejected the exec |
 | 127 | the command could not be resolved on the caller's `PATH` |
 | 128+N | the wrapped command was killed by signal `N` |
 
@@ -275,12 +288,32 @@ needs to tell them apart reads the line, not the number. This is stated rather
 than fixed, because renumbering would break the convention the rest of the
 table follows.
 
+The second half of the `126` row is something the tool must **make** true, not
+something the backend does on its own. Measured: when `sandbox-exec` cannot
+exec the command under the profile it prints
+`execvp() of '<cmd>' failed: Operation not permitted` and exits **71**, and a
+transparent passthrough (rule 12) would report that 71 as if the command
+itself had exited 71 — a number in the wrapped command's own range,
+indistinguishable from its work. The darwin body therefore does not pass 71
+through blind: when the child is `sandbox-exec`, it exits 71, and the command
+never ran, the tool exits **126** and prints
+`SANDBOX REFUSED reason=sandbox_failed` naming the exec failure. A wrapped
+command that genuinely exits 71 through a working exec is untouched, because
+the mapping is on the backend's own failure to exec, which it reports before
+the command has run.
+
 `127` is about the **caller's** `PATH`, not the policy's: rule 5 resolves the
 command to an absolute path before the wrap, so the lookup happens outside the
 wall and a `127` means the tool could not find the command at all. A command
 that is found and then dies inside the wall for want of its interpreter or a
-shared library exits `126` or dies by signal, and the `SANDBOX NOTE` on that
-failure names `--read` as the remedy.
+shared library exits `126` or dies by signal. There is **no** `SANDBOX NOTE`
+on that failure, and the previous revision was wrong to promise one: on linux
+the tool has `syscall.Exec`'d itself away before the command runs, so nothing
+of the tool is left to print anything (rule 12), and a promise the tool can
+keep on one platform and not the other two is worse than no promise. The
+remedy is printed where it can be printed on all three — the usage banner and
+the `--read` paragraph of the roots section — and a reader diagnosing a `126`
+compares it with the same command run without the wrap.
 
 The `probe`, `policy`, `fence` and `check` verbs are not wrappers and use
 SPEC.md's grammar unchanged: **0** the verb ran and passed, **1** the verb ran
@@ -295,11 +328,11 @@ which is the thing asked for and goes to stdout.
 ```
 SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> read=<n> write=<n> net=<denied|nopromise> cwd=<dir> cmd=<name>
 SANDBOX UNSANDBOXED cmd=<name> read=<n> write=<n>: no OS containment; every read and write this command makes is yours
-SANDBOX NOTE <the one remedy or gap line>
+SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|bad_read|bad_write|bad_cwd|home_outside|no_command|not_found|not_executable>: <text>
 PROBE STEP name=<write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
 PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise>
-PROBE REFUSED reason=<check|secret_inside_allow|no_sandbox|net_unenforceable>: <text>
+PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|no_sandbox|net_unenforceable>: <text>
 POLICY OK backend=<name> read=<n> write=<n> bytes=<n>
 POLICY REFUSED reason=<no_sandbox|bad_read|bad_write>: <text>
 FENCE OK out=<path> keys=<n>
@@ -311,6 +344,11 @@ CHECK OK backend=<name|none> abi=<n|-> net=<enforceable|unenforceable> note=<one
 crash still says what the wall was. It names `cmd=<name>` — the base name of
 the executable — and never the arguments, because arguments carry task text and
 task text carries quoted rules.
+
+Every `SANDBOX NOTE` is printed **before** the command starts, for the reason
+`SANDBOX OK` is: on linux the tool becomes the command and can print nothing
+afterwards. There is no note about a failure the command suffered inside the
+wall, on any platform.
 
 `net=nopromise` is rule 7: the caller did not ask for network denial and the
 tool is not implying one. There is no `net=unenforced`; a denial that cannot be
@@ -364,7 +402,7 @@ rediscover it: `/usr/bin/git` on a Mac is an Xcode shim that reads
 wall. Rule 5 resolves the command on the caller's `PATH` before the wrap, so a
 caller whose `git` is the real binary (`/opt/homebrew/bin/git`, measured
 working) is unaffected; a caller stuck with the shim names `/private/var/db`
-with `--read`, and the `SANDBOX NOTE` of the `--read` section is the remedy.
+with `--read`.
 
 There is no `--root` flag. A toolchain installed into a user directory — Go
 under `~/go`, node under `~/.nvm`, .NET under `~/.local`, the Studio's
@@ -372,7 +410,10 @@ under `~/go`, node under `~/.nvm`, .NET under `~/.local`, the Studio's
 caller-supplied read-only root and needs no second spelling. On Windows,
 `--read` is what makes the tool add a read-only ACE for the container SID. A
 command that dies for want of an interpreter inside the wall and runs outside
-it is a missing `--read`, and the `SANDBOX NOTE` on that failure says so.
+it is a missing `--read`. The tool cannot say so after the fact — on linux it
+is gone by then (rule 12) — so the sentence lives in the usage banner instead:
+*a command that runs outside the wall and dies inside it is missing a
+`--read`.*
 
 The home directory is never a root.
 
@@ -437,10 +478,27 @@ first, or `landlock_restrict_self` fails with `EPERM`.
 "in the child between fork and exec" from Go. The body is therefore
 **restrict-then-exec in place**, in the tool's own process:
 
-1. `landlock_create_ruleset` with `handled_access_fs` covering the whole
-   read/write set the running ABI supports: `LANDLOCK_ACCESS_FS_EXECUTE`,
-   `READ_FILE`, `READ_DIR`, `WRITE_FILE`, `MAKE_REG`, `MAKE_DIR`, `MAKE_SYM`,
-   `REMOVE_FILE`, `REMOVE_DIR`, `REFER` (ABI 2+), `TRUNCATE` (ABI 3+).
+1. `landlock_create_ruleset` with `handled_access_fs` covering **every
+   filesystem access the running ABI defines** — stated per ABI, because an
+   access left unhandled is an access the kernel does not check, and that is a
+   hole with no line in any log:
+
+   | ABI (kernel) | `handled_access_fs` |
+   |---|---|
+   | 1 (5.13) | `EXECUTE`, `WRITE_FILE`, `READ_FILE`, `READ_DIR`, `REMOVE_DIR`, `REMOVE_FILE`, `MAKE_CHAR`, `MAKE_DIR`, `MAKE_REG`, `MAKE_SOCK`, `MAKE_FIFO`, `MAKE_BLOCK`, `MAKE_SYM` |
+   | 2 (5.19) | + `REFER` |
+   | 3 (6.2) | + `TRUNCATE` |
+   | 5 (6.10) | + `IOCTL_DEV` |
+
+   ABI 4 (6.7) and ABI 6 (6.12) add no filesystem access — 4 adds the network
+   rule type, 6 the two scopes — so the filesystem set at 4 equals 3's and at
+   6 equals 5's. `IOCTL_DEV` at ABI 5 is what the previous revision omitted
+   while claiming "the whole set": without it a sandboxed process can `ioctl`
+   any device file it can open. The set is masked down to the discovered ABI
+   (a ruleset handling an access the kernel does not know is rejected), and
+   the `MAKE_*`, `REMOVE_*`, `WRITE_FILE`, `TRUNCATE`, `REFER` and `IOCTL_DEV`
+   bits are *granted* to the write set only; the read set and the roots get
+   `EXECUTE|READ_FILE|READ_DIR`.
 The linux root list names `/proc`, not `/proc/self`. `/proc/self` opened
 `O_PATH` resolves at open time to the pid that opened it — the tool's, which
 after `syscall.Exec` is the command's — so a rule built on it grants the
@@ -539,7 +597,7 @@ Four checks, under the real policy for this platform, each one line:
 
 | name | what it does | expected |
 |---|---|---|
-| `write_outside` | creates a file in a temp directory outside every named path | `deny` |
+| `write_outside` | creates a file at one **explicitly named** path outside every named path — `<parent of the first --write>/.nova-sandbox-probe-<pid>` — printed on the step line | `deny` |
 | `read_secret` | opens the named secret file for reading | `deny` |
 | `write_inside` | creates and removes a file under the first `--write` | `allow` |
 | `read_root` | reads a byte from the resolved command's own directory | `allow` |
@@ -548,6 +606,15 @@ Every check runs; the verb does not stop at the first failure, because a caller
 fixing a machine wants all four answers at once (SPEC.md: report every
 independent problem at once). The exit is 1 if any check disagreed with its
 expectation, and `PROBE REFUSED reason=check` names each one.
+
+`write_outside` names its path instead of calling `os.TempDir()`, because
+rule 8 points `TMPDIR` **inside** the wall: a probe that wrote to
+`os.TempDir()` would write inside the write set, watch it succeed, and report
+a false refusal — it would fail on a working wall. If the named path resolves
+inside any `--read` or `--write` (a first `--write` whose parent is itself in
+a list), the verb is exit 2 `reason=probe_outside_inside` and names the path,
+because a probe that cannot find an outside is a misconfiguration, not a
+failed check.
 
 The secret file's **contents are never read into memory**: the check is that
 `open(2)` (or `CreateFileW`) fails, and a probe that succeeded in opening it
@@ -564,23 +631,31 @@ nothing: the argv is built by the dispatcher from the job it created.
 
 *The read set*, shared and named once per batch:
 
-- `pool/ref/<repo>` — **one reference checkout per batch, owned by the
-  dispatcher**. At `run` (or per task at its pinned sha, `--ref <sha>` on
-  `add`/`batch`) nova-swarm fetches it once, over the network, with its own
-  credential, outside every worker's wall. Every worker reads that one
-  checkout. A read-only task works on it directly and copies nothing.
+- `pool/ref/<repo>@<sha>` — **one reference checkout per distinct ref in the
+  batch, owned by the dispatcher**. The previous revision said both "once per
+  batch" and "per task at its pinned sha", and the two cannot both hold: two
+  tasks in one batch with different `--ref` cannot share one directory while
+  readers are running in it. The path therefore carries the sha. The
+  dispatcher collects the distinct refs of the batch (the default ref counts
+  as one), resolves each to a sha, and fetches **each one once**, over the
+  network, with its own credential, outside every worker's wall, before the
+  first worker starts; a sha already materialised by an earlier batch is not
+  refetched. Each worker's read set names the one checkout for **its** task's
+  sha. Two tasks at the same sha share one checkout, and N workers at one sha
+  still cost one fetch, which is the number #69 cares about. A read-only task
+  works on its checkout directly and copies nothing.
 - the worker home, which holds `AGENTS.md` and the generated `opencode.json`
   fence — without it in the read set the harness cannot read its own config.
 - the corpus and the specs the batch needs, if any.
 
 *A task that needs its own tree* declares it with `tree: yes` in its header,
-and the **dispatcher** runs `git clone --shared pool/ref/<repo>
-<jobdir>/repo` — objects borrowed, no network, about a second — **before the
-sandbox closes**. The clone lands in the job directory, which is in the write
+and the **dispatcher** runs `git clone --shared pool/ref/<repo>@<sha>
+<jobdir>/repo` — that task's checkout, objects borrowed, no network, about a
+second — **before the sandbox closes**. The clone lands in the job directory, which is in the write
 set, so the worker can branch and commit in it. The worker therefore holds **no
 git credential and needs no network for the repo at all**; the network it has
-is the provider's API. The fetch is one network round per batch, not one per
-worker: 64 workers do not do 64 clones.
+is the provider's API. The fetch is one network round per distinct sha in the
+batch, not one per worker: 64 workers at one sha do not do 64 clones.
 
 *The rest of the seam:* `--net-deny` is not passed, because the provider's API
 is the work (`net=nopromise`); the provider key is read from its file before
@@ -634,7 +709,12 @@ instead of it.
   the question this tool answers is what a command can reach on disk.
 - **It does not restrict CPU, memory or process count.** A runaway worker is
   the deadline's problem.
-- **It does not create directories.** A missing path is a refusal (rule 5).
+- **It does not create the directories it is handed.** Every `--read`,
+  `--write`, `--cwd` and `--tmp` path must already exist; a missing one is a
+  refusal and is not created (rule 5). The one directory it creates is its
+  own: `<first --write>/.nova-sandbox-tmp` under rule 8 — inside the write
+  set, named by the tool, never by the caller. An explicit `--tmp` is a caller
+  path and follows rule 5: it must exist.
 - **It does not run a shell.** Everything after `--` is `exec`'d (rule 12).
 - **It does not take a caller-supplied profile.** The policy is generated
   (rule 15).
@@ -742,7 +822,12 @@ One per rule:
 9. An environment variable set by the caller arrives in the child unchanged,
    including one whose value is a credential-shaped string, and that value
    appears in no printed line.
-10. `TestProbeProvesTheWall`: all four checks run even when the first fails; a
+10. `TestProbeProvesTheWall`: the `write_outside` path is the named one and is
+    asserted to be outside every list **with `TMPDIR` pointed inside the wall
+    by rule 8** — a probe built on `os.TempDir()` turns this red; a first
+    `--write` whose parent is inside a list is exit 2
+    `reason=probe_outside_inside`; all four checks run even when the first
+    fails; a
     policy that denies everything fails `write_inside` and `read_root` and is
     `PROBE REFUSED`, not `PROBE OK`; a policy with no wall at all fails
     `write_outside` and `read_secret`; a correct policy is
@@ -758,7 +843,12 @@ One per rule:
     after the wrap (the test reads `/proc/self/stat` from the wrapped command
     and compares it with the pid it spawned) and no wait happens; on darwin and
     windows `SIGTERM` (or the console control event) reaches the child and the
-    tool waits for it. On every platform the wrapped command can signal its
+    tool waits for it. stdio: a wrapped command whose stdout is a **pipe**
+    writes through it, and one whose stdout is a **file inside the write set**
+    writes through it; one whose stdout is a file **outside** every named path
+    fails for `/bin/cat` — the test asserts that failure rather than hiding
+    it, because it is the reason the rule names only two legal shapes. On
+    every platform the wrapped command can signal its
     **own** child: `sh -c 'sleep 30 & kill $!'` exits 0 and the sleep is gone,
     which is red on darwin without `(target children)` in the signal clause.
 13. The default `--cwd` is the first `--write`; a `--cwd` outside the write set
@@ -790,12 +880,21 @@ And one for each thing the rules above assert but no test yet reached:
     command that is on no `PATH` entry. A command that itself exits 126 or 127
     gives the same number with **no** `SANDBOX REFUSED` line, and the test
     asserts the stderr difference, which is the only way to tell them apart.
+    darwin, the measured case: a profile under which `sandbox-exec` cannot
+    exec the command (the single-clause exec/signal grant is one such) gives
+    exit **126** and one `SANDBOX REFUSED reason=sandbox_failed`, **not** the
+    backend's raw 71 — a mutation that passes 71 through turns the test red —
+    while a wrapped command that genuinely exits 71 still exits 71 with no
+    refusal line, asserted in the same test.
 20. darwin: the generated profile file is created under the first `--write`
     with mode `0600` (the test stats it while the command runs) and is **gone**
     after the command ends, on a clean exit and on a signal death alike.
 21. `--read` ergonomics: a toolchain placed in a user directory is unreadable
-    inside the wall without `--read` and the failure prints one `SANDBOX NOTE`
-    naming `--read` as the remedy; with `--read` it runs.
+    inside the wall without `--read` — the wrapped command fails (126 or a
+    signal death) — and with `--read` it runs. The test asserts that **no**
+    `SANDBOX NOTE` is printed after the command has started, on every platform
+    (the linux body cannot, and the others must not diverge), and that the
+    usage banner carries the `--read` remedy sentence.
 22. windows: the ACEs the tool adds appear on the `--write` and `--read`
     directories while the command runs, with the read-only grant carrying no
     write right, and are **removed** after it ends. A second test documents the
@@ -807,9 +906,11 @@ And one for each thing the rules above assert but no test yet reached:
     reason=sandbox_probe` and starts no worker; `run` on a machine with no
     backend prints `RUN REFUSED reason=no_sandbox` and starts no worker; both
     assert the worker count is zero, not just the line.
-24. In `nova-swarm`: the dispatcher fetches `pool/ref/<repo>` **once** per
-    batch (a counter on the fetch, asserted `== 1` for N workers), every
-    worker's argv carries it as `--read` and the worker home as `--read`, and a
+24. In `nova-swarm`: the dispatcher fetches `pool/ref/<repo>@<sha>` **once per
+    distinct sha** — a counter on the fetch, asserted `== 1` for N workers at
+    one sha and `== 2` for a batch holding two distinct `--ref` values, each
+    worker's argv naming the checkout for its own sha — every worker's argv
+    carries that checkout as `--read` and the worker home as `--read`, and a
     `tree: yes` task finds `<jobdir>/repo` already present, sharing objects
     with the reference (`.git/objects/info/alternates` names it) and reachable
     with no network. A task text naming a directory does not change the
@@ -862,8 +963,8 @@ them.
    `125`/`126`/`127` refusals. Tests: 12, 19.
 6. **`cmd/nova-sandbox/main.go`** — the verbs, the `--` split, the output
    grammar, `probe` (test 10), `fence` (test 14), `check` (test 18),
-   `--no-sandbox` with its one loud line (test 11), and the `--read` NOTE
-   (test 21).
+   `--no-sandbox` with its one loud line (test 11), and the `--read` remedy
+   sentence in the usage banner (test 21).
 7. **The CI matrix** — linux, mac and windows jobs, each running its own
    platform's wrap tests for real and skipping the others by name (**test on
    multiple platforms**, 2026-09-09: fix the cause, not the assertion).
