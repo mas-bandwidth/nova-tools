@@ -22,6 +22,16 @@ func main() {
 		fmt.Fprintln(os.Stderr, "fake harness: no prompt file")
 		os.Exit(2)
 	}
+	// THE CONTRACT A REAL HARNESS HAS. `opencode run --model <m> -- <prompt>`: a
+	// subcommand, the model, and the prompt FILE last. The fake refused nothing before
+	// 2026-09-11, so the dispatcher's missing `--model` passed every test here and killed
+	// two real jobs in two seconds. It refuses now, the way a real one does.
+	if os.Getenv("FAKE_BACKGROUND_CHILD") != "1" {
+		if err := checkInvocation(os.Args[1:]); err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness:", err)
+			os.Exit(2)
+		}
+	}
 	raw, err := os.ReadFile(os.Args[len(os.Args)-1])
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "fake harness: the prompt could not be read:", err)
@@ -37,6 +47,12 @@ func main() {
 		if strings.HasPrefix(env, "FAKE_KEY=") {
 			fmt.Println("fake harness: the key is present, length", len(env)-len("FAKE_KEY="))
 		}
+	}
+	// The argv the dispatcher built, recorded for the test that proves the model reached
+	// the child. It carries no task text -- the task is the prompt FILE -- so writing it
+	// down puts nothing in a file that is not already in the process table.
+	if job != "" {
+		_ = os.WriteFile(filepath.Join(job, "argv"), []byte(strings.Join(os.Args[1:], " ")), 0o644)
 	}
 	// FAKE-LAUNCHES records one line per real invocation, before any directive can exit,
 	// so a test can prove how many times the machinery retried a task.
@@ -180,4 +196,30 @@ func number(prompt, name string) (int, bool) {
 		return 0, false
 	}
 	return n, true
+}
+
+// checkInvocation is what a real harness requires of its argv: its own subcommand, the
+// model it is to run, and a readable prompt file last. A harness handed a bare path treats
+// it as a project directory and does nothing at all.
+func checkInvocation(args []string) error {
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return fmt.Errorf("the first argument wants a subcommand such as `run`, got %q", strings.Join(args, " "))
+	}
+	model := ""
+	for i, a := range args {
+		if a == "--model" && i+1 < len(args) {
+			model = args[i+1]
+		}
+		if strings.HasPrefix(a, "--model=") {
+			model = strings.TrimPrefix(a, "--model=")
+		}
+	}
+	if model == "" {
+		return fmt.Errorf("no --model in %q: this harness was never told which model to run", strings.Join(args, " "))
+	}
+	last := args[len(args)-1]
+	if !strings.HasSuffix(last, "PROMPT.md") {
+		return fmt.Errorf("the last argument wants the prompt FILE, got %q", last)
+	}
+	return nil
 }

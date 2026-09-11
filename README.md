@@ -22,7 +22,7 @@ Small command-line tools for a [nova](https://github.com/mas-bandwidth/nova) sel
 
 **Install.** Three ways, none needing a credential: `go install github.com/mas-bandwidth/nova-tools/cmd/<tool>@<tag>` pinned to a release tag; a binary per platform from the release page with a `SHA256SUMS` beside it; or a clone and `go build ./...`. Go 1.26 or newer. Everybody sharing one bus should run one version, and `nova-bus version` says which.
 
-**What comes next.** Five more tools are specified and not yet built, each with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-merge` (a merge lane with local gates), `nova-swarm` (one-shot worker jobs with a token budget), `nova-wake` (waking a line only when a note for it lands), `nova-board` (cards with owners, deadlines and counts) and `nova-tokens` (token spend per day, model and repo, from every harness). They are the open pull requests on `docs/SPEC-*.md`.
+**What comes next.** Four more tools are specified and not yet built, each with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-merge` (a merge lane with local gates), `nova-wake` (waking a line only when a note for it lands), `nova-board` (cards with owners, deadlines and counts) and `nova-tokens` (token spend per day, model and repo, from every harness). They are the open pull requests on `docs/SPEC-*.md`.
 
 ---
 
@@ -415,6 +415,32 @@ QUICKSTART NOTE the conditions are worth more than the model: nova-swarm templat
 $ nova-swarm status --pool ./pool --max 20
 STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
 ```
+
+**The one input `run` cannot proceed without** is the worker description, and every field
+below is required. This one ran two real DeepSeek workers end to end on 2026-09-11:
+
+```json
+{
+  "name": "deepseek-1",
+  "provider": "deepseek",
+  "model": "deepseek/deepseek-chat",
+  "env_var": "DEEPSEEK_API_KEY",
+  "key_file": "/home/you/.keys/deepseek",
+  "usage": "opencode",
+  "harness": "opencode",
+  "harness_args": ["run", "--model", "{model}", "--title", "nova-swarm", "--", "{prompt}"],
+  "worker_dir": "/home/you/worker",
+  "deadline": "20m"
+}
+```
+
+`harness_args` is the invocation the harness needs, and `{model}` is where the model goes:
+a harness handed nothing but a path reads that path as a project directory and does
+nothing, so a description that never places `{model}` is refused before any worker starts.
+`{prompt}` is the prompt FILE, appended last where `harness_args` does not name it — the
+task text is never an argument. `usage: opencode` reads OpenCode's own `opencode.db`
+through `sqlite3 -readonly`; where no `sqlite3` is on PATH the numbers are dashes, so the
+honest first run is `--tokens unmetered` and the deadline as the only stop.
 
 **Reading it.** Every line is `<VERB> OK`, `<VERB> REFUSED` or one of `run`'s own `RUN`
 events; refusals and FAIL lines go to stderr. A job reports EXACTLY ONCE — one `RUN DONE`,

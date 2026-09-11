@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -221,11 +222,44 @@ func taskDeadline(sc Sidecar, w Worker) time.Duration {
 	return w.DefaultDeadline()
 }
 
-// harnessArgs is the harness's argv: the description's own arguments, then the prompt FILE.
-// THE TASK TEXT IS NEVER AN ARGUMENT -- the prototype took it as $1, which puts a
+// harnessArgs is the harness's argv: the description's own arguments with this tool's two
+// placeholders expanded, and the prompt FILE last where the description names no place for
+// it. THE TASK TEXT IS NEVER AN ARGUMENT -- the prototype took it as $1, which puts a
 // multi-paragraph task into the process table and into every ps a bench user runs.
+//
+// The placeholders exist because the model must REACH THE CHILD. On 2026-09-11 a real run
+// against DeepSeek decoded `model`, required it, printed it on RUN POOL, and handed the
+// harness nothing but a path: `opencode <job>/PROMPT.md` reads that path as a project
+// directory, fails to chdir, exits 0, and two jobs died in two seconds under a green
+// RUN OK. A description now writes the invocation it means --
+// ["run", "--model", "{model}", "--", "{prompt}"] -- and this function fills it in.
 func harnessArgs(w Worker, jobDir string) []string {
-	return append(append([]string{}, w.HarnessArgs...), filepath.Join(jobDir, "PROMPT.md"))
+	prompt := filepath.Join(jobDir, "PROMPT.md")
+	out := make([]string, 0, len(w.HarnessArgs)+1)
+	placed := false
+	for _, a := range w.HarnessArgs {
+		if strings.Contains(a, PromptPlaceholder) {
+			placed = true
+		}
+		out = append(out, expandHarnessArg(a, w, prompt))
+	}
+	if !placed {
+		out = append(out, prompt)
+	}
+	return out
+}
+
+// The placeholders a worker description may write into harness_args.
+const (
+	ModelPlaceholder   = "{model}"
+	PromptPlaceholder  = "{prompt}"
+	BaseURLPlaceholder = "{base_url}"
+)
+
+func expandHarnessArg(a string, w Worker, prompt string) string {
+	a = strings.ReplaceAll(a, ModelPlaceholder, w.Model)
+	a = strings.ReplaceAll(a, PromptPlaceholder, prompt)
+	return strings.ReplaceAll(a, BaseURLPlaceholder, w.BaseURL)
 }
 
 // childEnv is the child's whole environment, built rather than inherited: the key in the

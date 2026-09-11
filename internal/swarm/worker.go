@@ -78,6 +78,19 @@ func LoadWorker(path string) (Worker, []error) {
 	default:
 		problems = append(problems, fmt.Errorf("%s: usage wants `opencode` or `none`, got %q", path, w.Usage))
 	}
+	// D1, 2026-09-11: the model must REACH THE CHILD. A description that names a model and
+	// never places it in the harness's argv launches a harness that was told nothing, and
+	// the jobs die under a green RUN OK. harness_args is the invocation, and `{model}` is
+	// where the model goes.
+	placed := false
+	for _, a := range w.HarnessArgs {
+		if strings.Contains(a, ModelPlaceholder) {
+			placed = true
+		}
+	}
+	if !placed {
+		problems = append(problems, fmt.Errorf("%s: harness_args is required and must place %s, so the model this description names reaches the harness; for OpenCode it is [\"run\", \"--model\", \"{model}\", \"--\", \"{prompt}\"] -- %s is the prompt FILE, and is appended last where harness_args does not name it", path, ModelPlaceholder, PromptPlaceholder))
+	}
 	if w.Deadline != "" {
 		if _, err := time.ParseDuration(w.Deadline); err != nil {
 			problems = append(problems, fmt.Errorf("%s: deadline wants a duration such as 20m, got %q", path, w.Deadline))

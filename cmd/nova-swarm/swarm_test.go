@@ -66,7 +66,10 @@ func newBench(t *testing.T) *bench {
 		"name": "fake-1", "provider": "fake", "model": "fake-model",
 		"env_var": "FAKE_KEY", "key_file": b.keyFile, "usage": "opencode",
 		"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
-		"board": "mas-bandwidth/schema#876",
+		// The invocation a real harness needs: its subcommand, the model this description
+		// names, and the prompt FILE last (D1, 2026-09-11).
+		"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
+		"board":        "mas-bandwidth/schema#876",
 	}
 	raw, _ := json.MarshalIndent(desc, "", "  ")
 	write(t, b.worker, string(raw))
@@ -476,4 +479,82 @@ func grepTree(t *testing.T, dir, needle string) string {
 		return nil
 	})
 	return found
+}
+
+// D1 (the real run, 2026-09-11): `model` was decoded, required, printed -- and never
+// reached the child. `opencode <path>/PROMPT.md` reads the path as a PROJECT DIRECTORY,
+// so both jobs died in two seconds under a green RUN OK. The worker description's
+// harness_args carry the invocation, `{model}` is where the model goes, and `{prompt}` is
+// where the prompt file goes; the fake harness refuses an invocation a real one would not
+// understand, so the contract the tests run is the contract a first run meets.
+func TestTheHarnessIsToldWhichModelToRun(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a task that proves the invocation reached the child\n")
+
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	argv := b.jobFile(id, "argv")
+	if !strings.Contains(argv, "--model fake-model") {
+		t.Errorf("the child's argv wants `--model fake-model`, the model the description names:\n%s", argv)
+	}
+	if !strings.HasPrefix(argv, "run ") {
+		t.Errorf("the child's argv wants the harness's own subcommand first, from harness_args:\n%s", argv)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(argv), "PROMPT.md") {
+		t.Errorf("the prompt FILE is the last argument, never the task text:\n%s", argv)
+	}
+}
+
+// A worker description that never places the model is refused BEFORE any worker starts,
+// naming the field and showing the shape. This is D1 caught at the door.
+func TestAWorkerDescriptionWithoutTheModelIsRefused(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	b.add("a task nothing will run\n")
+	b.rewriteWorker(func(d map[string]any) { delete(d, "harness_args") })
+
+	exit, stdout, stderr := b.run()
+	if exit != 2 {
+		t.Fatalf("a description with no harness_args exits %d, want 2:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, "harness_args")
+	mustContain(t, "the refusal", stderr, "{model}")
+	if strings.Contains(stdout, "RUN START") {
+		t.Errorf("the refusal comes before any worker starts:\n%s", stdout)
+	}
+}
+
+// jobFile reads one file the child wrote under its job directory, found by the job id.
+func (b *bench) jobFile(id, name string) string {
+	b.t.Helper()
+	var found string
+	root := filepath.Join(b.dir, "worker-home-1", "jobs", id)
+	raw, err := os.ReadFile(filepath.Join(root, name))
+	if err != nil {
+		b.t.Fatalf("no %s under %s: %v", name, root, err)
+	}
+	found = string(raw)
+	return found
+}
+
+// rewriteWorker edits the worker description in place, so a test can take one field away.
+func (b *bench) rewriteWorker(edit func(map[string]any)) {
+	b.t.Helper()
+	raw, err := os.ReadFile(b.worker)
+	if err != nil {
+		b.t.Fatal(err)
+	}
+	var d map[string]any
+	if err := json.Unmarshal(raw, &d); err != nil {
+		b.t.Fatal(err)
+	}
+	edit(d)
+	out, err := json.MarshalIndent(d, "", "  ")
+	if err != nil {
+		b.t.Fatal(err)
+	}
+	write(b.t, b.worker, string(out))
 }
