@@ -18,6 +18,8 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 | `nova-memory` | answers "do I already know this?" | a lexical index over your own tree, rebuilt each run; hands back receipts, never a verdict |
 | `nova-bus` | a postal service over git | several minds and people send notes to each other through one repository, with the races taken out |
 | `nova-wake` | one blocking call at the attention layer | a window pays one turn per change instead of one turn per tick: it watches a bus inbox, a set of entries and other lines' `RESULT.md` files, and returns the moment one of them moves |
+| `nova-merge` | an ordered merge lane onto one base | lands entries one at a time on evidence it can name: a green gate for this head against this base, a compare-and-swap push, a conflict that is BLOCKED with its file list |
+| `nova-board` | the list of things a group of lines owes | append-only cards with owners, deadlines and defaults; `check` exits 1 when your words are already on the board, so it guards an `add` in one line of shell |
 
 **The rules every tool keeps.** Exit 0 means it ran and passed, 1 means it ran and said no, 2 means it could not run. Every path and every number comes from a flag; there is no default it could guess wrong, and a missing flag is a one-line refusal that says what the flag wants. Output is bounded: a run that finds eight hundred problems prints twenty and the number eight hundred. Standard library only. `nova-check nocode` pointed at this repository would fail it, which is the point: machinery lives here, the self stays prose.
 
@@ -25,7 +27,7 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 
 **Install.** Three ways, none needing a credential: `go install github.com/mas-bandwidth/nova-tools/cmd/<tool>@<tag>` pinned to a release tag; a binary per platform from the release page with a `SHA256SUMS` beside it; or a clone and `go build ./...`. Go 1.26 or newer. Everybody sharing one bus should run one version, and `nova-bus version` says which.
 
-**What comes next.** Four more tools are specified and not yet built, each with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-merge` (a merge lane with local gates), `nova-swarm` (one-shot worker jobs with a token budget), `nova-board` (cards with owners, deadlines and counts) and `nova-tokens` (token spend per day, model and repo, from every harness). They are the open pull requests on `docs/SPEC-*.md`.
+**What comes next.** Two more tools are specified and not yet built, each with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-swarm` (one-shot worker jobs with a token budget) and `nova-tokens` (token spend per day, model and repo, from every harness). They are the open pull requests on `docs/SPEC-*.md`.
 
 ---
 
@@ -481,6 +483,73 @@ never two:
   the pinned `nova-bus` binary, which is work list item 3a and a branch of its
   own. Advancement is an acknowledgement optimisation and not a prerequisite for
   delivery, and a v1 that cannot move a cursor cannot lose a note.
+
+## nova-merge
+
+`nova-merge` lands an **ordered lane** of entries — pull requests, or branches
+with no pull request at all — onto one base branch, one at a time, and it refuses
+to land anything whose evidence it cannot name. Its contract is
+[docs/SPEC-MERGE.md](docs/SPEC-MERGE.md), which is normative; this section is the
+door.
+
+A lane in this shape landed 30-odd pull requests onto one base in a morning, and
+failed in every way a shell loop around `gh pr merge` fails. The tool is those
+failures closed, one rule each: `--auto` and every force-push refused in the one
+function that runs a mutating command; a merge that rests on **one predicate** —
+the newest gate record for `(the entry's head, the base sha read this pass)` being
+green, for an **integration commit this tool built and publishes unchanged**; a
+compare-and-swap push whose lease is the expected base, so a base that moved is
+`MERGE RACED` *before* anything lands; reads and gates as **immutable files in the
+lane's own branch**, so a reader on another machine records a verdict where every
+lane folds it; a conflict that is `BLOCKED` with its file list and the exact hand
+command, because the lane never edits an entry's content.
+
+### First run
+
+Make a lane, queue an entry, and look at it. Every path is a flag; there is no
+default lane, no default repository and no default base.
+
+```
+$ nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
+INIT OK lane=./lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
+STATUS OK prs=0 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=0 reads=0a/0h
+
+$ nova-merge add --lane ./lane --pr 949 --needs-read
+ADD OK kind=pr entry=949 needs_read=yes lane=1/0
+
+$ nova-merge status --lane ./lane
+STATUS ENTRY kind=pr entry=949 head=deade72d3f50 checks=g4/p1/r0 read=0a/0h stale=0 gate=- state=PENDING last=-
+STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=1 reads=0a/0h
+```
+
+`quickstart` is `init` and then `status`: the lane is created once, with its
+repository, its base and the branch its records live in, and no other verb takes
+those three. `joined=false` says this lane created the record branch; a second
+lane on the same branch — a reader on another machine — prints `joined=true` and
+creates nothing.
+
+Reading that status: `state=PENDING` is an entry **waiting**, which is not a
+failure and exits 0. `checks=g4/p1/r0` counts green, pending and red **separately**
+— zero red is not the same news as zero pending, and the merge condition wants
+zero of both. `gate=-` means no gate record; `head` means one for this head against
+an older base (a candidate); `merge` means one for this head against the base as it
+is now, which is the only thing that merges. `read=0a/0h` are approves and holds
+for **this** head, and `stale=` counts the verdicts recorded for a head that has
+since moved: kept, counted, and authorizing nothing.
+
+The things a first run gets wrong, and what each one wants:
+
+- **`add --base main`** — exit 2. The base is a property of the lane, written by
+  `init`; a `--base` on a queueing verb would let two invocations disagree about
+  where the lane lands.
+- **`gate --base <sha>`** — exit 2, naming `--base-sha`. The lane's branch and the
+  base **sha** a gate was taken against are different words on purpose.
+- **`read` with no `--head`** — exit 2. A verdict binds to the sha the reader had
+  open, never to whatever the entry's head is when the verb runs: an approve
+  recorded a minute after the author pushed is an approve for code nobody read.
+- **`run --loop 5m` with no `--hours`** — exit 2. Every loop ends on its own.
+- **a verb on a directory that is not a lane** — exit 2, with the whole `init`
+  command in the refusal, and nothing written on the way past.
 
 ## nova-board
 

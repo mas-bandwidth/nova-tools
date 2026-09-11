@@ -131,6 +131,28 @@ WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=
 WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default taken
 ```
 
+## nova-merge
+
+Fixture: a bare git repository and a fake host, both made in `t.TempDir()` by
+`cmd/nova-merge/helpers_test.go`. The lane below is `./lane`; the test points it
+at a directory of its own, and `mas-bandwidth/nova-tools` resolves to the fixture
+repository, so this transcript reaches no network.
+
+### First run
+
+```
+$ nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
+INIT OK lane=./lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
+STATUS OK prs=0 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=0 reads=0a/0h
+
+$ nova-merge add --lane ./lane --pr 949 --needs-read
+ADD OK kind=pr entry=949 needs_read=yes lane=1/0
+
+$ nova-merge status --lane ./lane
+STATUS ENTRY kind=pr entry=949 head=deade72d3f50 checks=g4/p1/r0 read=0a/0h stale=0 gate=- state=PENDING last=-
+STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=1 reads=0a/0h
+```
+
 ## nova-board
 
 Fixture: `cmd/nova-board/testdata/example-board`.
