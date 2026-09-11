@@ -120,6 +120,7 @@ const UTC = "utc"
 
 // Message is the one unit every source hands the fold.
 type Message struct {
+	ID     string // the source's own message id, for the overlap check; not part of Key
 	Day    string // YYYY-MM-DD
 	Basis  string // UTC, or the zone a provider export declares
 	Model  string
@@ -164,15 +165,60 @@ type Folder struct {
 	rows  map[Key]*Row
 	turns map[string]int
 	days  map[string]bool
+
+	// idLabel is which source first fed each message id, and overlaps counts the ids two
+	// sources both fed. SPEC-TOKENS says the fold "deliberately does not check … that two
+	// sources overlap", and the numbers here still do not change: two declarations of one
+	// tree still double the day, exactly as the spec says. What changes is that the run
+	// SAYS SO. (Measured 2026-09-11: ~/.claude/projects/<session>/subagents/agent-*.jsonl
+	// and /private/tmp/.../tasks/*.output were the same 10,281 messages, the fold reported
+	// 2,932,982,350 cache_read against the correct 1,502,293,166, written=true, check OK,
+	// sum OK.)
+	idLabel  map[string]string
+	overlaps map[[2]string]int
 }
 
 // NewFolder returns an empty fold.
 func NewFolder() *Folder {
-	return &Folder{rows: map[Key]*Row{}, turns: map[string]int{}, days: map[string]bool{}}
+	return &Folder{rows: map[Key]*Row{}, turns: map[string]int{}, days: map[string]bool{},
+		idLabel: map[string]string{}, overlaps: map[[2]string]int{}}
+}
+
+// Overlap is two declared sources that fed the same message ids: not an error, and not a
+// change to any number, but the one thing a green day file cannot say for itself.
+type Overlap struct {
+	A, B string
+	IDs  int
+}
+
+// Overlaps is every pair of sources that shared an id, sorted, so the remedy can name one.
+func (f *Folder) Overlaps() []Overlap {
+	var out []Overlap
+	for pair, n := range f.overlaps {
+		out = append(out, Overlap{A: pair[0], B: pair[1], IDs: n})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].A != out[j].A {
+			return out[i].A < out[j].A
+		}
+		return out[i].B < out[j].B
+	})
+	return out
 }
 
 // Add folds one message from the source named by label.
 func (f *Folder) Add(label string, m Message) {
+	if m.ID != "" {
+		if first, seen := f.idLabel[m.ID]; !seen {
+			f.idLabel[m.ID] = label
+		} else if first != label {
+			pair := [2]string{first, label}
+			if pair[0] > pair[1] {
+				pair[0], pair[1] = pair[1], pair[0]
+			}
+			f.overlaps[pair]++
+		}
+	}
 	k := Key{Day: m.Day, Model: m.Model, Repo: m.Repo}
 	r, ok := f.rows[k]
 	if !ok {
@@ -342,6 +388,7 @@ func (s *Source) AddMessage(id string, m Message) {
 	if s.byID == nil {
 		s.byID = map[string]Message{}
 	}
+	m.ID = id
 	if _, seen := s.byID[id]; seen {
 		s.Stat.Dup++
 	} else {

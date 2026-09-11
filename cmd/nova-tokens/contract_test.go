@@ -236,3 +236,41 @@ func TestMaxZeroPrintsAllAndMaxNegativeIsRefused(t *testing.T) {
 		wantContains(t, r.stderr, "0 for all")
 	}
 }
+
+// ---------------------------------------------------------------- overlapping sources
+
+// TestTwoSourcesOverThatOneTreeAreNamed pins the collapse the spec declares and nothing
+// pinned: "It does not detect overlap between sources." Measured 2026-09-11 on the real
+// bench: ~/.claude/projects/<session>/subagents/agent-*.jsonl and
+// /private/tmp/.../tasks/*.output are the SAME messages, and declaring both reported
+// 2,932,982,350 cache_read against the correct 1,502,293,166 -- written=true, check OK,
+// sum OK, and nothing anywhere said the day had been doubled. The numbers still double,
+// because that is what the spec says this tool does; the run now says so.
+func TestTwoSourcesOverOneTreeAreNamedInTheRemedy(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	repos := reposFile(t, dir)
+	one := mkdir(t, filepath.Join(dir, "one"))
+	two := mkdir(t, filepath.Join(dir, "two"))
+	line := msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 100}, "/x/schema/a.go") + "\n"
+	write(t, filepath.Join(one, "a.jsonl"), line)
+	write(t, filepath.Join(two, "a.jsonl"), line)
+
+	single := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "bench="+one)
+	wantExit(t, single, 0)
+	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "fable\tschema\t100\t")
+	wantContains(t, lineWith(single.stdout, "TOKENS NOTE"), "nothing was wrong")
+
+	out2 := mkdir(t, filepath.Join(dir, "out2"))
+	both := invoke(t, "fold", "--out", out2, "--day", "2026-09-11", "--repos", repos,
+		"--claude", "bench="+one, "--claude", "copy="+two)
+	wantExit(t, both, 0)
+	// The day IS doubled -- the spec says the fold does not de-duplicate across sources --
+	// and the remedy names the two labels and the count.
+	wantContains(t, read(t, filepath.Join(out2, "2026-09-11.tsv")), "fable\tschema\t200\t")
+	note := lineWith(both.stdout, "TOKENS NOTE")
+	wantContains(t, note, "claude:bench")
+	wantContains(t, note, "claude:copy")
+	wantContains(t, note, "1 message ids")
+	wantContains(t, note, "TWICE")
+}

@@ -555,7 +555,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	} else {
 		fmt.Fprintf(stdout, "TOKENS OK %s\n", counts)
 	}
-	fmt.Fprintf(stdout, "TOKENS NOTE %s\n", oneline.Escape(remedy(sources, unreadable.Total(), unparsed.Total(),
+	fmt.Fprintf(stdout, "TOKENS NOTE %s\n", oneline.Escape(remedy(sources, folder.Overlaps(), unreadable.Total(), unparsed.Total(),
 		mixedList.Total(), conflicts.Total(), shrankList.Total(), *allowShrink, *out)))
 	if bad {
 		return 1
@@ -649,7 +649,7 @@ func dayLine(day string, file *tokens.DayFile, rows []*tokens.Row, folder *token
 
 // remedy is the ONE line TOKENS NOTE carries. It names the label and the act, in the order
 // a reader would act on them, and when nothing was wrong it names the gate.
-func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shrank int, allowShrink bool, out string) string {
+func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unparsed, mixed, conflict, shrank int, allowShrink bool, out string) string {
 	switch {
 	case unreadable > 0:
 		return "a declared source could not be read whole (" + firstUnreadableLabel(sources) + "): open those files to this group, or drop the flag -- a declared source is a claim that the report covers it"
@@ -674,6 +674,9 @@ func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shr
 		return "a day would have gone backwards and was left as it was: --allow-shrink writes it anyway, and it is a person's act"
 	case shrank > 0:
 		return "a day was written smaller at your word (--allow-shrink); nova-tokens check --out " + out + " is the gate"
+	case len(overlaps) > 0:
+		o := overlaps[0]
+		return "two declared sources fed the same " + strconv.Itoa(o.IDs) + " message ids (" + o.A + " and " + o.B + "): those messages are counted TWICE, because this fold does not de-duplicate across sources; one harness is one source flag, and a scratch tree under a declared directory holds the same transcripts again"
 	}
 	return "nothing was wrong; nova-tokens check --out " + out + " is the gate"
 }
