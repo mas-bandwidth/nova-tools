@@ -113,8 +113,19 @@ func Run(in RunInput) int {
 			}
 			fin, usagePath := in.settle(sc, d.File.JobDir, rec, end, now())
 			said = said || end == EndUnknown
-			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=%s usage=%s\n", n, oneline.Field(sc.ID), oneline.Field(end), oneline.Field(usagePath))
-			_ = fin
+			// ITS FILES MOVE AS RULE 12 SAYS (SPEC-SWARM.md:372). Finalize writes the
+			// usage file and the report copy; it does not move the job, and this branch
+			// never did either -- so a recovered job sat in running/ with no slot and
+			// nothing watching it, forever.
+			sc.Class, sc.End, sc.RC, sc.Ended = fin.Class, end, rec.RC, Stamp(now())
+			if fin.Class == ClassMalformed {
+				sc.Malformed = fin.MalformedLine
+			}
+			dest := destinationFor(end, fin.Class, rec.RC)
+			_ = p.WriteSidecar(Running, sc)
+			_ = p.Claim(sc.ID, Running, dest)
+			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=%s dest=%s usage=%s\n",
+				n, oneline.Field(sc.ID), oneline.Field(end), oneline.Field(dest), oneline.Field(usagePath))
 			if err := p.Free(n); err != nil {
 				fmt.Fprintf(errOut, "RUN QUARANTINE slot=%d id=%s: the slot file could not be released: %s\n", n, oneline.Field(sc.ID), oneline.Escape(redactedReason(err)))
 				quarantined[n] = true

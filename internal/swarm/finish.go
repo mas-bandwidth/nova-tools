@@ -85,15 +85,7 @@ func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (
 	if survivors > 0 && end == EndDone {
 		end = EndViolation
 	}
-	dest := Done
-	switch {
-	case end == EndViolation, end == EndKilled, end == EndUnverifiable, end == EndUnknown, end == EndFailed:
-		dest = Failed
-	case report.Class == ClassMalformed, report.Class == ClassPlanOnly, report.Class == ClassNoResult:
-		dest = Failed
-	case rec.RC != 0:
-		dest = Failed
-	}
+	dest := destinationFor(end, report.Class, rec.RC)
 	sc.Class, sc.End, sc.RC, sc.Ended, sc.Notes = report.Class, end, rec.RC, Stamp(now), notesSent
 	if survivors > 0 {
 		sc.Violation = "background"
@@ -150,6 +142,22 @@ func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (
 	return fmt.Sprintf("RUN DONE id=%s slot=%d rc=%d after=%s result=%s findings=%d refusals=%d notes=%d/%s unpublished=%t budget=%s dest=%s",
 		oneline.Field(sc.ID), r.slot, rec.RC, after, oneline.Field(report.Class), findings, refusals,
 		notesSent, oneline.Field(notesRead), unpublished, budget, dest), end, dest
+}
+
+// destinationFor is WHERE A JOB LANDS, and it is one rule for every path that ends a job:
+// the dispatcher's own `finish`, and the start-up pass that recovers a dead dispatcher's
+// job (rule 17). It was written twice and then only once -- the recovery path moved nothing
+// at all, and every recovered job stayed in running/ with no slot (DeepSeek, 2026-09-11).
+func destinationFor(end, class string, rc int) string {
+	switch {
+	case end == EndViolation, end == EndKilled, end == EndUnverifiable, end == EndUnknown, end == EndFailed:
+		return Failed
+	case class == ClassMalformed, class == ClassPlanOnly, class == ClassNoResult:
+		return Failed
+	case rc != 0:
+		return Failed
+	}
+	return Done
 }
 
 // settle is finalize in rule 12's order: the usage file, then the report copy or its marker,
