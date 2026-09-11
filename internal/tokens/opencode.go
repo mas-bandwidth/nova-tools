@@ -3,6 +3,7 @@ package tokens
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,13 +41,45 @@ const DefaultTimeout = 120 * time.Second
 // --timeout is a deadline on the process and not on this tool.
 const waitDelay = 2 * time.Second
 
-// The three queries. Assistant messages carry the usage; sessions carry the parent link a
-// child session inherits its repo across; parts carry the tool inputs a path is found in.
+// The three queries. OpenCode keeps the row itself in a JSON `data` column -- `session`
+// is the one table with the fields as columns of its own -- so every field SPEC-TOKENS
+// names (`providerID`, `modelID`, the five `tokens.*` counts, `path.cwd`, a tool part's
+// inputs) is a json_extract, and the answers come back as `sqlite3 -json` prints them:
+// a JSON array of row objects keyed by the SELECT's own aliases. Bare columns were
+// `no such column: providerID`, one TOKENS UNREADABLE, and every OpenCode row of the day
+// lost (measured 2026-09-11, folding the day beside the prototype).
+//
+// `time_created` is epoch MILLISECONDS; strftime renders it as the RFC 3339 UTC stamp
+// rule 17 folds by, so the day is the message's own stamp and never the bench's clock.
+// -json rather than -tabs because a tool part's `command` input holds tabs and newlines,
+// and a row that splits on the data inside it is a row read wrong.
 const (
-	sessionsSQL = `SELECT id, parent_id, directory FROM session`
-	messagesSQL = `SELECT id, session_id, time_created, providerID, modelID, tokens_input, tokens_output, tokens_cache_write, tokens_cache_read, tokens_reasoning, cwd FROM message WHERE role = 'assistant'`
-	partsSQL    = `SELECT message_id, session_id, input FROM part WHERE input IS NOT NULL`
+	sessionsSQL = `SELECT id AS id, parent_id AS parent_id, directory AS directory FROM session`
+	messagesSQL = `SELECT id AS id, session_id AS session_id, ` +
+		`strftime('%Y-%m-%dT%H:%M:%SZ', time_created/1000, 'unixepoch') AS stamp, ` +
+		`json_extract(data, '$.providerID') AS provider, json_extract(data, '$.modelID') AS model, ` +
+		`json_extract(data, '$.tokens.input') AS input, json_extract(data, '$.tokens.output') AS output, ` +
+		`json_extract(data, '$.tokens.cache.write') AS cache_write, json_extract(data, '$.tokens.cache.read') AS cache_read, ` +
+		`json_extract(data, '$.tokens.reasoning') AS reasoning, json_extract(data, '$.path.cwd') AS cwd ` +
+		`FROM message WHERE json_extract(data, '$.role') = 'assistant' ORDER BY time_created, id`
+	partsSQL = `SELECT message_id AS message_id, session_id AS session_id, ` +
+		`json_extract(data, '$.state.input.command') AS command, json_extract(data, '$.state.input.filePath') AS file_path, ` +
+		`json_extract(data, '$.state.input.path') AS path, json_extract(data, '$.state.input.pattern') AS pattern ` +
+		`FROM part WHERE json_extract(data, '$.type') = 'tool' ORDER BY message_id, id`
 )
+
+// partInputs are the four tool inputs SPEC-TOKENS names, in a fixed order so that one
+// database folds the same way twice.
+var partInputs = []string{"command", "file_path", "path", "pattern"}
+
+// messageCounts maps the message row's aliases onto the five types.
+var messageCounts = []struct {
+	column string
+	typ    Type
+}{
+	{"input", Input}, {"output", Output}, {"cache_write", CacheWrite},
+	{"cache_read", CacheRead}, {"reasoning", Reasoning},
+}
 
 // ReadOpenCode copies the database into scratch and reads it there.
 func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *Rules) *Source {
@@ -90,36 +123,34 @@ func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *R
 
 	parent := map[string]string{}
 	for _, row := range sessions {
-		if len(row) >= 2 {
-			parent[row[0]] = row[1]
-		}
+		parent[row["id"]] = row["parent_id"]
 	}
 	inputs := map[string][]string{}
 	for _, row := range parts {
-		if len(row) >= 3 && row[0] != "" {
-			inputs[row[0]] = append(inputs[row[0]], row[2])
+		id := row["message_id"]
+		if id == "" {
+			continue
+		}
+		for _, col := range partInputs {
+			if v := row[col]; v != "" {
+				inputs[id] = append(inputs[id], v)
+			}
 		}
 	}
 
 	sort.SliceStable(messages, func(i, j int) bool {
-		if len(messages[i]) < 3 || len(messages[j]) < 3 {
-			return false
+		if messages[i]["stamp"] != messages[j]["stamp"] {
+			return messages[i]["stamp"] < messages[j]["stamp"]
 		}
-		if messages[i][2] != messages[j][2] {
-			return messages[i][2] < messages[j][2]
-		}
-		return messages[i][0] < messages[j][0]
+		return messages[i]["id"] < messages[j]["id"]
 	})
 
 	prev := map[string]string{}
 	seen := map[string]Message{}
 	var order []string
 	for _, row := range messages {
-		if len(row) < 11 {
-			continue
-		}
-		id, session, stamp, model := row[0], row[1], row[2], row[4]
-		day := dayOfStamp(stamp)
+		id, session := row["id"], row["session_id"]
+		day := dayOfStamp(row["stamp"])
 		if day == "" {
 			continue
 		}
@@ -136,9 +167,9 @@ func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *R
 			s.Stat.NoID++
 			continue
 		}
-		m := Message{Day: day, Basis: UTC, Model: model, Repo: repo, Turn: true}
-		for i, t := range []Type{Input, Output, CacheWrite, CacheRead, Reasoning} {
-			cell := strings.TrimSpace(row[5+i])
+		m := Message{Day: day, Basis: UTC, Model: row["model"], Repo: repo, Turn: true}
+		for _, c := range messageCounts {
+			cell := strings.TrimSpace(row[c.column])
 			if cell == "" || cell == Dash {
 				continue
 			}
@@ -146,7 +177,7 @@ func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *R
 			if err != nil {
 				continue
 			}
-			m.Counts.Set(t, v)
+			m.Counts.Set(c.typ, v)
 		}
 		if _, dup := seen[id]; dup {
 			s.Stat.Dup++
@@ -162,11 +193,12 @@ func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *R
 	return s
 }
 
-// query runs one statement against the COPY, read-only, under the timeout.
-func query(db, sql string, timeout time.Duration) ([][]string, error) {
+// query runs one statement against the COPY, read-only, under the timeout, and returns
+// each row keyed by the SELECT's own aliases.
+func query(db, sql string, timeout time.Duration) ([]map[string]string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, SQLiteBinary, "-readonly", "-tabs", db, sql)
+	cmd := exec.CommandContext(ctx, SQLiteBinary, "-readonly", "-json", db, sql)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	// A killed sqlite3 can leave a grandchild holding the pipe, and Run would then wait
@@ -180,14 +212,45 @@ func query(db, sql string, timeout time.Duration) ([][]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %v: %s", SQLiteBinary, err, strings.TrimSpace(errb.String()))
 	}
-	var rows [][]string
-	for _, line := range strings.Split(strings.TrimSuffix(out.String(), "\n"), "\n") {
-		if line == "" {
-			continue
+	text := strings.TrimSpace(out.String())
+	if text == "" {
+		return nil, nil
+	}
+	dec := json.NewDecoder(strings.NewReader(text))
+	dec.UseNumber()
+	var raw []map[string]any
+	if err := dec.Decode(&raw); err != nil {
+		return nil, fmt.Errorf("%s -json did not answer with an array of rows: %v", SQLiteBinary, err)
+	}
+	rows := make([]map[string]string, 0, len(raw))
+	for _, r := range raw {
+		row := make(map[string]string, len(r))
+		for k, v := range r {
+			row[k] = cellText(v)
 		}
-		rows = append(rows, strings.Split(line, "\t"))
+		rows = append(rows, row)
 	}
 	return rows, nil
+}
+
+// cellText renders one JSON cell as text. SQL NULL is the empty string, which is a column
+// the row does not carry: a dash in the day file and never a zero (rule 15).
+func cellText(v any) string {
+	switch t := v.(type) {
+	case nil:
+		return ""
+	case string:
+		return t
+	case json.Number:
+		return t.String()
+	case bool:
+		if t {
+			return "1"
+		}
+		return "0"
+	default:
+		return fmt.Sprint(t)
+	}
 }
 
 // HaveSQLite reports whether the one required program is on PATH.

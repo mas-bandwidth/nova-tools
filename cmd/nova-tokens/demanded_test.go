@@ -721,9 +721,9 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 	db := write(t, filepath.Join(dir, "opencode.db"), "SQLite format 3\x00 not really\n")
 	write(t, db+"-wal", "wal\n")
 	logPath := fakeSqlite3(t,
-		"s1\t\t/x/schema\n",
-		"msg1\ts1\t2026-09-11T10:00:00Z\tanthropic\tmercury-2.5\t10\t20\t30\t40\t50\t/x/schema\n",
-		"msg1\ts1\t/x/schema/a.go\n")
+		ocRows(ocSession("s1", "", "/x/schema")),
+		ocRows(ocMessage("msg1", "s1", "2026-09-11T10:00:00Z", "anthropic", "mercury-2.5", "10", "20", "30", "40", "50", "/x/schema")),
+		ocRows(ocPart("msg1", "s1", "", "/x/schema/a.go", "", "")))
 
 	before, err := os.Stat(db)
 	if err != nil {
@@ -737,6 +737,14 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 	argv := read(t, logPath)
 	if !strings.Contains(argv, "-readonly") {
 		t.Errorf("an invocation carried no -readonly:\n%s", argv)
+	}
+	// The spec's --opencode section names providerID, the five tokens.* counts, path.cwd
+	// and session.directory: JSON paths, because OpenCode keeps the row in a `data`
+	// column. A query that names bare columns is `no such column: providerID`.
+	for _, want := range []string{"-json", "$.providerID", "$.modelID", "$.tokens.input", "$.tokens.cache.write", "$.tokens.reasoning", "$.path.cwd", "directory FROM session"} {
+		if !strings.Contains(argv, want) {
+			t.Errorf("no invocation named %s; the real schema keeps it in the JSON data column:\n%s", want, argv)
+		}
 	}
 	for _, line := range strings.Split(strings.TrimSpace(argv), "\n") {
 		for _, tok := range strings.Fields(line) {

@@ -149,6 +149,15 @@ func msg(id, stamp, model string, usage map[string]int, paths ...string) string 
 
 // fakeSqlite3 puts a stub sqlite3 on PATH whose answers come from the three files named,
 // and which records every invocation's argv into a log the test reads.
+//
+// The three answers are what `sqlite3 -json` prints: a JSON array of row objects keyed by
+// the SELECT's own aliases. The shape they describe is OpenCode's REAL schema, read off
+// ~/.local/share/opencode/opencode.db on 2026-09-11: `session` carries `parent_id` and
+// `directory` as columns of its own, while `message` and `part` carry `id`, `session_id`,
+// `time_created` (epoch MILLISECONDS) and one `data` column holding the row as JSON --
+// which is where `providerID`, `modelID`, `tokens.input`, `tokens.cache.write`,
+// `path.cwd` and a tool part's `state.input.*` live. A fake that answered bare columns
+// would be a fixture only this code could read.
 func fakeSqlite3(t *testing.T, sessions, messages, parts string) (logPath string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -179,6 +188,48 @@ esac
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	return logPath
+}
+
+// ocSession is one row of `sqlite3 -json` over the sessions query.
+func ocSession(id, parent, dir string) string {
+	return fmt.Sprintf(`{"id":%q,"parent_id":%s,"directory":%q}`, id, jsonOrNull(parent), dir)
+}
+
+// ocMessage is one assistant message as the real `message` table yields it: the stamp is
+// what strftime makes of `time_created`, and the five counts and the model come out of the
+// JSON `data` column. A count given as "-" is SQL NULL: the column the row does not carry.
+func ocMessage(id, session, stamp, provider, model, in, out, cw, cr, rsn, cwd string) string {
+	return fmt.Sprintf(`{"id":%q,"session_id":%q,"stamp":%s,"provider":%q,"model":%q,"input":%s,"output":%s,"cache_write":%s,"cache_read":%s,"reasoning":%s,"cwd":%q}`,
+		id, session, jsonOrNull(stamp), provider, model,
+		numOrNull(in), numOrNull(out), numOrNull(cw), numOrNull(cr), numOrNull(rsn), cwd)
+}
+
+// ocPart is one tool part: the four inputs SPEC-TOKENS names, each NULL when absent.
+func ocPart(message, session, command, filePath, path, pattern string) string {
+	return fmt.Sprintf(`{"message_id":%q,"session_id":%q,"command":%s,"file_path":%s,"path":%s,"pattern":%s}`,
+		message, session, jsonOrNull(command), jsonOrNull(filePath), jsonOrNull(path), jsonOrNull(pattern))
+}
+
+// ocRows joins row objects into the array sqlite3 -json prints, or the empty answer.
+func ocRows(rows ...string) string {
+	if len(rows) == 0 {
+		return ""
+	}
+	return "[" + strings.Join(rows, ",") + "]\n"
+}
+
+func jsonOrNull(v string) string {
+	if v == "" {
+		return "null"
+	}
+	return fmt.Sprintf("%q", v)
+}
+
+func numOrNull(v string) string {
+	if v == "" || v == "-" {
+		return "null"
+	}
+	return v
 }
 
 // swarmHeader is transcribed from SPEC-SWARM.md rule 12, whose sentence reads: "one
