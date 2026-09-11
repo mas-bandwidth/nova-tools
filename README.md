@@ -383,3 +383,73 @@ go test ./...
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+## nova-wake
+
+One blocking call at the **attention layer**, specified in
+[docs/SPEC-WAKE.md](docs/SPEC-WAKE.md). A window that coordinates other lines
+spends its turns on a clock: it sleeps, wakes, looks at three places, finds
+nothing, and sleeps again. Every one of those cycles is a model turn, and a turn
+that learns nothing is the most expensive kind of nothing there is. `nova-wake`
+is that cycle inverted — one call that returns the moment something moved, and
+otherwise at a deadline you named, so the window pays one turn per **change**
+rather than one turn per **tick**.
+
+It watches three sources — a bus inbox, the checks on a set of entries, and
+`RESULT.md` files written by other lines — and says what moved. It acts on none
+of them: **everything it prints is data.** A note it relays is not an
+instruction, a failing check is not a verdict about whose fault it is, and a
+report file is prose somebody else wrote.
+
+### First run
+
+Point it at a directory holding `RESULT.md` files and give it a state file of
+its own. `quickstart` passes `--baseline`, so the first run lists the world once
+instead of recording it quietly:
+
+```
+$ nova-wake quickstart --state ./wake.state --reports ./reports
+WAKE NOTE quickstart chose --baseline, --interval 5s and --max 5s, so a first run returns with the world listed once rather than blocking; --on-deadline report is the word it echoes back
+WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=true nova-bus=- pending=0
+WAKE REPORT path=reports/first-job/RESULT.md lines=8 bytes=220 new
+WAKE REPORT path=reports/second-job/RESULT.md lines=7 bytes=199 new
+WAKE CHANGE after=0s polls=1 bus=0 entries=0 reports=2 lines=0 pending=0
+
+$ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
+WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
+WAKE QUIET after=5s polls=1 default=report: deadline, default taken
+```
+
+How to read it. The **first** line is the opening `WAKE`, printed before
+anything is waited on, so a transcript shows the call began and what it was told
+to do — a tool call that prints nothing for twenty minutes and then prints
+everything is, while it runs, indistinguishable from one that has hung. The
+**last** line is the verdict, and its **second token** is the answer: `CHANGE`,
+`QUIET` or `BROKEN`. Read that and never the exit code, which is 0 for both of
+the first two — a deadline is not an error, it is the answer *nothing yet*, and
+a change is not a failure even when what changed is a red check.
+
+What a first run gets wrong, and what each one wants:
+
+- **No `--max`, or no `--on-deadline`.** Both are required. The deadline is the
+  one thing only you can state, because a watcher with no deadline is a window
+  that is stuck rather than waiting and nobody outside can tell the two apart;
+  the default is what *you* will do if nothing moves, echoed back on the verdict
+  so the transcript records the decision. This tool takes no action itself.
+- **No `--interval`.** The right cadence is a fact about the watched thing's
+  rate, which only you know. Entries have their own, `--entry-interval`, and it
+  is the expected length of the hosted run: an 8-minute CI run deserves one
+  check at 8 minutes, not eight checks at one minute.
+- **No source.** A watch with nothing to watch is a `sleep` with a longer name,
+  and it is the one invocation that would look like it was working.
+- **A `--max` over 60m.** A watch runs inside a tool call and every harness kills
+  a call that runs too long. Ask your harness what its limit is and sit under
+  it; 20m is the recommendation.
+- **A second watch on one `--state`.** Two runs each write the whole map, so the
+  later write erases what the earlier one learned. One state file per watch.
+
+Without `--advance-cursor` — which is specified and deliberately not in this
+build — nothing here fetches: the bus checkout is read as it stands, and every
+`WAKE SOURCE bus` line carries `head=` and `head-at=` so you can see it stand
+still. `--refresh --remote <name> --branch <name>` fetches through `nova-bus
+wait` and moves no cursor.

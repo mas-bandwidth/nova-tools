@@ -222,8 +222,12 @@ func (p *problems) missing(flag string) {
 func (p *problems) print(stderr io.Writer, verb string) int {
 	for i, what := range p.list {
 		fmt.Fprintf(stderr, "nova-wake %s: %s; run: nova-wake help\n", oneline.Escape(verb), oneline.Escape(what))
-		if p.hint[i] != "" {
-			fmt.Fprint(stderr, p.hint[i])
+		// The hint is one INDENTED line under the refusal it belongs to, and
+		// it goes through the escape like everything else: most of these are
+		// package constants, but the ones a flag's own value reaches (a
+		// duration that did not parse, an entry that is not an entry) are not.
+		if h := strings.TrimSpace(p.hint[i]); h != "" {
+			fmt.Fprintf(stderr, "  %s\n", oneline.Escape(h))
 		}
 	}
 	return 2
