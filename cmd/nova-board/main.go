@@ -319,8 +319,11 @@ func cmdList(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	// RULE 1: CARDS PRINT ONLY UNDER --list. --open and --owner are FILTERS on that
 	// listing and never an implicit one: a counting question answered with a listing is a
-	// context window spent on the good news.
-	printBoard(stdout, b, kind, source, cards, open, owner, max)
+	// context window spent on the good news. --owner IMPLIES --open, because rule 1 gives
+	// it one job — "`--list --owner <name>` prints only that owner's open cards, so one
+	// line reads its own batch of owed decisions in one command and never the board" — and
+	// a closed card in that batch is work already done read as work still owed.
+	printBoard(stdout, b, kind, source, cards, open || owner != "", owner, max)
 	return 0
 }
 
@@ -721,10 +724,18 @@ func cardLine(c *board.Card) string {
 // `CLOSED/#942` as ONE field, which is a state and a location joined by a slash and
 // unparseable by the scanner it was written for.
 func closeLine(c *board.Card) string {
+	// where= carries the same alternation the CLOSE OK line's does — `<repo#n|path|->` —
+	// so a close is the same two facts wherever it is printed: the repository and number
+	// for a land, the EVIDENCE for a probe, and a dash for a close that is a sentence. A
+	// row that was not probed was not done, and a listing that dropped the evidence would
+	// say a row was probed without saying by what.
 	where := "-"
 	tail := c.Close.Tail
-	if c.Close.Verb == "landed" {
+	switch c.Close.Verb {
+	case "landed":
 		where, tail = c.Close.In, c.Close.In
+	case "probed":
+		where = c.Close.Tail
 	}
 	return fmt.Sprintf("BOARD CLOSE id=%s by=%s at=%s how=%s override=%s where=%s: %s",
 		oneline.Field(c.ID), oneline.Field(c.Close.As), oneline.Field(c.Close.AtRaw),

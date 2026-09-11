@@ -780,11 +780,23 @@ func TestConcurrentEventsAreCountedNotHidden(t *testing.T) {
 
 	// `list --list --owner Bo` PRINTS ONLY Bo's OPEN CARDS and BOARD OK still counts the
 	// whole board: the listing is capped and filtered, the counting never is.
+	bosDone := b.add(plain("rowan", "a card Bo took and finished")...)
+	for _, verb := range [][]string{
+		b.board("take", "--as", "Bo", "--card", bosDone, "--stale", "10m"),
+		b.board("close", "--as", "Bo", "--card", bosDone, "--stale", "10m", "--how", "Bo finished it"),
+	} {
+		if exit, _, stderr := b.run(verb...); exit != 0 {
+			t.Fatalf("%v: exit %d %s", verb[0], exit, stderr)
+		}
+	}
 	_, mine, _ := b.atTime(one, b.board("list", "--stale", "10m", "--list", "--owner", "Bo")...)
+	if strings.Contains(mine, bosDone) || strings.Contains(mine, "state=CLOSED") {
+		t.Errorf("one line's own batch holds a card that is no longer owed:\n%s", mine)
+	}
 	if count(mine, "BOARD CARD") != 1 || !strings.Contains(mine, "owner=Bo") {
 		t.Errorf("--list --owner Bo printed %d cards, want Bo's one:\n%s", count(mine, "BOARD CARD"), mine)
 	}
-	if !strings.Contains(mine, "BOARD OK cards=5") {
+	if !strings.Contains(mine, "BOARD OK cards=6") {
 		t.Errorf("the filtered listing changed the board's counts:\n%s", mine)
 	}
 }

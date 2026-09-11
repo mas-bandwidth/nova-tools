@@ -708,6 +708,17 @@ func TestOpenAndOwnerAreFiltersOnTheListing(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		b.add(plain("rowan", fmt.Sprintf("thing number %d is owed", i))...)
 	}
+	// One card rowan took and closed: `--owner` is one line's own batch of OWED decisions,
+	// and a closed card is not owed.
+	done := b.add(plain("rowan", "a thing rowan has already finished")...)
+	for _, verb := range [][]string{
+		b.board("take", "--as", "rowan", "--card", done, "--stale", "10m"),
+		b.board("close", "--as", "rowan", "--card", done, "--stale", "10m", "--how", "it is done"),
+	} {
+		if exit, _, stderr := b.run(verb...); exit != 0 {
+			t.Fatalf("%v: exit %d %s", verb[0], exit, stderr)
+		}
+	}
 	for _, args := range [][]string{
 		{"list", "--stale", "10m", "--open"},
 		{"list", "--stale", "10m", "--owner", "rowan"},
@@ -720,14 +731,77 @@ func TestOpenAndOwnerAreFiltersOnTheListing(t *testing.T) {
 		if n := count(stdout, "BOARD CARD"); n != 0 {
 			t.Errorf("%v printed %d cards; list without --list prints no card:\n%s", args, n, stdout)
 		}
-		if !strings.Contains(stdout, "BOARD OK cards=3") {
+		if !strings.Contains(stdout, "BOARD OK cards=4") {
 			t.Errorf("%v did not print the board's counts:\n%s", args, stdout)
 		}
 	}
 	// Under --list the same flags are the filter they are documented as.
 	_, stdout, _ := b.run(b.board("list", "--stale", "10m", "--list", "--open")...)
 	if n := count(stdout, "BOARD CARD"); n != 3 {
-		t.Errorf("--list --open printed %d cards, want 3:\n%s", n, stdout)
+		t.Errorf("--list --open printed %d cards, want the 3 open ones:\n%s", n, stdout)
+	}
+	// "--list --owner <name> prints only that owner's OPEN cards, so one line reads its own
+	// batch of OWED decisions in one command and never the board" (rule 1). A closed card
+	// in that batch is work already done read as work still owed.
+	_, mine, _ := b.run(b.board("list", "--stale", "10m", "--list", "--owner", "rowan")...)
+	if n := count(mine, "BOARD CARD"); n != 3 {
+		t.Errorf("--list --owner rowan printed %d cards, want that owner's 3 OPEN cards:\n%s", n, mine)
+	}
+	for _, forbidden := range []string{"state=CLOSED", "BOARD CLOSE", done} {
+		if strings.Contains(mine, forbidden) {
+			t.Errorf("one line's own batch holds %q, which is not owed:\n%s", forbidden, mine)
+		}
+	}
+	if !strings.Contains(mine, "BOARD OK cards=4 open=3 closed=1") {
+		t.Errorf("the filtered listing changed the board's counts; the listing is capped and filtered, the counting never is:\n%s", mine)
+	}
+}
+
+// A PROBED CLOSE NAMES ITS EVIDENCE ON BOTH LINES. Spec, Output grammar: `CLOSE OK id=<id>
+// how=<closed|landed|probed> where=<repo#n|path|-> ...` and `BOARD CLOSE id=<id> by=<name>
+// at=<stamp> how=<closed|landed|probed> override=<true|false> where=<repo#n|path|->: <how>`
+// — the same alternation on both, so the `path` arm is the probe's evidence wherever the
+// close is printed. A row that was not probed was not done, and a listing that dropped the
+// evidence would say a row was probed without saying by what.
+func TestAProbedCloseNamesItsEvidenceOnBoardCloseToo(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	row := b.add(append(plain("rowan", "a row of the owed ledger"), "--thing", "every-field", "--leg", "cpp")...)
+	exit, stdout, stderr := b.run(b.board("close", "--as", "rowan", "--card", row, "--stale", "10m", "--probed", "./reports/probe.txt")...)
+	if exit != 0 {
+		t.Fatalf("probe: exit %d %s", exit, stderr)
+	}
+	if !strings.Contains(stdout, "how=probed where=./reports/probe.txt") {
+		t.Fatalf("CLOSE OK does not name the evidence: %q", stdout)
+	}
+	_, listing, _ := b.run(b.board("list", "--stale", "10m", "--list")...)
+	var closeLine string
+	for _, line := range strings.Split(listing, "\n") {
+		if strings.HasPrefix(line, "BOARD CLOSE") {
+			closeLine = line
+		}
+	}
+	if !strings.Contains(closeLine, "how=probed") || !strings.Contains(closeLine, "where=./reports/probe.txt") {
+		t.Errorf("BOARD CLOSE for a probed close: %q\nwant where= the evidence, as CLOSE OK printed it", closeLine)
+	}
+	// The other two arms of the same alternation stay what they are.
+	landedID := b.add(plain("rowan", "a card that lands under a number")...)
+	if exit, _, stderr := b.run(b.board("close", "--as", "rowan", "--card", landedID, "--stale", "10m", "--landed", "mas-bandwidth/nova-tools#9")...); exit != 0 {
+		t.Fatalf("land: exit %d %s", exit, stderr)
+	}
+	plainID := b.add(plain("rowan", "a card closed with a sentence")...)
+	if exit, _, stderr := b.run(b.board("close", "--as", "rowan", "--card", plainID, "--stale", "10m", "--how", "it was already done")...); exit != 0 {
+		t.Fatalf("close: exit %d %s", exit, stderr)
+	}
+	_, listing, _ = b.run(b.board("list", "--stale", "10m", "--list")...)
+	for _, want := range []string{
+		"BOARD CLOSE id=" + landedID + " by=rowan",
+		"how=landed override=false where=mas-bandwidth/nova-tools#9",
+		"how=closed override=false where=-",
+	} {
+		if !strings.Contains(listing, want) {
+			t.Errorf("the listing does not hold %q:\n%s", want, listing)
+		}
 	}
 }
 
