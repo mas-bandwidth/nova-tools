@@ -8,7 +8,14 @@ import (
 	"testing"
 )
 
+// Every test in this file owns its own bus under t.TempDir and runs parallel, EXCEPT the
+// ones that assert a delta of NoteParses. That counter is one number for the whole process,
+// so a second test parsing a note beside them would be counted into an assertion that is an
+// exact number. They are the price of instrumentation that is process-wide, and the
+// omission is named here rather than left to be guessed at.
+
 func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	// A lane with no CURSOR is a reader who has not read yet, and that is not an error.
 	got, err := ReadCursor(root, "from-ada")
@@ -71,6 +78,7 @@ func TestCursorRoundTripsAndRefusesWhatIsNotACommit(t *testing.T) {
 // OPEN v2: an entry carries the whole line the note prints as, so a later run can list it
 // without opening the note. The round trip is the proof that nothing in that line is lost.
 func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	if got, err := ReadOpen(root, "from-ada"); err != nil || got != nil {
 		t.Fatalf("a lane with no OPEN: %+v, %v", got, err)
@@ -149,6 +157,7 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 // counted cursor is exactly the state a healthy v2 reader is in. So the file says its own
 // version, and a file that does not is refused at the read, naming the repair.
 func TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	write(t, root, OpenPath("from-ada"), "bo-abcdef012345 from-bo/old.md\n")
 	_, err := ReadOpen(root, "from-ada")
@@ -172,6 +181,7 @@ func TestAnOpenListWrittenBeforeV2IsRefusedAtTheRead(t *testing.T) {
 }
 
 func TestIndexLineIsFiveFieldsAndCannotBeForged(t *testing.T) {
+	t.Parallel()
 	// A roster name holding a tab would otherwise make one record look like two, which is
 	// the same hole the printed lines close and is closed here the same way.
 	e := IndexEntry{
@@ -216,6 +226,7 @@ func TestIndexLineIsFiveFieldsAndCannotBeForged(t *testing.T) {
 // The catalogue answers a thread by id without opening a note, and falls back to the
 // filesystem for the one thing it cannot hold: a note written before ids existed.
 func TestIndexResolvesByIdAndLegacyPath(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, map[string]string{
 		"from-bo/INDEX":        "bo-abcdef012345\tfrom-bo/new.md\t2026-09-07T00:01:00Z\tAda\t-\n",
 		"from-bo/new.md":       "From: Bo\nTo: Ada\nId: bo-abcdef012345\nSubject: s\n\nbody\n",
@@ -247,6 +258,7 @@ func TestIndexResolvesByIdAndLegacyPath(t *testing.T) {
 // note contributes no line: it is addressed by path, and giving it a catalogue entry keyed
 // on an id would be inventing the id.
 func TestRebuildLaneIndexFromTheNotes(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, map[string]string{
 		"from-bo/b.md":   "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:02:00 UTC 2026\nId: bo-111111111111\nRe: new\nSubject: b\n\nbody\n",
 		"from-bo/a.md":   "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: a\n\nbody\n",
@@ -515,6 +527,7 @@ func readFile(t *testing.T, root, path string) string {
 // whole history, on every run, forever, against being asked twice about a note somebody
 // edited after I answered it.
 func TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt(t *testing.T) {
+	t.Parallel()
 	files := map[string]string{
 		"from-bo/old.md": "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:01:00 UTC 2026\nId: bo-abcdef012345\nSubject: old\n\nA question?\n",
 		"from-ada/answer.md": "From: Ada\nTo: Bo\nDate: Mon Sep  7 01:00:00 UTC 2026\nId: ada-333333333333\n" +
@@ -584,6 +597,7 @@ func TestAReplyBehindTheCursorReShowsTheNoteAndAFullReadSettlesIt(t *testing.T) 
 // an in-place write would show the new content, or a truncated half of it, through the
 // same descriptor -- so it is a direct test of the mechanism and not of a symptom.
 func TestALaneStateFileIsReplacedByRenameAndLeavesNoPartialFile(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	const lane = "from-ada"
 	first := "1111111111111111111111111111111111111111"
@@ -644,6 +658,7 @@ func TestALaneStateFileIsReplacedByRenameAndLeavesNoPartialFile(t *testing.T) {
 // the lane walk steps over rather than a stray that fails the whole check. The old file is
 // still the file, and the next write replaces it.
 func TestAStrandedTemporaryIsIgnoredByTheLaneWalk(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	files["from-bo/CURSOR"] = "1111111111111111111111111111111111111111 2026-09-09T12:00:00Z open=0\n"
 	files["from-bo/CURSOR"+TempSuffix] = "22222222222222222222222222222222222222"
@@ -677,6 +692,7 @@ func TestAStrandedTemporaryIsIgnoredByTheLaneWalk(t *testing.T) {
 // line that will be forgotten on one, and the run that forgets it opens every note behind
 // it at once.
 func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	sha := "0123456789abcdef0123456789abcdef01234567"
 	if err := WriteCursor(root, "from-ada", sha, 2, "2026-09-01", at("2026-09-09T12:34:56Z")); err != nil {
@@ -759,6 +775,7 @@ func TestTheCursorCarriesTheLegacyLineAndStaysReadableWithoutOne(t *testing.T) {
 // draws it where they actually switched -- and a date still means exactly what it always
 // meant.
 func TestTheLegacyLineIsAMomentSoTheSwitchDayIsNotAllLegacy(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	files["from-bo/2026-09-09T1806Z-a-minute-before-the-switch.md"] = `From: Bo
 To: Ada
@@ -1064,6 +1081,7 @@ func TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened(t *testing.T) {
 // Which switch-day lines are worth saying something about, and which are not. The predicate
 // under the INBOX SWITCH line: a bare DATE standing at today or later, and nothing else.
 func TestLegacyDateAtOrAfterTodayNamesOnlyAForwardDrawnDate(t *testing.T) {
+	t.Parallel()
 	now := at("2026-09-09T12:34:56Z")
 	for _, tc := range []struct {
 		line, drawn, hides string

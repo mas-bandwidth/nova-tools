@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // writeTree materializes a map of relative path -> content under dir.
@@ -56,3 +58,8 @@ func wantFailures(t *testing.T, failures []Failure, want []string) {
 		}
 	}
 }
+
+// brief renders a value for a test failure the way the tools render one for a
+// caller: one line, escaped, and capped, so a large or hostile string in a
+// fixture cannot turn a failure message into a screenful.
+func brief(s string) string { return oneline.Escape(oneline.Cap(s, 200)) }

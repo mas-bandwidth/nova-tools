@@ -18,6 +18,7 @@ The matrix key is misspelled, so the step is skipped.
 `
 
 func TestPrepareAssignsTheDateTheIDAndThePath(t *testing.T) {
+	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
 	p, err := Prepare(tab, draft, at("2026-09-09T12:34:56Z"), "")
 	if err != nil {
@@ -56,6 +57,7 @@ func TestPrepareAssignsTheDateTheIDAndThePath(t *testing.T) {
 }
 
 func TestPrepareRefuses(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, text, want string
 	}{
@@ -83,6 +85,7 @@ func TestPrepareRefuses(t *testing.T) {
 }
 
 func TestPrepareAcceptsAReByIDAndByLegacyPath(t *testing.T) {
+	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
 	for _, re := range []string{"bo-abcdef012345", "from-bo/2026-09-06-legacy-note.md", "new"} {
 		text := "From: Ada\nTo: Bo\nRe: " + re + "\nSubject: s\n\nbody\n"
@@ -95,6 +98,7 @@ func TestPrepareAcceptsAReByIDAndByLegacyPath(t *testing.T) {
 // Sending the same draft in the same second twice is one note, and the second is refused
 // by name rather than overwriting the first.
 func TestPrepareRefusesAnIDAlreadyOnTheBus(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, fixture())
 	tab := loadBus(t, root)
 	now := at("2026-09-09T12:34:56Z")
@@ -121,6 +125,7 @@ func TestPrepareRefusesAnIDAlreadyOnTheBus(t *testing.T) {
 }
 
 func TestWriteRefusesToOverwrite(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, fixture())
 	p, err := Prepare(loadBus(t, root), draft, at("2026-09-09T12:34:56Z"), "")
 	if err != nil {
@@ -150,6 +155,7 @@ func TestWriteRefusesToOverwrite(t *testing.T) {
 
 // A note sent by the tool passes check, which is the only interesting round trip here.
 func TestASentNotePassesCheck(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, fixture())
 	p, err := Prepare(loadBus(t, root), draft, at("2026-09-09T12:34:56Z"), "")
 	if err != nil {
@@ -164,6 +170,7 @@ func TestASentNotePassesCheck(t *testing.T) {
 }
 
 func TestPlanReceipts(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, fixture())
 	tab := loadBus(t, root)
 	ada := mustParticipant(t, tab.Config, "Ada")
@@ -230,6 +237,7 @@ func TestPlanReceipts(t *testing.T) {
 }
 
 func TestPlanReceiptsRefuses(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, fixture())
 	tab := loadBus(t, root)
 	ada := mustParticipant(t, tab.Config, "Ada")
@@ -256,6 +264,7 @@ func TestPlanReceiptsRefuses(t *testing.T) {
 // directory; a newline forges a second line in anything that lists the path. Every one of
 // them is a refusal, and the refusal happens in Prepare, before the bus is touched.
 func TestPrepareRefusesASlugThatIsNotASlug(t *testing.T) {
+	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
 	when := at("2026-09-09T12:34:56Z")
 	for _, slug := range []string{
@@ -302,6 +311,7 @@ func TestPrepareRefusesASlugThatIsNotASlug(t *testing.T) {
 // not produce it -- the assertion is the point, and an assertion nothing can reach today
 // is one nobody has to remember tomorrow.
 func TestSaveRefusesToWriteOutsideTheBus(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, fixture())
 	tab := loadBus(t, root)
 	p, err := Prepare(tab, draft, at("2026-09-09T12:34:56Z"), "")

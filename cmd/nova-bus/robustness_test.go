@@ -29,6 +29,7 @@ func draftFrom(who, subject, body string) string {
 // the next `send` refuse with "commits the tool did not make". Here: a send loses its push,
 // and the NEXT send runs and carries it.
 func TestASendThatLostItsPushDoesNotWedgeTheNextOne(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	other := cloneOf(t, bare)
@@ -77,6 +78,7 @@ func TestASendThatLostItsPushDoesNotWedgeTheNextOne(t *testing.T) {
 // --attempts has a default, and it is the number the scenario measured. A send that names
 // none is not a refusal.
 func TestTheRetryBudgetHasAMeasuredDefault(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
@@ -93,6 +95,7 @@ func TestTheRetryBudgetHasAMeasuredDefault(t *testing.T) {
 // own `git pull --rebase` then landed in a half-done rebase with `UU from-<lane>/INDEX`.
 // Twenty sends, ten rounds of two, and every one of them lands.
 func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	second := cloneOf(t, bare)
@@ -168,6 +171,7 @@ func TestTwoClonesOfOneLaneRacingTenRoundsAllLand(t *testing.T) {
 // 22 notes on the real bus were in no inbox and were not UNREADABLE either: they parsed,
 // and their To line named nobody. Nothing ever told anyone they were there.
 func TestANoteAddressedToNobodyIsNamed(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	const toNobody = "from-bo/2026-09-08T0100Z-team.md"
@@ -214,6 +218,7 @@ func TestANoteAddressedToNobodyIsNamed(t *testing.T) {
 // `Ada\x20Claude` and `send` refuses that. The names are quoted now, and the proof is
 // that what comes out of `names` goes into a draft the tool accepts.
 func TestNamesPrintsSomethingASendWillAccept(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	r := invoke(t, "", "names", "--bus", checkout).mustCode(t, 0)
@@ -240,6 +245,7 @@ func TestNamesPrintsSomethingASendWillAccept(t *testing.T) {
 // inlined into the reason and escaped: forty lines of git as one line of \x0d\x0a. The
 // actionable line is one line; the transcript follows it, as git wrote it.
 func TestARebaseConflictPrintsOneActionableLineAndTheTranscriptRaw(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	second := cloneOf(t, checkoutRemote(t, checkout))
@@ -284,6 +290,7 @@ func TestARebaseConflictPrintsOneActionableLineAndTheTranscriptRaw(t *testing.T)
 // no such file" -- true, and not the caller's mistake. The root check runs first, so the
 // sentence that fixes the invocation is the one seen.
 func TestASubdirectoryBusIsRefusedByItsRootAndNotByItsRoster(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	nested := filepath.Join(checkout, "docs", "bus")
@@ -314,6 +321,7 @@ func TestASubdirectoryBusIsRefusedByItsRootAndNotByItsRoster(t *testing.T) {
 // the heard notes. Both are now on the OK line, under the names they are printed under
 // elsewhere, beside the decomposition that makes them add up.
 func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-abcdef012345",
@@ -349,6 +357,14 @@ func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 
 // The subprocess budget is a flag, and a value that is not a budget is a bad invocation
 // rather than a run with no budget at all.
+//
+// NOT PARALLEL. `--git-timeout 5` does not set a budget for this run: it calls
+// bus.SetGitTimeout, which writes a package-level atomic that EVERY git call in the process
+// reads. Run beside the dozen other git tests this package now runs at once, it would cut
+// their budget to five seconds under them -- a timeout they would report as the tool
+// hanging, on whichever test happened to be slowest on a loaded runner, and never here.
+// It is the same class as the NoteParses and checkoutLockWait tests: process-global state,
+// so it runs alone.
 func TestGitTimeoutIsAFlagAndIsChecked(t *testing.T) {
 	hermetic(t)
 	checkout, _ := busDir(t)
