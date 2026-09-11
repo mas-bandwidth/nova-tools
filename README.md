@@ -383,3 +383,70 @@ go test ./...
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+## nova-merge
+
+`nova-merge` lands an **ordered lane** of entries — pull requests, or branches
+with no pull request at all — onto one base branch, one at a time, and it refuses
+to land anything whose evidence it cannot name. Its contract is
+[docs/SPEC-MERGE.md](docs/SPEC-MERGE.md), which is normative; this section is the
+door.
+
+A lane in this shape landed 30-odd pull requests onto one base in a morning, and
+failed in every way a shell loop around `gh pr merge` fails. The tool is those
+failures closed, one rule each: `--auto` and every force-push refused in the one
+function that runs a mutating command; a merge that rests on **one predicate** —
+the newest gate record for `(the entry's head, the base sha read this pass)` being
+green, for an **integration commit this tool built and publishes unchanged**; a
+compare-and-swap push whose lease is the expected base, so a base that moved is
+`MERGE RACED` *before* anything lands; reads and gates as **immutable files in the
+lane's own branch**, so a reader on another machine records a verdict where every
+lane folds it; a conflict that is `BLOCKED` with its file list and the exact hand
+command, because the lane never edits an entry's content.
+
+### First run
+
+Make a lane, queue an entry, and look at it. Every path is a flag; there is no
+default lane, no default repository and no default base.
+
+```
+$ nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
+INIT OK lane=./lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
+STATUS OK prs=0 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=0 reads=0a/0h
+
+$ nova-merge add --lane ./lane --pr 949 --needs-read
+ADD OK kind=pr entry=949 needs_read=yes lane=1/0
+
+$ nova-merge status --lane ./lane
+STATUS ENTRY kind=pr entry=949 head=deade72d3f50 checks=g4/p1/r0 read=0a/0h stale=0 gate=- state=PENDING last=-
+STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=1 reads=0a/0h
+```
+
+`quickstart` is `init` and then `status`: the lane is created once, with its
+repository, its base and the branch its records live in, and no other verb takes
+those three. `joined=false` says this lane created the record branch; a second
+lane on the same branch — a reader on another machine — prints `joined=true` and
+creates nothing.
+
+Reading that status: `state=PENDING` is an entry **waiting**, which is not a
+failure and exits 0. `checks=g4/p1/r0` counts green, pending and red **separately**
+— zero red is not the same news as zero pending, and the merge condition wants
+zero of both. `gate=-` means no gate record; `head` means one for this head against
+an older base (a candidate); `merge` means one for this head against the base as it
+is now, which is the only thing that merges. `read=0a/0h` are approves and holds
+for **this** head, and `stale=` counts the verdicts recorded for a head that has
+since moved: kept, counted, and authorizing nothing.
+
+The things a first run gets wrong, and what each one wants:
+
+- **`add --base main`** — exit 2. The base is a property of the lane, written by
+  `init`; a `--base` on a queueing verb would let two invocations disagree about
+  where the lane lands.
+- **`gate --base <sha>`** — exit 2, naming `--base-sha`. The lane's branch and the
+  base **sha** a gate was taken against are different words on purpose.
+- **`read` with no `--head`** — exit 2. A verdict binds to the sha the reader had
+  open, never to whatever the entry's head is when the verb runs: an approve
+  recorded a minute after the author pushed is an approve for code nobody read.
+- **`run --loop 5m` with no `--hours`** — exit 2. Every loop ends on its own.
+- **a verb on a directory that is not a lane** — exit 2, with the whole `init`
+  command in the refusal, and nothing written on the way past.

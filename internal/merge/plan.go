@@ -86,10 +86,15 @@ func standing(base string, checks Checks, reads Standing, gate GateStand, basePe
 	switch {
 	case admitted == "":
 		return StatePending, ""
+	case !reads.Satisfied:
+		// THE READ IS NAMED BEFORE THE GATE because the read is the thing a PERSON
+		// must do: an entry waiting on a reader and an entry waiting on a runner are
+		// two different next steps, and the one a coordinator can act on is this one.
+		// The build and the gate command still happen (classify), so naming this does
+		// not serialise the two.
+		return StateNeedsRead, admitted
 	case !gate.Green():
 		return StateNeedsGate, admitted
-	case !reads.Satisfied:
-		return StateNeedsRead, admitted
 	case basePending:
 		return StatePending, admitted
 	}

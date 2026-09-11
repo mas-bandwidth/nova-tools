@@ -46,7 +46,9 @@ func TestOnlyTheGatedObjectIsPublished(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("a lane waiting on a gate is not a failure: exit %d\n%s\n%s", exit, stdout, stderr)
 	}
-	contains(t, stdout, "state=NEEDS-GATE")
+	// The entry needs a read AND a gate; the state names the person-shaped blocker and
+	// the pass builds the integration commit anyway, so the two round trips overlap.
+	contains(t, stdout, "state=NEEDS-READ")
 	contains(t, stdout, "RUN BUILT entry=951")
 	absent(t, stdout, "MERGE OK")
 	m := mergeSHAOf(t, stdout, "951")

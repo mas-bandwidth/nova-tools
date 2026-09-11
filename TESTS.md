@@ -111,3 +111,25 @@ MEMORY CAL score=4.41 score-channel=bm25 probe=unrelated-control
 MEMORY CAND n=1: "the lantern glazing is cleaned with two cloths, one for the brass and one for the glass…"
 MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=notes name=lantern-care type=measured: notes/lantern.md:1 "the lantern glazing collects a salt haze on every onshore wind…"
 ```
+
+## nova-merge
+
+Fixture: a bare git repository and a fake host, both made in `t.TempDir()` by
+`cmd/nova-merge/helpers_test.go`. The lane below is `./lane`; the test points it
+at a directory of its own, and `mas-bandwidth/nova-tools` resolves to the fixture
+repository, so this transcript reaches no network.
+
+### First run
+
+```
+$ nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
+INIT OK lane=./lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
+STATUS OK prs=0 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=0 reads=0a/0h
+
+$ nova-merge add --lane ./lane --pr 949 --needs-read
+ADD OK kind=pr entry=949 needs_read=yes lane=1/0
+
+$ nova-merge status --lane ./lane
+STATUS ENTRY kind=pr entry=949 head=deade72d3f50 checks=g4/p1/r0 read=0a/0h stale=0 gate=- state=PENDING last=-
+STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=1 reads=0a/0h
+```

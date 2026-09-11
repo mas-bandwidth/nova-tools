@@ -70,7 +70,12 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 		return 1
 	}
 	g := merge.NewGit(*f.lane, f.dur(), deps.Runner)
-	if _, err := g.Run("clone", deps.RepoURL(*repo), merge.RepoDir); err != nil {
+	// A lane whose state.json was LOST is re-made by init on the same branch, and its
+	// checkout and its clone are still on the disk (rule 22: losing state.json loses the
+	// order and nothing else). A clone that is already here is taken rather than refused.
+	if _, err := os.Stat(filepath.Join(*f.lane, merge.RepoDir, ".git")); err == nil {
+		merge.Appendf(*f.lane, deps.Now(), "INIT took the clone that was already at %s", filepath.Join(*f.lane, merge.RepoDir))
+	} else if _, err := g.Run("clone", deps.RepoURL(*repo), merge.RepoDir); err != nil {
 		fmt.Fprintf(stderr, "INIT REFUSED: the lane's own clone could not be made: %s\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 2
 	}

@@ -115,14 +115,16 @@ func (p *Pass) classify(e *Entry, baseSHA string, res *Result) Classification {
 		}
 	case StatePending:
 		c.Detail = "waiting on evidence for this head"
-	case StateNeedsGate:
-		// Candidate evidence and no record for (oid, base sha): build the integration
-		// commit once, keep it under refs/nova-merge/integration/, and name the gate
-		// command. THIS IS THE WHOLE OF WHAT #942 TAUGHT: the head was proven, the
-		// merge was not.
-		p.build(e, &c, baseSHA, res)
 	case StateNeedsRead:
 		c.Detail = "needs an approve, for this head, by a line that is not its author"
+	}
+	// Candidate evidence and no record for (oid, base sha): build the integration commit
+	// once, keep it under refs/nova-merge/integration/, and name the gate command. THIS
+	// IS THE WHOLE OF WHAT #942 TAUGHT: the head was proven, the merge was not. It runs
+	// for NEEDS-READ as well as NEEDS-GATE, so that the gate round trip and the reader's
+	// round trip happen beside each other rather than one after the other.
+	if (state == StateNeedsGate || state == StateNeedsRead) && !c.Gate.Green() {
+		p.build(e, &c, baseSHA, res)
 	}
 	p.record(e, c)
 	return c
