@@ -282,7 +282,14 @@ func (in TriageInput) writePage(kept []folded) (string, error) {
 	return path, writeAtomic(path, []byte(b.String()), 0o644)
 }
 
-// Jobs is every task the pool knows about, in id order.
+// Jobs is every task the pool knows about whose result triage may count, in id order.
+//
+// RULE 11 (SPEC-SWARM.md:156): a job whose group left a survivor "moves to `failed/` with
+// `violation=background` in the sidecar, and `triage` does not count it". The result is
+// QUARANTINED: a report written beside a process that was still running when it was read
+// is not evidence, and folding it into a coordinator's page is the one way a quarantined
+// result reaches a person as though it were a finished one. `result --id` is how it is
+// read (rule 15), and it is still counted by `status` and by `cost`.
 func (p *Pool) Jobs() ([]Sidecar, error) {
 	var out []Sidecar
 	for _, state := range []string{Running, Done, Failed} {
@@ -290,7 +297,12 @@ func (p *Pool) Jobs() ([]Sidecar, error) {
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, list...)
+		for _, sc := range list {
+			if sc.Violation != "" {
+				continue
+			}
+			out = append(out, sc)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil

@@ -88,6 +88,16 @@ func main() {
 		_ = child.Start()
 		// The child outlives this process, which is exactly the violation rule 11 names.
 	}
+	// The other half of rule 11: a worker that forks and WAITS for its child leaves nothing
+	// alive in its group, and is no violation at all.
+	if _, ok := directive(prompt, "FAKE-FOREGROUND-CHILD"); ok && os.Getenv("FAKE_FOREGROUND_CHILD") != "1" {
+		child := exec.Command(os.Args[0], "run", "--model", "none", "--", os.Args[len(os.Args)-1])
+		child.Env = append(os.Environ(), "FAKE_FOREGROUND_CHILD=1")
+		_ = child.Run()
+	}
+	if os.Getenv("FAKE_FOREGROUND_CHILD") == "1" {
+		return
+	}
 	if os.Getenv("FAKE_BACKGROUND_CHILD") == "1" {
 		time.Sleep(60 * time.Second)
 		return

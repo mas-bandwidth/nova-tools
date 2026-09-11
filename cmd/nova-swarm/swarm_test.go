@@ -558,3 +558,102 @@ func (b *bench) rewriteWorker(edit func(map[string]any)) {
 	}
 	write(b.t, b.worker, string(out))
 }
+
+// DEMANDED TEST 11 (SPEC-SWARM.md:1274). A fake worker that forks a process which outlives
+// it ends `RUN VIOLATION background=1`, the survivor is dead afterwards, the job is in
+// `failed/` with `violation=background`, and `TRIAGE BATCH` DOES NOT COUNT ITS REPORT
+// (SPEC-SWARM.md:156, "and `triage` does not count it"). A worker that forks and WAITS for
+// its child is not a violation. The prompt carries the one-process sentence. Every job
+// prints exactly one of `RUN DONE` or `RUN VIOLATION`. And SPEC-SWARM.md:541: a run that
+// ended with a quarantined slot exits 1.
+func TestABackgroundedChildIsAViolationAndIsNotTriaged(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a worker that leaves a process behind\nFAKE-FINDINGS 2\nFAKE-BACKGROUND\n")
+
+	exit, stdout, stderr := b.run()
+	// A run that quarantined a slot says NO.
+	if exit != 1 {
+		t.Errorf("a run that quarantined a slot exits %d, want 1 (SPEC-SWARM.md:541):\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN VIOLATION id="+id)
+	mustContain(t, "the run", stdout, "background=1")
+	if strings.Contains(stdout, "RUN DONE id="+id) {
+		t.Errorf("a job reports EXACTLY ONCE: one RUN DONE or one RUN VIOLATION, never both:\n%s", stdout)
+	}
+
+	// The job is in failed/ with violation=background.
+	sc := b.sidecar(id)
+	if sc.Violation != "background" {
+		t.Errorf("the sidecar wants violation=background, got %q", sc.Violation)
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "failed", id+".json")); err != nil {
+		t.Errorf("a violation belongs in failed/: %v", err)
+	}
+
+	// THE RULE THIS TEST IS FOR: triage does not count a quarantined result.
+	exit, stdout, stderr = b.swarm("triage", "--pool", b.pool)
+	if exit != 0 {
+		t.Fatalf("triage exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "triage", stdout, "reports=0")
+	if strings.Contains(stdout, id) {
+		t.Errorf("triage folded a quarantined result into a coordinator's page:\n%s", stdout)
+	}
+	if strings.Contains(stdout, "TRIAGE FINDING") {
+		t.Errorf("a violation's findings are not a batch's findings:\n%s", stdout)
+	}
+
+	// The prompt says it in one sentence.
+	prompt := b.jobFile(id, "PROMPT.md")
+	mustContain(t, "the prompt", prompt, "THIS JOB IS ONE PROCESS")
+	mustContain(t, "the prompt", prompt, "two independent things is two tasks")
+}
+
+// The other half of rule 11: a worker that forks and WAITS for its child is not a
+// violation. Nothing survives it, so nothing is quarantined and the run exits 0.
+func TestAWorkerThatWaitsForItsChildIsNotAViolation(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a worker that forks and waits\nFAKE-FINDINGS 1\nFAKE-FOREGROUND-CHILD\n")
+
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("a worker that waits for its child is no violation; exit %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN DONE id="+id)
+	if strings.Contains(stdout, "RUN VIOLATION") {
+		t.Errorf("waiting for your own child is not backgrounding it:\n%s", stdout)
+	}
+	mustContain(t, "the run", stdout, "dest=done")
+}
+
+// sidecar reads one job's sidecar wherever it is in the pool.
+func (b *bench) sidecar(id string) swarmSidecar {
+	b.t.Helper()
+	for _, state := range []string{"pending", "running", "done", "failed"} {
+		raw, err := os.ReadFile(filepath.Join(b.pool, state, id+".json"))
+		if err != nil {
+			continue
+		}
+		var sc swarmSidecar
+		if err := json.Unmarshal(raw, &sc); err != nil {
+			b.t.Fatal(err)
+		}
+		return sc
+	}
+	b.t.Fatalf("no sidecar for %s anywhere in %s", id, b.pool)
+	return swarmSidecar{}
+}
+
+// swarmSidecar is the handful of sidecar fields these tests read. It is deliberately its
+// own type: a test that imported the package's struct would pass when the FILE stopped
+// carrying a field the struct still has.
+type swarmSidecar struct {
+	ID        string `json:"id"`
+	Violation string `json:"violation,omitempty"`
+	Launch    string `json:"launch,omitempty"`
+	End       string `json:"end,omitempty"`
+	RC        int    `json:"rc"`
+	Class     string `json:"class,omitempty"`
+}

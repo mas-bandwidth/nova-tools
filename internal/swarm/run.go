@@ -233,6 +233,13 @@ func Run(in RunInput) int {
 	if len(pending) > 0 && started == 0 && len(watching) == 0 {
 		said = true
 	}
+	// SPEC-SWARM.md:541 -- exit 1 covers "a `run` that ended with a quarantined slot or a
+	// `LAUNCH-FAILED` job". A slot RETIRED mid-run (rule 11's survivors, a data home that
+	// may still have a writer in it) is such a slot, and before this the whole pass exited
+	// 0 over it: the next reader saw a green RUN OK above a pool one worker smaller.
+	if len(quarantined) > 0 {
+		said = true
+	}
 	if said {
 		return 1
 	}
