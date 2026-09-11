@@ -158,6 +158,8 @@ func cmdAdd(args []string, stdout, stderr io.Writer, deps Deps, isBranch bool) i
 		f.require("branch", *branch, "the branch this lane is to land, as it is named at the host")
 	} else if *pr < 1 {
 		f.problem("--pr is required and is the pull request's number; refusing to guess")
+	} else if !isBranch && *pr < 1 {
+		f.problem(fmt.Sprintf("--pr is a pull request's number, which is positive, got %d; a number no host can answer for queues in this lane forever", *pr))
 	}
 	if !f.done(stderr) {
 		return 2
@@ -194,6 +196,12 @@ func cmdAdd(args []string, stdout, stderr io.Writer, deps Deps, isBranch bool) i
 		return 2
 	}
 	st, _ = merge.Load(*f.lane)
+	if yn == "no" {
+		// THE DEFAULT IS THE DIRECTION THAT MERGES WITH ZERO READS, and it was a field on
+		// a line rather than a sentence anybody read.
+		fmt.Fprintf(stderr, "ADD NOTE %s is queued with needs_read=no: this lane will merge it on its checks and its gate with NOBODY having read it; nova-merge add --lane %s %s --needs-read asks for one\n",
+			oneline.Field(id), oneline.Field(*f.lane), oneline.Escape(selectorOf(isBranch, *pr, *branch)))
+	}
 	merge.Appendf(*f.lane, deps.Now(), "ADD %s %s needs_read=%s", verb, id, yn)
 	kind := "pr"
 	if isBranch {
@@ -202,6 +210,14 @@ func cmdAdd(args []string, stdout, stderr io.Writer, deps Deps, isBranch bool) i
 	fmt.Fprintf(stdout, "ADD OK kind=%s entry=%s needs_read=%s lane=%d/%d\n",
 		kind, oneline.Field(id), yn, len(st.PRs), len(st.Branches))
 	return 0
+}
+
+// selectorOf is how a remedy names the entry it is about, on a command line.
+func selectorOf(isBranch bool, pr int, branch string) string {
+	if isBranch {
+		return "--branch " + branch
+	}
+	return "--pr " + strconv.Itoa(pr)
 }
 
 // entrySelector is (--pr <n>|--branch <name>) on read, gate and packet: exactly one.
@@ -256,6 +272,9 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 	if st == nil {
 		return code
 	}
+	nameAnEntryThisLaneDoesNotHold("read", st, id, stderr)
+	nameAnUnheldObject("read", "head", *head, *f.lane, f.dur(), deps, stderr,
+		"a verdict binds to a sha, and a sha nothing holds is a verdict about nothing; check it, or run nova-merge run --once first to fetch the entry's head")
 	sub, err := merge.NewSubmission(deps.Now())
 	if err != nil {
 		fmt.Fprintf(stderr, "READ REFUSED: %s\n", oneline.Err(err))
@@ -288,6 +307,35 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 		oneline.Field(id), oneline.Field(*who), oneline.Field(*verdict), oneline.Field(merge.Short(*head)),
 		current, approvals, holds, stale, oneline.Field(file))
 	return 0
+}
+
+// nameAnEntryThisLaneDoesNotHold says when a record is being written for an entry this
+// lane's own state does not list. A RECORD IS IMMUTABLE, so an approve for a typo'd entry
+// is an approve nobody can take back -- and `READ OK ... pushed=true` said nothing at all.
+//
+// It is a NOTE and NOT a refusal, and rule 22 is why: "add and add-branch write state.json
+// only: the order of the lane is the coordinator's and is not shared", so a reader on
+// another machine has a lane that lists none of the coordinator's entries and records for
+// them anyway -- which is the case TestAReadFromAnotherMachineReachesTheCoordinatorsNextPass
+// drives. A wall here would break the multi-machine shape the whole rule exists for.
+func nameAnEntryThisLaneDoesNotHold(verb string, st *merge.State, id string, stderr io.Writer) {
+	if st.Find(id) != nil {
+		return
+	}
+	fmt.Fprintf(stderr, "%s NOTE entry=%s: this lane's own state does not list it, so nothing here will fold this record -- which is right for a reader on another machine, and a typo otherwise; nova-merge status --lane <dir> lists what this lane holds\n",
+		strings.ToUpper(verb), oneline.Field(id))
+}
+
+// nameAnUnheldObject says when a sha this record binds to is in neither the lane's clone
+// nor its checkout. It is a NOTE and not a wall: a head may simply not be fetched yet. But
+// `READ OK ... pushed=true` for forty zeros said nothing at all.
+func nameAnUnheldObject(verb, what, sha, lane string, timeout time.Duration, deps Deps, stderr io.Writer, why string) {
+	clone := merge.NewGit(filepath.Join(lane, merge.RepoDir), timeout, deps.Runner)
+	if merge.HasObject(clone, sha) {
+		return
+	}
+	fmt.Fprintf(stderr, "%s NOTE %s=%s: this lane's clone holds no commit with this sha; %s\n",
+		strings.ToUpper(verb), what, oneline.Field(merge.Short(sha)), oneline.Escape(why))
 }
 
 // standingOf is READ OK's counts: current says whether the sha the reader supplied is the
@@ -390,6 +438,11 @@ func cmdGate(args []string, stdout, stderr io.Writer, deps Deps) int {
 		fmt.Fprintf(stderr, "GATE REFUSED: the summary could not be read: %s\n", oneline.Err(err))
 		return 2
 	}
+	nameAnUnheldObject("gate", "merge", *mergeSHA, *f.lane, f.dur(), deps, stderr,
+		"this record will not satisfy the merge predicate, which asks for an object THIS CLONE holds whose parents are the base and the head (rule 21); RUN BUILT is where the merge sha comes from")
+	// in_lane= is about the ENTRY, which is not the phrase a reader expects here; the
+	// NOTE above is what says whether the merge object is one this lane can publish. See
+	// the PR body: entry_in_lane= plus merge_in_clone= is proposed for the grammar.
 	inLane := st.Find(id) != nil
 	newest := isNewest(st, id, *head, *baseSHA, sub.At)
 	recs := merge.NewRecords(*f.lane, st.LaneBranch, "origin", merge.NewGit(*f.lane, f.dur(), deps.Runner), f.dur())

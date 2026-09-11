@@ -127,3 +127,81 @@ func TestEveryRemedyIsACommandAPersonCanRun(t *testing.T) {
 		}
 	}
 }
+
+// FG-2: `read` recorded and PUSHED an immutable approve for an entry not in the lane, and
+// for a head that is not a commit, and said nothing about either. A typo'd entry records an
+// approve nothing will ever fold, and the record cannot be taken back.
+//
+// It is a NOTE and not a refusal because rule 22 says the lane's order is the
+// coordinator's and is NOT shared: a reader on another machine has a lane listing none of
+// the entries and records for them anyway.
+func TestAReadNamesAnEntryThisLaneDoesNotHold(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	setupPR(t, l, 951, "feature-a", "a.txt", false)
+	exit, stdout, stderr := l.run("read", "--lane", l.lane, "--branch", "nosuch", "--who", "emma",
+		"--head", strings.Repeat("a", 40), "--verdict", "approve")
+	if exit != 0 {
+		t.Fatalf("read: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "READ OK")
+	contains(t, stderr, "READ NOTE entry=nosuch")
+	contains(t, stderr, "does not list it")
+}
+
+// And a head the lane's clone does not hold is NAMED. It may simply not be fetched yet, so
+// it is a note and not a wall -- but "READ OK ... pushed=true" for forty zeros said
+// nothing at all.
+func TestAReadNamesAHeadNoCloneHolds(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	setupPR(t, l, 951, "feature-a", "a.txt", false)
+	exit, stdout, stderr := l.run("read", "--lane", l.lane, "--pr", "951", "--who", "emma",
+		"--head", strings.Repeat("0", 40), "--verdict", "approve")
+	if exit != 0 {
+		t.Fatalf("read: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "READ OK entry=951")
+	contains(t, stderr, "READ NOTE")
+	contains(t, stderr, "no commit with this sha")
+}
+
+// FG-5: `add --pr N` defaults needs_read=no -- the direction that merges with zero reads --
+// as a field and not a warning, and the number was checked against nothing.
+func TestAddSaysWhatNeedsReadNoMeansAndChecksTheNumber(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	setupPR(t, l, 951, "feature-a", "a.txt", false)
+	_, stdout, stderr := l.run("add", "--lane", l.lane, "--pr", "952")
+	contains(t, stdout, "ADD OK")
+	contains(t, stderr, "ADD NOTE")
+	contains(t, stderr, "needs_read=no")
+	contains(t, stderr, "--needs-read")
+	// A number no host could ever answer for is refused rather than queued forever.
+	exit, stdout, stderr := l.run("add", "--lane", l.lane, "--pr", "0")
+	if exit != 2 {
+		t.Fatalf("a pull request number is positive: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "--pr")
+}
+
+// FG-7: `GATE OK ... in_lane=true` means "the ENTRY is in the lane", not "the merge object
+// is in the lane's clone" -- which is the phrase the tool's own help uses for the
+// predicate. A green gate for a merge commit held by neither the clone nor the remote
+// printed in_lane=true newest=true: a green receipt for a useless record.
+func TestAGateNamesAMergeObjectNoCloneHolds(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	oid := setupPR(t, l, 951, "feature-a", "a.txt", false)
+	base := l.baseSHA()
+	ghost := strings.Repeat("b", 40)
+	exit, stdout, stderr := l.run("gate", "--lane", l.lane, "--pr", "951", "--head", oid,
+		"--base-sha", base, "--merge", ghost, "--verdict", "green", "--summary", l.summary("ghost"))
+	if exit != 0 {
+		t.Fatalf("gate: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "GATE OK entry=951")
+	contains(t, stderr, "GATE NOTE")
+	contains(t, stderr, "no commit with this sha")
+	contains(t, stderr, "will not satisfy")
+}
