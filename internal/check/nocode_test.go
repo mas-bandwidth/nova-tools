@@ -231,6 +231,42 @@ func TestNoCode(t *testing.T) {
 	}
 }
 
+// The same seam for nocode, governed by the same words in SPEC.md: "Refuses
+// (exit 2) when --dir is missing, unresolvable, or does not resolve to a
+// directory, or a directory in the walk cannot be listed ... A walk error stops
+// the run without reporting partial findings." Issue #30's first item asked for
+// a named failure that keeps walking; the spec as written says refusal, so the
+// refusal is what is pinned here. Left open on #30.
+func TestNoCodeUnlistableDirIsARefusalNotAPartialReport(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
+	}
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"a.md":          "prose",
+		"locked/run.py": "print(1)",
+	})
+	locked := filepath.Join(dir, "locked")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	scanned, findings, err := NoCode(NoCodeOptions{Dir: dir})
+	if err == nil {
+		t.Fatalf("want a refusal for an unlistable directory; got scanned=%d findings=%d", scanned, len(findings))
+	}
+	if !strings.Contains(err.Error(), "locked") {
+		t.Errorf("error does not name the directory: %s", brief(err.Error()))
+	}
+	if scanned != 0 || len(findings) != 0 {
+		t.Errorf("a refusal must report nothing; got scanned=%d findings=%d", scanned, len(findings))
+	}
+}
+
 // TestNoCodeSymlinkNotFollowed is separate because it needs a real symlink.
 func TestNoCodeSymlinkNotFollowed(t *testing.T) {
 	dir := t.TempDir()

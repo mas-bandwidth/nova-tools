@@ -102,22 +102,24 @@ func checkFileLinks(root, mdPath string) (checked int, broken []BrokenLink) {
 		return 0, []BrokenLink{{File: relFile, Reason: fmt.Sprintf("unreadable (%v)", readCause(err))}}
 	}
 
+	// Fences use fenceRE, the same CommonMark rule the ledger parser uses: the
+	// opening run records its character and length, and only a run of the SAME
+	// character, at least as long and carrying nothing after it, closes it.
+	var fenceChar byte
+	var fenceLen int
 	inFence := false
-	fenceMarker := "" // the marker that opened the fence; only it can close it
 	for i, line := range strings.Split(string(data), "\n") {
 		trimmed := strings.TrimLeft(line, " \t")
-		if inFence {
-			if strings.HasPrefix(trimmed, fenceMarker) {
+		if m := fenceRE.FindStringSubmatch(trimmed); m != nil {
+			delim := m[1]
+			if !inFence {
+				inFence, fenceChar, fenceLen = true, delim[0], len(delim)
+			} else if delim[0] == fenceChar && len(delim) >= fenceLen && strings.TrimSpace(m[2]) == "" {
 				inFence = false
 			}
 			continue
 		}
-		if strings.HasPrefix(trimmed, "```") {
-			inFence, fenceMarker = true, "```"
-			continue
-		}
-		if strings.HasPrefix(trimmed, "~~~") {
-			inFence, fenceMarker = true, "~~~"
+		if inFence {
 			continue
 		}
 		line = codeSpanRE.ReplaceAllString(line, "")

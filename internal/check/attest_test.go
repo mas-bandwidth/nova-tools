@@ -3,7 +3,9 @@ package check
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -313,5 +315,92 @@ func TestAttestRefusals(t *testing.T) {
 	}
 	if _, _, err := Attest(home, filepath.Join(home, "no-such-manifest")); err == nil {
 		t.Error("nonexistent manifest should be an error")
+	}
+}
+
+// Issue #30: attest.go's package comment said "four record-layer checks" while
+// SPEC.md defines six. A test that only greps for the word "six" would agree
+// with the comment by construction and go stale the same way on a seventh, so
+// this derives the count from SPEC.md -- the authority the comment points at.
+//
+// Reviewer (#66, finding 2): deriving from SPEC alone fails on SPEC/comment
+// drift only, not on the CODE direction -- a seventh check wired into the
+// binary with no SPEC section would leave the comment stale and this test
+// green, and any non-check "### " subsection added under "## nova-check" would
+// redden it falsely. So the check NAMES are compared, not just counted: the
+// name in each SPEC subsection heading must be a verb the binary dispatches,
+// and every check verb the binary dispatches must have a SPEC subsection. The
+// numeral in attest.go's comment is then the size of that agreed set.
+//
+// It reads three files in the repo rather than a t.TempDir() tree because the
+// property under test IS those files agreeing; nothing is written.
+// dispatchRE matches one verb of run()'s switch: a case whose body hands the
+// remaining args to a cmd* handler. The flag-name cases elsewhere in main.go do
+// not, so they do not match.
+var dispatchRE = regexp.MustCompile(`(?m)^\s*case "([a-z-]+)":\s*\n\s*return cmd`)
+
+func TestRecordLayerCheckCountMatchesSPEC(t *testing.T) {
+	const specPath = "../../SPEC.md"
+	spec, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatalf("cannot read %s: %v", specPath, err)
+	}
+	// The checks are the "### " subsections between "## nova-check" and the
+	// next tool's "## " heading; each heading opens with the check's name,
+	// which is also the verb the binary dispatches ("### links -- ...").
+	inTool := false
+	specNames := map[string]bool{}
+	for _, line := range strings.Split(string(spec), "\n") {
+		switch {
+		case strings.HasPrefix(line, "## nova-check"):
+			inTool = true
+		case inTool && strings.HasPrefix(line, "## "):
+			inTool = false
+		case inTool && strings.HasPrefix(line, "### "):
+			name, _, _ := strings.Cut(strings.TrimPrefix(line, "### "), " ")
+			specNames[strings.TrimSpace(name)] = true
+		}
+	}
+
+	// The code side: the verbs run() dispatches to a cmd* handler. quickstart
+	// is the door to the first run, not a record-layer check, so it is the one
+	// verb excluded here -- SPEC.md documents it outside the "### " sections.
+	const mainPath = "../../cmd/nova-check/main.go"
+	mainSrc, err := os.ReadFile(mainPath)
+	if err != nil {
+		t.Fatalf("cannot read %s: %v", mainPath, err)
+	}
+	verbNames := map[string]bool{}
+	for _, m := range dispatchRE.FindAllStringSubmatch(string(mainSrc), -1) {
+		if m[1] != "quickstart" {
+			verbNames[m[1]] = true
+		}
+	}
+
+	for name := range specNames {
+		if !verbNames[name] {
+			t.Errorf("SPEC.md has a nova-check subsection %q that %s does not dispatch", brief(name), mainPath)
+		}
+	}
+	for name := range verbNames {
+		if !specNames[name] {
+			t.Errorf("%s dispatches check verb %q with no SPEC.md subsection", mainPath, brief(name))
+		}
+	}
+	checks := len(specNames)
+	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
+	if checks <= 0 || checks >= len(words) {
+		t.Fatalf("SPEC.md names %d nova-check subsections; expected 1..%d", checks, len(words)-1)
+	}
+	want := words[checks] + " record-layer checks"
+
+	const attestPath = "attest.go"
+	attest, err := os.ReadFile(attestPath)
+	if err != nil {
+		t.Fatalf("cannot read %s: %v", attestPath, err)
+	}
+	first, _, _ := strings.Cut(string(attest), "\n")
+	if !strings.Contains(first, want) {
+		t.Errorf("%s says %s; SPEC.md defines %d checks, so it should say %q", attestPath, brief(first), checks, want)
 	}
 }
