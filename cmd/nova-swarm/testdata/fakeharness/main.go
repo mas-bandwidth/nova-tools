@@ -18,6 +18,10 @@ import (
 )
 
 func main() {
+	if os.Getenv("FAKE_BACKGROUND_CHILD") == "1" {
+		time.Sleep(60 * time.Second)
+		return
+	}
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "fake harness: no prompt file")
 		os.Exit(2)
@@ -26,11 +30,9 @@ func main() {
 	// subcommand, the model, and the prompt FILE last. The fake refused nothing before
 	// 2026-09-11, so the dispatcher's missing `--model` passed every test here and killed
 	// two real jobs in two seconds. It refuses now, the way a real one does.
-	if os.Getenv("FAKE_BACKGROUND_CHILD") != "1" {
-		if err := checkInvocation(os.Args[1:]); err != nil {
-			fmt.Fprintln(os.Stderr, "fake harness:", err)
-			os.Exit(2)
-		}
+	if err := checkInvocation(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, "fake harness:", err)
+		os.Exit(2)
 	}
 	raw, err := os.ReadFile(os.Args[len(os.Args)-1])
 	if err != nil {
@@ -96,10 +98,6 @@ func main() {
 		_ = child.Run()
 	}
 	if os.Getenv("FAKE_FOREGROUND_CHILD") == "1" {
-		return
-	}
-	if os.Getenv("FAKE_BACKGROUND_CHILD") == "1" {
-		time.Sleep(60 * time.Second)
 		return
 	}
 	if n, ok := number(prompt, "FAKE-SLEEP"); ok {
