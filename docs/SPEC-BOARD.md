@@ -375,7 +375,6 @@ CLOSE OK id=<id> how=<closed|landed|probed> where=<repo#n|path|-> at=<stamp> own
 CLOSE REFUSED: <reason>
 CHECK HIT id=<id> state=<OPEN|CLOSED> owner=<name|->: <text>
 CHECK OK matched=<n> cards=<n> scanned=<OPEN|ALL> words=<n>
-CHECK REFUSED: <reason>
 QUICKSTART OK backend=<issue|dir> source=<where> stale=<d>: <what the two lines below are>
 QUICKSTART LINE n=<n> what=<check|add>: "<a line meant to be pasted, quoted as nova-bus names quotes>"
 QUICKSTART NOTE <something a first run needs said in words>
@@ -418,6 +417,15 @@ stemming, no synonyms, no ranking, no regular expressions — a filer who gets a
 surprising answer can see why by reading the card, and `--words` with one common
 word is a filer's mistake the output can name (`BOARD NOTE` says when one word
 matched more than half the board).
+
+**A query that matched exits 1 even when every one of its words is that common.**
+The tool's most important sentence has no exception in it: a broad query is not one
+of exit 2's causes — a missing or malformed flag, no backend or two, an unreadable
+board, a card file without its version line, an id that names no card — and a run
+that printed hits and counts plainly ran. What a match carried only by common words
+earns is a second `BOARD NOTE`, on stdout beside the counts, saying that its hits
+are about the board's prose rather than about the filer's finding; the verdict is a
+fact and what it is worth is the filer's judgment.
 
 `check` scans **open** cards by default and open plus closed under `--all`. It
 prints one `CHECK HIT` per match, capped at `--max` with a `BOARD MORE` line, and

@@ -12,7 +12,8 @@ import (
 
 // check is the rule, mechanized. CHECK BEFORE YOU FILE.
 //
-// IT EXITS 1 WHEN IT MATCHES, and that is this tool's most important sentence. A check in
+// IT EXITS 1 WHEN IT MATCHES — ALWAYS, AND WITH NO EXCEPTION — and that is this tool's
+// most important sentence. A check in
 // this repo is a thing that can say NO (SPEC.md: a check never seen failing is not a
 // check), and the NO a board owes a filer is "this is already on the board, do not file
 // it". The inverted reading — 0 for "found it" — would make the natural && chain file
@@ -107,16 +108,18 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stdout, "BOARD NOTE matched=0 over %d words: a card matches only when EVERY word appears in its text, so a long phrase is the NARROWEST check there is; try two or three rare words, as in %s\n",
 			len(query), oneline.Field(rarest(query, perWord)))
 	}
-	// F2: A MATCH CARRIED ONLY BY COMMON WORDS IS NOT A NO. Every word of this query is in
-	// more than half the cards scanned, so the hits say something about the board's prose
-	// and nothing about this filer's finding — and the guard reads exit 1 as "already
-	// filed" and drops the card. Exit 2 is the guard's could-not-run arm, which is what a
-	// query that answered nothing is. The counts still print: they are the truth about the
-	// board whatever this run did.
-	if cards > 1 && matched*2 > cards && allCommon(query, perWord, cards) {
-		fmt.Fprintf(stderr, "CHECK REFUSED: every word of --words is in more than half the %d cards scanned, so these %d hits are about the board's prose and not about your finding; narrow --words to two or three RARE words and run it again — this is not a NO\n",
+	// F2: A MATCH CARRIED ONLY BY COMMON WORDS IS SAID IN WORDS, NOT IN AN EXIT CODE. Every
+	// word of this query is in more than half the cards scanned, so the hits say something
+	// about the board's prose and nothing about this filer's finding — worth a line, and
+	// not worth a second exit code. This once returned 2, which contradicted the tool's
+	// most important sentence: a check that MATCHED exits 1, always. Exit 2 is
+	// could-not-run — a missing or malformed flag, no backend or two, an unreadable board —
+	// and a run that printed hits and counts plainly ran. The verdict is a FACT (a card on
+	// this board contains all your words); what it is worth is the filer's judgment, and
+	// this note is what that judgment needs.
+	if cards > 1 && matched > 0 && allCommon(query, perWord, cards) {
+		fmt.Fprintf(stdout, "BOARD NOTE every word of --words is in more than half the %d cards scanned, so these %d hits are about the board's prose rather than about your finding; narrow --words to two or three RARE words and run it again before you believe this NO\n",
 			cards, matched)
-		return 2
 	}
 	if matched > 0 {
 		return 1

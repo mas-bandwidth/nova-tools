@@ -435,8 +435,9 @@ nova-board add   --dir ./board --as rowan --text "the Windows runner skips three
 more words is a *narrower* check, never a broader one — `--words "the Windows CI skips
 steps"` does not match the card *the windows runner skips three steps*. Two or three rare
 words is the query that works, and `matched=0` over three or more words says so in a
-`BOARD NOTE`. A check whose every word is in more than half the board answers nothing about
-your finding and **exits 2**, not 1: a NO nobody meant must not read as *already filed*.
+`BOARD NOTE`. A check whose every word is in more than half the board still **exits 1** —
+a matched check exits 1, always — and says so in a `BOARD NOTE`: the hits are about the
+board's prose rather than about your finding, and narrowing `--words` is what sharpens it.
 
 **The default view is counts, not cards**: one line per owner, one per leg, one `BOARD OK`
 and exactly one `BOARD NEXT` naming the one thing to do first. At 500 cards across 20 lines

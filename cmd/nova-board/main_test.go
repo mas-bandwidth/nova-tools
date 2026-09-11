@@ -1027,25 +1027,37 @@ func TestCheckSaysThatEveryWordMustAppear(t *testing.T) {
 	}
 }
 
-// A TOO-BROAD --words MUST NEVER LOOK LIKE A NO NOBODY MEANT. `check --words the` matched
-// every card on the board and exited 1; the guard reads 1 as "already filed" and the
-// finding is never filed — the same lost card as a false duplicate, reached from the other
-// side. Exit 2 is the guard's could-not-run arm, which is what a query that answered
-// nothing actually is.
-func TestABroadCheckIsACouldNotRunAndNeverANo(t *testing.T) {
+// A MATCHED CHECK EXITS 1, ALWAYS — INCLUDING THE TOO-BROAD QUERY. `check --words the`
+// matches every card on the board, and the remedy the spec prescribes for a word that
+// common is a `BOARD NOTE` naming it, not a second exit code: "**`check` exits 1 when it
+// matches, and that is the tool's most important sentence**" (docs/SPEC-BOARD.md), and
+// exit 2 is could-not-run — a missing or malformed flag, no backend or two, an unreadable
+// board — none of which a broad query is. A check that answered with hits and then exited
+// 2 taught the guard that a run which DID run could not; the note says what the hits are
+// worth and the filer, who makes the judgment, reads it.
+func TestABroadCheckStillExitsOneAndNamesTheCommonWord(t *testing.T) {
 	t.Parallel()
 	b := newBench(t)
 	b.add(plain("bo", "the windows runner skips three steps")...)
 	b.add(plain("emma", "the token ledger has no September rows yet")...)
 	exit, stdout, stderr := b.run(b.board("check", "--words", "the")...)
-	if exit != 2 {
-		t.Errorf("a match carried only by a word in more than half the board: exit %d, want 2\n%s%s", exit, stdout, stderr)
+	if exit != 1 {
+		t.Errorf("a check that MATCHED exits %d, want 1 — a broad query is not a could-not-run\n%s%s", exit, stdout, stderr)
 	}
-	if !strings.Contains(stderr, "CHECK REFUSED") {
-		t.Errorf("the refusal is not named on stderr: %q", stderr)
+	if strings.Contains(stderr, "CHECK REFUSED") {
+		t.Errorf("a match was refused: %q", stderr)
+	}
+	if !strings.Contains(stdout, "BOARD NOTE the word the is in 2 of the 2 cards scanned") {
+		t.Errorf("the common word is not named on stdout:\n%s", stdout)
+	}
+	// EVERY word of this query is that common, so the hits are about the board's prose and
+	// not about the filer's finding. That is a thing to SAY, on stdout, beside the counts —
+	// it is not a second exit code.
+	if !strings.Contains(stdout, "BOARD NOTE every word of --words is in more than half the 2 cards scanned") {
+		t.Errorf("a match carried only by common words is not named:\n%s", stdout)
 	}
 	if !strings.Contains(stdout, "CHECK OK matched=2 cards=2") {
-		t.Errorf("the counts do not print on failure:\n%s", stdout)
+		t.Errorf("the counts do not print:\n%s", stdout)
 	}
 	// A rare word still says NO, and that is the sentence the whole tool rests on.
 	exit, _, _ = b.run(b.board("check", "--words", "windows")...)
