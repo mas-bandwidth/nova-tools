@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -514,163 +513,6 @@ func lastLine(s string) string {
 	return lines[len(lines)-1]
 }
 
-// Test 5's advancing half, and test 11's: the bound holds over consumed mail,
-// and the cursor waits behind the print.
-//
-// "200 notes ... with --advance-cursor on, where the bus prints --max-lines
-// notes and one WAKE MORE kind=bus ... n=160, the state holds 160 queue
-// records, the cursor has not moved, four further calls drain them in order and
-// the cursor moves on the fifth, after its print, with nova-bus asserted to
-// have received --advance exactly once; each of the first four calls prints
-// WAKE NOTE bus advance deferred once".
-func TestTheCursorWaitsBehindThePrint(t *testing.T) {
-	busDir, _ := fakes(t)
-	var notes []string
-	for i := 0; i < 200; i++ {
-		notes = append(notes, fmt.Sprintf(
-			"INBOX NOTE id=n%03d from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/n%03d.md: note %d", i, i, i))
-	}
-	write(t, filepath.Join(busDir, "out"), strings.Join(notes, "\n")+"\n")
-	state := filepath.Join(t.TempDir(), "wake.state")
-	args := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
-		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
-		"--advance-cursor", "--remote", "origin", "--branch", "main", "--max-lines", "40"}
-
-	first := wakeRun(t, args...)
-	if n := countLines(first.stdout, "WAKE BUS id="); n != 40 {
-		t.Fatalf("the first call printed %d notes, want --max-lines 40:\n%s", n, lastLine(first.stdout))
-	}
-	if !strings.Contains(first.stdout, "WAKE MORE kind=bus") || !strings.Contains(first.stdout, "n=160") {
-		t.Errorf("the elided notes are not counted:\n%s", first.stdout)
-	}
-	if n := wakeQueueRecords(t, state); n != 160 {
-		t.Errorf("%d queue records, want 160: mail consumed is mail spooled, and the queue is never evicted", n)
-	}
-
-	// Four further calls drain them, and none of the first four advances.
-	seen := 40
-	for call := 2; call <= 5; call++ {
-		r := wakeRun(t, args...)
-		if n := countLines(r.stdout, "WAKE BUS id="); n != 40 {
-			t.Fatalf("call %d printed %d notes, want 40:\n%s", call, n, lastLine(r.stdout))
-		}
-		seen += 40
-		if call < 5 && countLines(r.stdout, "WAKE NOTE bus advance deferred") != 1 {
-			t.Errorf("call %d does not say the advance is deferred:\n%s", call, r.stdout)
-		}
-		if call < 5 && advances(t, busDir) != 0 {
-			t.Fatalf("the cursor moved on call %d, with %d notes still unprinted", call, 200-seen)
-		}
-	}
-	if seen != 200 {
-		t.Fatalf("drained %d of 200", seen)
-	}
-	// The fifth call drained the queue and only then advanced.
-	if got := advances(t, busDir); got != 1 {
-		t.Errorf("nova-bus received --advance %d times, want exactly once -- after the print that emptied the queue", got)
-	}
-}
-
-// Test 11's advancing half: the residual race of The races, closed by the
-// recovery and not by a refusal.
-//
-// "The loop is killed with an injected kill point between `nova-bus inbox
-// --advance` returning and the write of its output; the state then holds
-// `bus:advance=inflight`; the next call is asserted to run `inbox --open
-// --open-max 25`, `25` being the `carrying=` it read AND NOT A CONSTANT, prints
-// the `WAKE NOTE ... recovered 25 notes from OPEN` line, and the following
-// calls print all 25 WAKE BUS lines."
-func TestTheAdvanceRecoversAnInterruptedRead(t *testing.T) {
-	busDir, _ := fakes(t)
-	// Poll 1: nothing owed, so the call advances behind an empty queue.
-	write(t, filepath.Join(busDir, "out.1"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
-	state := filepath.Join(t.TempDir(), "wake.state")
-	args := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
-		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
-		"--advance-cursor", "--remote", "origin", "--branch", "main", "--max-lines", "0"}
-
-	// The kill lands between the advance returning and the write of its output.
-	// A backlog ABOVE nova-bus's default OPEN display cap of 20, so a fixed
-	// --open-max would recover a fixed number.
-	wake.AdvanceKillPoint = "after-advance"
-	wakeRun(t, args...)
-	wake.AdvanceKillPoint = ""
-	if !strings.Contains(read(t, state), "bus:advance") || !strings.Contains(read(t, state), "inflight") {
-		t.Fatalf("the kill did not leave the marker:\n%s", read(t, state))
-	}
-
-	// What the cursor passed is on the reader's own OPEN list and on no other:
-	// a plain inbox prints carrying= and no NOTE line for it.
-	var carried []string
-	for i := 0; i < 25; i++ {
-		carried = append(carried, fmt.Sprintf(
-			"INBOX NOTE id=c%02d from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/c%02d.md: carried %d", i, i, i))
-	}
-	// The fake's poll counter: run one read the inbox (1) and advanced (2), so
-	// the recovery's plain inbox is the third call and its --open read the
-	// fourth. `version` does not count.
-	write(t, filepath.Join(busDir, "out"), "INBOX OPEN carrying=25 heard=0\n")
-	write(t, filepath.Join(busDir, "out.3"), "INBOX OPEN carrying=25 heard=0\n")
-	write(t, filepath.Join(busDir, "out.4"), strings.Join(carried, "\n")+"\n")
-
-	r := wakeRun(t, args...)
-	if !strings.Contains(r.stdout, "WAKE NOTE bus advance was interrupted; recovered 25 notes from OPEN") {
-		t.Errorf("the recovery is not said out loud:\n%s", r.all())
-	}
-	if n := countLines(r.stdout, "WAKE BUS id=c"); n != 25 {
-		t.Errorf("%d of the 25 consumed notes were printed; the residual is a repeated wake, never a lost one:\n%s", n, lastLine(r.stdout))
-	}
-	var sawOpen bool
-	for _, c := range calls(t, busDir) {
-		if strings.Contains(c, "--open --open-max 25") {
-			sawOpen = true
-		}
-		if strings.Contains(c, "--open-max 20") {
-			t.Errorf("the recovery used a constant: nova-bus caps the listed OPEN at --open-max, and a fixed number recovers a fixed number: %q", c)
-		}
-	}
-	if !sawOpen {
-		t.Errorf("the carried list was not read whole with --open-max equal to carrying=:\n%s", strings.Join(calls(t, busDir), "\n"))
-	}
-	if strings.Contains(read(t, state), "inflight") {
-		t.Errorf("the marker was not cleared after the recovery:\n%s", read(t, state))
-	}
-	// Rule 7 covers the recovery's own reads: "every line the bus source reads
-	// is classified as suppressed, relayed or standing, and every line is
-	// counted", and read equals the sum of the other three. A recovery that
-	// read the bus and counted none of it leaves that sum short.
-	var source string
-	for _, line := range strings.Split(r.stdout, "\n") {
-		if strings.HasPrefix(line, "WAKE SOURCE bus ") {
-			source = line
-		}
-	}
-	if source == "" {
-		t.Fatalf("no WAKE SOURCE line:\n%s", r.stdout)
-	}
-	n := map[string]int{}
-	for _, tok := range strings.Fields(source) {
-		k, v, ok := strings.Cut(tok, "=")
-		if !ok {
-			continue
-		}
-		if i, err := strconv.Atoi(v); err == nil {
-			n[k] = i
-		}
-	}
-	if n["read"] != n["suppressed"]+n["relayed"]+n["standing"] {
-		t.Errorf("the four counts do not add up: %s", source)
-	}
-	// Every line of this call: the recovery's own plain inbox (one INBOX OPEN),
-	// the carried list it recovered (25 notes), the poll after it (one INBOX
-	// OPEN) and the advance behind the drained queue (one more). A recovery
-	// that read the bus and counted none of it leaves read at 27.
-	if n["read"] != 28 || n["suppressed"] != 3 {
-		t.Errorf("read=%d suppressed=%d; the recovery's own read is a read, and rule 7 says every line of it is counted: %s",
-			n["read"], n["suppressed"], source)
-	}
-}
-
 // wakeQueueRecords counts the delivery queue in a state file, without counting
 // its counter.
 func wakeQueueRecords(t *testing.T, state string) int {
@@ -678,18 +520,6 @@ func wakeQueueRecords(t *testing.T, state string) int {
 	n := 0
 	for _, line := range strings.Split(read(t, state), "\n") {
 		if strings.HasPrefix(line, "queue:") && !strings.HasPrefix(line, "queue:next|") {
-			n++
-		}
-	}
-	return n
-}
-
-// advances counts the invocations of the fake nova-bus that carried --advance.
-func advances(t *testing.T, busDir string) int {
-	t.Helper()
-	n := 0
-	for _, c := range calls(t, busDir) {
-		if advanced(c) {
 			n++
 		}
 	}

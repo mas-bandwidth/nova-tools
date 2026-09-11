@@ -750,66 +750,20 @@ func TestNewMailReachesTheCheckoutThroughTheAdvance(t *testing.T) {
 		}
 	})
 
-	// Work list item 3a, and test 12's advancing half: "a note is pushed from
-	// the other clone while one watcher runs alone with --advance-cursor and is
-	// relayed WITHIN TWO POLLS". New mail reaches the checkout through the
-	// fetch inside `inbox --advance`'s push and is listed by the NEXT inbox.
-	t.Run("--advance-cursor relays new mail within two advancing polls", func(t *testing.T) {
-		busDir, _ := fakes(t)
-		write(t, filepath.Join(busDir, "out.1"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
-		// The advance: its push fetched, and it lists nothing new itself.
-		write(t, filepath.Join(busDir, "out.2"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
-		// The next plain inbox lists what the push brought down.
-		write(t, filepath.Join(busDir, "out"),
-			"INBOX NOTE id=new001 from=Stella addr=to at=2026-09-11T11:09:00Z path=from-stella/new.md: pushed by the other clone\n")
+	// "--advance-cursor is specified here and is not in the first build. Work
+	// list item 3a ships it after item 3 is read and test 11 is green against
+	// the PINNED BINARY; until then the flag is WAKE REFUSED: --advance-cursor
+	// is not in this build; use --refresh, exit 2." That gate is not met while
+	// the advancing tests run against a fake, so the flag is refused and item
+	// 3a is a branch of its own, against the real nova-bus.
+	t.Run("--advance-cursor is not in this build", func(t *testing.T) {
+		fakes(t)
 		state := filepath.Join(t.TempDir(), "wake.state")
-		r := wakeRun(t, "watch", "--state", state, "--max", "20s", "--on-deadline", "report",
+		r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
 			"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
 			"--advance-cursor", "--remote", "origin", "--branch", "main")
-		if r.exit != 0 {
-			t.Fatalf("exit = %d; %s", r.exit, r.all())
-		}
-		if !strings.Contains(r.stdout, "WAKE BUS id=new001") {
-			t.Errorf("the note was not relayed within two advancing polls:\n%s", r.all())
-		}
-		advances := 0
-		for _, c := range calls(t, busDir) {
-			if advanced(c) {
-				advances++
-				if !strings.Contains(c, "--remote origin") || !strings.Contains(c, "--branch main") {
-					t.Errorf("the advance is the one write-side call and it pushes: %q", c)
-				}
-			}
-		}
-		if advances == 0 {
-			t.Errorf("nothing advanced:\n%s", strings.Join(calls(t, busDir), "\n"))
-		}
-	})
-
-	// "The cursor never moves past a note this tool has not spooled, and never
-	// moves while a note is unprinted." A call holding unprinted mail prints up
-	// to the cap, returns, and DOES NOT ADVANCE.
-	t.Run("--advance-cursor defers behind unprinted notes", func(t *testing.T) {
-		busDir, _ := fakes(t)
-		write(t, filepath.Join(busDir, "out"), strings.Join([]string{
-			"INBOX NOTE id=aaa111 from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/a.md: one",
-			"INBOX NOTE id=bbb222 from=Johnny addr=to at=2026-09-11T11:01:00Z path=from-johnny/b.md: two",
-		}, "\n")+"\n")
-		state := filepath.Join(t.TempDir(), "wake.state")
-		args := []string{"watch", "--state", state, "--max", "20s", "--on-deadline", "report",
-			"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
-			"--advance-cursor", "--remote", "origin", "--branch", "main", "--max-lines", "1"}
-		r := wakeRun(t, args...)
-		if n := countLines(r.stdout, "WAKE NOTE bus advance deferred"); n != 1 {
-			t.Errorf("%d deferred notes, want exactly one per call that holds unprinted mail:\n%s", n, r.stdout)
-		}
-		for _, c := range calls(t, busDir) {
-			if advanced(c) {
-				t.Errorf("the cursor moved past a note this tool has not printed: %q", c)
-			}
-		}
-		if !strings.Contains(r.stdout, "pending=1") {
-			t.Errorf("the verdict does not carry what the window has not been shown:\n%s", r.stdout)
+		if r.exit != 2 || !strings.Contains(r.stderr, "not in this build; use --refresh") {
+			t.Errorf("exit = %d; %s", r.exit, r.stderr)
 		}
 	})
 
@@ -1037,117 +991,6 @@ func (w *failingWriter) Write(p []byte) (int, error) {
 		return 0, fmt.Errorf("the reader has gone")
 	}
 	return len(p), nil
-}
-
-// The first race of The races: "two watchers advancing one bus cursor ... one
-// advancing watcher per (bus, as): an exclusive kernel lock, the second is WAKE
-// REFUSED exit 2 naming the holder". Two calls over one pair interleave, each
-// consuming the notes the other should have relayed, and each returns a partial
-// listing that looks complete.
-func TestASecondAdvancingWatcherOnOnePairRefuses(t *testing.T) {
-	busDir, _ := fakes(t)
-	write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
-	bus := t.TempDir()
-	release, holder, err := wake.LockAdvance(bus, "Rowan")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if release == nil {
-		t.Fatalf("the first advancing watcher could not take the cursor lock (held by %s)", holder)
-	}
-	defer release()
-
-	args := []string{"watch", "--state", filepath.Join(t.TempDir(), "wake.state"),
-		"--max", "5s", "--on-deadline", "report", "--interval", "5s",
-		"--bus", bus, "--as", "Rowan", "--receipt-max-words", "40",
-		"--advance-cursor", "--remote", "origin", "--branch", "main"}
-	r := wakeRun(t, args...)
-	if r.exit != 2 {
-		t.Fatalf("exit = %d, want 2: a cursor two runs move is a claim neither of them can make\n%s", r.exit, r.all())
-	}
-	lines := strings.Split(strings.TrimSuffix(r.stderr, "\n"), "\n")
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "WAKE REFUSED: ") {
-		t.Fatalf("the refusal is not one WAKE REFUSED line:\n%s", r.stderr)
-	}
-	if !strings.Contains(lines[0], fmt.Sprint(os.Getpid())) {
-		t.Errorf("the refusal does not name the holder:\n%s", lines[0])
-	}
-	for _, c := range calls(t, busDir) {
-		if advanced(c) {
-			t.Errorf("the second watcher advanced a cursor the first one holds: %q", c)
-		}
-	}
-
-	// And with the first one gone, the same call runs.
-	release()
-	if r := wakeRun(t, args...); r.exit != 0 {
-		t.Errorf("the lock outlived its holder: exit %d\n%s", r.exit, r.all())
-	}
-}
-
-// The advance lock may not sit in the bus WORKTREE. `nova-bus inbox --advance`
-// refuses a dirty checkout, and an untracked dotfile is dirty -- so a lock at
-// the bus root makes the one write-side call this tool has refuse every time,
-// and the watcher is blind while looking perfectly healthy. internal/bus says
-// it in its own words: a lock belongs in the git directory, which is
-// per-checkout, "and a lock at the bus root would be a file on the bus".
-func TestTheAdvanceLockDoesNotDirtyTheBus(t *testing.T) {
-	busDir := t.TempDir()
-	gitRun(t, busDir, "init", "--quiet", "-b", "main")
-	write(t, filepath.Join(busDir, "participants.json"), "{}\n")
-	gitRun(t, busDir, "add", "-A")
-	gitRun(t, busDir, "-c", "user.name=T", "-c", "user.email=t@example.com", "commit", "-q", "-m", "the bus")
-
-	release, holder, err := wake.LockAdvance(busDir, "Rowan")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if release == nil {
-		t.Fatalf("the lock could not be taken (held by %s)", holder)
-	}
-	defer release()
-
-	out := gitRun(t, busDir, "status", "--porcelain", "--untracked-files=all")
-	if strings.TrimSpace(out) != "" {
-		t.Errorf("the advance lock dirtied the bus checkout, and `inbox --advance` refuses a dirty checkout:\n%s", out)
-	}
-	// And it still locks: a second taker is refused.
-	if again, _, err := wake.LockAdvance(busDir, "Rowan"); err != nil || again != nil {
-		t.Errorf("the lock stopped locking: it was taken a second time (err=%v)", err)
-	}
-}
-
-func gitRun(t *testing.T, dir string, args ...string) string {
-	t.Helper()
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	raw, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("git %v: %v\n%s", args, err, raw)
-	}
-	return string(raw)
-}
-
-// "A source fails when the bus's nova-bus exits other than 0 or times out", and
-// the third consecutive failure ends the watch. An advance that fails every
-// call is a watcher that never fetches -- the rule-12 blindness -- and it must
-// reach WAKE BROKEN rather than printing WAKE POLL forever.
-func TestAFailingAdvanceReachesBroken(t *testing.T) {
-	busDir, _ := fakes(t)
-	write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
-	// The polls succeed; every advance -- the even-numbered call -- fails.
-	for _, n := range []string{"2", "4", "6", "8"} {
-		write(t, filepath.Join(busDir, "exit."+n), "1\n")
-	}
-	state := filepath.Join(t.TempDir(), "wake.state")
-	r := wakeRun(t, "watch", "--state", state, "--max", "60s", "--on-deadline", "report",
-		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
-		"--advance-cursor", "--remote", "origin", "--branch", "main")
-	if !strings.HasPrefix(lastLine(r.stdout), "WAKE BROKEN source=bus failures=3") {
-		t.Errorf("an advance that fails every call ends %q; a watcher that cannot fetch is not watching, and a WAKE QUIET from it would be a lie", lastLine(r.stdout))
-	}
-	if r.exit != 2 {
-		t.Errorf("exit = %d, want 2", r.exit)
-	}
 }
 
 // The refusal set is what a poll that could not be read produced, and it is

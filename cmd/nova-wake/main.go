@@ -383,20 +383,12 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 		if *as == "" {
 			return refused(stderr, "--advance-cursor without --as: the --as name IS the claim, and a watcher may not advance a cursor that is not the window's own")
 		}
-		if *remote == "" || *branch == "" {
-			return refused(stderr, "--advance-cursor without --remote and --branch: the advance is the one write-side call this tool makes, and it pushes")
-		}
-		// One advancing watcher per (bus, as), for the WHOLE call: two calls
-		// over one pair interleave, each consuming the notes the other should
-		// have relayed, and each returns a partial listing that looks complete.
-		releaseCursor, cursorHolder, cerr := wake.LockAdvance(*busDir, *as)
-		if cerr != nil {
-			return refused(stderr, oneline.Err(cerr))
-		}
-		if releaseCursor == nil {
-			return refused(stderr, "another nova-wake is advancing "+*as+"'s cursor on this bus (pid "+cursorHolder+"); one advancing watcher per bus and name, because a cursor two runs move is a claim neither of them can make")
-		}
-		defer releaseCursor()
+		// Item 3a ships this, and the spec's own gate for it is "after item 3
+		// is read and test 11 is green AGAINST THE PINNED BINARY". Until those
+		// tests run against the real nova-bus, the flag is refused -- which is
+		// what the spec says it must be, and a v1 that cannot move a cursor
+		// cannot lose a note.
+		return refused(stderr, "--advance-cursor is not in this build; use --refresh")
 	}
 
 	timeout := time.Duration(*ghTimeout) * time.Second
@@ -462,10 +454,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 		stdout: stdout, stderr: stderr, clock: clock, st: st, statePath: *state,
 		maxLines: *maxLines, finalOnly: *finalOnly, baseline: *baseline,
 		cold: st.Cold() && !*baseline, sources: sources, bus: busSrc, lines: lineView,
-		busDir: *busDir, timeout: timeout, advance: *advance,
-	}
-	if *advance {
-		w.advancer = &wake.Advancer{Bus: busSrc, Clock: clock}
+		busDir: *busDir, timeout: timeout, advance: false,
 	}
 	if quickstart {
 		fmt.Fprintf(stdout, "WAKE NOTE quickstart chose --baseline, --interval %s and --max %s, so a first run returns with the world listed once rather than blocking; --on-deadline %s is the word it echoes back\n",
@@ -475,7 +464,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 		oneline.Field(wake.Stamp(now)), oneline.Field(dash(*as)), oneline.Field(wake.Dur(max)),
 		oneline.Field(wake.Dur(every)), oneline.Field(*onDeadline), oneline.Field(sourceList(*busDir, entries, reports)),
 		oneline.Field(*state), w.cold, oneline.Field(busVersion), st.Pending())
-	if *busDir != "" && !*refresh && !*advance {
+	if *busDir != "" && !*refresh {
 		w.note("bus checkout is read as it stands; nothing fetches without --advance-cursor; freshness is head-at=")
 	}
 	return w.loop(ctx, now, max, *onDeadline)
@@ -562,7 +551,6 @@ type watcher struct {
 	busDir         string
 	timeout        time.Duration
 	advance        bool
-	advancer       *wake.Advancer
 
 	head, headAt string
 	// refusal holds the keys of lines this call read from a poll that ENDED
@@ -571,8 +559,6 @@ type watcher struct {
 	// rule-8 streak rather than returning the call as news at after=0s, which
 	// is the tick loop this tool exists to delete.
 	refusal       map[string]bool
-	busRead       bool
-	busFail       bool
 	failing       map[string]bool
 	notes         map[string]bool
 	changed       map[string]int
@@ -598,10 +584,6 @@ func (w *watcher) note(text string) {
 func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, onDeadline string) int {
 	deadline := start.Add(max)
 	w.changed = map[string]int{}
-	// Step 4, before anything else is polled: a call that finds the marker
-	// spools every unprinted note off the reader's OWN OPEN list, because a
-	// plain inbox does not re-list a note the cursor has passed.
-	w.recoverAdvance(ctx, start)
 	for {
 		now := w.clock.Now()
 		// The deadline is read BEFORE anything is polled, so that --max is the
@@ -609,7 +591,6 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 		// watch that polled at its deadline would make one more call against
 		// somebody else's server for an answer it has no time to print.
 		reached := !now.Before(deadline)
-		w.busRead, w.busFail = false, false
 		broken := ""
 		if !reached {
 			for _, s := range w.sources {
@@ -640,32 +621,6 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 		w.save()
 		printed, news := w.printQueue(now)
 		_ = printed
-		// Steps 2 and 3: the cursor waits behind the print, and a poll advances
-		// only when this tool's bus queue holds nothing after it.
-		// The advance is the bus source too, and its streak is read AFTER it
-		// has had its turn: an advance that fails every call must reach three
-		// and say BROKEN rather than running to the deadline as quiet.
-		if broken == "" {
-			if n, _, _ := w.st.Streak("bus"); n >= 3 {
-				broken = "bus"
-			}
-		}
-		if w.advanceOrDefer(ctx, now) {
-			// The injected kill of test 11: the process died between the
-			// advance returning and the write of its output.
-			return 0
-		}
-		if w.busRead && !w.busFail {
-			// Both halves answered.
-			delete(w.failing, "bus")
-			w.st.ClearFail("bus")
-		}
-
-		if broken == "" {
-			if n, _, _ := w.st.Streak("bus"); n >= 3 {
-				broken = "bus"
-			}
-		}
 		switch {
 		case broken != "":
 			n, since, reason := w.st.Streak(broken)
@@ -734,14 +689,6 @@ func (w *watcher) poll(ctx context.Context, src wake.Source, now time.Time) {
 		return
 	}
 	delete(w.failing, src.Name())
-	if w.advancer != nil && w.bus != nil && src.Name() == w.bus.Name() {
-		// The bus source's poll is not over: its advance runs after the print,
-		// and a read that worked beside an advance that did not is not a
-		// success of this source. The streak is cleared once both halves have
-		// had their turn.
-		w.busRead = true
-		return
-	}
 	w.st.ClearFail(src.Name())
 }
 
@@ -891,72 +838,6 @@ func (w *watcher) printQueue(now time.Time) (int, int) {
 		w.save()
 	}
 	return len(printed), news
-}
-
-// recoverAdvance is step 4 of the advance transaction, run once at the start of
-// a call that finds bus:advance=inflight: a plain inbox for carrying=, then the
-// whole carried list off the reader's own OPEN list, spooled before anything
-// else -- because a plain inbox does not re-list a note the cursor has passed.
-func (w *watcher) recoverAdvance(ctx context.Context, now time.Time) {
-	if w.advancer == nil || !wake.Interrupted(w.st) {
-		return
-	}
-	res, note, err := w.advancer.Recover(ctx, w.st)
-	w.observe("bus", res, now, err != nil)
-	w.save()
-	if err != nil {
-		w.busFailed(err, now)
-		return
-	}
-	if note != "" {
-		w.note(note)
-	}
-}
-
-// advanceOrDefer is steps 2 and 3. Mail consumed is mail spooled; mail spooled
-// is mail printed, under the cap like everything else; and a cap that elides a
-// note DEFERS THE FETCH rather than losing the note. It answers whether the
-// injected kill of test 11 landed.
-func (w *watcher) advanceOrDefer(ctx context.Context, now time.Time) bool {
-	if w.advancer == nil || !w.firstPoll {
-		return false
-	}
-	if n := wake.BusQueued(w.st); n > 0 {
-		w.note(fmt.Sprintf("bus advance deferred: pending=%d bus notes unprinted; nothing fetches until they print", n))
-		return false
-	}
-	res, killed, err := w.advancer.Advance(ctx, w.st, w.head, w.save)
-	if killed {
-		return true
-	}
-	w.observe("bus", res, now, err != nil)
-	w.save()
-	if err != nil {
-		w.busFailed(err, now)
-		return false
-	}
-	// Cleared ONLY after the advance's output is durable.
-	wake.ClearAdvance(w.st)
-	w.save()
-	return false
-}
-
-// busFailed counts an advance or a recovery that could not be run toward the
-// bus source's streak. "A source fails when the bus's nova-bus exits other than
-// 0 or times out" -- and an advance that fails every call is a watcher that
-// never fetches, which is the blindness rule 12 names. Printing WAKE POLL and
-// clearing the streak on the next successful READ would let that watcher run to
-// its deadline and say QUIET, which would be a lie.
-func (w *watcher) busFailed(err error, now time.Time) {
-	if w.failing == nil {
-		w.failing = map[string]bool{}
-	}
-	w.failing["bus"] = true
-	w.busFail = true
-	n, since, _ := w.st.Fail("bus", oneLine(err.Error()), now)
-	fmt.Fprintf(w.stderr, "WAKE POLL bus: %s (failure %d of 3 in a row, since %s)\n",
-		oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)), n, oneline.Field(since))
-	w.save()
 }
 
 // remedyFor names the flag that lifts the ceiling, or the file that holds the
