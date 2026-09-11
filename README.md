@@ -18,6 +18,7 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 | `nova-memory` | answers "do I already know this?" | a lexical index over your own tree, rebuilt each run; hands back receipts, never a verdict |
 | `nova-bus` | a postal service over git | several minds and people send notes to each other through one repository, with the races taken out |
 | `nova-wake` | one blocking call at the attention layer | a window pays one turn per change instead of one turn per tick: it watches a bus inbox, a set of entries and other lines' `RESULT.md` files, and returns the moment one of them moves |
+| `nova-tokens` | token spend per day, model and repo | folds declared sources into one file per day, keyed exactly by `(day, model, repo)` with the five token types kept apart; it never estimates, never fills a gap and removes nothing |
 
 **The rules every tool keeps.** Exit 0 means it ran and passed, 1 means it ran and said no, 2 means it could not run. Every path and every number comes from a flag; there is no default it could guess wrong, and a missing flag is a one-line refusal that says what the flag wants. Output is bounded: a run that finds eight hundred problems prints twenty and the number eight hundred. Standard library only. `nova-check nocode` pointed at this repository would fail it, which is the point: machinery lives here, the self stays prose.
 
@@ -25,7 +26,7 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 
 **Install.** Three ways, none needing a credential: `go install github.com/mas-bandwidth/nova-tools/cmd/<tool>@<tag>` pinned to a release tag; a binary per platform from the release page with a `SHA256SUMS` beside it; or a clone and `go build ./...`. Go 1.26 or newer. Everybody sharing one bus should run one version, and `nova-bus version` says which.
 
-**What comes next.** Four more tools are specified and not yet built, each with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-merge` (a merge lane with local gates), `nova-swarm` (one-shot worker jobs with a token budget), `nova-board` (cards with owners, deadlines and counts) and `nova-tokens` (token spend per day, model and repo, from every harness). They are the open pull requests on `docs/SPEC-*.md`.
+**What comes next.** Three more tools are specified and not yet built, each with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-merge` (a merge lane with local gates), `nova-swarm` (one-shot worker jobs with a token budget) and `nova-board` (cards with owners, deadlines and counts). They are the open pull requests on `docs/SPEC-*.md`.
 
 ---
 

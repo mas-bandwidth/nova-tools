@@ -72,6 +72,11 @@ func pkgText(t *testing.T, pkg string) map[string]string {
 	return out
 }
 
+// rule9Emptiers is the tripwire's list of calls that can empty a file. It is a package
+// variable and not a local so TestRule9EmptierListMatchesTheSpec below can pin it: a name
+// quietly deleted from this list would otherwise take its tripwire with it and go green.
+var rule9Emptiers = []string{"os.Remove", "os.RemoveAll", "os.Truncate", ".Truncate(", "os.Create(", "os.WriteFile(", "os.O_TRUNC"}
+
 // Rule 9 and demanded test 8: this tool removes NOTHING. The prototype removed the old
 // month files on every real run and noted it in a list capped at six.
 func TestNothingInThisToolRemovesAFile(t *testing.T) {
@@ -81,7 +86,6 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 	// that can empty a file is searched for, and the four the tool is allowed are carved
 	// out here BY FILE, with the reason -- each one a file THIS RUN makes, never a file the
 	// tool was given.
-	emptiers := []string{"os.Remove", "os.RemoveAll", "os.Truncate", ".Truncate(", "os.Create(", "os.WriteFile(", "os.O_TRUNC"}
 	allowed := map[string][]string{
 		// The platform with no flock: the lock is an exclusive create and its release
 		// removes the sentinel this run made.
@@ -101,7 +105,7 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 	for _, pkg := range []string{"internal/tokens", "cmd/nova-tokens"} {
 		for name, text := range pkgText(t, pkg) {
 			path := pkg + "/" + name
-			for _, forbidden := range emptiers {
+			for _, forbidden := range rule9Emptiers {
 				if !strings.Contains(text, forbidden) {
 					continue
 				}
@@ -123,6 +127,99 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 			if !used[path+" "+n] {
 				t.Errorf("%s no longer calls %s; drop the carve-out rather than leaving the tripwire open on that file (rule 9)", path, n)
 			}
+		}
+	}
+}
+
+// The meta-tripwire. TestNothingInThisToolRemovesAFile is only as wide as its list, and
+// the list is source in a test file: deleting `os.O_TRUNC` from it deletes the check with
+// it and every test still passes. So the list is read back out of rule 9's own sentence in
+// docs/SPEC-TOKENS.md and compared both ways -- a name the spec demands and the list lacks
+// is a hole, a name the list carries and the spec does not is drift. Neither side can be
+// edited alone.
+func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	specPath := filepath.Join(root, "docs", "SPEC-TOKENS.md")
+	raw, err := os.ReadFile(specPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := string(raw)
+
+	// Rule 9's block: from its numbered opening to rule 10's.
+	begin := strings.Index(spec, "\n9. **One file per day")
+	if begin < 0 {
+		t.Fatalf("docs/SPEC-TOKENS.md has no rule 9 opening `9. **One file per day`; this test was reading the wrong place and would have passed by checking nothing")
+	}
+	end := strings.Index(spec[begin+1:], "\n10. ")
+	if end < 0 {
+		t.Fatalf("docs/SPEC-TOKENS.md rule 9 has no rule 10 after it; this test could not bound rule 9's text")
+	}
+	rule9 := strings.Join(strings.Fields(spec[begin:begin+1+end]), " ")
+
+	// The clause that names them, bounded by the `--` that closes it.
+	const marker = "can empty a file --"
+	at := strings.Index(rule9, marker)
+	if at < 0 {
+		t.Fatalf("rule 9 no longer says %q before naming the calls that can empty a file; this test finds the list by that clause and could not find it", marker)
+	}
+	clause := rule9[at+len(marker):]
+
+	// Walk it: collect the backticked names, and skip any inside a parenthetical, which is
+	// prose about a name (`os.OpenFile`, the call the flag empties) and not a name of its own.
+	var want []string
+	depth, i := 0, 0
+	for i < len(clause) {
+		switch clause[i] {
+		case '(':
+			depth++
+			i++
+		case ')':
+			if depth > 0 {
+				depth--
+			}
+			i++
+		case '-':
+			if depth == 0 && strings.HasPrefix(clause[i:], "--") {
+				i = len(clause) // the clause is closed; stop
+				continue
+			}
+			i++
+		case '`':
+			close := strings.IndexByte(clause[i+1:], '`')
+			if close < 0 {
+				t.Fatalf("rule 9's clause has an unclosed backtick; the spec's own list cannot be read")
+			}
+			name := clause[i+1 : i+1+close]
+			if depth == 0 {
+				want = append(want, name)
+			}
+			i += close + 2
+		default:
+			i++
+		}
+	}
+	if len(want) < 5 {
+		t.Fatalf("read only %d names out of rule 9's clause (%v); the clause's shape changed and this test would have passed by checking almost nothing", len(want), want)
+	}
+
+	have := map[string]bool{}
+	for _, e := range rule9Emptiers {
+		have[e] = true
+	}
+	inSpec := map[string]bool{}
+	for _, w := range want {
+		inSpec[w] = true
+		if !have[w] {
+			t.Errorf("rule 9 names %s as a call that can empty a file and rule9Emptiers does not carry it; the tripwire is open on that call. Add it to the list in %s, or change rule 9 in docs/SPEC-TOKENS.md -- never one alone", w, "cmd/nova-tokens/contract_test.go")
+		}
+	}
+	for _, e := range rule9Emptiers {
+		if !inSpec[e] {
+			t.Errorf("rule9Emptiers carries %s and rule 9 does not name it; spec and tripwire have drifted. Name it in rule 9 of docs/SPEC-TOKENS.md, or drop it from the list -- never one alone", e)
 		}
 	}
 }
