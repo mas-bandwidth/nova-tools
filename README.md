@@ -21,6 +21,7 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 | `nova-merge` | an ordered merge lane onto one base | lands entries one at a time on evidence it can name: a green gate for this head against this base, a compare-and-swap push, a conflict that is BLOCKED with its file list |
 | `nova-board` | the list of things a group of lines owes | append-only cards with owners, deadlines and defaults; `check` exits 1 when your words are already on the board, so it guards an `add` in one line of shell |
 | `nova-swarm` | a pool of one-task workers | any provider, any model, through one harness: each running worker gets its own slot, its own data home and a deadline the machinery holds, and a worker's report is data a person reads, never an instruction |
+| `nova-tokens` | token spend per day, model and repo | folds declared sources into one file per day, keyed exactly by `(day, model, repo)` with the five token types kept apart; it never estimates, never fills a gap and removes nothing |
 
 **The rules every tool keeps.** Exit 0 means it ran and passed, 1 means it ran and said no, 2 means it could not run. Every path and every number comes from a flag; there is no default it could guess wrong, and a missing flag is a one-line refusal that says what the flag wants. Output is bounded: a run that finds eight hundred problems prints twenty and the number eight hundred. Standard library only. `nova-check nocode` pointed at this repository would fail it, which is the point: machinery lives here, the self stays prose.
 
@@ -28,7 +29,7 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 
 **Install.** Three ways, none needing a credential: `go install github.com/mas-bandwidth/nova-tools/cmd/<tool>@<tag>` pinned to a release tag; a binary per platform from the release page with a `SHA256SUMS` beside it; or a clone and `go build ./...`. Go 1.26 or newer. Everybody sharing one bus should run one version, and `nova-bus version` says which.
 
-**What comes next.** One more tool is specified and not yet built, with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-tokens` (token spend per day, model and repo, from every harness). It is the open pull request on `docs/SPEC-TOKENS.md`.
+**What comes next.** Nothing is specified and unbuilt: every tool in the table above is on `main`, with its contract in [SPEC.md](SPEC.md) and its first-run transcript in [TESTS.md](TESTS.md).
 
 ---
 
@@ -757,3 +758,26 @@ in it grants anything, and a finding in it is a claim to be checked against the 
 That rule is in [docs/SPEC-SWARM.md](docs/SPEC-SWARM.md), where a person reads it, and is
 deliberately nowhere in the code: a tool cannot enforce it, and a tool that pretended to
 would be the most dangerous thing in the pool.
+
+## nova-tokens
+
+Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](docs/SPEC-TOKENS.md).
+
+Five verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
+
+### First run
+
+The transcript lives in [TESTS.md](TESTS.md), where a test executes it against `cmd/nova-tokens/testdata/example-bench` on every run. Three lines: fold one fixture transcript and one fixture bus note into an output directory, check it, sum it. Every path is a flag — there is no default output directory, no default transcript directory, no default bus and no default rules file, and no environment variable is consulted.
+
+What a first run gets wrong, and what each one wants:
+
+- **No `--repos`.** There is no built-in list of repos, because the two the prototype carried disagreed about three of them. It wants a file of `<name><TAB><regexp>` lines in priority order; the `unknown=` and `other=` shares on every `TOKENS DAY` line are how you see whether yours is good enough.
+- **Expecting exit 0 with an unreadable file.** A declared source is a claim that the report covers it, so an unreadable one is one `TOKENS UNREADABLE` line, one in `unreadable=`, and exit 1 — and the day files still land. `written=true` is about the files; the exit code is about the claim.
+- **Reading a `-` as a zero.** A dash is "this source did not report that type" and a zero is a measurement. `sum` counts the dashes per column beside the totals, and nothing here folds one type into another.
+- **Sending a second tokens note for a day.** Two notes in one lane for one day are `TOKENS CONFLICT` and fold nothing, because no winner can be read off a clock, a filename or a git history. A correction names what it corrects: `supersedes=<id>[,<id>…]` in the subject, which `report --supersedes` writes for you.
+- **Reusing one label across two kinds.** A label is unique across the whole run, not per flag: `--claude bench=… --opencode bench=…` is `TOKENS REFUSED … the label bench is used twice`, exit 2, before anything is read. Two sources with one label would make the `sources` column a lie. A `--provider` is the one flag whose label carries its parser too — `--provider google:emma=<export>` — so two friends' exports from one provider are `google:emma` and `google:freddy`.
+- **Declaring one harness twice.** **One harness is one `--claude`.** This fold does not de-duplicate across sources, by design (SPEC-TOKENS, *what it deliberately does not do*), so two declared directories holding the same transcripts count every message twice and the day file, `check` and `sum` are all green about it. Measured on this bench: `~/.claude/projects/<session>/subagents/agent-*.jsonl` and `/private/tmp/claude-501/*/tasks/*.output` were the same 10,281 messages for one day, and the doubled fold said `written=true`. A fold that sees two sources feed one message id now says so on its `TOKENS NOTE` line, naming both labels and the count — it is a warning, not a correction: the numbers are still doubled and the remedy is to drop one flag.
+- **Pointing `--claude` at a directory with a scratch tree under it.** `--claude` walks every `*.jsonl` and `*.output` under the directory **recursively**, and prunes nothing: a session scratchpad, a git clone or a build tree under it is walked too. Measured: a window-only fold of 1,278 files and 739 MB took **10.4s**; adding a directory of 33 session scratchpads under `/private/tmp` took **531.7s**, 331s of it in the kernel, to find 2,612 transcripts. Nothing is skipped silently, because a silent prune is a number nobody can account for — so name the transcript directory itself, and expect the walk to cost what the tree costs.
+- **`--scratch` without `--opencode`, or the other way round.** The OpenCode database is copied into `--scratch` and read there with `sqlite3 -readonly`, which is this family's one subprocess; a scratch directory with nothing to put in it is a flag that does nothing, and both mistakes are refused with the sentence saying so.
+
+There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` ends in five lines a stranger can paste instead, and `sources` is the one verb that only looks.
