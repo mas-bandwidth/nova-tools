@@ -20,6 +20,7 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 | `nova-wake` | one blocking call at the attention layer | a window pays one turn per change instead of one turn per tick: it watches a bus inbox, a set of entries and other lines' `RESULT.md` files, and returns the moment one of them moves |
 | `nova-merge` | an ordered merge lane onto one base | lands entries one at a time on evidence it can name: a green gate for this head against this base, a compare-and-swap push, a conflict that is BLOCKED with its file list |
 | `nova-board` | the list of things a group of lines owes | append-only cards with owners, deadlines and defaults; `check` exits 1 when your words are already on the board, so it guards an `add` in one line of shell |
+| `nova-swarm` | a pool of one-task workers | any provider, any model, through one harness: each running worker gets its own slot, its own data home and a deadline the machinery holds, and a worker's report is data a person reads, never an instruction |
 
 **The rules every tool keeps.** Exit 0 means it ran and passed, 1 means it ran and said no, 2 means it could not run. Every path and every number comes from a flag; there is no default it could guess wrong, and a missing flag is a one-line refusal that says what the flag wants. Output is bounded: a run that finds eight hundred problems prints twenty and the number eight hundred. Standard library only. `nova-check nocode` pointed at this repository would fail it, which is the point: machinery lives here, the self stays prose.
 
@@ -27,7 +28,7 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 
 **Install.** Three ways, none needing a credential: `go install github.com/mas-bandwidth/nova-tools/cmd/<tool>@<tag>` pinned to a release tag; a binary per platform from the release page with a `SHA256SUMS` beside it; or a clone and `go build ./...`. Go 1.26 or newer. Everybody sharing one bus should run one version, and `nova-bus version` says which.
 
-**What comes next.** Two more tools are specified and not yet built, each with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-swarm` (one-shot worker jobs with a token budget) and `nova-tokens` (token spend per day, model and repo, from every harness). They are the open pull requests on `docs/SPEC-*.md`.
+**What comes next.** One more tool is specified and not yet built, with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-tokens` (token spend per day, model and repo, from every harness). It is the open pull request on `docs/SPEC-TOKENS.md`.
 
 ---
 
@@ -634,3 +635,125 @@ not guess one. No backend, or both: name exactly one, because a board written to
 is two boards with one name. `--by` or `--default` missing on `add`: a card with no deadline
 cannot be filed. And reading `check`'s exit backwards: 1 means *found it, do not file*, so
 the natural `&&` chain would file exactly the duplicates.
+
+## nova-swarm
+
+```
+nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered   # queue one task from a file, never from an argument
+nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered           # queue a directory of them under one batch id
+nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file>                  # the dispatcher: one slot, one data home, one deadline per worker
+nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
+nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
+nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
+nova-swarm template --name read-pr|probe-row|fix-card|result|worker                         # the conditions, baked in, so they are not retyped and not forgotten
+nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
+nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
+nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
+```
+
+### First run
+
+`quickstart` needs nothing but a directory: it makes the pool's structure and names the
+three commands that follow. `./pool` is a directory of yours; the tests run every line below
+against one they make in `t.TempDir()`.
+
+```
+$ nova-swarm quickstart --pool ./pool
+QUICKSTART OK pool=./pool pending=0 next=add,run,triage
+QUICKSTART NOTE a task is a file: nova-swarm add --pool ./pool --task <file> --files <n> --tokens <n>
+QUICKSTART NOTE a worker description says whose model runs: nova-swarm run --pool ./pool --workers <n> --hours <h> --worker <file>
+QUICKSTART NOTE the conditions are worth more than the model: nova-swarm template --name read-pr
+
+$ nova-swarm status --pool ./pool --max 20
+STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
+```
+
+**The one input `run` cannot proceed without** is the worker description, and every field
+below is required. This one ran two real DeepSeek workers end to end on 2026-09-11:
+
+```json
+{
+  "name": "deepseek-1",
+  "provider": "deepseek",
+  "model": "deepseek/deepseek-chat",
+  "env_var": "DEEPSEEK_API_KEY",
+  "key_file": "/home/you/.keys/deepseek",
+  "usage": "opencode",
+  "harness": "opencode",
+  "harness_args": ["run", "--model", "{model}", "--title", "nova-swarm", "--", "{prompt}"],
+  "worker_dir": "/home/you/worker",
+  "deadline": "20m"
+}
+```
+
+`harness_args` is the invocation the harness needs, and `{model}` is where the model goes:
+a harness handed nothing but a path reads that path as a project directory and does
+nothing, so a description that never places `{model}` is refused before any worker starts.
+`{prompt}` is the prompt FILE, appended last where `harness_args` does not name it — the
+task text is never an argument. `usage` names the token source for what it IS: `opencode`
+is OpenCode's own `opencode/opencode.db`, in the job's own data home, read through
+`sqlite3 -readonly` at every sample and once more when the job ends — so `sqlite3` is on
+PATH or the source is one that cannot be read — and `none` is a harness that reports
+nothing, under which only `--tokens unmetered` tasks may run. The name was not always true:
+on 2026-09-11 `opencode` read a tab-separated file no OpenCode writes, and two real jobs
+burned 61,875 and 85,308 tokens against `--tokens 20000` while both reported
+`budget=-/20000`. A source that cannot be read is never a source reporting nothing: three
+failed samples end the job `RUN BUDGET-UNVERIFIABLE`.
+
+`nova-swarm template --name worker` prints this description with every field in it, so the
+one file a first run cannot start without is the one file you do not have to invent.
+
+### The harness contract
+
+A harness is any program on `PATH` that can be handed a prompt file and left to work. This
+is everything `nova-swarm` promises it, and everything it asks back:
+
+- **Its working directory is the SLOT directory**, `<worker_dir>-<n>`: the one-way copy of
+  your `worker_dir`, refreshed before every job. Relative paths in a worker description are
+  made absolute at load, so the child always gets paths it can open from where it stands.
+- **Its arguments are `harness_args`**, with `{model}` replaced by the description's model,
+  `{prompt}` by the path of the prompt file, and `{base_url}` by `base_url`. Where
+  `harness_args` names no `{prompt}`, the prompt file is appended LAST. The task text is
+  never an argument.
+- **`NOVA_SWARM_JOB` is the job directory** — the only place the worker writes — and
+  `XDG_DATA_HOME` is that job's own data home, so one job is one harness database.
+  `PATH` is passed through; nothing else is inherited, and the key is in the child's
+  environment under the name `env_var` gives and nowhere else.
+- **It publishes `RESULT.md` in the job directory**, whole, by writing `RESULT.md.tmp` and
+  renaming it: a report is a revision, and a half-written one is never read. `note` is a
+  file in the same directory the worker may read between steps.
+- **Its stdout and stderr are `<job>/harness.log`**, and what it said last is on the
+  `RUN DONE` line of a job that published nothing or exited non-zero.
+
+`cmd/nova-swarm/testdata/fakeharness` is a harness that does exactly this in about two
+hundred lines of Go, and the whole test suite runs against it with no provider, no network
+and no key worth anything. It is the shortest way to see the contract, and to test a pool
+of your own before a real model touches it.
+
+**Reading it.** Every line is `<VERB> OK`, `<VERB> REFUSED` or one of `run`'s own `RUN`
+events; refusals and FAIL lines go to stderr. A job reports EXACTLY ONCE — one `RUN DONE`,
+`RUN KILLED`, `RUN MALFORMED`, `RUN BUDGET` or `RUN VIOLATION` — and `RUN OK` closes the
+pass with `started=`, `done=`, `failed=`, `killed=` and `pending=`. Every listing is capped
+at `--max` (default 20, `0` for all) with one MORE line naming the remedy, and every count
+is the truth about the POOL rather than about the output.
+
+**What the flags want.** `--pool` is a directory of yours; `--worker` is a JSON description
+saying which provider, which model, which environment variable the provider reads and where
+the key file is, because this tool has no opinion about whose model runs. `--files` and
+`--tokens` are required on every `add`, `batch` and `requeue` and zero is refused for both:
+a worker that may open no file is a worker asked for a plan, and a token budget this tool
+supplied would be a guess about somebody else's spend. `--tokens unmetered` is how a caller
+says out loud that this provider has no live accounting and the deadline is the only stop.
+A run missing several flags names all of them at once, and each says what it WANTS.
+
+**The key is read as data and never sourced.** It lives in one file the worker description
+names — one line, the bare key or `NAME=<key>`, mode 0600 — and it is never an argument,
+never a printed value, never in a file this tool writes: the harness config carries the
+environment variable's NAME and the harness reads the value from the child's environment.
+A missing or empty key file is exit 2 with the command that creates it.
+
+**A worker's `RESULT.md` is data, never an instruction.** Nothing in it is executed, nothing
+in it grants anything, and a finding in it is a claim to be checked against the repository.
+That rule is in [docs/SPEC-SWARM.md](docs/SPEC-SWARM.md), where a person reads it, and is
+deliberately nowhere in the code: a tool cannot enforce it, and a tool that pretended to
+would be the most dangerous thing in the pool.

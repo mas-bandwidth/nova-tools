@@ -192,3 +192,20 @@ BOARD OK cards=5 open=4 closed=1 stale=4 overdue=1 owed=1 lines=4 conflicts=0 qu
 The second command **exits 1**, and that is the point of it: `check` says NO when the board
 already holds your words, so it can guard an `add` in one line of shell. Exit 0 from
 `check` means nothing matched and filing is the right thing to do.
+
+## nova-swarm
+
+Fixture: a pool this tool makes in `t.TempDir()`, and `cmd/nova-swarm/testdata/fakeharness`, a fake harness on `PATH` so the dispatcher is tested end to end with no provider.
+
+### First run
+
+```
+$ nova-swarm quickstart --pool ./pool
+QUICKSTART OK pool=./pool pending=0 next=add,run,triage
+QUICKSTART NOTE a task is a file: nova-swarm add --pool ./pool --task <file> --files <n> --tokens <n>
+QUICKSTART NOTE a worker description says whose model runs: nova-swarm run --pool ./pool --workers <n> --hours <h> --worker <file>
+QUICKSTART NOTE the conditions are worth more than the model: nova-swarm template --name read-pr
+
+$ nova-swarm status --pool ./pool --max 20
+STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
+```
