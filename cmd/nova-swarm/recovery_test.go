@@ -371,7 +371,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		p := mustOpenPool(t, b.pool)
 		sf, _ := p.ReadSlot(1)
 		if sf.JobPgid > 0 {
-			swarm.Reap(sf.JobPgid, 0)
+			swarm.Reap(sf.JobPgid, sf.JobStarted, 0)
 		}
 	})
 

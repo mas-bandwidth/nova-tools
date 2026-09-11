@@ -21,30 +21,30 @@ const TerminateGrace = 3 * time.Second
 // Reap ends a process group: terminate, wait, kill -- and then reports whether anything in
 // it SURVIVED, because a slot whose data home may still have a writer in it is not a free
 // slot, and a pool that re-used it would reproduce the lock failure with a corpse.
-func Reap(pgid int, grace time.Duration) (survived bool) {
+func Reap(pgid int, started string, grace time.Duration) (survived bool) {
 	if pgid <= 0 {
 		return false
 	}
-	TerminateGroup(pgid)
+	TerminateGroup(pgid, started)
 	deadline := time.Now().Add(grace)
 	for time.Now().Before(deadline) {
-		if !GroupAlive(pgid) {
+		if !GroupAlive(pgid, started) {
 			return false
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	if !GroupAlive(pgid) {
+	if !GroupAlive(pgid, started) {
 		return false
 	}
-	KillGroup(pgid)
+	KillGroup(pgid, started)
 	// The kill is not instant: the kernel reaps at its own pace, and a check that ran in
 	// the same microsecond would report a survivor that is a corpse.
 	deadline = time.Now().Add(grace)
 	for time.Now().Before(deadline) {
-		if !GroupAlive(pgid) {
+		if !GroupAlive(pgid, started) {
 			return false
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	return GroupAlive(pgid)
+	return GroupAlive(pgid, started)
 }

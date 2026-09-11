@@ -16,7 +16,7 @@ import (
 func ownGroup(cmd *exec.Cmd) {}
 
 // Alive reports whether a pid names a live process.
-func Alive(pid int) bool {
+func Alive(pid int, started string) bool {
 	if pid <= 0 {
 		return false
 	}
@@ -28,13 +28,13 @@ func Alive(pid int) bool {
 }
 
 // TerminateGroup asks the process to stop.
-func TerminateGroup(pgid int) { killPid(pgid) }
+func TerminateGroup(pgid int, started string) { killPid(pgid) }
 
 // KillGroup ends the process.
-func KillGroup(pgid int) { killPid(pgid) }
+func KillGroup(pgid int, started string) { killPid(pgid) }
 
 // GroupAlive reports whether the leader is alive; there is no group to ask about.
-func GroupAlive(pgid int) bool { return Alive(pgid) }
+func GroupAlive(pgid int, started string) bool { return Alive(pgid, started) }
 
 func killPid(pid int) {
 	if pid <= 0 {
@@ -55,10 +55,3 @@ func GroupMembers(pgid, self int) (int, bool) { return 0, false }
 
 // pgidOf has no process group to report here, so a process is its own group of one.
 func pgidOf(pid int) int { return pid }
-
-// noteChild and identify are the WINDOWS process layer's business: there a pid is not an
-// identity, so every pid that may be ended carries the kernel's creation stamp beside it.
-// Here there is no group and no stamp to be had, so these record nothing and the
-// platform keeps the degraded shape it had.
-func noteChild(pid int)                {}
-func identify(pid int, started string) {}

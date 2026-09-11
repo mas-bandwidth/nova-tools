@@ -329,8 +329,7 @@ const (
 // the slot file recorded, because a platform with no process groups has only that stamp to
 // tell this job's harness from whoever holds its number now.
 func aliveGroupOf(sf SlotFile) bool {
-	identify(sf.JobPgid, sf.JobStarted)
-	return GroupAlive(sf.JobPgid) || GroupAlive(sf.Pgid)
+	return GroupAlive(sf.JobPgid, sf.JobStarted) || GroupAlive(sf.Pgid, sf.PidStarted)
 }
 
 func (p *Pool) Decide(n int) Decision {
@@ -345,7 +344,7 @@ func (p *Pool) Decide(n int) Decision {
 		// itself, and a spawned supervisor paused before its identify cannot be proven
 		// absent by a dead runner. So launch absence must be ESTABLISHED, by an aborted.json
 		// carrying this nonce with no survivors, by the runner's own kill, or by a person.
-		if sf.State == SlotReserved && Alive(sf.RunnerPid) {
+		if sf.State == SlotReserved && Alive(sf.RunnerPid, sf.RunnerStarted) {
 			d.Kind, d.Reason = DecideQuarantine, "reserved by a runner that is still alive (pid "+strconv.Itoa(sf.RunnerPid)+")"
 			return d
 		}
@@ -362,10 +361,10 @@ func (p *Pool) Decide(n int) Decision {
 		return d
 	case SlotLaunched:
 		switch {
-		case Alive(sf.Pid) && StartStamp(sf.Pid) == sf.PidStarted:
+		case Alive(sf.Pid, sf.PidStarted) && StartStamp(sf.Pid) == sf.PidStarted:
 			d.Kind, d.Reason = DecideAdopt, "pid alive under its recorded start stamp"
 			return d
-		case Alive(sf.Pid):
+		case Alive(sf.Pid, ""):
 			d.Kind, d.Reason = DecideQuarantine, "pid "+strconv.Itoa(sf.Pid)+" is alive under a different start stamp (pid reuse)"
 			return d
 		case aliveGroupOf(sf):

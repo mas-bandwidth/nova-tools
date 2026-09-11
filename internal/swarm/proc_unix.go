@@ -23,7 +23,11 @@ func ownGroup(cmd *exec.Cmd) {
 
 // Alive reports whether a pid names a live process. Signal 0 asks the kernel and sends
 // nothing; EPERM is a live process this user may not signal, which is still alive.
-func Alive(pid int) bool {
+//
+// `started` is the identity the caller recorded for that pid. It is WINDOWS's business,
+// where a pid is re-issued the instant its holder ends; here rule 17's own comparison
+// (slot.go) is the place a start stamp is read, and this call ignores it.
+func Alive(pid int, started string) bool {
 	if pid <= 0 {
 		return false
 	}
@@ -32,21 +36,21 @@ func Alive(pid int) bool {
 }
 
 // TerminateGroup asks every process in a group to stop.
-func TerminateGroup(pgid int) {
+func TerminateGroup(pgid int, started string) {
 	if pgid > 0 {
 		_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	}
 }
 
 // KillGroup ends every process in a group.
-func KillGroup(pgid int) {
+func KillGroup(pgid int, started string) {
 	if pgid > 0 {
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	}
 }
 
 // GroupAlive reports whether ANY process remains in a group.
-func GroupAlive(pgid int) bool {
+func GroupAlive(pgid int, started string) bool {
 	if pgid <= 0 {
 		return false
 	}
@@ -61,10 +65,3 @@ func pgidOf(pid int) int {
 	}
 	return pid
 }
-
-// noteChild and identify are the WINDOWS process layer's business: there a pid is not an
-// identity, so every pid that may be ended carries the kernel's creation stamp beside it.
-// Here a process GROUP is identity enough -- `kill(-pgid)` reaches the job or nothing --
-// and these record nothing.
-func noteChild(pid int)                {}
-func identify(pid int, started string) {}

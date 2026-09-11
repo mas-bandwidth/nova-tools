@@ -30,9 +30,9 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		// about them AFTER their processes have gone: each is handed to the process layer
 		// with the start stamp that says which process it meant, so that a platform which
 		// re-issues pids cannot make a stranger this job's survivor -- or its corpse.
-		identify(sf.JobPgid, sf.JobStarted)
-		identify(sf.Pgid, sf.PidStarted)
-		survivors = survivorsSeen(GroupAlive(sf.JobPgid), Reap(sf.JobPgid, TerminateGrace) || Reap(sf.Pgid, TerminateGrace))
+		survivors = survivorsSeen(
+			GroupAlive(sf.JobPgid, sf.JobStarted),
+			Reap(sf.JobPgid, sf.JobStarted, TerminateGrace) || Reap(sf.Pgid, sf.PidStarted, TerminateGrace))
 	}
 
 	rec := ExitRecord{RC: -1}
@@ -97,9 +97,7 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	if end == EndKilled {
 		sc.Reaped++
 	}
-	if survivors > 0 {
-		sc.Violation = "background"
-	}
+	sc.Violation = violationWord(end, survivors)
 	if report.Class == ClassMalformed {
 		sc.Malformed = report.MalformedLine
 	}
@@ -173,6 +171,23 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		notesSent, oneline.Field(notesRead), unpublished, budget, dest, said), end, dest
 }
 
+// violationWord is what rule 11 writes in the SIDECAR, which is the record that outlives
+// the run and the one `triage` reads: "it moves to `failed/` with `violation=background` in
+// the sidecar, and `triage` does not count it" (SPEC-SWARM.md:154-156).
+//
+// A JOB REAPED AT ITS DEADLINE IS NOT THAT JOB. A worker reaped at its deadline broke no
+// rule, and a process that outlived the kill is a fact about the kill -- which is why the
+// line is `RUN KILLED … survived=true` and not RUN VIOLATION. The word was written for it
+// anyway, and rule 7's automatic retry inherited the whole sidecar: a retry that then
+// SUCCEEDED still carried `violation=background`, so `triage` skipped it forever and its
+// findings were never folded (DeepSeek's read 5, finding 2).
+func violationWord(end string, survivors int) string {
+	if survivors == 0 || end == EndKilled {
+		return ""
+	}
+	return "background"
+}
+
 // survivorsSeen is rule 11's count from what the DISPATCHER itself observed, and one job
 // group asked about twice is one survivor. The group was asked before the reap and again
 // after it, and each yes added one: a single backgrounded child could print
@@ -230,10 +245,8 @@ func (in RunInput) requeue(sc Sidecar, now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	next := sc
-	next.ID = NewID(now, sc.Label)
+	next := freshAttempt(sc, now)
 	next.From, next.Requeued, next.Reaped = sc.ID, 1, sc.Reaped
-	next.Job, next.Slot, next.Started, next.Ended, next.End, next.Class = "", 0, "", "", "", ""
 	if err := in.Pool.Add(text, next); err != nil {
 		return false
 	}
@@ -270,14 +283,26 @@ func (in RunInput) retry429(sc Sidecar, now time.Time) bool {
 	if err != nil {
 		return false
 	}
-	next := sc
-	next.ID = NewID(now, sc.Label)
+	next := freshAttempt(sc, now)
 	next.From, next.Requeued = sc.ID, 1
-	next.Job, next.Slot, next.Started, next.Ended, next.End, next.Class = "", 0, "", "", "", ""
 	if err := in.Pool.Add(text, next); err != nil {
 		return false
 	}
 	return true
+}
+
+// freshAttempt is the task rule 7 and the 429 retry queue: the SAME TASK -- its text, its
+// budgets, its deadline, its label, its template, its batch -- and NONE of the last
+// attempt's verdict. Only the six fields naming where a job ran were cleared before, so a
+// retry was queued already carrying the previous attempt's `violation`, `malformed`,
+// `launch` and `rc`, and a retry that succeeded was skipped by `triage` on a word it had
+// not earned (read 5, finding 2). A verdict belongs to the attempt that earned it.
+func freshAttempt(sc Sidecar, now time.Time) Sidecar {
+	next := sc
+	next.ID = NewID(now, sc.Label)
+	next.Job, next.Slot, next.Started, next.Ended, next.End, next.Class = "", 0, "", "", "", ""
+	next.Violation, next.Malformed, next.Launch, next.RC, next.Notes = "", 0, "", -1, 0
+	return next
 }
 
 // budgetWord is rule 13's ceiling and what was observed under it: a dash for no observation,

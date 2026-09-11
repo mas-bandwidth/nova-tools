@@ -90,8 +90,8 @@ func Supervise(in SuperviseInput) int {
 	// THE HARNESS'S OWN IDENTITY, learned at the one moment it is not in doubt: on a
 	// platform with no process group a pid alone is a number the kernel re-issues the
 	// instant the process ends, and the survivor check and the kill both have to know
-	// whether the pid they hold is still the process they meant.
-	noteChild(jobPgid)
+	// whether the pid they hold is still the process they meant. It travels WITH the pid,
+	// into the job's own records and into every call below.
 	jobStarted := StartStamp(jobPgid)
 	_ = WriteJSON(PidPath(jobDir), PidRecord{
 		Job: in.Task, Slot: in.Slot, State: SlotLaunched, Pid: self, Pgid: pgidOf(self), JobPgid: jobPgid,
@@ -103,14 +103,14 @@ func Supervise(in SuperviseInput) int {
 	})
 	CheckKillPoint("supervisor-after-release")
 
-	record := watch(in, cmd, jobDir, jobPgid, started)
+	record := watch(in, cmd, jobDir, jobPgid, jobStarted, started)
 	logFile.Close()
 	CheckKillPoint("between-exit-and-exit-json")
 	return endWith(in, jobDir, started, record)
 }
 
 // watch holds the deadline and the budget beside the harness (rules 7 and 13).
-func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, started time.Time) ExitRecord {
+func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStarted string, started time.Time) ExitRecord {
 	deadline := taskDeadline(in.Sidecar, in.Worker)
 	done := make(chan error, 1)
 	go func() { done <- cmd.Wait() }()
@@ -145,7 +145,7 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, started
 		case <-timer.C:
 			// The default action at the deadline: reap the worker and record what is on
 			// disk. The swarm never waits forever.
-			survived := Reap(jobPgid, TerminateGrace)
+			survived := Reap(jobPgid, jobStarted, TerminateGrace)
 			<-done
 			return ExitRecord{RC: -1, End: EndKilled, Survivors: boolCount(survived), Spent: spent, Observed: observed, Partial: partial}
 		case <-sample.C:
@@ -153,7 +153,7 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, started
 			if err != nil {
 				failures++
 				if failures >= 3 {
-					survived := Reap(jobPgid, TerminateGrace)
+					survived := Reap(jobPgid, jobStarted, TerminateGrace)
 					<-done
 					return ExitRecord{RC: -1, End: EndUnverifiable, Survivors: boolCount(survived), Spent: spent,
 						Observed: observed, Partial: partial, Reason: err.Error()}
@@ -175,7 +175,7 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, started
 				// after the tokens are spent, so the overshoot is bounded by one sample
 				// interval plus the provider's own delay, and the usage row carries the
 				// true final sum rather than the sum at the stop.
-				survived := Reap(jobPgid, TerminateGrace)
+				survived := Reap(jobPgid, jobStarted, TerminateGrace)
 				<-done
 				return ExitRecord{RC: -1, End: EndBudget, Survivors: boolCount(survived), Spent: spent, Observed: true, Partial: partial}
 			}
@@ -190,13 +190,13 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 	rec.Nonce, rec.Ended = in.Nonce, Stamp(in.Now())
 	// Rule 11's group check, made by the process that owns the group: anything still in the
 	// job's own group after its leader has gone is a background subtask the prompt forbids.
-	if jobPgid := readJobPgid(jobDir); jobPgid > 0 && GroupAlive(jobPgid) {
+	if jobPgid, jobStarted := readJobProc(jobDir); jobPgid > 0 && GroupAlive(jobPgid, jobStarted) {
 		if n, ok := GroupMembers(jobPgid, os.Getpid()); ok {
 			rec.Survivors = n
 		} else if rec.Survivors == 0 {
 			rec.Survivors = 1
 		}
-		KillGroup(jobPgid)
+		KillGroup(jobPgid, jobStarted)
 	}
 	if err := WriteJSON(ExitPath(jobDir), rec); err != nil {
 		fmt.Fprintf(in.Stderr, "SUPERVISE FAILED slot=%d id=%s: the completion evidence could not be written: %s\n",
@@ -318,12 +318,15 @@ func childEnv(w Worker, slot int, id, key string) []string {
 	return env
 }
 
-func readJobPgid(jobDir string) int {
+// readJobProc is the job's own process AND the identity recorded beside it, from the pid
+// file this supervisor wrote. The pid alone was enough on unix, where the question is put
+// to a process group; it is not enough where a pid is a number the kernel re-issues.
+func readJobProc(jobDir string) (int, string) {
 	var pr PidRecord
 	if err := ReadJSON(PidPath(jobDir), &pr); err != nil {
-		return 0
+		return 0, ""
 	}
-	return pr.JobPgid
+	return pr.JobPgid, pr.JobStarted
 }
 
 func exitOf(err error) (int, string) {

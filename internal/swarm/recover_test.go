@@ -219,3 +219,111 @@ func boolWord(b bool) string {
 	}
 	return "false"
 }
+
+// DeepSeek's read 5, finding 1. The FIRST shape of the Windows identity fix kept one
+// package-global pid->stamp map, and that map is a second way to lose a job: when a
+// finished job's `identify` wrote its own stamp under a pid Windows had already re-issued
+// to a LIVE job's supervisor, the dispatcher read that running supervisor as dead,
+// finalized it `end=unknown` and freed its slot -- the very failure rule 17 exists to
+// close, arriving by the door that was meant to close it.
+//
+// So the identity travels WITH the pid, from the record that recorded it, and this test is
+// the tripwire: no file in the process layer may hold identity of its own. Two jobs whose
+// supervisors' pids are learned in each other's window cannot interfere if there is nothing
+// between them to interfere through.
+func TestNoProcessLayerFileKeepsIdentityOfItsOwn(t *testing.T) {
+	for _, name := range []string{"proc_windows.go", "proc_unix.go", "proc_other.go", "proc_linux.go",
+		"proc_darwin.go", "proc_bsd.go", "deadline.go"} {
+		raw, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatalf("the process layer wants %s: %v", name, err)
+		}
+		body := string(raw)
+		for _, forbidden := range []string{"sync.Map", "map[int]", "var known", "func identify", "func noteChild"} {
+			if strings.Contains(body, forbidden) {
+				t.Errorf("%s holds %q: a pid's identity belongs to the job that recorded it, never to a table this file keeps",
+					name, forbidden)
+			}
+		}
+	}
+	// And every question about a pid takes the identity beside it, so the caller cannot
+	// ask one without saying which process it means.
+	for _, decl := range []string{
+		"func Alive(pid int, started string) bool",
+		"func GroupAlive(pgid int, started string) bool",
+		"func TerminateGroup(pgid int, started string)",
+		"func KillGroup(pgid int, started string)",
+	} {
+		raw, err := os.ReadFile("proc_windows.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), decl) {
+			t.Errorf("the process layer wants %q", decl)
+		}
+	}
+}
+
+// RULE 7 QUEUES THE SAME TASK, NOT THE LAST ATTEMPT'S VERDICT (SPEC-SWARM.md:108-111), and
+// rule 11's word is read by `triage` (SPEC-SWARM.md:154-156: "and `triage` does not count
+// it"). A retry was queued carrying the previous attempt's `violation`, `malformed`,
+// `launch` and `rc`, so a retry that SUCCEEDED was skipped forever and its findings were
+// never folded (read 5, finding 2).
+func TestARetryStartsWithoutTheLastAttemptsVerdict(t *testing.T) {
+	dirty := Sidecar{
+		ID: "20260101T000000Z-old-000001", Label: "a label", Template: "read-pr", Batch: "b1",
+		Files: 5, Tokens: 1000, Deadline: "30s", Unmetered: false,
+		Job: "/somewhere/jobs/old", Slot: 3, Started: "s", Ended: "e",
+		End: EndKilled, Class: ClassNoResult, RC: 7, Violation: "background", Malformed: 12,
+		Launch: "failed", Notes: 4, Reaped: 1,
+	}
+	next := freshAttempt(dirty, time.Now().UTC())
+	if next.ID == dirty.ID {
+		t.Error("a retry is a new attempt with a new id")
+	}
+	for _, c := range []struct {
+		field string
+		got   any
+		want  any
+	}{
+		{"violation", next.Violation, ""},
+		{"malformed", next.Malformed, 0},
+		{"launch", next.Launch, ""},
+		{"rc", next.RC, -1},
+		{"class", next.Class, ""},
+		{"end", next.End, ""},
+		{"notes", next.Notes, 0},
+		{"slot", next.Slot, 0},
+		{"job", next.Job, ""},
+	} {
+		if c.got != c.want {
+			t.Errorf("a retry starts clean: %s is %v, want %v", c.field, c.got, c.want)
+		}
+	}
+	// The TASK, unchanged: its budgets, its deadline, its label, its template, its batch.
+	if next.Files != 5 || next.Tokens != 1000 || next.Deadline != "30s" ||
+		next.Label != "a label" || next.Template != "read-pr" || next.Batch != "b1" {
+		t.Errorf("a retry is the same task: %+v", next)
+	}
+}
+
+// RULE 11'S WORD IS FOR THE RULE IT NAMES. A worker reaped at its deadline broke no rule,
+// and a process that outlived the kill is a fact about the kill -- `RUN KILLED …
+// survived=true` (SPEC-SWARM.md:1055), never `violation=background`.
+func TestAReapedJobIsNotABackgroundViolation(t *testing.T) {
+	for _, c := range []struct {
+		name, end string
+		survivors int
+		want      string
+	}{
+		{"a job that outlived nothing", EndDone, 0, ""},
+		{"a job whose child outlived it", EndViolation, 1, "background"},
+		{"a job reaped at its deadline, nothing left", EndKilled, 0, ""},
+		{"a job reaped at its deadline whose child survived the kill", EndKilled, 1, ""},
+		{"a job with no evidence that left a process behind", EndUnknown, 1, "background"},
+	} {
+		if got := violationWord(c.end, c.survivors); got != c.want {
+			t.Errorf("%s: violation=%q, want %q", c.name, got, c.want)
+		}
+	}
+}

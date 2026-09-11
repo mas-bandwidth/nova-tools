@@ -250,12 +250,17 @@ func Run(in RunInput) int {
 				// watching it now.
 				sf, err := p.ReadSlot(slot)
 				if err == nil {
-					identify(sf.JobPgid, sf.JobStarted)
-					identify(sf.Pgid, sf.PidStarted)
-					Reap(sf.JobPgid, TerminateGrace)
-					Reap(sf.Pgid, TerminateGrace)
+					Reap(sf.JobPgid, sf.JobStarted, TerminateGrace)
+					Reap(sf.Pgid, sf.PidStarted, TerminateGrace)
 				}
 				continue
+			}
+			// `recovered=<n>` is every job this pass finished that it did not START: the
+			// start-up pass's reclaims and the jobs it ADOPTED from a dead dispatcher
+			// alike (read 5, finding 4). An adopted job ends in this loop, with the same
+			// RUN line it would have had, so it is counted here.
+			if r.adopted {
+				recovered++
 			}
 			line, end, dest := in.finish(r, retired, now())
 			// D2 (the real run, 2026-09-11): two jobs printed `RUN DONE … dest=failed`
@@ -382,7 +387,10 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		_ = p.Free(slot)
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: the supervisor would not start: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), 1
 	}
-	noteChild(cmd.Process.Pid)
+	// The identity of the child THIS dispatcher started, taken at the one moment it is not
+	// in doubt and carried to the one place that may end it. It is never stored by pid:
+	// see proc_windows.go.
+	childStarted := StartStamp(cmd.Process.Pid)
 	_ = os.WriteFile(filepath.Join(jobDir, "supervisor.pid"), []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
 	CheckKillPoint("after-spawn")
 	go func() { _ = cmd.Wait() }()
@@ -407,7 +415,7 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		time.Sleep(20 * time.Millisecond)
 		waited += 20 * time.Millisecond
 	}
-	KillGroup(cmd.Process.Pid)
+	KillGroup(cmd.Process.Pid, childStarted)
 	sc.Launch = "failed"
 	_ = p.WriteSidecar(Running, sc)
 	_ = p.Claim(sc.ID, Running, Failed)
@@ -453,7 +461,12 @@ func (in RunInput) state(r *running, now time.Time) (alive, over bool) {
 	if err != nil {
 		return false, false
 	}
-	if !Alive(sf.Pid) {
+	// THE SLOT FILE IS THE IDENTITY, read afresh on every poll: the supervisor's pid AND
+	// the start stamp it wrote beside it. A pid alone let a re-issued number read as the
+	// still-running supervisor of a job whose exit.json was already on disk, and an ADOPTED
+	// job -- whose supervisor this dispatcher never started -- had no identity at all
+	// (read 5, finding 3).
+	if !Alive(sf.Pid, sf.PidStarted) {
 		return false, false
 	}
 	return true, now.Sub(r.started) > r.deadline+TerminateGrace*2

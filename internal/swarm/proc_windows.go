@@ -7,7 +7,6 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"sync"
 	"syscall"
 )
 
@@ -17,72 +16,70 @@ import (
 // process, and the survivor check can see nothing beyond it. Every claim this file makes is
 // narrower than the unix one, and the places that matter say so on the line they print.
 //
-// A PID IS NOT AN IDENTITY HERE. Unix kills a process GROUP -- `kill(-pgid)` reaches the
-// job or nothing, and an id whose group is gone names nothing. Windows has no group to
-// name, so the same call is a kill BY PID, and Windows hands a pid back for reuse the
-// moment the process ends. On 2026-09-11 CI that cost two jobs: a dispatcher finished one
-// job, terminated the two dead pids its slot file recorded, and the numbers had already
-// been handed to a PARALLEL test's supervisor, which died between its harness exiting and
-// its exit.json being written -- `rc=-1`, the sentinel for "no completion evidence", on a
-// job that had finished cleanly.
+// A PID IS NOT AN IDENTITY HERE. Unix ends a process GROUP: `kill(-pgid)` reaches the job
+// or nothing, and a group id whose group is gone names nothing. Windows has no group, so
+// the same call is a kill BY PID, and Windows re-issues a pid the moment the process ends.
+// Under `go test ./...` a dispatcher terminated the two dead pids its slot file recorded
+// and the numbers had already been handed to a PARALLEL test's supervisor, which died
+// between its harness exiting and its exit.json being written.
 //
-// So every pid this file may END carries its identity beside it: the kernel's creation
-// stamp, learned when the process was ours (`noteChild`) or read from the durable record
-// that named it (`identify`). A pid whose stamp no longer matches is somebody else's
-// process, and this file will not touch it, ask about its group, or call it alive.
-
-// known is pid -> the creation stamp this run learned for it. It is per-process and it is
-// never read from a pid alone: an entry is proof only while the kernel still agrees.
-var known sync.Map
-
-// noteChild records a child THIS process started, at the one moment its identity is not in
-// doubt. Everything that may later terminate that pid asks this first.
-func noteChild(pid int) {
-	if pid <= 0 {
-		return
-	}
-	if stamp := StartStamp(pid); stamp != Dash {
-		known.Store(pid, stamp)
-	}
-}
-
-// identify records the identity a durable record carries for a pid this process did not
-// start -- a slot file's or a pid file's start stamp -- so that a dispatcher adopting
-// somebody else's job can still end it, and still refuse to end a stranger wearing its
-// number. On unix this is a no-op: a process group is identity enough.
-func identify(pid int, started string) {
-	if pid <= 0 || started == "" || started == Dash {
-		return
-	}
-	known.Store(pid, started)
-}
-
-// identified reports whether a pid still names the process this run meant by it. No record
-// is NOT proof: a pid nobody here established is never ended and never counted alive as a
-// group, because on this platform it may be anybody.
-func identified(pid int) bool {
-	want, ok := known.Load(pid)
-	if !ok {
-		return false
-	}
-	return want.(string) == StartStamp(pid)
-}
+// So every pid this file is asked about arrives WITH the identity of the process that was
+// meant by it: the kernel's creation stamp, from the durable record that recorded the pid
+// -- the slot file's `pid_started` and `job_started`, the pid file's, or a stamp taken by
+// the parent at `cmd.Start()`. It is a PARAMETER and never a table: the first shape of this
+// fix kept one process-global pid->stamp map, and a finished job's stamp could overwrite a
+// LIVE job's entry under a re-issued pid, making the dispatcher read a running supervisor
+// as dead and finalize it (DeepSeek's read 5, finding 1). An identity that is not owned by
+// the job it belongs to is not an identity.
 
 func ownGroup(cmd *exec.Cmd) {}
 
-// Alive reports whether a pid names a live process -- and, where this run knows which
-// process it meant by that pid, whether it is still that one.
-func Alive(pid int) bool {
+// Alive reports whether a pid names a live process, and -- where the caller knows which
+// process it meant by that pid -- whether it is still that one. A caller with no stamp to
+// offer (an older record, another tool's pid) gets the question it asked: is this number
+// alive.
+func Alive(pid int, started string) bool {
 	if pid <= 0 {
 		return false
 	}
-	if !livePid(pid) {
+	return livePid(pid) && stillTheSame(pid, started)
+}
+
+// GroupAlive reports whether the leader is alive; there is no group to ask about, and a
+// leader whose identity the caller cannot supply is not one this platform will claim is
+// alive: the answer would be about a number.
+func GroupAlive(pgid int, started string) bool {
+	if pgid <= 0 || !known(started) {
 		return false
 	}
-	if want, ok := known.Load(pid); ok {
-		return want.(string) == StartStamp(pid)
+	return livePid(pgid) && stillTheSame(pgid, started)
+}
+
+// TerminateGroup asks the process to stop.
+func TerminateGroup(pgid int, started string) { killPid(pgid, started) }
+
+// KillGroup ends the process.
+func KillGroup(pgid int, started string) { killPid(pgid, started) }
+
+// killPid ends a pid ONLY while it still names the process the caller meant. A pid with no
+// identity beside it is left alone: on this platform the number outlives the process by no
+// time at all, and the wrong process is somebody else's still-running job.
+func killPid(pid int, started string) {
+	if pid <= 0 || !known(started) || !stillTheSame(pid, started) {
+		return
 	}
-	return true
+	if p, err := os.FindProcess(pid); err == nil {
+		_ = p.Kill()
+	}
+}
+
+func known(started string) bool { return started != "" && started != Dash }
+
+func stillTheSame(pid int, started string) bool {
+	if !known(started) {
+		return true
+	}
+	return StartStamp(pid) == started
 }
 
 func livePid(pid int) bool {
@@ -97,32 +94,6 @@ func livePid(pid int) bool {
 		return false
 	}
 	return event == syscall.WAIT_TIMEOUT
-}
-
-// TerminateGroup asks the process to stop.
-func TerminateGroup(pgid int) { killPid(pgid) }
-
-// KillGroup ends the process.
-func KillGroup(pgid int) { killPid(pgid) }
-
-// GroupAlive reports whether the leader is alive; there is no group to ask about, and a
-// leader this run cannot identify is not one it will claim is alive.
-func GroupAlive(pgid int) bool {
-	if pgid <= 0 {
-		return false
-	}
-	return identified(pgid) && livePid(pgid)
-}
-
-// killPid ends a pid ONLY while it still names the process this run meant. An unidentified
-// pid is left alone: on this platform the number outlives the process by no time at all.
-func killPid(pid int) {
-	if pid <= 0 || !identified(pid) {
-		return
-	}
-	if p, err := os.FindProcess(pid); err == nil {
-		_ = p.Kill()
-	}
 }
 
 // StartStamp is the kernel's start stamp for a pid: the creation FILETIME, which is what
