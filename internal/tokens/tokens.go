@@ -295,6 +295,10 @@ type Stat struct {
 	Unparsed   int
 	Comments   int
 	Redated    int
+	// NotNotes is how many files a bus lane opened that are not tokens notes. It is not
+	// a column of the source line; it is what the one remedy line needs to tell a friend
+	// whose subject was one token short that the tool looked and found nothing.
+	NotNotes   int
 	Superseded int
 	Rows       int
 }

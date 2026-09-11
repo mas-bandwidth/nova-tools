@@ -127,6 +127,12 @@ func ParseSubject(subject string) (parsedSubject, bool) {
 	if p.at == "" || p.build == "" {
 		return parsedSubject{}, false
 	}
+	// Rule 6 names the trailer exactly: `at=<RFC 3339 UTC> build=<id>`. `at=garbage` was
+	// accepted as a tokens note, and the fold's own at= is what a note's Date: is
+	// validated against -- a stamp nobody parsed is not a stamp.
+	if t, err := time.Parse(time.RFC3339, p.at); err != nil || !strings.HasSuffix(p.at, "Z") || !t.Equal(t.UTC()) {
+		return parsedSubject{}, false
+	}
 	return p, true
 }
 
@@ -189,11 +195,17 @@ func ReadBus(dir string, rules *Rules, at time.Time) []*Source {
 				s.unreadable(path, err.Error())
 				continue
 			}
+			// files= is what this lane OPENED, tokens note or not. A lane of near-miss
+			// subjects printed byte-identical output to a lane holding nothing at all --
+			// a note one trailer token short vanished into TOKENS OK days=0 (lesson 30).
+			// It is still not folded and still not a tokens note (rule 6: any other text
+			// after the date is not one), but the run says it looked.
+			s.Stat.Files++
 			n := readNote(name, path, string(raw), rules, at)
 			if n == nil {
+				s.Stat.NotNotes++
 				continue
 			}
-			s.Stat.Files++
 			all[n.id] = n
 			byLane[name] = append(byLane[name], n)
 		}
@@ -407,9 +419,12 @@ func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
 		}
 	}
 
+	// Rule 6: "the successor is validated whole -- header, `Date:`, every body line --
+	// before it replaces anything." A note with an unparsed BODY line was not dead, so a
+	// half-read correction replaced its predecessor and the lane-day folded from it.
 	superseded := map[string]string{}
 	for _, n := range notes {
-		if n.dead != nil {
+		if !n.clean() {
 			continue
 		}
 		for _, id := range n.subject.supersedes {

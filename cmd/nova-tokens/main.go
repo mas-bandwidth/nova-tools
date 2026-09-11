@@ -878,6 +878,12 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
 		oneline.Field(buildVersion()),
 		oneline.Escape(tokens.Subject(*day, stamp(now), buildVersion(), sorted)))
+	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1.
+	// The body still printed and --note still landed -- exit 1 still writes -- but a
+	// friend about to paste this onto the bus is told it does not cover what it claims.
+	if unreadable > 0 {
+		return 1
+	}
 	return 0
 }
 

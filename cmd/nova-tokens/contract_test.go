@@ -274,3 +274,60 @@ func TestTwoSourcesOverOneTreeAreNamedInTheRemedy(t *testing.T) {
 	wantContains(t, note, "1 message ids")
 	wantContains(t, note, "TWICE")
 }
+
+// ---------------------------------------------------------------- the bus, read whole
+
+// TestReportWithOneUnreadableSourceExitsOne pins rule 3 on the verb that skipped it:
+// "The fold continues over the rest and writes what it could compute, and the run exits 1,
+// because a declared source is a claim that the report covers it." cmdReport counted the
+// unreadable and then returned 0 whenever any line printed, so a friend pasted a partial
+// day onto the bus under REPORT OK.
+func TestReportWithOneUnreadableSourceExitsOne(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a mode-000 file")
+	}
+	dir := t.TempDir()
+	repos := reposFile(t, dir)
+	good := mkdir(t, filepath.Join(dir, "good"))
+	write(t, filepath.Join(good, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 3}, "/x/schema/a.go")+"\n")
+	bad := mkdir(t, filepath.Join(dir, "bad"))
+	f := write(t, filepath.Join(bad, "x.jsonl"), "{}\n")
+	if err := os.Chmod(f, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(f, 0o644)
+
+	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos,
+		"--claude", "g="+good, "--claude", "b="+bad)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS UNREADABLE")
+	// Exit 1 still writes: the body printed, so the friend can see what it could compute.
+	wantContains(t, r.stdout, "2026-09-11\temma\tf\tschema\tinput\t3")
+}
+
+// TestAHalfReadSuccessorDoesNotReplaceItsPredecessor pins rule 6: "the successor is
+// validated whole -- header, Date:, every body line -- before it replaces anything." A
+// note with one unparsed body line was not dead, entered the superseded map, and its
+// predecessor's numbers vanished behind a correction nobody could read whole.
+func TestAHalfReadSuccessorDoesNotReplaceItsPredecessor(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	repos := reposFile(t, dir)
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
+	first := busNote(t, bus, "emma", "a.md", "emma-00000000000a", "tokens 2026-09-11", busDate,
+		"2026-09-11\temma\tg\tschema\tinput\t100\n")
+	busNote(t, bus, "emma", "b.md", "emma-00000000000b",
+		"tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes="+first, busDate,
+		"2026-09-11\temma\tg\tschema\tinput\t250\nthis line is prose\n")
+
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--bus", bus)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS UNPARSED")
+	wantNotContains(t, r.stdout, "TOKENS SUPERSEDED")
+	// Two tips now, so the lane-day is a conflict and nothing folds for it: the half-read
+	// correction never quietly became the day.
+	wantContains(t, r.stderr, "TOKENS CONFLICT label=bus:emma day=2026-09-11")
+	if _, err := os.Stat(filepath.Join(out, "2026-09-11.tsv")); err == nil {
+		t.Error("a day folded from a successor that did not parse whole")
+	}
+}

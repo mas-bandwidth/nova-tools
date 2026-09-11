@@ -154,12 +154,15 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 	if !ok || p.day != "2026-09-11" || len(p.supersedes) != 2 || p.badSet != "" {
 		t.Errorf("the subject %q does not parse back: %+v ok=%v", subject, p, ok)
 	}
-	for _, bad := range []string{"Tokens 2026-09-11", "tokens 2026-09-11 (rough)", "tokens 2026-09-11 at=x", "tokens 11-09-2026"} {
+	// `at=` is an RFC 3339 UTC stamp: `at=garbage build=b` was taken for a tokens note,
+	// and the fold validates every note's Date: against that stamp.
+	for _, bad := range []string{"Tokens 2026-09-11", "tokens 2026-09-11 (rough)", "tokens 2026-09-11 at=x",
+		"tokens 11-09-2026", "tokens 2026-09-11 at=garbage build=b", "tokens 2026-09-11 at=2026-09-11T23:55:02-07:00 build=b"} {
 		if _, ok := ParseSubject(bad); ok {
 			t.Errorf("%q was taken for a tokens note's subject", bad)
 		}
 	}
-	if p, _ := ParseSubject("tokens 2026-09-11 at=s build=b supersedes=emma-000000000002,emma-000000000001"); p.badSet == "" {
+	if p, _ := ParseSubject("tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=emma-000000000002,emma-000000000001"); p.badSet == "" {
 		t.Error("an unsorted predecessor set was accepted")
 	}
 }
