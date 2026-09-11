@@ -426,7 +426,7 @@ below is required. This one ran two real DeepSeek workers end to end on 2026-09-
   "model": "deepseek/deepseek-chat",
   "env_var": "DEEPSEEK_API_KEY",
   "key_file": "/home/you/.keys/deepseek",
-  "usage": "opencode",
+  "usage": "tsv",
   "harness": "opencode",
   "harness_args": ["run", "--model", "{model}", "--title", "nova-swarm", "--", "{prompt}"],
   "worker_dir": "/home/you/worker",
@@ -438,9 +438,13 @@ below is required. This one ran two real DeepSeek workers end to end on 2026-09-
 a harness handed nothing but a path reads that path as a project directory and does
 nothing, so a description that never places `{model}` is refused before any worker starts.
 `{prompt}` is the prompt FILE, appended last where `harness_args` does not name it — the
-task text is never an argument. `usage: opencode` reads OpenCode's own `opencode.db`
-through `sqlite3 -readonly`; where no `sqlite3` is on PATH the numbers are dashes, so the
-honest first run is `--tokens unmetered` and the deadline as the only stop.
+task text is never an argument. `usage` names the token source for what it IS: `tsv` is the
+tab-separated file the harness writes into the job's own data home, and `none` is a
+harness that reports nothing, under which only `--tokens unmetered` tasks may run.
+`opencode` is refused: nothing here reads OpenCode's `opencode.db`, and on 2026-09-11 two
+real jobs burned 61,875 and 85,308 tokens against `--tokens 20000` and both reported
+`budget=-/20000`. Against OpenCode today the honest first run is `--tokens unmetered`,
+with the deadline as the only stop.
 
 **Reading it.** Every line is `<VERB> OK`, `<VERB> REFUSED` or one of `run`'s own `RUN`
 events; refusals and FAIL lines go to stderr. A job reports EXACTLY ONCE — one `RUN DONE`,

@@ -64,7 +64,7 @@ func newBench(t *testing.T) *bench {
 	b.worker = filepath.Join(dir, "worker.json")
 	desc := map[string]any{
 		"name": "fake-1", "provider": "fake", "model": "fake-model",
-		"env_var": "FAKE_KEY", "key_file": b.keyFile, "usage": "opencode",
+		"env_var": "FAKE_KEY", "key_file": b.keyFile, "usage": "tsv",
 		"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
 		// The invocation a real harness needs: its subcommand, the model this description
 		// names, and the prompt FILE last (D1, 2026-09-11).
@@ -819,5 +819,28 @@ func TestUsageAndTheCopyAreWrittenBeforeTheMove(t *testing.T) {
 	mustContain(t, "the refusal", stderr, "does not match REV")
 	if _, err := os.Stat(jobDir); err != nil {
 		t.Errorf("a refused reclaim leaves the directory intact: %v", err)
+	}
+}
+
+// D4 / check 6 (the real run and the cold read, 2026-09-11): the enum said `opencode`,
+// promising that OpenCode's own accounting is read. OpenCode 1.18.20 writes `opencode.db`
+// and no `usage.tsv`, so the budget never fired, `finalize` wrote a row of dashes, and two
+// jobs that burned 61,875 and 85,308 tokens both reported `budget=-/20000`. A source is
+// named for what it IS: `tsv` is the file this tool reads, and `opencode` is refused until
+// a reader for that database exists.
+func TestTheUsageSourceIsNamedForWhatItIs(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	b.add("a task nothing will run\n")
+	b.rewriteWorker(func(d map[string]any) { d["usage"] = "opencode" })
+
+	exit, stdout, stderr := b.run()
+	if exit != 2 {
+		t.Fatalf("`usage: opencode` exits %d, want 2 -- no reader for opencode.db exists:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, "opencode.db")
+	mustContain(t, "the refusal", stderr, "tsv")
+	if strings.Contains(stdout, "RUN START") {
+		t.Errorf("the refusal comes before any worker starts:\n%s", stdout)
 	}
 }
