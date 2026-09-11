@@ -181,6 +181,67 @@ func TestLinksUnreadableFileIsNamedFailureAtTheCLI(t *testing.T) {
 	}
 }
 
+// The unreadable-DIRECTORY seam at the CLI, the case issue #30 (first item)
+// names: a chmod-000 nested directory should be NAMED and the walk should
+// continue, keeping the broken link beside it, exit 1. Against the code as it
+// stands the walk error is a refusal: exit 2 and NO findings at all. NOTE:
+// SPEC.md:348-353 says a directory in the walk that cannot be listed IS a
+// refusal and the walk stops without partial findings, so this is
+// intentionally RED. See RESULT.md.
+func TestLinksUnreadableDirAtTheCLI(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
+	}
+	dir := t.TempDir()
+	mustWrite(t, dir, "broken.md", "[gone](missing.md)\n")
+	mustWrite(t, dir, "locked/inside.md", "text\n")
+	locked := filepath.Join(dir, "locked")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	var stdout, stderr bytes.Buffer
+	if got := run([]string{"links", "--dir", dir}, &stdout, &stderr); got != 1 {
+		t.Fatalf("exit = %d, want 1 -- a named failure, not a refusal; stderr: %s", got, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "locked") || !strings.Contains(stderr.String(), "unreadable") {
+		t.Errorf("stderr = %q, want the unreadable directory named", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "LINKS FAIL broken.md:1: missing.md (does not exist)") {
+		t.Errorf("stderr = %q, want the accumulated broken link kept, not discarded", stderr.String())
+	}
+}
+
+// The same seam for nocode.
+func TestNoCodeUnreadableDirAtTheCLI(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
+	}
+	dir := t.TempDir()
+	mustWrite(t, dir, "a.md", "prose\n")
+	mustWrite(t, dir, "locked/run.py", "print(1)\n")
+	locked := filepath.Join(dir, "locked")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	var stdout, stderr bytes.Buffer
+	if got := run([]string{"nocode", "--dir", dir}, &stdout, &stderr); got != 1 {
+		t.Fatalf("exit = %d, want 1 -- a named failure, not a refusal; stderr: %s", got, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "locked") || !strings.Contains(stderr.String(), "unreadable") {
+		t.Errorf("stderr = %q, want the unreadable directory named", stderr.String())
+	}
+}
+
 // The kernel budget in TOKENS, at the CLI seam. A cap denominated in bytes
 // is a proxy for what a context window actually spends; the token form makes
 // the divisor — the caller's own measurement of their own writing — visible

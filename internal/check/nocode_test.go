@@ -231,6 +231,43 @@ func TestNoCode(t *testing.T) {
 	}
 }
 
+// An unreadable nested DIRECTORY is the card's case: a chmod-000 directory
+// under the tree. Issue #30 (first item) asks for a NAMED failure that keeps
+// walking, with the findings found beside it kept. Against the code as it
+// stands, the walk callback returns walkErr, so the whole run becomes a
+// refusal (exit 2) and every finding already accumulated is thrown away.
+// NOTE: current SPEC.md:622-630 says the opposite — "a directory in the walk
+// cannot be listed" is a REFUSAL and "a walk error stops the run without
+// reporting partial findings". This test is intentionally RED until that is
+// settled.
+func TestNoCodeUnreadableDirIsNamedFailureWalkContinues(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
+	}
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"a.md":          "prose",
+		"locked/run.py": "print(1)",
+	})
+	locked := filepath.Join(dir, "locked")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	scanned, findings, err := NoCode(NoCodeOptions{Dir: dir})
+	if err != nil {
+		t.Fatalf("an unreadable directory must be a named failure, not a refusal: %v", err)
+	}
+	if scanned != 1 {
+		t.Errorf("scanned = %d, want 1: the walk must continue past the unreadable directory", scanned)
+	}
+	wantFailures(t, findings, []string{"locked", "unreadable"})
+}
+
 // TestNoCodeSymlinkNotFollowed is separate because it needs a real symlink.
 func TestNoCodeSymlinkNotFollowed(t *testing.T) {
 	dir := t.TempDir()

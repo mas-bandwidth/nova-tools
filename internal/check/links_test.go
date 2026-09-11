@@ -325,6 +325,47 @@ func TestLinksUnreadableFileIsNamedFailureNotRefusal(t *testing.T) {
 	}
 }
 
+// An unreadable nested DIRECTORY is the card's case: a chmod-000 directory
+// under the tree. Issue #30 (first item) asks for a NAMED failure that keeps
+// walking, with the findings found beside it kept. Against the code as it
+// stands, the walk callback returns walkErr, so the whole run becomes a
+// refusal (exit 2) and every finding already accumulated is thrown away.
+// NOTE: current SPEC.md:348-353 says the opposite — "a directory in the walk
+// cannot be listed" is a REFUSAL and "a walk error stops the run without
+// reporting partial findings". This test is intentionally RED until that is
+// settled.
+func TestLinksUnreadableDirIsNamedFailureWalkContinues(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
+	}
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"a.md":             "[gone](missing.md)",
+		"locked/inside.md": "text",
+	})
+	locked := filepath.Join(dir, "locked")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	mdFiles, _, broken, err := Links(dir)
+	if err != nil {
+		t.Fatalf("an unreadable directory must be a named failure, not a refusal: %v", err)
+	}
+	if mdFiles != 1 {
+		t.Errorf("mdFiles = %d, want 1: the walk must continue past the unreadable directory", mdFiles)
+	}
+	var asFailures []Failure
+	for _, b := range broken {
+		asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
+	}
+	wantFailures(t, asFailures, []string{"a.md", "missing.md", "does not exist", "locked", "unreadable"})
+}
+
 // A dangling .md symlink is the second face of the same case: the walk sees a
 // file, the read fails. Named failure, walk continues, findings kept, exit 1.
 func TestLinksDanglingSymlinkMdIsNamedFailure(t *testing.T) {
