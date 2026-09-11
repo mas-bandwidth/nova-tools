@@ -112,7 +112,7 @@ const templateWorker = `{
   "model": "<the model id>",
   "env_var": "<the NAME of the variable the provider reads>",
   "key_file": "<the path of a file holding one line, mode 0600>",
-  "usage": "tsv",
+  "usage": "opencode",
   "harness": "<the harness command on PATH>",
   "harness_args": ["run", "--model", "{model}", "--", "{prompt}"],
   "worker_dir": "<the home copy of this worker's own directory>",

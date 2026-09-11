@@ -38,17 +38,18 @@ type Worker struct {
 	Board       string   `json:"board,omitempty"`
 }
 
-// The usage sources a description may declare (rule 13).
+// The usage sources a description may declare (rule 13). There are two.
 //
 // A SOURCE IS NAMED FOR WHAT IT IS. `opencode` promised that OpenCode's own accounting is
-// read; on 2026-09-11 two real jobs burned 61,875 and 85,308 tokens against `--tokens
-// 20000` and both reported `budget=-/20000`, because OpenCode writes `opencode.db` and
-// this tool reads a tab-separated file. `tsv` is that file. `opencode` is refused until a
-// reader for that database exists, so a caller cannot believe a budget that cannot fire.
+// read, and did not read it: on 2026-09-11 two real jobs burned 61,875 and 85,308 tokens
+// against `--tokens 20000` and both reported `budget=-/20000`, because OpenCode writes
+// `opencode.db` and this tool read a tab-separated file instead. The name is true now --
+// `opencode` reads that database through `sqlite3`, read-only, in the data home this tool
+// exported for the job -- and the tab-separated file is not a name a description may carry:
+// a caller names a SOURCE, never a file some harness might write.
 const (
-	UsageTSV      = "tsv"
+	UsageOpenCode = "opencode"
 	UsageNone     = "none"
-	UsageOpenCode = "opencode" // named, and refused: see LoadWorker
 )
 
 // LoadWorker reads and checks a worker description, reporting EVERY independent problem in
@@ -98,13 +99,11 @@ func LoadWorker(path string) (Worker, []error) {
 	want(w.WorkerDir, "worker_dir", "the home copy of the worker's own directory, refreshed into a slot directory one way")
 	want(w.Deadline, "deadline", "this worker's default deadline per task, such as 20m")
 	switch w.Usage {
-	case UsageTSV, UsageNone:
-	case UsageOpenCode:
-		problems = append(problems, fmt.Errorf("%s: usage `opencode` is refused: nothing here reads OpenCode's opencode.db, and a budget that cannot fire is worse than no budget (2026-09-11: two jobs burned 61,875 and 85,308 tokens and both reported spent=-). It wants `tsv` (the harness writes %s into the job's data home, five token types, a dash for absence) or `none` (it reports nothing, and only `--tokens unmetered` tasks may run under it)", path, UsageFileName))
+	case UsageOpenCode, UsageNone:
 	case "":
-		problems = append(problems, fmt.Errorf("%s: usage is required; it wants `tsv` (the harness writes %s into the job's data home) or `none` (it reports nothing, and only `--tokens unmetered` tasks may run under it)", path, UsageFileName))
+		problems = append(problems, fmt.Errorf("%s: usage is required; it wants `opencode` (the job's own %s in the data home this tool exports for it, read with `%s -readonly`, five token types, a dash for absence) or `none` (it reports nothing, and only `--tokens unmetered` tasks may run under it)", path, OpenCodeDB, SQLiteBinary))
 	default:
-		problems = append(problems, fmt.Errorf("%s: usage wants `tsv` or `none`, got %q", path, w.Usage))
+		problems = append(problems, fmt.Errorf("%s: usage wants `opencode` (the job's own %s, read with `%s -readonly`) or `none` (it reports nothing, and only `--tokens unmetered` tasks may run under it), got %q", path, OpenCodeDB, SQLiteBinary, w.Usage))
 	}
 	// D1, 2026-09-11: the model must REACH THE CHILD. A description that names a model and
 	// never places it in the harness's argv launches a harness that was told nothing, and

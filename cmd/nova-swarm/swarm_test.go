@@ -45,10 +45,10 @@ func newBench(t *testing.T) *bench {
 	if err := os.MkdirAll(b.pool, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	// The two binaries are built ONCE for the whole package, not once per bench. Thirty
-	// benches building two binaries each saturated the machine, and a dispatcher that
-	// cannot start a child inside its deadline turns a contract test into a race: three
-	// tests that kill a worker went red under the load and green on their own (2026-09-11).
+	// The three binaries are built ONCE for the whole package, not once per bench. Thirty
+	// benches building them each saturated the machine, and a dispatcher that cannot start
+	// a child inside its deadline turns a contract test into a race: three tests that kill
+	// a worker went red under the load and green on their own (2026-09-11).
 	b.binary, b.path = builtBinaries(t)
 
 	home := filepath.Join(dir, "worker-home")
@@ -66,7 +66,7 @@ func newBench(t *testing.T) *bench {
 	b.worker = filepath.Join(dir, "worker.json")
 	desc := map[string]any{
 		"name": "fake-1", "provider": "fake", "model": "fake-model",
-		"env_var": "FAKE_KEY", "key_file": b.keyFile, "usage": "tsv",
+		"env_var": "FAKE_KEY", "key_file": b.keyFile, "usage": "opencode",
 		"harness": "fake-harness", "worker_dir": home, "deadline": "30s",
 		// The invocation a real harness needs: its subcommand, the model this description
 		// names, and the prompt FILE last (D1, 2026-09-11).
@@ -98,6 +98,12 @@ func builtBinaries(t *testing.T) (string, string) {
 			return
 		}
 		if _, buildErr = build(t, harnessDir, "fake-harness", "./cmd/nova-swarm/testdata/fakeharness"); buildErr != nil {
+			return
+		}
+		// The one program the usage source runs. It is a stand-in, on the same PATH as the
+		// fake harness, so the dispatcher reads a database end to end with no sqlite3 of
+		// the machine's and no provider (SPEC-SWARM rule 12).
+		if _, buildErr = build(t, harnessDir, "sqlite3", "./internal/swarm/testdata/fakesqlite"); buildErr != nil {
 			return
 		}
 		builtPath = harnessDir + string(os.PathListSeparator) + os.Getenv("PATH")
@@ -954,24 +960,42 @@ func TestUsageAndTheCopyAreWrittenBeforeTheMove(t *testing.T) {
 	}
 }
 
-// D4 / check 6 (the real run and the cold read, 2026-09-11): the enum said `opencode`,
-// promising that OpenCode's own accounting is read. OpenCode 1.18.20 writes `opencode.db`
-// and no `usage.tsv`, so the budget never fired, `finalize` wrote a row of dashes, and two
-// jobs that burned 61,875 and 85,308 tokens both reported `budget=-/20000`. A source is
-// named for what it IS: `tsv` is the file this tool reads, and `opencode` is refused until
-// a reader for that database exists.
-func TestTheUsageSourceIsNamedForWhatItIs(t *testing.T) {
+// D4 / check 6, and the coordinator's ruling of 2026-09-11 that answered it: the enum said
+// `opencode` and the reader read a tab-separated file no OpenCode writes, so two jobs that
+// burned 61,875 and 85,308 tokens both reported `budget=-/20000`. A source is named for what
+// it IS -- and what it is, is now true: `usage: opencode` reads the job's own
+// `opencode.db` through `sqlite3`, read-only (SPEC-SWARM rule 12, rule 13). `tsv` is not a
+// name a worker description may carry: the file is what the FAKE harness writes, never a
+// source a caller may name.
+func TestTheUsageSourceIsTheDatabaseTheHarnessWrites(t *testing.T) {
 	t.Parallel()
 	b := newBench(t)
-	b.add("a task nothing will run\n")
-	b.rewriteWorker(func(d map[string]any) { d["usage"] = "opencode" })
+	id := b.add("a job whose numbers come from the database\nFAKE-FINDINGS 1\nFAKE-USAGE 100 50 - 20 -\n")
 
 	exit, stdout, stderr := b.run()
-	if exit != 2 {
-		t.Fatalf("`usage: opencode` exits %d, want 2 -- no reader for opencode.db exists:\n%s%s", exit, stdout, stderr)
+	if exit != 0 {
+		t.Fatalf("`usage: opencode` runs; exit %d:\n%s%s", exit, stdout, stderr)
 	}
-	mustContain(t, "the refusal", stderr, "opencode.db")
-	mustContain(t, "the refusal", stderr, "tsv")
+	mustContain(t, "the run", stdout, "RUN DONE id="+id)
+	row := b.usageRow(id)
+	for _, c := range []struct{ column, want string }{
+		{"tokens_in", "100"}, {"tokens_out", "50"}, {"cache_write", "-"}, {"cache_read", "20"}, {"reasoning", "-"},
+	} {
+		if row[c.column] != c.want {
+			t.Errorf("the row read from opencode.db wants %s=%s, got %q", c.column, c.want, row[c.column])
+		}
+	}
+
+	// The retired name is refused BEFORE the first worker, the way any name that is not a
+	// source is: a caller who names the tab-separated file is told the two sources there are.
+	b.rewriteWorker(func(d map[string]any) { d["usage"] = "tsv" })
+	b.add("a task nothing will run\n")
+	exit, stdout, stderr = b.run()
+	if exit != 2 {
+		t.Fatalf("`usage: tsv` exits %d, want 2 -- it is not a source a description may name:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, "opencode")
+	mustContain(t, "the refusal", stderr, "none")
 	if strings.Contains(stdout, "RUN START") {
 		t.Errorf("the refusal comes before any worker starts:\n%s", stdout)
 	}
@@ -1145,8 +1169,11 @@ func TestUsageOutlivesTheJob(t *testing.T) {
 	if row["end"] != "done" || row["attempt"] != "1" {
 		t.Errorf("a job that finished wants end=done attempt=1, got end=%q attempt=%q", row["end"], row["attempt"])
 	}
+	// `repo` is a dash: the message table the source reads holds no repository, and a
+	// reader that invented one would be writing a fact nobody measured (rule 12, a field
+	// the provider did not report is the literal dash).
 	for col, want := range map[string]string{"tokens_in": "100", "tokens_out": "50", "cache_write": "-",
-		"cache_read": "-", "reasoning": "-", "model": "fake-model", "repo": "mas-bandwidth/nova-tools"} {
+		"cache_read": "-", "reasoning": "-", "model": "fake-model", "repo": "-"} {
 		if row[col] != want {
 			t.Errorf("the usage row wants %s=%s, got %q", col, want, row[col])
 		}

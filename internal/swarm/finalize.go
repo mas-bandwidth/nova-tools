@@ -76,6 +76,11 @@ func (p *Pool) Finalize(e Ending) (Finalized, error) {
 	for _, c := range append(append([]string{}, TokenColumns...), "usd") {
 		row[c] = dashOr(strings.TrimSpace(e.Usage.Values[c]))
 	}
+	// A finalize by hand knows no worker description; what the source itself reported stands
+	// in for what the caller did not know, and never over it.
+	if row["provider"] == Dash {
+		row["provider"] = dashOr(strings.TrimSpace(e.Usage.Values["provider"]))
+	}
 	if row["repo"] == Dash {
 		row["repo"] = dashOr(strings.TrimSpace(e.Usage.Values["repo"]))
 	}

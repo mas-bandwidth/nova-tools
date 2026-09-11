@@ -108,8 +108,11 @@ func main() {
 		os.Exit(1)
 	}
 	if _, ok := directive(prompt, "FAKE-BADUSAGE"); ok {
-		_ = os.MkdirAll(data, 0o755)
-		writeRecorded(filepath.Join(data, "usage.tsv"), []byte("this file has no tab-separated header\x00"), 0o000)
+		// A source that FAILS to read, which rule 13 keeps apart from one that has reported
+		// nothing yet: bytes that are not a database, in a file that refuses its own owner.
+		path := openCodeDB(data)
+		_ = os.MkdirAll(filepath.Dir(path), 0o755)
+		writeRecorded(path, []byte("not a database\x00"), 0o000)
 	}
 	if _, ok := directive(prompt, "FAKE-BACKGROUND"); ok {
 		child := exec.Command(os.Args[0], "--background-child")
@@ -222,16 +225,27 @@ func publish(job, prompt string, findings, notes int) {
 	}
 }
 
+// openCodeDB is the database the harness keeps in the data home this job was handed, the
+// one the dispatcher reads through sqlite3 (SPEC-SWARM rule 12).
+func openCodeDB(data string) string { return filepath.Join(data, "opencode", "opencode.db") }
+
+// writeUsage writes the job's accounting the way OpenCode does: into its own database, in
+// the data home. The FAKE database holds exactly the tab-separated rows a real
+// `sqlite3 -tabs` prints for the dispatcher's query -- provider, model, and the five token
+// types, an empty column for a type this provider did not report -- and the fake sqlite3 on
+// PATH prints them back.
 func writeUsage(data, arg string) {
-	_ = os.MkdirAll(data, 0o755)
+	path := openCodeDB(data)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
 	fields := strings.Fields(arg)
-	values := []string{"-", "-", "-", "-", "-"}
+	values := []string{"", "", "", "", ""}
 	for i := 0; i < len(fields) && i < 5; i++ {
-		values[i] = fields[i]
+		if fields[i] != "-" {
+			values[i] = fields[i]
+		}
 	}
-	body := "tokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\tmodel\trepo\n" +
-		strings.Join(values, "\t") + "\t0.0100\tfake-model\tmas-bandwidth/nova-tools\n"
-	writeRecorded(filepath.Join(data, "usage.tsv"), []byte(body), 0o644)
+	row := append([]string{"fake", "fake-model"}, values...)
+	writeRecorded(path, []byte(strings.Join(row, "\t")+"\n"), 0o644)
 }
 
 // THE WRITE-PATH TRIPWIRE (demanded test 9, SPEC-SWARM.md:1264). Every path this child

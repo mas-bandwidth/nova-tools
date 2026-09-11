@@ -3,6 +3,7 @@ package swarm
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -65,7 +66,10 @@ func FinalizeByHand(p *Pool, id string, now time.Time) (int, string) {
 			end = EndDone
 		}
 	}
-	usage, _ := ReadProviderUsage(sc.Job + "/data")
+	// A finalize by hand has no worker description to name a source, and the job's own
+	// database is the only source there is: one that is not there reports nothing, and the
+	// row is written with dashes rather than not written at all.
+	usage, _ := ReadProviderUsage(UsageOpenCode, filepath.Join(sc.Job, "data"))
 	fin, err := p.Finalize(Ending{
 		Sidecar: sc, JobDir: sc.Job, End: end, RC: rec.RC,
 		Started: parseStamp(sc.Started, time.Time{}), Ended: now, Usage: usage,

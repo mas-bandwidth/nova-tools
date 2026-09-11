@@ -182,7 +182,7 @@ func destinationFor(end, class string, rc int) string {
 // settle is finalize in rule 12's order: the usage file, then the report copy or its marker,
 // and only then anything else.
 func (in RunInput) settle(sc Sidecar, jobDir string, rec ExitRecord, end string, now time.Time) (Finalized, string) {
-	usage, _ := ReadProviderUsage(in.Worker.DataHome(sc.Slot, sc.ID))
+	usage, _ := ReadProviderUsage(in.Worker.Usage, in.Worker.DataHome(sc.Slot, sc.ID))
 	fin, err := in.Pool.Finalize(Ending{
 		Sidecar: sc, JobDir: jobDir, Provider: in.Worker.Provider, Model: in.Worker.Model,
 		End: end, RC: rec.RC, Started: parseStamp(sc.Started, time.Time{}), Ended: now, Usage: usage,

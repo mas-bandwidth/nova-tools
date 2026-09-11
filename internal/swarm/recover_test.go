@@ -110,5 +110,5 @@ func recoveryPool(t *testing.T, dir string) (*Pool, Worker) {
 		t.Fatal(err)
 	}
 	return p, Worker{Name: "recovery", Provider: "fake", Model: "fake-model", Harness: "fake-harness",
-		WorkerDir: home, Deadline: "30s", Usage: UsageTSV}
+		WorkerDir: home, Deadline: "30s", Usage: UsageOpenCode}
 }

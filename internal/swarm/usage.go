@@ -1,7 +1,6 @@
 package swarm
 
 import (
-	"bufio"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -147,66 +146,25 @@ func (u ProviderUsage) Sum() (sum int, seen int, partial bool) {
 	return sum, seen, partial && seen > 0
 }
 
-// UsageFileName is the file the harness writes its own accounting into, inside the data
-// home this tool exported for the job.
+// ReadProviderUsage reads the provider's own accounting for one job, from the source the
+// worker description names (rule 13). There are two: `opencode`, the job's own database in
+// the data home this tool exported for it, and `none`, which reports nothing and under
+// which only `--tokens unmetered` tasks may run.
 //
-// THE SPEC NAMES SQLITE, AND THIS TOOL CANNOT READ ONE. SPEC-SWARM rule 12 says the source
-// for OpenCode is the SQLite database in the data home, read once, read-only. This repo is
-// standard library only (CONTRIBUTING.md, shape before substance), and the standard library
-// has no SQLite reader; a third-party driver would show up as a go.mod diff and is the one
-// thing that cannot arrive here silently. So the source this tool reads is a tab-separated
-// file the harness writes beside its database, one header line and one row per sample, the
-// last row winning -- the same five token types, the same dash-is-absence rule. It is
-// recorded as a gap rather than a decision: see RESULT.md, "What the spec did not tell me".
-const UsageFileName = "usage.tsv"
-
-// ReadProviderUsage reads the provider's own accounting for one job.
-//
-// A MISSING FILE IS NOT AN ERROR: it is the provider reporting nothing YET, which rule 13
-// distinguishes carefully from a source that FAILS to read. The first leaves the budget
-// unable to fire and the deadline to end the job; the second, three samples running, ends
-// the job RUN BUDGET-UNVERIFIABLE, because a numeric budget the tool has stopped being able
-// to see is a budget the caller believes is enforced and is not.
-func ReadProviderUsage(dataHome string) (ProviderUsage, error) {
-	path := filepath.Join(dataHome, UsageFileName)
-	f, err := os.Open(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return ProviderUsage{Values: map[string]string{}}, nil
-		}
-		return ProviderUsage{}, fmt.Errorf("the usage source %s could not be read: %s", path, redactedReason(err))
-	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
-	sc.Buffer(make([]byte, 0, 64*1024), 1<<20)
-	var head, last []string
-	for sc.Scan() {
-		fields := strings.Split(strings.TrimRight(sc.Text(), "\r"), "\t")
-		if head == nil {
-			head = fields
-			continue
-		}
-		if len(strings.TrimSpace(strings.Join(fields, ""))) == 0 {
-			continue
-		}
-		last = fields
-	}
-	if err := sc.Err(); err != nil {
-		return ProviderUsage{}, fmt.Errorf("the usage source %s could not be read: %s", path, redactedReason(err))
-	}
-	if head == nil {
-		return ProviderUsage{}, fmt.Errorf("the usage source %s has no header row", path)
-	}
-	if last == nil {
+// A SOURCE THAT REPORTS NOTHING AND A SOURCE THAT FAILS TO READ ARE NOT THE SAME THING,
+// and rule 13 rests on the difference: the first leaves the budget unable to fire and the
+// deadline to end the job, and the second, three samples running, ends the job RUN
+// BUDGET-UNVERIFIABLE, because a numeric budget the tool has stopped being able to see is a
+// budget the caller believes is enforced and is not.
+func ReadProviderUsage(source, dataHome string) (ProviderUsage, error) {
+	switch source {
+	case UsageOpenCode:
+		return readOpenCodeUsage(dataHome)
+	case UsageNone, "":
 		return ProviderUsage{Values: map[string]string{}}, nil
+	default:
+		return ProviderUsage{}, fmt.Errorf("the usage source %q is not one this tool reads; it wants `%s` or `%s`", source, UsageOpenCode, UsageNone)
 	}
-	values := map[string]string{}
-	for i, name := range head {
-		if i < len(last) {
-			values[strings.TrimSpace(name)] = strings.TrimSpace(last[i])
-		}
-	}
-	return ProviderUsage{Values: values, Observed: true}, nil
 }
 
 // Stamp is the one time format this tool writes: a UTC instant, seconds resolution.

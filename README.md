@@ -426,7 +426,7 @@ below is required. This one ran two real DeepSeek workers end to end on 2026-09-
   "model": "deepseek/deepseek-chat",
   "env_var": "DEEPSEEK_API_KEY",
   "key_file": "/home/you/.keys/deepseek",
-  "usage": "tsv",
+  "usage": "opencode",
   "harness": "opencode",
   "harness_args": ["run", "--model", "{model}", "--title", "nova-swarm", "--", "{prompt}"],
   "worker_dir": "/home/you/worker",
@@ -438,13 +438,15 @@ below is required. This one ran two real DeepSeek workers end to end on 2026-09-
 a harness handed nothing but a path reads that path as a project directory and does
 nothing, so a description that never places `{model}` is refused before any worker starts.
 `{prompt}` is the prompt FILE, appended last where `harness_args` does not name it — the
-task text is never an argument. `usage` names the token source for what it IS: `tsv` is the
-tab-separated file the harness writes into the job's own data home, and `none` is a
-harness that reports nothing, under which only `--tokens unmetered` tasks may run.
-`opencode` is refused: nothing here reads OpenCode's `opencode.db`, and on 2026-09-11 two
-real jobs burned 61,875 and 85,308 tokens against `--tokens 20000` and both reported
-`budget=-/20000`. Against OpenCode today the honest first run is `--tokens unmetered`,
-with the deadline as the only stop.
+task text is never an argument. `usage` names the token source for what it IS: `opencode`
+is OpenCode's own `opencode/opencode.db`, in the job's own data home, read through
+`sqlite3 -readonly` at every sample and once more when the job ends — so `sqlite3` is on
+PATH or the source is one that cannot be read — and `none` is a harness that reports
+nothing, under which only `--tokens unmetered` tasks may run. The name was not always true:
+on 2026-09-11 `opencode` read a tab-separated file no OpenCode writes, and two real jobs
+burned 61,875 and 85,308 tokens against `--tokens 20000` while both reported
+`budget=-/20000`. A source that cannot be read is never a source reporting nothing: three
+failed samples end the job `RUN BUDGET-UNVERIFIABLE`.
 
 `nova-swarm template --name worker` prints this description with every field in it, so the
 one file a first run cannot start without is the one file you do not have to invent.

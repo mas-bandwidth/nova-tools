@@ -140,7 +140,7 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, started
 			<-done
 			return ExitRecord{RC: -1, End: EndKilled, Survivors: boolCount(survived), Spent: spent, Observed: observed, Partial: partial}
 		case <-sample.C:
-			usage, err := ReadProviderUsage(dataHome)
+			usage, err := ReadProviderUsage(in.Worker.Usage, dataHome)
 			if err != nil {
 				failures++
 				if failures >= 3 {
