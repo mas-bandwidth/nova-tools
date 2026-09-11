@@ -221,6 +221,48 @@ func TestLinksFenceRemembersOpeningMarker(t *testing.T) {
 	}
 }
 
+// Issue #30 (fence length): the scanner stored a fixed three-character marker,
+// so a four-backtick fence was closed by the three-backtick fence it was
+// quoting. The quoted example's link then leaked out and was reported — a
+// false FAIL. A fence closes only on a run at least as long as its opener.
+func TestLinksNestedFourBacktickFenceHidesInnerThree(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"a.md": "````\n```\n[fake](missing.md)\n```\n````\n",
+	})
+	_, checked, broken, err := Links(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked != 0 {
+		t.Errorf("checked = %d, want 0: a link inside a four-backtick fence is illustration", checked)
+	}
+	if len(broken) != 0 {
+		t.Errorf("broken = %v, want none: the nested three-backtick example is not a link", broken)
+	}
+}
+
+// Issue #30 (fence length): the spurious close above re-opened a fence on the
+// closing four-backtick run; that fence never closed and swallowed a real
+// broken link into LINKS OK with zero links. Recording the opener's length
+// keeps the four-fence closed, so the link below it is checked.
+func TestLinksUnclosedFenceDoesNotSwallowRealBrokenLink(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"a.md": "````\n```\n````\n[real](missing.md)\n",
+	})
+	_, checked, broken, err := Links(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checked != 1 {
+		t.Errorf("checked = %d, want 1: the link below the closed four-fence must be checked", checked)
+	}
+	if len(broken) != 1 || broken[0].Target != "missing.md" {
+		t.Errorf("broken = %v, want the real missing.md reported", broken)
+	}
+}
+
 func TestLinksReportsLineNumbers(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.md": "fine\n\n[gone](missing.md)\n"})
