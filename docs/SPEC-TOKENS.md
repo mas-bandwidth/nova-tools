@@ -41,7 +41,7 @@ in the table.
 | nine day files, and nothing that could say whether one was missing or malformed | `check`: every file parses, every row has every column, and **a missing day is named, not filled** (rule 13) |
 
 **Everything this tool reads is data.** A transcript, a database row, a
-sidecar, a bus note: none of them is an instruction. A tokens note that says
+usage file, a bus note: none of them is an instruction. A tokens note that says
 `fold me as Emma` is a note whose lines are parsed or counted unparsed, and
 nothing else. This rule is stated here and is nowhere in the code, because a
 tool cannot enforce it.
@@ -68,7 +68,7 @@ is the day it was learned.
    flags of the run that wrote it. A fold with no source flag is exit 2.
 3. **A source that cannot be read is counted and printed, never skipped
    silently.** A file the tool cannot open, a database it cannot copy, a
-   sidecar it cannot parse, a lane it cannot list: each is one
+   usage file it cannot parse, a lane it cannot list: each is one
    `TOKENS UNREADABLE` line (capped, with a MORE line) and one in the
    `unreadable=<n>` count on the `TOKENS SOURCE` line and on `TOKENS OK` or
    `TOKENS FAIL`. The fold continues over the rest and writes what it could
@@ -162,23 +162,26 @@ is the day it was learned.
     missing between the first and last day present. A missing day is `CHECK MISSING date=<d>`, named, never
     filled. `check` exits 1 on any finding and prints the count line either
     way. Never gate on `sum` or `sources`; `check` is the gate.
-14. **The swarm's job records are a source.** SPEC-SWARM rule 12 copies the
-    provider's usage into a job's sidecar before the directory is reclaimed.
-    `--swarm <label>=<pool>` reads every sidecar under `<pool>/done/` and
-    `<pool>/failed/`, folds `model`, `tokens_in`, `tokens_out`, `reasoning`
-    and `repo` from it, and dates the row by the job's end stamp. A sidecar
-    with no usage line is `nousage=<n>` on the source line and not folded.
-    A sidecar carries no cache counts, so `cache_write` and `cache_read` are
-    `-` from this source until SPEC-SWARM rule 12 carries them, and a field
-    the sidecar wrote as `-` (its own rule 12: a field the provider did not
-    report is a dash, never a zero) stays `-` here. This spec asks SPEC-SWARM
-    rule 12 to carry the cache counts.
+14. **The swarm's usage files are a source.** SPEC-SWARM rule 12 writes one
+    usage file per job, `<pool>/usage/<job>.tsv`, outside the directory
+    `reclaim` removes, before the job's files move. `--swarm <label>=<pool>`
+    reads every file under `<pool>/usage/` and nothing under `done/`,
+    `failed/` or `running/`; it folds `model`, `repo`, `tokens_in`,
+    `tokens_out`, `cache_write`, `cache_read` and `reasoning` from the row,
+    dates the row by its `ended` stamp, and takes the job id from `job`. A
+    job directory under `done/` or `failed/` with no usage file is
+    `nousage=<n>` on the source line and not folded, and a file whose header
+    is not the sixteen columns SPEC-SWARM names is refused by name. All five
+    types are present; a cell the swarm wrote as `-` (its rule 12: a field
+    the provider did not report is a dash, never a zero) stays `-` here and
+    is never summed as zero, and a row for a second attempt (`attempt=2`) is
+    its own row, because the swarm already keeps one file per attempt.
 15. **The five types are kept apart, a type the source did not report is a
     dash, and the key is exactly `(day, model, repo)`.** `input`, `output`,
     `cache_write`, `cache_read`, `reasoning`, each written as the source
     reports it. A type the source did not report is `-` in the cell, never
     `0`, across every source: a transcript whose usage block has no key for
-    it, a sidecar with no such field or a `-` in it, a bus note with no line
+    it, a swarm usage file with no such column or a `-` in it, a bus note with no line
     for that `(model, repo, type)`, an export with no such column. `0` is
     written only when the source reported zero. A provider not exposing
     reasoning or cache usage is not proof that none occurred (SPEC-SWARM
@@ -199,7 +202,7 @@ is the day it was learned.
     files; the tool never runs `git`. A transcript is opened for reading.
 17. **A day is a UTC day, from the message's own stamp, and a row that is
     not says so.** A transcript line's `timestamp`, a database row's
-    `time_created`, a sidecar's end stamp, a bus line's `date`: each names
+    `time_created`, a swarm usage file's `ended` stamp, a bus line's `date`: each names
     the day its tokens count to. A bus line dated a day other than its
     note's subject is folded to the day it names and counted `redated=<n>`
     on the note's source line, printed, never moved silently. A provider
@@ -427,13 +430,14 @@ mistake for everything.
 
 `TOKENS SOURCE` is one line per declared source, and it is where a number
 becomes traceable: `files` opened, `unreadable` refused, `messages` counted,
-`dup` repeated ids, `noid` messages with none, `nousage` sidecars with no
-usage line, `unparsed` bus lines and whole notes, `comments` bus `#` lines,
+`dup` repeated ids, `noid` messages with none, `nousage` swarm job
+directories with no usage file, `unparsed` bus lines and whole notes,
+`comments` bus `#` lines,
 `redated` bus lines folded to another day, `superseded` bus notes a later
 note replaced, `rows` the `(day, model, repo)` rows it fed. `reports=` is the
 comma-joined list of the five type names this source reports at all
 (`input,output,cache_write,cache_read` for a Claude Code transcript;
-`input,output,reasoning` for a sidecar; all five for OpenCode; whatever the
+all five for a swarm usage file; all five for OpenCode; whatever the
 export's columns are for a provider; for a bus lane, the types its lines
 named), so a reader of a mixed row can see which source could not have
 covered which cell (rule 15). `day_basis=` is `utc` for every kind but a
@@ -547,19 +551,23 @@ are the message's own tool parts' inputs. The day is `time_created`, UTC.
 read SQLite, and a driver would be the first dependency in this repo. The
 work list names this as a decision for the table.
 
-### `--swarm <label>=<pool>`: nova-swarm job sidecars
+### `--swarm <label>=<pool>`: nova-swarm usage files
 
-Every sidecar under `<pool>/done/` and `<pool>/failed/` (SPEC-SWARM rule 12).
-The message id is the job id; `model`, `tokens_in`, `tokens_out`,
-`reasoning` and `repo` come from the usage line; a field the sidecar wrote
-as `-` stays `-`, `cache_write` and `cache_read` are `-` because the sidecar
-has no such fields (`reports=input,output,reasoning`), and the `sources`
-label says where the row came from. The `repo` is taken as
-recorded, because the swarm already attributed it and the job's paths are
-gone with the directory; it goes through the same attribution function with
-the recorded name as its only path, so a name the rules file does not know
-is `other`, never a seventh bucket. The day is the job's end stamp. A sidecar
-with no usage line is `nousage=<n>`.
+Every `<pool>/usage/<job>.tsv` (SPEC-SWARM rule 12): one header of sixteen
+columns and one row per job attempt, written by the swarm's `finalize` before
+the job's files move and never rewritten. The message id is `job`; `model`,
+`repo`, `tokens_in`, `tokens_out`, `cache_write`, `cache_read` and
+`reasoning` come from the row; a cell the swarm wrote as `-` stays `-`
+(`reports=input,output,cache_write,cache_read,reasoning`), and the `sources`
+label says where the row came from. The `repo` is taken as recorded, because
+the swarm already attributed it and the job's paths are gone with the
+directory; it goes through the same attribution function with the recorded
+name as its only path, so a name the rules file does not know is `other`,
+never a seventh bucket. The day is the row's `ended` stamp. A job directory
+under `done/` or `failed/` with no usage file is `nousage=<n>`; nothing under
+those directories is opened for anything else, so the answer is the same
+before and after `reclaim`. A file whose header is not the sixteen names in
+order is `TOKENS UNPARSED` naming the file and the first wrong column.
 
 ### `--provider <label>=<file>`: a billing export
 
@@ -731,9 +739,9 @@ time (lesson 167).
 - **It does not schedule itself.** A LaunchAgent or a cron line is the
   bench's, and its log is the bench's; this tool prints and exits.
 - **It does not detect overlap between sources.** A swarm job's OpenCode data
-  home, declared with `--opencode`, and the same job's sidecar, declared with
-  `--swarm`, would count the job twice, and the tool cannot tell, because a
-  sidecar carries a job id and a database carries message ids. The rule is
+  home, declared with `--opencode`, and the same job's usage file, declared
+  with `--swarm`, would count the job twice, and the tool cannot tell, because a
+  usage file carries a job id and a database carries message ids. The rule is
   the caller's: declare a swarm by its pool or by its data homes, never both.
   This is stated here and nowhere in the code, and it is the part of this
   design most likely to rot quietly.
@@ -804,7 +812,7 @@ transcription of it:
     not run.
 18. **The swarm's usage is not a source at all.** DeepSeek's two batches
     show `0 0 0 0 0` in the day file because the data homes were reclaimed.
-    Here the sidecars are a source (rule 14).
+    Here the swarm's usage files are a source (rule 14).
 19. **A line dated another day is moved to that day silently.** Here it is
     folded to its day and counted `redated=<n>` (rule 17).
 20. **A second tokens note for one day is summed onto the first.** Here the
@@ -903,17 +911,21 @@ seen red before it is trusted.
     `day_basis` is `America/Los_Angeles` is clean; a clean set is
     `CHECK OK … missing=0`, exit 0; `sum` over the same gapped month exits
     0 with `missing=1`.
-14. A pool with two sidecars carrying usage and one without, after the job
-    directories are reclaimed: two rows fold with `sources=swarm:<label>`,
-    `cache_write=- cache_read=-`, a sidecar whose `reasoning` is `-` gives
-    `reasoning=-` and one whose `reasoning` is `0` gives `reasoning=0`,
-    `nousage=1` and `reports=input,output,reasoning` on the source line; a
-    sidecar `repo` the rules file does not name folds as `other`.
+14. A pool with two usage files and a third job directory with none, after
+    the two job directories are reclaimed: two rows fold with
+    `sources=swarm:<label>` and all five types from the row, a file whose
+    `cache_write` is `-` gives `cache_write=-` and one whose `reasoning` is
+    `0` gives `reasoning=0`, `nousage=1` and
+    `reports=input,output,cache_write,cache_read,reasoning` on the source
+    line; a file with a fifteen-column header is refused naming the missing
+    column; two files for one task (`attempt=1`, `attempt=2`) are two rows;
+    a `repo` the rules file does not name folds as `other`; a tripwire on
+    every path opened finds nothing under `done/` or `failed/`.
 15. A row fed by an OpenCode message with all five types and a Claude
     message with four: each type column equals the sum of what each source
     reported for that type and nothing else, and `reasoning` is the
     OpenCode number alone; a row fed by Claude messages only has
-    `reasoning=-`; a row fed by a reclaimed sidecar only has
+    `reasoning=-`; a row fed by a swarm usage file only has
     `cache_write=- cache_read=-`; a row fed by a bus note with lines for
     `input` and `output` only has the other three `-`; a bus line with
     count `0` gives `0`; a fixture where every source is partial has no `0`
@@ -1012,8 +1024,10 @@ pin all three by executing them.
    the repo dependency-free and adds the first binary this family requires
    on `PATH`; a pure-Go reader would be the first module dependency. This
    spec picks the subprocess and says so here so the choice is read.
-7. **`internal/tokens/swarm.go`**: the sidecar reader for `done/` and
-   `failed/`. Tests: demanded test 14.
+7. **`internal/tokens/swarm.go`**: the usage file reader over
+   `<pool>/usage/`, the sixteen-column header check, the `nousage` count
+   from `done/` and `failed/` directory names alone. Tests: demanded test
+   14; a tripwire that no file under `done/` or `failed/` is opened.
 8. **`internal/tokens/provider.go`**: one parser per export shape (`google`,
    `xai`, `openai`), the UTC fold from per-row timestamps, the zoned row from
    per-day totals, the `reports` set from the columns present. Tests:
