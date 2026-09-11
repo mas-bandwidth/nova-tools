@@ -53,6 +53,7 @@ with the read set and the write set separate.**
 | OpenCode's `external_directory` is relative to the harness cwd, so a job directory that is not the cwd is "external" to itself | rule 13 |
 | a harness `permission` block set to `ask` hangs a headless job on a prompt nobody sees | rule 14 |
 | 64 workers each clone the repo over the network, each needing a credential | the swarm caller section: one dispatcher-owned reference checkout per batch |
+| the wall stands and the job's first `git status` dies on `~/.gitconfig`, which reads as a broken sandbox | rule 9: the caller sets `HOME` to the per-job data home, and a `HOME` outside both lists is a refusal |
 
 The fence is the `opencode.json` `permission` block; the wall is the kernel.
 Everything below is about the wall, except one section which is about the fence.
@@ -137,10 +138,33 @@ near the end.
    toolchain whose first scratch write fails looks like a broken sandbox rather
    than a working one. `--tmp <dir>` overrides it and must resolve inside a
    `--write` path.
-9. **The environment passes through.** This is not a secrets tool: the child
-   inherits the caller's environment, minus the three temp variables the tool
-   sets. The credential the caller deliberately passed by environment (rule 6)
-   must arrive.
+9. **The environment passes through, and the caller points the child's home
+   into the write set.** This is not a secrets tool: the child inherits the
+   caller's environment, minus the three temp variables the tool sets. The
+   credential the caller deliberately passed by environment (rule 6) must
+   arrive. But an inherited `HOME` names a directory that is in no list and
+   is therefore denied, and almost every tool a worker runs derives a path
+   from it. Measured on this Mac under the profile below: with the caller's
+   `HOME` inherited, `git -C <jobdir>/repo status` is `fatal: unable to
+   access '/Users/<user>/.gitconfig': Operation not permitted`, so a
+   `tree: yes` job cannot run its first git command; a harness that writes
+   `~/.config/opencode` and `~/.local/share/opencode` dies the same way.
+   **The caller therefore sets `HOME` to the per-job data home** — which is
+   in the write set (the swarm seam below) — in the environment it hands this
+   tool. With `HOME` so set the same `git status` exits 0 (measured).
+   `HOME` rather than the XDG quartet (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+   `XDG_CACHE_HOME` plus `GIT_CONFIG_GLOBAL`) because one variable covers
+   every home-derived path a tool invents — `~/.gitconfig`, `~/.ssh`,
+   `~/.npm`, `~/.cache`, and macOS's `~/Library/Application Support`, which
+   no XDG variable reaches — while the quartet covers only the tools that
+   honour it and must grow a name every time a toolchain invents one. (The
+   quartet was measured too: `GIT_CONFIG_GLOBAL` + `XDG_CONFIG_HOME` fixes
+   git. It fixes git.) The tool does not set `HOME` itself: rule 4 forbids it
+   guessing which write path is a data home. It does **check**: a run whose
+   `HOME` resolves outside every `--read` and `--write` path is
+   `SANDBOX REFUSED reason=home_outside` at exit 125 and the command does not
+   run, because a wall that lets the job start and kills its first git
+   command is the silent sandbox rule 1 exists to prevent.
 10. **The probe proves the wall before the work runs.** `nova-sandbox probe
     --write <dir> [--read <dir>...] --secret <path>` runs four checks under the
     real policy for this platform: a write **outside** every named path must
@@ -237,7 +261,8 @@ range, and this is a deliberate, recorded departure from the conventions
 | code | meaning |
 |------|---------|
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
-| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial was asked for and is not available (`reason=net_unenforceable`), no `--write`, a relative or missing path, a path in both lists, a `--cwd` outside the write set, a missing `--` |
+| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial was asked for and is not available (`reason=net_unenforceable`), no `--write`, a relative or missing path, a path in both lists, a `--cwd` outside the write set, a `HOME` outside both lists
+(`reason=home_outside`), a missing `--` |
 | 126 | the command was resolved but could not be executed (not executable, or the backend failed to start it) |
 | 127 | the command could not be resolved on the caller's `PATH` |
 | 128+N | the wrapped command was killed by signal `N` |
@@ -271,7 +296,7 @@ which is the thing asked for and goes to stdout.
 SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> read=<n> write=<n> net=<denied|nopromise> cwd=<dir> cmd=<name>
 SANDBOX UNSANDBOXED cmd=<name> read=<n> write=<n>: no OS containment; every read and write this command makes is yours
 SANDBOX NOTE <the one remedy or gap line>
-SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|bad_read|bad_write|bad_cwd|no_command|not_found|not_executable>: <text>
+SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|bad_read|bad_write|bad_cwd|home_outside|no_command|not_found|not_executable>: <text>
 PROBE STEP name=<write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
 PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise>
 PROBE REFUSED reason=<check|secret_inside_allow|no_sandbox|net_unenforceable>: <text>
@@ -308,15 +333,38 @@ source, not a string built in three places, and `policy` prints them:
 
 | platform | roots |
 |---|---|
-| darwin | `/` (the directory itself, `(literal "/")`, not a subpath), `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/opt/homebrew`, `/opt/local`, `/private/etc`, `/dev` (read), the directory of the resolved command; plus **write** on `/dev/null` and `/dev/tty` |
-| linux | `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`, `/opt`, `/dev` (read), `/proc/self`, the directory of the resolved command; plus **write** on `/dev/null` and `/dev/tty` |
+| darwin | `/`, `/etc`, `/tmp`, `/var` (each the directory or link itself, `(literal ...)`, not a subpath), `/System`, `/usr`, `/bin`, `/sbin`, `/Library`, `/opt/homebrew`, `/opt/local`, `/private/etc`, `/private/var/select`, `/dev` (read), the directory of the resolved command; plus **write** on `/dev/null` and `/dev/tty` |
+| linux | `/usr`, `/bin`, `/sbin`, `/lib`, `/lib64`, `/etc`, `/opt`, `/dev` (read), `/proc`, the directory of the resolved command; plus **write** on `/dev/null` and `/dev/tty` |
 | windows | `%WINDIR%`, `%ProgramFiles%`, `%ProgramFiles(x86)%`, the directory of the resolved command |
 
 `/` itself and `/dev` are in the darwin list because they were measured to be
 required, not because a document said so: with the previous list `/bin/echo`
-died with `SIGABRT` (exit 134) and a plain `2>/dev/null` failed. Node runs once
-both are present. `/private/var/db/dyld` is **not** in the list: it does not
-exist on macOS 26.
+died with `SIGABRT` (exit 134), and `/dev` was measured to be required for a
+plain `2>/dev/null` — the shell opens `/dev/null` before the command runs.
+(`/dev` was not shown to be required by `/bin/echo` itself, and "Node runs
+once both are added" is the measurement that Node runs with the list complete,
+not a per-item necessity for either.) `/private/var/db/dyld` is **not** in the
+list: it does not exist on macOS 26.
+
+`/etc`, `/tmp` and `/var` are the second measured correction, and they are
+`literal` grants on the **symlinks**, not subpaths. Granting `(literal "/")`
+grants the root directory; it does not grant the top-level symlinks that macOS
+puts in it. Measured with the previous list: `cat /etc/hosts` is denied while
+`cat /private/etc/hosts` succeeds, `ls /tmp` is denied, and **every**
+`/bin/sh -c ...` dies with `Error opening /private/var/select/sh` — which made
+the wall unusable for any wrapped shell command. With the three literals and
+`/private/var/select` added, `cat /etc/hosts` and `/bin/sh -c true` both work
+(measured). A subpath grant on `/var` or `/tmp` is **not** wanted and is not
+what is written: the literal grants the link, and what the link points at is
+granted, or not, by the other roots.
+
+One measured consequence of the same shape, named here so a build does not
+rediscover it: `/usr/bin/git` on a Mac is an Xcode shim that reads
+`/var/db/xcode_select_link`, which no root grants, so the shim fails inside the
+wall. Rule 5 resolves the command on the caller's `PATH` before the wrap, so a
+caller whose `git` is the real binary (`/opt/homebrew/bin/git`, measured
+working) is unaffected; a caller stuck with the shim names `/private/var/db`
+with `--read`, and the `SANDBOX NOTE` of the `--read` section is the remedy.
 
 There is no `--root` flag. A toolchain installed into a user directory — Go
 under `~/go`, node under `~/.nvm`, .NET under `~/.local`, the Studio's
@@ -342,16 +390,23 @@ generated per run, never hand-edited (rule 15):
 (version 1)
 (deny default)
 (allow process-exec* process-fork)
-(allow signal (target self))
+(allow signal (target self) (target children))
 (allow sysctl-read)
 (allow mach-lookup)
-(allow file-read* (literal "/"))
+(allow file-read* (literal "/") (literal "/etc") (literal "/tmp") (literal "/var"))
 (allow file-read* (subpath (param "ROOT0")) (subpath (param "ROOT1")) ...)
 (allow file-read* (subpath (param "READ0")) ...)
 (allow file-read* file-write* (subpath (param "WRITE0")) ...)
 (allow file-write* (literal "/dev/null") (literal "/dev/tty"))
 (allow network*)            ; omitted when --net-deny
 ```
+
+The signal grant carries **both** `(target self)` and `(target children)`.
+With `(target self)` alone, measured, `sh -c 'sleep 30 & kill $!'` prints
+`kill: Operation not permitted`: the wrapped harness cannot kill its own
+timed-out child, which is the one thing a supervisor must always be able to
+do. With both filters the same line exits 0 (measured). `(target children)`
+grants nothing outside the wrapped process tree.
 
 The exec and signal grants are **two clauses**. A single
 `(allow process-exec* process-fork signal (target self))` applies the
@@ -386,6 +441,13 @@ first, or `landlock_restrict_self` fails with `EPERM`.
    read/write set the running ABI supports: `LANDLOCK_ACCESS_FS_EXECUTE`,
    `READ_FILE`, `READ_DIR`, `WRITE_FILE`, `MAKE_REG`, `MAKE_DIR`, `MAKE_SYM`,
    `REMOVE_FILE`, `REMOVE_DIR`, `REFER` (ABI 2+), `TRUNCATE` (ABI 3+).
+The linux root list names `/proc`, not `/proc/self`. `/proc/self` opened
+`O_PATH` resolves at open time to the pid that opened it — the tool's, which
+after `syscall.Exec` is the command's — so a rule built on it grants the
+wrapped process its own `/proc` entry and grants **every child it spawns
+nothing**: a harness that runs a subprocess which reads `/proc/self/status`
+would fail for no legible reason. `/proc` read-only is the grant.
+
 2. For each root and each `--read`: `open(2)` it `O_PATH|O_CLOEXEC` and
    `landlock_add_rule` with `LANDLOCK_RULE_PATH_BENEATH` and the read subset.
 3. For each `--write`: the same with the full read+write subset.
@@ -647,6 +709,12 @@ One per rule:
    Files planted at `<home>/.ssh/id_test`, `<home>/.config/gh/hosts.yml`,
    `<home>/Library/Keychains/probe.db` (darwin) and `<home>/.zsh_history` are
    each unreadable inside the wall and readable outside it in the same test.
+   On darwin the roots themselves are asserted through their symlinks:
+   `cat /etc/hosts` succeeds and `/bin/sh -c true` exits 0 inside the wall
+   (both fail without the `/etc`, `/tmp`, `/var` literals and
+   `/private/var/select`). On linux a wrapped command's **child** reads
+   `/proc/self/status` successfully, which `/proc/self` as a root would
+   deny.
 4. No `--write` is exit 125 with the sentence naming the flag; three `--read`
    and two `--write` put five paths in the generated policy, read-only and
    read-write respectively, and print `read=3 write=2`; the same path in both
@@ -690,7 +758,9 @@ One per rule:
     after the wrap (the test reads `/proc/self/stat` from the wrapped command
     and compares it with the pid it spawned) and no wait happens; on darwin and
     windows `SIGTERM` (or the console control event) reaches the child and the
-    tool waits for it.
+    tool waits for it. On every platform the wrapped command can signal its
+    **own** child: `sh -c 'sleep 30 & kill $!'` exits 0 and the sleep is gone,
+    which is red on darwin without `(target children)` in the signal clause.
 13. The default `--cwd` is the first `--write`; a `--cwd` outside the write set
     is exit 125 `reason=bad_cwd`; a wrapped command reports its own cwd as the
     job directory.
@@ -744,6 +814,12 @@ And one for each thing the rules above assert but no test yet reached:
     with the reference (`.git/objects/info/alternates` names it) and reachable
     with no network. A task text naming a directory does not change the
     worker's `--write` argv — the test plants one and compares the argv.
+    The same test proves rule 9 end to end **inside** the wall: with the argv
+    the dispatcher built, `git -C <jobdir>/repo status` exits 0 and a harness
+    config write (`$HOME/.config/opencode/opencode.json`, through the `HOME`
+    the caller set) lands under the write set; with `HOME` left at the
+    caller's, the run is `SANDBOX REFUSED reason=home_outside` and no worker
+    starts.
 25. From inside a sandboxed task, `rm -rf` of a line's self path fails with
     `EPERM` and the self is byte-identical afterwards (#69's worked specimen).
 26. **The read and the adoption**, before this wraps a working loop: one
