@@ -55,3 +55,10 @@ func GroupMembers(pgid, self int) (int, bool) { return 0, false }
 
 // pgidOf has no process group to report here, so a process is its own group of one.
 func pgidOf(pid int) int { return pid }
+
+// noteChild and identify are the WINDOWS process layer's business: there a pid is not an
+// identity, so every pid that may be ended carries the kernel's creation stamp beside it.
+// Here there is no group and no stamp to be had, so these record nothing and the
+// platform keeps the degraded shape it had.
+func noteChild(pid int)                {}
+func identify(pid int, started string) {}

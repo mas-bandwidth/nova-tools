@@ -87,11 +87,20 @@ func Supervise(in SuperviseInput) int {
 		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness would not start: " + redactedReason(err)})
 	}
 	jobPgid := cmd.Process.Pid
+	// THE HARNESS'S OWN IDENTITY, learned at the one moment it is not in doubt: on a
+	// platform with no process group a pid alone is a number the kernel re-issues the
+	// instant the process ends, and the survivor check and the kill both have to know
+	// whether the pid they hold is still the process they meant.
+	noteChild(jobPgid)
+	jobStarted := StartStamp(jobPgid)
 	_ = WriteJSON(PidPath(jobDir), PidRecord{
 		Job: in.Task, Slot: in.Slot, State: SlotLaunched, Pid: self, Pgid: pgidOf(self), JobPgid: jobPgid,
-		PidStarted: identity.PidStarted, Nonce: in.Nonce, Started: Stamp(started),
+		PidStarted: identity.PidStarted, JobStarted: jobStarted, Nonce: in.Nonce, Started: Stamp(started),
 	})
-	_ = p.UpdateSlot(in.Slot, in.Nonce, func(sf SlotFile) SlotFile { sf.JobPgid = jobPgid; return sf })
+	_ = p.UpdateSlot(in.Slot, in.Nonce, func(sf SlotFile) SlotFile {
+		sf.JobPgid, sf.JobStarted = jobPgid, jobStarted
+		return sf
+	})
 	CheckKillPoint("supervisor-after-release")
 
 	record := watch(in, cmd, jobDir, jobPgid, started)

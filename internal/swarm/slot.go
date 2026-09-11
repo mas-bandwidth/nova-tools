@@ -45,6 +45,7 @@ type SlotFile struct {
 	Pgid          int    `json:"pgid,omitempty"`
 	JobPgid       int    `json:"job_pgid,omitempty"`
 	PidStarted    string `json:"pid_started,omitempty"`
+	JobStarted    string `json:"job_started,omitempty"`
 	RunnerPid     int    `json:"runner_pid"`
 	RunnerStarted string `json:"runner_started,omitempty"`
 	ReservedAt    string `json:"reserved_at,omitempty"`
@@ -61,6 +62,7 @@ type PidRecord struct {
 	Pgid       int    `json:"pgid"`
 	JobPgid    int    `json:"job_pgid,omitempty"`
 	PidStarted string `json:"pid_started"`
+	JobStarted string `json:"job_started,omitempty"`
 	RunnerPid  int    `json:"runner_pid"`
 	Nonce      string `json:"nonce"`
 	Started    string `json:"started"`
@@ -322,6 +324,15 @@ const (
 // Decide reads one slot file and decides it with NO GUESS. Every branch here is rule 17's,
 // and the default is quarantine: a slot this tool cannot decide is never allocated, is
 // named on STATUS OK quarantined=, and is a person's to clear.
+// aliveGroupOf is rule 17's last liveness question: with the leader dead, is anything of
+// this job still running? The job's pid is handed to the process layer with the start stamp
+// the slot file recorded, because a platform with no process groups has only that stamp to
+// tell this job's harness from whoever holds its number now.
+func aliveGroupOf(sf SlotFile) bool {
+	identify(sf.JobPgid, sf.JobStarted)
+	return GroupAlive(sf.JobPgid) || GroupAlive(sf.Pgid)
+}
+
 func (p *Pool) Decide(n int) Decision {
 	sf, err := p.ReadSlot(n)
 	if err != nil {
@@ -357,7 +368,7 @@ func (p *Pool) Decide(n int) Decision {
 		case Alive(sf.Pid):
 			d.Kind, d.Reason = DecideQuarantine, "pid "+strconv.Itoa(sf.Pid)+" is alive under a different start stamp (pid reuse)"
 			return d
-		case GroupAlive(sf.JobPgid) || GroupAlive(sf.Pgid):
+		case aliveGroupOf(sf):
 			d.Kind, d.Reason = DecideQuarantine, "the leader is dead and a process in its group is alive"
 			return d
 		}

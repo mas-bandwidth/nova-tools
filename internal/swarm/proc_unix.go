@@ -61,3 +61,10 @@ func pgidOf(pid int) int {
 	}
 	return pid
 }
+
+// noteChild and identify are the WINDOWS process layer's business: there a pid is not an
+// identity, so every pid that may be ended carries the kernel's creation stamp beside it.
+// Here a process GROUP is identity enough -- `kill(-pgid)` reaches the job or nothing --
+// and these record nothing.
+func noteChild(pid int)                {}
+func identify(pid int, started string) {}

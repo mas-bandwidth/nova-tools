@@ -26,6 +26,12 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	// job's own process group is a background subtask the prompt forbids.
 	survivors := 0
 	if slotErr == nil {
+		// The pids this check asks about are the ones the slot file recorded, and it asks
+		// about them AFTER their processes have gone: each is handed to the process layer
+		// with the start stamp that says which process it meant, so that a platform which
+		// re-issues pids cannot make a stranger this job's survivor -- or its corpse.
+		identify(sf.JobPgid, sf.JobStarted)
+		identify(sf.Pgid, sf.PidStarted)
 		if GroupAlive(sf.JobPgid) {
 			survivors = 1
 		}

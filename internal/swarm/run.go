@@ -213,6 +213,8 @@ func Run(in RunInput) int {
 				// watching it now.
 				sf, err := p.ReadSlot(slot)
 				if err == nil {
+					identify(sf.JobPgid, sf.JobStarted)
+					identify(sf.Pgid, sf.PidStarted)
 					Reap(sf.JobPgid, TerminateGrace)
 					Reap(sf.Pgid, TerminateGrace)
 				}
@@ -343,6 +345,7 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		_ = p.Free(slot)
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: the supervisor would not start: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), 1
 	}
+	noteChild(cmd.Process.Pid)
 	_ = os.WriteFile(filepath.Join(jobDir, "supervisor.pid"), []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
 	CheckKillPoint("after-spawn")
 	go func() { _ = cmd.Wait() }()
