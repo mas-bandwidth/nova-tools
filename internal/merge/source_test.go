@@ -232,3 +232,73 @@ func stringArgs(call *ast.CallExpr) []string {
 	}
 	return out
 }
+
+// Rule 4: THE GUARD IS IN FRONT OF EVERY COMMAND THIS TOOL STARTS.
+//
+// gitops.go used to claim the guard is on run() "because the one function that runs a
+// mutating command is only true if there is no second function that runs anything" -- and
+// there is a second: GH.gh reaches Runner.Run directly. It guards first, so rule 4 held,
+// but nothing said so, and guard_test.go drives Git.Run alone. A third call site would be
+// an unguarded mutation path with nothing red. The prototype's guard lived in a shell
+// function called `mut`, and every other call site in the file ran git or gh directly.
+//
+// So: every function that reaches Runner.Run calls guard() first, and this reads the
+// positions rather than trusting the order a reader remembers.
+func TestEveryRunnerCallSiteIsGuardedFirst(t *testing.T) {
+	fset := token.NewFileSet()
+	sites := 0
+	for name := range packageSource(t) {
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, decl := range f.Decls {
+			fn, ok := decl.(*ast.FuncDecl)
+			if !ok || fn.Body == nil {
+				continue
+			}
+			runner, guarded := token.NoPos, token.NoPos
+			ast.Inspect(fn.Body, func(n ast.Node) bool {
+				call, ok := n.(*ast.CallExpr)
+				if !ok {
+					return true
+				}
+				switch fun := call.Fun.(type) {
+				case *ast.SelectorExpr:
+					// <anything>.Runner.Run(...)
+					if fun.Sel.Name != "Run" {
+						return true
+					}
+					inner, ok := fun.X.(*ast.SelectorExpr)
+					if !ok || inner.Sel.Name != "Runner" {
+						return true
+					}
+					if runner == token.NoPos {
+						runner = call.Pos()
+					}
+				case *ast.Ident:
+					if fun.Name == "guard" && guarded == token.NoPos {
+						guarded = call.Pos()
+					}
+				}
+				return true
+			})
+			if runner == token.NoPos {
+				continue
+			}
+			sites++
+			switch {
+			case guarded == token.NoPos:
+				t.Errorf("%s's %s hands a command to a Runner and never calls guard; rule 4's four spellings are refused in the one function that runs a command, BEFORE the command is built",
+					name, fn.Name.Name)
+			case guarded > runner:
+				t.Errorf("%s's %s calls guard at line %d and runs the command at line %d; the guard runs BEFORE the command is built, not after",
+					name, fn.Name.Name, fset.Position(guarded).Line, fset.Position(runner).Line)
+			}
+		}
+	}
+	// Two today: Git.Run and GH.gh. A zero here is a tripwire that has stopped looking.
+	if sites < 2 {
+		t.Fatalf("this tripwire found %d call sites reaching a Runner; it was looking in the wrong place and would have passed by checking nothing", sites)
+	}
+}

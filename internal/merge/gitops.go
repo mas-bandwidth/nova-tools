@@ -24,10 +24,14 @@ import (
 // its ref is exactly that sha, and the object pushed has that sha as its first parent, so
 // the ref moves forward by one gated commit and no history is rewritten.
 //
-// The guard is on run(), not on a Mutate() beside a Run(), because "the one function that
-// runs a mutating command" is only true if there is no second function that runs anything.
-// The prototype's guard lived in a shell function called mut, and every other call site in
-// the file ran git or gh directly.
+// The guard is on run(), not on a Mutate() beside a Run(): a guard the caller must
+// remember to ask for is a guard with an exemption list. There is a second function that
+// reaches a Runner -- GH.gh, which shells to gh rather than git -- and it calls guard()
+// first for the same reason. That is not a convention: TestEveryRunnerCallSiteIsGuardedFirst
+// reads the positions and fails a function that hands a command to a Runner without
+// guarding it first, so a third call site is red rather than quiet. The prototype's guard
+// lived in a shell function called mut, and every other call site in the file ran git or
+// gh directly.
 
 // GuardError is a refusal the guard made. It is exit 1 -- the tool ran and said NO -- and
 // never exit 2: the invocation was readable, and what it asked for is forbidden.
