@@ -28,6 +28,16 @@ func openLane(verb, lane string, stderr io.Writer) (*merge.State, int) {
 		fmt.Fprintf(stderr, "nova-merge %s: %s\n", verb, oneline.Err(err))
 		return nil, 2
 	}
+	// A STOPPED LANE SAYS SO ON EVERY VERB. Only `run` read this file, so after STOP OK a
+	// person checking `status` saw a normal lane and `dry-run` printed stopped=0 -- the
+	// one signal that says "start nothing new" was invisible to the verbs a person looks
+	// at first. `run` prints its own, on every pass of its loop.
+	if verb != "run" {
+		if _, err := os.Stat(filepath.Join(lane, merge.StopName)); err == nil {
+			fmt.Fprintf(stderr, "%s NOTE a stop file is present in this lane: start nothing new; remove %s to run again\n",
+				strings.ToUpper(verb), oneline.Field(filepath.Join(lane, merge.StopName)))
+		}
+	}
 	return st, 0
 }
 

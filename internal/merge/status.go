@@ -18,10 +18,22 @@ import (
 // the lane has not run, because a read-only verb that depends on a clone's freshness is a
 // read-only verb that can be wrong.
 func (p *Pass) Status(reads string) int {
+	// A TOOL THAT COULD NOT LOOK SAYS SO. base_state=UNKNOWN with no other line let a
+	// reader take STATUS OK as a report over a lane the tool could not see; the two calls
+	// that can fail are named, with what they said, and the exit code is untouched
+	// because status REPORTS.
 	baseSHA, baseState := "", "UNKNOWN"
-	if sha, err := p.BaseSHA(); err == nil {
+	sha, err := p.BaseSHA()
+	switch {
+	case err != nil:
+		fmt.Fprintf(p.Stderr, "STATUS NOTE the lane's base %s could not be read from %s, so base_state is UNKNOWN: %s\n",
+			oneline.Field(p.State.Base), oneline.Field(p.Remote), oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
+	default:
 		baseSHA = sha
-		if checks, err := p.Host.Checks(sha); err == nil {
+		if checks, err := p.Host.Checks(sha); err != nil {
+			fmt.Fprintf(p.Stderr, "STATUS NOTE the base's checks could not be read from the host, so base_state is UNKNOWN: %s\n",
+				oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
+		} else {
 			baseState = checks.Verdict()
 			if p.baseGateGreen(sha) && baseState != "RED" {
 				baseState = "GREEN"

@@ -31,7 +31,13 @@ func (p *Pass) Packet(who string, only string, all bool) int {
 			continue
 		}
 		c := p.plan(e, baseSHA)
+		// AN ENTRY PASSED OVER SAYS WHY. `packet --pr N` on an entry that IS in the lane
+		// printed entries=0 and no reason, and --all silently meant "the ones with
+		// needs_read=yes" -- so a coordinator saw one entry of three and concluded the
+		// rest needed no read.
 		if !p.needsReadFrom(e, who) {
+			fmt.Fprintf(p.Stderr, "PACKET NOTE entry=%s who=%s: %s\n",
+				oneline.Field(e.ID()), oneline.Field(who), oneline.Escape(p.skipReason(e, who)))
 			continue
 		}
 		blocks++
@@ -54,6 +60,15 @@ func (p *Pass) Packet(who string, only string, all bool) int {
 	holdList.More()
 	fmt.Fprintf(p.Stdout, "PACKET OK entries=%d holds=%d\n", blocks, total)
 	return 0
+}
+
+// skipReason is the sentence behind PACKET NOTE: which half of the one condition this
+// entry failed, in the words the lane's own state uses.
+func (p *Pass) skipReason(e *Entry, who string) string {
+	if e.NeedsRead != "yes" {
+		return fmt.Sprintf("needs_read=no, so this entry asks nobody for a read; nova-merge add --lane %s %s --needs-read sets it", p.Lane, selector(e))
+	}
+	return fmt.Sprintf("%s has already approved head %s, which is this entry's current head", who, dashIfEmpty(Short(e.OID)))
 }
 
 // needsReadFrom is the one condition: needs_read=yes, and no approve by that name for the

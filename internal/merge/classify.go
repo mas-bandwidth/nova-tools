@@ -2,6 +2,7 @@ package merge
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -162,8 +163,10 @@ func (p *Pass) build(e *Entry, c *Classification, baseSHA string, res *Result) {
 	fmt.Fprintf(p.Stdout, "RUN BUILT entry=%s head=%s base=%s merge=%s ref=%s\n",
 		oneline.Field(e.ID()), oneline.Field(Short(e.OID)), oneline.Field(Short(baseSHA)),
 		oneline.Field(Short(built.Merge)), oneline.Field(built.Ref))
-	res.Note = fmt.Sprintf("gate this: --head %s --base-sha %s --merge %s --from %s/repo, then nova-merge gate --lane %s %s --head %s --base-sha %s --merge %s --verdict green|red --summary <path>",
-		e.OID, baseSHA, built.Merge, p.Lane, p.Lane, selector(e), e.OID, baseSHA, built.Merge)
+	// A REMEDY IS A COMMAND A PERSON CAN RUN, and this one opened with a verbless
+	// "gate this:" and a --from flag that exists on nothing.
+	res.Note = fmt.Sprintf("nova-merge gate --lane %s %s --head %s --base-sha %s --merge %s --verdict green|red --summary <path>  # prove %s in %s first",
+		p.Lane, selector(e), e.OID, baseSHA, built.Merge, Short(built.Merge), filepath.Join(p.Lane, RepoDir))
 }
 
 // selector is how a verb names this entry on a command line: --pr <n> or --branch <name>.

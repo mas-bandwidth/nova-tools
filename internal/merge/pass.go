@@ -55,6 +55,11 @@ type Result struct {
 	Blocked int
 	Waiting int
 	Stopped bool // something was refused, stopped or blocked: exit 1
+	// Refused is THE TOOL COULD NOT LOOK -- the host or the remote did not answer -- and
+	// it is exit 2, not 1. Exit 1 is "the tool ran and said no", which is a different
+	// piece of news from "the tool could not find out", and a caller that cannot tell
+	// them apart cannot decide whether to retry.
+	Refused bool
 	Note    string
 	Plan    []string
 }
@@ -67,7 +72,10 @@ type Result struct {
 // as intended -- the prototype exited 1 on every pass while CI ran, and its caller
 // stopped reading the exit code.
 func (r *Result) Exit() int {
-	if r.Stopped {
+	switch {
+	case r.Refused:
+		return 2
+	case r.Stopped:
 		return 1
 	}
 	return 0
@@ -123,14 +131,17 @@ func (p *Pass) baseLine(res *Result) (baseSHA string, ok bool) {
 	baseSHA, err := p.BaseSHA()
 	if err != nil {
 		fmt.Fprintf(p.Stderr, "RUN REFUSED: the lane's base %s could not be read from %s: %s\n",
-			oneline.Field(p.State.Base), oneline.Field(p.Remote), oneline.Err(err))
-		res.Stopped = true
+			oneline.Field(p.State.Base), oneline.Field(p.Remote), oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
+		res.Stopped, res.Refused = true, true
+		res.Note = fmt.Sprintf("nova-merge status --lane %s  # the remote did not answer for %s; this pass looked at nothing", p.Lane, p.State.Base)
 		return "", false
 	}
 	checks, err := p.Host.Checks(baseSHA)
 	if err != nil {
-		fmt.Fprintf(p.Stderr, "RUN REFUSED: the base's checks could not be read: %s\n", oneline.Err(err))
-		res.Stopped = true
+		fmt.Fprintf(p.Stderr, "RUN REFUSED: the base's checks could not be read: %s\n",
+			oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
+		res.Stopped, res.Refused = true, true
+		res.Note = fmt.Sprintf("nova-merge status --lane %s  # the host did not answer for the base; this pass looked at nothing", p.Lane)
 		return "", false
 	}
 	gate := "-"
@@ -154,8 +165,10 @@ func (p *Pass) baseLine(res *Result) (baseSHA string, ok bool) {
 		return baseSHA, false
 	}
 	if state == "PENDING" {
-		res.Note = fmt.Sprintf("the base %s has no evidence for %s: gate it with --head %s --base-sha %s --merge %s --from %s/repo",
-			p.State.Base, Short(baseSHA), baseSHA, baseSHA, baseSHA, p.Lane)
+		// A REMEDY IS A COMMAND. This one had no verb and named a --from flag that
+		// exists on nothing.
+		res.Note = fmt.Sprintf("nova-merge gate --lane %s --branch %s --head %s --base-sha %s --merge %s --verdict green --summary <path>  # the base %s has no evidence for %s; a base gate is its three shas equal",
+			p.Lane, p.State.Base, baseSHA, baseSHA, baseSHA, p.State.Base, Short(baseSHA))
 	}
 	p.basePending = state == "PENDING"
 	return baseSHA, true
