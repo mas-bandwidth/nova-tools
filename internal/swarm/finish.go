@@ -32,12 +32,7 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		// re-issues pids cannot make a stranger this job's survivor -- or its corpse.
 		identify(sf.JobPgid, sf.JobStarted)
 		identify(sf.Pgid, sf.PidStarted)
-		if GroupAlive(sf.JobPgid) {
-			survivors = 1
-		}
-		if Reap(sf.JobPgid, TerminateGrace) || Reap(sf.Pgid, TerminateGrace) {
-			survivors++
-		}
+		survivors = survivorsSeen(GroupAlive(sf.JobPgid), Reap(sf.JobPgid, TerminateGrace) || Reap(sf.Pgid, TerminateGrace))
 	}
 
 	rec := ExitRecord{RC: -1}
@@ -176,6 +171,19 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	return fmt.Sprintf("RUN DONE id=%s slot=%d rc=%d after=%s result=%s findings=%d refusals=%d notes=%d/%s unpublished=%t budget=%s dest=%s%s",
 		oneline.Field(sc.ID), r.slot, rec.RC, after, oneline.Field(report.Class), findings, refusals,
 		notesSent, oneline.Field(notesRead), unpublished, budget, dest, said), end, dest
+}
+
+// survivorsSeen is rule 11's count from what the DISPATCHER itself observed, and one job
+// group asked about twice is one survivor. The group was asked before the reap and again
+// after it, and each yes added one: a single backgrounded child could print
+// `background=2` (read 4, F8). The count of MEMBERS is the supervisor's, made with
+// GroupMembers inside the group's own process and carried on exit.json, which `finish`
+// prefers whenever it is larger; this is the fallback, and a fallback counts what it saw.
+func survivorsSeen(aliveBefore, survivedTheReap bool) int {
+	if aliveBefore || survivedTheReap {
+		return 1
+	}
+	return 0
 }
 
 // destinationFor is WHERE A JOB LANDS, and it is one rule for every path that ends a job:

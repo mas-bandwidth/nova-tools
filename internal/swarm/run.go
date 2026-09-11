@@ -81,6 +81,13 @@ func Run(in RunInput) int {
 	retired := map[int]bool{}
 	watching := map[int]*running{}
 
+	// The counters RUN OK prints are declared before the start-up pass, because that pass
+	// finishes jobs too: a recovered job lands in done/ or failed/ and belongs in the
+	// numbers that describe the pool afterwards (read 4, F2).
+	started, done, failed, killed := 0, 0, 0, 0
+	recovered := 0
+	launchFailed := 0
+
 	// The start-up pass, before a single pending task is claimed.
 	slots, bad, err := p.SlotNumbers()
 	if err != nil {
@@ -117,6 +124,19 @@ func Run(in RunInput) int {
 					end = EndDone
 				}
 			}
+			// RULE 7 ON THE RECOVERY PATH (SPEC-SWARM.md:109-111), VERBATIM: "A worker
+			// silent past its deadline is reaped and its job is re-queued once, with
+			// `requeued=1` in the new task's sidecar; a job reaped a second time goes to
+			// `failed/` with `reaped=2` and is not re-queued again." The rule is about
+			// the JOB, not about which dispatcher was alive to see it: a supervisor that
+			// reaped its worker while the dispatcher was dead left `end=killed` on
+			// exit.json, and this branch finalized it straight into failed/ with a stale
+			// `reaped` and no second attempt (read 4, F1). The reap is counted here, once,
+			// exactly as `finish` counts it, and BEFORE the files move -- the new task's
+			// text is the old task's text, read from where the old task still is.
+			if end == EndKilled {
+				sc.Reaped++
+			}
 			fin, usagePath := in.settle(sc, d.File.JobDir, rec, end, now())
 			said = said || end == EndUnknown
 			// ITS FILES MOVE AS RULE 12 SAYS (SPEC-SWARM.md:372). Finalize writes the
@@ -129,9 +149,28 @@ func Run(in RunInput) int {
 			}
 			dest := destinationFor(end, fin.Class, rec.RC)
 			_ = p.WriteSidecar(Running, sc)
+			requeued := false
+			if end == EndKilled {
+				requeued = in.requeue(sc, now())
+			}
 			_ = p.Claim(sc.ID, Running, dest)
-			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=%s dest=%s usage=%s\n",
-				n, oneline.Field(sc.ID), oneline.Field(end), oneline.Field(dest), oneline.Field(usagePath))
+			// THE COUNTS ARE THE TRUTH ABOUT THE POOL (SPEC-SWARM.md:608-612), "never
+			// about the output". A recovered job lands in done/ or failed/ during THIS
+			// pass, and `RUN OK` said `done=0 failed=0` over it because only the main
+			// loop touched the counters (read 4, F2). It is counted where it landed, and
+			// `recovered=<n>` says how many of the counted jobs this pass recovered
+			// rather than started.
+			recovered++
+			switch {
+			case end == EndKilled, end == EndUnverifiable:
+				killed++
+			case dest == Done:
+				done++
+			default:
+				failed++
+			}
+			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=%s dest=%s usage=%s requeued=%t\n",
+				n, oneline.Field(sc.ID), oneline.Field(end), oneline.Field(dest), oneline.Field(usagePath), requeued)
 			if err := p.Free(n); err != nil {
 				fmt.Fprintf(errOut, "RUN QUARANTINE slot=%d id=%s: the slot file could not be released: %s\n", n, oneline.Field(sc.ID), oneline.Escape(redactedReason(err)))
 				quarantined[n] = true
@@ -149,7 +188,7 @@ func Run(in RunInput) int {
 			// one did not, so the same line came out two ways and a reader parsing it by
 			// field found the field missing. An unlaunched task goes back to pending/,
 			// which is neither done nor failed: the dash the grammar names for exactly that.
-			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=unlaunched dest=%s usage=-\n", n, oneline.Field(d.File.Job), Dash)
+			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=unlaunched dest=%s usage=- requeued=false\n", n, oneline.Field(d.File.Job), Dash)
 		default:
 			said = true
 			quarantined[n] = true
@@ -173,8 +212,6 @@ func Run(in RunInput) int {
 	}
 
 	deadline := now().Add(time.Duration(in.Hours * float64(time.Hour)))
-	started, done, failed, killed := 0, 0, 0, 0
-	launchFailed := 0
 	tasks := bounded.Capped(out, in.Max, "RUN", "task", "nova-swarm status --pool "+p.Dir+" --max 0")
 
 	for {
@@ -256,8 +293,8 @@ func Run(in RunInput) int {
 	tasks.More()
 
 	pending, _ := p.List(Pending)
-	fmt.Fprintf(out, "RUN OK started=%d done=%d failed=%d killed=%d pending=%d after=%s\n",
-		started, done, failed, killed, len(pending), trimDuration(now().Sub(deadline.Add(-time.Duration(in.Hours*float64(time.Hour))))))
+	fmt.Fprintf(out, "RUN OK started=%d done=%d failed=%d killed=%d pending=%d recovered=%d after=%s\n",
+		started, done, failed, killed, len(pending), recovered, trimDuration(now().Sub(deadline.Add(-time.Duration(in.Hours*float64(time.Hour))))))
 	fmt.Fprintf(out, "RUN NOTE %s\n", oneline.Escape(remedy(p, failed+launchFailed, killed, len(pending), len(quarantined)+len(retired))))
 	if len(pending) > 0 && started == 0 && len(watching) == 0 {
 		said = true

@@ -52,7 +52,7 @@ usage:
   nova-swarm cost      --pool <dir> [--since <stamp>] [--max <n>]
   nova-swarm note      --pool <dir> --task <id> --text <text>
   nova-swarm finalize  --pool <dir> --task <id>
-  nova-swarm reclaim   --pool <dir> (--task <id> | --done) [--max <n>]
+  nova-swarm reclaim   --pool <dir> (--task <id> | --done | --failed | --all) [--max <n>]
   nova-swarm quickstart --pool <dir>
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a dispatcher

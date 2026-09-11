@@ -112,3 +112,110 @@ func recoveryPool(t *testing.T, dir string) (*Pool, Worker) {
 	return p, Worker{Name: "recovery", Provider: "fake", Model: "fake-model", Harness: "fake-harness",
 		WorkerDir: home, Deadline: "30s", Usage: UsageOpenCode}
 }
+
+// RULE 7, VERBATIM (SPEC-SWARM.md:109-111): "A worker silent past its deadline is reaped
+// and its job is re-queued once, with `requeued=1` in the new task's sidecar; a job reaped
+// a second time goes to `failed/` with `reaped=2` and is not re-queued again."
+//
+// DeepSeek's read 4, finding 1: the rule held on the live path and was dropped on the
+// recovery one. A supervisor that reaped its worker at the deadline while the dispatcher
+// was dead left `end=killed` on exit.json; the next dispatcher finalized it straight into
+// failed/ with a stale `reaped` and never ran the one retry. The rule is about the JOB, not
+// about which dispatcher was alive to see it.
+func TestARecoveredKilledJobRunsOnceMore(t *testing.T) {
+	for _, c := range []struct {
+		name         string
+		wasReaped    int
+		wantReaped   int
+		wantRequeued bool
+	}{
+		{"the first reap runs once more", 0, 1, true},
+		{"the second reap is final", 1, 2, false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p, w := recoveryPool(t, dir)
+			id := NewID(time.Now().UTC(), "reaped")
+			jobDir := w.JobDir(1, id)
+			if err := os.MkdirAll(jobDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			sc := Sidecar{ID: id, Files: 1, Tokens: 1000, RC: -1, Job: jobDir, Slot: 1,
+				Reaped: c.wasReaped, Started: Stamp(time.Now().UTC())}
+			if err := p.Add([]byte("a task a dead dispatcher's supervisor reaped"), sc); err != nil {
+				t.Fatal(err)
+			}
+			if err := p.Claim(id, Pending, Running); err != nil {
+				t.Fatal(err)
+			}
+			nonce := "0123456789abcdef"
+			if err := WriteJSON(ExitPath(jobDir), ExitRecord{RC: -1, End: EndKilled, Nonce: nonce}); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeSlot(p.slotPath(1), SlotFile{
+				Job: id, JobDir: jobDir, State: SlotLaunched, Pid: 0, Pgid: 0, JobPgid: 0,
+				PidStarted: "-", RunnerPid: 0, Nonce: nonce, LaunchedAt: Stamp(time.Now().UTC()),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			// The pool is asked to stop, so this pass recovers and then starts nothing:
+			// what the re-queue put in pending/ is read here rather than run.
+			if err := os.WriteFile(p.Path(StopFile), []byte("stop\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			var out, errb bytes.Buffer
+			Run(RunInput{Pool: p, Worker: w, Workers: 1, Hours: 0.0001, Stdout: &out, Stderr: &errb,
+				Now: func() time.Time { return time.Now().UTC() }})
+			stdout := out.String()
+			want := "RUN RECLAIM slot=1 id=" + id + " end=killed dest=failed"
+			if !strings.Contains(stdout, want) {
+				t.Fatalf("a reaped job is recovered as killed:\n%s%s", stdout, errb.String())
+			}
+			if !strings.Contains(stdout, "requeued="+boolWord(c.wantRequeued)) {
+				t.Errorf("the reclaim line wants requeued=%t:\n%s", c.wantRequeued, stdout)
+			}
+			// The counts are the truth about the pool: a job this pass ended is in them.
+			if !strings.Contains(stdout, "killed=1") || !strings.Contains(stdout, "recovered=1") {
+				t.Errorf("RUN OK counts the job it recovered:\n%s", stdout)
+			}
+			// THE DURABLE RECORD, which is what a person reads tomorrow.
+			moved, err := p.ReadSidecar(Failed, id)
+			if err != nil {
+				t.Fatalf("a recovered killed job belongs in failed/: %v", err)
+			}
+			if moved.Reaped != c.wantReaped {
+				t.Errorf("the moved sidecar wants reaped=%d, got %d", c.wantReaped, moved.Reaped)
+			}
+			// The one automatic retry: a NEW task carrying from=<old> and requeued=1.
+			pending, err := p.List(Pending)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !c.wantRequeued {
+				if len(pending) != 0 {
+					t.Fatalf("a job reaped a second time is not re-queued again, got %d pending", len(pending))
+				}
+				return
+			}
+			if len(pending) != 1 {
+				t.Fatalf("rule 7 re-queues the job once, got %d pending", len(pending))
+			}
+			next := pending[0]
+			if next.From != id || next.Requeued != 1 || next.Reaped != c.wantReaped {
+				t.Errorf("the new task wants from=%s requeued=1 reaped=%d, got from=%s requeued=%d reaped=%d",
+					id, c.wantReaped, next.From, next.Requeued, next.Reaped)
+			}
+			if _, err := p.Text(Pending, next.ID); err != nil {
+				t.Errorf("the new task's text is the old task's text: %v", err)
+			}
+		})
+	}
+}
+
+func boolWord(b bool) string {
+	if b {
+		return "true"
+	}
+	return "false"
+}

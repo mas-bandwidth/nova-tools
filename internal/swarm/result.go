@@ -168,7 +168,11 @@ func ParseReport(data []byte) Report {
 			// complete report, so the one shape a coordinator classifies on was not the
 			// shape the parser required, and completion evidence could sit anywhere in
 			// the head. A shape the parser bends is not a shape.
-			if trimmed != "" && !headSeen {
+			//
+			// A BLANK LINE IS A LINE. Skipping whitespace to find the count gave "first"
+			// a second reading, under which `## Head` / `` / `findings: 0` was a complete
+			// report (read 4, F7). The first line of the head is the first line.
+			if !headSeen {
 				headSeen = true
 				if !strings.HasPrefix(trimmed, "findings:") {
 					return malformed(r, n)

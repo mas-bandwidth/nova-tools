@@ -555,7 +555,7 @@ input wants.
 ## Output grammar
 
 ```
-ADD OK id=<id> label=<label> template=<name|-> deadline=<d> files=<n> tokens=<n> batch=<id|-> pending=<n>
+ADD OK id=<id> label=<label> template=<name|-> deadline=<d> files=<n> tokens=<n|unmetered> batch=<id|-> pending=<n>
 ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
@@ -563,7 +563,7 @@ RUN POOL workers=<n> hours=<h> worker=<name> model=<model> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path>
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
-RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|unknown|unlaunched> dest=<done|failed|-> usage=<path|->
+RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false>
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
@@ -572,7 +572,7 @@ RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only|
 RUN VIOLATION id=<id> slot=<n> background=<n> dest=failed: <reason>
 RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> unpublished=<true|false> budget=<spent|n+|->/<n> survived=<true|false> requeued=<true|false> reaped=<1|2>
 RUN MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
-RUN OK started=<n> done=<n> failed=<n> killed=<n> pending=<n> after=<d>
+RUN OK started=<n> done=<n> failed=<n> killed=<n> pending=<n> recovered=<n> after=<d>
 RUN NOTE <the one remedy line>
 RUN REFUSED: <reason>
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
@@ -580,6 +580,7 @@ STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=
 TRIAGE REPORT id=<id> rev=<sha12> job=<name> result=<ok|clean|plan-only> items=<n> red=<n> green=<n> notdone=<n>: <head>
 TRIAGE QUARANTINED id=<id> rev=<sha12> line=<n>: not folded; nova-swarm result --pool <dir> --id <id>
 TRIAGE SKIPPED id=<id>: changed while read
+TRIAGE FINDING jobs=<id>[,<id>...] at=<file:line|->: <one bounded finding line>
 TRIAGE MORE kind=<report|finding> shown=<n> total=<t> at=<path> --max 0
 TRIAGE BATCH batch=<id|-> reports=<n> findings=<n> new=<n> dup=<n> unquoted=<n> clean=<n> plan_only=<n> no_result=<n> malformed=<n> budget=<n> accurate=<n|-> wrong=<n|->
 TRIAGE OK folded=<n> template=<n> malformed=<n> skipped=<n> items=<n> red=<n> green=<n> notdone=<n> page=<path>

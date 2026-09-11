@@ -117,9 +117,16 @@ func TestTheHeadsFirstLineIsTheFindingCount(t *testing.T) {
 			t.Errorf("a malformed report yields NO finding, ever: %q kept %d", first, len(got.FindingLines))
 		}
 	}
-	// A blank line between the heading and the count is whitespace, not a first line.
-	if got := ParseReport([]byte("# t\n\n## Head\n\nfindings: 0\n")); got.Class != ClassClean {
-		t.Errorf("a blank line before findings: is not a first line, got %s", got.Class)
+	// AND A BLANK LINE IS A FIRST LINE. The parser skipped whitespace to find the count,
+	// so `## Head` followed by an empty line and then `findings: 0` read `clean`: rule 8's
+	// "whose FIRST line is `findings: <n>`" had a second reading, and the one shape a
+	// coordinator classifies on was again not the shape the parser required (read 4, F7).
+	blank := ParseReport([]byte("# t\n\n## Head\n\nfindings: 0\n"))
+	if blank.Class != ClassMalformed {
+		t.Errorf("a head whose first line is blank is malformed, got %s", blank.Class)
+	}
+	if blank.MalformedLine != 4 {
+		t.Errorf("the malformed line is the blank one, 4, got %d", blank.MalformedLine)
 	}
 }
 
@@ -294,4 +301,27 @@ func sprintf(format string, args ...any) string {
 		out = strings.Replace(out, "%s", a.(string), 1)
 	}
 	return out
+}
+
+// RULE 11, VERBATIM (SPEC-SWARM.md:148-155): a process of the job's own group that outlives
+// the job is a background subtask the prompt forbids, and the line carries `background=<n>`.
+//
+// ONE SURVIVOR IS ONE. The dispatcher asked the group twice -- alive before the reap, alive
+// after it -- and added one for each yes, so a single backgrounded child could be reported
+// as two (read 4, F8). The number a person reads tomorrow is a count of processes.
+func TestOneSurvivorIsCountedOnce(t *testing.T) {
+	for _, c := range []struct {
+		name                      string
+		aliveBefore, survivedReap bool
+		want                      int
+	}{
+		{"the group was empty", false, false, 0},
+		{"alive before the reap, gone after it", true, false, 1},
+		{"alive before the reap and after it", true, true, 1},
+		{"seen only by the reap", false, true, 1},
+	} {
+		if got := survivorsSeen(c.aliveBefore, c.survivedReap); got != c.want {
+			t.Errorf("%s: background=%d, want %d", c.name, got, c.want)
+		}
+	}
 }
