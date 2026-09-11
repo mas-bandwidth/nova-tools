@@ -1,10 +1,19 @@
-// A recorded gh, for the tests of the issue backend. It is on PATH instead of the real
-// one, so nothing here reaches the network — CONTRIBUTING: a test that touches the network
-// wants a reason, and this one does not have one.
+// A recorded gh, for the tests of the issue backend. The backend is handed this program's
+// absolute path, and this directory is also first on PATH for any child that looks one up,
+// so nothing here reaches the network — CONTRIBUTING: a test that touches the network wants
+// a reason, and this one does not have one.
 //
 // It holds the thread in a file the test names, serves it back as two JSON pages so that
 // the backend's pagination is exercised rather than assumed, and records every argv it was
 // called with so a test can prove that an event's text never went on a command line.
+//
+// IT ALSO HOLDS THE PAUSE. A test that wants two real processes to have both READ the board
+// before either APPENDS to it cannot get that from a sleep, which is a race written down;
+// it gets it from a rendezvous. With NOVA_BOARD_FAKE_GH_GATE naming a file and
+// NOVA_BOARD_FAKE_GH_GATE_N naming a number, the append arm records its arrival and then
+// waits until that many callers have arrived — which is the pause exactly where the spec
+// puts it, after the read and before the write. The wait is BOUNDED: a gate that never
+// fills lets the caller through rather than hanging a test forever (the wait-loop rule).
 package main
 
 import (
@@ -12,8 +21,34 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 )
+
+// gateWait is how long the append arm waits for the other callers before giving up and
+// proceeding. A test that deadlocked here would be worse than a test that failed.
+const gateWait = 20 * time.Second
+
+// gate records this caller's arrival and waits for the rest, if the test asked for one.
+func gate() {
+	path := os.Getenv("NOVA_BOARD_FAKE_GH_GATE")
+	want, err := strconv.Atoi(os.Getenv("NOVA_BOARD_FAKE_GH_GATE_N"))
+	if path == "" || err != nil || want < 2 {
+		return
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return
+	}
+	fmt.Fprint(f, ".")
+	f.Close()
+	for deadline := time.Now().Add(gateWait); time.Now().Before(deadline); time.Sleep(5 * time.Millisecond) {
+		if info, err := os.Stat(path); err == nil && info.Size() >= int64(want) {
+			return
+		}
+	}
+}
 
 func main() {
 	store := os.Getenv("NOVA_BOARD_FAKE_GH_STORE")
@@ -61,6 +96,7 @@ func main() {
 			fmt.Println(string(out))
 		}
 	case "issue":
+		gate()
 		body, err := io.ReadAll(os.Stdin)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)

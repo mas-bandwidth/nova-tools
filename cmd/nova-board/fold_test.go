@@ -11,6 +11,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"os/exec"
@@ -38,8 +39,13 @@ func TestTheBoardIsAFoldOverCardFilesWithNoLock(t *testing.T) {
 		t.Fatalf("add wrote %v, want exactly %s.board", names(entries), id)
 	}
 
-	// Twenty cards, taken and closed from two clones at once. All of it lands and no lock
+	// Twenty cards, TAKEN AND CLOSED from two clones at once. All of it lands and no lock
 	// file is left behind, because the tool holds no lock: no file has two writers.
+	//
+	// The close runs inside the same goroutine as its take, so twenty takes and twenty
+	// closes are in flight together: a close path that dropped or mis-ordered an append
+	// under concurrency would show up here as a card that stayed open, and an earlier
+	// version of this test — takes only — could not have seen it.
 	var ids []string
 	for i := 0; i < 20; i++ {
 		ids = append(ids, b.add(plain("rowan", "thing "+string(rune('a'+i))+" is owed")...))
@@ -53,8 +59,13 @@ func TestTheBoardIsAFoldOverCardFilesWithNoLock(t *testing.T) {
 			if i%2 == 1 {
 				who = "bo"
 			}
-			if exit, _, stderr := b.atTime(b.now.Add(time.Duration(i)*time.Second), b.board("take", "--as", who, "--card", card, "--stale", "10m")...); exit != 0 {
+			when := b.now.Add(time.Duration(i) * time.Second)
+			if exit, _, stderr := b.atTime(when, b.board("take", "--as", who, "--card", card, "--stale", "10m")...); exit != 0 {
 				t.Errorf("take %s: exit %d %s", card, exit, stderr)
+				return
+			}
+			if exit, _, stderr := b.atTime(when.Add(time.Second), b.board("close", "--as", who, "--card", card, "--stale", "10m", "--how", "done by "+who)...); exit != 0 {
+				t.Errorf("close %s: exit %d %s", card, exit, stderr)
 			}
 		}(i, card)
 	}
@@ -72,8 +83,15 @@ func TestTheBoardIsAFoldOverCardFilesWithNoLock(t *testing.T) {
 		}
 	}
 	_, stdout, _ := b.run(b.board("list", "--stale", "10m")...)
-	if !strings.Contains(stdout, "cards=21") || !strings.Contains(stdout, "open=21") {
-		t.Errorf("twenty concurrent takes did not all land:\n%s", stdout)
+	if !strings.Contains(stdout, "cards=21") || !strings.Contains(stdout, "closed=20") || !strings.Contains(stdout, "open=1") {
+		t.Errorf("twenty concurrent takes and closes did not all land:\n%s", stdout)
+	}
+	// Every one of the twenty carries its own take AND its own close: three events each,
+	// and nothing lost to the other nineteen writers.
+	for i, card := range ids {
+		if n := len(eventLines(t, filepath.Join(b.dir, card+".board"))); n != 3 {
+			t.Errorf("card %d (%s) holds %d events, want the card, the take and the close", i, card, n)
+		}
 	}
 }
 
@@ -651,30 +669,59 @@ func TestABrokenRandomSourceIsRefusedInBothBackends(t *testing.T) {
 
 // TWO PROCESSES UNDER --issue DRAW TWO IDS AND NEITHER IS REFUSED. Spec, Tests this spec
 // demands 3: "two rows filed under one name with one text on two legs at one injected
-// second ... from two clones under `--dir` and from two processes under `--issue`, produce
-// two cards with two distinct thirty-two-hex ids and neither is refused". The exclusivity
-// above may not cost the ordinary concurrent filing: a board that refused one of two real
-// filings would be the count failing to climb while a review was arriving.
+// second, with both `add`s paused after reading the board and before appending, from two
+// clones under `--dir` and from two processes under `--issue`, produce two cards with two
+// distinct thirty-two-hex ids and neither is refused". The exclusivity above may not cost
+// the ordinary concurrent filing: a board that refused one of two real filings would be
+// the count failing to climb while a review was arriving.
+//
+// TWO PROCESSES MEANS TWO PROCESSES. Two goroutines share one address space, one random
+// source and one heap, so they cannot catch a creation identity that depends on state two
+// separate processes would each observe for themselves — which is the exact failure the
+// id's draw-from-nothing rule was written against. So the tool is BUILT and EXECUTED
+// twice, with the recorded gh first on PATH.
+//
+// AND THE PAUSE IS REAL. Both adds are held after they have read the board (and after the
+// re-read the issue backend does immediately before an append) and before either writes,
+// by a rendezvous inside the recorded gh: neither append lands until both processes have
+// arrived at it. Without that the two runs might simply not overlap, and a test that
+// passes because nothing happened at once proves nothing about concurrency.
 func TestTwoProcessesUnderIssueBothFile(t *testing.T) {
 	b := newBench(t)
 	fakeGH(t)
+	prog := buildBoard(t)
+	gate := filepath.Join(t.TempDir(), "gate")
+	t.Setenv("NOVA_BOARD_FAKE_GH_GATE", gate)
+	t.Setenv("NOVA_BOARD_FAKE_GH_GATE_N", "2")
+
 	var wg sync.WaitGroup
 	ids := make([]string, 2)
 	exits := make([]int, 2)
+	errs := make([]string, 2)
 	for n, leg := range []string{"cpp", "go"} {
 		wg.Add(1)
 		go func(n int, leg string) {
 			defer wg.Done()
-			exit, stdout, _ := b.run("add", "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60", "--as", "rowan",
-				"--text", "every field is written", "--by", "4h", "--default", "rowan probes it",
-				"--thing", "every-field", "--leg", leg)
-			exits[n], ids[n] = exit, field(stdout, "id=")
+			var out, errb bytes.Buffer
+			cmd := exec.Command(prog, "add", "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60",
+				"--as", "rowan", "--text", "every field is written", "--by", "4h",
+				"--default", "rowan probes it", "--thing", "every-field", "--leg", leg)
+			cmd.Stdout, cmd.Stderr = &out, &errb
+			if err := cmd.Run(); err != nil {
+				var exit *exec.ExitError
+				if !errors.As(err, &exit) {
+					errs[n] = err.Error()
+					exits[n] = -1
+					return
+				}
+			}
+			exits[n], ids[n], errs[n] = cmd.ProcessState.ExitCode(), field(out.String(), "id="), errb.String()
 		}(n, leg)
 	}
 	wg.Wait()
 	for n := range ids {
 		if exits[n] != 0 {
-			t.Errorf("the add from process %d was refused: exit %d", n, exits[n])
+			t.Errorf("the add from process %d was refused: exit %d, stderr %q", n, exits[n], errs[n])
 		}
 		if len(ids[n]) != 32 || strings.Trim(ids[n], "0123456789abcdef") != "" {
 			t.Errorf("id %q is not thirty-two lower-case hex", ids[n])
@@ -683,9 +730,73 @@ func TestTwoProcessesUnderIssueBothFile(t *testing.T) {
 	if ids[0] == ids[1] {
 		t.Fatalf("two processes drew one id %s", ids[0])
 	}
+	// The pause: two arrivals at the append, which means both processes had read the board
+	// before either of them wrote to it.
+	if raw, err := os.ReadFile(gate); err != nil || len(raw) != 2 {
+		t.Errorf("the two adds were not both held between the read and the append: gate %q, err %v", raw, err)
+	}
 	_, listing, _ := b.run("list", "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60", "--stale", "10m")
 	if !strings.Contains(listing, "cards=2") {
 		t.Errorf("two filings from two processes are two cards:\n%s", listing)
+	}
+}
+
+// buildBoard builds THIS tool and returns the path, for the tests that need a second
+// process rather than a second goroutine. The executable suffix is part of the name, for
+// the reason written on fakeGH.
+func buildBoard(t *testing.T) string {
+	t.Helper()
+	prog := filepath.Join(t.TempDir(), "nova-board")
+	if runtime.GOOS == "windows" {
+		prog += ".exe"
+	}
+	if out, err := exec.Command("go", "build", "-o", prog, ".").CombinedOutput(); err != nil {
+		t.Fatalf("building nova-board: %v\n%s", err, out)
+	}
+	return prog
+}
+
+// A RETRY AFTER AN UNCERTAIN APPEND REUSES THE ID IT DREW, UNDER --issue TOO. Spec, Tests
+// this spec demands 3: "an `add` interrupted after its append with an injected fault,
+// re-run with `--id` and the same fields, is `ADD OK existed=true` with one card on the
+// board and nothing appended, UNDER BOTH BACKENDS; the same `--id` with a different
+// `--text` is `ADD REFUSED ... different fields` exit 1 with nothing written". The --dir
+// half is pinned above; this is the other backend, where "nothing appended" is a comment
+// that was never posted rather than a file that never grew, and where the retry has to
+// survive the re-read the append does for exclusivity.
+func TestAnIdRetryUnderIssueIsTheSameFilingOrARefusal(t *testing.T) {
+	b := newBench(t)
+	store, _ := fakeGH(t)
+	issue := []string{"add", "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60"}
+	fields := plain("rowan", "a filing through the forge whose outcome nobody saw")
+	exit, stdout, stderr := b.run(append(append([]string{}, issue...), fields...)...)
+	if exit != 0 {
+		t.Fatalf("the first add: exit %d %s", exit, stderr)
+	}
+	id := field(stdout, "id=")
+	lines := func() int { return strings.Count(readFile(t, store), "card "+id) }
+	if lines() != 1 {
+		t.Fatalf("the thread holds %d card lines for %s, want 1", lines(), id)
+	}
+	// The same add, run again with --id and the same fields: existed=true, nothing posted.
+	exit, stdout, stderr = b.run(append(append(append([]string{}, issue...), "--id", id), fields...)...)
+	if exit != 0 || !strings.Contains(stdout, "existed=true") || !strings.Contains(stdout, "id="+id) {
+		t.Errorf("an identical retry through the forge: exit %d, stdout %q, stderr %q", exit, stdout, stderr)
+	}
+	if n := lines(); n != 1 {
+		t.Errorf("the retry appended: the thread holds %d card lines for %s, want 1", n, id)
+	}
+	// The same --id with a different --text is a refusal, and nothing is written.
+	exit, _, stderr = b.run(append(append(append([]string{}, issue...), "--id", id), plain("rowan", "a different filing entirely")...)...)
+	if exit != 1 || !strings.Contains(stderr, "different fields") {
+		t.Errorf("a differing retry through the forge: exit %d, stderr %q", exit, stderr)
+	}
+	if n := lines(); n != 1 {
+		t.Errorf("a refused retry wrote: the thread holds %d card lines for %s, want 1", n, id)
+	}
+	_, listing, _ := b.run("list", "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60", "--stale", "10m")
+	if !strings.Contains(listing, "cards=1") || !strings.Contains(listing, "conflicts=0") {
+		t.Errorf("a retry and a refusal left more than the one card:\n%s", listing)
 	}
 }
 
