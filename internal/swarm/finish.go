@@ -58,6 +58,7 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	if harnessLog, readLogErr := os.ReadFile(r.jobDir + "/harness.log"); readLogErr == nil {
 		limited = RateLimited(harnessLog)
 	}
+	limited = rateLimitedOutcome(limited, end, rec.RC)
 	if limited {
 		rec.RC, end = 429, EndFailed
 	}
@@ -169,6 +170,16 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	return fmt.Sprintf("RUN DONE id=%s slot=%d rc=%d after=%s result=%s findings=%d refusals=%d notes=%d/%s unpublished=%t budget=%s dest=%s%s",
 		oneline.Field(sc.ID), r.slot, rec.RC, after, oneline.Field(report.Class), findings, refusals,
 		notesSent, oneline.Field(notesRead), unpublished, budget, dest, said), end, dest
+}
+
+// rateLimitedOutcome is whether a 429 in the harness log is this job's OUTCOME or its
+// HISTORY. A harness that was rate-limited mid-run, backed off, retried itself and then
+// answered leaves "429" in its log AND a zero exit status beside a finished RESULT.md; the
+// completion evidence the supervisor wrote is the outcome. `finish` rewrote the job from
+// the log alone, and a done job with exit.json rc=0 was filed in failed/ with rc=429
+// (dogfood D5, 2026-09-11) -- and then re-queued, spending the tokens a second time.
+func rateLimitedOutcome(inLog bool, end string, rc int) bool {
+	return inLog && !(end == EndDone && rc == 0)
 }
 
 // violationWord is what rule 11 writes in the SIDECAR, which is the record that outlives
