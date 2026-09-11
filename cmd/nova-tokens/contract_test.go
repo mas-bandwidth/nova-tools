@@ -429,3 +429,32 @@ func TestAMonthWithNoDayFilesSumsToDashesNotZeros(t *testing.T) {
 		}
 	}
 }
+
+// Rule 3 and the provider reader's comment stripping: a `#` is a comment only where a
+// comment can be. The reader dropped every line whose first byte is `#` before the CSV
+// reader saw anything, so a quoted field carrying a newline whose continuation line begins
+// with `#` had that line deleted out of the middle of its own record -- the record then
+// parsed from the wrong bytes, with the `line=` map off by as many lines as were removed.
+func TestAQuotedFieldWhoseContinuationStartsWithAHashIsNotStripped(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	// The quoted field is the model, the only column of this export that can carry text;
+	// its second line begins with `#` and is NOT a comment.
+	export := write(t, filepath.Join(dir, "google.csv"), strings.Join([]string{
+		"timestamp,model,input_tokens",
+		`2026-09-11T10:00:00Z,"gemini`,
+		"# 2.5",
+		`pro",100`,
+		"",
+	}, "\n"))
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--provider", "google:emma="+export)
+	wantExit(t, r, 0)
+	wantNotContains(t, r.stderr, "UNREADABLE")
+	wantNotContains(t, r.stderr, "UNPARSED")
+	day := read(t, filepath.Join(out, "2026-09-11.tsv"))
+	wantContains(t, day, "unattributed\t100\t")
+	// The stripped line was part of the model's own text: dropping it writes a model name
+	// the export never carried.
+	wantContains(t, day, "2.5")
+	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "rows=1")
+}

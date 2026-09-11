@@ -115,8 +115,13 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	// declaration is line 1 reported its first data row (line 3) as line=2, and a quoted
 	// field carrying a newline made the count drift further with every one of them.
 	var fileLine []int
+	// A `#` is a comment only where a comment can be. Inside a quoted field a line is the
+	// field's own text, and deleting it parses the record from the wrong bytes: the count
+	// of quote characters so far is odd exactly while the reader is inside one (an escaped
+	// `""` is two, which keeps the parity), so that is the test.
+	inQuotes := false
 	for i, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, "#") {
+		if !inQuotes && strings.HasPrefix(line, "#") {
 			if rest, ok := strings.CutPrefix(line, zoneDeclaration); ok {
 				zone = strings.TrimSpace(rest)
 			}
@@ -124,6 +129,9 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 		}
 		body = append(body, line)
 		fileLine = append(fileLine, i+1)
+		if strings.Count(line, `"`)%2 == 1 {
+			inQuotes = !inQuotes
+		}
 	}
 	rd := csv.NewReader(strings.NewReader(strings.Join(body, "\n")))
 	rd.FieldsPerRecord = -1
