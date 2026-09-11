@@ -201,6 +201,17 @@ the day it was learned.
     base without it, merged one minute later and turned the tip red on four
     tests; three more entries were then gated red against that tip.)
 
+19. **A read is recorded by the reader, with the verb, and the bus carries
+    only findings.** A reader records a verdict with `read --who <name>
+    --verdict approve|hold [--note <text>]` on their own machine (the tool
+    pushes the state), never by writing a note the coordinator then reads
+    and transcribes: today the coordinator read 26 receipt lines and 21
+    review notes to record 21 reads by hand, and mis-attributed all 21 once.
+    A bus note is for findings a person must act on (a HOLD's quoted lines);
+    an APPROVE with no findings is a command and no note. `status` prints
+    reads as counts per entry (`reads=2 holds=0`), never the list, and the
+    list is behind `--reads <pr>`. The coordinator's tokens are spent on
+    decisions, not on transcription. (2026-09-11)
 ## The verbs
 
 ```
@@ -927,6 +938,10 @@ check never seen failing is not a check).
    now X+A); B is not merged on its recorded gate: a gate of B merged onto
    X+A runs first, and when that gate is red B is RED with the base sha named
    and A stays merged; when the base has not moved, no second gate runs.
+19. `read --who emma --verdict approve` from a second checkout of the lane
+    lands in the state under the lane lock and `status` shows `reads=1`
+    with no name; `--reads <pr>` lists it; a `read` whose `--who` is empty
+    is refused with the remedy line.
 
 ## The work list
 
