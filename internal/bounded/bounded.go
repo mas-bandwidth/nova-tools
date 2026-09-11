@@ -69,6 +69,7 @@ type List struct {
 	remedy string
 	shown  int
 	total  int
+	err    error
 }
 
 // Capped returns a List that writes to w, prints at most max lines, and stands the rest
@@ -97,9 +98,22 @@ func (l *List) Line(line string) {
 	if l.max > 0 && l.shown >= l.max {
 		return
 	}
+	// SHOWN MEANS IT REACHED THE STREAM. A writer that failed -- a closed pipe,
+	// a reader that has gone, a full disk -- has not shown anything, and a
+	// caller whose delivery record follows Shown() would mark a line delivered
+	// that nobody ever read. So the error is not discarded: the line is counted
+	// in Total, which is the truth about the state, and not in Shown, which is
+	// the truth about the output.
+	if _, err := fmt.Fprintf(l.w, "%s\n", oneline.Escape(strings.TrimSuffix(line, "\n"))); err != nil {
+		l.err = err
+		return
+	}
 	l.shown++
-	fmt.Fprintf(l.w, "%s\n", oneline.Escape(strings.TrimSuffix(line, "\n")))
 }
+
+// Err is the first write error this listing hit, or nil. A caller that records
+// what it has delivered asks this before it writes that record down.
+func (l *List) Err() error { return l.err }
 
 // More prints the one line that stands for everything Line counted and did not print,
 // and prints nothing at all when nothing was elided -- a MORE line saying total equals

@@ -368,7 +368,14 @@ func (s *server) recordNote(it wake.Item, now time.Time) {
 	}
 	s.remember(id)
 	s.notes++
-	if p := wake.Decompose(it.Value); len(p) > 1 && p[1] == "cc" {
+	// ONLY addr=to WAKES. Cc means should know, and anything else -- a note for
+	// another name that this bus listed anyway, an addressing from a nova-bus
+	// this tool has never heard of -- is not this receiver's to act on. The
+	// unsafe direction here is not silence: it is starting somebody's command
+	// over a note nobody addressed to them, so the allow-list decides what is
+	// DISPATCHED, exactly as the suppress list decides what is HIDDEN and never
+	// what is shown (rule 7 is about relaying to a window, not about spawning).
+	if p := wake.Decompose(it.Value); len(p) < 2 || p[1] != "to" {
 		s.st.Set(serveKey(id), wake.Compose("cc", wake.Stamp(now)))
 		s.cc++
 		return

@@ -2,6 +2,7 @@ package bounded
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -206,3 +207,27 @@ func TestAGroupHandsBackEachKindsList(t *testing.T) {
 		t.Error("a kind this group never saw must not be invented")
 	}
 }
+
+// A listing whose writer fails has not shown anything, and says so: a caller
+// whose delivery record follows Shown() must not mark a line delivered that
+// never reached the stream.
+func TestAFailedWriteIsNotShown(t *testing.T) {
+	l := Capped(brokenWriter{}, 0, "WAKE", "report", "--max-lines 0 prints them all")
+	l.Line("WAKE REPORT path=a")
+	l.Line("WAKE REPORT path=b")
+	if l.Shown() != 0 {
+		t.Errorf("Shown() = %d over a writer that failed every write, want 0", l.Shown())
+	}
+	if l.Total() != 2 {
+		t.Errorf("Total() = %d, want 2: the count is the truth about the state even when the output is not", l.Total())
+	}
+	if l.Err() == nil {
+		t.Error("the write error was discarded")
+	}
+}
+
+type brokenWriter struct{}
+
+func (brokenWriter) Write(p []byte) (int, error) { return 0, errWrite }
+
+var errWrite = errors.New("the reader has gone")

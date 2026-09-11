@@ -985,3 +985,102 @@ func TestRefreshListsWhatIsOwedBeforeWhatIsNewAndSurvivesAFailedPoll(t *testing.
 		t.Errorf("the carried list was read %d times with --open-max 2, want once per run, and the count is carrying= and never a constant:\n%s", openCalls, strings.Join(calls(t, busDir), "\n"))
 	}
 }
+
+// Rule 11, step 3, verbatim: "delete each printed record and write
+// `printed=<id>` FOR EACH LINE THAT REACHED STDOUT". A line counted as shown
+// when its write failed is a delivery this tool never made, marked delivered
+// permanently -- the silent loss rule 11 and The races exist to prevent.
+//
+// Test 11 demands it by name: "with an injected stdout that fails mid-write, no
+// `printed=` mark is written for the failed line".
+func TestAFailedWriteIsNotADelivery(t *testing.T) {
+	reports := t.TempDir()
+	for _, name := range []string{"a", "b", "c"} {
+		write(t, filepath.Join(reports, name, "RESULT.md"), "# a finding in "+name+"\n")
+	}
+	state := filepath.Join(t.TempDir(), "wake.state")
+	args := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--reports", reports, "--baseline", "--max-lines", "0"}
+
+	// A stdout that takes the opening line and then fails, the way a closed
+	// pipe does when the reader has gone.
+	var errb bytes.Buffer
+	out := &failingWriter{after: 1}
+	exit := runWith(args, out, &errb, wake.NewFake(at))
+	if exit != 0 && exit != 2 {
+		t.Fatalf("exit = %d", exit)
+	}
+	if strings.Contains(read(t, state), "printed=") && !strings.Contains(read(t, state), "printed=-") {
+		t.Errorf("a printed= mark was written for a line that never reached stdout:\n%s", read(t, state))
+	}
+	if n := wakeQueueRecords(t, state); n != 3 {
+		t.Errorf("%d queue records after a failed write, want all 3 still pending: a record leaves the queue only by being printed", n)
+	}
+
+	// And the next call, over a stdout that works, prints every one of them.
+	r := wakeRun(t, args...)
+	if n := countLines(r.stdout, "WAKE REPORT"); n != 3 {
+		t.Errorf("the next call printed %d of the 3 reports the failed write lost:\n%s", n, r.stdout)
+	}
+}
+
+// failingWriter takes `after` writes and then fails every one, so a test can
+// put a broken stdout under the loop without a pipe or a subprocess.
+type failingWriter struct {
+	after int
+	n     int
+}
+
+func (w *failingWriter) Write(p []byte) (int, error) {
+	w.n++
+	if w.n > w.after {
+		return 0, fmt.Errorf("the reader has gone")
+	}
+	return len(p), nil
+}
+
+// The first race of The races: "two watchers advancing one bus cursor ... one
+// advancing watcher per (bus, as): an exclusive kernel lock, the second is WAKE
+// REFUSED exit 2 naming the holder". Two calls over one pair interleave, each
+// consuming the notes the other should have relayed, and each returns a partial
+// listing that looks complete.
+func TestASecondAdvancingWatcherOnOnePairRefuses(t *testing.T) {
+	busDir, _ := fakes(t)
+	write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+	bus := t.TempDir()
+	release, holder, err := wake.LockAdvance(bus, "Rowan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if release == nil {
+		t.Fatalf("the first advancing watcher could not take the cursor lock (held by %s)", holder)
+	}
+	defer release()
+
+	args := []string{"watch", "--state", filepath.Join(t.TempDir(), "wake.state"),
+		"--max", "5s", "--on-deadline", "report", "--interval", "5s",
+		"--bus", bus, "--as", "Rowan", "--receipt-max-words", "40",
+		"--advance-cursor", "--remote", "origin", "--branch", "main"}
+	r := wakeRun(t, args...)
+	if r.exit != 2 {
+		t.Fatalf("exit = %d, want 2: a cursor two runs move is a claim neither of them can make\n%s", r.exit, r.all())
+	}
+	lines := strings.Split(strings.TrimSuffix(r.stderr, "\n"), "\n")
+	if len(lines) != 1 || !strings.HasPrefix(lines[0], "WAKE REFUSED: ") {
+		t.Fatalf("the refusal is not one WAKE REFUSED line:\n%s", r.stderr)
+	}
+	if !strings.Contains(lines[0], fmt.Sprint(os.Getpid())) {
+		t.Errorf("the refusal does not name the holder:\n%s", lines[0])
+	}
+	for _, c := range calls(t, busDir) {
+		if advanced(c) {
+			t.Errorf("the second watcher advanced a cursor the first one holds: %q", c)
+		}
+	}
+
+	// And with the first one gone, the same call runs.
+	release()
+	if r := wakeRun(t, args...); r.exit != 0 {
+		t.Errorf("the lock outlived its holder: exit %d\n%s", r.exit, r.all())
+	}
+}

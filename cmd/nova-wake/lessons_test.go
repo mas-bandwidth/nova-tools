@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -633,6 +634,40 @@ func TestTheAdvanceRecoversAnInterruptedRead(t *testing.T) {
 	}
 	if strings.Contains(read(t, state), "inflight") {
 		t.Errorf("the marker was not cleared after the recovery:\n%s", read(t, state))
+	}
+	// Rule 7 covers the recovery's own reads: "every line the bus source reads
+	// is classified as suppressed, relayed or standing, and every line is
+	// counted", and read equals the sum of the other three. A recovery that
+	// read the bus and counted none of it leaves that sum short.
+	var source string
+	for _, line := range strings.Split(r.stdout, "\n") {
+		if strings.HasPrefix(line, "WAKE SOURCE bus ") {
+			source = line
+		}
+	}
+	if source == "" {
+		t.Fatalf("no WAKE SOURCE line:\n%s", r.stdout)
+	}
+	n := map[string]int{}
+	for _, tok := range strings.Fields(source) {
+		k, v, ok := strings.Cut(tok, "=")
+		if !ok {
+			continue
+		}
+		if i, err := strconv.Atoi(v); err == nil {
+			n[k] = i
+		}
+	}
+	if n["read"] != n["suppressed"]+n["relayed"]+n["standing"] {
+		t.Errorf("the four counts do not add up: %s", source)
+	}
+	// Every line of this call: the recovery's own plain inbox (one INBOX OPEN),
+	// the carried list it recovered (25 notes), the poll after it (one INBOX
+	// OPEN) and the advance behind the drained queue (one more). A recovery
+	// that read the bus and counted none of it leaves read at 27.
+	if n["read"] != 28 || n["suppressed"] != 3 {
+		t.Errorf("read=%d suppressed=%d; the recovery's own read is a read, and rule 7 says every line of it is counted: %s",
+			n["read"], n["suppressed"], source)
 	}
 }
 

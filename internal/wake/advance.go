@@ -117,6 +117,11 @@ func (a *Advancer) Recover(ctx context.Context, st *State) (Result, string, erro
 	if code != 0 {
 		return res, "", fmt.Errorf("nova-bus exit=%d", code)
 	}
+	// Rule 7 is absolute and covers this read too: every line the bus source
+	// reads is classified as suppressed, relayed or standing, and every line is
+	// counted. A recovery that read the bus and counted none of it leaves
+	// read= short of suppressed+relayed+standing for that call.
+	a.Bus.classify(out, &res)
 	n := carrying(out)
 	if n <= 0 {
 		st.Delete(AdvanceMarker)

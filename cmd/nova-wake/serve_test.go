@@ -32,7 +32,12 @@ func TestServeSurfacesTheUncertainAndWakesOnlyTo(t *testing.T) {
 		"INBOX NOTE id=zzz111 from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/a.md: the first",
 		"INBOX NOTE id=bbb222 from=Johnny addr=to at=2026-09-11T11:01:00Z path=from-johnny/b.md: the second",
 		"INBOX NOTE id=ccc333 from=Emma addr=cc at=2026-09-11T11:02:00Z path=from-emma/c.md: a broadcast",
-		"INBOX OK as=Rowan carrying=3 open=3 notes=3 receipts=0",
+		// And the fourth the spec's fixture names: one for ANOTHER NAME. A bus
+		// does not list it for this reader, and a serve that dispatched
+		// anything whose addr was merely not cc would start somebody's command
+		// over a note nobody addressed to them.
+		"INBOX NOTE id=ddd444 from=Freddy addr=other at=2026-09-11T11:03:00Z path=from-freddy/d.md: for somebody else",
+		"INBOX OK as=Rowan carrying=4 open=4 notes=4 receipts=0",
 	}, "\n")+"\n")
 	note, noteDir := fakeNote(t)
 	state := filepath.Join(t.TempDir(), "serve.state")
@@ -54,6 +59,9 @@ func TestServeSurfacesTheUncertainAndWakesOnlyTo(t *testing.T) {
 	if strings.Contains(strings.Join(got, " "), "ccc333") {
 		t.Error("a Cc: note was dispatched; To means must act, cc means should know, and a broadcast to five is five turns")
 	}
+	if strings.Contains(strings.Join(got, " "), "ddd444") {
+		t.Error("a note for another name was dispatched; only addr=to wakes this receiver")
+	}
 	if read(t, filepath.Join(noteDir, "stdin")) != "" {
 		t.Error("something reached the receiver's stdin; the command receives note ids and nothing else")
 	}
@@ -65,10 +73,10 @@ func TestServeSurfacesTheUncertainAndWakesOnlyTo(t *testing.T) {
 	if !strings.Contains(r.stdout, "WAKE FIRED ids=2 first=zzz111 rc=0 redelivered=0") {
 		t.Errorf("the fire line is missing or wrong:\n%s", r.stdout)
 	}
-	if !strings.Contains(r.stdout, "cc=1") {
+	if !strings.Contains(r.stdout, "cc=2") {
 		t.Errorf("the exit line does not count the Cc: note:\n%s", r.stdout)
 	}
-	if !strings.Contains(r.stdout, "WAKE SERVE fired=1 notes=3") {
+	if !strings.Contains(r.stdout, "WAKE SERVE fired=1 notes=4") {
 		t.Errorf("the exit line is missing or wrong:\n%s", r.stdout)
 	}
 }
