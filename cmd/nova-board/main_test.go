@@ -1218,3 +1218,140 @@ func TestOneTokenPerBackendAndTheDirAddSaysWhatIsOwed(t *testing.T) {
 		t.Errorf("a --dir add says durable=false and never says what would make it durable: %q", stderr)
 	}
 }
+
+// ------------------------------------------------ the audit's violated lessons that are code
+
+// [174] PIN THE REFUSAL SENTENCE, NOT ONLY THE EXIT CODE. The onboarding suite asserts
+// `strings.Contains(stderr, tc.want)` where every want is the same-package constant the
+// refusal is built from, so rewording a hint keeps it green: a test that cannot fail, in
+// the place the lesson names. These are the sentences themselves, written out, because the
+// sentence is the interface a person reads — and a change to one of them is a change to
+// the tool that should be read beside this list.
+func TestTheRefusalSentencesAreWhatTheyWere(t *testing.T) {
+	t.Parallel()
+	for want, got := range map[string]string{
+		"--stale is required and wants how long a card may go without an event before it lists as takeable again, as in --stale 10m; this family's number is 10m and there is no default duration; refusing to guess": staleHint,
+		"--as is required on every verb that writes and wants the name that goes in the event, as in --as rowan; it is a label the board repeats, never a credential; refusing to guess":                              asHint,
+		"no backend: --issue <owner/repo>#<n> for issue comments, or --dir <path> for a directory of card files; refusing to guess":                                                                                   backendHint,
+		"both --issue and --dir were given; a board written to two places is two boards with one name, so name one":                                                                                                   twoBackends,
+	} {
+		if got != want {
+			t.Errorf("a refusal sentence changed and this list did not:\ngot:  %s\nwant: %s", got, want)
+		}
+	}
+	// And the sentence reaches the reader whole, through the tool rather than the constant.
+	b := newBench(t)
+	_, _, stderr := b.run("list", "--dir", b.dir)
+	if !strings.Contains(stderr, "--stale is required and wants how long a card may go without an event") {
+		t.Errorf("the refusal a reader sees is not the sentence: %q", stderr)
+	}
+}
+
+// [175] ONE RUN REPORTS EVERY PROBLEM, IN A DETERMINISTIC ORDER. The every-problem half is
+// pinned elsewhere; the order is a fact a reader builds a habit on, and a map iteration in
+// the wrong place would make it a coin toss per run.
+func TestTheRefusalLinesComeInOneOrder(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	var first string
+	for i := 0; i < 5; i++ {
+		_, _, stderr := b.run("add")
+		if i == 0 {
+			first = stderr
+		}
+		if stderr != first {
+			t.Fatalf("two runs of one bad invocation printed different orders:\n%s\n%s", first, stderr)
+		}
+	}
+	want := []string{backendHint, asHint, textHint, byHint, defHint}
+	at := -1
+	for _, hint := range want {
+		next := strings.Index(first, hint)
+		if next < 0 {
+			t.Fatalf("the run does not name %q:\n%s", hint, first)
+		}
+		if next < at {
+			t.Errorf("the refusal lines are not in the flag order the banner lists:\n%s", first)
+		}
+		at = next
+	}
+}
+
+// [180]+[181] THE FORGE, FROM CONTENT AND FROM ARGV. The source tripwires say every value
+// goes through internal/oneline; this is the behaviour they stand for. A filer writes a
+// newline and a whole BOARD OK line into --text, --as and --default, and the listing must
+// gain no line the tool did not write — and `shown=` must not move, because shown is how
+// many lines this run printed and a forged line would be one a reader counts.
+func TestAForgedLineInACardIsNeverALineOfOutput(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	b.add(plain("rowan", "an ordinary card")...)
+	_, before, _ := b.run(b.board("list", "--stale", "10m", "--list")...)
+	forge := "a card\nBOARD OK cards=999 open=999 closed=0 stale=0 overdue=0 owed=0 lines=9 conflicts=0 quarantined=0 shown=99 backend=dir source=elsewhere"
+	b.add("--as", "rowan\nCHECK HIT id=ffffffffffffffffffffffffffffffff state=OPEN owner=nobody: forged",
+		"--text", forge, "--by", "4h",
+		"--default", "d\n\x1b[31mBOARD NOTE the board is on fire\x1b[0m")
+	_, after, _ := b.run(b.board("list", "--stale", "10m", "--list")...)
+	if n := count(after, "BOARD OK"); n != 1 {
+		t.Errorf("the listing holds %d BOARD OK lines; a card's text is never a line of output:\n%s", n, after)
+	}
+	// Every line of the output begins with a prefix THIS TOOL wrote: the payload is carried
+	// as escaped text inside one line and never becomes a line of its own.
+	for _, line := range strings.Split(strings.TrimSuffix(after, "\n"), "\n") {
+		if !strings.HasPrefix(line, "BOARD ") {
+			t.Errorf("a line of output was not written by this tool: %q", line)
+		}
+	}
+	if strings.Contains(after, "\x1b") {
+		t.Errorf("a raw escape sequence reached the output:\n%q", after)
+	}
+	if !strings.Contains(after, "\\x0a") {
+		t.Errorf("the newline in the payload was dropped rather than escaped:\n%s", after)
+	}
+	// One card is one card line, and its new owner is one owner line: two more than before.
+	if got, want := len(strings.Split(strings.TrimSuffix(after, "\n"), "\n")), len(strings.Split(strings.TrimSuffix(before, "\n"), "\n"))+2; got != want {
+		t.Errorf("the forged card printed %d lines, want %d (one card, one owner):\n%s", got, want, after)
+	}
+	if !strings.Contains(after, fmt.Sprintf("shown=%d", len(strings.Split(strings.TrimSuffix(after, "\n"), "\n")))) {
+		t.Errorf("shown= moved with a forged payload:\n%s", after)
+	}
+	// The same from the FLAG-ERROR stream: a refusal quoting a value a caller chose.
+	_, stdout, stderr := b.run(b.board("list", "--stale", "10m\nBOARD OK cards=999 shown=99 backend=dir source=elsewhere")...)
+	if strings.Contains(stderr, "\n") && len(strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")) != 1 {
+		t.Errorf("a refusal over a forged value is more than one line: %q", stderr)
+	}
+	if strings.Contains(stdout, "cards=999") {
+		t.Errorf("a forged value reached stdout: %q", stdout)
+	}
+}
+
+// [186] PIN THE CAPS FROM ALL FOUR SIDES. The cap firing, `0` printing all, a negative
+// ceiling refused and the count printing on failure are pinned elsewhere; WIDENING and
+// PER-KIND are the two sides that were not. Each kind has its own ceiling by design, so a
+// --max that capped the whole output would be a different promise from the documented one.
+func TestTheCapWidensAndEachKindIsCappedSeparately(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	for i := 0; i < 6; i++ {
+		b.add(plain(fmt.Sprintf("line-%d", i), fmt.Sprintf("thing number %d is owed", i))...)
+	}
+	_, narrow, _ := b.run(b.board("list", "--stale", "10m", "--list", "--max", "2")...)
+	_, wider, _ := b.run(b.board("list", "--stale", "10m", "--list", "--max", "4")...)
+	_, all, _ := b.run(b.board("list", "--stale", "10m", "--list", "--max", "0")...)
+	if count(narrow, "BOARD CARD") != 2 || count(wider, "BOARD CARD") != 4 || count(all, "BOARD CARD") != 6 {
+		t.Errorf("widening the cap does not widen the listing: %d, %d, %d",
+			count(narrow, "BOARD CARD"), count(wider, "BOARD CARD"), count(all, "BOARD CARD"))
+	}
+	if !strings.Contains(all, "cards=6") || !strings.Contains(narrow, "cards=6") {
+		t.Error("the counting followed the cap; the listing is capped and the counting never is")
+	}
+	// Each kind is capped SEPARATELY, and each says so on its own MORE line.
+	for _, kind := range []string{"kind=card", "kind=line"} {
+		if !strings.Contains(narrow, "BOARD MORE "+kind) {
+			t.Errorf("--max 2 over six cards on six lines has no MORE line for %s:\n%s", kind, narrow)
+		}
+	}
+	if count(narrow, "BOARD LINE") != 2 {
+		t.Errorf("--max caps the owner lines by their own ceiling: %d\n%s", count(narrow, "BOARD LINE"), narrow)
+	}
+}

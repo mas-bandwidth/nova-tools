@@ -235,3 +235,56 @@ func TestTheFixtureIsSmallEnoughToReadInASitting(t *testing.T) {
 		t.Errorf("the fixture is %d bytes; a fixture is meant to be read in a sitting", bytesTotal)
 	}
 }
+
+// [194] THE README TRANSCRIPT IS COMPARED AGAINST REAL OUTPUT. The transcript test above
+// reads TESTS.md; README.md carried a second `### First run` for this tool that nothing
+// executed, and it had drifted — an abridged run presented as a run, with a count line
+// copied from a different command. A transcript nothing runs is a claim about a message
+// that has since moved, and the README is where a first run reads it.
+func TestTheReadmeFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	section := string(raw)[strings.Index(string(raw), "## nova-board"):]
+	block := section[strings.Index(section, "### First run"):]
+	start := strings.Index(block, "```\n$ nova-board ")
+	if start < 0 {
+		t.Fatal("the README's nova-board ### First run holds no runnable transcript")
+	}
+	block = block[start+4:]
+	block = block[:strings.Index(block, "\n```")]
+	lines := strings.Split(block, "\n")
+	cmd, ok := strings.CutPrefix(lines[0], "$ nova-board ")
+	if !ok {
+		t.Fatalf("the first line of the transcript is not a command: %q", lines[0])
+	}
+	exit, stdout, stderr := runFixture(t, strings.Fields(cmd)...)
+	if exit == 2 {
+		t.Fatalf("the README's transcript command does not run: exit 2, stderr: %s", stderr)
+	}
+	printed := map[string]bool{}
+	count := 0
+	for _, out := range strings.Split(stdout, "\n") {
+		if s := onboarding.Shape(out); s != "" {
+			printed[s] = true
+			count++
+		}
+	}
+	shown := 0
+	for _, line := range lines[1:] {
+		s := onboarding.Shape(line)
+		if s == "" {
+			continue
+		}
+		shown++
+		if !printed[s] {
+			t.Errorf("README.md line\n  %s\nhas shape %q, which this tool never prints. Re-run the command and paste what it said.", line, s)
+		}
+	}
+	// And the whole run is shown: an abridged transcript presented as a run is the drift
+	// this test exists to catch, and it is what the README carried.
+	if shown != count {
+		t.Errorf("the README shows %d of the %d lines this command prints; an abridgement presented as a run is a claim about output nobody checked", shown, count)
+	}
+}

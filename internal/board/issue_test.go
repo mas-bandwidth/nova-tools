@@ -174,3 +174,73 @@ func TestACardAppendRereadsTheThreadAndRefusesAnExistingId(t *testing.T) {
 		t.Errorf("the take posted %d comments, want 1", posted)
 	}
 }
+
+// [172] PIN THE DEADLINE FROM BOTH SIDES. --gh-timeout is the one deadline this tool has,
+// and until now nothing exercised it: a budget nothing tests is a budget that can quietly
+// become no budget at all, and a subprocess that never returns is a tool that has stopped
+// saying anything while looking exactly like one that is working.
+func TestGhTimeoutIsAFlagAndIsChecked(t *testing.T) {
+	// The budget a caller names reaches the subprocess, on the read side and the write
+	// side, as a context deadline and not as a hope.
+	i, err := NewIssue("mas-bandwidth/schema#876", 30*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var deadlines []time.Duration
+	i.run = func(ctx context.Context, stdin string, args ...string) (string, error) {
+		when, ok := ctx.Deadline()
+		if !ok {
+			t.Errorf("gh %s ran with no deadline at all", strings.Join(args, " "))
+			return "[]", nil
+		}
+		deadlines = append(deadlines, time.Until(when).Round(time.Second))
+		return "[]", nil
+	}
+	if _, err := i.Events(); err != nil {
+		t.Fatal(err)
+	}
+	if err := i.Append(later("taken", idA, "0000000000a1", idA, "bo", "2026-09-10T09:10:00Z", false)); err != nil {
+		t.Fatal(err)
+	}
+	if len(deadlines) != 2 {
+		t.Fatalf("the read and the append ran %d subprocesses, want one each", len(deadlines))
+	}
+	for _, d := range deadlines {
+		if d != 30*time.Second {
+			t.Errorf("a gh call ran under a %s budget, want the 30s the caller named", d)
+		}
+	}
+	// A budget of zero or less is the DEFAULT, named, rather than no budget: --gh-timeout 0
+	// must not become a subprocess that can run forever.
+	zero, err := NewIssue("mas-bandwidth/schema#876", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if zero.timeout != DefaultGHTimeout {
+		t.Errorf("--gh-timeout 0 gave a %s budget, want the %s default", zero.timeout, DefaultGHTimeout)
+	}
+	if neg, _ := NewIssue("mas-bandwidth/schema#876", -time.Second); neg.timeout != DefaultGHTimeout {
+		t.Errorf("a negative budget gave %s, want the default", neg.timeout)
+	}
+	// And a call that outlives its budget comes back NAMED, with the flag that widens it.
+	slow, err := NewIssue("mas-bandwidth/schema#876", 20*time.Millisecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slow.run = func(ctx context.Context, stdin string, args ...string) (string, error) {
+		<-ctx.Done()
+		return "", fmt.Errorf("gh %s did not finish in time and was killed; nothing was left half-done by this tool, and a longer budget is --gh-timeout <seconds>", strings.Join(args, " "))
+	}
+	_, err = slow.Events()
+	if err == nil {
+		t.Fatal("a gh call past its budget returned no error")
+	}
+	if !strings.Contains(err.Error(), "--gh-timeout") {
+		t.Errorf("the refusal does not name the flag that widens the budget: %v", err)
+	}
+	// The killGrace is what makes the budget real: gh's children inherit the output pipe
+	// and hold it open after gh is gone, so the WaitDelay is not decoration.
+	if killGrace <= 0 {
+		t.Error("killGrace is not positive; a killed gh whose children hold the pipe blocks forever")
+	}
+}
