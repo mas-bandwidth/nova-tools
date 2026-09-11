@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // --claude <label>=<dir>: Claude Code transcripts.
@@ -126,9 +127,11 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 		}
 		prev := ""
 		bad := 0
+		n := 0
 		sc := bufio.NewScanner(f)
 		sc.Buffer(make([]byte, 0, 256*1024), 16*1024*1024)
 		for sc.Scan() {
+			n++
 			text := strings.TrimSpace(sc.Text())
 			if text == "" {
 				continue
@@ -150,8 +153,9 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 				s.Stat.NoID++
 				continue
 			}
-			day := dayOfStamp(line.Timestamp)
-			if day == "" {
+			day, ok := DayOfStamp(line.Timestamp)
+			if !ok {
+				s.unparsed(path, n, "the timestamp is not an RFC 3339 stamp and is not a day this tool can read: "+line.Timestamp)
 				continue
 			}
 			m := Message{Day: day, Basis: UTC, Model: line.Message.Model, Repo: repo, Turn: true}
@@ -193,14 +197,22 @@ func (s *Source) unreadable(path, why string) {
 	s.Unreadables = append(s.Unreadables, Unreadable{Label: s.Label, Path: path, Why: why})
 }
 
-// dayOfStamp is the UTC day of an RFC 3339 stamp, which is its first ten characters. A
-// stamp this tool cannot read is not a day and the message is not dated by a guess.
-func dayOfStamp(stamp string) string {
-	if len(stamp) < 10 || !ValidDay(stamp[:10]) {
-		return ""
+// DayOfStamp is the UTC day of an RFC 3339 stamp (rule 17: "A day is a UTC day, from the
+// message's own stamp"). The stamp is PARSED and converted, never sliced: its first ten
+// characters are the day in whatever zone it was printed in, and a line stamped
+// 2026-09-11T20:30:00-07:00 belongs to 2026-09-12. A stamp this tool cannot read is not a
+// day, is not dated by a guess, and is not dropped either: every caller counts it and
+// prints it (rule 3).
+func DayOfStamp(stamp string) (string, bool) {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(stamp))
+	if err != nil {
+		return "", false
 	}
-	return stamp[:10]
+	return t.UTC().Format(dayLayout), true
 }
+
+// dayLayout is how a UTC day is written, in the day file and in every `date` column.
+const dayLayout = "2006-01-02"
 
 // jsonStrings is every string anywhere inside a JSON value: a tool_use block's input is a
 // shape this tool does not know, and a path may be under any key of it.

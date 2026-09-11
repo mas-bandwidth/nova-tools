@@ -264,8 +264,11 @@ const (
 
 // applies says which Stat fields a kind can have. The fold prints a dash for the rest.
 var applies = map[string]map[string]bool{
-	KindClaude:   {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "rows": true},
-	KindOpenCode: {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "rows": true},
+	// `unparsed` is a measurement for a transcript and for a database too: a line whose
+	// stamp this tool cannot read is an unparsed line, and rule 3 counts and prints it
+	// rather than dropping it.
+	KindClaude:   {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "unparsed": true, "rows": true},
+	KindOpenCode: {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "unparsed": true, "rows": true},
 	KindSwarm:    {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "nousage": true, "unparsed": true, "rows": true},
 	KindBus:      {"files": true, "unreadable": true, "unparsed": true, "comments": true, "redated": true, "superseded": true, "rows": true},
 	KindProvider: {"files": true, "unreadable": true, "unparsed": true, "rows": true},

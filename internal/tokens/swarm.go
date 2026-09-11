@@ -102,8 +102,8 @@ func ReadSwarm(label, pool string, rules *Rules) *Source {
 				continue
 			}
 			seen[job] = true
-			day := dayOfStamp(cells[cols["ended"]])
-			if day == "" {
+			day, okDay := DayOfStamp(cells[cols["ended"]])
+			if !okDay {
 				s.unparsed(path, n, "the ended stamp is not a date this tool can read: "+cells[cols["ended"]])
 				continue
 			}

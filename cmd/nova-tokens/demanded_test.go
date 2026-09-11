@@ -847,6 +847,52 @@ func TestRule17TheDayComesFromTheMessageStamp(t *testing.T) {
 	}
 }
 
+// TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted pins rule 17's own
+// sentence -- "A day is a UTC day, from the message's own stamp, and a row that is not
+// says so" -- on the two readers that took the stamp's first ten characters instead of
+// parsing it: a transcript line stamped 2026-09-11T20:30:00-07:00 is 03:30Z on the 12th,
+// and it landed in 2026-09-11.tsv with day_basis=utc. A stamp this tool cannot read is
+// rule 3's business: counted and printed, never skipped silently -- it vanished.
+func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), strings.Join([]string{
+		msg("m1", "2026-09-11T20:30:00-07:00", "f", map[string]int{"input_tokens": 7}, "/x/schema/a.go"),
+		`{"type":"assistant","timestamp":"","message":{"id":"m2","model":"f","usage":{"input_tokens":9}}}`,
+		`{"type":"assistant","timestamp":"the eleventh","message":{"id":"m3","model":"f","usage":{"input_tokens":9}}}`,
+	}, "\n")+"\n")
+
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--claude", "g="+tr)
+	wantExit(t, r, 1)
+	// 20:30 on the 11th at -07:00 is 03:30Z on the TWELFTH.
+	wantContains(t, read(t, filepath.Join(out, "2026-09-12.tsv")), "f\tschema\t7\t")
+	if _, err := os.Stat(filepath.Join(out, "2026-09-11.tsv")); err == nil {
+		t.Error("the zoned stamp folded on the local day, not on its UTC day")
+	}
+	// Two stamps this tool cannot read: counted, printed, and named.
+	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=2")
+	wantContains(t, r.stderr, "TOKENS UNPARSED label=claude:g")
+	wantContains(t, r.stderr, "the eleventh")
+	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "unparsed=2")
+
+	// The same, for the OpenCode reader.
+	scratch := mkdir(t, filepath.Join(dir, "scratch"))
+	db := write(t, filepath.Join(dir, "opencode.db"), "SQLite format 3\x00\n")
+	fakeSqlite3(t,
+		ocRows(ocSession("s1", "", "/x/schema")),
+		ocRows(
+			ocMessage("k1", "s1", "2026-09-11T20:30:00-07:00", "p", "m", "3", "", "", "", "", "/x/schema"),
+			ocMessage("k2", "s1", "", "p", "m", "4", "", "", "", "", "/x/schema")),
+		ocRows(ocPart("k1", "s1", "", "/x/schema/a.go", "", "")))
+	out2 := mkdir(t, filepath.Join(dir, "out2"))
+	r = invoke(t, "fold", "--out", out2, "--all", "--repos", reposFile(t, dir), "--opencode", "b="+db, "--scratch", scratch)
+	wantExit(t, r, 1)
+	wantContains(t, read(t, filepath.Join(out2, "2026-09-12.tsv")), "m\tschema\t3\t")
+	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=1")
+	wantContains(t, r.stderr, "TOKENS UNPARSED label=opencode:b")
+}
+
 func TestRule17ABusLineDatedAnotherDayIsRedatedAndCounted(t *testing.T) {
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
