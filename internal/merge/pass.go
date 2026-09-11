@@ -214,7 +214,19 @@ func (p *Pass) walk(baseSHA string, res *Result) {
 			if p.merge(e, st, baseSHA, res) {
 				merged = true
 				res.Merged++
+				continue
 			}
+			// A PUBLICATION THAT WAS REFUSED STOPS THE PASS. Rule 21: "nothing was
+			// published, the unpublished object is named, the pass exits 1 and stops",
+			// and "a moved base is a refusal, not a report ... the pass stops there".
+			// The walk used to fall through to the next entry, so a race printed its
+			// refusal and then went on classifying, building and refusing entries
+			// against a base the tool had just been told it does not know -- and the one
+			// RUN NOTE ended up being the next entry's gate command rather than the
+			// race's remedy.
+			list.More()
+			p.okLine(len(entries), res)
+			return
 		case StateBlocked:
 			res.Blocked++
 			res.Stopped = true
@@ -225,8 +237,14 @@ func (p *Pass) walk(baseSHA string, res *Result) {
 		}
 	}
 	list.More()
+	p.okLine(len(entries), res)
+}
+
+// okLine is RUN OK, and it has ONE statement so that the pass that stops and the pass that
+// finishes cannot drift into printing different counts of the same lane.
+func (p *Pass) okLine(lane int, res *Result) {
 	fmt.Fprintf(p.Stdout, "RUN OK lane=%d merged=%d dropped=%d blocked=%d waiting=%d\n",
-		len(entries), res.Merged, res.Dropped, res.Blocked, res.Waiting)
+		lane, res.Merged, res.Dropped, res.Blocked, res.Waiting)
 }
 
 // note is RUN NOTE: EXACTLY ONE remedy line per pass, and it names the next command. Not

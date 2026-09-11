@@ -48,10 +48,9 @@ func packageSource(t *testing.T) map[string]string {
 func TestNothingWritesIntoTheClonesWorkTree(t *testing.T) {
 	// The writing sites this package is allowed, each with the thing it writes.
 	allowed := map[string]string{
-		"state.go":      "the lane's own state file, through the fixed temp name and a rename",
-		"records.go":    "the outbox, and the record path the CAS loop restores from the outbox",
-		"lock.go":       "the lock file, whose content is the holder's pid for a waiter's refusal",
-		"lock_other.go": "the sentinel beside the lock file, where there is no flock (Windows)",
+		"state.go":   "the lane's own state file, through the fixed temp name and a rename",
+		"records.go": "the outbox, and the record path the CAS loop restores from the outbox",
+		"lock.go":    "the lock file, whose content is the holder's pid for a waiter's refusal",
 	}
 	for name, src := range packageSource(t) {
 		for i, line := range strings.Split(src, "\n") {

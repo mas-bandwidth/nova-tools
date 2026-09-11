@@ -217,6 +217,7 @@ func (p *Pass) remerge(e *Entry, pr PR, baseSHA string, res *Result) Classificat
 		return c
 	}
 	pushed := false
+	var pushErr error
 	files := []string(nil)
 	result := "clean"
 	if _, err := p.Clone.Run("merge", "--no-ff", "-m", "Merge "+p.State.Base+" into "+pr.HeadRef, baseSHA); err != nil {
@@ -235,6 +236,8 @@ func (p *Pass) remerge(e *Entry, pr PR, baseSHA string, res *Result) Classificat
 		result = "blocked"
 	} else if _, err := p.Clone.Run("push", p.Remote, "HEAD:refs/heads/"+pr.HeadRef); err == nil {
 		pushed = true
+	} else {
+		pushErr = err
 	}
 	fmt.Fprintf(p.Stdout, "RUN REMERGE entry=%s base=%s result=%s pushed=%t files=%d\n",
 		oneline.Field(e.ID()), oneline.Field(p.State.Base), result, pushed, len(files))
@@ -246,11 +249,29 @@ func (p *Pass) remerge(e *Entry, pr PR, baseSHA string, res *Result) Classificat
 		p.record(e, c)
 		return c
 	}
+	// CLEAN MEANS COMMIT AND PUSH THE HEAD. A clean merge whose push the remote refused
+	// did neither: the base is not in that head, the host will still report CONFLICTING,
+	// and the next pass would re-merge it again, forever. `pushed=false` on its own line
+	// was the only thing saying so, and nothing acted on it.
+	if !pushed {
+		c.Detail = fmt.Sprintf("the base merged cleanly into %s and the result was not pushed: %s", pr.HeadRef,
+			oneline.Cap(errText(pushErr), oneline.TailBytes))
+		p.stopped(e, c, res)
+		return c
+	}
 	// The lane MOVES ON: one entry that needs a hand does not stop the other thirty-two,
 	// and a re-merged entry waits for the checks its new commit starts.
 	c.State = StateRemerged
 	p.record(e, c)
 	return c
+}
+
+// errText is an error's own words, or a sentence for the error that never arrived.
+func errText(err error) string {
+	if err == nil {
+		return "the push reported no error and the head did not move"
+	}
+	return err.Error()
 }
 
 func (p *Pass) stopped(e *Entry, c Classification, res *Result) {

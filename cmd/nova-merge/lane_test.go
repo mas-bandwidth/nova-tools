@@ -282,3 +282,49 @@ func TestAPullRequestOntoMainWithNoHostedChecksWaits(t *testing.T) {
 	absent(t, stdout, "MERGE OK")
 	absent(t, stdout, "RUN BUILT")
 }
+
+// Rule 3's table is two lines and this is the first: "merge the base / clean -> COMMIT AND
+// PUSH THE HEAD (never forced)". A clean merge whose push the remote refused did neither:
+// `RUN REMERGE ... result=clean pushed=false` was printed, the entry was marked REMERGED,
+// the pass exited 0, and the only thing telling a person that the base is still not in that
+// head was a `pushed=false` token nothing acted on. The next pass would find the same
+// CONFLICTING entry and re-merge it again, forever.
+func TestACleanReMergeWhosePushIsRefusedStopsTheEntry(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	l.init("main")
+	// An entry whose head merges the base CLEANLY -- different files -- but which the
+	// host reports as CONFLICTING, which is what puts it on the re-merge path.
+	oid := l.branch("feature-c", "c.txt", "c\n", "c")
+	l.git(l.work, "checkout", "-q", "main")
+	l.write("moved.txt", "the base moved\n")
+	l.commit("the base moved")
+	l.git(l.work, "push", "-q", "origin", "HEAD:refs/heads/main")
+	l.host.SetChecks(l.refreshBase(), 2, 0)
+	l.host.PRs[7] = merge.PR{Number: 7, Author: "pat", Base: "main", HeadRef: "feature-c",
+		HeadOID: oid, Mergeable: "CONFLICTING"}
+	l.host.SetChecks(oid, 2, 0)
+	if exit, _, errb := l.run("add", "--lane", l.lane, "--pr", "7"); exit != 0 {
+		t.Fatalf("add: %s", errb)
+	}
+	// The remote refuses every push at that head, the way a protected or a fork-owned
+	// branch does.
+	hook := filepath.Join(l.remote, "hooks", "update")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho \"$1 $2 $3\" >> \"$GIT_DIR/pushes\"\n"+
+		"case \"$1\" in refs/heads/feature-c) echo \"protected branch hook declined\" >&2; exit 1;; esac\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once")
+	if exit != 1 {
+		t.Fatalf("a re-merge that did not land is a refusal: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "RUN REMERGE entry=7")
+	contains(t, stdout, "pushed=false")
+	contains(t, stderr, "RUN STOPPED entry=7")
+	contains(t, stderr, "was not pushed")
+	absent(t, stdout, "state=REMERGED")
+	// The head really is untouched at the remote.
+	if got := l.git(l.work, "rev-parse", "refs/remotes/origin/feature-c"); got != oid {
+		t.Errorf("the entry's head is %s and nothing landed, so it must still be %s", got, oid)
+	}
+}

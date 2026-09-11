@@ -452,3 +452,57 @@ func TestAProtectedBaseIsBlockedAndNothingFallsBack(t *testing.T) {
 		t.Errorf("the lease was attempted %d times; the pass stops on the first refusal", leases)
 	}
 }
+
+// Rule 21: "MERGE RACED ... nothing was published, the unpublished object is named, the
+// pass exits 1 and STOPS", and again: "a moved base is a refusal, not a report ... the
+// pass stops there". Demanded test 21 says it in one clause: the pass stops with NO
+// FURTHER ENTRY TOUCHED.
+//
+// The walk merged only when merge() returned true and otherwise fell through to the next
+// entry, so a raced, blocked or failed publication printed its refusal and then went on
+// classifying: a second RUN ENTRY, possibly a second RUN BUILT, and a second refusal --
+// all of them computed against a base the tool had just been told it does not know.
+func TestAFailedPublicationStopsThePassWithNoFurtherEntryTouched(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	l.init("main")
+	l.host.SetChecks(l.baseSHA(), 3, 0)
+	first := l.branch("feature-a", "a.txt", "a\n", "a")
+	second := l.branch("feature-b", "b.txt", "b\n", "b")
+	l.host.PRs[1] = merge.PR{Number: 1, Author: "pat", Base: "main", HeadRef: "feature-a", HeadOID: first, Mergeable: "MERGEABLE"}
+	l.host.PRs[2] = merge.PR{Number: 2, Author: "pat", Base: "main", HeadRef: "feature-b", HeadOID: second, Mergeable: "MERGEABLE"}
+	l.host.SetChecks(first, 3, 0)
+	l.host.SetChecks(second, 3, 0)
+	for _, n := range []string{"1", "2"} {
+		if exit, _, errb := l.run("add", "--lane", l.lane, "--pr", n); exit != 0 {
+			t.Fatalf("add: %s", errb)
+		}
+	}
+	base := l.baseSHA()
+	_, stdout, _ := l.run("run", "--lane", l.lane, "--once")
+	m := mergeSHAOf(t, stdout, "1")
+	if exit, _, errb := l.run("gate", "--lane", l.lane, "--pr", "1", "--head", first,
+		"--base-sha", base, "--merge", m, "--verdict", "green", "--summary", l.summary("g1")); exit != 0 {
+		t.Fatalf("gate: %s", errb)
+	}
+	l.beforePush(func() {
+		l.git(l.work, "checkout", "-q", "main")
+		l.write("hand.txt", "somebody else\n")
+		moved := l.commit("a hand at another keyboard")
+		l.git(l.work, "push", "-q", "origin", "HEAD:refs/heads/main")
+		l.host.SetChecks(moved, 3, 0)
+	})
+	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once")
+	if exit != 1 {
+		t.Fatalf("a raced base is a refusal: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "MERGE RACED entry=1")
+	contains(t, stdout, "RUN ENTRY entry=1")
+	// NO FURTHER ENTRY TOUCHED. Not classified, not built, not refused a second time.
+	absent(t, stdout, "RUN ENTRY entry=2")
+	absent(t, stdout, "RUN BUILT entry=2")
+	absent(t, stderr, "entry=2")
+	// And the pass still says what it did: the counts and the one remedy line.
+	contains(t, stdout, "RUN OK lane=2")
+	contains(t, stdout, "RUN NOTE")
+}
