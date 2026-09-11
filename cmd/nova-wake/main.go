@@ -570,6 +570,7 @@ type watcher struct {
 	// rule-8 streak rather than returning the call as news at after=0s, which
 	// is the tick loop this tool exists to delete.
 	refusal       map[string]bool
+	killed        bool
 	failing       map[string]bool
 	notes         map[string]bool
 	changed       map[string]int
@@ -642,7 +643,7 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 		}
 		printed, news := w.printQueue(now)
 		_ = printed
-		if watchKillPoint == "after-marks" {
+		if w.killed || watchKillPoint == "after-marks" {
 			return 0
 		}
 		switch {
@@ -781,6 +782,11 @@ func (w *watcher) pollLines(ctx context.Context, now time.Time) {
 // stored newest one, byte for byte.
 func (w *watcher) observe(source string, res wake.Result, now time.Time, failed bool) {
 	w.standing = append(w.standing, res.Standing...)
+	for _, key := range res.StandingKeys {
+		// The same recency the sighting memory is evicted by: a standing line
+		// ages only while it is not standing.
+		w.st.Sight(key)
+	}
 	for _, it := range res.Items {
 		w.markRefusal(it.Key, failed)
 		value, display := it.Value, it.Value
@@ -891,7 +897,10 @@ func (w *watcher) printQueue(now time.Time) (int, int) {
 		// The kill lands between the item lines reaching stdout and the marks
 		// that say so. Rule 11 chooses this side every time: the entry stays
 		// pending, the next call prints it again, and a window told the same
-		// news twice reads twice.
+		// news twice reads twice. The LOOP ends here too -- a process that died
+		// does not poll again -- so the killed call prints each line once and
+		// the test can tell a kill from a second print.
+		w.killed = true
 		return len(printed), 0
 	}
 	news := 0

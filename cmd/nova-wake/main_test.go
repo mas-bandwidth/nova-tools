@@ -1153,12 +1153,19 @@ func TestAKillAtEachOrderBoundaryReplaysRatherThanLoses(t *testing.T) {
 			watchKillPoint = tc.kill
 			killed := wakeRun(t, args...)
 			watchKillPoint = ""
-			if got := countLines(killed.stdout, "WAKE REPORT") > 0; got != tc.printed {
-				t.Fatalf("the killed call printed lines=%v, want %v:\n%s", got, tc.printed, killed.stdout)
+			// A process that died does not poll again: the killed call prints
+			// each line ONCE or not at all, and never a second copy on a later
+			// iteration of a loop that should have ended.
+			want := 0
+			if tc.printed {
+				want = 3
+			}
+			if n := countLines(killed.stdout, "WAKE REPORT"); n != want {
+				t.Fatalf("the killed call printed %d report lines, want %d: a kill is not a pause\n%s", n, want, killed.stdout)
 			}
 
 			next := wakeRun(t, args...)
-			want := 3
+			want = 3
 			if tc.kill == "after-marks" {
 				// The marks were written, so those three are delivered and the
 				// next call prints nothing it had already shown.

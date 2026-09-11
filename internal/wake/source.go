@@ -31,6 +31,10 @@ type Source interface {
 
 // Result is one poll's observation.
 type Result struct {
+	// StandingKeys are the state keys of the lines this poll showed as
+	// standing, so their recency can be kept: shown every time, woken on once.
+	StandingKeys []string
+
 	// Items are the observations, each with a state key, a state value and a
 	// delivery id. Whether one is a CHANGE is decided in State.Observe.
 	Items []Item

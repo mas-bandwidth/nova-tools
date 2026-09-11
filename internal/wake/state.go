@@ -266,6 +266,17 @@ func (s *State) RecordOnly(key, value string) {
 	s.raw[key] = Compose(value, s.PrintedID(key))
 }
 
+// Sight records an unrecognised bus line as SEEN: the watched form every other
+// key is stored in, and the recency the LRU evicts by. It is the one writer of
+// the sighting memory, because a second one that wrote the value without the
+// recency is what made the bound a sort by key name -- and a bound by key name
+// deletes the same earliest-sorting lines every poll and wakes the window with
+// them again, which is the prototype's item 9 in a new costume.
+func (s *State) Sight(key string) {
+	s.touch(key)
+	s.raw[key] = Compose("seen", s.PrintedID(key))
+}
+
 func (s *State) touch(key string) {
 	if !evictable(key) {
 		return

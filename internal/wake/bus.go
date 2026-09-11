@@ -243,6 +243,10 @@ func (b *Bus) classify(out string, res *Result) {
 			// the false-quiet failure.
 			b.standing++
 			res.Standing = append(res.Standing, "WAKE BUS STANDING "+escapeTail(line))
+			// A line that STANDS is the most recently seen thing there is, and
+			// a memory that aged it out while it stood would wake the window
+			// with a sentence it has been looking at all hour.
+			res.StandingKeys = append(res.StandingKeys, "bus:line:"+line)
 			continue
 		}
 		b.relay++

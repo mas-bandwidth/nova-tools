@@ -338,11 +338,15 @@ func (s *server) poll(ctx context.Context, now time.Time, budget time.Duration) 
 			// The first sighting of an unrecognised line is news, and it is
 			// remembered so the next hour of the same sentence stands rather
 			// than waking the line again.
-			s.st.Set(it.Key, "seen")
+			s.st.Sight(it.Key)
 			list.Line(wake.Render(wake.KindBusLine, it.Key, it.Value, now))
 		}
 	}
-	// Shown every time, woken on once.
+	// Shown every time, woken on once -- and touched, because a line that
+	// stands is the most recently seen thing there is.
+	for _, key := range res.StandingKeys {
+		s.st.Sight(key)
+	}
 	for _, line := range res.Standing {
 		list.Line(line)
 	}

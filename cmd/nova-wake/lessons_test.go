@@ -601,3 +601,100 @@ func TestServeBoundsItsSightingMemory(t *testing.T) {
 		t.Errorf("no sighting memory at all; a standing line must not wake the line every poll")
 	}
 }
+
+// The sighting memory is an LRU of the least recently SEEN, and the reason is
+// the prototype's item 9: a memory swept by anything other than recency turns
+// standing errors back into changes at exactly the moment the bus is noisiest.
+//
+// A bound that deletes the lexicographically smallest keys is not that bound.
+// A line that stands on every poll is the most recently seen thing there is,
+// and it must never be relayed a second time however many new lines arrive.
+func TestAStandingLineIsNeverEvictedWhileItStands(t *testing.T) {
+	busDir, _ := fakes(t)
+	// The standing line sorts FIRST, which is what a bound by key name deletes.
+	const standing = "INBOX FAIL aaa the remote is refusing, and has been all hour"
+	for poll := 1; poll <= 4; poll++ {
+		lines := []string{standing}
+		for i := 0; i < 120; i++ {
+			lines = append(lines, fmt.Sprintf("INBOX FAIL zzz poll %d line %03d", poll, i))
+		}
+		write(t, filepath.Join(busDir, fmt.Sprintf("out.%d", poll)), strings.Join(lines, "\n")+"\n")
+	}
+	note, _ := fakeNote(t)
+	state := filepath.Join(t.TempDir(), "serve.state")
+	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
+		"--interval", "30s", "--state", state, "--hours", "0.03",
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; %s", r.exit, r.all())
+	}
+	if n := countLines(r.stdout, "WAKE BUS LINE "+standing); n != 1 {
+		t.Errorf("the standing line was relayed as a FIRST SIGHTING %d times; shown every time, woken on ONCE, and an eviction by key name re-wakes the earliest-sorting line every poll\n%s", n, lastLine(r.stdout))
+	}
+	// (How often it STANDS on stdout is the per-poll cap's business -- 120 new
+	// lines a poll is more than a listing prints -- and the cap is counted and
+	// remedied like every other. What is not the cap's business is being woken
+	// by it twice.)
+	kept := 0
+	for _, line := range strings.Split(read(t, state), "\n") {
+		if strings.HasPrefix(line, "bus:line:") {
+			kept++
+			// And the row is the watched form every other key uses, so the
+			// recency counter has somewhere to live.
+			if len(wake.Decompose(line)) != 4 {
+				t.Fatalf("a sighting row is not the watched form <key>|<value>|printed|seen: %q", line)
+			}
+		}
+	}
+	if kept > wake.LRUMax {
+		t.Errorf("%d sighting keys, want at most %d", kept, wake.LRUMax)
+	}
+}
+
+// Test 9's --line half, verbatim: "a --line whose newest commit's SUBJECT
+// carries a future date is judged by the commit stamp". A time that reaches
+// this tool inside text is data.
+func TestALinesFutureSubjectIsDataAndTheCommitStampDecides(t *testing.T) {
+	fakes(t)
+	bus := t.TempDir()
+	git(t, bus, "init", "--quiet", "-b", "main")
+	write(t, filepath.Join(bus, "participants.json"), "{}\n")
+	git(t, bus, "add", "-A")
+	// Johnny's newest commit is eleven minutes old and its subject claims a
+	// time two hours in the future. A reader that believed the subject would
+	// call him present; the commit stamp says he has been silent eleven
+	// minutes.
+	subjectCommit(t, bus, "Johnny", at.Add(-11*time.Minute),
+		"a sign from Johnny at "+at.Add(2*time.Hour).Format(time.RFC3339))
+	state := filepath.Join(t.TempDir(), "wake.state")
+	r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", bus, "--as", "Rowan", "--receipt-max-words", "40",
+		"--line", "Johnny", "--offline-after", "10m")
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; %s", r.exit, r.all())
+	}
+	if !strings.Contains(r.stdout, "WAKE LINE name=Johnny state=OFFLINE") {
+		t.Fatalf("the line was judged by the date in its subject rather than by its commit stamp:\n%s", r.all())
+	}
+	if !strings.Contains(r.stdout, "silent=11m0s") {
+		t.Errorf("the silence is measured from the commit stamp, not from a typed time:\n%s", r.stdout)
+	}
+	if strings.Contains(r.stdout, at.Add(2*time.Hour).Format(time.RFC3339)) {
+		t.Errorf("a time that reached this tool inside text was printed as if it were a stamp:\n%s", r.stdout)
+	}
+}
+
+func subjectCommit(t *testing.T, dir, name string, when time.Time, subject string) {
+	t.Helper()
+	stamp := when.UTC().Format(time.RFC3339)
+	cmd := exec.Command("git", "-C", dir,
+		"-c", "user.name="+name, "-c", "user.email="+strings.ToLower(name)+"@mas-bandwidth.com",
+		"commit", "-q", "--allow-empty", "-m", subject)
+	cmd.Env = append(os.Environ(),
+		"GIT_AUTHOR_DATE="+stamp, "GIT_COMMITTER_DATE="+stamp,
+		"GIT_CONFIG_GLOBAL="+filepath.Join(dir, ".gitconfig-none"),
+		"GIT_CONFIG_SYSTEM="+filepath.Join(dir, ".gitconfig-none"))
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("committing as %s: %v\n%s", name, err, out)
+	}
+}
