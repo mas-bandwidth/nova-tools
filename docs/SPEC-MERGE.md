@@ -342,7 +342,9 @@ A lane is a directory, named by `--lane`. It holds:
 <lane>/repo/          this lane's own clone, never a working copy of anybody's
 <lane>/gates/         the gate summaries, one file per entry and head
 <lane>/gates/<entry>/<head>/<step>.log   one log per gate step, kept past --gc (rule 17)
-<lane>/lock/          the lock, a directory; holds pid and stamp (rules 1 and 2)
+<lane>/state.lock     the state lock: a file the kernel locks per read-modify-write (rules 1 and 2)
+<lane>/run.lock       the pass lock: one `run` per lane; pid and stamp inside; kernel-released
+<lane>/slots/<n>.lock one kernel-locked file per gate slot (rule 14)
 <lane>/stop           present means: start nothing new and exit
 ```
 
