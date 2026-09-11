@@ -39,6 +39,7 @@ func main() {
 	}
 	prompt := string(raw)
 	job := os.Getenv("NOVA_SWARM_JOB")
+	jobDir = job
 	data := os.Getenv("XDG_DATA_HOME")
 
 	// The key reaches the child in its environment and nowhere else. The fake proves it is
@@ -52,11 +53,12 @@ func main() {
 	// the child. It carries no task text -- the task is the prompt FILE -- so writing it
 	// down puts nothing in a file that is not already in the process table.
 	if job != "" {
-		_ = os.WriteFile(filepath.Join(job, "argv"), []byte(strings.Join(os.Args[1:], " ")), 0o644)
+		writeRecorded(filepath.Join(job, "argv"), []byte(strings.Join(os.Args[1:], " ")), 0o644)
 	}
 	// FAKE-LAUNCHES records one line per real invocation, before any directive can exit,
 	// so a test can prove how many times the machinery retried a task.
 	if _, ok := directive(prompt, "FAKE-LAUNCHES"); ok && job != "" {
+		record(filepath.Join(job, "launches"))
 		if f, err := os.OpenFile(filepath.Join(job, "launches"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644); err == nil {
 			fmt.Fprintln(f, "launch")
 			f.Close()
@@ -80,7 +82,7 @@ func main() {
 	}
 	if _, ok := directive(prompt, "FAKE-BADUSAGE"); ok {
 		_ = os.MkdirAll(data, 0o755)
-		_ = os.WriteFile(filepath.Join(data, "usage.tsv"), []byte("this file has no tab-separated header\x00"), 0o000)
+		writeRecorded(filepath.Join(data, "usage.tsv"), []byte("this file has no tab-separated header\x00"), 0o000)
 	}
 	if _, ok := directive(prompt, "FAKE-BACKGROUND"); ok {
 		child := exec.Command(os.Args[0], "--background-child")
@@ -172,6 +174,7 @@ func publish(job, prompt string, findings, notes int) {
 	b.WriteString("\n## Left owed\n- nothing\n\n## One line\nA fake worker did a fake task.\n")
 
 	tmp := filepath.Join(job, "RESULT.md.tmp")
+	record(tmp)
 	if err := os.WriteFile(tmp, []byte(b.String()), 0o644); err != nil {
 		fmt.Fprintln(os.Stderr, "fake harness: the report could not be written:", err)
 		os.Exit(2)
@@ -179,6 +182,7 @@ func publish(job, prompt string, findings, notes int) {
 	if _, ok := directive(prompt, "FAKE-UNPUBLISHED"); ok {
 		return
 	}
+	record(filepath.Join(job, "RESULT.md"))
 	if err := os.Rename(tmp, filepath.Join(job, "RESULT.md")); err != nil {
 		fmt.Fprintln(os.Stderr, "fake harness: the report could not be published:", err)
 		os.Exit(2)
@@ -194,7 +198,31 @@ func writeUsage(data, arg string) {
 	}
 	body := "tokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd\tmodel\trepo\n" +
 		strings.Join(values, "\t") + "\t0.0100\tfake-model\tmas-bandwidth/nova-tools\n"
-	_ = os.WriteFile(filepath.Join(data, "usage.tsv"), []byte(body), 0o644)
+	writeRecorded(filepath.Join(data, "usage.tsv"), []byte(body), 0o644)
+}
+
+// THE WRITE-PATH TRIPWIRE (demanded test 9, SPEC-SWARM.md:1264). Every path this child
+// opens for writing is recorded in its OWN job directory, one per line, so a test can prove
+// that no path was opened by two children rather than trust that slots keep them apart.
+// The record file itself is the tripwire's own and is excluded by construction: it is the
+// one path per child that the test never compares.
+var jobDir string
+
+func record(path string) {
+	if jobDir == "" {
+		return
+	}
+	f, err := os.OpenFile(filepath.Join(jobDir, "writes"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintln(f, path)
+}
+
+func writeRecorded(path string, body []byte, perm os.FileMode) {
+	record(path)
+	_ = os.WriteFile(path, body, perm)
 }
 
 func directive(prompt, name string) (string, bool) {

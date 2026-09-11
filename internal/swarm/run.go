@@ -335,6 +335,13 @@ func (in RunInput) prepare(sc Sidecar, text []byte, slot int, jobDir string) err
 	if err := in.Worker.RefreshSlot(slot); err != nil {
 		return err
 	}
+	// The job directory is made ON PURPOSE, and not as a side effect of making the data
+	// home inside it: the data home is the thing demanded test 9's tripwire is free to
+	// move, and a directory that exists only because something else needed a path under
+	// it is a directory that disappears when that something changes.
+	if err := os.MkdirAll(jobDir, 0o755); err != nil {
+		return err
+	}
 	if _, err := in.Worker.WriteHarnessConfig(slot); err != nil {
 		return err
 	}

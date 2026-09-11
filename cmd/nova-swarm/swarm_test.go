@@ -894,3 +894,130 @@ func TestTheUsageSourceIsNamedForWhatItIs(t *testing.T) {
 		t.Errorf("the refusal comes before any worker starts:\n%s", stdout)
 	}
 }
+
+// DEMANDED TEST 9 (SPEC-SWARM.md:1264). N workers are N CHILD PROCESSES, each with its own
+// job directory and its own report file; a tripwire on every path a child opens for
+// WRITING finds no path opened by two children; the merge into the page runs once, after
+// the last worker is reaped.
+//
+// This is the prototype's worst failure written as an assertion: workers that shared a
+// working directory shared a harness database, and two jobs' token counts, two jobs' logs
+// and two jobs' reports landed on top of each other. Slots exist for this, and the fake
+// harness records every path it opens for writing so the test can prove it rather than
+// trust it.
+func TestNWorkersAreNProcessesAndShareNoPath(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	var ids []string
+	for i := 0; i < 4; i++ {
+		ids = append(ids, b.add("one of four workers, two at a time\nFAKE-FINDINGS 1\nFAKE-USAGE 100 50 - - -\n"))
+	}
+
+	// Four jobs over two workers: two run at once, and each slot runs two jobs one after
+	// the other. Both halves matter -- a path shared by two workers and a path shared by
+	// two jobs of ONE worker are the same lost token count.
+	exit, stdout, stderr := b.run("--workers", "2")
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+
+	// N child processes: N distinct supervisor pids, N distinct slots, N distinct job
+	// directories, N report files.
+	pids := map[int]string{}
+	slots := map[int]string{}
+	dirs := map[string]bool{}
+	for _, id := range ids {
+		var pr struct {
+			Pid  int    `json:"pid"`
+			Slot int    `json:"slot"`
+			Job  string `json:"job"`
+		}
+		dir := b.jobDir(id)
+		dirs[dir] = true
+		raw, err := os.ReadFile(filepath.Join(dir, "pid"))
+		if err != nil {
+			t.Fatalf("no pid record for %s: %v", id, err)
+		}
+		if err := json.Unmarshal(raw, &pr); err != nil {
+			t.Fatal(err)
+		}
+		if other, seen := pids[pr.Pid]; seen {
+			t.Errorf("%s and %s were the same process (pid %d): N workers are N processes", other, id, pr.Pid)
+		}
+		pids[pr.Pid] = id
+		if pr.Slot < 1 || pr.Slot > 2 {
+			t.Errorf("%s ran on slot %d, outside the two workers this run allows", id, pr.Slot)
+		}
+		slots[pr.Slot] = id
+		if _, err := os.Stat(filepath.Join(b.pool, "reports", id, "RESULT.md")); err != nil {
+			t.Errorf("%s has no report file of its own: %v", id, err)
+		}
+	}
+	if len(dirs) != len(ids) {
+		t.Errorf("%d jobs want %d job directories, got %d", len(ids), len(ids), len(dirs))
+	}
+
+	// THE TRIPWIRE. Every path a child opened for writing, by job: no path twice.
+	owner := map[string]string{}
+	for _, id := range ids {
+		raw, err := os.ReadFile(filepath.Join(b.jobDir(id), "writes"))
+		if err != nil {
+			t.Fatalf("the child for %s recorded no write path: %v", id, err)
+		}
+		paths := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+		if len(paths) < 3 {
+			t.Fatalf("the tripwire wants every write path of %s, got %d", id, len(paths))
+		}
+		for _, path := range paths {
+			if other, seen := owner[path]; seen && other != id {
+				t.Errorf("two children opened %s for writing: %s and %s", path, other, id)
+			}
+			owner[path] = id
+		}
+	}
+
+	// The merge into the page runs ONCE, after the last worker is reaped: one page, holding
+	// all three, written by the triage that follows the run and never by a worker.
+	exit, stdout, stderr = b.swarm("triage", "--pool", b.pool)
+	if exit != 0 {
+		t.Fatalf("triage exited %d: %s%s", exit, stdout, stderr)
+	}
+	pages := 0
+	entries, err := os.ReadDir(filepath.Join(b.pool, "reports"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".md") {
+			pages++
+		}
+	}
+	if pages != 1 {
+		t.Errorf("one merge is one page, got %d", pages)
+	}
+	page, err := os.ReadFile(field(t, stdout, "page="))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range ids {
+		if !strings.Contains(string(page), id) {
+			t.Errorf("the one page wants every reaped worker's report, %s is missing", id)
+		}
+	}
+}
+
+// jobDir is one job's directory, wherever its slot put it.
+func (b *bench) jobDir(id string) string {
+	b.t.Helper()
+	for slot := 1; slot <= swarmSlotsInTests; slot++ {
+		dir := filepath.Join(b.dir, fmt.Sprintf("worker-home-%d", slot), "jobs", id)
+		if _, err := os.Stat(dir); err == nil {
+			return dir
+		}
+	}
+	b.t.Fatalf("no job directory for %s under %s", id, b.dir)
+	return ""
+}
+
+// swarmSlotsInTests is the highest slot any test here runs with.
+const swarmSlotsInTests = 8
