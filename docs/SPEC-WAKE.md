@@ -167,6 +167,7 @@ WAKE MORE kind=<bus|entry|report> shown=<n> total=<t> n=<k> <remedy>
 WAKE REFUSED: <reason>
 WAKE FIRED ids=<n> first=<id> rc=<n> redelivered=<0|1>
 WAKE UNCERTAIN id=<id> attempt=<n>: dispatch interrupted; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> runs it again
+WAKE UNCERTAIN id=<id> attempt=<n> rc=<n>: retry not terminal; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> runs it again
 WAKE BLOCKED as=<name> uncertain=<id> queued=<n>: a dispatch may still own this receiver; end it, then nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
 WAKE SERVE fired=<n> notes=<n> redelivered=<n> uncertain=<n> queued=<n> cc=<n> max_wait=<d> idle=<duration>
 ```
@@ -481,7 +482,13 @@ One file, named by `--state`, holding a flat map of key to value: one entry per
 watched thing, namespaced by source — `bus:line:<bytes>`, `bus:note:<id>`,
 `entry:<repo>#<n>`, `report:<path>`, `line:<name>` — plus one `fail:<source>`
 per source, the **delivery queue** `queue:<n>` with its counter `queue:next`,
-and the advance marker `bus:advance`. It is written **after every poll**, through a temporary file in
+the advance marker `bus:advance`, and for `serve` one `serve:<id>` per note
+holding exactly one of `queued|<stamp>`, `dispatching|<stamp>|attempt=<n>`,
+`delivered|<stamp>|rc=<n>|redelivered=<0|1>`, `uncertain|<stamp>|attempt=<n>`,
+`uncertain|<stamp>|attempt=<n>|rc=<n>` (an idempotent retry that returned
+non-zero) or `cc|<stamp>` (rule 10) — a `delivered … rc=0` is the one record
+that says the receiver finished with that id, and under `--on-note-idempotent`
+it is the completion boundary the queue waits behind. It is written **after every poll**, through a temporary file in
 the same directory and an atomic rename, so a call killed by the harness mid-poll
 leaves either the previous state or the new one and never half of either.
 
@@ -840,22 +847,42 @@ spec forbids**.
     the state stores no command, so the redelivery names its handler —
     refused unless the state is `uncertain`, and runs it once more as
     `attempt=<n+1>` with `redelivered=1`; the queue drains after it returns.
-    With `--on-note-idempotent` — the caller's declaration that the command
-    de-duplicates by id, durably, **and tolerates a second invocation for the
-    same id beside a live first one**, which is the receiver's declared
-    contract and never an assumption about an arbitrary command — an
+    With `--on-note-idempotent` — the caller's declaration of a **stronger
+    receiver contract**, never an assumption about an arbitrary command:
+    the command de-duplicates by id, durably; it tolerates a second
+    invocation for the same id beside a live first one; **and its exit 0 for
+    an id is a terminal acknowledgement that the work for that id has
+    completed**, so a second invocation that finds the first still running
+    either waits for it and returns its outcome, or exits non-zero — it
+    never exits 0 for merely having seen the id, because "already accepted"
+    says nothing about idleness, and idleness is what the queue behind it
+    needs — an
     interrupted `attempt=1` is run once more as `attempt=2 redelivered=1`
-    before anything queued, and an interrupted `attempt=2` is `uncertain` and
-    blocks all the same, so nothing fires forever and nothing goes quiet.
+    before anything queued, and **the completion boundary is that retry's
+    `delivered|<stamp>|rc=0|redelivered=1` written to `serve:<id>` after it
+    exits 0**: until that record exists no different queued id is
+    dispatched (the entry sits `dispatching|<stamp>|attempt=2` while the
+    retry runs, and a running command holds the queue as always); a retry
+    that exits non-zero has not acknowledged the original dispatch and its
+    entry becomes `uncertain|<stamp>|attempt=2|rc=<n>` — `WAKE UNCERTAIN
+    id=<id> attempt=2 rc=<n>: retry not terminal; …` — which blocks the
+    queue like any `uncertain` until a person's `--redeliver`, never a
+    third automatic run; and an interrupted `attempt=2` is `uncertain` and
+    blocks all the same, so nothing fires forever and nothing goes quiet. A
+    receiver that cannot promise the terminal meaning of exit 0 must not be
+    declared idempotent; it gets the default, a person's `--redeliver`.
     Continued automatic progress past a kill would need durable
     process-level receiver ownership and a handoff that proves no overlap,
     which this version does not claim. (Stella, 2026-09-11: with A running
     and B queued, kill `serve` alone and restart: A uncertain, B dispatched
     beside a live A, two turns on one harness.) An earlier draft
     wrote the id once before the spawn and called that exactly-once; Stella's
-    second read showed it was at-most-once with a lost launch in the gap, and
+    second read showed it was at-most-once with a lost launch in the gap,
     her third that an automatic second run of an arbitrary command is a
-    duplicate nobody chose. The handoff is therefore **at-most-once by
+    duplicate nobody chose, and her final read that a same-id concurrency
+    tolerance does not establish idleness for a different id, so the
+    idempotent retry needs a completion boundary and the flag names it.
+    The handoff is therefore **at-most-once by
     default, with the uncertain case surfaced and never silent**. A command
     still running holds the next note as `queued`, because the harness is
     one and cannot take two turns at once. The command's exit code is
@@ -1000,7 +1027,25 @@ Each is proven able to fail by a mutation before it is trusted.
     --on-note <fake>` runs A once as `attempt=2 redelivered=1` and the next
     call fires B in its own invocation, never beside A; with
     `--on-note-idempotent` the restart runs A's retry once and still fires B
-    only after that retry returns; `--redeliver` without `--on-note` is
+    only after that retry returns 0; **the completion boundary** (Stella,
+    2026-09-11, final read): with `--on-note-idempotent`, the fake for A
+    blocks until a release file appears, B lands and is `queued`, `serve`
+    is SIGKILLed with A alive, and the restart runs A's retry, which the
+    fake answers **immediately with "already accepted" and exit 75** while
+    the original A still runs: the entry becomes `uncertain attempt=2
+    rc=75`, `WAKE UNCERTAIN id=A attempt=2 rc=75: retry not terminal` and
+    `WAKE BLOCKED … uncertain=A queued=1` are printed, B stays queued, the
+    fake records no call for B while A lives, and a further restart runs no
+    third attempt; after A is released and returns, `--redeliver A --on-note
+    <fake>` exits 0, `serve:A` reads `delivered rc=0 redelivered=1`, and only
+    then does the next call fire B in its own invocation; the same schedule
+    with a fake whose duplicate **waits for the original and then exits 0**
+    fires B in the call after the retry returns, never before, and the
+    state file shows `dispatching attempt=2` for A for as long as the retry
+    ran; a mutation that dispatches B on the retry's non-zero return, one
+    that treats the retry's spawn rather than its `delivered rc=0` as the
+    boundary, and one that runs `attempt=3` on its own, each turn the test
+    red; `--redeliver` without `--on-note` is
     refused naming the flag; a mutation that dispatches B on a restart with
     A `uncertain` turns the test red, and the state codec round-trips a
     value holding a literal `%7C` and one holding `%25` byte-identically;
@@ -1087,7 +1132,10 @@ Each is proven able to fail by a mutation before it is trusted.
 - **A `serve` dispatch can be uncertain, and a person clears it.** After a
   kill between the `dispatching` write and the `delivered` write the note is
   `uncertain` and waits for `--redeliver`; only under `--on-note-idempotent`
-  does the restart run it once more, marked `redelivered=1` (rule 10). Never
+  does the restart run it once more, marked `redelivered=1`, and the queue
+  behind it waits for that retry's `delivered rc=0`, the receiver's terminal
+  acknowledgement — a retry that returns non-zero is `uncertain` again and
+  a person's (rule 10). Never
   a silent duplicate, and never a silent loss.
 
 ## What it deliberately does not do
@@ -1204,7 +1252,8 @@ shared packages used rather than re-spelled.
     each written before or after the step it names and never during it, the
     `uncertain` surfacing with `--redeliver --on-note`, the queue blocked
     behind an unresolved `uncertain` (`WAKE BLOCKED`) and the one-more-run
-    only under `--on-note-idempotent`, ids and nothing else on the command line, the
+    only under `--on-note-idempotent` with the queue held until that retry's
+    `delivered rc=0` and `uncertain … rc=<n>` on a non-zero return, ids and nothing else on the command line, the
     receipt per id after `delivered rc=0` and never before, `max_wait`, the
     `stop` file and `--hours`. Tests: test 10, with the kill points injected.
 
@@ -1304,6 +1353,7 @@ be grateful to. These are the places it is **not** a model, each with the reason
 | Emma, D | rolling coordinator session boundary | not folded: a window's practice, not a tool rule |
 | Rowan, ideas 1, 9 | serve for every line; no status polls | rule 10, narrowed: `serve` is an opt-in adapter per consenting line — starting one under a name is that name's person's decision (the receipt paragraph), never a fleet setting; no status polls is the first lesson (Stella's closing read) |
 | Stella, closing read | recovery proves idleness before any dispatch | rule 10: an unresolved `uncertain` blocks the receiver's queue, `WAKE BLOCKED` with the remedy; `--redeliver` names `--on-note`; `--on-note-idempotent` declares concurrency tolerance; `%` escaped as `%25` in the state codec (test 10) |
+| Stella, final read | the idempotent exception needs a completion boundary | rule 10: `--on-note-idempotent` names the stronger contract — exit 0 for an id is terminal completion, never "already accepted"; the boundary is the retry's `delivered rc=0 redelivered=1` in `serve:<id>`, before which no different id is dispatched; a non-zero retry is `uncertain … rc=<n>` and a person's (state, grammar, test 10) |
 | Rowan, idea 4 | pointers in the window, detail in children | not folded: a window's practice |
 | Freddy, idea 2 | webhook wakeups over polling | already, rule 10 (a fetch outside the session); a webhook is a v2 source |
 | Freddy, idea 5 | bundle acknowledgements | rule 10: one batch, receipts per id by machinery |
