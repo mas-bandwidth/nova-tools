@@ -326,7 +326,7 @@ func (s *State) Encode() ([]byte, error) {
 // Load reads the lane's state. A directory with no state.json is not a lane, and the
 // refusal names the one verb that makes one (rule 20).
 func Load(lane string) (*State, error) {
-	raw, err := os.ReadFile(StatePath(lane))
+	raw, err := readState(StatePath(lane))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, ErrNotALane
 	}
@@ -334,6 +334,38 @@ func Load(lane string) (*State, error) {
 		return nil, err
 	}
 	return Decode(raw)
+}
+
+// The replace window: how long a reader waits out a rename that is in flight, and how
+// often it looks again. The rename itself is microseconds; 200ms is a machine under a
+// load the caller would want to hear about, and 2ms is small enough that a reader in a
+// tight loop does not notice the wait at all.
+const (
+	replaceWindow = 200 * time.Millisecond
+	replacePoll   = 2 * time.Millisecond
+)
+
+// readState reads the state file, WAITING OUT A REPLACE THAT IS IN FLIGHT.
+//
+// On unix this is one os.ReadFile and nothing else: replaceRefusal is never true there,
+// because a rename is atomic for readers too. On Windows an open during MoveFileEx's
+// replace can be refused -- a sharing violation, or a not-found inside the window -- and
+// a reader that took that as its answer would report "this is not a lane" about a lane
+// that is there, or fail a verb for a write that was landing correctly. It is bounded:
+// past the window the refusal IS the answer, because a door that stays shut for 200ms is
+// not a rename any more.
+//
+// Only the OPEN is retried. A file that is there and does not parse is never retried and
+// never smoothed over -- Decode's error is the one rule 1 is checked by.
+func readState(path string) ([]byte, error) {
+	deadline := time.Now().Add(replaceWindow)
+	for {
+		raw, err := os.ReadFile(path)
+		if err == nil || !replaceRefusal(err) || !time.Now().Before(deadline) {
+			return raw, err
+		}
+		time.Sleep(replacePoll)
+	}
 }
 
 // ErrNotALane is the one error every verb but init turns into the same refusal: exit 2,

@@ -1,6 +1,7 @@
 package merge
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,6 +116,14 @@ func TestAnInitOfALaneThatExistsRefuses(t *testing.T) {
 
 // Demanded test 1: thirty concurrent writers on one lane, and a reader in a tight loop
 // that must never see 0 bytes or a partial file.
+//
+// TWO READERS, because the replace has two sides. THE TOOL'S OWN READER, Load, must never
+// answer a parse error and never answer "this is not a lane" about a lane that is there:
+// that is the contract every verb depends on, and on Windows it is what the bounded wait
+// in readState buys -- an open refused for the microseconds of a MoveFileEx replace is a
+// door held shut, not an answer. A RAW READER holds the other half: whenever a plain open
+// does succeed, the bytes it gets parse, so a zero-byte or half-written state file is red
+// on every platform, which is the property the rename is there for.
 func TestThirtyConcurrentWritersAllLandAndTheFileAlwaysParses(t *testing.T) {
 	lane := t.TempDir()
 	if err := Init(lane, "o/n", "main", "nova-merge/l"); err != nil {
@@ -122,7 +131,33 @@ func TestThirtyConcurrentWritersAllLandAndTheFileAlwaysParses(t *testing.T) {
 	}
 	done := make(chan struct{})
 	bad := make(chan error, 1)
+	fail := func(err error) {
+		select {
+		case bad <- err:
+		default:
+		}
+	}
+	var readers sync.WaitGroup
+	readers.Add(2)
+	// The tool's reader: every answer it gives while thirty writers race must be a state.
 	go func() {
+		defer readers.Done()
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			if _, err := Load(lane); err != nil {
+				fail(fmt.Errorf("the tool's own reader: %w", err))
+				return
+			}
+		}
+	}()
+	// The raw reader: an open a replace refused is not this test's subject, but bytes
+	// that do not parse are.
+	go func() {
+		defer readers.Done()
 		for {
 			select {
 			case <-done:
@@ -130,21 +165,11 @@ func TestThirtyConcurrentWritersAllLandAndTheFileAlwaysParses(t *testing.T) {
 			default:
 			}
 			raw, err := os.ReadFile(filepath.Join(lane, "state.json"))
-			if os.IsNotExist(err) {
+			if err != nil {
 				continue
 			}
-			if err != nil {
-				select {
-				case bad <- err:
-				default:
-				}
-				return
-			}
 			if _, err := Decode(raw); err != nil {
-				select {
-				case bad <- err:
-				default:
-				}
+				fail(fmt.Errorf("a plain read of %d bytes: %w", len(raw), err))
 				return
 			}
 		}
@@ -164,9 +189,10 @@ func TestThirtyConcurrentWritersAllLandAndTheFileAlwaysParses(t *testing.T) {
 	}
 	wg.Wait()
 	close(done)
+	readers.Wait()
 	select {
 	case err := <-bad:
-		t.Fatalf("a reader polling the file saw one that does not parse: %v", err)
+		t.Fatalf("a reader racing thirty writers must never see a missing or unparsable state: %v", err)
 	default:
 	}
 	st, err := Load(lane)
