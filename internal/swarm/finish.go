@@ -149,9 +149,18 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		return fmt.Sprintf("RUN MALFORMED id=%s slot=%d line=%d dest=failed",
 			oneline.Field(sc.ID), r.slot, report.MalformedLine), EndFailed, dest
 	}
-	return fmt.Sprintf("RUN DONE id=%s slot=%d rc=%d after=%s result=%s findings=%d refusals=%d notes=%d/%s unpublished=%t budget=%s dest=%s",
+	// WHAT THE HARNESS SAID, on the line, when there is nothing else to go on: a job with
+	// no report or a non-zero exit is one a person has to diagnose, and its only diagnosis
+	// was a file no verb printed and `reclaim` deleted (the audit, F5).
+	said := ""
+	if report.Class == ClassNoResult || rec.RC != 0 {
+		if tail := HarnessTail(r.jobDir); tail != "" {
+			said = " log=" + oneline.Escape(oneline.Cap(tail, oneline.TailBytes))
+		}
+	}
+	return fmt.Sprintf("RUN DONE id=%s slot=%d rc=%d after=%s result=%s findings=%d refusals=%d notes=%d/%s unpublished=%t budget=%s dest=%s%s",
 		oneline.Field(sc.ID), r.slot, rec.RC, after, oneline.Field(report.Class), findings, refusals,
-		notesSent, oneline.Field(notesRead), unpublished, budget, dest), end, dest
+		notesSent, oneline.Field(notesRead), unpublished, budget, dest, said), end, dest
 }
 
 // destinationFor is WHERE A JOB LANDS, and it is one rule for every path that ends a job:

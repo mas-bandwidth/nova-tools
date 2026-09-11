@@ -903,14 +903,16 @@ func cmdReclaim(args []string, stdout, stderr io.Writer) int {
 	pool := f.fs.String("pool", "", "")
 	task := f.fs.String("task", "", "")
 	done := f.fs.Bool("done", false, "")
+	failedOnly := f.fs.Bool("failed", false, "")
+	all := f.fs.Bool("all", false, "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
 	}
 	f.wantMax(*max)
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
-	if *task == "" && !*done {
-		f.add("--task is required; it wants the id of the job whose directory is to be removed, or --done for every finished job: this is the one thing this tool deletes")
+	if *task == "" && !*done && !*failedOnly && !*all {
+		f.add("--task is required; it wants the id of the job whose directory is to be removed, or --done, --failed or --all for every job in that state: this is the one thing this tool deletes")
 	}
 	if f.refused(stderr) {
 		return 2
@@ -919,16 +921,30 @@ func cmdReclaim(args []string, stdout, stderr io.Writer) int {
 	if !ok {
 		return 2
 	}
+	// A PASS WHERE EVERYTHING FAILED needed one `reclaim --task <id>` per failure before
+	// this: `--done` swept done/ and nothing else, so the failure path leaked disk (the
+	// new-user audit, F9, 2026-09-11).
 	ids := []string{*task}
-	if *done {
+	if *done || *failedOnly || *all {
 		ids = nil
-		list, _ := p.List(swarm.Done)
-		for _, sc := range list {
-			ids = append(ids, sc.ID)
+		var states []string
+		switch {
+		case *all:
+			states = []string{swarm.Done, swarm.Failed}
+		case *failedOnly:
+			states = []string{swarm.Failed}
+		default:
+			states = []string{swarm.Done}
+		}
+		for _, state := range states {
+			list, _ := p.List(state)
+			for _, sc := range list {
+				ids = append(ids, sc.ID)
+			}
 		}
 	}
 	worst := 0
-	list := bounded.Capped(stdout, *max, "RECLAIM", "task", "nova-swarm reclaim --pool "+*pool+" --done --max 0")
+	list := bounded.Capped(stdout, *max, "RECLAIM", "task", "nova-swarm reclaim --pool "+*pool+" --all --max 0")
 	for _, id := range ids {
 		sc, found := p.FindAnywhere(id)
 		if !found {

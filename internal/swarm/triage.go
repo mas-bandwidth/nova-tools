@@ -378,7 +378,16 @@ func ResultByID(p *Pool, id string, stdout, stderr io.Writer) int {
 	}
 	raw, from, err := p.ReportBytes(sc)
 	if err != nil {
-		fmt.Fprintf(stderr, "RESULT REFUSED: %s published no report; the record says %s\n", oneline.Field(id), oneline.Field(MarkerNoResult))
+		tail := ""
+		if sc.Job != "" {
+			tail = HarnessTail(sc.Job)
+		}
+		fmt.Fprintf(stderr, "RESULT REFUSED: %s published no report; the record says %s; what the harness said is beneath\n",
+			oneline.Field(id), oneline.Field(MarkerNoResult))
+		// LESSON 23: one escaped event line, and another tool's transcript RAW beneath it.
+		if tail != "" {
+			fmt.Fprintln(stderr, tail)
+		}
 		return 1
 	}
 	report := ParseReport(raw)

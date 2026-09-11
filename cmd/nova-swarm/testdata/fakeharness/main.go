@@ -87,6 +87,11 @@ func main() {
 		published = true
 	}
 
+	// FAKE-SAY is the harness's own words on its own stderr -- a provider's `401
+	// unauthorized`, the one diagnosis a failed job has.
+	if said, ok := directive(prompt, "FAKE-SAY"); ok {
+		fmt.Fprintln(os.Stderr, "fake harness:", said)
+	}
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
 			fmt.Printf("fake harness: read of /etc/somewhere: permission denied (refused)\n")

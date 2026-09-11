@@ -109,3 +109,107 @@ func TestOneTokenHasOneMeaningOnAPage(t *testing.T) {
 	}
 	mustContain(t, "TRIAGE OK", ok, "folded=1")
 }
+
+// F5 / lesson 23: the only diagnosis of a failed job was printed NOWHERE and then deleted.
+// The harness's own words -- `401 unauthorized` -- land in <job>/harness.log, no verb
+// printed them, and `reclaim` removes the log with the directory. A line whose key is wrong
+// had no printed route to the word `unauthorized`.
+func TestAFailedJobPrintsTheHarnesssOwnWords(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a worker whose provider refuses its key\nFAKE-SAY error: 401 unauthorized\nFAKE-NORESULT\n")
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	// One bounded, escaped field on the event line: the run says what the harness said.
+	run := lineWith(t, stdout, "RUN DONE id="+id)
+	mustContain(t, "the RUN DONE line of a job with no result", run, "401 unauthorized")
+	if strings.Count(run, "\n") != 0 {
+		t.Errorf("an event line is ONE line:\n%q", run)
+	}
+
+	// And `result --id` hands over the transcript itself, raw, beneath its one event line.
+	exit, stdout, stderr = b.swarm("result", "--pool", b.pool, "--id", id)
+	if exit != 1 {
+		t.Fatalf("`result --id` on a job that published nothing is REFUSED, got %d", exit)
+	}
+	mustContain(t, "the refusal", stderr, "RESULT REFUSED")
+	mustContain(t, "the transcript beneath it", stderr, "401 unauthorized")
+}
+
+// F9: the failure path leaked disk. `reclaim --done` swept only done/, so a pass where
+// everything failed needed one `reclaim --task <id>` per failure.
+func TestReclaimSweepsTheFailedJobsToo(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	ok := b.add("a job that finishes\nFAKE-FINDINGS 1\n")
+	bad := b.add("a job that publishes nothing\nFAKE-NORESULT\n")
+	if exit, stdout, stderr := b.run("--workers", "2"); exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	exit, stdout, stderr := b.swarm("reclaim", "--pool", b.pool, "--failed")
+	if exit != 0 {
+		t.Fatalf("`reclaim --failed` exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "reclaim --failed", stdout, "RECLAIM OK id="+bad)
+	if strings.Contains(stdout, ok) {
+		t.Errorf("`--failed` sweeps failed/ and nothing else:\n%s", stdout)
+	}
+	exit, stdout, stderr = b.swarm("reclaim", "--pool", b.pool, "--all")
+	if exit != 0 {
+		t.Fatalf("`reclaim --all` exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "reclaim --all", stdout, "RECLAIM OK id="+ok)
+}
+
+// S1 and S2: the one file a first run cannot start without was the one with no template.
+// `template --name worker` prints a complete worker description, and the tool runs the one
+// it prints.
+func TestTemplateWorkerPrintsADescriptionThisToolAccepts(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	exit, stdout, stderr := b.swarm("template", "--name", "worker")
+	if exit != 0 {
+		t.Fatalf("`template --name worker` exited %d: %s%s", exit, stdout, stderr)
+	}
+	for _, field := range []string{"name", "provider", "model", "env_var", "key_file", "usage",
+		"harness", "harness_args", "{model}", "{prompt}", "worker_dir", "deadline"} {
+		mustContain(t, "the worker template", stdout, field)
+	}
+	// It is not prose: it is a description this tool reads. Filled in with this bench's own
+	// fake harness and key, `run` accepts it.
+	filled := strings.NewReplacer(
+		"<the harness command on PATH>", "fake-harness",
+		"<the model id>", "fake-model",
+		"<the NAME of the variable the provider reads>", "FAKE_KEY",
+		"<the path of a file holding one line, mode 0600>", b.keyFile,
+		"<the home copy of this worker's own directory>", filepath.Join(b.dir, "worker-home"),
+	).Replace(stdout)
+	path := filepath.Join(b.dir, "from-template.json")
+	write(t, path, filled)
+	b.add("a task the template's worker runs\nFAKE-FINDINGS 1\n")
+	exit, stdout, stderr = b.swarm("run", "--pool", b.pool, "--workers", "1", "--hours", "0.25", "--worker", path)
+	if exit != 0 {
+		t.Fatalf("the description this tool PRINTS is one it reads; run exited %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN DONE")
+}
+
+// S3: the harness contract was undocumented -- cwd, argv, NOVA_SWARM_JOB, RESULT.md -- and
+// the audit learned it by dumping the fake harness's own environment. The README says it,
+// and names the fake harness that already demonstrates it.
+func TestTheReadmeCarriesTheHarnessContract(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	for _, want := range []string{"### The harness contract", "NOVA_SWARM_JOB", "RESULT.md",
+		"cmd/nova-swarm/testdata/fakeharness", "harness_args"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("the README's harness contract wants %q", want)
+		}
+	}
+}

@@ -393,10 +393,10 @@ nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file>      
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
 nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
-nova-swarm template --name read-pr|probe-row|fix-card|result                                # the conditions, baked in, so they are not retyped and not forgotten
+nova-swarm template --name read-pr|probe-row|fix-card|result|worker                         # the conditions, baked in, so they are not retyped and not forgotten
 nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
 nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
-nova-swarm reclaim  --pool <dir> (--task <id> | --done)                                     # the one thing this tool deletes, and only with the record kept outside it
+nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
 ```
 
 ### First run
@@ -445,6 +445,36 @@ harness that reports nothing, under which only `--tokens unmetered` tasks may ru
 real jobs burned 61,875 and 85,308 tokens against `--tokens 20000` and both reported
 `budget=-/20000`. Against OpenCode today the honest first run is `--tokens unmetered`,
 with the deadline as the only stop.
+
+`nova-swarm template --name worker` prints this description with every field in it, so the
+one file a first run cannot start without is the one file you do not have to invent.
+
+### The harness contract
+
+A harness is any program on `PATH` that can be handed a prompt file and left to work. This
+is everything `nova-swarm` promises it, and everything it asks back:
+
+- **Its working directory is the SLOT directory**, `<worker_dir>-<n>`: the one-way copy of
+  your `worker_dir`, refreshed before every job. Relative paths in a worker description are
+  made absolute at load, so the child always gets paths it can open from where it stands.
+- **Its arguments are `harness_args`**, with `{model}` replaced by the description's model,
+  `{prompt}` by the path of the prompt file, and `{base_url}` by `base_url`. Where
+  `harness_args` names no `{prompt}`, the prompt file is appended LAST. The task text is
+  never an argument.
+- **`NOVA_SWARM_JOB` is the job directory** — the only place the worker writes — and
+  `XDG_DATA_HOME` is that job's own data home, so one job is one harness database.
+  `PATH` is passed through; nothing else is inherited, and the key is in the child's
+  environment under the name `env_var` gives and nowhere else.
+- **It publishes `RESULT.md` in the job directory**, whole, by writing `RESULT.md.tmp` and
+  renaming it: a report is a revision, and a half-written one is never read. `note` is a
+  file in the same directory the worker may read between steps.
+- **Its stdout and stderr are `<job>/harness.log`**, and what it said last is on the
+  `RUN DONE` line of a job that published nothing or exited non-zero.
+
+`cmd/nova-swarm/testdata/fakeharness` is a harness that does exactly this in about two
+hundred lines of Go, and the whole test suite runs against it with no provider, no network
+and no key worth anything. It is the shortest way to see the contract, and to test a pool
+of your own before a real model touches it.
 
 **Reading it.** Every line is `<VERB> OK`, `<VERB> REFUSED` or one of `run`'s own `RUN`
 events; refusals and FAIL lines go to stderr. A job reports EXACTLY ONCE — one `RUN DONE`,

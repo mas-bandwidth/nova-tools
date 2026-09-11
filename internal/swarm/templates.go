@@ -102,6 +102,25 @@ important fact.>
 <one sentence a coordinator can paste into the board.>
 `
 
+// templateWorker is the ONE FILE A FIRST RUN CANNOT START WITHOUT, and it was the one with
+// no template: the audit guessed `"env"`, met a good refusal listing the fields, and had to
+// read a refusal to learn a schema (S1 and S2, 2026-09-11). Every value in angle brackets
+// is a thing only the caller knows; everything else is the shape this tool reads.
+const templateWorker = `{
+  "name": "<what this worker is called on a RUN POOL line>",
+  "provider": "<the provider id the harness config declares, such as deepseek>",
+  "model": "<the model id>",
+  "env_var": "<the NAME of the variable the provider reads>",
+  "key_file": "<the path of a file holding one line, mode 0600>",
+  "usage": "tsv",
+  "harness": "<the harness command on PATH>",
+  "harness_args": ["run", "--model", "{model}", "--", "{prompt}"],
+  "worker_dir": "<the home copy of this worker's own directory>",
+  "deadline": "20m",
+  "board": "<owner/repo#issue, or omit>"
+}
+`
+
 // Template returns one template by name.
 func Template(name string) (string, error) {
 	switch name {
@@ -113,13 +132,15 @@ func Template(name string) (string, error) {
 		return templateFixCard, nil
 	case "result":
 		return templateResult, nil
+	case "worker":
+		return templateWorker, nil
 	}
 	return "", fmt.Errorf("--name wants one of %s, got %q", strings.Join(TemplateNames(), ", "), name)
 }
 
 // TemplateNames is every name Template answers to, in a fixed order.
 func TemplateNames() []string {
-	names := []string{"read-pr", "probe-row", "fix-card", "result"}
+	names := []string{"read-pr", "probe-row", "fix-card", "result", "worker"}
 	sort.Strings(names)
 	return names
 }

@@ -304,6 +304,18 @@ var refusalMarks = []string{
 	"eperm",
 }
 
+// HarnessTail is the LAST thing the harness said, bounded: the one diagnosis of a failed
+// job, which lived in <job>/harness.log, was printed by no verb, and was then deleted with
+// the job directory by `reclaim`. A line whose key is wrong had no printed route to the
+// word `unauthorized` (the new-user audit, F5, 2026-09-11).
+func HarnessTail(jobDir string) string {
+	raw, err := os.ReadFile(filepath.Join(jobDir, "harness.log"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(raw))
+}
+
 // CountRefusals reads a harness log and counts its own refusal lines. It reads the file in
 // one pass and never holds more than a line.
 func CountRefusals(path string) int {
