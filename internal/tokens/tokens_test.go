@@ -175,12 +175,14 @@ func TestASourceLineFieldIsADashWhereItIsNotAMeasurement(t *testing.T) {
 	if s.StatField("dup") != "0" {
 		t.Error("a transcript CAN have duplicate ids, so zero of them is a measurement")
 	}
-	// A transcript line whose timestamp is not a stamp this tool can read IS an unparsed
-	// line (rule 17, and rule 3: counted and printed, never skipped silently), so zero of
-	// them is a measurement. The grammar's aside "a transcript has no unparsed lines" is
-	// the sentence this contradicts, and the PR body carries it as a spec question.
-	if s.StatField("unparsed") != "0" {
-		t.Error("a transcript CAN have a line whose stamp does not parse, so zero of them is a measurement")
+	// SPEC-TOKENS' TOKENS SOURCE paragraph says "a transcript has no unparsed lines",
+	// so the column is a dash there and the code follows the spec rather than arguing
+	// with it in the output. The lines themselves are not lost: a transcript line whose
+	// stamp does not parse is one TOKENS UNPARSED line naming the label and is in the
+	// unparsed= total on TOKENS FAIL (rule 3). Striking the spec's clause is a spec
+	// decision, and the PR body carries it as one; this assertion moves with the spec.
+	if s.StatField("unparsed") != Dash {
+		t.Error("the spec says a transcript has no unparsed lines, so the column is a dash")
 	}
 	b := &Source{Kind: KindBus}
 	if b.StatField("dup") != Dash || b.StatField("comments") != "0" {

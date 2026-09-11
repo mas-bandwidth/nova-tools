@@ -656,7 +656,10 @@ func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unp
 	case unparsed > 0:
 		// The advice is for the KIND that failed. Every unparsed was a bus line once, and
 		// a swarm usage file refused by its header was told the shape of a bus body line.
-		kind, note := firstUnparsed(sources)
+		kind, note, own := firstUnparsed(sources)
+		if own != "" {
+			return own
+		}
 		switch kind {
 		case tokens.KindSwarm:
 			return "a swarm usage file did not parse (" + note + "): its header is the sixteen columns SPEC-SWARM rule 12 names, in order -- " + strings.Join(tokens.SwarmColumns, ", ")
@@ -715,13 +718,13 @@ func noidAndDup(sources []*tokens.Source) string {
 	return "a source fed " + strconv.Itoa(noid) + " messages with no id (" + label + "): a message is counted by its id (rule 4), and one with none is noid= and is not folded"
 }
 
-func firstUnparsed(sources []*tokens.Source) (kind, note string) {
+func firstUnparsed(sources []*tokens.Source) (kind, note, own string) {
 	for _, s := range sources {
 		if len(s.Unparseds) > 0 {
-			return s.Kind, s.Unparseds[0].Note
+			return s.Kind, s.Unparseds[0].Note, s.Unparseds[0].Remedy
 		}
 	}
-	return "", "-"
+	return "", "-", ""
 }
 
 func firstConflictLabel(sources []*tokens.Source) string {

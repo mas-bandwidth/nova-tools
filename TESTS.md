@@ -1,6 +1,6 @@
 # TESTS.md: the first-run transcripts the tests execute
 
-Every `$` line under a `### First run` heading below is run by a test against the fixture named beside it, and the lines the tool prints are compared with what is written here. README.md explains the tools; this file is what they do today, verbatim. Change a tool, change this file in the same commit, or the test says so.
+Every `$` line under a `### First run` heading below is run by a test against the fixture named beside it, and what the tool prints is compared with what is written here by SHAPE: the two-token event prefix and the field names in order, per ONBOARDING.md point 5(c). The values are deliberately not compared, so that this file stays a document instead of becoming a fixture -- but every block below was produced by RUNNING the tool, so the values are a run's own and not anybody's memory of one. README.md explains the tools; this file is what they do today. Change a tool, change this file in the same commit, or the test says so.
 
 ## nova-check
 
@@ -134,11 +134,11 @@ CHECK OK at=2026-09-11T23:55:02Z build=devel files=1 rows=3 first=2026-09-11 las
 
 $ nova-tokens sum --out ./out --month 2026-09
 SUM MONTH month=2026-09 at=2026-09-11T23:55:02Z build=devel days=1 first=2026-09-11 last=2026-09-11 missing=0 rows=3 turns=3
-SUM PAIR model=claude-fable-5-1 repo=schema input=908 output=1535 cache_write=1200 cache_read=242000 reasoning=0 rough=0 dashes=0,0,0,0,1 nonutc=0 days=1
-SUM PAIR model=gemini-2.5-pro repo=schema input=123456 output=7890 cache_write=0 cache_read=0 reasoning=0 rough=0 dashes=0,0,1,1,1 nonutc=0 days=1
-SUM PAIR model=claude-fable-5-1 repo=serialize input=430 output=58 cache_write=0 cache_read=4000 reasoning=0 rough=0 dashes=0,0,1,0,1 nonutc=0 days=1
-SUM MODEL model=claude-fable-5-1 input=1338 output=1593 cache_write=1200 cache_read=246000 reasoning=0 rough=0 dashes=0,0,1,0,2 nonutc=0 repos=2
-SUM MODEL model=gemini-2.5-pro input=123456 output=7890 cache_write=0 cache_read=0 reasoning=0 rough=0 dashes=0,0,1,1,1 nonutc=0 repos=1
-SUM TOTAL input=124794 output=9483 cache_write=1200 cache_read=246000 reasoning=0 rough=0 dashes=0,0,2,1,3 nonutc=0 turns=3 pairs=3 models=2
+SUM PAIR model=claude-fable-5-1 repo=schema input=908 output=1535 cache_write=1200 cache_read=242000 reasoning=- rough=0 dashes=0,0,0,0,1 nonutc=0 days=1
+SUM PAIR model=gemini-2.5-pro repo=schema input=123456 output=7890 cache_write=- cache_read=- reasoning=- rough=0 dashes=0,0,1,1,1 nonutc=0 days=1
+SUM PAIR model=claude-fable-5-1 repo=serialize input=430 output=58 cache_write=- cache_read=4000 reasoning=- rough=0 dashes=0,0,1,0,1 nonutc=0 days=1
+SUM MODEL model=claude-fable-5-1 input=1338 output=1593 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,1,0,2 nonutc=0 repos=2
+SUM MODEL model=gemini-2.5-pro input=123456 output=7890 cache_write=- cache_read=- reasoning=- rough=0 dashes=0,0,1,1,1 nonutc=0 repos=1
+SUM TOTAL input=124794 output=9483 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,2,1,3 nonutc=0 turns=3 pairs=3 models=2
 SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
 ```

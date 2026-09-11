@@ -136,6 +136,19 @@ func ParseSubject(subject string) (parsedSubject, bool) {
 	return p, true
 }
 
+// nearMissSubject says whether a subject that ParseSubject refused was MEANT as a tokens
+// note, and why it is not one. The test is deliberately narrow: the first word is `tokens`
+// in any case and the second is a day. "Tokens 2026-09-11 (rough)" and
+// "tokens 2026-09-11 at=x" are near misses; "build is red" and "tokens, a question" are
+// ordinary lane traffic and are not this tool's business.
+func nearMissSubject(subject string) (string, bool) {
+	f := strings.Fields(subject)
+	if len(f) < 2 || !strings.EqualFold(f[0], "tokens") || !ValidDay(f[1]) {
+		return "", false
+	}
+	return "the subject names tokens and a day and is not the exact shape, so nothing in this note was folded: " + subject, true
+}
+
 // note is one tokens note on the way to being folded.
 type note struct {
 	lane, path, id string
@@ -195,15 +208,14 @@ func ReadBus(dir string, rules *Rules, at time.Time) []*Source {
 				s.unreadable(path, err.Error())
 				continue
 			}
-			// files= is what this lane OPENED, tokens note or not. A lane of near-miss
-			// subjects printed byte-identical output to a lane holding nothing at all --
-			// a note one trailer token short vanished into TOKENS OK days=0 (lesson 30).
-			// It is still not folded and still not a tokens note (rule 6: any other text
-			// after the date is not one), but the run says it looked.
+			// files= is what this lane OPENED, tokens note or not: a lane of near-miss
+			// subjects printed byte-identical output to a lane holding nothing at all
+			// (lesson 30). The near miss itself comes back from readNote as a dead note
+			// and is counted and printed like any other unparsed one; a file that is
+			// simply another piece of the lane's traffic is nil here and is only a file.
 			s.Stat.Files++
 			n := readNote(name, path, string(raw), rules, at)
 			if n == nil {
-				s.Stat.NotNotes++
 				continue
 			}
 			all[n.id] = n
@@ -256,11 +268,27 @@ func laneNames(dir string) ([]string, error) {
 func readNote(lane, path, text string, rules *Rules, at time.Time) *note {
 	header, body, headerLines := splitNote(text)
 	subject, ok := ParseSubject(header["Subject"])
+	label := Label(KindBus, lane)
 	if !ok {
-		return nil
+		why, near := nearMissSubject(header["Subject"])
+		if !near {
+			return nil
+		}
+		// A NEAR MISS is not an ordinary note of the lane: it names tokens and a day, so
+		// a friend meant it as a report. Counting it silently made the lane print the
+		// same bytes as a lane holding nothing at all (lesson 30), so it is an unparsed
+		// note with its id -- counted, printed, exit 1 -- and it still folds nothing.
+		n := &note{lane: lane, path: path, id: header["Id"], zones: map[string]bool{}}
+		if n.id == "" {
+			n.id = filepath.Base(path)
+		}
+		n.dead = &Unparsed{Label: label, Note: n.id, Line: headerLines["Subject"], Text: why,
+			Remedy: "a note's subject named tokens and a day but is not the exact shape (" + n.id +
+				"): it is `" + SubjectPrefix + "YYYY-MM-DD`, with nothing after it or with `at=<RFC 3339 UTC> build=<id>` -- " +
+				"nova-tokens report --who <you> --day <day> --note <file> writes one"}
+		return n
 	}
 	n := &note{lane: lane, path: path, id: header["Id"], subject: subject, zones: map[string]bool{}}
-	label := Label(KindBus, lane)
 	if n.id == "" {
 		n.id = filepath.Base(path)
 	}

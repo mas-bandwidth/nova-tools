@@ -5,6 +5,7 @@ package main
 // no network, and each was seen red before the code under it existed.
 
 import (
+	"flag"
 	"os"
 	"path/filepath"
 	"strings"
@@ -258,18 +259,55 @@ func TestRule6TheSubjectIsExactAndAnUnparsedLineIsPrinted(t *testing.T) {
 	wantExit(t, r, 1)
 	wantContains(t, r.stdout, "comments=2")
 	wantContains(t, r.stdout, "TOKENS TOUCHED label=bus:emma day=2026-09-11 repos=schema,serialize")
-	if n := strings.Count(r.stderr, "TOKENS UNPARSED"); n != 3 {
-		t.Errorf("%d TOKENS UNPARSED lines, want 3:\n%s", n, r.stderr)
+	if n := strings.Count(r.stderr, "TOKENS UNPARSED"); n != 5 {
+		t.Errorf("%d TOKENS UNPARSED lines, want 5 -- three body lines and the two near-miss subjects:\n%s", n, r.stderr)
 	}
 	wantContains(t, r.stderr, "note=emma-00000000000c")
-	wantContains(t, r.stdout, "unparsed=3")
+	wantContains(t, r.stdout, "unparsed=5")
 	day := read(t, filepath.Join(out, "2026-09-11.tsv"))
 	if n := strings.Count(day, "\n"); n != 4 { // version, header, two rows
 		t.Errorf("want three folded rows across two repos, got:\n%s", day)
 	}
-	// Neither the wrong-case subject nor the one with trailing text is a tokens note.
-	wantNotContains(t, r.stdout+r.stderr, "emma-00000000000a")
+	// Neither the wrong-case subject nor the one with trailing text is a tokens note:
+	// each is named, counted, and folds nothing (its 1 input is in no row).
+	for _, id := range []string{"emma-00000000000a", "emma-00000000000b"} {
+		wantContains(t, r.stderr, "TOKENS UNPARSED label=bus:emma note="+id)
+	}
+	if strings.Contains(day, "\t1\t") {
+		t.Errorf("a near-miss note's numbers were folded:\n%s", day)
+	}
+}
+
+// TestANearMissSubjectIsNamedAndNeverVanishes pins lesson 30 on the whole run rather than
+// on a lane that also holds a real note: a friend whose subject is one token short used to
+// get TOKENS OK, days=0, "nothing was wrong" -- byte-identical to a lane holding nothing
+// at all, with `files=` the only trace. Counting it in a field nobody printed was the same
+// silence. It is an unparsed note now: named with its id, counted, exit 1, and the one
+// remedy line is about the subject.
+func TestANearMissSubjectIsNamedAndNeverVanishes(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
+	busNote(t, bus, "emma", "near.md", "emma-00000000000a", "tokens 2026-09-11 (rough)", busDate,
+		"2026-09-11\temma\tg\tschema\tinput\t100\n")
+	// An ordinary note of the lane is not this tool's business and stays silent.
+	busNote(t, bus, "emma", "talk.md", "emma-00000000000b", "the build is red", busDate, "prose\n")
+
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS UNPARSED label=bus:emma note=emma-00000000000a")
+	wantContains(t, r.stderr, "tokens 2026-09-11 (rough)")
+	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "files=2")
+	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=1")
+	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "unparsed=1")
+	note := lineWith(r.stdout, "TOKENS NOTE")
+	wantContains(t, note, "emma-00000000000a")
+	wantNotContains(t, note, "nothing was wrong")
+	// The ordinary note is a file this lane opened and nothing more.
 	wantNotContains(t, r.stdout+r.stderr, "emma-00000000000b")
+	if _, err := os.Stat(filepath.Join(out, "2026-09-11.tsv")); err == nil {
+		t.Error("a near-miss note was folded into a day file")
+	}
 }
 
 func TestRule6ABadDateRefusesTheWholeNote(t *testing.T) {
@@ -398,6 +436,10 @@ func TestRule6SupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 		{"a missing target", "supersedes=emma-0000000000ff", "no such note"},
 		{"a target in another lane", "supersedes=bo-000000000001", "another lane"},
 		{"a target for another day", "supersedes=emma-000000000009", "another day"},
+		// SPEC-TOKENS' demanded test names five refusals, and this is the fifth: a
+		// predecessor that is a note of this lane and this day and did NOT parse. The
+		// successor is refused whole rather than replacing a note nobody could read.
+		{"a target that did not parse", "supersedes=emma-00000000000e", "did not parse"},
 	} {
 		t.Run(tc.name+" refuses the whole successor", func(t *testing.T) {
 			dir, out, bus := newBus(t)
@@ -406,6 +448,9 @@ func TestRule6SupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 			busNote(t, bus, "emma", "b.md", "emma-000000000002", "tokens 2026-09-11 at=2026-09-11T20:00:00Z build=b supersedes=emma-000000000001", busDate, line("g", "schema", "input", "250"))
 			busNote(t, bus, "emma", "old.md", "emma-000000000009", "tokens 2026-09-10", busDate, "2026-09-10\temma\tg\tschema\tinput\t1\n")
 			busNote(t, bus, "bo", "x.md", "bo-000000000001", "tokens 2026-09-11", busDate, line("g", "schema", "input", "1"))
+			// A note of this lane and this day whose Date: nobody can parse: it is in the
+			// lane, it is dead, and naming it as a predecessor is the fifth refusal.
+			busNote(t, bus, "emma", "dead.md", "emma-00000000000e", "tokens 2026-09-11", "yesterday", line("g", "schema", "input", "7"))
 			busNote(t, bus, "emma", "z.md", "emma-00000000000f", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b "+tc.trailer, busDate, line("g", "schema", "input", "900"))
 			r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 			wantExit(t, r, 1)
@@ -787,7 +832,11 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 	logPath := fakeSqlite3(t,
 		ocRows(ocSession("s1", "", "/x/schema")),
 		ocRows(ocMessage("msg1", "s1", "2026-09-11T10:00:00Z", "anthropic", "mercury-2.5", "10", "20", "30", "40", "50", "/x/schema")),
-		ocRows(ocPart("msg1", "s1", "", "/x/schema/a.go", "", "")))
+		ocRows(
+			ocPart("msg1", "s1", "", "/x/schema/a.go", "", ""),
+			// A tool part's command holds tabs and newlines. It is the reason the code
+			// asks sqlite3 for -json: under -tabs this row splits on the data inside it.
+			ocPart("msg1", "s1", "cat /x/schema/b.go\tand\nmore", "", "", "")))
 
 	before, err := os.Stat(db)
 	if err != nil {
@@ -895,8 +944,13 @@ func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testi
 	if _, err := os.Stat(filepath.Join(out, "2026-09-11.tsv")); err == nil {
 		t.Error("the zoned stamp folded on the local day, not on its UTC day")
 	}
-	// Two stamps this tool cannot read: counted, printed, and named.
-	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=2")
+	// Two stamps this tool cannot read: counted, printed, and named. The count is on
+	// TOKENS FAIL and the lines name the label; the transcript's own unparsed= column is
+	// a dash, which is what the spec's TOKENS SOURCE paragraph says it is.
+	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=-")
+	if n := strings.Count(r.stderr, "TOKENS UNPARSED label=claude:g"); n != 2 {
+		t.Errorf("%d TOKENS UNPARSED lines for the transcript, want 2", n)
+	}
 	wantContains(t, r.stderr, "TOKENS UNPARSED label=claude:g")
 	wantContains(t, r.stderr, "the eleventh")
 	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "unparsed=2")
@@ -914,7 +968,8 @@ func TestRule17AZonedStampFoldsOnItsUTCDayAndAnUnreadableStampIsCounted(t *testi
 	r = invoke(t, "fold", "--out", out2, "--all", "--repos", reposFile(t, dir), "--opencode", "b="+db, "--scratch", scratch)
 	wantExit(t, r, 1)
 	wantContains(t, read(t, filepath.Join(out2, "2026-09-12.tsv")), "m\tschema\t3\t")
-	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=1")
+	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "unparsed=-")
+	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "unparsed=1")
 	wantContains(t, r.stderr, "TOKENS UNPARSED label=opencode:b")
 }
 
@@ -1209,4 +1264,53 @@ func TestRule21ANoteOfOneReposCommentIsValidWithZeroRows(t *testing.T) {
 	wantContains(t, r.stdout, "TOKENS TOUCHED label=bus:emma day=2026-09-11 repos=schema,serialize")
 	wantContains(t, r.stdout, "unparsed=0")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "rows=0")
+}
+
+// TestRule19TheTimeoutDefaultIsTwoMinutes pins SPEC-TOKENS' own sentence, "`--timeout`
+// unset is 120 and a test asserts it", on the flag the verbs actually declare rather than
+// on the constant alone: a default is a promise about the unset flag, and the two could
+// drift. A run cannot be the test here -- the assertion is that nothing waits two minutes.
+func TestRule19TheTimeoutDefaultIsTwoMinutes(t *testing.T) {
+	var s sourceFlags
+	fs := flag.NewFlagSet("fold", flag.ContinueOnError)
+	s.declare(fs, true)
+	if err := fs.Parse(nil); err != nil {
+		t.Fatal(err)
+	}
+	if s.timeout != 120 {
+		t.Errorf("--timeout unset is %d, want 120", s.timeout)
+	}
+	if got := fs.Lookup("timeout").DefValue; got != "120" {
+		t.Errorf("the flag's declared default is %q, want \"120\"", got)
+	}
+	if tokens.DefaultTimeout != 120*time.Second {
+		t.Errorf("tokens.DefaultTimeout is %s, want 2m0s", tokens.DefaultTimeout)
+	}
+}
+
+// TestRule20ABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed pins rule 20's own clause:
+// "a note with a six-field and a seven-field line for one `(date, model, repo)` is
+// `TOKENS MIXED` for that row." The MIXED path was only ever exercised through two
+// PROVIDER exports; a single note can do it alone, because the seventh field is the
+// line's day basis and a six-field line is UTC.
+func TestRule20ABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
+	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
+		"2026-09-11\temma\tg\tschema\tinput\t100",
+		"2026-09-11\temma\tg\tschema\tinput\t5\tday_basis=America/Los_Angeles",
+		"",
+	}, "\n"))
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS MIXED")
+	wantContains(t, r.stderr, "2026-09-11")
+	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "mixed=1")
+	// A row fed by two bases is not written, and the one remedy line is about the bases.
+	if _, err := os.Stat(filepath.Join(out, "2026-09-11.tsv")); err == nil {
+		if day := read(t, filepath.Join(out, "2026-09-11.tsv")); strings.Contains(day, "\t100\t") || strings.Contains(day, "\t105\t") {
+			t.Errorf("a mixed row was written:\n%s", day)
+		}
+	}
 }

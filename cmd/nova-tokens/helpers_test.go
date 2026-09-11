@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -239,6 +240,14 @@ func fakeSqlite3Main(mode string, args []string, stdout io.Writer) int {
 	f.Close()
 	if len(args) == 0 {
 		return 0
+	}
+	// The fixture answers in the -json shape and ONLY in it. The spec's --opencode
+	// section says `sqlite3 -readonly -tabs`, and a tool part's `command` input holds
+	// tabs and newlines, so a tabs answer splits a row on the data inside it: the code
+	// asks for -json and this fake is what proves it must.
+	if !slices.Contains(args, "-json") {
+		fmt.Fprintln(os.Stderr, "this fake sqlite3 answers -json only: a row of the real database carries tabs and newlines inside a tool part's command, and -tabs splits on them")
+		return 1
 	}
 	sql := args[len(args)-1]
 	answer := ""

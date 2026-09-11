@@ -295,10 +295,6 @@ type Stat struct {
 	Unparsed   int
 	Comments   int
 	Redated    int
-	// NotNotes is how many files a bus lane opened that are not tokens notes. It is not
-	// a column of the source line; it is what the one remedy line needs to tell a friend
-	// whose subject was one token short that the tool looked and found nothing.
-	NotNotes   int
 	Superseded int
 	Rows       int
 }
@@ -314,11 +310,16 @@ const (
 
 // applies says which Stat fields a kind can have. The fold prints a dash for the rest.
 var applies = map[string]map[string]bool{
-	// `unparsed` is a measurement for a transcript and for a database too: a line whose
-	// stamp this tool cannot read is an unparsed line, and rule 3 counts and prints it
-	// rather than dropping it.
-	KindClaude:   {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "unparsed": true, "rows": true},
-	KindOpenCode: {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "unparsed": true, "rows": true},
+	// A transcript's and a database's `unparsed` is a DASH, because SPEC-TOKENS says so
+	// in the TOKENS SOURCE paragraph: "a transcript has no unparsed lines ... a dash is
+	// an absence where a zero is a measurement". A line whose stamp this tool cannot
+	// read IS counted and printed -- one TOKENS UNPARSED line naming the label, and the
+	// unparsed= total on TOKENS FAIL (rule 3) -- so nothing is lost by the dash; what the
+	// column would claim is that a clean transcript was MEASURED for unparsed lines, and
+	// the spec reserves the zero for that. The PR proposes striking the spec's clause; if
+	// it is struck, these two become `"unparsed": true` and the column is the measurement.
+	KindClaude:   {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "rows": true},
+	KindOpenCode: {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "rows": true},
 	KindSwarm:    {"files": true, "unreadable": true, "messages": true, "dup": true, "noid": true, "nousage": true, "unparsed": true, "rows": true},
 	KindBus:      {"files": true, "unreadable": true, "unparsed": true, "comments": true, "redated": true, "superseded": true, "rows": true},
 	KindProvider: {"files": true, "unreadable": true, "unparsed": true, "rows": true},
@@ -337,6 +338,10 @@ type Unparsed struct {
 	Label, Note string
 	Line        int
 	Text        string
+	// Remedy, when set, is the one act for THIS unparsed rather than for its kind: a
+	// near-miss subject is a bus unparsed, and "a body line is date<TAB>who..." is not
+	// what its writer has to change.
+	Remedy string
 }
 
 // Superseded is a bus note a later note in the same lane replaced by name.
