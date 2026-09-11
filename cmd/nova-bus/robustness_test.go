@@ -357,8 +357,15 @@ func TestTheCarryingAndOpenCountsSayWhatTheyCount(t *testing.T) {
 
 // The subprocess budget is a flag, and a value that is not a budget is a bad invocation
 // rather than a run with no budget at all.
+//
+// NOT PARALLEL. `--git-timeout 5` does not set a budget for this run: it calls
+// bus.SetGitTimeout, which writes a package-level atomic that EVERY git call in the process
+// reads. Run beside the dozen other git tests this package now runs at once, it would cut
+// their budget to five seconds under them -- a timeout they would report as the tool
+// hanging, on whichever test happened to be slowest on a loaded runner, and never here.
+// It is the same class as the NoteParses and checkoutLockWait tests: process-global state,
+// so it runs alone.
 func TestGitTimeoutIsAFlagAndIsChecked(t *testing.T) {
-	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", "check", "--bus", checkout, "--full", "--git-timeout", "0").

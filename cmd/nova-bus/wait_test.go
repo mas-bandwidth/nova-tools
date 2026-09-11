@@ -151,9 +151,11 @@ func TestWaitTimesOutQuietlyAndCountsItsPolls(t *testing.T) {
 	settled(t, checkout)
 
 	// Two seconds and not the few hundred milliseconds this needs on a quiet machine: the
-	// assertion under it is that the run POLLED MORE THAN ONCE, and one poll is a git
-	// fetch, which on a loaded CI runner is not instant. A window several polls wide keeps
-	// the assertion about the loop rather than about the runner.
+	// assertion under it is that the run did not come back BEFORE its deadline, and a
+	// deadline long enough to be told apart from the work around it is what makes that
+	// about the timeout rather than about the runner. It used to say the assertion was
+	// that the run polled more than once; that claim is a wall clock and now lives behind
+	// the perf tag, which is what the note further down is about.
 	const timeout = 2 * time.Second
 	start := time.Now()
 	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0)

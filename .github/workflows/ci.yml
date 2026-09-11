@@ -237,7 +237,7 @@ jobs:
     #
     # WINDOWS. The portable steps run there too. An earlier revision excluded
     # the whole job on the grounds that its fixtures need an executable bit,
-    # chmod refusing a read, mkfifo or symlinks — true of three steps and false
+    # chmod refusing a read, mkfifo or symlinks — true of four steps and false
     # of the other three, which meant the binary was never smoked on the one
     # platform whose defects this branch exists to have found. The steps that
     # genuinely cannot run there are marked individually.
