@@ -347,6 +347,12 @@ func (s *server) poll(ctx context.Context, now time.Time, budget time.Duration) 
 		list.Line(line)
 	}
 	list.More()
+	// The sighting memory grows with THINGS THAT HAPPEN rather than with things
+	// being watched, so it is an LRU of 300 like the watch verb's -- a serve
+	// runs for hours over a bus that may emit a distinct line every poll, and
+	// an unbounded map in a file rewritten every poll is the state growing
+	// without a reason anybody chose.
+	s.st.Evict()
 	switch {
 	case err != nil:
 		fmt.Fprintf(s.stderr, "WAKE POLL bus: %s\n", oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)))

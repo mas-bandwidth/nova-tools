@@ -525,3 +525,79 @@ func wakeQueueRecords(t *testing.T, state string) int {
 	}
 	return n
 }
+
+// Rule 3, verbatim: "--interval ... is the cadence for the bus, for --line and
+// for report directories." The --line view is a `git log` against the bus
+// checkout, and running it on the loop's own cadence ran it at whatever the
+// SHORTEST interval in the call happened to be: an 8m --interval beside a 5s
+// --entry-interval ran it ninety-six times for every once the caller asked for.
+//
+// The cadence is observable: a line that falls silent between two --line polls
+// is reported at the NEXT one, and not at the entry's.
+func TestTheLineViewIsPolledAtTheIntervalAndNotTheLoopsCadence(t *testing.T) {
+	_, ghDir := fakes(t)
+	write(t, filepath.Join(ghDir, "1.json"), `{"state":"OPEN","statusCheckRollup":[]}`)
+	bus := t.TempDir()
+	gitRun(t, bus, "init", "--quiet", "-b", "main")
+	write(t, filepath.Join(bus, "participants.json"), "{}\n")
+	gitRun(t, bus, "add", "-A")
+	// Johnny's last sign is one minute before the watch begins, so he falls
+	// silent four minutes into it, under --offline-after 5m.
+	stamp := at.Add(-1 * time.Minute).Format(time.RFC3339)
+	cmd := exec.Command("git", "-C", bus, "-c", "user.name=Johnny", "-c", "user.email=j@example.com",
+		"commit", "-q", "-m", "a note from Johnny", "--date="+stamp)
+	cmd.Env = append(os.Environ(), "GIT_COMMITTER_DATE="+stamp, "GIT_AUTHOR_DATE="+stamp)
+	if raw, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git commit: %v\n%s", err, raw)
+	}
+	state := filepath.Join(t.TempDir(), "wake.state")
+	r := wakeRun(t, "watch", "--state", state, "--max", "30m", "--on-deadline", "report",
+		"--interval", "8m", "--bus", bus, "--as", "Rowan", "--receipt-max-words", "40",
+		"--entry", "mas-bandwidth/nova-tools#1", "--entry-interval", "5s",
+		"--line", "Johnny", "--offline-after", "5m")
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; %s", r.exit, r.all())
+	}
+	if !strings.Contains(r.stdout, "WAKE LINE name=Johnny state=OFFLINE") {
+		t.Fatalf("the silent line was never reported:\n%s", r.all())
+	}
+	// Johnny is silent from 4m; the --line poll that can see it is the one at
+	// 8m, which is --interval. A view polled on the loop's cadence would have
+	// seen it at 4m0s, at the entry's 5s tick.
+	if !strings.Contains(lastLine(r.stdout), "after=8m0s") {
+		t.Errorf("the line view ran at the loop's cadence and not at --interval: %q", lastLine(r.stdout))
+	}
+}
+
+// "The bus:line: sighting memory and the delivered bus:note: marks ... are the
+// two parts that grow with things that HAPPEN rather than with things being
+// watched, so each is an LRU of 300." serve reads the same bus with the same
+// classifier and writes the same sighting keys, and a serve runs for hours.
+func TestServeBoundsItsSightingMemory(t *testing.T) {
+	busDir, _ := fakes(t)
+	var lines []string
+	for i := 0; i < 400; i++ {
+		lines = append(lines, fmt.Sprintf("INBOX FAIL the remote said no, attempt %d", i))
+	}
+	write(t, filepath.Join(busDir, "out"), strings.Join(lines, "\n")+"\n")
+	note, _ := fakeNote(t)
+	state := filepath.Join(t.TempDir(), "serve.state")
+	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
+		"--interval", "30s", "--state", state, "--hours", "0.005",
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; %s", r.exit, r.all())
+	}
+	kept := 0
+	for _, line := range strings.Split(read(t, state), "\n") {
+		if strings.HasPrefix(line, "bus:line:") {
+			kept++
+		}
+	}
+	if kept > wake.LRUMax {
+		t.Errorf("%d sighting keys in the state, want at most %d: the memory grows with what happens, and a serve runs for hours", kept, wake.LRUMax)
+	}
+	if kept == 0 {
+		t.Errorf("no sighting memory at all; a standing line must not wake the line every poll")
+	}
+}

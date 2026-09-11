@@ -361,7 +361,14 @@ func TestTheSourceHoldsNoProcessScanAndNoTempDir(t *testing.T) {
 				continue
 			}
 			src := read(t, filepath.Join(dir, name))
-			for _, banned := range []string{"pgrep", `"ps"`, "/proc", "os.TempDir", `"/tmp`, `--at `, `"stamp"`, `"now"`} {
+			// Rule 9, verbatim: "the source tripwire finds no flag named --at,
+			// --stamp or --now". Both spellings of each: a flag is declared as
+			// its name without the dashes and read as its name with them. `at`
+			// alone is not banned -- a bus note's own at= field is read by that
+			// name, and rule 9 is about a flag that SETS a stamp, never about
+			// the word.
+			for _, banned := range []string{"pgrep", `"ps"`, "/proc", "os.TempDir", `"/tmp`,
+				`--at `, `--stamp`, `--now`, `"stamp"`, `"now"`} {
 				if strings.Contains(src, banned) {
 					t.Errorf("%s/%s holds %q; rule 4 (its only files are --state, the temp file beside it and <state>.lock) and rule 9 (there is no flag that sets a stamp)", dir, name, banned)
 				}
@@ -1114,4 +1121,52 @@ func gitRun(t *testing.T, dir string, args ...string) string {
 		t.Fatalf("git %v: %v\n%s", args, err, raw)
 	}
 	return string(raw)
+}
+
+// Test 11's demanded kills, verbatim: "the loop is killed, with an injected
+// kill point, after the observed write, after the item lines, and after the
+// printed= marks, and in each case THE NEXT CALL PRINTS EVERY LINE THE KILLED
+// CALL HAD NOT MARKED AND NOTHING IT HAD".
+//
+// This race is closed in the safe direction deliberately: observed state is
+// written first, item lines are printed second, printed= marks are written
+// third, and a kill at any boundary leaves the entry pending. A window told the
+// same news twice reads twice; a window told it never does not.
+func TestAKillAtEachOrderBoundaryReplaysRatherThanLoses(t *testing.T) {
+	for _, tc := range []struct {
+		kill    string
+		printed bool // did the killed call get its lines to stdout?
+	}{
+		{"after-observed", false},
+		{"after-lines", true},
+		{"after-marks", true},
+	} {
+		t.Run(tc.kill, func(t *testing.T) {
+			reports := t.TempDir()
+			for _, name := range []string{"a", "b", "c"} {
+				write(t, filepath.Join(reports, name, "RESULT.md"), "# a finding in "+name+"\n")
+			}
+			state := filepath.Join(t.TempDir(), "wake.state")
+			args := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+				"--interval", "5s", "--reports", reports, "--baseline", "--max-lines", "0"}
+
+			watchKillPoint = tc.kill
+			killed := wakeRun(t, args...)
+			watchKillPoint = ""
+			if got := countLines(killed.stdout, "WAKE REPORT") > 0; got != tc.printed {
+				t.Fatalf("the killed call printed lines=%v, want %v:\n%s", got, tc.printed, killed.stdout)
+			}
+
+			next := wakeRun(t, args...)
+			want := 3
+			if tc.kill == "after-marks" {
+				// The marks were written, so those three are delivered and the
+				// next call prints nothing it had already shown.
+				want = 0
+			}
+			if n := countLines(next.stdout, "WAKE REPORT"); n != want {
+				t.Errorf("the next call printed %d report lines, want %d: every line the killed call had not marked, and nothing it had:\n%s", n, want, next.stdout)
+			}
+		})
+	}
 }

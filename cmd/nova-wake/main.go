@@ -454,7 +454,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 		stdout: stdout, stderr: stderr, clock: clock, st: st, statePath: *state,
 		maxLines: *maxLines, finalOnly: *finalOnly, baseline: *baseline,
 		cold: st.Cold() && !*baseline, sources: sources, bus: busSrc, lines: lineView,
-		busDir: *busDir, timeout: timeout, advance: false,
+		busDir: *busDir, timeout: timeout, advance: false, every: every, lineDue: now,
 	}
 	if quickstart {
 		fmt.Fprintf(stdout, "WAKE NOTE quickstart chose --baseline, --interval %s and --max %s, so a first run returns with the world listed once rather than blocking; --on-deadline %s is the word it echoes back\n",
@@ -535,6 +535,15 @@ func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 	return true
 }
 
+// watchKillPoint is the injected kill of test 11, at the three boundaries rule
+// 11 orders the poll by: after the observed values are written, after the item
+// lines reach stdout, and after the printed= marks are written. A test cannot
+// SIGKILL a function it is calling, and what has to be proved is which side of
+// each boundary the state lands on. It is never set outside a test, and it is a
+// var in this package rather than an environment variable for the reason
+// serveKillPoint is.
+var watchKillPoint string
+
 // watcher is the loop.
 type watcher struct {
 	stdout, stderr io.Writer
@@ -549,6 +558,8 @@ type watcher struct {
 	bus            *wake.Bus
 	lines          *wake.Lines
 	busDir         string
+	every          time.Duration
+	lineDue        time.Time
 	timeout        time.Duration
 	advance        bool
 
@@ -610,7 +621,13 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 					broken = s.src.Name()
 				}
 			}
-			if w.lines != nil {
+			if w.lines != nil && !now.Before(w.lineDue) {
+				// Rule 3: --interval "is the cadence for the bus, for --line
+				// and for report directories". The --line view is a git log
+				// against the bus checkout, and running it on the loop's own
+				// cadence meant a 5s entry interval beside an 8m --interval ran
+				// it ninety-six times for every once the caller asked for.
+				w.lineDue = now.Add(w.every)
 				w.pollLines(ctx, now)
 			}
 			w.firstPoll = true
@@ -620,8 +637,14 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 		// printed. A kill here leaves the entry pending, which is a repeated
 		// wake and never a lost one.
 		w.save()
+		if watchKillPoint == "after-observed" {
+			return 0
+		}
 		printed, news := w.printQueue(now)
 		_ = printed
+		if watchKillPoint == "after-marks" {
+			return 0
+		}
 		switch {
 		case broken != "":
 			n, since, reason := w.st.Streak(broken)
@@ -660,6 +683,9 @@ func (w *watcher) until(now, deadline time.Time) time.Duration {
 			next = s.due
 		}
 	}
+	if w.lines != nil && w.lineDue.Before(next) {
+		next = w.lineDue
+	}
 	d := next.Sub(now)
 	if d < 0 {
 		return 0
@@ -679,6 +705,15 @@ func (w *watcher) busBudget(now, deadline time.Time) time.Duration {
 		due := s.due
 		if !due.After(now) {
 			due = now.Add(s.src.Every())
+		}
+		if due.Before(next) {
+			next = due
+		}
+	}
+	if w.lines != nil {
+		due := w.lineDue
+		if !due.After(now) {
+			due = now.Add(w.every)
 		}
 		if due.Before(next) {
 			next = due
@@ -851,6 +886,13 @@ func (w *watcher) printQueue(now time.Time) (int, int) {
 			fmt.Fprintf(w.stdout, "WAKE MORE kind=%s shown=%d total=%d n=%d %s\n",
 				oneline.Field(kind), l.Shown(), l.Total(), l.Elided(), oneline.Escape(remedyFor(kind)))
 		}
+	}
+	if watchKillPoint == "after-lines" {
+		// The kill lands between the item lines reaching stdout and the marks
+		// that say so. Rule 11 chooses this side every time: the entry stays
+		// pending, the next call prints it again, and a window told the same
+		// news twice reads twice.
+		return len(printed), 0
 	}
 	news := 0
 	for _, r := range printed {
