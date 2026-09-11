@@ -177,3 +177,35 @@ func TestAVerbThatCannotTakeTheCheckoutLockExitsTwoAndNamesTheHolder(t *testing.
 		})
 	}
 }
+
+// `status` REPORTS and exits 0 on a pull it could not make, and says so.
+//
+// SPEC-MERGE, the verb sentences: "`status`, `dry-run` and `packet` report and exit 0
+// whatever the lane holds. `run` is the verb that acts, and `run`'s exit code is about the
+// pass, not about the lane" -- with the exit table making "could not run" 2 and "the verb
+// ran and said NO" 1. A remote that cannot be reached made `status` exit 1, which is
+// neither: the report is still a report, over the lane's own files, and what is owed is
+// the NOTE that says the records another machine wrote are not in it. The lock half stays
+// exit 2 under rule 22, which is TestAVerbThatCannotTakeTheCheckoutLockExitsTwoAndNamesTheHolder.
+func TestAStatusWhosePullFailedStillReportsAndSaysWhatIsMissing(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	setupPR(t, l, 951, "feature-a", "a.txt", false)
+	// The lane's origin now points at a repository that is not there, which is every
+	// unreachable remote: no network, a revoked token, a deleted fork.
+	l.git(l.lane, "remote", "set-url", "origin", filepath.Join(l.dir, "no-such-remote.git"))
+	exit, stdout, stderr := l.run("status", "--lane", l.lane, "--timeout", "5")
+	if exit != 0 {
+		t.Fatalf("status reports and exits 0 whatever the lane holds: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "STATUS ENTRY kind=pr entry=951")
+	contains(t, stderr, "STATUS NOTE")
+	contains(t, stderr, "not pulled")
+	// `run` is the verb that acts, and it still refuses: deciding on a state it knows is
+	// stale is the failure rule 22 exists to close.
+	exit, stdout, stderr = l.run("run", "--lane", l.lane, "--once", "--timeout", "5")
+	if exit != 1 {
+		t.Fatalf("run on a lane that could not pull: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "RUN REFUSED")
+}

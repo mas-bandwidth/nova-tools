@@ -138,7 +138,17 @@ func cmdStatus(args []string, stdout, stderr io.Writer, deps Deps) int {
 	recs := merge.NewRecords(*f.lane, st.LaneBranch, "origin", merge.NewGit(*f.lane, f.dur(), deps.Runner), f.dur())
 	_, problems, err := foldInto(*f.lane, st, recs, f.dur())
 	if err != nil {
-		return foldRefused("STATUS", stderr, err)
+		// "`status`, `dry-run` and `packet` report and exit 0 whatever the lane holds"
+		// (SPEC-MERGE, the verb sentences). A pull this verb could not make is a thing
+		// the lane holds: the report is still the report, it is now over the lane's own
+		// files, and THE NOTE SAYS SO on stderr so nobody reads it as current. A lock it
+		// could not take within --timeout stays exit 2 -- that is "could not run", and
+		// rule 22 asks that one to name the holder.
+		if _, held := merge.AsHeldError(err); held {
+			return foldRefused("STATUS", stderr, err)
+		}
+		fmt.Fprintf(stderr, "STATUS NOTE the lane branch was not pulled: %s; this report is the lane's own state, and a record another machine wrote since the last pull is not in it\n",
+			oneline.Err(err))
 	}
 	p := &merge.Pass{
 		Lane: *f.lane, State: st, Host: deps.NewHost(st.Repo, f.dur()),
