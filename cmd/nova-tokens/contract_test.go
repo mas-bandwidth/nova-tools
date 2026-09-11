@@ -3,6 +3,7 @@ package main
 import (
 	"go/ast"
 	"go/parser"
+	"go/printer"
 	"go/token"
 	"os"
 	"path/filepath"
@@ -492,4 +493,126 @@ func TestAQuotedFieldWhoseContinuationStartsWithAHashIsNotStripped(t *testing.T)
 	// the export never carried.
 	wantContains(t, day, "2.5")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "rows=1")
+}
+
+// typeNames are the five type constants. A type expression is one of them, the index of a
+// counts array, or the argument of a Get.
+var typeNames = map[string]bool{"Input": true, "Output": true, "CacheWrite": true, "CacheRead": true, "Reasoning": true}
+
+// typeExprs is every type expression inside an expression, rendered back to source text so
+// two of them can be compared without a type checker.
+func typeExprs(fset *token.FileSet, e ast.Expr) []string {
+	var out []string
+	add := func(x ast.Expr) {
+		var b strings.Builder
+		if err := printer.Fprint(&b, fset, x); err == nil {
+			out = append(out, b.String())
+		}
+	}
+	ast.Inspect(e, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.Ident:
+			if typeNames[v.Name] {
+				out = append(out, v.Name)
+			}
+		case *ast.IndexExpr:
+			add(v.Index)
+		case *ast.CallExpr:
+			if sel, ok := v.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Get" && len(v.Args) == 1 {
+				add(v.Args[0])
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// Demanded test 15's first clause, which nothing pinned: "a source test asserts no function
+// adds one type column into another". Every DeepSeek row in the prototype that said zero
+// and every cell that carried its neighbour's number came from exactly this. A write of
+// one type may only read THAT type: `c.Set(Input, c.n[Output])` is the shape this forbids.
+// countsArrays are the arrays a type column lives in; an index into one of them is a type
+// column and a map keyed by anything else is not.
+func isCountsTarget(text string) bool {
+	return strings.Contains(text, "Counts") || strings.HasSuffix(text, ".n") || strings.HasSuffix(text, ".has") ||
+		strings.HasSuffix(text, "Totals") || strings.HasSuffix(text, "Dashes")
+}
+
+func exprText(fset *token.FileSet, e ast.Expr) string {
+	var b strings.Builder
+	if err := printer.Fprint(&b, fset, e); err != nil {
+		return ""
+	}
+	return b.String()
+}
+
+func TestNoFunctionAddsOneTypeColumnIntoAnother(t *testing.T) {
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	checked := 0
+	for _, pkg := range []string{"internal/tokens", "cmd/nova-tokens"} {
+		ents, err := os.ReadDir(filepath.Join(root, pkg))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, e := range ents {
+			if e.IsDir() || !strings.HasSuffix(e.Name(), ".go") || strings.HasSuffix(e.Name(), "_test.go") {
+				continue
+			}
+			fset := token.NewFileSet()
+			f, err := parser.ParseFile(fset, filepath.Join(root, pkg, e.Name()), nil, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, d := range f.Decls {
+				fn, ok := d.(*ast.FuncDecl)
+				if !ok || fn.Body == nil {
+					continue
+				}
+				onCounts := false
+				if fn.Recv != nil && len(fn.Recv.List) == 1 {
+					onCounts = strings.Contains(exprText(fset, fn.Recv.List[0].Type), "Counts")
+				}
+				ast.Inspect(fn.Body, func(n ast.Node) bool {
+					var into, from ast.Expr
+					switch v := n.(type) {
+					case *ast.CallExpr:
+						sel, ok := v.Fun.(*ast.SelectorExpr)
+						if !ok || sel.Sel.Name != "Set" || len(v.Args) != 2 {
+							return true
+						}
+						if !onCounts && !isCountsTarget(exprText(fset, sel.X)) {
+							return true
+						}
+						into, from = v.Args[0], v.Args[1]
+					case *ast.AssignStmt:
+						if len(v.Lhs) != 1 || len(v.Rhs) != 1 {
+							return true
+						}
+						ix, ok := v.Lhs[0].(*ast.IndexExpr)
+						if !ok || !isCountsTarget(exprText(fset, ix.X)) {
+							return true
+						}
+						into, from = ix.Index, v.Rhs[0]
+					default:
+						return true
+					}
+					checked++
+					want := exprText(fset, into)
+					for _, got := range typeExprs(fset, from) {
+						if got != want {
+							t.Errorf("%s/%s:%d writes the %s column from %s; the five types are kept apart and no function adds one type column into another (rule 15)",
+								pkg, e.Name(), fset.Position(n.Pos()).Line, want, got)
+						}
+					}
+					return true
+				})
+			}
+		}
+	}
+	if checked < 5 {
+		t.Fatalf("%d type-column writes examined; this tripwire was looking at the wrong shape and would have passed by checking nothing", checked)
+	}
 }
