@@ -51,9 +51,9 @@ protected.
 ## The verbs
 
 ```
-nova-board list   (--issue <owner/repo>#<n> | --dir <path>) --stale <duration> [--list] [--open] [--max <n>]
+nova-board list   (--issue <owner/repo>#<n> | --dir <path>) --stale <duration> [--list] [--open] [--owner <name>] [--max <n>]
 nova-board add    (--issue ... | --dir ...) --as <name> --text <text> --by <duration|stamp> --default <text>
-                  [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>]
+                  [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>] [--id <thirty-two hex>]
 nova-board take   (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
 nova-board close  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
 nova-board check  (--issue ... | --dir ...) --words <text> [--max <n>] [--all]
@@ -133,6 +133,21 @@ silent deduplication **The races** forbids — and `check` reports a hash match
 the same way, as a note beside its text match. The hash is for a person's eye;
 the id is for the tool's.
 
+**A retry after an uncertain append reuses the id it drew.** `add` prints the
+id on `ADD OK`, and when the append's outcome is unknown — `gh` timed out after
+posting, a clone lost power after the file was created — the same `add` run
+again with `--id <thirty-two hex>` is the retry: with `--id`, an existing card
+whose creation fields are identical (`as`, `hash`, `owner`, `by`, `default`,
+`thing`, `leg`, `evidence` — everything on the `card` line but `at`) is `ADD OK
+… existed=true` and nothing is written; one whose fields differ is `ADD
+REFUSED: id <id> exists with different fields; nothing written`, exit 1; no
+card is `ADD OK … existed=false` with the id used as drawn, never redrawn.
+Two `card` events with one id and different fields, however they got there,
+are a **conflict** in the fold: the card lists `conflict=true`, is counted in
+`conflicts=` on `BOARD OK`, and neither event silently wins. (Stella,
+2026-09-11: a differing payload with the same identity is a conflict, never
+one card silently winning.)
+
 **Creation is exclusive against hand-made files, and that is all it needs to
 be.** Under `--dir` the card file is created with `O_EXCL` and never truncated;
 under `--issue` the board is re-read immediately before the append and the id
@@ -149,11 +164,29 @@ There are five event lines and that is the whole format:
 
 ```
 card <id> as=<name> at=<stamp> override=false hash=<hash> owner=<name> by=<stamp> default=<text> [thing=<name> leg=<name>] [evidence=<path>]: <text>
-taken <id> as=<name> at=<stamp> override=<true|false>
-closed <id> as=<name> at=<stamp> override=<true|false>: <how>
-landed <id> as=<name> at=<stamp> override=<true|false> in=<repo>#<n>
-probed <id> as=<name> at=<stamp> override=<true|false>: <evidence>
+taken <id> ev=<ev> after=<ev|id> as=<name> at=<stamp> override=<true|false>
+closed <id> ev=<ev> after=<ev|id> as=<name> at=<stamp> override=<true|false>: <how>
+landed <id> ev=<ev> after=<ev|id> as=<name> at=<stamp> override=<true|false> in=<repo>#<n>
+probed <id> ev=<ev> after=<ev|id> as=<name> at=<stamp> override=<true|false>: <evidence>
 ```
+
+- **Every later event has its own id and names the event it saw.** `ev=` is
+  twelve lower-case hex characters drawn from the OS random source by the verb
+  that appended it, and `after=` is the `ev=` of the newest event for that card
+  in the writer's fold at the moment it appended — the card's own id when there
+  was none. Two events for one card with the same `after=` are **concurrent**:
+  each writer read the same board and neither saw the other. The fold applies
+  the total order below to choose the owner and the first close, as it always
+  did, and now also **counts** what it chose over: `BOARD CARD … conflicts=<n>`
+  is the number of concurrent pairs in that card's history and `BOARD OK
+  conflicts=<n>` the board's, so a take that won a tie is visible as a tie
+  rather than as the only take. The order is a documented tie-break and never
+  git's union placement: two clones merging the same lines in opposite orders
+  count the same conflicts and name the same owner. Migration (work list 10)
+  writes `ev=` and `after=` for every old event in its comment order, so a
+  migrated history folds to the same cards, owners and conflict counts. (Stella,
+  2026-09-11: concurrent events with the same predecessor are visibly
+  concurrent, either a conflict or a stable tie-break with a count.)
 
 - **Every event line carries `as=<name>` and `override=<true|false>`**: the
   actor is the `--as` of the verb that appended it, and `override` is `true`
@@ -177,7 +210,7 @@ probed <id> as=<name> at=<stamp> override=<true|false>: <evidence>
   cards for one thing become one, and `superseded by <id>`, which is the only way
   a deadline moves; `probed` is the only close for a row of the owed ledger
   (rule 4), and it carries the evidence.
-- Every `key=value` field on every event line — `as=`, `at=`, `override=`,
+- Every `key=value` field on every event line — `ev=`, `after=`, `as=`, `at=`, `override=`,
   `hash=`, `owner=`, `by=`, `default=`, `thing=`, `leg=`, `evidence=`, `in=` — is
   rendered through `oneline.Field`, so a default holding a space or a name
   holding one is one token, and the free text after `: ` is rendered through
@@ -272,7 +305,7 @@ nine seconds apart both read the board as it was before either wrote.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: a listing printed, a card appended, **or a `check` that found nothing** |
-| 1 | the verb ran and said **NO**: a `check` that **matched**, a `take` of a card another line holds, a `close` of a card another line holds, an append the backend rejected |
+| 1 | the verb ran and said **NO**: a `check` that **matched**, a `take` of a card another line holds, a `close` of a card another line holds, an append the backend rejected, an `add --id` whose id exists with different fields |
 | 2 | could not run: a missing or malformed flag, no backend or two, an unreadable board, a card file without its version line, an id that names no card |
 
 **`check` exits 1 when it matches, and that is the tool's most important
@@ -308,17 +341,17 @@ impossible would be edited around.
 ## Output grammar
 
 ```
-BOARD CARD id=<id> state=<OPEN|CLOSED> owner=<name|-> since=<stamp> by=<stamp> age=<d> taken=<d|-> stale=<true|false> overdue=<true|false> default=<text> thing=<name|-> leg=<name|-> evidence=<path|->: <text>
+BOARD CARD id=<id> state=<OPEN|CLOSED> owner=<name|-> since=<stamp> by=<stamp> age=<d> taken=<d|-> stale=<true|false> overdue=<true|false> conflicts=<n> conflict=<true|false> default=<text> thing=<name|-> leg=<name|-> evidence=<path|->: <text>
 BOARD CLOSE id=<id> by=<name> at=<stamp> how=<closed|landed|probed> override=<true|false> where=<repo#n|path|->: <how>
 BOARD LINE name=<name> open=<n> overdue=<n> stale=<n>
 BOARD LEG leg=<name> owed=<n> probed=<n>
 BOARD NEXT <the one thing to do first, with its id>
-BOARD OK cards=<n> open=<n> closed=<n> stale=<n> overdue=<n> owed=<n> lines=<n> shown=<n> backend=<issue|dir> source=<where>
+BOARD OK cards=<n> open=<n> closed=<n> stale=<n> overdue=<n> owed=<n> lines=<n> conflicts=<n> shown=<n> backend=<issue|dir> source=<where>
 BOARD MORE kind=<card|line|leg> shown=<n> total=<t> and <t-n> more; <remedy>
 BOARD NOTE <something true about this board that is not a card>
 BOARD FAIL <id or source>: <reason>
 BOARD REFUSED: <reason>
-ADD OK id=<id> owner=<name> at=<stamp> backend=<issue|file> durable=<true|false>
+ADD OK id=<id> owner=<name> at=<stamp> backend=<issue|file> durable=<true|false> existed=<true|false>
 ADD REFUSED: <reason>
 TAKE OK id=<id> owner=<name> at=<stamp> previous=<name|-> override=<true|false>
 TAKE REFUSED: <reason>
@@ -337,11 +370,12 @@ the tool's own field and never a card's text. **The free-text tail is never to b
 scanned for fields** — everything after the `: ` is what the filer wrote, and a
 filer may well have written `state=OPEN`.
 
-`BOARD OK` carries eight counts and they are eight different facts: `cards` is
+`BOARD OK` carries nine counts and they are nine different facts: `cards` is
 the whole board, `open` is what is still owed, `closed` is what is not, `stale` is
 how many open cards have had no event for longer than `--stale`, `overdue` is how
 many open cards are past their deadline, `owed` is how many rows of the ledger
-are not yet probed, `lines` is how many owners the open cards have, and `shown`
+are not yet probed, `lines` is how many owners the open cards have, `conflicts` is how many concurrent
+event pairs the fold chose over (**The card, and the events**), and `shown`
 is how many lines this run printed. **The counts print on failure as well
 as success** and they are the truth about the **board**, not about the output: the
 listing is capped at `--max`, the counting never is. `source=` is the issue or the
@@ -442,7 +476,9 @@ spec forbids**.
    smaller leg name. A board with one fresh card and a future deadline has
    something to do first, and a tool that said *nothing owed* over it would be
    the count falling for the wrong reason, said in words. Cards print only under `--list`, capped at `--max`,
-   and past the cap one `BOARD MORE` line reads `and <t-n> more` with the remedy.
+   and past the cap one `BOARD MORE` line reads `and <t-n> more` with the remedy;
+   `--list --owner <name>` prints only that owner's open cards, so one line
+   reads its own batch of owed decisions in one command and never the board.
    `BOARD LINE` and `BOARD LEG` are capped at `--max` the same way. (Glenn,
    2026-09-09: counts, not lists; one remedy line. A listing is a context window
    spent on the good news.)
@@ -577,7 +613,22 @@ Each is proven able to fail by a mutation before it is trusted.
    opens the card file without `O_EXCL` turns the test red; an `add` whose
    text matches an OPEN card prints `ADD NOTE hash=<hash> matches open card`
    on stderr and files a second card; the source tripwire finds no `seq`
-   field and no count read at `add` time.
+   field and no count read at `add` time; an `add` interrupted after its
+   append with an injected fault, re-run with `--id` and the same fields, is
+   `ADD OK existed=true` with one card on the board and nothing appended,
+   under both backends; the same `--id` with a different `--text` is `ADD
+   REFUSED … different fields` exit 1 with nothing written; two `card` lines
+   with one id and different fields fold to `conflict=true` and
+   `conflicts=1`. `TestConcurrentEventsAreCountedNotHidden`: two takes from
+   two clones with the same `after=` fold to one owner by the total order,
+   `BOARD CARD conflicts=1`, `BOARD OK conflicts=1`, identically from both
+   merge orders and both backends; a take whose `after=` names the other
+   take is not a conflict and `conflicts=0`; every `taken`, `closed`, `landed`
+   and `probed` line carries a distinct twelve-hex `ev=` from the injected
+   source and an `after=` equal to the newest `ev=` in the writer's fold or
+   the card id; the migration fixture folds to the same owners and
+   conflict counts before and after; `list --list --owner Bo` prints only
+   `Bo`'s open cards and `BOARD OK` still counts the whole board.
 4. `TestOwedCountsPerLegAndDoneIsZero`: rows on three legs, some probed; one
    `BOARD LEG` per leg with the right counts; `BOARD OK` carries `owed=<n>`;
    probing the last row prints `owed=0`; `closed` on a row is `CLOSE REFUSED`
@@ -667,7 +718,8 @@ Standard library only, no third-party imports, no hardcoded paths, and the repo'
 shared packages used rather than re-spelled.
 
 1. **`internal/board/event.go`** — the five event lines: render and parse, anchored
-   at the line start, id as the token after the verb, `as=` `at=` `override=` on
+   at the line start, id as the token after the verb, `ev=` and `after=` on
+   every later event, `as=` `at=` `override=` on
    every line, `oneline.Field` on every value, the id (128 bits from
    `crypto/rand` behind an injectable source, thirty-two hex), `hash=` as
    SHA-256 over the rendered text, and no sequence, no count and no read at
@@ -677,7 +729,9 @@ shared packages used rather than re-spelled.
    returns the same bytes twice are refused by `O_EXCL`, never overwritten.
 2. **`internal/board/derive.go`** — events in, cards out: the fold order
    `(at, as, id, verb, bytes)` applied before anything is derived, owner from the latest
-   take in that order, `since` from the add, first close wins, staleness as a pure function of
+   take in that order, `since` from the add, first close wins, concurrent
+   pairs by equal `after=` counted as `conflicts`, two `card` lines with one
+   id and different fields as `conflict=true`, staleness as a pure function of
    `(latest event stamp, now, stale window)` and overdue as a pure function of
    `(by, now)`. Tests: a second close changes nothing; a
    re-take moves the owner; stale is annotation and writes nothing; identical event
@@ -717,7 +771,9 @@ shared packages used rather than re-spelled.
 10. **A migration of today's board** — `mas-bandwidth/schema#876`'s comments are in
     the prototype's shape, with backend-derived six-digit ids. Migration is an
     `add` per open card under the new id scheme and one `closed <old>: migrated to
-    <new>` per old card, appended, with nothing edited and nothing deleted — the
+    <new>` per old card, appended, with nothing edited and nothing deleted,
+    every migrated event given its `ev=` and an `after=` naming the event
+    before it in comment order — the
     tool's own rules applied to its own arrival. It is a script that runs once and
     is reviewed as code, not a verb.
 11. **`SPEC.md` and `README.md` wiring** — the binary count in SPEC.md's opening
@@ -804,3 +860,23 @@ the two failures that cost a morning. These are the places it is **not** a model
 23. **Never measured at a large board.** `BOARD_MAXROWS=60` and `BOARD_WINDOW=40`
     were chosen by feel, and the 40-comment window is what a bound looks like
     when it is chosen instead of measured: the count line lies. Rule 7.
+
+## Ideas folded on 2026-09-11
+
+| source | the idea, in six words | disposition |
+|---|---|---|
+| Stella, spec repairs | operation nonce, reused through retries | `add --id`: the drawn id is the nonce; `existed=true` on an identical retry, refused on a different one |
+| Stella, spec repairs | derive the display id by hashing | left different: the 128-bit draw is the id; a hash of a random draw adds nothing it does not already have |
+| Stella, spec repairs | same identity, different payload is conflict | `conflict=true`, `conflicts=` counted, neither wins |
+| Stella, spec repairs | event ids and causal predecessors | `ev=` and `after=` on every later event |
+| Stella, spec repairs | concurrent events visible, stable tie-break | the fold order (already) plus `conflicts=` (this pass) |
+| Stella, spec repairs | migration preserves ids and links | work list 10 |
+| Stella, ideas 2–3 | one decision packet per item; one home for ownership | already, rule 1 (`BOARD NEXT`, counts) and `take` |
+| Emma, C3 | one batch of ready decisions per line | rule 1: `list --list --owner <name>` |
+| Rowan, idea 7 | a state-of-the-table line the tools write | already, rule 1 (`BOARD OK`, `BOARD NEXT`) |
+| DeepSeek, idea 1 | a derived digest, never hand-edited | already: the board is a fold, nothing is stored |
+| DeepSeek, idea 4 | atomic claims, a cheap dashboard | already, `take` with the accepted race made visible; rule 1 |
+| Freddy, idea 5 | batch acknowledgements | not folded: the board acknowledges nothing; receipts are `nova-wake serve`'s |
+| ideas #273 | a belief whose evidence arrived later | `after=`: every event names what its writer knew |
+| ideas #357 | a card is data, never an instruction | already, the second paragraph |
+| nova-tools #35 | a shared file keyed by the clock races | already, rule 3 (one file per card) and the tool's own stamps (rule 9) |
