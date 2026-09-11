@@ -1,6 +1,7 @@
 package check
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -260,6 +261,48 @@ func TestLinksUnclosedFenceDoesNotSwallowRealBrokenLink(t *testing.T) {
 	}
 	if len(broken) != 1 || broken[0].Target != "missing.md" {
 		t.Errorf("broken = %v, want the real missing.md reported", broken)
+	}
+}
+
+// Reviewer (#66, finding 1): the two tests above only exercise a SHORTER run
+// failing to close a LONGER fence, so the ">=" at links.go could be narrowed
+// back to "==" with every test still green. The rule the scanner actually
+// implements is the one SPEC.md states for the shared fenceRE at the corpus
+// check: "an opening delimiter records its character and length, and only a
+// run of the same character, at least as long and carrying nothing after it,
+// closes it." These two pin the halves that were unpinned: a LONGER run does
+// close, and a same-length run carrying text does not.
+func TestLinksLongerRunClosesShorterFence(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"a.md": "```\n[fake](inside.md)\n````\n[real](missing.md)\n",
+	})
+	_, checked, broken, err := Links(dir)
+	if err != nil {
+		t.Fatalf("Links: %s", brief(err.Error()))
+	}
+	if checked != 1 {
+		t.Errorf("checked = %d, want 1: a four-backtick run is at least as long as the three-backtick opener, so it closes it", checked)
+	}
+	if len(broken) != 1 || broken[0].Target != "missing.md" {
+		t.Errorf("broken = %s, want the link below the closed fence reported", brief(fmt.Sprint(broken)))
+	}
+}
+
+func TestLinksSameLengthRunWithTrailingTextDoesNotClose(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"a.md": "```\n[fake](inside.md)\n``` not a closer\n[alsofake](missing.md)\n",
+	})
+	_, checked, broken, err := Links(dir)
+	if err != nil {
+		t.Fatalf("Links: %s", brief(err.Error()))
+	}
+	if checked != 0 {
+		t.Errorf("checked = %d, want 0: a run carrying text after it does not close the fence, so both links stay illustration", checked)
+	}
+	if len(broken) != 0 {
+		t.Errorf("broken = %s, want none: nothing below an unclosed fence is a link", brief(fmt.Sprint(broken)))
 	}
 }
 
