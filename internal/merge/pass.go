@@ -205,6 +205,11 @@ func (p *Pass) walk(baseSHA string, res *Result) {
 		list.Line(fmt.Sprintf("RUN ENTRY entry=%s head=%s checks=%s read=%s gate=%s state=%s",
 			oneline.Field(e.ID()), oneline.Field(dashIfEmpty(Short(e.OID))), st.Checks.Field(),
 			st.Reads.Field(), dashIfEmpty(st.Gate.Kind), st.State))
+		// ONE PLACE COUNTS. A blocked entry is one entry, however many sites in the code
+		// noticed it: the count on RUN OK is the truth about the LANE, never about the
+		// number of times the code said so. It was two per blocked entry when the sites
+		// that produce the state counted as well as this switch, and the fold's own
+		// refusal -- which counted nowhere -- was zero.
 		switch st.State {
 		case StateMergeableGreen:
 			if p.merge(e, st, baseSHA, res) {

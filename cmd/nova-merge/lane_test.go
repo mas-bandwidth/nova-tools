@@ -75,6 +75,9 @@ func TestOnlyAConflictingEntryIsReMerged(t *testing.T) {
 	}
 	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once")
 	contains(t, stdout, "MERGE OK entry=1")
+	// THE COUNTS ON RUN OK ARE THE TRUTH ABOUT THE LANE. One entry merged, and a merged
+	// entry is dropped from the lane; the entry behind a merge waits.
+	contains(t, stdout, "RUN OK lane=2 merged=1 dropped=1 blocked=0 waiting=1")
 	l.host.SetChecks(l.refreshBase(), 2, 0)
 	// The conflicting entry behind it is re-merged exactly once, and the base is now
 	// ahead of it. The merge of the base into its head conflicts, so it is BLOCKED with
@@ -89,6 +92,9 @@ func TestOnlyAConflictingEntryIsReMerged(t *testing.T) {
 	contains(t, stderr, "README.md")
 	contains(t, stderr, "git clone")
 	contains(t, stderr, "git push origin HEAD:feature-conflicting")
+	// ONE blocked entry in a lane of one is blocked=1. The count is of the lane, not of
+	// the number of places in the code that noticed.
+	contains(t, stdout, "RUN OK lane=1 merged=0 dropped=0 blocked=1 waiting=0")
 	// The head is untouched: the lane never edits an entry's content.
 	if got := l.git(l.work, "rev-parse", "refs/remotes/origin/feature-conflicting"); got != conflicting {
 		t.Errorf("the entry's head moved to %s; a conflict is BLOCKED and a hand resolves it", got)
@@ -99,6 +105,7 @@ func TestOnlyAConflictingEntryIsReMerged(t *testing.T) {
 	absent(t, stdout2, "RUN REMERGE entry=2")
 	absent(t, stderr2, "RUN BLOCKED entry=2")
 	contains(t, stdout2, "state=BLOCKED")
+	contains(t, stdout2, "RUN OK lane=1 merged=0 dropped=0 blocked=1 waiting=0")
 }
 
 // Demanded test 23: the packet is POINTERS, NEVER THE DIFF.

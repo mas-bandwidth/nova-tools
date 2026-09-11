@@ -155,7 +155,6 @@ func (p *Pass) build(e *Entry, c *Classification, baseSHA string, res *Result) {
 		c.State = StateBlocked
 		c.Detail = BlockedDetail(p.State.Base, built.Conflicts)
 		p.blockedLine(e, built.Conflicts)
-		res.Blocked++
 		res.Stopped = true
 		return
 	}
@@ -198,7 +197,6 @@ func (p *Pass) remerge(e *Entry, pr PR, baseSHA string, res *Result) Classificat
 	if e.State == StateBlocked && e.OID != "" && strings.Contains(e.Detail, "conflicts with") {
 		// The entry stays BLOCKED until a NEW head arrives; no pass retries it.
 		c.State, c.Detail = StateBlocked, e.Detail
-		res.Blocked++
 		res.Stopped = true
 		p.record(e, c)
 		return c
@@ -244,7 +242,6 @@ func (p *Pass) remerge(e *Entry, pr PR, baseSHA string, res *Result) Classificat
 		c.State = StateBlocked
 		c.Detail = BlockedDetail(p.State.Base, files)
 		p.blockedLine(e, files)
-		res.Blocked++
 		res.Stopped = true
 		p.record(e, c)
 		return c

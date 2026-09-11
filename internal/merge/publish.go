@@ -121,7 +121,10 @@ func (p *Pass) merge(e *Entry, c Classification, baseSHA string, res *Result) bo
 		oneline.Field(c.Admitted), oneline.Field(c.Reads.ReadNames(e.NeedsRead == "yes")),
 		oneline.Field(c.Checks.Names()), published, oneline.Field(Short(verified)))
 	Appendf(p.Lane, p.Now, "MERGE OK entry=%s merge=%s verified=%s", e.ID(), rec.Merge, verified)
+	// The entry LEAVES THE LANE: the lane's authority is exactly its own list, and
+	// dropped= on RUN OK is how many entries this pass took out of it.
 	p.drop(e)
+	res.Dropped++
 	return true
 }
 
