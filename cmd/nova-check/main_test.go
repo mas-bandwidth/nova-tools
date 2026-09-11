@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/check"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // The no-guessing rule at the CLI: a missing flag is a refusal (exit 2)
@@ -181,14 +182,18 @@ func TestLinksUnreadableFileIsNamedFailureAtTheCLI(t *testing.T) {
 	}
 }
 
-// The unreadable-DIRECTORY seam at the CLI, the case issue #30 (first item)
-// names: a chmod-000 nested directory should be NAMED and the walk should
-// continue, keeping the broken link beside it, exit 1. Against the code as it
-// stands the walk error is a refusal: exit 2 and NO findings at all. NOTE:
-// SPEC.md:348-353 says a directory in the walk that cannot be listed IS a
-// refusal and the walk stops without partial findings, so this is
-// intentionally RED. See RESULT.md.
-func TestLinksUnreadableDirAtTheCLI(t *testing.T) {
+// brief renders a value for a test failure the way the CLI renders one for a
+// caller: one line, escaped, and capped.
+func brief(s string) string { return oneline.Escape(oneline.Cap(s, 200)) }
+
+// The unlistable-DIRECTORY seam at the CLI. Issue #30's first item asked for a
+// named failure with the walk continuing; SPEC.md:348-353 (links) and 622-630
+// (nocode) say a directory in the walk that cannot be listed is a REFUSAL and
+// that a walk error stops the run without reporting partial findings. This
+// pins the specified behaviour at the seam a caller actually sees: exit 2, the
+// directory named on stderr, and NO FAIL line -- the broken link beside it is
+// deliberately not reported. Whether that is the right trade is open on #30.
+func TestLinksUnlistableDirRefusesAtTheCLI(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
 	}
@@ -205,19 +210,22 @@ func TestLinksUnreadableDirAtTheCLI(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{"links", "--dir", dir}, &stdout, &stderr); got != 1 {
-		t.Fatalf("exit = %d, want 1 -- a named failure, not a refusal; stderr: %s", got, stderr.String())
+	if got := run([]string{"links", "--dir", dir}, &stdout, &stderr); got != 2 {
+		t.Fatalf("exit = %d, want 2 -- an unlistable directory is a refusal; stderr: %s", got, brief(stderr.String()))
 	}
-	if !strings.Contains(stderr.String(), "locked") || !strings.Contains(stderr.String(), "unreadable") {
-		t.Errorf("stderr = %q, want the unreadable directory named", stderr.String())
+	if !strings.Contains(stderr.String(), "locked") {
+		t.Errorf("stderr does not name the directory: %s", brief(stderr.String()))
 	}
-	if !strings.Contains(stderr.String(), "LINKS FAIL broken.md:1: missing.md (does not exist)") {
-		t.Errorf("stderr = %q, want the accumulated broken link kept, not discarded", stderr.String())
+	if strings.Contains(stderr.String(), "LINKS FAIL") {
+		t.Errorf("a refusal must not report partial findings: %s", brief(stderr.String()))
+	}
+	if lines := strings.Count(strings.TrimRight(stderr.String(), "\n"), "\n") + 1; lines != 1 {
+		t.Errorf("refusal stderr = %d lines, want 1: %s", lines, brief(stderr.String()))
 	}
 }
 
 // The same seam for nocode.
-func TestNoCodeUnreadableDirAtTheCLI(t *testing.T) {
+func TestNoCodeUnlistableDirRefusesAtTheCLI(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
 	}
@@ -234,11 +242,14 @@ func TestNoCodeUnreadableDirAtTheCLI(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
 	var stdout, stderr bytes.Buffer
-	if got := run([]string{"nocode", "--dir", dir}, &stdout, &stderr); got != 1 {
-		t.Fatalf("exit = %d, want 1 -- a named failure, not a refusal; stderr: %s", got, stderr.String())
+	if got := run([]string{"nocode", "--dir", dir}, &stdout, &stderr); got != 2 {
+		t.Fatalf("exit = %d, want 2 -- an unlistable directory is a refusal; stderr: %s", got, brief(stderr.String()))
 	}
-	if !strings.Contains(stderr.String(), "locked") || !strings.Contains(stderr.String(), "unreadable") {
-		t.Errorf("stderr = %q, want the unreadable directory named", stderr.String())
+	if !strings.Contains(stderr.String(), "locked") {
+		t.Errorf("stderr does not name the directory: %s", brief(stderr.String()))
+	}
+	if strings.Contains(stderr.String(), "NOCODE FAIL") {
+		t.Errorf("a refusal must not report partial findings: %s", brief(stderr.String()))
 	}
 }
 

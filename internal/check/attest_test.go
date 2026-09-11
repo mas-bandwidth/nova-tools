@@ -317,28 +317,46 @@ func TestAttestRefusals(t *testing.T) {
 	}
 }
 
-// TestRecordLayerCheckCount verifies the comment in attest.go matches the actual
-// number of record-layer checks in this package. This prevents the comment
-// from going stale silently when checks are added or removed.
-func TestRecordLayerCheckCount(t *testing.T) {
-	const (
-		attestGo        = "attest.go"
-		expectedComment = "six record-layer checks"
-	)
-	// Read attest.go and verify the comment line.
-	attest, err := os.ReadFile(attestGo)
+// Issue #30: attest.go's package comment said "four record-layer checks" while
+// SPEC.md defines six. A test that only greps for the word "six" would agree
+// with the comment by construction and go stale the same way on a seventh, so
+// this derives the count from SPEC.md -- the authority the comment points at --
+// and fails when the two drift apart in either direction.
+//
+// It reads two files in the repo rather than a t.TempDir() tree because the
+// property under test IS those two files agreeing; nothing is written.
+func TestRecordLayerCheckCountMatchesSPEC(t *testing.T) {
+	const specPath = "../../SPEC.md"
+	spec, err := os.ReadFile(specPath)
 	if err != nil {
-		t.Fatalf("cannot read %s: %v", attestGo, err)
+		t.Fatalf("cannot read %s: %v", specPath, err)
 	}
-	lines := strings.Split(string(attest), "\n")
-	found := false
-	for _, line := range lines {
-		if strings.Contains(line, expectedComment) {
-			found = true
-			break
+	// The checks are the "### " subsections between "## nova-check" and the
+	// next tool's "## " heading.
+	inTool, checks := false, 0
+	for _, line := range strings.Split(string(spec), "\n") {
+		switch {
+		case strings.HasPrefix(line, "## nova-check"):
+			inTool = true
+		case inTool && strings.HasPrefix(line, "## "):
+			inTool = false
+		case inTool && strings.HasPrefix(line, "### "):
+			checks++
 		}
 	}
-	if !found {
-		t.Errorf("comment in %s does not contain %q; got: %q", attestGo, expectedComment, lines[0])
+	words := []string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"}
+	if checks <= 0 || checks >= len(words) {
+		t.Fatalf("SPEC.md names %d nova-check subsections; expected 1..%d", checks, len(words)-1)
+	}
+	want := words[checks] + " record-layer checks"
+
+	const attestPath = "attest.go"
+	attest, err := os.ReadFile(attestPath)
+	if err != nil {
+		t.Fatalf("cannot read %s: %v", attestPath, err)
+	}
+	first, _, _ := strings.Cut(string(attest), "\n")
+	if !strings.Contains(first, want) {
+		t.Errorf("%s says %s; SPEC.md defines %d checks, so it should say %q", attestPath, brief(first), checks, want)
 	}
 }

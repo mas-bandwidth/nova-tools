@@ -325,16 +325,17 @@ func TestLinksUnreadableFileIsNamedFailureNotRefusal(t *testing.T) {
 	}
 }
 
-// An unreadable nested DIRECTORY is the card's case: a chmod-000 directory
-// under the tree. Issue #30 (first item) asks for a NAMED failure that keeps
-// walking, with the findings found beside it kept. Against the code as it
-// stands, the walk callback returns walkErr, so the whole run becomes a
-// refusal (exit 2) and every finding already accumulated is thrown away.
-// NOTE: current SPEC.md:348-353 says the opposite — "a directory in the walk
-// cannot be listed" is a REFUSAL and "a walk error stops the run without
-// reporting partial findings". This test is intentionally RED until that is
-// settled.
-func TestLinksUnreadableDirIsNamedFailureWalkContinues(t *testing.T) {
+// An unlistable nested DIRECTORY -- issue #30's first item, which asked for a
+// NAMED failure with the walk continuing. SPEC.md says the opposite, in the
+// paragraph that governs this exact case: "Refuses (exit 2) only when --dir is
+// missing, unresolvable, or does not resolve to a directory, or a directory in
+// the walk cannot be listed ... A walk error stops the run without reporting
+// partial findings." The unreadable-FILE rule above (named failure, walk
+// continues) is a different case. So the refusal is the specified behaviour and
+// this test pins it, including the two halves a caller can observe: the
+// directory is named in the error, and the finding found before it is NOT
+// reported. Whether the spec should change is left open on #30.
+func TestLinksUnlistableDirIsARefusalNotAPartialReport(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
 	}
@@ -352,18 +353,16 @@ func TestLinksUnreadableDirIsNamedFailureWalkContinues(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
-	mdFiles, _, broken, err := Links(dir)
-	if err != nil {
-		t.Fatalf("an unreadable directory must be a named failure, not a refusal: %v", err)
+	mdFiles, checked, broken, err := Links(dir)
+	if err == nil {
+		t.Fatalf("want a refusal for an unlistable directory; got mdFiles=%d checked=%d broken=%d", mdFiles, checked, len(broken))
 	}
-	if mdFiles != 1 {
-		t.Errorf("mdFiles = %d, want 1: the walk must continue past the unreadable directory", mdFiles)
+	if !strings.Contains(err.Error(), "locked") {
+		t.Errorf("error does not name the directory: %s", brief(err.Error()))
 	}
-	var asFailures []Failure
-	for _, b := range broken {
-		asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
+	if mdFiles != 0 || checked != 0 || len(broken) != 0 {
+		t.Errorf("a refusal must report nothing; got mdFiles=%d checked=%d broken=%d", mdFiles, checked, len(broken))
 	}
-	wantFailures(t, asFailures, []string{"a.md", "missing.md", "does not exist", "locked", "unreadable"})
 }
 
 // A dangling .md symlink is the second face of the same case: the walk sees a

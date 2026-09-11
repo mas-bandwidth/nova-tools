@@ -231,16 +231,13 @@ func TestNoCode(t *testing.T) {
 	}
 }
 
-// An unreadable nested DIRECTORY is the card's case: a chmod-000 directory
-// under the tree. Issue #30 (first item) asks for a NAMED failure that keeps
-// walking, with the findings found beside it kept. Against the code as it
-// stands, the walk callback returns walkErr, so the whole run becomes a
-// refusal (exit 2) and every finding already accumulated is thrown away.
-// NOTE: current SPEC.md:622-630 says the opposite — "a directory in the walk
-// cannot be listed" is a REFUSAL and "a walk error stops the run without
-// reporting partial findings". This test is intentionally RED until that is
-// settled.
-func TestNoCodeUnreadableDirIsNamedFailureWalkContinues(t *testing.T) {
+// The same seam for nocode, governed by the same words in SPEC.md: "Refuses
+// (exit 2) when --dir is missing, unresolvable, or does not resolve to a
+// directory, or a directory in the walk cannot be listed ... A walk error stops
+// the run without reporting partial findings." Issue #30's first item asked for
+// a named failure that keeps walking; the spec as written says refusal, so the
+// refusal is what is pinned here. Left open on #30.
+func TestNoCodeUnlistableDirIsARefusalNotAPartialReport(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
 	}
@@ -259,13 +256,15 @@ func TestNoCodeUnreadableDirIsNamedFailureWalkContinues(t *testing.T) {
 	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
 
 	scanned, findings, err := NoCode(NoCodeOptions{Dir: dir})
-	if err != nil {
-		t.Fatalf("an unreadable directory must be a named failure, not a refusal: %v", err)
+	if err == nil {
+		t.Fatalf("want a refusal for an unlistable directory; got scanned=%d findings=%d", scanned, len(findings))
 	}
-	if scanned != 1 {
-		t.Errorf("scanned = %d, want 1: the walk must continue past the unreadable directory", scanned)
+	if !strings.Contains(err.Error(), "locked") {
+		t.Errorf("error does not name the directory: %s", brief(err.Error()))
 	}
-	wantFailures(t, findings, []string{"locked", "unreadable"})
+	if scanned != 0 || len(findings) != 0 {
+		t.Errorf("a refusal must report nothing; got scanned=%d findings=%d", scanned, len(findings))
+	}
 }
 
 // TestNoCodeSymlinkNotFollowed is separate because it needs a real symlink.
