@@ -181,8 +181,20 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 // anyway, and rule 7's automatic retry inherited the whole sidecar: a retry that then
 // SUCCEEDED still carried `violation=background`, so `triage` skipped it forever and its
 // findings were never folded (DeepSeek's read 5, finding 2).
+//
+// NEITHER IS A JOB ENDED AT ITS BUDGET, or one whose usage source stopped being readable.
+// Rule 13, verbatim (SPEC-SWARM.md:232-233): "a job that ends this way keeps the findings
+// it appended so far (rule 3)." Both ends reap the group exactly as the deadline does, and
+// a survivor of THAT reap was written rule 11's word -- which `Jobs()` (triage.go) reads as
+// "do not count this job at all", so the findings rule 13 promises to keep were dropped
+// from `TRIAGE BATCH` entirely (read 6, finding 2).
 func violationWord(end string, survivors int) string {
-	if survivors == 0 || end == EndKilled {
+	if survivors == 0 {
+		return ""
+	}
+	switch end {
+	case EndKilled, EndBudget, EndUnverifiable:
+		// The reap's own ends: a process that outlived the kill is a fact about the kill.
 		return ""
 	}
 	return "background"
