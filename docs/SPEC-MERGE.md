@@ -666,7 +666,7 @@ is waiting.
 **A state file written by two verbs at once.** `add`, `read` and `gate` are
 run by hand while `run` loops, and six gate records can arrive in one second.
 Every write is a read-modify-write of one JSON file, so every write takes the
-same lane lock (rule 1). The write goes to `state.json.tmp.<pid>`, a name per
+same lane lock (rule 1). The write goes to `state.json.tmp` (a fixed name, rule 1), a name per
 writing process, and lands by rename; nothing is written unless the old state
 parsed and the new state parses. Today's prototype, before its lock, had two
 writers on one shared temp name: the state was left at 0 bytes and the lane
@@ -940,7 +940,7 @@ verb, and tests that pin all three by executing them.
 
 1. **`internal/merge/state.go`** — the state file: strict decode (unknown field
    is an error), the two entry lists, the gate list, the write under the lock
-   through `state.json.tmp.<pid>` and rename, both states parsed before the
+   through `state.json.tmp` (a fixed name, rule 1) and rename, both states parsed before the
    rename. Tests: an unknown field refuses; a string where a number belongs
    refuses; a round trip preserves order; thirty concurrent writers all land
    and the file parses at every instant (demanded test 1).
