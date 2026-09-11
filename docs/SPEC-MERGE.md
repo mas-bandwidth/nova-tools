@@ -243,7 +243,9 @@ the day it was learned.
     with `--head <oid> --base-sha <sha> --merge <merge sha> --from
     <lane>/repo`. `nova-merge` does not run the gate (see **the local gate**):
     the gate runner fetches **that object** by sha from the lane's clone into a
-    clone of its own, refuses if its parents are not `(base, head)`, runs the
+    clone of its own, refuses if its parents are not `(base, head)` (an
+    integration gate; the base gate of the **output grammar** is the one
+    exception, and it is checked by exact sha instead), runs the
     fast lane's steps on it, and records `gate --head <oid> --base-sha <sha>
     --merge <merge sha>`. Hosted green and a green gate for the head alone are
     **candidates** (rule 5): they earn the entry `NEEDS-GATE`, the build, and
@@ -347,26 +349,50 @@ the day it was learned.
 22. **A read and a gate are each one immutable file in the lane's branch,
     pushed by the tool; the lane directory is the durable home; the state
     lock protects only the local fold.** `read` writes
-    `<lane>/reads/<entry>/<who>-<head>.json` and `gate` writes
+    `<lane>/reads/<entry>/<who>-<head12>-<at>-<rand6>.json` and `gate` writes
     `<lane>/gates/<entry>/<head12>-<base12>-<at>-<rand6>.json` (the summary
     copied beside it as `<same name>.summary`), each holding the whole record
     and nothing else — the gate record carries `run=<rand6>`, the same six
-    characters as its filename, so a record quoted from a log names its file; the file is then committed and pushed to the lane branch
-    by the tool, in a compare-and-swap loop: fetch, `reset --hard` the branch
-    to the fetched tip (the tracked files are records that are never edited,
-    so the reset can lose nothing, and the new file is untracked until it is
-    added), add, commit, push; a rejected push repeats the loop, at most five
-    times within `--timeout`, and a push that still fails is `READ FAIL` /
-    `GATE FAIL … pushed=false` at exit 1 naming the file, which is committed
-    locally and is pushed by re-running the same verb. Two readers never touch
-    one path: a reader who records again for the same head replaces their own
-    file and the branch's history keeps the earlier one; a second gate for the
-    same pair is a second file. `run`, `status` and `dry-run` **pull** the
-    lane branch (`--ff-only`, bounded by `--timeout`) and then **fold** every
-    record file into `state.json`'s `reads` and `gates` lists under the state
-    lock of rule 1; the lists are the fold and the files are the truth, so a
+    characters as its filename, so a record quoted from a log names its file,
+    and `<at>-<rand6>` is the record's **submission id**, drawn once per verb
+    and never reused. The record is first written, byte for byte, to a
+    durable **outbox** outside the branch, `<lane>/outbox/<submission
+    id>.json` (the gate summary beside it as `.summary`), untracked, through
+    `.tmp` and rename; the file is then committed and pushed to the lane
+    branch by the tool, in a compare-and-swap loop: fetch, `reset --hard` the
+    branch to the fetched tip, **restore** the outbox bytes to the record's
+    path, add, commit, push; a rejected push repeats the loop, at most five
+    times within `--timeout`. The outbox item is marked delivered — and only
+    then removed — after a fetch shows the record's path at the remote tip
+    with the outbox's bytes; a push that still fails is `READ FAIL` / `GATE
+    FAIL … pushed=false` at exit 1 naming the file, which stays in the outbox
+    and is pushed by re-running the same verb, and a kill at any boundary
+    (before add, after commit, after a rejected push, after a landed push and
+    before the confirming fetch) is repaired by the same re-run, which finds
+    the outbox and restarts the loop. Every Git operation on a lane checkout —
+    the CAS loop, the pull and the fold, the fetch of `dry-run` — runs under
+    one **checkout lock**, `<lane>/checkout.lock`, a kernel lock with the
+    shape of rule 1 and the wait of rule 2, held for the whole loop; the
+    state lock of rule 1 protects `state.json` and nothing else. Two writers
+    never touch one path: a record is **one immutable file per submission**,
+    never edited and never replaced, so the reset removes nothing that the
+    outbox does not restore; a reader who records again for the same head
+    writes a second file, a second gate for the same pair is a second file,
+    and the branch's history keeps every earlier one. `run` and `status`
+    **pull** the lane branch (`--ff-only`, bounded by `--timeout`) and then
+    **fold** every record file into `state.json`'s `reads` and `gates` lists
+    under the state lock of rule 1; `dry-run` **fetches** the lane branch
+    under the checkout lock and folds the record files of the fetched tip
+    **in memory**, writing neither `state.json` nor the checkout, so its
+    plan is over a named, refreshed snapshot (`DRY PLAN … lane_tip=<sha12>`)
+    and it still cannot write (see **the verbs**). The lists are the fold
+    and the files are the truth, so a
     record that is in the branch is in the next fold, on every machine, with
-    the sha its reader supplied. `add` and `add-branch` write `state.json`
+    the sha its reader supplied. (Stella, 2026-09-11: after a rejected push
+    the new record was tracked in the local commit, the reset to the
+    competing tip removed it, and the next add failed with `pathspec … did
+    not match any files`; a fixture that preserved and restored the bytes
+    delivered both readers' records.) `add` and `add-branch` write `state.json`
     only: the order of the lane is the coordinator's and is not shared.
     Nothing else in the lane is tracked: `state.json`, `log`, `repo/`, the
     locks, `slots/`, `stop` and every `<step>.log` are in `.gitignore`, which
@@ -440,7 +466,9 @@ that any verb accepts, including the mutating ones, and the cost of that is a
 mode a caller can leave on or off by accident on the one command that merges.
 Here the survey is its own verb with its own name: it performs every read `run`
 performs, prints the whole plan rather than stopping at the first merge, and
-**cannot write**. Nothing in `dry-run`'s code path can reach the mutating
+**cannot write**: its fold is in memory over the lane tip it fetched (rule
+22), and `state.json` and the checkout are byte-identical afterwards. Nothing
+in `dry-run`'s code path can reach the mutating
 helper at all, which is a property a test can pin and a flag never is.
 
 `status`, `dry-run` and `packet` **report** and exit 0 whatever the lane holds. `run` is
@@ -531,10 +559,18 @@ the pass before any entry is read, with `RUN STOPPED base=…`. A `PENDING` base
 (no checks and no gate for its head, which is every base below `main` right
 after a merge) waits, and `RUN NOTE` names the gate run that proves it.
 `STATUS OK` carries the same verdict as `base_state`, so a lane can be read
-without a pass. A gate for the base branch is recorded with `--head` and
-`--base-sha` both the base's own sha and `--merge` that same sha — the base
-merged onto itself is itself — so the record has the shape of rule 18 and
-`RUN BASE gate=green` means exactly that record.
+without a pass. **A gate has one of two kinds, told apart by its shas.** A
+**base gate** is recorded with `--head`, `--base-sha` and `--merge` all the
+base's own sha — the base merged onto itself is itself — so the record has the
+shape of rule 18, and `RUN BASE gate=green` means exactly that record; the
+runner, given three equal shas, fetches that one object and verifies its sha
+is exactly the one named, and **no parent check applies**, because no commit
+is its own parent. An **integration gate** is a record whose three shas
+differ, and for it the runner's parent check of rule 21 is the guard. Any
+other mix — `merge` equal to `base` or to `head` with the third different —
+names no object either kind can validate and is refused by `gate` and by the
+runner naming the two kinds (rule 20). A base gate never satisfies an entry's
+predicate: rule 18 asks for `(oid, base sha)` and `oid` is never the base.
 
 `gate=` on `RUN ENTRY`, `STATUS ENTRY` and `DRY PLAN` is the rule 18 standing
 of the entry's gate records in one word: `merge` is a green record for
@@ -585,7 +621,9 @@ A lane is a directory, named by `--lane`. It holds:
 <lane>/state.json     the ordered entries and the fold of the reads and gates  (untracked)
 <lane>/log            one append-only line per event, UTC-stamped              (untracked)
 <lane>/repo/          this lane's own clone, never a working copy of anybody's  (untracked)
-<lane>/reads/<entry>/<who>-<head>.json                       one read, immutable, tracked and pushed (rule 22)
+<lane>/reads/<entry>/<who>-<head12>-<at>-<rand6>.json         one read, immutable, tracked and pushed (rule 22)
+<lane>/outbox/<at>-<rand6>.json                              a record not yet confirmed at the remote tip (rule 22), untracked
+<lane>/checkout.lock  the checkout lock: one Git operation on this checkout at a time (rule 22)
 <lane>/gates/<entry>/<head12>-<base12>-<at>-<rand6>.json     one gate record, tracked and pushed (rule 22)
 <lane>/gates/<entry>/<head12>-<base12>-<at>-<rand6>.summary  its summary, tracked beside it
 <lane>/gates/<entry>/<head>/<step>.log   one log per gate step, kept past --gc (rule 17), untracked
@@ -713,8 +751,10 @@ anything else            -> NEEDS-READ, waits
 
 **A hold blocks, and nothing outvotes it.** Not three approves, not a green
 gate, not a deadline. A hold is removed by the line that recorded it recording
-an approve for the same head, which replaces that reader's one file for that
-head (rule 22); the tool deletes no record, and the lane branch's history keeps
+an approve for the same head, a second file whose `at` is later (rule 22);
+per `(who, head)` the read condition takes the record with the newest `at`,
+and two with one `at` to the second fold **hold-last**, as rule 18 folds
+red-last; the tool deletes no record, and the lane branch's history keeps
 the hold.
 
 **An approve from the author is not a read.** The prototype counts any recorded
@@ -779,8 +819,10 @@ newer record for the pair already exists.
 second tool (below), and this spec fixes only the edge the lane sees: it takes
 `--head <sha> --base-sha <sha> --merge <sha> --from <path>`, the three shas and
 the clone path `RUN NOTE` prints; it fetches the object `merge` by sha from
-`--from` into one clone per run (rule 8), **refuses if that object's parents are
-not exactly `(base, head)`**, runs the fast lane's steps on it under one of the
+`--from` into one clone per run (rule 8), **refuses, for an integration gate, if
+that object's parents are not exactly `(base, head)`**, and for a base gate
+(the three shas equal, **output grammar**) verifies only that the fetched
+object's sha is the one named, runs the fast lane's steps on it under one of the
 machine's slots with the leg cap (rule 14) and under its own deadline, and
 records the verdict with `nova-merge gate` carrying the same three shas and the
 summary path. The runner never builds a merge of its own: a merge made twice
@@ -1036,7 +1078,7 @@ file whose owner believes a read is required.
     {"pr": 951, "needs_read": "yes",
      "reads": [{"who": "emma", "verdict": "approve", "note": "", "at": "2026-09-11T12:31:07Z",
                 "head": "cbde1fc6ba10c1430f9f90615c70706ea7aaa29e",
-                "file": "reads/951/emma-cbde1fc6ba10c1430f9f90615c70706ea7aaa29e.json"}],
+                "file": "reads/951/emma-cbde1fc6ba10-20260911T123107Z-c4d5e6.json"}],
      "head": "rowan/twin-full-width-lanes",
      "oid": "cbde1fc6ba10c1430f9f90615c70706ea7aaa29e",
      "state": "RED", "last": "2026-09-11T13:17:00Z",
@@ -1063,8 +1105,17 @@ all three are required; a record missing any does not decode (rules 18, 19 and
 21). `reads` and `gates` are the **fold** of the record files in the lane
 branch (rule 22): each carries `file`, the path of the record it came from,
 relative to the lane, and a fold replaces both lists wholesale from the files;
-a record file that does not decode is skipped and named on one `RUN NOTE`, never
-silently dropped and never repaired. The empty lane `init` writes is exactly
+**a record file that does not decode is never skipped**: the fold refuses it,
+`FOLD REFUSED file=<path>: <reason>`, the file is preserved untouched, and the
+entry whose directory holds it is `BLOCKED` for the pass — `MERGE BLOCKED
+entry=<id> reason=malformed_record file=<path>`, exit 1, no publication of
+that entry whatever its other records say, because the unreadable file may be
+the hold or the newer red — and a file whose path names no entry (scope
+indeterminate) stops the pass, `RUN STOPPED reason=malformed_record
+file=<path>`, before any entry is read; the remedy names the file and the
+verb that re-records it. (Stella, 2026-09-11: a malformed HOLD beside valid
+approvals vanished from the decision, and an older green survived an
+unreadable newer red; a printed NOTE does not make that safe.) The empty lane `init` writes is exactly
 this shape with the three lists empty.
 
 **The two entry lists are separate, and a gate carries `pr` or `branch` and
@@ -1330,6 +1381,16 @@ check never seen failing is not a check).
     without `--base-sha` or `--merge`, or with a 12-character one, is refused
     naming the flag, and `gate --base <sha>` is refused naming `--base-sha`; a
     state file with a gate record lacking `base` or `merge` is exit 2.
+    **The two kinds**: a lane with base `rowan/step-2`, not `main`, gated by
+    a record with `--head S --base-sha S --merge S` (S the base's own sha):
+    the fake runner receives three equal shas, fetches S, verifies its sha,
+    applies no parent check, `RUN BASE gate=green`, and the lane's first
+    entry A with a green record `(A, S, M)` where M's parents are `(S, A)`
+    merges; a mutation that applies the parent check to the base gate turns
+    the test red at `RUN BASE`; a record with `--merge` equal to `--base-sha`
+    and a different `--head`, or equal to `--head` and a different
+    `--base-sha`, is refused by `gate` naming the two kinds, and the base
+    gate for S never satisfies A's predicate.
     **Green then red**: a green record for `(B, X+A, M2)` at 13:00 and a red
     one at 13:05 make B `RED` and nothing merges; red then green merges; a
     mutation that picks the newest *green* turns the test red; a green and
@@ -1402,10 +1463,39 @@ check never seen failing is not a check).
     on rejection), the branch holds three record files, the coordinator's
     next pass prints `pulled=3`, `status` shows `reads=2a/0h` and the gate,
     and each fold record's `head` is the sha its reader supplied, byte for
-    byte; a push rejected five times is `READ FAIL … pushed=false` naming the
-    file, the file is committed locally, and re-running the same verb pushes
-    it; `git status` in every lane is clean after every verb; a tripwire on
-    every path opened finds no record file opened for writing twice.
+    byte. **Reject, reset, restore, retry**: against a real bare remote and
+    two clones, `alice` and `bob` each record for `H` from the same tip;
+    the loser's push is rejected, its reset moves to the winner's tip, the
+    outbox restores its exact bytes, the second push lands, and the remote
+    holds both files with the bytes each writer's outbox held, compared
+    byte for byte; a mutation that drops the restore turns the test red
+    with `pathspec … did not match`. **Kill at every boundary**: SIGKILL
+    injected before add, after commit, after the rejected push, and after
+    the landed push but before the confirming fetch; after each, the outbox
+    still holds the item, re-running the same verb delivers it exactly once,
+    and the remote never holds two files for one submission id. A push
+    rejected five times is `READ FAIL … pushed=false` naming the
+    file, the file stays in the outbox, and re-running the same verb pushes
+    it and empties the outbox only after the confirming fetch; `alice`
+    recording twice for `H` yields two files, the newer `at` wins the read
+    condition, and one `at` to the second folds hold-last; `git status` in
+    every lane is clean after every verb; a tripwire on
+    every path opened finds no record file opened for writing twice, and a
+    second tripwire finds every Git operation on a checkout — the loop, the
+    pull, the fold, `dry-run`'s fetch — inside the checkout lock, with
+    `status` and `read` on one checkout never interleaving. **The fold
+    refuses**: a lane branch holding two valid approves for A and one
+    truncated `reads/A/stella-…json`: `FOLD REFUSED file=…`, `MERGE BLOCKED
+    entry=A reason=malformed_record file=…`, the fake remote saw no push,
+    the file is byte-identical afterwards, and a mutation that skips the
+    file and merges A turns the test red; a valid green gate for `(B, X,
+    M)` beside a newer gate file for B that does not decode blocks B the
+    same way; a malformed file at `reads/README` (no entry) is `RUN STOPPED
+    reason=malformed_record` before any entry line. **`dry-run` is a
+    snapshot**: with a record pushed to the remote after the coordinator's
+    last pull, `dry-run` prints a plan that counts it and `lane_tip=` names
+    the fetched tip, `state.json` and the checkout's tracked tree are
+    byte-identical afterwards, and the state lock was never taken.
 23. `TestThePacketIsPointersNotDiff`: a lane with three entries — one read
     by `emma` at H1 and now at H2, one never read, one approved current by
     her — `packet --who emma --all` prints two `PACKET ENTRY` blocks in lane
@@ -1465,10 +1555,13 @@ verb, and tests that pin all three by executing them.
    remote saw was a fast-forward by one commit (demanded tests 4 and 21).
 6a. **`internal/merge/records.go`** — a read or gate record as one file, the
    commit-and-push CAS loop (fetch, reset to the fetched tip, add, commit,
-   push, at most five rounds within `--timeout`), the `--ff-only` pull before
-   a fold, `.gitignore` written by `init`, and the fold that rebuilds `reads`
-   and `gates` from the files. Tests: demanded tests 19 and 22; a record file
-   that does not decode is skipped and named, never repaired.
+   push, at most five rounds within `--timeout`), the outbox and its
+   restore after every reset, the confirming fetch before an item is
+   delivered, the checkout lock, the `--ff-only` pull before a fold,
+   `dry-run`'s in-memory fold over the fetched tip, `.gitignore` written by
+   `init`, and the fold that rebuilds `reads` and `gates` from the files.
+   Tests: demanded tests 19 and 22; a record file that does not decode is
+   `FOLD REFUSED` and blocks its entry, never skipped and never repaired.
 7. **`internal/merge/read.go`** — the read condition: author exclusion, head
    keying to the sha the reader supplied, hold precedence, the stale count,
    the lane-wide totals. Tests: a hold beats three approves; an author approve
@@ -1537,3 +1630,6 @@ reason.
 | ideas #273 | evidence arriving after the belief | already, rules 18 and 19: every record is keyed to the sha it was made for |
 | ideas #357 | reason about a note, never execute | already, the data paragraph at the top |
 | nova-tools #35 | a shared branch keyed by the clock races | already, rule 22: records are immutable files, pushed under a CAS loop, ordered by `at` the tool wrote |
+| Stella, closing read | durable outbox restored after every reset | rule 22: `<lane>/outbox/<submission id>`, restored after each fetch/reset, delivered only after the confirming fetch; one checkout lock; one immutable file per submission (test 22) |
+| Stella, closing read | an unreadable record blocks, never skipped | the state file: `FOLD REFUSED`, `MERGE BLOCKED … reason=malformed_record`, `RUN STOPPED` when the scope is unknown (test 22) |
+| Stella, closing read | a base gate is not an integration gate | output grammar: two kinds by shas; the parent check is the integration gate's only (test 18); `dry-run` folds in memory over a fetched tip (rule 22) |
