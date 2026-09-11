@@ -383,3 +383,45 @@ func TestAPacketIsHandedOverCorrectlyWhileAFlushRuns(t *testing.T) {
 		t.Errorf("every hold recorded is in the packet, got %d\n%s", n, stdout)
 	}
 }
+
+// Read 4b, finding 3 -- the OTHER half of rule 22's state write: A PASS WHOSE OWN VERDICTS
+// COULD NOT BE WRITTEN SAYS SO. The fold's half is pinned above; this is the write after
+// the pass, where the lane's file would otherwise keep the state from before it while the
+// pass printed its verdicts as though they had landed.
+//
+// The lock is taken INSIDE the pass -- the fold has already happened, so the refusal can
+// only be this write -- by a hand at the clone's first Git operation.
+func TestAPassWhoseOwnStateWriteIsRefusedIsNotSilent(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	setupPR(t, l, 951, "feature-a", "a.txt", true)
+	var release func()
+	taken := false
+	l.runner = &hookRunner{inner: merge.Exec{}, before: func(dir string, _ []string) {
+		if taken || dir != filepath.Join(l.lane, merge.RepoDir) {
+			return
+		}
+		taken = true
+		rel, err := merge.Lock(filepath.Join(l.lane, merge.StateLock), time.Second)
+		if err != nil {
+			t.Error(err)
+			return
+		}
+		release = rel
+	}}
+	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once", "--timeout", "1")
+	if release != nil {
+		release()
+	}
+	if !taken {
+		t.Fatal("the hand never reached the clone: this test would have passed by proving nothing")
+	}
+	if exit != 2 {
+		t.Fatalf("a pass whose verdicts could not be written exits 2: got %d\n%s\n%s", exit, stdout, stderr)
+	}
+	// The pass RAN -- which is what tells this apart from the fold's refusal -- and the
+	// refusal is about the write that came after it, with the holder named.
+	contains(t, stdout, "RUN PASS")
+	contains(t, stderr, "RUN REFUSED: this pass ran and its verdicts could not be written to state.json")
+	contains(t, stderr, "pid=")
+}
