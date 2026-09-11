@@ -44,6 +44,9 @@ func Supervise(in SuperviseInput) int {
 	jobDir := in.Worker.JobDir(in.Slot, in.Task)
 	self := os.Getpid()
 
+	CheckPausePoint("before-identify")
+	CheckKillPoint("before-identify")
+
 	// (3) IDENTIFY, before doing anything else. The write lands only if the slot file still
 	// reads reserved with the nonce this supervisor was handed.
 	identity := SlotFile{
@@ -84,9 +87,11 @@ func Supervise(in SuperviseInput) int {
 		PidStarted: identity.PidStarted, Nonce: in.Nonce, Started: Stamp(started),
 	})
 	_ = p.UpdateSlot(in.Slot, in.Nonce, func(sf SlotFile) SlotFile { sf.JobPgid = jobPgid; return sf })
+	CheckKillPoint("supervisor-after-release")
 
 	record := watch(in, cmd, jobDir, jobPgid, started)
 	logFile.Close()
+	CheckKillPoint("between-exit-and-exit-json")
 	return endWith(in, jobDir, started, record)
 }
 
@@ -192,6 +197,7 @@ func abort(in SuperviseInput, jobDir string, cause error) int {
 	_ = WriteJSON(AbortedPath(jobDir), AbortedRecord{
 		Nonce: in.Nonce, Reason: cause.Error(), At: Stamp(in.Now()), Survivors: survivors,
 	})
+	CheckKillPoint("between-aborted-and-exit")
 	fmt.Fprintf(in.Stderr, "SUPERVISE ABORTED slot=%d id=%s: reservation changed\n", in.Slot, in.Task)
 	return 2
 }

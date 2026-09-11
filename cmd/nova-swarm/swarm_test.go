@@ -23,13 +23,14 @@ import (
 
 // bench is one pool, one worker description, one key file and a fake harness on PATH.
 type bench struct {
-	t       *testing.T
-	dir     string
-	pool    string
-	binary  string
-	worker  string
-	keyFile string
-	path    string
+	t        *testing.T
+	dir      string
+	pool     string
+	binary   string
+	worker   string
+	keyFile  string
+	path     string
+	extraEnv []string
 }
 
 const fakeKey = "sk-fake-0123456789-not-a-key"
@@ -114,7 +115,7 @@ func (b *bench) swarm(args ...string) (exit int, stdout, stderr string) {
 	b.t.Helper()
 	cmd := exec.Command(b.binary, args...)
 	cmd.Dir = b.dir
-	cmd.Env = []string{"PATH=" + b.path, "HOME=" + b.dir}
+	cmd.Env = append([]string{"PATH=" + b.path, "HOME=" + b.dir}, b.extraEnv...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	var exitErr *exec.ExitError
