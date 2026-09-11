@@ -332,3 +332,67 @@ func TestACleanReMergeWhosePushIsRefusedStopsTheEntry(t *testing.T) {
 		t.Errorf("the entry's head is %s and nothing landed, so it must still be %s", got, oid)
 	}
 }
+
+// Demanded test 6's last clause, unpinned until read 4b's finding 5: A `PENDING` BASE
+// WAITS AND `RUN NOTE` NAMES THE GATE COMMAND. The other two clauses -- a red base stops,
+// --planned-red proceeds -- have their tests; this one is the base with no evidence for
+// its own head, which is every base below main right after a merge. Nothing merges onto a
+// base nothing has proven, however ready the entry is, and the remedy is a command: the
+// base gate, whose three shas are all the base's own.
+func TestAPendingBaseWaitsAndTheNoteNamesTheGateCommand(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	// A base below main, which is where a base gate belongs.
+	l.git(l.work, "checkout", "-q", "-B", "rowan/step-2", "origin/main")
+	l.git(l.work, "push", "-q", "origin", "HEAD:refs/heads/rowan/step-2")
+	l.git(l.work, "checkout", "-q", "main")
+	l.init("rowan/step-2")
+	oid := l.branch("rowan/wire-probe", "probe.txt", "the probe\n", "a probe")
+	l.host.Branches["rowan/wire-probe"] = oid
+	base := l.git(l.work, "rev-parse", "refs/remotes/origin/rowan/step-2")
+	// NO evidence for the base at all -- no hosted checks, and no base gate.
+	l.host.SetChecks(base, 0, 0)
+	if exit, _, errb := l.run("add-branch", "--lane", l.lane, "--branch", "rowan/wire-probe", "--needs-read"); exit != 0 {
+		t.Fatalf("add-branch: %s", errb)
+	}
+	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once")
+	if exit != 0 {
+		t.Fatalf("exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	m := mergeSHAOf(t, stdout, "rowan/wire-probe")
+	// The entry itself is made ready: its own gate is green and its read is in.
+	if exit, _, errb := l.run("gate", "--lane", l.lane, "--branch", "rowan/wire-probe", "--head", oid,
+		"--base-sha", base, "--merge", m, "--verdict", "green", "--summary", l.summary("probe-pending")); exit != 0 {
+		t.Fatalf("gate: %s", errb)
+	}
+	if exit, _, errb := l.run("read", "--lane", l.lane, "--branch", "rowan/wire-probe", "--who", "emma",
+		"--head", oid, "--verdict", "approve"); exit != 0 {
+		t.Fatalf("read: %s", errb)
+	}
+	exit, stdout, stderr = l.run("run", "--lane", l.lane, "--once")
+	if exit != 0 {
+		t.Fatalf("a pass whose entries are merely waiting is not a failure: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "RUN BASE base=rowan/step-2 head="+merge.Short(base))
+	contains(t, stdout, "gate=- state=PENDING")
+	contains(t, stdout, "state=PENDING")
+	contains(t, stdout, "waiting=1")
+	absent(t, stdout, "MERGE OK")
+	absent(t, stderr, "RUN STOPPED")
+	// A REMEDY IS A COMMAND: the base gate, its three shas all the base's own.
+	contains(t, stdout, "RUN NOTE nova-merge gate --lane "+l.lane+" --branch rowan/step-2 --head "+base+" --base-sha "+base+" --merge "+base+" --verdict green --summary <path>")
+	l.git(l.work, "fetch", "-q", "origin", "rowan/step-2")
+	if got := l.git(l.work, "rev-parse", "FETCH_HEAD"); got != base {
+		t.Errorf("nothing merges onto a base nothing has proven: the base is now %s", got)
+	}
+	// And the command in the note is the one that unblocks it.
+	if exit, _, errb := l.run("gate", "--lane", l.lane, "--branch", "rowan/step-2", "--head", base,
+		"--base-sha", base, "--merge", base, "--verdict", "green", "--summary", l.summary("base-pending")); exit != 0 {
+		t.Fatalf("base gate: %s", errb)
+	}
+	exit, stdout, stderr = l.run("run", "--lane", l.lane, "--once")
+	if exit != 0 {
+		t.Fatalf("exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "MERGE OK entry=rowan/wire-probe")
+}
