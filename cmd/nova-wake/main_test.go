@@ -1282,3 +1282,34 @@ func isDeliveryID(s string) bool {
 	}
 	return true
 }
+
+// Rule 8, verbatim: "A source fails when the bus's `nova-bus` exits other than
+// 0 or times out". Under --refresh the first poll makes TWO calls -- the wait,
+// and then `inbox --open --open-max <carrying>` for the list the window is
+// owed -- and the second one's exit is an exit like any other. A poll that
+// asked for the carried list, was told NO, and then counted the call as read
+// is a first-poll false quiet: the window is owed a list it was never shown and
+// the verdict says nothing could not be read.
+func TestARefreshWhoseCarriedListWasRefusedIsAFailedPoll(t *testing.T) {
+	busDir, _ := fakes(t)
+	// Poll 1 is the wait: it works, and says two notes are carried.
+	write(t, filepath.Join(busDir, "out.1"), "INBOX OPEN carrying=2 heard=0\n")
+	// Poll 2 is the carried list, and nova-bus says NO.
+	write(t, filepath.Join(busDir, "out.2"), "INBOX REFUSED the bus is locked by another line\n")
+	write(t, filepath.Join(busDir, "exit.2"), "3\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+		"--refresh", "--remote", "origin", "--branch", "main")
+
+	if n := countLines(r.stderr, "WAKE POLL bus"); n != 1 {
+		t.Errorf("%d WAKE POLL lines for a carried-list read that exited 3, want 1:\n%s", n, r.all())
+	}
+	if !strings.Contains(r.stderr, "exit=3") {
+		t.Errorf("the failed poll does not name the exit nova-bus gave it:\n%s", r.stderr)
+	}
+	last := lastLine(r.stdout)
+	if !strings.Contains(last, "sources-failing=1") {
+		t.Errorf("the verdict reads as calm over a bus whose carried list was refused: %q", last)
+	}
+}

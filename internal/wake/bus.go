@@ -126,13 +126,24 @@ func (b *Bus) Poll(ctx context.Context, now time.Time) (Result, error) {
 	// program shapes nor a read whose lines anything counted.
 	if b.Refresh && first {
 		if n := carrying(out); n > 0 {
-			open, _, oerr := b.run(ctx, append(b.inboxArgs(), "--open", "--open-max", strconv.Itoa(n))...)
+			open, ocode, oerr := b.run(ctx, append(b.inboxArgs(), "--open", "--open-max", strconv.Itoa(n))...)
 			// Classified BEFORE the poll's own lines: what the window is owed
 			// prints before what is new.
 			b.classify(open, &res)
+			// Rule 8: "A source fails when the bus's nova-bus exits other than
+			// 0 or times out". The carried-list read is a nova-bus call like
+			// any other, and its exit was once dropped on the floor -- so a
+			// first poll that asked for the list the window is OWED, was told
+			// NO, and counted itself read ended as calm while owing that list.
+			// Its lines are still classified, because a failed poll's lines
+			// are relayed and are not news.
 			if oerr != nil {
 				b.classify(out, &res)
 				return res, oerr
+			}
+			if ocode != 0 {
+				b.classify(out, &res)
+				return res, fmt.Errorf("nova-bus inbox --open exit=%d", ocode)
 			}
 		}
 	}
