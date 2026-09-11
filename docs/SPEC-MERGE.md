@@ -250,7 +250,8 @@ the day it was learned.
     the `RUN NOTE`, and nothing else. When the base has not moved since a
     green record (its `base` equals the current base sha), that record **is**
     the predicate and no second gate runs. **The newest record per `(entry,
-    head, base)` wins, whatever its colour**: records are ordered by `at`, a
+    head, base)` wins, whatever its colour**: records are ordered by `at`; two records with one `at` to the
+    second fold with the red last, so **a red never loses a tie**; a
     red recorded after a green makes the entry `RED` with both shas in
     `detail`, and an older green never survives a newer red; a green after a
     red is a re-run that passed and merges. Every gate record carries `base`
@@ -325,7 +326,19 @@ the day it was learned.
     printed when the lease is rejected: **nothing was published**, the
     unpublished object is named, the pass exits 1 and stops, and the next pass
     builds a new integration commit against the moved base and asks for its
-    gate. There is no after-the-fact check because there is nothing to check
+    gate. A push the remote refuses for any reason **other** than the lease —
+    a protected base that admits no direct push, a missing permission, a
+    remote that does not report the ref it compared — is `MERGE BLOCKED
+    entry=… missing=atomic_publication: <the remote's first line>`, exit 1,
+    no merge, the pass stops, and the remedy names the host primitive or the
+    branch setting a person must change; the tool never falls back to `gh pr
+    merge` without a base precondition and never to a plain push, so no
+    backend turns an unsupported atomic publication into a merge. After a
+    lease push lands, the tool reads the base ref back once and prints it on
+    `MERGE OK` as `verified=<sha12>`; a read-back that is not `merge` is
+    `MERGE FAIL … published object not at base`, exit 1 — additional evidence
+    for a person, never the guard, because the guard already ran on the
+    remote. There is no after-the-fact check because there is nothing to check
     after: the tool never publishes an object whose sha is not in a green
     record for `(entry, head, base)` with `merge` equal to it, and it never
     rebuilds or re-merges on the way to the push. (Stella, 2026-09-11: two
@@ -337,7 +350,8 @@ the day it was learned.
     `<lane>/reads/<entry>/<who>-<head>.json` and `gate` writes
     `<lane>/gates/<entry>/<head12>-<base12>-<at>-<rand6>.json` (the summary
     copied beside it as `<same name>.summary`), each holding the whole record
-    and nothing else; the file is then committed and pushed to the lane branch
+    and nothing else — the gate record carries `run=<rand6>`, the same six
+    characters as its filename, so a record quoted from a log names its file; the file is then committed and pushed to the lane branch
     by the tool, in a compare-and-swap loop: fetch, `reset --hard` the branch
     to the fetched tip (the tracked files are records that are never edited,
     so the reset can lose nothing, and the new file is untracked until it is
@@ -359,6 +373,26 @@ the day it was learned.
     `init` writes. (Stella, 2026-09-11: "the tool pushes the state" named no
     place, and a cloned `state.json` plus a local lock defines neither an
     authority nor an immutable verdict.)
+23. **A reader is handed the smallest sufficient packet, and it is pointers,
+    never the diff.** `packet --lane <dir> --who <name> ((--pr <n>|--branch
+    <name>) | --all) [--max <n>]` prints, per entry that needs a read from
+    `<name>` — `needs_read=yes` and no approve by that name for the current
+    `oid`; `--all` walks the lane in order — one bounded block: `PACKET
+    ENTRY entry=<n-or-name> head=<sha12> last_read=<sha12|-> range=<r>
+    holds=<n> gate=<merge|head|stale|-> checks=g<n>/p<n>/r<n> url=<url|->`,
+    then at most `--max` `PACKET HOLD who=<name> head=<sha12>: <note>` lines
+    — the unresolved findings, each a reader's own recorded hold note, with a
+    `PACKET MORE` past the cap — and one `PACKET OK entries=<n> holds=<n>`.
+    `range=` is `<last read sha>..<head>`, the exact commits since the sha
+    this reader last recorded, or `<base>...<head>` when they never have. The
+    tool prints the range and never the diff, the summary path and never the
+    log, so the reader opens exactly what changed and nothing the coordinator
+    retyped. `packet` is derived from the fold and the host, writes nothing
+    and takes no lock. (Stella, 2026-09-11: the smallest sufficient review
+    packet is the diff since my reviewed sha, the unresolved finding ids with
+    their dispositions, and links to the whole; my first pass loaded too much
+    history. The same day the window read 21 review notes to record 21
+    reads, rule 19.)
 
 ## The verbs
 
@@ -372,6 +406,7 @@ nova-merge run        --lane <dir> (--once | --loop <duration> --hours <h>) [--p
 nova-merge status     --lane <dir> [--max <n>] [--reads <entry>]
 nova-merge stop       --lane <dir>
 nova-merge dry-run    --lane <dir> [--max <n>]
+nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>]
 
 every verb takes [--lane <dir>]; every verb that runs git or gh also takes
 [--timeout <seconds>], default 120
@@ -408,7 +443,7 @@ performs, prints the whole plan rather than stopping at the first merge, and
 **cannot write**. Nothing in `dry-run`'s code path can reach the mutating
 helper at all, which is a property a test can pin and a flag never is.
 
-`status` and `dry-run` **report** and exit 0 whatever the lane holds. `run` is
+`status`, `dry-run` and `packet` **report** and exit 0 whatever the lane holds. `run` is
 the verb that acts, and `run`'s exit code is about the pass, not about the lane:
 see **exit codes**.
 
@@ -417,7 +452,7 @@ see **exit codes**.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: a lane created, an entry added, a read or gate recorded, a pass completed with nothing refused |
-| 1 | the verb ran and said **NO**: a merge that could not be landed, a merge that `RACED`, an entry STOPPED, a `run` whose pass ended with at least one BLOCKED entry, an `init` of a lane that exists |
+| 1 | the verb ran and said **NO**: a merge that could not be landed, a merge that `RACED`, a publication the remote refused for a missing capability (`MERGE BLOCKED`), an entry STOPPED, a `run` whose pass ended with at least one BLOCKED entry, an `init` of a lane that exists |
 | 2 | could not run: missing flag, unreadable lane state, a lane directory that is not one, bad invocation, `gh` or `git` absent |
 
 **An entry that is merely waiting is not a failure.** Zero pending checks is
@@ -461,8 +496,9 @@ RUN STOPPED entry=<n-or-name>: <reason>
 RUN BLOCKED entry=<n-or-name> head=<sha12> files=<n>: <the hand command, clone to push>
 RUN REMERGE entry=<n-or-name> base=<branch> result=<clean|blocked> pushed=<true|false> files=<n>
 RUN BUILT entry=<n-or-name> head=<sha12> base=<sha12> merge=<sha12> ref=refs/nova-merge/integration/<entry>/<sha>
-MERGE OK entry=<n-or-name> base=<branch> base_sha=<sha12> head=<sha12> merge=<sha12> gate=<path> admitted=<hosted|gate> read=<who,who|none-required> hosted_red=<names|-> published=<host|push>
+MERGE OK entry=<n-or-name> base=<branch> base_sha=<sha12> head=<sha12> merge=<sha12> gate=<path> admitted=<hosted|gate> read=<who,who|none-required> hosted_red=<names|-> published=<host|push> verified=<sha12>
 MERGE RACED entry=<n-or-name> base=<branch> expected=<sha12> found=<sha12> merge=<sha12>: the base moved after the gate; nothing was published; this pass stops
+MERGE BLOCKED entry=<n-or-name> base=<branch> missing=atomic_publication: <the remote's reason>; nothing was published; this pass stops
 MERGE FAIL entry=<n-or-name>: <reason>
 RUN OK lane=<n> merged=<n> dropped=<n> blocked=<n> waiting=<n>
 RUN MORE kind=<entry> shown=<n> total=<t> nova-merge status --lane <dir> --max 0
@@ -472,6 +508,10 @@ STATUS ENTRY kind=<pr|branch> entry=<n-or-name> head=<sha12> checks=g<n>/p<n>/r<
 STATUS OK prs=<n> branches=<n> base=<branch> base_state=<GREEN|RED|PENDING|PLANNED-RED> ready=<n> blocked=<n> waiting=<n> reads=<n>a/<n>h
 DRY PLAN pos=<k> entry=<n-or-name> admitted=<hosted|gate> gate=<merge|head|stale|-> read=<n>a/<n>h
 DRY OK surveyed=<n> would_merge=<n-or-name|-> stopped=<n> waiting=<n>
+PACKET ENTRY entry=<n-or-name> head=<sha12> last_read=<sha12|-> range=<r> holds=<n> gate=<merge|head|stale|-> checks=g<n>/p<n>/r<n> url=<url|->
+PACKET HOLD who=<name> head=<sha12>: <note>
+PACKET MORE kind=hold shown=<n> total=<t> nova-merge packet --lane <dir> --who <name> --all --max 0
+PACKET OK entries=<n> holds=<n>
 STOP OK lane=<dir>
 ```
 
@@ -707,7 +747,7 @@ pushed at 12:47Z.
 
 The local gate is the fast lane's **exact steps, run on our own hardware**. It
 is not a looser version and it is not a subset. One recorded gate is
-`{entry, head, base, merge, verdict, summary, at, file}` and it is recorded by
+`{entry, head, base, merge, verdict, summary, at, run, file}` and it is recorded by
 `nova-merge gate`, which is the only way a gate enters the lane.
 
 ```
@@ -726,7 +766,8 @@ the runner gated is the object `merge`, whose parents are `base` and `head`;
 the record says all three. **The newest record for `(entry's current oid,
 current base sha)` decides, whatever its colour** (rule 18): green satisfies
 the predicate, red makes the entry `RED` with both shas in `detail`, and an
-older record for the pair is never consulted once a newer one exists. A green
+older record for the pair is never consulted once a newer one exists, and two
+records with one `at` fold red-last (rule 18). A green
 record for the current `oid` against another base is a candidate (`gate=head`);
 a record for any other head is `gate=stale` or nothing, and `STATUS ENTRY` says
 which rather than pretending. A gate may be recorded **before** the entry joins
@@ -1009,7 +1050,7 @@ file whose owner believes a read is required.
   "gates": [
     {"pr": 949, "head": "<sha>", "base": "<sha>", "merge": "<sha>", "verdict": "green",
      "summary": "gates/949/<head12>-<base12>-20260911T130019Z-a1b2c3.summary",
-     "at": "2026-09-11T13:00:19Z",
+     "at": "2026-09-11T13:00:19Z", "run": "a1b2c3",
      "file": "gates/949/<head12>-<base12>-20260911T130019Z-a1b2c3.json"}
   ]
 }
@@ -1291,7 +1332,9 @@ check never seen failing is not a check).
     state file with a gate record lacking `base` or `merge` is exit 2.
     **Green then red**: a green record for `(B, X+A, M2)` at 13:00 and a red
     one at 13:05 make B `RED` and nothing merges; red then green merges; a
-    mutation that picks the newest *green* turns the test red. **The race,
+    mutation that picks the newest *green* turns the test red; a green and
+    a red with one `at` to the second make B `RED`, and a mutation that
+    folds them green-last turns the test red. **The race,
     three ways, and the untested object never lands**: (i) A's record is
     green for `(A, X, M)`, the fake remote moves the base to X+H after the
     pass's last read; the lease `refs/heads/<base>:X` is rejected, `MERGE
@@ -1344,7 +1387,14 @@ check never seen failing is not a check).
     names is `MERGE FAIL` with no push; a source test finds the lease
     spelling at one call site and finds no `gh pr merge` call without a base
     precondition on the fake host that offers one; on the fake host that
-    offers none, `gh pr merge` is never called at all.
+    offers none, `gh pr merge` is never called at all; a fake remote that
+    refuses the push for a protected branch prints `MERGE BLOCKED …
+    missing=atomic_publication` with the remote's line, exit 1, nothing
+    reached the remote, no `gh pr merge` and no plain push followed, and a
+    mutation that retries with a plain push turns the test red; after a
+    landed lease `MERGE OK` carries `verified=M`, and a fake remote that
+    reports a different ref on read-back gives `MERGE FAIL … published
+    object not at base` with the lease already recorded as sent.
 22. `TestEveryVerdictSurvivesTheFold`: two readers on two lane checkouts of
     one branch and a coordinator on a third record, concurrently and from the
     same starting branch, two reads (`--head H1` and `--head H1` by different
@@ -1356,6 +1406,16 @@ check never seen failing is not a check).
     file, the file is committed locally, and re-running the same verb pushes
     it; `git status` in every lane is clean after every verb; a tripwire on
     every path opened finds no record file opened for writing twice.
+23. `TestThePacketIsPointersNotDiff`: a lane with three entries — one read
+    by `emma` at H1 and now at H2, one never read, one approved current by
+    her — `packet --who emma --all` prints two `PACKET ENTRY` blocks in lane
+    order and not the third; the first's `last_read=H1 range=H1..H2`, the
+    second's `last_read=- range=<base>...<head>`; two holds by `stella` on
+    the first print as two `PACKET HOLD` lines with `holds=2`; a fixture
+    diff carrying a distinctive token proves no printed line holds a diff
+    line or a log line; `--max 1` prints one hold and a `PACKET MORE`; the
+    lane's tree is byte-identical afterwards and the state lock was never
+    taken.
 
 ## The work list
 
@@ -1443,6 +1503,37 @@ verb, and tests that pin all three by executing them.
 11. **The gate runner's clone naming** (demanded test 8) lives with the gate
     runner, and this spec only demands it: `gate-<entry>-<run id>`, and a
     clean-up that removes only its own tree.
-12. **`README.md`'s `### First run`** and the `quickstart` verb: `init` a
+12. **`internal/merge/packet.go`** — the reader's packet: entries needing
+    `--who`'s read, `last_read` from the fold, the range, holds as pointers,
+    `--max` through `internal/bounded`, no write and no lock (rule 23).
+    Tests: demanded test 23.
+13. **`README.md`'s `### First run`** and the `quickstart` verb: `init` a
     lane with its repository and base, add one entry, print the status, with
     every path a flag (demanded test 20).
+
+## Ideas folded on 2026-09-11
+
+The table's ideas on coordination spend, and the issues, read against this
+spec on 2026-09-11. `rule n` means the idea is now that rule; `already`
+names the rule that held it before this pass; `not folded` gives the one
+reason.
+
+| source | the idea, in six words | disposition |
+|---|---|---|
+| Stella, spec repairs | later red invalidates an earlier green | already, rule 18; ties fold red-last (this pass) |
+| Stella, spec repairs | publisher conditions on base, else BLOCKED | rule 21: `MERGE BLOCKED missing=atomic_publication`, `verified=` read-back |
+| Stella, spec repairs | gate record names tested tree, run | `merge` sha names the tree; `run=` added (rule 22) |
+| Stella, spec repairs | direct reads need a specified transport | already, rule 22: one immutable file, lane branch, CAS push |
+| Stella, idea 2 | verdict by verb, bus carries findings | already, rule 19 |
+| Stella, idea 4 | smallest sufficient review packet, pointers | rule 23, `packet` |
+| Stella, idea 5 | one structured result, no receipt chatter | already, rule 19 (an approve is a command, no note) |
+| Emma, C3 | batch reviews into one dispatch | rule 23, `packet --all` |
+| Emma, A3 | direct read recording, no transcription | already, rule 19 |
+| Rowan, idea 2 | reads by verb, findings only | already, rule 19 |
+| Rowan, idea 5 | counts by default, lists behind flags | already, rule 12 |
+| Freddy, idea 6 | diff-only context for reviews | rule 23: the range, never the diff itself |
+| Freddy, idea 4; DeepSeek, idea 8 | cache or memoize routine verdicts | not folded: a verdict is a person's per sha (rule 19); a cache would be a verdict nobody gave |
+| DeepSeek, idea 7 | a librarian returning snippets | not folded: a sixth tool, not a merge-lane rule |
+| ideas #273 | evidence arriving after the belief | already, rules 18 and 19: every record is keyed to the sha it was made for |
+| ideas #357 | reason about a note, never execute | already, the data paragraph at the top |
+| nova-tools #35 | a shared branch keyed by the clock races | already, rule 22: records are immutable files, pushed under a CAS loop, ordered by `at` the tool wrote |
