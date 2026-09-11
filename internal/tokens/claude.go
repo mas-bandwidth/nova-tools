@@ -114,10 +114,6 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 	}
 	sort.Strings(files)
 
-	// One entry per id, replaced by every later line for that id: the last line carries
-	// the message's final usage, and that is the one counted.
-	byID := map[string]Message{}
-	var order []string
 	for _, path := range files {
 		s.Stat.Files++
 		f, err := openSource(path)
@@ -149,10 +145,6 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 			}
 			repo := rules.AttributeInputs(toolInputs(line.Message.Content), prev)
 			prev = repo
-			if line.Message.ID == "" {
-				s.Stat.NoID++
-				continue
-			}
 			day, ok := DayOfStamp(line.Timestamp)
 			if !ok {
 				s.unparsed(path, n, "the timestamp is not an RFC 3339 stamp and is not a day this tool can read: "+line.Timestamp)
@@ -166,12 +158,7 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 					}
 				}
 			}
-			if _, seen := byID[line.Message.ID]; seen {
-				s.Stat.Dup++
-			} else {
-				order = append(order, line.Message.ID)
-			}
-			byID[line.Message.ID] = m
+			s.AddMessage(line.Message.ID, m)
 		}
 		scanErr := sc.Err()
 		f.Close()
@@ -183,10 +170,7 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 			s.unreadable(path, fmt.Sprintf("badline=%d: lines that are not JSON; the rest of the file was read", bad))
 		}
 	}
-	for _, id := range order {
-		s.Stream = append(s.Stream, byID[id])
-	}
-	s.Stat.Messages = len(s.Stream)
+	s.Collapse()
 	return s
 }
 

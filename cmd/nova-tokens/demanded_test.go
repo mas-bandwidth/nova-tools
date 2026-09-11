@@ -649,11 +649,18 @@ func TestRule13CheckNamesEveryFindingAndFillsNoDay(t *testing.T) {
 	write(t, filepath.Join(out, "2026-09-08.tsv"), "nova-tokens v1 day=2026-09-08 at=2026-09-11T23:55:02Z build=b sources=x\n"+hdr+row("2026-09-08", "a", "schema", "1"))
 	write(t, filepath.Join(out, "2026-09-10.tsv"), good("2026-09-10"))
 
+	// Rule 13: "the version line carries `turns=` as an integer or `-`". An EMPTY value
+	// and a NEGATIVE one both passed: turns= and turns=-5 were CHECK OK, exit 0.
+	write(t, filepath.Join(out, "2026-09-11.tsv"), "nova-tokens v1 day=2026-09-11 at=2026-09-11T23:55:02Z build=b turns= sources=x\n"+hdr+row("2026-09-11", "a", "schema", "1"))
+	write(t, filepath.Join(out, "2026-09-12.tsv"), "nova-tokens v1 day=2026-09-12 at=2026-09-11T23:55:02Z build=b turns=-5 sources=x\n"+hdr+row("2026-09-12", "a", "schema", "1"))
+
 	r := invoke(t, "check", "--out", out, "--max", "0")
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "CHECK MISSING date=2026-09-09")
+	wantContains(t, r.stderr, "2026-09-11.tsv")
+	wantContains(t, r.stderr, "2026-09-12.tsv")
 	line := lineWith(r.stderr, "CHECK FAIL files=")
-	wantContains(t, line, "bad=8")
+	wantContains(t, line, "bad=10")
 	wantContains(t, line, "missing=1")
 
 	// A clean set, with dashes and a zone, is CHECK OK.
@@ -715,6 +722,13 @@ func TestRule14TheSwarmUsageFilesAreASource(t *testing.T) {
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, swarmHeader[15])
 	wantContains(t, r.stderr, "TOKENS UNPARSED")
+	// TOKENS NOTE is ONE remedy line, and it is the remedy for the kind that failed: a
+	// swarm usage file's header wants SPEC-SWARM's sixteen columns, not a bus body line.
+	note := lineWith(r.stdout, "TOKENS NOTE")
+	wantContains(t, note, "SPEC-SWARM rule 12")
+	if strings.Contains(note, "date<TAB>who<TAB>") {
+		t.Errorf("the remedy for a swarm header refusal is the bus body-line shape: %q", note)
+	}
 }
 
 // ---------------------------------------------------------------- rule 15: five types apart, a dash is not a zero
@@ -1054,6 +1068,44 @@ func TestRule20ReportRefusesAndSupersedes(t *testing.T) {
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "REPORT REFUSED")
 	wantContains(t, r.stderr, "emma-000000000001")
+
+	// Demanded test 20's last clause, which had no test: "a note built from it folds as
+	// the successor of <id> (two sequential `report`s, the second superseding the first,
+	// fold to the second's rows and one SUPERSEDED line)."
+	first := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
+	wantExit(t, first, 0)
+	firstID := "emma-000000000001"
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
+	busNote(t, bus, "emma", "n1.md", firstID, subjectOf(t, first), busDate, first.stdout)
+
+	// The friend folds again -- the transcript grew -- and corrects the day by name.
+	write(t, filepath.Join(tr, "b.jsonl"), msg("m2", "2026-09-11T11:00:00Z", "gemini", map[string]int{"input_tokens": 40}, "/x/schema/a.go")+"\n")
+	second := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr, "--supersedes", firstID)
+	wantExit(t, second, 0)
+	secondID := "emma-000000000002"
+	busNote(t, bus, "emma", "n2.md", secondID, subjectOf(t, second), busDate, second.stdout)
+
+	out := mkdir(t, filepath.Join(dir, "out-seq"))
+	f := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--bus", bus)
+	wantExit(t, f, 0)
+	// The successor is the day: 41, not 1 and not 42.
+	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "gemini\tschema\t41\t")
+	wantContains(t, f.stdout, "TOKENS SUPERSEDED label=bus:emma note="+firstID+" by="+secondID+" day=2026-09-11")
+	if n := strings.Count(f.stdout, "TOKENS SUPERSEDED"); n != 1 {
+		t.Errorf("%d SUPERSEDED lines for two sequential reports, want one", n)
+	}
+	wantContains(t, lineWith(f.stdout, "TOKENS SOURCE"), "superseded=1")
+}
+
+// subjectOf is the subject a `report` says it built, as REPORT OK prints it.
+func subjectOf(t *testing.T, r result) string {
+	t.Helper()
+	line := lineWith(r.stderr, "REPORT OK")
+	i := strings.Index(line, "subject=")
+	if i < 0 {
+		t.Fatalf("no subject= on %q", line)
+	}
+	return line[i+len("subject="):]
 }
 
 // ---------------------------------------------------------------- rule 21: the provider export

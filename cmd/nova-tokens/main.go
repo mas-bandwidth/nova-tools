@@ -654,7 +654,18 @@ func remedy(sources []*tokens.Source, unreadable, unparsed, mixed, conflict, shr
 	case unreadable > 0:
 		return "a declared source could not be read whole (" + firstUnreadableLabel(sources) + "): open those files to this group, or drop the flag -- a declared source is a claim that the report covers it"
 	case unparsed > 0:
-		return "a bus line or note did not parse (" + firstUnparsedNote(sources) + "): a body line is date<TAB>who<TAB>model<TAB>repo<TAB>type<TAB>count, with an optional day_basis=<zone>"
+		// The advice is for the KIND that failed. Every unparsed was a bus line once, and
+		// a swarm usage file refused by its header was told the shape of a bus body line.
+		kind, note := firstUnparsed(sources)
+		switch kind {
+		case tokens.KindSwarm:
+			return "a swarm usage file did not parse (" + note + "): its header is the sixteen columns SPEC-SWARM rule 12 names, in order -- " + strings.Join(tokens.SwarmColumns, ", ")
+		case tokens.KindProvider:
+			return "a line of a billing export did not parse (" + note + "): the parser is the kind in --provider <kind>:<label>=<path>, and a row carries the columns that kind declares"
+		case tokens.KindClaude, tokens.KindOpenCode:
+			return "a message's stamp did not parse (" + note + "): a day comes from the message's own RFC 3339 stamp, and this tool dates nothing by a guess"
+		}
+		return "a bus line or note did not parse (" + note + "): a body line is date<TAB>who<TAB>model<TAB>repo<TAB>type<TAB>count, with an optional day_basis=<zone>"
 	case conflict > 0:
 		return "a lane-day has competing reports (" + firstConflictLabel(sources) + "): one note whose subject carries supersedes=<every tip, sorted> is the replacement snapshot that clears it"
 	case mixed > 0:
@@ -676,13 +687,15 @@ func firstUnreadableLabel(sources []*tokens.Source) string {
 	return "-"
 }
 
-func firstUnparsedNote(sources []*tokens.Source) string {
+// firstUnparsed names the kind of the first source with an unparsed line and what it was
+// reading, so that the one remedy line is the remedy for the thing that failed.
+func firstUnparsed(sources []*tokens.Source) (kind, note string) {
 	for _, s := range sources {
 		if len(s.Unparseds) > 0 {
-			return s.Unparseds[0].Note
+			return s.Kind, s.Unparseds[0].Note
 		}
 	}
-	return "-"
+	return "", "-"
 }
 
 func firstConflictLabel(sources []*tokens.Source) string {

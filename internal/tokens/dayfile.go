@@ -171,9 +171,18 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 			f = append(f, Finding{Line: 1, Reason: "the version line carries no `" + want + "=`; it wants " + Version + " day=… at=… build=… turns=<n or -> sources=…"})
 		}
 	}
-	if d.Turns != "" && d.Turns != Dash {
-		if _, err := strconv.Atoi(d.Turns); err != nil {
+	// Rule 13: "the version line carries `turns=` as an integer or `-`". An EMPTY value is
+	// present but says nothing, and a NEGATIVE one is not a count of messages; both read
+	// clean when the check was only `!= "" && != Dash`.
+	if _, ok := fields["turns"]; ok && d.Turns != Dash {
+		n, err := strconv.Atoi(d.Turns)
+		switch {
+		case d.Turns == "":
+			f = append(f, Finding{Line: 1, Reason: "turns= carries no value; it wants a whole number of messages counted, or `-` when no source counted any"})
+		case err != nil:
 			f = append(f, Finding{Line: 1, Reason: "turns= is neither a whole number nor `-`: " + d.Turns})
+		case n < 0:
+			f = append(f, Finding{Line: 1, Reason: "turns= is negative: " + d.Turns + "; it counts messages, and a count is never below zero"})
 		}
 	}
 	if d.Day != name {

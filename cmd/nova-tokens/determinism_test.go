@@ -1,7 +1,9 @@
 package main
 
 import (
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -31,7 +33,38 @@ func fakeGit(t *testing.T) (logPath string) {
 	return logPath
 }
 
+// reversedHistory makes dir a git repository whose commits land in the order given, using
+// the real git found BEFORE the fake one went on PATH. It runs entirely inside t.TempDir()
+// with no network and no global config: -c flags carry the identity, and the fixture never
+// touches the caller's git.
+func reversedHistory(t *testing.T, git, dir string, files ...string) {
+	t.Helper()
+	if git == "" {
+		t.Skip("no git on PATH; the reversed-history fixture wants one")
+	}
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command(git, append([]string{
+			"-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
+			"-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-C", dir,
+		}, args...)...)
+		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+			"GIT_AUTHOR_DATE=2026-09-11T20:00:00Z", "GIT_COMMITTER_DATE=2026-09-11T20:00:00Z")
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	run("init", "-q")
+	for i, f := range files {
+		run("add", "--", f)
+		run("commit", "-q", "-m", fmt.Sprintf("commit %d: %s", i+1, f))
+	}
+}
+
 func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
+	// The real git, resolved before the fake one goes on PATH: the fixture's history is
+	// built with it, and the tool must still never run git.
+	realGit, _ := exec.LookPath("git")
 	gitLog := fakeGit(t)
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
@@ -66,9 +99,11 @@ func TestNothingAboutTheCheckoutDecidesWhichNoteIsTheDay(t *testing.T) {
 	// An INDEX sorted by path, the way `nova-bus check --rebuild-index` writes it: a
 	// derived catalogue, and never a statement about which number the friend meant.
 	write(t, filepath.Join(bus, "INDEX.md"), "- from-emma/aaa-second.md\n- from-emma/zzz-first.md\n")
-	// And a git history in the checkout, whose commit order is the opposite of the send
-	// order. The tool must not look at it -- or at git at all.
-	mkdir(t, filepath.Join(bus, ".git"))
+	// And a REAL git history in the checkout, whose commit order is the opposite of the
+	// send order: the successor is committed first. Demanded test 6 asks for "the notes'
+	// commit order reversed in a fixture git history"; an empty .git directory was not
+	// one, and nothing about a checkout may decide which note is the day.
+	reversedHistory(t, realGit, bus, "from-emma/aaa-second.md", "from-emma/zzz-first.md")
 
 	after := fold(t, mkdir(t, filepath.Join(dir, "out2")))
 	a := strings.SplitN(before, "\n", 2)[1]

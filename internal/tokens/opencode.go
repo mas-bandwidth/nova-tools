@@ -146,8 +146,6 @@ func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *R
 	})
 
 	prev := map[string]string{}
-	seen := map[string]Message{}
-	var order []string
 	for _, row := range messages {
 		id, session := row["id"], row["session_id"]
 		day, ok := DayOfStamp(row["stamp"])
@@ -164,10 +162,6 @@ func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *R
 		}
 		repo := rules.AttributeInputs(inputs[id], prev[session])
 		prev[session] = repo
-		if id == "" {
-			s.Stat.NoID++
-			continue
-		}
 		m := Message{Day: day, Basis: UTC, Model: row["model"], Repo: repo, Turn: true}
 		for _, c := range messageCounts {
 			cell := strings.TrimSpace(row[c.column])
@@ -180,17 +174,9 @@ func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *R
 			}
 			m.Counts.Set(c.typ, v)
 		}
-		if _, dup := seen[id]; dup {
-			s.Stat.Dup++
-		} else {
-			order = append(order, id)
-		}
-		seen[id] = m
+		s.AddMessage(id, m)
 	}
-	for _, id := range order {
-		s.Stream = append(s.Stream, seen[id])
-	}
-	s.Stat.Messages = len(s.Stream)
+	s.Collapse()
 	return s
 }
 

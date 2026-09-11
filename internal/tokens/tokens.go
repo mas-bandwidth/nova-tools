@@ -319,6 +319,44 @@ type Source struct {
 	Supersededs []Superseded
 	Conflicts   []Conflict
 	Toucheds    []Touched
+
+	// byID and order build Stream through AddMessage: one entry per message id, in
+	// first-seen order.
+	byID  map[string]Message
+	order []string
+}
+
+// AddMessage puts one message into this source's stream, collapsed onto its id.
+//
+// This is rule 4, and it is written ONCE: "A Claude Code transcript repeats a message id
+// on every streamed line; the last line for an id carries the message's final usage, and
+// that is the one counted. Within one source, a second occurrence of an id is dup=<n>,
+// never a second count. A message with no id is counted in noid=<n> and not folded."
+// claude.go and opencode.go each kept their own byID/order/dup loop, and two copies of one
+// rule are two rules (lesson 113).
+func (s *Source) AddMessage(id string, m Message) {
+	if id == "" {
+		s.Stat.NoID++
+		return
+	}
+	if s.byID == nil {
+		s.byID = map[string]Message{}
+	}
+	if _, seen := s.byID[id]; seen {
+		s.Stat.Dup++
+	} else {
+		s.order = append(s.order, id)
+	}
+	s.byID[id] = m
+}
+
+// Collapse lays the collapsed messages into Stream, in first-seen order, and counts them.
+// Every reader that calls AddMessage ends with it.
+func (s *Source) Collapse() {
+	for _, id := range s.order {
+		s.Stream = append(s.Stream, s.byID[id])
+	}
+	s.Stat.Messages = len(s.Stream)
 }
 
 // ReportsList is the comma-joined type names this source reports at all, so a reader of a
