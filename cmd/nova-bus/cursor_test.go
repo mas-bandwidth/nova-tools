@@ -61,6 +61,12 @@ func read(t *testing.T, checkout, path string) string {
 // choice and neither choice may cost a parse. And then once more from the other side: a
 // reply that CLOSES an open entry is also one parse, so closing is driven by the new notes
 // and not by a walk of what is being carried.
+// NOT PARALLEL, and neither is TestHeardSurvivesTheCursor: both assert a DELTA of
+// bus.NoteParses, which is one counter for the whole process. A second test parsing a note
+// beside them would be counted here, and the assertion is an exact number. Every other test
+// in this package owns its own TempDir and its own bus and runs parallel; these two are the
+// price of instrumentation that is process-wide, and they are named here rather than left
+// as an unexplained omission.
 func TestInboxParsesOnlyWhatIsNewSinceTheCursor(t *testing.T) {
 	hermetic(t)
 	checkout, _ := busDir(t)
@@ -209,6 +215,7 @@ func openEntries(t *testing.T, checkout, lane string) int {
 // runs, with the note arriving before the first and being answered after the second: it is
 // listed both times and gone the third.
 func TestOpenListSurvivesTheCursorMovingPastIt(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 
@@ -296,6 +303,7 @@ func TestHeardSurvivesTheCursor(t *testing.T) {
 // effort. A reader told "nothing new" by a broken cursor has been lied to in exactly the
 // way this tool exists to stop.
 func TestACursorThatIsNotAnAncestorIsRefused(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	writeFile(t, checkout, "from-ada/CURSOR", "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef 2026-09-09T12:00:00Z\n")
@@ -328,6 +336,7 @@ func TestACursorThatIsNotAnAncestorIsRefused(t *testing.T) {
 // over notes nobody had read. Exit 2, because a --bus the tool will not work over is a
 // bad invocation and not a bus that failed.
 func TestABusBelowTheRepositoryRootIsRefused(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := filepath.Join(t.TempDir(), "bus.git")
 	if err := os.MkdirAll(bare, 0o755); err != nil {
@@ -376,6 +385,7 @@ func TestABusBelowTheRepositoryRootIsRefused(t *testing.T) {
 // still owed. The cursor carries the count it was written with, so the two states are
 // different and this is a refusal naming --full --advance.
 func TestACursorWhoseOpenListWentMissingIsRefused(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=2")
@@ -417,6 +427,7 @@ func TestACursorWhoseOpenListWentMissingIsRefused(t *testing.T) {
 // is in one of them, whatever route it took. Three dots would have taken the merge base and
 // missed everything on the branch that was merged.
 func TestANoteThatArrivedThroughAMergeIsSeen(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
@@ -462,6 +473,7 @@ func TestANoteThatArrivedThroughAMergeIsSeen(t *testing.T) {
 // send appends to its lane's catalogue in the SAME commit as the note, and check --full
 // agrees with it in both directions.
 func TestSendAppendsToTheIndexAndCheckAgrees(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	r := invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main", "--attempts", "3").
@@ -496,6 +508,7 @@ func TestSendAppendsToTheIndexAndCheckAgrees(t *testing.T) {
 // A catalogue line that DISAGREES with a note fails; a note with no catalogue line only
 // warns, and --rebuild-index writes it.
 func TestCheckFullAgainstTheIndex(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 
@@ -538,6 +551,7 @@ func TestCheckFullAgainstTheIndex(t *testing.T) {
 // check --since checks the change set and nothing else, and finds in it what --full would
 // find. It is the same per-note code with the lookups answered from the catalogue.
 func TestCheckSinceChecksOnlyWhatChanged(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	base := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
@@ -567,6 +581,7 @@ func TestCheckSinceChecksOnlyWhatChanged(t *testing.T) {
 
 // check refuses to guess a baseline, exactly the way every other flag here is refused.
 func TestCheckRefusesToGuessItsBaseline(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	invoke(t, "", "check", "--bus", checkout).mustCode(t, 2).
 		mustContain(t, "stderr", "give one of --full, --as <name> or --since <commit>").
@@ -580,6 +595,7 @@ func TestCheckRefusesToGuessItsBaseline(t *testing.T) {
 // inbox without --advance writes NOTHING. A report that edits the bus without being
 // asked is the surprise this repo does not do.
 func TestInboxWithoutAdvanceWritesNothing(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
@@ -597,6 +613,7 @@ func TestInboxWithoutAdvanceWritesNothing(t *testing.T) {
 // The cursor is on the bus, not on the bench: it is committed under the reader's own
 // identity from the roster and pushed like a receipt.
 func TestTheCursorIsPushedLikeAReceipt(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).
@@ -624,6 +641,7 @@ func TestTheCursorIsPushedLikeAReceipt(t *testing.T) {
 // The lane's state files are not notes and not strays. check --full says so, and inbox
 // does not try to read one as a note.
 func TestLaneStateFilesAreNotStrays(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
@@ -650,6 +668,7 @@ func TestLaneStateFilesAreNotStrays(t *testing.T) {
 // finding the legacy tolerance could not forgive, because a README cannot say when it was
 // written and is not a note whatever it says.
 func TestALanesReadmeIsNotANote(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	writeFile(t, checkout, "from-bo/README.md",
@@ -685,6 +704,7 @@ func TestALanesReadmeIsNotANote(t *testing.T) {
 // beside a counted cursor looks exactly like a healthy reader -- so the file says its own
 // version and this is what happens when it does not.
 func TestAnOpenListFromBeforeV2IsRefusedAndFullAdvanceRepairsIt(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0).mustContain(t, "stdout", "carrying=2")
@@ -723,6 +743,7 @@ func TestAnOpenListFromBeforeV2IsRefusedAndFullAdvanceRepairsIt(t *testing.T) {
 // off the list, which meant no later run ever mentioned it again: a note somebody wrote, on
 // the bus, that its reader is told about once and then never.
 func TestAnUnreadableFileIsCarriedAcrossRuns(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	writeFile(t, checkout, "from-bo/2026-09-07T0009Z-prose.md",
@@ -807,6 +828,7 @@ func appendFile(t *testing.T, root, path, content string) {
 // directory inside a repository about tools, and every verb that reads git refuses a
 // --bus that is not its repository's root.
 func TestTheExampleBusInTestdataIsWhatTheREADMESays(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	root := t.TempDir()
 	copyTree(t, filepath.Join("testdata", "example-bus"), root)
@@ -882,6 +904,7 @@ func copyTree(t *testing.T, from, to string) {
 // match any files`. The cursor must land anyway: a reader with nothing open is the state
 // every reader is trying to get to.
 func TestAFirstAdvanceWithNothingOpen(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	// Ada answers the two the fixture leaves open, so nothing is carried.
@@ -909,6 +932,7 @@ func TestAFirstAdvanceWithNothingOpen(t *testing.T) {
 // And the other direction: a reader who HAD an open list and now has none. The OPEN file
 // is tracked, so its removal must be staged or git brings it straight back.
 func TestAnOpenListThatEmptiesIsRemovedFromTheBus(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
@@ -937,6 +961,7 @@ func TestAnOpenListThatEmptiesIsRemovedFromTheBus(t *testing.T) {
 // counted on one line; the notes in front of it are the inbox. The date goes into the
 // cursor, so the run after it does not have to be told again.
 func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	// Two notes from before the line and one after it, on top of the fixture's two, which
@@ -1016,6 +1041,7 @@ func TestTheSwitchDayLineLeavesTheOldNotesOffTheOpenList(t *testing.T) {
 // and --full --advance can still move the line EARLIER -- which is how every one of those
 // five lines got their notes back.
 func TestASwitchDrawnAtTomorrowsDateHidesTodayAndAnInstantBringsItBack(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	// The afternoon of the switch: one note a minute before it and one a minute after,
@@ -1106,6 +1132,7 @@ func TestASwitchDrawnAtTomorrowsDateHidesTodayAndAnInstantBringsItBack(t *testin
 // same rule check's is, and the refusal names BOTH shapes because a caller who got one
 // wrong wants to be told the other.
 func TestInboxRefusesALegacyDateItCannotRead(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--full", "--legacy-before", "last Tuesday").mustCode(t, 2).
@@ -1143,6 +1170,7 @@ The checkpoint is pushed and the suite passed.
 // all: named on every run, exactly as before, because the tool never hides a new note.
 // `--full` still lists everything, whatever its date.
 func TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	const old, recent = "from-bo/2026-08-15-by-hand.md", "from-bo/2026-09-08-by-hand.md"
@@ -1237,6 +1265,7 @@ func TestUnreadableFilesBehindTheSwitchDayLineAreCountedAndNotListed(t *testing.
 // So the first advance on a lane, over notes older than today, is refused until the reader
 // says which they mean. The refusal names the count and hands them the line to run.
 func TestAFirstAdvanceOverOldNotesIsRefused(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, bare := busDir(t)
 	// The fixture's two notes are dated 2026-09-07 and the clock is 2026-09-09.
@@ -1305,6 +1334,7 @@ func TestAFirstAdvanceOverOldNotesIsRefused(t *testing.T) {
 // never asks again -- it is a question about a FIRST advance, and after it there is a
 // cursor.
 func TestAFirstAdvanceCarriesTheHistoryWhenAsked(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
@@ -1331,6 +1361,7 @@ func TestAFirstAdvanceCarriesTheHistoryWhenAsked(t *testing.T) {
 // bus whose notes are all from today advances with no flag at all, which is what a bus
 // started with this tool looks like forever.
 func TestAFirstAdvanceOnABusWithNoOldNotesNeedsNeither(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	// Take the fixture's two old notes off the bus and leave one note dated today.
@@ -1355,6 +1386,7 @@ func TestAFirstAdvanceOnABusWithNoOldNotesNeedsNeither(t *testing.T) {
 
 // The two answers answer the same question, so giving both says nothing about which.
 func TestTheTwoAnswersToTheFirstAdvanceCannotBothBeGiven(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--carry-history", "--legacy-before", "2026-09-10",
@@ -1374,6 +1406,7 @@ func TestTheTwoAnswersToTheFirstAdvanceCannotBothBeGiven(t *testing.T) {
 // This is the output discipline, over a lane carrying sixty: what a default return prints,
 // what --open prints, what --open-max does to it, and where the large-list line starts.
 func TestALongOpenListIsCountedListedOnAskAndCappedWhenListed(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	for i := 0; i < 60; i++ {
@@ -1425,6 +1458,7 @@ func TestALongOpenListIsCountedListedOnAskAndCappedWhenListed(t *testing.T) {
 // THE LARGE-LIST LINE, AT ITS EDGE. It is a threshold, so the run that matters is the one
 // either side of it: 41 carried says so, 40 does not, and --open-warn moves the line.
 func TestTheLargeListLineFiresPastTheWarnThresholdAndNotAtIt(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	// The fixture leaves Ada carrying 2, so 39 more makes 41 and 38 more makes 40.
@@ -1478,6 +1512,7 @@ func TestTheLargeListLineFiresPastTheWarnThresholdAndNotAtIt(t *testing.T) {
 // And a reader carrying a handful is told nothing about it: the line is about a backlog,
 // and a sentence about two notes on every run is the noise this is about.
 func TestASmallOpenListIsNotCalledLarge(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	invoke(t, "", advance(checkout, "Ada")...).mustCode(t, 0)
@@ -1501,6 +1536,7 @@ func TestASmallOpenListIsNotCalledLarge(t *testing.T) {
 // So the tool says it, on every run, and hands over the whole command. Glenn: "Freddy has
 // difficulty with the nova-bus, I think it should be resolved. Let's be kind."
 func TestAForwardDrawnDateLineSaysSoAndNamesTheCommandThatFixesIt(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	// The bus is busy this afternoon: a note sent after the fixed clock, 12:34:56Z.
@@ -1575,6 +1611,7 @@ func TestAForwardDrawnDateLineSaysSoAndNamesTheCommandThatFixesIt(t *testing.T) 
 // what a run found, so every case here runs over the same bus and differs only in the line
 // the cursor carries.
 func TestTheSwitchDayNoteFiresOnAForwardDateAndNothingElse(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	checkout, _ := busDir(t)
 	const said = "INBOX SWITCH your switch-day line is the date "
@@ -1612,6 +1649,7 @@ func TestTheSwitchDayNoteFiresOnAForwardDateAndNothingElse(t *testing.T) {
 // --legacy-now is sugar for one value and mutually exclusive with the two flags that answer
 // the same question. Both refusals are exit 2, a bad invocation, and both say why.
 func TestLegacyNowCannotBeGivenWithTheOtherAnswers(t *testing.T) {
+	t.Parallel()
 	checkout, _ := busDir(t)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--full", "--legacy-now", "--legacy-before", "2026-09-01").

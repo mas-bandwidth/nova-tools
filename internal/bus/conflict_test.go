@@ -11,6 +11,7 @@ import (
 // not double a line both sides already have. An INDEX and a RECEIPTS are sets of lines
 // whose order is history, so "ours then whatever of theirs is new" is the whole of it.
 func TestUnionLinesKeepsBothSidesAndDoublesNothing(t *testing.T) {
+	t.Parallel()
 	ours := "a\nb\n"
 	theirs := "a\nc\n"
 	if got, want := UnionLines(ours, theirs), "a\nb\nc\n"; got != want {
@@ -38,6 +39,7 @@ func TestUnionLinesKeepsBothSidesAndDoublesNothing(t *testing.T) {
 // again changes nothing. It is APPENDED to a file the bus already had rather than
 // replacing it, because that file belongs to the bus and this tool owns two lines of it.
 func TestEnsureMergeAttributes(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	wrote, err := EnsureMergeAttributes(root)
 	if err != nil {
@@ -96,6 +98,7 @@ func TestEnsureMergeAttributes(t *testing.T) {
 // that was true and unhelpful and nothing said the real one. The state is checked after the
 // attempt, and the refusal carries the recovery that works on the state it found.
 func TestAnAbortThatFailsIsRefusedWithTheRecovery(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	dir, where := conflictedRebase(t)
 
@@ -184,6 +187,7 @@ func conflictedRebase(t *testing.T) (string, string) {
 // out of the code rather than trusted: `git push` alone cannot land a branch that is ahead
 // of a remote which has moved, and that is exactly the state these refusals are about.
 func TestNoRefusalRecommendsABarePush(t *testing.T) {
+	t.Parallel()
 	if !strings.Contains(pullRebaseAdvice, "git pull --rebase && git push") {
 		t.Fatalf("the shared advice is %q, which is not the two commands that land a branch that is behind", pullRebaseAdvice)
 	}

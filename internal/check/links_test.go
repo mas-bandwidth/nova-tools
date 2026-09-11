@@ -1,6 +1,7 @@
 package check
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -221,6 +222,90 @@ func TestLinksFenceRemembersOpeningMarker(t *testing.T) {
 	}
 }
 
+// Issue #30 (fence length): the scanner stored a fixed three-character marker,
+// so a four-backtick fence was closed by the three-backtick fence it was
+// quoting. The quoted example's link then leaked out and was reported — a
+// false FAIL. A fence closes only on a run at least as long as its opener.
+func TestLinksNestedFourBacktickFenceHidesInnerThree(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"a.md": "````\n```\n[fake](missing.md)\n```\n````\n",
+	})
+	_, checked, broken, err := Links(dir)
+	if err != nil {
+		t.Fatalf("Links: %s", brief(err.Error()))
+	}
+	if checked != 0 {
+		t.Errorf("checked = %d, want 0: a link inside a four-backtick fence is illustration", checked)
+	}
+	if len(broken) != 0 {
+		t.Errorf("broken = %s, want none: the nested three-backtick example is not a link", brief(fmt.Sprint(broken)))
+	}
+}
+
+// Issue #30 (fence length): the spurious close above re-opened a fence on the
+// closing four-backtick run; that fence never closed and swallowed a real
+// broken link into LINKS OK with zero links. Recording the opener's length
+// keeps the four-fence closed, so the link below it is checked.
+func TestLinksUnclosedFenceDoesNotSwallowRealBrokenLink(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"a.md": "````\n```\n````\n[real](missing.md)\n",
+	})
+	_, checked, broken, err := Links(dir)
+	if err != nil {
+		t.Fatalf("Links: %s", brief(err.Error()))
+	}
+	if checked != 1 {
+		t.Errorf("checked = %d, want 1: the link below the closed four-fence must be checked", checked)
+	}
+	if len(broken) != 1 || broken[0].Target != "missing.md" {
+		t.Errorf("broken = %s, want the real missing.md reported", brief(fmt.Sprint(broken)))
+	}
+}
+
+// Reviewer (#66, finding 1): the two tests above only exercise a SHORTER run
+// failing to close a LONGER fence, so the ">=" at links.go could be narrowed
+// back to "==" with every test still green. The rule the scanner actually
+// implements is the one SPEC.md states for the shared fenceRE at the corpus
+// check: "an opening delimiter records its character and length, and only a
+// run of the same character, at least as long and carrying nothing after it,
+// closes it." These two pin the halves that were unpinned: a LONGER run does
+// close, and a same-length run carrying text does not.
+func TestLinksLongerRunClosesShorterFence(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"a.md": "```\n[fake](inside.md)\n````\n[real](missing.md)\n",
+	})
+	_, checked, broken, err := Links(dir)
+	if err != nil {
+		t.Fatalf("Links: %s", brief(err.Error()))
+	}
+	if checked != 1 {
+		t.Errorf("checked = %d, want 1: a four-backtick run is at least as long as the three-backtick opener, so it closes it", checked)
+	}
+	if len(broken) != 1 || broken[0].Target != "missing.md" {
+		t.Errorf("broken = %s, want the link below the closed fence reported", brief(fmt.Sprint(broken)))
+	}
+}
+
+func TestLinksSameLengthRunWithTrailingTextDoesNotClose(t *testing.T) {
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"a.md": "```\n[fake](inside.md)\n``` not a closer\n[alsofake](missing.md)\n",
+	})
+	_, checked, broken, err := Links(dir)
+	if err != nil {
+		t.Fatalf("Links: %s", brief(err.Error()))
+	}
+	if checked != 0 {
+		t.Errorf("checked = %d, want 0: a run carrying text after it does not close the fence, so both links stay illustration", checked)
+	}
+	if len(broken) != 0 {
+		t.Errorf("broken = %s, want none: nothing below an unclosed fence is a link", brief(fmt.Sprint(broken)))
+	}
+}
+
 func TestLinksReportsLineNumbers(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.md": "fine\n\n[gone](missing.md)\n"})
@@ -280,6 +365,46 @@ func TestLinksUnreadableFileIsNamedFailureNotRefusal(t *testing.T) {
 		if strings.Contains(b.Reason, "unreadable") && (b.Line != 0 || b.Target != "") {
 			t.Errorf("a whole-file failure carries no line and no target, got %+v", b)
 		}
+	}
+}
+
+// An unlistable nested DIRECTORY -- issue #30's first item, which asked for a
+// NAMED failure with the walk continuing. SPEC.md says the opposite, in the
+// paragraph that governs this exact case: "Refuses (exit 2) only when --dir is
+// missing, unresolvable, or does not resolve to a directory, or a directory in
+// the walk cannot be listed ... A walk error stops the run without reporting
+// partial findings." The unreadable-FILE rule above (named failure, walk
+// continues) is a different case. So the refusal is the specified behaviour and
+// this test pins it, including the two halves a caller can observe: the
+// directory is named in the error, and the finding found before it is NOT
+// reported. Whether the spec should change is left open on #30.
+func TestLinksUnlistableDirIsARefusalNotAPartialReport(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
+	}
+	dir := t.TempDir()
+	writeTree(t, dir, map[string]string{
+		"a.md":             "[gone](missing.md)",
+		"locked/inside.md": "text",
+	})
+	locked := filepath.Join(dir, "locked")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	mdFiles, checked, broken, err := Links(dir)
+	if err == nil {
+		t.Fatalf("want a refusal for an unlistable directory; got mdFiles=%d checked=%d broken=%d", mdFiles, checked, len(broken))
+	}
+	if !strings.Contains(err.Error(), "locked") {
+		t.Errorf("error does not name the directory: %s", brief(err.Error()))
+	}
+	if mdFiles != 0 || checked != 0 || len(broken) != 0 {
+		t.Errorf("a refusal must report nothing; got mdFiles=%d checked=%d broken=%d", mdFiles, checked, len(broken))
 	}
 }
 

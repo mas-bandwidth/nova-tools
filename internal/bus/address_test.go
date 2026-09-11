@@ -8,6 +8,7 @@ import (
 // The tolerances are enumerated in address.go and in SPEC.md. Every one of them is pinned
 // here, and so is the refusal, because a matcher that accepts everything is not a check.
 func TestResolveListToleratesTheShapesTheBusActuallyWrites(t *testing.T) {
+	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -44,6 +45,7 @@ func TestResolveListToleratesTheShapesTheBusActuallyWrites(t *testing.T) {
 }
 
 func TestResolveListRefusesAMisspelling(t *testing.T) {
+	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +61,7 @@ func TestResolveListRefusesAMisspelling(t *testing.T) {
 // The prefix rule takes the LONGEST known name, so a roster holding both "Bo" and
 // "Bo Quill" does not resolve "Bo Quill Two" to the shorter one.
 func TestLongestKnownNameWins(t *testing.T) {
+	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -71,6 +74,7 @@ func TestLongestKnownNameWins(t *testing.T) {
 
 // A From line names exactly one sender. Two names is not a sender.
 func TestResolveOne(t *testing.T) {
+	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -95,6 +99,7 @@ func TestResolveOne(t *testing.T) {
 // silent wrong-reader failure this whole file exists to prevent, and it is pinned here in
 // every spelling the bus uses.
 func TestAndIsASeparatorNotAQualifier(t *testing.T) {
+	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +137,7 @@ func TestAndIsASeparatorNotAQualifier(t *testing.T) {
 // resolved to the first. Whatever "Ada Bo" is, it is not a note to Ada, and a tool
 // that picked one of the two would be guessing about a reader.
 func TestAKnownNameFollowedByAKnownNameIsRefused(t *testing.T) {
+	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)

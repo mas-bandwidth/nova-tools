@@ -14,6 +14,7 @@ import (
 // version would pass over a line broken in two, which is the failure this verb's own
 // escaping exists to prevent.
 func TestVersionLineShape(t *testing.T) {
+	t.Parallel()
 	var out, errOut bytes.Buffer
 	if code := cmdVersion(nil, &out, &errOut); code != 0 {
 		t.Fatalf("exit %d, want 0\nstderr: %s", code, errOut.String())
@@ -69,6 +70,7 @@ func TestVersionLineHoldsWhateverTheStampContains(t *testing.T) {
 }
 
 func TestVersionRefusesFlagsAndArguments(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{{"--short"}, {"extra"}, {"--bus", "."}} {
 		var out, errOut bytes.Buffer
 		if code := cmdVersion(args, &out, &errOut); code != 2 {
@@ -86,6 +88,7 @@ func TestVersionRefusesFlagsAndArguments(t *testing.T) {
 // The order in version.go's header, one case per rank, because an order asserted only by
 // the build the test happens to run under is asserted by one case out of four.
 func TestVersionResolvesInOrder(t *testing.T) {
+	t.Parallel()
 	installed := &debug.BuildInfo{Main: debug.Module{Version: "v1.4.0"}}
 	built := func(settings ...debug.BuildSetting) *debug.BuildInfo {
 		return &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}, Settings: settings}
@@ -127,6 +130,7 @@ func TestVersionResolvesInOrder(t *testing.T) {
 // everyone and stops being read. The skip is keyed on the exact unknown-subcommand
 // refusal, so any other breakage is a failure rather than a skip.
 func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
+	t.Parallel()
 	for _, verb := range []string{"version", "--version"} {
 		r := invoke(t, "", verb)
 		if r.code == 2 && strings.Contains(r.stderr, "unknown subcommand") {
