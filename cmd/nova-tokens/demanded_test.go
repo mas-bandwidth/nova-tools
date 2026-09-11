@@ -298,7 +298,7 @@ func TestRule6SupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 		wantExit(t, r, 1)
 		wantContains(t, r.stderr, "TOKENS CONFLICT label=bus:emma day=2026-09-11")
 		wantContains(t, r.stderr, "supersedes=")
-		wantContains(t, r.stdout, "conflict=1")
+		wantContains(t, r.stderr, "conflict=1")
 		if got := read(t, filepath.Join(out, "2026-09-11.tsv")); got != before {
 			t.Errorf("the day file changed under a conflict:\nbefore:\n%s\nafter:\n%s", before, got)
 		}
@@ -316,8 +316,13 @@ func TestRule6SupersedesOrdersTwoNotesAndNothingElseDoes(t *testing.T) {
 		r = invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
 		wantExit(t, r, 0)
 		wantContains(t, r.stdout, "conflict=0")
-		if n := strings.Count(r.stdout, "TOKENS SUPERSEDED"); n != 2 {
-			t.Errorf("%d SUPERSEDED lines naming the tips, want 2:\n%s", n, r.stdout)
+		// Three: the two tips the snapshot named, and the note the first correction
+		// had already superseded. Every predecessor of a valid successor is one line.
+		if n := strings.Count(r.stdout, "TOKENS SUPERSEDED"); n != 3 {
+			t.Errorf("%d SUPERSEDED lines, want 3 (the two tips and the note already superseded):\n%s", n, r.stdout)
+		}
+		for _, tip := range []string{"emma-000000000002", "emma-000000000003"} {
+			wantContains(t, r.stdout, "note="+tip+" by=emma-000000000004")
 		}
 		wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "\t900\t")
 	})
@@ -947,13 +952,13 @@ func TestRule21AProviderExportIsUnattributedAndNeverSplit(t *testing.T) {
 	g := write(t, filepath.Join(dir, "google.csv"), strings.Join([]string{
 		"timestamp,model,input_tokens,output_tokens",
 		"2026-09-11T20:30:00-07:00,gemini-2.5-pro,100,10",
-		"2026-09-11T17:30:00-07:00,gemini-2.5-pro,200,20",
+		"2026-09-11T10:30:00-07:00,gemini-2.5-pro,200,20",
 		"",
 	}, "\n"))
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--provider", "google="+g)
 	wantExit(t, r, 0)
-	wantContains(t, read(t, filepath.Join(out, "2026-09-12.tsv")), "gemini-2.5-pro\tunattributed\t100\t10\t-\t-\t-\t0\tutc\tgoogle")
-	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "gemini-2.5-pro\tunattributed\t200\t20\t-\t-\t-\t0\tutc\tgoogle")
+	wantContains(t, read(t, filepath.Join(out, "2026-09-12.tsv")), "gemini-2.5-pro\tunattributed\t100\t10\t-\t-\t-\t0\tutc\tprovider:google")
+	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "gemini-2.5-pro\tunattributed\t200\t20\t-\t-\t-\t0\tutc\tprovider:google")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "reports=input,output")
 
 	// xAI: per-day totals in a declared zone.
@@ -966,7 +971,7 @@ func TestRule21AProviderExportIsUnattributedAndNeverSplit(t *testing.T) {
 	}, "\n"))
 	r = invoke(t, "fold", "--out", out2, "--all", "--repos", repos, "--provider", "xai="+x)
 	wantExit(t, r, 0)
-	wantContains(t, read(t, filepath.Join(out2, "2026-09-11.tsv")), "grok-4\tunattributed\t9912340\t301122\t-\t-\t55\t0\tAmerica/Los_Angeles\txai")
+	wantContains(t, read(t, filepath.Join(out2, "2026-09-11.tsv")), "grok-4\tunattributed\t9912340\t301122\t-\t-\t55\t0\tAmerica/Los_Angeles\tprovider:xai")
 	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "day_basis=America/Los_Angeles")
 	wantContains(t, lineWith(r.stdout, "TOKENS DAY"), "nonutc=1")
 	s := invoke(t, "sum", "--out", out2, "--month", "2026-09")
@@ -996,7 +1001,7 @@ func TestRule17AMixedRowIsRefused(t *testing.T) {
 	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos, "--provider", "google="+g, "--provider", "xai="+x)
 	wantExit(t, r, 1)
 	wantContains(t, r.stderr, "TOKENS MIXED date=2026-09-11 model=m repo=unattributed")
-	wantContains(t, r.stdout, "mixed=1")
+	wantContains(t, r.stderr, "mixed=1")
 	if _, err := os.Stat(filepath.Join(out, "2026-09-11.tsv")); err == nil {
 		t.Error("a mixed row was written")
 	}
