@@ -134,17 +134,22 @@ jobs:
           # symbol is missing or renamed, so a release could otherwise carry binaries that
           # answer `devel` while the release page says v1.2.3 -- and the one question this
           # verb exists to answer is which build somebody is running.
-          bin="dist/nova-bus_${TAG}_linux_amd64"
-          set +e; out=$("$bin" version 2>&1); rc=$?; set -e
-          if [ "$rc" -ne 0 ]; then
-            echo "\`nova-bus version\` exited $rc: $out"
-            echo "if this says 'unknown subcommand', the verb is not wired into main.go's dispatch yet"
-            exit 1
-          fi
-          case "$out" in
-            "nova-bus $TAG linux/amd64 go"*) echo "ok: $out" ;;
-            *) echo "want 'nova-bus $TAG linux/amd64 go...', got: $out"; exit 1 ;;
-          esac
+          # Every tool that HAS the verb is asserted, not one of them: a stamp read by one
+          # binary says nothing about the others built by the same loop above.
+          for name in nova-bus nova-board; do
+            bin="dist/${name}_${TAG}_linux_amd64"
+            [ -x "$bin" ] || { echo "$name is not in the shipped set"; exit 1; }
+            set +e; out=$("$bin" version 2>&1); rc=$?; set -e
+            if [ "$rc" -ne 0 ]; then
+              echo "\`$name version\` exited $rc: $out"
+              echo "if this says 'unknown subcommand' or 'unknown verb', the verb is not wired into main.go's dispatch yet"
+              exit 1
+            fi
+            case "$out" in
+              "$name $TAG linux/amd64 go"*) echo "ok: $out" ;;
+              *) echo "want '$name $TAG linux/amd64 go...', got: $out"; exit 1 ;;
+            esac
+          done
 
       - name: SHA256SUMS over the whole shipped set
         shell: bash

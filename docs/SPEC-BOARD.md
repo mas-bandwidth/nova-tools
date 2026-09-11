@@ -51,15 +51,25 @@ protected.
 ## The verbs
 
 ```
-nova-board list   (--issue <owner/repo>#<n> | --dir <path>) --stale <duration> [--list] [--open] [--owner <name>] [--max <n>]
-nova-board add    (--issue ... | --dir ...) --as <name> --text <text> --by <duration|stamp> --default <text>
+nova-board list   (--issue <owner/repo>#<n> --gh-timeout <seconds> | --dir <path>) --stale <duration>
+                  [--list] [--open] [--owner <name>] [--max <n>]
+nova-board add    (--issue ... --gh-timeout <seconds> | --dir ...) --as <name> --text <text> --by <duration|stamp> --default <text>
                   [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>] [--id <thirty-two hex>]
-nova-board take   (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
-nova-board close  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
-nova-board check  (--issue ... | --dir ...) --words <text> [--max <n>] [--all]
-nova-board quickstart (--issue ... | --dir ...) --stale <duration>
+nova-board take   (--issue ... --gh-timeout <seconds> | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
+nova-board close  (--issue ... --gh-timeout <seconds> | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
+nova-board check  (--issue ... --gh-timeout <seconds> | --dir ...) --words <text> [--max <n>] [--all]
+nova-board quickstart (--issue ... --gh-timeout <seconds> | --dir ...) --stale <duration>
 nova-board help
 ```
+
+**`--gh-timeout <seconds>` is required under `--issue`** and is not read under
+`--dir`. It is how long one `gh` call may take, and it is a **duration**, so rule 8
+applies to it exactly as it applies to `--stale`: a missing one is exit 2 with one
+line naming the flag, what it wants, and `run: nova-board help`. It had a default
+of 60 in an earlier draft and lost it for the same reason `--stale` lost its 10m —
+a subprocess budget nobody chose is a tool that hangs for a minute a reader never
+agreed to. A value that was given and will not do (`--gh-timeout 0`) is a *malformed*
+flag and says so, never `is required`.
 
 **Exactly one backend per invocation**, named. Neither `--issue` nor `--dir` is
 exit 2 and `refusing to guess`; both together is exit 2 as well, because a board
@@ -330,8 +340,8 @@ already on the board, do not file it**. So the rule every reader and fixer follo
 is one line of shell:
 
 ```sh
-nova-board check --issue mas-bandwidth/schema#876 --words "windows runner skips" || { [ $? -eq 1 ] && exit 0; exit 2; }
-nova-board add   --issue mas-bandwidth/schema#876 --as rowan --text "the Windows runner skips three steps" \
+nova-board check --issue mas-bandwidth/schema#876 --gh-timeout 60 --words "windows runner skips" || { [ $? -eq 1 ] && exit 0; exit 2; }
+nova-board add   --issue mas-bandwidth/schema#876 --gh-timeout 60 --as rowan --text "the Windows runner skips three steps" \
                  --by 4h --default "rowan files it on the schema board as a known gap"
 ```
 
@@ -366,7 +376,8 @@ BOARD MORE kind=<card|line|leg> shown=<n> total=<t> and <t-n> more; <remedy>
 BOARD NOTE <something true about this board that is not a card>
 BOARD FAIL <id or source>: <reason>
 BOARD REFUSED: <reason>
-ADD OK id=<id> owner=<name> at=<stamp> backend=<issue|file> durable=<true|false> existed=<true|false>
+ADD OK id=<id> owner=<name> at=<stamp> by=<stamp> backend=<issue|dir> durable=<true|false> existed=<true|false>
+ADD NOTE <something true about this filing that is not a refusal>
 ADD REFUSED: <reason>
 TAKE OK id=<id> owner=<name> at=<stamp> previous=<name|-> override=<true|false>
 TAKE REFUSED: <reason>
@@ -374,7 +385,9 @@ CLOSE OK id=<id> how=<closed|landed|probed> where=<repo#n|path|-> at=<stamp> own
 CLOSE REFUSED: <reason>
 CHECK HIT id=<id> state=<OPEN|CLOSED> owner=<name|->: <text>
 CHECK OK matched=<n> cards=<n> scanned=<OPEN|ALL> words=<n>
-CHECK REFUSED: <reason>
+QUICKSTART OK backend=<issue|dir> source=<where> stale=<d>: <what the two lines below are>
+QUICKSTART LINE n=<n> what=<check|add>: "<a line meant to be pasted, quoted as nova-bus names quotes>"
+QUICKSTART NOTE <something a first run needs said in words>
 ```
 
 `OK` lines and the informational tokens go to stdout; `FAIL` lines and refusals go
@@ -414,6 +427,15 @@ stemming, no synonyms, no ranking, no regular expressions — a filer who gets a
 surprising answer can see why by reading the card, and `--words` with one common
 word is a filer's mistake the output can name (`BOARD NOTE` says when one word
 matched more than half the board).
+
+**A query that matched exits 1 even when every one of its words is that common.**
+The tool's most important sentence has no exception in it: a broad query is not one
+of exit 2's causes — a missing or malformed flag, no backend or two, an unreadable
+board, a card file without its version line, an id that names no card — and a run
+that printed hits and counts plainly ran. What a match carried only by common words
+earns is a second `BOARD NOTE`, on stdout beside the counts, saying that its hits
+are about the board's prose rather than about the filer's finding; the verdict is a
+fact and what it is worth is the filer's judgment.
 
 `check` scans **open** cards by default and open plus closed under `--all`. It
 prints one `CHECK HIT` per match, capped at `--max` with a `BOARD MORE` line, and
@@ -668,7 +690,11 @@ Each is proven able to fail by a mutation before it is trusted.
    `stale=true`, counted on `BOARD OK` and on its owner's line, still listed
    under `--open`; one second under `--stale` is not stale; `close` without
    `--stale` is exit 2 naming it; the example pair under **Exit codes** is run
-   verbatim against a fresh board and files one card; against a card taken by
+   against a fresh board and files one card — with `--dir` in place of the
+   example's `--issue`, because that issue is a real thread and no test of this
+   tool reaches the network; the `--issue` shape of the pair, `--gh-timeout` and
+   all, is run against the recorded `gh` in
+   `TestQuickstartUnderIssuePrintsARunnablePair`; against a card taken by
    another line one second ago, `close --stale 10m` by a second line is
    `CLOSE REFUSED` exit 1 and the same with `--anyway` appends `override=true`;
    against a take eleven minutes old it closes without `--anyway` and appends

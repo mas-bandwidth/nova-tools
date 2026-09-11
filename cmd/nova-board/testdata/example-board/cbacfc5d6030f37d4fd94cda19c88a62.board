@@ -1,0 +1,3 @@
+BOARD v1
+card cbacfc5d6030f37d4fd94cda19c88a62 as=rowan at=2026-09-10T11:00:00Z override=false hash=af4140f3ce00 owner=rowan by=2126-01-01T00:00:00Z default=rowan\x20probes\x20it\x20himself thing=every-field leg=go: fixed tables: the Go leg writes every field
+probed cbacfc5d6030f37d4fd94cda19c88a62 ev=a261666464b7 after=cbacfc5d6030f37d4fd94cda19c88a62 as=rowan at=2026-09-10T11:00:00Z override=false: ./reports/go-leg-probe.txt
