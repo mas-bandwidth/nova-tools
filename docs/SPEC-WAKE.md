@@ -30,6 +30,7 @@ Both of these were paid for in one day, by one window, in Fable turns.
 | what happened | what it cost | the rule it bought |
 |---|---|---|
 | A window ran a five-minute sleep tick to find out whether anything had moved. Most ticks found nothing. | Every tick was a model turn on the most expensive model in the fleet, spent learning that the world was exactly as it had been left. The turns were gone and the window had not coordinated anything with them. | **A watcher blocks; it does not tick.** One call, one return, one turn per change. The clock lives inside the tool, where a poll costs a subprocess and not a turn. |
+| A harness `/loop` fired a whole model every minute as a heartbeat. First fire: 53 tool calls and 165 seconds to see a note already answered; second: 58 tool calls on an empty inbox (Johnny, 2026-09-11, on the Grok harness). | Every empty minute was a load: a full context re-read to learn that nothing had arrived. | **An in-session poll is not a wake.** A harness interval that runs a model — a `/loop`, a scheduler prompt, a heartbeat — is the five-minute sleep by another name; `watch` is the blocking call inside a turn, `serve` is the process outside one, and there is no third shape. Empty minutes cost zero tokens (rule 10). |
 | The state for one watched entry was stored as a **tab-joined** string whose last field was often empty. Reloading it dropped the trailing empty field, so the reloaded value never equalled the freshly computed one. | Every poll reported a change. The watcher woke the window every interval, forever, with nothing to say — a false wake is worse than a missed one, because the window learns to stop reading. | **A state value round-trips or it is not state.** The separator may not be a character the reader can eat, the comparison is byte-for-byte over the stored form, and a test writes state, reloads it, and asserts a second identical poll reports **no change**. |
 
 A third failure was paid the same day and is in **The races** below, because it is
@@ -51,18 +52,25 @@ test named):
 
 ```
 nova-wake watch --state <file> --max <duration> --on-deadline <word> --interval <duration> [--max-lines <n>] [--baseline]
-      [--bus <dir> --as <name> --receipt-max-words <n> [--advance-cursor --remote <name> --branch <name>]]
+      [--bus <dir> --as <name> --receipt-max-words <n> [--refresh --remote <name> --branch <name>] [--advance-cursor --remote <name> --branch <name>]]
       [--line <name> ... [--offline-after <duration>]]
       [--entry <repo>#<n> ... --entry-interval <duration>] [--final-only] [--gh-timeout <seconds>]
       [--reports <dir> ...]
-nova-wake serve --bus <dir> --as <name> --on-note <command> --interval <duration> --state <file> --hours <h> [--receipt --remote <name> --branch <name>] [--git-timeout <seconds>]
+nova-wake serve --bus <dir> --as <name> --on-note <command> --interval <duration> --state <file> --hours <h> [--receipt --remote <name> --branch <name>] [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
+nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id>
 nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
 nova-wake help
 ```
 
-One verb that watches, one that shows a first run, and `help`. There is no daemon,
-no `--detach`, no background mode and no second binary: the whole point is a call
-that a harness is already waiting on.
+One verb that watches, one that serves, one that shows a first run, and `help`.
+The two shapes are exactly two: `watch` is a **blocking tool call** inside a
+turn the session is already spending, and `serve` is a **process outside any
+session** that starts a turn only when a note has landed (rule 10). There is no
+third: `watch` has no `--detach` and no background mode, and an in-session
+poll — a harness `/loop`, a scheduler prompt, a heartbeat that runs a model on
+an interval — is not a wake and is not `serve`; it is the five-minute sleep of
+the first lesson, a load per tick, and this tool offers no verb for it (Johnny,
+2026-09-11: 53 tool calls to learn nothing).
 
 **At least one source, named.** A `watch` with no `--bus`, no `--entry` and no
 `--reports` is exit 2 and `refusing to guess`: a watcher with nothing to watch is
@@ -101,7 +109,8 @@ all under a timeout, all one at a time. `git` is started only against the bus
 checkout, read-only: for `--line` (rule 2 below) and for the checkout's head,
 which is the freshness the `WAKE SOURCE bus` line shows (**How the checkout
 receives mail**). `nova-bus` is started once before the opening line as
-`nova-bus version`; once per bus poll as `inbox` without `--advance`; a second
+`nova-bus version`; once per bus poll as `inbox` without `--advance`, or as
+`wait` without `--advance` under `--refresh`; a second
 time on a poll that advances, as `inbox --advance`; and once, as `inbox
 --open`, at the start of a call that finds an advance interrupted (**The bus
 inbox**). It opens no socket
@@ -156,11 +165,12 @@ WAKE NOTE <something true about this run that is not a change>
 WAKE POLL <source>: <reason one poll failed, which was not fatal>
 WAKE MORE kind=<bus|entry|report> shown=<n> total=<t> n=<k> <remedy>
 WAKE REFUSED: <reason>
-WAKE FIRED id=<id> rc=<n|-> redelivered=<0|1>[: <reason>]
-WAKE SERVE fired=<n> redelivered=<n> abandoned=<n> queued=<n> idle=<duration>
+WAKE FIRED ids=<n> first=<id> rc=<n> redelivered=<0|1>
+WAKE UNCERTAIN id=<id> attempt=<n>: dispatch interrupted; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> runs it again
+WAKE SERVE fired=<n> notes=<n> redelivered=<n> uncertain=<n> queued=<n> cc=<n> max_wait=<d> idle=<duration>
 ```
 
-The last two are `serve`'s (rule 10); everything above them is `watch`'s.
+The last three are `serve`'s (rule 10); everything above them is `watch`'s.
 
 `WAKE CHANGE`, `WAKE QUIET` and `WAKE BROKEN` are the **last** line and the three
 possible verdicts, and `pending=<n>` on each of the first two is the length of
@@ -288,7 +298,11 @@ Therefore:
      caps the listed `OPEN` at `--open-max` (default 20) and a fixed number
      would recover a fixed number — appends every listed note not marked
      printed to the queue, writes the state, clears the marker and says `WAKE
-     NOTE bus advance was interrupted; recovered <k> notes from OPEN`. The
+     NOTE bus advance was interrupted; recovered <k> notes from OPEN`. When
+     the `--open` read lists fewer than `carrying=` — the checkout moved
+     between the two reads — it is run once more with the new count; still
+     short, the marker stays, nothing advances, and the call says `WAKE NOTE
+     bus recovery incomplete: listed=<k> carrying=<n>; retried next call`. The
      recovery is complete and not paginated: `--open-max` takes any positive
      number, measured to 100000, and `n` is the whole carried list.
 
@@ -300,6 +314,25 @@ Therefore:
 - A run **without** `--advance-cursor` consumes nothing and fetches nothing
   (**How the checkout receives mail**). A note it prints is marked printed and
   wakes once; the default is the one that cannot lose mail.
+- **`--refresh` fetches without moving anything.** With `--refresh --remote
+  <name> --branch <name>`, each bus poll is `nova-bus wait --bus <dir> --as
+  <name> --receipt-max-words <n> --timeout <t> --remote <name> --branch
+  <name>` with **no** `--advance`, where `<t>` is the time to the earliest due
+  source, at most `--interval`: `wait` takes the checkout lock, fetches,
+  fast-forwards, and returns the moment the inbox would list something new or
+  at `<t>` (SPEC.md, **wait**), and its lines are classified exactly as
+  `inbox`'s, because the two verbs share one listing. So new mail reaches a
+  non-advancing watcher within one poll, no cursor moves, nothing is consumed,
+  and the carried list is then read whole with `inbox --open --open-max
+  <carrying>` once per run on the first poll, so a cold watcher lists what it
+  is owed before what is new. `--refresh` and `--advance-cursor` together are
+  exit 2: one fetch per poll, never two.
+- **`--advance-cursor` is specified here and is not in the first build.** Work
+  list item 3a ships it after item 3 is read and test 11 is green against the
+  pinned binary; until then the flag is `WAKE REFUSED: --advance-cursor is not
+  in this build; use --refresh`, exit 2. Advancement is an acknowledgement
+  optimisation and not a prerequisite for delivery (Stella and Johnny,
+  2026-09-11), and a v1 that cannot move a cursor cannot lose a note.
 
 **The bus is the exception to the cold-start rule.** See **The cold-start rule**.
 
@@ -760,49 +793,74 @@ spec forbids**.
     runs as its own process outside any session, fetches the bus every
     `--interval` (a git fetch costs no tokens; the interval matches the
     latency a person will accept, never the second), and for each new note
-    addressed to `<name>` runs `<command> <note-id>` **at least once, at most
-    twice, and never twice silently**. A note's delivery is three durable
-    states under `serve:<id>` in the state file, each written through the
-    same temp-file-and-rename as everything else: `queued|<stamp>` when the
-    note is first seen; `dispatching|<stamp>|attempt=<n>` written **before**
-    the spawn; `delivered|<stamp>|rc=<n>|redelivered=<0|1>` written **after**
-    the command exits, with its exit code. A restart that finds `queued`
-    runs it. One that finds `dispatching attempt=1` runs it once more, as
-    `attempt=2`, and its `WAKE FIRED` line says `redelivered=1` — because a
-    kill between the write and the spawn would otherwise suppress a command
-    that never ran, and a kill between the spawn and the `delivered` write
-    would otherwise run it twice with nothing said. One that finds
-    `dispatching attempt=2` runs it **no** more: it writes
-    `abandoned|<stamp>` and prints `WAKE FIRED id=<id> rc=- redelivered=1:
-    abandoned after two dispatches`, so nothing fires forever and nothing
-    goes quiet. An earlier draft wrote the id once before the spawn and
-    called that exactly-once; Stella's second read showed it was
-    at-most-once with a lost launch in the gap. The handoff is therefore
-    **at-least-once with the duplicate marked**: the command receives the id
-    and nothing else, must be safe to receive it twice, and a receiver that
-    cannot tolerate a duplicate reads `redelivered=` in the serve transcript.
-    A command still running holds the next note as `queued`, because the
-    harness is one and cannot take two turns at once. The command's exit
-    code is recorded per note as `WAKE FIRED id=<id> rc=<n>
+    whose `To:` names `<name>` runs `<command> <id> [<id>…]`: **once, and a
+    second time only on a person's word or under a declared idempotent
+    receiver**. `serve` starts `<command>` for a note and for nothing else —
+    never on an interval, never to receipt, never to look — so an empty
+    minute costs one fetch and zero tokens. The command receives note ids
+    and nothing else: never `inbox`'s output, never the `INBOX OPEN
+    carrying=<n>` line or the carried list, never a body; the line's model
+    opens the note itself (Johnny, 2026-09-11: the carrying dump is not a
+    wake payload). **`To:` wakes; `Cc:` does not.** A note carrying the name
+    on `Cc:` only (`INBOX NOTE … addr=cc`) is never dispatched, never
+    receipted and never a turn: it is recorded `cc|<stamp>` and counted
+    `cc=<n>` on the exit line, and the line reads it at its next natural
+    turn — to means must act, cc means should know, and a broadcast to five
+    is five turns (nova-tools #53). **Dispatch is coalesced.** Every note
+    `queued` at the moment the command is not running is handed to one
+    invocation, in bus order, at most `--batch-max` ids (default 20, the
+    listing law); one turn reads k notes rather than k turns reading one.
+    A note's delivery is durable states under `serve:<id>` in the state
+    file, each written through the same temp-file-and-rename as everything
+    else: `queued|<stamp>` when the note is first seen; `dispatching|<stamp>|
+    attempt=<n>` written **before** the spawn, for every id in the batch;
+    `delivered|<stamp>|rc=<n>|redelivered=<0|1>` written **after** the
+    command exits, with its exit code, for every id in the batch. Exit 0 is
+    the one acceptance boundary an arbitrary command offers, so `delivered
+    rc=0` is *accepted* and there is no separate *completed*. A restart that
+    finds `queued` runs it. One that finds `dispatching` finds an
+    **interrupted dispatch**, and what it does depends on what the caller
+    declared: without `--on-note-idempotent` the note becomes
+    `uncertain|<stamp>|attempt=<n>`, is **not** run, and prints `WAKE
+    UNCERTAIN id=<id> attempt=<n>: dispatch interrupted; nova-wake serve …
+    --redeliver <id> runs it again` — because a command with no idempotency
+    protocol may have acted, and a tool that ran it again would be choosing
+    a duplicate action on the mind's behalf; `--redeliver <id>` is a
+    person's act, refused unless the state is `uncertain`, and runs it once
+    more as `attempt=<n+1>` with `redelivered=1`. With `--on-note-idempotent`
+    — the caller's declaration that the command de-duplicates by id, durably
+    — an interrupted `attempt=1` is run once more as `attempt=2
+    redelivered=1`, and an interrupted `attempt=2` is `uncertain` all the
+    same, so nothing fires forever and nothing goes quiet. An earlier draft
+    wrote the id once before the spawn and called that exactly-once; Stella's
+    second read showed it was at-most-once with a lost launch in the gap, and
+    her third that an automatic second run of an arbitrary command is a
+    duplicate nobody chose. The handoff is therefore **at-most-once by
+    default, with the uncertain case surfaced and never silent**. A command
+    still running holds the next note as `queued`, because the harness is
+    one and cannot take two turns at once. The command's exit code is
+    recorded per batch as `WAKE FIRED ids=<n> first=<id> rc=<n>
     redelivered=<0|1>`; the tool never reads the command's output and never
     retries a non-zero exit on its own. It ends at `--hours` or a `stop` file
-    and prints `WAKE SERVE fired=<n> redelivered=<n> abandoned=<n> queued=<n>
-    idle=<duration>` on exit. What the command is (a `claude -p`, an
-    `opencode run`, a `grok` invocation) is the line's business, never the
-    tool's, and whether it runs at all is the line's person's: starting a
-    `serve` under a name is that name's decision and nobody else's. With
-    `--receipt`, `serve` sends the bus receipt for the note **after**
-    `delivered` is written with `rc=0`, never at fire time and never for a
-    non-zero exit: a receipt is the machinery's claim that the note was
-    handed to the mind and the mind returned, and a receipt sent before the
-    command returned would claim a handoff a kill could still lose. A note
-    whose command failed stays on the open list unreceipted, which is where a
-    note nobody has dealt with belongs. So the model never spends a turn on
-    "Heard": a receipt is the machinery's, a reply is the mind's.
-    (2026-09-11: one line sent 26 "Heard" receipts by hand, a turn each, and
-    the coordinator read every one.) While a line has no work, its cost is
-    one fetch per interval and zero tokens; while it has work, one wake per
-    note and no poll inside the turn.
+    and prints `WAKE SERVE fired=<n> notes=<n> redelivered=<n> uncertain=<n>
+    queued=<n> cc=<n> max_wait=<d> idle=<duration>` on exit, where
+    `max_wait` is the longest a note sat `queued` before its dispatch — the
+    latency Stella's sixth idea asks to measure. What the command is (a
+    `claude -p`, an `opencode run`, a `grok` invocation) is the line's
+    business, never the tool's, and whether it runs at all is the line's
+    person's: starting a `serve` under a name is that name's decision and
+    nobody else's. With `--receipt`, `serve` sends the bus receipt for every
+    id in a batch **after** `delivered` is written with `rc=0`, never at fire
+    time and never for a non-zero exit: a receipt is the machinery's claim
+    that the note was handed to the mind and the mind returned, and a receipt
+    sent before the command returned would claim a handoff a kill could still
+    lose. A note whose command failed stays on the open list unreceipted,
+    which is where a note nobody has dealt with belongs. So the model never
+    spends a turn on "Heard": a receipt is the machinery's, a reply is the
+    mind's. (2026-09-11: one line sent 26 "Heard" receipts by hand, a turn
+    each, and the coordinator read every one.) While a line has no work, its
+    cost is one fetch per interval and zero tokens; while it has work, one
+    wake per batch of notes and no poll inside the turn.
 
 11. **Delivery is the printed line, not the state write.** A change is
     *delivered* when its line has been written to stdout, and nothing else —
@@ -892,24 +950,32 @@ Each is proven able to fail by a mutation before it is trusted.
    a future date is judged by the commit stamp; the source tripwire finds no
    flag named `--at`, `--stamp` or `--now`, and no time parse over a note's body
    or a report's text.
-10. `TestServeDeliversAtLeastOnceAndMarksTheDuplicate`: a fixture bus with
-    two notes for the name and one for another name; `serve` with a fake
-    `--on-note` that records its argument runs it for the two ids, never for
-    the third; killed with an injected kill point **after** `dispatching` is
-    written and **before** the spawn, the restart runs the command once,
-    `WAKE FIRED ... redelivered=1`, and the fake records one call; killed
-    **after** the spawn and **before** `delivered`, the restart runs it
-    again, `redelivered=1`, and the fake records two calls; killed after
-    `delivered`, the restart fires zero more; a state holding `dispatching
-    attempt=2` is not run, is written `abandoned`, and prints `WAKE FIRED
-    id=<id> rc=- redelivered=1: abandoned after two dispatches`; the exit line
-    counts `redelivered=` and `abandoned=`; a note arriving while the command
-    runs is `queued` and fired after it returns, never beside it; with
-    `--receipt` a receipt is sent only after `delivered rc=0`, and a command
-    exiting 3 gets `WAKE FIRED rc=3` and no receipt; an hour with no note
-    fires nothing and the exit line says `fired=0`; a mutation that writes
-    `delivered` before the spawn, and one that skips a `dispatching` entry on
-    restart, each turn the test red.
+10. `TestServeSurfacesTheUncertainAndWakesOnlyTo`: a fixture bus with two
+    notes `To:` the name, one `Cc:` the name only, and one for another name;
+    `serve` with a fake `--on-note` that records its arguments runs once with
+    the two `To:` ids in bus order, never the `Cc:` id and never the third,
+    the `Cc:` note is recorded `cc` and the exit line says `cc=1`; killed
+    with an injected kill point **after** `dispatching` is written and
+    **before** the spawn, the restart runs nothing, prints `WAKE UNCERTAIN`
+    naming the id and the `--redeliver` command, and the fake records zero
+    further calls; `--redeliver <id>` runs it once as `attempt=2
+    redelivered=1` and is `WAKE REFUSED` for an id that is not `uncertain`;
+    killed **after** the spawn and **before** `delivered` the same; with
+    `--on-note-idempotent` the same two kills each run it once more,
+    `redelivered=1`, and a second interruption is `uncertain`; killed after
+    `delivered`, the restart fires zero more; three notes landing while the
+    command runs are `queued` and fired in **one** invocation carrying three
+    ids after it returns, never beside it, and `--batch-max 2` fires two then
+    one; with `--receipt` a receipt is sent for every id in a batch only
+    after `delivered rc=0`, and a command exiting 3 gets `WAKE FIRED rc=3`
+    and no receipt for any id; the fake `--on-note` is asserted to receive
+    ids only — no argument or stdin holds an `INBOX` line, `carrying=`, or a
+    note body; an hour with no note fires nothing, the fake was never
+    started, and the exit line says `fired=0`; `max_wait=` equals the
+    injected clock's longest queued interval; a mutation that writes
+    `delivered` before the spawn, one that runs a `dispatching` entry on
+    restart without `--on-note-idempotent`, and one that dispatches an
+    `addr=cc` note, each turn the test red.
 11. `TestDeliveryIsThePrintedLine`: 60 entry changes under `--max-lines 40`
     print 40 and `WAKE MORE kind=entry ... n=20`, the verdict says
     `pending=20`, and the next call with `--max-lines 0` prints exactly those
@@ -940,7 +1006,16 @@ Each is proven able to fail by a mutation before it is trusted.
     have printed, the deferring call prints `WAKE NOTE bus advance deferred`
     once, and the note is relayed within two polls of the queue draining; the
     same without `--advance-cursor` is not relayed, `head=` and `head-at=` on `WAKE SOURCE
-    bus` do not move, and the `WAKE NOTE` about fetching is printed once; a
+    bus` do not move, and the `WAKE NOTE` about fetching is printed once;
+    with `--refresh` the note is relayed within one poll, `nova-bus` is
+    asserted to have been run as `wait` with `--timeout` and without
+    `--advance`, the cursor never moves, the first poll runs `inbox --open
+    --open-max <carrying>` once and lists the carried notes before the new
+    one, and `--refresh --advance-cursor` together are exit 2; a `wait` that
+    exits non-zero on one poll (the remote unreachable) is one `WAKE POLL`
+    line, every queue record is intact afterwards, and the next successful
+    poll relays the note; in a build without item 3a, `--advance-cursor` is
+    `WAKE REFUSED … not in this build; use --refresh`, exit 2; a
     fake `nova-bus` answering `nova-bus v0.10.4` is `WAKE REFUSED` naming both
     versions, exit 2, before the opening line.
 
@@ -975,10 +1050,11 @@ Each is proven able to fail by a mutation before it is trusted.
   behind an empty bus queue, so a window that has been shown more than it has
   read is not fetched for until it reads; a `nova-bus` other than `v0.10.3`
   is refused until this document is re-measured against it.
-- **A `serve` command can run twice.** After a kill between the `dispatching`
-  write and the `delivered` write, the restart runs the command once more and
-  marks the line `redelivered=1`; a command that cannot bear a duplicate reads
-  that field (rule 10). Never more than twice, and never silently.
+- **A `serve` dispatch can be uncertain, and a person clears it.** After a
+  kill between the `dispatching` write and the `delivered` write the note is
+  `uncertain` and waits for `--redeliver`; only under `--on-note-idempotent`
+  does the restart run it once more, marked `redelivered=1` (rule 10). Never
+  a silent duplicate, and never a silent loss.
 
 ## What it deliberately does not do
 
@@ -1032,17 +1108,24 @@ shared packages used rather than re-spelled.
    display line and a delivery id. Every change decision is one comparison in one
    place — observed value against `printed=` — so a fourth source cannot invent
    its own.
-3. **`internal/wake/bus.go`** — run `nova-bus inbox` under a timeout; classify by
+3. **`internal/wake/bus.go`** — run `nova-bus inbox`, or `nova-bus wait`
+   without `--advance` under `--refresh`, under a timeout; classify by
    first tokens with a **suppress** list and a printing default case; the standing
-   vs first-sighting split; the `--advance-cursor` guard (`--as` required, lock
-   held for the call, the four-step transaction — plain `inbox`, spool, print,
-   `--advance` only behind an empty bus queue under the `bus:advance` marker —
-   and the `inbox --open --open-max <carrying>` recovery, the
-   `nova-bus version` pin, `head=`/`head-at=` from `git log -1`). Tests: an
+   vs first-sighting split; the first-poll `inbox --open --open-max <carrying>`
+   under `--refresh`; the `nova-bus version` pin; `head=`/`head-at=` from
+   `git log -1`; and `--advance-cursor` refused as not in this build. Tests: an
    `INBOX REFUSED` wakes and is relayed verbatim; a repeat is `STANDING` and does
-   not wake; an unknown future token prints; `--advance-cursor` without `--as` is
-   exit 2; a note past the cap is pending, not lost, and the cursor waits; the
-   recovery's `--open-max` equals `carrying=` and is never a constant.
+   not wake; an unknown future token prints; `--refresh` fetches and moves no
+   cursor; a note past the cap is pending, not lost.
+3a. **`internal/wake/advance.go`** — after item 3 is read and against the
+   pinned binary: the `--advance-cursor` guard (`--as` required, lock held for
+   the call, the four-step transaction — plain `inbox`, spool, print,
+   `--advance` only behind an empty bus queue under the `bus:advance` marker —
+   and the `inbox --open --open-max <carrying>` recovery with its re-read).
+   Tests: `--advance-cursor` without `--as` is exit 2; the cursor waits behind
+   the print; the recovery's `--open-max` equals `carrying=` and is never a
+   constant; tests 5, 11 and 12's advancing halves, green against the real
+   `nova-bus v0.10.3` before the flag is admitted.
 4. **`internal/wake/entry.go`** — the `gh` call per entry, the bucket rule, the
    five-field value, batching at 8, `unreadable:<reason>` as a value, and
    `--final-only`'s FINAL predicate as a pure function over the value. Tests:
@@ -1081,11 +1164,14 @@ shared packages used rather than re-spelled.
     the pid in `<state>.lock`, the `WAKE SOURCE` counts, and the three-in-a-row
     `WAKE BROKEN`. Tests: the eight in **Tests this spec demands**.
 12. **`internal/wake/serve.go`** — the `serve` loop: the fetch per interval,
-    the `serve:<id>` states `queued`, `dispatching attempt=<n>`, `delivered
-    rc=<n> redelivered=<0|1>` and `abandoned`, each written before or after
-    the step it names and never during it, the one-more-run on restart, the
-    receipt after `delivered rc=0` and never before, the `stop` file and
-    `--hours`. Tests: test 10, with the kill points injected.
+    `To:` dispatched and `Cc:` recorded, the coalesced batch under
+    `--batch-max`, the `serve:<id>` states `queued`, `dispatching
+    attempt=<n>`, `delivered rc=<n> redelivered=<0|1>`, `uncertain` and `cc`,
+    each written before or after the step it names and never during it, the
+    `uncertain` surfacing with `--redeliver` and the one-more-run only under
+    `--on-note-idempotent`, ids and nothing else on the command line, the
+    receipt per id after `delivered rc=0` and never before, `max_wait`, the
+    `stop` file and `--hours`. Tests: test 10, with the kill points injected.
 
 ## What the prototype does that this spec forbids
 
@@ -1160,3 +1246,34 @@ be grateful to. These are the places it is **not** a model, each with the reason
     reachable through `ROWAN_WORKING` and `TRIAGE_STATE` from the environment.
     Its `--max 40` and `--since` are good ideas in the wrong place. Rule 4 and the
     no-environment law: a report source's state is `--state` and nothing else.
+
+## Ideas folded on 2026-09-11
+
+| source | the idea, in six words | disposition |
+|---|---|---|
+| Stella, spec repairs | pending retained until delivery; LRU never pending | already, rule 11 and **State** |
+| Stella, spec repairs | plain inbox does not list OPEN | already, measured (**How the checkout receives mail**) |
+| Stella, spec repairs | grow `--open-max` to the count, retry | step 4: re-read on a short list, marker kept |
+| Stella, spec repairs | leave advancement out of v1; use `wait` | `--refresh` (wait without advance); `--advance-cursor` refused until item 3a |
+| Stella, spec repairs | serve: uncertain, not silent retry | rule 10: `uncertain`, `--redeliver`, `--on-note-idempotent` |
+| Stella, spec repairs | receipt only after durable acceptance | already, rule 10 (`delivered rc=0`); per id in a batch |
+| Johnny, addition 1 | an in-session poll is not serve | the verb paragraph and the lessons table |
+| Johnny, addition 2 | empty minutes cost zero tokens | rule 10: the command starts for a note and nothing else; test 10 |
+| Johnny, addition 3 | quiet poll is counts, not carrying | rule 10: ids only, never `inbox` output; test 10 |
+| Johnny, ideas 1–3 | serve is the wake; machinery sends Heard | already, rule 10 |
+| Johnny, idea 4; Emma, C2 | `Cc:` is not `To:` | rule 10: to wakes, cc does not (nova-tools #53) |
+| Stella, ideas 1–2 | machinery observes; coalesce per item; batch decisions | rule 10: coalesced dispatch, `--batch-max`; `--final-only` already (entries) |
+| Stella, idea 6 | measure latency and duplicate wakes | rule 10: `max_wait=`, `redelivered=`, `uncertain=` on the exit line |
+| Emma, A1–A2, C1 | event-driven wake, silence on idle | already, rule 10 |
+| Emma, B1–B3 | nova-bus counts by default, batch advance | not folded: `nova-bus`'s (Emma's tool, #53); `serve` never feeds the carrying list to a model regardless |
+| Emma, D | rolling coordinator session boundary | not folded: a window's practice, not a tool rule |
+| Rowan, ideas 1, 9 | serve for every line; no status polls | already, rule 10 and the first lesson |
+| Rowan, idea 4 | pointers in the window, detail in children | not folded: a window's practice |
+| Freddy, idea 2 | webhook wakeups over polling | already, rule 10 (a fetch outside the session); a webhook is a v2 source |
+| Freddy, idea 5 | bundle acknowledgements | rule 10: one batch, receipts per id by machinery |
+| DeepSeek, idea 3 | filtered event wakeups per interest | already, rule 10 (`--as`, `To:`) |
+| DeepSeek, idea 1 | state digest plus a cursor | already, **State** (the queue and `printed=`) |
+| nova-tools #53 | `to` wakes, `cc` does not | rule 10; the send side (`--to all`, `wakes=`) stays nova-bus's |
+| ideas #273 | evidence arriving after the belief | already, rule 11 (observed before printed, nothing coalesces) and `head-at=` |
+| ideas #357 | relay a note, never execute it | already, the data paragraph at the top |
+| nova-tools #35 | the table races | already: `nova-bus`'s ids and push-retry are what `serve` and `--refresh` rely on; the version is pinned |
