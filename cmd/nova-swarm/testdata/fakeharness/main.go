@@ -102,6 +102,9 @@ func main() {
 		time.Sleep(60 * time.Second)
 		return
 	}
+	if n, ok := number(prompt, "FAKE-SLEEP"); ok {
+		time.Sleep(time.Duration(n) * time.Second)
+	}
 	notes := 0
 	if job != "" {
 		if body, err := os.ReadFile(filepath.Join(job, "note")); err == nil {
@@ -113,9 +116,6 @@ func main() {
 	}
 	if _, ok := directive(prompt, "FAKE-NONOTES"); ok {
 		notes = -1
-	}
-	if n, ok := number(prompt, "FAKE-SLEEP"); ok {
-		time.Sleep(time.Duration(n) * time.Second)
 	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)

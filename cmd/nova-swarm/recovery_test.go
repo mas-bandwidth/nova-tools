@@ -1,3 +1,5 @@
+//go:build unix
+
 package main
 
 import (
@@ -6,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -164,10 +167,14 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 	if err := liveCmd.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer func() {
-		_ = liveCmd.Process.Kill()
-		_ = liveCmd.Wait()
-	}()
+	var waitOnce sync.Once
+	waitLiveCmd := func() {
+		waitOnce.Do(func() {
+			_ = liveCmd.Process.Kill()
+			_ = liveCmd.Wait()
+		})
+	}
+	defer waitLiveCmd()
 	livePgid := liveCmd.Process.Pid
 	sf1 := swarm.SlotFile{
 		Job: task1ID, JobDir: task1Dir, State: swarm.SlotLaunched,
@@ -197,8 +204,7 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 			RC: 0, End: swarm.EndDone, Nonce: "nonce-1", Ended: swarm.Stamp(time.Now()),
 		})
 		write(t, filepath.Join(task1Dir, "RESULT.md"), "# Head\nfindings: 0\nnotes read: 0\nrepo: o/n\nrev: abc\n\n## Findings\n")
-		_ = liveCmd.Process.Kill()
-		_ = liveCmd.Wait()
+		waitLiveCmd()
 	}()
 
 	// Run dispatcher with 6 workers
