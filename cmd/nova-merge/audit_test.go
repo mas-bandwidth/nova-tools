@@ -38,6 +38,7 @@ var mergeAudit = audit.Config{
 		"verbs.go|nameAnUnheldObject|strings.ToUpper(verb)":             "the verb's own name upper-cased, the literals \"read\" and \"gate\" at its two call sites in this file",
 		"verbs.go|nameAnUnheldObject|what":                              "the field's own name, the literals \"head\" and \"merge\" at its two call sites in this file",
 		"verbs.go|foldRefused|verb":                                     "the verb's own name, the literals \"RUN\" and \"STATUS\" at its two call sites in pass.go",
+		"verbs.go|stateWriteRefused|verb":                               "the verb's own name, the literal \"RUN\" at its one call site in pass.go",
 		"verbs.go|cmdAdd|kind":                                          "the literals \"pr\" and \"branch\", assigned from isBranch above the site",
 		"verbs.go|cmdAdd|yn":                                            "the literals \"yes\" and \"no\", assigned from --needs-read above the site",
 		"verbs.go|cmdRead|current":                                      "the literals \"true\", \"false\" and \"-\", returned by standingOf in this file",

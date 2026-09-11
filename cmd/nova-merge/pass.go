@@ -113,10 +113,16 @@ func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr i
 	// The pass wrote its verdicts onto the entries; the lane's own order and those
 	// verdicts are what state.json holds, and the write is one read-modify-write under
 	// the state lock.
-	_ = merge.Update(lane, f.dur(), func(s *merge.State) error {
+	if err := merge.Update(lane, f.dur(), func(s *merge.State) error {
 		s.PRs, s.Branches = st.PRs, st.Branches
 		return nil
-	})
+	}); err != nil {
+		// THE PASS RAN AND ITS VERDICTS DID NOT REACH state.json. This was assigned to
+		// `_`: a state lock another verb held, or a disk that refused the write, left the
+		// pass printing MERGE OK and the lane's own file still holding the state before
+		// it -- the next pass would re-decide from a state that never saw this one.
+		return stateWriteRefused("RUN", stderr, err)
+	}
 	return res.Exit()
 }
 
@@ -226,12 +232,14 @@ func cmdPacket(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return code
 	}
 	recs := merge.NewRecords(*f.lane, st.LaneBranch, "origin", merge.NewGit(*f.lane, f.dur(), deps.Runner), f.dur())
-	folded, err := recs.Fold()
+	// packet is derived from the fold and the host: it WRITES NOTHING and TAKES NO LOCK
+	// (rule 23), so its fold is the read-only one. A reader asking for their own packet
+	// while the coordinator's pass holds the checkout gets the packet, not a refusal.
+	folded, err := recs.FoldReadOnly()
 	if err != nil {
-		fmt.Fprintf(stderr, "RUN REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "PACKET REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	// packet is derived from the fold and the host: it WRITES NOTHING and TAKES NO LOCK.
 	snapshot := *st
 	snapshot.Apply(folded)
 	p := &merge.Pass{

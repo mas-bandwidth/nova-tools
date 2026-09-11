@@ -332,3 +332,99 @@ func recordFiles(t *testing.T, checkout string) []string {
 	sort.Strings(out)
 	return out
 }
+
+// Rule 22, the outbox: A FLUSH REMOVES WHAT IT DELIVERED AND NOTHING ELSE.
+//
+// The outbox is written BEFORE the checkout lock is taken, which is what makes the bytes
+// durable before any reset can move a tree under them -- and it means a second verb on
+// this lane can have its record sitting in the outbox, waiting for the lock, while the
+// first is pushing. `deliveredOK` swept the whole directory, so that waiting record was
+// deleted: a read or a gate whose writer had already been told "recorded" would never
+// reach the branch, and nothing would say so.
+func TestAFlushRemovesOnlyWhatItDelivered(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
+
+	// A second verb's record, written into the outbox in the window the first verb's
+	// flush is pushing through: the hand runs once, immediately before that push.
+	waiting := filepath.Join(l.lane, merge.OutboxDir, "20260911T131500Z-zzzzzz.json")
+	body := []byte(`{"pr":951,"who":"stella","head":"` + oid + `","verdict":"approve","at":"2026-09-11T13:15:00Z","run":"zzzzzz","file":"reads/951/stella-` + oid[:12] + `-20260911T131500Z-zzzzzz.json"}` + "\n")
+	fired := false
+	l.runner = &hookRunner{inner: merge.Exec{}, before: func(dir string, args []string) {
+		if fired || len(args) == 0 || args[0] != "push" || dir != l.lane {
+			return
+		}
+		fired = true
+		if err := os.MkdirAll(filepath.Dir(waiting), 0o755); err != nil {
+			t.Error(err)
+			return
+		}
+		if err := os.WriteFile(waiting, body, 0o644); err != nil {
+			t.Error(err)
+		}
+	}}
+	exit, stdout, stderr := l.run("read", "--lane", l.lane, "--pr", "951", "--who", "emma",
+		"--head", oid, "--verdict", "approve")
+	if exit != 0 {
+		t.Fatalf("emma's read: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "pushed=true")
+	if !fired {
+		t.Fatal("the hand never ran, so nothing was ever waiting in the outbox and this test proved nothing")
+	}
+
+	// THE WAITING RECORD IS EITHER STILL WAITING OR ALREADY DELIVERED, and never neither:
+	// this flush removes what it carried, so an item that appeared behind it is kept for
+	// its own flush -- or, if this flush's next round picked it up, it is at the remote.
+	dest := "reads/951/stella-" + oid[:12] + "-20260911T131500Z-zzzzzz.json"
+	if got, err := os.ReadFile(waiting); err == nil {
+		if string(got) != string(body) {
+			t.Errorf("the waiting outbox item is not the bytes its writer left:\nwant %q\ngot  %q", body, got)
+		}
+	} else if !onBranch(t, l, dest) {
+		t.Fatal("the record another verb left in the outbox is neither in the outbox nor at the remote: a flush that never carried it deleted it, and its writer was told it was recorded")
+	}
+	// Emma's own item is gone: delivered is delivered, and nothing it did not carry
+	// stayed behind either.
+	for _, name := range outboxNames(t, l.lane) {
+		if name == filepath.Base(waiting) {
+			continue
+		}
+		t.Errorf("the outbox still holds %s, which this flush delivered", name)
+	}
+	// The next verb on this lane delivers whatever is left, which is what the outbox is
+	// for, and the waiting record reaches the branch with its own bytes.
+	if exit, _, errb := l.run("status", "--lane", l.lane); exit != 0 {
+		t.Fatalf("status: %s", errb)
+	}
+	if !onBranch(t, l, dest) {
+		t.Error("the waiting record never reached the branch")
+	}
+}
+
+// onBranch reports whether the lane branch at the remote holds this path.
+func onBranch(t *testing.T, l *lab, path string) bool {
+	t.Helper()
+	side, err := os.MkdirTemp(l.dir, "verify-branch")
+	if err != nil {
+		t.Fatal(err)
+	}
+	l.git(l.dir, "clone", "-q", "--branch", "nova-merge/lane", l.remote, side)
+	_, statErr := os.Stat(filepath.Join(side, filepath.FromSlash(path)))
+	return statErr == nil
+}
+
+// outboxNames is what the lane's outbox holds right now.
+func outboxNames(t *testing.T, lane string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(filepath.Join(lane, merge.OutboxDir))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, e := range entries {
+		out = append(out, e.Name())
+	}
+	return out
+}

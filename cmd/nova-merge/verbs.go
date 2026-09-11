@@ -541,11 +541,17 @@ func foldInto(lane string, st *merge.State, recs *merge.Records, timeout time.Du
 	if folded == nil {
 		return pulled, nil, nil
 	}
-	_ = merge.Update(lane, timeout, func(s *merge.State) error {
+	// THE FOLD'S OWN WRITE IS RETURNED. It was assigned to `_`, so a state lock another
+	// verb held made the fold a no-op that said nothing: the records were pulled, the
+	// caller decided on the state as it was before them, and the file kept a fold that
+	// never happened.
+	if err := merge.Update(lane, timeout, func(s *merge.State) error {
 		s.Apply(folded)
 		st.PRs, st.Branches, st.Gates = s.PRs, s.Branches, s.Gates
 		return nil
-	})
+	}); err != nil {
+		return pulled, nil, err
+	}
 	if fresh, err := merge.Load(lane); err == nil {
 		*st = *fresh
 	}
@@ -562,6 +568,20 @@ func given(fs *flag.FlagSet, name string) bool {
 		}
 	})
 	return found
+}
+
+// stateWriteRefused is what a verb says when its own write of state.json did not happen:
+// exit 2, because the verb could not finish what it ran to do, and the holder is named
+// when a lock is what stopped it (rule 2).
+func stateWriteRefused(verb string, stderr io.Writer, err error) int {
+	if held, ok := merge.AsHeldError(err); ok {
+		fmt.Fprintf(stderr, "%s REFUSED: this pass ran and its verdicts could not be written to state.json: %s\n",
+			verb, oneline.Escape(held.Error()))
+		return 2
+	}
+	fmt.Fprintf(stderr, "%s REFUSED: this pass ran and its verdicts could not be written to state.json: %s; the lane's file still holds the state before this pass\n",
+		verb, oneline.Err(err))
+	return 2
 }
 
 // foldRefused is the one answer rule 22 gives a verb whose pull or fold failed: a lock it

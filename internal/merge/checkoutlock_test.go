@@ -32,6 +32,12 @@ var underTheCallersLock = map[string]string{
 	"outbox":        "the outbox, which is outside the branch, read inside flush's lock",
 	"writeOutbox":   "the outbox, which is outside the branch, written before the lock is taken",
 	"LockCheckout":  "the lock itself",
+	// RULE 23 NAMES THIS ONE: packet "is derived from the fold and the host, writes
+	// nothing and takes no lock". A verb that takes the lock can be refused by it, and
+	// packet was -- a reader asking for their own packet while the coordinator's pass
+	// held the checkout got a lock refusal, which is a writer's answer. This reads and
+	// never writes; every WRITING path still goes through Fold, which locks.
+	"FoldReadOnly": "rule 23's lock-free read: packet writes nothing and takes no lock",
 }
 
 func TestEveryCheckoutOperationIsUnderTheCheckoutLock(t *testing.T) {

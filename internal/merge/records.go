@@ -179,13 +179,13 @@ func (r *Records) writeOutbox(sub Submission, items []Item) error {
 // outbox reads what is waiting, oldest first, grouped by the submission id in the name.
 // The destination path is in the record itself -- every record carries `file` -- so the
 // outbox needs no second file to say where its bytes belong.
-func (r *Records) outbox() ([]Item, error) {
+func (r *Records) outbox() ([]Item, []string, error) {
 	entries, err := os.ReadDir(filepath.Join(r.Lane, OutboxDir))
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
+		return nil, nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var names []string
 	for _, e := range entries {
@@ -195,10 +195,14 @@ func (r *Records) outbox() ([]Item, error) {
 	}
 	sort.Strings(names)
 	var items []Item
+	// THE OUTBOX FILE NAMES THIS READ CONSUMED, and only these: what is delivered is
+	// removed by name afterwards, so an item another verb wrote into the outbox while
+	// this one was pushing is still there to be delivered by its own flush.
+	var taken []string
 	for _, name := range names {
 		body, err := os.ReadFile(filepath.Join(r.Lane, OutboxDir, name))
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		if strings.HasSuffix(name, ".summary") {
 			// A summary is carried beside its record below, under the record's own
@@ -207,16 +211,19 @@ func (r *Records) outbox() ([]Item, error) {
 		}
 		dest, err := destinationOf(body)
 		if err != nil {
-			return nil, fmt.Errorf("the outbox item %s does not name the path it belongs at: %w", name, err)
+			return nil, nil, fmt.Errorf("the outbox item %s does not name the path it belongs at: %w", name, err)
 		}
 		items = append(items, Item{Path: dest, Body: body})
+		taken = append(taken, name)
 		// Its summary, if this submission wrote one, goes beside it under the same name.
 		id := strings.TrimSuffix(name, ".json")
-		if s, err := os.ReadFile(filepath.Join(r.Lane, OutboxDir, id+".summary")); err == nil {
+		summary := id + ".summary"
+		if s, err := os.ReadFile(filepath.Join(r.Lane, OutboxDir, summary)); err == nil {
 			items = append(items, Item{Path: SummaryFile(dest), Body: s})
+			taken = append(taken, summary)
 		}
 	}
-	return items, nil
+	return items, taken, nil
 }
 
 // destinationOf reads the `file` field every record carries.
@@ -235,7 +242,7 @@ func destinationOf(body []byte) (string, error) {
 
 // flush is the compare-and-swap loop. The caller holds the checkout lock.
 func (r *Records) flush() error {
-	items, err := r.outbox()
+	items, taken, err := r.outbox()
 	if err != nil {
 		return err
 	}
@@ -280,7 +287,7 @@ func (r *Records) flush() error {
 			// Everything this loop carries is already at the tip: a push that landed
 			// before a kill, delivered by this re-run's confirming fetch below.
 			if r.confirm(items) {
-				return r.deliveredOK(items)
+				return r.deliveredOK(taken)
 			}
 		} else if _, err := r.Git.Run(Identity("commit", "-m", "nova-merge: "+strings.Join(paths, " "))...); err != nil {
 			lastErr = err
@@ -297,7 +304,7 @@ func (r *Records) flush() error {
 			r.backoff(round)
 			continue
 		}
-		return r.deliveredOK(items)
+		return r.deliveredOK(taken)
 	}
 	if lastErr == nil {
 		lastErr = ErrNotDelivered
@@ -363,15 +370,19 @@ func (r *Records) confirm(items []Item) bool {
 	return true
 }
 
-// deliveredOK removes the outbox items, and only then: delivered means seen at the remote
-// tip with these bytes.
-func (r *Records) deliveredOK(items []Item) error {
-	entries, err := os.ReadDir(filepath.Join(r.Lane, OutboxDir))
-	if err != nil {
-		return nil
-	}
-	for _, e := range entries {
-		_ = os.Remove(filepath.Join(r.Lane, OutboxDir, e.Name()))
+// deliveredOK removes THE ITEMS THIS FLUSH DELIVERED, by name, and only then: delivered
+// means seen at the remote tip with these bytes.
+//
+// It used to sweep the whole outbox directory. The outbox is written BEFORE the checkout
+// lock is taken (see Deliver), which is deliberate -- the bytes are durable before
+// anything can reset a tree under them -- so a second verb on this lane can have its
+// record sitting in the outbox, still waiting for the lock, while this flush is pushing.
+// The sweep deleted it: a read or a gate a person had already been told was recorded
+// would never reach the branch, and nothing would say so. What this flush carried is
+// what this flush removes.
+func (r *Records) deliveredOK(taken []string) error {
+	for _, name := range taken {
+		_ = os.Remove(filepath.Join(r.Lane, OutboxDir, name))
 	}
 	return nil
 }
@@ -464,6 +475,20 @@ func (r *Records) Fold() (*Folded, error) {
 		return nil, err
 	}
 	defer release()
+	return foldFiles(func(dir string) ([]foldFile, error) { return readDirFiles(r.Lane, dir) })
+}
+
+// FoldReadOnly folds the record files in the checkout WITHOUT TAKING THE CHECKOUT LOCK,
+// because rule 23 says what packet is: "it is derived from the fold and the host, writes
+// nothing and takes no lock."
+//
+// A verb that takes the lock can be REFUSED by it, and packet was: a reader asking for
+// their own packet while the coordinator's pass held the checkout got exit 2 and a lock
+// refusal, which is the coordinator's answer to a writer and not an answer a reader of a
+// report should ever see. Nothing here writes, so there is nothing to serialise; what a
+// concurrent flush can cost this fold is a record that lands a moment later, and the
+// packet is a snapshot either way. Every WRITING path still goes through Fold.
+func (r *Records) FoldReadOnly() (*Folded, error) {
 	return foldFiles(func(dir string) ([]foldFile, error) { return readDirFiles(r.Lane, dir) })
 }
 

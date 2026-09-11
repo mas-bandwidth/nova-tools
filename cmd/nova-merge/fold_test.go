@@ -209,3 +209,64 @@ func TestAStatusWhosePullFailedStillReportsAndSaysWhatIsMissing(t *testing.T) {
 	}
 	contains(t, stderr, "RUN REFUSED")
 }
+
+// Rule 23: `packet` TAKES NO LOCK.
+//
+// SPEC-MERGE, rule 23: the packet "is derived from the fold and the host, writes nothing
+// and takes no lock." Its fold went through Records.Fold, which takes the checkout lock --
+// so a reader asking for their own packet while the coordinator's pass held the checkout
+// was answered with exit 2 and a lock refusal, which is the answer given to a writer.
+func TestAPacketIsHandedOverWhileTheCheckoutIsHeld(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
+	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {
+		t.Fatalf("run: %s", errb)
+	}
+	release, err := merge.Lock(filepath.Join(l.lane, merge.CheckoutLock), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	exit, stdout, stderr := l.run("packet", "--lane", l.lane, "--pr", "951", "--who", "emma", "--timeout", "1")
+	if exit != 0 {
+		t.Fatalf("a packet is a report and takes no lock: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "PACKET ENTRY entry=951")
+	contains(t, stdout, "head="+merge.Short(oid))
+	absent(t, stderr, "REFUSED")
+	// `run` still takes it, and still says who holds it: only the report is lock-free.
+	exit, _, stderr = l.run("run", "--lane", l.lane, "--once", "--timeout", "1")
+	if exit != 2 {
+		t.Fatalf("a verb that acts still waits on the checkout lock: exit %d\n%s", exit, stderr)
+	}
+	contains(t, stderr, "pid=")
+}
+
+// Rule 22: A FOLD WHOSE STATE WRITE COULD NOT HAPPEN SAYS SO, and the pass does not run.
+//
+// merge.Update's error was assigned to `_`: a state lock another verb held made the fold
+// a no-op that said nothing, so the records were pulled, the pass decided on the state as
+// it was before them, and state.json kept a fold that never happened. The refusal now
+// comes BEFORE the pass -- no RUN PASS line -- and names the holder, which is what rule 2
+// asks of a verb that could not take a lock.
+func TestAFoldWhoseStateWriteIsRefusedIsNotSilent(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	setupPR(t, l, 951, "feature-a", "a.txt", true)
+	release, err := merge.Lock(filepath.Join(l.lane, merge.StateLock), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once", "--timeout", "1")
+	if exit != 2 {
+		t.Fatalf("a fold that could not write the state exits 2: got %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "REFUSED")
+	contains(t, stderr, "pulled and folded")
+	contains(t, stderr, "pid=")
+	// The pass never ran: a fold that did not land is not a state to decide on.
+	absent(t, stdout, "RUN PASS")
+	absent(t, stdout, "RUN ENTRY")
+}
