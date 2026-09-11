@@ -166,7 +166,8 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `usd`. `attempt` is `1` for a fresh job and `2` for the one automatic
     re-queue (rule 7), `from` is the earlier job id or `-`, `started` and
     `ended` are UTC stamps the tool wrote, `end` is one of `done`, `killed`,
-    `budget`, `violation`, `failed`, `unknown` (no completion evidence, rule
+    `budget`, `budget-unverifiable` (rule 13), `violation`, `failed`, `unknown`
+    (no completion evidence, rule
     17), `launch-failed` (rule 18), and `rc` is the worker's exit code, `-`
     for `unknown` and `launch-failed`. A
     field the provider did not report is the literal `-`, never `0`; `0` is
@@ -183,7 +184,10 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     through `.tmp` and rename, and when that copy does not parse (rule 15) a
     marker `<pool>/reports/<job>/MALFORMED` holding `line=<n>` is written
     beside it, and when no `RESULT.md` was published a marker
-    `<pool>/reports/<job>/NO-RESULT` is written instead; and **only then**
+    `<pool>/reports/<job>/NO-RESULT` is written instead; beside whichever
+    was written goes `<pool>/reports/<job>/REV`, holding `attempt=<n>` and
+    the SHA-256 of the copy (or of the empty string for a marker), so the
+    retained report is keyed by job, attempt and content hash; and **only then**
     moves the job's files to `done/` or `failed/`, and only then prints the
     job's `RUN` line. `triage` and `result --id` read `<pool>/reports/<job>/`
     for a finalized job and `<job>/RESULT.md` only for a running one, so the
@@ -200,7 +204,10 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `reclaim` of a job with no `<pool>/reports/<job>/RESULT.md`, `MALFORMED`
     or `NO-RESULT` is refused on one line, `RECLAIM REFUSED id=<id>: no report
     copy at <path>; nova-swarm finalize --pool <dir> --task <id>`, because the
-    evidence would be inside the thing about to be removed; `finalize` on a
+    evidence would be inside the thing about to be removed; a `reclaim` whose
+    copy does not hash to `REV`, or whose `REV` is missing, is refused the
+    same way, `report copy does not match REV`, because a persistence that
+    cannot be verified is not a persistence; `finalize` on a
     job whose usage file exists but whose copy is missing writes the copy and
     prints `FINALIZE OK … existed=true`. `cost` reads `<pool>/usage/` and nothing else, so it answers
     after the directory is gone; a killed attempt's partial usage stands in
@@ -210,8 +217,15 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
 
 13. **The swarm's own tokens are budgeted per job, and the machinery ends the
     job at the budget it can see.** Every job carries `--tokens <n>` (no
-    default; `add` and `batch` without it are exit 2 naming the flag, and `0`
-    is refused); the supervisor samples the provider's usage as the job runs
+    default; `add`, `batch` and `requeue` without it are exit 2 naming the
+    flag, and `0` is refused) or the explicit word `--tokens unmetered`, a
+    caller's statement that this provider has no live accounting and the
+    deadline is the only stop, printed as `budget=unmetered` on every `RUN`
+    line for the job. The worker description declares its usage source,
+    `usage: opencode` or `usage: none`; `run` refuses at exit 2, before the
+    first worker, a pool whose description says `none` while any pending
+    task carries a numeric budget, naming the task, because a budget nothing
+    can observe is a promise the tool cannot keep. Otherwise; the supervisor samples the provider's usage as the job runs
     (OpenCode's data dir, per job, read-only, every `--usage-interval`
     seconds, default 5, a tool property like a timeout) and ends the job when
     the observed sum passes the budget, recording `RUN BUDGET id=<id>
@@ -226,7 +240,13 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `budget=<spent|->/<n>`, `-` for no observation, so a job that ran under an
     unobservable budget is visible as such and never reported as under
     budget; a partial observation (some columns `-`) counts the columns it
-    has and prints `budget=<n>+/<n>` with the plus. A worker
+    has and prints `budget=<n>+/<n>` with the plus. A usage source that
+    **fails to read** — the database unreadable, the query erroring, as
+    distinct from reporting no rows yet — on three consecutive samples ends
+    the job: `RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3: <reason>`,
+    `end=budget-unverifiable`, findings kept, files to `failed/`, because a
+    numeric budget the tool has stopped being able to see is a budget the
+    caller believes is enforced and is not. A worker
     is handed a task file and the files the task names, never a conversation
     and never a repository to wander: the task template's file list is the
     reading list, `--files` is its ceiling, and a job that reads past it is
@@ -272,7 +292,11 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     are the head's `repo: <owner>/<name>` and `rev: <sha>` lines, and two
     findings merge only when both reports carry both and they are equal, so
     equal `file:line` and rule in two codebases, or in two revisions of one,
-    are two findings — and the duplicate count is printed, because a
+    are two findings; `file` is normalized before the compare — relative to
+    the repository root, a leading `./` stripped, `\` read as `/` — and the
+    merged finding carries every contributing job id, `jobs=<id,id,…>`, on
+    the page and on its triage line, so a de-duplicated finding never loses
+    the report it came from — and the duplicate count is printed, because a
     coordinator reading the same finding five times is five times the tokens
     for one fact.
 16. **A report is published by rename, and the tool reads only what was
@@ -313,7 +337,7 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     evidence `<job>/exit.json` (rule 18), because a dispatcher cannot `wait`
     on a process that is not its child and never pretends to; the pid is
     dead, no process in the recorded group is alive, and `<job>/exit.json`
-    exists — **reclaim**: `finalize` runs for the job, its files move as rule
+    exists with the slot's `nonce` — **reclaim**: `finalize` runs for the job, its files move as rule
     12 says, and the slot is freed; the pid is dead, the group is dead, and
     there is **no** `exit.json` — the outcome is **unknown**: `finalize` runs
     with `end=unknown`, the files go to `failed/` with `end=unknown` in the
@@ -322,7 +346,8 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     pid alive with a different start stamp (pid reuse), a dead leader with a
     survivor in the group, an unreadable slot file, a slot file with no
     matching `<job>/pid`, a `reserved` slot whose `runner_pid` is alive under
-    another start stamp — is **quarantined**: the slot is never allocated for
+    another start stamp, an `exit.json` whose `nonce` is not the slot's — is
+    **quarantined**: the slot is never allocated for
     the rest of this run, `RUN QUARANTINE slot=<n> id=<id|->: <reason>` is
     printed once, and `STATUS OK` carries `quarantined=<n>` until a person
     ends the survivor and removes the slot file. A slot is never decided by
@@ -335,12 +360,16 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     at any boundary leaves a pool the next dispatcher decides by rule 17:
     (1) **reserve** — under the pool lock the runner writes
     `<pool>/slots/<n>.json` with `{job, state: "reserved", runner_pid,
-    runner_started, reserved_at}` and no pid, through `.tmp` and rename, and
+    runner_started, reserved_at, nonce}` and no pid — `nonce` is twelve hex
+    characters from the OS random source, drawn once per launch and never
+    reused — through `.tmp` and rename, and
     moves the task into `running/`; (2) **spawn** — the runner forks the
     **supervisor**, `nova-swarm supervise --pool <dir> --task <id> --slot
-    <n>`, this binary again, as the leader of a new process group; (3)
+    <n> --nonce <hex>`, this binary again, as the leader of a new process
+    group; (3)
     **identify** — the supervisor, **before doing anything else**, writes its
-    own `pid`, `pgid` and kernel start stamp into the slot file and into
+    own `pid`, `pgid`, kernel start stamp and the `nonce` it was handed into
+    the slot file and into
     `<job>/pid` with `state: "launched"`, each through `.tmp` and rename;
     (4) **handshake** — the runner waits for `state: "launched"` to appear in
     the slot file, up to `--launch-timeout` seconds (default 10, a tool
@@ -353,8 +382,11 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     the key in the child's environment (rule 6), and holds the job's
     deadline and budget (rules 7 and 13); (6) **finalization** — when the
     harness exits, the supervisor writes `<job>/exit.json` with `{rc, signal,
-    ended, survivors}` through `.tmp` and rename, **the durable completion
-    evidence**, then exits; the runner, or an adopting dispatcher, reads that
+    ended, survivors, nonce}` through `.tmp` and rename, **the durable completion
+    evidence** — an `exit.json` whose `nonce` is not the slot file's is not
+    evidence of anything and the slot is quarantined (rule 17), so a stale
+    record from an earlier launch of the same job cannot finalize a later
+    one — then exits; the runner, or an adopting dispatcher, reads that
     file, runs the group check of rule 11 and `finalize` of rule 12, and
     prints the job's one `RUN` line. The runner never allocates a slot whose
     file exists in any state, so the worker cap `--workers` counts reserved
@@ -366,13 +398,13 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
 ## The verbs
 
 ```
-nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n> [--label <text>] [--template <name>] [--deadline <duration>]
-nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n> [--label <text>] [--template <name>] [--deadline <duration>]
+nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
+nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--launch-timeout <s>] [--usage-interval <s>]
-nova-swarm supervise --pool <dir> --task <id> --slot <n>          (spawned by run; refused by hand, rule 18)
+nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex>   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
 nova-swarm stop     --pool <dir>
-nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin [--label <text>]
+nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>]
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
@@ -451,7 +483,7 @@ is `run`'s child and nobody's verb.
 |------|---------|
 | 0 | the verb ran and passed: a task queued, a batch queued, a pool drained, a page written, a report printed |
 | 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report |
-| 2 | could not run: missing flag (`--files`, `--tokens` included), unreadable pool, unreadable worker description, a key file that is absent or empty, `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, bad invocation |
+| 2 | could not run: missing flag (`--files`, `--tokens` included, on `requeue` as on `add`), a numeric `--tokens` on a pending task under a worker description whose `usage` is `none`, unreadable pool, unreadable worker description, a key file that is absent or empty, `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, bad invocation |
 
 **A failed task is not a failed `run`.** A worker that exits non-zero moves its
 files to `failed/` and the pass continues; `RUN OK` carries `failed=<n>` and
@@ -478,6 +510,7 @@ RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
 RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|unknown|unlaunched> usage=<path|->
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
+RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
 RUN MALFORMED id=<id> slot=<n> line=<n> dest=failed
 RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only|malformed> findings=<n> refusals=<n> notes=<sent>/<read|-> unpublished=<true|false> budget=<spent|n+|->/<n> dest=<done|failed>
 RUN VIOLATION id=<id> slot=<n> background=<n> dest=failed: <reason>
@@ -905,7 +938,10 @@ nova-swarm requeue --pool <dir> --task <id> --task-file <file> [--label <text>]
 ```
 
 `requeue` takes a finished task and queues a **new** task with **new text**,
-recording `from=<old-id>` in the new task's sidecar. The text must be supplied;
+recording `from=<old-id>` in the new task's sidecar. `--files` and `--tokens`
+are required on it exactly as on `add`: the remedy that worked in batch 3 was
+a smaller file budget, and a requeue that inherited the old budget would
+repeat the failure it was typed to fix. The text must be supplied;
 a requeue with the same text is a retry, and a retry of a task that failed for
 what it said will fail the same way. The remedy that worked in batch 3 was a
 **file budget added to the text**, not a second attempt at the same sentence.
@@ -1183,7 +1219,10 @@ be seen red before it is trusted.
     removes the directory and prints `RECLAIM OK usage=<path>`; `reclaim` on
     a job with no usage file is `RECLAIM REFUSED … no usage file` exit 1 and
     the directory is intact; `cost` prints the numbers after the directory
-    is gone; **finalize → reclaim → first triage**: a job finalized and
+    is gone; a copy whose bytes are altered after `finalize` makes `reclaim`
+    `RECLAIM REFUSED … does not match REV` with the directory intact, and a
+    `REV` naming the attempt and the copy's SHA-256 exists beside every copy
+    and every marker; **finalize → reclaim → first triage**: a job finalized and
     reclaimed before any `triage` ran is in the next page with the same
     `rev=` hash and the same bytes as `<job>/RESULT.md` had, read from
     `<pool>/reports/<job>/RESULT.md`, and `result --id` prints them; a job
@@ -1208,7 +1247,14 @@ be seen red before it is trusted.
     and prints `budget=-/<n>`; one that writes usage only after the job has
     passed the budget is ended at the next sample, the overshoot is in the
     row, and the `RUN BUDGET` `spent=` is at least the budget; one that
-    reports only `tokens_in` prints `budget=<n>+/<n>`.
+    reports only `tokens_in` prints `budget=<n>+/<n>`; `--tokens unmetered`
+    prints `budget=unmetered` and runs to its deadline; a worker description
+    with `usage: none` beside a pending numeric budget is exit 2 before any
+    worker starts, naming the task, and beside `unmetered` tasks runs; a
+    fake usage source that errors on three consecutive samples ends the job
+    `RUN BUDGET-UNVERIFIABLE … samples=3` with `end=budget-unverifiable`,
+    the findings kept, and one that errors twice then answers does not;
+    `requeue` without `--files` or `--tokens` is exit 2 naming the flag.
 14. `TestOneCommandUpOneLineDown`: `batch --tasks` over three template
     tasks queues three jobs from files with no prompt text on the command
     line, `BATCH OK tasks=3`, every sidecar carrying the one batch id, and a
@@ -1230,6 +1276,9 @@ be seen red before it is trusted.
     `repo:` and `rev:` reporting one (file, line, rule) fold to one finding
     with `dup=1` printed; the same two lines under different `rev:` values,
     or with `rev:` missing from either head, stay two findings with `dup=0`;
+    `./internal/x.go:10` and `internal\x.go:10` under one `rev:` fold to one
+    finding whose page line and triage line carry `jobs=` naming both job
+    ids;
     a source test finds no code path from the parser's error to the page
     writer.
 16. `TestAReportIsARevision`: a fake worker that publishes three revisions
@@ -1273,7 +1322,12 @@ be seen red before it is trusted.
     supervisor that never writes its identity is killed at
     `--launch-timeout`, `RUN LAUNCH-FAILED` with the reason, the task in
     `failed/` with `launch=failed`, the slot free and no process of its
-    group alive; with `--workers 2`, a reserved slot counts as held and a
+    group alive; a supervisor SIGKILLed after release with the harness
+    alive is, on the next `run`, a dead leader with a live survivor and is
+    quarantined, never adopted and never finalized; a planted `exit.json`
+    whose `nonce` is not the slot file's is quarantined and never finalizes
+    the job, and the slot file's `nonce` equals the one the supervisor was
+    handed; with `--workers 2`, a reserved slot counts as held and a
     third job is never started; the slot file's pid, pgid and start stamp
     were written by the process they name (the fake supervisor records its
     own values and the test compares); `supervise` typed by hand with no live
@@ -1383,3 +1437,26 @@ verb, and tests that pin all three by executing them.
     read against this spec by a line that is not the author, then one batch run
     beside `worker-swarm.sh` on the same task list with the two results compared.
     `freddy-swarm.sh` and `run-freddy.sh` are not touched by any step above.
+
+## Ideas folded on 2026-09-11
+
+| source | the idea, in six words | disposition |
+|---|---|---|
+| Stella, spec repairs | reservation with a nonce counts immediately | rule 18: `nonce` on the reservation, the identity and `exit.json`; already counted (rule 18, last sentence) |
+| Stella, spec repairs | abort launch on lost handshake pipe | left different: the supervisor's identity is durable before the harness starts, so an orphaned launch is adopted by stamp (test 18) rather than aborted; nothing runs unrecorded, and the deadline is the supervisor's |
+| Stella, spec repairs | supervisor publishes authenticated exit record | rule 18: `exit.json` carries the nonce; a foreign nonce quarantines (rule 17) |
+| Stella, spec repairs | retain report and usage before reclaim, hashed | rule 12: `REV` beside the copy; `reclaim` verifies it |
+| Stella, spec repairs | budget is monitored, refuse unverifiable accounting | rule 13: `usage:` in the description, `unmetered`, `RUN BUDGET-UNVERIFIABLE` |
+| Stella, spec repairs | `--tokens` on requeue and stored metadata | grammar: `requeue --files --tokens` required |
+| Stella, spec repairs | dedup by normalized file, keep job ids | rule 15: normalized path, `jobs=` on the merged finding |
+| Stella, spec repairs | strict quarantine of malformed reports | already, rule 15 |
+| Stella, idea 5; DeepSeek, idea 5; Freddy, idea 3 | one structured worker result, capped | already, rules 14 and 15 |
+| Stella, idea 6 | measure decisions, not turns; limit fan-out | already, rule 8 (`accurate`/`wrong`), `--workers` cap, `--files` |
+| DeepSeek, idea 6 | a token budget per task | already, rule 13 |
+| DeepSeek, idea 4 | pull-based DAG, coordinator for exceptions | not folded: one task per worker is the shape (rule 11); dependencies are the board's and the coordinator's, not a second scheduler here |
+| Rowan, idea 3 | one command up, one line down | already, rules 13, 14, 15 |
+| Rowan, idea 8 | cheapest model that passes the test | already: the worker description chooses the model; the tool has no opinion |
+| Freddy, idea 8 | workers sync deltas, not full state | already, rule 10 (the note file) and rule 15 (the result shape) |
+| ideas #275 | refutation rate as a health metric | already, rule 8: `accurate`/`wrong` per batch is that rate; a falling `wrong` share is the reader's to notice |
+| ideas #273 | cleanup arriving before its notification | already, rule 18: `exit.json` before the slot is freed, and the nonce ties the evidence to its launch |
+| ideas #357 | reason about a report, never execute | already, the data paragraph at the top |
