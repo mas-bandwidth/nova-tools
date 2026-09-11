@@ -91,6 +91,13 @@ func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (
 	}
 	_ = p.WriteSidecar(Running, sc)
 
+	// Rule 7's one automatic re-queue is decided BEFORE the files move, because the new
+	// task's text is the old task's text and it is read from where the old task still is.
+	requeued := false
+	if end == EndKilled {
+		requeued = in.requeue(sc, now)
+	}
+
 	fin, usagePath := in.settle(sc, r.jobDir, rec, end, now)
 	_ = usagePath
 	_ = fin
@@ -118,7 +125,6 @@ func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (
 		return fmt.Sprintf("RUN BUDGET id=%s slot=%d spent=%d of=%d findings=%d",
 			oneline.Field(sc.ID), r.slot, rec.Spent, sc.Tokens, findings), EndBudget
 	case end == EndKilled:
-		requeued := in.requeue(sc, now)
 		return fmt.Sprintf("RUN KILLED id=%s slot=%d after=%s deadline=%s findings=%d unpublished=%t budget=%s requeued=%t reaped=%d",
 			oneline.Field(sc.ID), r.slot, after, trimDuration(r.deadline), findings, unpublished, budget, requeued, sc.Reaped+1), EndKilled
 	case report.Class == ClassMalformed:

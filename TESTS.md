@@ -111,3 +111,20 @@ MEMORY CAL score=4.41 score-channel=bm25 probe=unrelated-control
 MEMORY CAND n=1: "the lantern glazing is cleaned with two cloths, one for the brass and one for the glass…"
 MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=notes name=lantern-care type=measured: notes/lantern.md:1 "the lantern glazing collects a salt haze on every onshore wind…"
 ```
+
+## nova-swarm
+
+Fixture: a pool this tool makes in `t.TempDir()`, and `cmd/nova-swarm/testdata/fakeharness`, a fake harness on `PATH` so the dispatcher is tested end to end with no provider.
+
+### First run
+
+```
+$ nova-swarm quickstart --pool ./pool
+QUICKSTART OK pool=./pool pending=0 next=add,run,triage
+QUICKSTART NOTE a task is a file: nova-swarm add --pool ./pool --task <file> --files <n> --tokens <n>
+QUICKSTART NOTE a worker description says whose model runs: nova-swarm run --pool ./pool --workers <n> --hours <h> --worker <file>
+QUICKSTART NOTE the conditions are worth more than the model: nova-swarm template --name read-pr
+
+$ nova-swarm status --pool ./pool --max 20
+STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
+```

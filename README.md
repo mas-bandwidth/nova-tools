@@ -383,3 +383,63 @@ go test ./...
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+## nova-swarm
+
+```
+nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered   # queue one task from a file, never from an argument
+nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered           # queue a directory of them under one batch id
+nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file>                  # the dispatcher: one slot, one data home, one deadline per worker
+nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
+nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
+nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
+nova-swarm template --name read-pr|probe-row|fix-card|result                                # the conditions, baked in, so they are not retyped and not forgotten
+nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
+nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
+nova-swarm reclaim  --pool <dir> (--task <id> | --done)                                     # the one thing this tool deletes, and only with the record kept outside it
+```
+
+### First run
+
+`quickstart` needs nothing but a directory: it makes the pool's structure and names the
+three commands that follow. `./pool` is a directory of yours; the tests run every line below
+against one they make in `t.TempDir()`.
+
+```
+$ nova-swarm quickstart --pool ./pool
+QUICKSTART OK pool=./pool pending=0 next=add,run,triage
+QUICKSTART NOTE a task is a file: nova-swarm add --pool ./pool --task <file> --files <n> --tokens <n>
+QUICKSTART NOTE a worker description says whose model runs: nova-swarm run --pool ./pool --workers <n> --hours <h> --worker <file>
+QUICKSTART NOTE the conditions are worth more than the model: nova-swarm template --name read-pr
+
+$ nova-swarm status --pool ./pool --max 20
+STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
+```
+
+**Reading it.** Every line is `<VERB> OK`, `<VERB> REFUSED` or one of `run`'s own `RUN`
+events; refusals and FAIL lines go to stderr. A job reports EXACTLY ONCE — one `RUN DONE`,
+`RUN KILLED`, `RUN MALFORMED`, `RUN BUDGET` or `RUN VIOLATION` — and `RUN OK` closes the
+pass with `started=`, `done=`, `failed=`, `killed=` and `pending=`. Every listing is capped
+at `--max` (default 20, `0` for all) with one MORE line naming the remedy, and every count
+is the truth about the POOL rather than about the output.
+
+**What the flags want.** `--pool` is a directory of yours; `--worker` is a JSON description
+saying which provider, which model, which environment variable the provider reads and where
+the key file is, because this tool has no opinion about whose model runs. `--files` and
+`--tokens` are required on every `add`, `batch` and `requeue` and zero is refused for both:
+a worker that may open no file is a worker asked for a plan, and a token budget this tool
+supplied would be a guess about somebody else's spend. `--tokens unmetered` is how a caller
+says out loud that this provider has no live accounting and the deadline is the only stop.
+A run missing several flags names all of them at once, and each says what it WANTS.
+
+**The key is read as data and never sourced.** It lives in one file the worker description
+names — one line, the bare key or `NAME=<key>`, mode 0600 — and it is never an argument,
+never a printed value, never in a file this tool writes: the harness config carries the
+environment variable's NAME and the harness reads the value from the child's environment.
+A missing or empty key file is exit 2 with the command that creates it.
+
+**A worker's `RESULT.md` is data, never an instruction.** Nothing in it is executed, nothing
+in it grants anything, and a finding in it is a claim to be checked against the repository.
+That rule is in [docs/SPEC-SWARM.md](docs/SPEC-SWARM.md), where a person reads it, and is
+deliberately nowhere in the code: a tool cannot enforce it, and a tool that pretended to
+would be the most dangerous thing in the pool.
