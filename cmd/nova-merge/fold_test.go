@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -327,4 +328,58 @@ func TestAPacketStopsOnARecordWhosePathNamesNoEntry(t *testing.T) {
 	contains(t, stderr, "PACKET STOPPED reason=malformed_record file=reads/README.json")
 	absent(t, stdout, "PACKET ENTRY")
 	contains(t, stdout, "PACKET OK entries=0 holds=0")
+}
+
+// Read 4b, finding 2: A FLUSH DRIVEN AGAINST A PACKET. Rule 22 puts every Git operation on
+// a checkout under the checkout lock and rule 23 keeps the lock off `packet`, so the
+// packet's fold reads a work tree the CAS loop is restoring bytes into. A record file is
+// immutable and the branch only GROWS, so the invariant a reader depends on is that the
+// holds a packet shows never go backwards -- a half-written file read once and dropped is
+// exactly how they would.
+func TestAPacketIsHandedOverCorrectlyWhileAFlushRuns(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
+	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {
+		t.Fatalf("run: %s", errb)
+	}
+	if exit, _, errb := l.run("read", "--lane", l.lane, "--pr", "951", "--who", "stella",
+		"--head", oid, "--verdict", "hold", "--note", "the first finding"); exit != 0 {
+		t.Fatalf("read: %s", errb)
+	}
+	// A second line keeps recording holds: every one of those is a CAS loop resetting this
+	// lane's checkout and writing record bytes back over it.
+	done := make(chan error, 1)
+	go func() {
+		for i := 0; i < 6; i++ {
+			who := "reader" + itoa(i)
+			if exit, _, errb := l.run("read", "--lane", l.lane, "--pr", "951", "--who", who,
+				"--head", oid, "--verdict", "hold", "--note", "a finding by "+who); exit != 0 {
+				done <- fmt.Errorf("read by %s: exit %d\n%s", who, exit, errb)
+				return
+			}
+		}
+		done <- nil
+	}()
+	holds := 0
+	for i := 0; i < 12; i++ {
+		exit, stdout, stderr := l.run("packet", "--lane", l.lane, "--pr", "951", "--who", "emma", "--max", "0")
+		if exit != 0 {
+			t.Fatalf("packet reports and exits 0 whatever the lane holds: exit %d\n%s\n%s", exit, stdout, stderr)
+		}
+		absent(t, stderr, "FOLD REFUSED")
+		n := strings.Count(stdout, "PACKET HOLD ")
+		if n < holds {
+			t.Fatalf("a packet's holds never go backwards: %d after %d\n%s", n, holds, stdout)
+		}
+		holds = n
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	// And the last word is the whole truth: seven holds, all of them.
+	_, stdout, _ := l.run("packet", "--lane", l.lane, "--pr", "951", "--who", "emma", "--max", "0")
+	if n := strings.Count(stdout, "PACKET HOLD "); n != 7 {
+		t.Errorf("every hold recorded is in the packet, got %d\n%s", n, stdout)
+	}
 }

@@ -488,8 +488,88 @@ func (r *Records) Fold() (*Folded, error) {
 // report should ever see. Nothing here writes, so there is nothing to serialise; what a
 // concurrent flush can cost this fold is a record that lands a moment later, and the
 // packet is a snapshot either way. Every WRITING path still goes through Fold.
+//
+// WHAT A CONCURRENT FLUSH CAN ALSO COST IT IS HALF A FILE. The flush's restore is a
+// truncate-then-write over the record's path, so a fold with no lock can catch a record
+// mid-write and parse it as a PROBLEM -- and a problem blocks its entry, which here means
+// a reader told their entry is broken when nothing is, over a file that was whole a
+// millisecond later. Rule 23 keeps the lock off this path, so the answer is not a lock: a
+// file that parses as a problem is READ AGAIN, once, and only a file that refuses BOTH
+// times is a refusal this fold reports. A partial read is never a silent wrong packet
+// either way -- the first read's refusals that the second read resolves are dropped, and
+// the rest are surfaced by Packet (rule 23) exactly as Run surfaces them.
 func (r *Records) FoldReadOnly() (*Folded, error) {
-	return foldFiles(func(dir string) ([]foldFile, error) { return readDirFiles(r.Lane, dir) })
+	list := func(dir string) ([]foldFile, error) { return readDirFiles(r.Lane, dir) }
+	first, err := foldFiles(list)
+	if err != nil {
+		return nil, err
+	}
+	if len(first.Problems) == 0 {
+		return first, nil
+	}
+	Sleep(reReadPause)
+	second, err := foldFiles(list)
+	if err != nil {
+		return nil, err
+	}
+	return mergeFolds(first, second), nil
+}
+
+// reReadPause is the wait between the two reads: long enough for one truncate-and-write of
+// a small file to finish, short enough that a reader asking for a packet does not notice
+// it, and paid only when something refused.
+const reReadPause = 50 * time.Millisecond
+
+// mergeFolds joins the two reads of one tree. A RECORD FILE IS IMMUTABLE (rule 22: "one
+// immutable file per submission, never edited and never replaced"), so the two reads
+// cannot disagree about a file's content -- they can only disagree about whether the file
+// was whole yet. So: a path either read parsed is that record, and a problem survives only
+// while NEITHER read could parse that path.
+func mergeFolds(a, b *Folded) *Folded {
+	out := &Folded{Reads: map[string][]Read{}, Files: max(a.Files, b.Files)}
+	parsed := map[string]bool{}
+	for _, f := range []*Folded{a, b} {
+		for _, list := range f.Reads {
+			for _, r := range list {
+				parsed[r.File] = true
+			}
+		}
+		for _, g := range f.Gates {
+			parsed[g.File] = true
+		}
+	}
+	seen := map[string]bool{}
+	for _, f := range []*Folded{b, a} {
+		for entry, list := range f.Reads {
+			for _, r := range list {
+				if seen[r.File] {
+					continue
+				}
+				seen[r.File] = true
+				out.Reads[entry] = append(out.Reads[entry], r)
+			}
+		}
+		for _, g := range f.Gates {
+			if seen[g.File] {
+				continue
+			}
+			seen[g.File] = true
+			out.Gates = append(out.Gates, g)
+		}
+		for _, pr := range f.Problems {
+			if parsed[pr.File] || seen[pr.File] {
+				continue
+			}
+			seen[pr.File] = true
+			out.Problems = append(out.Problems, pr)
+		}
+	}
+	for _, list := range out.Reads {
+		sort.SliceStable(list, func(i, j int) bool { return list[i].At < list[j].At })
+	}
+	sort.SliceStable(out.Gates, func(i, j int) bool { return out.Gates[i].At < out.Gates[j].At })
+	sort.Slice(out.Problems, func(i, j int) bool { return out.Problems[i].File < out.Problems[j].File })
+	return out
 }
 
 // FoldTip folds the record files of the FETCHED tip in memory, writing neither the state
