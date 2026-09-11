@@ -293,12 +293,21 @@ func Prompt(in PromptInput) []byte {
 // beside a plan-only result, and a diagnosis assembled from a pattern nobody can read is
 // not one. A scratch-file refusal outside the job directory ended 3 of 7 runs in batch 2
 // and the pool reported rc=0 and done.
+//
+// EVERY MARK NAMES A DENIED OPERATION, in the harness's or the OS's own words. The bare
+// English words `refused` and `refusing` were marks too, and a harness log is a
+// TRANSCRIPT: the diff the worker read, the git log it printed, its own prose and the
+// RESULT.md it wrote are all in it. A clean read of nova-wake printed `refusals=27` and
+// the harness had refused nothing -- 27 commit subjects, test names and quoted `INBOX
+// REFUSED` fixtures (dogfood D13, 2026-09-11). A diagnosis that fires on the word for the
+// thing, wherever it appears, is noise in the one field a reader was told to trust; a
+// worker writing ABOUT refusals is doing the job it was given.
 var refusalMarks = []string{
 	"permission denied",
-	"refused",
-	"refusing",
-	"not permitted",
+	"operation not permitted",
 	"outside the working directory",
+	"read-only file system",
+	"access denied",
 	"eacces",
 	"eperm",
 }
