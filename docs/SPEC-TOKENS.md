@@ -180,12 +180,32 @@ is the day it was learned.
     `nova-bus --git-timeout`: it is how long the tool waits before saying
     so, not a fact about anybody's data.
 
+20. **A friend on another machine runs `report`, and never types a number.**
+    The first user of this tool is not this bench: it is Emma, Johnny or
+    Stella on a harness of their own (Glenn, 2026-09-11: "I want our friends
+    who are not swarms to use it"). `report` folds that machine's own
+    sources for one day, the same sources and the same attribution as
+    `fold`, and prints the day's lines in exactly the bus-note shape
+    (`date who model repo type count`, one line per (model, repo, type)),
+    with the tool's stamp, build id and `who` from a flag, ready to be the
+    body of a `tokens YYYY-MM-DD` note; with `--note <path>` it writes that
+    body to a file for `nova-bus draft`. A `report` for a day whose sources
+    were all unreadable prints `TOKENS UNREADABLE` per source and no lines,
+    exit 1: a friend with nothing to show says so, never sends zeros. A
+    `report` line is what `fold --bus` parses, so the two are one grammar
+    by construction (lesson 113), and a `report` never carries `~`: a rough
+    number is a person's, typed by hand, and the parser accepts it from a
+    person only.
+
 ## The verbs
 
 ```
 nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
                     [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
+nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
+                    [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--codex <label>=<dir>]...
+                    [--note <path>] [--scratch <dir>] [--timeout <seconds>]
 nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
 nova-tokens check   --out <dir> [--max <n>]
 nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
@@ -713,6 +733,12 @@ seen red before it is trusted.
     names the source and `timeout after 1s`, the fold continues over the
     other sources, exit 1; `--timeout` unset is 120 and a test asserts it;
     `--timeout 0` is refused.
+20. `report --who emma --day D` over a fixture Claude Code directory prints
+    lines that `fold --bus` parses back to the same (model, repo, type,
+    count) rows with zero unparsed (one grammar, by construction); a
+    `report` whose every source is unreadable prints no lines and exits 1;
+    a `report` line never contains `~`; `--note` writes exactly the printed
+    lines and nothing else.
 
 ## The work list
 
