@@ -757,3 +757,67 @@ func TestAFindingThatMatchesAnOwedItemIsADuplicate(t *testing.T) {
 	}
 	mustContain(t, "triage with no owed list", stdout, "findings=1 new=1 dup=0")
 }
+
+// DEMANDED TEST 12, the part this PR could lose without a test noticing (SPEC-SWARM.md:190,
+// "and **only then**"): finalize writes the usage file and the report copy BEFORE the job
+// moves, and `reclaim` refuses a copy that does not hash to its REV. The cold read's three
+// mutations -- claiming the job before settle, deleting the REV comparison, deleting the
+// launch transaction's compare-and-swap -- all stayed green; the first two go red here.
+func TestUsageAndTheCopyAreWrittenBeforeTheMove(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a job whose evidence outlives it\nFAKE-FINDINGS 1\nFAKE-USAGE 100 50 - - -\n")
+	if exit, stdout, stderr := b.run(); exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+
+	usage := filepath.Join(b.pool, "usage", id+".tsv")
+	copyPath := filepath.Join(b.pool, "reports", id, "RESULT.md")
+	// THE MOVE's own time is the done/ DIRECTORY's mtime: a rename carries the sidecar's
+	// mtime with it, so the file that arrived says when it was written and not when it
+	// landed. The directory says when it landed.
+	moved := filepath.Join(b.pool, "done")
+	usageStat, err := os.Stat(usage)
+	if err != nil {
+		t.Fatalf("no usage file: %v", err)
+	}
+	copyStat, err := os.Stat(copyPath)
+	if err != nil {
+		t.Fatalf("no report copy: %v", err)
+	}
+	movedStat, err := os.Stat(moved)
+	if err != nil {
+		t.Fatalf("done/ could not be read: %v", err)
+	}
+	// "Usage is written ... BEFORE anything else happens to the job" -- the file is older
+	// than the move, which is what makes a crash between them survivable.
+	if usageStat.ModTime().After(movedStat.ModTime()) {
+		t.Errorf("the usage file (%s) is newer than the move (%s): the job moved before its evidence existed",
+			usageStat.ModTime(), movedStat.ModTime())
+	}
+	if copyStat.ModTime().After(movedStat.ModTime()) {
+		t.Errorf("the report copy (%s) is newer than the move (%s)", copyStat.ModTime(), movedStat.ModTime())
+	}
+	// A REV naming the attempt and the copy's SHA-256 sits beside the copy.
+	rev, err := os.ReadFile(filepath.Join(b.pool, "reports", id, "REV"))
+	if err != nil {
+		t.Fatalf("no REV beside the copy: %v", err)
+	}
+	if !strings.Contains(string(rev), "attempt") {
+		t.Errorf("the REV wants the attempt it belongs to:\n%s", rev)
+	}
+
+	// Altered bytes after finalize: reclaim refuses and the directory is intact.
+	if err := os.WriteFile(copyPath, []byte("a copy nobody wrote\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	jobDir := filepath.Join(b.dir, "worker-home-1", "jobs", id)
+	exit, stdout, stderr := b.swarm("reclaim", "--pool", b.pool, "--task", id)
+	if exit != 1 {
+		t.Errorf("a copy that does not match its REV is RECLAIM REFUSED exit 1, got %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, "does not match REV")
+	if _, err := os.Stat(jobDir); err != nil {
+		t.Errorf("a refused reclaim leaves the directory intact: %v", err)
+	}
+}
