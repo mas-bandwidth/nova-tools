@@ -425,3 +425,81 @@ func TestAPassWhoseOwnStateWriteIsRefusedIsNotSilent(t *testing.T) {
 	contains(t, stderr, "RUN REFUSED: this pass ran and its verdicts could not be written to state.json")
 	contains(t, stderr, "pid=")
 }
+
+// Read 4b, the delta read: A STATUS NEVER SKIPS A RECORD THE FOLD REFUSED.
+//
+// `Status` performed the fold and dropped every `Folded.Problems`: the entry came out
+// BLOCKED from `plan`, but the FILE was never named, so a reader of `status` -- the one
+// verb the remedy line on every `run` points at -- was handed a lane in which a record
+// nobody could read had silently gone missing. `run`, `dry-run` and `packet` all announce
+// it. The spec's rule is one sentence: a record file that does not decode is NEVER
+// skipped.
+func TestStatusNamesTheRecordsTheFoldRefused(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
+	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {
+		t.Fatalf("run: %s", errb)
+	}
+	file := "reads/951/stella-" + oid[:12] + "-20260911T131500Z-abcdef.json"
+	l.putRecord(file, `{"who":"stella","verdict":"ho`)
+	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 1 {
+		t.Fatalf("a malformed record blocks its entry: exit %d\n%s", exit, errb)
+	}
+	exit, stdout, stderr := l.run("status", "--lane", l.lane)
+	if exit != 0 {
+		t.Fatalf("status reports and exits 0 whatever the lane holds: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "FOLD REFUSED file="+file)
+	contains(t, stdout, "STATUS ENTRY kind=pr entry=951")
+	contains(t, stdout, "state=BLOCKED")
+	contains(t, stdout, "STATUS OK")
+}
+
+// The other half: a record whose path names no entry leaves the SCOPE indeterminate.
+// `run` stops before any entry is read and `packet` hands nothing over; `status` placed
+// every entry in a state computed from a fold it knew was incomplete and said nothing at
+// all, because a problem with no entry matches no entry in `plan`.
+func TestStatusStopsOnARecordWhosePathNamesNoEntry(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	setupPR(t, l, 951, "feature-a", "a.txt", true)
+	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {
+		t.Fatalf("run: %s", errb)
+	}
+	l.putRecord("reads/README.json", "not a record at all\n")
+	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 1 {
+		t.Fatalf("a record that names no entry stops the pass: exit %d\n%s", exit, errb)
+	}
+	exit, stdout, stderr := l.run("status", "--lane", l.lane)
+	if exit != 0 {
+		t.Fatalf("status reports and exits 0 whatever the lane holds: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "FOLD REFUSED file=reads/README.json")
+	contains(t, stderr, "STATUS STOPPED reason=malformed_record file=reads/README.json")
+	absent(t, stdout, "STATUS ENTRY")
+	contains(t, stdout, "STATUS OK")
+}
+
+// `dry-run` stopped on the indeterminate one but never printed the FOLD REFUSED lines, so
+// a survey of a lane with a truncated record in an entry's own directory named no file
+// either: the entry read BLOCKED in the plan with nothing to point a hand at.
+func TestADryRunNamesTheRecordsTheFoldRefused(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
+	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {
+		t.Fatalf("run: %s", errb)
+	}
+	file := "reads/951/stella-" + oid[:12] + "-20260911T131500Z-abcdef.json"
+	l.putRecord(file, `{"who":"stella","verdict":"ho`)
+	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 1 {
+		t.Fatalf("a malformed record blocks its entry: exit %d\n%s", exit, errb)
+	}
+	exit, stdout, stderr := l.run("dry-run", "--lane", l.lane)
+	if exit != 0 {
+		t.Fatalf("dry-run reports and exits 0 whatever the lane holds: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "FOLD REFUSED file="+file)
+	contains(t, stdout, "DRY OK")
+}

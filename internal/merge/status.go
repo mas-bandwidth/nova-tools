@@ -41,6 +41,37 @@ func (p *Pass) Status(reads string) int {
 		}
 	}
 	p.basePending = baseState == "PENDING"
+
+	// THE FOLD REFUSES, IT NEVER SKIPS -- AND `status` IS THE VERB THE REMEDY LINE POINTS
+	// AT. Status performed the fold and dropped every problem: an entry named by a refusal
+	// came out BLOCKED from plan, but the FILE was never named here, and a refusal whose
+	// path names no entry matches no entry at all and so vanished completely. `run`,
+	// `dry-run` and `packet` announce both. A record file that does not decode is never
+	// skipped, and a lane read without a pass is still a lane that must say so.
+	//
+	// The output grammar has no STATUS line for either, so these are run's own forms --
+	// FOLD REFUSED verbatim, and run's `STOPPED reason=malformed_record file=<path>` under
+	// this verb's own first token, the way `packet` prints PACKET STOPPED.
+	for _, pr := range p.Problems {
+		fmt.Fprintf(p.Stderr, "FOLD REFUSED file=%s: %s\n",
+			oneline.Field(pr.File), oneline.Escape(oneline.Cap(pr.Reason, oneline.TailBytes)))
+	}
+	// A record file whose path names no entry leaves the SCOPE indeterminate: there is no
+	// entry to mark BLOCKED instead, so no entry's state can be trusted and none is
+	// printed -- run stops before any entry is read and this stops before any entry is
+	// listed. `status` REPORTS and exits 0 whatever the lane holds (the verb sentences),
+	// so the news is the line, not the code, and the closing line is still printed because
+	// a reader must be able to tell a stop from a death (lesson 87).
+	for _, pr := range p.Problems {
+		if pr.Entry == "" {
+			fmt.Fprintf(p.Stderr, "STATUS STOPPED reason=malformed_record file=%s: %s; this path names no entry, so no entry's state in this lane can be reported; re-record it with the verb that wrote it\n",
+				oneline.Field(pr.File), oneline.Escape(oneline.Cap(pr.Reason, oneline.TailBytes)))
+			fmt.Fprintf(p.Stdout, "STATUS OK prs=%d branches=%d base=%s base_state=%s ready=0 blocked=0 waiting=0 reads=0a/0h\n",
+				len(p.State.PRs), len(p.State.Branches), oneline.Field(p.State.Base), baseState)
+			return 0
+		}
+	}
+
 	list := bounded.Capped(p.Stdout, p.Max, "STATUS", "entry",
 		fmt.Sprintf("nova-merge status --lane %s --max 0", p.Lane))
 	var ready, blocked, waiting, approves, holds int

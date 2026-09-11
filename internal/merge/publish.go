@@ -176,6 +176,13 @@ func (p *Pass) survey(res *Result) *Result {
 	// dry-run REPORTS and exits 0 whatever the lane holds -- the spec's own sentence for
 	// status, dry-run and packet. It said the same thing and exited 1, so a caller could
 	// not tell a report from a wall.
+	// The fold's refusals are named before the survey, exactly as the pass names them: a
+	// survey that says an entry is blocked without naming the file nobody could read
+	// leaves the hand with nothing to open.
+	for _, pr := range p.Problems {
+		fmt.Fprintf(p.Stderr, "FOLD REFUSED file=%s: %s\n",
+			oneline.Field(pr.File), oneline.Escape(oneline.Cap(pr.Reason, oneline.TailBytes)))
+	}
 	for _, pr := range p.Problems {
 		if pr.Entry == "" {
 			fmt.Fprintf(p.Stderr, "RUN STOPPED reason=malformed_record file=%s: %s\n",
