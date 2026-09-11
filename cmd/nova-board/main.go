@@ -35,6 +35,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -375,7 +376,8 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 	}
 	deadline, err := deadlineOf(by, now)
 	if err != nil && strings.TrimSpace(by) != "" {
-		f.want(byHint)
+		f.want(fmt.Sprintf("--by %s: %s; it wants a deadline in the FUTURE, as a duration from now like 4h or an RFC 3339 stamp like 2026-09-12T09:00:00Z — both spellings are read the same way",
+			oneline.Field(by), oneline.Err(err)))
 	}
 	tail := board.Tail(text)
 	if strings.TrimSpace(text) != "" && strings.TrimSpace(tail) == "" {
@@ -405,9 +407,9 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 		if existing := b.Card(id); existing != nil {
 			event.ID = id
 			if sameCreation(existing, event) {
-				fmt.Fprintf(stdout, "ADD OK id=%s owner=%s at=%s backend=%s durable=%s existed=true\n",
+				fmt.Fprintf(stdout, "ADD OK id=%s owner=%s at=%s by=%s backend=%s durable=%s existed=true\n",
 					oneline.Field(id), oneline.Field(existing.Owner), oneline.Field(existing.SinceRaw),
-					oneline.Field(fileOrIssue(kind)), oneline.Field(durable(kind)))
+					oneline.Field(existing.By), oneline.Field(kind), oneline.Field(durable(kind)))
 				return 0
 			}
 			fmt.Fprintf(stderr, "ADD REFUSED: id %s exists with different fields; nothing written\n", oneline.Field(id))
@@ -459,9 +461,16 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 		counts(stdout, b, kind, source)
 		return 1
 	}
-	fmt.Fprintf(stdout, "ADD OK id=%s owner=%s at=%s backend=%s durable=%s existed=false\n",
+	fmt.Fprintf(stdout, "ADD OK id=%s owner=%s at=%s by=%s backend=%s durable=%s existed=false\n",
 		oneline.Field(event.ID), oneline.Field(owner), oneline.Field(board.Stamp(now)),
-		oneline.Field(fileOrIssue(kind)), oneline.Field(durable(kind)))
+		oneline.Field(deadline), oneline.Field(kind), oneline.Field(durable(kind)))
+	// durable=false IS THE ONE FIELD THAT OWES A REMEDY. The directory backend appends and
+	// never runs git, which is the honest asymmetry between the backends — and a line that
+	// read durable=false and was told nothing about it has a card no other clone can see.
+	if kind == "dir" {
+		fmt.Fprintf(stderr, "ADD NOTE landing it is yours: this add wrote %s and ran no git; commit and push it or the card is on this clone only\n",
+			oneline.Field(filepath.Join(source, event.ID+".board")))
+	}
 	return 0
 }
 
@@ -491,10 +500,12 @@ func cmdTake(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Read
 	// A TAKE OF A FRESH TAKE BY ANOTHER LINE IS REFUSED: that is the 2026-09-10
 	// two-children-one-bug failure, closed at the only moment a tool can see it. Past
 	// --stale the take is silent rather than live and this is permitted without --anyway.
-	previous := "-"
-	if target.HasTake {
-		previous = target.Owner
-	}
+	// previous= NAMES WHOEVER THIS TAKE REPLACED, which is the owner the board showed
+	// before it: the latest taker where there was one, and otherwise the card's own
+	// owner= — the add's --owner label, or the filer. A take that reported only a previous
+	// TAKER let a labelled owner leave the counts with nothing in the log saying they had
+	// been moved off.
+	previous := dash(target.Owner)
 	if !target.Open() {
 		fmt.Fprintf(stderr, "TAKE REFUSED: %s is CLOSED (by %s at %s); there is no reopen — a card closed in error is a NEW card whose text names this id\n",
 			oneline.Field(card), oneline.Field(closedBy(target)), oneline.Field(closedAt(target)))
@@ -849,21 +860,31 @@ func appendEvent(backend board.Backend, card *board.Card, event board.Event, rnd
 // deadlineOf reads --by: a duration from now, or an RFC 3339 stamp STORED AS GIVEN. A
 // deadline is a fact about the work rather than about when the tool wrote, and it is never
 // used as `since`.
+// ONE STATEMENT FOR "IS THIS DEADLINE IN THE FUTURE", over both spellings. The two arms
+// differ in how they READ a deadline and in nothing else: the duration arm adds to this
+// run's clock, the stamp arm is stored as given, and the one comparison below decides
+// both. Parity by transcription is how `--by -1h` came to be refused while `--by
+// 2026-09-01T00:00:00Z` filed a card overdue the second it existed.
 func deadlineOf(by string, now time.Time) (string, error) {
 	by = strings.TrimSpace(by)
 	if by == "" {
 		return "", fmt.Errorf("empty")
 	}
+	var stored string
+	var when time.Time
 	if d, err := time.ParseDuration(by); err == nil {
-		if d <= 0 {
-			return "", fmt.Errorf("a deadline in the past is not a deadline")
+		when, stored = now.Add(d), board.Stamp(now.Add(d))
+	} else {
+		parsed, err := time.Parse(time.RFC3339, by)
+		if err != nil {
+			return "", fmt.Errorf("neither a duration nor an RFC 3339 stamp")
 		}
-		return board.Stamp(now.Add(d)), nil
+		when, stored = parsed.UTC(), by
 	}
-	if _, err := time.Parse(time.RFC3339, by); err == nil {
-		return by, nil
+	if !when.After(now) {
+		return "", fmt.Errorf("a deadline in the past is not a deadline")
 	}
-	return "", fmt.Errorf("neither a duration nor an RFC 3339 stamp")
+	return stored, nil
 }
 
 // sameCreation compares everything on a card line but the stamp.
@@ -910,13 +931,6 @@ func backendFlag(kind, source string) string {
 
 // quote wraps a value for the shell lines quickstart prints, which are meant to be pasted.
 func quote(s string) string { return "\"" + strings.ReplaceAll(s, "\"", "\\\"") + "\"" }
-
-func fileOrIssue(kind string) string {
-	if kind == "issue" {
-		return "issue"
-	}
-	return "file"
-}
 
 // durable says when the card is durable, and it is the one asymmetry between the backends:
 // an add --issue is durable when the command returns, an add --dir when the caller lands it.

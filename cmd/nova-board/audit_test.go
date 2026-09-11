@@ -27,7 +27,10 @@ var boardAudit = audit.Config{
 		"main.go|capped|remedy": "the remedy a listing's MORE line carries: a fmt.Sprintf over a literal and an int, built at this file's two call sites and never caller text; internal/bounded also puts it through oneline.Escape before writing it",
 	},
 	Imports: []string{
-		`"crypto/rand"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`, `"time"`,
+		// path/filepath joins the board directory and a card's file name for the ADD NOTE
+		// that says what a --dir add left unlanded. It builds a string and writes nothing:
+		// the joined path goes out through oneline.Field like every other value here.
+		`"crypto/rand"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strings"`, `"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/board"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 	},

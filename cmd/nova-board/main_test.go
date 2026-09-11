@@ -1134,3 +1134,87 @@ func TestAFilterWithoutAListingIsRefused(t *testing.T) {
 		t.Errorf("the default view: exit %d\n%s", exit, stdout)
 	}
 }
+
+// previous= NAMES WHOEVER IT REPLACED. A card filed `--owner emma` and then taken by
+// another line printed `TAKE OK … previous=-` and emma left the counts without the log
+// saying she had been moved off: previous= reported the previous TAKER, and a card whose
+// owner is a label has no taker. The board may not lose a name quietly.
+func TestATakeNamesTheOwnerItReplaced(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add(append(plain("rowan", "a thing rowan files for emma"), "--owner", "emma")...)
+	_, before, _ := b.run(b.board("list", "--stale", "10m")...)
+	if !strings.Contains(before, "BOARD LINE name=emma") {
+		t.Fatalf("the --owner label is not an owner on the board:\n%s", before)
+	}
+	exit, stdout, stderr := b.run(b.board("take", "--as", "newline", "--card", id, "--stale", "10m")...)
+	if exit != 0 {
+		t.Fatalf("take: exit %d %s", exit, stderr)
+	}
+	if !strings.Contains(stdout, "previous=emma") {
+		t.Errorf("the take does not name the owner it replaced: %q", stdout)
+	}
+	// A take of a card nobody owned but its filer still names the filer it replaced, and a
+	// re-take by the holder names the holder: previous= is what the board said before.
+	fresh := b.add(plain("rowan", "a thing rowan files for rowan")...)
+	if _, stdout, _ := b.run(b.board("take", "--as", "ada", "--card", fresh, "--stale", "10m")...); !strings.Contains(stdout, "previous=rowan") {
+		t.Errorf("a take over the filer's own label: %q", stdout)
+	}
+}
+
+// ONE STATEMENT FOR "IS THIS DEADLINE IN THE FUTURE", AND ADD OK ECHOES IT. Lesson 113:
+// parity between two modes is by construction, never by transcription — `--by -1h` was
+// refused and `--by 2026-09-01T00:00:00Z` filed a card overdue the second it existed,
+// because only the duration arm was checked. And the line that confirms a filing carried
+// no by=, so the deadline just set could not be read back off it.
+func TestADeadlineInThePastIsRefusedInBothSpellings(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	for _, by := range []string{"-1h", "2026-09-01T00:00:00Z", "2026-09-11T09:59:59Z"} {
+		exit, stdout, stderr := b.run(b.board("add", "--as", "rowan", "--text", "a thing already late",
+			"--by", by, "--default", "d")...)
+		if exit != 2 {
+			t.Errorf("--by %s: exit %d, want 2\n%s%s", by, exit, stdout, stderr)
+		}
+		if !strings.Contains(stderr, "--by") || !strings.Contains(stderr, "past") {
+			t.Errorf("--by %s: stderr %q", by, stderr)
+		}
+	}
+	// Both spellings of a future deadline are accepted, and ADD OK says what was stored.
+	_, stdout, _ := b.run(b.board("add", "--as", "rowan", "--text", "a thing due in four hours",
+		"--by", "4h", "--default", "d")...)
+	if !strings.Contains(stdout, "by=2026-09-11T14:00:00Z") {
+		t.Errorf("ADD OK does not echo the deadline it stored: %q", stdout)
+	}
+	_, stdout, _ = b.run(b.board("add", "--as", "rowan", "--text", "a thing due on a date",
+		"--by", "2026-09-30T09:00:00Z", "--default", "d")...)
+	if !strings.Contains(stdout, "by=2026-09-30T09:00:00Z") {
+		t.Errorf("a stamp is stored as given and echoed as given: %q", stdout)
+	}
+}
+
+// ONE TOKEN PER BACKEND, AND durable=false CARRIES ITS REMEDY. `list` said backend=dir and
+// `add` said backend=file for the same board, so a reader grepping one name over a run's
+// lines finds half of them; and durable=false is the one field that should say what to do
+// about it — landing it is the caller's, and saying so is more honest than a push hidden
+// inside add.
+func TestOneTokenPerBackendAndTheDirAddSaysWhatIsOwed(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	exit, stdout, stderr := b.run(b.board("add", "--as", "rowan", "--text", "a thing on a directory board",
+		"--by", "4h", "--default", "d")...)
+	if exit != 0 {
+		t.Fatalf("add: exit %d %s", exit, stderr)
+	}
+	if !strings.Contains(stdout, "backend=dir durable=false") {
+		t.Errorf("ADD OK names the backend by another name than the listing does: %q", stdout)
+	}
+	id := field(stdout, "id=")
+	_, listing, _ := b.run(b.board("list", "--stale", "10m")...)
+	if !strings.Contains(listing, "backend=dir") {
+		t.Errorf("the listing's backend token moved: %q", listing)
+	}
+	if !strings.Contains(stderr, "ADD NOTE") || !strings.Contains(stderr, filepath.Join(b.dir, id+".board")) {
+		t.Errorf("a --dir add says durable=false and never says what would make it durable: %q", stderr)
+	}
+}
