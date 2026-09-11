@@ -86,6 +86,15 @@ func (r *Rules) Attribute(tokens []string, prev string) string {
 		if tok == "" {
 			continue
 		}
+		// THE THREE BUCKET NAMES PASS THROUGH. They are not repos and no rules file
+		// names them, so a recorded name of `unattributed` arriving from a bus line
+		// would otherwise become `other` -- and a provider total that crossed the bus
+		// would land under a different repo from the same total folded straight from
+		// the export. The bucket is a fact this tool wrote; it is not re-attributed.
+		switch tok {
+		case Unattributed, Unknown, Other:
+			return tok
+		}
 		seen = true
 		for _, rule := range r.rules {
 			if rule.re.MatchString(tok) {
