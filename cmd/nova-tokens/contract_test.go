@@ -410,3 +410,22 @@ func TestSumPrintsADashWhereNoRowReportedTheType(t *testing.T) {
 	wantContains(t, pair, "dashes=0,1,1,1,1")
 	wantContains(t, lineWith(s.stdout, "SUM TOTAL"), "reasoning=-")
 }
+
+// Rule 15 at the far edge: a month with no day files has no source that reported any
+// type, so its five cells are dashes. The running total was printed instead -- `input=0
+// output=0 cache_write=0 cache_read=0 reasoning=0` -- the one "not measured" zero rule 15
+// forbids, in the one place the tool had no row to learn it from.
+func TestAMonthWithNoDayFilesSumsToDashesNotZeros(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	r := invoke(t, "sum", "--out", out, "--month", "2026-09")
+	total := lineWith(r.stdout, "SUM TOTAL")
+	if total == "" {
+		t.Fatalf("no SUM TOTAL line over an empty month:\n%s%s", r.stdout, r.stderr)
+	}
+	for _, want := range []string{"input=-", "output=-", "cache_write=-", "cache_read=-", "reasoning=-"} {
+		if !strings.Contains(total, want) {
+			t.Errorf("SUM TOTAL over a month with no day files is %q; want %s -- a type no source reported is a dash, never 0 (rule 15)", total, want)
+		}
+	}
+}

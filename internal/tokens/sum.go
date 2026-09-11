@@ -57,7 +57,10 @@ func (a *Agg) add(r DayRow, key string) {
 // claiming to be complete, and the dashes= tuple beside it is a correction a reader has to
 // know the column order of.
 func (a *Agg) Cell(t Type) string {
-	if a.Rows > 0 && a.Dashes[t] == a.Rows {
+	// No rows at all is the same absence as every row a dash: a month with no day files
+	// had nothing that could report a type, and printing 0 there would be the one "not
+	// measured" zero rule 15 forbids.
+	if a.Dashes[t] == a.Rows {
 		return Dash
 	}
 	return itoa64(a.Totals[t])
