@@ -78,8 +78,12 @@ func grammarPairs(s string) map[string]string {
 	return out
 }
 
-// grammarEnum is the closed set of words a `<a|b|c>` value admits. A one-letter member is
-// a placeholder (`<all|d>`, `<n|->`), not a value, so such a template is not a closed set.
+// grammarEnum is the set of members a `<a|b|c>` value admits. A member in angle brackets --
+// `<zone>` in `<utc|mixed|<zone>>` -- is a PLACEHOLDER for a class of values, not a literal,
+// and comes back with its brackets so the matcher can check the class instead of the word:
+// the grammar used to spell that member `zone`, a word the tool has never printed, and the
+// zone name it does print was admitted by nothing. A one-letter member is a placeholder too
+// (`<all|d>`, `<n|->`), and this test knows no class for it, so such a template is not a set.
 func grammarEnum(spec string) ([]string, bool) {
 	if !strings.HasPrefix(spec, "<") || !strings.HasSuffix(spec, ">") {
 		return nil, false
@@ -89,11 +93,51 @@ func grammarEnum(spec string) ([]string, bool) {
 		return nil, false
 	}
 	for _, a := range alts {
+		if strings.HasPrefix(a, "<") && strings.HasSuffix(a, ">") && len(a) > 2 {
+			continue // a named placeholder, checked by grammarPlaceholder
+		}
 		if len(a) < 2 || strings.ContainsAny(a, "<>") {
 			return nil, false
 		}
 	}
 	return alts, true
+}
+
+// grammarAdmits reports whether an enumerated value is admitted: a literal member matches
+// exactly, a bracketed member by its class.
+func grammarAdmits(alts []string, v string) bool {
+	for _, a := range alts {
+		if strings.HasPrefix(a, "<") && strings.HasSuffix(a, ">") && len(a) > 2 {
+			if grammarPlaceholder(a[1:len(a)-1], v, alts) {
+				return true
+			}
+			continue
+		}
+		if v == a {
+			return true
+		}
+	}
+	return false
+}
+
+// grammarPlaceholder is the class each named placeholder stands for. `<zone>` is the zone
+// an export declares, as rule 17 and rule 13 accept it: non-empty, no whitespace, and not
+// one of the literal members standing beside it (`utc` spelled out is refused by rule 6).
+// A placeholder this test knows no class for admits anything, which is the old behaviour.
+func grammarPlaceholder(name, v string, alts []string) bool {
+	switch name {
+	case "zone":
+		if v == "" || strings.ContainsAny(v, " \t") {
+			return false
+		}
+		for _, a := range alts {
+			if v == a {
+				return false
+			}
+		}
+		return true
+	}
+	return true
 }
 
 func head(s string) string {
@@ -131,13 +175,7 @@ func checkAgainstGrammar(t *testing.T, grammar map[string]string, line string) {
 			continue
 		}
 		if alts, closed := grammarEnum(spec); closed {
-			found := false
-			for _, a := range alts {
-				if v == a {
-					found = true
-				}
-			}
-			if !found {
+			if !grammarAdmits(alts, v) {
 				t.Errorf("%s prints %s=%s; the output grammar enumerates %s=%s", kind, k, v, k, spec)
 			}
 		}
@@ -185,6 +223,23 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 		invoke(t, "sources", "--all", "--repos", reposFile(t, dir2), "--bus", bus),
 		invoke(t, "sum", "--out", out2, "--month", "2026-09"),
 		invoke(t, "check", "--out", out2))
+
+	// A provider export of per-day totals in its own zone (rule 17): the SOURCE line's
+	// `day_basis=` is the zone NAME, `America/Los_Angeles`, never the word `zone`. The
+	// grammar said `<utc|zone|mixed>` and the tool has never printed `zone`.
+	dir3 := t.TempDir()
+	out3 := mkdir(t, filepath.Join(dir3, "out"))
+	xai := write(t, filepath.Join(dir3, "xai.csv"), strings.Join([]string{
+		"# timezone: America/Los_Angeles",
+		"date,model,input,output,reasoning",
+		"2026-09-11,grok-4,9912340,301122,55",
+		"",
+	}, "\n"))
+	runs = append(runs,
+		invoke(t, "fold", "--out", out3, "--all", "--repos", reposFile(t, dir3), "--provider", "xai:johnny="+xai),
+		invoke(t, "sources", "--all", "--repos", reposFile(t, dir3), "--provider", "xai:johnny="+xai),
+		invoke(t, "sum", "--out", out3, "--month", "2026-09"),
+		invoke(t, "check", "--out", out3))
 
 	n := 0
 	for _, r := range runs {

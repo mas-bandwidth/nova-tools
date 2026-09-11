@@ -81,7 +81,7 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 	// that can empty a file is searched for, and the four the tool is allowed are carved
 	// out here BY FILE, with the reason -- each one a file THIS RUN makes, never a file the
 	// tool was given.
-	emptiers := []string{"os.Remove", "os.RemoveAll", "os.Truncate", ".Truncate(", "os.Create(", "os.WriteFile("}
+	emptiers := []string{"os.Remove", "os.RemoveAll", "os.Truncate", ".Truncate(", "os.Create(", "os.WriteFile(", "os.O_TRUNC"}
 	allowed := map[string][]string{
 		// The platform with no flock: the lock is an exclusive create and its release
 		// removes the sentinel this run made.

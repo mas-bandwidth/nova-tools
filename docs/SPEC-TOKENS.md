@@ -139,7 +139,8 @@ is the day it was learned.
    flock, the lock sentinel the release removes. A file the tool was given is
    never one of them, and the tripwire that enforces this searches for every
    call that can empty a file -- `os.Remove`, `os.RemoveAll`, `os.Truncate`,
-   `.Truncate(`, `os.Create(`, `os.WriteFile(` -- carving out those four by
+   `.Truncate(`, `os.Create(`, `os.WriteFile(`, `os.O_TRUNC` (the flag that
+   empties the file an `os.OpenFile` opens) -- carving out those four by
    file, with the reason, and failing when a carve-out has gone stale.
    A file under `--out` that is not a day file and not the temp name is
    named by `check` and left alone.
@@ -433,7 +434,7 @@ after `: ` is capped at `oneline.TailBytes`.
 
 ```
 TOKENS FOLD at=<stamp> build=<id> out=<dir> sources=<n> days=<all|d> repos=<file>
-TOKENS SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|zone|mixed> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
+TOKENS SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|mixed|<zone>> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
 TOKENS UNREADABLE label=<label> path=<path>: <why>
 TOKENS UNPARSED label=<kind>:<name> note=<id> line=<n>: <text or why>
 TOKENS SUPERSEDED label=bus:<name> note=<id> by=<id> day=<d>
@@ -465,7 +466,7 @@ CHECK MORE kind=<file|row|missing|stray> shown=<n> total=<t> nova-tokens check -
 CHECK OK at=<stamp> build=<id> files=<n> rows=<n> first=<d> last=<d> missing=0 stray=0
 CHECK FAIL files=<n> rows=<n> first=<d> last=<d> bad=<n> missing=<n> stray=<n>
 CHECK REFUSED: <reason>
-SOURCES SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|zone|mixed> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
+SOURCES SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|mixed|<zone>> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
 SOURCES UNREADABLE label=<label> path=<path>: <why>
 SOURCES UNPARSED label=<kind>:<name> note=<id> line=<n>: <text>
 SOURCES MORE kind=<source|unreadable|unparsed> shown=<n> total=<t> nova-tokens sources … --max 0
@@ -501,7 +502,10 @@ named), so a reader of a mixed row can see which source could not have
 covered which cell (rule 15). `day_basis=` is `utc` for every kind but a
 provider export of local-day totals, where it is the export's zone, and a
 bus lane whose lines carry a seventh field, where it is that zone, or
-`mixed` when one lane's lines carry more than one (rule 17); a lane is
+`mixed` when one lane's lines carry more than one (rule 17); `<zone>` in the
+block is that zone NAME as rule 17 declares it and rule 13 accepts it
+(`America/Los_Angeles`, `+02:00`: no whitespace, never `utc`), not the word
+`zone`, which this tool never prints; a lane is
 allowed to be mixed across days, a row never. The fields that do not apply to a kind print `-`, never `0`: a
 transcript has no unparsed lines and a bus lane has no duplicate ids, and a
 dash is an absence where a zero is a measurement. The same rule is why a
