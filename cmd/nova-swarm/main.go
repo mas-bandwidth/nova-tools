@@ -237,7 +237,11 @@ func parseInt(s string) (int, error) {
 func openPool(verb, dir string, stderr io.Writer) (*swarm.Pool, bool) {
 	p, err := swarm.OpenPool(dir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-swarm %s: %s\n", verb, oneline.Err(err))
+		// A refusal that offers a recovery offers one that WORKS: `quickstart` is the verb
+		// that makes a pool, and the audit's first stumble was a missing pool that named no
+		// remedy at all (2026-09-11).
+		fmt.Fprintf(stderr, "nova-swarm %s: %s; the verb that makes one: nova-swarm quickstart --pool %s\n",
+			verb, oneline.Err(err), oneline.Escape(dir))
 		return nil, false
 	}
 	return p, true
@@ -246,6 +250,15 @@ func openPool(verb, dir string, stderr io.Writer) (*swarm.Pool, bool) {
 // maxFlag is the ceiling every listing here carries.
 func maxFlag(fs *flag.FlagSet) *int {
 	return fs.Int("max", bounded.Default, "at most this many item lines, 0 for all")
+}
+
+// wantMax refuses a NEGATIVE ceiling. Zero already means all, so a negative number is a typo
+// with two readings -- and the reading this tool took was "all", on the one flag whose job
+// is to bound output, at the largest state (the new-user audit, F6, 2026-09-11).
+func (f *flags) wantMax(value int) {
+	if value < 0 {
+		f.add(fmt.Sprintf("--max is 0 or more, got %d; 0 already means all, so a negative ceiling is a typo with two readings and this tool refuses to pick one", value))
+	}
 }
 
 // ------------------------------------------------------------------------------- verbs
@@ -303,9 +316,11 @@ func cmdAdd(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.T
 		return 2
 	}
 	pending, _ := p.List(swarm.Pending)
-	fmt.Fprintf(stdout, "ADD OK id=%s label=%s template=%s deadline=%s tokens=%s batch=- pending=%d\n",
+	// BOTH budgets on the line: the audit found `tokens=` printed and `files=` not, so the
+	// half a caller cannot re-derive from the line was the half missing from it.
+	fmt.Fprintf(stdout, "ADD OK id=%s label=%s template=%s deadline=%s files=%d tokens=%s batch=- pending=%d\n",
 		oneline.Field(sc.ID), oneline.Field(dash(*label)), oneline.Field(dash(*template)),
-		oneline.Field(dash(*deadline)), oneline.Field(sc.BudgetWord()), len(pending))
+		oneline.Field(dash(*deadline)), sc.Files, oneline.Field(sc.BudgetWord()), len(pending))
 	return 0
 }
 
@@ -398,6 +413,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	f.wantMax(*max)
 	if *backoff < 1 {
 		f.add("--backoff wants a positive number of seconds to wait before retrying a provider's 429; zero or less is not a wait")
 	}
@@ -532,6 +548,7 @@ func cmdStatus(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	f.wantMax(*max)
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	if f.refused(stderr) {
 		return 2
@@ -734,6 +751,7 @@ func cmdTriage(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	f.wantMax(*max)
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	if f.refused(stderr) {
 		return 2
@@ -810,6 +828,7 @@ func cmdCost(args []string, stdout, stderr io.Writer) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	f.wantMax(*max)
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	if f.refused(stderr) {
 		return 2
@@ -888,6 +907,7 @@ func cmdReclaim(args []string, stdout, stderr io.Writer) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
+	f.wantMax(*max)
 	f.want(*pool, "pool", "the directory that holds this pool's tasks")
 	if *task == "" && !*done {
 		f.add("--task is required; it wants the id of the job whose directory is to be removed, or --done for every finished job: this is the one thing this tool deletes")

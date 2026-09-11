@@ -555,7 +555,7 @@ input wants.
 ## Output grammar
 
 ```
-ADD OK id=<id> label=<label> template=<name|-> deadline=<d> tokens=<n> batch=<id|-> pending=<n>
+ADD OK id=<id> label=<label> template=<name|-> deadline=<d> files=<n> tokens=<n> batch=<id|-> pending=<n>
 ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
@@ -563,14 +563,14 @@ RUN POOL workers=<n> hours=<h> worker=<name> model=<model> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path>
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
-RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|unknown|unlaunched> usage=<path|->
+RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|unknown|unlaunched> dest=<done|failed|-> usage=<path|->
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
 RUN MALFORMED id=<id> slot=<n> line=<n> dest=failed
 RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only|malformed> findings=<n> refusals=<n> notes=<sent>/<read|-> unpublished=<true|false> budget=<spent|n+|->/<n> dest=<done|failed>
 RUN VIOLATION id=<id> slot=<n> background=<n> dest=failed: <reason>
-RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> unpublished=<true|false> budget=<spent|n+|->/<n> requeued=<true|false> reaped=<1|2>
+RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> unpublished=<true|false> budget=<spent|n+|->/<n> survived=<true|false> requeued=<true|false> reaped=<1|2>
 RUN MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
 RUN OK started=<n> done=<n> failed=<n> killed=<n> pending=<n> after=<d>
 RUN NOTE <the one remedy line>
@@ -582,7 +582,7 @@ TRIAGE QUARANTINED id=<id> rev=<sha12> line=<n>: not folded; nova-swarm result -
 TRIAGE SKIPPED id=<id>: changed while read
 TRIAGE MORE kind=<report|finding> shown=<n> total=<t> at=<path> --max 0
 TRIAGE BATCH batch=<id|-> reports=<n> findings=<n> new=<n> dup=<n> unquoted=<n> clean=<n> plan_only=<n> no_result=<n> malformed=<n> budget=<n> accurate=<n|-> wrong=<n|->
-TRIAGE OK reports=<n> template=<n> malformed=<n> skipped=<n> items=<n> red=<n> green=<n> notdone=<n> page=<path>
+TRIAGE OK folded=<n> template=<n> malformed=<n> skipped=<n> items=<n> red=<n> green=<n> notdone=<n> page=<path>
 TRIAGE REFUSED: <reason>
 RESULT OK id=<id> rev=<sha12> class=<ok|clean|plan-only|malformed> bytes=<n> from=<path>
 RESULT REFUSED: <reason>

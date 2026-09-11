@@ -242,7 +242,10 @@ func Triage(in TriageInput) int {
 		fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: the page could not be written: %s\n", oneline.Escape(redactedReason(pageErr)))
 		return 2
 	}
-	fmt.Fprintf(out, "TRIAGE OK reports=%d template=%d malformed=%d skipped=%d items=%d red=%d green=%d notdone=%d page=%s\n",
+	// ONE TOKEN, ONE MEANING (lesson 119): `reports=` on TRIAGE BATCH counts the jobs that
+	// HAVE a report, and this line counts what this run FOLDED into the page -- two shapes
+	// that shared the token `reports=` three lines apart (the new-user audit, S6).
+	fmt.Fprintf(out, "TRIAGE OK folded=%d template=%d malformed=%d skipped=%d items=%d red=%d green=%d notdone=%d page=%s\n",
 		len(kept), len(kept), malformedN, skipped, itemsN, red, green, notdone, oneline.Field(page))
 
 	if !in.NoState && !in.All {

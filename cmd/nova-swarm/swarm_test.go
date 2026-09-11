@@ -1574,3 +1574,46 @@ func TestAKilledWorkerLeavesItsUnpublishedRevisionAlone(t *testing.T) {
 	}
 	mustContain(t, "the refusal", stderr, "NO-RESULT")
 }
+
+// AUDIT F1 and F4 (the new-user audit, 2026-09-11): a harness that exits 7 on a bad key
+// printed `RUN DONE … rc=7 … dest=failed` and then `RUN OK started=1 done=1 failed=0`,
+// exit 0, and `COST TASK … end=done` for a job in failed/. The counting was fixed by D2;
+// `End` was not. SPEC-SWARM.md:544: "A worker that exits non-zero moves its files to
+// `failed/` and the pass continues; `RUN OK` carries `failed=<n>`." The `end` column is
+// what the token ledger reads, so a spent failure read as a spent success is a wrong
+// number in a report to Glenn.
+//
+// The fake harness has understood FAKE-RC since the day it was written and no test had ever
+// used it: the machinery to catch this was built and never fired.
+func TestAWorkerThatExitsNonZeroIsAFailedJobEverywhere(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a worker whose provider refuses its key\nFAKE-FINDINGS 1\nFAKE-USAGE 40 20 - - -\nFAKE-RC 7\n")
+
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("a failed task is not a failed run; exit %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "rc=7")
+	mustContain(t, "the run", stdout, "dest=failed")
+	// THE COUNT IS THE POOL'S TRUTH.
+	mustContain(t, "the run", stdout, "RUN OK started=1 done=0 failed=1 killed=0 pending=0")
+	if _, err := os.Stat(filepath.Join(b.pool, "failed", id+".json")); err != nil {
+		t.Errorf("a job whose worker exited 7 belongs in failed/: %v", err)
+	}
+	// AND THE LEDGER SAYS SO. `end` is the column nova-tokens reads.
+	if got := b.usageRow(id)["end"]; got != "failed" {
+		t.Errorf("the usage row of a job whose worker exited 7 wants end=failed, got %q", got)
+	}
+	if got := b.usageRow(id)["rc"]; got != "7" {
+		t.Errorf("the usage row wants rc=7, got %q", got)
+	}
+	exit, stdout, stderr = b.swarm("cost", "--pool", b.pool)
+	if exit != 0 {
+		t.Fatalf("cost exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "cost", stdout, "end=failed")
+	if strings.Contains(stdout, "end=done") {
+		t.Errorf("the cost ledger called a failed job done:\n%s", stdout)
+	}
+}

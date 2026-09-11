@@ -64,6 +64,25 @@ func LoadWorker(path string) (Worker, []error) {
 	if err := dec.Decode(&w); err != nil {
 		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, usage, harness, harness_args, worker_dir, deadline, board", path, err)}
 	}
+	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
+	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
+	// file, the job directory the prompt calls the only place it writes -- are built from
+	// the description. A relative `worker_dir`, the style the README teaches, made every
+	// one of them a path that does not exist from where the child stands: two jobs, rc=0,
+	// `result=no-result dest=failed`, under a RUN OK byte-identical to a good pass (the
+	// new-user audit, F3, 2026-09-11). The tests could not see it because they all used an
+	// absolute t.TempDir().
+	for _, field := range []*string{&w.WorkerDir, &w.KeyFile} {
+		if *field == "" || filepath.IsAbs(*field) {
+			continue
+		}
+		abs, err := filepath.Abs(*field)
+		if err != nil {
+			return w, []error{fmt.Errorf("%s: %q could not be made absolute: %s", path, *field, redactedReason(err))}
+		}
+		*field = abs
+	}
+
 	var problems []error
 	want := func(value, field, wants string) {
 		if strings.TrimSpace(value) == "" {

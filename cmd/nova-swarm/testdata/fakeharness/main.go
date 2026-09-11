@@ -122,7 +122,6 @@ func main() {
 	if os.Getenv("FAKE_FOREGROUND_CHILD") == "1" {
 		return
 	}
-	notes := notesRead(job, prompt)
 	if n, ok := number(prompt, "FAKE-SLEEP"); ok {
 		time.Sleep(time.Duration(n) * time.Second)
 	}
@@ -131,7 +130,10 @@ func main() {
 	}
 	findings, _ := number(prompt, "FAKE-FINDINGS")
 	if !published {
-		publish(job, prompt, findings, notes)
+		// The notes are read HERE, after the work and before the report: a worker reads its
+		// note file while it works, and a fake that read it in its first instant made
+		// demanded test 10 a race against a note that had not been written yet.
+		publish(job, prompt, findings, notesRead(job, prompt))
 	}
 	if n, ok := number(prompt, "FAKE-RC"); ok {
 		os.Exit(n)

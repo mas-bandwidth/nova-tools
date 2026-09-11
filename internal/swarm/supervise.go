@@ -113,8 +113,16 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, started
 	for {
 		select {
 		case err := <-done:
+			// A WORKER THAT EXITS NON-ZERO IS A FAILED JOB (SPEC-SWARM.md:544), and `end`
+			// is the column the token ledger reads: a job whose provider refused its key
+			// with rc=7 was recorded `end=done`, so `COST TASK` called a spent failure a
+			// spent success (the new-user audit, F1 and F4, 2026-09-11).
 			rc, signal := exitOf(err)
-			return ExitRecord{RC: rc, Signal: signal, End: EndDone, Spent: spent, Observed: observed, Partial: partial}
+			end := EndDone
+			if rc != 0 {
+				end = EndFailed
+			}
+			return ExitRecord{RC: rc, Signal: signal, End: end, Spent: spent, Observed: observed, Partial: partial}
 		case <-timer.C:
 			// The default action at the deadline: reap the worker and record what is on
 			// disk. The swarm never waits forever.
