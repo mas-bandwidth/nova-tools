@@ -71,6 +71,14 @@ func standing(base string, checks Checks, reads Standing, gate GateStand, basePe
 		admitted = "hosted"
 	case headGateGreen:
 		admitted = "gate"
+	case !onMain:
+		// BELOW MAIN THE LOCAL GATE IS THE EVIDENCE (rules 10 and 15), and a branch
+		// entry has no hosted checks at all -- so an entry here is admitted to the
+		// integration gate by placement rather than by a hosted verdict, and the pass
+		// builds the commit and names the gate command. Admitting it any other way is
+		// a lane whose first gate can never be recorded: the runner gates the object
+		// RUN NOTE names, and nothing names one until the entry is admitted.
+		admitted = "gate"
 	}
 	if gate.Red() {
 		return StateRed, admitted

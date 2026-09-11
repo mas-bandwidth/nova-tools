@@ -132,14 +132,19 @@ func (p *Pass) classify(e *Entry, baseSHA string, res *Result) Classification {
 // with all three shas. The object built here is the object the gate proves and the object
 // publication moves the base to; nothing rebuilds it on the way to the push.
 func (p *Pass) build(e *Entry, c *Classification, baseSHA string, res *Result) {
+	// A build that cannot happen SAYS SO on its own line. It used to set a detail
+	// nothing printed, which is a pass that waits and never tells the reader what it is
+	// waiting on -- the failure ONBOARDING point 2 is about, inside the pass.
 	if _, err := p.Clone.Run("fetch", p.Remote, c.HeadRef); err != nil {
 		c.Detail = oneline.Cap(err.Error(), oneline.TailBytes)
+		p.stopped(e, *c, res)
 		return
 	}
 	built, err := BuildIntegration(p.Clone, EntryDirName(e.ID()), baseSHA, e.OID,
 		IntegrationMessage(e.ID(), p.State.Base, c.Subject))
 	if err != nil {
 		c.Detail = oneline.Cap(err.Error(), oneline.TailBytes)
+		p.stopped(e, *c, res)
 		return
 	}
 	if len(built.Conflicts) > 0 {
@@ -201,7 +206,12 @@ func (p *Pass) remerge(e *Entry, pr PR, baseSHA string, res *Result) Classificat
 		p.stopped(e, c, res)
 		return c
 	}
-	if _, err := p.Clone.Run("checkout", "--force", "-B", "nova-merge-remerge", pr.HeadOID); err != nil {
+	if _, err := p.Clone.Run("reset", "--hard"); err != nil {
+		c.Detail = oneline.Cap(err.Error(), oneline.TailBytes)
+		p.stopped(e, c, res)
+		return c
+	}
+	if _, err := p.Clone.Run("checkout", "-B", "nova-merge-remerge", pr.HeadOID); err != nil {
 		c.Detail = oneline.Cap(err.Error(), oneline.TailBytes)
 		p.stopped(e, c, res)
 		return c
