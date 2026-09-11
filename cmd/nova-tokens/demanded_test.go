@@ -26,8 +26,28 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	t.Setenv("TMPDIR", bait)
 	t.Setenv("XDG_DATA_HOME", bait)
 
+	// Rule 1: "$HOME, $TMPDIR, $XDG_DATA_HOME and every other variable are ignored, and a
+	// test sets them and proves it." The proof is the count of source files this process
+	// has opened: a read does not change the number of entries in a directory, so
+	// counting entries proved nothing, and the refusal returns before any source is read.
+	opensBefore := tokens.Opens()
 	r := invoke(t, "fold", "--day", "2026-09-11")
 	wantExit(t, r, 2)
+	if opened := tokens.Opens() - opensBefore; opened != 0 {
+		t.Errorf("the refusal opened %d source files; nothing under $HOME, $TMPDIR or $XDG_DATA_HOME may be opened", opened)
+	}
+
+	// And a fold that DOES run opens only the source its flags name -- the one transcript
+	// under --claude -- never the identical tree the variables point at, which holds one
+	// transcript of its own. (The rules file is a flag's value, not a source.)
+	out := mkdir(t, filepath.Join(dir, "out"))
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 5}, "/x/schema/a.go")+"\n")
+	opensBefore = tokens.Opens()
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
+	if opened := tokens.Opens() - opensBefore; opened != 1 {
+		t.Errorf("the fold opened %d source files, want the 1 its --claude names; the bait tree under $HOME, $TMPDIR and $XDG_DATA_HOME holds one more", opened)
+	}
 	lines := strings.Split(strings.TrimSuffix(r.stderr, "\n"), "\n")
 	if len(lines) != 3 {
 		t.Fatalf("want three refusal lines, one per independent problem, got %d:\n%s", len(lines), r.stderr)
@@ -43,10 +63,6 @@ func TestRule1EveryPathIsAFlagAndNoEnvironmentIsConsulted(t *testing.T) {
 	// What it WANTS, not only what was wrong.
 	wantContains(t, r.stderr, "refusing to guess")
 	wantContains(t, r.stderr, "--claude <label>=<dir>")
-	// Nothing under the variables was opened: no file was written anywhere.
-	if ents, _ := os.ReadDir(filepath.Join(bait, "t")); len(ents) != 1 {
-		t.Errorf("the bait directory changed")
-	}
 	if r.stdout != "" {
 		t.Errorf("a refusal wrote to stdout: %q", r.stdout)
 	}
