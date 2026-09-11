@@ -46,6 +46,13 @@ type TriageInput struct {
 	Owed           []string
 	Stdout, Stderr io.Writer
 	Now            func() time.Time
+
+	// pauseAfterFirstHash is demanded test 16's INJECTED PAUSE, and the only seam in this
+	// tool: it runs between the first hash of a report and the parse of that buffer, which
+	// is the window a third revision has to land in. It is unexported and set by nothing
+	// but this package's own tests -- no flag, no environment variable, no production
+	// caller -- because a pause a caller could ask for is a pause a pool could be left in.
+	pauseAfterFirstHash func()
 }
 
 type folded struct {
@@ -111,6 +118,9 @@ func Triage(in TriageInput) int {
 		}
 		reportsN++
 		first := HashBytes(raw)
+		if in.pauseAfterFirstHash != nil {
+			in.pauseAfterFirstHash()
+		}
 		report := ParseReport(raw)
 		again, err := p.rehash(from)
 		if err != nil || again != first {

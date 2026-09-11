@@ -1426,3 +1426,57 @@ func TestAnUnreadableUsageSourceEndsTheJobUnverifiable(t *testing.T) {
 	}
 	mustContain(t, "the kept report", string(copied), "- finding 2:")
 }
+
+// DEMANDED TEST 16 (SPEC-SWARM.md:1350), the dispatcher's half: a worker KILLED with a
+// RESULT.md.tmp on disk ends `RUN KILLED … unpublished=true`, and the tmp file is still
+// there afterwards, UNREAD. A half-written revision is not a report: the machinery says it
+// exists, leaves it exactly where the worker left it, and folds none of it.
+func TestAKilledWorkerLeavesItsUnpublishedRevisionAlone(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a worker killed with a revision half written\nFAKE-PUBLISH-FIRST\nFAKE-UNPUBLISHED\nFAKE-FINDINGS 2\nFAKE-SLEEP 30\n",
+		"--deadline", "2s")
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN KILLED id="+id)
+	mustContain(t, "the run", stdout, "unpublished=true")
+	// findings= is what was PUBLISHED, and nothing was: the tmp file is not a report.
+	mustContain(t, "the run", stdout, "findings=0")
+
+	tmp := filepath.Join(b.jobDir(id), "RESULT.md.tmp")
+	before, err := os.ReadFile(tmp)
+	if err != nil {
+		t.Fatalf("the half-written revision is left where the worker left it: %v", err)
+	}
+	mustContain(t, "the unpublished revision", string(before), "- finding 1:")
+	if _, err := os.Stat(filepath.Join(b.pool, "reports", id, "NO-RESULT")); err != nil {
+		t.Errorf("a job that published nothing wants its NO-RESULT marker: %v", err)
+	}
+
+	// THE TRIPWIRE: nothing this tool does opens RESULT.md.tmp. A mode that refuses its
+	// own owner turns any open of it into an error, and triage and `result` go on
+	// working -- which they could not do if either of them read it.
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(tmp, 0o000); err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = os.Chmod(tmp, 0o644) }()
+	}
+	if exit, stdout, stderr = b.swarm("triage", "--pool", b.pool); exit != 0 {
+		t.Fatalf("triage opened something it must not: exit %d\n%s%s", exit, stdout, stderr)
+	}
+	// Two: this job, and the ONE automatic re-queue of it (rule 7), which published nothing
+	// either. A tmp file is not a report for either of them.
+	mustContain(t, "triage", stdout, "reports=0 findings=0")
+	mustContain(t, "triage", stdout, "no_result=2")
+	if strings.Contains(stdout, "TRIAGE FINDING") {
+		t.Errorf("a revision that was never published holds no findings for a page:\n%s", stdout)
+	}
+	exit, stdout, stderr = b.swarm("result", "--pool", b.pool, "--id", id)
+	if exit != 1 {
+		t.Errorf("`result --id` on a job that published nothing is REFUSED, got exit %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, "NO-RESULT")
+}
