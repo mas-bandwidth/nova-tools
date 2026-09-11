@@ -324,24 +324,44 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     written by the launch transaction of rule 18 and holding, once launched,
     `{job, state, pid, pgid, pid_started, runner_pid}` where `pid_started` is
     the process start stamp the kernel reports for that pid; each job also
-    holds `<job>/pid` with the same fields. The pool lock is a kernel lock and
-    dies with its holder. On start, before it claims any pending task, a
+    holds `<job>/pid` with the same fields. There are **two kernel locks, and
+    each dies with its holder**: `<pool>/run.lock` excludes dispatchers only
+    and is held by `run` for its whole life; `<pool>/slots.lock` protects
+    each brief slot-state transition — reserve, identify, orphan, release —
+    is held for the read, the compare and the rename of one slot file and
+    nothing longer, and is **never held while waiting** for a process, a
+    handshake or a timeout, so a supervisor identifies while its parent still
+    owns `run.lock` and a recovering dispatcher owns `run.lock` while the
+    supervisor it is deciding about takes `slots.lock`. On start, before it
+    claims any pending task, a
     dispatcher reads every slot file and decides each one: `state=reserved`
     and `runner_pid` dead — **orphaned, and ambiguous**: no child has
     identified itself, but a spawned supervisor may be paused before its
     identify (rule 18, step 3) and cannot be proven absent by a dead runner,
     so the slot is **quarantined** (`RUN QUARANTINE slot=<n> id=<id>:
     reserved, launch unproven`), never allocated, and its file is rewritten
-    atomically to `state: "orphaned"` with the `nonce` unchanged, which is
+    atomically to `state: "orphaned"` with the `nonce` unchanged — **under
+    `slots.lock`, after re-reading the file and rechecking that it still
+    says `state: "reserved"` with the `nonce` first read**: if it now reads
+    `state: "launched"` the supervisor's identify landed first and the
+    dispatcher follows the adopt path below instead, and if it reads
+    anything else the dispatcher decides the new content by this rule, so an
+    orphaning never overwrites an identify that just completed; the kept
+    `nonce` is
     what makes the stale supervisor's identify fail (rule 18); **launch
     absence is established**, and only then is the task returned to
     `pending/` with `launch=unlaunched` in the sidecar and the slot freed
     (`RUN RECLAIM … end=unlaunched`), by exactly one of: `<job>/aborted.json`
-    carrying the slot's `nonce`, written by the supervisor that lost its
-    identify; the runner that spawned it having killed its group at
+    carrying the slot's `nonce` and `survivors=0`, written by the supervisor
+    that lost its identify (an `aborted.json` with `survivors>0` **retains
+    the quarantine**, `RUN QUARANTINE slot=<n> id=<id>: aborted, survivors=<n>`,
+    because a process in that group is not a proven absence); the runner
+    that spawned it having killed its group at
     `--launch-timeout` (rule 18, step 4, the runner alive to do it); or a
     person removing the slot file. A slot is never freed on a dead
-    `runner_pid` alone; the pid
+    `runner_pid` alone, and every release of a slot file — reclaim, unknown,
+    `LAUNCH-FAILED`, `end=unlaunched`, free-on-finalize — is a rename made
+    under `slots.lock`; the pid
     is alive **and** its start stamp matches the file — **adopt**: the job is
     watched from here, its deadline computed from the recorded start, and it
     ends with the same `RUN DONE`, `RUN KILLED` or `RUN VIOLATION` it would
@@ -370,7 +390,7 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
 18. **The launch is a transaction with a handshake, and the child writes its
     own identity.** Starting a job is these steps, in this order, and a kill
     at any boundary leaves a pool the next dispatcher decides by rule 17:
-    (1) **reserve** — under the pool lock the runner writes
+    (1) **reserve** — under `slots.lock` the runner writes
     `<pool>/slots/<n>.json` with `{job, state: "reserved", runner_pid,
     runner_started, reserved_at, nonce}` and no pid — `nonce` is twelve hex
     characters from the OS random source, drawn once per launch and never
@@ -383,21 +403,32 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     own `pid`, `pgid`, kernel start stamp and the `nonce` it was handed into
     the slot file and into
     `<job>/pid` with `state: "launched"`, each through `.tmp` and rename,
-    and the slot write is a **compare-and-swap under the pool lock**: it
+    and the slot write is a **compare-and-swap under `slots.lock`** (rule
+    17: never `run.lock`, which the runner holds for its whole life and
+    which would deadlock this step against the handshake): the supervisor
+    takes `slots.lock`, reads the slot file, compares, renames and releases,
+    and the write
     lands only if the slot file still reads `state: "reserved"` with the
     `nonce` the supervisor was handed; on any other content — no file, a
     different `nonce`, `state: "orphaned"` (rule 17), a later reservation —
-    the supervisor **aborts before step 5**: it never spawns the harness,
-    kills its own process group, writes `<job>/aborted.json` with `{nonce,
-    reason, at}` through `.tmp` and rename, and exits 2 with `SUPERVISE
-    ABORTED slot=<n> id=<id>: reservation changed`; a stale supervisor
+    the supervisor **aborts before step 5**, in this order: it never spawns
+    the harness; it counts the processes in its own group other than itself
+    (there should be none, because nothing has been spawned); it writes
+    `<job>/aborted.json` with `{nonce, reason, at, survivors}` through
+    `.tmp`, **fsync and rename, so the durable acknowledgement exists before
+    its own death can be observed**; then it exits 2 with `SUPERVISE
+    ABORTED slot=<n> id=<id>: reservation changed`. It never kills its own
+    group before that file is on disk, and it never claims an absence it
+    did not observe: `survivors>0` in the file keeps the slot quarantined
+    (rule 17). A stale supervisor
     therefore never writes over a live reservation and exactly one launch
     owns a slot;
     (4) **handshake** — the runner waits for `state: "launched"` to appear in
     the slot file, up to `--launch-timeout` seconds (default 10, a tool
-    property like a timeout); if it does not appear, the runner kills the
+    property like a timeout), **holding `run.lock` and no other lock while
+    it waits**; if it does not appear, the runner kills the
     supervisor's group, writes `launch=failed` into the sidecar, moves the
-    task to `failed/`, frees the slot, and prints `RUN LAUNCH-FAILED id=<id>
+    task to `failed/`, frees the slot under `slots.lock`, and prints `RUN LAUNCH-FAILED id=<id>
     slot=<n> after=<d>: no identity within <n>s`; only after the handshake is
     `RUN START` printed, with the identified pid; (5) **release to work** —
     the supervisor spawns the harness as its child in the same group, with
@@ -415,7 +446,10 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     slots as held; a `supervise` typed by hand is refused at exit 2 when no
     live `run` holds `<pool>/run.lock`. (Stella, 2026-09-11: two files
     written by the parent are not one atomic step, and a replacement
-    dispatcher cannot reap a process that is not its child.)
+    dispatcher cannot reap a process that is not its child. Stella, final
+    read: one pool lock held for `run`'s life cannot also be the lock the
+    child's identify takes, and a supervisor's death cannot precede its
+    acknowledgement — hence `slots.lock`, and `aborted.json` before exit.)
 
 ## The verbs
 
@@ -658,7 +692,10 @@ pid_started, runner_pid}` (rule 17); the slot file is **reserved** by the
 runner before the fork and **identified** by the child itself before it does
 anything else, with the runner waiting on that handshake (rule 18), and it is
 removed in the same step that finalizes the job, never on a timer and never by
-a scan of directories. The files
+a scan of directories. Every transition of a slot file is a rename made under
+`<pool>/slots.lock`, a lock held for that one transition and released before
+any wait; `<pool>/run.lock` is a different lock and says only that one
+dispatcher runs (rule 17). The files
 are the ownership, not a cache of it: a dispatcher that starts over a pool with
 slot files present adopts, reclaims or quarantines each one before it claims a
 task, and a quarantined slot stays out of the map for the whole run. See **the
@@ -1043,13 +1080,20 @@ dispatcher that loses the rename simply takes the next task), and on top of that
 a second `run` can start; the slot map is on disk (rule 17), so the second
 `run` adopts every worker whose pid and start stamp match its slot file and
 finishes it from the supervisor's `exit.json` (it cannot `wait` on another
-dispatcher's child, and it does not pretend to), frees every `reserved` slot
-whose runner is dead with the task back in `pending/`, reclaims every slot
+dispatcher's child, and it does not pretend to), **quarantines every
+`reserved` slot whose runner is dead as `orphaned`** — under `slots.lock`,
+after rechecking that the file still reads `reserved` with the same `nonce`,
+adopting instead if an identify landed in between — with its `nonce` kept and
+the task left where it is, because a supervisor paused before its identify
+cannot be proven absent by its parent's death (rule 17), and frees such a slot
+only on an `aborted.json` carrying that `nonce` with `survivors=0`, or by a
+person's hand; reclaims every slot
 whose whole process group is gone (running `finalize` for the job first, with
-`end=unknown` when there is no `exit.json`), and quarantines everything it
+`end=unknown` when there is no `exit.json`); and quarantines everything it
 cannot decide: a reused pid, a dead leader with a live survivor, an unreadable
-file. A quarantined slot is not in the map, is named on `STATUS OK
-quarantined=`, and is a person's to clear.
+file, an `aborted.json` naming survivors. A quarantined slot is not in the map, is named on `STATUS OK
+quarantined=`, and is a person's to clear. Never is a reservation freed merely
+because the runner that wrote it died.
 Nothing about a slot is ever inferred from a directory listing or an age. The
 dispatcher is not a lifecycle container for its children — a child in its own
 process group outlives a SIGKILL of its parent by design, so that a dispatcher
@@ -1327,7 +1371,9 @@ be seen red before it is trusted.
     a pending task), the third slot is `RUN QUARANTINE` with the reason,
     never allocated, `STATUS OK quarantined=1`, and the `run` exits 1 at its
     end; a slot file whose pid is alive with a different start stamp is
-    quarantined; the tripwire finds no `pgrep`, no `ps` and no match on a
+    quarantined; a fourth slot `reserved` by the dead dispatcher is
+    `orphaned`, its `nonce` kept, never freed by this run and never handed
+    to a pending task; the tripwire finds no `pgrep`, no `ps` and no match on a
     command line; a second `run` while the first is alive is still exit 2
     naming the holder; a slot whose supervisor is dead with no `exit.json`
     is finalized `end=unknown` into `failed/`, its published report copied,
@@ -1359,14 +1405,36 @@ be seen red before it is trusted.
     `state: "orphaned"` with the same `nonce`, the pending task is **not**
     started on that slot and no `RUN RECLAIM … end=unlaunched` is printed;
     the supervisor is then SIGCONTed: its identify finds the changed state,
-    it writes `<job>/aborted.json` with that `nonce`, exits 2 with
+    it writes `<job>/aborted.json` with that `nonce` and `survivors=0`,
+    exits 2 with
     `SUPERVISE ABORTED`, no process of its group survives, and the fake
-    harness records **zero** launches for the job; the next `run` reads
+    harness records **zero** launches for the job; **`aborted.json` is on
+    disk before the exit status is observable**: the test that reaps the
+    supervisor finds the file already there, and an injected kill point
+    between the rename and the exit leaves the file, which the next `run`
+    honours; a mutation that exits, or kills its group, before the rename
+    turns the test red; a planted `aborted.json` with `survivors=1` keeps
+    the slot quarantined (`RUN QUARANTINE … aborted, survivors=1`) and
+    never prints `RUN RECLAIM`; the next `run` reads
     `aborted.json`, prints `RUN RECLAIM … end=unlaunched`, the task is
     pending again and the slot is allocated to it, and the fake harness then
     records exactly one launch; a mutation that frees the slot on a dead
     `runner_pid` alone turns the test red with two launches on one slot or
-    the old supervisor's identity written over the new reservation; a slot
+    the old supervisor's identity written over the new reservation; **the
+    two locks**: a normal launch's supervisor identifies while its parent
+    still holds `run.lock` and the handshake completes within the timeout
+    (a mutation that takes `run.lock` in identify turns the test red with
+    `RUN LAUNCH-FAILED`); **recovery paused before its slot lock**: the
+    runner is SIGKILLed after spawn with the supervisor SIGSTOPped before
+    identify, a second `run` is paused with an injected point after it has
+    read the `reserved` slot and before it takes `slots.lock`, the
+    supervisor is SIGCONTed and identifies, then recovery resumes: it
+    rechecks under `slots.lock`, finds `launched`, adopts (`RUN ADOPT`) and
+    never writes `orphaned` over the identity; a mutation that skips the
+    recheck turns the test red with the identified supervisor's slot
+    orphaned and its `exit.json` rejected; every write to a slot file in
+    the test happens with `slots.lock` held (the tripwire on the lock's
+    holder) and no code path waits with it held; a slot
     left `orphaned` with no `aborted.json` and its runner dead stays
     quarantined across three runs, `STATUS OK quarantined=1`, until the file
     is removed; a mutation that lets identify land without comparing the
@@ -1376,8 +1444,9 @@ be seen red before it is trusted.
     were written by the process they name (the fake supervisor records its
     own values and the test compares); `supervise` typed by hand with no live
     `run` is exit 2; the tripwire on every path opened for writing finds
-    `slots/<n>.json` written by the runner once (reserved) and by the
-    supervisor once (launched), never by both for the same state.
+    `slots/<n>.json` written by the runner once (reserved), by the
+    supervisor once (launched) and by a recovering dispatcher at most once
+    (orphaned), never by two writers for the same state.
 
 ## The work list
 
@@ -1396,7 +1465,8 @@ verb, and tests that pin all three by executing them.
    collide — `nova-bus`'s id lesson), the sidecar file with `files`,
    `requeued`, `reaped`, `from`, `batch`, `tokens`, `launch`, `malformed`
    and the verdict, the atomic claim by rename, the kernel lock on
-   `run.lock`, the one automatic re-queue of a reaped job, and `finalize`:
+   `run.lock` (dispatcher exclusion only; slot transitions take
+   `slots.lock`, item 3), the one automatic re-queue of a reaped job, and `finalize`:
    the usage file, then the report copy or its marker under
    `<pool>/reports/<job>/`, each through `.tmp` and rename, before any move
    (rule 12), and `reclaim` refusing without both. Tests: two claimants, one
@@ -1413,21 +1483,27 @@ verb, and tests that pin all three by executing them.
    and the runner's pid, free-on-finalize in one step, retire a slot whose
    child survived, and the start-up pass: unlaunched, adopt, reclaim,
    unknown or quarantine for every slot file before the first claim (rule
-   17), the orphaned reservation written atomically with its nonce kept and
-   freed only on `aborted.json`, the runner's own kill or a person. Tests:
+   17), the short-lived `<pool>/slots.lock` around every slot-file
+   transition and never across a wait, the orphaned reservation written
+   under it after a recheck of `reserved` + nonce (adopt if `launched`),
+   with its nonce kept and
+   freed only on `aborted.json` with `survivors=0`, the runner's own kill or a person. Tests:
    `n` workers against `n-1` slots never double-hold; a
    surviving child's slot is never reallocated; a reused pid is quarantined,
    not adopted; a reserved slot with a dead runner is quarantined, never
-   freed; demanded tests 17 and 18.
+   freed; a recheck that finds `launched` adopts; demanded tests 17 and 18.
 3a. **`internal/swarm/supervise.go`** — the supervisor: identify itself in
    the slot and pid files by compare-and-swap on `state: "reserved"` and
-   its own nonce under the pool lock, abort with `<job>/aborted.json` and no
-   harness on any other content, spawn the harness in its group, hold the
+   its own nonce under `slots.lock` (never `run.lock`), abort on any other
+   content with no harness spawned and `<job>/aborted.json` written, fsynced
+   and renamed **before** exit 2, `survivors` counted rather than assumed,
+   spawn the harness in its group, hold the
    deadline
    and the budget sampling (rule 13), write `<job>/exit.json` as the
    completion evidence, refuse a hand-typed invocation. Tests: the identity
    in the files is the supervisor's own; an identify against a changed slot
-   never spawns the harness; `exit.json` is written through
+   never spawns the harness and leaves `aborted.json` on disk before its
+   exit is observable; `exit.json` is written through
    `.tmp` and rename after the harness exits and before the supervisor
    exits; demanded tests 13 and 18.
 4. **`internal/swarm/worker.go`** — the worker description (strict decode: an
@@ -1496,6 +1572,7 @@ verb, and tests that pin all three by executing them.
 | Stella, spec repairs | reservation with a nonce counts immediately | rule 18: `nonce` on the reservation, the identity and `exit.json`; already counted (rule 18, last sentence) |
 | Stella, spec repairs | abort launch on lost handshake pipe | left different: the supervisor's identity is durable before the harness starts, so an orphaned launch whose identify landed is adopted by stamp (test 18) rather than aborted; nothing runs unrecorded, and the deadline is the supervisor's |
 | Stella, closing read | orphaned reservation is ambiguous, not unlaunched | rule 17: quarantined as `orphaned`, nonce kept, freed only when launch absence is established; rule 18: identify is a CAS on `reserved` + nonce, else `SUPERVISE ABORTED` with `<job>/aborted.json` and no harness (test 18, the reverse schedule) |
+| Stella, final read | finish the reservation transaction consistently | rules 17 and 18, **Slots**, **The races**: `run.lock` excludes dispatchers only, `slots.lock` guards each slot transition and is released before any wait; orphaning rechecks `reserved` + nonce under it and adopts a `launched` slot instead; the aborting supervisor writes, fsyncs and renames `aborted.json` before exit 2 and records `survivors` rather than claiming absence; a dead runner never frees a reservation (tests 17 and 18) |
 | Stella, spec repairs | supervisor publishes authenticated exit record | rule 18: `exit.json` carries the nonce; a foreign nonce quarantines (rule 17) |
 | Stella, spec repairs | retain report and usage before reclaim, hashed | rule 12: `REV` beside the copy; `reclaim` verifies it |
 | Stella, spec repairs | budget is monitored, refuse unverifiable accounting | rule 13: `usage:` in the description, `unmetered`, `RUN BUDGET-UNVERIFIABLE` |
