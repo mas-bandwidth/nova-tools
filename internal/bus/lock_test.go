@@ -15,6 +15,7 @@ import (
 // The wait is short here and ten seconds in the binary. What is being asserted is the
 // behaviour and the sentence, not the number, which is a policy the caller passes in.
 func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -81,6 +82,7 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 // Two runs that genuinely race: whichever gets there second waits for the first rather than
 // working beside it, and both eventually run.
 func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
+	t.Parallel()
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)

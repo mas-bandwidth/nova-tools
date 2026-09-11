@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/check"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // The no-guessing rule at the CLI: a missing flag is a refusal (exit 2)
@@ -178,6 +179,83 @@ func TestLinksUnreadableFileIsNamedFailureAtTheCLI(t *testing.T) {
 	}
 	if stdout.String() != "" {
 		t.Errorf("a failing check must not print an OK line, got %q", stdout.String())
+	}
+}
+
+// brief renders a value for a test failure the way the CLI renders one for a
+// caller: one line, escaped, and capped.
+func brief(s string) string { return oneline.Escape(oneline.Cap(s, 200)) }
+
+// The unlistable-DIRECTORY seam at the CLI. Issue #30's first item asked for a
+// named failure with the walk continuing; SPEC.md:348-353 (links) and 622-630
+// (nocode) say a directory in the walk that cannot be listed is a REFUSAL and
+// that a walk error stops the run without reporting partial findings. This
+// pins the specified behaviour at the seam a caller actually sees: exit 2, the
+// directory named on stderr, and NO FAIL line -- the broken link beside it is
+// deliberately not reported. Whether that is the right trade is open on #30.
+func TestLinksUnlistableDirRefusesAtTheCLI(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
+	}
+	dir := t.TempDir()
+	mustWrite(t, dir, "broken.md", "[gone](missing.md)\n")
+	mustWrite(t, dir, "locked/inside.md", "text\n")
+	locked := filepath.Join(dir, "locked")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	var stdout, stderr bytes.Buffer
+	if got := run([]string{"links", "--dir", dir}, &stdout, &stderr); got != 2 {
+		t.Fatalf("exit = %d, want 2 -- an unlistable directory is a refusal; stderr: %s", got, brief(stderr.String()))
+	}
+	if !strings.Contains(stderr.String(), "locked") {
+		t.Errorf("stderr does not name the directory: %s", brief(stderr.String()))
+	}
+	if strings.Contains(stderr.String(), "LINKS FAIL") {
+		t.Errorf("a refusal must not report partial findings: %s", brief(stderr.String()))
+	}
+	if lines := strings.Count(strings.TrimRight(stderr.String(), "\n"), "\n") + 1; lines != 1 {
+		t.Errorf("refusal stderr = %d lines, want 1: %s", lines, brief(stderr.String()))
+	}
+}
+
+// The same seam for nocode.
+func TestNoCodeUnlistableDirRefusesAtTheCLI(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("windows: chmod 0 does not refuse reads, so this property cannot be observed here")
+	}
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not refuse, so this property cannot be observed here")
+	}
+	dir := t.TempDir()
+	mustWrite(t, dir, "a.md", "prose\n")
+	mustWrite(t, dir, "locked/run.py", "print(1)\n")
+	locked := filepath.Join(dir, "locked")
+	if err := os.Chmod(locked, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o755) })
+
+	var stdout, stderr bytes.Buffer
+	if got := run([]string{"nocode", "--dir", dir}, &stdout, &stderr); got != 2 {
+		t.Fatalf("exit = %d, want 2 -- an unlistable directory is a refusal; stderr: %s", got, brief(stderr.String()))
+	}
+	if !strings.Contains(stderr.String(), "locked") {
+		t.Errorf("stderr does not name the directory: %s", brief(stderr.String()))
+	}
+	if strings.Contains(stderr.String(), "NOCODE FAIL") {
+		t.Errorf("a refusal must not report partial findings: %s", brief(stderr.String()))
+	}
+	// Reviewer (#66, finding 3): the links twin pins the one-line guarantee and
+	// this seam did not. SPEC.md:230-232: a refusal is "this tool's own one-line
+	// refusal ... and nothing else -- at exit 2".
+	if lines := strings.Count(strings.TrimRight(stderr.String(), "\n"), "\n") + 1; lines != 1 {
+		t.Errorf("refusal stderr = %d lines, want 1: %s", lines, brief(stderr.String()))
 	}
 }
 

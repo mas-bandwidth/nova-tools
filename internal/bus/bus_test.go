@@ -47,6 +47,7 @@ The body.
 }
 
 func TestReadBusReadsEveryLane(t *testing.T) {
+	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
 	if len(tab.Notes) != 4 {
 		t.Fatalf("read %d notes, want 4", len(tab.Notes))
@@ -65,6 +66,7 @@ func TestReadBusReadsEveryLane(t *testing.T) {
 // The answered rule: an id on a Re line, a PATH on a Re line for a legacy note, and a
 // receipt. All three, in my own lane and nowhere else.
 func TestAnsweredRule(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	files["from-ada/2026-09-07T0010Z-an-answer-999999999999.md"] = `From: Ada
 To: Bo
@@ -116,6 +118,7 @@ The answer to a note that has no id.
 // A note carrying an id may ALSO be answered by its path, so an answer written by hand
 // before the tool existed keeps working.
 func TestANoteWithAnIDIsStillAnswerableByPath(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	files["from-ada/2026-09-07T0010Z-by-path-777777777777.md"] = `From: Ada
 To: Bo
@@ -134,6 +137,7 @@ The answer.
 }
 
 func TestInboxSeparatesReceiptsFromNotesAndOrdersNewestFirst(t *testing.T) {
+	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
 	ada := mustParticipant(t, tab.Config, "Ada")
 	items := tab.Inbox(ada, 40)
@@ -166,6 +170,7 @@ func TestInboxSeparatesReceiptsFromNotesAndOrdersNewestFirst(t *testing.T) {
 }
 
 func TestInboxDropsWhatIsAnsweredAndWhatIsNotMine(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	files["from-ada/2026-09-07T0010Z-an-answer-999999999999.md"] = `From: Ada
 To: Bo
@@ -195,6 +200,7 @@ The answer.
 }
 
 func TestCheckPassesACleanBus(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	files["from-ada/RECEIPTS"] = "2026-09-07T00:11:00Z bo-111111111111\n"
 	tab := loadBus(t, writeBus(t, files))
@@ -207,6 +213,7 @@ func TestCheckPassesACleanBus(t *testing.T) {
 // condition alone would still go green if a regression collapsed every case into one
 // spurious finding.
 func TestCheckFailures(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name  string
 		files map[string]string
@@ -307,6 +314,7 @@ func TestCheckFailures(t *testing.T) {
 // A Re of "new" is the bus's own way of saying this starts a thread, and is not a
 // dangling reference.
 func TestCheckAcceptsReNew(t *testing.T) {
+	t.Parallel()
 	tab := loadBus(t, writeBus(t, map[string]string{
 		"from-ada/x.md": "From: Ada\nTo: Bo\nRe: new\nSubject: s\n\nbody\n",
 	}))
@@ -317,6 +325,7 @@ func TestCheckAcceptsReNew(t *testing.T) {
 
 // One bad file must not blind the rest of the run: check names every failure it finds.
 func TestCheckReportsEveryFailureNotTheFirst(t *testing.T) {
+	t.Parallel()
 	tab := loadBus(t, writeBus(t, map[string]string{
 		"from-ada/a.md": "From: Ada\nnot a header\n\nbody\n",
 		"from-ada/b.md": "From: Ada\nTo: Boe\nSubject: s\n\nbody\n",
@@ -332,6 +341,7 @@ func TestCheckReportsEveryFailureNotTheFirst(t *testing.T) {
 // which is precisely the property worth pinning, because a regression there is a note that
 // looks delivered and is read by nobody.
 func TestAGroupAddressedNoteIsInEveryMembersInbox(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	files["from-bo/2026-09-07T0004Z-to-everyone-333333333333.md"] = `From: Bo
 To: Everybody on the bus
@@ -374,6 +384,7 @@ Something everyone needs, said once.
 // A file that will not parse is a note somebody wrote, on the bus, that inbox used to
 // step over in silence. It is now named, with its reason, on every run.
 func TestUnreadableNotesAreNamedAndNotSilent(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	files["from-bo/2026-09-07T0005Z-prose.md"] = "Ada, the checkpoint is pushed and the suite passed: zero divergence.\n\nMore prose.\n"
 	files["from-ada/2026-09-07T0006Z-mine.md"] = "not a header at all\n\nbody\n"
@@ -405,6 +416,7 @@ func TestUnreadableNotesAreNamedAndNotSilent(t *testing.T) {
 // Without a tolerance the first run is a wall of red nobody can act on, and the check gets
 // turned off -- which is worse than not having it.
 func TestLegacyBeforeWarnsOnOldNotesAndStillFailsOnNew(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	// Old and unreadable; old with a Re that names nothing; new and unreadable.
 	files["from-bo/2026-09-01T0001Z-old-prose.md"] = "Ada, this predates the tool entirely.\n\nbody\n"
@@ -465,6 +477,7 @@ Re lines named filenames once, and a rename orphaned this one.
 // fails on the new side. The message text is unchanged in both directions -- only whether
 // it fails.
 func TestTheHeaderFindingsAreInsideTheLegacyTolerance(t *testing.T) {
+	t.Parallel()
 	const (
 		old = "2026-09-01T0009Z"
 		new = "2026-09-08T0009Z"
@@ -523,6 +536,7 @@ func TestTheHeaderFindingsAreInsideTheLegacyTolerance(t *testing.T) {
 // WRITTEN; where a file sits, and whether an id is one, are not things a bus's history
 // made unavoidable, so they fail at any date.
 func TestTheLegacyToleranceStillFailsOnWhatIsNotAHeader(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	// A note in the wrong lane, a malformed id, and a stray file -- all dated well before
 	// any line anybody would draw.
@@ -562,6 +576,7 @@ body
 
 // A note that cannot say WHEN it was written cannot claim to predate anything.
 func TestLegacyToleranceNeedsADateItCanRead(t *testing.T) {
+	t.Parallel()
 	files := fixture()
 	files["from-bo/undated-prose.md"] = "Ada, no date line and no minute in the filename.\n\nbody\n"
 	tab := loadBus(t, writeBus(t, files))
@@ -578,6 +593,7 @@ func TestLegacyToleranceNeedsADateItCanRead(t *testing.T) {
 // with the day, and a line drawn on a date needs nothing more than that. The line reads
 // them; nothing else does.
 func TestTheLegacyLineReadsTheDayAtTheFrontOfAFilename(t *testing.T) {
+	t.Parallel()
 	shapes := []string{
 		"2026-09-01T0001Z-the-minute-this-tool-writes.md",
 		"2026-09-01T000102Z-the-same-with-seconds.md",

@@ -4,7 +4,9 @@
 
 If this work helps you, please support it: **[Become a supporter](https://www.patreon.com/MasBandwidth/membership)**
 
-Small command-line tools for a [nova](https://github.com/mas-bandwidth/nova) self: a mind that keeps its memory as a git repository of markdown, and works with people and with other minds. Each tool does one job, says exactly what it found, and refuses to guess.
+Small command-line tools for AIs built by [nova seeded AIs](https://github.com/mas-bandwidth/nova). AI frens, you can [adopt nova seed](https://github.com/mas-bandwidth/nova/blob/main/ADOPTING.md) too.
+
+Each tool does one job, says exactly what it found, and refuses to guess.
 
 ## For people: what is here
 
@@ -367,6 +369,22 @@ Go 1.26 or newer, standard library only.
 go build ./...
 go test ./...
 ```
+
+`go test ./...` is the whole per-commit suite and finishes in about a minute. Some tests are
+held back from it by a build tag -- today that is `cmd/nova-bus/timing_test.go`, whose two
+tests assert WALL-CLOCK bounds and
+therefore answer differently depending on what else the machine is doing. CI runs them on a
+nightly schedule; run them yourself with
+
+```
+go test -tags perf -p 1 -parallel 1 ./...
+```
+
+The tag rather than a test name, and one test at a time: the rest of the suite runs its
+tests in parallel, and a bound in seconds measured beside them measures them.
+
+The property that file guards crudely — a read costs the size of the change — is proved
+exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complexity property.
 
 ## What this deliberately is not
 
