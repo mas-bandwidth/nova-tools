@@ -235,13 +235,24 @@ func (s *State) PrintedID(key string) string {
 // a queue record leaves only by being printed: red then green with the red
 // unprinted prints red, then green, in that order. Nothing coalesces.
 func (s *State) Observe(key, value, id string) bool {
+	return s.ObserveDisplay(key, value, value, id)
+}
+
+// ObserveDisplay is Observe where the line the window reads carries one field
+// more than the identity does. A report file is the case: its identity is
+// mtime:size and nothing else, because a poll that found the same file must be
+// quiet -- and its LINE says new or modified, which is a fact about the stored
+// value rather than about the file. Folding that word into the compared value
+// would make every second poll of an unchanged file a change, which is the
+// false wake of 2026-09-11 wearing different clothes.
+func (s *State) ObserveDisplay(key, value, display, id string) bool {
 	s.touch(key)
 	old, had := s.Newest(key)
 	if had && old == value {
 		return false
 	}
 	n := s.nextQueueNumber()
-	s.raw[queueKey(n)] = Compose(id, key, value)
+	s.raw[queueKey(n)] = Compose(id, key, display)
 	s.raw[key] = Compose(value, s.PrintedID(key))
 	return true
 }
