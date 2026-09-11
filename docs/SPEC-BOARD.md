@@ -55,7 +55,7 @@ nova-board list   (--issue <owner/repo>#<n> | --dir <path>) --stale <duration> [
 nova-board add    (--issue ... | --dir ...) --as <name> --text <text> --by <duration|stamp> --default <text>
                   [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>]
 nova-board take   (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
-nova-board close  (--issue ... | --dir ...) --as <name> --card <id> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
+nova-board close  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
 nova-board check  (--issue ... | --dir ...) --words <text> [--max <n>] [--all]
 nova-board quickstart (--issue ... | --dir ...) --stale <duration>
 nova-board help
@@ -89,7 +89,7 @@ optional row and evidence fields are ever written by hand:
 
 | field | what it is |
 |---|---|
-| **id** | twelve lower-case hex characters, assigned by `add`, never recomputed and never reused |
+| **id** | twelve lower-case hex characters, assigned by `add` from the stamp, the filer, the filer's sequence number on this board and the text; never recomputed and never reused |
 | **text** | what is owed, one line, as the filer wrote it |
 | **owner** | the name from the latest `taken` event, else the `add` event's `--owner`, else the filer |
 | **since** | the `add` event's stamp — when the thing became owed, not when it was last touched |
@@ -100,26 +100,52 @@ optional row and evidence fields are ever written by hand:
 | **evidence** | a path the filer named with `--evidence`, carried and never opened (rule 5) |
 
 **The id is the tool's, not the backend's.** `add` computes it as the first twelve
-hex characters of a SHA-256 over a preimage of `nova-board\x00<stamp>\x00<as>\x00<text>`
-— the same shape and the same reasoning as `nova-bus`'s id: an id that cannot
-collide between two lines adding in the same second, that survives moving the
-board from one backend to another, and that is assigned **once**. A short id taken
-from a backend's own comment number is forbidden: it is a different id in the
-other backend, and the prototype's **last six digits** of a comment id is a
-collision in one million with no detection and no recovery.
+hex characters of a SHA-256 over a preimage of
+`nova-board\x00<stamp>\x00<as>\x00<seq>\x00<text>`, where `<seq>` is the filer's
+**sequence number on this board**: the count of `card` events whose `as=` is this
+`--as`, read from the whole log at `add` time, plus one, and written on the
+`card` line as `seq=<n>`. The same shape and the same reasoning as `nova-bus`'s
+id — an id that survives moving the board from one backend to another and is
+assigned **once** — with the sequence added because stamps are to the second and
+`--leg`, `--owner`, `--by`, `--default` and `--evidence` are not in the
+preimage: two adds by one line in one second with one text and two legs are
+`seq=n` and `seq=n+1`, and so two ids, by construction rather than by
+detection. **Creation is exclusive.** Under `--dir` the card file is created
+with `O_EXCL` and never truncated; under `--issue` the board is re-read
+immediately before the append and the id looked for. An id that already exists —
+which after the sequence means two benches filing as one name at one second with
+one text, or a hand-made file — is `ADD REFUSED: id <id> exists; nothing
+written` at exit 1, and no card file and no comment is replaced, ever. A short
+id taken from a backend's own comment number is forbidden: it is a different id
+in the other backend, and the prototype's **last six digits** of a comment id is
+a collision in one million with no detection and no recovery.
 
 **Nothing is ever deleted or edited. Every state change is an appended event.**
 There are five event lines and that is the whole format:
 
 ```
-card <id> (<stamp>, <as>) owner=<name> by=<stamp> default=<text> [thing=<name> leg=<name>] [evidence=<path>]: <text>
-taken <id> by <name> (<stamp>)
-closed <id>: <how> (<stamp>)
-landed <id> in <repo>#<n> (<stamp>)
-probed <id>: <evidence> (<stamp>)
+card <id> as=<name> at=<stamp> override=false seq=<n> owner=<name> by=<stamp> default=<text> [thing=<name> leg=<name>] [evidence=<path>]: <text>
+taken <id> as=<name> at=<stamp> override=<true|false>
+closed <id> as=<name> at=<stamp> override=<true|false>: <how>
+landed <id> as=<name> at=<stamp> override=<true|false> in=<repo>#<n>
+probed <id> as=<name> at=<stamp> override=<true|false>: <evidence>
 ```
 
-- `<stamp>` is RFC 3339 in UTC, to the second.
+- **Every event line carries `as=<name>` and `override=<true|false>`**: the
+  actor is the `--as` of the verb that appended it, and `override` is `true`
+  exactly when the verb ran with `--anyway` over a refusal it would otherwise
+  have made, `false` on every other event and always on `card`, which overrides
+  nothing. These two are the facts the read side derives from and nothing else
+  is consulted: `BOARD CLOSE by=<name>` is the closing event's `as=`, `owner` is
+  the latest `taken` event's `as=`, and a history read from a directory with no
+  git metadata, or from a forge with no comment author, derives the same
+  answer. An earlier draft wrote `(<stamp>, <as>)` after the id and `by <name>`
+  in prose and carried no override at all; that shape is not the format, and a
+  line in it is an unparsed event, counted and never guessed at (**Known
+  limits**). The format is `BOARD v1` and no board in the old shape has
+  shipped, so there is nothing to read backward; the migration script (work
+  list 10) writes this shape.
+- `<stamp>` is RFC 3339 in UTC, to the second, and it is the `at=` field.
 - `closed`, `landed` and `probed` are the three closing events and the only
   three. `landed` is the one that names where the work went, which is the close a
   reader can verify; `closed … : <how>` is the one that says what happened in
@@ -127,9 +153,11 @@ probed <id>: <evidence> (<stamp>)
   cards for one thing become one, and `superseded by <id>`, which is the only way
   a deadline moves; `probed` is the only close for a row of the owed ledger
   (rule 4), and it carries the evidence.
-- The `by=`, `default=`, `thing=`, `leg=` and `evidence=` fields on a `card`
-  line are `key=value` fields and are rendered through `oneline.Field`, so a
-  default holding a space is one token.
+- Every `key=value` field on every event line — `as=`, `at=`, `override=`,
+  `seq=`, `owner=`, `by=`, `default=`, `thing=`, `leg=`, `evidence=`, `in=` — is
+  rendered through `oneline.Field`, so a default holding a space or a name
+  holding one is one token, and the free text after `: ` is rendered through
+  `internal/oneline` and is never scanned for fields.
 - A second closing event on a closed card is permitted and changes nothing: the
   **first** close is the close, and the later ones are in the log where a reader
   can see that two lines thought they had finished the same thing.
@@ -211,20 +239,26 @@ already on the board, do not file it**. So the rule every reader and fixer follo
 is one line of shell:
 
 ```sh
-nova-board check --issue mas-bandwidth/schema#876 --words "windows runner skips" || exit 0
-nova-board add   --issue mas-bandwidth/schema#876 --as rowan --text "the Windows runner skips three steps"
+nova-board check --issue mas-bandwidth/schema#876 --words "windows runner skips" || { [ $? -eq 1 ] && exit 0; exit 2; }
+nova-board add   --issue mas-bandwidth/schema#876 --as rowan --text "the Windows runner skips three steps" \
+                 --by 4h --default "rowan files it on the schema board as a known gap"
 ```
 
-It reads the way it should be read: *if it is already there, stop*. The inverted
-reading — 0 for "found it" — would make the natural `&&` chain file **exactly** the
-duplicates, so the mnemonic is written into the banner, the README's first run,
-and a test named for it. `--all` makes `check` report over closed cards as well,
+It reads the way it should be read: *if it is already there, stop* — and the
+guard tells a NO from a could-not-run, because `check` at exit 2 (no backend, an
+unreadable board) is an operational error and a guard that read every non-zero
+as *already filed* would turn a broken board into a quiet one. The `add` carries
+`--by` and `--default` because rule 2 requires them and an example that does not
+run is not an example: this pair is executed by a test against a fresh board and
+files one card. The inverted reading — 0 for "found it" — would make the natural
+`&&` chain file **exactly** the duplicates, so the mnemonic is written into the
+banner, the README's first run, and a test named for it. `--all` makes `check` report over closed cards as well,
 still exit 1 on a match, because *somebody already fixed this* is as good a reason
 not to file as *somebody already filed it*.
 
 A `take` or `close` refused for ownership exits **1** and not 2: the verb ran, the
 board was read, and the answer is no. `--anyway` turns either into a 0 and records
-the override in the event, because there are real reasons to close somebody's card
+the override in the event as `override=true`, because there are real reasons to close somebody's card
 — they went offline, it landed under another number — and a tool that made that
 impossible would be edited around.
 
@@ -232,7 +266,7 @@ impossible would be edited around.
 
 ```
 BOARD CARD id=<id> state=<OPEN|CLOSED> owner=<name|-> since=<stamp> by=<stamp> age=<d> taken=<d|-> stale=<true|false> overdue=<true|false> default=<text> thing=<name|-> leg=<name|-> evidence=<path|->: <text>
-BOARD CLOSE id=<id> by=<name> at=<stamp> how=<closed|landed|probed> where=<repo#n|path|->: <how>
+BOARD CLOSE id=<id> by=<name> at=<stamp> how=<closed|landed|probed> override=<true|false> where=<repo#n|path|->: <how>
 BOARD LINE name=<name> open=<n> overdue=<n> stale=<n>
 BOARD LEG leg=<name> owed=<n> probed=<n>
 BOARD NEXT <the one thing to do first, with its id>
@@ -243,9 +277,9 @@ BOARD FAIL <id or source>: <reason>
 BOARD REFUSED: <reason>
 ADD OK id=<id> owner=<name> at=<stamp> backend=<issue|file> durable=<true|false>
 ADD REFUSED: <reason>
-TAKE OK id=<id> owner=<name> at=<stamp> previous=<name|->
+TAKE OK id=<id> owner=<name> at=<stamp> previous=<name|-> override=<true|false>
 TAKE REFUSED: <reason>
-CLOSE OK id=<id> how=<closed|landed> where=<repo#n|-> at=<stamp> owner=<name|->
+CLOSE OK id=<id> how=<closed|landed|probed> where=<repo#n|path|-> at=<stamp> owner=<name|-> override=<true|false>
 CLOSE REFUSED: <reason>
 CHECK HIT id=<id> state=<OPEN|CLOSED> owner=<name|->: <text>
 CHECK OK matched=<n> cards=<n> scanned=<OPEN|ALL> words=<n>
@@ -320,9 +354,12 @@ line B, reading a board it fetched at 10:00:00, closes it at 10:00:03. Two
 appends, both durable, and B has closed work that A is in the middle of. Closed by
 reading at write time: `close` re-reads the board immediately before appending, and
 a close of a card whose latest take is by **another** name and is **not** stale is
-`CLOSE REFUSED`, exit 1, naming the owner and the age of the take. `--anyway`
-overrides it and the event records that it was overridden, so the log says a close
-went over a live take. The same rule guards `take`: a take of a fresh take by
+`CLOSE REFUSED`, exit 1, naming the owner and the age of the take. *Stale* here is
+measured against `close`'s own `--stale <duration>`, which is required for the
+same reason it is on `take` and `list` (rule 8: no default durations, and this
+decision is made from one): a `close` without it is exit 2 naming the flag.
+`--anyway` overrides it and the event records that it was overridden,
+`override=true`, so the log says a close went over a live take. The same rule guards `take`: a take of a fresh take by
 another line is `TAKE REFUSED` exit 1 naming the holder, which is the 2026-09-10
 two-children-one-bug failure closed at the only moment a tool can see it. The
 window between the re-read and the append cannot be closed by this tool over a
@@ -355,7 +392,12 @@ spec forbids**.
    `BOARD OK` with the board's counts; and exactly one `BOARD NEXT` line naming
    the one thing to do first. `BOARD NEXT` is chosen by a fixed order: the oldest
    overdue card, else the oldest stale card, else the leg with the most owed
-   rows, else `nothing owed`. Cards print only under `--list`, capped at `--max`,
+   rows, else the **oldest ordinary OPEN card**, else — and only when
+   `open=0` — `nothing owed`. Oldest is by `since`, and a tie at the same
+   second is the lexically smaller id; a tie between legs is the lexically
+   smaller leg name. A board with one fresh card and a future deadline has
+   something to do first, and a tool that said *nothing owed* over it would be
+   the count falling for the wrong reason, said in words. Cards print only under `--list`, capped at `--max`,
    and past the cap one `BOARD MORE` line reads `and <t-n> more` with the remedy.
    `BOARD LINE` and `BOARD LEG` are capped at `--max` the same way. (Glenn,
    2026-09-09: counts, not lists; one remedy line. A listing is a context window
@@ -457,7 +499,10 @@ Each is proven able to fail by a mutation before it is trusted.
 
 1. `TestTheDefaultViewIsCountsNotCards`: a board of 50 cards; `list` prints no
    `BOARD CARD` line, one `BOARD LINE` per owner, one `BOARD OK`, exactly one
-   `BOARD NEXT` chosen by the fixed order; `list --list` prints cards capped at
+   `BOARD NEXT` chosen by the fixed order; a board holding a single fresh
+   ordinary card with a future deadline prints `BOARD NEXT` naming that card
+   and never `nothing owed`; two such cards at one second name the smaller
+   id; an empty board and a board of only closed cards print `nothing owed`; `list --list` prints cards capped at
    `--max` and a `BOARD MORE` reading `and <t-n> more`.
 2. `TestNoCardLivesWithoutADeadline`: `add` without `--by` is exit 2 naming
    `--by`; without `--default`, exit 2 naming `--default`; both missing is one run
@@ -465,9 +510,17 @@ Each is proven able to fail by a mutation before it is trusted.
    one second before is not, with the clock injected.
 3. `TestTheBoardIsAFoldOverCardFilesWithNoLock`: `add` creates `<id>.board` and
    no other file; twenty concurrent takes and closes on twenty cards from two
-   clones all land and no lock file exists; the source tripwire finds no lock call
-   in `internal/board`; two backends with the same events print identical
-   listings.
+   clones all land and no lock file exists; two lines taking **one** card from
+   two clones both append and the union keeps both `taken` lines in log order
+   with the later one the owner; the source tripwire finds no lock call in
+   `internal/board`; two backends with the same events print identical
+   listings, including an overridden close that shows `BOARD CLOSE by=<name>
+   override=true` from both with no git metadata and no comment author read.
+   `TestTheIdIsSequencedAndCreationIsExclusive`: two rows filed by one line
+   with one text on two legs at one injected second get `seq=1` and `seq=2`
+   and two ids; an `add` whose id already exists — a file placed by hand under
+   that name — is `ADD REFUSED` at exit 1 and the file's bytes are unchanged;
+   a mutation that opens the card file without `O_EXCL` turns the test red.
 4. `TestOwedCountsPerLegAndDoneIsZero`: rows on three legs, some probed; one
    `BOARD LEG` per leg with the right counts; `BOARD OK` carries `owed=<n>`;
    probing the last row prints `owed=0`; `closed` on a row is `CLOSE REFUSED`
@@ -477,7 +530,14 @@ Each is proven able to fail by a mutation before it is trusted.
    does not exist files fine and nothing opens it.
 6. `TestSilenceIsAStateAndIsCounted`: a card with no event past `--stale` is
    `stale=true`, counted on `BOARD OK` and on its owner's line, still listed
-   under `--open`; one second under `--stale` is not stale.
+   under `--open`; one second under `--stale` is not stale; `close` without
+   `--stale` is exit 2 naming it; the example pair under **Exit codes** is run
+   verbatim against a fresh board and files one card; against a card taken by
+   another line one second ago, `close --stale 10m` by a second line is
+   `CLOSE REFUSED` exit 1 and the same with `--anyway` appends `override=true`;
+   against a take eleven minutes old it closes without `--anyway` and appends
+   `override=false`; the guard exits 2, not 0, when `check` is given no
+   backend.
 7. `TestBoundedAtFiveHundredCardsAcrossTwentyLines`: 500 cards, 20 owners, 5
    legs; the default view is at most 27 lines and 4 KB on stdout plus stderr;
    1,000 cards print the same number of lines.
@@ -550,9 +610,10 @@ Standard library only, no third-party imports, no hardcoded paths, and the repo'
 shared packages used rather than re-spelled.
 
 1. **`internal/board/event.go`** — the five event lines: render and parse, anchored
-   at the line start, id as the token after the verb, `oneline` on every value, the
-   id scheme (SHA-256 over `nova-board\x00<stamp>\x00<as>\x00<text>`, first twelve
-   hex). Tests: a card whose text contains a six-digit number cannot be closed by a
+   at the line start, id as the token after the verb, `as=` `at=` `override=` on
+   every line, `oneline.Field` on every value, the id scheme (SHA-256 over
+   `nova-board\x00<stamp>\x00<as>\x00<seq>\x00<text>`, first twelve hex) and the
+   sequence read from the log. Tests: a card whose text contains a six-digit number cannot be closed by a
    sentence about another card; an unparsed line is counted and never guessed at; a
    text with a newline files one card.
 2. **`internal/board/derive.go`** — events in, cards out: owner from the latest
@@ -568,13 +629,15 @@ shared packages used rather than re-spelled.
 4. **`internal/board/issue.go`** — `gh` for read and append, under a timeout, one
    event per comment, full pagination. Tests against a recorded fixture rather than
    the network (CONTRIBUTING: a test that touches the network wants a reason).
-5. **`internal/board/dir.go`** — one file per card, the `BOARD v1` version line,
-   append, read every file whole and fold, `#` comments and blanks ignored, a
+5. **`internal/board/dir.go`** — one file per card, created `O_EXCL` and refused
+   at exit 1 when it exists, the `BOARD v1` version line, append, read every
+   file whole and fold, `#` comments and blanks ignored, a
    file without its version line is exit 2, a file that is not `<id>.board` is
    counted and never read. No git, no lock.
 6. **`cmd/nova-board/main.go`** — the five verbs; exactly one backend or exit 2;
-   `--as` required on every writing verb; the read-before-append for `take` and
-   `close` with the ownership refusals at exit 1 and `--anyway`; `internal/bounded`
+   `--as` required on every writing verb; `--stale` required on `take` and
+   `close` as on `list`; the read-before-append for `take` and `close` with the
+   ownership refusals at exit 1 and `--anyway` written as `override=true`; `internal/bounded`
    for `--max` with `BOARD MORE`; the count line printed on failure as well as
    success. Refusals name what the flag wants and report **every** independent
    problem in one go.
@@ -582,7 +645,8 @@ shared packages used rather than re-spelled.
    `matched=` never capped, and **exit 1 on a match**. The test is named for the
    mnemonic: `TestCheckExitsOneOnMatchSoTheShellGuardReads`.
 8. **`quickstart`** — the natural first run: read the board, print the counts, print
-   the `check … || exit 0; add …` pair with this board's own values in it, quoted
+   the `check … || { [ $? -eq 1 ] && exit 0; exit 2; }; add … --by … --default …`
+   pair with this board's own values in it, quoted
    the way `nova-bus names` quotes — a value meant to be pasted rather than
    scanned.
 9. **Onboarding, which `internal/ci/onboarding_test.go` will require the moment the
@@ -601,8 +665,10 @@ shared packages used rather than re-spelled.
 12. **The rules of the last two days, in `main.go` and `derive.go`** — the counts
     view as the default and `--list` for cards, `--by` and `--default` required,
     `overdue`, the row fields and `probed`, `BOARD LEG` and `owed=`, `--evidence`
-    carried and never opened, `--stale` with no default, `BOARD NEXT` by its fixed
-    order. Tests: the eight in **Tests this spec demands**.
+    carried and never opened, `--stale` with no default on every
+    verb that decides by it, `BOARD NEXT` by its fixed order with the ordinary
+    open card before `nothing owed`. Tests: the nine in **Tests this spec
+    demands** and `TestTheIdIsSequencedAndCreationIsExclusive`.
 
 ## What the prototype does that this spec forbids
 
@@ -617,7 +683,8 @@ the two failures that cost a morning. These are the places it is **not** a model
     — which is the 25-duplicate failure, mechanized.
 3. **Six-digit ids truncated from the backend's comment id.** A collision in one
     million with no detection, and a different id in any other backend. The id is
-    the tool's, twelve hex, over a preimage.
+    the tool's, twelve hex, over a preimage that carries the filer's sequence, and
+    an id that exists is a refusal and never an overwrite.
 4. **Unanchored substring matching for state.** `test("closed[ :]*" + $sid)` and
     `test($sid) and test("taken by")` match anywhere in any comment body, so a
     card whose text contains a number can be closed by a sentence about something
