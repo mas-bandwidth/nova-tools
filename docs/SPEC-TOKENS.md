@@ -425,9 +425,9 @@ after `: ` is capped at `oneline.TailBytes`.
 
 ```
 TOKENS FOLD at=<stamp> build=<id> out=<dir> sources=<n> days=<all|d> repos=<file>
-TOKENS SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|zone> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
+TOKENS SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|zone|mixed> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
 TOKENS UNREADABLE label=<label> path=<path>: <why>
-TOKENS UNPARSED label=bus:<name> note=<id> line=<n>: <text or why>
+TOKENS UNPARSED label=<kind>:<name> note=<id> line=<n>: <text or why>
 TOKENS SUPERSEDED label=bus:<name> note=<id> by=<id> day=<d>
 TOKENS CONFLICT label=bus:<name> day=<d> notes=<id,id,…>: competing reports; send a correction whose subject carries supersedes=<id>
 TOKENS TOUCHED label=bus:<name> day=<d> repos=<list>
@@ -457,13 +457,21 @@ CHECK MORE kind=<file|row|missing|stray> shown=<n> total=<t> nova-tokens check -
 CHECK OK at=<stamp> build=<id> files=<n> rows=<n> first=<d> last=<d> missing=0 stray=0
 CHECK FAIL files=<n> rows=<n> first=<d> last=<d> bad=<n> missing=<n> stray=<n>
 CHECK REFUSED: <reason>
-SOURCES SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|zone> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
+SOURCES SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|zone|mixed> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
 SOURCES UNREADABLE label=<label> path=<path>: <why>
-SOURCES UNPARSED label=bus:<name> note=<id> line=<n>: <text>
+SOURCES UNPARSED label=<kind>:<name> note=<id> line=<n>: <text>
 SOURCES MORE kind=<source|unreadable|unparsed> shown=<n> total=<t> nova-tokens sources … --max 0
 SOURCES OK sources=<n> files=<n> messages=<n> unreadable=<n> unparsed=<n> rows=<n>
 SOURCES REFUSED: <reason>
 ```
+
+Every `label=` in the block is `<kind>:<name>`, the kind one of the five
+(`claude`, `opencode`, `swarm`, `bus`, `provider`) and the name the one the
+caller declared, so a line names the reader that could not read something as
+well as the source: a transcript line this tool cannot date is
+`TOKENS UNPARSED label=claude:<name> note=<path> line=<n>: <text or why>`, and
+`note=` is the note id for a bus note and the file the line came from for every
+other kind.
 
 `TOKENS FOLD` is the first line of every fold and it says what the fold will
 count before it counts: how many sources, which days, which rules file. A
