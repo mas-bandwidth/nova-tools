@@ -96,7 +96,22 @@ func ParseSubject(subject string) (parsedSubject, bool) {
 	if trailer == "" {
 		return p, true
 	}
-	for _, tok := range strings.Split(trailer, " ") {
+	// The trailer is ONE shape in ONE order: `at=<stamp> build=<id>[ supersedes=<set>]`.
+	// Accepting the keys in any order or position made `tokens <day> build=b at=<stamp>`
+	// and `tokens <day> supersedes=x at=... build=...` tokens notes, though rule 6 names
+	// exactly one arrangement and says any other text after the date is not one.
+	toks := strings.Split(trailer, " ")
+	keys := []string{"at", "build", "supersedes"}
+	for i, tok := range toks {
+		if i >= len(keys) {
+			return parsedSubject{}, false
+		}
+		k, _, ok := strings.Cut(tok, "=")
+		if !ok || k != keys[i] {
+			return parsedSubject{}, false
+		}
+	}
+	for _, tok := range toks {
 		k, v, ok := strings.Cut(tok, "=")
 		if !ok {
 			return parsedSubject{}, false
@@ -460,6 +475,10 @@ func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
 		}
 	}
 
+	// Every basis the lane's LINES carried, utc included. Dropping the utc member here
+	// made a lane of one six-field line (utc, rule 6) and one seven-field line print the
+	// zone rather than `mixed`, which is the one thing this field is for.
+	laneZones := map[string]bool{}
 	byDay := map[string][]*note{}
 	for _, n := range notes {
 		byDay[n.subject.day] = append(byDay[n.subject.day], n)
@@ -506,16 +525,34 @@ func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
 			s.Stream = append(s.Stream, n.msgs...)
 			s.Stat.Redated += n.redated
 			for z := range n.zones {
-				if z != UTC {
-					s.Basis = mergeBasis(s.Basis, z)
-				}
+				laneZones[z] = true
 			}
 			if len(n.touched) > 0 {
 				s.Toucheds = append(s.Toucheds, Touched{Label: label, Day: day, Repos: n.touched})
 			}
 		}
 	}
+	s.Basis = laneBasis(laneZones)
 	s.Reports = reportedTypes(s.Stream)
+}
+
+// laneBasis is the lane's day_basis: `utc` when its lines carried nothing else, the one
+// zone when they all carried that one, and `mixed` when they carried more than one. A
+// lane is allowed to be mixed across days; a row never is, and that is a separate check.
+func laneBasis(zones map[string]bool) string {
+	basis := ""
+	for z := range zones {
+		switch {
+		case basis == "":
+			basis = z
+		case basis != z:
+			return "mixed"
+		}
+	}
+	if basis == "" {
+		return UTC
+	}
+	return basis
 }
 
 // badPredecessors names why a successor's predecessor set is refused, or returns the empty

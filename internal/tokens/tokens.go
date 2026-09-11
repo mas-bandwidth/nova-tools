@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"sync/atomic"
+	"time"
 )
 
 // Type is one of the five token types. They are kept apart everywhere: nothing in this
@@ -468,20 +469,16 @@ var AllTypes = []Type{Input, Output, CacheWrite, CacheRead, Reasoning}
 // ClaudeTypes is what a Claude Code transcript carries: no reasoning count exists in it.
 var ClaudeTypes = []Type{Input, Output, CacheWrite, CacheRead}
 
-// ValidDay reports whether s is a YYYY-MM-DD day.
+// ValidDay reports whether s is a YYYY-MM-DD day ON THE CALENDAR. The shape alone was
+// the whole test, so `--day 2026-13-40` was accepted, wrote 2026-13-40.tsv, passed
+// `check`, and left MissingDays walking from a day that does not exist. time.Parse is the
+// range check, and the round trip refuses what it normalises (2026-02-30 -> 2026-03-02).
 func ValidDay(s string) bool {
 	if len(s) != 10 || s[4] != '-' || s[7] != '-' {
 		return false
 	}
-	for i, r := range s {
-		if i == 4 || i == 7 {
-			continue
-		}
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
+	t, err := time.Parse(dayLayout, s)
+	return err == nil && t.Format(dayLayout) == s
 }
 
 // ValidZone reports whether s is a day_basis a day file may carry: a zone name with no

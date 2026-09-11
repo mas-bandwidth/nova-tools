@@ -76,9 +76,13 @@ func ReadSwarm(label, pool string, rules *Rules) *Source {
 				continue
 			}
 			cells := strings.Split(line, "\t")
-			if n == 1 {
+			// The header is the first NON-BLANK line, not line 1: a file with a leading
+			// blank line never validated its header at all, so every row after it was
+			// read against a nil column map -- every lookup column 0 -- and the file
+			// never got the named wrong-column refusal the spec promises.
+			if cols == nil {
 				if wrong := wrongColumn(cells); wrong != "" {
-					s.unparsed(path, 1, wrong)
+					s.unparsed(path, n, wrong)
 					bad = true
 					break
 				}

@@ -1314,3 +1314,116 @@ func TestRule20ABusNoteWithSixAndSevenFieldLinesForOneKeyIsMixed(t *testing.T) {
 		}
 	}
 }
+
+// TestReportCountsAndPrintsEverythingItDropped pins rule 20's "the same sources and the
+// same attribution as fold" on the part that is not a row: a transcript line whose stamp
+// this tool cannot read, and a message with no id. Both are counted by the reader and
+// dropped before the body, and `report` used to print neither -- REPORT OK, exit 0, and a
+// friend pasting a short day onto the bus with nothing anywhere saying so.
+func TestReportCountsAndPrintsEverythingItDropped(t *testing.T) {
+	dir := t.TempDir()
+	repos := reposFile(t, dir)
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), strings.Join([]string{
+		msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 3}, "/x/schema/a.go"),
+		msg("m2", "yesterday", "f", map[string]int{"input_tokens": 5}, "/x/schema/a.go"),
+		msg("", "2026-09-11T11:00:00Z", "f", map[string]int{"input_tokens": 7}, "/x/schema/a.go"),
+	}, "\n")+"\n")
+
+	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS UNPARSED label=claude:g")
+	wantContains(t, r.stderr, "yesterday")
+	// The OK line is the grammar's, so what says the day is short is the line above it,
+	// the note, and the exit code -- and the body still printed.
+	wantContains(t, r.stderr, "REPORT OK who=emma day=2026-09-11 rows=1")
+	if n := strings.Count(r.stderr, "TOKENS UNPARSED"); n != 1 {
+		t.Errorf("%d TOKENS UNPARSED lines, want 1:\n%s", n, r.stderr)
+	}
+	// The no-id message is spend that was read and dropped, and it is named.
+	note := lineWith(r.stderr, "TOKENS NOTE")
+	wantContains(t, note, "no id")
+	wantContains(t, note, "claude:g")
+	// Exit 1 still writes: the body is what it could compute, and it is only the 3.
+	wantContains(t, r.stdout, "2026-09-11\temma\tf\tschema\tinput\t3")
+	wantNotContains(t, r.stdout, "\t15")
+}
+
+// TestABusLaneWithASixFieldAndASevenFieldLineIsMixed pins the TOKENS SOURCE paragraph:
+// day_basis is "`mixed` when one lane's lines carry more than one". A six-field line means
+// UTC (rule 6), so a lane with one of each carries two bases -- and the field named the
+// zone, because the utc member was dropped before the merge.
+func TestABusLaneWithASixFieldAndASevenFieldLineIsMixed(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
+	// Two different models, so the two bases are two rows and not one mixed row.
+	busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate, strings.Join([]string{
+		"2026-09-11\temma\tutcmodel\tschema\tinput\t100",
+		"2026-09-11\temma\tzonemodel\tschema\tinput\t5\tday_basis=America/Los_Angeles",
+		"",
+	}, "\n"))
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
+	wantExit(t, r, 0)
+	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "day_basis=mixed")
+
+	// A lane whose lines all carry the one zone names that zone, and a lane of six-field
+	// lines alone is utc: mixed is a fact about the lane, not a default.
+	dir2 := t.TempDir()
+	bus2 := busDir(t, mkdir(t, filepath.Join(dir2, "bus")), "emma")
+	busNote(t, bus2, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate,
+		"2026-09-11\temma\tzonemodel\tschema\tinput\t5\tday_basis=America/Los_Angeles\n")
+	r = invoke(t, "fold", "--out", mkdir(t, filepath.Join(dir2, "out")), "--all", "--repos", reposFile(t, dir2), "--bus", bus2)
+	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "day_basis=America/Los_Angeles")
+}
+
+// TestADayIsADateOnTheCalendar pins rule 6's "exactly `tokens YYYY-MM-DD`" and rule 17's
+// "each names the day its tokens count to" as what they say: a DAY. The shape alone was
+// the test, so --day 2026-13-40 was accepted and wrote 2026-13-40.tsv.
+func TestADayIsADateOnTheCalendar(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 1}, "/x/schema/a.go")+"\n")
+	for _, bad := range []string{"2026-13-40", "2026-02-30", "2026-00-10", "2026-09-31"} {
+		r := invoke(t, "fold", "--out", out, "--day", bad, "--repos", reposFile(t, dir), "--claude", "g="+tr)
+		wantExit(t, r, 2)
+		wantContains(t, r.stderr, "--day is not a day: "+bad)
+		if _, err := os.Stat(filepath.Join(out, bad+".tsv")); err == nil {
+			t.Errorf("%s was written as a day file", bad)
+		}
+	}
+	// A leap day that exists is a day.
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2024-02-29", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
+}
+
+// TestASwarmFileWithALeadingBlankLineStillValidatesItsHeader pins the --swarm section: "A
+// file whose header is not the sixteen names in order is TOKENS UNPARSED naming the file
+// and the first wrong column." The header was whatever line 1 was, so one blank line at
+// the top meant the header was never checked at all: every row after it was read against
+// an empty column map -- every lookup column 0 -- and the named refusal never came.
+func TestASwarmFileWithALeadingBlankLineStillValidatesItsHeader(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	pool := mkdir(t, filepath.Join(dir, "pool"))
+	wrong := append([]string(nil), swarmHeader...)
+	wrong[2] = "nonsense"
+	write(t, filepath.Join(pool, "usage", "j1.tsv"),
+		"\n"+strings.Join(wrong, "\t")+"\n"+swarmRow("j1", "1", "-", "m", "schema", "2026-09-11T10:00:00Z", "1", "2", "3", "4", "5")+"\n")
+
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--swarm", "d="+pool)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS UNPARSED label=swarm:d")
+	wantContains(t, r.stderr, "nonsense")
+	wantContains(t, r.stderr, swarmHeader[2])
+
+	// The same file without the blank line refuses in exactly the same words.
+	dir2 := t.TempDir()
+	pool2 := mkdir(t, filepath.Join(dir2, "pool"))
+	write(t, filepath.Join(pool2, "usage", "j1.tsv"),
+		strings.Join(wrong, "\t")+"\n"+swarmRow("j1", "1", "-", "m", "schema", "2026-09-11T10:00:00Z", "1", "2", "3", "4", "5")+"\n")
+	r2 := invoke(t, "fold", "--out", mkdir(t, filepath.Join(dir2, "out")), "--day", "2026-09-11",
+		"--repos", reposFile(t, dir2), "--swarm", "d="+pool2)
+	wantExit(t, r2, 1)
+	wantContains(t, r2.stderr, "nonsense")
+}

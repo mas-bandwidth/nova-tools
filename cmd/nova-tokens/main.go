@@ -854,12 +854,30 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			folder.Add(s.Label, m)
 		}
 	}
-	unreadable := 0
+	// Rule 20: report "folds that machine's own sources for one day, the same sources and
+	// the same attribution as fold". That has to include what the fold SAYS about them.
+	// This verb counted only the unreadables, so a transcript line whose stamp does not
+	// parse and a message with no id -- both counted by the reader, both dropped before
+	// the body -- left no trace at all, and the friend pasted a short day onto the bus
+	// under REPORT OK (rule 3: counted and printed, never skipped silently).
+	unreadable, unparsed := 0, 0
 	for _, s := range sources {
 		for _, u := range s.Unreadables {
 			fmt.Fprintln(stderr, unreadableLine("TOKENS", u))
 			unreadable++
 		}
+	}
+	for _, s := range sources {
+		for _, u := range s.Unparseds {
+			fmt.Fprintln(stderr, unparsedLine("TOKENS", u))
+			unparsed++
+		}
+	}
+	// A message the fold could not count by id is not an unparsed line and is not a
+	// refusal; it is spend that was read and then dropped, and fold names it on its one
+	// remedy line. So does this verb.
+	if dropped := noidAndDup(sources); dropped != "" {
+		fmt.Fprintf(stderr, "TOKENS NOTE %s\n", oneline.Escape(dropped))
 	}
 	rows, mixed := folder.DayRows(*day)
 	for _, m := range mixed {
@@ -900,14 +918,19 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return r.print(stderr)
 		}
 	}
+	// The OK line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE section):
+	// it carries no unreadable= and no unparsed=, so what says the day is short is the
+	// TOKENS UNREADABLE / TOKENS UNPARSED lines above it, the TOKENS NOTE, and exit 1.
+	// Giving this line those two counts is a grammar change, and the PR body proposes it.
 	fmt.Fprintf(stderr, "REPORT OK who=%s day=%s rows=%d at=%s build=%s subject=%s\n",
 		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
 		oneline.Field(buildVersion()),
 		oneline.Escape(tokens.Subject(*day, stamp(now), buildVersion(), sorted)))
-	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1.
-	// The body still printed and --note still landed -- exit 1 still writes -- but a
-	// friend about to paste this onto the bus is told it does not cover what it claims.
-	if unreadable > 0 {
+	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
+	// and a line that did not parse is the same wall under fold (main.go's counts). The
+	// body still printed and --note still landed -- exit 1 still writes -- but a friend
+	// about to paste this onto the bus is told it does not cover what it claims.
+	if unreadable > 0 || unparsed > 0 {
 		return 1
 	}
 	return 0

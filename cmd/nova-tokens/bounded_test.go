@@ -264,7 +264,9 @@ func TestSumIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 	// example is twenty models, which does not overflow the model listing at all -- and
 	// its table still shows a MORE line under it. One more model is what makes both caps
 	// and both MORE lines real, and the pair count moves with it.
-	for d := 1; d <= 31; d++ {
+	// September has THIRTY days. The fixture wrote a 2026-09-31.tsv and the month read it
+	// as a day, because a day used to be a shape and not a date on the calendar.
+	for d := 1; d <= 30; d++ {
 		date := fmt.Sprintf("2026-09-%02d", d)
 		var rows []string
 		for m := range 21 {
@@ -294,7 +296,7 @@ func TestSumIsBoundedAtTheLargestPlausibleState(t *testing.T) {
 		t.Errorf("%d bytes, want under 10 KB", n)
 	}
 	wantContains(t, lineWith(r.stdout, "SUM OK"), "pairs=210")
-	wantContains(t, lineWith(r.stdout, "SUM MONTH"), "turns=3100")
+	wantContains(t, lineWith(r.stdout, "SUM MONTH"), "turns=3000")
 	t.Logf("measured: %d lines, %d bytes", len(lines(all)), ownBytes(all, dir))
 }
 

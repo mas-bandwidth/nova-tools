@@ -156,14 +156,39 @@ func TestTheBusGrammarIsOneGrammar(t *testing.T) {
 	}
 	// `at=` is an RFC 3339 UTC stamp: `at=garbage build=b` was taken for a tokens note,
 	// and the fold validates every note's Date: against that stamp.
+	// Rule 6 names ONE trailer in ONE order, `at=<stamp> build=<id>[ supersedes=<set>]`,
+	// and says any other text after the date is not a tokens note. The keys used to be
+	// accepted in any order and any position, so three arrangements nobody wrote were
+	// tokens notes. A day is a date on the calendar too: 2026-02-30 is not one.
 	for _, bad := range []string{"Tokens 2026-09-11", "tokens 2026-09-11 (rough)", "tokens 2026-09-11 at=x",
-		"tokens 11-09-2026", "tokens 2026-09-11 at=garbage build=b", "tokens 2026-09-11 at=2026-09-11T23:55:02-07:00 build=b"} {
+		"tokens 11-09-2026", "tokens 2026-09-11 at=garbage build=b", "tokens 2026-09-11 at=2026-09-11T23:55:02-07:00 build=b",
+		"tokens 2026-09-11 build=b at=2026-09-11T23:55:02Z",
+		"tokens 2026-09-11 supersedes=emma-000000000001 at=2026-09-11T23:55:02Z build=b",
+		"tokens 2026-09-11 at=2026-09-11T23:55:02Z supersedes=emma-000000000001 build=b",
+		"tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=emma-000000000001 at=2026-09-11T23:55:02Z",
+		"tokens 2026-02-30", "tokens 2026-13-40"} {
 		if _, ok := ParseSubject(bad); ok {
 			t.Errorf("%q was taken for a tokens note's subject", bad)
 		}
 	}
 	if p, _ := ParseSubject("tokens 2026-09-11 at=2026-09-11T23:55:02Z build=b supersedes=emma-000000000002,emma-000000000001"); p.badSet == "" {
 		t.Error("an unsorted predecessor set was accepted")
+	}
+}
+
+// TestValidDayIsACalendarCheck: a day is a date, not a ten-character shape. `--day
+// 2026-13-40` was accepted, wrote a day file, passed check, and left MissingDays walking
+// from a day that does not exist.
+func TestValidDayIsACalendarCheck(t *testing.T) {
+	for _, good := range []string{"2026-09-11", "2024-02-29", "2026-01-01", "2026-12-31"} {
+		if !ValidDay(good) {
+			t.Errorf("%s is a day", good)
+		}
+	}
+	for _, bad := range []string{"2026-13-40", "2026-02-30", "2026-00-10", "2026-09-31", "2026-09-00", "2026-9-11", "not-a-day!"} {
+		if ValidDay(bad) {
+			t.Errorf("%s is not a day", bad)
+		}
 	}
 }
 
