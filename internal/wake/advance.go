@@ -94,21 +94,26 @@ func LockAdvance(busDir, as string) (release func(), holder string, err error) {
 	return rel, "", nil
 }
 
-// safeName keeps a name that reaches the filesystem to one path segment.
+// safeName keeps a name that reaches the filesystem to one path segment, and it
+// ENCODES rather than strips: the lock is named by (bus, as), so two different
+// names that share a lock refuse each other over a cursor neither of them is
+// moving. Every byte outside [A-Za-z0-9_-] becomes %<hex>, and % itself is
+// encoded first, so the mapping is injective and reversible by eye.
 func safeName(as string) string {
-	out := make([]rune, 0, len(as))
-	for _, r := range as {
+	var b strings.Builder
+	for i := 0; i < len(as); i++ {
+		c := as[i]
 		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_':
-			out = append(out, r)
+		case c >= 'a' && c <= 'z', c >= 'A' && c <= 'Z', c >= '0' && c <= '9', c == '-', c == '_':
+			b.WriteByte(c)
 		default:
-			out = append(out, '-')
+			fmt.Fprintf(&b, "%%%02X", c)
 		}
 	}
-	if len(out) == 0 {
-		return "-"
+	if b.Len() == 0 {
+		return "%00"
 	}
-	return string(out)
+	return b.String()
 }
 
 // Interrupted reports whether an advance was in flight when the last call died.
@@ -146,18 +151,29 @@ func (a *Advancer) Recover(ctx context.Context, st *State) (Result, string, erro
 		return res, "", err
 	}
 	if listed < n {
-		// The checkout moved between the two reads. Once more, with the count
-		// this read saw.
-		again := carrying(out)
-		if listed > 0 {
-			again = listed
+		// The checkout moved between the two reads, so the count is READ AGAIN
+		// rather than guessed from the short list: a short read of 0 would
+		// otherwise ask the same question twice and call the answer incomplete,
+		// and a short read of k would ask for k when the checkout may now carry
+		// more than that.
+		fresh, code, ferr := a.Bus.run(ctx, a.Bus.inboxArgs()...)
+		if ferr != nil {
+			return res, "", ferr
+		}
+		if code != 0 {
+			return res, "", fmt.Errorf("nova-bus exit=%d", code)
+		}
+		a.Bus.classify(fresh, &res)
+		again := carrying(fresh)
+		if again <= 0 {
+			again = n
 		}
 		listed, res, err = a.open(ctx, again, &res)
 		if err != nil {
 			return res, "", err
 		}
-		if listed < n {
-			return res, fmt.Sprintf("bus recovery incomplete: listed=%d carrying=%d; retried next call", listed, n), nil
+		if listed < again {
+			return res, fmt.Sprintf("bus recovery incomplete: listed=%d carrying=%d; retried next call", listed, again), nil
 		}
 	}
 	st.Delete(AdvanceMarker)

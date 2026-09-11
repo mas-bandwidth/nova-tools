@@ -86,14 +86,40 @@ func realBus(t *testing.T) {
 		t.Fatalf("the nova-bus built from this tree answers %s and the spec pins %s; the advancing tests are a measurement of the pinned program", busVersion, wake.PinnedBusVersion)
 	}
 	bin := t.TempDir()
-	path := filepath.Join(bin, "nova-bus")
+	real := filepath.Join(bin, "nova-bus-real")
 	if runtime.GOOS == "windows" {
-		path += ".exe"
+		real += ".exe"
 	}
-	if err := os.WriteFile(path, busBinary, 0o755); err != nil {
+	if err := os.WriteFile(real, busBinary, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	// A recording wrapper stands in front of it, because one of test 11's
+	// demands is about an ARGUMENT -- "--open-max 25, 25 being the carrying= it
+	// read and not a constant" -- and a test that drives the real binary cannot
+	// otherwise see what it was handed. The wrapper runs the real nova-bus, so
+	// the same test proves the argument and the behaviour.
+	shim := filepath.Join(bin, "nova-bus")
+	if runtime.GOOS == "windows" {
+		shim += ".exe"
+	}
+	if raw, err := exec.Command("go", "build", "-o", shim, "./testdata/recordbus").CombinedOutput(); err != nil {
+		t.Fatalf("building the recording nova-bus: %v\n%s", err, raw)
+	}
+	t.Setenv("NOVA_WAKE_REAL_BUS", real)
+	t.Setenv("NOVA_WAKE_BUS_CALLS", filepath.Join(t.TempDir(), "bus-calls"))
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// busCalls is every nova-bus invocation this test has made, argv per line.
+func busCalls(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(read(t, os.Getenv("NOVA_WAKE_BUS_CALLS")), "\n") {
+		if strings.TrimSpace(line) != "" {
+			out = append(out, line)
+		}
+	}
+	return out
 }
 
 const advanceRoster = `{
@@ -269,48 +295,107 @@ func TestTheRealBusCursorWaitsBehindThePrint(t *testing.T) {
 }
 
 // Test 11's advancing half, against the real binary: the residual race of The
-// races. The kill lands between `inbox --advance` returning and the write of
-// its output; the marker is what brings the consumed notes back, through the
-// reader's own OPEN list, with --open-max equal to carrying= and never a
-// constant.
+// races, which is the whole reason the marker exists.
+//
+// "A kill between `nova-bus inbox --advance` returning and the write of its
+// output would lose this tool's record of ANY NOTE THAT CALL LISTED FIRST, and
+// a plain inbox does not re-list a note the cursor has passed, so nothing would
+// bring it back on its own."
+//
+// So the fixture leaves exactly that: 25 notes on the REMOTE that the checkout
+// has not pulled. The advance's push fetches them, `inbox --advance` lists them
+// first, the kill loses the listing, and the cursor is already past them -- they
+// are on the reader's OPEN list and on no listing a plain inbox makes. Only the
+// recovery reaches them.
 func TestTheRealBusAdvanceRecoversAnInterruptedRead(t *testing.T) {
 	rowan, stella := synthBus(t)
 	// A backlog above nova-bus's default OPEN display cap of 20.
 	for i := 0; i < 25; i++ {
 		push(t, stella, fmt.Sprintf("stella-dddddddddd%02d", i), fmt.Sprintf("carried %d", i))
 	}
-	gitAt(t, rowan, "pull", "-q", "--ff-only")
+	// Deliberately NOT pulled into rowan: these notes reach the checkout
+	// through the fetch inside the advance's push, and the kill lands after it.
 	state := filepath.Join(t.TempDir(), "wake.state")
 
-	// The kill leaves the marker, with the cursor already moved.
+	// First, the kill itself: it leaves the marker, which is what brings the
+	// consumed notes back.
 	wake.AdvanceKillPoint = "after-advance"
 	killed := wakeRun(t, advanceArgs(state, rowan, "--max-lines", "0")...)
 	wake.AdvanceKillPoint = ""
+	if n := countLines(killed.stdout, "WAKE BUS id="); n != 0 {
+		t.Fatalf("the killed call printed %d notes; the kill must land before its output is written:\n%s", n, killed.stdout)
+	}
 	if !strings.Contains(read(t, state), "bus:advance") || !strings.Contains(read(t, state), "inflight") {
 		t.Fatalf("the kill did not leave the marker:\n%s", read(t, state))
 	}
-	_ = killed
 
-	// The next call recovers every note the advance consumed.
-	r := wakeRun(t, advanceArgs(state, rowan, "--max-lines", "0")...)
-	if !strings.Contains(r.stdout, "WAKE NOTE bus advance was interrupted; recovered") {
-		t.Fatalf("the recovery is not said out loud:\n%s", r.all())
+	// Now the state the race actually leaves: the cursor PAST notes this tool
+	// has no record of, with the marker set. Measured on v0.10.3, one
+	// `inbox --advance` moves the cursor to the head it read at its start, so
+	// the notes its own push fetched are still listed by the next plain inbox
+	// -- the two-poll property -- and the residual needs the cursor a poll
+	// further on. A person's second advance puts it there, which is exactly the
+	// state a kill in the gap leaves behind: carried notes, unprinted, on no
+	// listing a plain inbox makes.
+	runBus(t, "inbox", "--bus", rowan, "--as", "Rowan", "--receipt-max-words", "40",
+		"--advance", "--remote", "origin", "--branch", "main")
+	plain := runBus(t, "inbox", "--bus", rowan, "--as", "Rowan", "--receipt-max-words", "40")
+	if strings.Contains(plain, "INBOX NOTE id=stella-dddddddddd") {
+		t.Fatalf("the cursor is not past the notes, so there is nothing only the recovery can reach:\n%s", plain)
 	}
-	printed := map[string]bool{}
-	for _, call := range []result{killed, r} {
-		for _, line := range strings.Split(call.stdout, "\n") {
-			if id, ok := strings.CutPrefix(line, "WAKE BUS id="); ok {
-				printed[strings.Fields(id)[0]] = true
-			}
+	if !strings.Contains(plain, "carrying=25") {
+		t.Fatalf("the reader does not carry the 25 the advance consumed:\n%s", plain)
+	}
+	// A fresh state with the marker and nothing else: no note here has ever
+	// been printed, so every one the recovery misses is a note lost.
+	state = filepath.Join(t.TempDir(), "recovered.state")
+	write(t, state, "bus:advance|inflight%7C2026-09-11T12:00:00Z%7C-\n")
+
+	before := len(busCalls(t))
+	r := wakeRun(t, advanceArgs(state, rowan, "--max-lines", "0")...)
+	if !strings.Contains(r.stdout, "WAKE NOTE bus advance was interrupted; recovered 25 notes from OPEN") {
+		t.Fatalf("the recovery did not reach the 25 notes the kill lost:\n%s", r.all())
+	}
+	printed := map[string]string{}
+	for _, line := range strings.Split(r.stdout, "\n") {
+		if !strings.HasPrefix(line, "WAKE BUS id=") {
+			continue
 		}
+		f := strings.Fields(line)
+		id := strings.TrimPrefix(f[0]+" "+f[2], "WAKE BUS id=")
+		printed[strings.TrimPrefix(f[2], "id=")] = line
+		_ = id
 	}
 	for i := 0; i < 25; i++ {
-		if id := fmt.Sprintf("stella-dddddddddd%02d", i); !printed[id] {
+		id := fmt.Sprintf("stella-dddddddddd%02d", i)
+		line, ok := printed[id]
+		if !ok {
 			t.Errorf("%s was consumed by the advance and never printed; the residual is a repeated wake, never a lost one", id)
+			continue
+		}
+		// Rule 6: what woke you is named, and a note is named by its id AND ITS
+		// COMMIT SHA. A recovered note is a change line like any other.
+		if strings.Contains(line, "commit=-") {
+			t.Errorf("the recovered note carries no commit sha: %s", line)
 		}
 	}
 	if strings.Contains(read(t, state), "inflight") {
 		t.Errorf("the marker was not cleared after the recovery:\n%s", read(t, state))
+	}
+
+	// "--open-max 25, 25 being the carrying= it read AND NOT A CONSTANT."
+	opens := 0
+	for _, c := range busCalls(t)[before:] {
+		if !strings.Contains(c, "--open-max") {
+			continue
+		}
+		opens++
+		if !strings.Contains(c, "--open --open-max 25") {
+			t.Errorf("the recovery asked for a number that is not the carrying= it read: %q", c)
+		}
+	}
+	if opens == 0 {
+		t.Errorf("the recovery never read the carried list:\n%s", strings.Join(busCalls(t)[before:], "\n"))
 	}
 }
 

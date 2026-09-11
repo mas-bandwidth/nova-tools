@@ -462,7 +462,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 		stdout: stdout, stderr: stderr, clock: clock, st: st, statePath: *state,
 		maxLines: *maxLines, finalOnly: *finalOnly, baseline: *baseline,
 		cold: st.Cold() && !*baseline, sources: sources, bus: busSrc, lines: lineView,
-		busDir: *busDir, timeout: timeout, advance: *advance, every: every, lineDue: now,
+		busDir: *busDir, timeout: timeout, every: every, lineDue: now,
 	}
 	if *advance {
 		w.advancer = &wake.Advancer{Bus: busSrc, Clock: clock}
@@ -572,8 +572,10 @@ type watcher struct {
 	every          time.Duration
 	lineDue        time.Time
 	timeout        time.Duration
-	advance        bool
-	advancer       *wake.Advancer
+	// advancer is item 3a's transaction, and its presence IS the flag: there is
+	// no second field saying the same thing, because two spellings of one fact
+	// are one chance for them to disagree.
+	advancer *wake.Advancer
 
 	head, headAt string
 	// refusal holds the keys of lines this call read from a poll that ENDED
@@ -612,7 +614,13 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 	w.changed = map[string]int{}
 	// Step 4, before anything else is polled: a call that finds the marker
 	// spools every unprinted note off the reader's OWN OPEN list, because a
-	// plain inbox does not re-list a note the cursor has passed.
+	// plain inbox does not re-list a note the cursor has passed. The head is
+	// read first, because rule 6 is that every change line carries the identity
+	// of the thing that changed -- a note's id AND COMMIT SHA -- and a recovered
+	// note is a change line like any other.
+	if w.bus != nil {
+		w.head, w.headAt = wake.Head(ctx, w.busDir, w.timeout)
+	}
 	w.recoverAdvance(ctx, start)
 	for {
 		now := w.clock.Now()
