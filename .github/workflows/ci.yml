@@ -40,15 +40,16 @@ concurrency:
 jobs:
   test:
     if: github.event_name != 'schedule'
-    # Three operating systems because the platforms genuinely differ: Windows
-    # has no executable bit, so `nocode`'s executable condition cannot fire
-    # there and only the extension and shebang conditions carry it. The
-    # tests that assert the mode-bit behaviour SKIP on Windows with that reason
-    # named, so the difference is declared rather than silently untested.
+    # TWO operating systems in this job and the third fanned out below. The platforms
+    # genuinely differ -- Windows has no executable bit, so `nocode`'s executable condition
+    # cannot fire there and only the extension and shebang conditions carry it, and the
+    # tests that assert the mode-bit behaviour SKIP on Windows with that reason named, so
+    # the difference is declared rather than silently untested. What changed is where
+    # Windows runs, not whether it does: see test-windows.
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
@@ -79,6 +80,89 @@ jobs:
 
       - name: test
         run: go test -race ./...
+
+  windows-packages:
+    # The list the Windows fan-out runs on, READ OUT OF THE SOURCE rather than written
+    # down. It is `go list` filtered to packages that have tests, printed as JSON for the
+    # matrix below.
+    #
+    # This job exists so that there is no second list to keep in step with the first. This
+    # file already carries one hand-copied list -- the release targets in release-dry-run,
+    # which says of itself that it is worth nothing the moment the two lists disagree -- and
+    # that one has a reason (a workflow cannot read another workflow's matrix). This one
+    # does not: a package added tomorrow would quietly never run on Windows, and nothing
+    # would say so. Here, it is in the fan-out the moment it has a test file.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      packages: ${{ steps.list.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - id: list
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages=$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... |
+            sed 's#^github.com/mas-bandwidth/nova-tools/##' |
+            jq -R -s -c 'split("\n") | map(select(length > 0))')
+          echo "$packages"
+          [ "$(echo "$packages" | jq 'length')" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
+          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+
+  test-windows:
+    # WINDOWS, ONE RUNNER PER PACKAGE, all launched at once.
+    #
+    # The shape is mirrored from networknext/next's `.semaphore/functional-tests.yml`,
+    # where every functional test is its own job inside a block and the whole block is what
+    # has to be green -- the run takes as long as the slowest single test rather than as
+    # long as their sum.
+    #
+    # Why Windows and not the others: this repository's tests are mostly git subprocesses,
+    # and Windows pays the most per process. Making the tests inside a package parallel
+    # sped ubuntu and macOS up and slowed Windows DOWN -- 7m58s to 10m41s -- because
+    # `go test` already runs packages in parallel, so a four-core runner was suddenly
+    # asked for four packages times four tests at once. More cores is the answer that does
+    # not trade one platform against another: the packages go to separate machines instead
+    # of competing for one.
+    #
+    # `windows` below is the aggregate and is the check to require. The per-package jobs
+    # are named for their package, so a red one says which package failed in its own name.
+    needs: windows-packages
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.windows-packages.outputs.packages) }}
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: test
+        run: go test -race ./${{ matrix.package }}
+
+  windows:
+    # The aggregate, and the only Windows check worth requiring: `needs` on a matrix job
+    # is success only if EVERY leg succeeded, so a cancelled or skipped leg fails here
+    # rather than passing by being absent. `if: always()` so that this job runs and says so
+    # when a leg failed, instead of being skipped along with it.
+    needs: test-windows
+    if: always() && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every windows package passed
+        shell: bash
+        run: |
+          result="${{ needs.test-windows.result }}"
+          echo "test-windows: $result"
+          [ "$result" = "success" ] || exit 1
 
   smoke:
     if: github.event_name != 'schedule'
