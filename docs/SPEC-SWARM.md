@@ -1507,7 +1507,7 @@ verb, and tests that pin all three by executing them.
 | DeepSeek, idea 6 | a token budget per task | already, rule 13 |
 | DeepSeek, idea 4 | pull-based DAG, coordinator for exceptions | not folded: one task per worker is the shape (rule 11); dependencies are the board's and the coordinator's, not a second scheduler here |
 | Rowan, idea 3 | one command up, one line down | already, rules 13, 14, 15 |
-| Rowan, idea 8 | cheapest model that passes the test | already: the worker description chooses the model; the tool has no opinion |
+| Rowan, idea 8 | cheapest model that passes the test | already: the worker description chooses the model; the tool has no opinion — and the choice is by measured task quality plus retry and review cost, which rule 8's `accurate`/`wrong` and rule 13's usage file supply, never the unit rate alone (Stella's closing read) |
 | Freddy, idea 8 | workers sync deltas, not full state | already, rule 10 (the note file) and rule 15 (the result shape) |
 | ideas #275 | refutation rate as a health metric | already, rule 8: `accurate`/`wrong` per batch is that rate; a falling `wrong` share is the reader's to notice |
 | ideas #273 | cleanup arriving before its notification | already, rule 18: `exit.json` before the slot is freed, and the nonce ties the evidence to its launch |
