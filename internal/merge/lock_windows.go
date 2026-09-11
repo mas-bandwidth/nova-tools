@@ -31,13 +31,23 @@ const (
 	lockfileExclusiveLock   = 0x00000002
 	// ERROR_LOCK_VIOLATION: somebody else holds it. That is the answer NO, not a failure.
 	errorLockViolation = syscall.Errno(33)
+	// THE LOCKED BYTE IS NOT A BYTE THE FILE HAS. A Windows file lock is MANDATORY, not
+	// advisory like flock: while the holder locks bytes 0..0, every other handle's read
+	// of that range fails with ERROR_LOCK_VIOLATION -- so the `pid=<n> at=<stamp>` line
+	// the holder writes for a waiter to name became unreadable exactly while there was a
+	// holder to name, and every Windows refusal said "the holder left no pid".
+	//
+	// Locking one byte far past any content -- 2^63, which no lock file reaches -- keeps
+	// the mutual exclusion (every taker locks the same range) and leaves the line
+	// readable. It is the trick SQLite's byte-range locks and Go's own x/sys callers use.
+	lockOffsetHigh = 0x80000000
 )
 
-// tryLockFile takes an exclusive lock on the whole file without blocking.
+// tryLockFile takes the exclusive lock without blocking. See lockOffsetHigh for the range.
 func tryLockFile(f *os.File) (bool, error) {
-	var ov syscall.Overlapped
+	ov := lockRange()
 	r, _, err := procLockFileEx.Call(f.Fd(), lockfileExclusiveLock|lockfileFailImmediately,
-		0, 1, 0, uintptr(unsafe.Pointer(&ov)))
+		0, 1, 0, uintptr(unsafe.Pointer(ov)))
 	if r != 0 {
 		return true, nil
 	}
@@ -48,6 +58,12 @@ func tryLockFile(f *os.File) (bool, error) {
 }
 
 func unlockFile(f *os.File) {
-	var ov syscall.Overlapped
-	_, _, _ = procUnlockFileEx.Call(f.Fd(), 0, 1, 0, uintptr(unsafe.Pointer(&ov)))
+	ov := lockRange()
+	_, _, _ = procUnlockFileEx.Call(f.Fd(), 0, 1, 0, uintptr(unsafe.Pointer(ov)))
+}
+
+// lockRange is the one byte both calls name, and they must name the same one: an unlock
+// of a range nobody locked leaves the lock held until the process dies.
+func lockRange() *syscall.Overlapped {
+	return &syscall.Overlapped{OffsetHigh: lockOffsetHigh}
 }

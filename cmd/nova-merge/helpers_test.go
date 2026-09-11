@@ -241,7 +241,16 @@ func (l *lab) init(base string) {
 // summary writes a gate summary file, which `gate` requires to exist.
 func (l *lab) summary(body string) string {
 	l.t.Helper()
-	path := filepath.Join(l.dir, "summary-"+strings.ReplaceAll(body, "/", "-")+".txt")
+	// The name is made of the body, and a body carrying a timestamp carries colons, which
+	// Windows does not allow in a file name at all (it reads them as a stream separator).
+	// Every character a path may not hold becomes a dash here, on every platform, so the
+	// fixture writes the same name everywhere.
+	path := filepath.Join(l.dir, "summary-"+strings.Map(func(r rune) rune {
+		if strings.ContainsRune(`/\:*?"<>|`, r) {
+			return '-'
+		}
+		return r
+	}, body)+".txt")
 	if err := os.WriteFile(path, []byte(body+"\n"), 0o644); err != nil {
 		l.t.Fatal(err)
 	}
