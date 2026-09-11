@@ -244,7 +244,7 @@ func TestTheIdIsRandomAndCreationIsExclusive(t *testing.T) {
 	// The ids come from the injected source and equal NOTHING computed from the fields:
 	// the same fields through a source at a different point draw a different id.
 	third := newBench(t)
-	third.rnd.n = 500
+	third.rnd.n = 500 // a different point in the source, not a different set of fields
 	args := append([]string{"add", "--dir", third.dir}, same...)
 	_, stdout, _ := third.run(append(args, "--thing", "every-field", "--leg", "cpp")...)
 	if field(stdout, "id=") == got[0] {

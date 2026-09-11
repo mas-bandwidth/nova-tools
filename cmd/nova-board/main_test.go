@@ -14,15 +14,25 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
 
 // seq is the injected random source: distinct bytes per draw, so ids differ and a test can
 // name one. It is deliberately NOT a hash of anything — the id is a draw.
-type seq struct{ n uint64 }
+//
+// It is MUTEX-GUARDED because crypto/rand.Reader, the source the binary really uses, is
+// safe for concurrent use: a fake that was not would fail the concurrency test for a
+// reason that belongs to the fake.
+type seq struct {
+	mu sync.Mutex
+	n  uint64
+}
 
 func (s *seq) Read(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.n++
 	for i := range p {
 		p[i] = 0
