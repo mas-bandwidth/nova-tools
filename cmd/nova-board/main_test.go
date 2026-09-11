@@ -1002,3 +1002,70 @@ func isSeqName(name string) bool {
 	}
 	return false
 }
+
+// ------------------------------------------------------- the new-user audit, F1 and F2
+
+// EVERY WORD MUST APPEAR, AND THE TOOL SAYS SO. A new line ran `check --words "the Windows
+// CI skips steps"` against the open card *the windows runner skips three steps*, read
+// `CHECK OK matched=0`, and filed the duplicate the tool exists to prevent — because
+// matching is an AND and the only place that was written for a person was the refusal for
+// an empty --words. A dumb matcher a filer cannot predict is the clever matcher this tool
+// refused to build, wearing a different hat.
+func TestCheckSaysThatEveryWordMustAppear(t *testing.T) {
+	t.Parallel()
+	if !strings.Contains(usage, "EVERY WORD APPEARS") {
+		t.Error("the banner does not say that a card matches only when EVERY word appears")
+	}
+	readme := readFile(t, filepath.Join("..", "..", "README.md"))
+	nova := readme[strings.Index(readme, "## nova-board"):]
+	if !strings.Contains(nova, "every word") && !strings.Contains(nova, "EVERY word") {
+		t.Error("the README's nova-board section does not say that every word must appear")
+	}
+	b := newBench(t)
+	b.add(plain("bo", "the windows runner skips three steps")...)
+	exit, stdout, stderr := b.run(b.board("check", "--words", "the Windows CI skips steps")...)
+	if exit != 0 || !strings.Contains(stdout, "matched=0") {
+		t.Fatalf("exit %d, stdout %q", exit, stdout)
+	}
+	if !strings.Contains(stdout, "BOARD NOTE") || !strings.Contains(stdout, "EVERY word") {
+		t.Errorf("matched=0 over five words says nothing about why:\n%s%s", stdout, stderr)
+	}
+	// Two words is a query a person can hold in their head; the remedy line is for the
+	// long phrase that cannot match, not for every miss.
+	_, stdout, _ = b.run(b.board("check", "--words", "windows elephant")...)
+	if strings.Contains(stdout, "EVERY word") {
+		t.Errorf("a two-word miss carries the remedy line:\n%s", stdout)
+	}
+}
+
+// A TOO-BROAD --words MUST NEVER LOOK LIKE A NO NOBODY MEANT. `check --words the` matched
+// every card on the board and exited 1; the guard reads 1 as "already filed" and the
+// finding is never filed — the same lost card as a false duplicate, reached from the other
+// side. Exit 2 is the guard's could-not-run arm, which is what a query that answered
+// nothing actually is.
+func TestABroadCheckIsACouldNotRunAndNeverANo(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	b.add(plain("bo", "the windows runner skips three steps")...)
+	b.add(plain("emma", "the token ledger has no September rows yet")...)
+	exit, stdout, stderr := b.run(b.board("check", "--words", "the")...)
+	if exit != 2 {
+		t.Errorf("a match carried only by a word in more than half the board: exit %d, want 2\n%s%s", exit, stdout, stderr)
+	}
+	if !strings.Contains(stderr, "CHECK REFUSED") {
+		t.Errorf("the refusal is not named on stderr: %q", stderr)
+	}
+	if !strings.Contains(stdout, "CHECK OK matched=2 cards=2") {
+		t.Errorf("the counts do not print on failure:\n%s", stdout)
+	}
+	// A rare word still says NO, and that is the sentence the whole tool rests on.
+	exit, _, _ = b.run(b.board("check", "--words", "windows")...)
+	if exit != 1 {
+		t.Errorf("a real match: exit %d, want 1", exit)
+	}
+	// A common word beside a rare one is a real query: the rare word is what matched.
+	exit, _, _ = b.run(b.board("check", "--words", "the windows")...)
+	if exit != 1 {
+		t.Errorf("a query with one rare word in it: exit %d, want 1", exit)
+	}
+}

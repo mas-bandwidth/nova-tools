@@ -71,6 +71,12 @@ reader and fixer follows is one line of shell:
   nova-board add   --dir ./board --as rowan --text "the Windows runner skips three steps" \
                    --by 4h --default "rowan files it on the schema board as a known gap"
 
+A CARD MATCHES ONLY WHEN EVERY WORD APPEARS in its text, lower-cased, as a substring: more
+words is a NARROWER check and never a broader one, so "the Windows CI skips steps" does not
+match the card "the windows runner skips three steps". Two or three rare words is the query
+that works. A check whose every word is in more than half the board answers nothing and
+exits 2 rather than saying a NO nobody meant.
+
 The guard tells a NO from a could-not-run: check at exit 2 is an operational error, and a
 guard that read every non-zero as "already filed" would turn a broken board into a quiet
 one. --all makes check report over closed cards too, because "somebody already fixed
