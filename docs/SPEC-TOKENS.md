@@ -95,9 +95,10 @@ is the day it was learned.
    is counted and printed with the note's id.** The subject is exactly
    `tokens YYYY-MM-DD` (lower case, one space), either with nothing after or
    followed by exactly one space and the tool's trailer
-   `at=<RFC 3339 UTC> build=<id>`, which is where a `report`'s stamp and
-   build id travel (rule 20); any other text after the date is not a tokens
-   note. A body line is one of three things: six tab-separated fields,
+   `at=<RFC 3339 UTC> build=<id>[ supersedes=<note-id>]`, which is where a
+   `report`'s stamp, build id and, for a correction, the id of the note it
+   replaces travel (rule 20 and the bus source); any other text after the
+   date is not a tokens note. A body line is one of three things: six tab-separated fields,
    `date who model repo type count`, `type` one of the five names, `count`
    a decimal integer with an optional leading `~`, with an optional seventh
    field exactly `day_basis=<zone>` (rule 17) present only when the line's
@@ -153,14 +154,20 @@ is the day it was learned.
     plausible state** below, in lines and bytes, and a test measures it.
 12. **The tool stamps, never a person.** Every day file's first line carries
     the tool's name, the file version, the UTC stamp of the fold that wrote
-    it and the build id. `TOKENS FOLD`, `SUM MONTH` and `CHECK OK` carry
+    it, the build id, and `turns=<n|->`: the number of messages counted into
+    the day across the sources that count messages (`--claude`, `--opencode`),
+    `-` when none did, so the turn count sits beside the tokens on the line
+    a person reads (Rowan, 2026-09-11: the coordinator's own turn count as a
+    daily number beside tokens; Emma, the same day: a turn's cost is its
+    whole context, so tokens over turns is the number that explains a day). `TOKENS FOLD`, `SUM MONTH` and `CHECK OK` carry
     `at=<stamp> build=<id>`. No flag sets the stamp, and a day file whose
     first line lacks it is a `check` failure. The stamp is when the tool
     computed the file; the `date` column is the UTC day of the message.
 13. **`check` is the gate.** It verifies every day file under `--out` parses,
     every row has all eleven columns with each of the five type cells either
     a non-negative integer or exactly `-`, never empty, `day_basis` either
-    `utc` or a zone name with no whitespace, the `date` column equals the
+    `utc` or a zone name with no whitespace, the version line carries
+    `turns=` as an integer or `-`, the `date` column equals the
     file name, rows are sorted and unique by `(model, repo)`, and no day is
     missing between the first and last day present. A missing day is `CHECK MISSING date=<d>`, named, never
     filled. `check` exits 1 on any finding and prints the count line either
@@ -230,15 +237,14 @@ is the day it was learned.
 18. **Two folds over the same sources produce the same rows.** Rows are sorted
     by `(model, repo)` inside a file, sources inside a row are sorted, and a
     test proves two runs differ in nothing but the stamp line (lesson 70).
-19. **Every subprocess runs under a timeout, and there are two.** `sqlite3`
+19. **Every subprocess runs under a timeout, and there is one.** `sqlite3`
     runs under `--timeout <seconds>`, default 120, and a run that exceeds it
-    is `TOKENS UNREADABLE` for that source with the timeout named. `git log`
-    over the bus checkout, run only to order competing tokens notes (the
-    bus source), runs under `--git-timeout <seconds>`, default 60 as
-    `nova-bus` has it, and a run that exceeds it is `TOKENS UNPARSED` for
-    the note it was placing with `git log: timeout after <n>s` as the
-    reason. No other subprocess exists. The defaults are allowed for the
-    reason SPEC.md gives `nova-bus --git-timeout`: they are how long the
+    is `TOKENS UNREADABLE` for that source with the timeout named. No other
+    subprocess exists: an earlier draft ran `git log` over the bus checkout
+    to order competing tokens notes, and that order is now explicit in the
+    notes themselves (`supersedes=`, the bus source), so the tool runs no
+    `git` at all and rule 16 holds without exception. The default is allowed
+    for the reason SPEC.md gives `nova-bus --git-timeout`: it is how long the
     tool waits before saying so, not a fact about anybody's data.
 
 20. **A friend on another machine runs `report`, and never types a number.**
@@ -264,7 +270,12 @@ is the day it was learned.
     `TOKENS UNREADABLE` lines: this verb is the one place in the family
     where the OK line leaves stdout, because stdout is the artifact, and
     this sentence is the exception SPEC.md's Conventions allow when a spec
-    says so. `--note <path>` writes exactly the stdout bytes to that file.
+    says so. `--note <path>` writes exactly the stdout bytes to that file, through
+    `<path>.tmp` and one rename, and only on `REPORT OK`: a `REPORT FAIL`
+    writes nothing and leaves an existing `--note` file byte-unchanged.
+    `--supersedes <note-id>` puts `supersedes=<id>` on the subject, which is
+    how a friend corrects a day (the bus source); the tool checks the id's
+    shape and nothing else, because the lane is not on this machine.
     A `report` for a day whose sources were all unreadable prints
     `TOKENS UNREADABLE` per source and no lines, `REPORT FAIL`, exit 1: a
     friend with nothing to show says so, never sends zeros. A `report` line
@@ -306,25 +317,24 @@ is the day it was learned.
 nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
                     [--provider <label>=<file>]...
-                    [--scratch <dir>] [--timeout <seconds>] [--git-timeout <seconds>] [--allow-shrink] [--max <n>]
+                    [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
 nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <label>=<file>]...
-                    [--note <path>] [--scratch <dir>] [--timeout <seconds>]
+                    [--supersedes <note-id>] [--note <path>] [--scratch <dir>] [--timeout <seconds>]
 nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
 nova-tokens check   --out <dir> [--max <n>]
 nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
                     [--provider <label>=<file>]...
-                    [--scratch <dir>] [--timeout <seconds>] [--git-timeout <seconds>] [--max <n>]
+                    [--scratch <dir>] [--timeout <seconds>] [--max <n>]
 nova-tokens help
 nova-tokens version
 ```
 
 The binary is `nova-tokens`, and that is its only name.
 
-**No guessed anything, with one named exception.** The two timeouts have
-defaults, `--timeout` 120 seconds and `--git-timeout` 60 (rule 19), and
-`--git-timeout` is refused without `--bus`. Nothing else has a default: not the output directory,
+**No guessed anything, with one named exception.** `--timeout` defaults to
+120 seconds (rule 19). Nothing else has a default: not the output directory,
 not a source, not the rules file, not the scratch directory. `--scratch` is
 required when `--opencode` is given and refused otherwise, because a scratch
 directory with nothing to put in it is a flag that does nothing. A label in a
@@ -334,10 +344,13 @@ run; two sources with one label would make the `sources` column a lie.
 ### `fold`
 
 Asserts: every declared source was read whole, every bus line and note
-parsed, no row mixed two day bases, every day file computed was written. Says
+parsed, no row mixed two day bases, no lane's day had two reports without a
+supersession between them, every day file computed was written. Says
 NO (exit 1) when any file was unreadable, any bus line or note unparsed, any
-row was `TOKENS MIXED`, or any day would have shrunk without `--allow-shrink`;
-the rest is still written. Deliberately does not check: that the day files
+row was `TOKENS MIXED`, any lane-day was `TOKENS CONFLICT`, or any day would
+have shrunk without `--allow-shrink`; the rest is still written, and a day
+whose report in some lane is ambiguous is not written at all, its existing
+file untouched. Deliberately does not check: that the day files
 already on disk parse (`check` does), that a source is complete (a transcript
 directory with one file in it is one file), or that two sources overlap (see
 **what it deliberately does not do**). `fold` is a **wall**.
@@ -378,7 +391,7 @@ writes.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: every source read, every line parsed, every day written; a sum or a listing printed; a check with nothing to name |
-| 1 | the verb ran and said **NO**: a declared source with an unreadable file, an unparsed bus line or note, a row of two day bases, a day that would shrink, a check finding, a `report` with nothing to show |
+| 1 | the verb ran and said **NO**: a declared source with an unreadable file, an unparsed bus line or note, a row of two day bases, a lane-day with competing reports (`TOKENS CONFLICT`), a day that would shrink, a check finding, a `report` with nothing to show |
 | 2 | could not run: missing flag, bad flag value, `--out` not a directory, `--repos` unreadable or malformed, a duplicate label, `sqlite3` absent when `--opencode` is given, a second fold holding the lock |
 
 **Exit 1 still writes.** A fold with one unreadable file writes every day it
@@ -406,22 +419,23 @@ TOKENS SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path
 TOKENS UNREADABLE label=<label> path=<path>: <why>
 TOKENS UNPARSED label=bus:<name> note=<id> line=<n>: <text or why>
 TOKENS SUPERSEDED label=bus:<name> note=<id> by=<id> day=<d>
+TOKENS CONFLICT label=bus:<name> day=<d> notes=<id,id,…>: competing reports; send a correction whose subject carries supersedes=<id>
 TOKENS TOUCHED label=bus:<name> day=<d> repos=<list>
 TOKENS MIXED date=<d> model=<model> repo=<repo> bases=<utc,zone>: two day bases on one row; declare one export for that day
-TOKENS DAY date=<d> rows=<n> models=<n> repos=<n> unknown=<pct>% other=<pct>% rough=<n> dashes=<n> nonutc=<n> sources=<labels> written=<true|false>
+TOKENS DAY date=<d> rows=<n> models=<n> repos=<n> turns=<n|-> unknown=<pct>% other=<pct>% rough=<n> dashes=<n> nonutc=<n> sources=<labels> written=<true|false>
 TOKENS SHRANK date=<d> type=<type> file=<n> now=<n|-> written=<true|false>: a source went quiet; --allow-shrink writes it anyway
-TOKENS MORE kind=<source|unreadable|unparsed|superseded|touched|mixed|day> shown=<n> total=<t> <remedy>
-TOKENS OK days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> shrank=<n>
-TOKENS FAIL days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> shrank=<n>
+TOKENS MORE kind=<source|unreadable|unparsed|superseded|conflict|touched|mixed|day> shown=<n> total=<t> <remedy>
+TOKENS OK days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n>
+TOKENS FAIL days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n>
 TOKENS NOTE <the one remedy line>
 TOKENS REFUSED: <reason>
 REPORT OK who=<name> day=<d> rows=<n> at=<stamp> build=<id> subject=<subject>
 REPORT FAIL who=<name> day=<d> rows=0 unreadable=<n>
 REPORT REFUSED: <reason>
-SUM MONTH month=<m> at=<stamp> build=<id> days=<n> first=<d> last=<d> missing=<n> rows=<n>
+SUM MONTH month=<m> at=<stamp> build=<id> days=<n> first=<d> last=<d> missing=<n> rows=<n> turns=<n|->
 SUM PAIR model=<model> repo=<repo> input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> days=<n>
 SUM MODEL model=<model> input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> repos=<n>
-SUM TOTAL input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> pairs=<n> models=<n>
+SUM TOTAL input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> turns=<n|-> pairs=<n> models=<n>
 SUM MORE kind=<pair|model> shown=<n> total=<t> nova-tokens sum --out <dir> --month <m> --max 0
 SUM OK month=<m> days=<n> missing=<n> pairs=<n> models=<n> nonutc=<n>
 SUM REFUSED: <reason>
@@ -476,7 +490,7 @@ type cells are `-` and `nonutc=` how many of its rows carry a `day_basis`
 other than `utc`. `sources=` is the union of labels across the day's rows.
 
 **Every listing is a cap and a count**, per SPEC.md. `TOKENS SOURCE`,
-`TOKENS UNREADABLE`, `TOKENS UNPARSED`, `TOKENS SUPERSEDED`, `TOKENS TOUCHED`,
+`TOKENS UNREADABLE`, `TOKENS UNPARSED`, `TOKENS SUPERSEDED`, `TOKENS CONFLICT`, `TOKENS TOUCHED`,
 `TOKENS MIXED` and `TOKENS DAY` are each capped at `--max` separately, per
 kind, because a month of `--all` is up to 90 day lines
 and one unreadable directory is 2,000 file lines, and the loud kind must not
@@ -486,6 +500,8 @@ about the fold, never about the output.
 **`TOKENS NOTE` is exactly one remedy line.** If anything was unreadable it
 names the label and says either open the files to the group or drop the flag;
 if a bus line or note was unparsed it names the note id and the shape; if a
+lane-day had competing reports it names the lane and the `supersedes=`
+trailer; if a
 row mixed two day bases it names the two labels; if a day shrank it names
 `--allow-shrink`; if nothing was wrong it names `check`.
 
@@ -497,7 +513,7 @@ fold with no `--out`, no `--repos` and a bad label says all three.
 `<out>/<day>.tsv`, tab separated, one file per UTC day:
 
 ```
-nova-tokens v1 day=2026-09-11 at=2026-09-11T23:55:02Z build=<id> sources=claude:glenn,opencode:bench,swarm:deepseek,bus:emma,google:emma
+nova-tokens v1 day=2026-09-11 at=2026-09-11T23:55:02Z build=<id> turns=1204 sources=claude:glenn,opencode:bench,swarm:deepseek,bus:emma,google:emma
 date	model	repo	input	output	cache_write	cache_read	reasoning	rough	day_basis	sources
 2026-09-11	claude-fable-5-1	schema	8410	593734	1504393	236002356	-	0	utc	claude:glenn
 2026-09-11	deepseek-v3	serialize	812004	40211	-	-	-	0	utc	swarm:deepseek
@@ -520,7 +536,10 @@ Eleven columns, every one written on every row. A `-` in a type cell is a
 fact about the source ("did not report"), not about the day, and `sum`
 counts them beside the totals it prints.
 
-The first line is the **version and stamp line** (rule 12; lesson 45). A file
+The first line is the **version and stamp line** (rule 12; lesson 45), and
+`turns=` on it is the day's message count across the sources that count
+messages, `-` when none did, summed by `sum` onto `SUM MONTH` and `SUM TOTAL`
+as `turns=`. A file
 whose first line is not `nova-tokens v1 …` is refused by `sum` and named by
 `check`, and the repair is `fold --day <d>`. Rows are sorted by
 `(model, repo)`. The temp name is `<day>.tsv.tmp`, fixed (rule 8).
@@ -654,51 +673,44 @@ than this fold's own `at=` stamp is `TOKENS UNPARSED` once for the whole
 note, no line of it folded, `unparsed=<n>` counted once for it, exit 1; a
 correction with a bad date is refused whole rather than half-read.
 
-**Two notes with one subject in one lane are ordered by the bus's own
-history, and the order is the first-parent line of the checkout's `HEAD`.**
-The bus is a git history and the note that reached that line later wins.
-`INDEX` is not consulted for this: it is a derived catalogue,
-`nova-bus check --rebuild-index` writes it sorted by path, and a rebuild
-can reorder two same-second corrections by their filenames without
-changing either note (Stella's second read, 2026-09-11); a cache cannot
-supply a chronology it never kept. The order comes from the checkout. For
-each parsed tokens note that competes for one day in one lane, the tool
-runs `git log --first-parent --format=%H --diff-filter=A -- <path>` in the
-bus checkout under `--git-timeout` (rule 19), once per competing note and
-never for a lone note; the one hash it prints is the commit that added the
-note to the first-parent line of `HEAD` (a note merged in from a branch
-is added, on that line, by its merge commit). The notes' adding commits
-are then ranked by their position in `git log --first-parent --format=%H`
-of `HEAD`, read once per fold and only when some day has competing notes,
-newest first. The competing note whose adding commit is newest is the
-report for that day; every other is
-`TOKENS SUPERSEDED label=bus:<name> note=<id> by=<id> day=<d>` and not
-folded, `superseded=<n>` on the source line. `Date:` is never consulted for
-this (two sends can share a second), the filename never (a stamp in a name
-is a `Date:`), `INDEX` never, the author's clock never, and the order the
-filesystem lists notes in changes nothing. Two competing notes added by
-one commit have no order between them and the tool invents none: both are
-`TOKENS UNPARSED` for the whole note with the reason
-`two tokens notes for <day> in one commit <hash>` and the remedy `send a
-correction`, neither folds, and a correction in its own later commit is
-the report. A competing note `git log` names no adding commit for (in the
-working tree and uncommitted, or on a branch not on the first-parent line
-of `HEAD`) is `TOKENS UNPARSED` for the whole note with the reason
-`not on main` and the remedy `nova-bus send`; the notes that can be placed
-still decide the day. A `git log` that fails or exceeds `--git-timeout` is
-`TOKENS UNPARSED` for the note it was placing, git's first stderr line or
-the timeout as the reason, exit 1. A lone tokens note for a day needs no
-order and folds with no `git` run at all. A friend who sends twice is
-correcting, and summing a correction onto its original doubles the day; an
-unparsed newer correction leaves the older parsed note as the report,
-visibly, with the run at exit 1 until the correction is fixed.
+**Two notes for one day in one lane are one report only when the later
+names the earlier: `supersedes=<note-id>` in the subject trailer, and nothing
+else orders them.** A friend who sends twice is correcting, and summing a
+correction onto its original doubles the day; so a correction says what it
+corrects. A tokens note whose subject trailer carries `supersedes=<id>` is a
+**successor**: `<id>` must name a tokens note in the same lane for the same
+day that itself parsed whole, and the successor is validated whole — header,
+`Date:`, every body line — before it replaces anything. When it does, the
+predecessor is `TOKENS SUPERSEDED label=bus:<name> note=<id> by=<id> day=<d>`,
+not folded, `superseded=<n>` on the source line, and the successor is the
+day's report; a chain of successors folds to its last valid link, so two
+sequential corrections are one report. When the lane holds two parsed notes
+for one day and neither supersedes the other — two roots, or two successors
+of one predecessor — that lane-day is `TOKENS CONFLICT label=bus:<name>
+day=<d> notes=<id,id>`, `conflict=<n>` on `TOKENS OK` or `TOKENS FAIL`, exit
+1, **no** row from that lane folds for that day, the day file is not written
+and an existing one is left untouched, and no winner is inferred from `Date:`
+(two sends can share a second), from the filename (a stamp in a name is a
+`Date:`), from the directory listing, from the author's clock, from `INDEX`,
+or from the bus's git history: `INDEX` is a derived catalogue that
+`nova-bus check --rebuild-index` writes sorted by path (Stella's second read,
+2026-09-11), and a commit order is a fact about the checkout and not about
+which number the friend meant. A successor that names a missing note, a note
+in another lane or for another day, a note that did not parse, or a note
+that is itself its successor (a cycle, at any length) is `TOKENS UNPARSED`
+for the whole successor with the reason after the colon and the remedy `send
+a correction whose subject carries supersedes=<id>`; the earlier valid note
+stays the day's report, visibly, and the run is exit 1 until the correction
+is fixed. `report --supersedes <note-id>` writes the trailer, and the parser
+that reads it is the serializer that writes it (lesson 113). A lone tokens
+note for a day needs no order and no trailer.
 
-The tool never pulls, fetches or pushes. It reads the checkout it is given,
-and the one `git` it runs asks that checkout about its own history, which
-no network answers. A caller who wants today's notes runs `nova-bus inbox`
-first. A fold that fetched would be a fold whose numbers depend on a
-network call, and the `TOKENS SOURCE` line for the bus prints the newest
-note's mtime so a reader can see how fresh the checkout was.
+The tool never pulls, fetches, pushes, runs `git`, or talks to a network. It
+reads the checkout it is given as files (rule 16). A caller who wants today's
+notes runs `nova-bus inbox` first. A fold that fetched would be a fold whose
+numbers depend on a network call, and the `TOKENS SOURCE` line for the bus
+prints the newest note's mtime so a reader can see how fresh the checkout
+was.
 
 ## Repo attribution
 
@@ -755,7 +767,7 @@ sources. Ninety days under `--all`.
 
 | verb | lines at that state (default `--max 20`) | bytes |
 |---|---|---|
-| `fold --all` | 1 FOLD + 10 SOURCE + 20 UNREADABLE + 1 MORE + 20 UNPARSED + 1 MORE + 20 SUPERSEDED + 1 MORE + 20 TOUCHED + 1 MORE + 20 MIXED + 1 MORE + 20 DAY + 1 MORE + 1 OK + 1 NOTE = 139 | under 24 KB |
+| `fold --all` | 1 FOLD + 10 SOURCE + 20 UNREADABLE + 1 MORE + 20 UNPARSED + 1 MORE + 20 SUPERSEDED + 1 MORE + 20 CONFLICT + 1 MORE + 20 TOUCHED + 1 MORE + 20 MIXED + 1 MORE + 20 DAY + 1 MORE + 1 OK + 1 NOTE = 160 | under 28 KB |
 | `report` | up to 200 pairs x 5 types = 1,000 lines on stdout, uncapped, because the body is the artifact and a capped report would be a count sent as a total; 1 REPORT OK on stderr | under 64 KB |
 | `sum --month` | 1 MONTH + 20 PAIR + 1 MORE + 20 MODEL + 1 MORE + 1 TOTAL + 1 OK = 45 | under 10 KB |
 | `check` | 20 FAIL + 1 MORE + 20 MISSING + 1 MORE + 20 STRAY + 1 MORE + 1 count line = 64 | under 8 KB |
@@ -767,9 +779,8 @@ against the table; the measured numbers go into the commit that first passes
 it (lesson 169).
 
 **The fold's cost is one pass over each source file.** Each declared file is
-opened once per run, and a test counts opens; `git log` runs once per
-competing tokens note plus once per fold that has any, never for a lone
-note, and the same test counts invocations. There is no index and no
+opened once per run, and a test counts opens; no subprocess but `sqlite3`
+runs, and the same test asserts it. There is no index and no
 incremental mode: a day file is recomputed whole from the sources every
 time, and the day's own transcripts are the only thing that must be read to
 compute it. The prototype read 2,497 files in about ten seconds; the
@@ -781,10 +792,12 @@ time (lesson 167).
 - **It does not price anything.** Tokens, by type, per model. Dollars are a
   rate card times a count, the rate card changes, and a tool that carried
   one would carry a stale one.
-- **It does not pull the bus, fetch, push, or talk to a network.** It reads
-  a checkout; the one `git` it runs is `git log` over that checkout, to
-  order competing notes (the bus source), and a fake `git` in the tests
-  records that nothing else was ever asked.
+- **It does not claim coverage.** Every total is the sum of what the declared
+  sources reported; `dashes=`, `missing=`, `unknown=` and `unreadable=` say
+  what it does not cover, and no line calls a sum complete.
+- **It does not pull the bus, fetch, push, run `git`, or talk to a network.**
+  It reads a checkout as files; competing notes are ordered by what they say
+  (`supersedes=`), never by the checkout's history.
 - **It does not fill a missing day.** A day nobody folded is named by
   `check` and stays missing until somebody folds it.
 - **It does not remove, trim or rotate any file.** Not a month file, not a
@@ -868,9 +881,10 @@ transcription of it:
     Here the swarm's usage files are a source (rule 14).
 19. **A line dated another day is moved to that day silently.** Here it is
     folded to its day and counted `redated=<n>` (rule 17).
-20. **A second tokens note for one day is summed onto the first.** Here the
-    note whose commit is later on the bus's first-parent line supersedes,
-    and the older is printed (the bus source).
+20. **A second tokens note for one day is summed onto the first.** Here a
+    correction names what it corrects with `supersedes=`, the older is
+    printed as superseded, and two notes with no chain between them are a
+    conflict that folds nothing (the bus source).
 21. **A type the source did not carry is written `0`.** Every DeepSeek row
     and every Claude `reasoning` cell said zero when nothing had measured
     them. Here it is `-`, and `sum` counts the dashes (rule 15).
@@ -916,28 +930,26 @@ seen red before it is trusted.
    `at=` are each one `TOKENS UNPARSED` line naming the header line and the
    reason, contribute no row, `unparsed=1` each. Two notes for one day in
    one lane with the same `Date:` to the second and different ids, the
-   fixture bus a real git repository in `t.TempDir()` with the two notes
-   in two commits and filenames whose lexical order opposes their commit
-   order: the note whose commit is later on the first-parent line is the
-   day, the other prints `TOKENS SUPERSEDED`, `superseded=1`; the same
-   fixture with the lane's files listed in reverse order, the two files'
-   mtimes swapped, and `INDEX` rewritten sorted by path as
-   `nova-bus check --full --rebuild-index` writes it, gives byte-identical
-   rows and the same `SUPERSEDED` line (fold, rebuild `INDEX`, fold:
-   identical); a third note for that day, in a later commit and with a
-   malformed `Date:`, is `TOKENS UNPARSED`, the second note stays the day's
-   report, exit 1; two competing notes added by one commit are each
-   `TOKENS UNPARSED` with `two tokens notes for <day> in one commit`,
-   neither folds, and a note in a later commit becomes the day; two
-   corrections from two branches reaching `HEAD` by two merges rank by
-   their merge commits, the later merge winning, whatever their `Date:`
-   headers and author clocks say, and the same two reaching `HEAD` by one
-   merge are both `TOKENS UNPARSED` as one commit; a competing note in the
-   working tree and in no commit is `TOKENS UNPARSED` with `not on main`
-   and the `nova-bus send` remedy while the committed note stays the day;
-   a fake `git` on `PATH` that sleeps past `--git-timeout 1` gives
-   `TOKENS UNPARSED` naming `timeout after 1s`, exit 1; a lone note folds
-   with the fake `git` never invoked.
+   second's subject carrying `supersedes=<first id>`, with filenames whose
+   lexical order opposes their send order: the successor is the day, the
+   first prints `TOKENS SUPERSEDED`, `superseded=1`; the same lane with the
+   files listed in reverse order, the two files' mtimes swapped, `INDEX`
+   rewritten sorted by path as `nova-bus check --full --rebuild-index`
+   writes it, and the notes' commit order reversed in a fixture git history,
+   gives byte-identical rows and the same `SUPERSEDED` line (fold, rebuild
+   `INDEX`, fold: identical); a third note superseding the second folds as
+   the day with two `SUPERSEDED` lines (two sequential corrections); two
+   notes for one day with no `supersedes=` between them, and two successors
+   naming one predecessor, are each `TOKENS CONFLICT … notes=<id,id>`,
+   `conflict=1`, no row from that lane for that day, that day's file not
+   written and an existing one byte-identical, exit 1, and a later note
+   superseding one of the two still leaves the other as a conflict until it
+   too is superseded; a successor naming a missing id, one naming a note in
+   another lane, one naming a note for another day, one naming a note that
+   did not parse, and two notes naming each other, are each `TOKENS
+   UNPARSED` for the whole successor with the reason and the remedy, the
+   earlier valid note stays the day's report, exit 1; a lone note folds;
+   the source tripwire finds no `os/exec` call but `sqlite3`.
 7. A body line `… input ~100000` folds as 100000, the row has `rough=1`, a
    second rough line on the same row makes `rough=2`, `TOKENS DAY rough=2`,
    and `sum` carries `rough=2` on the pair, the model and the total.
@@ -968,14 +980,19 @@ seen red before it is trusted.
     `nova-tokens v1 day=<d> at=<RFC 3339 UTC> build=<id>` with the id
     compiled in; no flag can set `at=`; `TOKENS FOLD`, `SUM MONTH` and
     `CHECK OK` carry the same `at=` shape and `build=`; the day file's
-    `date` column is the message's day, not the fold's.
+    `date` column is the message's day, not the fold's; the version line's
+    `turns=` equals the counted messages across the Claude and OpenCode
+    sources for that day, is `-` for a day fed by a bus note alone, prints
+    on `TOKENS DAY`, and `sum` prints their sum on `SUM MONTH` and `SUM
+    TOTAL`, `-` when every day is `-`.
 13. `check` over: a file with a missing column, a file whose `date` column
     disagrees with its name, a file with two rows for one `(model, repo)`,
     a file with rows out of order, a file with no version line, a file with
-    an empty type cell, a file with `day_basis` empty, and a run of days
+    an empty type cell, a file with `day_basis` empty, a file whose version
+    line lacks `turns=`, and a run of days
     `09-07, 09-08, 09-10`: every finding prints one line,
     `CHECK MISSING date=2026-09-09` prints, the count line prints
-    `bad=7 missing=1`, exit 1; a file whose type cells are `-` and whose
+    `bad=8 missing=1`, exit 1; a file whose type cells are `-` and whose
     `day_basis` is `America/Los_Angeles` is clean; a clean set is
     `CHECK OK … missing=0`, exit 0; `sum` over the same gapped month exits
     0 with `missing=1`.
@@ -1007,10 +1024,8 @@ seen red before it is trusted.
 16. A fake `sqlite3` on `PATH` records the paths it was asked to open: only
     paths under `--scratch`, every invocation carries `-readonly`; the
     original database's bytes and mtime are unchanged after the fold; a
-    fake `git` on `PATH` records every argument vector: each is `log` with
-    `--first-parent` and `--format=%H` and a path inside `--bus`, never
-    `fetch`, `pull`, `push`, `remote` or a URL; a source test finds no
-    `net` import.
+    fake `git` on `PATH` records that it was never invoked, over a fixture
+    bus holding competing notes; a source test finds no `net` import.
 17. A transcript line stamped `2026-09-11T23:59:59Z` and one stamped
     `2026-09-12T00:00:01Z` land in two files; a bus note with subject
     `tokens 2026-09-11` and a line dated `2026-09-10` folds into the
@@ -1026,7 +1041,8 @@ seen red before it is trusted.
     row for that key, `mixed=1`, exit 1.
 18. Two folds over one fixture, run in sequence: every day file is
     byte-identical below the first line, and the first lines differ only in
-    `at=`; the same over a bus lane holding two tokens notes for one day,
+    `at=`; the same over a bus lane holding two tokens notes for one day, one
+    superseding the other,
     with the directory listing order reversed between the runs, is
     byte-identical the same way.
 19. A fake `sqlite3` that sleeps past `--timeout 1`: `TOKENS UNREADABLE`
@@ -1044,7 +1060,13 @@ seen red before it is trusted.
     directory, `reasoning=-`, and `TOKENS TOUCHED … repos=schema` (one
     grammar, by construction); a `report` whose every source is unreadable
     prints no lines, `REPORT FAIL`, exit 1; a `report` line never contains
-    `~` or `#`; `--note` writes exactly the stdout bytes and nothing else;
+    `~` or `#`; `--note` writes exactly the stdout bytes and nothing else, through
+    `.tmp` and rename, and a `report` that fails leaves a pre-existing
+    `--note` file byte-identical with no `.tmp` beside it; `report
+    --supersedes <id>` prints `subject=tokens D at=… build=… supersedes=<id>`
+    and a note built from it folds as the successor of `<id>` (two
+    sequential `report`s, the second superseding the first, fold to the
+    second's rows and one `SUPERSEDED` line);
     `report --who emma --day D --provider g=<export>` over the fixture
     export of per-day totals declaring `America/Los_Angeles` prints lines
     of seven fields, each ending `day_basis=America/Los_Angeles`, and a
@@ -1078,7 +1100,7 @@ every independent problem at once, a `### First run` in `README.md`, a
 pin all three by executing them.
 
 1. **`internal/tokens/dayfile.go`**: the day file: the version and stamp
-   line, the eleven columns, strict parse (a row with ten columns is an
+   line with `turns=`, the eleven columns, strict parse (a row with ten columns is an
    error naming the line; a type cell is an integer or `-` and an empty
    cell is an error), sorted rows, the write through `<day>.tsv.tmp` and
    rename under the output lock, the shrink comparison with `-` on either
@@ -1121,7 +1143,8 @@ pin all three by executing them.
    lines), the exact subject with its one trailer shape, the `Date:`
    validation against the fold's stamp, the six-field line, blank and `#`
    lines with the one `# repos:` shape and the optional seventh field, the
-   `git log` read under `--git-timeout` and the supersede rule over it,
+   `supersedes=` chain with its whole-note validation, cycle, cross-lane,
+   cross-day and missing-target refusals, and `TOKENS CONFLICT`,
    and the serializer `report` writes with, which is this parser's inverse
    and lives in this file. Tests: demanded tests 6, 7, 17,
    18, 20.
@@ -1133,9 +1156,8 @@ pin all three by executing them.
     repo's one-line refusals (the flag parser given `io.Discard`), the
     output grammar exactly as above, `--max` per kind, `--scratch` required
     with `--opencode` and refused without, `--timeout` default 120,
-    `--git-timeout` default 60 and refused without `--bus`,
-    `report`'s stdout as the artifact and its OK line on stderr, `version`
-    from the build.
+    `report`'s stdout as the artifact, `--note` written only on OK, its OK
+    line on stderr, `--supersedes`, `version` from the build.
 12. **`cmd/nova-tokens/*_test.go`**: the contract tests: every exit code,
     every refusal sentence, the environment ignored (demanded test 1), the
     largest plausible state measured (demanded test 11), the audit over
@@ -1152,3 +1174,22 @@ pin all three by executing them.
     that this spec forbids**, and only then the LaunchAgent repointed.
     `token-collate.sh` and its two folds stay where they are until that
     day.
+
+## Ideas folded on 2026-09-11
+
+| source | the idea, in six words | disposition |
+|---|---|---|
+| Stella, spec repairs | `supersedes=<note-id>` on the subject trailer | rule 6 and the bus source: explicit supersession; `git log` and `--git-timeout` removed; rule 19 back to one subprocess |
+| Stella, spec repairs | competing roots or successors are CONFLICT | `TOKENS CONFLICT`, exit 1, no winner inferred, day file untouched |
+| Stella, spec repairs | validate the whole correction; reject cycles | the bus source; test 6 |
+| Stella, spec repairs | INDEX is a lookup aid only | already; now also the git history is not consulted |
+| Stella, spec repairs | `report` refuses non-UTC aggregates | left different: `report` carries the zone as the seventh field and six fields never erase it (rule 20, test 20); `--note` is now written only on OK, so a refused report cannot replace a file |
+| Stella, spec repairs | totals are sums of reported measurements | **what it deliberately does not do**: it does not claim coverage |
+| Rowan, idea 10; Emma, T×C | the turn count beside the tokens | rule 12: `turns=` on the version line, `TOKENS DAY`, `SUM` |
+| Stella, idea 6 | measure spend with types and coverage preserved | already, rules 15 and 21 (`-` is never zero; `unattributed` is never split) |
+| Emma, B–D; Johnny, ideas 1–5 | fewer turns per decision | not folded here: the wake and merge specs own the turns; this spec counts them |
+| DeepSeek, idea 6 | coordination as an accounted resource | already: this tool is the account; `turns=` adds the unit |
+| ideas #275 | 967,000 tokens to do nothing | `turns=` beside tokens is the number that shows it; already per day (rule 12) |
+| ideas #273 | evidence arriving after the belief | already, rule 10 (`SHRANK`) and rule 12 (the fold's own stamp on every file) |
+| ideas #357 | a tokens note is data, never instruction | already, the data paragraph at the top |
+| nova-tools #35 | notes keyed by the clock race | the bus source: two notes for one day are a conflict, never a clock decision |
