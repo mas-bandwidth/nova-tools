@@ -157,11 +157,17 @@ func publish(job, prompt string, findings, notes int) {
 		b.WriteString("- a finding with no rule beside it and nothing to check it against\n")
 	}
 	b.WriteString("\n## Per item\n| item | state | evidence |\n| --- | --- | --- |\n")
-	state := "green"
+	state, evidence := "green", "SPEC.md:1"
 	if _, ok := directive(prompt, "FAKE-MALFORMED"); ok {
 		state = "probably"
 	}
-	fmt.Fprintf(&b, "| the item as it was handed to me | %s | SPEC.md:1 |\n", state)
+	// A completed probe row that finished `not done` WITH ITS REASON (demanded test 8): a
+	// worker that ran the item to the end and found it could not be decided is a finished
+	// job, not a failed one, and the reason is the evidence cell.
+	if _, ok := directive(prompt, "FAKE-NOTDONE"); ok {
+		state, evidence = "not done", "the row could not be probed: the fixture it names is not in this tree"
+	}
+	fmt.Fprintf(&b, "| the item as it was handed to me | %s | %s |\n", state, evidence)
 	b.WriteString("\n## Gates\n| name | result | seconds |\n| --- | --- | --- |\n| go test ./... | pass | 3 |\n")
 	b.WriteString("\n## Left owed\n- nothing\n\n## One line\nA fake worker did a fake task.\n")
 

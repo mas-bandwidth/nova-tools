@@ -258,35 +258,85 @@ func TestADispatcherRunsAJobEndToEnd(t *testing.T) {
 	mustContain(t, "cost", stdout, "dashes=0,0,1,1,1")
 }
 
-// Rule 8: completion is evidence, separate from the count. A report with no head is
-// plan-only and lands in failed/, however much else it holds; a finished review with
-// findings: 0 is CLEAN and lands in done/, because a tool that failed it would be paying a
-// worker for finding something.
+// DEMANDED TEST 8 (SPEC-SWARM.md:1253). EIGHT JOBS, and the counts they print.
+//
+// Completion is EVIDENCE, separate from the count: a report with no head is plan-only and
+// lands in failed/ however much else it holds; a finished review with `findings: 0` is
+// CLEAN and lands in done/, because a tool that failed it would be paying a worker for
+// finding something.
+//
+// The eight the spec names: three with findings, one completed review with `findings: 0`
+// and no finding lines, one completed probe-row with `findings: 0` and one item `not done`
+// with its reason, one report with a plan and no head, one with no head and one finding
+// line appended before the kill, and one with no RESULT.md. (The kill itself is demanded
+// test 3's; what decides these counts is the SHAPE that kill leaves -- a headless report
+// carrying the finding line the worker had appended by then.)
 func TestCompletionIsEvidenceNotCount(t *testing.T) {
+	t.Parallel()
 	b := newBench(t)
+	found1 := b.add("a review that found two things\nFAKE-FINDINGS 2\n")
+	found2 := b.add("another review that found two things\nFAKE-FINDINGS 2\n")
+	found3 := b.add("a third review that found two things\nFAKE-FINDINGS 2\n")
 	clean := b.add("a bounded review that finds nothing\nFAKE-FINDINGS 0\n")
-	plan := b.add("a run that ends on a refusal\nFAKE-NOHEAD\nFAKE-REFUSE 2\n")
+	probe := b.add("a probe row that finished not done\nFAKE-FINDINGS 0\nFAKE-NOTDONE\n", "--template", "probe-row")
+	plan := b.add("a run that ends on a refusal with no head\nFAKE-NOHEAD\nFAKE-REFUSE 2\n")
+	headless := b.add("a worker that appended one finding and never wrote its head\nFAKE-NOHEAD\nFAKE-FINDINGS 1\n")
+	noResult := b.add("a worker that published nothing at all\nFAKE-NORESULT\n")
 
-	exit, stdout, stderr := b.run("--workers", "2")
+	exit, stdout, stderr := b.run("--workers", "8")
 	if exit != 0 {
 		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
 	}
+	for _, id := range []string{found1, found2, found3, clean, probe, plan, headless, noResult} {
+		if !strings.Contains(stdout, "id="+id) {
+			t.Fatalf("every job wants a RUN line, %s has none:\n%s", id, stdout)
+		}
+	}
 	mustContain(t, "the run", stdout, "result=clean findings=0")
 	mustContain(t, "the run", stdout, "result=plan-only findings=0 refusals=2")
-	if !strings.Contains(stdout, "id="+clean) || !strings.Contains(stdout, "id="+plan) {
-		t.Fatalf("both jobs want a RUN line:\n%s", stdout)
+	mustContain(t, "the run", stdout, "result=no-result")
+	// The two clean reports are in done/ and RUN OK counts them done; the two plan-only
+	// are in failed/, and so is the job that published nothing.
+	mustContain(t, "the run", stdout, "RUN OK started=8 done=5 failed=3 killed=0 pending=0")
+	for _, id := range []string{clean, probe} {
+		if _, err := os.Stat(filepath.Join(b.pool, "done", id+".task")); err != nil {
+			t.Errorf("a clean report belongs in done/: %v", err)
+		}
 	}
-	if _, err := os.Stat(filepath.Join(b.pool, "done", clean+".task")); err != nil {
-		t.Errorf("a clean report belongs in done/: %v", err)
+	for _, id := range []string{plan, headless, noResult} {
+		if _, err := os.Stat(filepath.Join(b.pool, "failed", id+".task")); err != nil {
+			t.Errorf("%s belongs in failed/: %v", id, err)
+		}
 	}
-	if _, err := os.Stat(filepath.Join(b.pool, "failed", plan+".task")); err != nil {
-		t.Errorf("a plan-only report belongs in failed/: %v", err)
-	}
-	exit, stdout, _ = b.swarm("triage", "--pool", b.pool)
+
+	exit, stdout, stderr = b.swarm("triage", "--pool", b.pool)
 	if exit != 0 {
-		t.Fatalf("triage exited %d", exit)
+		t.Fatalf("triage exited %d: %s%s", exit, stdout, stderr)
 	}
-	mustContain(t, "triage", stdout, "clean=1 plan_only=1")
+	// ONE LINE, and `reports=` is the number of jobs that HAVE a report to read -- seven of
+	// the eight. `findings=` counts every finding line once, the headless report's appended
+	// one among them: 3x2 + 1. Three of the six fold under one repo and rev, which moves
+	// them from `new` to `dup` and changes neither `findings` nor the classification.
+	if n := strings.Count(stdout, "TRIAGE BATCH "); n != 1 {
+		t.Fatalf("the batch line prints exactly once, got %d:\n%s", n, stdout)
+	}
+	mustContain(t, "triage", stdout, "reports=7 findings=7 new=3 dup=4 unquoted=0 clean=2 plan_only=2 no_result=1 malformed=0")
+	// With no verdict recorded, both numbers are a dash: an absence is never a zero.
+	mustContain(t, "triage", stdout, "accurate=- wrong=-")
+
+	// The probe row's `not done` item carries its reason, and it is counted as not done.
+	mustContain(t, "triage", stdout, "notdone=1")
+
+	// One recorded verdict, and the numbers are its numbers.
+	if exit, stdout, stderr = b.swarm("verdict", "--pool", b.pool, "--task", found1, "--who", "rowan", "--accurate", "2", "--wrong", "1"); exit != 0 {
+		t.Fatalf("verdict exited %d: %s%s", exit, stdout, stderr)
+	}
+	exit, stdout, stderr = b.swarm("triage", "--pool", b.pool, "--all")
+	if exit != 0 {
+		t.Fatalf("triage exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "triage after a verdict", stdout, "accurate=2 wrong=1")
+	mustContain(t, "triage after a verdict", stdout, "reports=7 findings=7")
 }
 
 // Rule 15: a malformed report is QUARANTINED -- never folded, no finding of it counted,
