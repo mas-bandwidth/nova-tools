@@ -662,6 +662,27 @@ func TestNewMailReachesTheCheckoutThroughTheAdvance(t *testing.T) {
 		if !sawOpen {
 			t.Errorf("the first poll must read the carried list WHOLE, with --open-max equal to carrying= and never a constant:\n%s", strings.Join(calls(t, busDir), "\n"))
 		}
+		// "--timeout <t> ... where <t> is the TIME TO THE EARLIEST DUE SOURCE,
+		// AT MOST --interval." A wait that blocked for --gh-timeout would spend
+		// nine intervals in one poll, and the deadline would arrive inside a
+		// call that was still waiting.
+		for _, c := range calls(t, busDir) {
+			if !strings.HasPrefix(c, "wait ") {
+				continue
+			}
+			if !strings.Contains(c, "--timeout 5s") {
+				t.Errorf("the wait budget is not the interval; --gh-timeout is the budget for a forge call, not for a poll: %q", c)
+			}
+		}
+		// Rule 7 covers every line the bus source reads, and the enumerated
+		// program shapes (docs/SPEC-WAKE.md:111-114) have no plain `inbox`
+		// under --refresh: the carried count comes from the wait's own INBOX
+		// OPEN line, so the extra read is neither run, nor unclassified.
+		for _, c := range calls(t, busDir) {
+			if strings.HasPrefix(c, "inbox ") && !strings.Contains(c, "--open") {
+				t.Errorf("--refresh ran a plain inbox beside its wait: an extra process against the bus, and a read whose lines reached no count: %q", c)
+			}
+		}
 	})
 
 	t.Run("--refresh and --advance-cursor together", func(t *testing.T) {

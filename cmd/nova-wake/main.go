@@ -565,6 +565,12 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 					continue
 				}
 				s.due = now.Add(s.src.Every())
+				if w.bus != nil && s.src.Name() == w.bus.Name() {
+					// The bus poll may block (--refresh), and what it may
+					// block for is the time to the earliest due source, at
+					// most --interval -- never --gh-timeout.
+					w.bus.Budget(w.until(now, deadline))
+				}
 				w.poll(ctx, s.src, now)
 				if n, _, _ := w.st.Streak(s.src.Name()); n >= 3 && broken == "" {
 					broken = s.src.Name()

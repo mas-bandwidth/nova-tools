@@ -65,6 +65,7 @@ type Bus struct {
 
 	read, suppress, relay, standing int
 	firstPoll                       bool
+	budget                          time.Duration
 }
 
 func (b *Bus) Name() string         { return "bus" }
@@ -78,30 +79,58 @@ func (b *Bus) Counts() (read, suppress, relay, standing int) {
 	return b.read, b.suppress, b.relay, b.standing
 }
 
+// Budget is the time this poll may block for: the time to the earliest due
+// source, AT MOST --interval (docs/SPEC-WAKE.md, "The bus inbox", --refresh).
+// It is set by the loop before each bus poll, because the earliest due source
+// is a fact about the whole watch and not about this source. --gh-timeout is
+// the budget for a forge call and was never this one: at the documented
+// defaults it would block about nine intervals per poll.
+func (b *Bus) Budget(d time.Duration) {
+	if d > 0 {
+		b.budget = d
+	}
+}
+
+func (b *Bus) waitBudget() time.Duration {
+	if b.budget > 0 && b.budget < b.Every_ {
+		return b.budget
+	}
+	if b.Every_ > 0 {
+		return b.Every_
+	}
+	return b.Timeout
+}
+
 // Poll runs one bus read and classifies every line of it.
 func (b *Bus) Poll(ctx context.Context, now time.Time) (Result, error) {
 	var res Result
 	first := !b.firstPoll
 	b.firstPoll = true
 
+	args := b.inboxArgs()
+	if b.Refresh {
+		args = b.waitArgs(b.waitBudget())
+	}
+	out, code, err := b.run(ctx, args...)
+
 	// Under --refresh the carried list is read WHOLE once, on the first poll,
-	// so a cold watcher lists what it is owed before what is new.
+	// so a cold watcher lists what it is owed before what is new -- and the
+	// carrying= count comes from the poll's OWN INBOX OPEN line rather than
+	// from an extra plain inbox, which is neither one of the enumerated
+	// program shapes nor a read whose lines anything counted.
 	if b.Refresh && first {
-		if out, _, err := b.run(ctx, b.inboxArgs()...); err == nil {
-			if n := carrying(out); n > 0 {
-				open, _, err := b.run(ctx, append(b.inboxArgs(), "--open", "--open-max", strconv.Itoa(n))...)
-				if err == nil {
-					b.classify(open, &res)
-				}
+		if n := carrying(out); n > 0 {
+			open, _, oerr := b.run(ctx, append(b.inboxArgs(), "--open", "--open-max", strconv.Itoa(n))...)
+			// Classified BEFORE the poll's own lines: what the window is owed
+			// prints before what is new.
+			b.classify(open, &res)
+			if oerr != nil {
+				b.classify(out, &res)
+				return res, oerr
 			}
 		}
 	}
 
-	args := b.inboxArgs()
-	if b.Refresh {
-		args = b.waitArgs(b.Timeout)
-	}
-	out, code, err := b.run(ctx, args...)
 	b.classify(out, &res)
 	if err != nil {
 		return res, err
