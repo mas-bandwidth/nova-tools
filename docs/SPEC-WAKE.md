@@ -44,6 +44,7 @@ nova-wake watch --state <file> --max <duration> --on-deadline <word> --interval 
       [--line <name> ... [--offline-after <duration>]]
       [--entry <repo>#<n> ... --entry-interval <duration>] [--final-only] [--gh-timeout <seconds>]
       [--reports <dir> ...]
+nova-wake serve --bus <dir> --as <name> --on-note <command> --interval <duration> --state <file> --hours <h> [--git-timeout <seconds>]
 nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
 nova-wake help
 ```
@@ -434,7 +435,7 @@ a window told it never does not.
 
 ## The rules of the last two days
 
-Nine rules, 2026-09-09 to 2026-09-11. Each came from a hurt and each is written so
+Ten rules, 2026-09-09 to 2026-09-11. Each came from a hurt and each is written so
 a test can be built from it. Where a rule changes a sentence above, that sentence
 has been changed to match, and this section is the reason. Where a rule names a
 prototype behaviour, it is listed by number in **What the prototype does that this
@@ -541,6 +542,29 @@ spec forbids**.
    notes two hours ahead of the clock, and every reader that ordered by the
    typed time put them in the future.)
 
+10. **`serve` wakes a harness from outside it, once per note, and spends
+    nothing while idle.** `watch` runs inside a tool call and returns to a
+    session that is already awake; `serve` is the other shape (Glenn,
+    2026-09-11: a named friend should wake efficiently when a note for them
+    lands, and be efficient while there is NO work, never polling once a
+    second inside a turn that costs tokens). `serve --bus <dir> --as <name>
+    --on-note <command> --interval <duration> --state <file> --hours <h>`
+    runs as its own process outside any session, fetches the bus every
+    `--interval` (a git fetch costs no tokens; the interval matches the
+    latency a person will accept, never the second), and for each new note
+    addressed to `<name>` runs `<command> <note-id>` exactly once: the id is
+    written to the state file before the command starts, so a restart never
+    fires twice, and a command still running holds the next note in a queue,
+    because the harness is one and cannot take two turns at once. The
+    command's exit code is recorded per note as `WAKE FIRED id=<id> rc=<n>`;
+    the tool never reads the command's output and never retries a non-zero
+    exit on its own. It ends at `--hours` or a `stop` file and prints
+    `WAKE SERVE fired=<n> queued=<n> idle=<duration>` on exit. What the
+    command is (a `claude -p`, an `opencode run`, a `grok` invocation) is
+    the line's business, never the tool's. While a line has no work, its
+    cost is one fetch per interval and zero tokens; while it has work, one
+    wake per note and no poll inside the turn.
+
 ## Tests this spec demands
 
 One test per rule above, named for the rule, beside the tests the work list names.
@@ -586,6 +610,13 @@ Each is proven able to fail by a mutation before it is trusted.
    a future date is judged by the commit stamp; the source tripwire finds no
    flag named `--at`, `--stamp` or `--now`, and no time parse over a note's body
    or a report's text.
+10. `TestServeFiresOncePerNoteAndSpendsNothingIdle`: a fixture bus with two
+    notes for the name and one for another name; `serve` with a fake
+    `--on-note` that records its argument runs it exactly twice, with the
+    two ids, never for the third; killed and restarted on the same state it
+    fires zero more; a note arriving while the command runs is fired after
+    it returns, never beside it; an hour with no note fires nothing and the
+    exit line says `fired=0`.
 
 ## Known limits
 
