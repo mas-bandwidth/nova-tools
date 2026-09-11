@@ -247,10 +247,14 @@ func (f *Folder) Turns(day string) (int, bool) {
 	return n, ok
 }
 
-// Mixed is a row fed by two day bases: not written, and named.
+// Mixed is a row fed by two day bases: not written, and named. Labels is WHICH sources
+// fed it: "if a row mixed two day bases it names the two labels" (SPEC-TOKENS, the
+// TOKENS NOTE paragraph). Telling a caller to declare one export for that day without
+// saying which two are competing is the one remedy that names nothing.
 type Mixed struct {
 	Key
-	Bases []string
+	Bases  []string
+	Labels []string
 }
 
 // DayRows is the day's rows, sorted by (model, repo), and separately the rows of that day
@@ -261,7 +265,7 @@ func (f *Folder) DayRows(day string) (rows []*Row, mixed []Mixed) {
 			continue
 		}
 		if len(r.bases) > 1 {
-			mixed = append(mixed, Mixed{Key: k, Bases: r.Bases()})
+			mixed = append(mixed, Mixed{Key: k, Bases: r.Bases(), Labels: r.Sources()})
 			continue
 		}
 		rows = append(rows, r)

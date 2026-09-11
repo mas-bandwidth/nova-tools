@@ -385,6 +385,19 @@ func sourceLine(token string, s *tokens.Source) string {
 		oneline.Field(s.StatField("rows")))
 }
 
+// noPositional refuses a verb invoked with a positional argument. Every verb's shape in
+// the usage block is flags only, and four of the five silently DROPPED the extra word:
+// `nova-tokens sum --out X --month Y extra` ran and answered about something the caller
+// did not ask about. One function, so a sixth verb cannot forget it.
+func noPositional(fs *flag.FlagSet, stderr io.Writer, verb string) (int, bool) {
+	n := fs.NArg()
+	if n == 0 {
+		return 0, false
+	}
+	return refuse(stderr, " "+verb, fmt.Sprintf("takes no positional arguments, got %d (%s); flags come before arguments",
+		n, oneline.Field(strings.Join(fs.Args(), " ")))), true
+}
+
 func unreadableLine(token string, u tokens.Unreadable) string {
 	return fmt.Sprintf("%s UNREADABLE label=%s path=%s: %s",
 		oneline.Field(token), oneline.Field(u.Label), oneline.Field(u.Path),
@@ -413,8 +426,8 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " fold", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
-	if n := fs.NArg(); n > 0 {
-		return refuse(stderr, " fold", fmt.Sprintf("takes no positional arguments, got %d (flags come before arguments)", n))
+	if code, refused := noPositional(fs, stderr, "fold"); refused {
+		return code
 	}
 	r := &refusals{token: "TOKENS"}
 	r.required("out", *out, wantsOut)
@@ -472,7 +485,11 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 			unreadable.Line(unreadableLine("TOKENS", u))
 		}
 	}
-	unreadable.More()
+	// unreadable.More() is NOT here: a day file this run could not WRITE is an unreadable
+	// too (below), and capping the listing before that loop printed a MORE line with a
+	// total that was still growing -- or, with no earlier unreadable, truncated the
+	// listing with no MORE line at all. The cap and the count are closed together, after
+	// the last line either can get.
 	for _, s := range sources {
 		for _, u := range s.Unparseds {
 			unparsed.Line(unparsedLine("TOKENS", u))
@@ -508,9 +525,13 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		days = []string{*day}
 	}
 	daysWritten, rowsWritten := 0, 0
+	mixedLabels := "-"
 	for _, d := range days {
 		rows, mixed := folder.DayRows(d)
 		for _, m := range mixed {
+			if mixedLabels == "-" && len(m.Labels) > 0 {
+				mixedLabels = strings.Join(m.Labels, " and ")
+			}
 			mixedList.Line(fmt.Sprintf("TOKENS MIXED date=%s model=%s repo=%s bases=%s: two day bases on one row; declare one export for that day",
 				oneline.Field(m.Day), oneline.Field(m.Model), oneline.Field(m.Repo), oneline.Field(strings.Join(m.Bases, ","))))
 		}
@@ -541,6 +562,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		dayList.Line(dayLine(d, file, rows, folder, written))
 	}
+	unreadable.More()
 	mixedList.More()
 	dayList.More()
 	shrankList.More()
@@ -556,7 +578,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stdout, "TOKENS OK %s\n", counts)
 	}
 	fmt.Fprintf(stdout, "TOKENS NOTE %s\n", oneline.Escape(remedy(sources, folder.Overlaps(), unreadable.Total(), unparsed.Total(),
-		mixedList.Total(), conflicts.Total(), shrankList.Total(), *allowShrink, *out)))
+		mixedList.Total(), conflicts.Total(), shrankList.Total(), *allowShrink, *out, mixedLabels)))
 	if bad {
 		return 1
 	}
@@ -649,7 +671,7 @@ func dayLine(day string, file *tokens.DayFile, rows []*tokens.Row, folder *token
 
 // remedy is the ONE line TOKENS NOTE carries. It names the label and the act, in the order
 // a reader would act on them, and when nothing was wrong it names the gate.
-func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unparsed, mixed, conflict, shrank int, allowShrink bool, out string) string {
+func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unparsed, mixed, conflict, shrank int, allowShrink bool, out, mixedLabels string) string {
 	switch {
 	case unreadable > 0:
 		return "a declared source could not be read whole (" + firstUnreadableLabel(sources) + "): open those files to this group, or drop the flag -- a declared source is a claim that the report covers it"
@@ -672,7 +694,10 @@ func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unp
 	case conflict > 0:
 		return "a lane-day has competing reports (" + firstConflictLabel(sources) + "): one note whose subject carries supersedes=<every tip, sorted> is the replacement snapshot that clears it"
 	case mixed > 0:
-		return "a row was fed by two day bases: declare one export for that day, not both"
+		// The two labels, because "declare one export for that day" is not an act until
+		// the caller knows which two are competing. Every other branch of this switch
+		// names a label, a note or a lane; this one named nothing.
+		return "a row was fed by two day bases (" + mixedLabels + "): declare one of those two for that day, not both"
 	case shrank > 0 && !allowShrink:
 		return "a day would have gone backwards and was left as it was: --allow-shrink writes it anyway, and it is a person's act"
 	case shrank > 0:
@@ -752,6 +777,9 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " sources", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
+	if code, refused := noPositional(fs, stderr, "sources"); refused {
+		return code
+	}
 	r := &refusals{token: "SOURCES"}
 	checkDay(r, *day, *all)
 	sf.check(r)
@@ -816,6 +844,9 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	sf.declare(fs, false)
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " report", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if code, refused := noPositional(fs, stderr, "report"); refused {
+		return code
 	}
 	r := &refusals{token: "REPORT"}
 	r.required("who", *who, wantsWho)
@@ -884,6 +915,8 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "TOKENS MIXED date=%s model=%s repo=%s bases=%s: two day bases on one row; declare one export for that day\n",
 			oneline.Field(m.Day), oneline.Field(m.Model), oneline.Field(m.Repo), oneline.Field(strings.Join(m.Bases, ",")))
 	}
+	// A mixed key is not in `rows` at all (Folder.DayRows keeps them apart), so the body
+	// below is exactly "no line for that key" and every other key's lines.
 	var rendered []string
 	for _, row := range rows {
 		for t := tokens.Type(0); t < tokens.NTypes; t++ {
@@ -902,8 +935,18 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if lines == 0 || len(mixed) > 0 {
 		// A friend with nothing to show says so, and never sends zeros. A REPORT FAIL
 		// writes nothing: an existing --note file is left byte-unchanged.
-		fmt.Fprintf(stderr, "REPORT FAIL who=%s day=%s rows=0 unreadable=%d\n",
-			oneline.Field(*who), oneline.Field(*day), unreadable)
+		//
+		// A mixed key is a FAIL for the day, and the rest of the body is still printed:
+		// the spec's sentence is "no line for that key", not no line for any key, and a
+		// friend who has to choose an export wants to see what the other keys came to.
+		// It goes to stdout only -- nothing is pasted and --note is not touched -- and
+		// rows= is what it could compute rather than a flat 0, which is a change to the
+		// grammar's REPORT FAIL line and is proposed in the PR body.
+		if lines > 0 {
+			fmt.Fprint(stdout, body)
+		}
+		fmt.Fprintf(stderr, "REPORT FAIL who=%s day=%s rows=%d unreadable=%d\n",
+			oneline.Field(*who), oneline.Field(*day), lines, unreadable)
 		return 1
 	}
 	fmt.Fprint(stdout, body)
@@ -947,6 +990,9 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	max := fs.Int("max", bounded.Default, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " sum", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if code, refused := noPositional(fs, stderr, "sum"); refused {
+		return code
 	}
 	r := &refusals{token: "SUM"}
 	r.required("out", *out, wantsOut)
@@ -1032,6 +1078,9 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	max := fs.Int("max", bounded.Default, "")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, " check", oneline.Cap(err.Error(), oneline.TailBytes))
+	}
+	if code, refused := noPositional(fs, stderr, "check"); refused {
+		return code
 	}
 	r := &refusals{token: "CHECK"}
 	r.required("out", *out, wantsOut)

@@ -281,7 +281,7 @@ func laneNames(dir string) ([]string, error) {
 // the subject is the whole test, exact, because the prototype's case-insensitive match
 // with any text after the date folded notes nobody meant as a report.
 func readNote(lane, path, text string, rules *Rules, at time.Time) *note {
-	header, body, headerLines := splitNote(text)
+	header, body, headerLines, bodyStart := splitNote(text)
 	subject, ok := ParseSubject(header["Subject"])
 	label := Label(KindBus, lane)
 	if !ok {
@@ -328,14 +328,14 @@ func readNote(lane, path, text string, rules *Rules, at time.Time) *note {
 	if n.dead != nil {
 		return n
 	}
-	parseBody(n, label, body, len(headerLines)+1, rules)
+	parseBody(n, label, body, bodyStart, rules)
 	return n
 }
 
 // splitNote reads the header — every line before the first blank line, `Key: value`, with
 // nova-bus's two presentation tolerances: a markdown heading above it and a bullet on
 // each line.
-func splitNote(text string) (map[string]string, []string, map[string]int) {
+func splitNote(text string) (map[string]string, []string, map[string]int, int) {
 	text = strings.TrimPrefix(text, "\ufeff")
 	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
 	header := map[string]string{}
@@ -370,7 +370,12 @@ func splitNote(text string) (map[string]string, []string, map[string]int) {
 	if end < len(lines) {
 		body = lines[end+1:]
 	}
-	return header, body, at
+	// bodyStart is the 0-based index of the first body line, which is the 1-based line
+	// BEFORE it: an UNPARSED line's line= is the line in the FILE. Counting the parsed
+	// header KEYS instead was right only for a note with no heading and no repeated or
+	// malformed header line -- which is every fixture and no real note with a `# heading`
+	// above it, where every body line was reported one line early.
+	return header, body, at, end + 1
 }
 
 // parseBody reads the note's lines: six tab-separated fields with an optional seventh, a
@@ -591,18 +596,6 @@ func onCycle(n *note, all map[string]*note, seen map[string]bool) bool {
 	}
 	delete(seen, n.id)
 	return false
-}
-
-// mergeBasis is a lane's day_basis: utc, one zone, or `mixed` when its lines carry more
-// than one. A lane is allowed to be mixed across days; a row never is.
-func mergeBasis(have, zone string) string {
-	switch have {
-	case UTC:
-		return zone
-	case zone:
-		return zone
-	}
-	return "mixed"
 }
 
 // reportedTypes is the types a lane's lines actually named, which is what `reports=` is

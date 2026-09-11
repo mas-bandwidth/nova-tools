@@ -1427,3 +1427,134 @@ func TestASwarmFileWithALeadingBlankLineStillValidatesItsHeader(t *testing.T) {
 	wantExit(t, r2, 1)
 	wantContains(t, r2.stderr, "nonsense")
 }
+
+// TestTheMixedRemedyNamesTheTwoLabels pins the TOKENS NOTE sentence: "if a row mixed two
+// day bases it names the two labels". Every other remedy names a label, a note or a lane;
+// the mixed one told the caller to declare one export for that day without saying which
+// two were competing.
+func TestTheMixedRemedyNamesTheTwoLabels(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	repos := reposFile(t, dir)
+	g := write(t, filepath.Join(dir, "google.csv"), "timestamp,model,input_tokens\n2026-09-11T12:00:00Z,gemini-2.5-pro,100\n")
+	x := write(t, filepath.Join(dir, "xai.csv"), "# timezone: America/Los_Angeles\ndate,model,input\n2026-09-11,gemini-2.5-pro,5\n")
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", repos,
+		"--provider", "google:emma="+g, "--provider", "xai:johnny="+x)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS MIXED")
+	note := lineWith(r.stdout, "TOKENS NOTE")
+	for _, label := range []string{"google:emma", "xai:johnny"} {
+		wantContains(t, note, label)
+	}
+}
+
+// TestABusNoteWithAHeadingReportsTheFileLineNumber pins the grammar's `line=<n>`: it is
+// the line in the FILE. The number was computed from the count of parsed header KEYS, so
+// a note with the leading `# heading` nova-bus writes -- or a repeated or malformed header
+// line -- reported every body line early. Every fixture in this package writes a plain
+// five-key header with no heading, which is the one shape the old arithmetic got right.
+func TestABusNoteWithAHeadingReportsTheFileLineNumber(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
+	// 1 heading, 2 blank, 3-7 header (one bulleted), 8 blank, 9 good, 10 prose.
+	note := strings.Join([]string{
+		"# tokens 2026-09-11",
+		"",
+		"From: Emma",
+		"To: Rowan",
+		"- Date: " + busDate,
+		"Id: emma-000000000001",
+		"Subject: tokens 2026-09-11",
+		"",
+		"2026-09-11\temma\tg\tschema\tinput\t100",
+		"this line is prose",
+		"",
+	}, "\n")
+	write(t, filepath.Join(bus, "from-emma", "a.md"), note)
+
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "line=10: this line is prose")
+	// And the row from line 9 still folded.
+	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "\t100\t")
+}
+
+// TestAFailedDayWriteIsInsideTheUnreadableCap pins rule 11's contract on the one listing
+// that grows after its own cap used to close: "every listing is capped at --max ... one
+// MORE line naming the remedy; every count is uncapped". A day file this run cannot write
+// is an unreadable, and it is appended after the MORE line had already been printed -- so
+// with no earlier unreadable the listing was truncated with no MORE line at all.
+func TestAFailedDayWriteIsInsideTheUnreadableCap(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), strings.Join([]string{
+		msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 1}, "/x/schema/a.go"),
+		msg("m2", "2026-09-12T10:00:00Z", "f", map[string]int{"input_tokens": 2}, "/x/schema/a.go"),
+	}, "\n")+"\n")
+	// A DIRECTORY where each day file goes: the rename onto it fails on every OS.
+	for _, d := range []string{"2026-09-11", "2026-09-12"} {
+		mkdir(t, filepath.Join(out, d+".tsv"))
+	}
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--claude", "g="+tr, "--max", "1")
+	wantExit(t, r, 1)
+	if n := strings.Count(r.stderr, "TOKENS UNREADABLE"); n != 1 {
+		t.Errorf("%d TOKENS UNREADABLE lines under --max 1, want 1:\n%s", n, r.stderr)
+	}
+	wantContains(t, r.stdout+r.stderr, "TOKENS MORE kind=unreadable shown=1 total=2")
+	wantContains(t, lineWith(r.stderr, "TOKENS FAIL"), "unreadable=2")
+}
+
+// TestReportKeepsTheLinesForEveryKeyThatIsNotMixed pins rule 20's own words: a report
+// whose sources give one (model, repo) two bases prints TOKENS MIXED, "no line for that
+// key", REPORT FAIL, exit 1. The verb threw away the whole body instead, so one mixed key
+// hid every other key the day had.
+func TestReportKeepsTheLinesForEveryKeyThatIsNotMixed(t *testing.T) {
+	dir := t.TempDir()
+	repos := reposFile(t, dir)
+	note := write(t, filepath.Join(dir, "note.txt"), "what was there before\n")
+	g := write(t, filepath.Join(dir, "google.csv"), strings.Join([]string{
+		"timestamp,model,input_tokens",
+		"2026-09-11T12:00:00Z,mixed-model,100",
+		"2026-09-11T12:00:00Z,clean-model,7",
+		"",
+	}, "\n"))
+	x := write(t, filepath.Join(dir, "xai.csv"), "# timezone: America/Los_Angeles\ndate,model,input\n2026-09-11,mixed-model,5\n")
+
+	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--note", note,
+		"--provider", "google:emma="+g, "--provider", "xai:johnny="+x)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS MIXED")
+	wantContains(t, r.stderr, "REPORT FAIL")
+	// The key that is not mixed keeps its line; the mixed key has none.
+	wantContains(t, r.stdout, "clean-model")
+	wantNotContains(t, r.stdout, "mixed-model")
+	// A FAIL still writes nothing: the note file is byte-unchanged.
+	if read(t, note) != "what was there before\n" {
+		t.Error("a failed report replaced the --note file")
+	}
+}
+
+// TestEveryVerbRefusesAPositionalArgument: every verb's shape in the usage block is flags
+// only. Four of the five parsed the extra word and dropped it, so `nova-tokens sum --out X
+// --month Y extra` answered about something the caller did not ask about.
+func TestEveryVerbRefusesAPositionalArgument(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	repos := reposFile(t, dir)
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 1}, "/x/schema/a.go")+"\n")
+	for _, args := range [][]string{
+		{"fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "g=" + tr, "extra"},
+		{"sources", "--repos", repos, "--claude", "g=" + tr, "extra"},
+		{"report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g=" + tr, "extra"},
+		{"sum", "--out", out, "--month", "2026-09", "extra"},
+		{"check", "--out", out, "extra"},
+	} {
+		r := invoke(t, args...)
+		wantExit(t, r, 2)
+		wantContains(t, r.stderr, "takes no positional arguments")
+		wantContains(t, r.stderr, "extra")
+	}
+}
