@@ -535,9 +535,6 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		}
 		supPID, _ := strconv.Atoi(strings.TrimSpace(string(rawPid)))
 
-		// Orphan slot 1
-		_, _, _ = b.run()
-
 		// Resume supervisor with killpoint between-aborted-and-exit
 		// (The supervisor already inherited NOVA_SWARM_KILLPOINT=between-aborted-and-exit if set in env,
 		// or we can test that aborted.json on disk is honoured even if supervisor was killed before clean exit)
