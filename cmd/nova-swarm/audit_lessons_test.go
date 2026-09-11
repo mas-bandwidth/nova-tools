@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // THE NEW-USER AUDIT (2026-09-11). Each test below is one footgun or one stumble a person
@@ -212,4 +213,87 @@ func TestTheReadmeCarriesTheHarnessContract(t *testing.T) {
 			t.Errorf("the README's harness contract wants %q", want)
 		}
 	}
+}
+
+// F2 and F7 / lesson 15: "Every refusal that offers a recovery offers one that actually
+// works on the state it names, and a test runs it."
+//
+// The audit met `usage: none` beside a metered task, was told to "Re-queue it with
+// `--tokens unmetered`", and found that `requeue` ADDS: pending went 2 to 4, the next `run`
+// printed the identical refusal, and no verb could drop the task. The only exit was `rm`.
+// THIS TEST RUNS THE SENTENCE THE REFUSAL PRINTS.
+func TestTheRefusalsOwnRemedyUnwedgesThePool(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	metered := b.add("a task carrying a number nothing can watch\nFAKE-FINDINGS 1\n", "--tokens", "5000")
+	b.rewriteWorker(func(d map[string]any) { d["usage"] = "none" })
+	exit, stdout, stderr := b.run()
+	if exit != 2 {
+		t.Fatalf("the refusal this test is about did not happen; exit %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, "--tokens unmetered")
+
+	// The remedy, exactly as the refusal names it.
+	replacement := filepath.Join(b.dir, "replacement.md")
+	write(t, replacement, "the same work, with no budget this tool cannot watch\nFAKE-FINDINGS 1\n")
+	exit, stdout, stderr = b.swarm("requeue", "--pool", b.pool, "--task", metered,
+		"--task-file", replacement, "--files", "5", "--tokens", "unmetered")
+	if exit != 0 {
+		t.Fatalf("requeue exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "requeue", stdout, "from="+metered)
+	mustContain(t, "requeue", stdout, "replaced=true")
+
+	// THE POOL IS NOT WEDGED: one pending task, not two, and the refused one is kept where
+	// a person can see what happened to it.
+	pending, err := os.ReadDir(filepath.Join(b.pool, "pending"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 2 { // one .task and one .json
+		t.Errorf("a requeue REPLACES: pending wants the one new task, got %d files", len(pending))
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "aborted", metered+".json")); err != nil {
+		t.Errorf("the replaced task is kept in aborted/: %v", err)
+	}
+	// And the run the refusal promised now runs.
+	exit, stdout, stderr = b.run()
+	if exit != 0 {
+		t.Fatalf("the remedy the refusal named did not work; run exited %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN DONE")
+	mustContain(t, "the run", stdout, "budget=unmetered")
+}
+
+// F7: `--task` said it "wants the id of the finished task this one replaces" and accepted
+// any state. A RUNNING task is refused by name: work in flight is ended by its deadline or
+// by `stop`, never replaced under itself.
+func TestRequeueRefusesATaskThatIsStillRunning(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a worker that is still working\nFAKE-SLEEP 5\nFAKE-FINDINGS 1\n")
+	replacement := filepath.Join(b.dir, "replacement.md")
+	write(t, replacement, "a replacement\n")
+	refused := make(chan string, 1)
+	go func() {
+		for i := 0; i < 60; i++ {
+			exit, _, stderr := b.swarm("requeue", "--pool", b.pool, "--task", id,
+				"--task-file", replacement, "--files", "5", "--tokens", "100")
+			if exit == 1 && strings.Contains(stderr, "running") {
+				refused <- stderr
+				return
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		refused <- ""
+	}()
+	if exit, stdout, stderr := b.run(); exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	got := <-refused
+	if got == "" {
+		t.Fatal("a requeue of a RUNNING task is refused, and it never was")
+	}
+	mustContain(t, "the refusal", got, "REQUEUE REFUSED")
+	mustContain(t, "the refusal", got, "nova-swarm stop")
 }

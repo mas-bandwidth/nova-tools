@@ -674,6 +674,13 @@ func cmdRequeue(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 		fmt.Fprintf(stderr, "REQUEUE REFUSED: no task %s in %s\n", oneline.Field(*task), oneline.Field(p.Dir))
 		return 1
 	}
+	// WORK IN FLIGHT IS NEVER REPLACED UNDER ITSELF. --task said it wanted a finished task
+	// and accepted any state at all (the new-user audit, F7).
+	if old == swarm.Running {
+		fmt.Fprintf(stderr, "REQUEUE REFUSED: %s is running; a task in flight ends at its deadline or by nova-swarm stop --pool %s, and is replaced after that\n",
+			oneline.Field(*task), oneline.Escape(p.Dir))
+		return 1
+	}
 	oldSc, _ := p.ReadSidecar(old, *task)
 	text, err := readTask(*taskFile, *useStdin, stdin)
 	if err != nil {
@@ -689,7 +696,24 @@ func cmdRequeue(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 		fmt.Fprintf(stderr, "REQUEUE REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	fmt.Fprintf(stdout, "REQUEUE OK id=%s from=%s changed=true\n", oneline.Field(sc.ID), oneline.Field(*task))
+	// AND IT REPLACES. The old task moves to aborted/ carrying the id that replaced it, so
+	// the refusal that names this verb as its remedy leaves a pool with ONE task in it and
+	// not two -- the audit's `usage: none` refusal took pending from 2 to 4 and printed
+	// itself again.
+	replaced := true
+	oldSc.ReplacedBy = sc.ID
+	if err := p.WriteSidecar(old, oldSc); err != nil {
+		replaced = false
+	} else if err := p.Claim(*task, old, swarm.Aborted); err != nil {
+		replaced = false
+	}
+	if !replaced {
+		fmt.Fprintf(stderr, "REQUEUE REFUSED: %s was queued as %s but the old task could not be moved to %s; move it by hand before the next run\n",
+			oneline.Field(*task), oneline.Field(sc.ID), oneline.Escape(p.Path(swarm.Aborted)))
+		return 1
+	}
+	fmt.Fprintf(stdout, "REQUEUE OK id=%s from=%s was=%s replaced=%t changed=true\n",
+		oneline.Field(sc.ID), oneline.Field(*task), oneline.Field(old), replaced)
 	return 0
 }
 
