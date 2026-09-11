@@ -95,9 +95,10 @@ is the day it was learned.
    is counted and printed with the note's id.** The subject is exactly
    `tokens YYYY-MM-DD` (lower case, one space), either with nothing after or
    followed by exactly one space and the tool's trailer
-   `at=<RFC 3339 UTC> build=<id>[ supersedes=<note-id>]`, which is where a
-   `report`'s stamp, build id and, for a correction, the id of the note it
-   replaces travel (rule 20 and the bus source); any other text after the
+   `at=<RFC 3339 UTC> build=<id>[ supersedes=<note-id>[,<note-id>…]]`, which
+   is where a `report`'s stamp, build id and, for a correction, the ids of
+   the notes it replaces — a set, sorted ascending, no duplicates, one or
+   more — travel (rule 20 and the bus source); any other text after the
    date is not a tokens note. A body line is one of three things: six tab-separated fields,
    `date who model repo type count`, `type` one of the five names, `count`
    a decimal integer with an optional leading `~`, with an optional seventh
@@ -159,7 +160,14 @@ is the day it was learned.
     `-` when none did, so the turn count sits beside the tokens on the line
     a person reads (Rowan, 2026-09-11: the coordinator's own turn count as a
     daily number beside tokens; Emma, the same day: a turn's cost is its
-    whole context, so tokens over turns is the number that explains a day). `TOKENS FOLD`, `SUM MONTH` and `CHECK OK` carry
+    whole context, so tokens over turns is the number that explains a day).
+    **`turns=` is labelled by its scope**: it counts eligible assistant
+    messages across the declared message-counting sources, and the
+    `sources=` on the same line is that scope; it is not, by itself, the
+    coordinator's task turns or anybody's decisions, and a comparison that
+    quotes it quotes `sources=` and the denominator — messages counted, over
+    which sources, for which day — beside it (Stella, 2026-09-11: label the
+    new metric accurately). `TOKENS FOLD`, `SUM MONTH` and `CHECK OK` carry
     `at=<stamp> build=<id>`. No flag sets the stamp, and a day file whose
     first line lacks it is a `check` failure. The stamp is when the tool
     computed the file; the `date` column is the UTC day of the message.
@@ -273,9 +281,11 @@ is the day it was learned.
     says so. `--note <path>` writes exactly the stdout bytes to that file, through
     `<path>.tmp` and one rename, and only on `REPORT OK`: a `REPORT FAIL`
     writes nothing and leaves an existing `--note` file byte-unchanged.
-    `--supersedes <note-id>` puts `supersedes=<id>` on the subject, which is
-    how a friend corrects a day (the bus source); the tool checks the id's
-    shape and nothing else, because the lane is not on this machine.
+    `--supersedes <note-id>`, repeatable, puts `supersedes=<id>[,<id>…]` on
+    the subject — the ids sorted ascending, a repeated id refused — which is
+    how a friend corrects a day, or joins competing tips into one (the bus
+    source); the tool checks each id's shape and nothing else, because the
+    lane is not on this machine.
     A `report` for a day whose sources were all unreadable prints
     `TOKENS UNREADABLE` per source and no lines, `REPORT FAIL`, exit 1: a
     friend with nothing to show says so, never sends zeros. A `report` line
@@ -320,7 +330,7 @@ nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
                     [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
 nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <label>=<file>]...
-                    [--supersedes <note-id>] [--note <path>] [--scratch <dir>] [--timeout <seconds>]
+                    [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
 nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
 nova-tokens check   --out <dir> [--max <n>]
 nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
@@ -674,22 +684,33 @@ note, no line of it folded, `unparsed=<n>` counted once for it, exit 1; a
 correction with a bad date is refused whole rather than half-read.
 
 **Two notes for one day in one lane are one report only when the later
-names the earlier: `supersedes=<note-id>` in the subject trailer, and nothing
-else orders them.** A friend who sends twice is correcting, and summing a
-correction onto its original doubles the day; so a correction says what it
-corrects. A tokens note whose subject trailer carries `supersedes=<id>` is a
-**successor**: `<id>` must name a tokens note in the same lane for the same
-day that itself parsed whole, and the successor is validated whole — header,
-`Date:`, every body line — before it replaces anything. When it does, the
-predecessor is `TOKENS SUPERSEDED label=bus:<name> note=<id> by=<id> day=<d>`,
-not folded, `superseded=<n>` on the source line, and the successor is the
-day's report; a chain of successors folds to its last valid link, so two
-sequential corrections are one report. When the lane holds two parsed notes
-for one day and neither supersedes the other — two roots, or two successors
-of one predecessor — that lane-day is `TOKENS CONFLICT label=bus:<name>
-day=<d> notes=<id,id>`, `conflict=<n>` on `TOKENS OK` or `TOKENS FAIL`, exit
-1, **no** row from that lane folds for that day, the day file is not written
-and an existing one is left untouched, and no winner is inferred from `Date:`
+names the earlier: `supersedes=<note-id>[,<note-id>…]` in the subject
+trailer, and nothing else orders them.** A friend who sends twice is
+correcting, and summing a correction onto its original doubles the day; so a
+correction says what it corrects. A tokens note whose subject trailer carries
+`supersedes=` is a **successor** of an explicit **predecessor set**: one or
+more ids, sorted ascending, no duplicates, each naming a tokens note in the
+same lane for the same day that itself parsed whole, and the successor is
+validated whole — header, `Date:`, every body line — before it replaces
+anything. When it does, each predecessor is `TOKENS SUPERSEDED
+label=bus:<name> note=<id> by=<id> day=<d>`, not folded, `superseded=<n>` on
+the source line, and the successor is the day's report; a chain of successors
+folds to its last valid link, so two sequential corrections are one report.
+The lane-day's **tips** are its parsed notes that no valid successor names.
+When there is more than one tip — two roots, or two successors of one
+predecessor — that lane-day is `TOKENS CONFLICT label=bus:<name> day=<d>
+notes=<id,id>`, `conflict=<n>` on `TOKENS OK` or `TOKENS FAIL`, exit 1,
+**no** row from that lane folds for that day, the day file is not written and
+an existing one is left untouched; a correction that names only one of the
+tips replaces that one and leaves the conflict, because the other tip still
+stands, and the printed remedy names **every** tip. The append-only
+reconciliation is a **replacement snapshot**: one fully validated note whose
+predecessor set names all current tips becomes their single successor and the
+lane-day's single tip, the old records untouched and each `SUPERSEDED` by
+name. A predecessor set with a duplicate, an unsorted order, an id that names
+a note in another lane or for another day, a missing or unparsed target, or a
+cycle (at any length, through any member) refuses the whole successor as
+below; the set never partially applies. No winner is inferred from `Date:`
 (two sends can share a second), from the filename (a stamp in a name is a
 `Date:`), from the directory listing, from the author's clock, from `INDEX`,
 or from the bus's git history: `INDEX` is a derived catalogue that
@@ -701,9 +722,14 @@ that is itself its successor (a cycle, at any length) is `TOKENS UNPARSED`
 for the whole successor with the reason after the colon and the remedy `send
 a correction whose subject carries supersedes=<id>`; the earlier valid note
 stays the day's report, visibly, and the run is exit 1 until the correction
-is fixed. `report --supersedes <note-id>` writes the trailer, and the parser
+is fixed. `report --supersedes <note-id>`, repeated once per predecessor,
+writes the trailer, and the parser
 that reads it is the serializer that writes it (lesson 113). A lone tokens
-note for a day needs no order and no trailer.
+note for a day needs no order and no trailer. (Stella, 2026-09-11: with one
+id per trailer, two roots or two successors leave two tips whatever is sent
+next, and the printed remedy could not resolve the conflict; the set is the
+missing append-only operation, and the omission was in her earlier
+single-id suggestion too.)
 
 The tool never pulls, fetches, pushes, runs `git`, or talks to a network. It
 reads the checkout it is given as files (rule 16). A caller who wants today's
@@ -943,8 +969,19 @@ seen red before it is trusted.
    naming one predecessor, are each `TOKENS CONFLICT … notes=<id,id>`,
    `conflict=1`, no row from that lane for that day, that day's file not
    written and an existing one byte-identical, exit 1, and a later note
-   superseding one of the two still leaves the other as a conflict until it
-   too is superseded; a successor naming a missing id, one naming a note in
+   superseding one of the two still leaves the other as a conflict, the
+   remedy naming both remaining tips; **the replacement snapshot**: for each
+   of the two shapes — two roots R1, R2, and one root with two successors S1,
+   S2 — a single-parent correction `supersedes=R1` (or `S1`) still prints
+   `TOKENS CONFLICT` with the new note and the unnamed tip in `notes=`, then
+   one note whose trailer is `supersedes=<both tips, sorted>` clears it: the
+   lane-day folds that note's rows only, two `TOKENS SUPERSEDED` lines name
+   the tips, `conflict=0`, exit 0, every old note byte-identical in the
+   checkout, and the fold is byte-identical with the files listed in reverse
+   order and `INDEX` rebuilt; a trailer naming the same id twice, one with
+   the ids unsorted, and one naming both tips where one member is a note of
+   another lane, are each `TOKENS UNPARSED` for the whole successor and the
+   set applies to nothing; a successor naming a missing id, one naming a note in
    another lane, one naming a note for another day, one naming a note that
    did not parse, and two notes naming each other, are each `TOKENS
    UNPARSED` for the whole successor with the reason and the remedy, the
@@ -1063,7 +1100,10 @@ seen red before it is trusted.
     `~` or `#`; `--note` writes exactly the stdout bytes and nothing else, through
     `.tmp` and rename, and a `report` that fails leaves a pre-existing
     `--note` file byte-identical with no `.tmp` beside it; `report
-    --supersedes <id>` prints `subject=tokens D at=… build=… supersedes=<id>`
+    --supersedes <id>` prints `subject=tokens D at=… build=… supersedes=<id>`,
+    `--supersedes <id2> --supersedes <id1>` prints `supersedes=<id1>,<id2>`
+    sorted, and `--supersedes <id> --supersedes <id>` is `REPORT REFUSED`
+    naming the duplicate;
     and a note built from it folds as the successor of `<id>` (two
     sequential `report`s, the second superseding the first, fold to the
     second's rows and one `SUPERSEDED` line);
@@ -1143,8 +1183,10 @@ pin all three by executing them.
    lines), the exact subject with its one trailer shape, the `Date:`
    validation against the fold's stamp, the six-field line, blank and `#`
    lines with the one `# repos:` shape and the optional seventh field, the
-   `supersedes=` chain with its whole-note validation, cycle, cross-lane,
-   cross-day and missing-target refusals, and `TOKENS CONFLICT`,
+   `supersedes=` predecessor set (sorted, no duplicates) and its chain with
+   whole-note validation, the tips of a lane-day, the replacement snapshot,
+   cycle, cross-lane,
+   cross-day, duplicate, unsorted and missing-target refusals, and `TOKENS CONFLICT`,
    and the serializer `report` writes with, which is this parser's inverse
    and lives in this file. Tests: demanded tests 6, 7, 17,
    18, 20.
@@ -1185,7 +1227,8 @@ pin all three by executing them.
 | Stella, spec repairs | INDEX is a lookup aid only | already; now also the git history is not consulted |
 | Stella, spec repairs | `report` refuses non-UTC aggregates | left different: `report` carries the zone as the seventh field and six fields never erase it (rule 20, test 20); `--note` is now written only on OK, so a refused report cannot replace a file |
 | Stella, spec repairs | totals are sums of reported measurements | **what it deliberately does not do**: it does not claim coverage |
-| Rowan, idea 10; Emma, T×C | the turn count beside the tokens | rule 12: `turns=` on the version line, `TOKENS DAY`, `SUM` |
+| Rowan, idea 10; Emma, T×C | the turn count beside the tokens | rule 12: `turns=` on the version line, `TOKENS DAY`, `SUM`; labelled by its scope, `sources=` beside it, never called task turns (Stella's closing read) |
+| Stella, closing read | supersede a set; a snapshot joins all tips | rule 6 and the bus source: `supersedes=<id>[,<id>…]` sorted, `report --supersedes` repeatable, the replacement snapshot names every tip and becomes the single tip (test 6, two roots and two successors) |
 | Stella, idea 6 | measure spend with types and coverage preserved | already, rules 15 and 21 (`-` is never zero; `unattributed` is never split) |
 | Emma, B–D; Johnny, ideas 1–5 | fewer turns per decision | not folded here: the wake and merge specs own the turns; this spec counts them |
 | DeepSeek, idea 6 | coordination as an accounted resource | already: this tool is the account; `turns=` adds the unit |
