@@ -1021,3 +1021,270 @@ func (b *bench) jobDir(id string) string {
 
 // swarmSlotsInTests is the highest slot any test here runs with.
 const swarmSlotsInTests = 8
+
+// DEMANDED TEST 12 (SPEC-SWARM.md:1279). USAGE OUTLIVES THE JOB, and every sentence of
+// `RECLAIM REFUSED` is one of these assertions.
+//
+// DeepSeek's usage for two batches on 2026-09-11 lived in per-worker data directories that
+// were reclaimed with the jobs, and nothing survived. So the usage file is written OUTSIDE
+// the reclaimable subtree, BEFORE anything moves, and reclaim -- the one thing this tool
+// deletes -- refuses without both the usage file and the verified report copy.
+func TestUsageOutlivesTheJob(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a job whose evidence outlives it\nFAKE-FINDINGS 1\nFAKE-USAGE 100 50 - - -\n")
+	if exit, stdout, stderr := b.run(); exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	usage := filepath.Join(b.pool, "usage", id+".tsv")
+	row := b.usageRow(id)
+	if row["end"] != "done" || row["attempt"] != "1" {
+		t.Errorf("a job that finished wants end=done attempt=1, got end=%q attempt=%q", row["end"], row["attempt"])
+	}
+	for col, want := range map[string]string{"tokens_in": "100", "tokens_out": "50", "cache_write": "-",
+		"cache_read": "-", "reasoning": "-", "model": "fake-model", "repo": "mas-bandwidth/nova-tools"} {
+		if row[col] != want {
+			t.Errorf("the usage row wants %s=%s, got %q", col, want, row[col])
+		}
+	}
+	// The file is older than the MOVE. A rename carries the sidecar's own mtime with it, so
+	// the arrived file says when it was written and never when it landed; the done/
+	// DIRECTORY's mtime is the move's own time.
+	usageStat, err := os.Stat(usage)
+	if err != nil {
+		t.Fatalf("no usage file: %v", err)
+	}
+	movedStat, err := os.Stat(filepath.Join(b.pool, "done"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if usageStat.ModTime().After(movedStat.ModTime()) {
+		t.Errorf("the usage file (%s) is newer than the move (%s): the job moved before its evidence existed",
+			usageStat.ModTime(), movedStat.ModTime())
+	}
+
+	jobDir := b.jobDir(id)
+	copyPath := filepath.Join(b.pool, "reports", id, "RESULT.md")
+	kept := filepath.Join(b.dir, "kept-usage.tsv")
+
+	// (a) NO USAGE FILE: refused, exit 1, the directory intact.
+	raw, err := os.ReadFile(usage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, kept, string(raw))
+	if err := os.Remove(usage); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := b.swarm("reclaim", "--pool", b.pool, "--task", id)
+	if exit != 1 {
+		t.Errorf("a reclaim with no usage file exits %d, want 1:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, "no usage file")
+	if _, err := os.Stat(jobDir); err != nil {
+		t.Errorf("a refused reclaim leaves the directory intact: %v", err)
+	}
+	write(t, usage, string(raw))
+
+	// (b) NO REPORT COPY: refused, exit 1, the directory intact -- and `finalize` is the
+	// verb that writes the copy, which is why the refusal names it.
+	if err := os.Remove(copyPath); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr = b.swarm("reclaim", "--pool", b.pool, "--task", id)
+	if exit != 1 {
+		t.Errorf("a reclaim with no report copy exits %d, want 1:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, "no report copy")
+	mustContain(t, "the refusal", stderr, "nova-swarm finalize")
+	if _, err := os.Stat(jobDir); err != nil {
+		t.Errorf("a refused reclaim leaves the directory intact: %v", err)
+	}
+	if exit, stdout, stderr = b.swarm("finalize", "--pool", b.pool, "--task", id); exit != 0 {
+		t.Fatalf("finalize exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "finalize", stdout, "FINALIZE OK id="+id)
+	if _, err := os.Stat(copyPath); err != nil {
+		t.Errorf("finalize writes the copy a reclaim was refused for: %v", err)
+	}
+
+	// (c) With both, the directory goes and `cost` still answers, which is the whole point.
+	exit, stdout, stderr = b.swarm("reclaim", "--pool", b.pool, "--task", id)
+	if exit != 0 {
+		t.Fatalf("reclaim exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "reclaim", stdout, "RECLAIM OK id="+id)
+	if _, err := os.Stat(jobDir); err == nil {
+		t.Error("a reclaim that printed OK removed nothing")
+	}
+	exit, stdout, _ = b.swarm("cost", "--pool", b.pool)
+	if exit != 0 {
+		t.Fatalf("cost exited %d", exit)
+	}
+	mustContain(t, "cost", stdout, "COST OK tasks=1 in=100 out=50")
+	// A provider that reported no cache counts prints dashes, never zeroes.
+	mustContain(t, "cost", stdout, "cache_write=- cache_read=-")
+	mustContain(t, "cost", stdout, "dashes=0,0,1,1,1")
+}
+
+// Demanded test 12, the two records that stand in for a report: a MALFORMED job reclaims
+// only with the MALFORMED marker present, and a no-result job only with NO-RESULT. The
+// marker is the record of WHY there is no foldable report, and a reclaim that removed the
+// job directory without it would leave a pool that cannot say what happened.
+func TestAMarkerIsTheRecordWhereThereIsNoReport(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	malformed := b.add("a report with a fourth state word\nFAKE-FINDINGS 1\nFAKE-MALFORMED\n")
+	noResult := b.add("a worker that publishes nothing\nFAKE-NORESULT\n")
+	if exit, stdout, stderr := b.run("--workers", "2"); exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+
+	marker := filepath.Join(b.pool, "reports", malformed, "MALFORMED")
+	body, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatalf("a malformed report wants its MALFORMED marker: %v", err)
+	}
+	mustContain(t, "the marker", string(body), "line=")
+	if _, err := os.Stat(filepath.Join(b.pool, "reports", noResult, "NO-RESULT")); err != nil {
+		t.Errorf("a job that published nothing wants its NO-RESULT marker: %v", err)
+	}
+	for _, id := range []string{malformed, noResult} {
+		if _, err := os.Stat(filepath.Join(b.pool, "reports", id, "REV")); err != nil {
+			t.Errorf("a REV sits beside every copy AND every marker, %s has none: %v", id, err)
+		}
+	}
+
+	// Without its marker, neither reclaims.
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := b.swarm("reclaim", "--pool", b.pool, "--task", malformed)
+	if exit != 1 {
+		t.Errorf("a malformed job with no MALFORMED marker exits %d, want 1:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, "MALFORMED")
+	if _, err := os.Stat(b.jobDir(malformed)); err != nil {
+		t.Errorf("a refused reclaim leaves the directory intact: %v", err)
+	}
+	if err := os.Remove(filepath.Join(b.pool, "reports", noResult, "NO-RESULT")); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr = b.swarm("reclaim", "--pool", b.pool, "--task", noResult)
+	if exit != 1 {
+		t.Errorf("a no-result job with no NO-RESULT marker exits %d, want 1:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the refusal", stderr, "no report copy")
+	if _, err := os.Stat(b.jobDir(noResult)); err != nil {
+		t.Errorf("a refused reclaim leaves the directory intact: %v", err)
+	}
+}
+
+// Demanded test 12, the killed job: its row says `end=killed` and carries whatever partial
+// usage the provider's accounting held when the deadline came, and its re-queue is a SECOND
+// file with `attempt=2 from=<old-id>` that `cost` sums once each.
+func TestAKilledJobsUsageSaysKilledAndItsRetrySumsOnce(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("this one waits for two deadlines")
+	}
+	b := newBench(t)
+	id := b.add("a worker that spends and then sleeps past its deadline\nFAKE-USAGE 700 300 - - -\nFAKE-SLEEP 30\n", "--deadline", "1s")
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN KILLED id="+id)
+
+	first := b.usageRow(id)
+	if first["end"] != "killed" {
+		t.Errorf("a job killed at its deadline wants end=killed, got %q", first["end"])
+	}
+	if first["attempt"] != "1" || first["from"] != "-" {
+		t.Errorf("the first attempt wants attempt=1 from=-, got attempt=%q from=%q", first["attempt"], first["from"])
+	}
+	if first["tokens_in"] != "700" || first["tokens_out"] != "300" {
+		t.Errorf("the killed row wants whatever partial usage the source held, got in=%q out=%q",
+			first["tokens_in"], first["tokens_out"])
+	}
+	// The re-queue is a SECOND file, naming the attempt and where it came from.
+	var retry map[string]string
+	entries, err := os.ReadDir(filepath.Join(b.pool, "usage"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("two attempts want two usage files, got %d", len(entries))
+	}
+	for _, e := range entries {
+		other := strings.TrimSuffix(e.Name(), ".tsv")
+		if other == id {
+			continue
+		}
+		retry = b.usageRow(other)
+	}
+	if retry["attempt"] != "2" || retry["from"] != id {
+		t.Errorf("the re-queue wants attempt=2 from=%s, got attempt=%q from=%q", id, retry["attempt"], retry["from"])
+	}
+	if retry["end"] != "killed" {
+		t.Errorf("the second attempt was killed too, got end=%q", retry["end"])
+	}
+	exit, stdout, stderr = b.swarm("cost", "--pool", b.pool)
+	if exit != 0 {
+		t.Fatalf("cost exited %d: %s%s", exit, stdout, stderr)
+	}
+	// Each attempt once: 700 and 700, never 1400 for one of them.
+	mustContain(t, "cost", stdout, "COST OK tasks=2 in=1400 out=600")
+}
+
+// Demanded test 12, the last sentence: `finalize --task` on a job whose group is ALIVE is
+// FINALIZE REFUSED. Finalizing under a live worker would copy a report that is still being
+// written and write a usage row the job has not finished earning.
+func TestFinalizeIsRefusedWhileTheGroupIsAlive(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a worker that is still working\nFAKE-SLEEP 5\nFAKE-FINDINGS 1\n")
+	refused := make(chan string, 1)
+	go func() {
+		for i := 0; i < 200; i++ {
+			exit, _, stderr := b.swarm("finalize", "--pool", b.pool, "--task", id)
+			if exit == 1 && strings.Contains(stderr, "still alive") {
+				refused <- stderr
+				return
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		refused <- ""
+	}()
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	got := <-refused
+	if got == "" {
+		t.Fatal("`finalize --task` under a live process group is FINALIZE REFUSED, and it never was")
+	}
+	mustContain(t, "the refusal", got, "FINALIZE REFUSED id="+id)
+	mustContain(t, "the refusal", got, "process group is still alive")
+}
+
+// usageRow reads one job's usage file as a map of column to value.
+func (b *bench) usageRow(id string) map[string]string {
+	b.t.Helper()
+	raw, err := os.ReadFile(filepath.Join(b.pool, "usage", id+".tsv"))
+	if err != nil {
+		b.t.Fatalf("no usage file for %s: %v", id, err)
+	}
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if len(lines) != 2 {
+		b.t.Fatalf("a usage file is one header and one row, got %d lines:\n%s", len(lines), raw)
+	}
+	head, values := strings.Split(lines[0], "\t"), strings.Split(lines[1], "\t")
+	row := map[string]string{}
+	for i, name := range head {
+		if i < len(values) {
+			row[name] = values[i]
+		}
+	}
+	return row
+}

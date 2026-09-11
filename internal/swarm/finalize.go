@@ -178,6 +178,14 @@ func (p *Pool) Reclaim(id, jobDir string) (freed int64, usagePath string, err er
 	if readErr != nil {
 		return 0, usagePath, fmt.Errorf("no report copy at %s", filepath.Join(p.ReportsDir(id), CopiedResult))
 	}
+	// A MALFORMED report reclaims ONLY with its marker (SPEC-SWARM.md:1298). The marker is
+	// the record of WHY the copy beside it cannot be folded; without it the copy reads as an
+	// ordinary report, and removing the job directory would leave a pool that has kept the
+	// bytes and lost the reason. Demanded test 12 found this: the marker was deleted and
+	// the reclaim printed OK.
+	if kind == CopiedResult && ParseReport(raw).Class == ClassMalformed {
+		return 0, usagePath, fmt.Errorf("no MALFORMED marker at %s beside a report that is malformed", filepath.Join(p.ReportsDir(id), MarkerMalformed))
+	}
 	_, want, revErr := p.ReadRev(id)
 	if revErr != nil || want == "" {
 		return 0, usagePath, fmt.Errorf("report copy does not match REV: no REV at %s", filepath.Join(p.ReportsDir(id), MarkerRev))
