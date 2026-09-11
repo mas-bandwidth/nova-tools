@@ -84,14 +84,15 @@ and writes in one call, so nothing here can half-succeed in two places.
 
 ## The card, and the events
 
-A card is nine things, and only the text, the deadline, the default and the
+A card is ten things, and only the text, the deadline, the default and the
 optional row and evidence fields are ever written by hand:
 
 | field | what it is |
 |---|---|
-| **id** | twelve lower-case hex characters, assigned by `add` from the stamp, the filer, the filer's sequence number on this board and the text; never recomputed and never reused |
+| **id** | thirty-two lower-case hex characters: 128 bits read from the operating system's random source by `add` at creation; derived from no field, never recomputed and never reused |
+| **hash** | twelve lower-case hex characters, SHA-256 over the card's text, written on the `card` line as `hash=`; for a duplicate warning only, never an identity |
 | **text** | what is owed, one line, as the filer wrote it |
-| **owner** | the name from the latest `taken` event, else the `add` event's `--owner`, else the filer |
+| **owner** | the name from the latest `taken` event in the fold order, else the `add` event's `--owner`, else the filer |
 | **since** | the `add` event's stamp — when the thing became owed, not when it was last touched |
 | **state** | `OPEN` or `CLOSED`, **derived** from the events and stored nowhere |
 | **by** | the deadline, from the `add` event's `--by`; never moved (rule 2) |
@@ -99,32 +100,55 @@ optional row and evidence fields are ever written by hand:
 | **thing, leg** | present only on a **row** of the owed ledger, from `--thing` and `--leg` (rule 4) |
 | **evidence** | a path the filer named with `--evidence`, carried and never opened (rule 5) |
 
-**The id is the tool's, not the backend's.** `add` computes it as the first twelve
-hex characters of a SHA-256 over a preimage of
-`nova-board\x00<stamp>\x00<as>\x00<seq>\x00<text>`, where `<seq>` is the filer's
-**sequence number on this board**: the count of `card` events whose `as=` is this
-`--as`, read from the whole log at `add` time, plus one, and written on the
-`card` line as `seq=<n>`. The same shape and the same reasoning as `nova-bus`'s
-id — an id that survives moving the board from one backend to another and is
-assigned **once** — with the sequence added because stamps are to the second and
-`--leg`, `--owner`, `--by`, `--default` and `--evidence` are not in the
-preimage: two adds by one line in one second with one text and two legs are
-`seq=n` and `seq=n+1`, and so two ids, by construction rather than by
-detection. **Creation is exclusive.** Under `--dir` the card file is created
-with `O_EXCL` and never truncated; under `--issue` the board is re-read
-immediately before the append and the id looked for. An id that already exists —
-which after the sequence means two benches filing as one name at one second with
-one text, or a hand-made file — is `ADD REFUSED: id <id> exists; nothing
-written` at exit 1, and no card file and no comment is replaced, ever. A short
-id taken from a backend's own comment number is forbidden: it is a different id
-in the other backend, and the prototype's **last six digits** of a comment id is
-a collision in one million with no detection and no recovery.
+**The id is the tool's, not the backend's, and it is a draw, not a derivation.**
+`add` reads 128 bits from the operating system's random source (`crypto/rand`)
+at creation and renders them as thirty-two lower-case hex characters. The id is
+computed from nothing — not the stamp, not the filer, not the text, not a count
+— so two `add`s anywhere, from two clones or two benches, under one name at one
+second with one text, get two ids without reading anything first. There is no
+sequence to read, no shared counter two writers can both read before either
+writes, and no collision to detect or recover from: two draws of 128 bits
+meeting is not an event this family will see. An earlier draft derived the id
+from a hash over the stamp, the filer, the filer's sequence number on the board
+and the text, and claimed two same-second same-text adds got different ids *by
+construction*; Stella's second read showed the construction was a read of an
+unsynchronized count — two concurrent adds could both read the same count and
+both publish one id, `O_EXCL` refusing one only when both wrote to one
+directory, while two clones each succeeded locally and the issue backend's
+reread-before-append is not atomic. **A creation identity may depend on nothing
+two writers can both observe before either writes.** The id shares one property
+with `nova-bus`'s and not the other: it survives moving the board from one
+backend to another and is assigned **once**; but a note's id is a hash because a
+note is its content, and a card's is a draw because a card is an obligation, and
+two lines noticing one thing owe it twice until one closes `duplicate of`.
+
+**The content hash is a separate field and is never the identity.** `add` also
+writes `hash=<twelve hex>`, the first twelve hex characters of a SHA-256 over
+the card's text as rendered through `internal/oneline` — the text only, and not
+the leg, owner, deadline, default or evidence. It has one use: before appending,
+`add` folds the board, and if an OPEN card carries the same hash it prints `ADD
+NOTE hash=<hash> matches open card <id> owner=<name>; filing anyway` on stderr
+and files. It never refuses on it and never merges on it — that would be the
+silent deduplication **The races** forbids — and `check` reports a hash match
+the same way, as a note beside its text match. The hash is for a person's eye;
+the id is for the tool's.
+
+**Creation is exclusive against hand-made files, and that is all it needs to
+be.** Under `--dir` the card file is created with `O_EXCL` and never truncated;
+under `--issue` the board is re-read immediately before the append and the id
+looked for. An id that already exists — which with a random id means a
+hand-made file, a copied one, or a broken random source — is `ADD REFUSED: id
+<id> exists; nothing written` at exit 1, and no card file and no comment is
+replaced, ever. A short id taken from a backend's own comment number is
+forbidden: it is a different id in the other backend, and the prototype's
+**last six digits** of a comment id is a collision in one million with no
+detection and no recovery.
 
 **Nothing is ever deleted or edited. Every state change is an appended event.**
 There are five event lines and that is the whole format:
 
 ```
-card <id> as=<name> at=<stamp> override=false seq=<n> owner=<name> by=<stamp> default=<text> [thing=<name> leg=<name>] [evidence=<path>]: <text>
+card <id> as=<name> at=<stamp> override=false hash=<hash> owner=<name> by=<stamp> default=<text> [thing=<name> leg=<name>] [evidence=<path>]: <text>
 taken <id> as=<name> at=<stamp> override=<true|false>
 closed <id> as=<name> at=<stamp> override=<true|false>: <how>
 landed <id> as=<name> at=<stamp> override=<true|false> in=<repo>#<n>
@@ -137,7 +161,7 @@ probed <id> as=<name> at=<stamp> override=<true|false>: <evidence>
   have made, `false` on every other event and always on `card`, which overrides
   nothing. These two are the facts the read side derives from and nothing else
   is consulted: `BOARD CLOSE by=<name>` is the closing event's `as=`, `owner` is
-  the latest `taken` event's `as=`, and a history read from a directory with no
+  the `as=` of the latest `taken` event in the fold order, and a history read from a directory with no
   git metadata, or from a forge with no comment author, derives the same
   answer. An earlier draft wrote `(<stamp>, <as>)` after the id and `by <name>`
   in prose and carried no override at all; that shape is not the format, and a
@@ -154,14 +178,16 @@ probed <id> as=<name> at=<stamp> override=<true|false>: <evidence>
   a deadline moves; `probed` is the only close for a row of the owed ledger
   (rule 4), and it carries the evidence.
 - Every `key=value` field on every event line — `as=`, `at=`, `override=`,
-  `seq=`, `owner=`, `by=`, `default=`, `thing=`, `leg=`, `evidence=`, `in=` — is
+  `hash=`, `owner=`, `by=`, `default=`, `thing=`, `leg=`, `evidence=`, `in=` — is
   rendered through `oneline.Field`, so a default holding a space or a name
   holding one is one token, and the free text after `: ` is rendered through
   `internal/oneline` and is never scanned for fields.
 - A second closing event on a closed card is permitted and changes nothing: the
   **first** close is the close, and the later ones are in the log where a reader
   can see that two lines thought they had finished the same thing.
-- `taken` may appear many times. The latest one is the owner.
+- `taken` may appear many times. The latest one **in the fold order** is the
+  owner — never the last one in a file or a thread, because two clones can hold
+  the same lines in different orders (**The fold order**, below).
 - There is no `reopen`. A card closed in error is a new card whose text names the
   old id, because a board that can reopen is a board whose count can rise for a
   reason other than new work, and the count is the thing being protected. This is
@@ -183,6 +209,23 @@ by` anywhere in any comment body, so a card whose *text* contained a six-digit
 number could be closed by a sentence about something else — and on a board about a
 repository full of issue numbers, that is not a hypothetical.
 
+**The fold order is total, and it is the same in every clone.** Every derivation
+— the owner, the first close, staleness, `BOARD NEXT` — is made over a card's
+events sorted ascending by `(at, as, id, verb, the line's bytes)`, and never by
+the order the lines appear in a file or a comment thread. Every event line
+carries the first three keys, which is why they are on every line: the id after
+the verb, `as=` and `at=`. The order is total — two events equal in all five
+keys are one line, and a union merge that holds one line twice folds it once —
+so two clones that merged the same concurrent appends in opposite textual
+orders derive the same owner, and the two backends derive the same owner from
+the same events. The owner of a card two lines took in one second is the take
+whose `as=` sorts later. That winner is arbitrary and **reproducible**, which is
+the property the accepted residual race in **The races** needs: the tool does
+not make `take` globally exclusive; it makes the outcome the same wherever it is
+computed, and the log shows both takes so the line that lost can see it. An
+event whose `at=` the tool cannot parse folds last, is counted under `BOARD
+NOTE unparsed events=<n>`, and is never guessed at.
+
 ## One format, two backends
 
 The **format** is the five event lines above. A backend decides only where a line
@@ -202,7 +245,7 @@ read whole; the board is a fold over every file in the directory (rule 3). The
 first line of every card file is exactly `BOARD v1` and nothing else, for the
 reason `OPEN v2` has a version line: a later format read as this one would be
 entries nobody wrote. Blank lines and `#` comments are ignored, as everywhere else
-in this family's files. A file in the directory that is not `<twelve hex>.board`
+in this family's files. A file in the directory that is not `<thirty-two hex>.board`
 is counted under `BOARD NOTE unparsed files=<n>` and never read as a card. **The
 directory backend appends and never runs git**: committing and pushing it is the
 caller's, and saying so is more honest than a push hidden inside `add`. That is
@@ -364,7 +407,8 @@ another line is `TAKE REFUSED` exit 1 naming the holder, which is the 2026-09-10
 two-children-one-bug failure closed at the only moment a tool can see it. The
 window between the re-read and the append cannot be closed by this tool over a
 backend it does not own — so it is narrowed to one round trip and **named here**,
-and the log's ordering settles what the tool could not.
+and the fold order (**The card, and the events**) settles what the tool could
+not — the same way in every clone, which is what makes it a settlement.
 
 **A take by a line that is offline — the ten-minutes-silent rule.** A card taken
 by a line that then stops is owed by nobody and looks owed by somebody, which is
@@ -425,9 +469,10 @@ spec forbids**.
    creates a file whose name is the tool-owned id, so two adds of one thing are
    two files (the first race above, accepted and made cheap); a `take` or `close`
    appends one line to one file, and a second line appending to the same file
-   appends a different line, which a union merge keeps in the log's order; the
-   one write two lines can race on is one card's `take`, and that is settled by
-   the read-before-append rule and by the log's order, as **The races** says.
+   appends a different line, which a union merge keeps in either order and the
+   fold order sorts; the one write two lines can race on is one card's `take`,
+   and that is settled by the read-before-append rule and by the fold order, as
+   **The races** says.
    Under `--issue`, the forge serialises comments, which is the same property
    held by somebody else. (Glenn, 2026-09-11, Amdahl for coordination: scatter and
    merge; the serial step is the shared file, so there is none.)
@@ -511,16 +556,28 @@ Each is proven able to fail by a mutation before it is trusted.
 3. `TestTheBoardIsAFoldOverCardFilesWithNoLock`: `add` creates `<id>.board` and
    no other file; twenty concurrent takes and closes on twenty cards from two
    clones all land and no lock file exists; two lines taking **one** card from
-   two clones both append and the union keeps both `taken` lines in log order
-   with the later one the owner; the source tripwire finds no lock call in
+   two clones both append and the union keeps both `taken` lines, and the
+   owner is the take that sorts later by `(at, as, id)`; the same two appends
+   merged in the opposite textual order by the other clone fold to the **same**
+   owner, and the same events migrated to the issue backend name the same
+   owner; two takes at one injected second by `Ada` and `Bo` name `Bo` from
+   every clone and both backends; a mutation that folds in file order turns
+   the test red; the source tripwire finds no lock call in
    `internal/board`; two backends with the same events print identical
    listings, including an overridden close that shows `BOARD CLOSE by=<name>
    override=true` from both with no git metadata and no comment author read.
-   `TestTheIdIsSequencedAndCreationIsExclusive`: two rows filed by one line
-   with one text on two legs at one injected second get `seq=1` and `seq=2`
-   and two ids; an `add` whose id already exists — a file placed by hand under
-   that name — is `ADD REFUSED` at exit 1 and the file's bytes are unchanged;
-   a mutation that opens the card file without `O_EXCL` turns the test red.
+   `TestTheIdIsRandomAndCreationIsExclusive`: two rows filed under one name
+   with one text on two legs at one injected second, with both `add`s paused
+   after reading the board and before appending, from two clones under `--dir`
+   and from two processes under `--issue`, produce two cards with two distinct
+   thirty-two-hex ids and neither is refused; the ids come from an injected
+   random source and equal nothing computed from the fields; an `add` whose
+   id already exists — a file placed by hand under that name — is `ADD
+   REFUSED` at exit 1 and the file's bytes are unchanged; a mutation that
+   opens the card file without `O_EXCL` turns the test red; an `add` whose
+   text matches an OPEN card prints `ADD NOTE hash=<hash> matches open card`
+   on stderr and files a second card; the source tripwire finds no `seq`
+   field and no count read at `add` time.
 4. `TestOwedCountsPerLegAndDoneIsZero`: rows on three legs, some probed; one
    `BOARD LEG` per leg with the right counts; `BOARD OK` carries `owed=<n>`;
    probing the last row prints `owed=0`; `closed` on a row is `CLOSE REFUSED`
@@ -582,7 +639,7 @@ Each is proven able to fail by a mutation before it is trusted.
 - **No assignment.** No verb gives a card to a line that did not take it. A board
   that could assign would be a board that can be used to hand somebody work, and
   on this bus nothing is a grant.
-- **No priority, no labels, no ordering but the log's.** Every one of those is a
+- **No priority, no labels, no ordering but the fold's.** Every one of those is a
   field two lines will fill differently, and none of them is needed to answer
   *what is owed* or *is this already filed*. An earlier draft listed due dates
   here. A deadline is not one of these: it is the family's rule that nothing waits
@@ -611,17 +668,21 @@ shared packages used rather than re-spelled.
 
 1. **`internal/board/event.go`** — the five event lines: render and parse, anchored
    at the line start, id as the token after the verb, `as=` `at=` `override=` on
-   every line, `oneline.Field` on every value, the id scheme (SHA-256 over
-   `nova-board\x00<stamp>\x00<as>\x00<seq>\x00<text>`, first twelve hex) and the
-   sequence read from the log. Tests: a card whose text contains a six-digit number cannot be closed by a
+   every line, `oneline.Field` on every value, the id (128 bits from
+   `crypto/rand` behind an injectable source, thirty-two hex), `hash=` as
+   SHA-256 over the rendered text, and no sequence, no count and no read at
+   `add` time. Tests: a card whose text contains a six-digit number cannot be closed by a
    sentence about another card; an unparsed line is counted and never guessed at; a
-   text with a newline files one card.
-2. **`internal/board/derive.go`** — events in, cards out: owner from the latest
-   take, `since` from the add, first close wins, staleness as a pure function of
+   text with a newline files one card; two ids drawn from a source that
+   returns the same bytes twice are refused by `O_EXCL`, never overwritten.
+2. **`internal/board/derive.go`** — events in, cards out: the fold order
+   `(at, as, id, verb, bytes)` applied before anything is derived, owner from the latest
+   take in that order, `since` from the add, first close wins, staleness as a pure function of
    `(latest event stamp, now, stale window)` and overdue as a pure function of
    `(by, now)`. Tests: a second close changes nothing; a
    re-take moves the owner; stale is annotation and writes nothing; identical event
-   lists from the two backends derive identical cards.
+   lists from the two backends derive identical cards; the same events in two
+   textual orders derive one owner.
 3. **`internal/board/backend.go`** — the `Backend` interface: `Events() ([]string,
    error)` and `Append(string) error`, nothing else, so nothing above it can learn
    which backend it has. Plus the cache rule: valid only while the backend's latest
@@ -668,7 +729,7 @@ shared packages used rather than re-spelled.
     carried and never opened, `--stale` with no default on every
     verb that decides by it, `BOARD NEXT` by its fixed order with the ordinary
     open card before `nothing owed`. Tests: the nine in **Tests this spec
-    demands** and `TestTheIdIsSequencedAndCreationIsExclusive`.
+    demands** and `TestTheIdIsRandomAndCreationIsExclusive`.
 
 ## What the prototype does that this spec forbids
 
@@ -683,8 +744,8 @@ the two failures that cost a morning. These are the places it is **not** a model
     — which is the 25-duplicate failure, mechanized.
 3. **Six-digit ids truncated from the backend's comment id.** A collision in one
     million with no detection, and a different id in any other backend. The id is
-    the tool's, twelve hex, over a preimage that carries the filer's sequence, and
-    an id that exists is a refusal and never an overwrite.
+    the tool's, thirty-two hex drawn from the OS at creation and derived from
+    nothing, and an id that exists is a refusal and never an overwrite.
 4. **Unanchored substring matching for state.** `test("closed[ :]*" + $sid)` and
     `test($sid) and test("taken by")` match anywhere in any comment body, so a
     card whose text contains a number can be closed by a sentence about something
