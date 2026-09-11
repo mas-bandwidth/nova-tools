@@ -12,6 +12,7 @@ import (
 // does. "Bo, Team" reaches Bo and is in her inbox, and telling her it went nowhere
 // would be false; "Team" alone reaches no one and was in no listing at all.
 func TestUnaddressedReason(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, map[string]string{
 		// The shape that was on the bus 22 times: a To line naming a group nobody
 		// declared.

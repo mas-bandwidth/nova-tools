@@ -10,6 +10,7 @@ import (
 // usage -- 6,473 bytes, about 1.6K tokens, to say a dash was in the wrong place. The
 // open-list work on `inbox` and `wait` belongs to another line and is not touched here.
 func TestARefusalIsOneLineAndNamesTheDoor(t *testing.T) {
+	t.Parallel()
 	for _, args := range [][]string{
 		nil,
 		{"wibble"},
