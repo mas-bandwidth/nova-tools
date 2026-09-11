@@ -278,13 +278,18 @@ func expandHarnessArg(a string, w Worker, prompt string) string {
 // it runs. No path this tool uses comes from the environment (SPEC.md, no guessing); PATH is
 // here because a harness is a program and a program is found on one.
 func childEnv(w Worker, slot int, id, key string) []string {
+	pathVal := os.Getenv("PATH")
+	if pathVal == "" {
+		pathVal = os.Getenv("Path")
+	}
 	env := []string{
-		"PATH=" + os.Getenv("PATH"),
+		"PATH=" + pathVal,
 		"XDG_DATA_HOME=" + w.DataHome(slot, id),
 		"NOVA_SWARM_JOB=" + w.JobDir(slot, id),
 	}
 	if runtime.GOOS == "windows" {
-		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC", "Path"} {
+		env = append(env, "Path="+pathVal)
+		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC"} {
 			if v := os.Getenv(k); v != "" {
 				env = append(env, k+"="+v)
 			}

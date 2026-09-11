@@ -115,9 +115,9 @@ func (b *bench) swarm(args ...string) (exit int, stdout, stderr string) {
 	b.t.Helper()
 	cmd := exec.Command(b.binary, args...)
 	cmd.Dir = b.dir
-	cmd.Env = append([]string{"PATH=" + b.path, "HOME=" + b.dir}, b.extraEnv...)
+	cmd.Env = append([]string{"PATH=" + b.path, "Path=" + b.path, "HOME=" + b.dir}, b.extraEnv...)
 	if runtime.GOOS == "windows" {
-		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC", "Path"} {
+		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC"} {
 			if v := os.Getenv(k); v != "" {
 				cmd.Env = append(cmd.Env, k+"="+v)
 			}

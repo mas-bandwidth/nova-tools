@@ -17,7 +17,7 @@ import (
 func tryLockFile(f *os.File) (bool, error) {
 	held, err := os.OpenFile(sentinel(f), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
-		if errors.Is(err, os.ErrExist) {
+		if errors.Is(err, os.ErrExist) || errors.Is(err, os.ErrPermission) {
 			return false, nil
 		}
 		return false, err
