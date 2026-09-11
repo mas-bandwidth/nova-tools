@@ -2,11 +2,13 @@ package wake
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bus"
 )
 
 // Work list item 3a: the --advance-cursor guard.
@@ -61,8 +63,21 @@ type Advancer struct {
 //
 // The lock lives beside the bus it names, which is a directory the caller gave:
 // nothing here guesses a path, and nothing here writes to /tmp (rule 4).
-func LockAdvance(bus, as string) (release func(), holder string, err error) {
-	return lockAt(filepath.Join(bus, ".nova-wake-advance-"+safeName(as)+".lock"))
+func LockAdvance(busDir, as string) (release func(), holder string, err error) {
+	lock := filepath.Join(busDir, ".nova-wake-advance-"+safeName(as)+".lock")
+	// internal/bus's LockFile, the ONE lock implementation in this repo since
+	// Emma exported it: an flock the kernel drops when the process dies, an
+	// O_EXCL sentinel where there is no flock. A second advancing watcher does
+	// not wait -- a watch runs for its whole --max, and waiting out a
+	// twenty-minute holder is not a refusal anybody wants.
+	rel, err := bus.LockFile(lock, 0)
+	if err != nil {
+		if errors.Is(err, bus.ErrLockHeld) {
+			return nil, bus.ReadLockHolder(lock), nil
+		}
+		return nil, "", fmt.Errorf("the lock that keeps two watchers off one cursor could not be taken at %s: %w", lock, err)
+	}
+	return rel, "", nil
 }
 
 // safeName keeps a name that reaches the filesystem to one path segment.
@@ -192,35 +207,4 @@ func BusQueued(st *State) int {
 		}
 	}
 	return n
-}
-
-// lockAt is LockState's body over any path, so that the (bus, as) lock and the
-// state lock are one implementation and not two.
-func lockAt(lock string) (release func(), holder string, err error) {
-	f, err := os.OpenFile(lock, os.O_RDWR|os.O_CREATE, 0o644)
-	if err != nil {
-		return nil, "", fmt.Errorf("the lock that keeps two advancing watchers off one cursor could not be opened at %s: %w", lock, err)
-	}
-	ok, lockErr := tryLockFile(f)
-	if lockErr != nil {
-		f.Close()
-		return nil, "", fmt.Errorf("the lock at %s could not be taken: %w", lock, lockErr)
-	}
-	if !ok {
-		f.Close()
-		return nil, readHolder(lock), nil
-	}
-	if err := f.Truncate(0); err == nil {
-		f.WriteAt([]byte(strconv.Itoa(os.Getpid())+"\n"), 0)
-		f.Sync()
-	}
-	released := false
-	return func() {
-		if released {
-			return
-		}
-		released = true
-		unlockFile(f)
-		f.Close()
-	}, "", nil
 }
