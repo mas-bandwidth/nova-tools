@@ -52,3 +52,6 @@ func StartStamp(pid int) string { return "-" }
 
 // GroupMembers counts the processes in a group other than self. Unavailable here.
 func GroupMembers(pgid, self int) (int, bool) { return 0, false }
+
+// pgidOf has no process group to report here, so a process is its own group of one.
+func pgidOf(pid int) int { return pid }
