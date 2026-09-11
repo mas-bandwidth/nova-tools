@@ -107,6 +107,7 @@ func (p *Pass) Run(n int) *Result {
 				oneline.Field(pr.File), oneline.Escape(oneline.Cap(pr.Reason, oneline.TailBytes)))
 			res.Stopped = true
 			res.Note = "nova-merge status --lane " + p.Lane
+			p.okLine(len(p.State.Entries()), res)
 			p.note(res)
 			return res
 		}
@@ -114,6 +115,11 @@ func (p *Pass) Run(n int) *Result {
 
 	base, ok := p.baseLine(res)
 	if !ok {
+		// THE CLOSING LINE IS PRINTED ON EVERY PASS. A refused pass returned before the
+		// walk, so the one kind of pass a reader most wants counted -- the one that
+		// stopped -- had no counts at all, and a reader had to work out whether the pass
+		// ended or died (lesson 87).
+		p.okLine(len(p.State.Entries()), res)
 		p.note(res)
 		return res
 	}

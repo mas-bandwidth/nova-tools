@@ -246,6 +246,7 @@ func (r *Records) flush() error {
 	for round := 0; round < Rounds; round++ {
 		if err := r.fetchAndReset(); err != nil {
 			lastErr = err
+			r.backoff(round)
 			continue
 		}
 		// RESTORE: the reset removed whatever this loop's previous round had staged, and
@@ -265,27 +266,36 @@ func (r *Records) flush() error {
 		if _, err := r.Git.Run(append([]string{"add", "--"}, paths...)...); err != nil {
 			return err
 		}
-		if out, err := r.Git.Out("status", "--porcelain"); err == nil && strings.TrimSpace(out) == "" {
+		// WHETHER THERE IS ANYTHING TO COMMIT IS A QUESTION GIT ANSWERS, not a phrase to
+		// match in its error text (lesson 24: `strings.Contains(err.Error(), "nothing to
+		// commit")` is a branch on wording that a git release, a locale or a translation
+		// can change under us). The porcelain is empty or it is not.
+		clean, err := r.nothingStaged()
+		if err != nil {
+			lastErr = err
+			r.backoff(round)
+			continue
+		}
+		if clean {
 			// Everything this loop carries is already at the tip: a push that landed
 			// before a kill, delivered by this re-run's confirming fetch below.
 			if r.confirm(items) {
 				return r.deliveredOK(items)
 			}
-		}
-		if _, err := r.Git.Run("-c", "user.name=nova-merge", "-c", "user.email=nova-merge@localhost",
+		} else if _, err := r.Git.Run("-c", "user.name=nova-merge", "-c", "user.email=nova-merge@localhost",
 			"commit", "-m", "nova-merge: "+strings.Join(paths, " ")); err != nil {
-			// Nothing to commit is not an error worth losing the round over.
-			if !strings.Contains(err.Error(), "nothing to commit") {
-				lastErr = err
-				continue
-			}
+			lastErr = err
+			r.backoff(round)
+			continue
 		}
 		if _, err := r.Git.Run("push", r.Remote, "HEAD:refs/heads/"+r.Branch); err != nil {
 			lastErr = err
+			r.backoff(round)
 			continue
 		}
 		if !r.confirm(items) {
 			lastErr = fmt.Errorf("the push landed and the confirming fetch did not find the record at the remote tip")
+			r.backoff(round)
 			continue
 		}
 		return r.deliveredOK(items)
@@ -295,6 +305,36 @@ func (r *Records) flush() error {
 	}
 	return fmt.Errorf("%w: %v", ErrNotDelivered, lastErr)
 }
+
+// nothingStaged asks git whether this checkout has anything to commit. The answer is the
+// porcelain, which is empty or is not; it is never a phrase in an error's text.
+func (r *Records) nothingStaged() (bool, error) {
+	out, err := r.Git.Out("status", "--porcelain")
+	if err != nil {
+		return false, err
+	}
+	return strings.TrimSpace(out) == "", nil
+}
+
+// backoff is lesson 66, on the loop two lanes actually contend on. The lock had jitter and
+// this did not: five rounds with no wait and no spread means two writers that collide
+// collide again immediately, five times, and then both give up -- which is the lockstep
+// the jitter on the lock exists to break. The wait grows with the round and is spread, and
+// the last round never waits, because the budget belongs to the work and not to the sleep.
+func (r *Records) backoff(round int) {
+	if round >= Rounds-1 {
+		return
+	}
+	Sleep(jitter(time.Duration(round+1) * casBackoff))
+}
+
+// casBackoff is the step of the CAS loop's wait. A record is a small file and a push is
+// milliseconds, so the first retry waits about that and the fifth about five times it,
+// which is inside any --timeout this tool accepts.
+const casBackoff = 50 * time.Millisecond
+
+// Sleep is time.Sleep, named here so a test can hold the loop still.
+var Sleep = time.Sleep
 
 // fetchAndReset moves this checkout to the branch's remote tip. reset --hard leaves
 // untracked files alone, so the outbox, the state and the logs survive it.

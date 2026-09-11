@@ -5,6 +5,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
@@ -35,6 +36,10 @@ func cmdRun(args []string, stdout, stderr io.Writer, deps Deps) int {
 		f.problem("--once or --loop <duration> is required; refusing to guess whether this is one pass or a watch")
 	case *loop != 0 && *hours <= 0:
 		f.problem("--loop requires --hours <h>, the deadline this loop ends on by itself; a loop with no deadline is a lane that is stuck rather than working and nobody outside can tell the two apart")
+	case *loop != 0 && *hours > maxHours:
+		f.problem(fmt.Sprintf("--hours is the deadline this loop ends on by itself, from above 0 to %d, got %s; a loop nobody outlives is a loop nobody notices has stuck", maxHours, strconv.FormatFloat(*hours, 'g', -1, 64)))
+	case *loop != 0 && *loop < minLoop:
+		f.problem(fmt.Sprintf("--loop is how long this waits between passes, and is at least %s, got %s; a pass per millisecond is a rate limit spent on a lane that has not changed", minLoop, *loop))
 	case *loop < 0:
 		f.problem(fmt.Sprintf("--loop is how long this waits between passes, and is positive, got %s", *loop))
 	}

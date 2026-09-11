@@ -173,11 +173,15 @@ func shorts(list []string) []string {
 // is a property a test can pin and a flag never is.
 func (p *Pass) survey(res *Result) *Result {
 	fmt.Fprintf(p.Stdout, "DRY PLAN lane_tip=%s pulled=%d\n", oneline.Field(dashIfEmpty(Short(p.LaneTip))), p.Pulled)
+	// dry-run REPORTS and exits 0 whatever the lane holds -- the spec's own sentence for
+	// status, dry-run and packet. It said the same thing and exited 1, so a caller could
+	// not tell a report from a wall.
 	for _, pr := range p.Problems {
 		if pr.Entry == "" {
 			fmt.Fprintf(p.Stderr, "RUN STOPPED reason=malformed_record file=%s: %s\n",
 				oneline.Field(pr.File), oneline.Escape(oneline.Cap(pr.Reason, oneline.TailBytes)))
-			res.Stopped = true
+			res.Blocked++
+			fmt.Fprintf(p.Stdout, "DRY OK surveyed=0 would_merge=- stopped=%d waiting=0\n", res.Blocked)
 			return res
 		}
 	}

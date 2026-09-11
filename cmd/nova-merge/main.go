@@ -325,12 +325,24 @@ func laneSet(verb string) *laneFlags {
 
 func (l *laneFlags) check() {
 	l.require("lane", *l.lane, "the lane's own directory, which holds its state, its clone and its records")
-	if *l.timeout < 1 {
-		l.problem(fmt.Sprintf("--timeout is a number of seconds this tool waits for git or gh before saying so, and is at least 1, got %d", *l.timeout))
+	// A DEADLINE PINNED FROM ONE SIDE ONLY IS NOT PINNED. An hour is longer than any
+	// fetch, clone or gh call this tool makes; past it, a tool that is "waiting" and a
+	// tool that has stopped saying anything are the same thing to whoever is reading.
+	if *l.timeout < 1 || *l.timeout > maxTimeout {
+		l.problem(fmt.Sprintf("--timeout is a number of seconds this tool waits for git or gh before saying so, from 1 to %d, got %d", maxTimeout, *l.timeout))
 	}
 	if *l.max < 0 {
 		l.problem(fmt.Sprintf("--max is a ceiling on a listing: 0 means all and a negative one is a typo with two readings, got %d", *l.max))
 	}
 }
+
+// maxTimeout, maxHours and minLoop are the far sides of this tool's three deadlines. Each
+// is stated rather than left open, because a bound with no ceiling is a bound nobody set
+// (lessons 75, 76, 172).
+const (
+	maxTimeout = 3600 // seconds: longer than any git or gh call this tool makes
+	maxHours   = 24   // a loop nobody outlives is a loop nobody notices has stuck
+	minLoop    = time.Second
+)
 
 func (l *laneFlags) dur() time.Duration { return time.Duration(*l.timeout) * time.Second }

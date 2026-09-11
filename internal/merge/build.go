@@ -111,3 +111,32 @@ func IntegrationMessage(entry, base string, subject string) string {
 	}
 	return fmt.Sprintf("nova-merge: %s onto %s (%s)", entry, base, subject)
 }
+
+// ValidRefName is lesson 48: A VALUE THAT BECOMES A COMMAND-LINE ARGUMENT IS CHECKED WHERE
+// IT IS TYPED. The lane's base and its lane branch are stored once by init and handed to
+// git on every pass afterwards, so a value beginning with a dash is a FLAG to whatever
+// reads it, and a value holding a space or a control character is a refname git refuses
+// later, far from the person who typed it.
+func ValidRefName(name string) error {
+	switch {
+	case name == "":
+		return fmt.Errorf("a branch name is required and this one is empty")
+	case strings.HasPrefix(name, "-"):
+		return fmt.Errorf("a branch name beginning with %q is a flag to whatever reads it, not a branch: got %q", "-", name)
+	case strings.HasPrefix(name, "/") || strings.HasSuffix(name, "/") || strings.Contains(name, "//"):
+		return fmt.Errorf("a branch name has no empty path component, got %q", name)
+	case strings.Contains(name, ".."):
+		return fmt.Errorf("a branch name holds no %q, which is a range to git, got %q", "..", name)
+	case strings.HasSuffix(name, ".lock"):
+		return fmt.Errorf("a branch name does not end in %q, which is what git calls its own lock files, got %q", ".lock", name)
+	}
+	for _, r := range name {
+		switch {
+		case r <= ' ' || r == 0x7f:
+			return fmt.Errorf("a branch name holds no space and no control character, got %q", name)
+		case strings.ContainsRune("~^:?*[\\", r):
+			return fmt.Errorf("a branch name holds none of %q, which git reads as a revision, got %q", "~^:?*[\\", name)
+		}
+	}
+	return nil
+}

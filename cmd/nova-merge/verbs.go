@@ -64,6 +64,16 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 	f.check()
 	f.require("repo", *repo, "the repository this lane lands into, as <owner>/<name>")
 	f.require("base", *base, "the branch this lane's entries are merged onto")
+	// Lesson 48: these two are stored once and handed to git on every pass afterwards, so
+	// they are checked HERE, where a person can still see what they typed.
+	for _, c := range []struct{ name, value string }{{"base", *base}, {"lane-branch", *laneBranch}} {
+		if c.value == "" {
+			continue
+		}
+		if err := merge.ValidRefName(c.value); err != nil {
+			f.problem(fmt.Sprintf("--%s: %s", c.name, oneline.Escape(err.Error())))
+		}
+	}
 	f.require("lane-branch", *laneBranch, "the branch of that repository this lane's read and gate records live in")
 	if strings.TrimSpace(*repo) != "" && !strings.Contains(*repo, "/") {
 		f.problem(fmt.Sprintf("--repo is <owner>/<name>, got %q", *repo))

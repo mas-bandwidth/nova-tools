@@ -27,6 +27,8 @@ var underTheCallersLock = map[string]string{
 	"confirm":       "the confirming fetch of the CAS loop",
 	"deliveredOK":   "the outbox sweep at the end of the CAS loop",
 	"count":         "pulled=, counted inside Pull's lock",
+	"nothingStaged": "the porcelain of one CAS round, inside flush's lock",
+	"backoff":       "the CAS loop's wait, inside flush's lock",
 	"outbox":        "the outbox, which is outside the branch, read inside flush's lock",
 	"writeOutbox":   "the outbox, which is outside the branch, written before the lock is taken",
 	"LockCheckout":  "the lock itself",
