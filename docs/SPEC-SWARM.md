@@ -895,6 +895,14 @@ line.
 fourth word is a report a coordinator has to interpret, and a coordinator reading
 forty reports interprets nothing.
 
+**A `|` inside a backtick span is text, not a cell boundary.** Rule 2 asks
+every claim to quote its rule **verbatim**, and the rules of these tools are
+grammar lines full of `|` — a reader obeying rule 2 has to be able to write
+`` `<utc|zone>` `` in an item or a gate's command. The cells of a row are the
+pipes outside its quotes; an unterminated backtick quotes to the end of the
+line, which leaves too few cells and is malformed like any other row that does
+not parse.
+
 **`repo:` and `rev:` name what was read**, the repository and the revision the
 worker had open; they are the first two parts of the de-duplication key (rule
 15). A head without them is still a head — the report is `ok` or `clean` by

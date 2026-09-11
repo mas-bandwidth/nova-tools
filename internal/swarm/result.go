@@ -307,16 +307,38 @@ func malformed(r Report, line int) Report {
 	return r
 }
 
+// tableRow reads one row of the template's tables into its cells. A `|` INSIDE A BACKTICK
+// SPAN IS TEXT, not a cell boundary: rule 2 (SPEC-SWARM.md:82-84) requires every claim to
+// quote its rule VERBATIM, and this tool's own rules are grammar lines full of `|`, so a
+// reader obeying rule 2 could not write a row about one. The row was split on every pipe,
+// the state column landed on prose, and a complete report with five findings was
+// `RUN MALFORMED line=66` and lost to failed/ (dogfood D12, 2026-09-11).
+//
+// This is a cell boundary read correctly, not a report salvaged: the parser gains no
+// opinion, and a row whose state word is still not one of rule 15's three is malformed
+// exactly as before. An unterminated backtick quotes to the end of the line, which leaves
+// too few cells and is malformed -- the quarantine is never opened by a missing mark.
 func tableRow(line string) ([]string, bool) {
 	if !strings.HasPrefix(line, "|") {
 		return nil, false
 	}
-	parts := strings.Split(strings.Trim(line, "|"), "|")
-	out := make([]string, 0, len(parts))
-	for _, p := range parts {
-		out = append(out, strings.TrimSpace(p))
+	body := strings.TrimSuffix(strings.TrimPrefix(line, "|"), "|")
+	var out []string
+	var cell strings.Builder
+	quoted := false
+	for _, r := range body {
+		switch {
+		case r == '`':
+			quoted = !quoted
+			cell.WriteRune(r)
+		case r == '|' && !quoted:
+			out = append(out, strings.TrimSpace(cell.String()))
+			cell.Reset()
+		default:
+			cell.WriteRune(r)
+		}
 	}
-	return out, true
+	return append(out, strings.TrimSpace(cell.String())), true
 }
 
 func isTableRule(cells []string) bool {
