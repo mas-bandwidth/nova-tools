@@ -24,10 +24,40 @@ func (p *Pass) Packet(who string, only string, all bool) int {
 	entries := p.State.Entries()
 	blocks := 0
 	total := 0
+	// THE FOLD'S REFUSALS ARE THE PACKET'S REFUSALS. The packet was computed from the
+	// folded lists alone and the fold's problems were dropped, so a truncated hold beside
+	// two valid approves simply vanished: the reader was handed the entry with no note
+	// and without whatever that file said, while `run` and `status` on the same lane
+	// blocked it as malformed_record. A report that authorises a read against a record
+	// the fold refuses is the silent half of the failure the refusal exists to close.
+	for _, pr := range p.Problems {
+		fmt.Fprintf(p.Stderr, "FOLD REFUSED file=%s: %s\n",
+			oneline.Field(pr.File), oneline.Escape(oneline.Cap(pr.Reason, oneline.TailBytes)))
+	}
+	// A record file whose path names no entry leaves the SCOPE indeterminate: there is no
+	// entry to withhold instead, so nothing is handed over. `packet` REPORTS and exits 0
+	// whatever the lane holds (the verb sentences), so the news is the line, not the code.
+	for _, pr := range p.Problems {
+		if pr.Entry == "" {
+			fmt.Fprintf(p.Stderr, "PACKET STOPPED reason=malformed_record file=%s: %s; this path names no entry, so no entry in this lane can be handed over; re-record it with the verb that wrote it\n",
+				oneline.Field(pr.File), oneline.Escape(oneline.Cap(pr.Reason, oneline.TailBytes)))
+			fmt.Fprintf(p.Stdout, "PACKET OK entries=0 holds=0\n")
+			return 0
+		}
+	}
 	holdList := bounded.Capped(p.Stdout, p.Max, "PACKET", "hold",
 		fmt.Sprintf("nova-merge packet --lane %s --who %s --all --max 0", p.Lane, who))
 	for _, e := range entries {
 		if !all && e.ID() != only {
+			continue
+		}
+		// An entry one of those refusals names is blocked for `run` and for `status`, and
+		// it is withheld here for the same reason: the file nobody could read may be the
+		// hold this reader is being asked to answer.
+		if pr, ok := p.problemFor(e.ID()); ok {
+			fmt.Fprintf(p.Stderr, "PACKET NOTE entry=%s who=%s: %s\n",
+				oneline.Field(e.ID()), oneline.Field(who),
+				oneline.Escape(fmt.Sprintf("this entry is blocked by a record the fold refused (malformed_record file=%s), so it is not handed to a reader; nova-merge status --lane %s", pr.File, p.Lane)))
 			continue
 		}
 		c := p.plan(e, baseSHA)
@@ -60,6 +90,16 @@ func (p *Pass) Packet(who string, only string, all bool) int {
 	holdList.More()
 	fmt.Fprintf(p.Stdout, "PACKET OK entries=%d holds=%d\n", blocks, total)
 	return 0
+}
+
+// problemFor is the fold's refusal that names this entry, if there is one.
+func (p *Pass) problemFor(id string) (FoldProblem, bool) {
+	for _, pr := range p.Problems {
+		if pr.Entry == id {
+			return pr, true
+		}
+	}
+	return FoldProblem{}, false
 }
 
 // skipReason is the sentence behind PACKET NOTE: which half of the one condition this

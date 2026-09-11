@@ -270,3 +270,61 @@ func TestAFoldWhoseStateWriteIsRefusedIsNotSilent(t *testing.T) {
 	absent(t, stdout, "RUN PASS")
 	absent(t, stdout, "RUN ENTRY")
 }
+
+// Read 4b, finding 1 -- rule 23 ("`packet` is derived from the fold and the host") read
+// against demanded test 22 ("the fold refuses"): A PACKET NEVER HANDS OVER AN ENTRY WHOSE
+// RECORDS THE FOLD REFUSED.
+//
+// `Packet` computed needs_read from the folded lists and ignored the fold's PROBLEMS
+// entirely, so a truncated hold beside two valid approves vanished from the packet: the
+// reader was handed the entry, with no note and none of the holds in that file, while
+// `run` and `status` on the same lane blocked it as `malformed_record`. A report that
+// authorises a read against a record the fold refuses is the silent half of the failure
+// the fold's refusal exists to close.
+func TestAPacketNeverOffersAnEntryWhoseRecordsTheFoldRefused(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
+	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {
+		t.Fatalf("run: %s", errb)
+	}
+	file := "reads/951/stella-" + oid[:12] + "-20260911T131500Z-abcdef.json"
+	l.putRecord(file, `{"who":"stella","verdict":"ho`)
+	// The coordinator's pass pulls the file into the checkout and blocks the entry.
+	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 1 {
+		t.Fatalf("a malformed record blocks its entry: exit %d\n%s", exit, errb)
+	}
+	exit, stdout, stderr := l.run("packet", "--lane", l.lane, "--pr", "951", "--who", "emma")
+	if exit != 0 {
+		t.Fatalf("packet reports and exits 0 whatever the lane holds: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	// The file is named, the entry is not handed over, and nothing is counted.
+	contains(t, stderr, "FOLD REFUSED file="+file)
+	contains(t, stderr, "PACKET NOTE entry=951")
+	contains(t, stderr, "malformed_record")
+	absent(t, stdout, "PACKET ENTRY")
+	contains(t, stdout, "PACKET OK entries=0 holds=0")
+}
+
+// The other half of finding 1: a record whose path names no entry makes the SCOPE
+// indeterminate, so there is no entry to block instead -- `run` stops before any entry
+// line, and a packet hands nothing over either.
+func TestAPacketStopsOnARecordWhosePathNamesNoEntry(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	setupPR(t, l, 951, "feature-a", "a.txt", true)
+	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {
+		t.Fatalf("run: %s", errb)
+	}
+	l.putRecord("reads/README.json", "not a record at all\n")
+	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 1 {
+		t.Fatalf("a record that names no entry stops the pass: exit %d\n%s", exit, errb)
+	}
+	exit, stdout, stderr := l.run("packet", "--lane", l.lane, "--who", "emma", "--all")
+	if exit != 0 {
+		t.Fatalf("packet reports and exits 0 whatever the lane holds: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "PACKET STOPPED reason=malformed_record file=reads/README.json")
+	absent(t, stdout, "PACKET ENTRY")
+	contains(t, stdout, "PACKET OK entries=0 holds=0")
+}
