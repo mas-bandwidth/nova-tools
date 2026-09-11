@@ -315,11 +315,14 @@ func (s *State) RecordOnly(key, value string) {
 }
 
 // Sight records an unrecognised bus line as SEEN: the watched form every other
-// key is stored in, and the recency the LRU evicts by. It is the one writer of
-// the sighting memory, because a second one that wrote the value without the
-// recency is what made the bound a sort by key name -- and a bound by key name
-// deletes the same earliest-sorting lines every poll and wakes the window with
-// them again, which is the prototype's item 9 in a new costume.
+// key is stored in, and the recency the LRU evicts by. It is the writer for a
+// line that is only SEEN -- serve's sightings and a standing line the watch
+// re-sights; a line the watch relays as news goes through ObserveDisplay, which
+// touches the same recency. EVERY writer of a bus:line: row must touch, because
+// a write that left the recency alone is what made the bound a sort by key name
+// -- and a bound by key name deletes the same earliest-sorting lines every poll
+// and wakes the window with them again, which is the prototype's item 9 in a
+// new costume.
 func (s *State) Sight(key string) {
 	s.touch(key)
 	s.raw[key] = Compose("seen", printedField(s.PrintedID(key)))
