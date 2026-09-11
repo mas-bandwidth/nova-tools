@@ -17,6 +17,7 @@
 //	exit.<n>     the exit code for the nth poll
 //	calls        appended to, one line per invocation: the arguments
 //	polls        the poll counter, so out.<n> can be chosen
+//	delay        milliseconds to block before answering, the way a `wait` does
 package main
 
 import (
@@ -25,6 +26,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 )
 
 func main() {
@@ -42,6 +44,9 @@ func main() {
 		}
 		fmt.Println(strings.TrimRight(v, "\n"))
 		return
+	}
+	if ms, err := strconv.Atoi(strings.TrimSpace(read(filepath.Join(dir, "delay")))); err == nil && ms > 0 {
+		time.Sleep(time.Duration(ms) * time.Millisecond)
 	}
 	n := bump(filepath.Join(dir, "polls"))
 	out := read(filepath.Join(dir, "out."+strconv.Itoa(n)))

@@ -63,7 +63,7 @@ func cmdServe(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		idempotent = fs.Bool("on-note-idempotent", false, "")
 		batchMax   = fs.Int("batch-max", DefaultBatchMax, "")
 		gitTimeout = fs.Int("git-timeout", DefaultGHTimeout, "")
-		words      = fs.Int("receipt-max-words", 40, "")
+		words      = fs.Int("receipt-max-words", 0, "")
 		redeliver  = fs.String("redeliver", "", "")
 	)
 	if !parseFlags(fs, args, stderr) {
@@ -112,6 +112,14 @@ func cmdServe(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 	}
 	if *receipt && (*remote == "" || *branch == "") {
 		p.add("--receipt needs --remote and --branch", "  a receipt is pushed, the same way nova-bus pushes one\n")
+	}
+	if *gitTimeout <= 0 {
+		p.add("--git-timeout must be a positive number of seconds", "  a budget of zero or less is not 'unlimited'; it is a call that can never finish\n")
+	}
+	if *redeliver == "" && *words <= 0 {
+		// nova-bus has no default for it and neither has this: it is a fact
+		// about how much of a receipt the caller wants printed.
+		p.missing("receipt-max-words")
 	}
 	if *batchMax < 0 {
 		p.add("--batch-max is negative", "  0 already means all\n")
@@ -182,6 +190,7 @@ type server struct {
 	timeout        time.Duration
 
 	fired, notes, redelivered, uncertain, cc int
+	failed                                   int
 	maxWait                                  time.Duration
 	saidBlocked                              bool
 
@@ -242,8 +251,11 @@ func (s *server) loop(ctx context.Context, every, hours time.Duration) int {
 		}
 	}
 	s.sourceLine(ctx)
-	fmt.Fprintf(s.stdout, "WAKE SERVE fired=%d notes=%d redelivered=%d uncertain=%d queued=%d cc=%d max_wait=%s idle=%s\n",
-		s.fired, s.notes, s.redelivered, uncertain, queued, s.cc,
+	// The count line prints on FAILURE too: a dispatch whose command exited 7
+	// is not a fire that worked, and a reader of this line must not have to
+	// infer it from the absence of anything else.
+	fmt.Fprintf(s.stdout, "WAKE SERVE fired=%d notes=%d redelivered=%d uncertain=%d queued=%d cc=%d failed=%d max_wait=%s idle=%s\n",
+		s.fired, s.notes, s.redelivered, uncertain, queued, s.cc, s.failed,
 		oneline.Field(wake.Dur(s.maxWait)), oneline.Field(wake.Dur(s.clock.Now().Sub(start))))
 	return 0
 }
@@ -300,10 +312,21 @@ func (s *server) blocked() string {
 // only `INBOX NOTE ` would be the grep of 2026-09-10 rebuilt in the other verb:
 // an hour over a bus refusing every read, ending `fired=0` and exit 0.
 func (s *server) poll(ctx context.Context, now time.Time, budget time.Duration) {
-	out, code, err := s.runBus(ctx, s.busArgs(budget))
+	// The process budget must COVER the fetch it asked for: the wait is told to
+	// block for one interval, so killing the process at --git-timeout would
+	// kill serve's own fetch every poll (a serve --interval 60s at the 45s
+	// default fetched the first 45s of every minute and was blind for the rest).
+	out, code, err := s.runBusWithin(ctx, budget+s.timeout, s.busArgs(budget))
 	// The lines are classified whether or not the poll ended badly: a run that
 	// dropped an INBOX REFUSED line because nova-bus exited 2 is the false
 	// quiet arriving by the other road.
+	// BUS ORDER, for every note the poll listed -- including the ones the
+	// classifier suppresses because this receiver already holds a record for
+	// them. On a restart that is ALL of them, and a dispatch that read its
+	// order off the state file would read sorted order and call it bus order.
+	for _, id := range wake.BusNoteIDs(out) {
+		s.remember(id)
+	}
 	res := s.busSrc.Classify(out)
 	list := bounded.Capped(s.stdout, bounded.Default, "WAKE", "bus",
 		"the bus said more than a poll prints; nova-bus inbox --bus <dir> --as <name> lists the whole of it")
@@ -316,7 +339,7 @@ func (s *server) poll(ctx context.Context, now time.Time, budget time.Duration) 
 			// remembered so the next hour of the same sentence stands rather
 			// than waking the line again.
 			s.st.Set(it.Key, "seen")
-			list.Line("WAKE BUS LINE " + strings.TrimPrefix(it.Key, "bus:line:"))
+			list.Line(wake.Render(wake.KindBusLine, it.Key, it.Value, now))
 		}
 	}
 	// Shown every time, woken on once.
@@ -382,7 +405,8 @@ func (s *server) sourceLine(ctx context.Context) {
 // never a guessed second.
 func (s *server) busArgs(budget time.Duration) []string {
 	return []string{"wait", "--bus", s.bus, "--as", s.as,
-		"--receipt-max-words", strconv.Itoa(s.words), "--timeout", wake.Dur(budget),
+		"--receipt-max-words", strconv.Itoa(s.words),
+		"--timeout", wake.Dur(budget), "--interval", wake.Dur(budget),
 		"--remote", s.remote, "--branch", s.branch}
 }
 
@@ -454,15 +478,24 @@ func (s *server) runBatch(ctx context.Context, ids []string, attempt int, redeli
 	}
 	done := wake.Stamp(s.clock.Now())
 	for _, id := range ids {
-		if redelivered && rc != 0 {
-			// A retry that exits non-zero has NOT acknowledged the original
-			// dispatch: "already accepted" says nothing about idleness, and
-			// idleness is what the queue behind it needs. It is uncertain
-			// again, and a person's -- never a third automatic run.
+		if rc != 0 {
+			// A command that did not exit 0 has NOT accepted the note, and
+			// writing `delivered rc=7` for it loses the note twice over: it is
+			// never dispatched again, and --redeliver refuses it as delivered.
+			// A harness out of credits, a typo in the command, a crashed child
+			// -- every one of them silently consumed a note. Exit 0 is the one
+			// acceptance boundary an arbitrary command offers, so anything else
+			// is uncertain and a person's; "never a silent duplicate, and never
+			// a silent loss".
 			s.st.Set(serveKey(id), wake.Compose("uncertain", done, "attempt="+strconv.Itoa(attempt), "rc="+strconv.Itoa(rc)))
 			s.uncertain++
-			fmt.Fprintf(s.stdout, "WAKE UNCERTAIN id=%s attempt=%d rc=%d: retry not terminal; %s\n",
-				oneline.Field(id), attempt, rc, oneline.Escape(s.remedy(id)))
+			s.failed++
+			why := "dispatch did not accept"
+			if redelivered {
+				why = "retry not terminal"
+			}
+			fmt.Fprintf(s.stdout, "WAKE UNCERTAIN id=%s attempt=%d rc=%d: %s; %s\n",
+				oneline.Field(id), attempt, rc, oneline.Escape(why), oneline.Escape(s.remedy(id)))
 			continue
 		}
 		s.st.Set(serveKey(id), wake.Compose("delivered", done, "rc="+strconv.Itoa(rc), "redelivered="+mark))
@@ -594,12 +627,16 @@ func (s *server) save() {
 // runBus starts nova-bus under the timeout. It is the same one program the
 // watch verb starts, with the same read of stdout and stderr together.
 func (s *server) runBus(ctx context.Context, args []string) (string, int, error) {
-	ctx, cancel := context.WithTimeout(ctx, s.timeout)
+	return s.runBusWithin(ctx, s.timeout, args)
+}
+
+func (s *server) runBusWithin(ctx context.Context, budget time.Duration, args []string) (string, int, error) {
+	ctx, cancel := context.WithTimeout(ctx, budget)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "nova-bus", args...)
 	raw, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
-		return string(raw), 0, fmt.Errorf("nova-bus timed out after %s", wake.Dur(s.timeout))
+		return string(raw), 0, fmt.Errorf("nova-bus timed out after %s", wake.Dur(budget))
 	}
 	if err != nil {
 		var ee *exec.ExitError

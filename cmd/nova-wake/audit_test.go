@@ -22,6 +22,10 @@ var wakeAudit = audit.Config{
 	Exempt: map[string]string{},
 	Imports: []string{
 		`"context"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"os/exec"`, `"strconv"`, `"strings"`, `"time"`,
+		// runtime, for the version verb's os/arch/toolchain, which are
+		// constants of the build and are printed through oneline.Field like
+		// everything else: it writes nothing and shadows nothing.
+		`"runtime"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/wake"`,
 	},

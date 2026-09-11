@@ -25,6 +25,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -45,15 +46,16 @@ usage:
         [--advance-cursor --remote <name> --branch <name>]   not in this build; use --refresh
         [--line <name> ...]  a line to watch for silence, needs --bus (repeatable)
         [--offline-after <duration>]   how long silent is offline; default 10m
-        [--entry <repo>#<n> ... --entry-interval <duration>]   a forge entry and its checks
+        [--entry <owner>/<repo>#<n> ... --entry-interval <duration>]   an entry and its checks
         [--final-only]      an entry wakes only when it is MERGED, CLOSED or pending=0
         [--gh-timeout <seconds>]   budget for one gh, git or nova-bus call; default 45
         [--reports <dir> ...]   every RESULT.md at any depth under it (repeatable)
-  nova-wake serve --bus <dir> --as <name> --on-note <command> --interval <duration>
-        --state <file> --hours <h> [--receipt --remote <name> --branch <name>]
-        [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
+  nova-wake serve --bus <dir> --as <name> --receipt-max-words <n> --on-note <command>
+        --interval <duration> --state <file> --hours <h> --remote <name> --branch <name>
+        [--receipt] [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
   nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
         [--on-note-idempotent]
+  nova-wake version
   nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
         [--reports <dir> ...] [--bus <dir> --as <name> --receipt-max-words <n>]
   nova-wake help
@@ -64,8 +66,17 @@ landed. There is no third shape: a harness /loop, a scheduler prompt or a
 heartbeat that runs a model on an interval is not a wake, and this tool offers
 no verb for it.
 
+serve FETCHES every --interval, which is why --remote and --branch are its own
+flags and not --receipt's, and its --on-note command is started as
+<command> <id> [<id>...]: note ids and nothing else, no stdin, no environment,
+its output discarded. Its last line is WAKE SERVE, and a note whose command
+exited non-zero is uncertain and waits for a person's --redeliver, counted
+failed= there.
+
 There are no defaults for --state, --bus, --as, --entry, --reports, --interval,
---max or --on-deadline: each missing one is a refusal, refusing to guess.
+--max, --receipt-max-words or --on-deadline: each missing one is a refusal,
+refusing to guess. --interval and --entry-interval have a 5s floor and --max a
+60m ceiling.
 --max-lines (40), --gh-timeout (45s) and --offline-after (10m) have defaults,
 because none of them is a fact about your world that only you can supply.
 
@@ -147,6 +158,9 @@ const DefaultMaxLines = 40
 // DefaultGHTimeout is the budget for one gh, git or nova-bus call.
 const DefaultGHTimeout = 45
 
+// Version is this build, printed by `nova-wake version` and nowhere else.
+const Version = "v0.1.0"
+
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
 func run(args []string, stdout, stderr io.Writer) int {
@@ -164,6 +178,13 @@ func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		return cmdWatch(args[1:], stdout, stderr, clock, true)
 	case "serve":
 		return cmdServe(args[1:], stdout, stderr, clock)
+	case "version":
+		// The first question after a table misbehaves is which build each line
+		// is running, and a tool that cannot answer it costs a person the
+		// asking (lesson 142).
+		fmt.Fprintf(stdout, "nova-wake %s %s/%s %s\n", oneline.Field(Version),
+			oneline.Field(runtime.GOOS), oneline.Field(runtime.GOARCH), oneline.Field(runtime.Version()))
+		return 0
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
@@ -526,7 +547,14 @@ type watcher struct {
 	timeout        time.Duration
 	advance        bool
 
-	head, headAt  string
+	head, headAt string
+	// refusal holds the keys of lines this call read from a poll that ENDED
+	// BADLY. They are printed like any other line -- rule 7 is absolute -- and
+	// they are not a change: a bus that refused every read must reach the
+	// rule-8 streak rather than returning the call as news at after=0s, which
+	// is the tick loop this tool exists to delete.
+	refusal       map[string]bool
+	failing       map[string]bool
 	notes         map[string]bool
 	changed       map[string]int
 	standing      []string
@@ -586,7 +614,8 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 		// printed. A kill here leaves the entry pending, which is a repeated
 		// wake and never a lost one.
 		w.save()
-		printed := w.printQueue(now)
+		printed, news := w.printQueue(now)
+		_ = printed
 
 		switch {
 		case broken != "":
@@ -596,7 +625,7 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 				oneline.Field(broken), n, oneline.Field(since),
 				oneline.Escape(oneline.Cap(reason, oneline.TailBytes)))
 			return 2
-		case printed > 0:
+		case news > 0:
 			w.sourceLine()
 			fmt.Fprintf(w.stdout, "WAKE CHANGE after=%s polls=%d bus=%d entries=%d reports=%d lines=%d pending=%d\n",
 				oneline.Field(wake.Dur(now.Sub(start))), w.polls, w.changed["bus"], w.changed["entries"],
@@ -604,8 +633,12 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 			return 0
 		case reached:
 			w.sourceLine()
-			fmt.Fprintf(w.stdout, "WAKE QUIET after=%s polls=%d default=%s: deadline, default taken\n",
-				oneline.Field(wake.Dur(now.Sub(start))), w.polls, oneline.Field(onDeadline))
+			// A source that could not be read at all must not end a call as
+			// CALM: BROKEN arrives on the third consecutive failure, and a
+			// --max under three intervals would report a watch of nothing as a
+			// deadline reached.
+			fmt.Fprintf(w.stdout, "WAKE QUIET after=%s polls=%d default=%s sources-failing=%d: deadline, default taken\n",
+				oneline.Field(wake.Dur(now.Sub(start))), w.polls, oneline.Field(onDeadline), len(w.failing))
 			return 0
 		}
 		w.clock.Sleep(w.until(now, deadline))
@@ -638,15 +671,35 @@ func (w *watcher) poll(ctx context.Context, src wake.Source, now time.Time) {
 	res, err := src.Poll(ctx, now)
 	// The items are classified whether or not the poll ended badly: a run that
 	// dropped an INBOX REFUSED line because nova-bus exited 1 would be the grep
-	// that gave the window thirty minutes of false quiet.
+	// that gave the window thirty minutes of false quiet. What a FAILED poll's
+	// lines are not is NEWS.
+	if err != nil {
+		w.markRefusal(res)
+	}
 	w.observe(src.Name(), res, now)
 	if err != nil {
+		if w.failing == nil {
+			w.failing = map[string]bool{}
+		}
+		w.failing[src.Name()] = true
 		n, since, _ := w.st.Fail(src.Name(), oneLine(err.Error()), now)
 		fmt.Fprintf(w.stderr, "WAKE POLL %s: %s (failure %d of 3 in a row, since %s)\n",
 			oneline.Field(src.Name()), oneline.Escape(oneline.Cap(oneLine(err.Error()), oneline.TailBytes)), n, oneline.Field(since))
 		return
 	}
+	delete(w.failing, src.Name())
 	w.st.ClearFail(src.Name())
+}
+
+// markRefusal remembers the keys a failed poll produced, so that printing them
+// does not end the call as a change.
+func (w *watcher) markRefusal(res wake.Result) {
+	if w.refusal == nil {
+		w.refusal = map[string]bool{}
+	}
+	for _, it := range res.Items {
+		w.refusal[it.Key] = true
+	}
 }
 
 func (w *watcher) pollLines(ctx context.Context, now time.Time) {
@@ -713,7 +766,9 @@ func (w *watcher) observe(source string, res wake.Result, now time.Time) {
 				continue
 			}
 		}
-		if w.st.ObserveDisplay(it.Key, value, display, it.DeliveryID()) {
+		if w.st.ObserveDisplay(it.Key, value, display, it.DeliveryID()) && !w.refusal[it.Key] {
+			// The verdict's counts are about the WORLD: a line from a poll that
+			// could not be read is not something that changed in it.
 			w.changed[source]++
 		}
 	}
@@ -730,7 +785,7 @@ func (w *watcher) save() {
 // the queue up to the cap, then delete each printed record and write its
 // printed= mark. The marks are written AFTER the print and never before, so a
 // kill at any boundary leaves the entry pending.
-func (w *watcher) printQueue(now time.Time) int {
+func (w *watcher) printQueue(now time.Time) (int, int) {
 	caps := map[string]*bounded.List{}
 	order := []string{}
 	var printed []wake.Record
@@ -768,13 +823,17 @@ func (w *watcher) printQueue(now time.Time) int {
 				oneline.Field(kind), l.Shown(), l.Total(), l.Elided(), oneline.Escape(remedyFor(kind)))
 		}
 	}
+	news := 0
 	for _, r := range printed {
 		w.st.MarkPrinted(r)
+		if !w.refusal[r.Key] {
+			news++
+		}
 	}
 	if len(printed) > 0 {
 		w.save()
 	}
-	return len(printed)
+	return len(printed), news
 }
 
 // remedyFor names the flag that lifts the ceiling, or the file that holds the

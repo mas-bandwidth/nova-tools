@@ -128,5 +128,5 @@ WAKE CHANGE after=0s polls=1 bus=0 entries=0 reports=2 lines=0 pending=0
 
 $ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
 WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
-WAKE QUIET after=5s polls=1 default=report: deadline, default taken
+WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default taken
 ```

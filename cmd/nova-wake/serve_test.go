@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // 10. serve wakes a harness from outside it, once per note, and spends nothing
@@ -36,7 +38,7 @@ func TestServeSurfacesTheUncertainAndWakesOnlyTo(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "serve.state")
 	args := []string{"serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 		"--interval", "30s", "--state", state, "--hours", "0.02",
-		"--remote", "origin", "--branch", "main"}
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40"}
 
 	r := wakeRun(t, args...)
 	if r.exit != 0 {
@@ -78,7 +80,7 @@ func TestServeFiresNothingOnAnEmptyHour(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "serve.state")
 	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 		"--interval", "60s", "--state", state, "--hours", "1",
-		"--remote", "origin", "--branch", "main")
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
 	if r.exit != 0 {
 		t.Fatalf("exit = %d; %s", r.exit, r.all())
 	}
@@ -115,7 +117,7 @@ func TestServeAKilledDispatchIsUncertainAndBlocksTheQueue(t *testing.T) {
 			state := filepath.Join(t.TempDir(), "serve.state")
 			args := []string{"serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 				"--interval", "30s", "--state", state, "--hours", "0.02",
-				"--remote", "origin", "--branch", "main"}
+				"--remote", "origin", "--branch", "main", "--receipt-max-words", "40"}
 
 			serveKillPoint = kill
 			wakeRun(t, args...)
@@ -193,7 +195,7 @@ func TestServeAKillAfterDeliveredFiresNothingMore(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "serve.state")
 	args := []string{"serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 		"--interval", "30s", "--state", state, "--hours", "0.02",
-		"--remote", "origin", "--branch", "main"}
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40"}
 	serveKillPoint = "after-delivered"
 	wakeRun(t, args...)
 	serveKillPoint = ""
@@ -221,7 +223,7 @@ func TestServeTheIdempotentRetryAndItsCompletionBoundary(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "serve.state")
 		args := []string{"serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 			"--interval", "30s", "--state", state, "--hours", "0.02", "--on-note-idempotent",
-			"--remote", "origin", "--branch", "main"}
+			"--remote", "origin", "--branch", "main", "--receipt-max-words", "40"}
 		serveKillPoint = "before-spawn"
 		wakeRun(t, args...)
 		serveKillPoint = ""
@@ -249,7 +251,7 @@ func TestServeTheIdempotentRetryAndItsCompletionBoundary(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "serve.state")
 		args := []string{"serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 			"--interval", "30s", "--state", state, "--hours", "0.02", "--on-note-idempotent",
-			"--remote", "origin", "--branch", "main"}
+			"--remote", "origin", "--branch", "main", "--receipt-max-words", "40"}
 		serveKillPoint = "before-spawn"
 		wakeRun(t, args...)
 		serveKillPoint = ""
@@ -298,7 +300,7 @@ func TestServeBatchesAndReceiptsAfterDelivered(t *testing.T) {
 
 	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 		"--interval", "30s", "--state", state, "--hours", "0.02", "--batch-max", "2",
-		"--receipt", "--remote", "origin", "--branch", "main")
+		"--receipt", "--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
 	if r.exit != 0 {
 		t.Fatalf("exit = %d; %s", r.exit, r.all())
 	}
@@ -328,7 +330,7 @@ func TestServeBatchesAndReceiptsAfterDelivered(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "serve.state")
 		r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 			"--interval", "30s", "--state", state, "--hours", "0.02",
-			"--receipt", "--remote", "origin", "--branch", "main")
+			"--receipt", "--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
 		if !strings.Contains(r.stdout, "WAKE FIRED ids=1 first=zzz rc=3") {
 			t.Errorf("the exit code is not recorded:\n%s", r.stdout)
 		}
@@ -352,7 +354,7 @@ func TestServeEndsOnItsStopFile(t *testing.T) {
 	}
 	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 		"--interval", "60s", "--state", state, "--hours", "8",
-		"--remote", "origin", "--branch", "main")
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
 	if r.exit != 0 || !strings.Contains(r.stdout, "WAKE SERVE fired=0") {
 		t.Fatalf("exit %d; the stop file must end it at once:\n%s", r.exit, r.all())
 	}
@@ -378,7 +380,7 @@ func TestServeNeverFiltersTheStatusLine(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "serve.state")
 	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 		"--interval", "60s", "--state", state, "--hours", "1",
-		"--remote", "origin", "--branch", "main")
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
 	if r.exit != 0 {
 		t.Fatalf("exit = %d; %s", r.exit, r.all())
 	}
@@ -413,7 +415,7 @@ func TestServeFetchesEveryIntervalAndPinsTheVersion(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "serve.state")
 	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 		"--interval", "30s", "--state", state, "--hours", "0.02",
-		"--remote", "origin", "--branch", "main")
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
 	if r.exit != 0 {
 		t.Fatalf("exit = %d; %s", r.exit, r.all())
 	}
@@ -460,7 +462,7 @@ func TestServeFetchesEveryIntervalAndPinsTheVersion(t *testing.T) {
 		write(t, filepath.Join(busDir, "version"), "nova-bus v0.10.4 darwin/arm64 go1.27.1\n")
 		r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 			"--interval", "30s", "--state", filepath.Join(t.TempDir(), "s"), "--hours", "1",
-			"--remote", "origin", "--branch", "main")
+			"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
 		if r.exit != 2 || !strings.Contains(r.stderr, "v0.10.4") || !strings.Contains(r.stderr, "v0.10.3") {
 			t.Errorf("exit %d; a nova-bus that stopped fetching inside its push leaves a serve that looks healthy and is blind:\n%s", r.exit, r.stderr)
 		}
@@ -480,7 +482,7 @@ func TestServeRunsNoThirdAttemptOnItsOwn(t *testing.T) {
 	state := filepath.Join(t.TempDir(), "serve.state")
 	args := []string{"serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 		"--interval", "30s", "--state", state, "--hours", "0.02", "--on-note-idempotent",
-		"--remote", "origin", "--branch", "main"}
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40"}
 
 	// The first kill interrupts attempt=1; the second interrupts the retry the
 	// idempotent contract allows, leaving `dispatching attempt=2`.
@@ -528,7 +530,7 @@ func TestServeCoalescesWhatWaitedAndMeasuresHowLongItWaited(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "serve.state")
 		r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 			"--interval", "30s", "--state", state, "--hours", "0.02",
-			"--remote", "origin", "--branch", "main")
+			"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
 		if r.exit != 0 {
 			t.Fatalf("exit = %d; %s", r.exit, r.all())
 		}
@@ -555,9 +557,192 @@ func TestServeCoalescesWhatWaitedAndMeasuresHowLongItWaited(t *testing.T) {
 		// INJECTED clock, and the exit line must say so.
 		r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 			"--interval", "30s", "--state", state, "--hours", "0.02", "--batch-max", "1",
-			"--remote", "origin", "--branch", "main")
+			"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
 		if !strings.Contains(r.stdout, "max_wait=30s") {
 			t.Errorf("max_wait is not the longest a note sat queued before its dispatch; 0s in every run is a measurement that measures nothing:\n%s", r.stdout)
 		}
 	})
+}
+
+// Bus order has to survive a RESTART, which is the case the coalescing rule is
+// really about: every note this receiver still carries already has a serve:<id>
+// record, so nothing about it is new, and a dispatch that read its order off
+// the state file would read SORTED order and call it bus order.
+//
+// "Dispatch is coalesced. Every note `queued` at the moment the command is not
+// running is handed to one invocation, IN BUS ORDER, at most --batch-max ids"
+// (docs/SPEC-WAKE.md, rule 10).
+func TestServeKeepsBusOrderAcrossARestart(t *testing.T) {
+	busDir, _ := fakes(t)
+	// Bus order zzz111, yyy222, bbb333. Sorted order is bbb333, yyy222 -- so
+	// the two orders disagree about the pair that is left queued.
+	write(t, filepath.Join(busDir, "out"), strings.Join([]string{
+		"INBOX NOTE id=zzz111 from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/a.md: the first",
+		"INBOX NOTE id=yyy222 from=Johnny addr=to at=2026-09-11T11:01:00Z path=from-johnny/b.md: the second",
+		"INBOX NOTE id=bbb333 from=Emma addr=to at=2026-09-11T11:02:00Z path=from-emma/c.md: the third",
+	}, "\n")+"\n")
+	note, noteDir := fakeNote(t)
+	state := filepath.Join(t.TempDir(), "serve.state")
+	// One poll, one dispatch of one id: the other two are left queued in the
+	// state file for the next process to find.
+	args := []string{"serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
+		"--interval", "30s", "--state", state, "--hours", "0.005", "--batch-max", "1",
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40"}
+	first := wakeRun(t, args...)
+	if first.exit != 0 {
+		t.Fatalf("exit = %d; %s", first.exit, first.all())
+	}
+	if got := calls(t, noteDir); len(got) != 1 || got[0] != "zzz111" {
+		t.Fatalf("the first call handed %v, want one invocation carrying zzz111: bus order, --batch-max 1", got)
+	}
+
+	// A new process, with two carried notes it has records for.
+	r := wakeRun(t, append(append([]string{}, args[:len(args)-4]...), "--remote", "origin", "--branch", "main", "--receipt-max-words", "40")...)
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; %s", r.exit, r.all())
+	}
+	got := calls(t, noteDir)
+	if len(got) < 2 {
+		t.Fatalf("the restart dispatched nothing: %v", got)
+	}
+	if got[1] != "yyy222" {
+		t.Errorf("the restart handed %q first, want yyy222: a restart reads sorted state order, and sorted order is not bus order", got[1])
+	}
+	if strings.Contains(strings.Join(got[1:], " "), "zzz111") {
+		t.Errorf("a delivered note was dispatched again on the restart: %v", got)
+	}
+}
+
+// Rule 5 and the grammar: "A relayed line is escaped and NEVER SHORTENED BELOW
+// ITS OWN TAIL BUDGET; and no line is exempt from the cap". A bus line is
+// somebody else's bytes, and one of them must not spend the whole of what a
+// window learns from this return.
+func TestASoLongBusLineIsCappedWhenServeRelaysIt(t *testing.T) {
+	busDir, _ := fakes(t)
+	long := "INBOX REFUSED " + strings.Repeat("the bus is not a git checkout ", 400)
+	write(t, filepath.Join(busDir, "out"), long+"\n")
+	note, _ := fakeNote(t)
+	state := filepath.Join(t.TempDir(), "serve.state")
+	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
+		"--interval", "30s", "--state", state, "--hours", "0.005",
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
+	for _, line := range strings.Split(r.stdout, "\n") {
+		if !strings.HasPrefix(line, "WAKE BUS LINE") {
+			continue
+		}
+		if len(line) > 2*oneline.TailBytes {
+			t.Errorf("a relayed bus line is %d bytes; no line is exempt from the cap, and a silent truncation is the prototype's cut160", len(line))
+		}
+		if !strings.Contains(line, "B") || !strings.Contains(line, "...+") {
+			t.Errorf("the cut is not marked; a reader cannot tell a cut from an author's own ellipsis:\n%s", line)
+		}
+	}
+	if !strings.Contains(r.stdout, "WAKE BUS LINE") {
+		t.Fatalf("the line was not relayed at all:\n%s", r.all())
+	}
+}
+
+// Exit 2 is for "a missing or MALFORMED flag". The watch verb refuses a
+// non-positive --gh-timeout; serve took the same class of number and built a
+// context that can never finish out of it, so every poll printed `nova-bus
+// timed out after 0s` and the fetch never happened.
+func TestServeRefusesABudgetThatCanNeverFinish(t *testing.T) {
+	note, _ := fakeNote(t)
+	for _, tc := range []struct{ name, flag, value string }{
+		{"a zero git timeout", "--git-timeout", "0"},
+		{"a negative git timeout", "--git-timeout", "-5"},
+		{"a zero receipt word budget", "--receipt-max-words", "0"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
+				"--interval", "30s", "--state", filepath.Join(t.TempDir(), "s"), "--hours", "1",
+				"--remote", "origin", "--branch", "main", "--receipt-max-words", "40", tc.flag, tc.value)
+			if r.exit != 2 || !strings.Contains(r.stderr, tc.flag) {
+				t.Errorf("exit %d; a budget of zero or less is not 'unlimited', it is a call that can never finish:\n%s", r.exit, r.stderr)
+			}
+		})
+	}
+}
+
+// The process budget must cover the fetch it asked for. serve hands `wait` a
+// --timeout of one interval and then wrapped the process in --git-timeout, so a
+// `serve --interval 60s` at the default 45s killed its own fetch every poll and
+// printed WAKE POLL for it: the fetch covered the first 45s of each interval
+// and the rest of the minute was blind.
+func TestServesPollBudgetCoversTheIntervalItFetchesFor(t *testing.T) {
+	busDir, _ := fakes(t)
+	write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+	// A nova-bus that takes longer than --git-timeout and less than the
+	// interval it was given, which is exactly what a blocking `wait` does.
+	write(t, filepath.Join(busDir, "delay"), "1200\n")
+	note, _ := fakeNote(t)
+	state := filepath.Join(t.TempDir(), "serve.state")
+	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
+		"--interval", "5s", "--state", state, "--hours", "0.001",
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40", "--git-timeout", "1")
+	if strings.Contains(r.stderr, "timed out") {
+		t.Errorf("serve killed its own fetch: the budget for the process must cover the interval the wait was told to block for\n%s", r.stderr)
+	}
+}
+
+// Test 10, the half that says what a person gets wrong: "--redeliver without
+// --on-note is refused naming the flag" -- because the state stores no command,
+// so a redelivery names its handler.
+func TestServeRefusesARedeliveryThatNamesNoHandler(t *testing.T) {
+	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan",
+		"--state", filepath.Join(t.TempDir(), "s"), "--redeliver", "aaa111")
+	if r.exit != 2 {
+		t.Fatalf("exit = %d, want 2:\n%s", r.exit, r.all())
+	}
+	if !strings.Contains(r.stderr, "--on-note") {
+		t.Errorf("the refusal does not name the flag it wants:\n%s", r.stderr)
+	}
+}
+
+// A first attempt that exited non-zero was written `delivered rc=7` -- so the
+// note was never dispatched again, and --redeliver refused it as "delivered,
+// not uncertain". A harness out of credits, a typo in the command, a crashed
+// child: the note is gone, with no path back. The spec's promise is "never a
+// silent duplicate, and NEVER A SILENT LOSS" (Known limits).
+func TestServeDoesNotLoseANoteWhoseCommandFailed(t *testing.T) {
+	busDir, _ := fakes(t)
+	write(t, filepath.Join(busDir, "out"),
+		"INBOX NOTE id=aaa111 from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/a.md: the first\n")
+	note, noteDir := fakeNote(t)
+	write(t, filepath.Join(noteDir, "rc"), "7")
+	state := filepath.Join(t.TempDir(), "serve.state")
+	args := []string{"serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
+		"--interval", "30s", "--state", state, "--hours", "0.005",
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40"}
+	r := wakeRun(t, args...)
+	if !strings.Contains(r.stdout, "WAKE FIRED ids=1 first=aaa111 rc=7") {
+		t.Fatalf("the exit code is not recorded:\n%s", r.all())
+	}
+	if !strings.Contains(r.stdout, "WAKE UNCERTAIN id=aaa111 attempt=1 rc=7") {
+		t.Errorf("a first attempt that never returned 0 was written off as delivered:\n%s", r.stdout)
+	}
+	if !strings.Contains(r.stdout, "failed=1") {
+		t.Errorf("the exit line does not count the dispatch that failed; the count line prints on failure too:\n%s", r.stdout)
+	}
+	if strings.Contains(read(t, state), "delivered") {
+		t.Errorf("exit 0 is the one acceptance boundary an arbitrary command offers:\n%s", read(t, state))
+	}
+
+	// And the path back exists: a person's --redeliver is accepted, not
+	// refused, and the note runs again once the receiver is fixed.
+	if err := os.Remove(filepath.Join(noteDir, "rc")); err != nil {
+		t.Fatal(err)
+	}
+	before := len(calls(t, noteDir))
+	r = wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--state", state,
+		"--redeliver", "aaa111", "--on-note", note)
+	if r.exit != 0 {
+		t.Fatalf("a person cannot get the note back: exit %d\n%s", r.exit, r.all())
+	}
+	if got := len(calls(t, noteDir)); got != before+1 {
+		t.Errorf("the redelivery started the receiver %d times, want 1", got-before)
+	}
+	if !strings.Contains(r.stdout, "redelivered=1") {
+		t.Errorf("the redelivery is not marked:\n%s", r.stdout)
+	}
 }

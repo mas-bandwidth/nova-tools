@@ -235,7 +235,7 @@ func TestAWatchNamesItsDeadlineAndItsDefault(t *testing.T) {
 		if n := countLines(r.stdout, "WAKE QUIET"); n != 1 {
 			t.Fatalf("%d WAKE QUIET lines, want exactly 1:\n%s", n, r.stdout)
 		}
-		if !strings.Contains(r.stdout, "default=ask-glenn: deadline, default taken") {
+		if !strings.Contains(r.stdout, "default=ask-glenn sources-failing=0: deadline, default taken") {
 			t.Errorf("the verdict does not echo the default the caller named:\n%s", r.stdout)
 		}
 		if got := r.clock.Now().Sub(at); got != 20*time.Minute {
@@ -503,6 +503,11 @@ func TestAStandingBusLineIsShownEveryTimeAndWokenOnOnce(t *testing.T) {
 func TestThreeFailedPollsEndTheWatchLoudly(t *testing.T) {
 	t.Run("three in a row in one call", func(t *testing.T) {
 		busDir, _ := fakes(t)
+		// A REFUSING bus, not a silent one. A fake that printed nothing
+		// defended a path production cannot take: a real nova-bus that refuses
+		// prints a line, the line relays, and a build that returned the call on
+		// it never reached the streak at all.
+		write(t, filepath.Join(busDir, "out"), "INBOX REFUSED the bus is not a git checkout\n")
 		write(t, filepath.Join(busDir, "exit"), "1")
 		state := filepath.Join(t.TempDir(), "wake.state")
 		r := wakeRun(t, "watch", "--state", state, "--max", "1m", "--on-deadline", "report",
@@ -810,5 +815,121 @@ func TestTheOpeningLineSaysWhichFirstRunThisIs(t *testing.T) {
 	}
 	if !strings.Contains(listed.stdout, "cold=false") {
 		t.Errorf("a --baseline run listed the world AND said cold=true; the field the spec uses to tell the two first-run shapes apart is then wrong for one of them, and the README ships it:\n%s", listed.stdout)
+	}
+}
+
+// A bus that REFUSES every read printed its refusal (rule 7, rightly) and the
+// call returned `WAKE CHANGE after=0s polls=1 bus=1`, exit 0 -- so a window
+// looping on the second token of the last line spins with zero delay over a bus
+// it cannot read, and the rule-8 streak can never reach three because the
+// relayed line returns the call first. A run that LOOKED AT NOTHING must not
+// print the same thing as a run that FOUND something.
+func TestARefusingBusIsBrokenAndNotAChange(t *testing.T) {
+	busDir, _ := fakes(t)
+	write(t, filepath.Join(busDir, "out"), "INBOX REFUSED Nobody is not on this bus's roster\n")
+	write(t, filepath.Join(busDir, "exit"), "2\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	r := wakeRun(t, "watch", "--state", state, "--max", "60s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Nobody", "--receipt-max-words", "40")
+	last := lastLine(r.stdout)
+	if !strings.HasPrefix(last, "WAKE BROKEN source=bus failures=3") {
+		t.Errorf("the verdict over a bus that refused every read is %q; a watcher that cannot see its source is not watching, and CHANGE is what a caller reads as news", last)
+	}
+	if r.exit != 2 {
+		t.Errorf("exit = %d, want 2: a watch whose source went away did not run to its deadline", r.exit)
+	}
+	// Rule 7 still holds: the sentence the bus said is on stdout.
+	if !strings.Contains(r.stdout, "INBOX REFUSED Nobody is not on this bus's roster") {
+		t.Errorf("the refusal was not relayed:\n%s", r.all())
+	}
+	if strings.Contains(r.stdout, "bus=1") {
+		t.Errorf("a refusal was counted as a note that changed:\n%s", r.stdout)
+	}
+}
+
+// A source that could not be read at all must not end a call as CALM. BROKEN
+// arrives on the third consecutive failure, and a --max under three intervals
+// would otherwise report a watch of nothing as a deadline reached.
+func TestAQuietVerdictSaysHowManySourcesCouldNotBeRead(t *testing.T) {
+	state := filepath.Join(t.TempDir(), "wake.state")
+	missing := filepath.Join(t.TempDir(), "there-is-no-such-directory")
+	r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--reports", missing)
+	last := lastLine(r.stdout)
+	if !strings.HasPrefix(last, "WAKE QUIET") {
+		t.Fatalf("one failed poll is not yet BROKEN: %q", last)
+	}
+	if !strings.Contains(last, "sources-failing=1") {
+		t.Errorf("the verdict reads as calm over a source that could not be read at all: %q", last)
+	}
+}
+
+// The first question after a table misbehaves is which build each line is
+// running (lesson 142).
+func TestTheToolSaysWhichBuildItIs(t *testing.T) {
+	r := wakeRun(t, "version")
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; %s", r.exit, r.all())
+	}
+	if !strings.HasPrefix(r.stdout, "nova-wake v") || countLines(r.stdout, "nova-wake ") != 1 {
+		t.Errorf("version is not one line naming the build:\n%s", r.stdout)
+	}
+}
+
+// Test 12's --refresh halves, which the first build left to the shape of the
+// call and never asserted: "the first poll runs `inbox --open --open-max
+// <carrying>` once and LISTS THE CARRIED NOTES BEFORE THE NEW ONE ... a `wait`
+// that exits non-zero on one poll (the remote unreachable) is one `WAKE POLL`
+// line, every queue record is intact afterwards, and the next successful poll
+// relays the note".
+func TestRefreshListsWhatIsOwedBeforeWhatIsNewAndSurvivesAFailedPoll(t *testing.T) {
+	busDir, _ := fakes(t)
+	// Poll 1 is the wait: it fails, the remote unreachable.
+	write(t, filepath.Join(busDir, "out.1"), "INBOX FAIL could not reach origin\n")
+	write(t, filepath.Join(busDir, "exit.1"), "1\n")
+	// Poll 2 is the wait that works: one new note, and two notes carried.
+	write(t, filepath.Join(busDir, "out.2"), strings.Join([]string{
+		"INBOX NOTE id=new001 from=Stella addr=to at=2026-09-11T11:09:00Z path=from-stella/new.md: the new one",
+		"INBOX OPEN carrying=2 heard=0",
+	}, "\n")+"\n")
+	// Poll 3 is the carried list, read whole with --open-max <carrying>.
+	write(t, filepath.Join(busDir, "out.3"), strings.Join([]string{
+		"INBOX NOTE id=old001 from=Johnny addr=to at=2026-09-11T10:00:00Z path=from-johnny/a.md: owed one",
+		"INBOX NOTE id=old002 from=Emma addr=to at=2026-09-11T10:01:00Z path=from-emma/b.md: owed two",
+	}, "\n")+"\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	r := wakeRun(t, "watch", "--state", state, "--max", "20s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+		"--refresh", "--remote", "origin", "--branch", "main")
+
+	if n := countLines(r.stderr, "WAKE POLL bus"); n != 1 {
+		t.Errorf("%d WAKE POLL lines for one unreachable remote, want 1; a failed poll is one line and the watch goes on:\n%s", n, r.stderr)
+	}
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; one failed poll is not BROKEN:\n%s", r.exit, r.all())
+	}
+	var order []string
+	for _, line := range strings.Split(r.stdout, "\n") {
+		if id, ok := strings.CutPrefix(line, "WAKE BUS id="); ok {
+			order = append(order, strings.Fields(id)[0])
+		}
+	}
+	if len(order) != 3 {
+		t.Fatalf("relayed %v, want the two carried notes and the new one", order)
+	}
+	if order[0] != "old001" || order[1] != "old002" || order[2] != "new001" {
+		t.Errorf("relayed in the order %v; a cold watcher lists what it is OWED before what is new", order)
+	}
+	var openCalls int
+	for _, c := range calls(t, busDir) {
+		if strings.Contains(c, "--open --open-max 2") {
+			openCalls++
+		}
+		if advanced(c) {
+			t.Errorf("--refresh moved a cursor: %q", c)
+		}
+	}
+	if openCalls != 1 {
+		t.Errorf("the carried list was read %d times with --open-max 2, want once per run, and the count is carrying= and never a constant:\n%s", openCalls, strings.Join(calls(t, busDir), "\n"))
 	}
 }

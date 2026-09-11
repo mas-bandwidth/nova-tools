@@ -104,14 +104,20 @@ func (b *Bus) waitBudget() time.Duration {
 // Poll runs one bus read and classifies every line of it.
 func (b *Bus) Poll(ctx context.Context, now time.Time) (Result, error) {
 	var res Result
+	// The carried list is read once per RUN, on the first poll that could be
+	// read: a first poll whose remote was unreachable has not read it, and a
+	// run that counted that as the first would owe the window a list it never
+	// printed.
 	first := !b.firstPoll
-	b.firstPoll = true
 
 	args := b.inboxArgs()
 	if b.Refresh {
 		args = b.waitArgs(b.waitBudget())
 	}
 	out, code, err := b.run(ctx, args...)
+	if err == nil && code == 0 {
+		b.firstPoll = true
+	}
 
 	// Under --refresh the carried list is read WHOLE once, on the first poll,
 	// so a cold watcher lists what it is owed before what is new -- and the
@@ -325,7 +331,7 @@ func Head(ctx context.Context, dir string, timeout time.Duration) (sha, at strin
 	if len(f) != 2 {
 		return "-", "-"
 	}
-	return f[0], f[1]
+	return f[0], StampOf(f[1])
 }
 
 // Classify is rule 7 over a transcript the caller has already read: every line
@@ -337,4 +343,34 @@ func (b *Bus) Classify(out string) Result {
 	var res Result
 	b.classify(out, &res)
 	return res
+}
+
+// BusNoteIDs is every INBOX NOTE id in a transcript, in the order the bus
+// listed them. It is the BUS ORDER a caller needs for notes the classifier
+// suppresses -- a note already handed to the receiver is suppressed and still
+// has a place in the order the queue is dispatched in.
+func BusNoteIDs(out string) []string {
+	var ids []string
+	for _, line := range strings.Split(out, "\n") {
+		toks := strings.Fields(line)
+		if len(toks) < 2 || toks[0]+" "+toks[1] != "INBOX NOTE" {
+			continue
+		}
+		if id, _ := parseNote(line); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+// StampOf is an RFC 3339 stamp from a git-formatted one, put into UTC the way
+// every other stamp this tool prints is. git's %cI carries the committer's own
+// offset, and a freshness field a reader compares to at= must not read four
+// hours stale at a glance (rule 9: one clock, one spelling).
+func StampOf(s string) string {
+	t, err := time.Parse(time.RFC3339, strings.TrimSpace(s))
+	if err != nil {
+		return s
+	}
+	return Stamp(t)
 }
