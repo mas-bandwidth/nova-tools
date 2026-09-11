@@ -512,7 +512,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 				}
 			}
 			if !shrank || *allowShrink {
-				if err := file.Write(*out); err != nil {
+				if err := file.Save(*out); err != nil {
 					unreadable.Line(unreadableLine("TOKENS", tokens.Unreadable{Label: "out", Path: tokens.Path(*out, d), Why: err.Error()}))
 				} else {
 					written = true
@@ -806,18 +806,20 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintf(stderr, "TOKENS MIXED date=%s model=%s repo=%s bases=%s: two day bases on one row; declare one export for that day\n",
 			oneline.Field(m.Day), oneline.Field(m.Model), oneline.Field(m.Repo), oneline.Field(strings.Join(m.Bases, ",")))
 	}
-	var body strings.Builder
-	lines := 0
+	var rendered []string
 	for _, row := range rows {
 		for t := tokens.Type(0); t < tokens.NTypes; t++ {
 			v, ok := row.Counts.Get(t)
 			if !ok {
 				continue
 			}
-			body.WriteString(tokens.BodyLine(*day, *who, row.Model, row.Repo, t, v, row.Basis()))
-			body.WriteString("\n")
-			lines++
+			rendered = append(rendered, tokens.BodyLine(*day, *who, row.Model, row.Repo, t, v, row.Basis()))
 		}
+	}
+	lines := len(rendered)
+	body := ""
+	if lines > 0 {
+		body = strings.Join(rendered, "\n") + "\n"
 	}
 	if lines == 0 || len(mixed) > 0 {
 		// A friend with nothing to show says so, and never sends zeros. A REPORT FAIL
@@ -826,10 +828,10 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			oneline.Field(*who), oneline.Field(*day), unreadable)
 		return 1
 	}
-	fmt.Fprint(stdout, body.String())
+	fmt.Fprint(stdout, body)
 	if *notePath != "" {
 		tmp := *notePath + ".tmp"
-		if err := os.WriteFile(tmp, []byte(body.String()), 0o644); err != nil {
+		if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
 			r.add("--note " + *notePath + ": " + err.Error())
 			return r.print(stderr)
 		}

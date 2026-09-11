@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // The day file: one file per day, eleven columns, every one written on every row.
@@ -67,27 +69,32 @@ func Path(out, day string) string { return filepath.Join(out, day+FileSuffix) }
 func TempPath(out, day string) string { return filepath.Join(out, day+TempSuffix) }
 
 // Render is the file's bytes.
+//
+// EVERY STORED CELL GOES THROUGH oneline.Field, and that is what makes eleven
+// tab-separated columns a promise rather than a hope: a model id or a repo name holding a
+// tab would otherwise write a twelve-column row, and one holding a newline would write two
+// rows, from a value this tool copied out of somebody's transcript. Field escapes
+// whitespace and "=", so an ordinary name is untouched and a hostile one is one token.
 func (d *DayFile) Render() string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "%s day=%s at=%s build=%s turns=%s sources=%s\n",
-		Version, d.Day, d.At, d.Build, d.Turns, strings.Join(d.Sources, ","))
-	b.WriteString(HeaderLine)
-	b.WriteString("\n")
+	rows := make([]string, 0, len(d.Rows)+2)
+	rows = append(rows, fmt.Sprintf("%s day=%s at=%s build=%s turns=%s sources=%s",
+		Version, oneline.Field(d.Day), oneline.Field(d.At), oneline.Field(d.Build),
+		oneline.Field(d.Turns), oneline.Field(strings.Join(d.Sources, ","))), HeaderLine)
 	for _, r := range d.Rows {
-		cells := []string{r.Date, r.Model, r.Repo}
+		cells := []string{oneline.Field(r.Date), oneline.Field(r.Model), oneline.Field(r.Repo)}
 		for t := Type(0); t < NTypes; t++ {
 			cells = append(cells, r.Counts.Cell(t))
 		}
-		cells = append(cells, strconv.Itoa(r.Rough), r.Basis, strings.Join(r.Sources, ","))
-		b.WriteString(strings.Join(cells, "\t"))
-		b.WriteString("\n")
+		cells = append(cells, strconv.Itoa(r.Rough), oneline.Field(r.Basis),
+			oneline.Field(strings.Join(r.Sources, ",")))
+		rows = append(rows, strings.Join(cells, "\t"))
 	}
-	return b.String()
+	return strings.Join(rows, "\n") + "\n"
 }
 
-// Write recomputes the file whole: the bytes to the fixed temp name in the same
-// directory, then one rename. Nothing is appended and nothing is edited in place.
-func (d *DayFile) Write(out string) error {
+// Save recomputes the file whole: the bytes to the fixed temp name in the same directory,
+// then one rename. Nothing is appended and nothing is edited in place.
+func (d *DayFile) Save(out string) error {
 	tmp := TempPath(out, d.Day)
 	if err := os.WriteFile(tmp, []byte(d.Render()), 0o644); err != nil {
 		return err

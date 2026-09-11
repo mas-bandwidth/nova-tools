@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // --bus <dir>: friends' self-reports.
@@ -53,11 +55,14 @@ func Subject(day, at, build string, supersedes []string) string {
 	return s
 }
 
-// BodyLine renders one body line, which is what fold --bus parses.
+// BodyLine renders one body line, which is what fold --bus parses. Every stored field goes
+// through oneline.Field for the reason the day file's cells do: six tab-separated fields
+// is a promise, and a model id holding a tab would make it seven.
 func BodyLine(day, who, model, repo string, t Type, count int64, basis string) string {
-	line := strings.Join([]string{day, who, model, repo, TypeNames[t], strconv.FormatInt(count, 10)}, "\t")
+	line := strings.Join([]string{oneline.Field(day), oneline.Field(who), oneline.Field(model),
+		oneline.Field(repo), TypeNames[t], strconv.FormatInt(count, 10)}, "\t")
 	if basis != UTC && basis != "" {
-		line += "\tday_basis=" + basis
+		line += "\tday_basis=" + oneline.Field(basis)
 	}
 	return line
 }
