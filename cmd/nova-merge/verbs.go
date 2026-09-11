@@ -53,6 +53,11 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 	repo := f.fs.String("repo", "", "")
 	base := f.fs.String("base", "", "")
 	laneBranch := f.fs.String("lane-branch", "", "")
+	// --remote is the URL this lane pushes to and clones from. Without it nothing could
+	// be exercised without a live GitHub repository -- the URL was hardcoded, so a new
+	// line could not rehearse, and git's own config was the only way in, which means the
+	// ENVIRONMENT could move where a lane pushes and no flag said so.
+	remote := f.fs.String("remote", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -71,9 +76,20 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 			oneline.Field(*f.lane))
 		return 1
 	}
-	joined, err := checkout(*f.lane, *repo, *laneBranch, f.dur(), deps)
+	url := *remote
+	if url == "" {
+		url = deps.RepoURL(*repo)
+	}
+	// A REFUSED INIT LEAVES NOTHING BEHIND. checkout() runs git init, writes .gitignore,
+	// commits and pushes before merge.Init writes state.json; when it failed it cleaned
+	// nothing up, so the retry refused with "On branch <lane branch>" -- a refusal about
+	// the wreckage rather than about the cause -- and the directory was permanently
+	// un-initializable.
+	_, existed := os.Stat(*f.lane)
+	joined, err := checkout(*f.lane, url, *laneBranch, f.dur(), deps)
 	if err != nil {
-		fmt.Fprintf(stderr, "INIT REFUSED: %s\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
+		fmt.Fprintf(stderr, "INIT REFUSED: %s%s\n",
+			oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)), oneline.Escape(undoInit(*f.lane, existed == nil)))
 		return 2
 	}
 	if err := merge.Init(*f.lane, *repo, *base, *laneBranch); err != nil {
@@ -86,7 +102,7 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 	// order and nothing else). A clone that is already here is taken rather than refused.
 	if _, err := os.Stat(filepath.Join(*f.lane, merge.RepoDir, ".git")); err == nil {
 		merge.Appendf(*f.lane, deps.Now(), "INIT took the clone that was already at %s", filepath.Join(*f.lane, merge.RepoDir))
-	} else if _, err := g.Run("clone", deps.RepoURL(*repo), merge.RepoDir); err != nil {
+	} else if _, err := g.Run("clone", url, merge.RepoDir); err != nil {
 		fmt.Fprintf(stderr, "INIT REFUSED: the lane's own clone could not be made: %s\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 2
 	}
@@ -99,14 +115,27 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 	return cmdStatus([]string{"--lane", *f.lane, "--timeout", strconv.Itoa(*f.timeout), "--max", strconv.Itoa(*f.max)}, stdout, stderr, deps)
 }
 
-// checkout makes the lane directory a checkout of its own branch of the repository: the
-// existing branch where the host has one (joined=true, which is how a reader on another
+// undoInit is what a refused init says about what it made. A directory init created is
+// removed, so the retry meets the same cause; a directory that was already there is not
+// removed and the two paths to delete are named instead, because a lane a person made is
+// not this tool's to throw away.
+func undoInit(lane string, existed bool) string {
+	if !existed {
+		if err := os.RemoveAll(lane); err == nil {
+			return "; nothing was left behind, so running this again meets the same cause and not the wreckage"
+		}
+	}
+	return fmt.Sprintf("; this left a checkout behind in a directory that was already here: remove %s and %s before running this again",
+		oneline.Field(filepath.Join(lane, ".git")), oneline.Field(filepath.Join(lane, ".gitignore")))
+}
+
+// checkout makes the lane directory a checkout of its own branch of the repository at url:
+// the existing branch where the host has one (joined=true, which is how a reader on another
 // machine gets a lane for the same records), and otherwise one commit holding .gitignore.
-func checkout(lane, repo, branch string, timeout time.Duration, deps Deps) (joined bool, err error) {
+func checkout(lane, url, branch string, timeout time.Duration, deps Deps) (joined bool, err error) {
 	if err := os.MkdirAll(lane, 0o755); err != nil {
 		return false, err
 	}
-	url := deps.RepoURL(repo)
 	g := merge.NewGit(lane, timeout, deps.Runner)
 	if _, err := g.Run("init", "-q", "-b", branch, "."); err != nil {
 		return false, err

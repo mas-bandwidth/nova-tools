@@ -28,6 +28,9 @@ type lab struct {
 	now    time.Time
 	build  string
 	runner merge.Runner
+	// urlFor, when set, is what RepoURL answers -- so a test can point init at a
+	// repository that is not there.
+	urlFor func(string) string
 }
 
 func newLab(t *testing.T) *lab {
@@ -174,10 +177,15 @@ func isLeasePush(args []string) bool {
 
 func (l *lab) deps() Deps {
 	return Deps{
-		Runner:  l.runner,
-		Now:     func() time.Time { return l.now },
-		Sleep:   func(d time.Duration) { l.now = l.now.Add(d) },
-		RepoURL: func(string) string { return l.remote },
+		Runner: l.runner,
+		Now:    func() time.Time { return l.now },
+		Sleep:  func(d time.Duration) { l.now = l.now.Add(d) },
+		RepoURL: func(repo string) string {
+			if l.urlFor != nil {
+				return l.urlFor(repo)
+			}
+			return l.remote
+		},
 		NewHost: func(string, time.Duration) merge.Host { return l.host },
 		BuildID: func() string { return l.build },
 	}

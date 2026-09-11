@@ -227,7 +227,7 @@ func foreignFlags(verb string, args []string, stderr io.Writer) (int, bool) {
 		return false
 	}
 	creation := verb == "init" || verb == "quickstart"
-	for _, name := range []string{"repo", "lane-branch"} {
+	for _, name := range []string{"repo", "lane-branch", "remote"} {
 		if !creation && has(name) {
 			return refuse(stderr, " "+verb, fmt.Sprintf("--%s belongs to `init`, which writes it into the lane once; every other verb reads it from the lane's state", name)), true
 		}

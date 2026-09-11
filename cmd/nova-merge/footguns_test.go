@@ -2,6 +2,8 @@ package main
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"strings"
@@ -204,4 +206,66 @@ func TestAGateNamesAMergeObjectNoCloneHolds(t *testing.T) {
 	contains(t, stderr, "GATE NOTE")
 	contains(t, stderr, "no commit with this sha")
 	contains(t, stderr, "will not satisfy")
+}
+
+// FG-3: a refused `init` left a half-built lane and poisoned every retry. checkout() ran
+// git init, wrote .gitignore, committed and pushed BEFORE merge.Init wrote state.json, and
+// cleaned nothing up -- so the second attempt failed with "On branch nova-merge/lane", a
+// refusal about nothing, and the directory was permanently un-initializable.
+func TestARefusedInitLeavesNothingBehindAndRetriesTheSame(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	l.urlFor = func(string) string { return filepath.Join(l.dir, "no-such-repository.git") }
+	lane := filepath.Join(l.dir, "fresh")
+	first := ""
+	for i := 0; i < 2; i++ {
+		exit, stdout, stderr := l.run("init", "--lane", lane, "--repo", "o/n", "--base", "main",
+			"--lane-branch", "nova-merge/lane")
+		if exit == 0 {
+			t.Fatalf("this fixture points init at a repository that is not there: exit 0\n%s", stdout)
+		}
+		contains(t, stderr, "INIT REFUSED")
+		if i == 0 {
+			first = stderr
+			// Nothing half-built: the directory init made is gone.
+			if _, err := os.Stat(lane); !os.IsNotExist(err) {
+				entries, _ := os.ReadDir(lane)
+				t.Fatalf("a refused init left %v behind in %s", entries, lane)
+			}
+			continue
+		}
+		// THE SAME REFUSAL, the second time: a retry that says something different is a
+		// retry that is refusing about the wreckage rather than about the cause.
+		if stderr != first {
+			t.Errorf("the retry gives a different refusal, so the first one left state behind:\nfirst: %s\nthen:  %s", first, stderr)
+		}
+	}
+}
+
+// FG-10: nothing could be exercised without a live GitHub repository -- the URL was
+// hardcoded with no flag and no override -- so a new line could not rehearse, and git's own
+// config was the only way in, which means THE ENVIRONMENT could move where a lane pushes.
+func TestInitTakesAnExplicitRemoteSoALaneCanBeRehearsed(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	// A URL that could never be reached if the flag were ignored.
+	l.urlFor = func(string) string { return filepath.Join(l.dir, "no-such-repository.git") }
+	lane := filepath.Join(l.dir, "rehearsal")
+	exit, stdout, stderr := l.run("init", "--lane", lane, "--repo", "o/n", "--base", "main",
+		"--lane-branch", "nova-merge/lane", "--remote", l.remote)
+	if exit != 0 {
+		t.Fatalf("--remote is what a rehearsal needs: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "INIT OK")
+	if got := l.git(lane, "remote", "get-url", "origin"); got != l.remote {
+		t.Errorf("the lane's origin is %s, and --remote said %s", got, l.remote)
+	}
+	if got := l.git(filepath.Join(lane, merge.RepoDir), "remote", "get-url", "origin"); got != l.remote {
+		t.Errorf("the lane's clone points at %s, and --remote said %s", got, l.remote)
+	}
+	// And --remote is refused off the verb that owns it, like every other init flag.
+	exit, _, stderr = l.run("status", "--lane", lane, "--remote", l.remote)
+	if exit != 2 {
+		t.Fatalf("--remote on a verb that is not init is exit 2: got %d\n%s", exit, stderr)
+	}
 }
