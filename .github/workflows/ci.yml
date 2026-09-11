@@ -106,20 +106,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          packages=$(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... |
-            sed 's#^github.com/mas-bandwidth/nova-tools/##' |
-            jq -R -s -c 'split("\n") | map(select(length > 0))')
+          # SPLITS is the only hand-written number here, and it is a TUNING number rather
+          # than a coverage one: a package absent from it runs as one job, which costs
+          # speed and never coverage. cmd/nova-bus measured 6m33s as a single Windows job
+          # against under 90 seconds for everything else, because its tests are almost
+          # entirely git subprocesses and Windows pays the most per process.
+          declare -A SPLITS=( ["cmd/nova-bus"]=4 )
+          entries=()
+          while read -r pkg; do
+            [ -n "$pkg" ] || continue
+            n=${SPLITS[$pkg]:-1}
+            for g in $(seq 1 "$n"); do
+              entries+=("{\"package\":\"$pkg\",\"group\":\"$g\",\"groups\":\"$n\"}")
+            done
+          done < <(go list -f '{{if or .TestGoFiles .XTestGoFiles}}{{.ImportPath}}{{end}}' ./... |
+            sed 's#^github.com/mas-bandwidth/nova-tools/##')
+          packages=$(printf '%s\n' "${entries[@]}" | jq -s -c '.')
           echo "$packages"
           [ "$(echo "$packages" | jq 'length')" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
           echo "packages=$packages" >> "$GITHUB_OUTPUT"
 
   test-windows:
-    # WINDOWS, ONE RUNNER PER PACKAGE, all launched at once.
+    # WINDOWS, ONE RUNNER PER PACKAGE -- and per GROUP of a package that is big enough to
+    # want more than one -- all launched at once.
     #
     # The shape is mirrored from networknext/next's `.semaphore/functional-tests.yml`,
     # where every functional test is its own job inside a block and the whole block is what
-    # has to be green -- the run takes as long as the slowest single test rather than as
-    # long as their sum.
+    # has to be green, so a run takes as long as its slowest single job rather than as long
+    # as their sum.
     #
     # Why Windows and not the others: this repository's tests are mostly git subprocesses,
     # and Windows pays the most per process. Making the tests inside a package parallel
@@ -127,16 +141,20 @@ jobs:
     # `go test` already runs packages in parallel, so a four-core runner was suddenly
     # asked for four packages times four tests at once. More cores is the answer that does
     # not trade one platform against another: the packages go to separate machines instead
-    # of competing for one.
+    # of competing for one. One job per package took the leg to 6m33s; splitting the one
+    # package that was all of that 6m33s is the second cut.
     #
-    # `windows` below is the aggregate and is the check to require. The per-package jobs
-    # are named for their package, so a red one says which package failed in its own name.
+    # A group takes every Nth test of its package, by name, from `go test -list` -- so the
+    # split needs no list of test names anywhere and a test added tomorrow lands in a group
+    # by arithmetic. Groups are separate PROCESSES, which is also why the parse-count tests
+    # are safe here: bus.NoteParses is per process.
+    name: test-windows (${{ matrix.entry.package }}${{ matrix.entry.groups != '1' && format(' {0}/{1}', matrix.entry.group, matrix.entry.groups) || '' }})
     needs: windows-packages
     if: github.event_name != 'schedule'
     strategy:
       fail-fast: false
       matrix:
-        package: ${{ fromJSON(needs.windows-packages.outputs.packages) }}
+        entry: ${{ fromJSON(needs.windows-packages.outputs.packages) }}
     runs-on: windows-latest
     timeout-minutes: 15
     steps:
@@ -145,27 +163,29 @@ jobs:
         with:
           go-version-file: go.mod
       - name: test
-        run: go test -race ./${{ matrix.package }}
-
-  windows:
-    # The aggregate, and the only Windows check worth requiring: `needs` on a matrix job
-    # is success only if EVERY leg succeeded, so a cancelled or skipped leg fails here
-    # rather than passing by being absent. `if: always()` so that this job runs and says so
-    # when a leg failed, instead of being skipped along with it.
-    needs: test-windows
-    if: always() && github.event_name != 'schedule'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - name: every windows package passed
         shell: bash
         run: |
-          result="${{ needs.test-windows.result }}"
-          echo "test-windows: $result"
-          [ "$result" = "success" ] || exit 1
+          set -euo pipefail
+          pkg="./${{ matrix.entry.package }}"
+          group="${{ matrix.entry.group }}"
+          groups="${{ matrix.entry.groups }}"
+          if [ "$groups" = "1" ]; then
+            go test -race "$pkg"
+            exit 0
+          fi
+          names=$(go test -list '.*' "$pkg" | grep -E '^(Test|Fuzz)' | sort |
+            awk -v g="$group" -v n="$groups" 'NR % n == g % n')
+          if [ -z "$names" ]; then
+            echo "group $group of $groups over $pkg selected no tests; the split is wrong, not green"
+            exit 1
+          fi
+          echo "$names"
+          run="^($(printf '%s\n' "$names" | paste -sd'|' -))$"
+          go test -race -run "$run" "$pkg"
 
   smoke:
     if: github.event_name != 'schedule'
+    needs: release-dry-run
     # Exercises the BUILT BINARY. `go test` covers the packages; nothing else
     # covered the executable a user actually runs, and what a release ships is
     # the executable.
@@ -203,15 +223,40 @@ jobs:
       BIN: ${{ github.workspace }}/nova-check${{ startsWith(matrix.os, 'windows') && '.exe' || '' }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: go.mod
 
-      - name: build nova-check
-        run: go build -o "$BIN" ./cmd/nova-check
+      - name: download the cross-built binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: cross-built-binaries
+          path: dist
+
+      - name: take this runner's shipped binary
+        # THE BINARY THAT WOULD SHIP, not one built here. This step used to be `go build -o
+        # "$BIN" ./cmd/nova-check`, which is a different binary from the released one --
+        # different flags, no -trimpath, CGO as the host has it -- so the job whose whole
+        # argument is "what a release ships is the executable" was smoking an executable no
+        # release ships. There is no Go toolchain in this job any more: if the binary is not
+        # in the artifact, this job cannot paper over it by compiling one.
         shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ matrix.os }}" in
+            ubuntu-latest)  target=linux-amd64 ;;
+            macos-latest)   target=darwin-arm64 ;;
+            windows-latest) target=windows-amd64 ;;
+            *) echo "no shipped target mapped for ${{ matrix.os }}"; exit 1 ;;
+          esac
+          src="dist/$target/nova-check"
+          [ "$target" = "windows-amd64" ] && src="$src.exe"
+          [ -f "$src" ] || { echo "$src is not in the artifact: ls -R dist"; ls -R dist; exit 1; }
+          mkdir -p "$(dirname "$BIN")"
+          cp "$src" "$BIN"
+          chmod +x "$BIN"
+          "$BIN" version || true
 
       - name: a clean prose tree passes, and is actually walked
+        id: clean_tree
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           tree="$(mktemp -d)"
@@ -228,8 +273,9 @@ jobs:
           esac
 
       - name: a symlinked --dir is resolved, not passed over
+        id: symlink_nocode
         # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && (runner.os != 'Windows') }}
         shell: bash
         run: |
           # The fail-open the assertion above was WRONGLY credited with
@@ -249,8 +295,9 @@ jobs:
           esac
 
       - name: a symlinked --dir is resolved, not passed over (links)
+        id: symlink_links
         # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && (runner.os != 'Windows') }}
         shell: bash
         run: |
           # The same fail-open, in the other checker. os.Stat follows a link,
@@ -270,6 +317,8 @@ jobs:
           esac
 
       - name: a tree that classified nothing says so
+        id: classified_nothing
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           # The scanned==0 warning is the only remaining backstop for the
@@ -286,8 +335,9 @@ jobs:
           esac
 
       - name: each condition refuses separately, with the right code and reason
+        id: each_condition
         # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && (runner.os != 'Windows') }}
         shell: bash
         run: |
           # One fixture per condition AND an assertion on which reason fired.
@@ -313,8 +363,9 @@ jobs:
           check "shebang" "$t" "executable script (shebang)"
 
       - name: the fail-opens this CI exists for stay closed
+        id: fail_opens
         # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
-        if: runner.os != 'Windows'
+        if: ${{ !cancelled() && (runner.os != 'Windows') }}
         shell: bash
         run: |
           # These are the regressions that motivated the file. Each was a real
@@ -349,6 +400,8 @@ jobs:
           esac
 
       - name: a guard that cannot read its own list refuses, and says so
+        id: unreadable_list
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           # Exit 2, not merely non-zero: `flag` also exits non-zero on an
@@ -368,6 +421,36 @@ jobs:
             *"deny-list file: open no-such-deny-list.txt"*) echo "ok: unreadable deny-list refused" ;;
             *) echo "wrong message: $out"; exit 1 ;;
           esac
+
+      - name: every assertion above reported
+        # THE GATE, and the reason every step above carries `if: ${{ !cancelled() }}`.
+        #
+        # A step that fails stops the ones after it from running by default, so a broken
+        # second assertion used to hide assertions three to six: the job went red, somebody
+        # fixed the one failure it named, and the next run found the next one. Six red steps
+        # in one run is six facts; one red step and five skipped is one fact and a queue.
+        # `!cancelled()` runs them all anyway -- and keeps honouring a real cancellation --
+        # and this step is where the job's verdict is stated in one place, naming every
+        # outcome rather than only the first bad one.
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -uo pipefail
+          bad=0
+          for pair in \
+            "a clean prose tree passes:${{ steps.clean_tree.outcome }}" \
+            "a symlinked --dir (nocode):${{ steps.symlink_nocode.outcome }}" \
+            "a symlinked --dir (links):${{ steps.symlink_links.outcome }}" \
+            "a tree that classified nothing:${{ steps.classified_nothing.outcome }}" \
+            "each condition refuses separately:${{ steps.each_condition.outcome }}" \
+            "the fail-opens stay closed:${{ steps.fail_opens.outcome }}" \
+            "an unreadable deny-list refuses:${{ steps.unreadable_list.outcome }}"
+          do
+            what="${pair%:*}"; outcome="${pair##*:}"
+            echo "$outcome	$what"
+            case "$outcome" in success|skipped) ;; *) bad=$((bad + 1)) ;; esac
+          done
+          [ "$bad" -eq 0 ] || { echo "$bad smoke assertion(s) failed"; exit 1; }
 
   release-dry-run:
     if: github.event_name != 'schedule'
@@ -405,12 +488,29 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          out="$(mktemp -d)"
+          # One directory PER TARGET, where an earlier revision built every target over the
+          # top of the last one in a single mktemp dir. The compile was the whole product
+          # then; now the binaries are the product too -- the smoke job below runs them --
+          # and five targets sharing one path means four of them are deleted by the fifth.
           for target in "linux amd64" "linux arm64" "darwin arm64" "darwin amd64" "windows amd64"; do
             set -- $target
-            GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -o "$out/" ./cmd/...
+            GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -o "dist/$1-$2/" ./cmd/...
             echo "ok $1/$2"
           done
+          ls -R dist
+
+      - name: upload the cross-built binaries
+        # So that the smoke job runs THE BINARY THIS WOULD SHIP rather than one it builds
+        # itself with different flags. The job above already builds with -trimpath and
+        # CGO_ENABLED=0 for the reason stated at the top of it -- build the way the shipped
+        # artifact is built, or the check is checking a configuration nobody ships -- and a
+        # smoke job compiling its own copy was quietly exempt from that.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: cross-built-binaries
+          path: dist/
+          retention-days: 1
+          if-no-files-found: error
 
   perf:
     # THE WALL CLOCK, nightly, because a wall clock is not a per-commit test.
@@ -450,5 +550,56 @@ jobs:
         # stopped compiling says that rather than failing as a bound.
         run: go vet -tags perf ./...
 
-      - name: every verb is under its bound on ten thousand notes
-        run: go test -tags perf -count=1 -v -run TestEveryVerbIsUnderASecondOnTenThousandNotes ./cmd/nova-bus
+      - name: the wall-clock tests, one at a time
+        # THE WHOLE PACKAGE, not a -run naming one test. This step used to name
+        # TestEveryVerbIsUnderASecondOnTenThousandNotes, and the second wall-clock test
+        # added in the same pull request -- TestAWaitPollsMoreThanOnceBeforeItsDeadline --
+        # therefore ran NOWHERE: behind a tag the per-commit jobs do not build, and behind a
+        # -run the nightly did not match. A list of test names in a workflow is a list that
+        # goes stale silently, so there is not one: the tag decides what is extra and the
+        # package decides what runs.
+        #
+        # `-p 1 -parallel 1` because these are wall clocks. The rest of the package now runs
+        # its tests in parallel, and a bound in seconds measured while twelve siblings are
+        # spawning git processes measures the siblings. One at a time on an idle nightly
+        # runner is the condition the numbers in timing_test.go were written against.
+        run: go test -tags perf -count=1 -v -p 1 -parallel 1 ./cmd/nova-bus
+
+  ci-ok:
+    # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
+    # in a branch ruleset.
+    #
+    # Windows is a matrix now, and a matrix's leg names change: split a package, rename one,
+    # add a package and the leg that branch protection was told to require is simply not
+    # reported any more. GitHub's answer to a required check that never reports is to wait
+    # forever or, with the ruleset written the other way, to let it through -- and the
+    # second is how a repository ends up merging on checks nobody ran. One aggregate whose
+    # name never changes closes that: it needs every job, and `needs` on a matrix job is
+    # success only when EVERY leg succeeded, so a leg that was renamed out of existence
+    # shows up here as a missing success and not as silence.
+    #
+    # `if: always()` so it reports when something it needs went red, rather than being
+    # skipped along with it; the explicit per-job check below is what makes it red, because
+    # a skipped or cancelled need is not a passed one.
+    needs: [test, windows-packages, test-windows, smoke, release-dry-run]
+    if: always() && github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every job succeeded
+        shell: bash
+        run: |
+          set -uo pipefail
+          bad=0
+          for pair in \
+            "test:${{ needs.test.result }}" \
+            "windows-packages:${{ needs.windows-packages.result }}" \
+            "test-windows:${{ needs.test-windows.result }}" \
+            "smoke:${{ needs.smoke.result }}" \
+            "release-dry-run:${{ needs.release-dry-run.result }}"
+          do
+            job="${pair%:*}"; result="${pair##*:}"
+            echo "$result	$job"
+            [ "$result" = "success" ] || bad=$((bad + 1))
+          done
+          [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }

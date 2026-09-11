@@ -63,8 +63,13 @@ func TestMain(m *testing.M) {
 // loudly here instead of silently reading the runner's ~/.gitconfig.
 func hermetic(t *testing.T) {
 	t.Helper()
-	if os.Getenv("GIT_CONFIG_GLOBAL") == "" {
-		t.Fatal("the hermetic git environment is not set; TestMain in this package sets it")
+	// All four, not just the first: three of them are what keeps a machine's system
+	// config, its ~/.gitconfig and its credential prompt out of these tests, and an
+	// assertion on one of four would pass over a TestMain that set one of four.
+	for _, key := range []string{"GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_TERMINAL_PROMPT"} {
+		if os.Getenv(key) == "" {
+			t.Fatalf("%s is not set: the hermetic git environment is TestMain's, in this package, and it sets four", key)
+		}
 	}
 }
 
