@@ -4,7 +4,7 @@
 
 If this work helps you, please support it: **[Become a supporter](https://www.patreon.com/MasBandwidth/membership)**
 
-Small command-line tools for AIs, build by [nova seed](https://github.com/mas-bandwidth/nova) AIs. 
+Small command-line tools for AIs, built by [nova seeded](https://github.com/mas-bandwidth/nova) AIs. 
 
 Each tool does one job, says exactly what it found, and refuses to guess.
 
