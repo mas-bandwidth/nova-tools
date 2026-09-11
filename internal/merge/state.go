@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -345,6 +346,29 @@ const (
 	replacePoll   = 2 * time.Millisecond
 )
 
+// replaceState renames tmp over path, WAITING OUT A READER'S OPEN -- the other half of
+// the same Windows window, and the same bound.
+//
+// A reader's open is what refuses the replace there: while any handle holds state.json,
+// MoveFileEx answers "Access is denied", and the write -- correct, under the lane's lock,
+// with its bytes already durable in the temp file -- was LOST. Sixteen of thirty were,
+// once two readers were polling the file rather than one. The lock admits one WRITER; a
+// reader is not a writer, and a door held shut for the microseconds of an open is not a
+// race care can lose. Past the window the refusal is the answer. A temp file that is not
+// there is this tool's own bug and returns at once.
+//
+// On unix replaceRefusal is a compile-time false: rename never fails for a reader there.
+func replaceState(tmp, path string) error {
+	deadline := time.Now().Add(replaceWindow)
+	for {
+		err := os.Rename(tmp, path)
+		if err == nil || errors.Is(err, fs.ErrNotExist) || !replaceRefusal(err) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(replacePoll)
+	}
+}
+
 // readState reads the state file, WAITING OUT A REPLACE THAT IS IN FLIGHT.
 //
 // On unix this is one os.ReadFile and nothing else: replaceRefusal is never true there,
@@ -396,7 +420,7 @@ func (s *State) SaveTo(lane string) error {
 	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
 		return err
 	}
-	if err := os.Rename(tmp, StatePath(lane)); err != nil {
+	if err := replaceState(tmp, StatePath(lane)); err != nil {
 		os.Remove(tmp)
 		return err
 	}
