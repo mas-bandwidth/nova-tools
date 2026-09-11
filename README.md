@@ -479,12 +479,14 @@ never two:
 - `--refresh --remote <name> --branch <name>` fetches through `nova-bus wait`
   and **moves no cursor**. Nothing is consumed, so any number of watchers may
   run. This is the one to reach for.
-- `--advance-cursor` is specified in docs/SPEC-WAKE.md and is **not in this
-  build**: it answers `WAKE REFUSED: --advance-cursor is not in this build; use
-  --refresh`, exit 2. Its own gate is that the advancing tests are green against
-  the pinned `nova-bus` binary, which is work list item 3a and a branch of its
-  own. Advancement is an acknowledgement optimisation and not a prerequisite for
-  delivery, and a v1 that cannot move a cursor cannot lose a note.
+- `--advance-cursor --as <name> --remote <name> --branch <name>` fetches through
+  the push inside `nova-bus inbox --advance` and **moves your own cursor**, so
+  new mail is relayed within two advancing polls. It advances only behind a
+  print and only as part of a bus poll before the deadline: a call holding
+  unprinted notes prints up to the cap, says `WAKE NOTE bus advance deferred`,
+  and does not fetch until they have printed. A cursor is a claim about what a
+  reader has been shown, so it needs `--as`, it is one advancing watcher per bus
+  and name, and there is no flag that advances somebody else's.
 
 ## nova-merge
 
