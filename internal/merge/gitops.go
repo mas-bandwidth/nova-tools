@@ -196,12 +196,19 @@ type PublishRefusedError struct{ Output string }
 
 func (e *PublishRefusedError) Error() string { return e.Output }
 
-// isLeaseRejection reads the remote's answer for the one word that means the lease was
+// isLeaseRejection reads the remote's answer for the one word that means THE LEASE was
 // what failed. git spells a rejected lease "stale info"; the ref-status line carries
 // "[rejected]" for every refusal, so the lease word is what tells the two apart.
+//
+// It is exactly that word and no other. "non-fast-forward" and "cannot lock ref" were
+// here too, and they are not leases: a protected branch, a missing permission and a
+// concurrent ref update would each have been printed as MERGE RACED -- "the base moved
+// after the gate; the next pass builds a fresh integration commit" -- which sends a
+// reader to wait for a next pass that will be refused the same way forever. Rule 21:
+// "A push the remote refuses for any reason OTHER than the lease ... is MERGE BLOCKED
+// entry=... missing=atomic_publication", and the remedy names what a person must change.
 func isLeaseRejection(out string) bool {
-	return strings.Contains(out, "stale info") || strings.Contains(out, "fetch first") ||
-		strings.Contains(out, "non-fast-forward") || strings.Contains(out, "cannot lock ref")
+	return strings.Contains(out, "stale info")
 }
 
 // oneLineOf reduces a subprocess's output to the first line that says something, capped,

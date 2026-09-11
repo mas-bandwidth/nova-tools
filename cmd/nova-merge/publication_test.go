@@ -1,6 +1,7 @@
 package main
 
 import (
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -312,3 +313,142 @@ func TestBelowMainAHostedRedIsNamedOnTheMergeLineAndNeverBlocks(t *testing.T) {
 }
 
 func mustTime(s string) (t timeValue) { return parseStamp(s) }
+
+// Demanded test 21, race (ii): THE REMOTE ADVANCED TO A'S HEAD -- AN ANCESTOR OF M, WHICH
+// A PLAIN PUSH WOULD ACCEPT -- IS REJECTED THE SAME WAY.
+//
+// This is the case that tells the lease apart from a plain push, and it is the whole
+// argument for rule 21(b). Race (i) moves the base somewhere unrelated, which a plain push
+// would refuse as non-fast-forward too, so it proves nothing about the lease.
+func TestABaseMovedToAnAncestorOfTheMergeIsRacedToo(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	oid := setupPR(t, l, 951, "feature-a", "a.txt", false)
+	base := l.baseSHA()
+	_, stdout, _ := l.run("run", "--lane", l.lane, "--once")
+	m := mergeSHAOf(t, stdout, "951")
+	if exit, _, errb := l.run("gate", "--lane", l.lane, "--pr", "951", "--head", oid,
+		"--base-sha", base, "--merge", m, "--verdict", "green", "--summary", l.summary("g1")); exit != 0 {
+		t.Fatalf("gate: %s", errb)
+	}
+	// The hand moves the base to the entry's OWN head, which is the integration commit's
+	// second parent. A plain push of M onto it would fast-forward and land.
+	l.beforePush(func() {
+		l.git(l.work, "fetch", "-q", "origin")
+		l.git(l.work, "push", "-q", "origin", oid+":refs/heads/main")
+		l.host.SetChecks(oid, 3, 0)
+	})
+	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once")
+	if exit != 1 {
+		t.Fatalf("an ancestor is still not the expected base: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "MERGE RACED entry=951")
+	contains(t, stderr, "expected="+base[:12])
+	contains(t, stderr, "found="+oid[:12])
+	contains(t, stderr, "merge="+m[:12])
+	contains(t, stderr, "nothing was published")
+	absent(t, stdout, "MERGE OK")
+	if got := l.refreshBase(); got != oid {
+		t.Errorf("the base is %s; the race must leave it exactly where the hand left it (%s)", got, oid)
+	}
+	// And the case really is the one a plain push would have taken: M's first parent is
+	// the old base and the hand's commit is M's SECOND parent, so oid..M is a
+	// fast-forward.
+	l.git(l.work, "fetch", "-q", "origin")
+	l.git(filepath.Join(l.lane, merge.RepoDir), "merge-base", "--is-ancestor", oid, m)
+}
+
+// Rule 21's read-back on the PUSH branch: after a lease that landed, the base is read back
+// once, and a read-back that is not the merge is MERGE FAIL -- additional evidence for a
+// person, never the guard, because the guard already ran on the remote.
+func TestALeaseThatLandedAndABaseThatMovedAfterItIsMergeFail(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	oid := setupPR(t, l, 951, "feature-a", "a.txt", false)
+	base := l.baseSHA()
+	_, stdout, _ := l.run("run", "--lane", l.lane, "--once")
+	m := mergeSHAOf(t, stdout, "951")
+	if exit, _, errb := l.run("gate", "--lane", l.lane, "--pr", "951", "--head", oid,
+		"--base-sha", base, "--merge", m, "--verdict", "green", "--summary", l.summary("g1")); exit != 0 {
+		t.Fatalf("gate: %s", errb)
+	}
+	after := ""
+	l.afterPush(func() {
+		l.git(l.work, "fetch", "-q", "origin")
+		l.git(l.work, "checkout", "-q", "-B", "afterwards", "FETCH_HEAD")
+		l.write("afterwards.txt", "a hand, after the lease landed\n")
+		after = l.commit("after the lease landed")
+		l.git(l.work, "push", "-q", "origin", "HEAD:refs/heads/main")
+		l.git(l.work, "checkout", "-q", "main")
+	})
+	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once")
+	if exit != 1 {
+		t.Fatalf("a read-back that is not the merge is exit 1: %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "MERGE FAIL entry=951")
+	contains(t, stderr, "published object not at base")
+	contains(t, stderr, "reads back as "+after[:12])
+	absent(t, stdout, "MERGE OK")
+}
+
+// Demanded test 21: A BASE THAT ADMITS NO DIRECT PUSH IS `MERGE BLOCKED
+// missing=atomic_publication`, NOT `MERGE RACED`, and nothing falls back.
+func TestAProtectedBaseIsBlockedAndNothingFallsBack(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	oid := setupPR(t, l, 951, "feature-a", "a.txt", false)
+	base := l.baseSHA()
+	_, stdout, _ := l.run("run", "--lane", l.lane, "--once")
+	m := mergeSHAOf(t, stdout, "951")
+	if exit, _, errb := l.run("gate", "--lane", l.lane, "--pr", "951", "--head", oid,
+		"--base-sha", base, "--merge", m, "--verdict", "green", "--summary", l.summary("g1")); exit != 0 {
+		t.Fatalf("gate: %s", errb)
+	}
+	// The remote refuses every push to the base, the way a protected branch does.
+	hook := filepath.Join(l.remote, "hooks", "update")
+	if err := os.WriteFile(hook, []byte("#!/bin/sh\necho \"$1 $2 $3\" >> \"$GIT_DIR/pushes\"\n"+
+		"case \"$1\" in refs/heads/main) echo \"protected branch hook declined: main is a protected branch\" >&2; exit 1;; esac\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var ran [][]string
+	inner := l.runner
+	if inner == nil {
+		inner = merge.Exec{}
+	}
+	l.runner = &hookRunner{inner: inner, before: func(_ string, args []string) {
+		ran = append(ran, append([]string(nil), args...))
+	}}
+	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once")
+	if exit != 1 {
+		t.Fatalf("a base that admits no direct push is exit 1: %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "MERGE BLOCKED entry=951")
+	contains(t, stderr, "missing=atomic_publication")
+	contains(t, stderr, "nothing was published")
+	absent(t, stderr, "MERGE RACED")
+	absent(t, stdout, "MERGE OK")
+	if got := l.refreshBase(); got != base {
+		t.Errorf("the base moved to %s and nothing may have been published", got)
+	}
+	// NO FALLBACK: no gh pr merge, and no second push at the base after the refusal.
+	if len(l.host.Merges) != 0 {
+		t.Errorf("the tool fell back to the host primitive: %v", l.host.Merges)
+	}
+	leases := 0
+	for _, args := range ran {
+		if isLeasePush(args) {
+			leases++
+			continue
+		}
+		if len(args) > 0 && args[0] == "push" {
+			for _, a := range args {
+				if strings.Contains(a, "refs/heads/main") {
+					t.Errorf("a plain push at the base followed the refusal: %v", args)
+				}
+			}
+		}
+	}
+	if leases != 1 {
+		t.Errorf("the lease was attempted %d times; the pass stops on the first refusal", leases)
+	}
+}

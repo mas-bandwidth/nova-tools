@@ -134,17 +134,42 @@ func (h *hookRunner) Run(ctx context.Context, dir, name string, args ...string) 
 func (l *lab) beforePush(hand func()) {
 	done := false
 	l.runner = &hookRunner{inner: merge.Exec{}, before: func(_ string, args []string) {
-		if done || len(args) == 0 || args[0] != "push" {
+		if done || !isLeasePush(args) {
 			return
 		}
-		for _, a := range args {
-			if strings.HasPrefix(a, "--force-with-lease=") {
-				done = true
-				hand()
-				return
-			}
-		}
+		done = true
+		hand()
 	}}
+}
+
+// afterPush installs a hand that runs once in the window BETWEEN the lease landing and the
+// read-back of rule 21 -- which is the next fetch of the base. It is how a test reaches
+// `MERGE FAIL ... published object not at base` on the push branch.
+func (l *lab) afterPush(hand func()) {
+	pushed, done := false, false
+	l.runner = &hookRunner{inner: merge.Exec{}, before: func(_ string, args []string) {
+		if isLeasePush(args) {
+			pushed = true
+			return
+		}
+		if !pushed || done || len(args) == 0 || args[0] != "fetch" {
+			return
+		}
+		done = true
+		hand()
+	}}
+}
+
+func isLeasePush(args []string) bool {
+	if len(args) == 0 || args[0] != "push" {
+		return false
+	}
+	for _, a := range args {
+		if strings.HasPrefix(a, "--force-with-lease=") {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *lab) deps() Deps {
