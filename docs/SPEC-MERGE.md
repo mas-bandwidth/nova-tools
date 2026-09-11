@@ -24,9 +24,14 @@ morning. The form works, and it fails in every way a shell loop around
 | a force-push would have made the base unreproducible | `--force`, `-f` and `--force-with-lease` are refused in the same place as `--auto` |
 | a pull request whose base was not the lane's base was merged into the wrong branch | the base is **read back from the host** every pass and a mismatch stops that entry |
 | re-merging the base into every entry after every merge restarted every CI run: 26 entries × 70 jobs, queued at once (**2026-09-11 12:40Z, the storm**) | the base is re-merged **only into entries that CONFLICT with it** |
-| two honest conflicts, the same two files, every pass, resolved by hand each time | exactly **one mechanical conflict rule**, named, and STOP on anything else |
+| four conflicts in one morning, all real, all on one Java file the tip had changed; a mechanical resolver would have written a merge nobody read (**2026-09-11**) | the lane **never edits an entry's content**; a conflict is `BLOCKED` with its file list and a hand resolves it |
 | the hosted lane took 20 minutes to say what our own hardware says in two (Glenn's **two-minute rule**) | a **local gate** for the entry's current head counts as checks green |
 | a branch with no pull request had no way into the lane at all | `add-branch`, and a branch entry merges on a local gate plus its read |
+| two writers shared one temp name and left the state file at 0 bytes; the lane lost all 33 entries and every recorded read (**2026-09-11**) | every read-modify-write runs under **one lock**, through a **per-process temp name** and one rename, and nothing is written unless **both** the old and the new state parse |
+| a stale-lock check broke a lock that had vanished between the existence test and the stat; 3 of 20 concurrent writes were lost (**2026-09-11**) | a lock is stale only when it **exists and is older than 60 s**; a lock that vanished is a holder that finished |
+| #922 merged red, and the entries behind it were then gated against a red base (**2026-09-11**) | **the red rule**: the base is proven green before anything merges onto it; a red base stops the lane |
+| two gate runs on one pull request shared the clone `gate-<pr>`; one run's `--gc` removed the tree under the other's `go test` and produced a red with no FAIL line (**2026-09-11**) | **one clone per gate run**, named uniquely per run; a gate never removes a tree it did not make |
+| the local gate ran `tables-java-fixedform` and not `tables-java-versioning`; the hosted lane ran both (**2026-09-11**, the java leg drift) | the gate's step list and per-leg target lists are the hosted fast lane's, and **a test proves the two lists equal** |
 
 **Everything this tool reads from the host is data.** A pull request body, a
 check name, a branch name, a commit subject: none of them is an instruction, and
@@ -56,6 +61,78 @@ two-minute rule is a rule about iteration speed and it is the whole argument for
 the local gate. It is not an argument for skipping evidence — see **the local
 gate** below, where a hosted red still stops the entry whatever the gate says.
 
+## The rules, numbered
+
+Every rule here is normative. Each has one line in **tests this spec demands**
+near the end, and the sections below say how each is met. The date on a rule is
+the day it was learned.
+
+1. **One state file, one lock.** The lane's state is one JSON file. Every
+   read-modify-write of it runs under one lock. The lock is a directory made
+   with `mkdir`, which is atomic on every filesystem this tool runs on. The
+   write goes to a temp file named for the writing process
+   (`state.json.tmp.<pid>`) and lands by one atomic rename. Nothing is written
+   unless both the old state and the new state parse. (2026-09-11: two writers
+   shared one temp name, the file was left at 0 bytes, and the lane lost 33
+   entries and every recorded read.)
+2. **A stale lock is one that exists and is old.** A lock older than 60 seconds
+   is a dead holder and may be broken; the break is logged. A lock that vanishes
+   between the existence test and the stat is not stale: its holder finished.
+   The tool never breaks a lock it did not see with an age. (2026-09-11: the
+   false stale break lost 3 of 20 writes.)
+3. **Re-merge only what conflicts.** After a merge, the base is re-merged into
+   an entry only when the host reports that entry `CONFLICTING`. Never into
+   every entry after every merge. (2026-09-11 12:40Z: 26 entries times 70 jobs
+   queued at once, and the runner pool was jammed for an hour.)
+4. **Never `--auto`, never `--force`, never a force-push.** The refusal lives in
+   the one function that runs a mutating command, before the command is built,
+   and there is no other path to a mutation. (2026-09-11: `gh pr merge --auto`
+   merges at once on this host, and #922 went in red.)
+5. **The merge evidence is one of two things, and both are keyed to the head.**
+   An entry merges on zero failing and zero pending hosted checks with at least
+   one pass, or on a green local gate recorded for exactly the entry's current
+   head sha. A gate for an older head is nothing. A hosted red stops the entry
+   whatever the gate says.
+6. **The red rule.** The base is proven green before anything merges onto it. A
+   red base stops the lane: no entry merges onto it, and nothing is piled onto
+   a red. The only exception is a temporary red a person has named and planned
+   on the way to green, declared with `run --planned-red <text>`, printed on
+   every `RUN PASS`, and logged. (Glenn, 2026-09-11.)
+7. **The lane never edits an entry's content.** A conflict the host reports
+   makes the entry `BLOCKED` with the list of conflicting files. A hand resolves
+   it: a child, one clone. The lane does no mechanical resolve of any kind.
+   (2026-09-11: four conflicts, all real, all on one Java file the tip had
+   changed.)
+8. **Gates run wide; the merge is the only serial step.** One clone per entry
+   per gate run, named uniquely per run. Two gate runs on one entry never share
+   a tree. A gate never removes a tree it did not make. Parallel is the
+   default. Serial is only where parallel cannot work, and those places are
+   named: one base, one writer of the state, one merge per pass. The merge
+   takes seconds. (Amdahl for coordination, Glenn 2026-09-11; the `gate-<pr>`
+   false red.)
+9. **Local-gate parity.** The local gate runs exactly the hosted fast lane's
+   steps and per-leg make targets. A test reads both lists and proves them
+   equal. A step that runs a smaller or a different target list is a contract
+   violation. (2026-09-11: the java leg ran `tables-java-fixedform` locally and
+   not `tables-java-versioning`.)
+10. **Placement.** A pull request into `main` gets hosted CI. Below `main`, a
+    branch, a local gate and a read are enough. Hosted CI runs only on `main`
+    and nightly. The lane supports both pull-request entries and branch
+    entries. (Glenn, 2026-09-11.)
+11. **Reads live in the state, and the state says how many.** `needs_read` is
+    per entry. A read is an approve or a hold, recorded by name. A hold blocks.
+    Every read is in the state file, so losing the state loses the reads, and
+    rule 1 is what protects them. `STATUS ENTRY` prints the count of approves
+    and holds each entry holds, and `STATUS OK` prints the total.
+12. **Bounded output.** `status` and `run` print counts and one remedy line.
+    No listing grows with the lane: every listing is capped at `--max`,
+    default 20. The bound is measured at the largest plausible state, 50
+    entries, in lines and bytes.
+13. **Every loop ends on its own.** `run --loop` requires `--hours`. The tool
+    never matches a process by its own command line. It never touches `/tmp`.
+    The state, the clone and the gate summaries live only under paths given by
+    flags.
+
 ## The verbs
 
 ```
@@ -63,7 +140,7 @@ nova-merge add        --lane <dir> --pr <n> [--needs-read]
 nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
 nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --verdict approve|hold [--note <text>]
 nova-merge gate       --lane <dir> (--pr <n>|--branch <name>) --head <sha> --verdict green|red --summary <path>
-nova-merge run        --lane <dir> (--once | --loop <duration>) [--hours <h>] [--local-gates] [--max <n>]
+nova-merge run        --lane <dir> (--once | --loop <duration> --hours <h>) [--local-gates] [--planned-red <text>] [--max <n>]
 nova-merge status     --lane <dir> [--max <n>]
 nova-merge stop       --lane <dir>
 nova-merge dry-run    --lane <dir> [--local-gates] [--max <n>]
@@ -115,7 +192,7 @@ see **exit codes**.
 not the same news as a red check, and a lane full of entries waiting on CI is a
 lane working exactly as intended. `run` exits 0 with `waiting=<n>` and exits 1
 only when something was **refused, stopped or blocked** — a red, a wrong base, a
-hold, a conflict that is not the mechanical one, a push that would not land. A
+hold, a conflict, a red base, a push that would not land. A
 lane that exits 1 on every pass while CI runs is a lane whose caller stops
 reading the exit code, and the prototype had exactly that shape.
 
@@ -139,10 +216,12 @@ READ OK entry=<n-or-name> who=<name> verdict=<approve|hold> head=<sha|-> approva
 READ REFUSED: <reason>
 GATE OK entry=<n-or-name> head=<sha12> verdict=<green|red> summary=<path> in_lane=<true|false>
 GATE REFUSED: <reason>
-RUN PASS n=<k> at=<stamp> local_gates=<true|false>
+RUN PASS n=<k> at=<stamp> local_gates=<true|false> planned_red=<text|->
+RUN BASE base=<branch> head=<sha12> checks=g<n>/p<n>/r<n> gate=<green|-> state=<GREEN|RED|PENDING|PLANNED-RED>
+RUN STOPPED base=<branch>: the base is red (<n> failing); nothing merges onto a red base
 RUN ENTRY entry=<n-or-name> head=<sha12> checks=g<n>/p<n>/r<n> read=<n>a/<n>h gate=<green|-> state=<STATE>
 RUN STOPPED entry=<n-or-name>: <reason>
-RUN REMERGE entry=<n-or-name> base=<branch> result=<clean|mechanical|stopped> pushed=<true|false>
+RUN REMERGE entry=<n-or-name> base=<branch> result=<clean|blocked> pushed=<true|false> files=<n>
 MERGE OK entry=<n-or-name> base=<branch> basis=<hosted|gate> gate=<path|-> read=<who,who|none-required>
 MERGE FAIL entry=<n-or-name>: <reason>
 RUN OK lane=<n> merged=<n> dropped=<n> blocked=<n> waiting=<n>
@@ -150,7 +229,7 @@ RUN MORE kind=<entry> shown=<n> total=<t> nova-merge status --lane <dir> --max 0
 RUN NOTE <the one remedy line>
 RUN REFUSED: <reason>
 STATUS ENTRY kind=<pr|branch> entry=<n-or-name> head=<sha12> checks=g<n>/p<n>/r<n> read=<n>a/<n>h gate=<green|-> state=<STATE> last=<stamp>
-STATUS OK prs=<n> branches=<n> base=<branch> ready=<n> blocked=<n> waiting=<n>
+STATUS OK prs=<n> branches=<n> base=<branch> base_state=<GREEN|RED|PENDING|PLANNED-RED> ready=<n> blocked=<n> waiting=<n> reads=<n>a/<n>h
 DRY PLAN pos=<k> entry=<n-or-name> basis=<hosted|gate> read=<n>a/<n>h
 DRY OK surveyed=<n> would_merge=<n-or-name|-> stopped=<n> waiting=<n>
 STOP OK lane=<dir>
@@ -160,6 +239,22 @@ STOP OK lane=<dir>
 **count as green** before it says what it found: `local_gates=true` accepted
 local gates, `local_gates=false` read hosted checks only. A listing that does
 not say what it looked at is a listing a reader will mistake for everything.
+`planned_red=<text>` is the one exception to the red rule (rule 6), printed
+where a reader of the log sees it on every pass it applied to.
+
+`RUN BASE` is the second line of every pass. It is the base's own evidence,
+read the same way an entry's is: the check buckets of the base's head commit,
+or a green gate recorded for the base branch at that head. A `RED` base stops
+the pass before any entry is read, with `RUN STOPPED base=…`. A `PENDING` base
+(no checks and no gate for its head, which is every base below `main` right
+after a merge) waits, and `RUN NOTE` names the gate run that proves it.
+`STATUS OK` carries the same verdict as `base_state`, so a lane can be read
+without a pass.
+
+`STATUS OK reads=<n>a/<n>h` is the total of approves and holds across the lane
+(rule 11). It is a count of what the state file holds, so a lane whose state
+was lost and rebuilt shows `reads=0a/0h`, and a reader knows the reads are
+gone rather than assuming they are somewhere else.
 
 **Every listing is a cap and a count**, per SPEC.md: `run` and `status` take
 `--max <n>`, default 20, `0` for all, and print one `RUN MORE` / `STATUS MORE`
@@ -190,8 +285,12 @@ A lane is a directory, named by `--lane`. It holds:
 <lane>/log            one append-only line per event, UTC-stamped
 <lane>/repo/          this lane's own clone, never a working copy of anybody's
 <lane>/gates/         the gate summaries, one file per entry and head
+<lane>/lock/          the lock, a directory; holds pid and stamp (rules 1 and 2)
 <lane>/stop           present means: start nothing new and exit
 ```
+
+Every one of these lives under `--lane`. Nothing this tool writes goes
+anywhere else, and nothing goes under `/tmp` (rule 13).
 
 The clone is the lane's own and the tool creates it. **It is never a checkout
 somebody works in.** A lane that merged into a working copy would rewrite a
@@ -338,11 +437,34 @@ smaller set of targets than the hosted job is a bug, and this spec says so here
 so that a future looser version is a contract violation rather than a
 convenience.
 
+**Parity is proven, not promised (rule 9).** The gate runner keeps its step
+list and its per-leg target lists as data, and a test reads them beside the
+hosted `ci-fast.yml` and asserts the two are equal, step for step and target
+for target. Today the java leg had drifted: the local gate ran
+`tables-java-fixedform` and the hosted job ran `tables-java-fixedform
+tables-java-versioning`. A green from a gate missing a target is a green that
+answered a smaller question, and nothing but a test notices.
+
+**Gates run wide (rule 8).** Every entry that needs a gate gets its own clone,
+and the clone's name is unique per run: `gate-<entry>-<run id>`, never
+`gate-<entry>` alone. Two gate runs on one entry never share a tree. Today two
+runs shared `gate-<pr>`; one run's clean-up removed the tree under the other
+run's `go test`, and the second run reported red with no FAIL line in it. A
+gate run removes only the tree it made, and only when asked. The only serial
+steps in the whole lane are the ones parallel cannot do: one base, one writer
+of the state, one merge per pass. The merge itself takes seconds.
+
 `nova-merge` does **not** run the gate. A second tool runs it and records the
 verdict; `nova-merge` reads records. The separation is deliberate: the gate's
 steps are this repository's `ci-fast.yml`'s, which belong to the repository
 being merged and change with it, and a merge tool that embedded them would be a
 merge tool that went stale silently.
+
+**Placement (rule 10).** A pull request into `main` merges on hosted checks.
+A branch entry, or a pull request whose base is below `main`, merges on a
+green local gate plus its read, and needs no hosted run at all. Hosted CI runs
+only on `main` and nightly. This is Glenn's law from the top of the page, made
+into a rule the lane can apply per entry.
 
 ## The re-merge rule — only what conflicts
 
@@ -370,58 +492,45 @@ The re-merge of one entry:
 fetch the base; fetch the entry's head
 check out the head in the lane's clone
 if the base is already an ancestor -> nothing to do
-merge the base with conflictstyle=diff3
+merge the base
   clean            -> commit and push the head (never forced)
-  mechanical       -> resolve per the rule below, commit, push
-  anything else    -> abort the merge, STOP this entry, move on
+  any conflict     -> abort the merge; BLOCKED with the conflicting file list; move on
 ```
 
-A stopped entry is `BLOCKED` with its reason, and the lane **moves on**: one
+A blocked entry is `BLOCKED` with its reason, and the lane **moves on**: one
 entry that needs a hand does not stop the other thirty-two. The reason names
-the file, so `docs/FIXED-FORM-VERSIONING-TESTS.md conflicts and is not one of
-the two mechanical files` is a sentence a reader can act on without opening
-anything.
+every conflicting file, so `conflicts with fixed-table-form in
+test/java-tables/Versioning.java` is a sentence a reader can act on without
+opening anything, and `files=<n>` on `RUN REMERGE` is the count.
 
 **A branch entry's merge is never re-merged and never auto-resolved.** A branch
 entry merges by checking out the base in the lane's clone, `merge --no-ff` of
 `origin/<branch>` with a message naming the branch and its last commit's
 subject, and a push of the base (never forced). A branch that conflicts stops
-with its reason and waits for a hand, because the mechanical rule below is a
-property of the pull-request path's own files and has no business being applied
-to a merge nobody reviewed against a pull request.
+with its reason and waits for a hand.
 
-## The one mechanical conflict rule
+## The one mechanical conflict rule, withdrawn
 
-Exactly two conflicts are resolved without a person, because both are
-mechanical — the resolution is determined by the two sides, with no judgment in
-it — and both arose on every second pass of a 30-entry lane.
+An earlier draft of this spec kept one mechanical conflict rule in two halves:
+a sorted union of a ship-target list, and a workflow hunk where both sides had
+only added steps. The prototype carries both, as `resolve_mechanical` and an
+embedded Python resolver. **This spec withdraws the rule. There is no
+mechanical resolve (rule 7).**
 
-1. **A sorted-union list.** A conflict whose entire `ours` side and entire
-   `theirs` side are each **one line** matching the ship-target declaration — the
-   generated list of which legs ship a given form — resolves to that same
-   declaration holding the **sorted set union** of both sides' string literals.
-   A conflict that includes any other line of that file, or where either side is
-   not exactly that one line, is **not** this rule and stops.
-2. **Two additions to a workflow.** A conflict in the CI workflow where the
-   **base side is empty** — both sides *added* lines, neither changed the same
-   ones — resolves to `ours` followed by `theirs`, in that order. A conflict
-   where the base side has any content is two sides **changing** the same steps,
-   which is a disagreement about the workflow and stops.
+The reason is the record. On 2026-09-11 the lane met four conflicts. All four
+were real: all on one Java file the tip had changed, none on either of the two
+files the rule named. A resolver that had matched would have been a resolver
+writing code nobody read into an entry. A resolver that did not match still
+had to be read, tested and kept parity with a file that belongs to another
+repository. The rule earned nothing on the day it was built for, and it is
+the one place in this tool where a mistake writes content.
 
-**Anything else STOPS that entry**, with one line naming the file and why it was
-not mechanical. There is no third rule, no heuristic, and no "take theirs": a
-merge tool that resolved a conflict it did not understand would be writing code
-nobody read into the base, which is the one thing this whole lane exists to
-prevent.
-
-The rule needs `diff3` conflict style — the base side is half the evidence — and
-a conflict marker the tool cannot parse to a close is a stop, never a guess.
-
-**Which files those two are is lane configuration, not a constant.** They are
-named in the lane's state at creation, as two paths and two rule names
-(`sorted-union-list`, `both-added-steps`), because the paths belong to the
-repository being merged and a binary that hardcoded one repository's test file
-would be this repository's tool carrying another repository's accidents.
+**So the lane never edits an entry's content.** A conflict is the host's word
+(`mergeable: CONFLICTING`), the entry becomes `BLOCKED`, `detail` names every
+conflicting file, and a hand resolves it: a child, in one clone of its own,
+never the lane's. The lane does not parse conflict markers, does not need
+`diff3`, and has no `mechanical` list in its state. There is no code path in
+`nova-merge` that writes a resolved file, and a test asserts it.
 
 ## The refusals that are structural
 
@@ -446,9 +555,9 @@ not checking the contract it claims to.
 **Two lanes on one base.** Two `run` processes, or one `run` and one hand
 `gh pr merge`, both merging into one base: each merges an entry its own checks
 verified against a base the other had already moved. The tool takes a **lock on
-the lane directory** for the whole of a pass (`O_CREAT|O_EXCL` on
-`<lane>/lock`, holding the pid and the stamp, per `internal/bus`'s lock), and a
-second `run` on the same lane exits 2 naming the holder. A lock is not a claim
+the lane directory** for the whole of a pass (`mkdir <lane>/lock`, a file
+inside holding the pid and the stamp; rules 1 and 2), and a second `run` on the
+same lane exits 2 naming the holder. A lock is not a claim
 on the base: two lanes on **one base** through two lane directories is a
 configuration this tool cannot see, so `run` records the base's sha at the start
 of a pass and **re-reads it immediately before the merge**; if it moved, the
@@ -478,11 +587,29 @@ pushed should be told the gate was spent rather than left wondering why the lane
 is waiting.
 
 **A state file written by two verbs at once.** `add`, `read` and `gate` are
-run by hand while `run` loops. Every write is a read-modify-write of one JSON
-file, so every write takes the same lane lock, and every write is to a temporary
-file in the lane directory renamed over the state (the prototype does the
-rename; it does not take the lock). A verb that cannot take the lock within its
-`--timeout` exits 2 and says who holds it.
+run by hand while `run` loops, and six gate records can arrive in one second.
+Every write is a read-modify-write of one JSON file, so every write takes the
+same lane lock (rule 1). The write goes to `state.json.tmp.<pid>`, a name per
+writing process, and lands by rename; nothing is written unless the old state
+parsed and the new state parses. Today's prototype, before its lock, had two
+writers on one shared temp name: the state was left at 0 bytes and the lane
+lost all 33 entries and every read. A verb that cannot take the lock within
+its `--timeout` exits 2 and says who holds it.
+
+**A lock broken under a live holder.** A stale lock is one that exists and
+whose stamp is older than 60 seconds (rule 2). The check is: does the lock
+exist; if so, how old is it. A lock that vanished between those two steps is
+not stale, it is released, and the writer simply tries again. The prototype's
+first check read a vanished lock's age as infinite, called it stale, and broke
+the lock the next writer had just taken; 3 of 20 concurrent writes were lost
+that way. The break, when it happens, is logged with the dead holder's pid.
+
+**A red base under a green entry.** An entry's checks are evidence about the
+entry merged with the base the host computed at check time. If the base is
+red, that merge is red too, whatever the entry's own checks say, and the entry
+behind it is worse. So a pass reads the base's evidence first (rule 6) and
+stops before touching any entry when the base is red. The only way through is
+`--planned-red`, a person's name on the exception, printed on every pass.
 
 ## The state file
 
@@ -494,10 +621,6 @@ file whose owner believes a read is required.
 {
   "repo": "<owner>/<name>",
   "base": "<branch>",
-  "mechanical": [
-    {"path": "<path>", "rule": "sorted-union-list"},
-    {"path": "<path>", "rule": "both-added-steps"}
-  ],
   "prs": [
     {"pr": 951, "needs_read": "yes",
      "reads": [{"who": "emma", "verdict": "approve", "note": "", "at": "2026-09-11T12:31:07Z",
@@ -553,8 +676,10 @@ status line.**
 - **It does not open, close, comment on, label or approve a pull request.** It
   readies a draft that is in the lane and it merges. A tool that could comment
   could be made to argue.
-- **It does not resolve a conflict it does not have a named rule for**, and it
-  has exactly two.
+- **It does not resolve a conflict.** Not one. A conflict is `BLOCKED` with
+  its file list, and a hand resolves it in a clone of its own (rule 7).
+- **It does not run in the dark.** Every loop has `--hours`, every wait has a
+  timeout, and a pass says on its second line whether the base is green.
 - **It does not rebase or squash.** A merge commit, or a stop.
 - **It does not decide what goes in the lane.** `add` is a person's decision,
   every time.
@@ -580,16 +705,21 @@ it:
    errors.** Here the exit table is this repository's: 0 pass, 1 said NO, 2
    could not run — so a flag typo is 2, and a blocked entry is 1.
 6. **The counts in the state file are strings.** Here they are numbers.
-7. **No lock.** Two `run` loops on one lane directory interleave their
-   read-modify-writes. Here every write takes the lane lock, and a pass holds it
-   throughout.
+7. **The lock covers one write and nothing holds the lane for a pass.** Two
+   `run` loops on one lane directory interleave their passes. Here every write
+   takes the lane lock, and a pass holds it throughout.
 8. **The base is not re-read immediately before the merge.** Here it is, and a
    base that moved stops the pass.
-9. **The mechanical files are hardcoded to one repository's paths** (a compiler
-   test and `ci.yml`). Here they are lane configuration with a named rule each.
-10. **The resolver is an embedded Python program**, which puts a second language
-    and a second set of parsing bugs inside a shell script. Here it is Go, in
-    `internal/merge`, with the conflict parser under test.
+9. **`resolve_mechanical`, and the embedded Python resolver behind it.** The
+   prototype rewrites two named files in place when every conflict matches one
+   of two rules. Here there is no resolver at all: a conflict is `BLOCKED`
+   with its file list, and no code path writes a resolved file (rule 7).
+   Today's four conflicts were all real and all on one Java file the rule did
+   not name.
+10. **The first shape re-merged the base into every entry after every merge.**
+    That is the storm of 12:40Z: 26 entries times 70 jobs, and the runner pool
+    jammed for an hour. Here the base is re-merged only into an entry the host
+    reports `CONFLICTING` (rule 3).
 11. **`gh pr checks` returning an empty list is treated as zero of everything**
     and then caught only because `C_GREEN == 0` is also a wait. Here "no checks
     at all" is explicitly `PENDING`, named, and tested.
@@ -598,6 +728,80 @@ it:
 13. **`status` can resolve a branch head by shelling into the clone when the
     entry has none yet**, which makes a read-only verb depend on a clone's
     freshness. Here `status` prints `head=-` and says the lane has not run yet.
+14. **The `--auto` refusal lives in one shell function, `mut`, and every other
+    call site in the file runs `git` or `gh` directly.** A caller who reaches
+    past `mut` has no guard, and `gh pr merge --auto` by hand is what merged
+    #922 red. Here the guard is the only path to a mutation (rule 4).
+15. **One shared temp name for the state write** (`lane.json.tmp`, in the
+    revision that lost the state), then `.tmp.$$`, with no lock around either.
+    Here rule 1: one lock, a per-process temp name, a rename, and both states
+    must parse.
+16. **A vanished lock is a stale lock.** The prototype's stale check computed
+    an age for a lock that was gone between its existence test and its stat,
+    called it stale, and broke the lock a live writer had just taken. Here rule
+    2: only a lock that exists and is older than 60 s is broken.
+17. **`local-gate.sh` names the clone `gate-<pr>`, reclaims it with `--gc`
+    (an `rm -rf`), and two runs on one pull request share it.** Here rule 8:
+    one clone per gate run, named uniquely per run, and a run removes only the
+    tree it made.
+18. **The java leg runs `tables-java-fixedform` only**; the hosted job runs
+    `tables-java-fixedform tables-java-versioning`. Here rule 9, and the parity
+    test that would have gone red on the drift.
+19. **`run` with no `--hours` loops forever** (`hours=0` means no deadline),
+    and the lane directory, the repository and the base default from
+    environment variables. Here `--loop` requires `--hours` (rule 13), and
+    every path is a flag (SPEC.md, no guessing).
+20. **Nothing reads the base's own checks.** A pass starts reading entries with
+    no word on whether the base is green. Here `RUN BASE` is the second line
+    of every pass and a red base stops it (rule 6).
+
+## Tests this spec demands
+
+One line per rule in **the rules, numbered**. Each is a test the work list
+builds, and each must be seen red before it is trusted (CONTRIBUTING.md: a
+check never seen failing is not a check).
+
+1. Thirty concurrent writers (`add`, `read`, `gate`, in any mix) on one lane:
+   every write lands in the final state, and a reader polling the file in a
+   tight loop parses it at every read, never 0 bytes, never a partial file.
+2. A lock directory with a stamp older than 60 s is broken, the break is
+   logged with the holder's pid; a lock that vanishes between the existence
+   test and the stat is not broken, and the writer waits and then writes.
+3. After a merge, an entry the host reports `MERGEABLE` is not touched: no
+   fetch of its head, no commit, no push. An entry reported `CONFLICTING` gets
+   exactly one re-merge attempt.
+4. `--auto`, `--force`, `-f`, `--force-with-lease` in any argument to the
+   mutating helper: exit 1 and the sentence, before the command is built; the
+   fake host records that no push was ever forced.
+5. One failing check refuses; one pending check waits; zero checks is
+   `PENDING`; a green gate for the current head merges; a green gate for the
+   previous head prints `gate=-` and waits; a hosted red with a green gate
+   still refuses.
+6. A red base: the pass prints `RUN STOPPED base=…` as its third line and
+   merges nothing, whatever the entries show; with `--planned-red <text>` the
+   text is on `RUN PASS` and in the log and the pass proceeds; a `PENDING`
+   base waits and `RUN NOTE` names the gate command.
+7. A conflicting entry becomes `BLOCKED` with every conflicting file named in
+   `detail`, its head sha is unchanged, and the fake host saw no push. A source
+   test asserts no function in `internal/merge` opens a file in the clone for
+   writing.
+8. Two gate runs for one entry in one process get two clone names, neither is
+   `gate-<entry>` alone, and a run's clean-up removes only the tree it made;
+   the other run's tree is intact afterwards.
+9. The gate runner's step list and per-leg target lists, read as data, equal
+   the hosted `ci-fast.yml`'s, read from the workflow; a fixture with the java
+   drift makes the test red.
+10. A branch entry merges on a green gate plus its read with no hosted checks
+    at all; a pull request onto `main` with no hosted checks waits.
+11. Reads survive a restart: `read` writes, the process exits, `status` prints
+    the same approve and hold counts, and `STATUS OK reads=` equals their sum.
+12. Fifty entries: `status` and `run` output measured in lines and bytes and
+    the numbers written into the commit; the listing is a prefix of 20 with
+    one MORE line; `RUN NOTE` is one line; the counts say 50.
+13. `run --loop` without `--hours` is exit 2 and the sentence; a loop with
+    `--hours` ends on its own with the injected clock; nothing under `/tmp`
+    is created; a source test finds no `pgrep`, no `ps`, and no read of the
+    process table.
 
 ## The work list
 
@@ -610,41 +814,54 @@ independent problem at once, a `### First run` in `README.md`, a `quickstart`
 verb, and tests that pin all three by executing them.
 
 1. **`internal/merge/state.go`** — the state file: strict decode (unknown field
-   is an error), the two entry lists, the gate list, atomic write through a
-   temporary file and rename. Tests: an unknown field refuses; a string where a
-   number belongs refuses; a round trip preserves order.
-2. **`internal/merge/lock.go`** — the lane lock, `O_CREAT|O_EXCL`, holder pid
-   and stamp in the file, stale-holder detection, and the Windows variant, on
-   `internal/bus/lock*.go`'s shape. Tests: a second holder is refused and the
-   refusal names the first.
-3. **`internal/merge/conflict.go`** — the diff3 conflict parser and the two
-   mechanical rules, as pure functions over text. Tests: the sorted union of
-   two lists; a three-line `ours` refuses; a non-empty base side refuses; an
-   unterminated marker refuses; a file not in the lane's `mechanical` list
-   refuses by name.
-4. **`internal/merge/host.go`** — the host interface: entry metadata, check
-   buckets, ready, merge. One implementation shelling to `gh` with
-   `--timeout`, and a fake for tests. Tests: an empty check list is `PENDING`;
-   a `cancel` bucket is red; a fork head is `FORK`.
-5. **`internal/merge/gitops.go`** — the clone, fetch, checkout, merge, push, all
+   is an error), the two entry lists, the gate list, the write under the lock
+   through `state.json.tmp.<pid>` and rename, both states parsed before the
+   rename. Tests: an unknown field refuses; a string where a number belongs
+   refuses; a round trip preserves order; thirty concurrent writers all land
+   and the file parses at every instant (demanded test 1).
+2. **`internal/merge/lock.go`** — the lane lock as a directory (`mkdir`),
+   holder pid and stamp in a file inside, the 60 s stale rule, the
+   vanished-is-not-stale rule, and the Windows variant. Tests: a second holder
+   is refused and the refusal names the first; demanded test 2.
+3. **`internal/merge/blocked.go`** — the conflicting-file list from
+   `git diff --name-only --diff-filter=U`, the abort, the abort checked
+   afterwards, the `BLOCKED` detail. Tests: every file is named; the abort is
+   verified; a source test asserts nothing in the package writes into the
+   clone (demanded test 7).
+4. **`internal/merge/parity_test.go`** — the gate runner's step and target
+   lists against `ci-fast.yml` (demanded test 9). The lists are data in the
+   gate runner, never a second copy in this package.
+5. **`internal/merge/host.go`** — the host interface: entry metadata, check
+   buckets, the base's own check buckets, ready, merge. One implementation
+   shelling to `gh` with `--timeout`, and a fake for tests. Tests: an empty
+   check list is `PENDING`; a `cancel` bucket is red; a fork head is `FORK`.
+6. **`internal/merge/gitops.go`** — the clone, fetch, checkout, merge, push, all
    with the timeout, and the **mutation guard** that refuses `--auto` and the
    three force spellings before building a command. Tests: each refused flag,
-   by exit code and text; a push is never `--force`.
-6. **`internal/merge/read.go`** — the read condition: author exclusion, head
-   keying, hold precedence. Tests: a hold beats three approves; an author
-   approve does not satisfy; a stale approve does not satisfy and is counted
-   separately.
-7. **`internal/merge/pass.go`** — one pass: walk the order, classify each entry
-   into the closed state set, re-merge only what conflicts, re-read the base and
-   the entry `oid` immediately before the merge, merge at most one, stop.
-   Tests: the storm does not happen (a clean entry is not touched after a
-   merge); a moved base stops the pass; one merge per pass.
-8. **`cmd/nova-merge/main.go`** — the verbs, the flag parsing with this repo's
+   by exit code and text; a push is never `--force` (demanded test 4).
+7. **`internal/merge/read.go`** — the read condition: author exclusion, head
+   keying, hold precedence, the lane-wide totals. Tests: a hold beats three
+   approves; an author approve does not satisfy; a stale approve does not
+   satisfy and is counted separately; demanded test 11.
+8. **`internal/merge/pass.go`** — one pass: the base's evidence first and a
+   red base stops (rule 6), walk the order, classify each entry into the
+   closed state set, re-merge only what conflicts, re-read the base and the
+   entry `oid` immediately before the merge, merge at most one, stop. Tests:
+   the storm does not happen (a clean entry is not touched after a merge,
+   demanded test 3); a moved base stops the pass; one merge per pass; demanded
+   tests 5, 6 and 10.
+9. **`cmd/nova-merge/main.go`** — the verbs, the flag parsing with this repo's
    one-line refusals, the output grammar exactly as above, `--max` on every
-   listing, `dry-run` as a verb with no path to the mutation guard.
-9. **`cmd/nova-merge/*_test.go`** — the contract tests: every exit code, every
-   refusal sentence, the structural refusals, `dry-run` writes nothing (asserted
-   by running it against a lane whose clone is read-only), a capped listing is a
-   prefix with a MORE line, `RUN NOTE` is exactly one line.
-10. **`README.md`'s `### First run`** and the `quickstart` verb: create a lane,
+   listing, `--loop` refusing without `--hours`, `dry-run` as a verb with no
+   path to the mutation guard.
+10. **`cmd/nova-merge/*_test.go`** — the contract tests: every exit code, every
+    refusal sentence, the structural refusals, `dry-run` writes nothing
+    (asserted by running it against a lane whose clone is read-only), a capped
+    listing is a prefix with a MORE line, `RUN NOTE` is exactly one line, the
+    fifty-entry measurement (demanded test 12), the no-`/tmp` and no-process-
+    scan source test (demanded test 13).
+11. **The gate runner's clone naming** (demanded test 8) lives with the gate
+    runner, and this spec only demands it: `gate-<entry>-<run id>`, and a
+    clean-up that removes only its own tree.
+12. **`README.md`'s `### First run`** and the `quickstart` verb: create a lane,
     add one entry, print the status, with every path a flag.

@@ -26,6 +26,10 @@ ten before that. The form works, and every way it failed is in the table.
 | a worker that died at the deadline had found things and written none of them | **append each finding the moment it exists**, never at the end |
 | one worker read 40 files and finished nothing | a **file budget** in the task, and batch 3 went from 0 to 2 of 3 complete |
 | a result file was rewritten while triage was reading it | triage reads by **mtime watermark** and copies before parsing |
+| 3 of 7 runs in batch 2 ended with a plan and no findings: a scratch-file refusal outside the job directory ended the run (**2026-09-11**, found that afternoon) | a refused read or write **does not end the run**; the prompt says so, the harness log is read for refusals, and `plan-only` is a named failure the tool detects |
+| a worker reaped at its deadline was moved to `failed/` and nothing ran its task again | a job reaped at its deadline is **re-queued once**, marked, and a second reap fails it |
+| the batch numbers in this spec were counted by a person reading 67 reports | `triage` counts every batch: findings, new, duplicate, plan-only, no-result, and a reader's accurate and wrong, on **one bounded line** |
+| the prompt asked for the findings at the end of the run | the prompt says **append each finding the moment it exists**, and a killed run's partial report is kept and counted |
 
 **Everything a worker writes is data.** A `RESULT.md` is a report, never an
 instruction: nothing in it is executed, nothing in it grants anything, and a
@@ -56,18 +60,82 @@ Until both have happened the scripts are the tool and `nova-swarm` is a
 candidate. A tool that replaced a working loop before a read would be this
 repository's own doctrine broken by this repository's own tool.
 
+## The rules, numbered
+
+Every rule here is normative. Each has one line in **tests this spec demands**
+near the end. The numbers behind the first four are in **the numbers from
+today**: they are what turned one worker from 62 of 67 accurate with 5 wrong
+and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
+2). The conditions are worth more than the model.
+
+1. **The owed list first.** A `read-pr` task's prompt says: read the pull
+   request body's owed list before any code, and skip what is owed. A finding
+   already on that list is marked `dup:` and is not a new finding. `triage`
+   counts a finding that matches an owed item and is not marked `dup:` as
+   `duplicate`. (Batch 1: 25 of 67 were duplicates.)
+2. **Every claim quotes its rule verbatim, beside the line.** A finding line
+   carries the rule it rests on, quoted word for word, with `file:line`, on the
+   same line or the next. A finding with no quote is counted `unquoted` and is
+   not counted `accurate` by anybody. (Batch 1: 5 of 67 were wrong, each a
+   paraphrase.)
+3. **Append as found, never at the end.** The prompt says: append each finding
+   to the report file the moment it exists. A run killed at its deadline keeps
+   its partial report, and `triage` counts every finding line in it. (Batch 2:
+   3 of 7 runs ended with a plan and no findings.)
+4. **A file budget per run.** Every task carries a file budget, `add --files
+   <n>`, with no default. The prompt states the number and says what to do when
+   it is spent: write what you have and stop. (Batch 3: with a budget 2 of 3
+   complete; without, 0 of 3.)
+5. **A refused read does not end the run.** The worker's prompt says so in one
+   sentence. The harness refuses a read or a scratch write outside the job
+   directory, and the worker continues with what is inside. `nova-swarm`
+   reads the harness log for refusals and prints `refusals=<n>` on `RUN DONE`,
+   so a `plan-only` result beside `refusals=1` is a diagnosis rather than a
+   silence. (2026-09-11: a scratch-file refusal ended 3 of 7 runs.)
+6. **The key file is data.** The key lives in one file, `~/.config/<provider>/env`
+   or the path the worker description names. It is read as data, never sourced,
+   never on a command line, never in a log, never in a file this tool writes.
+   (The leak that taught it.)
+7. **One clone per job; a written deadline; a default action.** Each job has
+   its own clone under its own job directory, never shared. Each job carries a
+   deadline in seconds and the default action at it: the machinery reaps the
+   worker and records what is on disk. The swarm never waits forever. A worker
+   silent past its deadline is reaped and its job is re-queued once, with
+   `requeued=1` in the new task's sidecar; a job reaped a second time goes to
+   `failed/` with `reaped=2` and is not re-queued again.
+8. **Results are counted per batch, on one line.** `triage` classifies every
+   report as `ok`, `no-result` or `plan-only`, and prints one `TRIAGE BATCH`
+   line: `findings=<n> new=<n> dup=<n> unquoted=<n> plan_only=<n>
+   no_result=<n> accurate=<n|-> wrong=<n|->`. `plan-only` is a report with no
+   finding lines, and the tool detects it. `accurate` and `wrong` are a
+   reader's verdicts recorded by `nova-swarm verdict`; a dash means nobody has
+   recorded one, and a dash is never a zero.
+9. **N workers are N processes.** Each worker has its own job directory and its
+   own report file. No file is written by two workers. The coordinator merges
+   the reports once, at the end: scatter, then merge, and the merge is the
+   only serial step.
+
 ## The verbs
 
 ```
-nova-swarm add      --pool <dir> --task <file>|--stdin [--label <text>] [--template <name>] [--deadline <duration>]
+nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> [--label <text>] [--template <name>] [--deadline <duration>]
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>]
 nova-swarm status   --pool <dir> [--max <n>]
 nova-swarm stop     --pool <dir>
 nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin [--label <text>]
+nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> [--dir <dir>]... [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm template --name <read-pr|probe-row|fix-card>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--max <n>]
 ```
+
+`--files <n>` is the file budget (rule 4). It has no default: a budget this
+tool supplied would be a guess about somebody else's task. Zero is refused,
+because a worker that may open no file is a worker asked for a plan.
+
+`verdict` records a reader's counts for one task: how many of its findings
+were accurate and how many wrong, by name, into the task's sidecar. It is the
+only way `accurate` and `wrong` reach a batch line, and it is a person's act.
 
 The binary is `nova-swarm`, and that is its only name.
 
@@ -117,8 +185,8 @@ ADD OK id=<id> label=<label> template=<name|-> deadline=<d> pending=<n>
 ADD REFUSED: <reason>
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> deadline=<d> job=<path>
-RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|no-result|plan-only> dest=<done|failed>
-RUN KILLED id=<id> slot=<n> after=<d> deadline=<d>
+RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|no-result|plan-only> findings=<n> refusals=<n> dest=<done|failed>
+RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> requeued=<true|false> reaped=<1|2>
 RUN MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
 RUN OK started=<n> done=<n> failed=<n> killed=<n> pending=<n> after=<d>
 RUN NOTE <the one remedy line>
@@ -128,8 +196,11 @@ STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n>
 TRIAGE REPORT at=<stamp> job=<name> items=<n> red=<n> green=<n> notdone=<n>: <head>
 TRIAGE DEGRADED at=<stamp> job=<name> lines=<n>: <first heading>
 TRIAGE MORE kind=<report> shown=<n> total=<t> --max 0
+TRIAGE BATCH reports=<n> findings=<n> new=<n> dup=<n> unquoted=<n> plan_only=<n> no_result=<n> accurate=<n|-> wrong=<n|->
 TRIAGE OK reports=<n> template=<n> degraded=<n> items=<n> red=<n> green=<n> notdone=<n> page=<path>
 TRIAGE REFUSED: <reason>
+VERDICT OK id=<id> who=<name> accurate=<n> wrong=<n>
+VERDICT REFUSED: <reason>
 COST TASK id=<id> in=<n> out=<n> usd=<n.nnnn> model=<model>
 COST OK tasks=<n> in=<n> out=<n> usd=<n.nnnn> window=<stamp>..<stamp>
 REQUEUE OK id=<id> from=<old-id> changed=<true>
@@ -149,8 +220,17 @@ reader wanted was one of them.
 
 **`RUN NOTE` is exactly one remedy line.** If anything failed it names
 `nova-swarm triage`; if the pool drained it says so; if a worker was killed at
-its deadline it names `requeue` with a smaller file budget, which is the remedy
-that worked in batch 3.
+its deadline twice it names `requeue` with a smaller file budget, which is the
+remedy that worked in batch 3.
+
+**`TRIAGE BATCH` is one line and it is the batch (rule 8).** It is the line
+this spec's own numbers table was assembled from by hand, printed by the tool
+instead. `findings` is every finding line across the batch's reports; `new` is
+findings not marked `dup:`; `dup` is findings marked `dup:` plus findings that
+match an owed item and were not marked; `unquoted` is findings with no verbatim
+rule beside them; `plan_only` and `no_result` are reports. `accurate` and
+`wrong` sum the recorded verdicts, and print a dash when no verdict exists for
+any report in the batch. The line never grows with the batch.
 
 ## The key, read as data
 
@@ -220,9 +300,19 @@ Every task carries a deadline. The default is the worker description's, and
 
 **The machinery holds it, not the worker.** The dispatcher starts the worker as
 a child, watches it, and at the deadline sends a terminate, waits, then a kill.
-`RUN KILLED` says so and the task goes to `failed/` with its partial
-`RESULT.md` intact. A worker asked to enforce its own deadline is a worker whose
-deadline depends on the thing that has stopped responding.
+`RUN KILLED` says so, with the count of finding lines on disk. A worker asked
+to enforce its own deadline is a worker whose deadline depends on the thing
+that has stopped responding.
+
+**A reaped job runs once more, and only once (rule 7).** The first reap keeps
+the partial `RESULT.md`, moves the task's files to `failed/`, and queues the
+same task text again with `requeued=1` and `from=<old-id>` in the new sidecar.
+`RUN KILLED … requeued=true reaped=1` says so. A second reap of the re-queued
+task is `reaped=2`, `requeued=false`, and the job stays in `failed/`; the
+remedy line names `requeue` with a smaller budget, which is a person's act.
+One automatic retry closes the case where a worker was silent because the
+provider was, and never the case where the task was too big, which a second
+identical run would only prove twice.
 
 **The worker is told its deadline in its own prompt**, in seconds, with the
 sentence that it will be killed by machinery — because a worker that knows it
@@ -249,9 +339,9 @@ directory and the worker's self and its clones live under the slot.
 
 **The sandbox rule, stated in the prompt:**
 
-> A read outside the job directory may be refused by the tool. **A refused read
-> is not an error and does not end this run.** Note it, read something inside
-> the job directory instead, and continue.
+> A read or a write outside the job directory may be refused by the tool. **A
+> refused read or write is not an error and does not end this run.** Note it,
+> read or write something inside the job directory instead, and continue.
 
 This sentence is in the prompt because **today two runs ended on a refused
 read**. The worker asked for a path outside its sandbox, the harness refused, and
@@ -260,6 +350,16 @@ written. The refusal was correct. What was missing was the worker knowing what a
 refusal means — and that is a property of the prompt, which is this tool's
 output, which makes it this tool's bug (Glenn, 2026-09-09: **a friend's first-run
 stumble means fix the tool and the docs, not only answer them**).
+
+**The same sentence covers a write (rule 5).** Later the same day the cause of
+batch 2's three silent runs was found: each had tried to write a scratch file
+outside the job directory, the harness refused, and the run ended with a plan
+at the top of `RESULT.md` and no findings under it. So the sentence in the
+prompt says *read or write*, and the tool does its half: after every run it
+reads the harness log for the harness's own refusal lines and prints
+`refusals=<n>` on `RUN DONE`. A `plan-only` beside `refusals=1` is a diagnosis
+a coordinator can act on; a `plan-only` alone is the silence this spec's first
+draft could not explain.
 
 The prompt also says, in one line each: **there is no bus** — do not try to send
 anything to anybody; **do not loop, poll or wait for replies**; write what you
@@ -288,8 +388,9 @@ below. Each condition names the failure it closes.
    [batch 1: 5 of 67 findings were wrong, each a paraphrase]
 3. APPEND EACH FINDING TO RESULT.md THE MOMENT IT EXISTS. Not at the end.
    You may be killed at your deadline; what is on disk is what you found.
-4. A FILE BUDGET: read at most <n> files. When the budget is spent, write what
-   you have and stop. Say in RESULT.md which files you did not open.
+4. A FILE BUDGET: read at most <n> files (the task's --files). When the budget
+   is spent, write what you have and stop. Say in RESULT.md which files you
+   did not open.
    [batch 3: with a budget, 2 of 3 tasks complete; without, 0 of 3]
 5. A RESULT.md CONTAINING ONLY A PLAN IS A FAILED TASK. The plan belongs at
    the top, before the work; the findings are the work.
@@ -429,7 +530,9 @@ its own `--backoff`, default 30 seconds, doubling to a cap of 5 minutes), and
 retries the **same** task once. A second 429 on the same task fails it with
 `rc=429` in its sidecar, so `triage` can see that a batch's silence was a limit
 rather than a set of bad tasks. Three of seven workers in batch 2 came back
-silent and nothing in the pool said why.
+with a plan and no findings and nothing in the pool said why; the cause turned
+out to be a refusal, not a limit (rule 5), but a 429 is a second road to the
+same silence and the sidecar closes both.
 
 ## `requeue` — the same task, changed
 
@@ -452,7 +555,7 @@ Stated because they are the evidence for every condition in the templates, and
 because a spec that asserted the conditions without them would be asking to be
 believed.
 
-| batch | conditions in the task | accurate | new | wrong | duplicate | silent |
+| batch | conditions in the task | accurate | new | wrong | duplicate | plan-only |
 |---|---|---|---|---|---|---|
 | 1 | none | 62 of 67 | 37 | 5 | 25 | — |
 | 2 | the owed list, verbatim quotes, append-as-you-go | 17 of 17 | 16 | 0 | 0 | 3 of 7 |
@@ -464,13 +567,16 @@ What the table says, in one sentence each:
   owed in the pull request body, and 5 were wrong, each one a rule paraphrased
   rather than quoted.
 - **Batch 2**, with three conditions in the task, was 17 for 17 with nothing
-  wrong and nothing duplicated — and **3 of 7 workers came back silent**, which
-  the pool could not explain, which is why rate limits and sidecar exit codes are
-  in this spec.
+  wrong and nothing duplicated — and **3 of 7 runs ended with a plan and no
+  findings**. The morning's pool could not say why. The afternoon's reading of
+  the harness logs could: each of the three had a scratch-file refusal outside
+  the job directory, and the run ended on it. That is rule 5, and it is why
+  `refusals=<n>` is on `RUN DONE`.
 - **Batch 3** added a file budget and went from workers that read forty files and
   finished nothing to **2 of 3 complete**.
 
-The conditions are worth more than the model. That is the finding.
+The conditions are worth more than the model. That is the finding. The table
+is the last one a person assembles by hand: `TRIAGE BATCH` prints it (rule 8).
 
 ## The races, taken out
 
@@ -521,7 +627,12 @@ pending path it no longer owns.
 - **It does not choose a model.** The worker description does, and it is
   required.
 - **It does not retry a failed task.** `requeue` with changed text is a person's
-  decision.
+  decision. The one exception is rule 7: a job reaped at its deadline is
+  re-queued once by the machinery, because a silent provider and a silent
+  worker look the same from outside, and once is enough to tell them apart.
+- **It does not judge accuracy.** `accurate` and `wrong` are a reader's
+  verdicts, recorded by `verdict`, and a batch line with no verdict prints a
+  dash.
 - **It does not delete anything.** A pool is a record.
 - **It does not spawn a task chip or any other follow-up** (Glenn, 2026-09-10:
   **no task chips**; follow-ups go to the queue).
@@ -544,9 +655,10 @@ places where this spec is deliberately **not** a transcription:
    log line's content reaches a report unescaped and unbounded. Here the tail is
    one line, through `internal/oneline`, capped at `oneline.TailBytes`.
 6. **There is no cost accounting and no rate-limit handling at all.** Three of
-   seven silent workers in batch 2 are the consequence. Here a sidecar records
-   the exit code and the harness's token counts, and a 429 is backed off and
-   retried once.
+   seven workers in batch 2 came back with nothing and the pool could not say
+   whether a limit was the cause (it was a refusal; item 13). Here a sidecar
+   records the exit code and the harness's token counts, and a 429 is backed
+   off and retried once.
 7. **The deadline is enforced by a one-second polling loop per worker**, one
    shell process per running task, and the dispatcher's own five-second poll on
    top. Here it is one process watching every child.
@@ -562,6 +674,64 @@ places where this spec is deliberately **not** a transcription:
     refused read. Here it is in every prompt the tool writes.
 12. **The harness config is written with the provider's model list hardcoded to
     one provider's ids.** Here the model list comes from the worker description.
+13. **A refusal ended the run, and nothing said so.** The prompt did not say
+    what a refusal means, and a scratch-file refusal outside the job directory
+    ended 3 of 7 runs in batch 2 with a plan and no findings; the pool reported
+    `rc=0` and `done`. Here the sentence covers reads and writes, the harness
+    log is read for refusals, and `RUN DONE` prints `refusals=<n>` beside
+    `plan-only` (rule 5).
+14. **A job reaped at its deadline is gone.** Its files move to `failed/` and
+    nothing runs it again. Here it is re-queued once, marked, and a second reap
+    fails it (rule 7).
+15. **Results are counted by a person.** The batch table in this spec was
+    assembled by hand from 67 reports. Here `TRIAGE BATCH` is one line the
+    tool prints, and `verdict` is how a reader's counts reach it (rule 8).
+16. **The prompt asks for the findings at the end** (*do the task, write what
+    you found*). Here it says append each finding the moment it exists, and a
+    killed run's partial report is counted (rule 3).
+17. **There is no file budget** unless the person typing the task remembers
+    one. Here `add --files <n>` is required and the prompt carries it (rule 4).
+18. **The pool, the log directory, the worker directory and the key file
+    default from environment variables and `$HOME`.** Here every path is a
+    flag or a field of the worker description, and no environment variable is
+    consulted (SPEC.md, no guessing).
+
+## Tests this spec demands
+
+One line per rule in **the rules, numbered**. Each runs against the fake
+harness binary on `PATH`, inside `t.TempDir()`, with no network, and each must
+be seen red before it is trusted.
+
+1. The `read-pr` prompt contains the owed-list sentence before any other
+   condition; a report with a finding that matches an owed item and is not
+   marked `dup:` is counted `dup=1 new=0`.
+2. A finding line with a verbatim quote and `file:line` counts as a finding;
+   one without is counted `unquoted=1`, and the count prints on `TRIAGE BATCH`.
+3. The prompt contains the append-as-found sentence; a fake worker that writes
+   three findings a second apart and is killed after the second leaves a report
+   with two finding lines, and `RUN KILLED findings=2` and `triage` both say 2.
+4. `add` without `--files` is exit 2 and the sentence; `--files 0` is refused;
+   the prompt contains the number and the spent-budget instruction.
+5. A fake harness that refuses one read and one write mid-run and then
+   continues: the run ends `result=ok refusals=2` with its findings; a fake
+   harness that ends on the refusal: `result=plan-only refusals=1`, and the
+   pair is on one `RUN DONE` line.
+6. The key never appears in any child's argv, in any log, in any printed line,
+   or in any file under the pool or the slot; the harness config contains the
+   variable's name and not its value; a key file with a second line is read as
+   one line.
+7. Each job's clone path is under its own job directory and no two jobs share
+   one; a worker that sleeps past its deadline is killed, `requeued=true
+   reaped=1`, runs again, is killed again, `requeued=false reaped=2`, and lands
+   in `failed/`; the dispatcher exits at `--hours` with the injected clock.
+8. Seven reports, three of them plan-only, one with a recorded verdict:
+   `TRIAGE BATCH` is exactly one line, its counts are the seven reports'
+   counts, `accurate` and `wrong` are the verdict's numbers; with no verdict
+   both print `-`; a report with no finding lines is `plan_only`.
+9. N workers are N child processes, each with its own job directory and its
+   own report file; a tripwire on every path a child opens for writing finds
+   no path opened by two children; the merge into the page runs once, after
+   the last worker is reaped.
 
 ## The work list
 
@@ -576,8 +746,10 @@ verb, and tests that pin all three by executing them.
 1. **`internal/swarm/pool.go`** — the pool directory: `pending/`, `running/`,
    `done/`, `failed/`, `reports/`, `scratch/`, the task id scheme (UTC stamp,
    label, random half, so two adds in one second cannot collide — `nova-bus`'s id
-   lesson), the sidecar file, the atomic claim by rename, the pool lock. Tests:
-   two claimants, one winner; an id collision is impossible by construction.
+   lesson), the sidecar file with `files`, `requeued`, `reaped`, `from` and the
+   verdict, the atomic claim by rename, the pool lock, the one automatic
+   re-queue of a reaped job. Tests: two claimants, one winner; an id collision
+   is impossible by construction; demanded test 7.
 2. **`internal/swarm/key.go`** — the key file read as data: first line, the two
    strip rules, whitespace out, empty refused with the creating command. Tests:
    a key never appears in any returned string; a file with a second line is read
@@ -588,10 +760,12 @@ verb, and tests that pin all three by executing them.
    never reallocated.
 4. **`internal/swarm/worker.go`** — the worker description (strict decode: an
    unknown field is a refusal), the slot refresh (one way, copy), the harness
-   config written with the variable's **name**, the prompt assembly. Tests: the
-   generated config contains the variable name and not the value; the prompt
-   contains the deadline, the job directory, the sandbox sentence and the
-   no-bus sentence.
+   config written with the variable's **name**, the prompt assembly, the
+   harness log read for refusal lines after the run. Tests: the generated
+   config contains the variable name and not the value; the prompt contains
+   the deadline, the job directory, the file budget, the read-or-write sandbox
+   sentence, the append-as-found sentence and the no-bus sentence; demanded
+   tests 4, 5 and 6.
 5. **`internal/swarm/deadline.go`** — one watcher over every child: terminate,
    wait, kill, report `survived`. Tests: a child that ignores terminate is
    killed; the report says so; the watcher never matches a process by its command
@@ -601,21 +775,24 @@ verb, and tests that pin all three by executing them.
    number that produced it. Tests: `template --name` prints each; `add
    --template` wraps a task and the result contains every condition.
 7. **`internal/swarm/result.go`** — the `RESULT.md` parser: the three states,
-   the Per item and Gates tables, `Left owed`, `One line`, the `plan-only` and
-   `no-result` classifications, and the degrade path. Tests: a malformed report
-   degrades rather than failing; a plan-only report is classified as one; a
-   fourth state word is a parse finding, not a silent fifth bucket.
+   the Per item and Gates tables, `Left owed`, `One line`, the finding lines
+   with their `dup:` marks and their verbatim quotes, the owed-list match, the
+   `plan-only` and `no-result` classifications, and the degrade path. Tests: a
+   malformed report degrades rather than failing; a plan-only report is
+   classified as one; a fourth state word is a parse finding, not a silent
+   fifth bucket; demanded tests 1, 2 and 3.
 8. **`internal/swarm/triage.go`** — the watermark state, copy-before-parse, the
-   page writer, the counts. Tests: a report appended to during triage does not
+   page writer, the counts, the one `TRIAGE BATCH` line, the verdict sums with
+   the dash for absence. Tests: a report appended to during triage does not
    produce half a table; the watermark advances once per run; `--no-state`
-   does not advance it.
+   does not advance it; demanded tests 8 and 9.
 9. **`internal/swarm/cost.go`** — the sidecar's token and dollar accounting, the
    window, the absence-is-a-dash rule, and the 429 backoff. Tests: a task with
    no accounting prints dashes; a 429 is retried once and then failed with its
    code.
-10. **`cmd/nova-swarm/main.go`** — the verbs, the flag parsing with this repo's
-    one-line refusals, the output grammar exactly as above, `--max` on every
-    listing.
+10. **`cmd/nova-swarm/main.go`** — the verbs, including `verdict`, the flag
+    parsing with this repo's one-line refusals, `--files` required and zero
+    refused, the output grammar exactly as above, `--max` on every listing.
 11. **`cmd/nova-swarm/*_test.go`** — the contract tests: every exit code, every
     refusal sentence, a fake harness binary on `PATH` so the dispatcher is
     tested end to end with no provider, `--workers 65` refused, a capped listing
