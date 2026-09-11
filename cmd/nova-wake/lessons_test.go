@@ -144,8 +144,13 @@ func TestTenMinutesSilentIsOfflineOnce(t *testing.T) {
 	if n := countLines(first.stdout, "WAKE LINE name=Johnny state=OFFLINE"); n != 1 {
 		t.Fatalf("%d OFFLINE lines for Johnny, want 1:\n%s", n, first.stdout)
 	}
-	if !strings.Contains(first.stdout, "WAKE LINE name=Emma state=BACK") {
-		t.Errorf("nine minutes -- or one -- is not offline:\n%s", first.stdout)
+	// Nine minutes -- or one -- is not offline, and a healthy line on a COLD
+	// first sighting is not news either: no sentence of this spec makes the
+	// first sighting of a line that is fine a change, and a cold watch that
+	// printed one WAKE LINE per online line and returned at once is the
+	// "listing of everything that exists" the cold-start rule forbids.
+	if strings.Contains(first.stdout, "state=BACK") {
+		t.Errorf("a cold first run listed a healthy line as BACK:\n%s", first.stdout)
 	}
 	if !strings.Contains(first.stdout, "silent=11m0s") {
 		t.Errorf("the OFFLINE line must carry how long the silence is:\n%s", first.stdout)
@@ -346,11 +351,34 @@ func TestATouchedReportWithTheSameSizeAndMtimeDoesNotWake(t *testing.T) {
 		t.Fatalf("this is the named limit and it is behaviour, not an accident:\n%s", r.all())
 	}
 
-	// And the other half: a real modification DOES wake.
+	// The same limit, in the shape that catches a compared identity carrying
+	// one field more than mtime:size. "ab\n" and "a\nb" are the same length and
+	// a different number of lines, and the spec says THIS rewrite must not
+	// wake: a content digest "would close it and costs a read of every watched
+	// file on every poll; it is a v2 item behind a flag".
+	write(t, path, "ab\n")
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	wakeRun(t, args...) // whatever that rewrite was, it is recorded now
+	write(t, path, "a\nb")
+	if err := os.Chtimes(path, info.ModTime(), info.ModTime()); err != nil {
+		t.Fatal(err)
+	}
+	r = wakeRun(t, args...)
+	if !strings.Contains(r.stdout, "WAKE QUIET") {
+		t.Fatalf("a rewrite that preserved mtime and size woke the window on its LINE COUNT; the state value of a report file is mtime:size, and the limit above is pinned as behaviour:\n%s", r.all())
+	}
+
+	// And the other half: a real modification DOES wake, and its line still
+	// carries lines= so the window can tell a stub from a finding.
 	write(t, path, "# a finding, and a second line\n")
 	r = wakeRun(t, args...)
 	if !strings.Contains(r.stdout, "WAKE REPORT path=") || !strings.Contains(r.stdout, "modified") {
 		t.Errorf("a modified report must wake:\n%s", r.all())
+	}
+	if !strings.Contains(r.stdout, "lines=1") {
+		t.Errorf("the WAKE REPORT line must still carry the line count, which is display and not identity:\n%s", r.stdout)
 	}
 }
 

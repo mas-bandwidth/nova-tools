@@ -242,3 +242,59 @@ func TestTheFailureStreakSpansCalls(t *testing.T) {
 		t.Errorf("a success did not clear the streak: n = %d, want 1", n)
 	}
 }
+
+// The second lesson of 2026-09-11 in its own shape. The prototype's state value
+// was TAB-JOINED and its last field was often empty; the reader ate the
+// trailing empty field, so the reloaded value never equalled the freshly
+// computed one and the watcher woke the window every interval, forever.
+//
+// The escaping half of that lesson is pinned elsewhere. THIS is the eating
+// half: a reader that drops a trailing empty field leaves the round-trip tests
+// green, because fields() pads what it is given and no printed value carries
+// the empty tail. So it is asserted here, on the codec, where the mutation has
+// nowhere to hide.
+func TestAReaderMayNotEatATrailingEmptyField(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		parts []string
+	}{
+		{"one trailing empty field", []string{"1757600000000000000", "412", "9", ""}},
+		{"two trailing empty fields", []string{"OPEN", "0", ""}},
+		{"nothing but empty fields", []string{"", "", ""}},
+		{"a single empty field", []string{""}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stored := Compose(tc.parts...)
+			back := Decompose(stored)
+			if len(back) != len(tc.parts) {
+				t.Fatalf("Decompose(%q) returned %d fields, want %d: a reader that eats a trailing empty field is the false wake of 2026-09-11",
+					stored, len(back), len(tc.parts))
+			}
+			for i := range tc.parts {
+				if back[i] != tc.parts[i] {
+					t.Errorf("field %d round-tripped as %q, want %q", i, back[i], tc.parts[i])
+				}
+			}
+			// And the stored form compares equal to a freshly composed one,
+			// byte for byte, which is what makes a second poll quiet.
+			if again := Compose(back...); again != stored {
+				t.Errorf("recomposed as %q, want %q byte for byte", again, stored)
+			}
+		})
+	}
+}
+
+// A line's LAST SIGN is "the stamp of the newest commit on the bus checkout's
+// branch whose author is that name" (rule 2). No commit count is named, and a
+// cap would make a line that has been quiet for longer than the cap look like a
+// line that never signed at all -- OFFLINE, or BACK, from missing history
+// rather than from the world.
+func TestALinesLastSignIsNotCappedByACommitCount(t *testing.T) {
+	raw, err := os.ReadFile("line.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"-n"`) {
+		t.Error("the --line view caps its git log at a commit count; the rule names no cap, and a line older than the cap reads as one with no sign at all")
+	}
+}

@@ -3,9 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 )
@@ -18,14 +16,7 @@ import (
 func fakeNote(t *testing.T) (command, dir string) {
 	t.Helper()
 	dir = t.TempDir()
-	bin := filepath.Join(t.TempDir(), "on-note")
-	if runtime.GOOS == "windows" {
-		bin += ".exe"
-	}
-	cmd := exec.Command("go", "build", "-o", bin, "./testdata/fakenote")
-	if raw, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building the fake receiver: %v\n%s", err, raw)
-	}
+	bin := install(t, t.TempDir(), "on-note")
 	t.Setenv("NOVA_WAKE_FAKE_NOTE", dir)
 	return bin, dir
 }

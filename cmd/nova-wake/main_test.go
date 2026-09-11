@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -50,23 +51,72 @@ func wakeRunAt(t *testing.T, start time.Time, args ...string) result {
 	return result{exit: exit, stdout: out.String(), stderr: errb.String(), clock: clock}
 }
 
-// fakes builds the fake nova-bus and gh into a directory of this test's own and
-// puts it at the front of PATH. The fakes are Go programs rather than shell
-// scripts because this repo's CI runs on Windows too.
+// The fakes are Go programs rather than shell scripts because this repo's CI
+// runs on Windows too -- and they are built ONCE for the package and copied
+// into each test's own directory, because a `go build` per test was most of
+// this package's wall clock and the two-minute rule is a rule. Nothing here
+// leaves t.TempDir(): the build lands in the first caller's, and what survives
+// it is the bytes.
+var (
+	fakeOnce  sync.Once
+	fakeBins  map[string][]byte
+	fakeBuilt error
+)
+
+func buildFakes(t *testing.T) {
+	t.Helper()
+	fakeOnce.Do(func() {
+		dir := t.TempDir()
+		cmd := exec.Command("go", "build", "-o", dir,
+			"./testdata/fakebus", "./testdata/fakegh", "./testdata/fakenote")
+		if raw, err := cmd.CombinedOutput(); err != nil {
+			fakeBuilt = fmt.Errorf("building the fakes: %v\n%s", err, raw)
+			return
+		}
+		fakeBins = map[string][]byte{}
+		for _, f := range []struct{ name, built string }{
+			{"nova-bus", "fakebus"}, {"gh", "fakegh"}, {"on-note", "fakenote"},
+		} {
+			built := filepath.Join(dir, f.built)
+			if runtime.GOOS == "windows" {
+				built += ".exe"
+			}
+			raw, err := os.ReadFile(built)
+			if err != nil {
+				fakeBuilt = err
+				return
+			}
+			fakeBins[f.name] = raw
+		}
+	})
+	if fakeBuilt != nil {
+		t.Fatal(fakeBuilt)
+	}
+}
+
+// install writes one of the built fakes into dir under the name the tool will
+// start it by, and returns the path.
+func install(t *testing.T, dir, name string) string {
+	t.Helper()
+	buildFakes(t)
+	out := filepath.Join(dir, name)
+	if runtime.GOOS == "windows" {
+		out += ".exe"
+	}
+	if err := os.WriteFile(out, fakeBins[name], 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return out
+}
+
+// fakes puts the fake nova-bus and gh at the front of PATH and hands back the
+// directories they record into.
 func fakes(t *testing.T) (busDir, ghDir string) {
 	t.Helper()
 	bin := t.TempDir()
 	busDir, ghDir = t.TempDir(), t.TempDir()
-	for _, f := range []struct{ name, pkg string }{{"nova-bus", "fakebus"}, {"gh", "fakegh"}} {
-		out := filepath.Join(bin, f.name)
-		if runtime.GOOS == "windows" {
-			out += ".exe"
-		}
-		cmd := exec.Command("go", "build", "-o", out, "./testdata/"+f.pkg)
-		if raw, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("building the fake %s: %v\n%s", f.name, err, raw)
-		}
-	}
+	install(t, bin, "nova-bus")
+	install(t, bin, "gh")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("NOVA_WAKE_FAKE_BUS", busDir)
 	t.Setenv("NOVA_WAKE_FAKE_GH", ghDir)
@@ -734,4 +784,31 @@ func TestNewMailReachesTheCheckoutThroughTheAdvance(t *testing.T) {
 			t.Errorf("the version is checked BEFORE the opening line:\n%s", r.stdout)
 		}
 	})
+}
+
+// "`cold=true` on the opening `WAKE` line says the run is IN THIS STATE, and
+// `--baseline` turns it off for the caller who does want the world listed once
+// -- that is what `quickstart` passes" (docs/SPEC-WAKE.md, The cold-start
+// rule). A --baseline run lists the world, so it is not in that state, and a
+// line that says it is describes the run it is not.
+func TestTheOpeningLineSaysWhichFirstRunThisIs(t *testing.T) {
+	reports := t.TempDir()
+	write(t, filepath.Join(reports, "job", "RESULT.md"), "# a finding\n")
+	base := []string{"--max", "5s", "--on-deadline", "report", "--interval", "5s", "--reports", reports}
+
+	cold := wakeRun(t, append([]string{"watch", "--state", filepath.Join(t.TempDir(), "a.state")}, base...)...)
+	if !strings.Contains(cold.stdout, "cold=true") {
+		t.Errorf("a run that records the world and reports nothing must say cold=true:\n%s", cold.stdout)
+	}
+	if strings.Contains(cold.stdout, "WAKE REPORT") {
+		t.Errorf("a cold run listed the world:\n%s", cold.stdout)
+	}
+
+	listed := wakeRun(t, append([]string{"watch", "--state", filepath.Join(t.TempDir(), "b.state"), "--baseline"}, base...)...)
+	if !strings.Contains(listed.stdout, "WAKE REPORT") {
+		t.Fatalf("--baseline must list the world once:\n%s", listed.stdout)
+	}
+	if !strings.Contains(listed.stdout, "cold=false") {
+		t.Errorf("a --baseline run listed the world AND said cold=true; the field the spec uses to tell the two first-run shapes apart is then wrong for one of them, and the README ships it:\n%s", listed.stdout)
+	}
 }

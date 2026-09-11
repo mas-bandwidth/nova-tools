@@ -437,7 +437,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 	fmt.Fprintf(stdout, "WAKE at=%s as=%s max=%s interval=%s on-deadline=%s sources=%s state=%s cold=%t nova-bus=%s pending=%d\n",
 		oneline.Field(wake.Stamp(now)), oneline.Field(dash(*as)), oneline.Field(wake.Dur(max)),
 		oneline.Field(wake.Dur(every)), oneline.Field(*onDeadline), oneline.Field(sourceList(*busDir, entries, reports)),
-		oneline.Field(*state), st.Cold(), oneline.Field(busVersion), st.Pending())
+		oneline.Field(*state), w.cold, oneline.Field(busVersion), st.Pending())
 	if *busDir != "" && !*refresh {
 		w.note("bus checkout is read as it stands; nothing fetches without --advance-cursor; freshness is head-at=")
 	}
@@ -670,10 +670,14 @@ func (w *watcher) observe(source string, res wake.Result, now time.Time) {
 			display = value
 		case wake.KindReport:
 			_, had := w.st.Newest(it.Key)
+			// mtime:size and nothing else is the compared identity.
+			value = wake.ReportIdentity(it.Value)
+			// The LINE keeps the count: it is what lets the window tell a stub
+			// from a finding without opening the file, and it is display.
 			// new or modified is a fact about the STATE and not about the
 			// file, so it rides on the line and never on the identity: a
 			// second poll of an unchanged report must be quiet.
-			display = wake.NewOrModified(value, had)
+			display = wake.NewOrModified(it.Value, had)
 		}
 		// The cold-start rule: with no state file, the first poll of --entry
 		// and --reports RECORDS the world and reports nothing, because a cold
@@ -682,12 +686,17 @@ func (w *watcher) observe(source string, res wake.Result, now time.Time) {
 		//
 		// The bus is the exception and it is not a choice: a cold first poll
 		// that swallowed five notes to stay quiet is the failure of 2026-09-11
-		// caused deliberately. --line is the other exception, and the rule
-		// names it by naming only --entry and --reports: a line that is
+		// caused deliberately. An OFFLINE line is the other: a line that is
 		// already silent when the watch starts is exactly the news rule 2
 		// exists for, and a watcher that recorded it quietly would hold the
 		// silence it was asked to report.
-		if w.cold && !w.firstPoll && it.Kind != wake.KindBus && it.Kind != wake.KindBusLine && it.Kind != wake.KindLine {
+		//
+		// A line that is BACK is not. No sentence of this spec makes the first
+		// sighting of a HEALTHY line a change, and a cold watch that printed
+		// one WAKE LINE per online line and returned at once is the "listing of
+		// everything that exists" the cold-start rule forbids.
+		if w.cold && !w.firstPoll && it.Kind != wake.KindBus && it.Kind != wake.KindBusLine &&
+			!(it.Kind == wake.KindLine && wake.LineIsOffline(value)) {
 			w.st.RecordOnly(it.Key, value)
 			continue
 		}

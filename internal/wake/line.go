@@ -45,7 +45,10 @@ type Lines struct {
 func (l *Lines) Poll(ctx context.Context, now time.Time) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, l.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", l.Bus, "log", "-n", "2000",
+	// No commit cap. Rule 2 names none, and a cap makes a line whose newest
+	// commit is older than it read as a line with NO sign at all -- OFFLINE,
+	// or BACK, from missing history rather than from the world.
+	cmd := exec.CommandContext(ctx, "git", "-C", l.Bus, "log",
 		"--format=%H%x1f%an%x1f%cI")
 	raw, err := cmd.Output()
 	if err != nil {
