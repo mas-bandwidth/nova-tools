@@ -30,5 +30,12 @@ func makeUnreadable(t *testing.T, path string) (release func()) {
 		_ = os.Chmod(path, 0o644)
 	}
 	t.Cleanup(release)
+	// PROVE it, here as on windows: a fixture that cannot be observed to work is the bug
+	// this helper exists to catch.
+	if f, err := os.Open(path); err == nil {
+		f.Close()
+		release()
+		t.Fatalf("mode 000 did not make %s refuse a read", path)
+	}
 	return release
 }
