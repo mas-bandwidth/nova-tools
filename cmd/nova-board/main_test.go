@@ -719,21 +719,10 @@ func TestOpenAndOwnerAreFiltersOnTheListing(t *testing.T) {
 			t.Fatalf("%v: exit %d %s", verb[0], exit, stderr)
 		}
 	}
-	for _, args := range [][]string{
-		{"list", "--stale", "10m", "--open"},
-		{"list", "--stale", "10m", "--owner", "rowan"},
-		{"list", "--stale", "10m", "--open", "--owner", "rowan"},
-	} {
-		exit, stdout, _ := b.run(b.board(args...)...)
-		if exit != 0 {
-			t.Fatalf("%v: exit %d", args, exit)
-		}
-		if n := count(stdout, "BOARD CARD"); n != 0 {
-			t.Errorf("%v printed %d cards; list without --list prints no card:\n%s", args, n, stdout)
-		}
-		if !strings.Contains(stdout, "BOARD OK cards=4") {
-			t.Errorf("%v did not print the board's counts:\n%s", args, stdout)
-		}
+	// Without --list they print no card at all: the refusal that says so is
+	// TestAFilterWithoutAListingIsRefused, and the default view is the counts.
+	if _, stdout, _ := b.run(b.board("list", "--stale", "10m")...); count(stdout, "BOARD CARD") != 0 || !strings.Contains(stdout, "BOARD OK cards=4") {
+		t.Errorf("list without --list prints no card and all the counts:\n%s", stdout)
 	}
 	// Under --list the same flags are the filter they are documented as.
 	_, stdout, _ := b.run(b.board("list", "--stale", "10m", "--list", "--open")...)
@@ -1067,5 +1056,81 @@ func TestABroadCheckIsACouldNotRunAndNeverANo(t *testing.T) {
 	exit, _, _ = b.run(b.board("check", "--words", "the windows")...)
 	if exit != 1 {
 		t.Errorf("a query with one rare word in it: exit %d, want 1", exit)
+	}
+}
+
+// A VALUE THAT WAS GIVEN AND WOULD NOT PARSE IS NOT A MISSING FLAG. Lesson 13: telling
+// somebody their To: line is absent when it is there and misspelled is a refusal about
+// nothing — and the new line who passed `--stale 10` re-passed `--stale 10` and was refused
+// the same way, because the parse failure was folded into the missing-flag hint.
+func TestAMalformedValueIsRefusedForWhatItIsNotForBeingAbsent(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	b.add(plain("rowan", "a thing on the board")...)
+	for _, tc := range []struct{ value, want string }{
+		{"10", "is not a duration"},
+		{"abc", "is not a duration"},
+		{"0", "is not a window"},
+		{"-5m", "is not a window"},
+	} {
+		exit, _, stderr := b.run(b.board("list", "--stale", tc.value)...)
+		if exit != 2 {
+			t.Errorf("--stale %s: exit %d, want 2", tc.value, exit)
+		}
+		if strings.Contains(stderr, "is required") {
+			t.Errorf("--stale %s was given and is refused as absent: %q", tc.value, stderr)
+		}
+		if !strings.Contains(stderr, tc.want) || !strings.Contains(stderr, tc.value) {
+			t.Errorf("--stale %s: stderr %q, want it to name the value and say %q", tc.value, stderr, tc.want)
+		}
+		if !strings.Contains(stderr, "10m") {
+			t.Errorf("--stale %s: the refusal does not show what a duration looks like: %q", tc.value, stderr)
+		}
+	}
+	// A malformed --card is the same shape: it was given, and it is not thirty-two hex.
+	exit, _, stderr := b.run(b.board("take", "--as", "rowan", "--card", "6b8ab31", "--stale", "10m")...)
+	if exit != 2 || strings.Contains(stderr, "is required") {
+		t.Errorf("--card 6b8ab31: exit %d, stderr %q", exit, stderr)
+	}
+	if !strings.Contains(stderr, "6b8ab31") || !strings.Contains(stderr, "is not a card id") {
+		t.Errorf("--card 6b8ab31: stderr %q", stderr)
+	}
+	// The flags are still REQUIRED when they are absent, in the words that say so.
+	if _, _, stderr := b.run(b.board("list")...); !strings.Contains(stderr, "--stale is required") {
+		t.Errorf("a missing --stale: %q", stderr)
+	}
+}
+
+// --open AND --owner WITHOUT --list ARE A REFUSAL, NOT A SILENT NO-OP. A line asking "what
+// is open" got the counts and no cards, byte-identical to the run without the flag, and
+// read that as "nothing is open". Rule 1 keeps cards behind --list; a filter for a listing
+// nobody asked for is an invocation that cannot mean what it says.
+func TestAFilterWithoutAListingIsRefused(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	b.add(plain("rowan", "a thing on the board")...)
+	for _, args := range [][]string{
+		{"list", "--stale", "10m", "--open"},
+		{"list", "--stale", "10m", "--owner", "rowan"},
+		{"list", "--stale", "10m", "--open", "--owner", "rowan"},
+	} {
+		exit, stdout, stderr := b.run(b.board(args...)...)
+		if exit != 2 {
+			t.Errorf("%v: exit %d, want 2\n%s%s", args, exit, stdout, stderr)
+		}
+		if !strings.Contains(stderr, "--list") {
+			t.Errorf("%v: the refusal does not name --list: %q", args, stderr)
+		}
+		if stdout != "" {
+			t.Errorf("%v: a refusal wrote to stdout: %q", args, stdout)
+		}
+	}
+	// With --list they are the filters they are documented as, and without either the
+	// default view is the counts.
+	if exit, stdout, _ := b.run(b.board("list", "--stale", "10m", "--list", "--open")...); exit != 0 || count(stdout, "BOARD CARD") != 1 {
+		t.Errorf("--list --open: exit %d\n%s", exit, stdout)
+	}
+	if exit, stdout, _ := b.run(b.board("list", "--stale", "10m")...); exit != 0 || count(stdout, "BOARD CARD") != 0 {
+		t.Errorf("the default view: exit %d\n%s", exit, stdout)
 	}
 }

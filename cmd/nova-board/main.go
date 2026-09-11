@@ -123,6 +123,7 @@ const (
 	textHint    = "--text is required and wants one line saying what is owed, as in --text \"the Windows runner skips three steps\"; refusing to guess"
 	byHint      = "--by is required and wants a deadline: a duration from now like 4h, or an RFC 3339 stamp like 2026-09-12T09:00:00Z; a card with no deadline cannot be filed"
 	defHint     = "--default is required and wants one line saying what happens if nobody closes the card by then, as in --default \"rowan files it as a known gap\"; never wait forever"
+	filterHint  = "--open and --owner are FILTERS on --list and change nothing without it: `--list --open` prints the open cards, `--list --owner <name>` prints one line's own batch, and the counts are what `list` prints with neither; refusing to print a listing nobody asked for"
 	cardHint    = "--card is required and wants the thirty-two hex id of a card on this board, which `nova-board list --list` prints; refusing to guess"
 	wordsHint   = "--words is required and wants the words you would file, as in --words \"windows runner skips\"; every word must appear in a card's text for it to match"
 	howHint     = "one of --how <text>, --landed <repo>#<n> or --probed <evidence> is required and says HOW this was closed; --landed is the close a reader can verify, --probed is the only close for a row of the owed ledger"
@@ -255,14 +256,21 @@ func (f *flags) backend() (board.Backend, string, string) {
 // duration reads a required duration flag. There are no default durations here: every one
 // comes from a flag, because a board found through a default is a board a line writes to
 // by accident.
+// A VALUE THAT WAS GIVEN AND WOULD NOT PARSE IS NOT A MISSING FLAG (lesson 13): a refusal
+// that said `--stale is required` over `--stale 10` is a refusal about nothing, and the
+// line that reads it passes the same value again.
 func (f *flags) duration(value, hint string) time.Duration {
 	if strings.TrimSpace(value) == "" {
 		f.want(hint)
 		return 0
 	}
 	d, err := time.ParseDuration(value)
-	if err != nil || d <= 0 {
-		f.want(hint)
+	if err != nil {
+		f.want(fmt.Sprintf("--stale %s is not a duration: it wants a number and a UNIT, as in --stale 10m (h, m or s); this family's number is 10m", oneline.Field(value)))
+		return 0
+	}
+	if d <= 0 {
+		f.want(fmt.Sprintf("--stale %s is not a window: it wants a duration greater than zero, as in --stale 10m; a window of zero or less would make every card stale at once", oneline.Field(value)))
 		return 0
 	}
 	return d
@@ -316,6 +324,12 @@ func cmdList(args []string, stdout, stderr io.Writer, now time.Time) int {
 	backend, kind, source := f.backend()
 	stale := f.duration(staleFlag, staleHint)
 	max = f.cap(max)
+	// --open AND --owner ARE FILTERS ON --list AND REFUSE WITHOUT IT. Rule 1 keeps cards
+	// behind --list, so without it these two change nothing at all — and a line that asked
+	// what is open and got a listing-free answer reads it as "nothing is open".
+	if !cards && (open || owner != "") {
+		f.want(filterHint)
+	}
 	if len(f.problems) > 0 {
 		return f.refused(stderr)
 	}
@@ -790,7 +804,7 @@ func notes(b *board.Board) []string {
 // as well as success and a run that read the board can always say what it read.
 func find(backend board.Backend, source, id string, now time.Time, stale time.Duration, stderr io.Writer) (*board.Board, *board.Card, int) {
 	if !board.Hex(id, board.IDHex) {
-		return nil, nil, refuse(stderr, "", cardHint)
+		return nil, nil, refuse(stderr, "", fmt.Sprintf("--card %s is not a card id: it wants the thirty-two lower-case hex characters `nova-board list --list` prints, and this one is %d character(s)", oneline.Field(id), len(id)))
 	}
 	b, ok := read(backend, source, now, stale, stderr)
 	if !ok {
