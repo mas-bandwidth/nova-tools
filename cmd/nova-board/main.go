@@ -53,7 +53,7 @@ usage:
   nova-board close (--issue ... | --dir ...) --as <name> --card <id> --stale <duration>
         (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
   nova-board check (--issue ... | --dir ...) --words <text> [--max <n>] [--all]
-  nova-board quickstart (--issue ... | --dir ...) --stale <duration> [--as <name>]
+  nova-board quickstart (--issue ... | --dir ...) --stale <duration>
 
 every verb that runs gh also takes [--gh-timeout <seconds>], default 60.
 
@@ -317,7 +317,10 @@ func cmdList(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !ok {
 		return 2
 	}
-	printBoard(stdout, b, kind, source, cards || open || owner != "", open || owner != "", owner, max)
+	// RULE 1: CARDS PRINT ONLY UNDER --list. --open and --owner are FILTERS on that
+	// listing and never an implicit one: a counting question answered with a listing is a
+	// context window spent on the good news.
+	printBoard(stdout, b, kind, source, cards, open, owner, max)
 	return 0
 }
 
@@ -385,6 +388,7 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 				return 0
 			}
 			fmt.Fprintf(stderr, "ADD REFUSED: id %s exists with different fields; nothing written\n", oneline.Field(id))
+			counts(stdout, b, kind, source)
 			return 1
 		}
 		event.ID = id
@@ -392,9 +396,24 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 		drawn, err := board.NewID(rnd)
 		if err != nil {
 			fmt.Fprintf(stderr, "ADD REFUSED: %s\n", oneline.Err(err))
+			counts(stdout, b, kind, source)
 			return 2
 		}
 		event.ID = drawn
+	}
+
+	// CREATION IS EXCLUSIVE AGAINST AN ID THAT ALREADY EXISTS, and the DRAWN id is looked
+	// up in the fold read immediately before this append just as a given one is — in both
+	// backends. With a random id an existing id means a hand-made file, a copied one, or a
+	// broken random source; a tool that trusted its draw would file a second card under an
+	// id the board already holds, and the two filings would fold into one card with nothing
+	// said — the silent deduplication The races forbids, and the count falling for a reason
+	// other than work. The backends hold the other half: O_EXCL under --dir, the re-read
+	// immediately before the append under --issue.
+	if b.Card(event.ID) != nil {
+		fmt.Fprintf(stderr, "ADD REFUSED: id %s exists; nothing written\n", oneline.Field(event.ID))
+		counts(stdout, b, kind, source)
+		return 1
 	}
 
 	// The hash is for a person's eye and never refuses: a silent deduplication is the one
@@ -410,9 +429,11 @@ func cmdAdd(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Reade
 	if err := backend.Append(event.Render()); err != nil {
 		if err == board.ErrExists {
 			fmt.Fprintf(stderr, "ADD REFUSED: id %s exists; nothing written\n", oneline.Field(event.ID))
+			counts(stdout, b, kind, source)
 			return 1
 		}
 		fmt.Fprintf(stderr, "ADD REFUSED: %s\n", oneline.Err(err))
+		counts(stdout, b, kind, source)
 		return 1
 	}
 	fmt.Fprintf(stdout, "ADD OK id=%s owner=%s at=%s backend=%s durable=%s existed=false\n",
@@ -432,7 +453,7 @@ func cmdTake(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Read
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	backend, _, source := f.backend()
+	backend, kind, source := f.backend()
 	f.need(as, asHint)
 	f.need(card, cardHint)
 	stale := f.duration(staleFlag, staleHint)
@@ -440,7 +461,8 @@ func cmdTake(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Read
 		return f.refused(stderr)
 	}
 	b, target, code := find(backend, source, card, now, stale, stderr)
-	if b == nil {
+	if target == nil {
+		counts(stdout, b, kind, source)
 		return code
 	}
 	// A TAKE OF A FRESH TAKE BY ANOTHER LINE IS REFUSED: that is the 2026-09-10
@@ -453,15 +475,18 @@ func cmdTake(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Read
 	if !target.Open() {
 		fmt.Fprintf(stderr, "TAKE REFUSED: %s is CLOSED (by %s at %s); there is no reopen — a card closed in error is a NEW card whose text names this id\n",
 			oneline.Field(card), oneline.Field(closedBy(target)), oneline.Field(closedAt(target)))
+		counts(stdout, b, kind, source)
 		return 1
 	}
 	if target.HasTake && target.Owner != as && !target.Stale && !anyway {
 		fmt.Fprintf(stderr, "TAKE REFUSED: %s is held by %s, taken %s ago and not yet stale at %s; --anyway takes it and says so in the log\n",
 			oneline.Field(card), oneline.Field(target.Owner), oneline.Field(board.Dur(now.Sub(target.TakenAt))), oneline.Field(stale.String()))
+		counts(stdout, b, kind, source)
 		return 1
 	}
 	override := anyway && target.HasTake && target.Owner != as && !target.Stale
 	if code := appendEvent(backend, target, board.Event{Verb: "taken", ID: card, As: as, At: now, Override: override}, rnd, stderr, "TAKE"); code != 0 {
+		counts(stdout, b, kind, source)
 		return code
 	}
 	fmt.Fprintf(stdout, "TAKE OK id=%s owner=%s at=%s previous=%s override=%s\n",
@@ -484,7 +509,7 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Rea
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	backend, _, source := f.backend()
+	backend, kind, source := f.backend()
 	f.need(as, asHint)
 	f.need(card, cardHint)
 	stale := f.duration(staleFlag, staleHint)
@@ -501,7 +526,8 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Rea
 		return f.refused(stderr)
 	}
 	b, target, code := find(backend, source, card, now, stale, stderr)
-	if b == nil {
+	if target == nil {
+		counts(stdout, b, kind, source)
 		return code
 	}
 	event := board.Event{ID: card, As: as, At: now}
@@ -519,16 +545,19 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Rea
 	if target.Row && event.Verb != "probed" {
 		fmt.Fprintf(stderr, "CLOSE REFUSED: %s is a row of the owed ledger (thing=%s leg=%s) and a row is closed only by --probed <evidence>; a row that was not probed was not done\n",
 			oneline.Field(card), oneline.Field(target.Thing), oneline.Field(target.Leg))
+		counts(stdout, b, kind, source)
 		return 1
 	}
 	// A CLOSE OF A CARD SOMEBODY JUST TOOK, closed by reading at write time.
 	if target.Open() && target.HasTake && target.Owner != as && !target.Stale && !anyway {
 		fmt.Fprintf(stderr, "CLOSE REFUSED: %s is held by %s, taken %s ago and not yet stale at %s; --anyway closes it and records override=true\n",
 			oneline.Field(card), oneline.Field(target.Owner), oneline.Field(board.Dur(now.Sub(target.TakenAt))), oneline.Field(stale.String()))
+		counts(stdout, b, kind, source)
 		return 1
 	}
 	event.Override = anyway && target.Open() && target.HasTake && target.Owner != as && !target.Stale
 	if code := appendEvent(backend, target, event, rnd, stderr, "CLOSE"); code != 0 {
+		counts(stdout, b, kind, source)
 		return code
 	}
 	owner := "-"
@@ -543,9 +572,8 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Rea
 
 func cmdQuickstart(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("quickstart")
-	var staleFlag, as string
+	var staleFlag string
 	f.fs.StringVar(&staleFlag, "stale", "", "")
-	f.fs.StringVar(&as, "as", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -558,9 +586,6 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !ok {
 		return 2
 	}
-	if as == "" {
-		as = "your-name"
-	}
 	fmt.Fprintf(stdout, "QUICKSTART OK backend=%s source=%s stale=%s: the board, then the rule every filer runs in front of add\n",
 		oneline.Field(kind), oneline.Field(source), oneline.Field(stale.String()))
 	printBoard(stdout, b, kind, source, false, false, "", bounded.Default)
@@ -569,7 +594,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer, now time.Time) int {
 		"nova-board check "+backendFlag(kind, source)+" --words "+quote(words)+
 			" || { [ $? -eq 1 ] && exit 0; exit 2; }"))
 	fmt.Fprintf(stdout, "QUICKSTART LINE n=2 what=add: %s\n", oneline.Quote(
-		"nova-board add "+backendFlag(kind, source)+" --as "+as+" --text "+quote(text)+
+		"nova-board add "+backendFlag(kind, source)+" --as <your-name> --text "+quote(text)+
 			" --by 4h --default "+quote("the filer files it as a known gap")))
 	fmt.Fprintf(stdout, "QUICKSTART NOTE check EXITS 1 WHEN IT MATCHES, so the guard reads \"if it is already there, stop\"; the exit-2 arm tells a NO from a board that could not be read\n")
 	fmt.Fprintf(stdout, "QUICKSTART NOTE --stale %s is this family's number and this run passed it in words: there is no default duration here, and --by and --default are required on every card\n",
@@ -637,12 +662,29 @@ func printBoard(stdout io.Writer, b *board.Board, kind, source string, cards, op
 		fmt.Fprintf(stdout, "BOARD NOTE %s\n", oneline.Escape(note))
 		shown++
 	}
+	printCounts(stdout, b, kind, source, shown+1)
+}
+
+// printCounts is the count line, and `shown` COUNTS THE LINE IT IS PRINTED ON: shown is
+// how many lines this run printed, and a number one short of its own definition is a
+// number every reader has to correct.
+func printCounts(stdout io.Writer, b *board.Board, kind, source string, shown int) {
 	c := b.Counts()
-	// THE COUNTS PRINT ON FAILURE AS WELL AS SUCCESS and they are the truth about the
-	// BOARD, not about the output: the listing is capped, the counting never is.
 	fmt.Fprintf(stdout, "BOARD OK cards=%d open=%d closed=%d stale=%d overdue=%d owed=%d lines=%d conflicts=%d quarantined=%d shown=%d backend=%s source=%s\n",
 		c.Cards, c.Open, c.Closed, c.Stale, c.Overdue, c.Owed, c.Lines, c.Conflicts, c.Quarantined,
 		shown, oneline.Field(kind), oneline.Field(source))
+}
+
+// counts is what a REFUSAL prints: THE COUNTS PRINT ON FAILURE AS WELL AS SUCCESS, and they
+// are the truth about the BOARD rather than about this run. A refusal that said nothing
+// about the board would leave the one number a reader acts on unsaid at exactly the moment
+// the board said no. A run whose READ failed has no counts to print and says so on BOARD
+// FAIL instead.
+func counts(stdout io.Writer, b *board.Board, kind, source string) {
+	if b == nil {
+		return
+	}
+	printCounts(stdout, b, kind, source, 1)
 }
 
 // capped prints a listing through internal/bounded, with the remedy naming how many were
@@ -727,6 +769,8 @@ func notes(b *board.Board) []string {
 
 // find reads the board and names the card, or refuses at exit 2: an id that names no card
 // is a bad invocation and not a board that said no.
+// The board comes back even when the id names no card, because THE COUNTS PRINT ON FAILURE
+// as well as success and a run that read the board can always say what it read.
 func find(backend board.Backend, source, id string, now time.Time, stale time.Duration, stderr io.Writer) (*board.Board, *board.Card, int) {
 	if !board.Hex(id, board.IDHex) {
 		return nil, nil, refuse(stderr, "", cardHint)
@@ -739,7 +783,7 @@ func find(backend board.Backend, source, id string, now time.Time, stale time.Du
 	if card == nil {
 		fmt.Fprintf(stderr, "nova-board: no card %s on %s; `nova-board list --list` prints the ids this board holds; run: nova-board help\n",
 			oneline.Field(id), oneline.Field(source))
-		return nil, nil, 2
+		return b, nil, 2
 	}
 	return b, card, 0
 }
@@ -753,6 +797,12 @@ func appendEvent(backend board.Backend, card *board.Card, event board.Event, rnd
 		return 2
 	}
 	event.Ev, event.After = ev, card.After()
+	// THE WRITER NEVER NAMES AN after= ITS OWN FOLD DOES NOT HOLD. This refusal is the
+	// guard on that, and through this tool it is UNREACHABLE BY CONSTRUCTION: After walks
+	// the folded events and falls back to the card id, and a quarantined event is not in
+	// the fold, so Holds is true of whatever After returned. It stays because the guard is
+	// cheaper than the invariant being true only as long as After is written this way, and
+	// the invariant itself is pinned by TestATakeNeverNamesAnAfterTheFoldDoesNotHold.
 	if !card.Holds(event.After) {
 		fmt.Fprintf(stderr, "%s REFUSED: this fold does not hold the event %s it would name as after=; nothing written\n",
 			oneline.Field(token), oneline.Field(event.After))
@@ -787,8 +837,12 @@ func deadlineOf(by string, now time.Time) (string, error) {
 
 // sameCreation compares everything on a card line but the stamp.
 func sameCreation(existing *board.Card, event board.Event) bool {
+	// The owner compared is the one ON THE CARD LINE. The derived owner is the latest take
+	// in the fold, which another line moves by taking the card; the card line's owner=
+	// never changes, and a retry refused because somebody took the card in between would be
+	// a wrong refusal of the one append whose outcome was unknown.
 	was := board.Event{
-		As: existing.Filer, Hash: existing.Hash, Owner: existing.Owner, By: existing.By,
+		As: existing.Filer, Hash: existing.Hash, Owner: existing.CardOwner, By: existing.By,
 		Default: existing.Default, Thing: existing.Thing, Leg: existing.Leg,
 		Evidence: existing.Evidence, Tail: existing.Text,
 	}

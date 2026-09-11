@@ -138,7 +138,26 @@ func (i *Issue) Events() (Log, error) {
 
 // Append posts one comment carrying one event line. The body goes in on STDIN rather than
 // on the command line, so nothing an event holds is ever an argument to gh.
+//
+// CREATION IS EXCLUSIVE HERE TOO. A card line is appended only after the thread is RE-READ
+// — not from this run's cache — and the id looked for: the forge append is the only serial
+// point this backend has, so this re-read is its half of the O_EXCL the directory backend
+// gets from the filesystem. An id that already exists is a hand-made comment, a copied one,
+// or a broken random source, and it is ErrExists with nothing posted, never a second card
+// under one id folded silently into the first.
 func (i *Issue) Append(line string) error {
+	if e, ok := Parse(line); ok && e.Verb == "card" {
+		i.cached = nil
+		log, err := i.Events()
+		if err != nil {
+			return err
+		}
+		for _, held := range log.Lines {
+			if h, ok := Parse(held); ok && h.Verb == "card" && h.ID == e.ID {
+				return ErrExists
+			}
+		}
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), i.timeout)
 	defer cancel()
 	i.cached = nil

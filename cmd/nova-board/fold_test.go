@@ -10,6 +10,8 @@ package main
 // IN THE FILE CHANGES NOTHING.
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -23,6 +25,7 @@ import (
 // --------------------------------------------------------------------------------- 3
 
 func TestTheBoardIsAFoldOverCardFilesWithNoLock(t *testing.T) {
+	t.Parallel()
 	b := newBench(t)
 	id := b.add(plain("rowan", "the first thing owed")...)
 	entries, err := os.ReadDir(b.dir)
@@ -215,6 +218,7 @@ func TestABrokenPredecessorIsQuarantinedAndCounted(t *testing.T) {
 // on two legs at one second, from two clones, produce two cards with two distinct ids and
 // neither is refused.
 func TestTheIdIsRandomAndCreationIsExclusive(t *testing.T) {
+	t.Parallel()
 	b := newBench(t)
 	one := clone(t, b.dir)
 	two := clone(t, b.dir)
@@ -541,4 +545,282 @@ func itoa(n int) string {
 		n /= 10
 	}
 	return string(digits)
+}
+
+// stuck is a BROKEN RANDOM SOURCE: it returns the same bytes on every draw, which is the
+// third way the spec names for an id to already exist — "a hand-made file, a copied one,
+// or a broken random source". A tool that trusted its draw would file the second card
+// over the first.
+type stuck struct{ b byte }
+
+func (s stuck) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = s.b
+	}
+	return len(p), nil
+}
+
+// with drives the binary at this bench's clock with another random source.
+func (b *bench) with(rnd io.Reader, args ...string) (int, string, string) {
+	b.t.Helper()
+	var out, errb bytes.Buffer
+	exit := run(args, &out, &errb, b.now, rnd)
+	return exit, out.String(), errb.String()
+}
+
+// AN ID THAT ALREADY EXISTS IS REFUSED IN BOTH BACKENDS, and the drawn id is looked up
+// too. Spec, Creation is exclusive against hand-made files: "under `--dir` the card file
+// is created with `O_EXCL` and never truncated; under `--issue` the board is re-read
+// immediately before the append and the id looked for. An id that already exists — which
+// with a random id means a hand-made file, a copied one, or a broken random source — is
+// `ADD REFUSED: id <id> exists; nothing written` at exit 1". Work list 1 asks for it by
+// the same case: "two ids drawn from a source that returns the same bytes twice are
+// refused by `O_EXCL`, never overwritten". A second filing that folded into the first
+// card would be the silent deduplication The races forbids, and the count falling for a
+// reason other than work.
+func TestABrokenRandomSourceIsRefusedInBothBackends(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake gh is built and put on PATH")
+	}
+	t.Run("dir", func(t *testing.T) {
+		b := newBench(t)
+		exit, stdout, stderr := b.with(stuck{0xab}, b.board("add", "--as", "rowan", "--text", "the first filing",
+			"--by", "4h", "--default", "d")...)
+		if exit != 0 {
+			t.Fatalf("the first add: exit %d %s", exit, stderr)
+		}
+		id := field(stdout, "id=")
+		exit, _, stderr = b.with(stuck{0xab}, b.board("add", "--as", "rowan", "--text", "the second filing",
+			"--by", "4h", "--default", "d")...)
+		if exit != 1 || !strings.Contains(stderr, "ADD REFUSED: id "+id+" exists; nothing written") {
+			t.Errorf("a second draw of one id: exit %d, stderr %q", exit, stderr)
+		}
+		if n := len(eventLines(t, filepath.Join(b.dir, id+".board"))); n != 1 {
+			t.Errorf("the refused add wrote: the card file holds %d events, want 1", n)
+		}
+		_, listing, _ := b.run(b.board("list", "--stale", "10m")...)
+		if !strings.Contains(listing, "cards=1") {
+			t.Errorf("two filings under one id did not stay one card and one refusal:\n%s", listing)
+		}
+	})
+	t.Run("issue", func(t *testing.T) {
+		b := newBench(t)
+		store, _ := fakeGH(t)
+		issue := []string{"add", "--issue", "mas-bandwidth/schema#876", "--as", "rowan", "--by", "4h", "--default", "d"}
+		exit, stdout, stderr := b.with(stuck{0xcd}, append(issue, "--text", "the first filing")...)
+		if exit != 0 {
+			t.Fatalf("the first add: exit %d %s", exit, stderr)
+		}
+		id := field(stdout, "id=")
+		exit, _, stderr = b.with(stuck{0xcd}, append(issue, "--text", "the second filing")...)
+		if exit != 1 || !strings.Contains(stderr, "ADD REFUSED: id "+id+" exists; nothing written") {
+			t.Errorf("a second draw of one id under --issue: exit %d, stderr %q", exit, stderr)
+		}
+		if n := strings.Count(readFile(t, store), "card "+id); n != 1 {
+			t.Errorf("the thread holds %d card lines under one id, want 1: nothing is written when the id exists", n)
+		}
+		_, listing, _ := b.run("list", "--issue", "mas-bandwidth/schema#876", "--stale", "10m")
+		if !strings.Contains(listing, "cards=1") || !strings.Contains(listing, "conflicts=0") {
+			t.Errorf("two filings folded into one card with nothing said:\n%s", listing)
+		}
+	})
+}
+
+// TWO PROCESSES UNDER --issue DRAW TWO IDS AND NEITHER IS REFUSED. Spec, Tests this spec
+// demands 3: "two rows filed under one name with one text on two legs at one injected
+// second ... from two clones under `--dir` and from two processes under `--issue`, produce
+// two cards with two distinct thirty-two-hex ids and neither is refused". The exclusivity
+// above may not cost the ordinary concurrent filing: a board that refused one of two real
+// filings would be the count failing to climb while a review was arriving.
+func TestTwoProcessesUnderIssueBothFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake gh is built and put on PATH")
+	}
+	b := newBench(t)
+	fakeGH(t)
+	var wg sync.WaitGroup
+	ids := make([]string, 2)
+	exits := make([]int, 2)
+	for n, leg := range []string{"cpp", "go"} {
+		wg.Add(1)
+		go func(n int, leg string) {
+			defer wg.Done()
+			exit, stdout, _ := b.run("add", "--issue", "mas-bandwidth/schema#876", "--as", "rowan",
+				"--text", "every field is written", "--by", "4h", "--default", "rowan probes it",
+				"--thing", "every-field", "--leg", leg)
+			exits[n], ids[n] = exit, field(stdout, "id=")
+		}(n, leg)
+	}
+	wg.Wait()
+	for n := range ids {
+		if exits[n] != 0 {
+			t.Errorf("the add from process %d was refused: exit %d", n, exits[n])
+		}
+		if len(ids[n]) != 32 || strings.Trim(ids[n], "0123456789abcdef") != "" {
+			t.Errorf("id %q is not thirty-two lower-case hex", ids[n])
+		}
+	}
+	if ids[0] == ids[1] {
+		t.Fatalf("two processes drew one id %s", ids[0])
+	}
+	_, listing, _ := b.run("list", "--issue", "mas-bandwidth/schema#876", "--stale", "10m")
+	if !strings.Contains(listing, "cards=2") {
+		t.Errorf("two filings from two processes are two cards:\n%s", listing)
+	}
+}
+
+// CONCURRENT EVENTS ARE COUNTED, NOT HIDDEN. Spec, Tests this spec demands 3: "two takes
+// from two clones with the same `after=` fold to one owner by the total order, `BOARD CARD
+// conflicts=1`, `BOARD OK conflicts=1`, identically from both merge orders and both
+// backends; a take whose `after=` names the other take is not a conflict and
+// `conflicts=0`" — and "every `taken`, `closed`, `landed` and `probed` line carries a
+// distinct twelve-hex `ev=` from the injected source and an `after=` equal to the newest
+// `ev=` in the writer's fold or the card id"; "`list --list --owner Bo` prints only `Bo`'s
+// open cards and `BOARD OK` still counts the whole board".
+//
+// The migration fixture clause of this test belongs to work list 10, which is not in this
+// PR and is named owed in its body; it is the one clause here that is not yet pinned.
+func TestConcurrentEventsAreCountedNotHidden(t *testing.T) {
+	b := newBench(t)
+	id := b.add(plain("rowan", "the one card two lines both reach for")...)
+	one := b.now.Add(time.Minute)
+	ada := clone(t, b.dir)
+	bo := clone(t, b.dir)
+	for dir, who := range map[string]string{ada: "Ada", bo: "Bo"} {
+		if exit, _, stderr := b.atTime(one, "take", "--dir", dir, "--as", who, "--card", id, "--stale", "10m"); exit != 0 {
+			t.Fatalf("take by %s: exit %d %s", who, exit, stderr)
+		}
+	}
+	adaLine := lastLine(t, filepath.Join(ada, id+".board"))
+	boLine := lastLine(t, filepath.Join(bo, id+".board"))
+	base := readFile(t, filepath.Join(b.dir, id+".board"))
+	forward := merged(t, b, id, base+adaLine+"\n"+boLine+"\n")
+	backward := merged(t, b, id, base+boLine+"\n"+adaLine+"\n")
+	lines := strings.Split(strings.TrimSpace(base+adaLine+"\n"+boLine), "\n")[1:]
+	viaIssue := issueListing(t, b, lines, "list", "--stale", "10m", "--list")
+	for name, got := range map[string]string{"the forward merge": forward, "the backward merge": backward, "the issue backend": viaIssue} {
+		if !strings.Contains(got, "owner=Bo") {
+			t.Errorf("%s names another owner; the take whose as= sorts later at one second is the owner:\n%s", name, got)
+		}
+		if count(got, "BOARD CARD") != 1 || !strings.Contains(got, "conflicts=1 conflict=") {
+			t.Errorf("%s does not carry conflicts=1 on the card:\n%s", name, got)
+		}
+		if !strings.Contains(got, "BOARD OK cards=1") || !strings.Contains(got, "conflicts=1 quarantined=0") {
+			t.Errorf("%s does not count the pair the fold chose over on BOARD OK:\n%s", name, got)
+		}
+	}
+	if stripSource(forward) != stripSource(backward) || stripSource(forward) != stripSource(viaIssue) {
+		t.Errorf("the same events printed differently:\n%s\n%s\n%s", forward, backward, viaIssue)
+	}
+	// The merge lands in this bench's own board, so the rest of the test reads what two
+	// clones that pushed would have.
+	if err := os.WriteFile(filepath.Join(b.dir, id+".board"), []byte(base+adaLine+"\n"+boLine+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// A TAKE THAT NAMES THE OTHER TAKE IS NOT A CONFLICT: the writer saw it.
+	seen := b.add(plain("rowan", "a card taken twice, the second knowing the first")...)
+	for _, who := range []string{"Bo", "Ada"} {
+		args := b.board("take", "--as", who, "--card", seen, "--stale", "10m")
+		if who == "Ada" {
+			args = append(args, "--anyway")
+		}
+		if exit, _, stderr := b.atTime(one, args...); exit != 0 {
+			t.Fatalf("take by %s: exit %d %s", who, exit, stderr)
+		}
+	}
+	_, listing, _ := b.atTime(one, b.board("list", "--stale", "10m", "--list", "--open")...)
+	if !strings.Contains(listing, "conflicts=0") || !strings.Contains(listing, "owner=Ada") {
+		t.Errorf("a take that names the take it saw is not concurrent:\n%s", listing)
+	}
+
+	// EVERY LATER EVENT CARRIES A DISTINCT TWELVE-HEX ev= AND AN after= THE WRITER HELD.
+	four := b.add(plain("rowan", "a card that gets one of every later verb")...)
+	row := b.add(append(plain("rowan", "a row of the owed ledger"), "--thing", "every-field", "--leg", "cpp")...)
+	if exit, _, stderr := b.run(b.board("take", "--as", "rowan", "--card", four, "--stale", "10m")...); exit != 0 {
+		t.Fatalf("take: exit %d %s", exit, stderr)
+	}
+	if exit, _, stderr := b.run(b.board("close", "--as", "rowan", "--card", four, "--stale", "10m", "--how", "it is done")...); exit != 0 {
+		t.Fatalf("close: exit %d %s", exit, stderr)
+	}
+	if exit, _, stderr := b.run(b.board("close", "--as", "rowan", "--card", row, "--stale", "10m", "--probed", "./reports/probe.txt")...); exit != 0 {
+		t.Fatalf("probe: exit %d %s", exit, stderr)
+	}
+	landedID := b.add(plain("rowan", "a card that lands under a number")...)
+	if exit, _, stderr := b.run(b.board("close", "--as", "rowan", "--card", landedID, "--stale", "10m", "--landed", "mas-bandwidth/nova-tools#9")...); exit != 0 {
+		t.Fatalf("land: exit %d %s", exit, stderr)
+	}
+	evs := map[string]string{}
+	verbs := map[string]bool{}
+	for _, card := range []string{four, row, landedID} {
+		held := map[string]bool{card: true}
+		for _, line := range eventLines(t, filepath.Join(b.dir, card+".board"))[1:] {
+			verb := strings.Fields(line)[0]
+			verbs[verb] = true
+			ev := evOf(line)
+			if len(ev) != 12 || strings.Trim(ev, "0123456789abcdef") != "" {
+				t.Errorf("%s carries ev=%q, want twelve lower-case hex", verb, ev)
+			}
+			if where, seen := evs[ev]; seen {
+				t.Errorf("%s reuses the ev= of %s: %s", verb, where, ev)
+			}
+			evs[ev] = verb
+			after := field(line, "after=")
+			if !held[after] {
+				t.Errorf("%s names after=%s, which its own fold did not hold: %s", verb, after, line)
+			}
+			held[ev] = true
+		}
+	}
+	for _, verb := range []string{"taken", "closed", "probed", "landed"} {
+		if !verbs[verb] {
+			t.Errorf("no %s line was written; the clause covers all four later verbs", verb)
+		}
+	}
+
+	// `list --list --owner Bo` PRINTS ONLY Bo's OPEN CARDS and BOARD OK still counts the
+	// whole board: the listing is capped and filtered, the counting never is.
+	_, mine, _ := b.atTime(one, b.board("list", "--stale", "10m", "--list", "--owner", "Bo")...)
+	if count(mine, "BOARD CARD") != 1 || !strings.Contains(mine, "owner=Bo") {
+		t.Errorf("--list --owner Bo printed %d cards, want Bo's one:\n%s", count(mine, "BOARD CARD"), mine)
+	}
+	if !strings.Contains(mine, "BOARD OK cards=5") {
+		t.Errorf("the filtered listing changed the board's counts:\n%s", mine)
+	}
+}
+
+// A WRITER NEVER NAMES AN after= ITS OWN FOLD DOES NOT HOLD. Spec, Tests this spec demands
+// 3: "`take --anyway` against a fold that lacks the named `after=` is refused", and The
+// fold order: "take, close, land and probe refuse to append an `after=` that their own
+// fold does not hold". The CLI cannot reach that refusal, and this test says why: after=
+// is DERIVED from the writer's own fold by Card.After, which walks the folded events and
+// falls back to the card id, so Card.Holds is true of it by construction — including when
+// the card's newest event is quarantined, which is the case the refusal was written for.
+// The refusal stays as the guard on that invariant; the invariant is what is pinned here.
+func TestATakeNeverNamesAnAfterTheFoldDoesNotHold(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add(plain("rowan", "a card whose newest event is quarantined")...)
+	file := filepath.Join(b.dir, id+".board")
+	good := readFile(t, file)
+	stamp := b.now.Add(time.Minute).UTC().Format(time.RFC3339)
+	broken := "taken " + id + " ev=111111111111 after=999999999999 as=zz at=" + stamp + " override=false\n"
+	if err := os.WriteFile(file, []byte(good+broken), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := b.atTime(b.now.Add(2*time.Minute), b.board("take", "--as", "ada", "--card", id, "--stale", "10m", "--anyway")...)
+	if exit != 0 {
+		t.Fatalf("a take over a quarantined event: exit %d %s", exit, stderr)
+	}
+	if !strings.Contains(stdout, "TAKE OK") {
+		t.Errorf("the take did not run: %q", stdout)
+	}
+	after := field(lastLine(t, file), "after=")
+	if after != id {
+		t.Errorf("after=%s, want the card id: a quarantined event is not in the fold, so it is never named", after)
+	}
+	_, listing, _ := b.atTime(b.now.Add(2*time.Minute), b.board("list", "--stale", "10m", "--list")...)
+	if !strings.Contains(listing, "owner=ada") || !strings.Contains(listing, "quarantined=1") {
+		t.Errorf("the fold did not keep the take and the quarantine apart:\n%s", listing)
+	}
 }

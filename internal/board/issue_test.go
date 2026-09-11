@@ -117,3 +117,60 @@ func mustTime(t *testing.T, s string) time.Time {
 	}
 	return when.UTC()
 }
+
+// CREATION IS EXCLUSIVE UNDER --issue AS WELL, and the re-read that makes it so is never
+// answered from this run's own cache. Spec, Creation is exclusive against hand-made files:
+// "under `--issue` the board is re-read immediately before the append and the id looked
+// for. An id that already exists — which with a random id means a hand-made file, a copied
+// one, or a broken random source — is `ADD REFUSED: id <id> exists; nothing written` at
+// exit 1". The forge append is the ONLY serial point under this backend, so this is its
+// half of the O_EXCL the directory backend gets from the filesystem: a run that read the
+// thread, paused, and appended what it drew would post a second card under an id another
+// line had already used, and two filings would fold into one card with nothing said.
+func TestACardAppendRereadsTheThreadAndRefusesAnExistingId(t *testing.T) {
+	i, err := NewIssue("mas-bandwidth/schema#876", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	thread := []string{}
+	posted := 0
+	i.run = func(ctx context.Context, stdin string, args ...string) (string, error) {
+		if args[0] == "issue" {
+			posted++
+			thread = append(thread, strings.TrimSpace(stdin))
+			return "", nil
+		}
+		var body strings.Builder
+		body.WriteString("[")
+		for n, line := range thread {
+			if n > 0 {
+				body.WriteString(",")
+			}
+			fmt.Fprintf(&body, "{\"body\": %q}", line)
+		}
+		body.WriteString("]")
+		return body.String(), nil
+	}
+	// This run reads the board...
+	if _, err := i.Events(); err != nil {
+		t.Fatal(err)
+	}
+	// ...and while it is paused between that read and its append, another line files the
+	// id it is about to use: a copied comment, or a broken random source in two clones.
+	thread = append(thread, card(idA, "the card the other line filed while this one paused"))
+
+	err = i.Append(card(idA, "the card this run drew the same id for"))
+	if err != ErrExists {
+		t.Errorf("Append of an existing id returned %v, want ErrExists: the board is re-read immediately before the append and the id looked for", err)
+	}
+	if posted != 0 {
+		t.Errorf("the refused append posted %d comments; nothing is written when the id exists", posted)
+	}
+	// A later event about that card still appends: only creation is exclusive.
+	if err := i.Append(later("taken", idA, "0000000000a1", idA, "bo", "2026-09-10T09:10:00Z", false)); err != nil {
+		t.Errorf("a take after a refused create: %v", err)
+	}
+	if posted != 1 {
+		t.Errorf("the take posted %d comments, want 1", posted)
+	}
+}

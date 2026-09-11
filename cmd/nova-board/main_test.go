@@ -10,6 +10,9 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"io"
 	"os"
 	"path/filepath"
@@ -133,6 +136,7 @@ func plain(as, text string) []string {
 
 // Rule 1: COUNTS, NOT LISTS. A listing is a context window spent on the good news.
 func TestTheDefaultViewIsCountsNotCards(t *testing.T) {
+	t.Parallel()
 	b := newBench(t)
 	owners := []string{"rowan", "emma", "freddy", "stella", "johnny"}
 	for i := 0; i < 50; i++ {
@@ -222,6 +226,7 @@ func TestTheDefaultViewIsCountsNotCards(t *testing.T) {
 
 // Rule 2: every card has an owner, a DEADLINE and a DEFAULT. Never wait forever.
 func TestNoCardLivesWithoutADeadline(t *testing.T) {
+	t.Parallel()
 	b := newBench(t)
 	exit, _, stderr := b.run("add", "--dir", b.dir, "--as", "rowan", "--text", "a thing", "--default", "d")
 	if exit != 2 || !strings.Contains(stderr, "--by") {
@@ -266,6 +271,7 @@ func TestNoCardLivesWithoutADeadline(t *testing.T) {
 // Rule 4: the owed ledger. Done means the owed count is ZERO, and the tool prints that
 // number rather than a word.
 func TestOwedCountsPerLegAndDoneIsZero(t *testing.T) {
+	t.Parallel()
 	b := newBench(t)
 	var rows []string
 	for _, leg := range []string{"cpp", "go", "rust"} {
@@ -316,6 +322,7 @@ func TestOwedCountsPerLegAndDoneIsZero(t *testing.T) {
 // Rule 5: a machine's finding becomes a card by ONE command, and the tool does not open
 // the path it carries.
 func TestAMachineFindingIsOneCommandWithEvidence(t *testing.T) {
+	t.Parallel()
 	b := newBench(t)
 	missing := filepath.Join(b.dir, "nowhere", "crash-176549.bin")
 	id := b.add("--as", "fuzzer", "--text", "a crash seed nobody has triaged", "--by", "4h",
@@ -341,6 +348,7 @@ func TestAMachineFindingIsOneCommandWithEvidence(t *testing.T) {
 // Rule 6: SILENCE IS A STATE. A card taken by a line that then stops is owed by nobody and
 // looks owed by somebody, which is worse than unowned.
 func TestSilenceIsAStateAndIsCounted(t *testing.T) {
+	t.Parallel()
 	b := newBench(t)
 	id := b.add(plain("rowan", "a thing that goes quiet")...)
 	ten := at(t, "2026-09-11T10:09:59Z")
@@ -398,6 +406,7 @@ func TestSilenceIsAStateAndIsCounted(t *testing.T) {
 // The example pair under Exit codes, run VERBATIM against a fresh board: an example that
 // does not run is not an example.
 func TestTheShellGuardPairRunsAgainstAFreshBoard(t *testing.T) {
+	t.Parallel()
 	b := newBench(t)
 	exit, stdout, _ := b.run(b.board("check", "--words", "windows runner skips")...)
 	if exit != 0 {
@@ -429,6 +438,7 @@ func TestTheShellGuardPairRunsAgainstAFreshBoard(t *testing.T) {
 
 // Work list 7's test, named for the mnemonic.
 func TestCheckExitsOneOnMatchSoTheShellGuardReads(t *testing.T) {
+	t.Parallel()
 	b := newBench(t)
 	id := b.add(plain("rowan", "the Windows runner skips three steps")...)
 	exit, stdout, _ := b.run(b.board("check", "--words", "windows SKIPS")...)
@@ -462,15 +472,9 @@ func TestCheckExitsOneOnMatchSoTheShellGuardReads(t *testing.T) {
 // Rule 7: BOUNDED AT THE LARGEST PLAUSIBLE STATE — 500 cards across 20 lines. The output
 // of the default view never grows with the number of cards.
 func TestBoundedAtFiveHundredCardsAcrossTwentyLines(t *testing.T) {
+	t.Parallel()
 	b := newBench(t)
-	legs := []string{"cpp", "go", "rust", "csharp", "python"}
-	for i := 0; i < 500; i++ {
-		args := plain(fmt.Sprintf("line-%02d", i%20), fmt.Sprintf("owed thing number %d on this board", i))
-		if i%5 == 0 {
-			args = append(args, "--thing", fmt.Sprintf("field-%d", i), "--leg", legs[(i/5)%len(legs)])
-		}
-		b.add(args...)
-	}
+	seed(t, b.dir, 0, 500)
 	exit, stdout, stderr := b.run(b.board("list", "--stale", "10m")...)
 	if exit != 0 {
 		t.Fatalf("exit %d: %s", exit, stderr)
@@ -487,15 +491,36 @@ func TestBoundedAtFiveHundredCardsAcrossTwentyLines(t *testing.T) {
 	}
 	// 1,000 cards print the SAME number of lines: the default view grows with owners and
 	// legs, never with cards.
-	for i := 500; i < 1000; i++ {
-		b.add(plain(fmt.Sprintf("line-%02d", i%20), fmt.Sprintf("owed thing number %d on this board", i))...)
-	}
+	seed(t, b.dir, 500, 1000)
 	_, twice, _ := b.run(b.board("list", "--stale", "10m")...)
 	if got := len(strings.Split(strings.TrimSuffix(twice, "\n"), "\n")); got != lines {
 		t.Errorf("1,000 cards print %d lines where 500 printed %d", got, lines)
 	}
 	if !strings.Contains(twice, "cards=1000") {
 		t.Errorf("the count did not follow the board:\n%s", twice)
+	}
+}
+
+// seed writes card files straight into a board directory, which is what a board of five
+// hundred cards looks like after five hundred adds. It is written rather than filed
+// because what is under test here is the SHAPE OF THE OUTPUT at the largest plausible
+// state, and five hundred adds is five hundred whole-log reads: the O(all events) trade
+// this tool makes deliberately, paid in a test that asserts nothing about it. The add path
+// itself is pinned by the tests above.
+func seed(t *testing.T, dir string, from, to int) {
+	t.Helper()
+	legs := []string{"cpp", "go", "rust", "csharp", "python"}
+	for i := from; i < to; i++ {
+		id := fmt.Sprintf("%032x", i+1)
+		row := ""
+		if i%5 == 0 && i < 500 {
+			row = fmt.Sprintf(" thing=field-%d leg=%s", i, legs[(i/5)%len(legs)])
+		}
+		line := fmt.Sprintf("card %s as=line-%02d at=2026-09-11T10:00:00Z override=false hash=%012x owner=line-%02d by=2026-09-11T14:00:00Z default=the\\x20filer\\x20files\\x20it%s: owed thing number %d on this board",
+			id, i%20, i, i%20, row, i)
+		if err := os.WriteFile(filepath.Join(dir, id+".board"), []byte("BOARD v1\n"+line+"\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -551,6 +576,7 @@ func TestEveryPathAndDurationIsAFlag(t *testing.T) {
 // The source tripwire behind rule 8: nothing here reaches for a temporary directory, and
 // nothing here takes a lock (rule 3).
 func TestTheSourceHoldsNoTempDirAndNoLock(t *testing.T) {
+	t.Parallel()
 	for _, dir := range []string{".", filepath.Join("..", "..", "internal", "board")} {
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -572,13 +598,10 @@ func TestTheSourceHoldsNoTempDirAndNoLock(t *testing.T) {
 					t.Errorf("%s/%s holds %q; rule 8 forbids a temporary path and rule 3 says the tool holds no lock because it needs none", dir, e.Name(), banned)
 				}
 			}
-			// Rule 9's tripwire: no time parse over a card's free text.
-			if strings.Contains(src, "time.Parse(time.RFC3339, e.Tail") || strings.Contains(src, "time.Parse(time.RFC3339, card.Text") {
-				t.Errorf("%s/%s parses a time out of a card's text; a time a filer writes inside --text is TEXT", dir, e.Name())
-			}
-			// Work list 1's tripwire: no sequence, no count read at add time.
-			if strings.Contains(src, "seq=") || strings.Contains(src, "Seq ") {
-				t.Errorf("%s/%s holds a sequence field; a creation identity may depend on nothing two writers can both observe before either writes", dir, e.Name())
+			// Rule 9's and work list 1's tripwires, STRUCTURALLY: the shapes, not one
+			// spelling of them, so a rename cannot walk past either.
+			for _, found := range bannedShapes(t, filepath.Join(dir, e.Name()), src) {
+				t.Error(found)
 			}
 		}
 		if read == 0 {
@@ -592,6 +615,7 @@ func TestTheSourceHoldsNoTempDirAndNoLock(t *testing.T) {
 // Rule 9: THE TOOL STAMPS, and add has no --at. A person stamped notes two hours ahead of
 // the clock, and every list that ordered by the typed time put them in the future.
 func TestTheToolStampsAndAddHasNoAt(t *testing.T) {
+	t.Parallel()
 	b := newBench(t)
 	for _, flag := range []string{"--at", "--since", "--stamp"} {
 		exit, _, stderr := b.run("add", "--dir", b.dir, "--as", "rowan", "--text", "a thing",
@@ -637,6 +661,7 @@ func TestTheToolStampsAndAddHasNoAt(t *testing.T) {
 // ONBOARDING point 1: a bare invocation costs ONE line and names the door; the banner is
 // behind `help`, on stdout, at exit 0.
 func TestABareInvocationCostsOneLineAndNamesTheDoor(t *testing.T) {
+	t.Parallel()
 	var out, errb bytes.Buffer
 	exit := run(nil, &out, &errb, time.Now().UTC(), &seq{})
 	if exit != 2 {
@@ -671,3 +696,235 @@ func TestABareInvocationCostsOneLineAndNamesTheDoor(t *testing.T) {
 
 // A guard against a test helper that silently stopped driving the tool.
 var _ io.Writer = (*bytes.Buffer)(nil)
+
+// Rule 1, the other half: --open AND --owner ARE FILTERS ON --list, NEVER AN IMPLICIT
+// LISTING. "`list` without `--list` prints no card" and "Cards print only under `--list`,
+// capped at `--max`". A tool that printed a board's cards because a filter was named would
+// spend a reader's context window on the good news at exactly the moment they asked a
+// counting question.
+func TestOpenAndOwnerAreFiltersOnTheListing(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	for i := 0; i < 3; i++ {
+		b.add(plain("rowan", fmt.Sprintf("thing number %d is owed", i))...)
+	}
+	for _, args := range [][]string{
+		{"list", "--stale", "10m", "--open"},
+		{"list", "--stale", "10m", "--owner", "rowan"},
+		{"list", "--stale", "10m", "--open", "--owner", "rowan"},
+	} {
+		exit, stdout, _ := b.run(b.board(args...)...)
+		if exit != 0 {
+			t.Fatalf("%v: exit %d", args, exit)
+		}
+		if n := count(stdout, "BOARD CARD"); n != 0 {
+			t.Errorf("%v printed %d cards; list without --list prints no card:\n%s", args, n, stdout)
+		}
+		if !strings.Contains(stdout, "BOARD OK cards=3") {
+			t.Errorf("%v did not print the board's counts:\n%s", args, stdout)
+		}
+	}
+	// Under --list the same flags are the filter they are documented as.
+	_, stdout, _ := b.run(b.board("list", "--stale", "10m", "--list", "--open")...)
+	if n := count(stdout, "BOARD CARD"); n != 3 {
+		t.Errorf("--list --open printed %d cards, want 3:\n%s", n, stdout)
+	}
+}
+
+// THE COUNTS PRINT ON FAILURE AS WELL AS SUCCESS. Spec, Output grammar: "**The counts
+// print on failure as well as success** and they are the truth about the **board**, not
+// about the output"; work list 6 asks for it by name: "the count line printed on failure
+// as well as success". A refusal that printed no counts would leave the one number a
+// reader acts on unsaid at exactly the moment the board said no, and `shown` is how many
+// lines this run printed, the count line among them.
+func TestTheCountsPrintOnFailureAsWellAsSuccess(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add(plain("rowan", "a card another line holds")...)
+	other := b.add(plain("rowan", "a card to close under a live take")...)
+	for _, card := range []string{id, other} {
+		if exit, _, stderr := b.run(b.board("take", "--as", "ada", "--card", card, "--stale", "10m")...); exit != 0 {
+			t.Fatalf("take: exit %d %s", exit, stderr)
+		}
+	}
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"a take over a live take", b.board("take", "--as", "bo", "--card", id, "--stale", "10m")},
+		{"a close over a live take", b.board("close", "--as", "bo", "--card", other, "--stale", "10m", "--how", "done")},
+		{"an --id that exists with different fields", append(b.board("add", "--id", id), plain("rowan", "a different filing entirely")...)},
+		{"an id that names no card", b.board("take", "--as", "bo", "--card", "0000000000000000000000000000000f", "--stale", "10m")},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exit, stdout, stderr := b.run(tc.args...)
+			if exit == 0 {
+				t.Fatalf("this case must fail: exit 0\n%s%s", stdout, stderr)
+			}
+			if !strings.Contains(stdout, "BOARD OK cards=2 open=2") {
+				t.Errorf("a failing run printed no count line; the counts print on failure as well as success:\nstdout: %q\nstderr: %q", stdout, stderr)
+			}
+			if !strings.Contains(stdout, "shown=1") {
+				t.Errorf("shown is how many lines this run printed:\nstdout: %q", stdout)
+			}
+		})
+	}
+	// And on success `shown` counts the count line too: the default view over this board
+	// prints one BOARD LINE, one BOARD NEXT and one BOARD OK.
+	_, stdout, _ := b.run(b.board("list", "--stale", "10m")...)
+	if n := len(strings.Split(strings.TrimSuffix(stdout, "\n"), "\n")); !strings.Contains(stdout, fmt.Sprintf("shown=%d", n)) {
+		t.Errorf("the run printed %d lines and says shown= something else:\n%s", n, stdout)
+	}
+}
+
+// THE --id RETRY COMPARES THE CARD LINE'S OWN owner=, NOT THE DERIVED OWNER. Spec, A retry
+// after an uncertain append reuses the id it drew: "an existing card whose creation fields
+// are identical (`as`, `hash`, `owner`, `by`, `default`, `thing`, `leg`, `evidence` —
+// everything on the `card` line but `at`) is `ADD OK … existed=true` and nothing is
+// written". The derived owner is the latest take in the fold, which another line moves by
+// taking the card; the card line's owner= never changes. A retry compared against the
+// TAKER's name is a wrong refusal of the one append whose outcome was unknown, which is
+// the only case --id exists for.
+func TestAnIdRetryComparesTheCardLineNotTheDerivedOwner(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	filing := plain("rowan", "a filing whose outcome nobody saw")
+	id := b.add(filing...)
+	// Another line takes the card between the uncertain append and the retry.
+	if exit, _, stderr := b.run(b.board("take", "--as", "ada", "--card", id, "--stale", "10m")...); exit != 0 {
+		t.Fatalf("take: exit %d %s", exit, stderr)
+	}
+	exit, stdout, stderr := b.run(append(b.board("add", "--id", id), filing...)...)
+	if exit != 0 || !strings.Contains(stdout, "existed=true") {
+		t.Errorf("the identical retry of a card another line has taken: exit %d, stdout %q, stderr %q", exit, stdout, stderr)
+	}
+	if n := len(eventLines(t, filepath.Join(b.dir, id+".board"))); n != 2 {
+		t.Errorf("the retry appended: the card file holds %d events, want the card and the take", n)
+	}
+	// The same --id with a different --owner is still a refusal: that field is on the card
+	// line and a different one is a different filing.
+	exit, _, stderr = b.run(append(b.board("add", "--id", id, "--owner", "emma"), filing...)...)
+	if exit != 1 || !strings.Contains(stderr, "different fields") {
+		t.Errorf("a retry with a different owner=: exit %d, stderr %q", exit, stderr)
+	}
+}
+
+// The tripwires behind rule 9 and work list 1 are STRUCTURAL, not literal. A tripwire that
+// matched one spelling of the line it forbids is green the moment somebody renames a
+// variable, and a check that cannot fail is not a check (SPEC.md). The mutation below is
+// the same rule broken under different names, and the tripwire must find it.
+func TestTheTripwiresAreStructuralAndCatchARename(t *testing.T) {
+	t.Parallel()
+	mutated := `package board
+
+import "time"
+
+type row struct {
+	Seq	int
+	Body	string
+}
+
+func (r row) since() (time.Time, error) {
+	return time.Parse(time.RFC3339, r.Body)
+}
+`
+	found := bannedShapes(t, "mutated.go", mutated)
+	for _, want := range []string{"parses a time out of a card's text", "sequence"} {
+		hit := false
+		for _, f := range found {
+			hit = hit || strings.Contains(f, want)
+		}
+		if !hit {
+			t.Errorf("the tripwire missed %q under a renamed field; it found %v", want, found)
+		}
+	}
+	// And it does not fire on the source as it stands, which is the other half of a
+	// tripwire being worth keeping.
+	if got := bannedShapes(t, "main.go", readFile(t, "main.go")); len(got) != 0 {
+		t.Errorf("the tripwire fires on main.go as it stands: %v", got)
+	}
+}
+
+// bannedShapes is the tripwire itself: the SHAPES rule 9 and work list 1 forbid, found in
+// one file's syntax tree rather than in one spelling of them.
+//
+// Rule 9: no time is parsed out of a card's free text, whatever the variable holding that
+// text is called — the shape is a time parse whose argument is a card's text or tail.
+// Work list 1: no sequence anywhere near a creation identity — no field, no variable and
+// no rendered key called seq, however it is spelled, because a creation identity may
+// depend on nothing two writers can both observe before either writes.
+func bannedShapes(t *testing.T, name, src string) []string {
+	t.Helper()
+	file, err := parser.ParseFile(token.NewFileSet(), name, src, parser.ParseComments)
+	if err != nil {
+		t.Fatalf("parsing %s: %v", name, err)
+	}
+	var found []string
+	textish := func(e ast.Expr) bool {
+		switch v := e.(type) {
+		case *ast.SelectorExpr:
+			return isTextName(v.Sel.Name)
+		case *ast.Ident:
+			return isTextName(v.Name)
+		case *ast.CallExpr:
+			for _, a := range v.Args {
+				if id, ok := a.(*ast.Ident); ok && isTextName(id.Name) {
+					return true
+				}
+				if sel, ok := a.(*ast.SelectorExpr); ok && isTextName(sel.Sel.Name) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch v := n.(type) {
+		case *ast.CallExpr:
+			if sel, ok := v.Fun.(*ast.SelectorExpr); ok && sel.Sel.Name == "Parse" {
+				if pkg, ok := sel.X.(*ast.Ident); ok && pkg.Name == "time" {
+					for _, arg := range v.Args {
+						if textish(arg) {
+							found = append(found, name+" parses a time out of a card's text; a time a filer writes inside --text is TEXT")
+						}
+					}
+				}
+			}
+		case *ast.Field:
+			for _, id := range v.Names {
+				if isSeqName(id.Name) {
+					found = append(found, name+" holds a sequence field "+id.Name+"; a creation identity may depend on nothing two writers can both observe before either writes")
+				}
+			}
+		case *ast.Ident:
+			if isSeqName(v.Name) {
+				found = append(found, name+" names a sequence "+v.Name+"; a creation identity may depend on nothing two writers can both observe before either writes")
+			}
+		case *ast.BasicLit:
+			if v.Kind == token.STRING && strings.Contains(strings.ToLower(v.Value), "seq=") {
+				found = append(found, name+" renders a seq= field; a creation identity may depend on nothing two writers can both observe before either writes")
+			}
+		}
+		return true
+	})
+	return found
+}
+
+// isTextName is a card's free text under any name a rename could give it.
+func isTextName(name string) bool {
+	switch strings.ToLower(strings.TrimPrefix(name, "card")) {
+	case "text", "tail", "body", "words", "freetext":
+		return true
+	}
+	return false
+}
+
+// isSeqName is a sequence under any name a rename could give it.
+func isSeqName(name string) bool {
+	switch strings.ToLower(name) {
+	case "seq", "sequence", "seqno", "serial", "counter", "ordinal":
+		return true
+	}
+	return false
+}

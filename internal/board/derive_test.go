@@ -127,3 +127,42 @@ func TestAnUnreadableStampFoldsLastAndIsCounted(t *testing.T) {
 		t.Error("the stamp was rewritten; it is carried as it was written")
 	}
 }
+
+// THE TOTAL KEY IS (at, as, id, verb, the line's bytes) and the id in it is THE CARD'S —
+// "the id after the verb", which the spec says is why it is on every line. Spec, The fold
+// order: "the one that goes first is the smallest by the stable total key `(at, as, id,
+// verb, the line's bytes)`" and "Every event line carries the first three keys, which is
+// why they are on every line: the id after the verb, `as=` and `at=`". A key that reached
+// for `ev=` in the id's place would let the DRAW decide a tie the document says the VERB
+// decides, and two documents that disagree about the order are two boards.
+func TestTheTotalKeyIsTheDocumentedOne(t *testing.T) {
+	at := "2026-09-10T09:10:00Z"
+	// Two concurrent closing events at one at= and one as=, whose ev= sorts the opposite
+	// way from their verbs: by the documented key `closed` folds first (closed < landed),
+	// by an ev= in the id's place `landed` does (111111111111 < ffffffffffff).
+	closed := later("closed", idA, "ffffffffffff", idA, "ada", at, false)
+	landed := later("landed", idA, "111111111111", idA, "ada", at, false)
+	root := card(idA, "one card two lines both finished at one second")
+	for _, order := range [][]string{{root, closed, landed}, {root, landed, closed}} {
+		b := Derive(Log{Lines: order}, mustTime2("2026-09-10T09:15:00Z"), 10*time.Minute)
+		c := b.Cards[0]
+		if c.Close == nil || c.Close.Verb != "closed" {
+			t.Errorf("the first close by the documented key (at, as, id, verb, bytes) is `closed`; got %v", c.Close)
+		}
+		if c.Conflicts != 1 {
+			t.Errorf("conflicts = %d, want the one concurrent pair", c.Conflicts)
+		}
+	}
+}
+
+// A UNION MERGE THAT HOLDS ONE LINE TWICE FOLDS IT ONCE, and that is as true of a line
+// whose at= will not parse as of any other: two events equal in all five keys ARE one
+// line, so the count a reader acts on cannot double because git kept a line twice.
+func TestADuplicatedUnreadableStampIsCountedOnce(t *testing.T) {
+	broken := "taken " + idA + " ev=0000000000c3 after=" + idA + " as=zz at=yesterday override=false"
+	lines := []string{card(idA, "a card with a stamp nobody can read"), broken, broken}
+	b := Derive(Log{Lines: lines}, mustTime2("2026-09-10T09:15:00Z"), 10*time.Minute)
+	if b.Unparsed != 1 {
+		t.Errorf("unparsed = %d, want 1: a union merge holding one line twice folds it once", b.Unparsed)
+	}
+}

@@ -375,6 +375,9 @@ CLOSE REFUSED: <reason>
 CHECK HIT id=<id> state=<OPEN|CLOSED> owner=<name|->: <text>
 CHECK OK matched=<n> cards=<n> scanned=<OPEN|ALL> words=<n>
 CHECK REFUSED: <reason>
+QUICKSTART OK backend=<issue|dir> source=<where> stale=<d>: <what the two lines below are>
+QUICKSTART LINE n=<n> what=<check|add>: "<a line meant to be pasted, quoted as nova-bus names quotes>"
+QUICKSTART NOTE <something a first run needs said in words>
 ```
 
 `OK` lines and the informational tokens go to stdout; `FAIL` lines and refusals go

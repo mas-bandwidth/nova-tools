@@ -36,16 +36,17 @@ import (
 
 // Card is one thing owed, as the log says it stands right now.
 type Card struct {
-	ID       string
-	Text     string
-	Hash     string
-	Owner    string // the latest take in the fold order, else the add's --owner, else the filer
-	Filer    string
-	By       string // the deadline as the add stored it
-	Default  string
-	Thing    string
-	Leg      string
-	Evidence string
+	ID        string
+	Text      string
+	Hash      string
+	Owner     string // the latest take in the fold order, else the add's --owner, else the filer
+	CardOwner string // the owner= ON THE CARD LINE, which a take never moves
+	Filer     string
+	By        string // the deadline as the add stored it
+	Default   string
+	Thing     string
+	Leg       string
+	Evidence  string
 
 	Since    time.Time
 	SinceRaw string
@@ -115,15 +116,17 @@ func Derive(log Log, now time.Time, stale time.Duration) *Board {
 			}
 			continue
 		}
-		if !e.AtOK {
-			// A stamp this tool cannot parse is never guessed at: the event folds last
-			// and is counted, so a reader learns that the board holds one.
-			b.Unparsed++
-		}
 		if seen[e.Line] {
 			continue
 		}
 		seen[e.Line] = true
+		if !e.AtOK {
+			// A stamp this tool cannot parse is never guessed at: the event folds last
+			// and is counted, so a reader learns that the board holds one. The counting
+			// is AFTER the duplicate-line check, because two events equal in all five
+			// keys are one line and a union merge that holds one twice folds it once.
+			b.Unparsed++
+		}
 		if _, ok := byCard[e.ID]; !ok {
 			order = append(order, e.ID)
 		}
@@ -185,7 +188,7 @@ func foldCard(id string, events []Event, b *Board, now time.Time, stale time.Dur
 	sortByKey(roots)
 	card := &Card{
 		ID: id, Text: roots[0].Tail, Hash: roots[0].Hash, Owner: roots[0].Owner,
-		Filer: roots[0].As, By: roots[0].By, Default: roots[0].Default,
+		CardOwner: roots[0].Owner, Filer: roots[0].As, By: roots[0].By, Default: roots[0].Default,
 		Thing: roots[0].Thing, Leg: roots[0].Leg, Evidence: roots[0].Evidence,
 		Since: roots[0].At, SinceRaw: roots[0].AtRaw, State: "OPEN",
 		LatestAt: roots[0].At,
@@ -333,21 +336,18 @@ func lessByKey(a, b Event) bool {
 	if a.As != b.As {
 		return a.As < b.As
 	}
-	if ka, kb := keyID(a), keyID(b); ka != kb {
-		return ka < kb
+	// The id in the key is THE CARD'S — "the id after the verb", which the spec says is
+	// why it is on every line. It is constant within a card and so decides nothing here,
+	// and that is the point: the verb decides the tie, never the draw. An ev= in its
+	// place would make a tie fall out of the random source, which is not a fact two
+	// clones can reason about.
+	if a.ID != b.ID {
+		return a.ID < b.ID
 	}
 	if a.Verb != b.Verb {
 		return a.Verb < b.Verb
 	}
 	return a.Line < b.Line
-}
-
-// keyID is the event's own id where it has one, and the card's where it does not.
-func keyID(e Event) string {
-	if e.Ev != "" {
-		return e.Ev
-	}
-	return e.ID
 }
 
 func sortByKey(events []Event) {
