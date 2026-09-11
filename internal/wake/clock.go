@@ -20,7 +20,7 @@ type Clock interface {
 // Real is the clock a watch runs on.
 type Real struct{}
 
-func (Real) Now() time.Time    { return time.Now() }
+func (Real) Now() time.Time { return time.Now() }
 func (Real) Sleep(d time.Duration) {
 	if d > 0 {
 		time.Sleep(d)

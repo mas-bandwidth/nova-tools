@@ -133,9 +133,9 @@ func (s *State) Cold() bool { return s.cold }
 // previous state or the new one and never half of either.
 //
 // The temp file has a FIXED name beside the state rather than a random one in
-// $TMPDIR: rule 4 says the only files this tool touches are --state, the temp
-// file beside it and <state>.lock, and a rename is only atomic within one
-// filesystem anyway.
+// a system scratch directory: rule 4 says the only files this tool touches are
+// --state, the temp file beside it and <state>.lock, and a rename is only
+// atomic within one filesystem anyway.
 func (s *State) Save(path string) error {
 	keys := s.Keys()
 	var b strings.Builder
@@ -163,8 +163,9 @@ func (s *State) Save(path string) error {
 }
 
 // TempName is the one scratch file this tool writes, beside the state it is
-// about to replace. Named here so the test that proves no /tmp and no
-// os.TempDir appears in this package has one place to look.
+// about to replace. It is named here, in one place, so that the tripwire which
+// proves this package reaches no system scratch directory has one function to
+// read rather than every write site.
 func TempName(path string) string {
 	return filepath.Join(filepath.Dir(path), "."+filepath.Base(path)+".writing")
 }

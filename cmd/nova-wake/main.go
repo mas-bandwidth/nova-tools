@@ -549,41 +549,50 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 	w.changed = map[string]int{}
 	for {
 		now := w.clock.Now()
-		polled := false
-		for _, s := range w.sources {
-			if now.Before(s.due) {
-				continue
+		// The deadline is read BEFORE anything is polled, so that --max is the
+		// moment this call stops and not the moment after one more poll: a
+		// watch that polled at its deadline would make one more call against
+		// somebody else's server for an answer it has no time to print.
+		reached := !now.Before(deadline)
+		broken := ""
+		if !reached {
+			for _, s := range w.sources {
+				if now.Before(s.due) {
+					continue
+				}
+				s.due = now.Add(s.src.Every())
+				w.poll(ctx, s.src, now)
+				if n, _, _ := w.st.Streak(s.src.Name()); n >= 3 && broken == "" {
+					broken = s.src.Name()
+				}
 			}
-			s.due = now.Add(s.src.Every())
-			polled = true
-			w.poll(ctx, s.src, now)
-			if n, _, _ := w.st.Streak(s.src.Name()); n >= 3 {
-				_, since, reason := w.st.Streak(s.src.Name())
-				w.save()
-				w.sourceLine()
-				fmt.Fprintf(w.stdout, "WAKE BROKEN source=%s failures=%d since=%s: %s\n",
-					oneline.Field(s.src.Name()), n, oneline.Field(since), oneline.Escape(oneline.Cap(reason, oneline.TailBytes)))
-				return 2
+			if w.lines != nil {
+				w.pollLines(ctx, now)
 			}
+			w.firstPoll = true
 		}
-		if w.lines != nil && (!w.firstPoll || polled) {
-			w.pollLines(ctx, now)
-		}
-		w.firstPoll = true
 
-		// Rule 11, step 1: the observations are in the state before anything is
-		// printed. A kill here leaves them pending, which is a repeated wake
-		// and never a lost one.
+		// Rule 11, step 1: every observation is in the state before anything is
+		// printed. A kill here leaves the entry pending, which is a repeated
+		// wake and never a lost one.
 		w.save()
 		printed := w.printQueue(now)
-		if printed > 0 {
+
+		switch {
+		case broken != "":
+			n, since, reason := w.st.Streak(broken)
+			w.sourceLine()
+			fmt.Fprintf(w.stdout, "WAKE BROKEN source=%s failures=%d since=%s: %s\n",
+				oneline.Field(broken), n, oneline.Field(since),
+				oneline.Escape(oneline.Cap(reason, oneline.TailBytes)))
+			return 2
+		case printed > 0:
 			w.sourceLine()
 			fmt.Fprintf(w.stdout, "WAKE CHANGE after=%s polls=%d bus=%d entries=%d reports=%d lines=%d pending=%d\n",
 				oneline.Field(wake.Dur(now.Sub(start))), w.polls, w.changed["bus"], w.changed["entries"],
 				w.changed["reports"], w.changed["lines"], w.st.Pending())
 			return 0
-		}
-		if !now.Before(deadline) {
+		case reached:
 			w.sourceLine()
 			fmt.Fprintf(w.stdout, "WAKE QUIET after=%s polls=%d default=%s: deadline, default taken\n",
 				oneline.Field(wake.Dur(now.Sub(start))), w.polls, oneline.Field(onDeadline))
@@ -656,12 +665,19 @@ func (w *watcher) observe(source string, res wake.Result, now time.Time) {
 			// second poll of an unchanged report must be quiet.
 			display = wake.NewOrModified(value, had)
 		}
-		// The cold-start rule: with no state file, the first poll of --entry,
-		// --reports and --line RECORDS the world and reports nothing. The bus
-		// is the exception and it is not a choice: a cold first poll that
-		// swallowed five notes to stay quiet is the failure of 2026-09-11
-		// caused deliberately.
-		if w.cold && !w.firstPoll && it.Kind != wake.KindBus && it.Kind != wake.KindBusLine {
+		// The cold-start rule: with no state file, the first poll of --entry
+		// and --reports RECORDS the world and reports nothing, because a cold
+		// watch would otherwise return instantly with a listing of everything
+		// that exists, which is not what "wake me on a change" means.
+		//
+		// The bus is the exception and it is not a choice: a cold first poll
+		// that swallowed five notes to stay quiet is the failure of 2026-09-11
+		// caused deliberately. --line is the other exception, and the rule
+		// names it by naming only --entry and --reports: a line that is
+		// already silent when the watch starts is exactly the news rule 2
+		// exists for, and a watcher that recorded it quietly would hold the
+		// silence it was asked to report.
+		if w.cold && !w.firstPoll && it.Kind != wake.KindBus && it.Kind != wake.KindBusLine && it.Kind != wake.KindLine {
 			w.st.RecordOnly(it.Key, value)
 			continue
 		}
