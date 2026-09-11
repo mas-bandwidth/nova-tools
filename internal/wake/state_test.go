@@ -329,3 +329,137 @@ func TestThePollProcessOutlivesTheWaitItAskedFor(t *testing.T) {
 		})
 	}
 }
+
+// The State section, verbatim (docs/SPEC-WAKE.md): "The stored form of a
+// watched key is `<value>|printed=<id|->`", and rule 11's step 3 asks for
+// "`printed=<id>` for each line that reached stdout" by name. The LABEL is the
+// half a reader outside this package can check: a second field holding a bare
+// id looks exactly like a second field holding anything else, so a guard that
+// greps a state file for the literal `printed=` over rows written without it
+// can never go red -- which is what cmd/nova-wake/main_test.go's failed-write
+// guard had become.
+func TestTheStoredFormOfAWatchedKeyCarriesThePrintedLabel(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state")
+	s, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const standing = "bus:line:INBOX REFUSED a line that stands"
+	s.Observe("entry:r#1", "red", "id-red")
+	s.Sight(standing)
+	s.RecordOnly("report:/a/RESULT.md", "17:42")
+	if err := s.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"entry:r#1", standing, "report:/a/RESULT.md"} {
+		if got := storedPrintedHalf(t, path, key); got != "printed=-" {
+			t.Errorf("%s stores its printed half as %q before any line reached stdout, want %q", key, got, "printed=-")
+		}
+	}
+
+	// And after the line reached stdout, the same half carries the id.
+	back, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	q := back.Queue()
+	if len(q) != 1 {
+		t.Fatalf("queue holds %d records, want 1", len(q))
+	}
+	back.MarkPrinted(q[0])
+	if err := back.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := storedPrintedHalf(t, path, "entry:r#1"); got != "printed=id-red" {
+		t.Errorf("entry:r#1 stores %q after its line reached stdout, want printed=id-red", got)
+	}
+	// The label is the STORED form; the accessor still answers the bare id.
+	if got := back.PrintedID("entry:r#1"); got != "id-red" {
+		t.Errorf("PrintedID = %q, want id-red", got)
+	}
+	// And the reload of a labelled row is still quiet over an unchanged value:
+	// the label is not part of the compared value.
+	again, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Observe("entry:r#1", "red", "id-red") {
+		t.Error("a poll of an unchanged value reported a change after the printed label was stored: this is the false wake of 2026-09-11")
+	}
+}
+
+// A state file written before the label reads, keeps its printed ids, wakes
+// nobody, and is rewritten in the labelled form. A state file is not a record
+// of anything -- deleting it is a correct if noisier watch -- but silently
+// forgetting what was already shown would print every standing thing once more,
+// and a migration that wakes a window is the cost this tool exists to avoid.
+func TestAStateWrittenWithoutTheLabelStillReads(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state")
+	const standing = "bus:line:a line that stands"
+	old := Compose("entry:r#1", Compose("red", "id-red")) + "\n" +
+		Compose(standing, "seen", "id-seen", "1") + "\n"
+	if err := os.WriteFile(path, []byte(old), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := s.PrintedID("entry:r#1"); got != "id-red" {
+		t.Errorf("the printed id of a pre-label row read as %q, want id-red", got)
+	}
+	if got := s.PrintedID(standing); got != "id-seen" {
+		t.Errorf("the printed id of a pre-label sighting read as %q, want id-seen", got)
+	}
+	if got, _ := s.Newest("entry:r#1"); got != "red" {
+		t.Errorf("the newest value of a pre-label row read as %q, want red", got)
+	}
+	if s.Observe("entry:r#1", "red", "id-red") {
+		t.Error("the first poll after the migration reported a change over a value that had not moved")
+	}
+	if err := s.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if got := storedPrintedHalf(t, path, "entry:r#1"); got != "printed=id-red" {
+		t.Errorf("a pre-label row was rewritten as %q, want printed=id-red", got)
+	}
+	if got := storedPrintedHalf(t, path, standing); got != "printed=id-seen" {
+		t.Errorf("a pre-label sighting was rewritten as %q, want printed=id-seen", got)
+	}
+}
+
+// storedPrintedHalf reads one watched row OUT OF THE FILE and hands back its
+// printed half exactly as the bytes hold it, label and all. It parses the file
+// the way a reader who is not this package would: a watched row is four fields
+// when its key is evictable (the fourth is the recency the LRU sorts by) and
+// two otherwise, the second field then being the composed pair itself.
+func storedPrintedHalf(t *testing.T, path, key string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(raw), "\n") {
+		if line == "" {
+			continue
+		}
+		p := Decompose(line)
+		if p[0] != key {
+			continue
+		}
+		switch len(p) {
+		case 4:
+			return p[2]
+		case 2:
+			inner := Decompose(p[1])
+			if len(inner) != 2 {
+				t.Fatalf("the row for %q holds %d fields inside its value, want <value>|printed=<id|->: %q", key, len(inner), line)
+			}
+			return inner[1]
+		default:
+			t.Fatalf("the row for %q holds %d fields: %q", key, len(p), line)
+		}
+	}
+	t.Fatalf("no row for %q in:\n%s", key, raw)
+	return ""
+}

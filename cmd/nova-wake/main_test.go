@@ -971,8 +971,14 @@ func TestAFailedWriteIsNotADelivery(t *testing.T) {
 	if exit != 0 && exit != 2 {
 		t.Fatalf("exit = %d", exit)
 	}
-	if strings.Contains(read(t, state), "printed=") && !strings.Contains(read(t, state), "printed=-") {
-		t.Errorf("a printed= mark was written for a line that never reached stdout:\n%s", read(t, state))
+	// Read per ROW rather than grepping the file: a `printed=` anywhere and a
+	// `printed=-` anywhere are both true while one row carries a real id, and
+	// before the label existed at all the grep matched nothing and could never
+	// go red. TestTheStateFileSaysWhatReachedStdout pins the other direction.
+	for key, half := range watchedRows(t, state) {
+		if half != "printed=-" {
+			t.Errorf("%s was marked %q for a line that never reached stdout:\n%s", key, half, read(t, state))
+		}
 	}
 	if n := wakeQueueRecords(t, state); n != 3 {
 		t.Errorf("%d queue records after a failed write, want all 3 still pending: a record leaves the queue only by being printed", n)
@@ -1176,4 +1182,103 @@ func TestAKillAtEachOrderBoundaryReplaysRatherThanLoses(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The State section, verbatim: "The stored form of a watched key is
+// `<value>|printed=<id|->`", and rule 11's step 3: "delete each printed record
+// and write `printed=<id>` for each line that reached stdout". End to end, over
+// the file the tool actually wrote: the row for a key whose line reached stdout
+// carries its delivery id behind the label, and the row for a key that was
+// recorded and never printed carries `-`.
+//
+// The unit half is internal/wake's TestTheStoredFormOfAWatchedKeyCarriesThe
+// PrintedLabel. This half exists because the label is what makes the failed-
+// write guard above able to fail at all.
+func TestTheStateFileSaysWhatReachedStdout(t *testing.T) {
+	reports := t.TempDir()
+	printed := filepath.Join(reports, "printed", "RESULT.md")
+	write(t, printed, "# a finding worth a line\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	args := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--reports", reports, "--baseline", "--max-lines", "0"}
+
+	r := wakeRun(t, args...)
+	if n := countLines(r.stdout, "WAKE REPORT"); n != 1 {
+		t.Fatalf("printed %d report lines, want 1:\n%s", n, r.all())
+	}
+	rows := watchedRows(t, state)
+	half, ok := rows["report:"+printed]
+	if !ok {
+		t.Fatalf("no watched row for the report that was printed:\n%s", read(t, state))
+	}
+	id, labelled := strings.CutPrefix(half, "printed=")
+	if !labelled || !isDeliveryID(id) {
+		t.Errorf("the row for the printed report says %q, want printed=<the twelve hex of its delivery id>:\n%s", half, read(t, state))
+	}
+
+	// A second run over an unmoved file is quiet, and the mark is unchanged:
+	// the label is stored beside the value, never inside it.
+	r = wakeRun(t, args...)
+	if n := countLines(r.stdout, "WAKE REPORT"); n != 0 {
+		t.Errorf("the second call printed %d report lines over a file that had not moved:\n%s", n, r.all())
+	}
+	if got := watchedRows(t, state)["report:"+printed]; got != half {
+		t.Errorf("the printed mark moved from %q to %q over a quiet poll", half, got)
+	}
+}
+
+// watchedRows reads the state file the way a reader outside internal/wake
+// would, and returns the printed half of every watched row EXACTLY as the
+// bytes hold it, label and all. A watched row is four fields when its key is
+// evictable (the fourth is the recency) and two otherwise, the second field
+// then holding the composed pair itself.
+func watchedRows(t *testing.T, state string) map[string]string {
+	t.Helper()
+	rows := map[string]string{}
+	for _, line := range strings.Split(read(t, state), "\n") {
+		if line == "" {
+			continue
+		}
+		p := wake.Decompose(line)
+		if !watchedKey(p[0]) {
+			continue
+		}
+		switch len(p) {
+		case 4:
+			rows[p[0]] = p[2]
+		case 2:
+			inner := wake.Decompose(p[1])
+			if len(inner) != 2 {
+				t.Fatalf("the row for %q holds %d fields inside its value, want <value>|printed=<id|->: %q", p[0], len(inner), line)
+			}
+			rows[p[0]] = inner[1]
+		default:
+			t.Fatalf("the row for %q holds %d fields: %q", p[0], len(p), line)
+		}
+	}
+	return rows
+}
+
+// watchedKey names the five namespaces the State section calls watched, as
+// against the plain entries beside them (bus:advance, fail:, serve:, queue:).
+func watchedKey(key string) bool {
+	for _, prefix := range []string{"bus:line:", "bus:note:", "entry:", "report:", "line:"} {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// isDeliveryID is the State section's "first twelve hex characters of SHA-256".
+func isDeliveryID(s string) bool {
+	if len(s) != 12 {
+		return false
+	}
+	for _, c := range s {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
 }

@@ -112,7 +112,19 @@ func Load(path string) (*State, error) {
 			if seen > s.tick {
 				s.tick = seen
 			}
-			s.raw[key] = Compose(parts[1], parts[2])
+			s.raw[key] = Compose(parts[1], printedField(printedIDOf(parts[2])))
+			continue
+		}
+		if watchedRow(key) {
+			// A watched row that carries no recency is stored as one field
+			// holding the composed pair. Normalise its printed half here, so
+			// that a state file written before the label is rewritten with it
+			// even if nothing observes that key again.
+			inner := Decompose(parts[1])
+			for len(inner) < 2 {
+				inner = append(inner, "")
+			}
+			s.raw[key] = Compose(inner[0], printedField(printedIDOf(inner[1])))
 			continue
 		}
 		s.raw[key] = parts[1]
@@ -145,7 +157,7 @@ func (s *State) Save(path string) error {
 			for len(parts) < 2 {
 				parts = append(parts, "")
 			}
-			b.WriteString(Compose(k, parts[0], parts[1], strconv.Itoa(seen)))
+			b.WriteString(Compose(k, parts[0], printedField(printedIDOf(parts[1])), strconv.Itoa(seen)))
 		} else {
 			b.WriteString(Compose(k, s.raw[k]))
 		}
@@ -222,10 +234,46 @@ func (s *State) PrintedID(key string) string {
 		return "-"
 	}
 	parts := Decompose(raw)
-	if len(parts) < 2 || parts[1] == "" {
+	if len(parts) < 2 {
 		return "-"
 	}
-	return parts[1]
+	return printedIDOf(parts[1])
+}
+
+// printedLabel is the State section's form for the second half of a watched
+// row: "The stored form of a watched key is `<value>|printed=<id|->`". The
+// label is not decoration. A bare id in that field is indistinguishable from
+// any other field, so nothing outside this package can read a state file and
+// say what the window was shown -- and a guard that greps the file for
+// `printed=` over rows written without it can never go red, which is exactly
+// what cmd/nova-wake's failed-write guard had quietly become.
+const printedLabel = "printed="
+
+// printedField renders the printed half. The empty id and the missing one are
+// both "-": the window has been shown nothing for this key.
+func printedField(id string) string {
+	if id == "" {
+		id = "-"
+	}
+	return printedLabel + id
+}
+
+// printedIDOf reads the printed half back, and accepts the BARE form a state
+// file written before the label carries: a mind that upgrades mid-watch keeps
+// what it was already shown rather than being woken once more by every
+// standing thing. The bare form is never written, only read; Save rewrites
+// every row it loads in the labelled form.
+func printedIDOf(field string) string {
+	if field == "" {
+		return "-"
+	}
+	if id, ok := strings.CutPrefix(field, printedLabel); ok {
+		if id == "" {
+			return "-"
+		}
+		return id
+	}
+	return field
 }
 
 // Observe compares a freshly polled value against the stored newest one, byte
@@ -254,7 +302,7 @@ func (s *State) ObserveDisplay(key, value, display, id string) bool {
 	}
 	n := s.nextQueueNumber()
 	s.raw[queueKey(n)] = Compose(id, key, display)
-	s.raw[key] = Compose(value, s.PrintedID(key))
+	s.raw[key] = Compose(value, printedField(s.PrintedID(key)))
 	return true
 }
 
@@ -263,7 +311,7 @@ func (s *State) ObserveDisplay(key, value, display, id string) bool {
 // --final-only's suppression at observation time.
 func (s *State) RecordOnly(key, value string) {
 	s.touch(key)
-	s.raw[key] = Compose(value, s.PrintedID(key))
+	s.raw[key] = Compose(value, printedField(s.PrintedID(key)))
 }
 
 // Sight records an unrecognised bus line as SEEN: the watched form every other
@@ -274,7 +322,7 @@ func (s *State) RecordOnly(key, value string) {
 // them again, which is the prototype's item 9 in a new costume.
 func (s *State) Sight(key string) {
 	s.touch(key)
-	s.raw[key] = Compose("seen", s.PrintedID(key))
+	s.raw[key] = Compose("seen", printedField(s.PrintedID(key)))
 }
 
 func (s *State) touch(key string) {
@@ -283,6 +331,19 @@ func (s *State) touch(key string) {
 	}
 	s.tick++
 	s.seen[key] = s.tick
+}
+
+// watchedRow names the five namespaces the State section calls watched -- the
+// ones stored as `<value>|printed=<id|->` -- as against the plain entries
+// beside them: bus:advance, fail:<source>, serve:<id>, queue:next and the
+// queue records.
+func watchedRow(key string) bool {
+	for _, prefix := range []string{"bus:line:", "bus:note:", "entry:", "report:", "line:"} {
+		if strings.HasPrefix(key, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func evictable(key string) bool {
@@ -334,7 +395,7 @@ func (s *State) MarkPrinted(r Record) {
 	if !ok {
 		value = r.Value
 	}
-	s.raw[r.Key] = Compose(value, r.ID)
+	s.raw[r.Key] = Compose(value, printedField(r.ID))
 }
 
 // Pending is the length of the delivery queue: every observation this run or an
