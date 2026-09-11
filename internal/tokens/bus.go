@@ -244,7 +244,7 @@ func laneNames(dir string) ([]string, error) {
 		}
 	}
 	if len(out) == 0 {
-		return nil, fmt.Errorf("participants.json names no lane")
+		return nil, fmt.Errorf(`participants.json names no lane; it wants {"participants":[{"name":"Emma","lane":"from-emma"}]} -- one entry per friend, each lane "from-<slug>", and every <slug>/*.md whose Subject: is exactly "tokens YYYY-MM-DD" is read`)
 	}
 	sort.Strings(out)
 	return out, nil

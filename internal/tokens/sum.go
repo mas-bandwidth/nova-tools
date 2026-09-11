@@ -19,6 +19,7 @@ import (
 type Agg struct {
 	Totals [NTypes]int64
 	Dashes [NTypes]int
+	Rows   int
 	Rough  int
 	NonUTC int
 	days   map[string]bool
@@ -41,12 +42,25 @@ func (a *Agg) add(r DayRow, key string) {
 			a.Dashes[t]++
 		}
 	}
+	a.Rows++
 	a.Rough += r.Rough
 	if r.Basis != UTC {
 		a.NonUTC++
 	}
 	a.days[r.Date] = true
 	a.keys[key] = true
+}
+
+// Cell is one type's total as a month prints it: the number, or `-` when NO row in this
+// grouping reported that type at all. A zero there would be the number rule 15 forbids --
+// "a type the source did not report is `-` in the cell, never 0" -- summed into a month
+// claiming to be complete, and the dashes= tuple beside it is a correction a reader has to
+// know the column order of.
+func (a *Agg) Cell(t Type) string {
+	if a.Rows > 0 && a.Dashes[t] == a.Rows {
+		return Dash
+	}
+	return itoa64(a.Totals[t])
 }
 
 // Pair is one (model, repo) grouping.

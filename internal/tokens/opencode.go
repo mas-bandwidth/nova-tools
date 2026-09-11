@@ -161,6 +161,11 @@ func ReadOpenCode(label, dbPath, scratch string, timeout time.Duration, rules *R
 			}
 		}
 		repo := rules.AttributeInputs(inputs[id], prev[session])
+		if repo == Unknown && row["cwd"] != "" {
+			// path.cwd is the same lowest rung as a transcript's cwd: a turn with no
+			// tool part named no path, and the session was `unknown` for the whole day.
+			repo = rules.Attribute(PathTokens([]string{row["cwd"]}), "")
+		}
 		prev[session] = repo
 		m := Message{Day: day, Basis: UTC, Model: row["model"], Repo: repo, Turn: true}
 		for _, c := range messageCounts {

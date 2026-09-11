@@ -28,7 +28,13 @@ var claudeSuffixes = []string{".jsonl", ".output"}
 
 type claudeLine struct {
 	Timestamp string `json:"timestamp"`
-	Message   *struct {
+	// Cwd is the session's working directory, which a transcript writes on every line.
+	// It is the LOWEST rung of the attribution ladder: a conversational turn, a pure
+	// Task fan-out, or any turn before the first tool call named no path at all, and the
+	// whole file was `unknown` -- a bucket `check` is happy with. Read only when the
+	// tool-call paths and the previous repo have both said nothing.
+	Cwd     string `json:"cwd"`
+	Message *struct {
 		ID    string                     `json:"id"`
 		Model string                     `json:"model"`
 		Usage map[string]json.RawMessage `json:"usage"`
@@ -144,6 +150,9 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 				continue
 			}
 			repo := rules.AttributeInputs(toolInputs(line.Message.Content), prev)
+			if repo == Unknown && line.Cwd != "" {
+				repo = rules.Attribute(PathTokens([]string{line.Cwd}), "")
+			}
 			prev = repo
 			day, ok := DayOfStamp(line.Timestamp)
 			if !ok {

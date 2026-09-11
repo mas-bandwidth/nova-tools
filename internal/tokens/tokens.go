@@ -455,6 +455,8 @@ func (s *Source) StatField(field string) string {
 
 func itoa(n int) string { return strconv.Itoa(n) }
 
+func itoa64(n int64) string { return strconv.FormatInt(n, 10) }
+
 // AllTypes is every type, for a source that reports all five.
 var AllTypes = []Type{Input, Output, CacheWrite, CacheRead, Reasoning}
 

@@ -331,3 +331,71 @@ func TestAHalfReadSuccessorDoesNotReplaceItsPredecessor(t *testing.T) {
 		t.Error("a day folded from a successor that did not parse whole")
 	}
 }
+
+// ---------------------------------------------------------------- the footguns a new line hit
+
+// TestCwdIsTheLowestRungOfTheAttributionLadder: a transcript whose every line carries
+// "cwd":"/x/schema" and whose --repos matches it was `repos=1 unknown=100.0%`, because the
+// paths came only from tool_use blocks. A conversational session, a pure Task fan-out, or
+// any turn before the first tool call was unknown for the whole file -- and `unknown` is a
+// bucket `check` is happy with.
+func TestCwdIsTheLowestRungOfTheAttributionLadder(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	line := `{"type":"assistant","timestamp":"2026-09-11T10:00:00Z","cwd":"/x/schema","message":{"id":"m1","model":"f","usage":{"input_tokens":100}}}`
+	write(t, filepath.Join(tr, "a.jsonl"), line+"\n")
+
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr)
+	wantExit(t, r, 0)
+	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "f\tschema\t100\t")
+	wantContains(t, lineWith(r.stdout, "TOKENS DAY"), "unknown=0.0%")
+
+	// A tool path still wins over cwd: cwd is the LOWEST rung, not a new first one.
+	tr2 := mkdir(t, filepath.Join(dir, "tr2"))
+	write(t, filepath.Join(tr2, "a.jsonl"),
+		`{"type":"assistant","timestamp":"2026-09-11T10:00:00Z","cwd":"/x/schema","message":{"id":"m2","model":"f","usage":{"input_tokens":5},"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/x/serialize/a.go"}}]}}`+"\n")
+	out2 := mkdir(t, filepath.Join(dir, "out2"))
+	wantExit(t, invoke(t, "fold", "--out", out2, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr2), 0)
+	wantContains(t, read(t, filepath.Join(out2, "2026-09-11.tsv")), "f\tserialize\t5\t")
+}
+
+// TestMessagesWithNoIDReachTheRemedyLine: noid= was a number on a green TOKENS SOURCE line
+// and reached nothing else -- not the exit code, not TOKENS NOTE. 100% of a file's usage
+// can be dropped that way under TOKENS OK (lesson 95: a number is not a sentence).
+func TestMessagesWithNoIDReachTheRemedyLine(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), strings.Join([]string{
+		msg("", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 9000}, "/x/schema/a.go"),
+		msg("m1", "2026-09-11T10:00:01Z", "f", map[string]int{"input_tokens": 1}, "/x/schema/a.go"),
+	}, "\n")+"\n")
+
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr)
+	wantExit(t, r, 0)
+	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "noid=1")
+	note := lineWith(r.stdout, "TOKENS NOTE")
+	wantContains(t, note, "no id")
+	wantContains(t, note, "claude:g")
+	wantNotContains(t, note, "nothing was wrong")
+}
+
+// TestSumPrintsADashWhereNoRowReportedTheType: help says a dash is "NEVER 0 ... a zero
+// meaning 'not measured' would sum into a month claiming to be complete", and SUM PAIR
+// printed reasoning=0 for a month whose every row had a dash there.
+func TestSumPrintsADashWhereNoRowReportedTheType(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 100}, "/x/schema/a.go")+"\n")
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr), 0)
+
+	s := invoke(t, "sum", "--out", out, "--month", "2026-09")
+	wantExit(t, s, 0)
+	pair := lineWith(s.stdout, "SUM PAIR")
+	wantContains(t, pair, "input=100")
+	wantContains(t, pair, "reasoning=-")
+	wantContains(t, pair, "dashes=0,1,1,1,1")
+	wantContains(t, lineWith(s.stdout, "SUM TOTAL"), "reasoning=-")
+}

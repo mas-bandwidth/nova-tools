@@ -674,6 +674,8 @@ func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unp
 		return "a day would have gone backwards and was left as it was: --allow-shrink writes it anyway, and it is a person's act"
 	case shrank > 0:
 		return "a day was written smaller at your word (--allow-shrink); nova-tokens check --out " + out + " is the gate"
+	case noidAndDup(sources) != "":
+		return noidAndDup(sources) + "; those messages are NOT in any row, and nothing else says so"
 	case len(overlaps) > 0:
 		o := overlaps[0]
 		return "two declared sources fed the same " + strconv.Itoa(o.IDs) + " message ids (" + o.A + " and " + o.B + "): those messages are counted TWICE, because this fold does not de-duplicate across sources; one harness is one source flag, and a scratch tree under a declared directory holds the same transcripts again"
@@ -692,6 +694,27 @@ func firstUnreadableLabel(sources []*tokens.Source) string {
 
 // firstUnparsed names the kind of the first source with an unparsed line and what it was
 // reading, so that the one remedy line is the remedy for the thing that failed.
+// noidAndDup is the sentence for spend that was read and then dropped: a message with no
+// id is not folded (rule 4) and a repeated id is counted once. Both are numbers on a green
+// TOKENS SOURCE line and nowhere else, and 100% of a file's usage can be a message with no
+// id (lesson 95: a number is not a sentence).
+func noidAndDup(sources []*tokens.Source) string {
+	noid, dup, label := 0, 0, "-"
+	for _, s := range sources {
+		if s.Stat.NoID > 0 || s.Stat.Dup > 0 {
+			if label == "-" {
+				label = s.Label
+			}
+			noid += s.Stat.NoID
+			dup += s.Stat.Dup
+		}
+	}
+	if noid == 0 {
+		return ""
+	}
+	return "a source fed " + strconv.Itoa(noid) + " messages with no id (" + label + "): a message is counted by its id (rule 4), and one with none is noid= and is not folded"
+}
+
 func firstUnparsed(sources []*tokens.Source) (kind, note string) {
 	for _, s := range sources {
 		if len(s.Unparseds) > 0 {
@@ -950,9 +973,9 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 // aggFields is the five totals, the rough count, the per-column dash counts and the
 // non-UTC count: everything a reader needs to know what a total does NOT cover.
 func aggFields(a *tokens.Agg) string {
-	return fmt.Sprintf("input=%d output=%d cache_write=%d cache_read=%d reasoning=%d rough=%d dashes=%d,%d,%d,%d,%d nonutc=%d",
-		a.Totals[tokens.Input], a.Totals[tokens.Output], a.Totals[tokens.CacheWrite],
-		a.Totals[tokens.CacheRead], a.Totals[tokens.Reasoning], a.Rough,
+	return fmt.Sprintf("input=%s output=%s cache_write=%s cache_read=%s reasoning=%s rough=%d dashes=%d,%d,%d,%d,%d nonutc=%d",
+		oneline.Field(a.Cell(tokens.Input)), oneline.Field(a.Cell(tokens.Output)), oneline.Field(a.Cell(tokens.CacheWrite)),
+		oneline.Field(a.Cell(tokens.CacheRead)), oneline.Field(a.Cell(tokens.Reasoning)), a.Rough,
 		a.Dashes[tokens.Input], a.Dashes[tokens.Output], a.Dashes[tokens.CacheWrite],
 		a.Dashes[tokens.CacheRead], a.Dashes[tokens.Reasoning], a.NonUTC)
 }
