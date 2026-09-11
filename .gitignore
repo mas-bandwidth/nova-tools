@@ -1,0 +1,10 @@
+# nova-merge: the tracked files are the records and nothing else (rule 22).
+/state.json
+/state.json.tmp
+/log
+/repo/
+/outbox/
+/slots/
+/stop
+*.lock
+*.log
