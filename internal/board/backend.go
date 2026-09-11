@@ -11,7 +11,7 @@ fall without any work being done — the one thing a board may not do. A board i
 construction: it is what is owed, and what is owed is closed.
 
 A CACHE MAY AVOID RE-READING; IT MAY NEVER TRUNCATE, and it may never outlive the run.
-The prototype kept a twenty-second time-to-live cache under $TMPDIR, which is exactly
+The prototype kept a twenty-second time-to-live cache in a temporary directory, which is exactly
 wrong for the duplicate-filing failure this tool exists to close: two reviewers filing
 nine seconds apart both read the board as it was before either wrote. The cache here is a
 field in memory, held for one invocation, and INVALIDATED BY THIS TOOL'S OWN APPEND, so a

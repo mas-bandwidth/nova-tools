@@ -718,7 +718,7 @@ func notes(b *board.Board) []string {
 		out = append(out, fmt.Sprintf("unparsed files=%d -- a file in the board directory that is not <thirty-two hex>.board is never read as a card", b.UnparsedFiles))
 	}
 	if b.Quarantined > 0 {
-		out = append(out, fmt.Sprintf("quarantined events=%d first=%s -- an after= naming no event of its card, or one on a cycle: not folded and not guessed at", b.Quarantined, b.FirstQuarantined))
+		out = append(out, fmt.Sprintf("quarantined events=%d first=%s -- an after= naming no event of its card, or one on a cycle: not folded and not guessed at", b.Quarantined, oneline.Field(b.FirstQuarantined)))
 	}
 	return out
 }

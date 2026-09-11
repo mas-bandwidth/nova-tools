@@ -383,3 +383,72 @@ go test ./...
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+## nova-board
+
+```
+nova-board list  (--issue <owner/repo>#<n> | --dir <path>) --stale <duration> [--list] [--open] [--owner <name>] [--max <n>]
+nova-board add   (--issue ... | --dir ...) --as <name> --text <text> --by <duration-or-stamp> --default <text>
+                 [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>] [--id <thirty-two hex>]
+nova-board take  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
+nova-board close (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
+nova-board check (--issue ... | --dir ...) --words <text> [--max <n>] [--all]     # EXIT 1 WHEN IT MATCHES
+nova-board quickstart (--issue ... | --dir ...) --stale <duration> [--as <name>]
+```
+
+A **board** is the list of things a group of lines owes: one **card** per item, appended
+when it is noticed, taken by whoever picks it up, closed with a sentence saying how.
+Nothing on it is ever deleted and nothing is ever edited — it is an append-only log of
+events, and the list of open cards is *derived* from that log rather than stored anywhere.
+The rules, the failures each one closes and what the prototype did wrong are in
+[docs/SPEC-BOARD.md](docs/SPEC-BOARD.md), which is the contract.
+
+**The verb that earns the tool is `check`, and it exits 1 when it matches.** The NO a board
+owes a filer is *this is already on the board, do not file it*, so the rule every reader and
+fixer follows is one line of shell — and the guard tells a NO from a could-not-run:
+
+```sh
+nova-board check --dir ./board --words "windows runner skips" || { [ $? -eq 1 ] && exit 0; exit 2; }
+nova-board add   --dir ./board --as rowan --text "the Windows runner skips three steps" \
+                 --by 4h --default "rowan files it on the schema board as a known gap"
+```
+
+**The default view is counts, not cards**: one line per owner, one per leg, one `BOARD OK`
+and exactly one `BOARD NEXT` naming the one thing to do first. At 500 cards across 20 lines
+it is 27 lines and under 4 KB, and it does not grow with the number of cards. Cards print
+under `--list`, capped at `--max` with one `MORE` line; `--list --owner <name>` is one
+line's own batch.
+
+**Every card has a deadline and a default** (`--by`, `--default`): nothing here waits
+forever. **Every path and every duration comes from a flag** — there is no default board,
+no default `--stale`, and no environment variable configures anything. A card taken by a
+line that then goes silent is `stale=true` past `--stale` and is takeable again without
+`--anyway`; a take or a close over somebody's *live* take is refused at exit 1 and names
+the holder. Two backends, one format: a directory of card files (`--dir`, which this tool
+appends to and never commits — landing it is yours) and issue comments (`--issue`, durable
+when the command returns).
+
+### First run
+
+`quickstart` needs a board and a stale window. It prints the board's counts and then the
+check-then-add pair with this board's own values in it, quoted so it can be pasted.
+`cmd/nova-board/testdata/example-board` is a board the size of a first run, and the
+transcript the tests execute against it is in [TESTS.md](TESTS.md#nova-board).
+
+```
+$ nova-board quickstart --dir ./board --stale 10m
+QUICKSTART OK backend=dir source=./board stale=10m0s: the board, then the rule every filer runs in front of add
+BOARD LINE name=emma open=1 overdue=1 stale=1
+BOARD LEG leg=cpp owed=1 probed=0
+BOARD NEXT the oldest OVERDUE card 283e2dd1e5c5424d7637d28488365e98, owed by emma, due 2026-09-11T09:00:00Z -- the token ledger has no September rows yet
+BOARD OK cards=5 open=4 closed=1 stale=4 overdue=1 owed=1 lines=4 conflicts=0 quarantined=0 shown=7 backend=dir source=./board
+QUICKSTART LINE n=1 what=check: "nova-board check --dir ./board --words \"the token ledger\" || { [ $? -eq 1 ] && exit 0; exit 2; }"
+QUICKSTART NOTE --stale 10m0s is this family's number and this run passed it in words: there is no default duration here, and --by and --default are required on every card
+```
+
+**What a first run gets wrong.** `--stale` missing: it wants how long a card may go without
+an event before it lists as takeable again, and the family's number is 10m — the tool will
+not guess one. No backend, or both: name exactly one, because a board written to two places
+is two boards with one name. `--by` or `--default` missing on `add`: a card with no deadline
+cannot be filed. And reading `check`'s exit backwards: 1 means *found it, do not file*, so
+the natural `&&` chain would file exactly the duplicates.
