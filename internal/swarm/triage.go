@@ -1,0 +1,351 @@
+package swarm
+
+import (
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+)
+
+// TRIAGE: ONE PAGE, AND THE TERMINAL IS AN INDEX TO IT.
+//
+// The coordinator's window never holds a worker's transcript, never a raw RESULT.md unless
+// it asks for one by id, and never the runner's log: on 2026-09-11 the window read twenty
+// reports of forty lines each and wrote twenty prompts of thirty lines each, and that cost
+// is the coordinator's tokens and the tool's to remove.
+//
+// A REPORT IS READ AS ONE REVISION. The tool reads RESULT.md into memory, hashes the bytes,
+// parses that buffer, and hashes the file again before recording anything; a second hash
+// that differs is TRIAGE SKIPPED, nothing is recorded as consumed, and the next run takes
+// it whole. RESULT.md.tmp is never opened. There is no mtime anywhere in this tool.
+
+// TriageState is <pool>/triage.json: what has been folded into a page already.
+type TriageState struct {
+	Version   int               `json:"version"`
+	Runs      int               `json:"runs"`
+	LastISO   string            `json:"last_iso"`
+	LastCount int               `json:"last_count"`
+	Consumed  map[string]string `json:"consumed"`
+}
+
+// TriageInput is one triage run.
+type TriageInput struct {
+	Pool           *Pool
+	Batch          string
+	Dirs           []string
+	Since          string
+	All            bool
+	NoState        bool
+	Max            int
+	Owed           []string
+	Stdout, Stderr io.Writer
+	Now            func() time.Time
+}
+
+type folded struct {
+	sc     Sidecar
+	report Report
+	from   string
+}
+
+// Triage walks the jobs, folds every revision it has not folded, and writes one page.
+func Triage(in TriageInput) int {
+	p := in.Pool
+	out := in.Stdout
+
+	state := TriageState{Version: 1, Consumed: map[string]string{}}
+	if !in.All {
+		_ = ReadJSON(p.Path(TriageStateFile), &state)
+		if state.Consumed == nil {
+			state.Consumed = map[string]string{}
+		}
+	}
+
+	jobs, err := p.Jobs()
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: the pool could not be walked: %s\n", oneline.Escape(redactedReason(err)))
+		return 2
+	}
+	if in.Batch != "" {
+		var kept []Sidecar
+		for _, sc := range jobs {
+			if sc.Batch == in.Batch {
+				kept = append(kept, sc)
+			}
+		}
+		if len(kept) == 0 {
+			fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: no sidecar in %s carries batch=%s; `nova-swarm status --pool %s` lists what is here\n",
+				oneline.Field(p.Dir), oneline.Field(in.Batch), p.Dir)
+			return 1
+		}
+		jobs = kept
+	}
+	if in.Since != "" {
+		var kept []Sidecar
+		for _, sc := range jobs {
+			if sc.ID >= in.Since {
+				kept = append(kept, sc)
+			}
+		}
+		jobs = kept
+	}
+
+	reports := bounded.Capped(out, in.Max, "TRIAGE", "report", "nova-swarm triage --pool "+p.Dir+" --max 0")
+	var kept []folded
+	counts := map[string]int{}
+	skipped, malformedN := 0, 0
+	for _, sc := range jobs {
+		raw, from, err := p.ReportBytes(sc)
+		if err != nil {
+			counts[ClassNoResult]++
+			continue
+		}
+		first := HashBytes(raw)
+		report := ParseReport(raw)
+		again, err := p.rehash(from)
+		if err != nil || again != first {
+			// A writer that ignored the protocol and appended in place. Not folded this
+			// run, not recorded, taken whole by the next one when it holds still.
+			fmt.Fprintf(out, "TRIAGE SKIPPED id=%s: changed while read\n", oneline.Field(sc.ID))
+			skipped++
+			continue
+		}
+		counts[report.Class]++
+		if report.Class == ClassMalformed {
+			malformedN++
+			fmt.Fprintf(out, "TRIAGE QUARANTINED id=%s rev=%s line=%d: not folded; nova-swarm result --pool %s --id %s\n",
+				oneline.Field(sc.ID), oneline.Field(Short(first)), report.MalformedLine, p.Dir, oneline.Field(sc.ID))
+			continue
+		}
+		if !in.All && state.Consumed[sc.ID] == first {
+			continue
+		}
+		kept = append(kept, folded{sc: sc, report: report, from: from})
+		reports.Line(fmt.Sprintf("TRIAGE REPORT id=%s rev=%s job=%s result=%s items=%d red=%d green=%d notdone=%d: %s",
+			oneline.Field(sc.ID), oneline.Field(Short(first)), oneline.Field(dashOr(sc.Label)), oneline.Field(report.Class),
+			len(report.Items), report.Red(), report.Green(), report.NotDone(),
+			oneline.Escape(oneline.Cap(dashOr(report.Heading), oneline.TailBytes))))
+	}
+	reports.More()
+
+	// Rule 15's de-duplication, by (repo, rev, file, line, rule): two findings merge only
+	// when both reports carry repo AND rev and they are equal, so equal file:line and rule
+	// in two codebases, or in two revisions of one, are two findings.
+	type merged struct {
+		f    Finding
+		jobs []string
+		from string
+	}
+	var order []*merged
+	byKey := map[string]*merged{}
+	findings, new_, dup, unquoted := 0, 0, 0, 0
+	for _, k := range kept {
+		for _, f := range k.report.FindingLines {
+			findings++
+			isDup := f.Dup || OwedMatch(f, in.Owed)
+			if isDup {
+				dup++
+			} else {
+				new_++
+			}
+			if !f.Quoted() {
+				unquoted++
+			}
+			key, ok := f.Key(k.report.Repo, k.report.Rev)
+			if ok {
+				if m, seen := byKey[key]; seen {
+					m.jobs = append(m.jobs, k.sc.ID)
+					dup++
+					new_--
+					continue
+				}
+				m := &merged{f: f, jobs: []string{k.sc.ID}, from: k.from}
+				byKey[key] = m
+				order = append(order, m)
+				continue
+			}
+			order = append(order, &merged{f: f, jobs: []string{k.sc.ID}, from: k.from})
+		}
+	}
+
+	accurate, wrong, anyVerdict := 0, 0, false
+	for _, sc := range jobs {
+		if sc.Verdict != nil {
+			anyVerdict = true
+			accurate += sc.Verdict.Accurate
+			wrong += sc.Verdict.Wrong
+		}
+	}
+	verdict := func(n int) string {
+		if !anyVerdict {
+			return Dash
+		}
+		return fmt.Sprint(n)
+	}
+	budgetEnded := 0
+	for _, sc := range jobs {
+		if sc.End == EndBudget || sc.End == EndUnverifiable {
+			budgetEnded++
+		}
+	}
+
+	page, pageErr := in.writePage(kept)
+	fmt.Fprintf(out, "TRIAGE BATCH batch=%s reports=%d findings=%d new=%d dup=%d unquoted=%d clean=%d plan_only=%d no_result=%d malformed=%d budget=%d accurate=%s wrong=%s\n",
+		oneline.Field(dashOr(in.Batch)), len(jobs), findings, new_, dup, unquoted,
+		counts[ClassClean], counts[ClassPlanOnly], counts[ClassNoResult], malformedN, budgetEnded,
+		verdict(accurate), verdict(wrong))
+
+	items := bounded.Capped(out, in.Max, "TRIAGE", "finding", "--max 0")
+	for _, m := range order {
+		jobsField := strings.Join(m.jobs, ",")
+		items.Line(fmt.Sprintf("TRIAGE FINDING jobs=%s at=%s: %s",
+			oneline.Field(jobsField), oneline.Field(dashOr(m.f.File+":"+m.f.FileLine)),
+			oneline.Escape(oneline.Cap(m.f.Text, oneline.TailBytes))))
+	}
+	if items.Elided() > 0 {
+		fmt.Fprintf(out, "TRIAGE MORE kind=finding shown=%d total=%d at=%s --max 0\n", items.Shown(), items.Total(), oneline.Field(page))
+	}
+
+	red, green, notdone, itemsN := 0, 0, 0, 0
+	for _, k := range kept {
+		red += k.report.Red()
+		green += k.report.Green()
+		notdone += k.report.NotDone()
+		itemsN += len(k.report.Items)
+	}
+	if pageErr != nil {
+		fmt.Fprintf(in.Stderr, "TRIAGE REFUSED: the page could not be written: %s\n", oneline.Escape(redactedReason(pageErr)))
+		return 2
+	}
+	fmt.Fprintf(out, "TRIAGE OK reports=%d template=%d malformed=%d skipped=%d items=%d red=%d green=%d notdone=%d page=%s\n",
+		len(kept), len(kept), malformedN, skipped, itemsN, red, green, notdone, oneline.Field(page))
+
+	if !in.NoState && !in.All {
+		for _, k := range kept {
+			state.Consumed[k.sc.ID] = k.report.Hash
+		}
+		state.Runs++
+		state.LastISO = Stamp(in.Now())
+		state.LastCount = len(kept)
+		_ = WriteJSON(p.Path(TriageStateFile), state)
+	}
+	return 0
+}
+
+// TriageStateFile is the consumed set's file name.
+const TriageStateFile = "triage.json"
+
+// writePage is the artifact: one page per run, carrying each report's heading, its Per item
+// table and its Left owed list, in job-id order, oldest first.
+func (in TriageInput) writePage(kept []folded) (string, error) {
+	path := in.Pool.Path(Reports, in.Now().UTC().Format("20060102T150405Z")+".md")
+	var b strings.Builder
+	fmt.Fprintf(&b, "# triage %s\n\n", Stamp(in.Now()))
+	sort.Slice(kept, func(i, j int) bool { return kept[i].sc.ID < kept[j].sc.ID })
+	for _, k := range kept {
+		fmt.Fprintf(&b, "## %s\n\n", k.sc.ID)
+		fmt.Fprintf(&b, "- rev: `%s`\n- path: `%s`\n- result: %s\n\n", Short(k.report.Hash), k.from, k.report.Class)
+		if k.report.Heading != "" {
+			fmt.Fprintf(&b, "%s\n\n", k.report.Heading)
+		}
+		if len(k.report.Items) > 0 {
+			b.WriteString("| item | state | evidence |\n| --- | --- | --- |\n")
+			for _, it := range k.report.Items {
+				fmt.Fprintf(&b, "| %s | %s | %s |\n", it.Text, it.State, it.Evidence)
+			}
+			b.WriteString("\n")
+		}
+		if len(k.report.FindingLines) > 0 {
+			b.WriteString("Findings:\n\n")
+			for _, f := range k.report.FindingLines {
+				fmt.Fprintf(&b, "- %s\n", f.Text)
+			}
+			b.WriteString("\n")
+		}
+		if len(k.report.LeftOwed) > 0 {
+			b.WriteString("Left owed:\n\n")
+			for _, owed := range k.report.LeftOwed {
+				fmt.Fprintf(&b, "- %s\n", owed)
+			}
+			b.WriteString("\n")
+		}
+		if k.report.OneLine != "" {
+			fmt.Fprintf(&b, "One line: %s\n\n", k.report.OneLine)
+		}
+	}
+	return path, writeAtomic(path, []byte(b.String()), 0o644)
+}
+
+// Jobs is every task the pool knows about, in id order.
+func (p *Pool) Jobs() ([]Sidecar, error) {
+	var out []Sidecar
+	for _, state := range []string{Running, Done, Failed} {
+		list, err := p.List(state)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, list...)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}
+
+// ReportBytes reads a job's report from the RETAINED copy for a finalized job and from the
+// job directory only for a running one, so the first triage after a reclaim reads the same
+// bytes it would have read before it.
+func (p *Pool) ReportBytes(sc Sidecar) ([]byte, string, error) {
+	retained := filepath.Join(p.ReportsDir(sc.ID), CopiedResult)
+	if raw, err := os.ReadFile(retained); err == nil {
+		return raw, retained, nil
+	}
+	if sc.Job == "" {
+		return nil, "", os.ErrNotExist
+	}
+	live := ResultPath(sc.Job)
+	raw, err := os.ReadFile(live)
+	return raw, live, err
+}
+
+func (p *Pool) rehash(path string) (string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	return HashBytes(raw), nil
+}
+
+// ResultByID is `result --id`: the one path by which a malformed report reaches a person.
+// The body does NOT go through internal/oneline, because the body is the thing asked for.
+func ResultByID(p *Pool, id string, stdout, stderr io.Writer) int {
+	sc, ok := p.findSidecar(id)
+	if !ok {
+		fmt.Fprintf(stderr, "RESULT REFUSED: no task %s in %s; `nova-swarm status --pool %s` lists what is here\n",
+			oneline.Field(id), oneline.Field(p.Dir), p.Dir)
+		return 1
+	}
+	raw, from, err := p.ReportBytes(sc)
+	if err != nil {
+		fmt.Fprintf(stderr, "RESULT REFUSED: %s published no report; the record says %s\n", oneline.Field(id), oneline.Field(MarkerNoResult))
+		return 1
+	}
+	report := ParseReport(raw)
+	fmt.Fprintf(stdout, "RESULT OK id=%s rev=%s class=%s bytes=%d from=%s\n",
+		oneline.Field(id), oneline.Field(Short(report.Hash)), oneline.Field(report.Class), len(raw), oneline.Field(from))
+	_, _ = stdout.Write(raw)
+	return 0
+}
+
+func (p *Pool) findSidecar(id string) (Sidecar, bool) {
+	for _, state := range []string{Running, Done, Failed, Pending} {
+		if sc, err := p.ReadSidecar(state, id); err == nil {
+			return sc, true
+		}
+	}
+	return Sidecar{}, false
+}

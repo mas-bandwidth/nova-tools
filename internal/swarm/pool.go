@@ -47,10 +47,9 @@ const (
 // RunLock excludes dispatchers and nothing else; SlotsLock guards one slot-file
 // transition and is never held across a wait (rule 17).
 const (
-	RunLock     = "run.lock"
-	SlotsLock   = "slots.lock"
-	StopFile    = "stop"
-	TriageState = "triage.json"
+	RunLock   = "run.lock"
+	SlotsLock = "slots.lock"
+	StopFile  = "stop"
 )
 
 // Pool is a pool directory. The directory itself must exist -- this tool creates the

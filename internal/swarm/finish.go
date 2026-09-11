@@ -1,0 +1,233 @@
+package swarm
+
+import (
+	"fmt"
+	"math"
+	"os"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+)
+
+// A JOB REPORTS EXACTLY ONCE: one RESULT.md, one RUN line, and never a second notification.
+// Children that spawned background subtasks stopped to wait on them and reported twice
+// (2026-09-11), which is what rule 11's group check and this one-line-per-job discipline
+// close.
+
+// finish ends one job: the group check, the classification, finalize in rule 12's order,
+// the move, the slot, the one automatic re-queue, and the single line.
+func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (string, string) {
+	p := in.Pool
+	sf, slotErr := p.ReadSlot(r.slot)
+
+	// The group check of rule 11, made after the supervisor has gone: anything alive in the
+	// job's own process group is a background subtask the prompt forbids.
+	survivors := 0
+	if slotErr == nil {
+		if GroupAlive(sf.JobPgid) {
+			survivors = 1
+		}
+		if Reap(sf.JobPgid, TerminateGrace) || Reap(sf.Pgid, TerminateGrace) {
+			survivors++
+		}
+	}
+
+	rec := ExitRecord{RC: -1}
+	end := EndUnknown
+	if slotErr == nil {
+		var got ExitRecord
+		if err := ReadJSON(ExitPath(r.jobDir), &got); err == nil && got.Nonce == sf.Nonce {
+			rec, end = got, got.End
+			if end == "" {
+				end = EndDone
+			}
+			if got.Survivors > survivors {
+				survivors = got.Survivors
+			}
+		}
+	}
+
+	raw, readErr := os.ReadFile(ResultPath(r.jobDir))
+	report := Report{Class: ClassNoResult}
+	if readErr == nil {
+		report = ParseReport(raw)
+	}
+	unpublished := false
+	if _, err := os.Stat(ResultPath(r.jobDir) + ".tmp"); err == nil {
+		unpublished = true
+	}
+	refusals := CountRefusals(r.jobDir + "/harness.log")
+	notesSent := countLines(NotePath(r.jobDir))
+	notesRead := Dash
+	if report.HasNotesRead {
+		notesRead = strconv.Itoa(report.NotesRead)
+	}
+	findings := len(report.FindingLines)
+
+	sc := r.sc
+	if fresh, err := p.ReadSidecar(Running, sc.ID); err == nil {
+		sc = fresh
+	}
+	if survivors > 0 && end == EndDone {
+		end = EndViolation
+	}
+	dest := Done
+	switch {
+	case end == EndViolation, end == EndKilled, end == EndUnverifiable, end == EndUnknown, end == EndFailed:
+		dest = Failed
+	case report.Class == ClassMalformed, report.Class == ClassPlanOnly, report.Class == ClassNoResult:
+		dest = Failed
+	case rec.RC != 0:
+		dest = Failed
+	}
+	sc.Class, sc.End, sc.RC, sc.Ended, sc.Notes = report.Class, end, rec.RC, Stamp(now), notesSent
+	if survivors > 0 {
+		sc.Violation = "background"
+	}
+	if report.Class == ClassMalformed {
+		sc.Malformed = report.MalformedLine
+	}
+	_ = p.WriteSidecar(Running, sc)
+
+	fin, usagePath := in.settle(sc, r.jobDir, rec, end, now)
+	_ = usagePath
+	_ = fin
+
+	// The slot is released in the SAME step that finalizes the job -- never on a timer and
+	// never by a scan of directories. A slot whose child survived the kill is RETIRED for
+	// the rest of the run: a data home that may still have a writer in it is not free.
+	if survivors > 0 {
+		quarantined[r.slot] = true
+	} else {
+		_ = p.Free(r.slot)
+	}
+	_ = p.Claim(sc.ID, Running, dest)
+
+	after := trimDuration(now.Sub(r.started))
+	budget := budgetWord(sc, rec)
+	switch {
+	case survivors > 0:
+		return fmt.Sprintf("RUN VIOLATION id=%s slot=%d background=%d dest=failed: a process of this job's group outlived it; one task is one process",
+			oneline.Field(sc.ID), r.slot, survivors), EndViolation
+	case end == EndUnverifiable:
+		return fmt.Sprintf("RUN BUDGET-UNVERIFIABLE id=%s slot=%d samples=3 findings=%d: %s",
+			oneline.Field(sc.ID), r.slot, findings, oneline.Escape(oneline.Cap(rec.Reason, oneline.TailBytes))), EndUnverifiable
+	case end == EndBudget:
+		return fmt.Sprintf("RUN BUDGET id=%s slot=%d spent=%d of=%d findings=%d",
+			oneline.Field(sc.ID), r.slot, rec.Spent, sc.Tokens, findings), EndBudget
+	case end == EndKilled:
+		requeued := in.requeue(sc, now)
+		return fmt.Sprintf("RUN KILLED id=%s slot=%d after=%s deadline=%s findings=%d unpublished=%t budget=%s requeued=%t reaped=%d",
+			oneline.Field(sc.ID), r.slot, after, trimDuration(r.deadline), findings, unpublished, budget, requeued, sc.Reaped+1), EndKilled
+	case report.Class == ClassMalformed:
+		return fmt.Sprintf("RUN MALFORMED id=%s slot=%d line=%d dest=failed",
+			oneline.Field(sc.ID), r.slot, report.MalformedLine), EndFailed
+	}
+	return fmt.Sprintf("RUN DONE id=%s slot=%d rc=%d after=%s result=%s findings=%d refusals=%d notes=%d/%s unpublished=%t budget=%s dest=%s",
+		oneline.Field(sc.ID), r.slot, rec.RC, after, oneline.Field(report.Class), findings, refusals,
+		notesSent, oneline.Field(notesRead), unpublished, budget, dest), end
+}
+
+// settle is finalize in rule 12's order: the usage file, then the report copy or its marker,
+// and only then anything else.
+func (in RunInput) settle(sc Sidecar, jobDir string, rec ExitRecord, end string, now time.Time) (Finalized, string) {
+	usage, _ := ReadProviderUsage(in.Worker.DataHome(sc.Slot, sc.ID))
+	fin, err := in.Pool.Finalize(Ending{
+		Sidecar: sc, JobDir: jobDir, Provider: in.Worker.Provider, Model: in.Worker.Model,
+		End: end, RC: rec.RC, Started: parseStamp(sc.Started, time.Time{}), Ended: now, Usage: usage,
+	})
+	if err != nil {
+		fmt.Fprintf(in.Stderr, "FINALIZE REFUSED id=%s: %s\n", oneline.Field(sc.ID), oneline.Escape(redactedReason(err)))
+	}
+	return fin, fin.UsagePath
+}
+
+// requeue is rule 7's ONE automatic retry: a job reaped at its deadline runs once more, and
+// only once. It closes the case where a worker was silent because the provider was, and
+// never the case where the task was too big, which a second identical run would only prove
+// twice.
+func (in RunInput) requeue(sc Sidecar, now time.Time) bool {
+	if sc.Reaped >= 1 {
+		return false
+	}
+	text, err := in.Pool.Text(Running, sc.ID)
+	if err != nil {
+		return false
+	}
+	next := sc
+	next.ID = NewID(now, sc.Label)
+	next.From, next.Requeued, next.Reaped = sc.ID, 1, 1
+	next.Job, next.Slot, next.Started, next.Ended, next.End, next.Class = "", 0, "", "", "", ""
+	if err := in.Pool.Add(text, next); err != nil {
+		return false
+	}
+	return true
+}
+
+// budgetWord is rule 13's ceiling and what was observed under it: a dash for no observation,
+// a plus for a partial one, so a job that ran under an unobservable budget is visible as
+// such and never reported as under budget.
+func budgetWord(sc Sidecar, rec ExitRecord) string {
+	if sc.Unmetered {
+		return "unmetered"
+	}
+	switch {
+	case !rec.Observed:
+		return fmt.Sprintf("-/%d", sc.Tokens)
+	case rec.Partial:
+		return fmt.Sprintf("%d+/%d", rec.Spent, sc.Tokens)
+	}
+	return fmt.Sprintf("%d/%d", rec.Spent, sc.Tokens)
+}
+
+// remedy is RUN NOTE: EXACTLY ONE line, naming the one thing to do next.
+func remedy(p *Pool, failed, killed, pending, quarantined int) string {
+	switch {
+	case quarantined > 0:
+		return fmt.Sprintf("%d slot file(s) are quarantined and out of the map; end any survivor and remove the file: ls %s", quarantined, p.Path(Slots))
+	case killed > 1:
+		return "a worker was killed at its deadline twice; re-queue it with a smaller file budget: nova-swarm requeue --pool " + p.Dir + " --task <id> --task-file <file> --files <n> --tokens <n>"
+	case failed > 0 || killed > 0:
+		return "something failed; read it down in one line: nova-swarm triage --pool " + p.Dir
+	case pending > 0:
+		return fmt.Sprintf("%d task(s) are still pending; run again with more hours: nova-swarm run --pool %s --workers <n> --hours <h> --worker <file>", pending, p.Dir)
+	}
+	return "the pool drained: nova-swarm triage --pool " + p.Dir
+}
+
+func countLines(path string) int {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	body := strings.TrimRight(string(raw), "\n")
+	if body == "" {
+		return 0
+	}
+	return strings.Count(body, "\n") + 1
+}
+
+func parseStamp(s string, fallback time.Time) time.Time {
+	t, err := time.Parse(time.RFC3339, s)
+	if err != nil {
+		return fallback
+	}
+	return t
+}
+
+// trimDuration prints a duration the way a person writes one, to the second.
+func trimDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	return d.Round(time.Second).String()
+}
+
+func trimFloat(f float64) string {
+	if f == math.Trunc(f) {
+		return strconv.Itoa(int(f))
+	}
+	return strconv.FormatFloat(f, 'f', -1, 64)
+}
