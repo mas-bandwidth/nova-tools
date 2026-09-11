@@ -175,9 +175,11 @@ probed <id> ev=<ev> after=<ev|id> as=<name> at=<stamp> override=<true|false>: <e
   that appended it, and `after=` is the `ev=` of the newest event for that card
   in the writer's fold at the moment it appended — the card's own id when there
   was none. Two events for one card with the same `after=` are **concurrent**:
-  each writer read the same board and neither saw the other. The fold applies
-  the total order below to choose the owner and the first close, as it always
-  did, and now also **counts** what it chose over: `BOARD CARD … conflicts=<n>`
+  each writer read the same board and neither saw the other. The fold orders
+  a card's events by their `after=` edges first — a predecessor before every
+  event that names it — and applies the total key below only among events
+  that are concurrent, to choose the owner and the first close, and it also
+  **counts** what it chose over: `BOARD CARD … conflicts=<n>`
   is the number of concurrent pairs in that card's history and `BOARD OK
   conflicts=<n>` the board's, so a take that won a tie is visible as a tie
   rather than as the only take. The order is a documented tie-break and never
@@ -242,17 +244,30 @@ by` anywhere in any comment body, so a card whose *text* contained a six-digit
 number could be closed by a sentence about something else — and on a board about a
 repository full of issue numbers, that is not a hypothetical.
 
-**The fold order is total, and it is the same in every clone.** Every derivation
-— the owner, the first close, staleness, `BOARD NEXT` — is made over a card's
-events sorted ascending by `(at, as, id, verb, the line's bytes)`, and never by
-the order the lines appear in a file or a comment thread. Every event line
-carries the first three keys, which is why they are on every line: the id after
-the verb, `as=` and `at=`. The order is total — two events equal in all five
-keys are one line, and a union merge that holds one line twice folds it once —
-so two clones that merged the same concurrent appends in opposite textual
-orders derive the same owner, and the two backends derive the same owner from
-the same events. The owner of a card two lines took in one second is the take
-whose `as=` sorts later. That winner is arbitrary and **reproducible**, which is
+**The fold order is causal first, then total, and it is the same in every
+clone.** Every derivation — the owner, the first close, staleness, `BOARD
+NEXT` — is made over a card's events in this order: the `after=` edges form a
+directed acyclic graph rooted at the `card` event, and the fold walks it
+**topologically**, every predecessor before every event that names it; among
+events that are eligible at one step and concurrent — no `after=` path between
+them — the one that goes first is the smallest by the stable total key `(at,
+as, id, verb, the line's bytes)`. The key is never applied across a causal
+edge: an event whose `after=` names another event folds after it whatever its
+`at=` says, because the writer saw that event and a clock behind is a clock,
+not a cause. Never by the order the lines appear in a file or a comment
+thread. Every event line carries the first three keys, which is why they are
+on every line: the id after the verb, `as=` and `at=`. The key is total — two
+events equal in all five keys are one line, and a union merge that holds one
+line twice folds it once — so two clones that merged the same concurrent
+appends in opposite textual orders derive the same owner, and the two backends
+derive the same owner from the same events. An event whose `after=` names no
+event of this card — a missing id, an id from another card — or that lies on
+a cycle (at any length) is **quarantined**: not folded, its card `conflict=true`
+with `quarantined=<n>` on `BOARD CARD` and `BOARD OK`, named once on `BOARD
+NOTE quarantined events=<n> first=<ev>`, and never guessed at; `take`, `close`,
+`land` and `probe` refuse to append an `after=` that their own fold does not
+hold. The owner of a card two lines took **concurrently** in one second is the
+take whose `as=` sorts later. That winner is arbitrary and **reproducible**, which is
 the property the accepted residual race in **The races** needs: the tool does
 not make `take` globally exclusive; it makes the outcome the same wherever it is
 computed, and the log shows both takes so the line that lost can see it. An
@@ -341,12 +356,12 @@ impossible would be edited around.
 ## Output grammar
 
 ```
-BOARD CARD id=<id> state=<OPEN|CLOSED> owner=<name|-> since=<stamp> by=<stamp> age=<d> taken=<d|-> stale=<true|false> overdue=<true|false> conflicts=<n> conflict=<true|false> default=<text> thing=<name|-> leg=<name|-> evidence=<path|->: <text>
+BOARD CARD id=<id> state=<OPEN|CLOSED> owner=<name|-> since=<stamp> by=<stamp> age=<d> taken=<d|-> stale=<true|false> overdue=<true|false> conflicts=<n> conflict=<true|false> quarantined=<n> default=<text> thing=<name|-> leg=<name|-> evidence=<path|->: <text>
 BOARD CLOSE id=<id> by=<name> at=<stamp> how=<closed|landed|probed> override=<true|false> where=<repo#n|path|->: <how>
 BOARD LINE name=<name> open=<n> overdue=<n> stale=<n>
 BOARD LEG leg=<name> owed=<n> probed=<n>
 BOARD NEXT <the one thing to do first, with its id>
-BOARD OK cards=<n> open=<n> closed=<n> stale=<n> overdue=<n> owed=<n> lines=<n> conflicts=<n> shown=<n> backend=<issue|dir> source=<where>
+BOARD OK cards=<n> open=<n> closed=<n> stale=<n> overdue=<n> owed=<n> lines=<n> conflicts=<n> quarantined=<n> shown=<n> backend=<issue|dir> source=<where>
 BOARD MORE kind=<card|line|leg> shown=<n> total=<t> and <t-n> more; <remedy>
 BOARD NOTE <something true about this board that is not a card>
 BOARD FAIL <id or source>: <reason>
@@ -623,7 +638,20 @@ Each is proven able to fail by a mutation before it is trusted.
    two clones with the same `after=` fold to one owner by the total order,
    `BOARD CARD conflicts=1`, `BOARD OK conflicts=1`, identically from both
    merge orders and both backends; a take whose `after=` names the other
-   take is not a conflict and `conflicts=0`; every `taken`, `closed`, `landed`
+   take is not a conflict and `conflicts=0`. **Causal order beats the key**
+   (Stella, 2026-09-11): at one second Bo takes the card, Ada sees that take
+   and retakes with `--anyway`, `after=<Bo's ev>`; the owner is **Ada**,
+   `conflicts=0`, identically from both textual merge orders and both
+   backends, and a mutation that sorts by `(at, as, …)` alone turns the test
+   red with Bo as owner; a later `closed` whose `at=` is a second behind
+   the take it names still folds after it and closes the card; two sibling
+   takes with one `after=` still fold by the documented key with
+   `conflicts=1`; an event whose `after=` names a missing id, one naming an
+   event of another card, and two events naming each other, are each
+   quarantined — `conflict=true`, `quarantined=1` on the card and on `BOARD
+   OK`, `BOARD NOTE quarantined events=…`, the owner derived from the rest —
+   and `take --anyway` against a fold that lacks the named `after=` is
+   refused; every `taken`, `closed`, `landed`
    and `probed` line carries a distinct twelve-hex `ev=` from the injected
    source and an `after=` equal to the newest `ev=` in the writer's fold or
    the card id; the migration fixture folds to the same owners and
@@ -727,8 +755,10 @@ shared packages used rather than re-spelled.
    sentence about another card; an unparsed line is counted and never guessed at; a
    text with a newline files one card; two ids drawn from a source that
    returns the same bytes twice are refused by `O_EXCL`, never overwritten.
-2. **`internal/board/derive.go`** — events in, cards out: the fold order
-   `(at, as, id, verb, bytes)` applied before anything is derived, owner from the latest
+2. **`internal/board/derive.go`** — events in, cards out: the topological
+   walk over `after=` edges applied before anything is derived, the key
+   `(at, as, id, verb, bytes)` only among concurrent eligible events, missing,
+   cross-card and cyclic predecessors quarantined and counted, owner from the latest
    take in that order, `since` from the add, first close wins, concurrent
    pairs by equal `after=` counted as `conflicts`, two `card` lines with one
    id and different fields as `conflict=true`, staleness as a pure function of
@@ -870,6 +900,7 @@ the two failures that cost a morning. These are the places it is **not** a model
 | Stella, spec repairs | same identity, different payload is conflict | `conflict=true`, `conflicts=` counted, neither wins |
 | Stella, spec repairs | event ids and causal predecessors | `ev=` and `after=` on every later event |
 | Stella, spec repairs | concurrent events visible, stable tie-break | the fold order (already) plus `conflicts=` (this pass) |
+| Stella, closing read | causal order first, the key among concurrent | the fold order: topological over `after=`, the total key only among concurrent eligible events; missing, cross-card and cyclic predecessors quarantined and counted (test 3) |
 | Stella, spec repairs | migration preserves ids and links | work list 10 |
 | Stella, ideas 2–3 | one decision packet per item; one home for ownership | already, rule 1 (`BOARD NEXT`, counts) and `take` |
 | Emma, C3 | one batch of ready decisions per line | rule 1: `list --list --owner <name>` |

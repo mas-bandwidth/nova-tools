@@ -57,7 +57,7 @@ nova-wake watch --state <file> --max <duration> --on-deadline <word> --interval 
       [--entry <repo>#<n> ... --entry-interval <duration>] [--final-only] [--gh-timeout <seconds>]
       [--reports <dir> ...]
 nova-wake serve --bus <dir> --as <name> --on-note <command> --interval <duration> --state <file> --hours <h> [--receipt --remote <name> --branch <name>] [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
-nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id>
+nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> [--on-note-idempotent]
 nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
 nova-wake help
 ```
@@ -166,7 +166,8 @@ WAKE POLL <source>: <reason one poll failed, which was not fatal>
 WAKE MORE kind=<bus|entry|report> shown=<n> total=<t> n=<k> <remedy>
 WAKE REFUSED: <reason>
 WAKE FIRED ids=<n> first=<id> rc=<n> redelivered=<0|1>
-WAKE UNCERTAIN id=<id> attempt=<n>: dispatch interrupted; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> runs it again
+WAKE UNCERTAIN id=<id> attempt=<n>: dispatch interrupted; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> runs it again
+WAKE BLOCKED as=<name> uncertain=<id> queued=<n>: a dispatch may still own this receiver; end it, then nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
 WAKE SERVE fired=<n> notes=<n> redelivered=<n> uncertain=<n> queued=<n> cc=<n> max_wait=<d> idle=<duration>
 ```
 
@@ -504,9 +505,12 @@ second line; red then green with the red unprinted prints red, then green, in
 that order; sixty entry transitions elided over three calls print as sixty
 lines. The one thing that keeps an observation out of the queue is
 `--final-only`, which keeps a non-final entry value out at observation time,
-because that is what the flag asked for. A key or value holding `|` is stored
-with it escaped as `%7C` and unescaped on load, and the round-trip test covers
-a report path that carries one.
+because that is what the flag asked for. A key or value holding `%` or `|` is
+stored with `%` escaped first as `%25` and then `|` as `%7C`, and unescaped in
+the reverse order on load, so a value holding a literal `%7C` reloads as those
+three characters and never as a pipe; the round-trip test covers a report path
+that carries a `|`, a value holding a literal `%7C`, and one holding `%25`
+(Stella, 2026-09-11).
 `fail:<source>` is `<n>|<since stamp>|<reason>`: the source's consecutive-failure
 streak, written on every failed poll, cleared on the first success, and read at
 the start of the next call — so the streak spans calls (rule 8).
@@ -817,21 +821,37 @@ spec forbids**.
     `delivered|<stamp>|rc=<n>|redelivered=<0|1>` written **after** the
     command exits, with its exit code, for every id in the batch. Exit 0 is
     the one acceptance boundary an arbitrary command offers, so `delivered
-    rc=0` is *accepted* and there is no separate *completed*. A restart that
-    finds `queued` runs it. One that finds `dispatching` finds an
-    **interrupted dispatch**, and what it does depends on what the caller
-    declared: without `--on-note-idempotent` the note becomes
-    `uncertain|<stamp>|attempt=<n>`, is **not** run, and prints `WAKE
-    UNCERTAIN id=<id> attempt=<n>: dispatch interrupted; nova-wake serve …
-    --redeliver <id> runs it again` — because a command with no idempotency
-    protocol may have acted, and a tool that ran it again would be choosing
-    a duplicate action on the mind's behalf; `--redeliver <id>` is a
-    person's act, refused unless the state is `uncertain`, and runs it once
-    more as `attempt=<n+1>` with `redelivered=1`. With `--on-note-idempotent`
-    — the caller's declaration that the command de-duplicates by id, durably
-    — an interrupted `attempt=1` is run once more as `attempt=2
-    redelivered=1`, and an interrupted `attempt=2` is `uncertain` all the
-    same, so nothing fires forever and nothing goes quiet. An earlier draft
+    rc=0` is *accepted* and there is no separate *completed*. **A restart
+    first establishes that the receiver is idle, and only then runs what it
+    finds `queued`.** Killing `serve` does not prove that the command it
+    started died: the child may be alive and mid-turn, and the harness is
+    one. So a `dispatching` entry found on restart is an **interrupted
+    dispatch** that becomes `uncertain|<stamp>|attempt=<n>`, is **not** run,
+    and prints `WAKE UNCERTAIN id=<id> attempt=<n>: dispatch interrupted;
+    nova-wake serve … --redeliver <id> --on-note <command> runs it again` —
+    because a command with no idempotency protocol may have acted, and a tool
+    that ran it again would be choosing a duplicate action on the mind's
+    behalf — and **an unresolved `uncertain` entry blocks this receiver's
+    queue**: no `queued` note is dispatched and nothing is redelivered while
+    one exists, `WAKE BLOCKED as=<name> uncertain=<id> queued=<n>: …` is
+    printed once per call with the remedy, and the exit line's `queued=`
+    carries what waited. `--redeliver <id> --on-note <command>` is a person's
+    act — the person has ended the earlier command or watched it return, and
+    the state stores no command, so the redelivery names its handler —
+    refused unless the state is `uncertain`, and runs it once more as
+    `attempt=<n+1>` with `redelivered=1`; the queue drains after it returns.
+    With `--on-note-idempotent` — the caller's declaration that the command
+    de-duplicates by id, durably, **and tolerates a second invocation for the
+    same id beside a live first one**, which is the receiver's declared
+    contract and never an assumption about an arbitrary command — an
+    interrupted `attempt=1` is run once more as `attempt=2 redelivered=1`
+    before anything queued, and an interrupted `attempt=2` is `uncertain` and
+    blocks all the same, so nothing fires forever and nothing goes quiet.
+    Continued automatic progress past a kill would need durable
+    process-level receiver ownership and a handoff that proves no overlap,
+    which this version does not claim. (Stella, 2026-09-11: with A running
+    and B queued, kill `serve` alone and restart: A uncertain, B dispatched
+    beside a live A, two turns on one harness.) An earlier draft
     wrote the id once before the spawn and called that exactly-once; Stella's
     second read showed it was at-most-once with a lost launch in the gap, and
     her third that an automatic second run of an arbitrary command is a
@@ -970,7 +990,21 @@ Each is proven able to fail by a mutation before it is trusted.
     after `delivered rc=0`, and a command exiting 3 gets `WAKE FIRED rc=3`
     and no receipt for any id; the fake `--on-note` is asserted to receive
     ids only — no argument or stdin holds an `INBOX` line, `carrying=`, or a
-    note body; an hour with no note fires nothing, the fake was never
+    note body; **the surviving child**: the fake `--on-note` for A blocks
+    until a release file appears, B lands while A runs and is `queued`,
+    `serve` is SIGKILLed with A alive, and the restart prints `WAKE
+    UNCERTAIN` for A and `WAKE BLOCKED as=<name> uncertain=A queued=1`, the
+    fake records zero further calls while A lives, the exit line says
+    `uncertain=1 queued=1`, and a second restart prints `WAKE BLOCKED` again
+    and still fires nothing; after A is released and returns, `--redeliver A
+    --on-note <fake>` runs A once as `attempt=2 redelivered=1` and the next
+    call fires B in its own invocation, never beside A; with
+    `--on-note-idempotent` the restart runs A's retry once and still fires B
+    only after that retry returns; `--redeliver` without `--on-note` is
+    refused naming the flag; a mutation that dispatches B on a restart with
+    A `uncertain` turns the test red, and the state codec round-trips a
+    value holding a literal `%7C` and one holding `%25` byte-identically;
+    an hour with no note fires nothing, the fake was never
     started, and the exit line says `fired=0`; `max_wait=` equals the
     injected clock's longest queued interval; a mutation that writes
     `delivered` before the spawn, one that runs a `dispatching` entry on
@@ -1091,7 +1125,7 @@ Standard library only, no third-party imports, no hardcoded paths, and the repo'
 shared packages used rather than re-spelled.
 
 1. **`internal/wake/state.go`** — the state map: load, save through a temp file and
-   rename, the `|` composition with `%7C` escaping, the `printed=<id>` half of every value, the
+   rename, the `|` composition with `%25` then `%7C` escaping and the reverse on load, the `printed=<id>` half of every value, the
    `queue:<n>` records and `queue:next`, the pending predicate as *a record
    names this key*, `bus:advance`, `fail:<source>` streaks, the 300-entry
    LRUs over `bus:line:` and **delivered** `bus:note:` keys with pending keys
@@ -1168,8 +1202,9 @@ shared packages used rather than re-spelled.
     `--batch-max`, the `serve:<id>` states `queued`, `dispatching
     attempt=<n>`, `delivered rc=<n> redelivered=<0|1>`, `uncertain` and `cc`,
     each written before or after the step it names and never during it, the
-    `uncertain` surfacing with `--redeliver` and the one-more-run only under
-    `--on-note-idempotent`, ids and nothing else on the command line, the
+    `uncertain` surfacing with `--redeliver --on-note`, the queue blocked
+    behind an unresolved `uncertain` (`WAKE BLOCKED`) and the one-more-run
+    only under `--on-note-idempotent`, ids and nothing else on the command line, the
     receipt per id after `delivered rc=0` and never before, `max_wait`, the
     `stop` file and `--hours`. Tests: test 10, with the kill points injected.
 
@@ -1267,7 +1302,8 @@ be grateful to. These are the places it is **not** a model, each with the reason
 | Emma, A1–A2, C1 | event-driven wake, silence on idle | already, rule 10 |
 | Emma, B1–B3 | nova-bus counts by default, batch advance | not folded: `nova-bus`'s (Emma's tool, #53); `serve` never feeds the carrying list to a model regardless |
 | Emma, D | rolling coordinator session boundary | not folded: a window's practice, not a tool rule |
-| Rowan, ideas 1, 9 | serve for every line; no status polls | already, rule 10 and the first lesson |
+| Rowan, ideas 1, 9 | serve for every line; no status polls | rule 10, narrowed: `serve` is an opt-in adapter per consenting line — starting one under a name is that name's person's decision (the receipt paragraph), never a fleet setting; no status polls is the first lesson (Stella's closing read) |
+| Stella, closing read | recovery proves idleness before any dispatch | rule 10: an unresolved `uncertain` blocks the receiver's queue, `WAKE BLOCKED` with the remedy; `--redeliver` names `--on-note`; `--on-note-idempotent` declares concurrency tolerance; `%` escaped as `%25` in the state codec (test 10) |
 | Rowan, idea 4 | pointers in the window, detail in children | not folded: a window's practice |
 | Freddy, idea 2 | webhook wakeups over polling | already, rule 10 (a fetch outside the session); a webhook is a v2 source |
 | Freddy, idea 5 | bundle acknowledgements | rule 10: one batch, receipts per id by machinery |
