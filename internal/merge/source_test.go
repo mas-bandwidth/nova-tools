@@ -47,12 +47,17 @@ func packageSource(t *testing.T) map[string]string {
 // but the lane's own state, log, outbox and record paths -- and git, not this code, is
 // what writes into a work tree.
 func TestNothingWritesIntoTheClonesWorkTree(t *testing.T) {
-	// The writing sites this package is allowed, each with the thing it writes.
-	allowed := map[string]string{
-		"state.go":   "the lane's own state file, through the fixed temp name and a rename",
-		"records.go": "the outbox, and the record path the CAS loop restores from the outbox",
-		"lock.go":    "the lock file, whose content is the holder's pid for a waiter's refusal",
+	// The writing sites this package is allowed, EACH ONE NAMED. It used to be a file
+	// name with a sentence, so any number of opens in state.go, records.go or lock.go
+	// passed on the strength of the first (read 4b, finding 6). Three sites is the whole
+	// of it, and writeWhole is the only one that writes a record path -- which is what
+	// makes the runtime tripwire over WatchWrites a tripwire on every path opened.
+	allowed := map[string][]struct{ expr, what string }{
+		"records.go": {{"return os.WriteFile(file, body, perm)", "writeWhole: the outbox item, the record path the CAS loop restores, and the state's temp name"}},
+		"state.go":   {{"os.OpenFile(filepath.Join(lane, LogName)", "the lane's log, append-only and never rotated"}},
+		"lock.go":    {{"os.OpenFile(path, os.O_RDWR|os.O_CREATE", "the lock file, whose content is the holder's pid for a waiter's refusal"}},
 	}
+	used := map[string]int{}
 	for name, src := range packageSource(t) {
 		for i, line := range strings.Split(src, "\n") {
 			if !strings.Contains(line, "os.WriteFile") && !strings.Contains(line, "os.OpenFile") && !strings.Contains(line, "os.Create") {
@@ -61,15 +66,31 @@ func TestNothingWritesIntoTheClonesWorkTree(t *testing.T) {
 			if strings.HasPrefix(strings.TrimSpace(line), "//") {
 				continue
 			}
-			if _, ok := allowed[name]; !ok {
-				t.Errorf("%s:%d writes a file: %s\nthe lane never edits an entry's content, and a new writing site is a decision rather than a drive-by", name, i+1, strings.TrimSpace(line))
+			site := ""
+			for _, s := range allowed[name] {
+				if strings.Contains(line, s.expr) {
+					site = s.expr
+					break
+				}
 			}
+			if site == "" {
+				t.Errorf("%s:%d writes a file: %s\nthe lane never edits an entry's content, and a new writing site is a decision rather than a drive-by", name, i+1, strings.TrimSpace(line))
+				continue
+			}
+			used[name+" "+site]++
 		}
 		// A mechanical resolver is what this spec withdrew: no conflict-marker parsing,
 		// no diff3, no resolver of any kind.
 		for _, forbidden := range []string{"<<<<<<<", "diff3", "resolve_mechanical", "--strategy-option"} {
 			if strings.Contains(src, forbidden) {
 				t.Errorf("%s carries %q; there is no mechanical resolve in this tool (rule 7, withdrawn 2026-09-11 after four real conflicts on a file no rule named)", name, forbidden)
+			}
+		}
+	}
+	for name, sites := range allowed {
+		for _, s := range sites {
+			if n := used[name+" "+s.expr]; n != 1 {
+				t.Errorf("the allowance for %q in %s matched %d writing sites, want exactly one (%s)", s.expr, name, n, s.what)
 			}
 		}
 	}

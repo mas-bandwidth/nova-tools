@@ -52,14 +52,24 @@ func TestTheBinaryReachesNoTmpAndNoProcessTable(t *testing.T) {
 	}
 }
 
+// writeSite is one allowed open-for-writing: the expression, and the thing it writes.
+type writeSite struct{ expr, what string }
+
 // Rule 7, from this side: the binary writes the lane's own files and nothing in a clone's
 // work tree. A new writing site here is a decision rather than a drive-by.
+//
+// THE ALLOWANCE IS PER SITE, NOT PER FILE. It used to be a file name with a sentence, so
+// every write in verbs.go and pass.go was allowed by the entry that covers the first one
+// -- a second open of a record's path in either of them would have passed unread (read 4b,
+// finding 6). Each site is named, and each allowance must match exactly one line, so an
+// allowance that stops being true is as loud as a site that is not allowed.
 func TestTheBinaryWritesOnlyTheLanesOwnFiles(t *testing.T) {
 	t.Parallel()
-	allowed := map[string]string{
-		"verbs.go": "the lane branch's .gitignore, which init writes, under --lane",
-		"pass.go":  "the lane's stop file, which the stop verb writes, under --lane",
+	allowed := map[string][]writeSite{
+		"verbs.go": {{`os.WriteFile(filepath.Join(lane, ".gitignore")`, "the lane branch's .gitignore, which init writes, under --lane"}},
+		"pass.go":  {{`os.WriteFile(path, []byte(deps.Now()`, "the lane's stop file, which the stop verb writes, under --lane"}},
 	}
+	used := map[string]int{}
 	for name, src := range mainPackageSource(t) {
 		for i, line := range strings.Split(src, "\n") {
 			if !strings.Contains(line, "os.WriteFile") && !strings.Contains(line, "os.OpenFile") && !strings.Contains(line, "os.Create") {
@@ -68,8 +78,24 @@ func TestTheBinaryWritesOnlyTheLanesOwnFiles(t *testing.T) {
 			if strings.HasPrefix(strings.TrimSpace(line), "//") {
 				continue
 			}
-			if _, ok := allowed[name]; !ok {
+			site := ""
+			for _, s := range allowed[name] {
+				if strings.Contains(line, s.expr) {
+					site = s.expr
+					break
+				}
+			}
+			if site == "" {
 				t.Errorf("%s:%d writes a file: %s\nthe lane never edits an entry's content, and a new writing site is a decision", name, i+1, strings.TrimSpace(line))
+				continue
+			}
+			used[name+" "+site]++
+		}
+	}
+	for name, sites := range allowed {
+		for _, s := range sites {
+			if n := used[name+" "+s.expr]; n != 1 {
+				t.Errorf("the allowance for %q in %s matched %d writing sites, want exactly one (%s)", s.expr, name, n, s.what)
 			}
 		}
 	}

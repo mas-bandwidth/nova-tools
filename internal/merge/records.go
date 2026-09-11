@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -166,7 +167,7 @@ func (r *Records) writeOutbox(sub Submission, items []Item) error {
 	for _, it := range items {
 		name := sub.ID() + filepath.Ext(it.Path)
 		tmp := filepath.Join(dir, name+".tmp")
-		if err := os.WriteFile(tmp, it.Body, 0o644); err != nil {
+		if err := writeWhole(tmp, it.Body, 0o644); err != nil {
 			return err
 		}
 		if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil {
@@ -174,6 +175,43 @@ func (r *Records) writeOutbox(sub Submission, items []Item) error {
 		}
 	}
 	return nil
+}
+
+// writeWhole is THE ONE PLACE this package writes a whole file: the outbox item, the
+// record path the CAS loop restores, and the state's temp name all go through it, so that
+// a tripwire can see EVERY path this tool opens for writing. (The lane's log is appended
+// to by design and the lock file is the kernel's; the source tests pin that those two are
+// the only other opens in this package.)
+func writeWhole(file string, body []byte, perm os.FileMode) error {
+	writeWatchMu.RLock()
+	watch := writeWatch
+	writeWatchMu.RUnlock()
+	if watch != nil {
+		watch(file, body)
+	}
+	return os.WriteFile(file, body, perm)
+}
+
+var (
+	writeWatchMu sync.RWMutex
+	writeWatch   func(string, []byte)
+)
+
+// WatchWrites installs that tripwire and returns the function that removes it. It is
+// demanded test 22's last clause -- "a tripwire on every path opened finds no record file
+// opened for writing twice" -- which is a property of the RUNNING tool and of no output:
+// a record is one immutable file per submission, never edited and never replaced (rule
+// 22), so a second open of a record's path is the edit that rule forbids, whatever the
+// bytes turn out to be.
+func WatchWrites(watch func(path string, body []byte)) func() {
+	writeWatchMu.Lock()
+	writeWatch = watch
+	writeWatchMu.Unlock()
+	return func() {
+		writeWatchMu.Lock()
+		writeWatch = nil
+		writeWatchMu.Unlock()
+	}
 }
 
 // outbox reads what is waiting, oldest first, grouped by the submission id in the name.
@@ -265,7 +303,7 @@ func (r *Records) flush() error {
 			if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 				return err
 			}
-			if err := os.WriteFile(full, it.Body, 0o644); err != nil {
+			if err := writeWhole(full, it.Body, 0o644); err != nil {
 				return err
 			}
 			paths = append(paths, it.Path)

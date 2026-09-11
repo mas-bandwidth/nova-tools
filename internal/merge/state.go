@@ -417,7 +417,7 @@ func (s *State) SaveTo(lane string) error {
 		return fmt.Errorf("refusing to write a state this binary could not read back: %w", err)
 	}
 	tmp := filepath.Join(lane, StateTmpName)
-	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
+	if err := writeWhole(tmp, raw, 0o644); err != nil {
 		return err
 	}
 	if err := replaceState(tmp, StatePath(lane)); err != nil {
