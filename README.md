@@ -405,7 +405,7 @@ MIT, see [LICENSE](LICENSE).
 ## nova-board
 
 ```
-nova-board list  (--issue <owner/repo>#<n> | --dir <path>) --stale <duration> [--list] [--open] [--owner <name>] [--max <n>]
+nova-board list  (--issue <owner/repo>#<n> --gh-timeout <seconds> | --dir <path>) --stale <duration> [--list] [--open] [--owner <name>] [--max <n>]
 nova-board add   (--issue ... | --dir ...) --as <name> --text <text> --by <duration-or-stamp> --default <text>
                  [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>] [--id <thirty-two hex>]
 nova-board take  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
@@ -447,12 +447,13 @@ line's own batch.
 
 **Every card has a deadline and a default** (`--by`, `--default`): nothing here waits
 forever. **Every path and every duration comes from a flag** — there is no default board,
-no default `--stale`, and no environment variable configures anything. A card taken by a
+no default `--stale` and no default `--gh-timeout` (required under `--issue`, which is the
+backend that runs `gh`), and no environment variable configures anything. A card taken by a
 line that then goes silent is `stale=true` past `--stale` and is takeable again without
 `--anyway`; a take or a close over somebody's *live* take is refused at exit 1 and names
 the holder. Two backends, one format: a directory of card files (`--dir`, which this tool
-appends to and never commits — landing it is yours) and issue comments (`--issue`, durable
-when the command returns).
+appends to and never commits — landing it is yours) and issue comments (`--issue` with
+`--gh-timeout <seconds>`, durable when the command returns).
 
 ### First run
 

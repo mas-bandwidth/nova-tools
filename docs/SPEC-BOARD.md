@@ -51,15 +51,25 @@ protected.
 ## The verbs
 
 ```
-nova-board list   (--issue <owner/repo>#<n> | --dir <path>) --stale <duration> [--list] [--open] [--owner <name>] [--max <n>]
-nova-board add    (--issue ... | --dir ...) --as <name> --text <text> --by <duration|stamp> --default <text>
+nova-board list   (--issue <owner/repo>#<n> --gh-timeout <seconds> | --dir <path>) --stale <duration>
+                  [--list] [--open] [--owner <name>] [--max <n>]
+nova-board add    (--issue ... --gh-timeout <seconds> | --dir ...) --as <name> --text <text> --by <duration|stamp> --default <text>
                   [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>] [--id <thirty-two hex>]
-nova-board take   (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
-nova-board close  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
-nova-board check  (--issue ... | --dir ...) --words <text> [--max <n>] [--all]
-nova-board quickstart (--issue ... | --dir ...) --stale <duration>
+nova-board take   (--issue ... --gh-timeout <seconds> | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
+nova-board close  (--issue ... --gh-timeout <seconds> | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
+nova-board check  (--issue ... --gh-timeout <seconds> | --dir ...) --words <text> [--max <n>] [--all]
+nova-board quickstart (--issue ... --gh-timeout <seconds> | --dir ...) --stale <duration>
 nova-board help
 ```
+
+**`--gh-timeout <seconds>` is required under `--issue`** and is not read under
+`--dir`. It is how long one `gh` call may take, and it is a **duration**, so rule 8
+applies to it exactly as it applies to `--stale`: a missing one is exit 2 with one
+line naming the flag, what it wants, and `run: nova-board help`. It had a default
+of 60 in an earlier draft and lost it for the same reason `--stale` lost its 10m —
+a subprocess budget nobody chose is a tool that hangs for a minute a reader never
+agreed to. A value that was given and will not do (`--gh-timeout 0`) is a *malformed*
+flag and says so, never `is required`.
 
 **Exactly one backend per invocation**, named. Neither `--issue` nor `--dir` is
 exit 2 and `refusing to guess`; both together is exit 2 as well, because a board

@@ -210,17 +210,16 @@ func TestGhTimeoutIsAFlagAndIsChecked(t *testing.T) {
 			t.Errorf("a gh call ran under a %s budget, want the 30s the caller named", d)
 		}
 	}
-	// A budget of zero or less is the DEFAULT, named, rather than no budget: --gh-timeout 0
-	// must not become a subprocess that can run forever.
-	zero, err := NewIssue("mas-bandwidth/schema#876", 0)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if zero.timeout != DefaultGHTimeout {
-		t.Errorf("--gh-timeout 0 gave a %s budget, want the %s default", zero.timeout, DefaultGHTimeout)
-	}
-	if neg, _ := NewIssue("mas-bandwidth/schema#876", -time.Second); neg.timeout != DefaultGHTimeout {
-		t.Errorf("a negative budget gave %s, want the default", neg.timeout)
+	// A budget of zero or less is NOT a backend, because there is no default duration to
+	// fall back on: rule 8 names durations as well as paths, and a minute nobody chose is a
+	// minute a reader never agreed to wait.
+	for _, bad := range []time.Duration{0, -time.Second} {
+		b, err := NewIssue("mas-bandwidth/schema#876", bad)
+		if err == nil {
+			t.Errorf("a %s budget gave a backend with a %s budget, want a refusal", bad, b.timeout)
+		} else if !strings.Contains(err.Error(), "--gh-timeout") {
+			t.Errorf("the refusal for a %s budget does not name the flag: %v", bad, err)
+		}
 	}
 	// And a call that outlives its budget comes back NAMED, with the flag that widens it.
 	slow, err := NewIssue("mas-bandwidth/schema#876", 20*time.Millisecond)

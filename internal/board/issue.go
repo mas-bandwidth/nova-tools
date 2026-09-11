@@ -26,8 +26,10 @@ import (
 	"time"
 )
 
-// DefaultGHTimeout is the per-subprocess budget when a caller names none.
-const DefaultGHTimeout = 60 * time.Second
+// THERE IS NO DEFAULT BUDGET. Rule 8 -- no default paths and no default durations -- names
+// durations as well as paths, and this backend's budget is a duration: it comes from
+// --gh-timeout or the caller does not get a backend. A minute nobody chose is a tool that
+// hangs for a minute a reader never agreed to.
 
 // killGrace is how long after the kill the pipes are closed. gh's children inherit the
 // output pipe and hold it open after gh is gone, so a killed call still blocks until they
@@ -86,7 +88,7 @@ func NewIssue(spec string, timeout time.Duration) (*Issue, error) {
 		return nil, err
 	}
 	if timeout <= 0 {
-		timeout = DefaultGHTimeout
+		return nil, fmt.Errorf("--gh-timeout wants how many SECONDS one gh call may take and is at least 1, as in --gh-timeout 60; there is no default duration")
 	}
 	return &Issue{owner: owner, repo: repo, number: number, timeout: timeout, run: runGH}, nil
 }

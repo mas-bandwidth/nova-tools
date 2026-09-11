@@ -366,7 +366,7 @@ func TestTheTwoBackendsRenderIdenticalListings(t *testing.T) {
 func TestTheIssueBackendWritesThroughStdinAndReadsTheWholeThread(t *testing.T) {
 	b := newBench(t)
 	store, argv := fakeGH(t)
-	exit, stdout, stderr := b.run("add", "--issue", "mas-bandwidth/schema#876", "--as", "rowan",
+	exit, stdout, stderr := b.run("add", "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60", "--as", "rowan",
 		"--text", "a card filed through the issue backend", "--by", "4h", "--default", "rowan files it")
 	if exit != 0 {
 		t.Fatalf("exit %d: %s", exit, stderr)
@@ -376,14 +376,14 @@ func TestTheIssueBackendWritesThroughStdinAndReadsTheWholeThread(t *testing.T) {
 	}
 	id := field(stdout, "id=")
 	for i := 0; i < 45; i++ {
-		if exit, _, stderr := b.run("add", "--issue", "mas-bandwidth/schema#876", "--as", "emma",
+		if exit, _, stderr := b.run("add", "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60", "--as", "emma",
 			"--text", "filler card "+itoa(i), "--by", "4h", "--default", "emma files it"); exit != 0 {
 			t.Fatalf("exit %d: %s", exit, stderr)
 		}
 	}
 	// THE READ IS THE WHOLE LOG: the prototype's forty-comment window would have lost the
 	// first card, and a vanished card makes the count fall without any work being done.
-	_, stdout, _ = b.run("list", "--issue", "mas-bandwidth/schema#876", "--stale", "10m", "--list", "--max", "0")
+	_, stdout, _ = b.run("list", "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60", "--stale", "10m", "--list", "--max", "0")
 	if !strings.Contains(stdout, "cards=46") {
 		t.Errorf("the read is not the whole thread:\n%s", stdout)
 	}
@@ -446,7 +446,7 @@ func issueListing(t *testing.T, b *bench, lines []string, args ...string) string
 	if err := os.WriteFile(store, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	full := append([]string{args[0], "--issue", "mas-bandwidth/schema#876"}, args[1:]...)
+	full := append([]string{args[0], "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60"}, args[1:]...)
 	_, stdout, stderr := b.atTime(b.now.Add(5*time.Minute), full...)
 	if stderr != "" {
 		t.Fatalf("listing through the issue backend: %s", stderr)
@@ -629,7 +629,7 @@ func TestABrokenRandomSourceIsRefusedInBothBackends(t *testing.T) {
 	t.Run("issue", func(t *testing.T) {
 		b := newBench(t)
 		store, _ := fakeGH(t)
-		issue := []string{"add", "--issue", "mas-bandwidth/schema#876", "--as", "rowan", "--by", "4h", "--default", "d"}
+		issue := []string{"add", "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60", "--as", "rowan", "--by", "4h", "--default", "d"}
 		exit, stdout, stderr := b.with(stuck{0xcd}, append(issue, "--text", "the first filing")...)
 		if exit != 0 {
 			t.Fatalf("the first add: exit %d %s", exit, stderr)
@@ -642,7 +642,7 @@ func TestABrokenRandomSourceIsRefusedInBothBackends(t *testing.T) {
 		if n := strings.Count(readFile(t, store), "card "+id); n != 1 {
 			t.Errorf("the thread holds %d card lines under one id, want 1: nothing is written when the id exists", n)
 		}
-		_, listing, _ := b.run("list", "--issue", "mas-bandwidth/schema#876", "--stale", "10m")
+		_, listing, _ := b.run("list", "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60", "--stale", "10m")
 		if !strings.Contains(listing, "cards=1") || !strings.Contains(listing, "conflicts=0") {
 			t.Errorf("two filings folded into one card with nothing said:\n%s", listing)
 		}
@@ -665,7 +665,7 @@ func TestTwoProcessesUnderIssueBothFile(t *testing.T) {
 		wg.Add(1)
 		go func(n int, leg string) {
 			defer wg.Done()
-			exit, stdout, _ := b.run("add", "--issue", "mas-bandwidth/schema#876", "--as", "rowan",
+			exit, stdout, _ := b.run("add", "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60", "--as", "rowan",
 				"--text", "every field is written", "--by", "4h", "--default", "rowan probes it",
 				"--thing", "every-field", "--leg", leg)
 			exits[n], ids[n] = exit, field(stdout, "id=")
@@ -683,7 +683,7 @@ func TestTwoProcessesUnderIssueBothFile(t *testing.T) {
 	if ids[0] == ids[1] {
 		t.Fatalf("two processes drew one id %s", ids[0])
 	}
-	_, listing, _ := b.run("list", "--issue", "mas-bandwidth/schema#876", "--stale", "10m")
+	_, listing, _ := b.run("list", "--issue", "mas-bandwidth/schema#876", "--gh-timeout", "60", "--stale", "10m")
 	if !strings.Contains(listing, "cards=2") {
 		t.Errorf("two filings from two processes are two cards:\n%s", listing)
 	}

@@ -20,6 +20,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/board"
 )
 
 // seq is the injected random source: distinct bytes per draw, so ids differ and a test can
@@ -570,6 +572,40 @@ func TestEveryPathAndDurationIsAFlag(t *testing.T) {
 	// --max is the one flag with a default, and a negative one is a typo with two readings.
 	if exit, _, stderr := b.run(b.board("list", "--stale", "10m", "--max", "-1")...); exit != 2 || !strings.Contains(stderr, "--max") {
 		t.Errorf("--max -1: exit %d, stderr %q", exit, stderr)
+	}
+
+	// Belt and braces while an --issue line is exercised without a fake gh: the backend is
+	// pointed at a program that does not exist, so a regression that got past the refusal
+	// fails here instead of reaching github.com (CONTRIBUTING: no test touches the network).
+	t.Cleanup(board.SetGHBinary(filepath.Join(t.TempDir(), "there-is-no-gh-here")))
+
+	// --gh-timeout IS A DURATION AND SO IT IS REQUIRED, under --issue, where it is the one
+	// that decides how long a gh call may take. It had a default of 60, which is a default
+	// duration -- the one thing this rule names -- and a subprocess budget nobody chose is
+	// a tool that hangs for a minute a reader never agreed to. --max keeps its default
+	// because it is neither a path nor a duration; this is not --max.
+	exit, stdout, stderr = b.run("list", "--issue", "mas-bandwidth/schema#876", "--stale", "10m")
+	if exit != 2 || !strings.Contains(stderr, "--gh-timeout") {
+		t.Errorf("--issue without --gh-timeout: exit %d, stderr %q", exit, stderr)
+	}
+	if !strings.Contains(stderr, "SECONDS") || !strings.Contains(stderr, "as in --gh-timeout 60") || !strings.Contains(stderr, "run: nova-board help") {
+		t.Errorf("the refusal does not say what --gh-timeout wants and where the door is: %q", stderr)
+	}
+	if n := len(strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")); n != 1 {
+		t.Errorf("a missing --gh-timeout cost %d lines, want one:\n%s", n, stderr)
+	}
+	if stdout != "" {
+		t.Errorf("a refusal wrote to stdout: %q", stdout)
+	}
+	// A VALUE THAT WAS GIVEN AND WILL NOT DO IS NOT A MISSING FLAG (lesson 13).
+	exit, _, stderr = b.run("list", "--issue", "mas-bandwidth/schema#876", "--stale", "10m", "--gh-timeout", "0")
+	if exit != 2 || !strings.Contains(stderr, "at least 1") {
+		t.Errorf("--gh-timeout 0: exit %d, stderr %q", exit, stderr)
+	}
+	// It belongs to --issue alone: a directory of card files runs no subprocess, and a
+	// verb that took a flag it does not use would be asking for a number for nothing.
+	if exit, _, stderr := b.run(b.board("list", "--stale", "10m")...); exit != 0 {
+		t.Errorf("--dir wanted a gh budget: exit %d, stderr %q", exit, stderr)
 	}
 }
 

@@ -47,7 +47,8 @@ import (
 const usage = `nova-board: what a group of lines owes, as an append-only log (see docs/SPEC-BOARD.md)
 
 usage:
-  nova-board list  (--issue <owner/repo>#<n> | --dir <path>) --stale <duration> [--list] [--open] [--owner <name>] [--max <n>]
+  nova-board list  (--issue <owner/repo>#<n> --gh-timeout <seconds> | --dir <path>) --stale <duration>
+        [--list] [--open] [--owner <name>] [--max <n>]
   nova-board add   (--issue ... | --dir ...) --as <name> --text <text> --by <duration-or-stamp> --default <text>
         [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>] [--id <thirty-two hex>]
   nova-board take  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
@@ -57,7 +58,8 @@ usage:
   nova-board quickstart (--issue ... | --dir ...) --stale <duration>
   nova-board version                 which build this is: <version> <goos>/<goarch> <go version>
 
-every verb that runs gh also takes [--gh-timeout <seconds>], default 60.
+--issue is the backend that runs gh, and every verb under it also REQUIRES
+--gh-timeout <seconds>: how long one gh call may take. There is no default duration.
 
 exit codes: 0 the verb ran and passed -- a listing printed, a card appended, or a check
 that found NOTHING; 1 the verb ran and said NO -- a check that MATCHED, a take or a close
@@ -87,7 +89,8 @@ this" is as good a reason not to file as "somebody already filed it".
 
 Exactly one backend per invocation, named. --dir <path> is a directory of card files, one
 file per card, appended and never committed: landing it is yours. --issue <owner/repo>#<n>
-is issue comments, one event per comment, durable when the command returns. Neither is
+is issue comments, one event per comment, durable when the command returns, and it takes
+--gh-timeout <seconds> because it runs gh. Neither is
 refusing to guess; both together is two boards with one name.
 
 No default paths and no default durations. --stale wants how long a card may go without an
@@ -119,21 +122,22 @@ example:
 // The hints. Every refusal says what the flag WANTS, not only what was wrong, because a
 // refusal naming only the fault has moved the guessing onto the reader.
 const (
-	backendHint = "no backend: --issue <owner/repo>#<n> for issue comments, or --dir <path> for a directory of card files; refusing to guess"
-	twoBackends = "both --issue and --dir were given; a board written to two places is two boards with one name, so name one"
-	staleHint   = "--stale is required and wants how long a card may go without an event before it lists as takeable again, as in --stale 10m; this family's number is 10m and there is no default duration; refusing to guess"
-	asHint      = "--as is required on every verb that writes and wants the name that goes in the event, as in --as rowan; it is a label the board repeats, never a credential; refusing to guess"
-	textHint    = "--text is required and wants one line saying what is owed, as in --text \"the Windows runner skips three steps\"; refusing to guess"
-	byHint      = "--by is required and wants a deadline: a duration from now like 4h, or an RFC 3339 stamp like 2026-09-12T09:00:00Z; a card with no deadline cannot be filed"
-	defHint     = "--default is required and wants one line saying what happens if nobody closes the card by then, as in --default \"rowan files it as a known gap\"; never wait forever"
-	filterHint  = "--open and --owner are FILTERS on --list and change nothing without it: `--list --open` prints the open cards, `--list --owner <name>` prints one line's own batch, and the counts are what `list` prints with neither; refusing to print a listing nobody asked for"
-	cardHint    = "--card is required and wants the thirty-two hex id of a card on this board, which `nova-board list --list` prints; refusing to guess"
-	wordsHint   = "--words is required and wants the words you would file, as in --words \"windows runner skips\"; every word must appear in a card's text for it to match"
-	howHint     = "one of --how <text>, --landed <repo>#<n> or --probed <evidence> is required and says HOW this was closed; --landed is the close a reader can verify, --probed is the only close for a row of the owed ledger"
-	legHint     = "--thing and --leg go together: a row of the owed ledger is one thing owed on one leg, and half of one is neither"
-	idHint      = "--id wants the thirty-two hex id an earlier add printed, and is the retry after an append whose outcome you do not know"
-	maxHint     = "--max is a ceiling on printed lines: 0 means all, and a negative one is a typo with two readings"
-	remedyMore  = "--max 0 shows all"
+	backendHint   = "no backend: --issue <owner/repo>#<n> for issue comments, or --dir <path> for a directory of card files; refusing to guess"
+	twoBackends   = "both --issue and --dir were given; a board written to two places is two boards with one name, so name one"
+	staleHint     = "--stale is required and wants how long a card may go without an event before it lists as takeable again, as in --stale 10m; this family's number is 10m and there is no default duration; refusing to guess"
+	asHint        = "--as is required on every verb that writes and wants the name that goes in the event, as in --as rowan; it is a label the board repeats, never a credential; refusing to guess"
+	textHint      = "--text is required and wants one line saying what is owed, as in --text \"the Windows runner skips three steps\"; refusing to guess"
+	byHint        = "--by is required and wants a deadline: a duration from now like 4h, or an RFC 3339 stamp like 2026-09-12T09:00:00Z; a card with no deadline cannot be filed"
+	defHint       = "--default is required and wants one line saying what happens if nobody closes the card by then, as in --default \"rowan files it as a known gap\"; never wait forever"
+	filterHint    = "--open and --owner are FILTERS on --list and change nothing without it: `--list --open` prints the open cards, `--list --owner <name>` prints one line's own batch, and the counts are what `list` prints with neither; refusing to print a listing nobody asked for"
+	cardHint      = "--card is required and wants the thirty-two hex id of a card on this board, which `nova-board list --list` prints; refusing to guess"
+	wordsHint     = "--words is required and wants the words you would file, as in --words \"windows runner skips\"; every word must appear in a card's text for it to match"
+	howHint       = "one of --how <text>, --landed <repo>#<n> or --probed <evidence> is required and says HOW this was closed; --landed is the close a reader can verify, --probed is the only close for a row of the owed ledger"
+	legHint       = "--thing and --leg go together: a row of the owed ledger is one thing owed on one leg, and half of one is neither"
+	idHint        = "--id wants the thirty-two hex id an earlier add printed, and is the retry after an append whose outcome you do not know"
+	maxHint       = "--max is a ceiling on printed lines: 0 means all, and a negative one is a typo with two readings"
+	ghTimeoutHint = "--gh-timeout is required under --issue and wants how many SECONDS one gh call may take, as in --gh-timeout 60; there is no default duration here, and a subprocess budget nobody chose is a tool that hangs for a minute a reader never agreed to; refusing to guess"
+	remedyMore    = "--max 0 shows all"
 )
 
 func main() {
@@ -199,8 +203,21 @@ func newFlags(verb string) *flags {
 	f := &flags{verb: verb, fs: fs}
 	fs.StringVar(&f.issue, "issue", "", "")
 	fs.StringVar(&f.dir, "dir", "", "")
-	fs.IntVar(&f.ghTimeout, "gh-timeout", 60, "")
+	fs.IntVar(&f.ghTimeout, "gh-timeout", 0, "")
 	return f
+}
+
+// given reports whether this run named a flag, as against leaving it at its zero. A
+// missing flag and a flag given a value that will not do are two different refusals, and
+// the flag package is the only thing that knows which happened.
+func (f *flags) given(name string) bool {
+	set := false
+	f.fs.Visit(func(fl *flag.Flag) {
+		if fl.Name == name {
+			set = true
+		}
+	})
+	return set
 }
 
 // want records one independent problem. ONE RUN REPORTS EVERY PROBLEM IT CAN FIND:
@@ -244,8 +261,18 @@ func (f *flags) backend() (board.Backend, string, string) {
 		}
 		return b, "dir", b.Source()
 	default:
+		// RULE 8 HAS NO EXCEPTION FOR THIS ONE. --gh-timeout is a duration, and every
+		// duration comes from a flag: a subprocess budget nobody chose is a tool that hangs
+		// for a minute a reader never agreed to, and a minute is not a number this family
+		// ever picked. --max keeps its default because it is neither a path nor a duration.
+		// A VALUE THAT WAS GIVEN AND WILL NOT DO IS NOT A MISSING FLAG (lesson 13), so the
+		// two are two refusals and the second one quotes what was given.
+		if !f.given("gh-timeout") {
+			f.want(ghTimeoutHint)
+			return nil, "", ""
+		}
 		if f.ghTimeout < 1 {
-			f.want("--gh-timeout is a number of seconds and is at least 1")
+			f.want(fmt.Sprintf("--gh-timeout %d is not a budget: it wants a whole number of SECONDS and is at least 1, as in --gh-timeout 60; a budget of zero or less is a subprocess that may never return", f.ghTimeout))
 			return nil, "", ""
 		}
 		b, err := board.NewIssue(f.issue, time.Duration(f.ghTimeout)*time.Second)
