@@ -172,3 +172,63 @@ func TestTheSurveysCallGraphCannotReachAMutation(t *testing.T) {
 		}
 	}
 }
+
+// Rule 21 and demanded test 21: NO `gh pr merge` CALL WITHOUT A BASE PRECONDITION.
+//
+// `gh pr merge` takes --match-head-commit and nothing about the base, and a merge with
+// only a head precondition is not the atomic publication rule 21 asks for. So: a gh
+// invocation whose first two arguments are "pr" and "merge" must also carry a flag that
+// names the expected BASE. On the host that offers no such primitive there is no such
+// call at all, which is what keeps gh pr merge out of the merge path entirely -- the
+// shape the prototype had when a hand-typed `gh pr merge --auto` reached past its guard.
+func TestNoGhPrMergeCallLacksABasePrecondition(t *testing.T) {
+	base := map[string]bool{"--match-base": true, "--match-base-commit": true, "--expected-base": true}
+	fset := token.NewFileSet()
+	calls := 0
+	for name := range packageSource(t) {
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			args := stringArgs(call)
+			if len(args) < 2 || args[0] != "pr" || args[1] != "merge" {
+				return true
+			}
+			calls++
+			carries := false
+			for _, a := range args {
+				if base[a] || base[strings.SplitN(a, "=", 2)[0]] {
+					carries = true
+				}
+			}
+			if !carries {
+				t.Errorf("%s:%d builds a `gh pr merge` call with no base precondition: %v\nrule 21 publishes onto a base that is exactly the expected sha, and --match-head-commit is a precondition on the HEAD",
+					name, fset.Position(call.Pos()).Line, args)
+			}
+			return true
+		})
+	}
+	if calls != 0 {
+		t.Logf("this package builds %d `gh pr merge` call(s); on a host that offers no two-precondition primitive there must be none at all", calls)
+	}
+}
+
+// stringArgs is the string literals a call was given, in order, which is how a source test
+// reads an argument list a function will hand a subprocess.
+func stringArgs(call *ast.CallExpr) []string {
+	var out []string
+	for _, a := range call.Args {
+		lit, ok := a.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			out = append(out, "")
+			continue
+		}
+		out = append(out, strings.Trim(lit.Value, `"`))
+	}
+	return out
+}

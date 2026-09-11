@@ -17,6 +17,10 @@ type FakeHost struct {
 	Atomic   bool
 	Merges   []string
 	Err      error
+	// Do is what this fake's two-precondition merge actually DOES, when a test wants the
+	// base really moved -- so that the read-back of rule 21 is exercised rather than
+	// skipped. A nil Do records the call and moves nothing.
+	Do func(n int, headOID, baseSHA, mergeSHA string) error
 }
 
 // NewFakeHost returns an empty one.
@@ -63,11 +67,21 @@ func (f *FakeHost) Ready(n int) error {
 
 func (f *FakeHost) AtomicMerge() bool { return f.Atomic }
 
+// Merge is the two-precondition primitive, and this fake is a GUARD rather than a
+// recorder: a call missing either precondition is refused, so no test passes branch (a)
+// of rule 21 by accident. The call is recorded in the spelling rule 21 states, so a test
+// reads the preconditions that were supplied and not the ones the signature implies.
 func (f *FakeHost) Merge(n int, headOID, baseSHA, mergeSHA string) error {
 	if !f.Atomic {
 		return fmt.Errorf("this fake host offers no two-precondition merge and Merge was called anyway")
 	}
-	f.Merges = append(f.Merges, fmt.Sprintf("%d %s %s %s", n, headOID, baseSHA, mergeSHA))
+	if !IsSHA(headOID) || !IsSHA(baseSHA) || !IsSHA(mergeSHA) {
+		return fmt.Errorf("a two-precondition merge wants an expected head, an expected base and the gated object, all full shas; got head %q base %q merge %q", headOID, baseSHA, mergeSHA)
+	}
+	f.Merges = append(f.Merges, fmt.Sprintf("pr=%d match-head-commit=%s base=%s merge=%s", n, headOID, baseSHA, mergeSHA))
+	if f.Do != nil {
+		return f.Do(n, headOID, baseSHA, mergeSHA)
+	}
 	return nil
 }
 
