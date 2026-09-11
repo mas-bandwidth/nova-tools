@@ -27,8 +27,8 @@ morning. The form works, and it fails in every way a shell loop around
 | four conflicts in one morning, all real, all on one Java file the tip had changed; a mechanical resolver would have written a merge nobody read (**2026-09-11**) | the lane **never edits an entry's content**; a conflict is `BLOCKED` with its file list and a hand resolves it |
 | the hosted lane took 20 minutes to say what our own hardware says in two (Glenn's **two-minute rule**) | a **local gate** for the entry's current head counts as checks green |
 | a branch with no pull request had no way into the lane at all | `add-branch`, and a branch entry merges on a local gate plus its read |
-| two writers shared one temp name and left the state file at 0 bytes; the lane lost all 33 entries and every recorded read (**2026-09-11**) | every read-modify-write runs under **one lock**, through a **per-process temp name** and one rename, and nothing is written unless **both** the old and the new state parse |
-| a stale-lock check broke a lock that had vanished between the existence test and the stat; 3 of 20 concurrent writes were lost (**2026-09-11**) | a lock is stale only when it **exists and is older than 60 s**; a lock that vanished is a holder that finished |
+| two writers shared one temp name and left the state file at 0 bytes; the lane lost all 33 entries and every recorded read (**2026-09-11**) | every read-modify-write runs under **one kernel lock** (`flock`), through a **fixed temp name** and one rename, and nothing is written unless **both** the old and the new state parse |
+| a stale-lock check broke a lock that had vanished between the existence test and the stat; 3 of 20 concurrent writes were lost (**2026-09-11**) | the kernel releases the lock on death: **no stale rule, no age**; a second holder waits a bounded, jittered time and exits 2 naming the holder |
 | #922 merged red, and the entries behind it were then gated against a red base (**2026-09-11**) | **the red rule**: the base is proven green before anything merges onto it; a red base stops the lane |
 | two gate runs on one pull request shared the clone `gate-<pr>`; one run's `--gc` removed the tree under the other's `go test` and produced a red with no FAIL line (**2026-09-11**) | **one clone per gate run**, named uniquely per run; a gate never removes a tree it did not make |
 | the local gate ran `tables-java-fixedform` and not `tables-java-versioning`; the hosted lane ran both (**2026-09-11**, the java leg drift) | the gate's step list and per-leg target lists are the hosted fast lane's, and **a test proves the two lists equal** |
@@ -68,18 +68,24 @@ near the end, and the sections below say how each is met. The date on a rule is
 the day it was learned.
 
 1. **One state file, one lock.** The lane's state is one JSON file. Every
-   read-modify-write of it runs under one lock. The lock is a directory made
-   with `mkdir`, which is atomic on every filesystem this tool runs on. The
-   write goes to a temp file named for the writing process
-   (`state.json.tmp.<pid>`) and lands by one atomic rename. Nothing is written
-   unless both the old state and the new state parse. (2026-09-11: two writers
-   shared one temp name, the file was left at 0 bytes, and the lane lost 33
-   entries and every recorded read.)
-2. **A stale lock is one that exists and is old.** A lock older than 60 seconds
-   is a dead holder and may be broken; the break is logged. A lock that vanishes
-   between the existence test and the stat is not stale: its holder finished.
-   The tool never breaks a lock it did not see with an age. (2026-09-11: the
-   false stale break lost 3 of 20 writes.)
+   read-modify-write of it runs under one lock: an OS lock the kernel releases
+   on death (`flock` on a lock file in the lane directory; the Windows variant
+   is named in the work list), never a sentinel file or a directory, exactly
+   as nova-bus holds its checkout (lessons 53, 54, 67). The write goes to a
+   temp file with a **fixed** name (`state.json.tmp`, in the same directory)
+   and lands by one atomic rename; the fixed name is safe because the lock
+   admits one writer, and a stranded one is a name a person can see. Nothing
+   is written unless both the old state and the new state parse. (2026-09-11:
+   two writers with no lock shared one temp name, the file was left at 0
+   bytes, and the lane lost 33 entries and every recorded read.)
+2. **No stale rule, no age.** Because the kernel releases the lock when its
+   holder dies, there is nothing to break and no age to compute. A second
+   holder waits a bounded time with jitter (lesson 66) and then exits 2 naming
+   the holder's pid. The lock's scope is the smallest that works: one
+   read-modify-write, never a whole pass (lesson 68). (2026-09-11: the
+   prototype's directory lock needed an age, and its "vanished means stale"
+   arithmetic broke another writer's live lock and lost 3 of 20 writes; that
+   whole class of bug is what the kernel lock removes.)
 3. **Re-merge only what conflicts.** After a merge, the base is re-merged into
    an entry only when the host reports that entry `CONFLICTING`. Never into
    every entry after every merge. (2026-09-11 12:40Z: 26 entries times 70 jobs
@@ -555,9 +561,10 @@ not checking the contract it claims to.
 **Two lanes on one base.** Two `run` processes, or one `run` and one hand
 `gh pr merge`, both merging into one base: each merges an entry its own checks
 verified against a base the other had already moved. The tool takes a **lock on
-the lane directory** for the whole of a pass (`mkdir <lane>/lock`, a file
-inside holding the pid and the stamp; rules 1 and 2), and a second `run` on the
-same lane exits 2 naming the holder. A lock is not a claim
+the lane directory** for the whole of a pass (`flock` on `<lane>/run.lock`, a
+second, longer-lived lock than the state lock of rule 1; the pid and the stamp
+written inside; released by the kernel on death, rule 2), and a second `run` on
+the same lane exits 2 naming the holder. A lock is not a claim
 on the base: two lanes on **one base** through two lane directories is a
 configuration this tool cannot see, so `run` records the base's sha at the start
 of a pass and **re-reads it immediately before the merge**; if it moved, the
@@ -596,13 +603,13 @@ writers on one shared temp name: the state was left at 0 bytes and the lane
 lost all 33 entries and every read. A verb that cannot take the lock within
 its `--timeout` exits 2 and says who holds it.
 
-**A lock broken under a live holder.** A stale lock is one that exists and
-whose stamp is older than 60 seconds (rule 2). The check is: does the lock
-exist; if so, how old is it. A lock that vanished between those two steps is
-not stale, it is released, and the writer simply tries again. The prototype's
-first check read a vanished lock's age as infinite, called it stale, and broke
-the lock the next writer had just taken; 3 of 20 concurrent writes were lost
-that way. The break, when it happens, is logged with the dead holder's pid.
+**A lock broken under a live holder.** This tool has no stale-lock check to
+get wrong (rule 2): the lock is the kernel's, released when the holder dies,
+so a dead holder holds nothing and a live holder cannot be broken. The
+prototype's directory lock needed an age; its check read a vanished lock's
+age as infinite, called it stale, and broke the lock the next writer had just
+taken; 3 of 20 concurrent writes were lost that way. That is the argument for
+the kernel lock, not for a better age.
 
 **A red base under a green entry.** An entry's checks are evidence about the
 entry merged with the base the host computed at check time. If the base is
@@ -734,12 +741,13 @@ it:
     #922 red. Here the guard is the only path to a mutation (rule 4).
 15. **One shared temp name for the state write** (`lane.json.tmp`, in the
     revision that lost the state), then `.tmp.$$`, with no lock around either.
-    Here rule 1: one lock, a per-process temp name, a rename, and both states
+    Here rule 1: one kernel lock, a fixed temp name, a rename, and both states
     must parse.
-16. **A vanished lock is a stale lock.** The prototype's stale check computed
-    an age for a lock that was gone between its existence test and its stat,
-    called it stale, and broke the lock a live writer had just taken. Here rule
-    2: only a lock that exists and is older than 60 s is broken.
+16. **A directory lock with an age, and "vanished means stale".** The
+    prototype's stale check computed an age for a lock that was gone between
+    its existence test and its stat, called it stale, and broke the lock a live
+    writer had just taken. Here rule 2: a kernel lock, no age, nothing to
+    break.
 17. **`local-gate.sh` names the clone `gate-<pr>`, reclaims it with `--gc`
     (an `rm -rf`), and two runs on one pull request share it.** Here rule 8:
     one clone per gate run, named uniquely per run, and a run removes only the
@@ -764,9 +772,11 @@ check never seen failing is not a check).
 1. Thirty concurrent writers (`add`, `read`, `gate`, in any mix) on one lane:
    every write lands in the final state, and a reader polling the file in a
    tight loop parses it at every read, never 0 bytes, never a partial file.
-2. A lock directory with a stamp older than 60 s is broken, the break is
-   logged with the holder's pid; a lock that vanishes between the existence
-   test and the stat is not broken, and the writer waits and then writes.
+2. A holder killed with SIGKILL mid-write leaves the old state entire and
+   the next writer takes the lock at once, with no age and no break; a second
+   holder against a live one waits the bounded, jittered time and exits 2
+   naming the live holder's pid; the fixed temp name left by the kill is
+   stepped over, not reported as a stray.
 3. After a merge, an entry the host reports `MERGEABLE` is not touched: no
    fetch of its head, no commit, no push. An entry reported `CONFLICTING` gets
    exactly one re-merge attempt.
@@ -819,9 +829,10 @@ verb, and tests that pin all three by executing them.
    rename. Tests: an unknown field refuses; a string where a number belongs
    refuses; a round trip preserves order; thirty concurrent writers all land
    and the file parses at every instant (demanded test 1).
-2. **`internal/merge/lock.go`** — the lane lock as a directory (`mkdir`),
-   holder pid and stamp in a file inside, the 60 s stale rule, the
-   vanished-is-not-stale rule, and the Windows variant. Tests: a second holder
+2. **`internal/merge/lock.go`** — the lane lock as `flock` on a lock file
+   in the lane directory (LockFileEx on Windows), held for one
+   read-modify-write, a bounded jittered wait, exit 2 naming the holder's pid;
+   no stale rule, no age. Tests: a second holder
    is refused and the refusal names the first; demanded test 2.
 3. **`internal/merge/blocked.go`** — the conflicting-file list from
    `git diff --name-only --diff-filter=U`, the abort, the abort checked
