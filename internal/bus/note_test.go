@@ -20,6 +20,7 @@ The body.
 `
 
 func TestParseNoteReadsTheHeaderAndStopsAtTheBlankLine(t *testing.T) {
+	t.Parallel()
 	n, err := ParseNote("from-ada/x.md", goodNote)
 	if err != nil {
 		t.Fatal(err)
@@ -55,6 +56,7 @@ func TestParseNoteReadsTheHeaderAndStopsAtTheBlankLine(t *testing.T) {
 }
 
 func TestParseNoteRefuses(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, text, want string
 	}{
@@ -81,6 +83,7 @@ func TestParseNoteRefuses(t *testing.T) {
 // CRLF and a byte order mark are what an editor on another platform adds. Neither is a
 // parse failure and neither may change an id.
 func TestParseNoteToleratesCRLFAndABOM(t *testing.T) {
+	t.Parallel()
 	crlf := "\ufeff" + strings.ReplaceAll(goodNote, "\n", "\r\n")
 	a, err := ParseNote("from-ada/x.md", goodNote)
 	if err != nil {
@@ -99,6 +102,7 @@ func TestParseNoteToleratesCRLFAndABOM(t *testing.T) {
 }
 
 func TestHeaderValidate(t *testing.T) {
+	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -140,6 +144,7 @@ func TestHeaderValidate(t *testing.T) {
 }
 
 func TestValidID(t *testing.T) {
+	t.Parallel()
 	for _, good := range []string{"ada-0123456789ab", "self-talk-ffffffffffff", "a-000000000000"} {
 		if err := ValidID(good); err != nil {
 			t.Fatalf("ValidID(%q) = %v, want nil", good, err)
@@ -157,6 +162,7 @@ func TestValidID(t *testing.T) {
 
 // The id's collision-proofness, stated as the three properties it rests on.
 func TestIDIsDeterministicNamespacedAndSensitiveToEveryFieldThatMakesANoteDifferent(t *testing.T) {
+	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -225,6 +231,7 @@ func TestIDIsDeterministicNamespacedAndSensitiveToEveryFieldThatMakesANoteDiffer
 
 // The id must survive what an editor does to a file on save, or it is not an id.
 func TestIDIsUnchangedByTrailingWhitespaceAndCRLF(t *testing.T) {
+	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -251,6 +258,7 @@ func TestIDIsUnchangedByTrailingWhitespaceAndCRLF(t *testing.T) {
 // "Ada Vale" and "Ada a1b2c3d4" are one recipient at the id layer as they are to
 // every reader.
 func TestIDUsesResolvedRecipients(t *testing.T) {
+	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -271,6 +279,7 @@ func TestIDUsesResolvedRecipients(t *testing.T) {
 }
 
 func TestAssignIDRefusesASenderWithNoLane(t *testing.T) {
+	t.Parallel()
 	c, err := LoadConfig(writeBus(t, nil))
 	if err != nil {
 		t.Fatal(err)
@@ -282,6 +291,7 @@ func TestAssignIDRefusesASenderWithNoLane(t *testing.T) {
 }
 
 func TestFileNameCarriesTheMinuteTheSlugAndTheIDsHashHalf(t *testing.T) {
+	t.Parallel()
 	got := FileName(at("2026-09-09T12:34:56Z"), "cold-read", "ada-0123456789ab")
 	want := "2026-09-09T1234Z-cold-read-0123456789ab.md"
 	if got != want {
@@ -296,6 +306,7 @@ func TestFileNameCarriesTheMinuteTheSlugAndTheIDsHashHalf(t *testing.T) {
 }
 
 func TestSlugify(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ in, want string }{
 		{"Cold read of #624: sound code", "cold-read-of-624-sound-code"},
 		{"   ", "note"},
@@ -312,6 +323,7 @@ func TestSlugify(t *testing.T) {
 
 // The receipt heuristic, and the Kind line that overrides it in both directions.
 func TestIsReceipt(t *testing.T) {
+	t.Parallel()
 	const maxWords = 40
 	cases := []struct {
 		name string
@@ -340,6 +352,7 @@ func TestIsReceipt(t *testing.T) {
 }
 
 func TestRenderPutsTheHeaderInCanonicalOrderAndKeepsTheAuthorsWords(t *testing.T) {
+	t.Parallel()
 	n, err := ParseNote("from-ada/x.md", goodNote)
 	if err != nil {
 		t.Fatal(err)
@@ -372,6 +385,7 @@ func TestRenderPutsTheHeaderInCanonicalOrderAndKeepsTheAuthorsWords(t *testing.T
 // are markdown lists. Between them they were most of the files inbox used to drop in
 // silence.
 func TestParseNoteAcceptsAHeadingAndBulletHeaders(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, text, wantFrom, wantSubject, wantBody string
 		wantFromLine                                int
@@ -437,6 +451,7 @@ func TestParseNoteAcceptsAHeadingAndBulletHeaders(t *testing.T) {
 // first colon is not a header key, and quoting the whole of it back would be one
 // unreadable line per note in a check over a bus of them.
 func TestAProseFirstLineFailsWithAShortQuotedKey(t *testing.T) {
+	t.Parallel()
 	long := "Ada, the graph checkpoint is pushed at 15649542 on PR #707 and the whole suite passed: 138,751 mutations, zero divergence"
 	_, err := ParseNote("from-bo/x.md", long+"\n\nbody\n")
 	if err == nil {
@@ -467,6 +482,7 @@ func TestAProseFirstLineFailsWithAShortQuotedKey(t *testing.T) {
 // key nobody knows, or a body sentence standing where the header goes. The failure is
 // unchanged in all three -- only the sentence after it.
 func TestAnUnreadableNoteSaysWhatToDoAboutIt(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, text string
 		want       []string

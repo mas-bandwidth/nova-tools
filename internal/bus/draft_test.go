@@ -9,6 +9,7 @@ import (
 // stored as, and the NOTICE the run printed. A tolerance whose notice nobody asserts is a
 // tool quietly rewriting what a person wrote.
 func TestSendTolerancesStoreTheNoteAndSayWhatTheyDid(t *testing.T) {
+	t.Parallel()
 	cases := []struct {
 		name, text, as string
 		wantHeader     []string // lines the stored note must carry, in Render's order
@@ -114,6 +115,7 @@ func TestSendTolerancesStoreTheNoteAndSayWhatTheyDid(t *testing.T) {
 // A tolerated draft is a note like any other: the reader that walks the bus reads back
 // exactly what send stored, with no tolerance of its own needed.
 func TestAToleratedNoteParsesStrictly(t *testing.T) {
+	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
 	p, err := PrepareDraft(tab, "# The subject\n\nDate: whenever\n**To**: Bo\n\nbody\n", at("2026-09-09T12:34:56Z"), "", "Ada")
 	if err != nil {
@@ -133,6 +135,7 @@ func TestAToleratedNoteParsesStrictly(t *testing.T) {
 
 // The refusals that stay, one per thing this tool cannot work out without guessing.
 func TestSendStillRefusesWhatItCannotGuess(t *testing.T) {
+	t.Parallel()
 	cases := []struct{ name, text, as, want string }{
 		{"a recipient the roster does not know", "From: Ada\nTo: Boe\nSubject: s\n\nbody\n", "", `"Boe" names no one on this bus`},
 		{"no To line at all", "From: Ada\nSubject: s\n\nbody\n", "", "no To line"},
@@ -160,6 +163,7 @@ func TestSendStillRefusesWhatItCannotGuess(t *testing.T) {
 // Every problem in one run, not the first. The failure this closes is a person running
 // the tool three times to be told three things it knew the first time.
 func TestARefusalReportsEveryProblemInTheDraft(t *testing.T) {
+	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
 	_, err := PrepareDraft(tab, "From: Ada\nTo: Boe\nRe: bo-deadbeefcafe\nSubject:\n\n\n", at("2026-09-09T12:34:56Z"), "", "")
 	if err == nil {
@@ -187,6 +191,7 @@ func TestARefusalReportsEveryProblemInTheDraft(t *testing.T) {
 // A refusal about a header line names the line of the FILE THE PERSON WROTE, not the line
 // of what was left after the tolerances dropped a Date line and two blanks.
 func TestALineNumberInARefusalIsTheWritersOwnLine(t *testing.T) {
+	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
 	//        1        2   3          4              5             6            7
 	text := "\n\n# Title\nFrom: Ada\nDate: whenever\nBranch: main\nTo: Bo\n\nbody\n"
@@ -202,6 +207,7 @@ func TestALineNumberInARefusalIsTheWritersOwnLine(t *testing.T) {
 // The skeleton the draft verb prints is a draft this tool sends: it parses, and it goes
 // through Prepare once a body is written into it.
 func TestTheSkeletonIsADraftThisToolSends(t *testing.T) {
+	t.Parallel()
 	s := Skeleton{From: "Ada", To: "Bo", Cc: "Dana", Re: []string{"bo-abcdef012345"}, Subject: "The gate"}.Render()
 	n, err := ParseNote("", s)
 	if err != nil {
@@ -233,6 +239,7 @@ func TestTheSkeletonIsADraftThisToolSends(t *testing.T) {
 
 // A header value is one line, whatever a caller passes --subject.
 func TestOneLineRefusesAValueThatWouldForgeAHeaderLine(t *testing.T) {
+	t.Parallel()
 	for _, bad := range []string{"a\nTo: somebody", "a\u2028b", "a\rb"} {
 		if err := OneLine("--subject", bad); err == nil {
 			t.Fatalf("%q was accepted as a header value", bad)

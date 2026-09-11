@@ -1,7 +1,36 @@
+//go:build perf
+
+// THE WALL-CLOCK GUARD, which is not a per-commit test and says so in its build tag.
+//
+// Why it is behind `perf`: this file is the one test in the package that asserts a WALL
+// TIME, and a wall-clock bound is a flake by construction -- it passes or fails on what
+// else the machine is doing. Measured 2026-09-11: alone it takes eleven seconds, and under
+// the load of `go test ./...` the same run took one minute fifty-one and the package hit
+// Go's ten-minute timeout with it (#63). The house rule is that a per-commit test finishes
+// in a minute, two at most, or it becomes nightly; a test that fails because a sibling
+// package was compiling has stopped being evidence about this tool.
+//
+// What did NOT move: the property the spec states. `nova-bus`'s claim is that a read costs
+// the size of the CHANGE, and SPEC.md proves it by COUNTING PARSES -- exactly 1 over ten
+// thousand notes with five hundred open -- in TestInboxParsesOnlyWhatIsNewSinceTheCursor,
+// which runs on every commit and is untouched. A count is exact, it is the same on every
+// machine, and it measures work not done. This file is the crude second net UNDER that one,
+// for a regression that is not a parse: a walk of every lane's INDEX per note, a git call
+// per open entry, a quadratic string build. Those show up only as the tool getting slow on
+// a big bus, which is a thing no count can see -- so the net is kept, in the one place a
+// wall clock belongs.
+//
+// How to run it:
+//
+//	go test -tags perf -count=1 -run TestEveryVerbIsUnderASecondOnTenThousandNotes ./cmd/nova-bus
+//
+// and .github/workflows/ci.yml runs exactly that on a nightly schedule.
+
 package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -102,4 +131,35 @@ func TestEveryVerbIsUnderASecondOnTenThousandNotes(t *testing.T) {
 	timed("receipt", pushBound, "receipt", "--bus", checkout, "--as", "Ada", "--note", "bo-222222222222",
 		"--remote", "origin", "--branch", "main")
 	timed("send", pushBound, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main")
+}
+
+// The loop property of `wait`, which used to live in wait_test.go and is a wall clock: it
+// says that more than one poll fits inside a two-second deadline at a hundred-millisecond
+// interval, and that is a statement about how fast a git fetch is on this machine. Under
+// the load of `go test ./...` on 2026-09-11 it was false -- one fetch took the whole two
+// seconds, the run reported polls=1, and the test failed over a tool that had done nothing
+// wrong (#63).
+//
+// It is a real property: a verb that returns "nothing yet" after a single look is a check
+// and not a wait, and polls= is the only place that difference is visible. So it is kept,
+// here, on a quiet machine at night, and what stays per-commit in wait_test.go is that the
+// run polled at least once, reported the count, did not return before its deadline, printed
+// no listing and wrote nothing -- every part of the promise that does not depend on the
+// runner.
+func TestAWaitPollsMoreThanOnceBeforeItsDeadline(t *testing.T) {
+	hermetic(t)
+	checkout, _ := busDir(t)
+	settled(t, checkout)
+
+	const timeout = 2 * time.Second
+	r := invoke(t, "", waitFlags(checkout, "Ada", timeout.String())...).mustCode(t, 0)
+	r.mustContain(t, "stdout", "WAIT TIMEOUT after=")
+
+	line := r.stdout[strings.Index(r.stdout, "WAIT TIMEOUT"):]
+	polls := field(t, line, "polls=")
+	n, err := strconv.Atoi(polls)
+	if err != nil || n < 2 {
+		t.Fatalf("polls=%q, want at least 2 over %s at 100ms; a wait that looks once is a check\n%s", polls, timeout, r.stdout)
+	}
+	t.Logf("polls=%d over %s at 100ms", n, timeout)
 }

@@ -73,7 +73,10 @@ diff arguing for itself.
 **Passing CI is not passing review, and CI covers less than it looks like.** It
 builds, runs `go vet`, and runs `go test -race`, each on Linux, macOS and
 Windows; `gofmt` is checked on one runner, because formatting is a property of
-the source rather than of the platform. So it runs whatever tests exist and does
+the source rather than of the platform. One job does not run on a commit at all:
+`perf`, on a nightly schedule and on one runner, builds `-tags perf` and runs the
+single wall-clock test behind that tag — a bound in seconds is evidence about the
+machine as much as about the tool, so it is not a gate on anybody's pull request. So it runs whatever tests exist and does
 not require that a contribution ship any. Beyond that, the built binary is
 smoke-tested for `nova-check nocode` and for the specific properties that job
 names — not for all of `nocode`, and three of those steps are skipped on

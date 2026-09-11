@@ -368,6 +368,18 @@ go build ./...
 go test ./...
 ```
 
+`go test ./...` is the whole per-commit suite and finishes in about a minute. One file is
+held back from it by a build tag: `cmd/nova-bus/timing_test.go`, which asserts a WALL-CLOCK
+bound over a ten-thousand-note bus and therefore answers differently depending on what else
+the machine is doing. CI runs it on a nightly schedule; run it yourself with
+
+```
+go test -tags perf -run TestEveryVerbIsUnderASecondOnTenThousandNotes ./cmd/nova-bus
+```
+
+The property that file guards crudely — a read costs the size of the change — is proved
+exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complexity property.
+
 ## What this deliberately is not
 
 `nova-check` is the record layer and nothing above it. It proves the files were present, whole, sized, linked, prose and in floor-set agreement when the check ran. It does not prove a model read them or acts from them, and it cannot detect a hostile input or a compromised reader; those defenses stay doctrine. What it closes is narrower and real: the posture used to rest on records nothing checked.

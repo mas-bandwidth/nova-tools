@@ -6,6 +6,7 @@ import "testing"
 // case-sensitive after a leading Re: comes off, and every line below is one shape a
 // hand-written reply's subject actually arrives in.
 func TestReplySubjectStripsThePrefixAndNothingElse(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ in, want string }{
 		{"the gate", "the gate"},
 		{"Re: the gate", "the gate"},
@@ -26,6 +27,7 @@ func TestReplySubjectStripsThePrefixAndNothingElse(t *testing.T) {
 // The trigger for the NOTE is the loose half, on purpose: it costs a reader one line they
 // can ignore, and missing it costs them an open note for ever.
 func TestIsReplySubjectIsTheLooseHalf(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		in   string
 		want bool
@@ -47,6 +49,7 @@ func TestIsReplySubjectIsTheLooseHalf(t *testing.T) {
 // Newest first, unreadable entries skipped, and nothing matched by a subject that is not
 // the same subject.
 func TestMatchOpenSubjectTakesTheNewestOfTheExactMatches(t *testing.T) {
+	t.Parallel()
 	open := []OpenEntry{
 		{ID: "bo-000000000001", Kind: OpenNote, From: "Bo", Date: "2026-09-07T00:00:00Z", Path: "from-bo/a.md", Subject: "the gate"},
 		{ID: "bo-000000000002", Kind: OpenNote, From: "Bo", Date: "2026-09-09T00:00:00Z", Path: "from-bo/b.md", Subject: "Re: the gate"},
@@ -73,6 +76,7 @@ func TestMatchOpenSubjectTakesTheNewestOfTheExactMatches(t *testing.T) {
 
 // The narrow half of the guess: one recipient, and they are holding something of yours.
 func TestSingleOpenSenderIsOneRecipientWhoIsWaiting(t *testing.T) {
+	t.Parallel()
 	root := writeBus(t, nil)
 	c, err := LoadConfig(root)
 	if err != nil {

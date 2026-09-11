@@ -20,16 +20,26 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  # NIGHTLY, for the perf job below and for nothing else. Every other job in this file
+  # carries `if: github.event_name != 'schedule'`, so a scheduled run builds the perf tag
+  # and stops -- a nightly that re-ran the per-commit jobs would be a second copy of the
+  # same evidence and a second thing to look at when it goes red.
+  schedule:
+    - cron: "17 7 * * *"
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.ref }}
+  # The event name is in the group because the nightly runs on refs/heads/main and so does
+  # every push to main: one group would let a push cancel the night's perf run, or the run
+  # cancel the push's checks, and either way the cancelled one looks like it never happened.
+  group: ci-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
   test:
+    if: github.event_name != 'schedule'
     # Three operating systems because the platforms genuinely differ: Windows
     # has no executable bit, so `nocode`'s executable condition cannot fire
     # there and only the extension and shebang conditions carry it. The
@@ -71,6 +81,7 @@ jobs:
         run: go test -race ./...
 
   smoke:
+    if: github.event_name != 'schedule'
     # Exercises the BUILT BINARY. `go test` covers the packages; nothing else
     # covered the executable a user actually runs, and what a release ships is
     # the executable.
@@ -275,6 +286,7 @@ jobs:
           esac
 
   release-dry-run:
+    if: github.event_name != 'schedule'
     # The cross-build in .github/workflows/release.yml, run on every pull request with
     # nothing uploaded. It exists because that workflow's first run is triggered by a TAG,
     # and a tag is the one thing in this repository that cannot be quietly amended: a
@@ -315,3 +327,44 @@ jobs:
             GOOS="$1" GOARCH="$2" CGO_ENABLED=0 go build -o "$out/" ./cmd/...
             echo "ok $1/$2"
           done
+
+  perf:
+    # THE WALL CLOCK, nightly, because a wall clock is not a per-commit test.
+    #
+    # cmd/nova-bus/timing_test.go runs every verb over a ten-thousand-note bus and holds
+    # each to a bound in SECONDS. That bound is the only assertion in this repository whose
+    # answer depends on what else the machine is doing, and on 2026-09-11 it was exactly
+    # that: eleven seconds alone, one minute fifty-one under the load of `go test ./...`,
+    # and the package hitting Go's ten-minute timeout with it in (#63). The house rule is
+    # that a per-commit test finishes in a minute, two at most, or it becomes nightly.
+    #
+    # The property it guards did NOT move: the cost of a read is the size of the change, and
+    # that is proved by COUNTING PARSES in TestInboxParsesOnlyWhatIsNewSinceTheCursor, which
+    # runs in the `test` job above on every commit. This job is the crude second net under
+    # it, for a regression that is not a parse.
+    #
+    # One runner, no race detector, no matrix: the file skips itself under `-race` because
+    # the instrumentation is what a wall clock would then be measuring, and a bound measured
+    # on three different runner classes is three different bounds. Linux is the one the
+    # number in that file was written against.
+    #
+    # It is NOT gated on the test job. A red perf job is a thing to go and read in the
+    # morning, and making it wait on three operating systems' worth of tests would mean a
+    # night where an unrelated flake means no perf evidence at all.
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: vet the perf-tagged tests
+        # `go vet ./...` in the test job cannot see a file behind a build tag, so the one
+        # place this file is compiled at all is here. Vet before test, so a perf file that
+        # stopped compiling says that rather than failing as a bound.
+        run: go vet -tags perf ./...
+
+      - name: every verb is under its bound on ten thousand notes
+        run: go test -tags perf -count=1 -v -run TestEveryVerbIsUnderASecondOnTenThousandNotes ./cmd/nova-bus
