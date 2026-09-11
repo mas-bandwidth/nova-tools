@@ -1,9 +1,13 @@
 package bus
 
 import (
+	"errors"
 	"fmt"
+	"math/rand"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -34,6 +38,96 @@ import (
 // LockName is the lock file, in the checkout's git directory.
 const LockName = "nova-bus.lock"
 
+// ErrLockHeld indicates that the requested lock could not be acquired within the wait duration.
+var ErrLockHeld = errors.New("lock held")
+
+// LockFile takes an exclusive advisory lock on path, waiting up to wait for it, and returns the
+// release function. The release is safe to call more than once.
+//
+// On Unix this is an flock (advisory lock) that dies with the process.
+// On Windows this is an O_EXCL sentinel file (.held).
+//
+// When the lock is taken, LockFile stamps the current process PID into the file so
+// waiters and refusals can name the holder.
+// If wait is 0, LockFile attempts to acquire the lock once without waiting.
+// If wait > 0, LockFile polls every 25ms until the deadline.
+// If the lock cannot be acquired within wait, it returns an error wrapping ErrLockHeld.
+func LockFile(path string, wait time.Duration) (func(), error) {
+	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	if err != nil {
+		return nil, fmt.Errorf("the lock at %s could not be opened: %w", path, err)
+	}
+	deadline := time.Now().Add(wait)
+	for {
+		ok, lockErr := tryLockFile(f)
+		if lockErr != nil {
+			f.Close()
+			return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lockErr)
+		}
+		if ok {
+			stampLockHolder(f)
+			released := false
+			return func() {
+				if released {
+					return
+				}
+				released = true
+				unlockFile(f)
+				f.Close()
+			}, nil
+		}
+		if wait == 0 || !time.Now().Before(deadline) {
+			holder := ReadLockHolder(path)
+			f.Close()
+			return nil, fmt.Errorf("the lock at %s is held by process %s; waited %s: %w", path, holder, wait, ErrLockHeld)
+		}
+		time.Sleep(jitter(lockPoll))
+	}
+}
+
+// jitter spreads the retries of several waiters so they do not wake together and collide again (lesson 66).
+func jitter(d time.Duration) time.Duration {
+	return d + time.Duration(rand.Int63n(int64(d/2)+1))
+}
+
+// stampLockHolder writes the current PID to the lock file.
+func stampLockHolder(f *os.File) {
+	line := fmt.Sprintf("pid=%d at=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339))
+	if err := f.Truncate(0); err != nil {
+		return
+	}
+	if _, err := f.Seek(0, 0); err != nil {
+		return
+	}
+	_, _ = f.WriteString(line)
+	_ = f.Sync()
+}
+
+// ReadLockHolder reads the pid written into the lock file by its holder.
+// It handles both bare "<pid>" and "pid=<n> at=<stamp>" formats.
+// If unreadable, empty, or missing, returns "-".
+func ReadLockHolder(path string) string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "-"
+	}
+	s := strings.TrimSpace(string(raw))
+	if s == "" {
+		return "-"
+	}
+	for _, tok := range strings.Fields(s) {
+		if v, ok := strings.CutPrefix(tok, "pid="); ok {
+			if _, err := strconv.Atoi(v); err == nil {
+				return v
+			}
+		}
+	}
+	if _, err := strconv.Atoi(s); err == nil {
+		return s
+	}
+	return "-"
+}
+
 // LockCheckout takes this checkout's lock, waiting up to wait for it, and returns the
 // release. The release is safe to call more than once.
 //
@@ -46,34 +140,14 @@ func LockCheckout(busDir string, wait time.Duration) (func(), error) {
 		return func() {}, nil
 	}
 	path := filepath.Join(gd, LockName)
-	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
+	release, err := LockFile(path, wait)
 	if err != nil {
-		return nil, fmt.Errorf("the lock that keeps two runs off one checkout could not be opened at %s: %w", path, err)
-	}
-	deadline := time.Now().Add(wait)
-	for {
-		ok, lockErr := tryLockFile(f)
-		if lockErr != nil {
-			f.Close()
-			return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lockErr)
-		}
-		if ok {
-			released := false
-			return func() {
-				if released {
-					return
-				}
-				released = true
-				unlockFile(f)
-				f.Close()
-			}, nil
-		}
-		if !time.Now().Before(deadline) {
-			f.Close()
+		if errors.Is(err, ErrLockHeld) {
 			return nil, fmt.Errorf("another nova-bus is already running on this checkout and still holds %s; this run waited %s for it and will not work beside it, because two runs on one checkout write one OPEN list and one index -- run this again when that one has finished", path, wait)
 		}
-		time.Sleep(lockPoll)
+		return nil, fmt.Errorf("the lock that keeps two runs off one checkout could not be opened at %s: %w", path, err)
 	}
+	return release, nil
 }
 
 // lockPoll is how often the wait re-tries. It is a poll rather than a blocking flock
