@@ -203,7 +203,7 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 // and field names in order. Timestamps, surface names and reasons are a run's
 // own business and are deliberately not compared.
 func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

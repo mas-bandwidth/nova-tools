@@ -40,7 +40,7 @@ var notYetOnTheStandard = map[string]string{
 
 func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 	root := repoRoot(t)
-	readme := readFile(t, filepath.Join(root, "README.md"))
+	readme := readFile(t, filepath.Join(root, "TESTS.md"))
 
 	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
 	if err != nil {
