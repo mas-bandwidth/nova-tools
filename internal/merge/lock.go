@@ -1,6 +1,7 @@
 package merge
 
 import (
+	"errors"
 	"fmt"
 	"math/rand"
 	"os"
@@ -67,10 +68,31 @@ func Lock(path string, wait time.Duration) (func(), error) {
 		if !time.Now().Before(deadline) {
 			held := holder(path)
 			f.Close()
-			return nil, fmt.Errorf("another nova-merge holds %s (%s); this run waited %s for it, and two writers of one lane's state is not a race care can win -- run this again when that one has finished", path, held, wait)
+			return nil, &HeldError{Path: path, Holder: held, Wait: wait}
 		}
 		time.Sleep(jitter(lockPoll))
 	}
+}
+
+// HeldError is a bounded wait that ran out: somebody else holds this lane's lock. It is
+// its own type because the verb's answer to it is fixed by rule 2 -- "a verb that cannot
+// take the lock within its --timeout exits 2 and says who holds it" -- and exit 2 is a
+// different answer from every other failure a Git operation can have.
+type HeldError struct {
+	Path   string
+	Holder string
+	Wait   time.Duration
+}
+
+func (e *HeldError) Error() string {
+	return fmt.Sprintf("another nova-merge holds %s (%s); this run waited %s for it, and two writers of one lane's state is not a race care can win -- run this again when that one has finished", e.Path, e.Holder, e.Wait)
+}
+
+// AsHeldError reports whether err is a lock this run could not take, for the exit code.
+func AsHeldError(err error) (*HeldError, bool) {
+	var h *HeldError
+	ok := errors.As(err, &h)
+	return h, ok
 }
 
 // jitter spreads the retries of several waiters so they do not wake together and collide

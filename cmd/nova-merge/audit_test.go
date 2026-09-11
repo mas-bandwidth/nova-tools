@@ -31,6 +31,7 @@ var mergeAudit = audit.Config{
 		"verbs.go|cmdGate|s.wants":  "the sentence saying what that flag WANTS, one of the three literals in the same table",
 		"main.go|done|f.verb":       "the verb's own name, a literal at every newFlags call site in this file",
 		"verbs.go|openLane|verb":    "the verb's own name, a literal at every call site in this file",
+		"verbs.go|foldRefused|verb": "the verb's own name, the literals \"RUN\" and \"STATUS\" at its two call sites in pass.go",
 		"verbs.go|cmdAdd|kind":      "the literals \"pr\" and \"branch\", assigned from isBranch above the site",
 		"verbs.go|cmdAdd|yn":        "the literals \"yes\" and \"no\", assigned from --needs-read above the site",
 		"verbs.go|cmdRead|current":  "the literals \"true\", \"false\" and \"-\", returned by standingOf in this file",

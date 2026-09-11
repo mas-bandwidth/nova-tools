@@ -90,7 +90,10 @@ func cmdRun(args []string, stdout, stderr io.Writer, deps Deps) int {
 // onePass folds the branch's records, runs the pass, and writes the state back.
 func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr io.Writer, deps Deps, build, plannedRed string) int {
 	recs := merge.NewRecords(lane, st.LaneBranch, "origin", merge.NewGit(lane, f.dur(), deps.Runner), f.dur())
-	pulled, problems := foldInto(lane, st, recs, f.dur())
+	pulled, problems, err := foldInto(lane, st, recs, f.dur())
+	if err != nil {
+		return foldRefused("RUN", stderr, err)
+	}
 	p := &merge.Pass{
 		Lane: lane, State: st, Host: deps.NewHost(st.Repo, f.dur()),
 		Clone:   merge.NewGit(filepath.Join(lane, merge.RepoDir), f.dur(), deps.Runner),
@@ -128,7 +131,10 @@ func cmdStatus(args []string, stdout, stderr io.Writer, deps Deps) int {
 		return code
 	}
 	recs := merge.NewRecords(*f.lane, st.LaneBranch, "origin", merge.NewGit(*f.lane, f.dur(), deps.Runner), f.dur())
-	_, problems := foldInto(*f.lane, st, recs, f.dur())
+	_, problems, err := foldInto(*f.lane, st, recs, f.dur())
+	if err != nil {
+		return foldRefused("STATUS", stderr, err)
+	}
 	p := &merge.Pass{
 		Lane: *f.lane, State: st, Host: deps.NewHost(st.Repo, f.dur()),
 		Clone:   merge.NewGit(filepath.Join(*f.lane, merge.RepoDir), f.dur(), deps.Runner),

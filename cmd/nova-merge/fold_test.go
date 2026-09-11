@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 )
@@ -141,5 +142,38 @@ func TestAReadFromAnotherMachineReachesTheCoordinatorsNextPass(t *testing.T) {
 		if out := l.git(lane, "status", "--porcelain"); out != "" {
 			t.Errorf("%s is not clean:\n%s", lane, out)
 		}
+	}
+}
+
+// Rule 22: `run` and `status` PULL the lane branch and then FOLD it, and "a verb that
+// cannot take the lock within its --timeout exits 2 and says who holds it".
+//
+// The pull's error was assigned to `_`. A checkout-lock wait that ran out, or a fetch that
+// failed, left the fold running over the local files and the pass deciding on the previous
+// state -- so a hold or a newer red that reached the remote since the last pull was simply
+// absent from the decision, silently. The fold is the only source of records other
+// machines wrote; swallowing its failure is the failure rule 22 exists to close.
+func TestAVerbThatCannotTakeTheCheckoutLockExitsTwoAndNamesTheHolder(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	setupPR(t, l, 951, "feature-a", "a.txt", false)
+	release, err := merge.Lock(filepath.Join(l.lane, merge.CheckoutLock), time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer release()
+	for _, verb := range []string{"run", "status"} {
+		t.Run(verb, func(t *testing.T) {
+			args := []string{verb, "--lane", l.lane, "--timeout", "1"}
+			if verb == "run" {
+				args = append(args, "--once")
+			}
+			exit, stdout, stderr := l.run(args...)
+			if exit != 2 {
+				t.Fatalf("a verb that cannot take the lock exits 2: got %d\n%s\n%s", exit, stdout, stderr)
+			}
+			contains(t, stderr, "REFUSED")
+			contains(t, stderr, "pid=")
+		})
 	}
 }

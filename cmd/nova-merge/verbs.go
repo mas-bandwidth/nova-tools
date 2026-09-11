@@ -269,7 +269,11 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 			oneline.Escape(oneline.Cap(pushErr.Error(), oneline.TailBytes)))
 		return 1
 	}
-	foldInto(*f.lane, st, recs, f.dur())
+	if _, _, err := foldInto(*f.lane, st, recs, f.dur()); err != nil {
+		// The record is at the remote tip -- that is what pushed=true means -- so this
+		// is a NOTE and never a lost record: the next run folds it.
+		fmt.Fprintf(stderr, "READ NOTE the record is pushed and this lane could not fold the branch afterwards: %s; the next run folds it\n", oneline.Err(err))
+	}
 	current, approvals, holds, stale = standingOf(st, id, *head)
 	fmt.Fprintf(stdout, "READ OK entry=%s who=%s verdict=%s head=%s current=%s approvals=%d holds=%d stale=%d file=%s pushed=true\n",
 		oneline.Field(id), oneline.Field(*who), oneline.Field(*verdict), oneline.Field(merge.Short(*head)),
@@ -392,7 +396,9 @@ func cmdGate(args []string, stdout, stderr io.Writer, deps Deps) int {
 			oneline.Escape(oneline.Cap(pushErr.Error(), oneline.TailBytes)))
 		return 1
 	}
-	foldInto(*f.lane, st, recs, f.dur())
+	if _, _, err := foldInto(*f.lane, st, recs, f.dur()); err != nil {
+		fmt.Fprintf(stderr, "GATE NOTE the record is pushed and this lane could not fold the branch afterwards: %s; the next run folds it\n", oneline.Err(err))
+	}
 	fmt.Fprintf(stdout, "GATE OK entry=%s head=%s base=%s merge=%s verdict=%s summary=%s in_lane=%t newest=%t file=%s pushed=true\n",
 		oneline.Field(id), oneline.Field(merge.Short(*head)), oneline.Field(merge.Short(*baseSHA)),
 		oneline.Field(merge.Short(*mergeSHA)), oneline.Field(*verdict), oneline.Field(abs), inLane, newest, oneline.Field(file))
@@ -412,11 +418,23 @@ func isNewest(st *merge.State, id, head, base, at string) bool {
 
 // foldInto pulls the lane branch and folds every record file into the state, under the
 // state lock. The lists are the fold and the files are the truth.
-func foldInto(lane string, st *merge.State, recs *merge.Records, timeout time.Duration) (int, []merge.FoldProblem) {
-	pulled, _ := recs.Pull()
+//
+// ITS FAILURE IS RETURNED. The pull's error was assigned to `_`: a checkout-lock wait that
+// ran out, or a fetch that failed, left the fold running over the local files and the
+// caller deciding on the previous state, so a hold or a newer red that reached the remote
+// since the last pull was simply absent from the decision and nothing said so. The fold is
+// the only source of records other machines wrote.
+func foldInto(lane string, st *merge.State, recs *merge.Records, timeout time.Duration) (int, []merge.FoldProblem, error) {
+	pulled, err := recs.Pull()
+	if err != nil {
+		return pulled, nil, err
+	}
 	folded, err := recs.Fold()
-	if err != nil || folded == nil {
-		return pulled, nil
+	if err != nil {
+		return pulled, nil, err
+	}
+	if folded == nil {
+		return pulled, nil, nil
 	}
 	_ = merge.Update(lane, merge.LockWait, func(s *merge.State) error {
 		s.Apply(folded)
@@ -426,5 +444,19 @@ func foldInto(lane string, st *merge.State, recs *merge.Records, timeout time.Du
 	if fresh, err := merge.Load(lane); err == nil {
 		*st = *fresh
 	}
-	return pulled, folded.Problems
+	return pulled, folded.Problems, nil
+}
+
+// foldRefused is the one answer rule 22 gives a verb whose pull or fold failed: a lock it
+// could not take within its --timeout is exit 2 and SAYS WHO HOLDS IT; anything else the
+// remote or the checkout refused is exit 1. The verb's own name leads the line.
+func foldRefused(verb string, stderr io.Writer, err error) int {
+	if held, ok := merge.AsHeldError(err); ok {
+		fmt.Fprintf(stderr, "%s REFUSED: the lane branch could not be pulled and folded: %s\n",
+			verb, oneline.Escape(held.Error()))
+		return 2
+	}
+	fmt.Fprintf(stderr, "%s REFUSED: the lane branch could not be pulled and folded: %s; the records other machines wrote are the fold, and a pass that skipped them would be deciding on a state it knows is stale\n",
+		verb, oneline.Err(err))
+	return 1
 }

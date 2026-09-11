@@ -407,7 +407,18 @@ type Folded struct {
 // Fold rebuilds reads and gates from the record files in the lane's checkout. The lists
 // are the fold and the files are the truth, so a record that is in the branch is in the
 // next fold, on every machine, with the sha its reader supplied.
+//
+// IT RUNS UNDER THE CHECKOUT LOCK, because it reads the checkout's work tree and rule 22
+// puts the pull AND THE FOLD there with the CAS loop. A concurrent flush does `reset
+// --hard` in that window: without the lock a fold can read a tree the reset has emptied
+// and the restore has not yet refilled, which is the outbox's own window read from the
+// other side.
 func (r *Records) Fold() (*Folded, error) {
+	release, err := r.LockCheckout()
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	return foldFiles(func(dir string) ([]foldFile, error) { return readDirFiles(r.Lane, dir) })
 }
 
