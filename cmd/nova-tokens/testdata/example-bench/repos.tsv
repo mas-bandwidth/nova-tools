@@ -1,0 +1,4 @@
+# <name><TAB><regexp>, in priority order. This file is yours: there is no built-in list,
+# and the two shares on every TOKENS DAY line are how you see whether it is good enough.
+schema	(^|/)schema($|/)
+serialize	(^|/)serialize($|/)
