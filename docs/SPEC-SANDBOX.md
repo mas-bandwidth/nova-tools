@@ -1065,8 +1065,9 @@ them.
 7. **The CI matrix** — linux, mac and windows jobs, each running its own
    platform's wrap tests for real and skipping the others by name (**test on
    multiple platforms**, 2026-09-09: fix the cause, not the assertion).
-8. **The callers, after the read** — `nova-swarm run` fetches `pool/ref/<repo>`
-   once per batch and runs the probe once; `supervise` builds each worker's
+8. **The callers, after the read** — `nova-swarm run` fetches
+   `pool/ref/<repo>@<sha>` once per distinct sha in the batch, sets `HOME` to
+   each job's data home, and runs the probe once; `supervise` builds each worker's
    read and write argv and makes the `tree: yes` clone before the wrap; the
    solo line's launcher reads its lists file; Freddy's `AGENTS.md` names the
    command. Tests 23, 24, 25. Neither caller changes before test 26.
