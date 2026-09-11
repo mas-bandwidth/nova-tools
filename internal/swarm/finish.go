@@ -178,8 +178,28 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 // completion evidence the supervisor wrote is the outcome. `finish` rewrote the job from
 // the log alone, and a done job with exit.json rc=0 was filed in failed/ with rc=429
 // (dogfood D5, 2026-09-11) -- and then re-queued, spending the tokens a second time.
+// A REAP'S OWN END IS THE SUPERVISOR'S VERDICT, and a 429 beside it is history too. The
+// deadline, the budget ceiling and three unreadable usage samples are ends the supervisor
+// wrote from INSIDE the job; rewriting one of them to `rc=429 end=failed` took it off
+// `violationWord`'s exemption list, so a budget kill whose reap left a process behind was
+// quarantined with `violation=background` and `Jobs()` dropped it -- the loss c070fbe
+// closed, arriving by the other road (delta read 2, finding 1). Rule 13, verbatim
+// (SPEC-SWARM.md:232-233): "a job that ends this way keeps the findings it appended so far".
 func rateLimitedOutcome(inLog bool, end string, rc int) bool {
-	return inLog && !(end == EndDone && rc == 0)
+	return inLog && !(end == EndDone && rc == 0) && !reapEnd(end)
+}
+
+// reapEnd is the ONE list of ends the supervisor wrote by reaping the job's own group: the
+// deadline (rule 7), the budget ceiling and the unreadable usage source (rule 13). It is
+// one function because two places ask the same question of it -- what the 429 in a log may
+// rewrite, and what rule 11's word may be written over -- and an end word exempt in one and
+// not the other is how a job's findings go missing.
+func reapEnd(end string) bool {
+	switch end {
+	case EndKilled, EndBudget, EndUnverifiable:
+		return true
+	}
+	return false
 }
 
 // violationWord is what rule 11 writes in the SIDECAR, which is the record that outlives
@@ -203,8 +223,7 @@ func violationWord(end string, survivors int) string {
 	if survivors == 0 {
 		return ""
 	}
-	switch end {
-	case EndKilled, EndBudget, EndUnverifiable:
+	if reapEnd(end) {
 		// The reap's own ends: a process that outlived the kill is a fact about the kill.
 		return ""
 	}
