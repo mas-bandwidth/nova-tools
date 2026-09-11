@@ -251,6 +251,12 @@ func TestNoCodeUnlistableDirRefusesAtTheCLI(t *testing.T) {
 	if strings.Contains(stderr.String(), "NOCODE FAIL") {
 		t.Errorf("a refusal must not report partial findings: %s", brief(stderr.String()))
 	}
+	// Reviewer (#66, finding 3): the links twin pins the one-line guarantee and
+	// this seam did not. SPEC.md:230-232: a refusal is "this tool's own one-line
+	// refusal ... and nothing else -- at exit 2".
+	if lines := strings.Count(strings.TrimRight(stderr.String(), "\n"), "\n") + 1; lines != 1 {
+		t.Errorf("refusal stderr = %d lines, want 1: %s", lines, brief(stderr.String()))
+	}
 }
 
 // The kernel budget in TOKENS, at the CLI seam. A cap denominated in bytes
