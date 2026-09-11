@@ -114,6 +114,46 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
    own report file. No file is written by two workers. The coordinator merges
    the reports once, at the end: scatter, then merge, and the merge is the
    only serial step.
+10. **A job has a note file, and its report counts the notes it read.** Every
+    job directory holds `<job>/note`, created empty before the worker starts
+    and named in the prompt. The coordinator appends to it with `nova-swarm
+    note --pool <dir> --task <id> --text <text>`, one line per note, stamped
+    by the tool; nothing else writes it. The prompt says: between steps, read
+    the note file, and count what you read. The report's `## Head` carries
+    `notes read: <n>`, and `RUN DONE` carries `notes=<sent>/<read>`, where
+    `sent` is the tool's own count of the lines it appended and `read` is the
+    report's number, or a dash when the report has none. The count is
+    mandatory because a job that ignored a note cannot be told apart from one
+    that got none, and a coordinator who cannot tell the difference cannot
+    redirect anything. A note is data to the worker and never an instruction
+    to the tool. (2026-09-11: a running child could not be redirected; there
+    was no path a message could take.)
+11. **A job is one blocking process, reported once.** The worker is one child
+    of the dispatcher and runs in its own process group. It spawns no
+    background subtasks, and the prompt says so in one sentence: do the steps
+    in a line; a task that needs two independent things is two tasks. When
+    the worker exits, the dispatcher checks the process group; a process still
+    alive in it, or a child the harness log shows was backgrounded, is `RUN
+    VIOLATION id=<id> background=<n>`, the survivors are killed, and the result
+    is quarantined: it moves to `failed/` with `violation=background` in the
+    sidecar, and `triage` does not count it. A job reports exactly once: one
+    `RESULT.md`, one `RUN DONE` or one `RUN VIOLATION`, and never a second
+    notification. (2026-09-11: children stopped mid-task to wait on their own
+    background tasks, then reported twice.)
+12. **Usage is copied into the job record before the directory is reclaimed.**
+    When the worker exits, the dispatcher copies the provider's own usage into
+    the sidecar: `model`, `tokens_in`, `tokens_out`, `reasoning` and `repo`,
+    the last being the repository the job worked in. For OpenCode the source
+    is the SQLite database in the data home the dispatcher exported for that
+    job (`XDG_DATA_HOME`, per job, so one job's usage is one database), read
+    once, read-only. A field the provider did not report is a dash, never a
+    zero. A job directory is reclaimed only by `reclaim`, and a `reclaim` of a
+    directory whose sidecar has no usage line is refused on one line,
+    `RECLAIM REFUSED id=<id>: no usage in sidecar`, because the evidence is
+    inside the thing about to be removed. `cost` reads the sidecar and nothing
+    else, so it answers after the directory is gone. (2026-09-11: DeepSeek's
+    usage for two batches lived in per-worker data directories that were
+    reclaimed with the jobs, and nothing survived.)
 
 ## The verbs
 
@@ -127,6 +167,8 @@ nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong
 nova-swarm triage   --pool <dir> [--dir <dir>]... [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm template --name <read-pr|probe-row|fix-card>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--max <n>]
+nova-swarm note     --pool <dir> --task <id> --text <text>
+nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
 ```
 
 `--files <n>` is the file budget (rule 4). It has no default: a budget this
@@ -185,7 +227,8 @@ ADD OK id=<id> label=<label> template=<name|-> deadline=<d> pending=<n>
 ADD REFUSED: <reason>
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> deadline=<d> job=<path>
-RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|no-result|plan-only> findings=<n> refusals=<n> dest=<done|failed>
+RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|no-result|plan-only> findings=<n> refusals=<n> notes=<sent>/<read|-> dest=<done|failed>
+RUN VIOLATION id=<id> slot=<n> background=<n> dest=failed: <reason>
 RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> requeued=<true|false> reaped=<1|2>
 RUN MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
 RUN OK started=<n> done=<n> failed=<n> killed=<n> pending=<n> after=<d>
@@ -201,9 +244,13 @@ TRIAGE OK reports=<n> template=<n> degraded=<n> items=<n> red=<n> green=<n> notd
 TRIAGE REFUSED: <reason>
 VERDICT OK id=<id> who=<name> accurate=<n> wrong=<n>
 VERDICT REFUSED: <reason>
-COST TASK id=<id> in=<n> out=<n> usd=<n.nnnn> model=<model>
+COST TASK id=<id> in=<n> out=<n> reasoning=<n|-> usd=<n.nnnn> model=<model> repo=<repo|->
 COST OK tasks=<n> in=<n> out=<n> usd=<n.nnnn> window=<stamp>..<stamp>
 REQUEUE OK id=<id> from=<old-id> changed=<true>
+NOTE OK id=<id> notes=<n>
+NOTE REFUSED: <reason>
+RECLAIM OK id=<id> freed=<bytes>
+RECLAIM REFUSED id=<id>: <reason>
 STOP OK pool=<dir> running=<n>
 ```
 
@@ -273,8 +320,9 @@ A running worker holds a **slot**, `1..n`. A slot is:
 
 - its **own working directory**, `<worker-dir>-<slot>`, refreshed from the home
   copy at every start, **one way** — nothing in a slot is ever written back;
-- its **own data home**, `<slot-dir>/data`, exported so the harness keeps its
-  own database there;
+- its **own data home**, `<slot-dir>/jobs/<label>/data`, exported per job as
+  `XDG_DATA_HOME` so the harness keeps its own database there, one per job
+  (rule 12);
 - its **own job directory**, `<slot-dir>/jobs/<label>`.
 
 **The data home is the whole reason slots exist.** The harness keeps one SQLite
@@ -695,6 +743,17 @@ places where this spec is deliberately **not** a transcription:
     default from environment variables and `$HOME`.** Here every path is a
     flag or a field of the worker description, and no environment variable is
     consulted (SPEC.md, no guessing).
+19. **`run-worker.sh`'s per-worker data directory is reclaimed with the
+    job.** The harness's usage database lived there, and today's DeepSeek
+    batches have no surviving usage at all. Here rule 12: usage into the
+    sidecar first, and a reclaim with no usage line is refused.
+20. **There is no path a message can take to a running worker.** A child that
+    was doing the wrong thing could only be killed. Here rule 10: the note
+    file, appended by the tool, counted in the report.
+21. **Nothing says a job is one process, and nothing checks.** Children
+    spawned background tasks, stopped to wait on them, and reported twice.
+    Here rule 11: one process group, checked at exit, `RUN VIOLATION` and
+    quarantine.
 
 ## Tests this spec demands
 
@@ -732,6 +791,24 @@ be seen red before it is trusted.
    own report file; a tripwire on every path a child opens for writing finds
    no path opened by two children; the merge into the page runs once, after
    the last worker is reaped.
+10. `note` appends one stamped line to `<job>/note` and prints `NOTE OK
+    notes=1`; a fake worker that reads the file between two steps and writes
+    `notes read: 1` ends `RUN DONE notes=1/1`; a fake worker that never reads
+    it ends `notes=1/-`; the prompt contains the note sentence; `note` on a
+    task that is not running is `NOTE REFUSED`.
+11. A fake worker that forks a process which outlives it ends `RUN VIOLATION
+    background=1`, the survivor is dead afterwards, the job is in `failed/`
+    with `violation=background`, and `TRIAGE BATCH` does not count its report;
+    a worker that forks and waits for its child is not a violation; the prompt
+    contains the one-process sentence; every job prints exactly one of `RUN
+    DONE` or `RUN VIOLATION`.
+12. A fake harness that writes a usage row into the job's data home: after
+    exit the sidecar carries `model`, `tokens_in`, `tokens_out`, `reasoning`
+    and `repo` equal to the row; `reclaim` on that job removes the directory
+    and prints `RECLAIM OK`; `reclaim` on a job whose sidecar has no usage
+    line is `RECLAIM REFUSED` exit 1 and the directory is intact; `cost`
+    prints the numbers from the sidecar after the directory is gone; a
+    provider that reported no reasoning count prints `reasoning=-`.
 
 ## The work list
 

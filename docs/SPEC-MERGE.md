@@ -59,7 +59,8 @@ So a pass does not wait on a hosted run it could have answered locally: a green
 local gate for the entry's **current head** is accepted as checks green. The
 two-minute rule is a rule about iteration speed and it is the whole argument for
 the local gate. It is not an argument for skipping evidence — see **the local
-gate** below, where a hosted red still stops the entry whatever the gate says.
+gate** below, where on `main` a hosted red still stops the entry whatever the
+gate says, and below `main` it is said by name on the merge line (rule 15).
 
 ## The rules, numbered
 
@@ -97,8 +98,9 @@ the day it was learned.
 5. **The merge evidence is one of two things, and both are keyed to the head.**
    An entry merges on zero failing and zero pending hosted checks with at least
    one pass, or on a green local gate recorded for exactly the entry's current
-   head sha. A gate for an older head is nothing. A hosted red stops the entry
-   whatever the gate says.
+   head sha. A gate for an older head is nothing. Which of the two is the
+   verdict depends on the base (rule 15): on `main` a hosted red stops the
+   entry whatever the gate says.
 6. **The red rule.** The base is proven green before anything merges onto it. A
    red base stops the lane: no entry merges onto it, and nothing is piled onto
    a red. The only exception is a temporary red a person has named and planned
@@ -138,6 +140,52 @@ the day it was learned.
     never matches a process by its own command line. It never touches `/tmp`.
     The state, the clone and the gate summaries live only under paths given by
     flags.
+14. **The gate takes one of N machine-wide slots.** The gate runner holds
+    `--slots <n>`, the number of gates this machine runs at once, and
+    `--slots-dir <dir>`, where the slots live. Neither has a default. A slot
+    is one lock file, `<slots-dir>/<k>`, held by a kernel lock exactly as
+    rule 1 holds the state: a slot whose holder died is free at once, with no
+    age and nothing to break. A gate that finds every slot held waits a
+    bounded, jittered time (rule 2), prints one line while it waits, `GATE
+    WAIT slots=<n>/<n> waited=<d>`, and exits 2 naming the holders if the wait
+    runs out. The leg fan-out inside one gate is capped by `--legs <n>`, no
+    default, so one gate cannot spend the whole budget on its own. The
+    machine's budget is the tool's to hold, because no caller can see the
+    other callers. (2026-09-11: every caller fanned out, load reached 235 and
+    then 422 on 32 cores, and green tests became 30 second timeouts.)
+15. **Below `main` the local gate is the verdict; on `main` the hosted lane
+    is.** When the lane's base is not `main`, a green local gate recorded for
+    the entry's current head is the merge evidence, and a hosted red for that
+    head is printed by name on the `MERGE OK` line, `hosted_red=<names>`, and
+    in the log: never blocking, never silent. When the base is `main`, the
+    hosted lane is the verdict, zero fail and zero pending, and a local gate
+    only lifts `PENDING`; a hosted red stops the entry whatever the gate says.
+    This is rule 10 applied to the verdict and not only to placement.
+    (2026-09-11: eleven gate-green pull requests below `main` sat behind a
+    hosted red the hosted lane had caused itself.)
+16. **`run` prints its build id and steps aside for a newer binary.** Every
+    `RUN PASS` line carries `build=<id>`, the id compiled into the running
+    binary. At the end of every pass under `--loop`, the tool reads the build
+    id of the binary at its own path on disk; when the two differ, it finishes
+    the pass, prints one line naming both ids, `RUN NEWER build=<id>
+    on_disk=<id>`, and exits 0. It never loads the new code itself and it
+    never runs the old code past the pass boundary. A restart is a person's
+    explicit act, never a silent one. (2026-09-11: the loop kept running old
+    code after the script was fixed, and nobody could tell from the log which
+    code a pass had run.)
+17. **A stop names its next step, and the evidence outlives the clone.** A
+    `BLOCKED` entry prints one `RUN BLOCKED` line carrying the exact hand
+    command: the clone, the fetch, the merge, the conflicting files and the
+    push, in the order a hand runs them, and the entry stays `BLOCKED` until a
+    new head arrives; no pass retries it. Gate logs live under the lane,
+    `<lane>/gates/<entry>/<head>/<step>.log`, one file per step, and they
+    outlive the gate's clone: `--gc` removes trees and never logs. Every gate
+    step declares its failure marker, a regular expression, and the summary
+    quotes the first line that matches it; a step with no marker says `no
+    marker, see <log path>`. Never a heuristic over free text. (2026-09-11:
+    four Java conflicts each cost a child an afternoon working out the next
+    step; #948's "first failing line" was a status line, and the real log had
+    been removed with the clone.)
 
 ## The verbs
 
@@ -222,13 +270,15 @@ READ OK entry=<n-or-name> who=<name> verdict=<approve|hold> head=<sha|-> approva
 READ REFUSED: <reason>
 GATE OK entry=<n-or-name> head=<sha12> verdict=<green|red> summary=<path> in_lane=<true|false>
 GATE REFUSED: <reason>
-RUN PASS n=<k> at=<stamp> local_gates=<true|false> planned_red=<text|->
+RUN PASS n=<k> at=<stamp> build=<id> local_gates=<true|false> planned_red=<text|->
+RUN NEWER build=<id> on_disk=<id>: the binary changed; this loop ends after this pass; restart it by hand
 RUN BASE base=<branch> head=<sha12> checks=g<n>/p<n>/r<n> gate=<green|-> state=<GREEN|RED|PENDING|PLANNED-RED>
 RUN STOPPED base=<branch>: the base is red (<n> failing); nothing merges onto a red base
 RUN ENTRY entry=<n-or-name> head=<sha12> checks=g<n>/p<n>/r<n> read=<n>a/<n>h gate=<green|-> state=<STATE>
 RUN STOPPED entry=<n-or-name>: <reason>
+RUN BLOCKED entry=<n-or-name> head=<sha12> files=<n>: <the hand command, clone to push>
 RUN REMERGE entry=<n-or-name> base=<branch> result=<clean|blocked> pushed=<true|false> files=<n>
-MERGE OK entry=<n-or-name> base=<branch> basis=<hosted|gate> gate=<path|-> read=<who,who|none-required>
+MERGE OK entry=<n-or-name> base=<branch> basis=<hosted|gate> gate=<path|-> read=<who,who|none-required> hosted_red=<names|->
 MERGE FAIL entry=<n-or-name>: <reason>
 RUN OK lane=<n> merged=<n> dropped=<n> blocked=<n> waiting=<n>
 RUN MORE kind=<entry> shown=<n> total=<t> nova-merge status --lane <dir> --max 0
@@ -291,6 +341,7 @@ A lane is a directory, named by `--lane`. It holds:
 <lane>/log            one append-only line per event, UTC-stamped
 <lane>/repo/          this lane's own clone, never a working copy of anybody's
 <lane>/gates/         the gate summaries, one file per entry and head
+<lane>/gates/<entry>/<head>/<step>.log   one log per gate step, kept past --gc (rule 17)
 <lane>/lock/          the lock, a directory; holds pid and stamp (rules 1 and 2)
 <lane>/stop           present means: start nothing new and exit
 ```
@@ -358,8 +409,11 @@ nobody read. **Zero checks at all is not green** — it is `PENDING`, because a
 pull request whose workflows have not been queued yet reports an empty list, and
 accepting that as green is a merge with no evidence behind it.
 
-**A hosted RED stops the entry whatever else is true.** A local gate never
-overrides a failure somebody saw. This is the asymmetry that makes the fast lane
+**On `main`, a hosted RED stops the entry whatever else is true.** A local gate
+never overrides a failure somebody saw. Below `main` the precedence is the other
+way (rule 15): the local gate is the verdict, and the hosted red is printed by
+name on the merge line rather than blocking it, because below `main` the hosted
+lane is not the evidence the entry is judged on (rule 10). This is the asymmetry that makes the fast lane
 safe to trust: a local green is permission to **stop waiting**, never permission
 to **ignore**.
 
@@ -762,6 +816,24 @@ it:
 20. **Nothing reads the base's own checks.** A pass starts reading entries with
     no word on whether the base is green. Here `RUN BASE` is the second line
     of every pass and a red base stops it (rule 6).
+21. **`local-gate.sh`'s slots are directories holding a pid, with a stale
+    check.** The stale check is the same age arithmetic that broke the lane
+    lock (item 16), and a slot whose holder died is held until somebody's
+    computation agrees it is dead. Here rule 14: one lock file per slot, a
+    kernel lock, no age, and the wait says so on one line.
+22. **A zsh loop runs old code after the file changed.** `merge-lane.sh run`
+    is a shell loop over a script that was edited under it, so a fixed pass
+    ran the old code and nobody could tell which. Here rule 16: the build id
+    is on every pass, and the loop ends at the pass boundary when the binary
+    on disk differs.
+23. **`BLOCKED` with a file name and no next step.** The prototype names the
+    conflicting file and stops; the clone, the merge and the push are the
+    reader's to work out, and today that was four afternoons. Here rule 17:
+    the exact hand command is on the line.
+24. **The "first failing line" is a search over free text, and the gate log
+    lives under the clone.** #948's first failing line was a status line, and
+    the real log went with `--gc`. Here rule 17: a declared marker or `no
+    marker, see <path>`, and logs under the lane that outlive the clone.
 
 ## Tests this spec demands
 
@@ -785,8 +857,8 @@ check never seen failing is not a check).
    fake host records that no push was ever forced.
 5. One failing check refuses; one pending check waits; zero checks is
    `PENDING`; a green gate for the current head merges; a green gate for the
-   previous head prints `gate=-` and waits; a hosted red with a green gate
-   still refuses.
+   previous head prints `gate=-` and waits; on `main`, a hosted red with a
+   green gate still refuses (below `main`, test 15).
 6. A red base: the pass prints `RUN STOPPED base=…` as its third line and
    merges nothing, whatever the entries show; with `--planned-red <text>` the
    text is on `RUN PASS` and in the log and the pass proceeds; a `PENDING`
@@ -812,6 +884,29 @@ check never seen failing is not a check).
     `--hours` ends on its own with the injected clock; nothing under `/tmp`
     is created; a source test finds no `pgrep`, no `ps`, and no read of the
     process table.
+14. With `--slots 3`, four gates started together: three run, the fourth
+    prints one `GATE WAIT` line and runs when a slot frees; a holder killed
+    with SIGKILL mid-gate frees its slot at once and the waiter takes it with
+    no age computed; a gate with `--legs 2` over nine legs never has more than
+    two leg processes alive, checked by a fake leg that records its start and
+    end; `--slots` or `--legs` missing is exit 2 naming the flag.
+15. Base is not `main`, hosted red for the head, green gate for the head: the
+    entry merges and `MERGE OK` carries `hosted_red=<names>` with the failing
+    check names; base is `main`, same evidence: the entry is `RED` and nothing
+    merges; base is `main`, hosted pending, green gate: merges with
+    `basis=gate`.
+16. `RUN PASS` carries `build=<id>` equal to the id compiled in; with the
+    binary at the tool's own path replaced mid-pass by one with a different
+    id, the loop finishes that pass, prints `RUN NEWER` naming both ids, and
+    exits 0 before the next pass; an unchanged binary loops to `--hours`.
+17. A conflicting entry prints `RUN BLOCKED` whose tail parses as the clone,
+    fetch, merge and push commands with every conflicting file named, and a
+    second pass with the same head prints nothing new for it; a new head
+    clears it; after the gate runner's `--gc` every `<step>.log` under
+    `<lane>/gates/` still exists; a step with a marker quotes the first
+    matching line in the summary, a step without prints `no marker, see
+    <path>` with an existing path, and a source test finds no free-text search
+    for `FAIL` or `error` in the summariser.
 
 ## The work list
 
