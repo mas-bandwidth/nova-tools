@@ -21,6 +21,7 @@ import (
 // directory that is not a lane -- with the init command in the refusal, and nothing
 // written on the way past.
 func TestEveryOtherVerbRefusesADirectoryThatIsNotALane(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	empty := filepath.Join(l.dir, "not-a-lane")
 	if err := os.MkdirAll(empty, 0o755); err != nil {
@@ -51,6 +52,7 @@ func TestEveryOtherVerbRefusesADirectoryThatIsNotALane(t *testing.T) {
 }
 
 func TestASecondInitIsRefusedAndTheStateIsByteIdentical(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	l.init("main")
 	before, err := os.ReadFile(merge.StatePath(l.lane))
@@ -71,6 +73,7 @@ func TestASecondInitIsRefusedAndTheStateIsByteIdentical(t *testing.T) {
 // Demanded test 20: the lane's three properties are refused off the verb that owns them,
 // and --base-sha and --base are never one word.
 func TestAFlagIsRefusedOffTheVerbThatOwnsIt(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	l.init("main")
 	sha := strings.Repeat("a", 40)
@@ -97,6 +100,7 @@ func TestAFlagIsRefusedOffTheVerbThatOwnsIt(t *testing.T) {
 }
 
 func TestAStateFileThisBinaryDoesNotKnowIsRefusedByNumber(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	l.init("main")
 	raw, err := os.ReadFile(merge.StatePath(l.lane))
@@ -117,6 +121,7 @@ func TestAStateFileThisBinaryDoesNotKnowIsRefusedByNumber(t *testing.T) {
 // Demanded test 13: every loop ends on its own, and it requires a written deadline.
 // Demanded test 16: the loop steps aside for a newer binary at the pass boundary.
 func TestTheLoopEndsOnItsOwnAndStepsAsideForANewerBinary(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	l.init("main")
 	l.host.SetChecks(l.baseSHA(), 1, 0)
@@ -154,6 +159,7 @@ func TestTheLoopEndsOnItsOwnAndStepsAsideForANewerBinary(t *testing.T) {
 // Demanded test 12: fifty entries, measured. The listing is a prefix of 20 with one MORE
 // line, RUN NOTE is exactly one line, and the counts say 50.
 func TestFiftyEntriesAreACappedPrefixAndTheCountsSayFifty(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	l.init("main")
 	l.host.SetChecks(l.baseSHA(), 1, 0)
@@ -208,6 +214,7 @@ func TestFiftyEntriesAreACappedPrefixAndTheCountsSayFifty(t *testing.T) {
 // Demanded test 22, the last part: dry-run is a SNAPSHOT. It performs every read run
 // performs, prints the whole plan, and leaves state.json and the checkout byte-identical.
 func TestDryRunWritesNothing(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
 	_ = oid
@@ -239,6 +246,7 @@ func TestDryRunWritesNothing(t *testing.T) {
 // Demanded test 11: reads survive a restart AND a lost state, because they were never in
 // state.json to lose.
 func TestReadsSurviveARestartAndALostState(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
 	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {
@@ -275,6 +283,7 @@ func TestReadsSurviveARestartAndALostState(t *testing.T) {
 // Demanded test 11, the stale half, and rule 19: a read is keyed to the head the reader
 // READ, and a push between the reading and the recording cannot move it.
 func TestAStaleApproveIsKeptCountedAndAuthorizesNothing(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	h1 := setupPR(t, l, 951, "feature-a", "a.txt", true)
 	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {
@@ -321,6 +330,7 @@ func TestAStaleApproveIsKeptCountedAndAuthorizesNothing(t *testing.T) {
 
 // A hold blocks, and nothing outvotes it.
 func TestAHoldBeatsThreeApproves(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
 	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {

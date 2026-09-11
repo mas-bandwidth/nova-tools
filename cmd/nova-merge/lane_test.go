@@ -13,6 +13,7 @@ import (
 // Demanded test 6: a red base stops the pass before any entry is read, and --planned-red
 // is a person's name on the exception, printed on every pass it applied to.
 func TestARedBaseStopsTheLaneAndPlannedRedIsTheOneWayThrough(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	setupPR(t, l, 951, "feature-a", "a.txt", false)
 	l.host.SetChecks(l.baseSHA(), 2, 0, "tables-cpp-fixedform")
@@ -50,6 +51,7 @@ func TestARedBaseStopsTheLaneAndPlannedRedIsTheOneWayThrough(t *testing.T) {
 // MERGEABLE is not touched -- no fetch of its head, no commit, no push -- and an entry
 // reported CONFLICTING gets exactly one re-merge attempt.
 func TestOnlyAConflictingEntryIsReMerged(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	l.init("main")
 	l.host.SetChecks(l.baseSHA(), 2, 0)
@@ -101,6 +103,7 @@ func TestOnlyAConflictingEntryIsReMerged(t *testing.T) {
 
 // Demanded test 23: the packet is POINTERS, NEVER THE DIFF.
 func TestThePacketIsPointersNotDiff(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	h1 := setupPR(t, l, 951, "feature-a", "a.txt", true)
 	// A second entry nobody has read, and a third this reader has already approved.
@@ -189,4 +192,86 @@ func TestThePacketIsPointersNotDiff(t *testing.T) {
 		t.Errorf("--max 1 prints one hold, got %d", n)
 	}
 	contains(t, stdout, "PACKET MORE kind=hold shown=1 total=2")
+}
+
+// Demanded test 10, and rule 10's whole point: A BRANCH ENTRY MERGES ON A GREEN GATE PLUS
+// ITS READ WITH NO HOSTED CHECKS AT ALL, while a pull request onto main with no hosted
+// checks waits. Work that is not going into main may live on a branch with no pull
+// request, which is why add-branch exists.
+func TestABranchEntryMergesOnAGateAndAReadWithNoHostedChecks(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	// The lane's base is below main, which is where a branch entry belongs.
+	l.git(l.work, "checkout", "-q", "-B", "rowan/step-2", "origin/main")
+	l.git(l.work, "push", "-q", "origin", "HEAD:refs/heads/rowan/step-2")
+	l.git(l.work, "checkout", "-q", "main")
+	l.init("rowan/step-2")
+	oid := l.branch("rowan/wire-probe", "probe.txt", "the probe\n", "a probe")
+	l.host.Branches["rowan/wire-probe"] = oid
+	base := l.git(l.work, "rev-parse", "refs/remotes/origin/rowan/step-2")
+	// No checks for the branch head AT ALL, and a base gate for the base.
+	l.host.SetChecks(base, 0, 0)
+	if exit, stdout, errb := l.run("add-branch", "--lane", l.lane, "--branch", "rowan/wire-probe", "--needs-read"); exit != 0 {
+		t.Fatalf("add-branch: %d %s %s", exit, stdout, errb)
+	} else {
+		contains(t, stdout, "ADD OK kind=branch entry=rowan/wire-probe needs_read=yes lane=0/1")
+	}
+	if exit, _, errb := l.run("gate", "--lane", l.lane, "--branch", "rowan/step-2", "--head", base,
+		"--base-sha", base, "--merge", base, "--verdict", "green", "--summary", l.summary("base")); exit != 0 {
+		t.Fatalf("base gate: %s", errb)
+	}
+	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once")
+	if exit != 0 {
+		t.Fatalf("exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "checks=g0/p0/r0")
+	m := mergeSHAOf(t, stdout, "rowan/wire-probe")
+	if exit, _, errb := l.run("gate", "--lane", l.lane, "--branch", "rowan/wire-probe", "--head", oid,
+		"--base-sha", base, "--merge", m, "--verdict", "green", "--summary", l.summary("probe")); exit != 0 {
+		t.Fatalf("gate: %s", errb)
+	}
+	if exit, _, errb := l.run("read", "--lane", l.lane, "--branch", "rowan/wire-probe", "--who", "emma",
+		"--head", oid, "--verdict", "approve"); exit != 0 {
+		t.Fatalf("read: %s", errb)
+	}
+	exit, stdout, stderr = l.run("run", "--lane", l.lane, "--once")
+	if exit != 0 {
+		t.Fatalf("a branch entry merges on a gate plus its read: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "MERGE OK entry=rowan/wire-probe")
+	contains(t, stdout, "admitted=gate")
+	contains(t, stdout, "read=emma")
+	if got := l.git(l.work, "rev-parse", "refs/remotes/origin/rowan/step-2"); got == base {
+		l.git(l.work, "fetch", "-q", "origin")
+		if got := l.git(l.work, "rev-parse", "refs/remotes/origin/rowan/step-2"); got != m {
+			t.Errorf("the base is %s and the gated object was %s", got, m)
+		}
+	}
+}
+
+// The other half of demanded test 10: a pull request onto main with no hosted checks at
+// all WAITS. Zero checks is not green -- a pull request whose workflows have not been
+// queued yet reports an empty list, and accepting that as green is a merge with no
+// evidence behind it.
+func TestAPullRequestOntoMainWithNoHostedChecksWaits(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	l.init("main")
+	l.host.SetChecks(l.baseSHA(), 2, 0)
+	oid := l.branch("feature-a", "a.txt", "a\n", "a")
+	l.host.PRs[951] = merge.PR{Number: 951, Author: "pat", Base: "main", HeadRef: "feature-a",
+		HeadOID: oid, Mergeable: "MERGEABLE"}
+	// No SetChecks for oid at all: the host reports an empty list.
+	if exit, _, errb := l.run("add", "--lane", l.lane, "--pr", "951"); exit != 0 {
+		t.Fatalf("add: %s", errb)
+	}
+	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once")
+	if exit != 0 {
+		t.Fatalf("an entry that is merely waiting is not a failure: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "checks=g0/p0/r0")
+	contains(t, stdout, "state=PENDING")
+	contains(t, stdout, "waiting=1")
+	absent(t, stdout, "MERGE OK")
+	absent(t, stdout, "RUN BUILT")
 }

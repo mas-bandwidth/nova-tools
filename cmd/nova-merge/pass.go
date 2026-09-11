@@ -36,7 +36,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, deps Deps) int {
 	case *loop != 0 && *hours <= 0:
 		f.problem("--loop requires --hours <h>, the deadline this loop ends on by itself; a loop with no deadline is a lane that is stuck rather than working and nobody outside can tell the two apart")
 	case *loop < 0:
-		f.problem("--loop is how long this waits between passes, and is positive, got %s", *loop)
+		f.problem(fmt.Sprintf("--loop is how long this waits between passes, and is positive, got %s", *loop))
 	}
 	if !f.done(stderr) {
 		return 2

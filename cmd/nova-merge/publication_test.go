@@ -36,6 +36,7 @@ func setupPR(t *testing.T, l *lab, n int, branch, file string, needsRead bool) (
 func itoa(n int) string { return strconv.Itoa(n) }
 
 func TestOnlyTheGatedObjectIsPublished(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
 	base := l.baseSHA()
@@ -125,6 +126,7 @@ func TestOnlyTheGatedObjectIsPublished(t *testing.T) {
 }
 
 func TestAMovedBaseIsRacedBeforeAnythingIsPublished(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", false)
 	base := l.baseSHA()
@@ -166,6 +168,7 @@ func TestAMovedBaseIsRacedBeforeAnythingIsPublished(t *testing.T) {
 }
 
 func TestARecordNamingAnObjectThisCloneDoesNotHoldIsMergeFail(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", false)
 	base := l.baseSHA()
@@ -190,6 +193,7 @@ func TestARecordNamingAnObjectThisCloneDoesNotHoldIsMergeFail(t *testing.T) {
 }
 
 func TestAGateIsForThePairAndTheNewestRecordDecides(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", false)
 	base := l.baseSHA()
@@ -222,6 +226,7 @@ func TestAGateIsForThePairAndTheNewestRecordDecides(t *testing.T) {
 }
 
 func TestATieBetweenAGreenAndARedFoldsRedLast(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", false)
 	base := l.baseSHA()
@@ -242,6 +247,7 @@ func TestATieBetweenAGreenAndARedFoldsRedLast(t *testing.T) {
 }
 
 func TestOnMainAHostedRedStopsTheEntryWhateverTheGateSays(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", false)
 	base := l.baseSHA()
@@ -261,6 +267,7 @@ func TestOnMainAHostedRedStopsTheEntryWhateverTheGateSays(t *testing.T) {
 }
 
 func TestBelowMainAHostedRedIsNamedOnTheMergeLineAndNeverBlocks(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	// A lane whose base is not main: the local gate is the candidate evidence.
 	l.git(l.work, "checkout", "-q", "-B", "rowan/step-2", "origin/main")

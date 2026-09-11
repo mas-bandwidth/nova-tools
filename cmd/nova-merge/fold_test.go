@@ -38,6 +38,7 @@ func (l *lab) putRecord(path, body string) {
 }
 
 func TestAMalformedRecordBlocksItsEntryAndIsNeverSkipped(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
 	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {
@@ -82,6 +83,7 @@ func TestAMalformedRecordBlocksItsEntryAndIsNeverSkipped(t *testing.T) {
 }
 
 func TestARecordWhosePathNamesNoEntryStopsThePass(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	setupPR(t, l, 951, "feature-a", "a.txt", false)
 	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {
@@ -100,6 +102,7 @@ func TestARecordWhosePathNamesNoEntryStopsThePass(t *testing.T) {
 // Demanded test 19 and 22: a read recorded on ANOTHER MACHINE -- a second lane on the
 // same branch -- is one file in the branch, and the coordinator's next pass folds it.
 func TestAReadFromAnotherMachineReachesTheCoordinatorsNextPass(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	oid := setupPR(t, l, 951, "feature-a", "a.txt", true)
 	if exit, _, errb := l.run("run", "--lane", l.lane, "--once"); exit != 0 {

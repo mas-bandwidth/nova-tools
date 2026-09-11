@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -50,7 +51,7 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 	f.require("base", *base, "the branch this lane's entries are merged onto")
 	f.require("lane-branch", *laneBranch, "the branch of that repository this lane's read and gate records live in")
 	if strings.TrimSpace(*repo) != "" && !strings.Contains(*repo, "/") {
-		f.problem("--repo is <owner>/<name>, got %q", *repo)
+		f.problem(fmt.Sprintf("--repo is <owner>/<name>, got %q", *repo))
 	}
 	if !f.done(stderr) {
 		return 2
@@ -85,7 +86,7 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 	if !quickstart {
 		return 0
 	}
-	return cmdStatus([]string{"--lane", *f.lane, "--timeout", fmt.Sprint(*f.timeout), "--max", fmt.Sprint(*f.max)}, stdout, stderr, deps)
+	return cmdStatus([]string{"--lane", *f.lane, "--timeout", strconv.Itoa(*f.timeout), "--max", strconv.Itoa(*f.max)}, stdout, stderr, deps)
 }
 
 // checkout makes the lane directory a checkout of its own branch of the repository: the
@@ -157,10 +158,10 @@ func cmdAdd(args []string, stdout, stderr io.Writer, deps Deps, isBranch bool) i
 	}
 	id := *branch
 	if !isBranch {
-		id = fmt.Sprint(*pr)
+		id = strconv.Itoa(*pr)
 	}
 	if e := st.Find(id); e != nil {
-		fmt.Fprintf(stdout, "ADD NOTE %s is already in the lane (needs_read=%s)\n", oneline.Field(id), e.NeedsRead)
+		fmt.Fprintf(stdout, "ADD NOTE %s is already in the lane (needs_read=%s)\n", oneline.Field(id), oneline.Field(e.NeedsRead))
 		return 0
 	}
 	yn := "no"
@@ -200,7 +201,7 @@ func entrySelector(f *laneFlags, pr *int, branch *string, allowNone bool) string
 		f.problem("--pr and --branch name two entries and a verb acts on one; give one of them")
 		return ""
 	case *pr > 0:
-		return fmt.Sprint(*pr)
+		return strconv.Itoa(*pr)
 	case *branch != "":
 		return *branch
 	}
@@ -233,10 +234,10 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 	f.require("who", *who, "the name of the line recording this verdict, as this lane knows it")
 	f.require("head", *head, "the full 40-character sha the reader had open; the verdict binds to that sha and never to whatever the entry's head is now")
 	if *head != "" && !merge.IsSHA(*head) {
-		f.problem("--head wants the full 40-character sha the reader had open, got %q; a truncated sha might name the wrong commit", *head)
+		f.problem(fmt.Sprintf("--head wants the full 40-character sha the reader had open, got %q; a truncated sha might name the wrong commit", *head))
 	}
 	if *verdict != "approve" && *verdict != "hold" {
-		f.problem("--verdict is approve or hold, got %q; refusing to guess", *verdict)
+		f.problem(fmt.Sprintf("--verdict is approve or hold, got %q; refusing to guess", *verdict))
 	}
 	if !f.done(stderr) {
 		return 2
@@ -317,18 +318,18 @@ func cmdGate(args []string, stdout, stderr io.Writer, deps Deps) int {
 		{"merge", *mergeSHA, "the full 40-character sha of the integration commit that was gated (rule 21)"},
 	} {
 		if strings.TrimSpace(s.value) == "" {
-			f.problem("--%s is required; refusing to guess: %s", s.name, s.wants)
+			f.problem(fmt.Sprintf("--%s is required; refusing to guess: %s", s.name, s.wants))
 		} else if !merge.IsSHA(s.value) {
-			f.problem("--%s wants a full 40-character sha, got %q: %s", s.name, s.value, s.wants)
+			f.problem(fmt.Sprintf("--%s wants a full 40-character sha, got %q: %s", s.name, s.value, s.wants))
 		}
 	}
 	if *verdict != "green" && *verdict != "red" {
-		f.problem("--verdict is green or red, got %q; refusing to guess", *verdict)
+		f.problem(fmt.Sprintf("--verdict is green or red, got %q; refusing to guess", *verdict))
 	}
 	f.require("summary", *summary, "the path of the gate's own summary, which must exist: a gate with no summary is a claim with no evidence behind it")
 	if *summary != "" {
 		if _, err := os.Stat(*summary); err != nil {
-			f.problem("--summary %q does not exist; a gate summary is read at record time, not trusted as a path", *summary)
+			f.problem(fmt.Sprintf("--summary %q does not exist; a gate summary is read at record time, not trusted as a path", *summary))
 		}
 	}
 	// THE TWO KINDS, told apart by the shas. A base gate is the base merged onto itself,

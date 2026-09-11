@@ -264,8 +264,13 @@ func newFlags(verb string) *flags {
 // problem collects one independent problem. A REFUSAL PRINTS EVERY INDEPENDENT PROBLEM
 // IN ONE GO: sending a first run back three times for three flags is three refusals the
 // first one already knew about.
-func (f *flags) problem(format string, args ...any) {
-	f.problems = append(f.problems, fmt.Sprintf(format, args...))
+//
+// It takes a finished sentence rather than a format and its arguments, so that every
+// value that reaches stderr is classified at the site that knows what it is -- which is
+// what internal/oneline/audit walks, and which a format string passed through a helper
+// would hide.
+func (f *flags) problem(text string) {
+	f.problems = append(f.problems, text)
 }
 
 func (f *flags) parse(args []string, stderr io.Writer) bool {
@@ -274,7 +279,7 @@ func (f *flags) parse(args []string, stderr io.Writer) bool {
 		return false
 	}
 	if n := f.fs.NArg(); n > 0 {
-		f.problem("takes no positional arguments, got %d (flags come before arguments)", n)
+		f.problem(fmt.Sprintf("takes no positional arguments, got %d (flags come before arguments)", n))
 	}
 	return true
 }
@@ -283,7 +288,7 @@ func (f *flags) parse(args []string, stderr io.Writer) bool {
 // it is missing.
 func (f *flags) require(name, value, wants string) {
 	if strings.TrimSpace(value) == "" {
-		f.problem("--%s is required; refusing to guess: %s", name, wants)
+		f.problem(fmt.Sprintf("--%s is required; refusing to guess: %s", name, wants))
 	}
 }
 
@@ -321,10 +326,10 @@ func laneSet(verb string) *laneFlags {
 func (l *laneFlags) check() {
 	l.require("lane", *l.lane, "the lane's own directory, which holds its state, its clone and its records")
 	if *l.timeout < 1 {
-		l.problem("--timeout is a number of seconds this tool waits for git or gh before saying so, and is at least 1, got %d", *l.timeout)
+		l.problem(fmt.Sprintf("--timeout is a number of seconds this tool waits for git or gh before saying so, and is at least 1, got %d", *l.timeout))
 	}
 	if *l.max < 0 {
-		l.problem("--max is a ceiling on a listing: 0 means all and a negative one is a typo with two readings, got %d", *l.max)
+		l.problem(fmt.Sprintf("--max is a ceiling on a listing: 0 means all and a negative one is a typo with two readings, got %d", *l.max))
 	}
 }
 

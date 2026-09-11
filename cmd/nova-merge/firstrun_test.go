@@ -57,6 +57,7 @@ func exampleLines(t *testing.T, l *lab) []string {
 // (a) The usage banner ends in an `example:` block of lines that ACTUALLY RUN. "Run" is
 // this repo's exit law: 0 or 1 is an answer and 2 is "could not run".
 func TestUsageBannerExamplesRun(t *testing.T) {
+	t.Parallel()
 	l := firstRunLab(t)
 	exs := exampleLines(t, l)
 	if len(exs) != 5 {
@@ -77,6 +78,7 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 
 // (b) A refusal says what the flag or input WANTS, not only what was wrong.
 func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	cases := []struct {
 		name string
@@ -113,6 +115,7 @@ func TestARefusalSaysWhatTheFlagWants(t *testing.T) {
 // things as easily as one, and sending a first run back three times for three independent
 // flags is three refusals the first one already knew about.
 func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
+	t.Parallel()
 	l := newLab(t)
 	cases := []struct {
 		name string
@@ -144,6 +147,7 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 // order. Shas, paths and counts are a run's own business and are deliberately not
 // compared, so the transcript stays a document rather than becoming a fixture.
 func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
