@@ -18,7 +18,7 @@ import (
 
 // finish ends one job: the group check, the classification, finalize in rule 12's order,
 // the move, the slot, the one automatic re-queue, and the single line.
-func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (string, string) {
+func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (string, string, string) {
 	p := in.Pool
 	sf, slotErr := p.ReadSlot(r.slot)
 
@@ -76,7 +76,7 @@ func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (
 	if report.HasNotesRead {
 		notesRead = strconv.Itoa(report.NotesRead)
 	}
-	findings := len(report.FindingLines)
+	findings := report.FindingCount()
 
 	sc := r.sc
 	if fresh, err := p.ReadSidecar(Running, sc.ID); err == nil {
@@ -133,23 +133,23 @@ func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (
 	switch {
 	case survivors > 0:
 		return fmt.Sprintf("RUN VIOLATION id=%s slot=%d background=%d dest=failed: a process of this job's group outlived it; one task is one process",
-			oneline.Field(sc.ID), r.slot, survivors), EndViolation
+			oneline.Field(sc.ID), r.slot, survivors), EndViolation, dest
 	case end == EndUnverifiable:
 		return fmt.Sprintf("RUN BUDGET-UNVERIFIABLE id=%s slot=%d samples=3 findings=%d: %s",
-			oneline.Field(sc.ID), r.slot, findings, oneline.Escape(oneline.Cap(rec.Reason, oneline.TailBytes))), EndUnverifiable
+			oneline.Field(sc.ID), r.slot, findings, oneline.Escape(oneline.Cap(rec.Reason, oneline.TailBytes))), EndUnverifiable, dest
 	case end == EndBudget:
 		return fmt.Sprintf("RUN BUDGET id=%s slot=%d spent=%d of=%d findings=%d",
-			oneline.Field(sc.ID), r.slot, rec.Spent, sc.Tokens, findings), EndBudget
+			oneline.Field(sc.ID), r.slot, rec.Spent, sc.Tokens, findings), EndBudget, dest
 	case end == EndKilled:
 		return fmt.Sprintf("RUN KILLED id=%s slot=%d after=%s deadline=%s findings=%d unpublished=%t budget=%s requeued=%t reaped=%d",
-			oneline.Field(sc.ID), r.slot, after, trimDuration(r.deadline), findings, unpublished, budget, requeued, sc.Reaped+1), EndKilled
+			oneline.Field(sc.ID), r.slot, after, trimDuration(r.deadline), findings, unpublished, budget, requeued, sc.Reaped+1), EndKilled, dest
 	case report.Class == ClassMalformed:
 		return fmt.Sprintf("RUN MALFORMED id=%s slot=%d line=%d dest=failed",
-			oneline.Field(sc.ID), r.slot, report.MalformedLine), EndFailed
+			oneline.Field(sc.ID), r.slot, report.MalformedLine), EndFailed, dest
 	}
 	return fmt.Sprintf("RUN DONE id=%s slot=%d rc=%d after=%s result=%s findings=%d refusals=%d notes=%d/%s unpublished=%t budget=%s dest=%s",
 		oneline.Field(sc.ID), r.slot, rec.RC, after, oneline.Field(report.Class), findings, refusals,
-		notesSent, oneline.Field(notesRead), unpublished, budget, dest), end
+		notesSent, oneline.Field(notesRead), unpublished, budget, dest), end, dest
 }
 
 // settle is finalize in rule 12's order: the usage file, then the report copy or its marker,

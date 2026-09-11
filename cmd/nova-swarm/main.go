@@ -46,7 +46,7 @@ usage:
   nova-swarm stop      --pool <dir>
   nova-swarm requeue   --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>]
   nova-swarm verdict   --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
-  nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>]
+  nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>]
   nova-swarm result    --pool <dir> --id <job>
   nova-swarm template  --name read-pr|probe-row|fix-card|result
   nova-swarm cost      --pool <dir> [--since <stamp>] [--max <n>]
@@ -729,6 +729,7 @@ func cmdTriage(args []string, stdout, stderr io.Writer, now time.Time) int {
 	since := f.fs.String("since", "", "")
 	all := f.fs.Bool("all", false, "")
 	noState := f.fs.Bool("no-state", false, "")
+	owed := f.fs.String("owed", "", "")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -741,8 +742,21 @@ func cmdTriage(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !ok {
 		return 2
 	}
+	// RULE 1's SECOND HALF (SPEC-SWARM.md:80): triage "counts a finding that matches an
+	// owed item and is not marked `dup:` as `duplicate`". Without this flag the match was
+	// dead code -- the field was read and nothing ever assigned it.
+	var owedList []string
+	if *owed != "" {
+		items, err := swarm.ReadOwed(*owed)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm triage: --owed wants a readable file of the items this pull request already owes, one per line or as `- ` bullets: %s\n", oneline.Err(err))
+			return 2
+		}
+		owedList = items
+	}
 	return swarm.Triage(swarm.TriageInput{
 		Pool: p, Batch: *batch, Since: *since, All: *all, NoState: *noState, Max: *max,
+		Owed:   owedList,
 		Stdout: stdout, Stderr: stderr, Now: func() time.Time { return now },
 	})
 }

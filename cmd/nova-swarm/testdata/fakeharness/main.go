@@ -148,6 +148,11 @@ func publish(job, prompt string, findings, notes int) {
 	if _, ok := directive(prompt, "FAKE-DUP"); ok {
 		b.WriteString("- dup: a finding already owed `the owed list first` SPEC-SWARM.md:70\n")
 	}
+	// A complete review that found nothing, written the way a person writes it: the head
+	// says `findings: 0` and the section says so in words. D3, 2026-09-11.
+	if _, ok := directive(prompt, "FAKE-NONE-BULLET"); ok {
+		b.WriteString("- none\n")
+	}
 	if _, ok := directive(prompt, "FAKE-UNQUOTED"); ok {
 		b.WriteString("- a finding with no rule beside it and nothing to check it against\n")
 	}

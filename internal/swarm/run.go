@@ -196,11 +196,16 @@ func Run(in RunInput) int {
 				}
 				continue
 			}
-			line, end := in.finish(r, quarantined, now())
-			switch end {
-			case EndKilled, EndUnverifiable:
+			line, end, dest := in.finish(r, quarantined, now())
+			// D2 (the real run, 2026-09-11): two jobs printed `RUN DONE … dest=failed`
+			// and RUN OK said `started=2 done=2 failed=0` with both of them in failed/.
+			// The counts are the truth about the POOL, so a job is counted by WHERE IT
+			// LANDED; only the two ends that are neither -- killed at a deadline, and a
+			// budget that could not be verified -- are counted by their end.
+			switch {
+			case end == EndKilled, end == EndUnverifiable:
 				killed++
-			case EndDone:
+			case dest == Done:
 				done++
 			default:
 				failed++

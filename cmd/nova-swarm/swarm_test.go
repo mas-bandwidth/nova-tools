@@ -657,3 +657,103 @@ type swarmSidecar struct {
 	RC        int    `json:"rc"`
 	Class     string `json:"class,omitempty"`
 }
+
+// D2 (the real run, 2026-09-11): two jobs ended `RUN DONE … dest=failed` and `RUN OK`
+// said `started=2 done=2 failed=0`, with both of them in failed/. The counts on RUN OK are
+// the truth about the POOL (SPEC-SWARM.md, the output grammar), so they are counted by
+// where the job LANDED and not by how the harness exited: a worker that exits 0 and
+// publishes no report is a failed task.
+func TestAFailedDestinationIsCountedFailed(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a worker that exits 0 and publishes nothing\nFAKE-NORESULT\n")
+
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("a failed task is not a failed run; exit %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "rc=0")
+	mustContain(t, "the run", stdout, "result=no-result")
+	mustContain(t, "the run", stdout, "dest=failed")
+	mustContain(t, "the run", stdout, "RUN OK started=1 done=0 failed=1 killed=0 pending=0")
+	if _, err := os.Stat(filepath.Join(b.pool, "failed", id+".json")); err != nil {
+		t.Errorf("the job counted failed belongs in failed/: %v", err)
+	}
+}
+
+// D3 (the real run, 2026-09-11): two counts of "findings" on one line. The head's
+// `findings: <n>` classifies the report (rule 8), and the `- ` bullets under `## Findings`
+// were counted for the RUN line -- so a worker obeying rule 8 with `findings: 0` that
+// writes `- none` ended `result=clean findings=1`. One number, and it is the head's.
+func TestOneReportHasOneFindingCount(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	b.add("a complete review that found nothing and said so\nFAKE-NONE-BULLET\n")
+
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "result=clean findings=0")
+	if strings.Contains(stdout, "findings=1") {
+		t.Errorf("`- none` under ## Findings is not a finding; the head said 0:\n%s", stdout)
+	}
+	exit, stdout, stderr = b.swarm("triage", "--pool", b.pool)
+	if exit != 0 {
+		t.Fatalf("triage exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "triage", stdout, "reports=1 findings=0")
+	mustContain(t, "triage", stdout, "clean=1")
+}
+
+// Finding 4 (cold read, 2026-09-11): TRIAGE BATCH's new/dup arithmetic double-counted and
+// could go NEGATIVE. SPEC-SWARM.md:621 -- "`new` is findings not marked `dup:`". Every
+// finding is counted exactly once: marked, owed, folded, or new.
+func TestEveryFindingIsCountedOnce(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	b.add("one worker\nFAKE-FINDINGS 1\nFAKE-DUP\n")
+	b.add("another worker on the same rev finding the same thing\nFAKE-FINDINGS 1\nFAKE-DUP\n")
+
+	if exit, stdout, stderr := b.run("--workers", "2"); exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	exit, stdout, stderr := b.swarm("triage", "--pool", b.pool)
+	if exit != 0 {
+		t.Fatalf("triage exited %d: %s%s", exit, stdout, stderr)
+	}
+	// Four finding lines: two marked `dup:`, and one (file, line, rule) reported twice
+	// under one repo and rev, which folds. One of the four is new.
+	mustContain(t, "triage", stdout, "findings=4 new=1 dup=3")
+	if strings.Contains(stdout, "new=-") {
+		t.Errorf("a count of findings is never negative:\n%s", stdout)
+	}
+}
+
+// Finding 5 (cold read, 2026-09-11): rule 1's owed-list match was DEAD CODE -- OwedMatch
+// was called with a field nothing ever assigned. SPEC-SWARM.md:80: triage "counts a finding
+// that matches an owed item and is not marked `dup:` as `duplicate`". `--owed <file>` is
+// how the owed list reaches it.
+func TestAFindingThatMatchesAnOwedItemIsADuplicate(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	b.add("a worker that finds what the pull request already owes\nFAKE-FINDINGS 1\n")
+	if exit, stdout, stderr := b.run(); exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	owed := filepath.Join(b.dir, "owed.md")
+	write(b.t, owed, "- finding 1: the count line prints on failure too\n- something else nobody found\n")
+
+	exit, stdout, stderr := b.swarm("triage", "--pool", b.pool, "--owed", owed, "--all")
+	if exit != 0 {
+		t.Fatalf("triage exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "triage with an owed list", stdout, "findings=1 new=0 dup=1")
+
+	// Without the owed list the same finding is new: the flag is what makes the difference.
+	exit, stdout, stderr = b.swarm("triage", "--pool", b.pool, "--all")
+	if exit != 0 {
+		t.Fatalf("triage exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "triage with no owed list", stdout, "findings=1 new=1 dup=0")
+}

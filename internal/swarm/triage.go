@@ -99,13 +99,17 @@ func Triage(in TriageInput) int {
 	reports := bounded.Capped(out, in.Max, "TRIAGE", "report", "nova-swarm triage --pool "+p.Dir+" --max 0")
 	var kept []folded
 	counts := map[string]int{}
-	skipped, malformedN := 0, 0
+	// `reports=` is the number of jobs that HAVE a report to read, not the number of jobs:
+	// demanded test 8's eight jobs, one of them with no RESULT.md, print `reports=7
+	// … no_result=1` (SPEC-SWARM.md:1253).
+	skipped, malformedN, reportsN := 0, 0, 0
 	for _, sc := range jobs {
 		raw, from, err := p.ReportBytes(sc)
 		if err != nil {
 			counts[ClassNoResult]++
 			continue
 		}
+		reportsN++
 		first := HashBytes(raw)
 		report := ParseReport(raw)
 		again, err := p.rehash(from)
@@ -144,31 +148,41 @@ func Triage(in TriageInput) int {
 	}
 	var order []*merged
 	byKey := map[string]*merged{}
+	// EVERY FINDING IS COUNTED EXACTLY ONCE (SPEC-SWARM.md:621, "`new` is findings not
+	// marked `dup:`"). A finding is `dup` because the worker marked it, because it matches
+	// an item the owed list already carries (rule 1), or because it folds into a finding
+	// already seen under the same (repo, rev, file, line, rule) (rule 15) -- and never for
+	// two of those at once. Before this, a marked duplicate that also folded was counted
+	// twice and decremented `new`, so three identical `dup:` findings printed `new=-2`.
 	findings, new_, dup, unquoted := 0, 0, 0, 0
 	for _, k := range kept {
 		for _, f := range k.report.FindingLines {
 			findings++
-			isDup := f.Dup || OwedMatch(f, in.Owed)
-			if isDup {
-				dup++
-			} else {
-				new_++
-			}
 			if !f.Quoted() {
 				unquoted++
 			}
+			isDup := f.Dup || OwedMatch(f, in.Owed)
 			key, ok := f.Key(k.report.Repo, k.report.Rev)
 			if ok {
 				if m, seen := byKey[key]; seen {
 					m.jobs = append(m.jobs, k.sc.ID)
 					dup++
-					new_--
 					continue
+				}
+				if isDup {
+					dup++
+				} else {
+					new_++
 				}
 				m := &merged{f: f, jobs: []string{k.sc.ID}, from: k.from}
 				byKey[key] = m
 				order = append(order, m)
 				continue
+			}
+			if isDup {
+				dup++
+			} else {
+				new_++
 			}
 			order = append(order, &merged{f: f, jobs: []string{k.sc.ID}, from: k.from})
 		}
@@ -197,7 +211,7 @@ func Triage(in TriageInput) int {
 
 	page, pageErr := in.writePage(kept)
 	fmt.Fprintf(out, "TRIAGE BATCH batch=%s reports=%d findings=%d new=%d dup=%d unquoted=%d clean=%d plan_only=%d no_result=%d malformed=%d budget=%d accurate=%s wrong=%s\n",
-		oneline.Field(dashOr(in.Batch)), len(jobs), findings, new_, dup, unquoted,
+		oneline.Field(dashOr(in.Batch)), reportsN, findings, new_, dup, unquoted,
 		counts[ClassClean], counts[ClassPlanOnly], counts[ClassNoResult], malformedN, budgetEnded,
 		verdict(accurate), verdict(wrong))
 

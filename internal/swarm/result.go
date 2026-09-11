@@ -3,6 +3,7 @@ package swarm
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -247,6 +248,14 @@ func ParseReport(data []byte) Report {
 			}
 		}
 	}
+	// D3 (the real run, 2026-09-11): ONE report has ONE finding count. The head's
+	// `findings: <n>` is the worker's own answer and the thing rule 8 classifies on, and
+	// the bullets under `## Findings` are what is FOLDED. When the head says 0, the
+	// section holds no findings whatever it says in words: a complete review that wrote
+	// `- none` ended `result=clean findings=1` and put "none" in a coordinator's page.
+	if r.HasHead && r.Findings == 0 {
+		r.FindingLines = nil
+	}
 	if r.HasHead && r.Class == ClassPlanOnly {
 		// A head with no findings: line at all. The head is the completion evidence, and
 		// evidence that does not say what it evidences is not evidence.
@@ -398,4 +407,35 @@ func foldForMatch(s string) string {
 		}
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// FindingCount is the ONE number a report has: the head's own, where there is a head, and
+// the finding lines where there is none. A report killed before it wrote its head still
+// carries what it found (rule 3, and demanded test 8's headless report with one appended
+// line).
+func (r Report) FindingCount() int {
+	if r.HasHead {
+		return r.Findings
+	}
+	return len(r.FindingLines)
+}
+
+// ReadOwed reads an owed list: the items a pull request already knows it owes, one per
+// line, `- ` bullets and blank lines alike. It is a FILE because an owed list is a
+// paragraph a person wrote, and putting it in an argument would put it in the process
+// table (the same reason a task is a file).
+func ReadOwed(path string) ([]string, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, line := range strings.Split(string(raw), "\n") {
+		item := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(line), "- "))
+		if item == "" {
+			continue
+		}
+		out = append(out, item)
+	}
+	return out, nil
 }
