@@ -1,8 +1,10 @@
 package bus
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -122,5 +124,81 @@ func TestTwoConcurrentRunsSerialiseOnOneCheckout(t *testing.T) {
 	}
 	if most != 1 {
 		t.Fatalf("%d runs were inside the lock at once, want 1", most)
+	}
+}
+
+// LockFile can be called directly on any file path.
+func TestLockFileNonBlockingAndHolderStamping(t *testing.T) {
+	dir := t.TempDir()
+	lockPath := filepath.Join(dir, "test.lock")
+
+	release, err := LockFile(lockPath, 0)
+	if err != nil {
+		t.Fatalf("first LockFile failed: %v", err)
+	}
+	defer release()
+
+	// Verify holder was stamped with our PID
+	holder := ReadLockHolder(lockPath)
+	wantPID := strconv.Itoa(os.Getpid())
+	if holder != wantPID {
+		t.Fatalf("holder = %q, want %q", holder, wantPID)
+	}
+
+	// Second LockFile with wait=0 must fail immediately with ErrLockHeld
+	start := time.Now()
+	_, err2 := LockFile(lockPath, 0)
+	if err2 == nil {
+		t.Fatal("second LockFile with wait=0 succeeded, want ErrLockHeld")
+	}
+	if !errors.Is(err2, ErrLockHeld) {
+		t.Fatalf("err = %v, want errors.Is(err, ErrLockHeld)", err2)
+	}
+	if elapsed := time.Since(start); elapsed > 50*time.Millisecond {
+		t.Fatalf("LockFile with wait=0 took %v, want near-immediate return", elapsed)
+	}
+
+	// Release first lock, second should succeed
+	release()
+	release2, err3 := LockFile(lockPath, 100*time.Millisecond)
+	if err3 != nil {
+		t.Fatalf("LockFile after release failed: %v", err3)
+	}
+	defer release2()
+}
+
+func TestReadLockHolderFormats(t *testing.T) {
+	dir := t.TempDir()
+
+	// Missing file returns "-"
+	if h := ReadLockHolder(filepath.Join(dir, "missing.lock")); h != "-" {
+		t.Fatalf("missing file holder = %q, want \"-\"", h)
+	}
+
+	// Empty file returns "-"
+	emptyPath := filepath.Join(dir, "empty.lock")
+	if err := os.WriteFile(emptyPath, []byte("  \n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if h := ReadLockHolder(emptyPath); h != "-" {
+		t.Fatalf("empty file holder = %q, want \"-\"", h)
+	}
+
+	// Bare PID returns the PID
+	barePath := filepath.Join(dir, "bare.lock")
+	if err := os.WriteFile(barePath, []byte("12345\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if h := ReadLockHolder(barePath); h != "12345" {
+		t.Fatalf("bare PID holder = %q, want \"12345\"", h)
+	}
+
+	// "pid=<n> at=<stamp>" format returns the PID
+	mergePath := filepath.Join(dir, "merge.lock")
+	if err := os.WriteFile(mergePath, []byte("pid=67890 at=2026-09-11T12:00:00Z\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if h := ReadLockHolder(mergePath); h != "67890" {
+		t.Fatalf("merge format holder = %q, want \"67890\"", h)
 	}
 }

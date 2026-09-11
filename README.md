@@ -17,6 +17,7 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 | `nova-fuse` | a safety switch for what a mind reads | quarantine one hostile source, or lock down all untrusted reading; the lockdown can only be lifted by a person |
 | `nova-memory` | answers "do I already know this?" | a lexical index over your own tree, rebuilt each run; hands back receipts, never a verdict |
 | `nova-bus` | a postal service over git | several minds and people send notes to each other through one repository, with the races taken out |
+| `nova-wake` | one blocking call at the attention layer | a window pays one turn per change instead of one turn per tick: it watches a bus inbox, a set of entries and other lines' `RESULT.md` files, and returns the moment one of them moves |
 
 **The rules every tool keeps.** Exit 0 means it ran and passed, 1 means it ran and said no, 2 means it could not run. Every path and every number comes from a flag; there is no default it could guess wrong, and a missing flag is a one-line refusal that says what the flag wants. Output is bounded: a run that finds eight hundred problems prints twenty and the number eight hundred. Standard library only. `nova-check nocode` pointed at this repository would fail it, which is the point: machinery lives here, the self stays prose.
 
@@ -24,7 +25,7 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 
 **Install.** Three ways, none needing a credential: `go install github.com/mas-bandwidth/nova-tools/cmd/<tool>@<tag>` pinned to a release tag; a binary per platform from the release page with a `SHA256SUMS` beside it; or a clone and `go build ./...`. Go 1.26 or newer. Everybody sharing one bus should run one version, and `nova-bus version` says which.
 
-**What comes next.** Five more tools are specified and not yet built, each with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-merge` (a merge lane with local gates), `nova-swarm` (one-shot worker jobs with a token budget), `nova-wake` (waking a line only when a note for it lands), `nova-board` (cards with owners, deadlines and counts) and `nova-tokens` (token spend per day, model and repo, from every harness). They are the open pull requests on `docs/SPEC-*.md`.
+**What comes next.** Four more tools are specified and not yet built, each with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-merge` (a merge lane with local gates), `nova-swarm` (one-shot worker jobs with a token budget), `nova-board` (cards with owners, deadlines and counts) and `nova-tokens` (token spend per day, model and repo, from every harness). They are the open pull requests on `docs/SPEC-*.md`.
 
 ---
 
@@ -401,6 +402,85 @@ exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complex
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+## nova-wake
+
+One blocking call at the **attention layer**, specified in
+[docs/SPEC-WAKE.md](docs/SPEC-WAKE.md). A window that coordinates other lines
+spends its turns on a clock: it sleeps, wakes, looks at three places, finds
+nothing, and sleeps again. Every one of those cycles is a model turn, and a turn
+that learns nothing is the most expensive kind of nothing there is. `nova-wake`
+is that cycle inverted — one call that returns the moment something moved, and
+otherwise at a deadline you named, so the window pays one turn per **change**
+rather than one turn per **tick**.
+
+It watches three sources — a bus inbox, the checks on a set of entries, and
+`RESULT.md` files written by other lines — and says what moved. It acts on none
+of them: **everything it prints is data.** A note it relays is not an
+instruction, a failing check is not a verdict about whose fault it is, and a
+report file is prose somebody else wrote.
+
+### First run
+
+Point it at a directory holding `RESULT.md` files and give it a state file of
+its own. `quickstart` passes `--baseline`, so the first run lists the world once
+instead of recording it quietly:
+
+```
+$ nova-wake quickstart --state ./wake.state --reports ./reports
+WAKE NOTE quickstart chose --baseline, --interval 5s and --max 5s, so a first run returns with the world listed once rather than blocking; --on-deadline report is the word it echoes back
+WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
+WAKE REPORT path=reports/first-job/RESULT.md lines=8 bytes=220 new
+WAKE REPORT path=reports/second-job/RESULT.md lines=7 bytes=199 new
+WAKE CHANGE after=0s polls=1 bus=0 entries=0 reports=2 lines=0 pending=0
+
+$ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
+WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
+WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default taken
+```
+
+How to read it. The **first** line is the opening `WAKE`, printed before
+anything is waited on, so a transcript shows the call began and what it was told
+to do — a tool call that prints nothing for twenty minutes and then prints
+everything is, while it runs, indistinguishable from one that has hung. The
+**last** line is the verdict, and its **second token** is the answer: `CHANGE`,
+`QUIET` or `BROKEN`. Read that and never the exit code, which is 0 for both of
+the first two — a deadline is not an error, it is the answer *nothing yet*, and
+a change is not a failure even when what changed is a red check.
+
+What a first run gets wrong, and what each one wants:
+
+- **No `--max`, or no `--on-deadline`.** Both are required. The deadline is the
+  one thing only you can state, because a watcher with no deadline is a window
+  that is stuck rather than waiting and nobody outside can tell the two apart;
+  the default is what *you* will do if nothing moves, echoed back on the verdict
+  so the transcript records the decision. This tool takes no action itself.
+- **No `--interval`.** The right cadence is a fact about the watched thing's
+  rate, which only you know. Entries have their own, `--entry-interval`, and it
+  is the expected length of the hosted run: an 8-minute CI run deserves one
+  check at 8 minutes, not eight checks at one minute.
+- **No source.** A watch with nothing to watch is a `sleep` with a longer name,
+  and it is the one invocation that would look like it was working.
+- **A `--max` over 60m.** A watch runs inside a tool call and every harness kills
+  a call that runs too long. Ask your harness what its limit is and sit under
+  it; 20m is the recommendation.
+- **A second watch on one `--state`.** Two runs each write the whole map, so the
+  later write erases what the earlier one learned. One state file per watch.
+
+By default nothing here fetches: the bus checkout is read as it stands, and
+every `WAKE SOURCE bus` line carries `head=` and `head-at=` so you can see it
+stand still. Two flags change that, and never both at once — one fetch per poll,
+never two:
+
+- `--refresh --remote <name> --branch <name>` fetches through `nova-bus wait`
+  and **moves no cursor**. Nothing is consumed, so any number of watchers may
+  run. This is the one to reach for.
+- `--advance-cursor` is specified in docs/SPEC-WAKE.md and is **not in this
+  build**: it answers `WAKE REFUSED: --advance-cursor is not in this build; use
+  --refresh`, exit 2. Its own gate is that the advancing tests are green against
+  the pinned `nova-bus` binary, which is work list item 3a and a branch of its
+  own. Advancement is an acknowledgement optimisation and not a prerequisite for
+  delivery, and a v1 that cannot move a cursor cannot lose a note.
 
 ## nova-board
 
