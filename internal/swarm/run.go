@@ -137,6 +137,17 @@ func Run(in RunInput) int {
 			if end == EndKilled {
 				sc.Reaped++
 			}
+			// RULE 11 IS ABOUT THE JOB, NOT ABOUT WHICH DISPATCHER WAS ALIVE TO SEE IT
+			// (SPEC-SWARM.md:154-156), VERBATIM: a job whose group has a survivor "is
+			// quarantined: it moves to `failed/` with `violation=background` in the
+			// sidecar, and `triage` does not count it." The supervisor makes that group
+			// check inside the group's own process and records the count on exit.json;
+			// this branch read the record and ignored `Survivors`, so the identical exit
+			// record was quarantined when the dispatcher lived (finish.go) and folded
+			// into a coordinator's page when it died (read 6, finding 1).
+			if rec.Survivors > 0 && end == EndDone {
+				end = EndViolation
+			}
 			fin, usagePath := in.settle(sc, d.File.JobDir, rec, end, now())
 			said = said || end == EndUnknown
 			// ITS FILES MOVE AS RULE 12 SAYS (SPEC-SWARM.md:372). Finalize writes the
@@ -144,6 +155,7 @@ func Run(in RunInput) int {
 			// never did either -- so a recovered job sat in running/ with no slot and
 			// nothing watching it, forever.
 			sc.Class, sc.End, sc.RC, sc.Ended = fin.Class, end, rec.RC, Stamp(now())
+			sc.Violation = violationWord(end, rec.Survivors)
 			if fin.Class == ClassMalformed {
 				sc.Malformed = fin.MalformedLine
 			}
@@ -154,6 +166,12 @@ func Run(in RunInput) int {
 				requeued = in.requeue(sc, now())
 			}
 			_ = p.Claim(sc.ID, Running, dest)
+			// A DATA HOME THAT MAY STILL HAVE A WRITER IN IT IS NOT FREE: rule 11's
+			// aftermath retires the slot on the live path (finish.go), and a recovered
+			// violation is the same fact about the same data home.
+			if rec.Survivors > 0 {
+				retired[n] = true
+			}
 			// THE COUNTS ARE THE TRUTH ABOUT THE POOL (SPEC-SWARM.md:608-612), "never
 			// about the output". A recovered job lands in done/ or failed/ during THIS
 			// pass, and `RUN OK` said `done=0 failed=0` over it because only the main
@@ -171,7 +189,9 @@ func Run(in RunInput) int {
 			}
 			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=%s dest=%s usage=%s requeued=%t\n",
 				n, oneline.Field(sc.ID), oneline.Field(end), oneline.Field(dest), oneline.Field(usagePath), requeued)
-			if err := p.Free(n); err != nil {
+			if retired[n] {
+				// The slot stays out of the map for the rest of this run; it is not freed.
+			} else if err := p.Free(n); err != nil {
 				fmt.Fprintf(errOut, "RUN QUARANTINE slot=%d id=%s: the slot file could not be released: %s\n", n, oneline.Field(sc.ID), oneline.Escape(redactedReason(err)))
 				quarantined[n] = true
 			}
