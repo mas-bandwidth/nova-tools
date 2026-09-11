@@ -120,12 +120,12 @@ func (l *lab) refreshBase() string {
 // remote's base between the pass's last read and its push and prove the lease catches it.
 type hookRunner struct {
 	inner  merge.Runner
-	before func(args []string)
+	before func(dir string, args []string)
 }
 
 func (h *hookRunner) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
 	if h.before != nil {
-		h.before(args)
+		h.before(dir, args)
 	}
 	return h.inner.Run(ctx, dir, name, args...)
 }
@@ -133,7 +133,7 @@ func (h *hookRunner) Run(ctx context.Context, dir, name string, args ...string) 
 // beforePush installs a hand that runs once, immediately before the lane's lease push.
 func (l *lab) beforePush(hand func()) {
 	done := false
-	l.runner = &hookRunner{inner: merge.Exec{}, before: func(args []string) {
+	l.runner = &hookRunner{inner: merge.Exec{}, before: func(_ string, args []string) {
 		if done || len(args) == 0 || args[0] != "push" {
 			return
 		}
