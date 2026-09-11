@@ -89,6 +89,18 @@ func (l *Lines) Poll(ctx context.Context, now time.Time) (Result, error) {
 		if now.Sub(last) >= l.After {
 			state = "OFFLINE"
 		}
+		if !ok && state == "BACK" {
+			// A line with NO COMMIT AT ALL on the branch is judged against the
+			// moment this watch began, which is a different moment in every
+			// call. Reporting it BACK would say a line that has never signed
+			// has come back -- and the call before it, if it ran past
+			// --offline-after, said OFFLINE. So it is not reported until the
+			// watch has run for --offline-after, and then it is OFFLINE and
+			// stays OFFLINE. "A line with no commit on the branch is last=-
+			// commit=- and is OFFLINE at the first poll after the watch has run
+			// for --offline-after."
+			continue
+		}
 		res.Items = append(res.Items, Item{
 			Kind:  KindLine,
 			Key:   "line:" + name,

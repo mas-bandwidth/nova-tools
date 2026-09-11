@@ -601,8 +601,9 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 				if w.bus != nil && s.src.Name() == w.bus.Name() {
 					// The bus poll may block (--refresh), and what it may
 					// block for is the time to the earliest due source, at
-					// most --interval -- never --gh-timeout.
-					w.bus.Budget(w.until(now, deadline))
+					// most --interval -- never --gh-timeout, and never past
+					// --max.
+					w.bus.Budget(w.busBudget(now, deadline))
 				}
 				w.poll(ctx, s.src, now)
 				if n, _, _ := w.st.Streak(s.src.Name()); n >= 3 && broken == "" {
@@ -657,6 +658,30 @@ func (w *watcher) until(now, deadline time.Time) time.Duration {
 	for _, s := range w.sources {
 		if s.due.Before(next) {
 			next = s.due
+		}
+	}
+	d := next.Sub(now)
+	if d < 0 {
+		return 0
+	}
+	return d
+}
+
+// busBudget is the time to the earliest source that will be due NEXT, capped by
+// the deadline. A source that is due right now is being polled in this same
+// iteration, so what the bus may block for is when that source comes round
+// again -- `until` answers 0 for it, and a wait of nothing is not what "the
+// time to the earliest due source" means. A 30s bus interval beside a 5s entry
+// interval blocks 5s, and a --max inside the interval blocks to --max.
+func (w *watcher) busBudget(now, deadline time.Time) time.Duration {
+	next := deadline
+	for _, s := range w.sources {
+		due := s.due
+		if !due.After(now) {
+			due = now.Add(s.src.Every())
+		}
+		if due.Before(next) {
+			next = due
 		}
 	}
 	d := next.Sub(now)

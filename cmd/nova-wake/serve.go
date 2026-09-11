@@ -367,20 +367,32 @@ func (s *server) recordNote(it wake.Item, now time.Time) {
 		return
 	}
 	s.remember(id)
-	s.notes++
-	// ONLY addr=to WAKES. Cc means should know, and anything else -- a note for
-	// another name that this bus listed anyway, an addressing from a nova-bus
-	// this tool has never heard of -- is not this receiver's to act on. The
-	// unsafe direction here is not silence: it is starting somebody's command
-	// over a note nobody addressed to them, so the allow-list decides what is
-	// DISPATCHED, exactly as the suppress list decides what is HIDDEN and never
-	// what is shown (rule 7 is about relaying to a window, not about spawning).
-	if p := wake.Decompose(it.Value); len(p) < 2 || p[1] != "to" {
-		s.st.Set(serveKey(id), wake.Compose("cc", wake.Stamp(now)))
-		s.cc++
-		return
+	addr := ""
+	if p := wake.Decompose(it.Value); len(p) > 1 {
+		addr = p[1]
 	}
-	s.st.Set(serveKey(id), wake.Compose("queued", wake.Stamp(now)))
+	switch addr {
+	case "to":
+		// To means must act.
+		s.notes++
+		s.st.Set(serveKey(id), wake.Compose("queued", wake.Stamp(now)))
+	case "cc":
+		// Cc means should know: recorded, counted, never a turn, and read by
+		// the line at its next natural turn. A broadcast to five is five turns.
+		s.notes++
+		s.cc++
+		s.st.Set(serveKey(id), wake.Compose("cc", wake.Stamp(now)))
+	default:
+		// A note addressed to ANOTHER NAME, which a bus does not normally list
+		// for this reader at all. It is not this receiver's note: not
+		// dispatched, not counted as cc, not counted as one of this receiver's
+		// notes. The record is kept so it is not re-examined every poll, and
+		// the allow-list decides what is DISPATCHED exactly as the suppress
+		// list decides what is hidden -- the unsafe direction here is not
+		// silence, it is starting somebody's command over a note nobody
+		// addressed to them.
+		s.st.Set(serveKey(id), wake.Compose("cc", wake.Stamp(now)))
+	}
 }
 
 // remember keeps BUS ORDER: the order the bus listed the ids in, which is not

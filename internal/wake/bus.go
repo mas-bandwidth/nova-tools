@@ -66,6 +66,7 @@ type Bus struct {
 	read, suppress, relay, standing int
 	firstPoll                       bool
 	budget                          time.Duration
+	budgetSet                       bool
 }
 
 func (b *Bus) Name() string         { return "bus" }
@@ -86,13 +87,12 @@ func (b *Bus) Counts() (read, suppress, relay, standing int) {
 // the budget for a forge call and was never this one: at the documented
 // defaults it would block about nine intervals per poll.
 func (b *Bus) Budget(d time.Duration) {
-	if d > 0 {
-		b.budget = d
-	}
+	b.budget = d
+	b.budgetSet = true
 }
 
 func (b *Bus) waitBudget() time.Duration {
-	if b.budget > 0 && b.budget < b.Every_ {
+	if b.budgetSet && b.budget > 0 && b.budget < b.Every_ {
 		return b.budget
 	}
 	if b.Every_ > 0 {

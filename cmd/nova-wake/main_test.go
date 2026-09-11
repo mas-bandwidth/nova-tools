@@ -1024,3 +1024,94 @@ func TestASourceThatRecoversHasItsChangeCounted(t *testing.T) {
 		t.Errorf("the verdict is %q; a source that failed once and then answered has its change counted -- the refusal is about the poll that failed, not about the key forever", last)
 	}
 }
+
+// "--timeout <t> ... where <t> is the TIME TO THE EARLIEST DUE SOURCE, at most
+// --interval", and rule 1: "The tool never waits past --max". A wait that
+// blocked the whole interval while a shorter-cadence source was already due
+// starves that source, and one that blocks past --max makes the deadline a
+// thing the harness has to enforce.
+func TestTheRefreshWaitEndsAtTheEarliestDueSourceAndNeverPastTheDeadline(t *testing.T) {
+	t.Run("a co-due source with a shorter cadence", func(t *testing.T) {
+		busDir, ghDir := fakes(t)
+		write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+		write(t, filepath.Join(ghDir, "1.json"), `{"state":"OPEN","statusCheckRollup":[]}`)
+		state := filepath.Join(t.TempDir(), "wake.state")
+		wakeRun(t, "watch", "--state", state, "--max", "60s", "--on-deadline", "report",
+			"--interval", "30s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+			"--entry", "mas-bandwidth/nova-tools#1", "--entry-interval", "5s",
+			"--refresh", "--remote", "origin", "--branch", "main")
+		for _, c := range calls(t, busDir) {
+			if !strings.HasPrefix(c, "wait ") {
+				continue
+			}
+			if !strings.Contains(c, "--timeout 5s") {
+				t.Errorf("the wait blocks past the entry's 5s cadence, so the shorter-cadence source starves: %q", c)
+			}
+		}
+	})
+
+	t.Run("a deadline inside the interval", func(t *testing.T) {
+		busDir, _ := fakes(t)
+		write(t, filepath.Join(busDir, "out"), "INBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+		state := filepath.Join(t.TempDir(), "wake.state")
+		wakeRun(t, "watch", "--state", state, "--max", "10s", "--on-deadline", "report",
+			"--interval", "30s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+			"--refresh", "--remote", "origin", "--branch", "main")
+		for _, c := range calls(t, busDir) {
+			if strings.HasPrefix(c, "wait ") && !strings.Contains(c, "--timeout 10s") {
+				t.Errorf("the wait blocks past --max: %q", c)
+			}
+		}
+	})
+}
+
+// "A line with no commit on the branch is `last=- commit=-` and is OFFLINE at
+// the first poll after the watch has run for --offline-after", and "The tool
+// never repeats an OFFLINE line while nothing changes". A line that never
+// signed must not flip between BACK and OFFLINE as calls start and end.
+func TestALineThatNeverSignedDoesNotFlip(t *testing.T) {
+	bus := t.TempDir()
+	gitRun(t, bus, "init", "--quiet", "-b", "main")
+	write(t, filepath.Join(bus, "participants.json"), "{}\n")
+	gitRun(t, bus, "add", "-A")
+	gitRun(t, bus, "-c", "user.name=Stella", "-c", "user.email=s@example.com", "commit", "-q", "-m", "the bus")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	args := []string{"watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", bus, "--as", "Rowan", "--receipt-max-words", "40",
+		"--line", "Ghost", "--offline-after", "10m"}
+	fakes(t)
+
+	for call := 1; call <= 3; call++ {
+		r := wakeRun(t, args...)
+		if strings.Contains(r.stdout, "WAKE LINE") {
+			t.Fatalf("call %d reported a line that has never signed, inside --offline-after:\n%s", call, r.stdout)
+		}
+		if !strings.Contains(r.stdout, "WAKE QUIET") {
+			t.Fatalf("call %d is not quiet:\n%s", call, r.all())
+		}
+	}
+
+	// A call that runs past --offline-after says OFFLINE, once -- and the call
+	// after it, which starts its own clock again, says nothing.
+	long := []string{"watch", "--state", state, "--max", "20m", "--on-deadline", "report",
+		"--interval", "5s", "--bus", bus, "--as", "Rowan", "--receipt-max-words", "40",
+		"--line", "Ghost", "--offline-after", "10m"}
+	r := wakeRun(t, long...)
+	if n := countLines(r.stdout, "WAKE LINE name=Ghost state=OFFLINE"); n != 1 {
+		t.Fatalf("%d OFFLINE lines for a line with no commit at all, want 1:\n%s", n, r.stdout)
+	}
+	r = wakeRun(t, args...)
+	if strings.Contains(r.stdout, "WAKE LINE") {
+		t.Errorf("the line flipped back on the next call; a line that never signed has not come back:\n%s", r.stdout)
+	}
+}
+
+func gitRun(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
+	raw, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, raw)
+	}
+	return string(raw)
+}

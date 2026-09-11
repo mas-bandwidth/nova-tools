@@ -73,10 +73,10 @@ func TestServeSurfacesTheUncertainAndWakesOnlyTo(t *testing.T) {
 	if !strings.Contains(r.stdout, "WAKE FIRED ids=2 first=zzz111 rc=0 redelivered=0") {
 		t.Errorf("the fire line is missing or wrong:\n%s", r.stdout)
 	}
-	if !strings.Contains(r.stdout, "cc=2") {
-		t.Errorf("the exit line does not count the Cc: note:\n%s", r.stdout)
+	if !strings.Contains(r.stdout, "cc=1") {
+		t.Errorf("the exit line must say cc=1 -- the Cc: note, and not the one addressed to another name:\n%s", r.stdout)
 	}
-	if !strings.Contains(r.stdout, "WAKE SERVE fired=1 notes=4") {
+	if !strings.Contains(r.stdout, "WAKE SERVE fired=1 notes=3") {
 		t.Errorf("the exit line is missing or wrong:\n%s", r.stdout)
 	}
 }
