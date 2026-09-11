@@ -18,6 +18,19 @@ import (
 )
 
 func main() {
+	// THE BACKGROUND CHILD, and nothing else: rule 11's violation is a process that OUTLIVES
+	// its parent, so this one does no work, reads no prompt, writes nothing but its own pid
+	// and sleeps. Before 2026-09-11 it fell through into the harness's own path, read
+	// `--background-child` as a prompt file and exited 2 within milliseconds -- so demanded
+	// test 11 was a RACE against a child that was already dying, and under three parallel
+	// benches it lost and the violation went unseen.
+	if os.Getenv("FAKE_BACKGROUND_CHILD") == "1" {
+		if job := os.Getenv("NOVA_SWARM_JOB"); job != "" {
+			_ = os.WriteFile(filepath.Join(job, "background.pid"), []byte(strconv.Itoa(os.Getpid())+"\n"), 0o644)
+		}
+		time.Sleep(60 * time.Second)
+		return
+	}
 	if len(os.Args) < 2 {
 		fmt.Fprintln(os.Stderr, "fake harness: no prompt file")
 		os.Exit(2)
@@ -26,11 +39,9 @@ func main() {
 	// subcommand, the model, and the prompt FILE last. The fake refused nothing before
 	// 2026-09-11, so the dispatcher's missing `--model` passed every test here and killed
 	// two real jobs in two seconds. It refuses now, the way a real one does.
-	if os.Getenv("FAKE_BACKGROUND_CHILD") != "1" {
-		if err := checkInvocation(os.Args[1:]); err != nil {
-			fmt.Fprintln(os.Stderr, "fake harness:", err)
-			os.Exit(2)
-		}
+	if err := checkInvocation(os.Args[1:]); err != nil {
+		fmt.Fprintln(os.Stderr, "fake harness:", err)
+		os.Exit(2)
 	}
 	raw, err := os.ReadFile(os.Args[len(os.Args)-1])
 	if err != nil {
@@ -109,10 +120,6 @@ func main() {
 		_ = child.Run()
 	}
 	if os.Getenv("FAKE_FOREGROUND_CHILD") == "1" {
-		return
-	}
-	if os.Getenv("FAKE_BACKGROUND_CHILD") == "1" {
-		time.Sleep(60 * time.Second)
 		return
 	}
 	notes := notesRead(job, prompt)

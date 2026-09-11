@@ -11,6 +11,8 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -42,13 +44,11 @@ func newBench(t *testing.T) *bench {
 	if err := os.MkdirAll(b.pool, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	b.binary = build(t, dir, "nova-swarm", "./cmd/nova-swarm")
-	harnessDir := filepath.Join(dir, "bin")
-	if err := os.MkdirAll(harnessDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	build(t, harnessDir, "fake-harness", "./cmd/nova-swarm/testdata/fakeharness")
-	b.path = harnessDir + string(os.PathListSeparator) + os.Getenv("PATH")
+	// The two binaries are built ONCE for the whole package, not once per bench. Thirty
+	// benches building two binaries each saturated the machine, and a dispatcher that
+	// cannot start a child inside its deadline turns a contract test into a race: three
+	// tests that kill a worker went red under the load and green on their own (2026-09-11).
+	b.binary, b.path = builtBinaries(t)
 
 	home := filepath.Join(dir, "worker-home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
@@ -77,7 +77,56 @@ func newBench(t *testing.T) *bench {
 	return b
 }
 
-func build(t *testing.T, into, name, pkg string) string {
+// builtBinaries builds nova-swarm and the fake harness once, and hands every bench the
+// same two files: the tool's own path, and a PATH whose first entry holds the fake harness.
+func builtBinaries(t *testing.T) (string, string) {
+	t.Helper()
+	buildOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "nova-swarm-binaries")
+		if err != nil {
+			buildErr = err
+			return
+		}
+		builtDir = dir
+		builtTool, buildErr = build(t, dir, "nova-swarm", "./cmd/nova-swarm")
+		if buildErr != nil {
+			return
+		}
+		harnessDir := filepath.Join(dir, "bin")
+		if buildErr = os.MkdirAll(harnessDir, 0o755); buildErr != nil {
+			return
+		}
+		if _, buildErr = build(t, harnessDir, "fake-harness", "./cmd/nova-swarm/testdata/fakeharness"); buildErr != nil {
+			return
+		}
+		builtPath = harnessDir + string(os.PathListSeparator) + os.Getenv("PATH")
+	})
+	if buildErr != nil {
+		t.Fatalf("building the binaries these tests run: %v", buildErr)
+	}
+	return builtTool, builtPath
+}
+
+var (
+	buildOnce sync.Once
+	builtDir  string
+	builtTool string
+	builtPath string
+	buildErr  error
+)
+
+// TestMain removes the one directory these tests keep outside a t.TempDir(): the two
+// binaries every bench runs, which cannot live in any single test's own directory because
+// every test shares them.
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if builtDir != "" {
+		_ = os.RemoveAll(builtDir)
+	}
+	os.Exit(code)
+}
+
+func build(t *testing.T, into, name, pkg string) (string, error) {
 	t.Helper()
 	bin := filepath.Join(into, name)
 	if runtime.GOOS == "windows" {
@@ -86,9 +135,9 @@ func build(t *testing.T, into, name, pkg string) string {
 	cmd := exec.Command("go", "build", "-o", bin, pkg)
 	cmd.Dir = repoRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("building %s: %v\n%s", pkg, err, out)
+		return "", fmt.Errorf("building %s: %v\n%s", pkg, err, out)
 	}
-	return bin
+	return bin, nil
 }
 
 func repoRoot(t *testing.T) string {
@@ -386,7 +435,7 @@ func TestAReapedJobRunsOnceMore(t *testing.T) {
 		t.Skip("this one waits for two deadlines")
 	}
 	b := newBench(t)
-	id := b.add("a worker that sleeps past its deadline\nFAKE-SLEEP 30\n", "--deadline", "1s")
+	id := b.add("a worker that sleeps past its deadline\nFAKE-SLEEP 30\n", "--deadline", "3s")
 	exit, stdout, stderr := b.run()
 	if exit != 0 {
 		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
@@ -631,6 +680,21 @@ func TestABackgroundedChildIsAViolationAndIsNotTriaged(t *testing.T) {
 	mustContain(t, "the run", stdout, "background=1")
 	if strings.Contains(stdout, "RUN DONE id="+id) {
 		t.Errorf("a job reports EXACTLY ONCE: one RUN DONE or one RUN VIOLATION, never both:\n%s", stdout)
+	}
+
+	// THE SURVIVOR IS DEAD AFTERWARDS. The machinery does not only notice the process that
+	// outlived its parent; it ends it, and the test asks the operating system rather than
+	// the tool's own line.
+	raw, err := os.ReadFile(filepath.Join(b.jobDir(id), "background.pid"))
+	if err != nil {
+		t.Fatalf("the backgrounded child never recorded its pid: %v", err)
+	}
+	survivor, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if processIsAlive(survivor) {
+		t.Errorf("the process that outlived its parent is still alive (pid %d) after the run", survivor)
 	}
 
 	// The job is in failed/ with violation=background.
@@ -1007,6 +1071,28 @@ func TestNWorkersAreNProcessesAndShareNoPath(t *testing.T) {
 	}
 }
 
+// processIsAlive asks the operating system about ONE pid this test was handed. It never
+// scans a process table and never matches a command line.
+func processIsAlive(pid int) bool {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return p.Signal(syscall.Signal(0)) == nil
+}
+
+// lineWith is the one line of an output that carries a marker.
+func lineWith(t *testing.T, out, marker string) string {
+	t.Helper()
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, marker) {
+			return line
+		}
+	}
+	t.Fatalf("no line carrying %q in:\n%s", marker, out)
+	return ""
+}
+
 // jobDir is one job's directory, wherever its slot put it.
 func (b *bench) jobDir(id string) string {
 	b.t.Helper()
@@ -1190,7 +1276,7 @@ func TestAKilledJobsUsageSaysKilledAndItsRetrySumsOnce(t *testing.T) {
 		t.Skip("this one waits for two deadlines")
 	}
 	b := newBench(t)
-	id := b.add("a worker that spends and then sleeps past its deadline\nFAKE-USAGE 700 300 - - -\nFAKE-SLEEP 30\n", "--deadline", "1s")
+	id := b.add("a worker that spends and then sleeps past its deadline\nFAKE-USAGE 700 300 - - -\nFAKE-SLEEP 30\n", "--deadline", "3s")
 	exit, stdout, stderr := b.run()
 	if exit != 0 {
 		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
@@ -1435,15 +1521,17 @@ func TestAKilledWorkerLeavesItsUnpublishedRevisionAlone(t *testing.T) {
 	t.Parallel()
 	b := newBench(t)
 	id := b.add("a worker killed with a revision half written\nFAKE-PUBLISH-FIRST\nFAKE-UNPUBLISHED\nFAKE-FINDINGS 2\nFAKE-SLEEP 30\n",
-		"--deadline", "2s")
+		"--deadline", "5s")
 	exit, stdout, stderr := b.run()
 	if exit != 0 {
 		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
 	}
-	mustContain(t, "the run", stdout, "RUN KILLED id="+id)
-	mustContain(t, "the run", stdout, "unpublished=true")
+	// THIS job's own line, not any line: the one automatic re-queue prints a RUN KILLED of
+	// its own, and a test that read the wrong one would pass while this one said nothing.
+	killed := lineWith(t, stdout, "RUN KILLED id="+id)
+	mustContain(t, "the RUN KILLED line", killed, "unpublished=true")
 	// findings= is what was PUBLISHED, and nothing was: the tmp file is not a report.
-	mustContain(t, "the run", stdout, "findings=0")
+	mustContain(t, "the RUN KILLED line", killed, "findings=0")
 
 	tmp := filepath.Join(b.jobDir(id), "RESULT.md.tmp")
 	before, err := os.ReadFile(tmp)
