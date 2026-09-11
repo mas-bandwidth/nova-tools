@@ -459,3 +459,56 @@ func TestFinalOnlySuppressesTheWakeAndNotTheState(t *testing.T) {
 		}
 	})
 }
+
+// Test 5's other named half, through the binary: "a backlog of 3,000 notes
+// leaves 3,000 queue records after the first call with none evicted". The queue
+// is never evicted and never truncated -- pending is unbounded in the STATE and
+// bounded in the OUTPUT, never the other way round -- and the file's size is
+// the honest cost of a window that has not read its mail. internal/wake's own
+// test proves the LRU at LRUMax+50; this one proves the promise at the number
+// the spec names, against the tool.
+func TestABacklogOfThreeThousandNotesIsThreeThousandQueueRecords(t *testing.T) {
+	busDir, _ := fakes(t)
+	var lines []string
+	for i := 0; i < 3000; i++ {
+		lines = append(lines, fmt.Sprintf(
+			"INBOX NOTE id=n%04d from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/n%04d.md: note %d", i, i, i))
+	}
+	write(t, filepath.Join(busDir, "out"), strings.Join(lines, "\n")+"\n")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
+		"--max-lines", "40")
+	if r.exit != 0 {
+		t.Fatalf("exit = %d; %s", r.exit, r.stderr)
+	}
+	if n := countLines(r.stdout, "WAKE BUS id="); n != 40 {
+		t.Errorf("the first call printed %d bus lines, want --max-lines 40: the bound holds at the largest plausible state", n)
+	}
+	kept, notes := 0, 0
+	for _, line := range strings.Split(read(t, state), "\n") {
+		switch {
+		case strings.HasPrefix(line, "queue:next|"):
+		case strings.HasPrefix(line, "queue:"):
+			kept++
+		case strings.HasPrefix(line, "bus:note:"):
+			notes++
+		}
+	}
+	// All 3,000 are accounted for: forty printed and deleted, 2,960 still
+	// pending, and not one evicted.
+	if kept != 2960 {
+		t.Errorf("%d queue records after the first call, want 2960 -- 3000 less the 40 that printed; a pending record leaves the state only by being printed", kept)
+	}
+	if notes != 3000 {
+		t.Errorf("%d bus:note: entries, want 3000: a bus:note: a queue record names is not a candidate for eviction whatever its age", notes)
+	}
+	if !strings.Contains(r.stdout, "pending=2960") {
+		t.Errorf("the verdict must carry what the window has not been shown:\n%s", lastLine(r.stdout))
+	}
+}
+
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	return lines[len(lines)-1]
+}

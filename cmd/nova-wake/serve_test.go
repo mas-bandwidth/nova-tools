@@ -504,3 +504,60 @@ func TestServeRunsNoThirdAttemptOnItsOwn(t *testing.T) {
 		t.Errorf("the uncertain line does not name the person's remedy:\n%s", r.stdout)
 	}
 }
+
+// Two halves of test 10 the first build named and did not assert.
+//
+// "Three notes landing while the command runs are `queued` and fired in ONE
+// invocation carrying three ids after it returns, never beside it", and
+// "`max_wait=` equals the injected clock's longest queued interval" -- the
+// latency Stella's sixth idea asks to measure, which read 0s in every green run.
+func TestServeCoalescesWhatWaitedAndMeasuresHowLongItWaited(t *testing.T) {
+	t.Run("three notes that land while the command runs fire in one invocation", func(t *testing.T) {
+		busDir, _ := fakes(t)
+		// The first poll sees A alone; the second sees the three that landed
+		// while A's command held the receiver.
+		write(t, filepath.Join(busDir, "out.1"),
+			"INBOX NOTE id=aaa111 from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/a.md: the first\n")
+		write(t, filepath.Join(busDir, "out"), strings.Join([]string{
+			"INBOX NOTE id=aaa111 from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/a.md: the first",
+			"INBOX NOTE id=bbb222 from=Johnny addr=to at=2026-09-11T11:01:00Z path=from-johnny/b.md: the second",
+			"INBOX NOTE id=ccc333 from=Emma addr=to at=2026-09-11T11:02:00Z path=from-emma/c.md: the third",
+			"INBOX NOTE id=ddd444 from=Freddy addr=to at=2026-09-11T11:03:00Z path=from-freddy/d.md: the fourth",
+		}, "\n")+"\n")
+		note, noteDir := fakeNote(t)
+		state := filepath.Join(t.TempDir(), "serve.state")
+		r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
+			"--interval", "30s", "--state", state, "--hours", "0.02",
+			"--remote", "origin", "--branch", "main")
+		if r.exit != 0 {
+			t.Fatalf("exit = %d; %s", r.exit, r.all())
+		}
+		got := calls(t, noteDir)
+		if len(got) != 2 {
+			t.Fatalf("the receiver was started %d times, want 2: one for A and ONE for the three that waited\n%v", len(got), got)
+		}
+		if got[1] != "bbb222 ccc333 ddd444" {
+			t.Errorf("the second invocation carried %q, want the three queued ids in bus order in one invocation; one turn reads k notes rather than k turns reading one", got[1])
+		}
+		if !strings.Contains(r.stdout, "WAKE FIRED ids=3 first=bbb222") {
+			t.Errorf("the fire line does not say three ids went in one batch:\n%s", r.stdout)
+		}
+	})
+
+	t.Run("max_wait is the longest a note sat queued", func(t *testing.T) {
+		busDir, _ := fakes(t)
+		write(t, filepath.Join(busDir, "out"),
+			"INBOX NOTE id=aaa111 from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/a.md: the first\n"+
+				"INBOX NOTE id=bbb222 from=Johnny addr=to at=2026-09-11T11:01:00Z path=from-johnny/b.md: the second\n")
+		note, _ := fakeNote(t)
+		state := filepath.Join(t.TempDir(), "serve.state")
+		// --batch-max 1 leaves B queued for exactly one interval of the
+		// INJECTED clock, and the exit line must say so.
+		r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
+			"--interval", "30s", "--state", state, "--hours", "0.02", "--batch-max", "1",
+			"--remote", "origin", "--branch", "main")
+		if !strings.Contains(r.stdout, "max_wait=30s") {
+			t.Errorf("max_wait is not the longest a note sat queued before its dispatch; 0s in every run is a measurement that measures nothing:\n%s", r.stdout)
+		}
+	})
+}
