@@ -155,6 +155,43 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     usage for two batches lived in per-worker data directories that were
     reclaimed with the jobs, and nothing survived.)
 
+13. **The swarm's own tokens are budgeted per job, and the machinery ends the
+    job at the budget.** Every job carries `--tokens <n>` (no default) beside
+    its deadline; the runner reads the provider's usage as the job runs
+    (OpenCode's data dir, per job) and ends the job when the sum passes the
+    budget, recording `RUN BUDGET id=<id> spent=<n> of=<n>`; a job that
+    ends this way keeps the findings it appended so far (rule 3). A worker
+    is handed a task file and the files the task names, never a conversation
+    and never a repository to wander: the task template's file list is the
+    reading list, `--files` is its ceiling, and a job that reads past it is
+    the refusal rule 1 already names. (2026-09-11: 21 children spent 2.4M
+    tokens on this bench, most of it re-reading what the task could have
+    handed them.)
+14. **The coordinator spends one command to spin a swarm up and one line to
+    read it down.** Spinning up is `add --task <file>` per job from a
+    template, or `batch --tasks <dir>` for many; the coordinator writes no
+    prompt by hand for a job a template covers, and a template is a file in
+    the repo, read by the tool, never pasted into a turn. Reading down is
+    `triage --batch <id>`: one bounded block, counts first (done, refused,
+    reaped, plan-only, budget), then the top `--max` findings by the
+    template's own ranking (a finding line with its evidence path), then
+    `TRIAGE MORE n=<k> at=<path>` for the rest. The coordinator's window
+    never holds a worker's transcript, never a raw `RESULT.md` unless it
+    asks for one by id (`result --id`), and never the runner's log. A named
+    friend spinning up a swarm pays the same: one command, one line back.
+    (2026-09-11: the window read twenty reports of forty lines each and
+    wrote twenty prompts of thirty lines each; that cost is the
+    coordinator's tokens, and it is the tool's to remove.)
+15. **A result has one shape, so the fold is mechanical and a person reads
+    counts.** `RESULT.md` is the template below and nothing else: a head
+    with the verdict words and counts, then items with the line quoted, the
+    rule, the fix; the runner parses it, and a result that does not parse
+    is `RUN MALFORMED id=<id> line=<n>` and quarantined, never folded and
+    never handed to a person to decipher. A batch's findings across jobs
+    are de-duplicated by (file, line, rule) before `triage` prints them, and
+    the duplicate count is printed, because a coordinator reading the same
+    finding five times is five times the tokens for one fact.
+
 ## The verbs
 
 ```
@@ -809,6 +846,16 @@ be seen red before it is trusted.
     line is `RECLAIM REFUSED` exit 1 and the directory is intact; `cost`
     prints the numbers from the sidecar after the directory is gone; a
     provider that reported no reasoning count prints `reasoning=-`.
+13. `TestBudgetEndsTheJobAndKeepsFindings`: a fake harness that appends a
+    finding then a usage row past `--tokens`: the job ends with `RUN BUDGET`,
+    the finding stands in `RESULT.md`, and a job under budget is untouched.
+14. `TestOneCommandUpOneLineDown`: `batch --tasks` over three template
+    tasks queues three jobs from files with no prompt text on the command
+    line; `triage --batch` on their results prints counts first, at most
+    `--max` findings, then `TRIAGE MORE`, and never a transcript line.
+15. `TestResultShapeIsMechanical`: a `RESULT.md` missing the head is `RUN
+    MALFORMED` with the line number and is not folded; two jobs reporting
+    one (file, line, rule) fold to one finding with `dup=1` printed.
 
 ## The work list
 
