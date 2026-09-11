@@ -682,7 +682,12 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 		// was supposed to have ended; an advance on an iteration that polled
 		// only the entries is a cursor moved by something that is not a bus
 		// poll at all.
-		if !reached && w.busRead {
+		// The deadline is read AGAIN here, after the poll: a poll may spend its
+		// whole budget, and rule 1 -- "The tool never waits past --max" -- is
+		// about the moment the advance would start, not about the moment the
+		// iteration began. An advance is a fetch and the one write-side call
+		// this tool makes.
+		if w.clock.Now().Before(deadline) && w.busRead {
 			if w.advanceOrDefer(ctx, now) {
 				// The injected kill of test 11: the process died between the
 				// advance returning and the write of its output.

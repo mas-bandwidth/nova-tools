@@ -146,6 +146,13 @@ func synthBus(t *testing.T) (rowan, stella string) {
 	gitAt(t, stella, "-c", "user.name=Stella", "-c", "user.email=stella@example.com", "commit", "-q", "-m", "the bus")
 	gitAt(t, stella, "push", "-q", "origin", "HEAD:refs/heads/main")
 	gitAt(t, root, "clone", "--quiet", bare, rowan)
+	// No background maintenance in a directory the test framework is about to
+	// remove: git's auto-gc is a second process writing into .git after the
+	// test has stopped looking, and RemoveAll races it.
+	for _, repo := range []string{bare, rowan, stella} {
+		gitAt(t, repo, "config", "gc.auto", "0")
+		gitAt(t, repo, "config", "maintenance.auto", "false")
+	}
 	return rowan, stella
 }
 
@@ -383,19 +390,82 @@ func TestTheRealBusAdvanceRecoversAnInterruptedRead(t *testing.T) {
 		t.Errorf("the marker was not cleared after the recovery:\n%s", read(t, state))
 	}
 
-	// "--open-max 25, 25 being the carrying= it read AND NOT A CONSTANT."
+	assertOpenMax(t, busCalls(t)[before:], 25)
+}
+
+// assertOpenMax is "--open-max <n>, <n> being the carrying= it read AND NOT A
+// CONSTANT". One fixture cannot say that -- a constant equal to that fixture's
+// count passes it -- so the caller runs this over two recoveries carrying
+// DIFFERENT numbers, and only a tool that reads the count passes both.
+func assertOpenMax(t *testing.T, calls []string, want int) {
+	t.Helper()
 	opens := 0
-	for _, c := range busCalls(t)[before:] {
+	for _, c := range calls {
 		if !strings.Contains(c, "--open-max") {
 			continue
 		}
 		opens++
-		if !strings.Contains(c, "--open --open-max 25") {
-			t.Errorf("the recovery asked for a number that is not the carrying= it read: %q", c)
+		if !strings.Contains(c, fmt.Sprintf("--open --open-max %d", want)) {
+			t.Errorf("the recovery asked for a number that is not the carrying= it read (want %d): %q", want, c)
 		}
 	}
 	if opens == 0 {
-		t.Errorf("the recovery never read the carried list:\n%s", strings.Join(busCalls(t)[before:], "\n"))
+		t.Errorf("the recovery never read the carried list:\n%s", strings.Join(calls, "\n"))
+	}
+}
+
+// The other half of "never a constant": a second recovery, carrying a different
+// number. A hardcoded --open-max of ANY value fails one of the two.
+func TestTheRecoveryReadsTheCountAndNeverAConstant(t *testing.T) {
+	for _, carried := range []int{7, 23} {
+		t.Run(fmt.Sprintf("carrying %d", carried), func(t *testing.T) {
+			rowan, stella := synthBus(t)
+			for i := 0; i < carried; i++ {
+				push(t, stella, fmt.Sprintf("stella-eeeeeeeeee%02d", i), fmt.Sprintf("carried %d", i))
+			}
+			gitAt(t, rowan, "pull", "-q", "--ff-only")
+			// Two advances by hand put the cursor past every one of them, which
+			// is the state a kill in the gap leaves: carried, unprinted, on no
+			// listing a plain inbox makes.
+			for i := 0; i < 2; i++ {
+				runBus(t, "inbox", "--bus", rowan, "--as", "Rowan", "--receipt-max-words", "40",
+					"--advance", "--remote", "origin", "--branch", "main")
+			}
+			plain := runBus(t, "inbox", "--bus", rowan, "--as", "Rowan", "--receipt-max-words", "40")
+			if !strings.Contains(plain, fmt.Sprintf("carrying=%d", carried)) {
+				t.Fatalf("the fixture does not carry %d:\n%s", carried, plain)
+			}
+			state := filepath.Join(t.TempDir(), "recovered.state")
+			write(t, state, "bus:advance|inflight%7C2026-09-11T12:00:00Z%7C-\n")
+			before := len(busCalls(t))
+			r := wakeRun(t, advanceArgs(state, rowan, "--max-lines", "0")...)
+			if n := countLines(r.stdout, "WAKE BUS id="); n != carried {
+				t.Errorf("the recovery reached %d of %d carried notes:\n%s", n, carried, lastLine(r.stdout))
+			}
+			assertOpenMax(t, busCalls(t)[before:], carried)
+			// And the lines the recovery read are counted, whatever nova-bus
+			// answered: read equals suppressed+relayed+standing (rule 7).
+			var source string
+			for _, line := range strings.Split(r.stdout, "\n") {
+				if strings.HasPrefix(line, "WAKE SOURCE bus ") {
+					source = line
+				}
+			}
+			n := map[string]int{}
+			for _, tok := range strings.Fields(source) {
+				k, v, ok := strings.Cut(tok, "=")
+				if !ok {
+					continue
+				}
+				var i int
+				if _, err := fmt.Sscanf(v, "%d", &i); err == nil {
+					n[k] = i
+				}
+			}
+			if n["read"] != n["suppressed"]+n["relayed"]+n["standing"] || n["read"] == 0 {
+				t.Errorf("the recovery's own reads are not counted: %s", source)
+			}
+		})
 	}
 }
 

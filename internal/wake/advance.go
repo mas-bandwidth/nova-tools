@@ -130,17 +130,19 @@ func Interrupted(st *State) bool {
 func (a *Advancer) Recover(ctx context.Context, st *State) (Result, string, error) {
 	var res Result
 	out, code, err := a.Bus.run(ctx, a.Bus.inboxArgs()...)
+	// Rule 7 is absolute and covers this read too: every line the bus source
+	// reads is classified as suppressed, relayed or standing, and every line is
+	// counted -- BEFORE the exit code is looked at, because a nova-bus that
+	// said NO said it in lines, and a recovery that returned on the code would
+	// drop exactly the REFUSED line the rule was written for. The non-zero exit
+	// is then a failed poll like any other, which is what reaches the streak.
+	a.Bus.classify(out, &res)
 	if err != nil {
 		return res, "", err
 	}
 	if code != 0 {
 		return res, "", fmt.Errorf("nova-bus exit=%d", code)
 	}
-	// Rule 7 is absolute and covers this read too: every line the bus source
-	// reads is classified as suppressed, relayed or standing, and every line is
-	// counted. A recovery that read the bus and counted none of it leaves
-	// read= short of suppressed+relayed+standing for that call.
-	a.Bus.classify(out, &res)
 	n := carrying(out)
 	if n <= 0 {
 		st.Delete(AdvanceMarker)
@@ -166,7 +168,12 @@ func (a *Advancer) Recover(ctx context.Context, st *State) (Result, string, erro
 		a.Bus.classify(fresh, &res)
 		again := carrying(fresh)
 		if again <= 0 {
-			again = n
+			// The checkout moved and the reader carries nothing now: there is
+			// nothing left for this recovery to reach, and asking the same
+			// question a second time with the count that is already stale is
+			// the defect the re-read exists to remove.
+			st.Delete(AdvanceMarker)
+			return res, fmt.Sprintf("bus advance was interrupted; recovered %d notes from OPEN", listed), nil
 		}
 		listed, res, err = a.open(ctx, again, &res)
 		if err != nil {
@@ -184,13 +191,15 @@ func (a *Advancer) Recover(ctx context.Context, st *State) (Result, string, erro
 func (a *Advancer) open(ctx context.Context, n int, res *Result) (int, Result, error) {
 	before := len(res.Items)
 	out, code, err := a.Bus.run(ctx, append(a.Bus.inboxArgs(), "--open", "--open-max", strconv.Itoa(n))...)
+	// Classified first, for the reason above: nothing this tool reads from the
+	// bus is dropped because of an exit code.
+	a.Bus.classify(out, res)
 	if err != nil {
 		return 0, *res, err
 	}
 	if code != 0 {
 		return 0, *res, fmt.Errorf("nova-bus exit=%d", code)
 	}
-	a.Bus.classify(out, res)
 	listed := len(res.Items) - before
 	// A note this tool has already printed is suppressed by the classifier and
 	// is still a note the bus listed: the count that matters to the re-read is
