@@ -39,11 +39,12 @@ bus notes that the window then had to be told about by hand.
 ## The verb
 
 ```
-nova-wake watch --state <file> --max <duration> [--interval <duration>] [--max-lines <n>] [--baseline]
+nova-wake watch --state <file> --max <duration> --on-deadline <word> --interval <duration> [--max-lines <n>] [--baseline]
       [--bus <dir> --as <name> --receipt-max-words <n> [--advance-cursor --remote <name> --branch <name>]]
-      [--entry <repo>#<n> ...] [--final-only] [--gh-timeout <seconds>]
+      [--line <name> ... [--offline-after <duration>]]
+      [--entry <repo>#<n> ... --entry-interval <duration>] [--final-only] [--gh-timeout <seconds>]
       [--reports <dir> ...]
-nova-wake quickstart --state <file> [--max <duration>]
+nova-wake quickstart --state <file> [--max <duration>] [--on-deadline <word>]
 nova-wake help
 ```
 
@@ -56,17 +57,19 @@ that a harness is already waiting on.
 a `sleep` with a longer name, and it is the one invocation that would look like it
 was working.
 
-**No guessed anything, with three exceptions.** There is no default state file, no
-default bus, no default bus name, no default entry, no default report directory
-and no default repository. Each missing one is exit 2 and `refusing to guess`. The
-exceptions are `--interval`, which defaults to **30 seconds**, `--max-lines`,
-which defaults to **40**, and `--gh-timeout`, which defaults to **45 seconds** —
-none of them a fact about this window's world that only this window can supply,
-which is the test the rule is really making. A poll interval is how hard this tool
-leans on somebody else's server; a line cap is this repo's own law (SPEC.md,
-Conventions) and is 20 everywhere a listing is a listing, and 40 here because a
-wake line is not a listing: it is the whole of what the window learns from this
-return. `--max` gets **no** default for the same reason `nova-bus wait --timeout`
+**No guessed anything, with two exceptions.** There is no default state file, no
+default bus, no default bus name, no default entry, no default report directory,
+no default repository, no default poll interval and no default action at the
+deadline. Each missing one is exit 2 and `refusing to guess`. The exceptions are
+`--max-lines`, which defaults to **40**, and `--gh-timeout`, which defaults to
+**45 seconds** — neither a fact about this window's world that only this window
+can supply, which is the test the rule is really making. A line cap is this repo's
+own law (SPEC.md, Conventions) and is 20 everywhere a listing is a listing, and 40
+here because a wake line is not a listing: it is the whole of what the window
+learns from this return. `--interval` had a default of 30 seconds in an earlier
+draft and lost it on 2026-09-11: the right cadence is a fact about the watched
+thing's rate, which only the caller knows (**The rules of the last two days**,
+rule 3). `--max` gets **no** default for the same reason `nova-bus wait --timeout`
 gets none: a deadline is the one thing the caller must state, because a watcher
 with no deadline is a window that is stuck rather than waiting and nobody outside
 can tell the two apart. (The prototype defaulted it to 1200 seconds. That default
@@ -81,8 +84,9 @@ your harness what its limit is and sit under it. `--interval` will not go below
 **5s**, because a poll is a `git fetch` and an API call against somebody else's
 server.
 
-**The only programs it starts are `nova-bus` and `gh`**, both named here, both
-under a timeout, both one at a time. It opens no socket of its own, resolves no
+**The only programs it starts are `nova-bus`, `gh` and `git`**, all named here,
+all under a timeout, all one at a time. `git` is started only for `--line`,
+read-only, against the bus checkout (rule 2 below). It opens no socket of its own, resolves no
 host, and has no opinion about what a bus or a forge is beyond what those two
 programs tell it. A source whose program is missing from `PATH` is a **change**
 on the first poll, not a refusal — see **Sources** — because a window that cannot
@@ -93,15 +97,17 @@ see its bus needs to hear so now.
 | code | meaning |
 |------|---------|
 | 0 | the watch ran: **either** something changed **or** the deadline arrived |
-| 2 | could not run: a missing or malformed flag, no source named, a `--max` over the ceiling, an unreadable or unparsable state file |
+| 2 | could not run: a missing or malformed flag, no source named, a `--max` over the ceiling, an unreadable or unparsable state file, a second watcher on the same state file, or a source that failed three polls in a row (rule 8) |
 
 **This is the one deviation from SPEC.md's Conventions table, and it is that there
 is no 1.** Nothing here asserts anything, so nothing here can say NO: a watcher is
 a report and never a gate. A deadline is not an error — it is the answer *nothing
 yet*, exactly as `WAIT TIMEOUT` is — and a change is not a failure even when what
 changed is a red check, because *red* is news and news is this tool's whole output.
-A caller that needs to know which of the two happened reads the **first token of
-the first line**, `WAKE CHANGE` or `WAKE QUIET`, and never the exit code. Exit 1
+A caller that needs to know which of the two happened reads the **second token of
+the last line**, `WAKE CHANGE` or `WAKE QUIET`, and never the exit code. A `WAKE
+BROKEN` last line is the third case, and it is exit 2, because a watch whose
+source went away did not run to its deadline (rule 8). Exit 1
 is not used and is reserved: if a later version ever gates on something, it will
 take 1 and this table will say what it gates on.
 
@@ -117,22 +123,25 @@ cold start on purpose.
 
 ```
 WAKE as=<name|-> max=<d> interval=<d> sources=<bus,entries,reports> state=<file> cold=<true|false>
-WAKE CHANGE after=<d> polls=<n> bus=<n> entries=<n> reports=<n>
-WAKE QUIET after=<d> polls=<n>
-WAKE BUS id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
+WAKE CHANGE after=<d> polls=<n> bus=<n> entries=<n> reports=<n> lines=<n>
+WAKE QUIET after=<d> polls=<n> default=<word>: deadline, default taken
+WAKE BROKEN source=<bus|entries|reports> failures=<n> since=<stamp>: <reason>
+WAKE BUS id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> commit=<sha|-> path=<path>: <subject>
 WAKE BUS LINE <the bus's own line, verbatim>
 WAKE BUS STANDING <the bus's own line, verbatim>
 WAKE ENTRY <repo>#<n> state=<state> fail=<n> pending=<n> pass=<n> final=<true|false> failing=<names|->
 WAKE ENTRY <repo>#<n> unreadable: <reason>
 WAKE REPORT path=<path> lines=<n> bytes=<n> <new|modified>
+WAKE LINE name=<name> state=<OFFLINE|BACK> last=<stamp|-> silent=<d> commit=<sha|->
+WAKE SOURCE <bus|entries|reports> read=<n> suppressed=<n> relayed=<n> standing=<n>
 WAKE NOTE <something true about this run that is not a change>
 WAKE POLL <source>: <reason one poll failed, which was not fatal>
 WAKE MORE kind=<bus|entry|report> shown=<n> total=<t> <remedy>
 WAKE REFUSED: <reason>
 ```
 
-`WAKE CHANGE` and `WAKE QUIET` are the **last** line and the two possible
-verdicts; the opening `WAKE` line is the **first**, printed before anything is
+`WAKE CHANGE`, `WAKE QUIET` and `WAKE BROKEN` are the **last** line and the three
+possible verdicts; the opening `WAKE` line is the **first**, printed before anything is
 waited on, so a transcript shows the call began and what it was told to do — a
 tool call that prints nothing for twenty minutes and then prints everything is,
 while it runs, indistinguishable from one that has hung. `WAKE` lines and the
@@ -423,13 +432,150 @@ written after every poll and before the verdict is printed, so the duplicate is 
 repeated wake and never a lost one. A window told the same news twice reads twice;
 a window told it never does not.
 
+## The rules of the last two days
+
+Eight rules, 2026-09-09 to 2026-09-11. Each came from a hurt and each is written so
+a test can be built from it. Where a rule changes a sentence above, that sentence
+has been changed to match, and this section is the reason. Where a rule names a
+prototype behaviour, it is listed by number in **What the prototype does that this
+spec forbids**.
+
+1. **Every wait has a written deadline and a default action.** `--max` is the
+   deadline and `--on-deadline <word>` is the action. Both are required. A `watch`
+   missing either is exit 2, `refusing to guess`, naming the one it lacks. The
+   tool never waits past `--max`. A watch that reaches its deadline prints exactly
+   one verdict line, `WAKE QUIET after=<d> polls=<n> default=<word>: deadline,
+   default taken`, and exits 0. `QUIET` is the status word the caller reads. The
+   tool takes no action itself. `<word>` is what the caller said it would do,
+   echoed on the opening line and on the verdict, so the transcript records the
+   decision. The caller decides. (The hurt: nineteen orphaned shells on 2026-09-09
+   were waits with no deadline, and a wait with no default is a window that
+   returns and then has to think about what it meant to do.)
+
+2. **Ten minutes silent is offline.** `--line <name>` names a line to watch and
+   may be given more than once. It requires `--bus`. A line's **last sign** is the
+   stamp of the newest commit on the bus checkout's branch whose author is that
+   name: a note, a receipt, or any other commit the line made. A line whose last
+   sign is older than `--offline-after` is reported once, as a change, on one
+   line: `WAKE LINE name=<name> state=OFFLINE last=<stamp> silent=<d>
+   commit=<sha>`. `--offline-after` defaults to **10m**. It is the one duration
+   here with a default, because it is the family's rule and not a fact about one
+   window: every line must agree about it, and it is the same number as
+   `nova-board --stale`. The tool never repeats an OFFLINE line while nothing
+   changes: the state file holds `line:<name>` as `<sha>|OFFLINE`, and a later
+   poll with the same value prints nothing. A new sign from the line is a change
+   once, `state=BACK`. A line with no commit on the branch is `last=- commit=-`
+   and is OFFLINE at the first poll after the watch has run for
+   `--offline-after`. The sign is read with `git log` against the bus checkout,
+   read-only, under `--gh-timeout`, and nothing else is read. (Glenn, 2026-09-10:
+   reassign a silent line's items after about ten minutes. Johnny ran out of
+   credits at 00:35Z and the board said he held his items for an hour.)
+
+3. **Poll cadence matches the watched thing's rate.** `--interval` has no default
+   and is exit 2 when missing. It is the cadence for the bus, for `--line` and for
+   report directories. Entries have their own cadence, `--entry-interval`,
+   required whenever `--entry` is given, and it is the expected length of the
+   hosted run: an entry is polled no more often than that. Both intervals have the
+   5s floor. The loop sleeps until the earliest due source, so a 5s bus interval
+   beside an 8m entry interval polls the bus every 5s and the entry every 8m.
+   (Amdahl, on Glenn's word: an 8-minute CI run deserves one check at 8 minutes,
+   not eight checks at one minute. The prototype's 30-second default made sixteen
+   `gh` calls per entry per eight-minute run, and every one learned nothing.)
+
+4. **It finds itself by a file, never by `pgrep`.** The tool never lists
+   processes, never reads its own command line back from the process table, and
+   never uses `/tmp` or `$TMPDIR`. Its only files are `--state`, the fixed-name
+   temp file beside it, and `<state>.lock` beside it, which holds the pid of the
+   run that took it. A second `watch` over the same `--state` path is `WAKE
+   REFUSED`, exit 2, on one line naming the holder's pid and the path. Nothing the
+   tool does touches the filesystem outside the directories it was given.
+   (2026-09-09: a loop that pgrepped its own command line matched itself and never
+   ended.)
+
+5. **Wake output is bounded and never carries a body.** One line per event. A
+   relayed note is its id, sender, stamp, commit, path and subject, never its body.
+   A report is its path and size, never its contents. An entry is its counts and
+   failing names, never a log. Past `--max-lines` events of one kind in one
+   interval, one `WAKE MORE` line counts the rest. `--max-lines` is the N. The
+   bound holds at the largest plausible state: 200 notes, 50 entries, 100 report
+   files and 20 lines changing in one interval print at most `4 * --max-lines +
+   10` lines. (Glenn, 2026-09-09: tool output costs tokens; test at the largest
+   plausible state.)
+
+6. **What woke you is named.** Every change line carries the identity of the thing
+   that changed: a note's id and commit sha, an entry's repository, number and new
+   state, a report's path, a line's name and last commit. The words `something
+   changed` never appear in this tool's output, and no change line is printed
+   without its identity field. (A wake that says only that the world moved sends
+   the window back to look at all three places, which is the tick this tool
+   replaces.)
+
+7. **Never filter the status line.** Every line the bus source reads is classified
+   as suppressed, relayed or standing, and every line is counted. Nothing is
+   dropped silently. Once per run, before the verdict, `WAKE SOURCE bus read=<n>
+   suppressed=<n> relayed=<n> standing=<n>` prints the four counts, and they add
+   up: `read` equals the sum of the other three. The suppress list decides what is
+   hidden and never what is shown; a line the tool cannot classify is relayed.
+   (2026-09-10: a grep that kept only NOTE lines dropped the `INBOX REFUSED` line
+   and gave the window thirty minutes of false quiet.)
+
+8. **The watcher's own failure is loud.** A poll of one source that fails is one
+   `WAKE POLL` line on stderr and the watch goes on. The **third consecutive**
+   failure of the same source ends the watch: the verdict is `WAKE BROKEN
+   source=<s> failures=3 since=<stamp>: <reason>`, exit 2, because a watcher that
+   cannot see its source is not watching, and a `WAKE QUIET` from it would be a
+   lie. A success resets the count. A source fails when the bus's `nova-bus` exits
+   other than 0 or times out, when every entry is unreadable in one poll, or when
+   every `--reports` directory is unreadable. Three is fixed and not a flag: it is
+   a fact about the tool, not about the window.
+
+## Tests this spec demands
+
+One test per rule above, named for the rule, beside the tests the work list names.
+Each is proven able to fail by a mutation before it is trusted.
+
+1. `TestAWatchNamesItsDeadlineAndItsDefault`: no `--max` is exit 2 naming
+   `--max`; no `--on-deadline` is exit 2 naming `--on-deadline`; both missing is
+   one run naming both; a watch whose sources never change ends at `--max` with
+   exactly one `WAKE QUIET` line carrying `default=<word>` and the tail `deadline,
+   default taken`, exit 0. The clock is injected.
+2. `TestTenMinutesSilentIsOfflineOnce`: a bus checkout whose last commit by one
+   line is eleven minutes old prints one `WAKE LINE ... state=OFFLINE` with that
+   commit's stamp and sha; a second poll with nothing changed prints nothing for
+   that line and is not a change; a new commit by the line prints `state=BACK`
+   once; nine minutes is not offline.
+3. `TestTheEntryIntervalIsTheRunLength`: with `--interval 5s --entry-interval 8m`
+   over an injected sixteen-minute clock the bus is polled 192 times and the entry
+   twice; `--interval` missing is exit 2; `--entry` without `--entry-interval` is
+   exit 2.
+4. `TestASecondWatcherOnOneStateFileRefusesOnOneLine`: two watches over one
+   `--state`; the second prints one `WAKE REFUSED` line naming the pid and the
+   path, exit 2; the source tripwire finds no `pgrep`, no `ps`, no `/proc`, no
+   `os.TempDir` and no literal `/tmp` in the package.
+5. `TestWakeOutputIsBoundedAtTheLargestPlausibleState`: 200 notes, 50 entries,
+   100 reports and 20 lines changing in one poll print at most `4 * --max-lines +
+   10` lines, measured in lines and bytes on stdout plus stderr, and no printed
+   line contains a note's body or a report's contents.
+6. `TestWhatWokeYouIsNamed`: every `WAKE BUS`, `WAKE ENTRY`, `WAKE REPORT` and
+   `WAKE LINE` line in a mixed run carries its identity field, and `something
+   changed` appears nowhere on stdout or stderr.
+7. `TestEveryBusLineIsClassifiedAndCounted`: a bus transcript of twelve lines, one
+   of them `INBOX REFUSED`, yields `WAKE SOURCE bus read=12` with the three counts
+   summing to twelve and the `REFUSED` line relayed verbatim; a mutation that
+   drops one line turns the test red.
+8. `TestThreeFailedPollsEndTheWatchLoudly`: a bus that exits 1 three times in a
+   row ends the watch with `WAKE BROKEN source=bus failures=3`, exit 2; two
+   failures then a success is two `WAKE POLL` lines and the watch goes on to its
+   deadline.
+
 ## Known limits
 
 - **It cannot make the window act.** It returns, the harness wakes the session,
   and what the session does next is the session's. The lost-note failure this tool
   closes was never that a note went missing; it was that nobody came back to look.
 - **It watches three sources and no others.** No filesystem watch of arbitrary
-  trees, no log tailing, no process liveness, no schedule. A fourth source is a
+  trees, no log tailing, no process liveness, no schedule. `--line` is not a
+  fourth source: it is a view over the bus checkout's commits (rule 2). A fourth source is a
   spec change, and a flag that ran an arbitrary command each poll would make this
   a `cron` with a blocking call, which is the thing it replaces.
 - **Its view of a forge is `gh`'s.** Rate limits, authentication and a forge's own
@@ -460,10 +606,11 @@ a window told it never does not.
 - **No acting on a report.** `RESULT.md` is prose another line wrote, relayed as a
   path and a size. Nothing parses it, and nothing in it is an instruction.
 - **No exit code for *what* changed.** One bit of news in an exit status is a
-  grammar that cannot grow; the first token of the first line is the answer and is
+  grammar that cannot grow; the second token of the last line is the answer and is
   readable by a person as well as a scanner.
 - **No retry loop around a forge.** A failed poll is one `WAKE POLL` line on
-  stderr and the watch goes on, still bounded by the deadline. A failed poll on
+  stderr and the watch goes on, still bounded by the deadline. The third failed
+  poll in a row of one source ends the watch as `WAKE BROKEN` (rule 8). A failed poll on
   the *first* call is not special here, unlike `nova-bus wait`'s first fetch,
   because the unreadable state value is itself the news and the window gets it as
   a change.
@@ -522,6 +669,12 @@ shared packages used rather than re-spelled.
     paragraph, a `## nova-wake` section or a pointer to this file, and the README
     `### First run`. CONTRIBUTING says a wording change to a rule here is a rule
     change; this file is that rule.
+11. **`internal/wake/line.go`** — the `--line` view: `git log` on the bus checkout
+    under the timeout, the last sign per name, the `<sha>|OFFLINE` state value,
+    OFFLINE once and BACK once. Plus, in `main.go`: `--on-deadline` echoed on the
+    opening line and the verdict, `--entry-interval` with a per-source due time,
+    the pid in `<state>.lock`, the `WAKE SOURCE` counts, and the three-in-a-row
+    `WAKE BROKEN`. Tests: the eight in **Tests this spec demands**.
 
 ## What the prototype does that this spec forbids
 
@@ -569,3 +722,29 @@ be grateful to. These are the places it is **not** a model, each with the reason
     `oneline.TailBytes` and the `...+<dropped>B` mark exist for this.
 15. **`--prs` as bare numbers against one `--repo`.** An entry's name includes its
     repository.
+16. **One cadence for every source.** `INTERVAL=30` polls a bus that answers in
+    seconds and a CI run that answers in eight minutes at one rate: sixteen `gh`
+    calls per entry per run, learning nothing. Rule 3: `--interval` and
+    `--entry-interval`, no defaults.
+17. **A deadline with no default action.** `no change in 1200s` and the window has
+    to remember what it meant to do. Rule 1: `--on-deadline` is required and is
+    echoed on the verdict.
+18. **Scratch under `/tmp`.** `TMPD="${TMPDIR:-/tmp}/wake-on-change.$$"` holds
+    every poll's `gh` output. Rule 4: the only files are beside `--state`.
+19. **No way to tell a silent line from a quiet one.** The prototype watches
+    notes, checks and files, and a line that stopped writing all three looks
+    exactly like a line that is busy. Rule 2: `--line` and OFFLINE once.
+20. **A failing source that ends the run as quiet.** After the first `nova-bus
+    exit=N` line, every later failure is `(still failing)` under STANDING, and a
+    run in which the bus never answered ends with `no change in 1200s`. Rule 8:
+    three in a row is `WAKE BROKEN`, exit 2.
+21. **Lines read and never counted.** An unknown line is relayed, which is right,
+    but nothing says how many lines were read, so a bus that printed nothing and
+    a bus that printed twelve bookkeeping lines look the same. Rule 7: `WAKE
+    SOURCE bus read=<n>` and the counts add up.
+22. **A second state file under the same guessed directory.** `child-report.sh`,
+    the report-side prototype, keeps its triage watermark at
+    `$HOME/rowan-working/wake/triage.json` beside the watcher's `state.json`, both
+    reachable through `ROWAN_WORKING` and `TRIAGE_STATE` from the environment.
+    Its `--max 40` and `--since` are good ideas in the wrong place. Rule 4 and the
+    no-environment law: a report source's state is `--state` and nothing else.
