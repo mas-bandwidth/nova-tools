@@ -179,12 +179,25 @@ func TestAddSaysWhatNeedsReadNoMeansAndChecksTheNumber(t *testing.T) {
 	contains(t, stderr, "ADD NOTE")
 	contains(t, stderr, "needs_read=no")
 	contains(t, stderr, "--needs-read")
-	// A number no host could ever answer for is refused rather than queued forever.
-	exit, stdout, stderr := l.run("add", "--lane", l.lane, "--pr", "0")
-	if exit != 2 {
-		t.Fatalf("a pull request number is positive: exit %d\n%s\n%s", exit, stdout, stderr)
+	// A number no host could ever answer for is refused rather than queued forever, AND
+	// THE REFUSAL IS THE ONE FOR THAT MISTAKE: a flag nobody typed is a missing argument,
+	// a number typed and wrong is a wrong number, and the two sentences were behind one
+	// `*pr < 1` where the second could never print. Asserting only "--pr" could not tell.
+	for _, typed := range []string{"0", "-3"} {
+		exit, stdout, stderr := l.run("add", "--lane", l.lane, "--pr", typed)
+		if exit != 2 {
+			t.Fatalf("a pull request number is positive: --pr %s exit %d\n%s\n%s", typed, exit, stdout, stderr)
+		}
+		contains(t, stderr, "which is positive, got "+typed)
+		absent(t, stderr, "refusing to guess")
 	}
-	contains(t, stderr, "--pr")
+	// And a --pr nobody typed is the missing-argument sentence, not the number one.
+	exit, stdout, stderr := l.run("add", "--lane", l.lane)
+	if exit != 2 {
+		t.Fatalf("add with no --pr: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stderr, "refusing to guess")
+	absent(t, stderr, "which is positive")
 }
 
 // FG-7: `GATE OK ... in_lane=true` means "the ENTRY is in the lane", not "the merge object

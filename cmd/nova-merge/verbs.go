@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -194,9 +195,13 @@ func cmdAdd(args []string, stdout, stderr io.Writer, deps Deps, isBranch bool) i
 	f.check()
 	if isBranch {
 		f.require("branch", *branch, "the branch this lane is to land, as it is named at the host")
-	} else if *pr < 1 {
+	} else if !given(f.fs, "pr") {
 		f.problem("--pr is required and is the pull request's number; refusing to guess")
-	} else if !isBranch && *pr < 1 {
+	} else if *pr < 1 {
+		// REACHABLE, and it says a different thing: a flag nobody typed is a missing
+		// argument, and `--pr 0` or `--pr -3` is a number typed and wrong. Both were
+		// behind one `*pr < 1`, so the second sentence could never print, and the test
+		// that asserted only "--pr" could not tell the two apart.
 		f.problem(fmt.Sprintf("--pr is a pull request's number, which is positive, got %d; a number no host can answer for queues in this lane forever", *pr))
 	}
 	if !f.done(stderr) {
@@ -545,6 +550,18 @@ func foldInto(lane string, st *merge.State, recs *merge.Records, timeout time.Du
 		*st = *fresh
 	}
 	return pulled, folded.Problems, nil
+}
+
+// given reports whether the flag was typed at all, which is not the same question as
+// what its value is: a default is a value nobody chose.
+func given(fs *flag.FlagSet, name string) bool {
+	found := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == name {
+			found = true
+		}
+	})
+	return found
 }
 
 // foldRefused is the one answer rule 22 gives a verb whose pull or fold failed: a lock it
