@@ -2,6 +2,7 @@ package tokens
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -27,14 +28,45 @@ var claudeSuffixes = []string{".jsonl", ".output"}
 type claudeLine struct {
 	Timestamp string `json:"timestamp"`
 	Message   *struct {
-		ID      string                     `json:"id"`
-		Model   string                     `json:"model"`
-		Usage   map[string]json.RawMessage `json:"usage"`
-		Content []struct {
-			Type  string          `json:"type"`
-			Input json.RawMessage `json:"input"`
-		} `json:"content"`
+		ID    string                     `json:"id"`
+		Model string                     `json:"model"`
+		Usage map[string]json.RawMessage `json:"usage"`
+		// `message.content` is a STRING on a user turn and an ARRAY of blocks on an
+		// assistant turn, and both are valid transcript lines. Declaring it the array
+		// alone made every user turn a type mismatch -- valid JSON that json.Unmarshal
+		// refuses -- and the reader called those lines "not JSON": 1,260 of 1,278 files
+		// flagged on a clean bench, TOKENS UNREADABLE, exit 1, and a remedy nobody could
+		// act on (measured 2026-09-11). Raw here, decoded below only when it is an array.
+		Content json.RawMessage `json:"content"`
 	} `json:"message"`
+}
+
+// contentBlock is one block of an assistant turn's content array. Only `tool_use` carries
+// the input a path is found in.
+type contentBlock struct {
+	Type  string          `json:"type"`
+	Input json.RawMessage `json:"input"`
+}
+
+// toolInputs is every tool_use input in a message's content. A content that is a string,
+// a null, or any other shape has no tool blocks and is not an error: the line is a turn
+// this reader has nothing to attribute from, not a line it could not read.
+func toolInputs(raw json.RawMessage) []string {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return nil
+	}
+	var blocks []contentBlock
+	if err := json.Unmarshal(trimmed, &blocks); err != nil {
+		return nil
+	}
+	var inputs []string
+	for _, c := range blocks {
+		if c.Type == "tool_use" && len(c.Input) > 0 {
+			inputs = append(inputs, jsonStrings(c.Input)...)
+		}
+	}
+	return inputs
 }
 
 // usageKeys maps the transcript's own usage keys onto the five types. `reasoning` is
@@ -112,13 +144,7 @@ func ReadClaude(label, dir string, rules *Rules) *Source {
 			if line.Message.Model == syntheticModel {
 				continue
 			}
-			var inputs []string
-			for _, c := range line.Message.Content {
-				if c.Type == "tool_use" && len(c.Input) > 0 {
-					inputs = append(inputs, jsonStrings(c.Input)...)
-				}
-			}
-			repo := rules.AttributeInputs(inputs, prev)
+			repo := rules.AttributeInputs(toolInputs(line.Message.Content), prev)
 			prev = repo
 			if line.Message.ID == "" {
 				s.Stat.NoID++

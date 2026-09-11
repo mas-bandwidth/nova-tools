@@ -125,6 +125,44 @@ func TestRule3AnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 	wantContains(t, r.stdout, "TOKENS OK")
 }
 
+// TestRule3AValidLineIsNeverCountedAsNotJSON pins rule 3's word: "A source that cannot be
+// read is counted and printed, never skipped silently." The count is for lines that do
+// not parse as JSON. A Claude Code user turn writes
+// `"message":{"role":"user","content":"<a string>"}` -- valid JSON, and a type mismatch
+// against a reader that declares content an array of blocks. Measured 2026-09-11 on a
+// clean bench: 1,260 of 1,278 files flagged, TOKENS UNREADABLE, exit 1, and the remedy
+// printed ("open those files to this group") impossible to act on.
+func TestRule3AValidLineIsNeverCountedAsNotJSON(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	tr := mkdir(t, filepath.Join(dir, "tr"))
+	lines := []string{
+		// A user turn: content is a STRING.
+		`{"type":"user","timestamp":"2026-09-11T09:59:00Z","message":{"role":"user","content":"hello, read /x/schema/a.go"}}`,
+		// A user turn whose content is an array of blocks, no usage.
+		`{"type":"user","timestamp":"2026-09-11T09:59:30Z","message":{"role":"user","content":[{"type":"tool_result","content":"ok"}]}}`,
+		// An assistant turn: content is an ARRAY, and it carries the usage.
+		msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 100, "output_tokens": 10}, "/x/schema/a.go"),
+	}
+	write(t, filepath.Join(tr, "a.jsonl"), strings.Join(lines, "\n")+"\n")
+
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "glenn="+tr)
+	wantExit(t, r, 0)
+	wantContains(t, r.stdout, "TOKENS OK")
+	if strings.Contains(r.stderr, "badline") || strings.Contains(r.stderr, "UNREADABLE") {
+		t.Errorf("a valid line was counted as not JSON:\n%s", r.stderr)
+	}
+	wantContains(t, r.stdout, "unreadable=0")
+	wantContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "fable\tschema\t100\t10\t")
+
+	// And a line that really is not JSON is still counted, printed, and exit 1.
+	write(t, filepath.Join(tr, "b.jsonl"), "{not json\n")
+	r = invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "glenn="+tr)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "badline=1")
+	wantContains(t, r.stderr, "b.jsonl")
+}
+
 // ---------------------------------------------------------------- rule 4: a message is counted once, by its id
 
 func TestRule4AMessageIsCountedOnceByItsID(t *testing.T) {
