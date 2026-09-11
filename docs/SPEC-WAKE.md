@@ -36,6 +36,17 @@ A third failure was paid the same day and is in **The races** below, because it 
 a race rather than a lesson about clocks: the watcher's own test run consumed five
 bus notes that the window then had to be told about by hand.
 
+The four races and the rule that closes each, so the settlement of every
+surface is in one place (each is argued in **The races** and pinned by the
+test named):
+
+| the race | the rule that closes it | test |
+|---|---|---|
+| two watchers advancing one bus cursor | one advancing watcher per `(bus, as)`: an exclusive kernel lock, the second is `WAKE REFUSED` exit 2 naming the holder | 12 |
+| two runs writing one state file | one writer per `--state`: an exclusive kernel lock on `<state>.lock` for the whole call, the second is `WAKE REFUSED` exit 2 naming the holder and the fix | 4 |
+| mail consumed by a probe and not relayed | `--advance-cursor` off by default, only for the window's own `--as`, and only behind the print | 12 |
+| a harness kill between observing and printing | closed in the safe direction by ordering (rule 11): a kill anywhere leaves the entry pending, a repeated wake and never a lost one | 11 |
+
 ## The verb
 
 ```
@@ -515,7 +526,14 @@ a window told it never does not. The one residual is named: with
 `--advance-cursor`, a kill between `nova-bus inbox --advance` returning and the
 pending write of its output loses this tool's record that the cursor moved; the
 notes are still on the reader's `OPEN` list, which `nova-bus inbox` lists on
-every call, so the next poll observes them again.
+every call, so the next poll observes them again. That residual is not left to
+the prose: test 11 kills at exactly that point and asserts every note the
+advance consumed is printed by the next call. **This race is closed by
+ordering, not by refusal.** A refusal before the state write (lesson 63's
+shape) would be the wrong tool here: there is nothing to refuse, because the
+kill is the harness's and arrives at any instruction; the only choice the tool
+has is which side a kill lands on, and it chooses the repeated wake every
+time. The cost — a window can read one line twice — is in **Known limits**.
 
 ## The rules of the last two days
 
@@ -561,7 +579,12 @@ spec forbids**.
    report directories. Entries have their own cadence, `--entry-interval`,
    required whenever `--entry` is given, and it is the expected length of the
    hosted run: an entry is polled no more often than that. Both intervals have the
-   5s floor. The loop sleeps until the earliest due source, so a 5s bus interval
+   5s floor and neither has a default, which is the opposite of `--offline-after`
+   in rule 2 on purpose: an interval is a fact about one window's round trip
+   and only that window knows it, while ten minutes silent is the family's
+   rule and every window must agree about it. A duration gets a default here
+   only when a different number per window would be a bug. The loop sleeps
+   until the earliest due source, so a 5s bus interval
    beside an 8m entry interval polls the bus every 5s and the entry every 8m.
    (Amdahl, on Glenn's word: an 8-minute CI run deserves one check at 8 minutes,
    not eight checks at one minute. The prototype's 30-second default made sixteen
@@ -756,7 +779,12 @@ Each is proven able to fail by a mutation before it is trusted.
     in each case the next call prints every line the killed call had not
     marked and nothing it had; with an injected stdout that fails mid-write,
     no `printed=` mark is written for the failed line; a mutation that writes
-    `printed=` before the print turns the test red.
+    `printed=` before the print turns the test red; with `--advance-cursor`
+    and a fixture bus of five notes, the loop is killed with an injected kill
+    point between `nova-bus inbox --advance` returning and the observed
+    write, and the next call prints all five `WAKE BUS` lines — the residual
+    named in **The races** is a repeated wake, never a lost one; a mutation
+    that skips notes already on the reader's `OPEN` list turns the test red.
 12. `TestNewMailReachesTheCheckoutThroughTheAdvance`: a bare remote and two
     clones; a note is pushed from the other clone while one watcher runs alone
     with `--advance-cursor` and is relayed within two polls; the same without
@@ -780,6 +808,12 @@ Each is proven able to fail by a mutation before it is trusted.
   around. A check that the forge has not created yet is invisible, which is why
   the no-checks case is not final.
 - **`mtime:size`** is the report identity; see the limit named above.
+- **A line can be printed twice, never zero times.** A harness kill between
+  an item line reaching stdout and its `printed=` mark leaves the entry
+  pending, and the next call prints it again (**The races**, rule 11). The
+  duplicate is the price of never losing a wake, and it is deliberately not
+  refused away: there is no moment before the write at which a refusal would
+  mean anything, because the kill is not the tool's to see coming.
 - **Quiet is only as true as the sources.** `WAKE QUIET` means *these sources said
   nothing in this window*, not *nothing happened*. It is a report and not a
   guarantee, as `WAIT TIMEOUT` is — and without `--advance-cursor` it means
