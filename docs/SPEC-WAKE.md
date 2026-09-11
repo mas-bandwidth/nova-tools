@@ -702,11 +702,13 @@ spec forbids**.
    here with a default, because it is the family's rule and not a fact about one
    window: every line must agree about it, and it is the same number as
    `nova-board --stale`. The tool never repeats an OFFLINE line while nothing
-   changes: the state file holds `line:<name>` as `<sha>|OFFLINE`, and a later
-   poll with the same value prints nothing. A new sign from the line is a change
-   once, `state=BACK`. A line with no commit on the branch is `last=- commit=-`
-   and is OFFLINE at the first poll after the watch has run for
-   `--offline-after`. The sign is read with `git log` against the bus checkout,
+   changes: the state file holds `line:<name>` as `<sha>|<state>|<stamp>` — the
+   commit the judgement was made on, the word it produced, and that commit's
+   stamp, which is what `silent=` is computed from at print time rather than a
+   duration stored in the file — and a later poll with the same value prints
+   nothing. A new sign from the line is a change once, `state=BACK`. A line
+   with no commit on the branch is `last=- commit=-` and is OFFLINE at the
+   first poll after the watch has run for `--offline-after`. The sign is read with `git log` against the bus checkout,
    read-only, under `--gh-timeout`, and nothing else is read. (Glenn, 2026-09-10:
    reassign a silent line's items after about ten minutes. Johnny ran out of
    credits at 00:35Z and the board said he held his items for an hour.)
@@ -1240,9 +1242,9 @@ shared packages used rather than re-spelled.
     `### First run`. CONTRIBUTING says a wording change to a rule here is a rule
     change; this file is that rule.
 11. **`internal/wake/line.go`** — the `--line` view: `git log` on the bus checkout
-    under the timeout, the last sign per name, the `<sha>|OFFLINE` state value,
-    OFFLINE once and BACK once. Plus, in `main.go`: `--on-deadline` echoed on the
-    opening line and the verdict, `--entry-interval` with a per-source due time,
+    under the timeout, the last sign per name, the `<sha>|<state>|<stamp>`
+    state value, OFFLINE once and BACK once. Plus, in `main.go`:
+    `--on-deadline` echoed on the opening line and the verdict, `--entry-interval` with a per-source due time,
     the pid in `<state>.lock`, the `WAKE SOURCE` counts, and the three-in-a-row
     `WAKE BROKEN`. Tests: the eight in **Tests this spec demands**.
 12. **`internal/wake/serve.go`** — the `serve` loop: the fetch per interval,
