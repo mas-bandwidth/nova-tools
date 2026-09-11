@@ -133,6 +133,14 @@ is the day it was learned.
 9. **One file per day. A month is a sum of day files. The tool removes
    nothing.** There is no month file. `sum` reads day files and writes
    nothing. No verb deletes, truncates or trims any file, including any log.
+   The exception is a file THIS RUN makes, named here and nowhere else: the
+   fold's own `fold.lock`, the copy under `--scratch`, the fixed
+   `<day>.tsv.tmp` a day is written through, and, on a platform with no
+   flock, the lock sentinel the release removes. A file the tool was given is
+   never one of them, and the tripwire that enforces this searches for every
+   call that can empty a file -- `os.Remove`, `os.RemoveAll`, `os.Truncate`,
+   `.Truncate(`, `os.Create(`, `os.WriteFile(` -- carving out those four by
+   file, with the reason, and failing when a carve-out has gone stale.
    A file under `--out` that is not a day file and not the temp name is
    named by `check` and left alone.
 10. **A day that would shrink is refused.** Before writing a day file that

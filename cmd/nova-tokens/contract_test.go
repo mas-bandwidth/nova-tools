@@ -74,18 +74,53 @@ func pkgText(t *testing.T, pkg string) map[string]string {
 // Rule 9 and demanded test 8: this tool removes NOTHING. The prototype removed the old
 // month files on every real run and noted it in a list capped at six.
 func TestNothingInThisToolRemovesAFile(t *testing.T) {
+	// Rule 9 says "deletes, truncates or trims", and a tripwire that searches only for the
+	// three removal names is hollow for the middle word: `f.Truncate(0)` on the lock and
+	// `os.Create` on the scratch copy both truncate and both walked past it. Every call
+	// that can empty a file is searched for, and the four the tool is allowed are carved
+	// out here BY FILE, with the reason -- each one a file THIS RUN makes, never a file the
+	// tool was given.
+	emptiers := []string{"os.Remove", "os.RemoveAll", "os.Truncate", ".Truncate(", "os.Create(", "os.WriteFile("}
+	allowed := map[string][]string{
+		// The platform with no flock: the lock is an exclusive create and its release
+		// removes the sentinel this run made.
+		"internal/tokens/lock_other.go": {"os.Remove"},
+		// The fold's own lock file, whose whole body this run wrote.
+		"internal/tokens/lock.go": {".Truncate("},
+		// The copy under --scratch, made from the live database this run and read there;
+		// the live file is never opened for writing.
+		"internal/tokens/opencode.go": {"os.Create("},
+		// The fixed `<day>.tsv.tmp` a day is written through before the one rename, the
+		// name `check` steps over by rule 9's own last sentence.
+		"internal/tokens/dayfile.go": {"os.WriteFile("},
+		// The same, for the report `report` writes.
+		"cmd/nova-tokens/main.go": {"os.WriteFile("},
+	}
+	used := map[string]bool{}
 	for _, pkg := range []string{"internal/tokens", "cmd/nova-tokens"} {
 		for name, text := range pkgText(t, pkg) {
-			// The one exemption, by name and with its reason: on a platform with no
-			// flock the lock is an exclusive create, and its release removes the
-			// sentinel THIS RUN made. It is not a file the tool was given.
-			if pkg == "internal/tokens" && name == "lock_other.go" {
-				continue
-			}
-			for _, forbidden := range []string{"os.Remove", "os.RemoveAll", "os.Truncate"} {
-				if strings.Contains(text, forbidden) {
-					t.Errorf("%s/%s calls %s; this tool removes nothing -- not a month file, not a log, not a stray (rule 9)", pkg, name, forbidden)
+			path := pkg + "/" + name
+			for _, forbidden := range emptiers {
+				if !strings.Contains(text, forbidden) {
+					continue
 				}
+				ok := false
+				for _, a := range allowed[path] {
+					if a == forbidden {
+						ok, used[path+" "+forbidden] = true, true
+					}
+				}
+				if !ok {
+					t.Errorf("%s calls %s; this tool deletes, truncates and trims nothing -- not a month file, not a log, not a stray (rule 9). A file THIS RUN makes is carved out by name in this test and in the spec, or it is a bug", path, forbidden)
+				}
+			}
+		}
+	}
+	// A carve-out nothing uses any more is a hole left open in the tripwire.
+	for path, names := range allowed {
+		for _, n := range names {
+			if !used[path+" "+n] {
+				t.Errorf("%s no longer calls %s; drop the carve-out rather than leaving the tripwire open on that file (rule 9)", path, n)
 			}
 		}
 	}
