@@ -18,6 +18,34 @@ import (
 // and the git is real -- the lease, the fast-forward and the two-parent merge are
 // properties of git and a fake git would prove none of them.
 
+// TestMain gives every test in this package THE ENVIRONMENT A CI RUNNER HAS: a git with
+// no identity anywhere -- no global config, no system config, no ambient EMAIL, and
+// user.useConfigOnly so git may not guess one from the account either.
+//
+// On a laptop git guesses a name from the account and every commit the tool writes works
+// by accident; on the Ubuntu leg of #57 it could not, and `git merge --no-ff` died with
+// "Committer identity unknown". The fixture's own commits pass their identity explicitly
+// (see lab.git), so what is left under test is whether THE TOOL carries its own.
+func TestMain(m *testing.M) {
+	dir, err := os.MkdirTemp("", "nova-merge-gitconfig")
+	if err != nil {
+		panic(err)
+	}
+	cfg := filepath.Join(dir, "gitconfig")
+	if err := os.WriteFile(cfg, []byte("[user]\n\tuseConfigOnly = true\n"), 0o644); err != nil {
+		panic(err)
+	}
+	os.Setenv("GIT_CONFIG_GLOBAL", cfg)
+	os.Setenv("GIT_CONFIG_SYSTEM", filepath.Join(dir, "no-such-gitconfig"))
+	os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	for _, name := range []string{"EMAIL", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"} {
+		os.Unsetenv(name)
+	}
+	code := m.Run()
+	os.RemoveAll(dir)
+	os.Exit(code)
+}
+
 type lab struct {
 	t      *testing.T
 	dir    string

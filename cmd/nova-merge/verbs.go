@@ -167,8 +167,7 @@ func checkout(lane, url, branch string, timeout time.Duration, deps Deps) (joine
 	if _, err := g.Run("add", "--", ".gitignore"); err != nil {
 		return false, err
 	}
-	if _, err := g.Run("-c", "user.name=nova-merge", "-c", "user.email=nova-merge@localhost",
-		"commit", "-m", "nova-merge: the lane's record branch"); err != nil {
+	if _, err := g.Run(merge.Identity("commit", "-m", "nova-merge: the lane's record branch")...); err != nil {
 		return false, err
 	}
 	if _, err := g.Run("push", "origin", "HEAD:refs/heads/"+branch); err != nil {

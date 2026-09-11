@@ -52,7 +52,7 @@ func BuildIntegration(g *Git, entry, base, head, message string) (*Built, error)
 	if _, err := g.Run("checkout", "--detach", base); err != nil {
 		return nil, err
 	}
-	if _, err := g.Run("merge", "--no-ff", "-m", message, head); err != nil {
+	if _, err := g.Run(Identity("merge", "--no-ff", "-m", message, head)...); err != nil {
 		files, listErr := ConflictFiles(g)
 		if listErr != nil {
 			return nil, listErr

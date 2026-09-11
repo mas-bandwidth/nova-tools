@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -300,4 +301,90 @@ func TestEveryRunnerCallSiteIsGuardedFirst(t *testing.T) {
 	if sites < 2 {
 		t.Fatalf("this tripwire found %d call sites reaching a Runner; it was looking in the wrong place and would have passed by checking nothing", sites)
 	}
+}
+
+// A commit object this tool writes carries nova-merge's own identity, on the command.
+//
+// The Ubuntu leg of #57 went red on 2026-09-11 with "Committer identity unknown" from
+// `git merge --no-ff`: the two commit sites carried `-c user.name=... -c user.email=...`
+// and the two merge sites did not, so the lane worked on every machine whose git could
+// guess a name from the account and died on a runner whose checkout has no gitconfig at
+// all. The identity is now one helper, and this reads the source so a third writing site
+// added later is red here rather than on one operating system.
+func TestEveryCommitWritingCommandCarriesTheIdentity(t *testing.T) {
+	fset := token.NewFileSet()
+	checked := 0
+	for name := range packageSource(t) {
+		f, err := parser.ParseFile(fset, name, nil, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ast.Inspect(f, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || (sel.Sel.Name != "Run" && sel.Sel.Name != "Out") {
+				return true
+			}
+			args := call.Args
+			identity := false
+			if len(args) == 1 {
+				if inner, ok := args[0].(*ast.CallExpr); ok {
+					if id, ok := inner.Fun.(*ast.Ident); ok && id.Name == "Identity" {
+						identity, args = true, inner.Args
+					}
+				}
+			}
+			words := literals(args)
+			if len(words) == 0 || !writesACommit(words) {
+				return true
+			}
+			checked++
+			if !identity {
+				t.Errorf("%s:%d runs `git %s` without merge.Identity; a machine with no git identity -- every CI runner -- answers \"Committer identity unknown\" and the pass dies after the entry is already checked out",
+					name, fset.Position(call.Pos()).Line, strings.Join(words, " "))
+			}
+			return true
+		})
+	}
+	if checked == 0 {
+		t.Fatal("no commit-writing git command found in this package; this test was looking for the wrong shape and would have passed by checking nothing")
+	}
+}
+
+// literals returns the leading string literals of an argument list, which is how every
+// git command in this package starts.
+func literals(args []ast.Expr) []string {
+	out := []string(nil)
+	for _, a := range args {
+		lit, ok := a.(*ast.BasicLit)
+		if !ok || lit.Kind != token.STRING {
+			break
+		}
+		value, err := strconv.Unquote(lit.Value)
+		if err != nil {
+			break
+		}
+		out = append(out, value)
+	}
+	return out
+}
+
+// writesACommit reports whether the command makes a commit object. `merge --abort` and
+// `merge --ff-only` move a ref and write none.
+func writesACommit(words []string) bool {
+	switch words[0] {
+	case "commit":
+		return true
+	case "merge":
+		for _, w := range words[1:] {
+			if w == "--abort" || w == "--ff-only" {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }

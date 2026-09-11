@@ -282,8 +282,7 @@ func (r *Records) flush() error {
 			if r.confirm(items) {
 				return r.deliveredOK(items)
 			}
-		} else if _, err := r.Git.Run("-c", "user.name=nova-merge", "-c", "user.email=nova-merge@localhost",
-			"commit", "-m", "nova-merge: "+strings.Join(paths, " ")); err != nil {
+		} else if _, err := r.Git.Run(Identity("commit", "-m", "nova-merge: "+strings.Join(paths, " "))...); err != nil {
 			lastErr = err
 			r.backoff(round)
 			continue

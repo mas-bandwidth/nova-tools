@@ -109,6 +109,22 @@ func (g *Git) Run(args ...string) (string, error) {
 	return out, nil
 }
 
+// Identity puts NOVA-MERGE'S OWN COMMITTER IDENTITY in front of a git command that
+// writes a commit object -- commit, and merge --no-ff.
+//
+// The lane is a robot on a machine that may have no git identity at all: a CI runner's
+// checkout has no ~/.gitconfig, git cannot guess a name from the account, and `git merge
+// --no-ff` there dies with "Committer identity unknown" after the entry was already
+// checked out. The identity is on the command rather than in a config the tool writes,
+// because the tool never edits configuration it does not own, and a commit the lane made
+// should say the lane made it wherever it ran.
+//
+// Every call site that can write a commit object goes through here; the source tripwire
+// TestEveryCommitWritingCommandCarriesTheIdentity fails a new one that does not.
+func Identity(args ...string) []string {
+	return append([]string{"-c", "user.name=nova-merge", "-c", "user.email=nova-merge@localhost"}, args...)
+}
+
 // Out is Run with the output trimmed, for the many commands whose answer is one token.
 func (g *Git) Out(args ...string) (string, error) {
 	out, err := g.Run(args...)

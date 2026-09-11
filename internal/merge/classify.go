@@ -223,7 +223,7 @@ func (p *Pass) remerge(e *Entry, pr PR, baseSHA string, res *Result) Classificat
 	var pushErr error
 	files := []string(nil)
 	result := "clean"
-	if _, err := p.Clone.Run("merge", "--no-ff", "-m", "Merge "+p.State.Base+" into "+pr.HeadRef, baseSHA); err != nil {
+	if _, err := p.Clone.Run(Identity("merge", "--no-ff", "-m", "Merge "+p.State.Base+" into "+pr.HeadRef, baseSHA)...); err != nil {
 		var listErr error
 		files, listErr = ConflictFiles(p.Clone)
 		if listErr != nil || len(files) == 0 {
