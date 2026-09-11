@@ -165,13 +165,9 @@ func TestNothingUnderDoneOrFailedIsOpened(t *testing.T) {
 	out := mkdir(t, filepath.Join(dir, "out"))
 	pool := mkdir(t, filepath.Join(dir, "pool"))
 	swarmUsage(t, pool, "j1", swarmRow("j1", "1", "-", "m", "schema", "2026-09-11T10:00:00Z", "1", "2", "3", "4", "5"))
-	secret := write(t, filepath.Join(pool, "done", "j2", "usage.tsv"), "nothing here may be opened\n")
-	if err := os.Chmod(secret, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(secret, 0o644)
+	makeUnreadable(t, write(t, filepath.Join(pool, "done", "j2", "usage.tsv"), "nothing here may be opened\n"))
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--swarm", "d="+pool)
-	// A mode-000 file under done/ would be one TOKENS UNREADABLE line if it were opened.
+	// An unreadable file under done/ would be one TOKENS UNREADABLE line if it were opened.
 	wantExit(t, r, 0)
 	wantNotContains(t, r.all(), "UNREADABLE")
 	wantContains(t, r.stdout, "nousage=1")
@@ -283,19 +279,12 @@ func TestTwoSourcesOverOneTreeAreNamedInTheRemedy(t *testing.T) {
 // unreadable and then returned 0 whenever any line printed, so a friend pasted a partial
 // day onto the bus under REPORT OK.
 func TestReportWithOneUnreadableSourceExitsOne(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads a mode-000 file")
-	}
 	dir := t.TempDir()
 	repos := reposFile(t, dir)
 	good := mkdir(t, filepath.Join(dir, "good"))
 	write(t, filepath.Join(good, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "f", map[string]int{"input_tokens": 3}, "/x/schema/a.go")+"\n")
 	bad := mkdir(t, filepath.Join(dir, "bad"))
-	f := write(t, filepath.Join(bad, "x.jsonl"), "{}\n")
-	if err := os.Chmod(f, 0o000); err != nil {
-		t.Fatal(err)
-	}
-	defer os.Chmod(f, 0o644)
+	makeUnreadable(t, write(t, filepath.Join(bad, "x.jsonl"), "{}\n"))
 
 	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos,
 		"--claude", "g="+good, "--claude", "b="+bad)

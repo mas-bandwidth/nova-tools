@@ -108,18 +108,13 @@ func TestRule2EveryRowNamesItsSources(t *testing.T) {
 // ---------------------------------------------------------------- rule 3: an unreadable source is counted, printed, exit 1
 
 func TestRule3AnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("root reads a mode-000 file, so the refusal this pins cannot happen")
-	}
 	dir := t.TempDir()
 	out := mkdir(t, filepath.Join(dir, "out"))
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	repos := reposFile(t, dir)
 	write(t, filepath.Join(tr, "good.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 100}, "/x/schema/a.go")+"\n")
 	bad := write(t, filepath.Join(tr, "bad.jsonl"), "{}\n")
-	if err := os.Chmod(bad, 0o000); err != nil {
-		t.Fatal(err)
-	}
+	release := makeUnreadable(t, bad)
 
 	r := invoke(t, "fold", "--out", out, "--day", "2026-09-11", "--repos", repos, "--claude", "glenn="+tr)
 	wantExit(t, r, 1)
@@ -133,6 +128,7 @@ func TestRule3AnUnreadableSourceIsCountedAndPrintedAndExitsOne(t *testing.T) {
 	}
 
 	// Without the unreadable file the same run is TOKENS OK, exit 0.
+	release() // windows holds the file open to make it unreadable, and an open file is undeletable
 	if err := os.Remove(bad); err != nil {
 		t.Fatal(err)
 	}
@@ -816,7 +812,10 @@ func TestRule16And19TheDatabaseIsCopiedAndQueriedReadOnlyUnderATimeout(t *testin
 	}
 	for _, line := range strings.Split(strings.TrimSpace(argv), "\n") {
 		for _, tok := range strings.Fields(line) {
-			if strings.HasPrefix(tok, "/") && !strings.HasPrefix(tok, scratch) {
+			// filepath.IsAbs, not a leading slash: on windows an absolute path starts
+			// with a drive letter, and the leading-slash reading made this clause
+			// vacuous there.
+			if filepath.IsAbs(tok) && !strings.HasPrefix(tok, scratch) {
 				t.Errorf("sqlite3 was pointed at %q, outside --scratch", tok)
 			}
 		}
@@ -840,11 +839,7 @@ func TestRule19ASubprocessPastTheTimeoutIsUnreadableAndTheFoldGoesOn(t *testing.
 	out := mkdir(t, filepath.Join(dir, "out"))
 	scratch := mkdir(t, filepath.Join(dir, "scratch"))
 	db := write(t, filepath.Join(dir, "opencode.db"), "SQLite format 3\x00\n")
-	bin := mkdir(t, filepath.Join(dir, "bin"))
-	if err := os.WriteFile(filepath.Join(bin, "sqlite3"), []byte("#!/bin/sh\nsleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	fakeSqlite3Sleeping(t)
 	tr := mkdir(t, filepath.Join(dir, "tr"))
 	write(t, filepath.Join(tr, "a.jsonl"), msg("m1", "2026-09-11T10:00:00Z", "fable", map[string]int{"input_tokens": 3}, "/x/schema/a.go")+"\n")
 
@@ -1037,12 +1032,9 @@ func TestRule20ReportRefusesAndSupersedes(t *testing.T) {
 	note := write(t, filepath.Join(dir, "note.txt"), "what was there before\n")
 
 	// A report whose every source is unreadable prints nothing and says so.
-	if os.Geteuid() != 0 {
+	{
 		bad := mkdir(t, filepath.Join(dir, "bad"))
-		f := write(t, filepath.Join(bad, "x.jsonl"), "{}\n")
-		if err := os.Chmod(f, 0o000); err != nil {
-			t.Fatal(err)
-		}
+		release := makeUnreadable(t, write(t, filepath.Join(bad, "x.jsonl"), "{}\n"))
 		r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+bad, "--note", note)
 		wantExit(t, r, 1)
 		if r.stdout != "" {
@@ -1056,7 +1048,7 @@ func TestRule20ReportRefusesAndSupersedes(t *testing.T) {
 		if _, err := os.Stat(note + ".tmp"); err == nil {
 			t.Error("a failed report left a .tmp beside the note")
 		}
-		os.Chmod(f, 0o644)
+		release()
 	}
 
 	r := invoke(t, "report", "--who", "emma", "--day", "2026-09-11", "--repos", repos, "--claude", "g="+tr,

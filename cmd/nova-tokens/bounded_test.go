@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -63,9 +62,6 @@ func countKinds(out string) (more int, byToken map[string]int) {
 // largestFoldState builds ten declared sources, every listing overflowing.
 func largestFoldState(t *testing.T) (tmp, out string, args []string) {
 	t.Helper()
-	if os.Geteuid() == 0 {
-		t.Skip("root reads a mode-000 file, so the unreadable listing cannot overflow")
-	}
 	dir := t.TempDir()
 	out = mkdir(t, filepath.Join(dir, "out"))
 	repos := reposFile(t, dir)
@@ -85,11 +81,7 @@ func largestFoldState(t *testing.T) (tmp, out string, args []string) {
 		write(t, filepath.Join(td, "window.jsonl"), strings.Join(body, "\n")+"\n")
 		if d == 0 {
 			for i := range overflow {
-				bad := write(t, filepath.Join(td, fmt.Sprintf("locked-%02d.jsonl", i)), "{}\n")
-				if err := os.Chmod(bad, 0o000); err != nil {
-					t.Fatal(err)
-				}
-				t.Cleanup(func() { os.Chmod(bad, 0o644) })
+				makeUnreadable(t, write(t, filepath.Join(td, fmt.Sprintf("locked-%02d.jsonl", i)), "{}\n"))
 			}
 		}
 	}

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -160,34 +161,104 @@ func msg(id, stamp, model string, usage map[string]int, paths ...string) string 
 // would be a fixture only this code could read.
 func fakeSqlite3(t *testing.T, sessions, messages, parts string) (logPath string) {
 	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("the fake sqlite3 is a shell script; the OpenCode source is exercised on unix here")
-	}
-	dir := t.TempDir()
-	logPath = filepath.Join(dir, "argv.log")
-	answers := filepath.Join(dir, "answers")
-	mkdir(t, answers)
+	answers := mkdir(t, filepath.Join(t.TempDir(), "answers"))
 	write(t, filepath.Join(answers, "sessions"), sessions)
 	write(t, filepath.Join(answers, "messages"), messages)
 	write(t, filepath.Join(answers, "parts"), parts)
-	bin := mkdir(t, filepath.Join(dir, "bin"))
-	script := `#!/bin/sh
-echo "$@" >> ` + logPath + `
-last=""
-for a in "$@"; do last="$a"; done
-case "$last" in
-  *FROM\ session*) cat ` + answers + `/sessions ;;
-  *FROM\ message*) cat ` + answers + `/messages ;;
-  *FROM\ part*) cat ` + answers + `/parts ;;
-  *) : ;;
-esac
-`
-	p := filepath.Join(bin, "sqlite3")
-	if err := os.WriteFile(p, []byte(script), 0o755); err != nil {
+	fakeSqlite3OnPath(t, answers)
+	return filepath.Join(answers, fakeArgvLog)
+}
+
+// fakeSqlite3Sleeping puts a stub sqlite3 on PATH that answers nothing and outlives any
+// timeout a test would set: the subprocess rule 19 is about.
+func fakeSqlite3Sleeping(t *testing.T) {
+	t.Helper()
+	fakeSqlite3OnPath(t, fakeSleepMode)
+}
+
+// The fake sqlite3 is THIS TEST BINARY under another name, re-entered through TestMain.
+//
+// It used to be a /bin/sh script, which Windows has no way to execute and no way to find
+// without the .exe suffix: every OpenCode test skipped there, and rule 19's own stub was
+// not even a program, so the fold refused ("sqlite3 is not on PATH") instead of timing out
+// and the rule went untested on a whole platform (measured in CI 2026-09-11). A copy of
+// the test binary is a real executable on all three, and the behaviour is written once, in
+// Go, rather than twice in two shell dialects.
+const (
+	fakeSqlite3Env = "NOVA_TOKENS_FAKE_SQLITE3"
+	fakeSleepMode  = "sleep"
+	fakeArgvLog    = "argv.log"
+	fakeSleep      = 30 * time.Second
+)
+
+// fakeSqlite3OnPath copies the test binary to <tmp>/bin/sqlite3[.exe], puts that directory
+// first on PATH, and hands the copy its mode through the environment.
+func fakeSqlite3OnPath(t *testing.T, mode string) {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bin := mkdir(t, filepath.Join(t.TempDir(), "bin"))
+	name := "sqlite3"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(bin, name), raw, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
-	return logPath
+	t.Setenv(fakeSqlite3Env, mode)
+}
+
+// TestMain is the fake's other half: with the mode set in the environment this binary is
+// not a test run at all but the stub sqlite3 the run under test just executed.
+func TestMain(m *testing.M) {
+	if mode := os.Getenv(fakeSqlite3Env); mode != "" {
+		os.Exit(fakeSqlite3Main(mode, os.Args[1:], os.Stdout))
+	}
+	os.Exit(m.Run())
+}
+
+// fakeSqlite3Main records the invocation and answers the last argument, which is the SQL.
+func fakeSqlite3Main(mode string, args []string, stdout io.Writer) int {
+	if mode == fakeSleepMode {
+		time.Sleep(fakeSleep)
+		return 0
+	}
+	f, err := os.OpenFile(filepath.Join(mode, fakeArgvLog), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	fmt.Fprintln(f, strings.Join(args, " "))
+	f.Close()
+	if len(args) == 0 {
+		return 0
+	}
+	sql := args[len(args)-1]
+	answer := ""
+	switch {
+	case strings.Contains(sql, "FROM session"):
+		answer = "sessions"
+	case strings.Contains(sql, "FROM message"):
+		answer = "messages"
+	case strings.Contains(sql, "FROM part"):
+		answer = "parts"
+	default:
+		return 0
+	}
+	raw, err := os.ReadFile(filepath.Join(mode, answer))
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	stdout.Write(raw)
+	return 0
 }
 
 // ocSession is one row of `sqlite3 -json` over the sessions query.
