@@ -45,7 +45,7 @@ func (p *Pass) Packet(who string, only string, all bool) int {
 		fmt.Fprintf(p.Stdout, "PACKET ENTRY entry=%s head=%s last_read=%s range=%s holds=%d gate=%s checks=%s url=%s\n",
 			oneline.Field(e.ID()), oneline.Field(dashIfEmpty(Short(e.OID))),
 			oneline.Field(dashIfEmpty(Short(last))), oneline.Field(rng), len(holds),
-			c.Gate.Kind, c.Checks.Field(), oneline.Field(dashIfEmpty(c.URL)))
+			dashIfEmpty(c.Gate.Kind), c.Checks.Field(), oneline.Field(dashIfEmpty(c.URL)))
 		for _, h := range holds {
 			holdList.Line(fmt.Sprintf("PACKET HOLD who=%s head=%s: %s",
 				oneline.Field(h.Who), oneline.Field(Short(h.Head)), oneline.Cap(h.Note, oneline.TailBytes)))
@@ -83,9 +83,13 @@ func lastReadBy(e *Entry, who string) string {
 	return best
 }
 
-// unresolvedHolds is the findings a reader must act on: per (who, head) the newest
-// record, kept only where it is a hold. A hold the same line later approved is resolved
-// and is not in the packet.
+// unresolvedHolds is the FINDINGS a reader must act on, and a finding is a hold record
+// rather than a reader: two holds recorded by one line on one head are two things to fix,
+// and a packet that folded them to one would hand the reader half of what was said.
+//
+// What the fold does decide is whether they are still open: per (who, head) the newest
+// record settles the pair, so a line that later recorded an approve for that head has
+// resolved every hold it left there, and none of them is in the packet.
 func unresolvedHolds(e *Entry) []Read {
 	newest := map[string]Read{}
 	for _, r := range e.Reads {
@@ -96,8 +100,11 @@ func unresolvedHolds(e *Entry) []Read {
 		}
 	}
 	var out []Read
-	for _, r := range newest {
-		if r.Verdict == "hold" {
+	for _, r := range e.Reads {
+		if r.Verdict != "hold" {
+			continue
+		}
+		if settled := newest[r.Who+"\x00"+r.Head]; settled.Verdict == "hold" {
 			out = append(out, r)
 		}
 	}

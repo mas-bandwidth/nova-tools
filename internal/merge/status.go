@@ -36,7 +36,7 @@ func (p *Pass) Status(reads string) int {
 		c := p.plan(e, baseSHA)
 		list.Line(fmt.Sprintf("STATUS ENTRY kind=%s entry=%s head=%s checks=%s read=%s stale=%d gate=%s state=%s last=%s",
 			e.Kind(), oneline.Field(e.ID()), oneline.Field(dashIfEmpty(Short(e.OID))), c.Checks.Field(),
-			c.Reads.Field(), c.Reads.Stale, c.Gate.Kind, c.State, oneline.Field(dashIfEmpty(e.Last))))
+			c.Reads.Field(), c.Reads.Stale, dashIfEmpty(c.Gate.Kind), c.State, oneline.Field(dashIfEmpty(e.Last))))
 		approves += c.Reads.Approves
 		holds += c.Reads.Holds
 		switch c.State {

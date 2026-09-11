@@ -84,6 +84,14 @@ func (p *Pass) Run(n int) *Result {
 		n, oneline.Field(p.Now.UTC().Format(Stamp)), oneline.Field(p.Build), p.Pulled,
 		oneline.Field(dashIfEmpty(p.PlannedRed)))
 
+	// THE FOLD REFUSES, IT NEVER SKIPS. An unreadable record file is preserved untouched
+	// and said out loud, because the file nobody could read may be the hold or the newer
+	// red -- a malformed HOLD beside valid approvals once vanished from the decision, and
+	// a printed NOTE does not make that safe.
+	for _, pr := range p.Problems {
+		fmt.Fprintf(p.Stderr, "FOLD REFUSED file=%s: %s\n",
+			oneline.Field(pr.File), oneline.Escape(oneline.Cap(pr.Reason, oneline.TailBytes)))
+	}
 	// A record file whose path names no entry stops the pass before any entry is read:
 	// the scope is indeterminate, so there is no entry to block instead.
 	for _, pr := range p.Problems {
@@ -196,7 +204,7 @@ func (p *Pass) walk(baseSHA string, res *Result) {
 		st := p.classify(e, baseSHA, res)
 		list.Line(fmt.Sprintf("RUN ENTRY entry=%s head=%s checks=%s read=%s gate=%s state=%s",
 			oneline.Field(e.ID()), oneline.Field(dashIfEmpty(Short(e.OID))), st.Checks.Field(),
-			st.Reads.Field(), st.Gate.Kind, st.State))
+			st.Reads.Field(), dashIfEmpty(st.Gate.Kind), st.State))
 		switch st.State {
 		case StateMergeableGreen:
 			if p.merge(e, st, baseSHA, res) {

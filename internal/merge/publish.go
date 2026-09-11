@@ -191,7 +191,7 @@ func (p *Pass) survey(res *Result) *Result {
 		pos++
 		st := p.plan(e, baseSHA)
 		list.Line(fmt.Sprintf("DRY PLAN pos=%d entry=%s admitted=%s gate=%s read=%s",
-			pos, oneline.Field(e.ID()), oneline.Field(dashIfEmpty(st.Admitted)), st.Gate.Kind, st.Reads.Field()))
+			pos, oneline.Field(e.ID()), oneline.Field(dashIfEmpty(st.Admitted)), dashIfEmpty(st.Gate.Kind), st.Reads.Field()))
 		switch st.State {
 		case StateMergeableGreen:
 			if would == "-" {
