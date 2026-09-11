@@ -1558,3 +1558,88 @@ func TestEveryVerbRefusesAPositionalArgument(t *testing.T) {
 		wantContains(t, r.stderr, "extra")
 	}
 }
+
+// TestAWholeNoteRefusalCarriesTheSubjectsFileLine finishes what the body-line fix started:
+// `line=` is the line in the FILE for every UNPARSED line, not only the ones that come
+// from a body. A refused trailer, a refused predecessor set and a cycle each refuse the
+// note at its Subject:, and all three printed line=1 while the same run numbered a prose
+// line in the same file correctly.
+func TestAWholeNoteRefusalCarriesTheSubjectsFileLine(t *testing.T) {
+	// 1 heading, 2 blank, 3 From, 4 To, 5 Date, 6 Id, 7 Subject, 8 blank, 9 body.
+	note := func(subject string) string {
+		return strings.Join([]string{
+			"# tokens 2026-09-11", "",
+			"From: Emma", "To: Rowan", "Date: " + busDate, "Id: emma-00000000000f", "Subject: " + subject, "",
+			"2026-09-11\temma\tg\tschema\tinput\t900", "",
+		}, "\n")
+	}
+	for _, tc := range []struct{ name, subject, want string }{
+		{"a duplicate predecessor", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b supersedes=emma-000000000001,emma-000000000001", "twice"},
+		{"a predecessor in another lane", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b supersedes=bo-000000000001", "another lane"},
+		{"a cycle", "tokens 2026-09-11 at=2026-09-11T22:00:00Z build=b supersedes=emma-00000000000f", "cycle"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			out := mkdir(t, filepath.Join(dir, "out"))
+			bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma", "bo")
+			write(t, filepath.Join(bus, "from-emma", "z.md"), note(tc.subject))
+			busNote(t, bus, "emma", "a.md", "emma-000000000001", "tokens 2026-09-11", busDate,
+				"2026-09-11\temma\tg\tschema\tinput\t100\n")
+			busNote(t, bus, "bo", "x.md", "bo-000000000001", "tokens 2026-09-11", busDate,
+				"2026-09-11\tbo\tg\tschema\tinput\t1\n")
+			r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
+			wantExit(t, r, 1)
+			wantContains(t, strings.ToLower(r.stderr), tc.want)
+			wantContains(t, r.stderr, "note=emma-00000000000f line=7")
+			wantNotContains(t, read(t, filepath.Join(out, "2026-09-11.tsv")), "\t900\t")
+		})
+	}
+}
+
+// TestAProviderUnparsedLineIsTheLineInTheFile: the comment-stripped view is not the file.
+// The `# timezone:` declaration every zoned export must carry is dropped before the CSV
+// reader sees it, so the record index was one short from the first row onward -- and a
+// quoted field holding a newline made it drift further with every one.
+func TestAProviderUnparsedLineIsTheLineInTheFile(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	x := write(t, filepath.Join(dir, "xai.csv"), strings.Join([]string{
+		"# timezone: America/Los_Angeles", // 1
+		"date,model,input",                // 2
+		"2026-09-11,grok-4,5",             // 3
+		"not-a-day,grok-4,6",              // 4
+		"",
+	}, "\n"))
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--provider", "xai:johnny="+x)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "line=4")
+	wantContains(t, r.stderr, "not-a-day")
+
+	// A field carrying a newline is one record over two file lines, and the record after
+	// it is still numbered by the file.
+	g := write(t, filepath.Join(dir, "google.csv"), strings.Join([]string{
+		"timestamp,model,input_tokens",           // 1
+		"2026-09-11T10:00:00Z,\"gemini\n2.5\",1", // 2-3
+		"nope,gemini,2",                          // 4
+		"",
+	}, "\n"))
+	r = invoke(t, "fold", "--out", mkdir(t, filepath.Join(dir, "out2")), "--all",
+		"--repos", reposFile(t, dir), "--provider", "google:emma="+g)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "line=4")
+}
+
+// TestALaneThatFoldedNothingPrintsADashForReports: every field of the source line has a
+// value. A lane whose only note is a near miss, or whose day is a conflict, reports no
+// type at all and printed `reports= day_basis=utc` -- a field with nothing in it.
+func TestALaneThatFoldedNothingPrintsADashForReports(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	bus := busDir(t, mkdir(t, filepath.Join(dir, "bus")), "emma")
+	busNote(t, bus, "emma", "near.md", "emma-00000000000a", "tokens 2026-09-11 (rough)", busDate,
+		"2026-09-11\temma\tg\tschema\tinput\t100\n")
+	r := invoke(t, "fold", "--out", out, "--all", "--repos", reposFile(t, dir), "--bus", bus)
+	wantExit(t, r, 1)
+	wantContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "reports=-")
+	wantNotContains(t, lineWith(r.stdout, "TOKENS SOURCE"), "reports= ")
+}

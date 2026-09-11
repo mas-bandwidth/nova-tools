@@ -167,16 +167,20 @@ func nearMissSubject(subject string) (string, bool) {
 // note is one tokens note on the way to being folded.
 type note struct {
 	lane, path, id string
-	subject        parsedSubject
-	dateLine       int
-	dead           *Unparsed // the whole note is refused; no line of it folds
-	lineErrs       []Unparsed
-	msgs           []Message
-	rough          int
-	comments       int
-	redated        int
-	touched        []string
-	zones          map[string]bool
+	// subjectLine is where the Subject: header is IN THE FILE. A refusal of the whole
+	// note is a refusal of that line, and printing line=1 for it while the same run
+	// numbered a prose body line correctly is the grammar's line= meaning two things.
+	subjectLine int
+	subject     parsedSubject
+	dateLine    int
+	dead        *Unparsed // the whole note is refused; no line of it folds
+	lineErrs    []Unparsed
+	msgs        []Message
+	rough       int
+	comments    int
+	redated     int
+	touched     []string
+	zones       map[string]bool
 }
 
 // clean is a note validated WHOLE — header, Date:, every body line — which is what a
@@ -303,7 +307,8 @@ func readNote(lane, path, text string, rules *Rules, at time.Time) *note {
 				"nova-tokens report --who <you> --day <day> --note <file> writes one"}
 		return n
 	}
-	n := &note{lane: lane, path: path, id: header["Id"], subject: subject, zones: map[string]bool{}}
+	n := &note{lane: lane, path: path, id: header["Id"], subject: subject, zones: map[string]bool{},
+		subjectLine: headerLines["Subject"]}
 	if n.id == "" {
 		n.id = filepath.Base(path)
 	}
@@ -323,7 +328,7 @@ func readNote(lane, path, text string, rules *Rules, at time.Time) *note {
 		}
 	}
 	if subject.badSet != "" && n.dead == nil {
-		n.dead = &Unparsed{Label: label, Note: n.id, Line: 1, Text: subject.badSet + "; send a correction whose subject carries supersedes=<id>"}
+		n.dead = &Unparsed{Label: label, Note: n.id, Line: n.subjectLine, Text: subject.badSet + "; send a correction whose subject carries supersedes=<id>"}
 	}
 	if n.dead != nil {
 		return n
@@ -454,7 +459,7 @@ func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
 				continue
 			}
 			if why := badPredecessors(n, all); why != "" {
-				n.dead = &Unparsed{Label: label, Note: n.id, Line: 1, Text: why + "; send a correction whose subject carries supersedes=<id>"}
+				n.dead = &Unparsed{Label: label, Note: n.id, Line: n.subjectLine, Text: why + "; send a correction whose subject carries supersedes=<id>"}
 				again = true
 			}
 		}
@@ -462,7 +467,7 @@ func foldLane(s *Source, lane string, notes []*note, all map[string]*note) {
 	// A cycle at any length, through any member, refuses every note on it.
 	for _, n := range notes {
 		if n.dead == nil && onCycle(n, all, map[string]bool{}) {
-			n.dead = &Unparsed{Label: label, Note: n.id, Line: 1,
+			n.dead = &Unparsed{Label: label, Note: n.id, Line: n.subjectLine,
 				Text: "a cycle: this note's predecessor set reaches itself; send a correction whose subject carries supersedes=<id>"}
 		}
 	}

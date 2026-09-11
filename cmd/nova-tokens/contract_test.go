@@ -347,6 +347,28 @@ func TestCwdIsTheLowestRungOfTheAttributionLadder(t *testing.T) {
 	out2 := mkdir(t, filepath.Join(dir, "out2"))
 	wantExit(t, invoke(t, "fold", "--out", out2, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr2), 0)
 	wantContains(t, read(t, filepath.Join(out2, "2026-09-11.tsv")), "f\tserialize\t5\t")
+
+	// THE WHOLE LADDER, in order, because cwd is a rung the spec's written rule does not
+	// yet have (the PR body proposes the sentence). Below the tool paths: a line with no
+	// path at all takes the PREVIOUS repo before it takes cwd, and a line whose paths
+	// matched no rule is `other` -- a bucket, decided -- and is not reopened by cwd.
+	tr3 := mkdir(t, filepath.Join(dir, "tr3"))
+	write(t, filepath.Join(tr3, "a.jsonl"), strings.Join([]string{
+		// serialize from a tool path, with a cwd that says schema: the path wins.
+		`{"type":"assistant","timestamp":"2026-09-11T10:00:00Z","cwd":"/x/schema","message":{"id":"p1","model":"f","usage":{"input_tokens":1},"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/x/serialize/a.go"}}]}}`,
+		// no path at all: the previous repo (serialize) is the rung above cwd (schema).
+		`{"type":"assistant","timestamp":"2026-09-11T10:01:00Z","cwd":"/x/schema","message":{"id":"p2","model":"f","usage":{"input_tokens":2}}}`,
+		// a path that matches no rule is `other`, and cwd does not reopen it.
+		`{"type":"assistant","timestamp":"2026-09-11T10:02:00Z","cwd":"/x/schema","message":{"id":"p3","model":"f","usage":{"input_tokens":4},"content":[{"type":"tool_use","name":"Read","input":{"file_path":"/elsewhere/a.go"}}]}}`,
+	}, "\n")+"\n")
+	out3 := mkdir(t, filepath.Join(dir, "out3"))
+	wantExit(t, invoke(t, "fold", "--out", out3, "--day", "2026-09-11", "--repos", reposFile(t, dir), "--claude", "g="+tr3), 0)
+	day := read(t, filepath.Join(out3, "2026-09-11.tsv"))
+	wantContains(t, day, "f\tserialize\t3\t") // 1 + 2: the path, then the previous repo
+	wantContains(t, day, "f\tother\t4\t")
+	if strings.Contains(day, "f\tschema\t") {
+		t.Errorf("cwd took a rung above the previous repo or above `other`:\n%s", day)
+	}
 }
 
 // TestMessagesWithNoIDReachTheRemedyLine: noid= was a number on a green TOKENS SOURCE line

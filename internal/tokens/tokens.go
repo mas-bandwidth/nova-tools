@@ -423,6 +423,13 @@ func (s *Source) Collapse() {
 // ReportsList is the comma-joined type names this source reports at all, so a reader of a
 // mixed row can see which source could not have covered which cell.
 func (s *Source) ReportsList() string {
+	if len(s.Reports) == 0 {
+		// A lane that folded no row reports no type, and the field's value is a dash
+		// like every other absence on this line. It used to render as nothing at all --
+		// `reports= day_basis=utc` -- which is a field with no value in a grammar whose
+		// every field has one.
+		return Dash
+	}
 	names := make([]string, 0, len(s.Reports))
 	for _, t := range s.Reports {
 		names = append(names, TypeNames[t])

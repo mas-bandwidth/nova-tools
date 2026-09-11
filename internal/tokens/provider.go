@@ -2,6 +2,7 @@ package tokens
 
 import (
 	"encoding/csv"
+	"io"
 	"sort"
 	"strconv"
 	"strings"
@@ -108,7 +109,13 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 
 	zone := ""
 	var body []string
-	for _, line := range strings.Split(text, "\n") {
+	// fileLine maps a line of the COMMENT-STRIPPED text back to its line in the file.
+	// The `# timezone:` declaration and every other comment are dropped before the CSV
+	// reader sees them, so a record index was never a line in the file: an export whose
+	// declaration is line 1 reported its first data row (line 3) as line=2, and a quoted
+	// field carrying a newline made the count drift further with every one of them.
+	var fileLine []int
+	for i, line := range strings.Split(text, "\n") {
 		if strings.HasPrefix(line, "#") {
 			if rest, ok := strings.CutPrefix(line, zoneDeclaration); ok {
 				zone = strings.TrimSpace(rest)
@@ -116,11 +123,33 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 			continue
 		}
 		body = append(body, line)
+		fileLine = append(fileLine, i+1)
 	}
 	rd := csv.NewReader(strings.NewReader(strings.Join(body, "\n")))
 	rd.FieldsPerRecord = -1
-	records, err := rd.ReadAll()
-	if err != nil || len(records) == 0 {
+	var records [][]string
+	var recordLine []int
+	for {
+		rec, err := rd.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			s.unreadable(path, "the export is not the comma-separated shape the "+kind+" parser reads")
+			return s
+		}
+		// FieldPos is where this record STARTED in the stripped text, which the map above
+		// turns back into the line the reader would count to in the file itself.
+		n := len(records) + 1
+		if len(rec) > 0 {
+			if at, _ := rd.FieldPos(0); at >= 1 && at <= len(fileLine) {
+				n = fileLine[at-1]
+			}
+		}
+		records = append(records, rec)
+		recordLine = append(recordLine, n)
+	}
+	if len(records) == 0 {
 		s.unreadable(path, "the export is not the comma-separated shape the "+kind+" parser reads")
 		return s
 	}
@@ -172,7 +201,7 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	s.Basis = basis
 
 	for i, rec := range records[1:] {
-		n := i + 2
+		n := recordLine[i+1]
 		if len(rec) != len(header) {
 			s.unparsed(path, n, strconv.Itoa(len(rec))+" fields, want "+strconv.Itoa(len(header)))
 			continue
