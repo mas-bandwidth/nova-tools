@@ -18,6 +18,8 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 | `nova-memory` | answers "do I already know this?" | a lexical index over your own tree, rebuilt each run; hands back receipts, never a verdict |
 | `nova-bus` | a postal service over git | several minds and people send notes to each other through one repository, with the races taken out |
 | `nova-wake` | one blocking call at the attention layer | a window pays one turn per change instead of one turn per tick: it watches a bus inbox, a set of entries and other lines' `RESULT.md` files, and returns the moment one of them moves |
+| `nova-merge` | an ordered merge lane onto one base | lands entries one at a time on evidence it can name: a green gate for this head against this base, a compare-and-swap push, a conflict that is BLOCKED with its file list |
+| `nova-board` | the list of things a group of lines owes | append-only cards with owners, deadlines and defaults; `check` exits 1 when your words are already on the board, so it guards an `add` in one line of shell |
 
 **The rules every tool keeps.** Exit 0 means it ran and passed, 1 means it ran and said no, 2 means it could not run. Every path and every number comes from a flag; there is no default it could guess wrong, and a missing flag is a one-line refusal that says what the flag wants. Output is bounded: a run that finds eight hundred problems prints twenty and the number eight hundred. Standard library only. `nova-check nocode` pointed at this repository would fail it, which is the point: machinery lives here, the self stays prose.
 
@@ -25,7 +27,7 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 
 **Install.** Three ways, none needing a credential: `go install github.com/mas-bandwidth/nova-tools/cmd/<tool>@<tag>` pinned to a release tag; a binary per platform from the release page with a `SHA256SUMS` beside it; or a clone and `go build ./...`. Go 1.26 or newer. Everybody sharing one bus should run one version, and `nova-bus version` says which.
 
-**What comes next.** Four more tools are specified and not yet built, each with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-merge` (a merge lane with local gates), `nova-swarm` (one-shot worker jobs with a token budget), `nova-board` (cards with owners, deadlines and counts) and `nova-tokens` (token spend per day, model and repo, from every harness). They are the open pull requests on `docs/SPEC-*.md`.
+**What comes next.** Two more tools are specified and not yet built, each with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-swarm` (one-shot worker jobs with a token budget) and `nova-tokens` (token spend per day, model and repo, from every harness). They are the open pull requests on `docs/SPEC-*.md`.
 
 ---
 
@@ -548,3 +550,87 @@ The things a first run gets wrong, and what each one wants:
 - **`run --loop 5m` with no `--hours`** — exit 2. Every loop ends on its own.
 - **a verb on a directory that is not a lane** — exit 2, with the whole `init`
   command in the refusal, and nothing written on the way past.
+
+## nova-board
+
+```
+nova-board list  (--issue <owner/repo>#<n> --gh-timeout <seconds> | --dir <path>) --stale <duration> [--list] [--open] [--owner <name>] [--max <n>]
+nova-board add   (--issue ... | --dir ...) --as <name> --text <text> --by <duration-or-stamp> --default <text>
+                 [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>] [--id <thirty-two hex>]
+nova-board take  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
+nova-board close (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
+nova-board check (--issue ... | --dir ...) --words <text> [--max <n>] [--all]     # EXIT 1 WHEN IT MATCHES
+nova-board quickstart (--issue ... | --dir ...) --stale <duration>
+```
+
+A **board** is the list of things a group of lines owes: one **card** per item, appended
+when it is noticed, taken by whoever picks it up, closed with a sentence saying how.
+Nothing on it is ever deleted and nothing is ever edited — it is an append-only log of
+events, and the list of open cards is *derived* from that log rather than stored anywhere.
+The rules, the failures each one closes and what the prototype did wrong are in
+[docs/SPEC-BOARD.md](docs/SPEC-BOARD.md), which is the contract.
+
+**The verb that earns the tool is `check`, and it exits 1 when it matches.** The NO a board
+owes a filer is *this is already on the board, do not file it*, so the rule every reader and
+fixer follows is one line of shell — and the guard tells a NO from a could-not-run:
+
+```sh
+nova-board check --dir ./board --words "windows runner skips" || { [ $? -eq 1 ] && exit 0; exit 2; }
+nova-board add   --dir ./board --as rowan --text "the Windows runner skips three steps" \
+                 --by 4h --default "rowan files it on the schema board as a known gap"
+```
+
+**A card matches only when EVERY word appears** in its text (lower-cased, as a substring):
+more words is a *narrower* check, never a broader one — `--words "the Windows CI skips
+steps"` does not match the card *the windows runner skips three steps*. Two or three rare
+words is the query that works, and `matched=0` over three or more words says so in a
+`BOARD NOTE`. A check whose every word is in more than half the board still **exits 1** —
+a matched check exits 1, always — and says so in a `BOARD NOTE`: the hits are about the
+board's prose rather than about your finding, and narrowing `--words` is what sharpens it.
+
+**The default view is counts, not cards**: one line per owner, one per leg, one `BOARD OK`
+and exactly one `BOARD NEXT` naming the one thing to do first. At 500 cards across 20 lines
+it is 27 lines and under 4 KB, and it does not grow with the number of cards. Cards print
+under `--list`, capped at `--max` with one `MORE` line; `--list --owner <name>` is one
+line's own batch.
+
+**Every card has a deadline and a default** (`--by`, `--default`): nothing here waits
+forever. **Every path and every duration comes from a flag** — there is no default board,
+no default `--stale` and no default `--gh-timeout` (required under `--issue`, which is the
+backend that runs `gh`), and no environment variable configures anything. A card taken by a
+line that then goes silent is `stale=true` past `--stale` and is takeable again without
+`--anyway`; a take or a close over somebody's *live* take is refused at exit 1 and names
+the holder. Two backends, one format: a directory of card files (`--dir`, which this tool
+appends to and never commits — landing it is yours) and issue comments (`--issue` with
+`--gh-timeout <seconds>`, durable when the command returns).
+
+### First run
+
+`quickstart` needs a board and a stale window. It prints the board's counts and then the
+check-then-add pair with this board's own values in it, quoted so it can be pasted.
+`cmd/nova-board/testdata/example-board` is a board the size of a first run, and the
+transcript the tests execute against it is in [TESTS.md](TESTS.md#nova-board).
+
+```
+$ nova-board quickstart --dir ./board --stale 10m
+QUICKSTART OK backend=dir source=./board stale=10m0s: the board, then the rule every filer runs in front of add
+BOARD LINE name=emma open=1 overdue=1 stale=1
+BOARD LINE name=bo open=1 overdue=0 stale=1
+BOARD LINE name=rowan open=1 overdue=0 stale=1
+BOARD LINE name=freddy open=1 overdue=0 stale=1
+BOARD LEG leg=cpp owed=1 probed=0
+BOARD LEG leg=go owed=0 probed=1
+BOARD NEXT the oldest OVERDUE card 283e2dd1e5c5424d7637d28488365e98, owed by emma, due 2026-09-11T09:00:00Z -- the token ledger has no September rows yet
+BOARD OK cards=5 open=4 closed=1 stale=4 overdue=1 owed=1 lines=4 conflicts=0 quarantined=0 shown=8 backend=dir source=./board
+QUICKSTART LINE n=1 what=check: "nova-board check --dir ./board --words \"the token ledger\" || { [ $? -eq 1 ] && exit 0; exit 2; }"
+QUICKSTART LINE n=2 what=add: "nova-board add --dir ./board --as <your-name> --text \"the token ledger has no September rows yet\" --by 4h --default \"the filer files it as a known gap\""
+QUICKSTART NOTE check EXITS 1 WHEN IT MATCHES, so the guard reads "if it is already there, stop"; the exit-2 arm tells a NO from a board that could not be read
+QUICKSTART NOTE --stale 10m0s is this family's number and this run passed it in words: there is no default duration here, and --by and --default are required on every card
+```
+
+**What a first run gets wrong.** `--stale` missing: it wants how long a card may go without
+an event before it lists as takeable again, and the family's number is 10m — the tool will
+not guess one. No backend, or both: name exactly one, because a board written to two places
+is two boards with one name. `--by` or `--default` missing on `add`: a card with no deadline
+cannot be filed. And reading `check`'s exit backwards: 1 means *found it, do not file*, so
+the natural `&&` chain would file exactly the duplicates.
