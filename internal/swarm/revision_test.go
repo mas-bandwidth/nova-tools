@@ -189,3 +189,71 @@ func readPage(t *testing.T, out string) string {
 	t.Fatalf("no page= in:\n%s", out)
 	return ""
 }
+
+// RULE 15 ON THE PAGE (SPEC-SWARM.md:297): "the merged finding carries every contributing
+// job id, `jobs=<id,id,…>`, ON THE PAGE and on its triage line."
+//
+// DeepSeek's confirming read, finding 3: the terminal line carried `jobs=` and the page --
+// the artifact that is kept, the one a coordinator reads tomorrow -- carried each report's
+// raw finding lines, undeduplicated and with no job ids at all. Two workers finding one
+// thing were two findings on the page and one in the count.
+func TestThePageCarriesTheMergedFindingAndItsJobs(t *testing.T) {
+	dir := t.TempDir()
+	p := emptyPool(t, dir)
+	first := donePublished(t, p, "a")
+	second := donePublished(t, p, "b")
+
+	var out, errb bytes.Buffer
+	if code := Triage(TriageInput{Pool: p, Stdout: &out, Stderr: &errb, Now: time.Now}); code != 0 {
+		t.Fatalf("triage exited %d: %s", code, errb.String())
+	}
+	page := readPage(t, out.String())
+	jobs := first + "," + second
+	if !strings.Contains(page, "jobs="+jobs) && !strings.Contains(page, "jobs="+second+","+first) {
+		t.Errorf("the page wants the merged finding's contributing job ids (jobs=%s):\n%s", jobs, page)
+	}
+	if n := strings.Count(page, "THE RULE, VERBATIM"); n != 1 {
+		t.Errorf("one finding reported by two jobs is ONE line on the page, got %d:\n%s", n, page)
+	}
+	// And the terminal line says the same thing, which is what makes the page an index.
+	if !strings.Contains(out.String(), "TRIAGE FINDING jobs="+jobs) && !strings.Contains(out.String(), "TRIAGE FINDING jobs="+second+","+first) {
+		t.Errorf("the triage line wants both job ids:\n%s", out.String())
+	}
+}
+
+func emptyPool(t *testing.T, dir string) *Pool {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, "pool"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p, err := OpenPool(filepath.Join(dir, "pool"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// donePublished is one finished job with one published report, retained beside the pool.
+func donePublished(t *testing.T, p *Pool, label string) string {
+	t.Helper()
+	sc := Sidecar{ID: NewID(time.Now().UTC(), label), Files: 1, Tokens: 1000, RC: 0, Class: ClassOK, End: EndDone}
+	if err := p.Add([]byte("a task"), sc); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Claim(sc.ID, Pending, Done); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(p.ReportsDir(sc.ID), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := report()
+	if err := writeAtomic(filepath.Join(p.ReportsDir(sc.ID), CopiedResult), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.writeRev(p.ReportsDir(sc.ID), 1, HashBytes([]byte(body))); err != nil {
+		t.Fatal(err)
+	}
+	// A job id is time-ordered to the second; two made in one second would collide.
+	time.Sleep(1100 * time.Millisecond)
+	return sc.ID
+}

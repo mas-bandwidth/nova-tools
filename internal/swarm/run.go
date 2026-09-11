@@ -72,7 +72,13 @@ func Run(in RunInput) int {
 		in.Workers, trimFloat(in.Hours), oneline.Field(in.Worker.Name), oneline.Field(in.Worker.Model), oneline.Field(p.Dir))
 
 	said := false // anything that makes this run exit 1
+	// TWO DIFFERENT THINGS, counted apart. `quarantined` is rule 17's: a SLOT FILE this
+	// dispatcher refuses to decide, which SPEC-SWARM.md:541 says makes the run exit 1.
+	// `retired` is rule 11's aftermath: a slot taken out of the map for the rest of this
+	// run because a survivor may still be writing in its data home. The spec has no
+	// sentence for the second, and the PR body proposes one.
 	quarantined := map[int]bool{}
+	retired := map[int]bool{}
 	watching := map[int]*running{}
 
 	// The start-up pass, before a single pending task is claimed.
@@ -169,7 +175,7 @@ func Run(in RunInput) int {
 	for {
 		// Start what can be started, while the dispatcher's own deadline is ahead of us.
 		for !now().After(deadline) && !p.Stopped() && len(watching) < in.Workers {
-			slot, ok := freeSlot(p, in.Workers, quarantined, watching)
+			slot, ok := freeSlot(p, in.Workers, quarantined, retired, watching)
 			if !ok {
 				break
 			}
@@ -177,7 +183,7 @@ func Run(in RunInput) int {
 			if err != nil || !claimed {
 				break
 			}
-			r, line, code := in.launch(sc, text, slot, quarantined)
+			r, line, code := in.launch(sc, text, slot, quarantined, retired)
 			switch code {
 			case 0:
 				started++
@@ -207,7 +213,7 @@ func Run(in RunInput) int {
 				}
 				continue
 			}
-			line, end, dest := in.finish(r, quarantined, now())
+			line, end, dest := in.finish(r, retired, now())
 			// D2 (the real run, 2026-09-11): two jobs printed `RUN DONE … dest=failed`
 			// and RUN OK said `started=2 done=2 failed=0` with both of them in failed/.
 			// The counts are the truth about the POOL, so a job is counted by WHERE IT
@@ -245,7 +251,7 @@ func Run(in RunInput) int {
 	pending, _ := p.List(Pending)
 	fmt.Fprintf(out, "RUN OK started=%d done=%d failed=%d killed=%d pending=%d after=%s\n",
 		started, done, failed, killed, len(pending), trimDuration(now().Sub(deadline.Add(-time.Duration(in.Hours*float64(time.Hour))))))
-	fmt.Fprintf(out, "RUN NOTE %s\n", oneline.Escape(remedy(p, failed+launchFailed, killed, len(pending), len(quarantined))))
+	fmt.Fprintf(out, "RUN NOTE %s\n", oneline.Escape(remedy(p, failed+launchFailed, killed, len(pending), len(quarantined)+len(retired))))
 	if len(pending) > 0 && started == 0 && len(watching) == 0 {
 		said = true
 	}
@@ -253,7 +259,7 @@ func Run(in RunInput) int {
 	// `LAUNCH-FAILED` job". A slot RETIRED mid-run (rule 11's survivors, a data home that
 	// may still have a writer in it) is such a slot, and before this the whole pass exited
 	// 0 over it: the next reader saw a green RUN OK above a pool one worker smaller.
-	if len(quarantined) > 0 {
+	if len(quarantined) > 0 || len(retired) > 0 {
 		said = true
 	}
 	if said {
@@ -265,9 +271,9 @@ func Run(in RunInput) int {
 // freeSlot is the allocation, and it asks ONE authority: the slot files. Never a directory
 // scan, never a lock file in the slot, never a timer. A slot whose file exists in any state
 // is held, so a reserved slot counts against --workers.
-func freeSlot(p *Pool, workers int, quarantined map[int]bool, watching map[int]*running) (int, bool) {
+func freeSlot(p *Pool, workers int, quarantined, retired map[int]bool, watching map[int]*running) (int, bool) {
 	for n := 1; n <= workers; n++ {
-		if quarantined[n] || watching[n] != nil {
+		if quarantined[n] || retired[n] || watching[n] != nil {
 			continue
 		}
 		if _, err := os.Stat(p.slotPath(n)); err == nil {
@@ -278,16 +284,29 @@ func freeSlot(p *Pool, workers int, quarantined map[int]bool, watching map[int]*
 	return 0, false
 }
 
+// unionOf is the slots this run will not allocate: rule 17's quarantined slot files and
+// rule 11's retired ones.
+func unionOf(a, b map[int]bool) map[int]bool {
+	out := map[int]bool{}
+	for n := range a {
+		out[n] = true
+	}
+	for n := range b {
+		out[n] = true
+	}
+	return out
+}
+
 // launch is rule 18's transaction, from this side: reserve, spawn, wait for the identity,
 // and kill what did not identify itself.
-func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine map[int]bool) (*running, string, int) {
+func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired map[int]bool) (*running, string, int) {
 	p := in.Pool
 	nonce, err := Nonce()
 	if err != nil {
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(err.Error())), 1
 	}
 	jobDirFor := func(n int) string { return in.Worker.JobDir(n, sc.ID) }
-	got, err := p.claimFree(in.Workers, quarantine, sc.ID, nonce, os.Getpid(), in.Now(), jobDirFor)
+	got, err := p.claimFree(in.Workers, unionOf(quarantine, retired), sc.ID, nonce, os.Getpid(), in.Now(), jobDirFor)
 	if err != nil {
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), 1
 	}

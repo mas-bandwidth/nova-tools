@@ -441,6 +441,12 @@ func TestAReapedJobRunsOnceMore(t *testing.T) {
 		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
 	}
 	mustContain(t, "the run", stdout, "RUN KILLED id="+id)
+	// A worker reaped at its deadline BROKE NO RULE: it is `RUN KILLED … survived=<bool>`
+	// (SPEC-SWARM.md:1055), never rule 11's `RUN VIOLATION`. Nothing outlived this kill.
+	mustContain(t, "the run", stdout, "survived=false")
+	if strings.Contains(stdout, "RUN VIOLATION") {
+		t.Errorf("a deadline kill is not a background violation:\n%s", stdout)
+	}
 	mustContain(t, "the run", stdout, "requeued=true reaped=1")
 	if _, err := os.Stat(filepath.Join(b.pool, "failed", id+".task")); err != nil {
 		t.Errorf("a reaped job's files belong in failed/: %v", err)

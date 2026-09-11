@@ -18,7 +18,7 @@ import (
 
 // finish ends one job: the group check, the classification, finalize in rule 12's order,
 // the move, the slot, the one automatic re-queue, and the single line.
-func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (string, string, string) {
+func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (string, string, string) {
 	p := in.Pool
 	sf, slotErr := p.ReadSlot(r.slot)
 
@@ -114,7 +114,12 @@ func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (
 	// never by a scan of directories. A slot whose child survived the kill is RETIRED for
 	// the rest of the run: a data home that may still have a writer in it is not free.
 	if survivors > 0 {
-		quarantined[r.slot] = true
+		// RULE 11 QUARANTINES THE RESULT (SPEC-SWARM.md:154), and rule 17's QUARANTINE is
+		// about a slot FILE. What this does to the slot is neither: it RETIRES it for the
+		// rest of the run, because a data home that may still have a writer in it is not
+		// free. The two are counted apart now; whether a retired slot makes the run exit 1
+		// is a sentence the spec does not have, and the PR body proposes one.
+		retired[r.slot] = true
 	} else {
 		_ = p.Free(r.slot)
 	}
@@ -123,7 +128,7 @@ func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (
 	after := trimDuration(now.Sub(r.started))
 	budget := budgetWord(sc, rec)
 	switch {
-	case survivors > 0:
+	case end == EndViolation:
 		return fmt.Sprintf("RUN VIOLATION id=%s slot=%d background=%d dest=failed: a process of this job's group outlived it; one task is one process",
 			oneline.Field(sc.ID), r.slot, survivors), EndViolation, dest
 	case end == EndUnverifiable:
@@ -133,8 +138,13 @@ func (in RunInput) finish(r *running, quarantined map[int]bool, now time.Time) (
 		return fmt.Sprintf("RUN BUDGET id=%s slot=%d spent=%d of=%d findings=%d",
 			oneline.Field(sc.ID), r.slot, rec.Spent, sc.Tokens, findings), EndBudget, dest
 	case end == EndKilled:
-		return fmt.Sprintf("RUN KILLED id=%s slot=%d after=%s deadline=%s findings=%d unpublished=%t budget=%s requeued=%t reaped=%d",
-			oneline.Field(sc.ID), r.slot, after, trimDuration(r.deadline), findings, unpublished, budget, requeued, sc.Reaped+1), EndKilled, dest
+		// A CHILD THAT SURVIVED THE KILL is `RUN KILLED … survived=true`
+		// (SPEC-SWARM.md:1055), and NOT rule 11's background violation: a worker reaped at
+		// its deadline broke no rule, and a process that outlived the kill is a fact about
+		// the kill. Before this both ends printed RUN VIOLATION over one another.
+		return fmt.Sprintf("RUN KILLED id=%s slot=%d after=%s deadline=%s findings=%d unpublished=%t budget=%s survived=%t requeued=%t reaped=%d",
+			oneline.Field(sc.ID), r.slot, after, trimDuration(r.deadline), findings, unpublished, budget,
+			survivors > 0, requeued, sc.Reaped+1), EndKilled, dest
 	case report.Class == ClassMalformed:
 		return fmt.Sprintf("RUN MALFORMED id=%s slot=%d line=%d dest=failed",
 			oneline.Field(sc.ID), r.slot, report.MalformedLine), EndFailed, dest

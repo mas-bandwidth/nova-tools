@@ -151,11 +151,6 @@ func Triage(in TriageInput) int {
 	// Rule 15's de-duplication, by (repo, rev, file, line, rule): two findings merge only
 	// when both reports carry repo AND rev and they are equal, so equal file:line and rule
 	// in two codebases, or in two revisions of one, are two findings.
-	type merged struct {
-		f    Finding
-		jobs []string
-		from string
-	}
 	var order []*merged
 	byKey := map[string]*merged{}
 	// EVERY FINDING IS COUNTED EXACTLY ONCE (SPEC-SWARM.md:621, "`new` is findings not
@@ -219,7 +214,7 @@ func Triage(in TriageInput) int {
 		}
 	}
 
-	page, pageErr := in.writePage(kept)
+	page, pageErr := in.writePage(kept, order)
 	fmt.Fprintf(out, "TRIAGE BATCH batch=%s reports=%d findings=%d new=%d dup=%d unquoted=%d clean=%d plan_only=%d no_result=%d malformed=%d budget=%d accurate=%s wrong=%s\n",
 		oneline.Field(dashOr(in.Batch)), reportsN, findings, new_, dup, unquoted,
 		counts[ClassClean], counts[ClassPlanOnly], counts[ClassNoResult], malformedN, budgetEnded,
@@ -265,9 +260,22 @@ func Triage(in TriageInput) int {
 // TriageStateFile is the consumed set's file name.
 const TriageStateFile = "triage.json"
 
+// merged is one finding after rule 15's fold, and every job that reported it.
+type merged struct {
+	f    Finding
+	jobs []string
+	from string
+}
+
 // writePage is the artifact: one page per run, carrying each report's heading, its Per item
-// table and its Left owed list, in job-id order, oldest first.
-func (in TriageInput) writePage(kept []folded) (string, error) {
+// table and its Left owed list, in job-id order, oldest first -- and then THE FINDINGS,
+// FOLDED, each carrying every contributing job id.
+//
+// SPEC-SWARM.md:297: "the merged finding carries every contributing job id,
+// `jobs=<id,id,…>`, on the page and on its triage line." The page carried each report's raw
+// lines instead: two workers finding one thing were two findings on the page and one in the
+// count, and the page -- the artifact that is KEPT -- was the one that disagreed.
+func (in TriageInput) writePage(kept []folded, order []*merged) (string, error) {
 	path := in.Pool.Path(Reports, in.Now().UTC().Format("20060102T150405Z")+".md")
 	var b strings.Builder
 	fmt.Fprintf(&b, "# triage %s\n\n", Stamp(in.Now()))
@@ -285,13 +293,6 @@ func (in TriageInput) writePage(kept []folded) (string, error) {
 			}
 			b.WriteString("\n")
 		}
-		if len(k.report.FindingLines) > 0 {
-			b.WriteString("Findings:\n\n")
-			for _, f := range k.report.FindingLines {
-				fmt.Fprintf(&b, "- %s\n", f.Text)
-			}
-			b.WriteString("\n")
-		}
 		if len(k.report.LeftOwed) > 0 {
 			b.WriteString("Left owed:\n\n")
 			for _, owed := range k.report.LeftOwed {
@@ -302,6 +303,13 @@ func (in TriageInput) writePage(kept []folded) (string, error) {
 		if k.report.OneLine != "" {
 			fmt.Fprintf(&b, "One line: %s\n\n", k.report.OneLine)
 		}
+	}
+	if len(order) > 0 {
+		b.WriteString("## Findings\n\n")
+		for _, m := range order {
+			fmt.Fprintf(&b, "- jobs=%s at=%s: %s\n", strings.Join(m.jobs, ","), dashOr(m.f.File+":"+m.f.FileLine), m.f.Text)
+		}
+		b.WriteString("\n")
 	}
 	return path, writeAtomic(path, []byte(b.String()), 0o644)
 }
