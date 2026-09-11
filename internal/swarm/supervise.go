@@ -165,7 +165,7 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 				continue
 			}
 			seen = usage
-			sum, seenCols, part := seen.Sum()
+			sum, seenCols, part := seen.Budget()
 			spent, partial, observed = sum, part, seenCols > 0
 			if in.Sidecar.Unmetered || in.Sidecar.Tokens <= 0 || !observed {
 				continue

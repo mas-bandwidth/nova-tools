@@ -130,11 +130,24 @@ type ProviderUsage struct {
 // TokenColumns are nova-tokens's five types, which are the five this tool sums.
 var TokenColumns = []string{"tokens_in", "tokens_out", "cache_write", "cache_read", "reasoning"}
 
+// BudgetColumns are the columns rule 13's budget counts: what the job SENT, what it
+// GENERATED, and what it REASONED. Cache reads are the provider re-reading context it
+// already holds, and cache writes are that context being laid down once; neither is work
+// this job asked for, and counting them ended a real four-million-token job at 4.18M in
+// under three minutes with zero findings (dogfood D6, 2026-09-11). The usage ROW keeps all
+// five columns -- `cost` reads what it always read -- the BUDGET counts these three.
+var BudgetColumns = []string{"tokens_in", "tokens_out", "reasoning"}
+
+// Budget is rule 13's observed spend: the same arithmetic as Sum over BudgetColumns.
+func (u ProviderUsage) Budget() (sum int, seen int, partial bool) { return u.add(BudgetColumns) }
+
 // Sum adds the token columns that are present, and says whether any were missing, so that a
 // partial observation prints `budget=<n>+/<n>` with the plus rather than passing for a
 // whole one.
-func (u ProviderUsage) Sum() (sum int, seen int, partial bool) {
-	for _, c := range TokenColumns {
+func (u ProviderUsage) Sum() (sum int, seen int, partial bool) { return u.add(TokenColumns) }
+
+func (u ProviderUsage) add(columns []string) (sum int, seen int, partial bool) {
+	for _, c := range columns {
 		n, err := strconv.Atoi(strings.TrimSpace(u.Values[c]))
 		if err != nil {
 			partial = true
