@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"runtime"
 	"strings"
 	"unicode"
 )
@@ -70,6 +71,9 @@ func ReadKey(path, varName string) (string, error) {
 // how somebody else's machine is administered, and a mode nobody mentions is how a key
 // ends up world-readable.
 func KeyFileMode(path string) (os.FileMode, bool) {
+	if runtime.GOOS == "windows" {
+		return 0, false
+	}
 	info, err := os.Stat(path)
 	if err != nil {
 		return 0, false

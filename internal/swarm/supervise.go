@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
 	"time"
@@ -72,7 +73,11 @@ func Supervise(in SuperviseInput) int {
 	if err != nil {
 		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness log could not be opened: " + redactedReason(err)})
 	}
-	cmd := exec.Command(in.Worker.Harness, harnessArgs(in.Worker, jobDir)...)
+	harness := in.Worker.Harness
+	if resolved, err := exec.LookPath(harness); err == nil {
+		harness = resolved
+	}
+	cmd := exec.Command(harness, harnessArgs(in.Worker, jobDir)...)
 	cmd.Dir = in.Worker.SlotDir(in.Slot)
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	cmd.Env = childEnv(in.Worker, in.Slot, in.Task, in.Key)
@@ -277,6 +282,13 @@ func childEnv(w Worker, slot int, id, key string) []string {
 		"PATH=" + os.Getenv("PATH"),
 		"XDG_DATA_HOME=" + w.DataHome(slot, id),
 		"NOVA_SWARM_JOB=" + w.JobDir(slot, id),
+	}
+	if runtime.GOOS == "windows" {
+		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC", "Path"} {
+			if v := os.Getenv(k); v != "" {
+				env = append(env, k+"="+v)
+			}
+		}
 	}
 	if w.EnvVar != "" && key != "" {
 		env = append(env, w.EnvVar+"="+key)
