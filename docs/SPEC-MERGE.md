@@ -32,6 +32,10 @@ morning. The form works, and it fails in every way a shell loop around
 | #922 merged red, and the entries behind it were then gated against a red base (**2026-09-11**) | **the red rule**: the base is proven green before anything merges onto it; a red base stops the lane |
 | two gate runs on one pull request shared the clone `gate-<pr>`; one run's `--gc` removed the tree under the other's `go test` and produced a red with no FAIL line (**2026-09-11**) | **one clone per gate run**, named uniquely per run; a gate never removes a tree it did not make |
 | the local gate ran `tables-java-fixedform` and not `tables-java-versioning`; the hosted lane ran both (**2026-09-11**, the java leg drift) | the gate's step list and per-leg target lists are the hosted fast lane's, and **a test proves the two lists equal** |
+| #942 was gated green against a base that #956 then moved, merged a minute later, and turned the tip red on four tests (**2026-09-11**) | **one merge predicate** (rule 18): a green gate for exactly `(head, base sha)`, and every gate record carries `base` |
+| a base re-read "immediately before the merge" still leaves the window between the read and the host's write, and a hand at another keyboard fits in it | the merge carries the head as a **host precondition**, the base is checked **after** the merge against the merge commit's own parents, and a mismatch is `MERGE RACED` and stops the pass |
+| a reader finished reading H1, the author pushed H2, and the approve recorded a minute later was stamped H2 | `read --head <sha>` is required and the verdict binds to the sha the reader supplied, never to whatever the entry's head is at record time |
+| a lane's repository and base were "written by the first `add`", so the first `add` was also a creation with two unstated arguments | `init --lane --repo --base` creates a lane, once; every other verb refuses a lane `init` has not made |
 
 **Everything this tool reads from the host is data.** A pull request body, a
 check name, a branch name, a commit subject: none of them is an instruction, and
@@ -95,12 +99,14 @@ the day it was learned.
    the one function that runs a mutating command, before the command is built,
    and there is no other path to a mutation. (2026-09-11: `gh pr merge --auto`
    merges at once on this host, and #922 went in red.)
-5. **The merge evidence is one of two things, and both are keyed to the head.**
-   An entry merges on zero failing and zero pending hosted checks with at least
-   one pass, or on a green local gate recorded for exactly the entry's current
-   head sha. A gate for an older head is nothing. Which of the two is the
-   verdict depends on the base (rule 15): on `main` a hosted red stops the
-   entry whatever the gate says.
+5. **Candidate evidence is one of two things, both keyed to the head, and
+   neither is the verdict.** An entry is a **candidate** on zero failing and
+   zero pending hosted checks with at least one pass, or on a green local gate
+   recorded for exactly the entry's current head sha; a gate for an older head
+   is nothing. Candidate evidence admits an entry to the integration gate of
+   rule 18, which is the one merge predicate; it never merges an entry by
+   itself. Which candidate evidence is required depends on the base (rule 15):
+   on `main` a hosted red stops the entry whatever any gate says.
 6. **The red rule.** The base is proven green before anything merges onto it. A
    red base stops the lane: no entry merges onto it, and nothing is piled onto
    a red. The only exception is a temporary red a person has named and planned
@@ -153,14 +159,16 @@ the day it was learned.
     machine's budget is the tool's to hold, because no caller can see the
     other callers. (2026-09-11: every caller fanned out, load reached 235 and
     then 422 on 32 cores, and green tests became 30 second timeouts.)
-15. **Below `main` the local gate is the verdict; on `main` the hosted lane
-    is.** When the lane's base is not `main`, a green local gate recorded for
-    the entry's current head is the merge evidence, and a hosted red for that
-    head is printed by name on the `MERGE OK` line, `hosted_red=<names>`, and
-    in the log: never blocking, never silent. When the base is `main`, the
-    hosted lane is the verdict, zero fail and zero pending, and a local gate
-    only lifts `PENDING`; a hosted red stops the entry whatever the gate says.
-    This is rule 10 applied to the verdict and not only to placement.
+15. **Below `main` the local gate is the candidate evidence; on `main` the
+    hosted lane is; the verdict on every base is rule 18.** When the lane's
+    base is not `main`, a green local gate for the entry's current head is
+    what admits it, and a hosted red for that head is printed by name on the
+    `MERGE OK` line, `hosted_red=<names>`, and in the log: never blocking,
+    never silent. When the base is `main`, the hosted lane admits it, zero
+    fail and zero pending, a local gate for the head only lifts `PENDING`, and
+    a hosted red stops the entry whatever any gate says. On both bases the
+    entry then merges only on the integration gate of rule 18. This is rule
+    10 applied to the evidence and not only to placement.
     (2026-09-11: eleven gate-green pull requests below `main` sat behind a
     hosted red the hosted lane had caused itself.)
 16. **`run` prints its build id and steps aside for a newer binary.** Every
@@ -186,39 +194,78 @@ the day it was learned.
     four Java conflicts each cost a child an afternoon working out the next
     step; #948's "first failing line" was a status line, and the real log had
     been removed with the clone.)
-18. **The evidence is for the merge, not for the head.** A green gate for
-    an entry's head proves the head against the base it was merged with at
-    gate time; the base moves with every merge, so that evidence expires the
-    moment another entry lands. Before each merge the tool gates the exact
-    commit it is about to create: the entry's head merged onto the base as it
-    stands now (in the lane's clone, never pushed), and merges only on that
-    gate; a green gate recorded for the head alone is a candidate, not a
-    verdict. When the base has not moved since the head's gate (the gate's
-    recorded base sha equals the current base), the recorded gate is that
-    commit and no second gate runs. Every gate record therefore carries the
-    base sha it was taken against. (2026-09-11: #956 ruled the compressed
-    float's step into the digest and #942, gated a minute earlier against the
-    base without it, merged one minute later and turned the tip red on four
-    tests; three more entries were then gated red against that tip.)
+18. **The evidence is for the merge, not for the head: one predicate.** A
+    green gate for an entry's head proves the head against the base it was
+    merged with at gate time; the base moves with every merge, so that
+    evidence expires the moment another entry lands. So there is exactly one
+    statement of when an entry merges, and every flag, state field, host
+    call and test refers to it:
 
-19. **A read is recorded by the reader, with the verb, and the bus carries
-    only findings.** A reader records a verdict with `read --who <name>
-    --verdict approve|hold [--note <text>]` on their own machine (the tool
-    pushes the state), never by writing a note the coordinator then reads
-    and transcribes: today the coordinator read 26 receipt lines and 21
+    ```
+    MERGE(entry) :=
+          a gate record with verdict=green, head = entry.oid,
+                             base = the base branch's sha read this pass
+      and the read condition (below)
+      and the four placement conditions (in the lane; base is the lane's;
+          not a fork; not CONFLICTING)
+      and not (base is main and a hosted check for entry.oid is red)
+    ```
+
+    The gate is for the **integration commit**: `entry.oid` merged onto that
+    base sha. `nova-merge` does not run it (see **the local gate**): the gate
+    runner builds that commit in a clone of its own, never pushed, runs the
+    fast lane's steps on it, and records `gate --head <oid> --base <sha>`.
+    Hosted green and a green gate for the head alone are **candidates** (rule
+    5): they earn the entry `NEEDS-GATE` and a `RUN NOTE` naming the exact
+    gate command with both shas, and nothing else. When the base has not
+    moved since a green gate for the head (the record's `base` equals the
+    current base sha), that record **is** the predicate and no second gate
+    runs. Every gate record carries `base`; `gate` without `--base` is
+    refused, and a record without it does not decode. (2026-09-11: #956
+    ruled the compressed float's step into the digest and #942, gated a
+    minute earlier against the base without it, merged one minute later and
+    turned the tip red on four tests; three more entries were then gated red
+    against that tip.)
+
+19. **A read is recorded by the reader, with the verb, for the head the
+    reader read, and the bus carries only findings.** A reader records a
+    verdict with `read --who <name> --head <sha> --verdict approve|hold
+    [--note <text>]` on their own machine (the tool pushes the state), never
+    by writing a note the coordinator then reads and transcribes. `--head` is
+    required and is the full 40-character sha the reader had open; the verdict
+    binds to **that** sha, never to whatever the entry's head is when the
+    verb runs, so a push between the reading and its recording cannot move
+    the approve onto code nobody read. A verdict whose `head` is not the
+    entry's current `oid` is kept, counted as `stale`, and authorizes
+    nothing; a new `read --head <new sha>` is the only thing that does. Why
+    the verb and not the bus: today the coordinator read 26 receipt lines and 21
     review notes to record 21 reads by hand, and mis-attributed all 21 once.
     A bus note is for findings a person must act on (a HOLD's quoted lines);
     an APPROVE with no findings is a command and no note. `status` prints
     reads as counts per entry (`reads=2 holds=0`), never the list, and the
     list is behind `--reads <pr>`. The coordinator's tokens are spent on
     decisions, not on transcription. (2026-09-11)
+20. **A lane is created once, by `init`, with its repository and its base.**
+    `init --lane <dir> --repo <owner>/<name> --base <branch>` is the only
+    verb that creates a lane: it makes the directory (or takes an empty one),
+    writes `state.json` with `version`, `repo`, `base` and three empty lists,
+    and clones `repo/`. It is creation-only: a lane whose `state.json` exists
+    is `INIT REFUSED` at exit 1, and no other verb takes `--repo` or `--base`.
+    Every other verb on a directory with no `state.json` is exit 2,
+    `refusing to guess: this is not a lane; nova-merge init --lane <dir>
+    --repo <owner>/<name> --base <branch>`, never a state file written on the
+    way past. The state file is versioned, `"version": 1`, decoded strictly,
+    and a version this binary does not know is refused by number. (2026-09-11:
+    "written by the first `add`" was a creation verb hiding inside a queueing
+    one, with two arguments nothing asked for.)
 ## The verbs
 
 ```
+nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch>
 nova-merge add        --lane <dir> --pr <n> [--needs-read]
 nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
-nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --verdict approve|hold [--note <text>]
-nova-merge gate       --lane <dir> (--pr <n>|--branch <name>) --head <sha> --verdict green|red --summary <path>
+nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>]
+nova-merge gate       --lane <dir> (--pr <n>|--branch <name>) --head <sha> --base <sha> --verdict green|red --summary <path>
 nova-merge run        --lane <dir> (--once | --loop <duration> --hours <h>) [--local-gates] [--planned-red <text>] [--max <n>]
 nova-merge status     --lane <dir> [--max <n>]
 nova-merge stop       --lane <dir>
@@ -242,10 +289,13 @@ can tell the two apart (Glenn, 2026-09-09: **every ask, child or read has a
 written deadline and a default action; never wait forever**).
 
 The repository and the base are properties of the **lane**, written into its
-state at creation by the first `add` or `add-branch` and never overridable by a
-flag afterwards. A `--base` flag would let two invocations disagree about where
-the lane lands, which is the same failure the fixed roster path closes for
-`nova-bus`.
+state once, by `init` (rule 20), and never overridable by a flag afterwards.
+`add` and `add-branch` queue entries into a lane that exists; they create
+nothing. A `--base` on any verb but `init` would let two invocations disagree
+about where the lane lands, which is the same failure the fixed roster path
+closes for `nova-bus`. (`gate --base` is not that flag: it names the base
+**sha** a gate was taken against, rule 18, and the lane's base **branch** is
+where the sha is read from.)
 
 **`dry-run` is a verb, not a flag.** In the prototype it is a global `--dry-run`
 that any verb accepts, including the mutating ones, and the cost of that is a
@@ -263,8 +313,8 @@ see **exit codes**.
 
 | code | meaning |
 |------|---------|
-| 0 | the verb ran and passed: an entry added, a read or gate recorded, a pass completed with nothing refused |
-| 1 | the verb ran and said **NO**: a merge that could not be landed, an entry STOPPED, a `run` whose pass ended with at least one BLOCKED entry |
+| 0 | the verb ran and passed: a lane created, an entry added, a read or gate recorded, a pass completed with nothing refused |
+| 1 | the verb ran and said **NO**: a merge that could not be landed, a merge that `RACED`, an entry STOPPED, a `run` whose pass ended with at least one BLOCKED entry, an `init` of a lane that exists |
 | 2 | could not run: missing flag, unreadable lane state, a lane directory that is not one, bad invocation, `gh` or `git` absent |
 
 **An entry that is merely waiting is not a failure.** Zero pending checks is
@@ -288,30 +338,33 @@ path, branch name, check name, commit subject and reason renders through
 line rather than two.
 
 ```
+INIT OK lane=<dir> repo=<owner>/<name> base=<branch> version=1
+INIT REFUSED: <reason>
 ADD OK kind=<pr|branch> entry=<n-or-name> needs_read=<yes|no> lane=<prs>/<branches>
 ADD NOTE <entry> is already in the lane (needs_read=<yes|no>)
 ADD REFUSED: <reason>
-READ OK entry=<n-or-name> who=<name> verdict=<approve|hold> head=<sha|-> approvals=<n> holds=<n>
+READ OK entry=<n-or-name> who=<name> verdict=<approve|hold> head=<sha12> current=<true|false|-> approvals=<n> holds=<n> stale=<n>
 READ REFUSED: <reason>
-GATE OK entry=<n-or-name> head=<sha12> verdict=<green|red> summary=<path> in_lane=<true|false>
+GATE OK entry=<n-or-name> head=<sha12> base=<sha12> verdict=<green|red> summary=<path> in_lane=<true|false>
 GATE REFUSED: <reason>
 RUN PASS n=<k> at=<stamp> build=<id> local_gates=<true|false> planned_red=<text|->
 RUN NEWER build=<id> on_disk=<id>: the binary changed; this loop ends after this pass; restart it by hand
 RUN BASE base=<branch> head=<sha12> checks=g<n>/p<n>/r<n> gate=<green|-> state=<GREEN|RED|PENDING|PLANNED-RED>
 RUN STOPPED base=<branch>: the base is red (<n> failing); nothing merges onto a red base
-RUN ENTRY entry=<n-or-name> head=<sha12> checks=g<n>/p<n>/r<n> read=<n>a/<n>h gate=<green|-> state=<STATE>
+RUN ENTRY entry=<n-or-name> head=<sha12> checks=g<n>/p<n>/r<n> read=<n>a/<n>h gate=<merge|head|stale|-> state=<STATE>
 RUN STOPPED entry=<n-or-name>: <reason>
 RUN BLOCKED entry=<n-or-name> head=<sha12> files=<n>: <the hand command, clone to push>
 RUN REMERGE entry=<n-or-name> base=<branch> result=<clean|blocked> pushed=<true|false> files=<n>
-MERGE OK entry=<n-or-name> base=<branch> basis=<hosted|gate> gate=<path|-> read=<who,who|none-required> hosted_red=<names|->
+MERGE OK entry=<n-or-name> base=<branch> base_sha=<sha12> head=<sha12> merge=<sha12> gate=<path> admitted=<hosted|gate> read=<who,who|none-required> hosted_red=<names|->
+MERGE RACED entry=<n-or-name> base=<branch> expected=<sha12> found=<sha12> merge=<sha12>: the base moved between the gate and the merge; this pass stops
 MERGE FAIL entry=<n-or-name>: <reason>
 RUN OK lane=<n> merged=<n> dropped=<n> blocked=<n> waiting=<n>
 RUN MORE kind=<entry> shown=<n> total=<t> nova-merge status --lane <dir> --max 0
 RUN NOTE <the one remedy line>
 RUN REFUSED: <reason>
-STATUS ENTRY kind=<pr|branch> entry=<n-or-name> head=<sha12> checks=g<n>/p<n>/r<n> read=<n>a/<n>h gate=<green|-> state=<STATE> last=<stamp>
+STATUS ENTRY kind=<pr|branch> entry=<n-or-name> head=<sha12> checks=g<n>/p<n>/r<n> read=<n>a/<n>h stale=<n> gate=<merge|head|stale|-> state=<STATE> last=<stamp>
 STATUS OK prs=<n> branches=<n> base=<branch> base_state=<GREEN|RED|PENDING|PLANNED-RED> ready=<n> blocked=<n> waiting=<n> reads=<n>a/<n>h
-DRY PLAN pos=<k> entry=<n-or-name> basis=<hosted|gate> read=<n>a/<n>h
+DRY PLAN pos=<k> entry=<n-or-name> admitted=<hosted|gate> gate=<merge|head|stale|-> read=<n>a/<n>h
 DRY OK surveyed=<n> would_merge=<n-or-name|-> stopped=<n> waiting=<n>
 STOP OK lane=<dir>
 ```
@@ -330,7 +383,20 @@ the pass before any entry is read, with `RUN STOPPED base=…`. A `PENDING` base
 (no checks and no gate for its head, which is every base below `main` right
 after a merge) waits, and `RUN NOTE` names the gate run that proves it.
 `STATUS OK` carries the same verdict as `base_state`, so a lane can be read
-without a pass.
+without a pass. A gate for the base branch is recorded with `--head` and
+`--base` both the base's own sha — the base merged onto itself is itself — so
+the record has the shape of rule 18 and `RUN BASE gate=green` means exactly
+that record.
+
+`gate=` on `RUN ENTRY`, `STATUS ENTRY` and `DRY PLAN` is the rule 18 standing
+of the entry's gate records in one word: `merge` is a green record for
+`(oid, current base sha)`, the predicate's first line satisfied; `head` is a
+green record for `oid` against an older base, a candidate; `stale` is a record
+whose head is not the entry's current `oid` (see **the races**); `-` is none.
+`MERGE OK` names all three shas the merge is made of — `base_sha`, `head`,
+`merge` — and `admitted=` says which candidate evidence let the entry reach the
+integration gate, because a reader of the log asks "what was this merged on"
+and the answer is one gate record plus one admission.
 
 `STATUS OK reads=<n>a/<n>h` is the total of approves and holds across the lane
 (rule 11). It is a count of what the state file holds, so a lane whose state
@@ -393,9 +459,9 @@ state file on purpose — see **the state file**. Every entry carries:
 |---|---|
 | `pr` or `branch` | which kind it is; exactly one is present |
 | `needs_read` | `yes` if a recorded read is required before it merges |
-| `reads` | the recorded verdicts: `who`, `verdict`, `note`, `at`, `head` |
+| `reads` | the recorded verdicts: `who`, `verdict`, `note`, `at`, `head` — `head` is the sha the reader supplied with `--head`, never one the tool filled in |
 | `head` | the branch name (a PR) or the resolved `origin/<branch>` sha |
-| `oid` | the head **commit**, which is what a read and a gate are keyed to |
+| `oid` | the head **commit**, which is what a read is keyed to and the first half of what a gate is keyed to (the other half is the base sha, rule 18) |
 | `state` | the last pass's verdict: one of the states below |
 | `last` | when that verdict was reached |
 | `detail` | the one-line reason, for a state that has one |
@@ -412,22 +478,36 @@ entries would be merging the second against a base no check had seen.
 
 ## The merge condition
 
-An entry merges when **both** halves hold. Neither is sufficient, and the
-conjunction is the whole tool:
+There is one merge predicate and it is rule 18's, restated here so the section
+a reader opens first says the same thing the rule says (lesson 113: **a
+matching rule has exactly one statement**):
 
 ```
-  (  hosted checks show ZERO fail and ZERO pending and at least one pass
-  OR a GREEN local gate recorded for this entry's CURRENT head, with --local-gates )
-AND the read condition
+MERGE(entry) :=
+      a gate record with verdict=green, head = entry.oid,
+                         base = the base branch's sha read this pass
+  and the read condition
+  and the four placement conditions
+  and not (base is main and a hosted check for entry.oid is red)
 ```
 
-and, independently, all of these are true:
+The four placement conditions:
 
 - the entry is **in the lane** (never anything else in the repository);
 - its base, read back from the host this pass, **is the lane's base**;
 - its head branch lives in the lane's own repository, not a fork the lane cannot
   push to;
 - it does not currently conflict with the base.
+
+**Candidate evidence is not in the predicate.** Hosted checks (zero fail, zero
+pending, at least one pass) and a green gate for the head alone (under
+`--local-gates`) are what admit an entry to `NEEDS-GATE` and put the exact gate
+command on `RUN NOTE`: `<gate runner> --head <oid> --base <base sha>`. On
+`main` hosted green is the admission an entry needs (rule 10); below `main` a
+head gate is. Neither merges anything. An entry with candidate evidence and no
+record for `(oid, base sha)` waits, and the pass says so: `RUN ENTRY …
+gate=head state=NEEDS-GATE`. This is the whole of what the storm of #942
+taught: the head was proven, the merge was not.
 
 **Zero fail and zero pending, counted separately.** `pass` and `skipping`
 buckets count green; `pending` counts pending; `fail` and `cancel` count red. A
@@ -436,13 +516,14 @@ nobody read. **Zero checks at all is not green** — it is `PENDING`, because a
 pull request whose workflows have not been queued yet reports an empty list, and
 accepting that as green is a merge with no evidence behind it.
 
-**On `main`, a hosted RED stops the entry whatever else is true.** A local gate
-never overrides a failure somebody saw. Below `main` the precedence is the other
-way (rule 15): the local gate is the verdict, and the hosted red is printed by
-name on the merge line rather than blocking it, because below `main` the hosted
-lane is not the evidence the entry is judged on (rule 10). This is the asymmetry that makes the fast lane
-safe to trust: a local green is permission to **stop waiting**, never permission
-to **ignore**.
+**On `main`, a hosted RED stops the entry whatever else is true** — it is the
+predicate's last line. A local gate never overrides a failure somebody saw.
+Below `main` the precedence is the other way (rule 15): the hosted red is
+printed by name on the merge line rather than blocking it, because below `main`
+the hosted lane is not the evidence the entry is judged on (rule 10). This is
+the asymmetry that makes the fast lane safe to trust: a local green is
+permission to **stop waiting**, never permission to **ignore**. On both bases
+the merge itself rests on the integration gate and on nothing else.
 
 **A draft is never merged from outside the lane, and never silently.** The
 prototype calls `gh pr ready` on a draft whose turn has come. That is kept —
@@ -478,10 +559,18 @@ resolution is by the names in the lane's own state, not by anything the host
 says about identity: a host login is evidence about an account, and `who` is a
 line at a keyboard.
 
-**A read is keyed to the head the reader read.** `read` stamps the entry's
-current `oid` into the verdict, and a pass ignores an approve whose `head` is
-not the entry's current `oid`, printing it as `read=0a/0h` with the stale count
-on `STATUS ENTRY`. This is the fourth race in **the races** below, and it is the
+**A read is keyed to the head the reader read, and the reader says which.**
+`read --head <sha>` is required (rule 19): the full 40-character sha the reader
+had open, and the verdict records **that** sha. The tool never fills `head` in
+from the entry's current `oid`, because the entry's head at record time is not
+the head the reader read — if Emma finishes reading H1 and the author pushes
+H2 before she types the verb, a stamp taken at record time would put her H1
+judgment on H2. `READ OK` prints `head=<sha12>` and `current=true|false`
+(against the `oid` the last pass recorded, `-` if the lane has not run), so a
+reader who is already stale hears it at once. A pass ignores an approve whose
+`head` is not the entry's current `oid`, counts it as `stale=<n>` on
+`STATUS ENTRY`, and prints `read=0a/0h` for the entry; a stale approve is kept
+and never counts. This is the fourth race in **the races** below, and it is the
 one the prototype leaves open: an approve recorded at 12:31Z counted for a head
 pushed at 12:47Z.
 
@@ -489,23 +578,38 @@ pushed at 12:47Z.
 
 The local gate is the fast lane's **exact steps, run on our own hardware**. It
 is not a looser version and it is not a subset. One recorded gate is
-`{entry, head, verdict, summary, at}` and it is recorded by `nova-merge gate`,
-which is the only way a gate enters the lane.
+`{entry, head, base, verdict, summary, at}` and it is recorded by `nova-merge
+gate`, which is the only way a gate enters the lane.
 
 ```
-nova-merge gate --lane <dir> --pr 949 --head <sha> --verdict green --summary <path>
+nova-merge gate --lane <dir> --pr 949 --head <sha> --base <sha> --verdict green --summary <path>
 ```
 
-`--head` must be a full hexadecimal commit sha of at least 7 characters;
-`--summary` must be a file that exists. Both are refusals, not tolerances: a
-gate with a truncated head is a gate that might match the wrong commit, and a
-gate with no summary is a claim with no evidence behind it.
+`--head` and `--base` must each be a full 40-character hexadecimal commit sha;
+`--summary` must be a file that exists. All three are refusals, not tolerances:
+a gate with a truncated sha is a gate that might match the wrong commit, a gate
+with no base is a gate for a commit nobody can name (rule 18), and a gate with
+no summary is a claim with no evidence behind it.
 
-**A gate is for exactly one head.** The newest green gate for the entry's
-current `oid` wins; a gate for any other head is ignored, and `STATUS ENTRY`
-prints `gate=-` rather than pretending. A gate may be recorded **before** the
-entry joins the lane — the gate list is top-level, keyed by entry — and `GATE
-OK` says `in_lane=false` when that is what happened.
+**A gate is for exactly one integration commit: one head onto one base.** What
+the runner gated is `head` merged onto `base`, in its own clone, never pushed;
+the record says both. The newest green record for `(entry's current oid,
+current base sha)` satisfies the predicate; a green record for the current
+`oid` against another base is a candidate (`gate=head`); a record for any other
+head is `gate=stale` or nothing, and `STATUS ENTRY` says which rather than
+pretending. A gate may be recorded **before** the entry joins the lane — the
+gate list is top-level, keyed by entry — and `GATE OK` says `in_lane=false`
+when that is what happened.
+
+**The gate runner's interface, as far as this spec needs it.** The runner is a
+second tool (below), and this spec fixes only the edge the lane sees: it takes
+`--head <sha> --base <sha>`, the two shas `RUN NOTE` prints; it builds the
+integration commit itself, in one clone per run (rule 8), under one of the
+machine's slots with the leg cap (rule 14) and under its own deadline; it
+records the verdict with `nova-merge gate` carrying the same two shas and the
+summary path. A runner that gates the head alone and records it as a merge
+gate is lying to rule 18, and the record's `base` is how a reader would catch
+it: the sha is in the summary's first line, and a test compares the two.
 
 **Gates are only accepted under `run --local-gates`.** Without the flag the lane
 reads hosted checks and nothing else. The flag is the caller saying *our
@@ -541,11 +645,15 @@ gate run removes only the tree it made, and only when asked. The only serial
 steps in the whole lane are the ones parallel cannot do: one base, one writer
 of the state, one merge per pass. The merge itself takes seconds.
 
-`nova-merge` does **not** run the gate. A second tool runs it and records the
-verdict; `nova-merge` reads records. The separation is deliberate: the gate's
-steps are this repository's `ci-fast.yml`'s, which belong to the repository
-being merged and change with it, and a merge tool that embedded them would be a
-merge tool that went stale silently.
+`nova-merge` does **not** run the gate — not the head's and not the
+integration commit's. A second tool runs it and records the verdict;
+`nova-merge` reads records, and a pass whose front entry lacks the record rule
+18 names waits in `NEEDS-GATE` with the command on `RUN NOTE`. The separation
+is deliberate: the gate's steps are this repository's `ci-fast.yml`'s, which
+belong to the repository being merged and change with it, and a merge tool that
+embedded them would be a merge tool that went stale silently. The cost is one
+round trip per base move, and the two-minute rule is what makes that round trip
+affordable.
 
 **Placement (rule 10).** A pull request into `main` merges on hosted checks.
 A branch entry, or a pull request whose base is below `main`, merges on a
@@ -645,13 +753,36 @@ verified against a base the other had already moved. The tool takes a **lock on
 the lane directory** for the whole of a pass (`flock` on `<lane>/run.lock`, a
 second, longer-lived lock than the state lock of rule 1; the pid and the stamp
 written inside; released by the kernel on death, rule 2), and a second `run` on
-the same lane exits 2 naming the holder. A lock is not a claim
-on the base: two lanes on **one base** through two lane directories is a
-configuration this tool cannot see, so `run` records the base's sha at the start
-of a pass and **re-reads it immediately before the merge**; if it moved, the
-pass prints `RUN STOPPED … : the base moved under this pass` and starts over
-rather than merging. That check is cheap and it is the only defence against a
-hand at another keyboard.
+the same lane exits 2 naming the holder. A lock is not a claim on the base:
+two lanes on **one base** through two lane directories is a configuration this
+tool cannot see, and a re-read of the base "immediately before the merge" does
+not close it either — another lane or a hand fits between that read and the
+host's write. So the window is closed **by the host and after the fact**, with
+the limit stated:
+
+- **the head is a precondition the host enforces.** A pull request merges with
+  `gh pr merge --match-head-commit <oid>`: the host refuses if the head is not
+  the sha the gate record names. A branch entry's merge commit is pushed with
+  a plain, non-force push of the base from the lane's clone, which the remote
+  rejects if the base is no longer the sha the merge commit's first parent
+  names: that push **is** the atomic expected-base guard, and it is exact.
+- **the base is checked against the merge commit's own parents.** The host
+  offers no expected-base precondition for a pull-request merge, so the tool
+  re-reads the base sha after the merge and compares it with the parents of
+  the merge commit the host reports: the first parent must be the base sha
+  the gate record names, the second the head. When either differs, the tool
+  prints `MERGE RACED entry=… expected=<sha12> found=<sha12> merge=<sha12>`,
+  logs it, exits 1, and **the pass stops there**: the merge is on the base
+  and it is untested, and the next pass gates it as the base before anything
+  else (rule 6), which is the red rule doing the job the precondition could
+  not.
+- **the limit, stated.** For a pull request the host recomputes the merge
+  commit; two parents equal to the gate's `(base, head)` is the strongest
+  precondition this backend offers, and the tested object is the runner's
+  merge of the same two parents. A backend with an expected-base merge
+  primitive replaces the after-check with a precondition and `MERGE RACED`
+  becomes a refusal before the write. `gh` today is not that backend, and
+  this spec says so rather than pretending the window is zero.
 
 **A merge and a re-merge crossing.** A re-merge pushes a new commit onto an
 entry's head; a pass that had already read that entry's checks would merge a
@@ -661,15 +792,20 @@ read its checks — the same re-read that catches the author pushing mid-pass. A
 re-merge of the entry that is next to merge happens **in the pass's own order**,
 before its checks are read, never concurrently.
 
-**A read recorded for a stale head.** Closed by keying the verdict to the
-`oid` it was recorded against; see **the read condition**. The prototype leaves
-it open, and today's state file shows four approves on one entry recorded at
-12:31Z and 12:35Z against a head whose `oid` is now something else.
+**A read recorded for a stale head.** Closed by `read --head <sha>`: the
+verdict carries the sha the reader supplied, and a pass counts it only while
+that sha is the entry's `oid`; see **the read condition**. A stamp taken by the
+tool at record time would not close it — the push can land between the reading
+and the verb. The prototype leaves it open, and today's state file shows four
+approves on one entry recorded at 12:31Z and 12:35Z against a head whose `oid`
+is now something else.
 
-**A gate for a stale head.** Closed the same way, and already closed in the
-prototype: `gate_path` selects on `head == oid` exactly. This spec keeps it and
-adds the symmetric refusal — a gate recorded for a head that is not an ancestor
-of the entry's current head is not merely ignored but reported, on
+**A gate for a stale head, or a stale base.** Closed the same way, and half
+closed in the prototype: `gate_path` selects on `head == oid` exactly. This
+spec keeps it, adds the base half (rule 18: a green record whose `base` is not
+the current base sha is `gate=head`, a candidate, and the entry is
+`NEEDS-GATE`), and adds the symmetric refusal — a gate recorded for a head that
+is not the entry's current head is not merely ignored but reported, on
 `STATUS ENTRY`, as `gate=stale`, because a caller who ran the gate and then
 pushed should be told the gate was spent rather than left wondering why the lane
 is waiting.
@@ -707,6 +843,7 @@ file whose owner believes a read is required.
 
 ```json
 {
+  "version": 1,
   "repo": "<owner>/<name>",
   "base": "<branch>",
   "prs": [
@@ -724,11 +861,17 @@ file whose owner believes a read is required.
      "head": "", "oid": "", "state": "NEEDS-GATE", "last": "", "detail": ""}
   ],
   "gates": [
-    {"pr": 949, "head": "<sha>", "verdict": "green",
+    {"pr": 949, "head": "<sha>", "base": "<sha>", "verdict": "green",
      "summary": "<path>", "at": "2026-09-11T13:00:19Z"}
   ]
 }
 ```
+
+`version` is written by `init` and checked first: a number this binary does not
+know is exit 2 naming both numbers, before any other field is read. A gate
+record's `base` and a read's `head` are both full 40-character shas and both
+are required; a record missing either does not decode (rules 18 and 19). The
+empty lane `init` writes is exactly this shape with the three lists empty.
 
 **The two entry lists are separate, and a gate carries `pr` or `branch` and
 never both.** A branch entry in the `prs` list would be parsed as a pull request
@@ -757,8 +900,9 @@ status line.**
 
 - **It does not review code.** A read verdict is recorded by a line; nothing in
   this tool reads a diff and forms an opinion.
-- **It does not run the gate.** It records gate verdicts. See **the local
-  gate**.
+- **It does not run the gate.** It records gate verdicts, for the head and
+  for the integration commit alike, and waits for the one rule 18 names. See
+  **the local gate**.
 - **It does not queue with the host's merge queue**, and it does not use
   `--auto`, which on this host is not a queue.
 - **It does not open, close, comment on, label or approve a pull request.** It
@@ -861,6 +1005,21 @@ it:
     lives under the clone.** #948's first failing line was a status line, and
     the real log went with `--gc`. Here rule 17: a declared marker or `no
     marker, see <path>`, and logs under the lane that outlive the clone.
+25. **A green gate for the head is the verdict, and a hosted green is a second
+    verdict beside it.** #942 merged on a head gate a minute after the base
+    moved. Here rule 18: one predicate, a gate for `(head, base sha)`, and
+    hosted green and head gates are admission only.
+26. **The base is re-read before the merge and then the merge is run.** A hand
+    fits in the gap. Here the head is a host precondition
+    (`--match-head-commit`), a branch merge is a plain push the remote rejects
+    on a moved base, and a pull-request merge is checked against its own
+    parents afterwards: `MERGE RACED` stops the pass.
+27. **`read` stamps the entry's head at record time.** Here `read --head` is
+    required and the verdict binds to the sha the reader supplied (rule 19).
+28. **The lane is created by whatever verb runs first**, with the repository
+    and the base from the environment. Here `init` is the one creation verb,
+    the state is versioned, and every other verb refuses a directory that is
+    not a lane (rule 20).
 
 ## Tests this spec demands
 
@@ -883,9 +1042,13 @@ check never seen failing is not a check).
    mutating helper: exit 1 and the sentence, before the command is built; the
    fake host records that no push was ever forced.
 5. One failing check refuses; one pending check waits; zero checks is
-   `PENDING`; a green gate for the current head merges; a green gate for the
-   previous head prints `gate=-` and waits; on `main`, a hosted red with a
-   green gate still refuses (below `main`, test 15).
+   `PENDING`; a green gate for the current head against the current base sha
+   merges; a green gate for the current head against an older base prints
+   `gate=head state=NEEDS-GATE`, waits, and `RUN NOTE` carries both shas; a
+   green gate for the previous head prints `gate=stale` and waits; on `main`,
+   a hosted red with a green integration gate still refuses (below `main`,
+   test 15); hosted green alone, on `main`, is `NEEDS-GATE` and never a
+   merge.
 6. A red base: the pass prints `RUN STOPPED base=…` as its third line and
    merges nothing, whatever the entries show; with `--planned-red <text>` the
    text is on `RUN PASS` and in the log and the pass proceeds; a `PENDING`
@@ -903,7 +1066,11 @@ check never seen failing is not a check).
 10. A branch entry merges on a green gate plus its read with no hosted checks
     at all; a pull request onto `main` with no hosted checks waits.
 11. Reads survive a restart: `read` writes, the process exits, `status` prints
-    the same approve and hold counts, and `STATUS OK reads=` equals their sum.
+    the same approve and hold counts, and `STATUS OK reads=` equals their sum;
+    a read recorded `--head H1`, then the fake host advances the entry to H2:
+    the next pass prints `read=0a/0h`, `STATUS ENTRY stale=1`, the entry is
+    `NEEDS-READ`, and a second `read --head H2` by the same reader satisfies
+    it while the H1 record is still in the file.
 12. Fifty entries: `status` and `run` output measured in lines and bytes and
     the numbers written into the commit; the listing is a prefix of 20 with
     one MORE line; `RUN NOTE` is one line; the counts say 50.
@@ -917,11 +1084,13 @@ check never seen failing is not a check).
     no age computed; a gate with `--legs 2` over nine legs never has more than
     two leg processes alive, checked by a fake leg that records its start and
     end; `--slots` or `--legs` missing is exit 2 naming the flag.
-15. Base is not `main`, hosted red for the head, green gate for the head: the
-    entry merges and `MERGE OK` carries `hosted_red=<names>` with the failing
-    check names; base is `main`, same evidence: the entry is `RED` and nothing
-    merges; base is `main`, hosted pending, green gate: merges with
-    `basis=gate`.
+15. Base is not `main`, hosted red for the head, green gate for `(head, base
+    sha)`: the entry merges and `MERGE OK` carries `hosted_red=<names>` with
+    the failing check names and `admitted=gate`; base is `main`, same
+    evidence: the entry is `RED` and nothing merges; base is `main`, hosted
+    pending, green gate for `(head, base sha)`: merges with `admitted=gate`;
+    base is `main`, hosted green, green gate for the head against an older
+    base: `NEEDS-GATE`, nothing merges.
 16. `RUN PASS` carries `build=<id>` equal to the id compiled in; with the
     binary at the tool's own path replaced mid-pass by one with a different
     id, the loop finishes that pass, prints `RUN NEWER` naming both ids, and
@@ -934,14 +1103,40 @@ check never seen failing is not a check).
     matching line in the summary, a step without prints `no marker, see
     <path>` with an existing path, and a source test finds no free-text search
     for `FAIL` or `error` in the summariser.
-18. Two entries A and B both gated green against base X; A merges (base is
-   now X+A); B is not merged on its recorded gate: a gate of B merged onto
-   X+A runs first, and when that gate is red B is RED with the base sha named
-   and A stays merged; when the base has not moved, no second gate runs.
-19. `read --who emma --verdict approve` from a second checkout of the lane
-    lands in the state under the lane lock and `status` shows `reads=1`
-    with no name; `--reads <pr>` lists it; a `read` whose `--who` is empty
-    is refused with the remedy line.
+18. Two entries A and B both gated green against base X (`--base X`); A
+    merges (base is now X+A); B is not merged on its recorded gate: B is
+    `NEEDS-GATE` with `gate=head`, `RUN NOTE` names `--head B --base X+A`, a
+    red record for `(B, X+A)` makes B `RED` with both shas in `detail` and A
+    stays merged, a green one merges B; when the base has not moved, no
+    second gate is asked for; `gate` without `--base`, or with a 12-character
+    one, is refused naming the flag; a state file with a gate record lacking
+    `base` is exit 2. The race: A's gate record is green for `(A, X)`, the
+    fake host moves the base to X+H after the pass's last read and then
+    performs the merge; the tool reads the merge commit's parents, finds
+    `X+H` where it expected `X`, prints `MERGE RACED expected=X found=X+H`,
+    exits 1, and the pass stops with no further entry touched; the next pass
+    treats the merged tip as an ungated base (rule 6) and waits. A branch
+    entry in the same race: the plain push is rejected by the fake remote,
+    nothing lands, `MERGE FAIL` names the rejection, and the branch is
+    untouched. A merge is always issued with `--match-head-commit <oid>`, and
+    the fake host records it.
+19. `read --who emma --head <sha> --verdict approve` from a second checkout
+    of the lane lands in the state under the lane lock and `status` shows
+    `reads=1` with no name; `--reads <pr>` lists it with the sha; a `read`
+    whose `--who` is empty is refused with the remedy line; a `read` with no
+    `--head`, or a `--head` shorter than 40 characters, is refused naming the
+    flag; `READ OK` prints `current=false` when the sha is not the last
+    pass's `oid`, and the record's `head` is the sha given, never the `oid`.
+20. `init --lane <dir> --repo o/n --base main` on an empty directory writes
+    `state.json` with `version: 1`, `repo`, `base` and three empty lists,
+    clones `repo/`, and prints `INIT OK`; a second `init` on the same
+    directory is `INIT REFUSED` exit 1 and the state is byte-identical
+    afterwards; `add`, `read`, `gate`, `run`, `status` and `dry-run` on a
+    directory with no `state.json` are exit 2 with the `init` command in the
+    refusal and write nothing; `--repo` or `--base` on any verb but `init` is
+    exit 2 naming the flag; a state file with `version: 2` is exit 2 naming
+    both numbers; the `### First run` in `README.md` starts with `init` and
+    a test executes it.
 
 ## The work list
 
@@ -953,12 +1148,16 @@ runnable `example:` block, refusals that say what the flag wants and report ever
 independent problem at once, a `### First run` in `README.md`, a `quickstart`
 verb, and tests that pin all three by executing them.
 
-1. **`internal/merge/state.go`** — the state file: strict decode (unknown field
-   is an error), the two entry lists, the gate list, the write under the lock
-   through `state.json.tmp` (a fixed name, rule 1) and rename, both states parsed before the
-   rename. Tests: an unknown field refuses; a string where a number belongs
-   refuses; a round trip preserves order; thirty concurrent writers all land
-   and the file parses at every instant (demanded test 1).
+1. **`internal/merge/state.go`** — the state file: `version` checked first,
+   strict decode (unknown field is an error), the two entry lists, the gate
+   list with `base` required, reads with `head` required, the write under
+   the lock through `state.json.tmp` (a fixed name, rule 1) and rename, both
+   states parsed before the rename; `Init` writes the empty versioned lane
+   and refuses an existing one. Tests: an unknown field refuses; a string
+   where a number belongs refuses; a gate without `base` refuses; a version
+   this binary does not know refuses by number; a round trip preserves order;
+   thirty concurrent writers all land and the file parses at every instant
+   (demanded tests 1 and 20).
 2. **`internal/merge/lock.go`** — the lane lock as `flock` on a lock file
    in the lane directory (LockFileEx on Windows), held for one
    read-modify-write, a bounded jittered wait, exit 2 naming the holder's pid;
@@ -981,20 +1180,27 @@ verb, and tests that pin all three by executing them.
    three force spellings before building a command. Tests: each refused flag,
    by exit code and text; a push is never `--force` (demanded test 4).
 7. **`internal/merge/read.go`** — the read condition: author exclusion, head
-   keying, hold precedence, the lane-wide totals. Tests: a hold beats three
-   approves; an author approve does not satisfy; a stale approve does not
-   satisfy and is counted separately; demanded test 11.
+   keying to the sha the reader supplied, hold precedence, the stale count,
+   the lane-wide totals. Tests: a hold beats three approves; an author approve
+   does not satisfy; a stale approve does not satisfy and is counted
+   separately; demanded tests 11 and 19.
 8. **`internal/merge/pass.go`** — one pass: the base's evidence first and a
    red base stops (rule 6), walk the order, classify each entry into the
-   closed state set, re-merge only what conflicts, re-read the base and the
-   entry `oid` immediately before the merge, merge at most one, stop. Tests:
-   the storm does not happen (a clean entry is not touched after a merge,
-   demanded test 3); a moved base stops the pass; one merge per pass; demanded
-   tests 5, 6 and 10.
-9. **`cmd/nova-merge/main.go`** — the verbs, the flag parsing with this repo's
-   one-line refusals, the output grammar exactly as above, `--max` on every
-   listing, `--loop` refusing without `--hours`, `dry-run` as a verb with no
-   path to the mutation guard.
+   closed state set, re-merge only what conflicts, evaluate `MERGE(entry)`
+   as one function that is the only caller of the mutating helper's merge,
+   issue the merge with the head precondition, read the merge commit's
+   parents back and stop the pass on `MERGE RACED`, merge at most one, stop.
+   Tests: the storm does not happen (a clean entry is not touched after a
+   merge, demanded test 3); a raced base stops the pass after the fact; one
+   merge per pass; a source test finds exactly one call site of the merge
+   helper and it is inside the predicate's function; demanded tests 5, 6, 10,
+   15 and 18.
+9. **`cmd/nova-merge/main.go`** — the verbs, `init` first and creation-only,
+   `read --head` and `gate --base` required, the flag parsing with this
+   repo's one-line refusals, the output grammar exactly as above, `--max` on
+   every listing, `--loop` refusing without `--hours`, `dry-run` as a verb
+   with no path to the mutation guard, every verb but `init` refusing a
+   directory that is not a lane.
 10. **`cmd/nova-merge/*_test.go`** — the contract tests: every exit code, every
     refusal sentence, the structural refusals, `dry-run` writes nothing
     (asserted by running it against a lane whose clone is read-only), a capped
@@ -1004,5 +1210,6 @@ verb, and tests that pin all three by executing them.
 11. **The gate runner's clone naming** (demanded test 8) lives with the gate
     runner, and this spec only demands it: `gate-<entry>-<run id>`, and a
     clean-up that removes only its own tree.
-12. **`README.md`'s `### First run`** and the `quickstart` verb: create a lane,
-    add one entry, print the status, with every path a flag.
+12. **`README.md`'s `### First run`** and the `quickstart` verb: `init` a
+    lane with its repository and base, add one entry, print the status, with
+    every path a flag (demanded test 20).
