@@ -255,7 +255,7 @@ nothing, writes nothing.
 
 ```
 LOCAL OK engines=<n> answering=<n> loaded=<n> models=<n> mem_used=<n> mem_free=<n> mem_total=<n> wired_cap=<n|unset> load1=<f>
-LOCAL ENGINE <name> state=<up|down|timeout> [status=<code>] base=<url> [loaded=<n>] [advertised=<n>] [resident=<file|unknown (<why>)>] [num_ctx=<n>] store=<dir|unknown (<why>)> shared=<yes|no|unknown>
+LOCAL ENGINE <name> state=<up|down|timeout> [status=<code>] base=<url> [loaded=<n>] [advertised=<n>] [resident=<file|unknown (<why>)>] [resident_bytes=<n|unknown (<why>)>] [num_ctx=<n>] store=<dir|unknown (<why>)> shared=<yes|no|unknown>
 LOCAL MODEL engine=<e> model=<ref> digest=<sha256:…|none (<e> reports none)> weights=<n> loaded=<yes|no> [num_ctx=<n>]
 LOCAL NOTE <text>
 LOCAL MORE kind=<kind> shown=<n> total=<n> remedy=<command>
@@ -264,10 +264,16 @@ LOCAL FAIL <what>: <reason>
 
 `state=up` is a **2xx on the health path inside `--timeout`** and nothing weaker, so
 another program on port 8000 is `state=down status=404`. `advertised` is what the
-server answers to; `resident` is what was loaded, from the `-m` path **resolved
-through symlinks** (a `ds4flash.gguf` symlink here points at the Pro GGUF, so the
-unresolved name prints bytes that are not there). With nothing answering it prints one
-remedy line naming `ollama serve`, never the state (rule 13).
+server answers to; `resident` is what was loaded, and it is **two facts, not one**: the
+`-m` path **resolved through symlinks**, and `resident_bytes=`, that resolved file's
+size from one `stat`. Both, because a name can lie two ways and resolution only catches
+one of them. `ds4flash.gguf` on this box is a **hard link** to the 464 GB Pro file
+(2026-09-12, `research/2026-09-12-local-model-bakeoff.md` on standard, `c94ee4d`), not a
+symlink and not a separate Flash GGUF — a hard link is a second name for the same inode,
+invisible to any resolution, so the path alone says Flash while Pro is what is loaded and
+the size is the only fact that separates them. A file it could not `stat` is
+`resident_bytes=unknown (<why>)`, not a guess (rule 15's shape). With nothing answering
+it prints one remedy line naming `ollama serve`, never the state (rule 13).
 
 **Refuses** nothing, except **no engine answering at all**: exit 1, one remedy line; a
 slow engine is `state=timeout` at exit 0. **Demanded test:** 11, 13, 17 — 400 models
@@ -495,8 +501,11 @@ supplies a **fake box** through the one interface that reads them
     `--key-file`; a bad `--usage`; a bad `--deadline`; `--provider` on ollama. Plus the
     one at exit 1: a `--model` the fake does not advertise, remedy `nova-local serve`.
 16. A fake ds4 with two ids and one loaded gives `advertised=2 resident=<the -m file,
-    symlinks resolved>` and `digest=none (ds4 reports none)`; no process gives
-    `resident=unknown (<why>)`; `serve` over a different resident model is exit 1 naming
+    symlinks resolved> resident_bytes=<that file's size>` and `digest=none (ds4 reports
+    none)`; a `-m` path that is a **hard link** to a second, larger fake prints the
+    linked name and the **larger** size, which is the assertion that can say NO to a
+    path-only answer; an unstattable file is `resident_bytes=unknown (<why>)` at exit 0;
+    no process gives `resident=unknown (<why>)`; `serve` over a different resident model is exit 1 naming
     it; `--stop` twice is exit 0 both times.
 17. **Two accounts, one store.** Two runs under different `HOME`/`USER` pairs are
     **byte-identical**, `store=` and `shared=` included; `store=` is the `blobs` parent
@@ -529,7 +538,8 @@ hardcoded paths, the exit grammar above, `internal/oneline` for every printed va
    **and** the `FROM` blob path), the derived tag via `/api/create`, the warm-up, the
    unload. Tests 5, 6, 7, 8, 17.
 4. **`internal/local/ds4.go`** — the process with model path, context, host and port;
-   advertised versus resident with symlinks resolved; the three unknowns read off
+   advertised versus resident, symlinks resolved and the resolved file `stat`ed for
+   `resident_bytes=`; the three unknowns read off
    `ds4_server.c` first. Tests 14, 16.
 5. **`internal/local/worker.go`** — the description in `nova-swarm`'s exact schema,
    every field from a flag or the adapter, the refusals, the key file `stat`ed and never
