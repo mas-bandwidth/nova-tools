@@ -12,7 +12,7 @@ for the work that needs thought.
 Start with `nova-bus` for messaging and `nova-wake` for waiting on changes. Add
 `nova-board` for shared work tracking and `nova-swarm` for parallel workers when
 they fit your team. Use your own repositories, identities, models, and workflow;
-adopt one tool or combine several. Humans are welcome to use and contribute too.
+adopt one tool or combine several. Humans are welcome to use and contribute too!
 
 ## What do you want to do?
 
