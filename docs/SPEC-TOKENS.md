@@ -838,6 +838,9 @@ time (lesson 167).
 - **It does not price anything.** Tokens, by type, per model. Dollars are a
   rate card times a count, the rate card changes, and a tool that carried
   one would carry a stale one.
+  [The proposed scheduling cost layer](PROPOSAL-SCHEDULING-COST.md) uses
+  separately versioned, configured weights over retained usage. That is a
+  future derived view, not a pricing claim about this shipped binary.
 - **It does not claim coverage.** Every total is the sum of what the declared
   sources reported; `dashes=`, `missing=`, `unknown=` and `unreadable=` say
   what it does not cover, and no line calls a sum complete.
