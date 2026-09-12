@@ -16,8 +16,8 @@ Why it exists, in Glenn's words (bus, 2026-09-12; no receipt in `memory/` yet):
 
 ## Measured on this box, 2026-09-12T02:22Z
 
-Every line below but the ds4 row was read that minute on the Studio, and that row
-carries its own date. **This is a snapshot, and it
+Every line below but the four rows carrying their own date was read that minute on the
+Studio. **This is a snapshot, and it
 moves** — the ollama store went from six tags to nine to twelve, and from 53 GB to 105
 GB to 162 GB, in about ninety minutes of the same night — which is why the numbers are
 dated and live here rather than in the spec.
@@ -28,6 +28,9 @@ dated and live here rather than in the spec.
 | ollama's store setting | `OLLAMA_MODELS` **unset** on the running daemon (its only `OLLAMA_*` environment is `FLASH_ATTENTION=1`, `KV_CACHE_TYPE=q8_0`), so the store is that account's `~/.ollama/models` |
 | ollama's store size | `/Users/glenn/.ollama` = **162 GB**, twelve tags advertised by `/api/tags` |
 | ds4's weights | **528 GB** under `/Users/rowan/rowan-working/ds4` (2026-09-12, read 4), the other account's home; no ds4 server running |
+| ds4's `ds4flash.gguf` | a **hard link** to the 464 GB **Pro** file, not a separate Flash GGUF (2026-09-12, `research/2026-09-12-local-model-bakeoff.md` on standard, `c94ee4d`), so a `ds4-server` started with no `-m` loads Pro; this box's job must pass an explicit `-m` to the Flash weights |
+| ds4's lock file | `/tmp/ds4.lock` is created `rowan:0600` (same source), so the second account cannot start ds4 unless `DS4_LOCK_FILE` names a group-writable path — the recipe puts it under the shared store |
+| ollama's sharing today | already shared across accounts: **one** daemon on `127.0.0.1:11434`, one store, pulls done by the daemon (same source); only the store's location **under a home** is what this recipe moves |
 | the two homes | `/Users/glenn` and `/Users/rowan` are both `drwxr-x---` (**750**) `<user>:staff` — each account reads the other's **only** because of that mode |
 | the shared path | `/Users/Shared` is `drwxrwxrwt root:wheel` (**1777**); `/Users/Shared/nova-local` does not exist yet |
 
@@ -40,8 +43,10 @@ cannot rest on it.
 
 Four steps **in this order and no other**: make the store, copy, switch the daemon,
 check. Copy before switch and verify before delete, because the thing being moved is
-528 GB nobody wants to download twice. **Never a copy per user**: a second copy is the
-same weights bought twice on a box where one model is 434 GiB.
+ollama's 162 GB (the table above) and nobody wants to download it twice; ds4's 528 GB is
+moved by no block here — step 1 only makes `models/ds4` for it. **Never a copy per
+user**: a second copy is the same weights bought twice on a box where one model is
+434 GiB.
 
 **1. Make the store.** `/Users/Shared/nova-local/models/<engine>` on darwin,
 `/var/lib/nova-local/models/<engine>` on linux, one subdirectory per engine
@@ -113,13 +118,17 @@ start, whatever brew regenerates, and no `OLLAMA_MODELS` is needed on this box a
 brew services stop ollama
 sudo rsync -aH --progress ~/.ollama/models/ /Users/Shared/nova-local/models/ollama/
 sudo chown -R root:staff /Users/Shared/nova-local/models/ollama && sudo chmod -R g+w /Users/Shared/nova-local/models/ollama
+sudo find /Users/Shared/nova-local/models/ollama -type d -exec chmod g+s {} +
 mv ~/.ollama/models ~/.ollama/models.pre-nova-local
 ln -s /Users/Shared/nova-local/models/ollama ~/.ollama/models
 sudo brew services start ollama --sudo-service-user glenn
 ```
 
-Line 2 is step 2's copy again, after the daemon is stopped: incremental, seconds, and it
-is what catches a tag pulled during step 2's window. `~` on lines 4 and 5 is the **service
+Lines 2-4 are step 2's copy and its two mode repairs again, after the daemon is stopped:
+incremental, seconds, and what catches a tag pulled during step 2's window. The mode
+lines repeat because `rsync -a` re-applies the source's `755` directories, so without
+them step 2's `g+w`/`g+s` is undone and the non-root service user cannot write a new
+blob. `~` on lines 5 and 6 is the **service
 user's** home — the account open question 1 below picks, `glenn` today because that
 account owns the weights and is in `staff` — and those two lines are run in that account,
 not under `sudo`, so the symlink is that user's. Nothing is deleted here either: the old

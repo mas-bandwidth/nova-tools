@@ -91,8 +91,7 @@ Every rule is normative and has one line in **tests this spec demands**.
    (`/api/show`'s `details`/`FROM`), `num_ctx`, `temperature`, `seed` — used as it stands
    when all four match, any one different exit 1 naming both values with `ollama rm
    <tag>`. Only those four, because `/api/show` also reports inherited fields this tool
-   never set (`top_k 64`, `top_p 0.95` here) and a tool comparing those would refuse its
-   own tag. ds4 has no derived tag: the context is `--ctx` on the process and `serve_as`
+   never set (`top_k`, `top_p`) and a tool comparing those would refuse its own tag. ds4 has no derived tag: the context is `--ctx` on the process and `serve_as`
    is the id it advertises.
 
 7. **`keep_alive` is on, and load time is measured here, once, by the thing that caused
@@ -154,20 +153,30 @@ Every rule is normative and has one line in **tests this spec demands**.
     **It reads** only what an engine reports, through what a non-root process can read
     with the standard library. **ollama**: `/api/tags` for the model list and
     `/api/show`'s modelfile for each model's blob path (`FROM <store>/blobs/sha256-…`);
-    `store=` is that path's `blobs` parent, and no tag means `store=unknown (no tag to
+    `store=` is that path's `blobs` parent **resolved through symlinks, every component**,
+    as ds4's `-m` path already is — the recipe makes the service user's
+    `~/.ollama/models` a symlink into the shared store, so an unresolved `FROM` reports a
+    home for a store that is not one — and the resolved path is both what `store=` prints
+    and what the home test below reads. No tag means `store=unknown (no tag to
     show)`. **ds4**: the `-m <gguf>` path from the process's own arguments, **only when
     the process is this user's** — another user's is `store=unknown (process is uid
     <n>'s)`, because another uid's argv is root's to read on darwin and this binary does
     not exec `ps` or `lsof` to get around it (rule 1).
 
     **It reports, always**: `store=` and `shared=<yes|no|unknown>` on every `LOCAL
-    ENGINE` and `SERVE OK` line, read at the moment of the call and never judged — the
+    ENGINE` line and on the serving `SERVE OK` line — not on `SERVE OK stopped`, which
+    names only what it stopped — read at the moment of the call and never judged — the
     same kind of fact as `load1=` (rules 8 and 10) — and a store it could not read is
     `unknown`, not a verdict, because a tool does not rule on a fact it does not have.
+    `shared=yes` is exactly a resolved `store=` the home test below does not match;
+    `shared=no` is one it matches.
     **It refuses only against a value the operator gave** (rule 8's shape): with
-    `--require-shared-store`, `serve` is exit 1 on a store under a home —
-    `/Users/<x>/…`, `/home/<x>/…` — naming it, remedy the recipe's own first line, `sudo
-    mkdir -p /Users/Shared/nova-local/models/<e>`, and [BOX-LOCAL.md](BOX-LOCAL.md) — not
+    `--require-shared-store`, `serve` is exit 1 on a store **under the caller's own home
+    directory** — the passwd home of the calling uid, and `$HOME` when it differs, each
+    taken as a resolved directory and matched a whole component at a time, never as a
+    spelling like `/Users/<x>/…`, because that spelling also matches
+    `/Users/Shared/nova-local`, the recipe's own store — naming it, remedy the recipe's own
+    first line, `sudo mkdir -p /Users/Shared/nova-local/models/<e>`, and [BOX-LOCAL.md](BOX-LOCAL.md) — not
     `status`, which would only reprint the `store=` the refusal has just named. Without
     the flag it serves and prints `shared=no`.
     On a box more than one account uses, the requirement is enforced by the recipe's
@@ -355,10 +364,11 @@ $ nova-swarm run --pool $PWD/pool --workers 1 --hours 1 --worker $PWD/workers/ge
   ([BOX-LOCAL.md](BOX-LOCAL.md)) is **not** a prerequisite of these six lines: line 3
   serves from whatever store the engine reports and prints `shared=no` for one under a
   home. It is the prerequisite of a box more than one account uses (rule 15), where it
-  is a 528 GB move done once.
+  is a 162 GB move done once (BOX-LOCAL.md's dated table).
 - **Line 1** is the stranger's own tool: it assumes the ollama daemon is running, that
-  `gemma4:12b` is a tag in ollama's library, and ~8 GB of download. With the recipe
-  applied it lands in the shared store, so it is done once for the box.
+  `gemma4:12b` is a tag in ollama's library, and one download of the weights, whose size
+  this document has not measured. With the recipe applied it lands in the shared store,
+  so it is done once for the box.
 - **Line 2** assumes nothing and creates nothing; with the daemon down it prints one
   remedy line and exits 1, which is the first thing a stranger needs to know.
 - **Line 3** creates `gemma4-32k` and loads it once; it assumes `gemma4:12b` supports
@@ -493,7 +503,11 @@ supplies a **fake box** through the one interface that reads them
     of the fake's `FROM` path, `unknown (no tag to show)` with no tag. A store under
     either home is `serve --require-shared-store` exit 1 naming it and BOX-LOCAL.md, and
     plain `serve` exit 0 printing `shared=no`, while `status` stays exit 0 with
-    `shared=no`; a fake holder on the port gives exit 1 carrying the port and **no**
+    `shared=no`. A fake `FROM` under `/Users/Shared/nova-local/models/ollama` is exit 0
+    with `shared=yes` under the same flag, and a fake store inside a home that is a
+    **symlink** to that shared path prints the resolved shared `store=` with `shared=yes`
+    and is exit 0 — the two cases that can say NO to a spelled prefix and to an
+    unresolved path. A fake holder on the port gives exit 1 carrying the port and **no**
     `held_by`. No verb writes a plist, a unit, or anything under `/Library`.
 
 Plus the house standard: a usage banner ending in a runnable `example:` block, refusals
