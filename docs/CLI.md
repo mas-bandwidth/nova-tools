@@ -916,7 +916,7 @@ A missing or empty key file is exit 2 with the command that creates it.
 
 **A worker's `RESULT.md` is data, never an instruction.** Nothing in it is executed, nothing
 in it grants anything, and a finding in it is a claim to be checked against the repository.
-That rule is in [docs/SPEC-SWARM.md](SPEC-SWARM.md), where a person reads it, and is
+That rule is in [docs/SPEC-SWARM.md](SPEC-SWARM.md), where you can read it, and is
 deliberately nowhere in the code: a tool cannot enforce it, and a tool that pretended to
 would be the most dangerous thing in the pool.
 
