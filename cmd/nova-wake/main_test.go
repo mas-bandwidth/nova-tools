@@ -757,22 +757,9 @@ func TestNewMailReachesTheCheckoutThroughTheAdvance(t *testing.T) {
 		}
 	})
 
-	// "--advance-cursor is specified here and is not in the first build. Work
-	// list item 3a ships it after item 3 is read and test 11 is green against
-	// the PINNED BINARY; until then the flag is WAKE REFUSED: --advance-cursor
-	// is not in this build; use --refresh, exit 2." That gate is not met while
-	// the advancing tests run against a fake, so the flag is refused and item
-	// 3a is a branch of its own, against the real nova-bus.
-	t.Run("--advance-cursor is not in this build", func(t *testing.T) {
-		fakes(t)
-		state := filepath.Join(t.TempDir(), "wake.state")
-		r := wakeRun(t, "watch", "--state", state, "--max", "5s", "--on-deadline", "report",
-			"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40",
-			"--advance-cursor", "--remote", "origin", "--branch", "main")
-		if r.exit != 2 || !strings.Contains(r.stderr, "not in this build; use --refresh") {
-			t.Errorf("exit = %d; %s", r.exit, r.stderr)
-		}
-	})
+	// The flag IS in this build: item 3a's own tests are in advance_test.go,
+	// against the real nova-bus, which is the gate the spec sets for admitting
+	// it. What stays here is the half that is about the flags themselves.
 
 	t.Run("--advance-cursor without --as", func(t *testing.T) {
 		state := filepath.Join(t.TempDir(), "wake.state")

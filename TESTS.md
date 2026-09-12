@@ -4,7 +4,14 @@ Every `$` line under a `### First run` heading below is run by a test against th
 
 ## nova-sandbox
 
-Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/Users/me/pool` standing in for yours, and the lines are what this Mac printed on 2026-09-11 with the paths shortened.
+Fixture: a job directory of yours. Every path below is one you name — this tool has no defaults and guesses nothing — so the transcript is a worked example with `/Users/me/pool` standing in for yours, and the lines are what this Mac printed on 2026-09-12 with the paths shortened.
+
+`read_root` reads the probe's own executable, `os.Executable()`, because the root it
+exercises is "the directory of the resolved command" and the probe's child is this
+binary; a transcript that named a shell there would be measuring `/bin`, which the
+profile grants verbatim. `TestTheTranscriptNamesTheToolsOwnBinary` holds that line here.
+The probe sets `HOME` for rule 9's reason: `HOME` must resolve inside a `--write`, and
+the dispatcher's own `HOME` does not.
 
 ### First run
 
@@ -12,12 +19,12 @@ Fixture: a job directory of yours. Every path below is one you name — this too
 $ nova-sandbox check
 CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
 
-$ nova-sandbox probe --read /Users/me/pool/ref --write /Users/me/pool/jobs/j1 --secret /Users/me/.config/anthropic/env
+$ HOME=/Users/me/pool/jobs/j1/home nova-sandbox probe --read /Users/me/pool/ref --write /Users/me/pool/jobs/j1 --secret /Users/me/.config/anthropic/env
 PROBE STEP name=write_outside_control expect=allow got=allow path=/Users/me/pool/jobs/.nova-sandbox-probe-46261
 PROBE STEP name=write_outside expect=deny got=deny path=/Users/me/pool/jobs/.nova-sandbox-probe-46261
 PROBE STEP name=read_secret expect=deny got=deny path=/Users/me/.config/anthropic/env
 PROBE STEP name=write_inside expect=allow got=allow path=/Users/me/pool/jobs/j1/.nova-sandbox-probe-inside
-PROBE STEP name=read_root expect=allow got=allow path=/bin/sh
+PROBE STEP name=read_root expect=allow got=allow path=/Users/me/bin/nova-sandbox
 PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise
 
 $ HOME=/Users/me/pool/jobs/j1/home nova-sandbox --read /Users/me/pool/ref --write /Users/me/pool/jobs/j1 -- /bin/sh -c 'echo hello > report.md; cat /Users/me/.config/anthropic/env'

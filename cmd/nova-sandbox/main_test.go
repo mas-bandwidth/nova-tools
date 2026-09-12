@@ -2,7 +2,7 @@ package main
 
 import (
 	"bytes"
-	"net"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Every test here runs the REAL thing on this Mac: a real sandbox-exec, a real profile
@@ -223,43 +224,58 @@ func TestTheFirstSecondOfARealJob(t *testing.T) {
 func TestTheAgentSocketIsUnreachable(t *testing.T) {
 	needDarwin(t)
 	j := newJob(t)
-	// The socket lives in a SHORT directory of its own, outside every named list: a
-	// unix socket path is capped near 104 bytes on macOS and t.TempDir()'s is longer,
-	// which would skip the one test this build's network fix exists for.
-	sockDir, err := os.MkdirTemp("", "nova-agent")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(sockDir) })
-	sock := filepath.Join(sockDir, "agent.sock")
-	if len(sock) > 100 {
-		t.Skipf("skipped: %d-byte socket path is over the AF_UNIX limit on this machine", len(sock))
-	}
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatalf("control: the socket could not be created outside the wall: %v", err)
-	}
-	defer ln.Close()
-	go func() {
-		for {
-			c, err := ln.Accept()
-			if err != nil {
-				return
-			}
-			c.Close()
-		}
-	}()
-	if c, err := net.Dial("unix", sock); err != nil {
-		t.Fatalf("control: the socket is not connectable outside the wall: %v", err)
-	} else {
-		c.Close()
-	}
 	if _, err := exec.LookPath("nc"); err != nil {
-		t.Skip("skipped: nc is not on this machine, and it is how the wrapped process dials")
+		t.Skip("skipped: nc is not on this machine, and it is how a socket is bound and dialled here")
 	}
+	// Test 16: no test reaches outside t.TempDir(). The socket therefore lives in this
+	// job's own outside directory, which is under t.TempDir() and in NEITHER list — and
+	// it is bound and dialled by RELATIVE name, with the process's cwd in that directory,
+	// exactly as profiles/darwin-check.sh does it. sun_path is 104 bytes and the absolute
+	// path of a t.TempDir() is longer, so an absolute bind fails silently and the one
+	// test this build's network fix exists for would pass for the wrong reason. The
+	// earlier form used os.MkdirTemp(""), which is outside t.TempDir().
+	//
+	// Two listeners, because `nc -lU` serves one connection and exits: the walled attempt
+	// must not consume the one the control needs.
+	listen := func(name string) {
+		t.Helper()
+		cmd := exec.Command("nc", "-lU", "./"+name)
+		cmd.Dir = j.outside
+		if err := cmd.Start(); err != nil {
+			t.Fatalf("control: no listener could be started outside the wall: %v", err)
+		}
+		t.Cleanup(func() {
+			_ = cmd.Process.Kill()
+			_ = cmd.Wait()
+		})
+	}
+	waitForSocket := func(name string) bool {
+		for i := 0; i < 20; i++ {
+			if fi, err := os.Stat(filepath.Join(j.outside, name)); err == nil && fi.Mode()&os.ModeSocket != 0 {
+				return true
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+		return false
+	}
+	listen("agent.sock")
+	listen("agent-control.sock")
+	if !waitForSocket("agent.sock") || !waitForSocket("agent-control.sock") {
+		t.Skip("skipped: nc -lU did not bind on this machine, and a denial with no listener proves nothing")
+	}
+	control := exec.Command("nc", "-U", "./agent-control.sock", "-w", "1")
+	control.Dir = j.outside
+	control.Stdin = strings.NewReader("")
+	if err := control.Run(); err != nil {
+		t.Fatalf("control: the socket is not connectable outside the wall: %v", err)
+	}
+
+	sock := filepath.Join(j.outside, "agent.sock")
 	env := j.env("SSH_AUTH_SOCK="+sock, "SSH_AGENT_PID=1")
+	// The cwd inside the wall is the first --write, so the relative name reaches the same
+	// socket the control just used, with a sun_path of 26 bytes.
 	code, _, errOut := j.tool(t, env, "--read", j.read, "--write", j.write, "--",
-		"/bin/sh", "-c", "nc -U '"+sock+"' -w 1 </dev/null")
+		"/bin/sh", "-c", "nc -U ../outside/agent.sock -w 1 </dev/null")
 	if code == 0 {
 		t.Fatal("a unix socket outside the wall was connectable from inside it")
 	}
@@ -592,28 +608,207 @@ func TestProbeReExecsTheToolAndNeverAShell(t *testing.T) {
 	}
 }
 
+// probeChild runs the internal verb as a REAL CHILD of this test binary, with the pipe on
+// fd 3 the probe's parent hands its child. It cannot be j.tool: that runs the verb IN
+// PROCESS, where os.Getppid() is `go test`'s and fd 3 is whatever the test binary happens
+// to hold — so the two halves of the guard that are about the PROCESS can only be
+// exercised from a process. exe is the binary to run, which is this one for the probe's
+// own child and a copy of it for the foreign-parent case. raw nil means no fd 3 at all.
+func probeChild(t *testing.T, exe string, raw []byte, nonceVar string, args ...string) (int, string) {
+	t.Helper()
+	var fd3 *os.File
+	if raw != nil {
+		pr, pw, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pr.Close()
+		if _, err := pw.Write(raw); err != nil {
+			t.Fatal(err)
+		}
+		if err := pw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		fd3 = pr
+	}
+	return probeChildOnFD(t, exe, fd3, nonceVar, args...)
+}
+
+// probeChildFile is fd 3 as a REGULAR FILE holding the same bytes: the shape a caller
+// reaches for first, and the one the Fstat half refuses before it reads anything.
+func probeChildFile(t *testing.T, exe string, raw []byte, nonceVar string, args ...string) (int, string) {
+	t.Helper()
+	name := filepath.Join(t.TempDir(), "fd3")
+	if err := os.WriteFile(name, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	return probeChildOnFD(t, exe, f, nonceVar, args...)
+}
+
+// probeChildOnFD runs the verb with whatever descriptor it is handed on fd 3, or none.
+func probeChildOnFD(t *testing.T, exe string, fd3 *os.File, nonceVar string, args ...string) (int, string) {
+	t.Helper()
+	cmd := exec.Command(exe, append([]string{"probe-step"}, args...)...)
+	cmd.Env = append(os.Environ(), nonceVar)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if fd3 != nil {
+		cmd.ExtraFiles = []*os.File{fd3}
+	}
+	_ = cmd.Run()
+	if cmd.ProcessState == nil {
+		t.Fatalf("probe-step child never ran: %s", errb.String())
+	}
+	return cmd.ProcessState.ExitCode(), errb.String()
+}
+
+// copyOfThisBinary is a second executable with the same bytes and a different path. It is
+// the foreign parent's side of the guard: the child's os.Executable() is this copy and its
+// parent is the test binary, so "the parent process is this binary" is false while every
+// other half of the guard is true.
+func copyOfThisBinary(t *testing.T) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "nova-sandbox-copy"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	copied := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(copied, b, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return copied
+}
+
 // The internal verb itself: it does the open, the write and the one-byte read in Go, so
 // no probe step is ever a shell string and no path the caller handed the tool is ever
 // re-parsed (rule 12: never through a shell).
 func TestProbeStepIsTheInternalVerb(t *testing.T) {
 	j := newJob(t)
 	target := filepath.Join(j.write, "step")
-	if code, _, errOut := j.tool(t, j.env(), "probe-step", "write_inside", target); code != 0 {
+	// The guard first, because it is the whole of this verb's safety: probe-step opens,
+	// TRUNCATES and reads the path it is handed, and at 1922f9d it was dispatched from
+	// run()'s switch with nothing between an ordinary shell and that O_TRUNC. Measured:
+	// `nova-sandbox probe-step write_outside <file>` emptied a file outside every wall and
+	// exited 0.
+	if err := os.WriteFile(target, []byte("MUST-SURVIVE\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut := j.tool(t, j.env(), "probe-step", "write_outside", target)
+	if code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("probe-step by hand was accepted: exit %d, stderr %q", code, errOut)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
+		t.Fatalf("the refused step still touched the file: %q, %v", string(got), err)
+	}
+	// The second measurement, on 29646c1, and the reason the guard is no longer a
+	// comparison between the argv and the environment: BOTH of those are the caller's own
+	// to set, so `NOVA_SANDBOX_PROBE_NONCE=<x> nova-sandbox probe-step <x> write_outside
+	// <file>` agreed with itself, ran, exited 0 and truncated the file. It is now refused
+	// in process and as a child, and the file survives both.
+	raw := []byte("0123456789abcdef")
+	nonce := hex.EncodeToString(raw)
+	if code, _, errOut := j.tool(t, j.env(probeNonceVar+"="+nonce), "probe-step", nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("argv equal to the environment was accepted in process: exit %d, stderr %q", code, errOut)
+	}
+	if code, errOut := probeChild(t, selfExecutable(t), nil, probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("argv equal to the environment was accepted as a child: exit %d, stderr %q", code, errOut)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
+		t.Fatalf("a refused step touched the file: %q, %v", string(got), err)
+	}
+
+	if runtime.GOOS == "windows" {
+		// Everything below hands a child a descriptor, and exec.Cmd.ExtraFiles is not
+		// supported on windows — a Start with one set returns an error, which is a test
+		// that never ran dressed as a test that failed (measured: "probe-step child never
+		// ran"). The windows body of this spec is not built either, so no probe there has
+		// a child at all; what windows does assert is every line above: the verb refuses
+		// in process and as a child, and the file survives.
+		t.Skip("skipped on windows: exec.Cmd.ExtraFiles is unsupported there, and no windows sandbox body is built for a probe to have a child at all")
+	}
+	// A pipe on fd 3 carrying the WRONG value is refused too: the value is what the
+	// descriptor is for, and holding a descriptor is not holding the probe's secret.
+	if code, errOut := probeChild(t, selfExecutable(t), []byte("fedcba9876543210"), probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("a pipe carrying the wrong value was accepted: exit %d, stderr %q", code, errOut)
+	}
+	// A SHORT pipe is refused: fewer bytes than the parent promised is not the parent.
+	if code, errOut := probeChild(t, selfExecutable(t), raw[:8], probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("a short pipe was accepted: exit %d, stderr %q", code, errOut)
+	}
+	// MORE bytes than the parent promised is refused too: the parent writes exactly
+	// probeNonceLen and closes, so a longer pipe is not the parent's pipe.
+	if code, errOut := probeChild(t, selfExecutable(t), append(append([]byte{}, raw...), 'x'), probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("a pipe carrying more than the promised bytes was accepted: exit %d, stderr %q", code, errOut)
+	}
+	// fd 3 a REGULAR FILE holding the right bytes is refused: what the guard wants is the
+	// parent's pipe, and a file is a thing a caller can make.
+	if code, errOut := probeChildFile(t, selfExecutable(t), raw, probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("a regular file on fd 3 was accepted: exit %d, stderr %q", code, errOut)
+	}
+	// The right value in the argv, in the environment AND on the pipe, and still refused,
+	// because the parent is not this binary. This is the half a caller who has learned the
+	// shape of the guard cannot supply without already being the tool.
+	if code, errOut := probeChild(t, copyOfThisBinary(t), raw, probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("a foreign parent was accepted: exit %d, stderr %q", code, errOut)
+	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
+		t.Fatalf("a refused step touched the file: %q, %v", string(got), err)
+	}
+	// With everything the parent passes — the pipe, the argv copy, the environment copy
+	// and this binary for a parent — the steps are themselves.
+	env := probeNonceVar + "=" + nonce
+	self := selfExecutable(t)
+	// A relative path is not the parent's: the parent builds every step path absolute.
+	if code, errOut := probeChild(t, self, raw, env, nonce, "write_inside", "step"); code != 2 || !strings.Contains(errOut, "absolute") {
+		t.Fatalf("a relative step path was accepted: exit %d, stderr %q", code, errOut)
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if code, errOut := probeChild(t, self, raw, env, nonce, "write_inside", target); code != 0 {
 		t.Fatalf("probe-step write_inside exit %d: %s", code, errOut)
 	}
 	if _, err := os.Stat(target); err == nil {
 		t.Fatal("write_inside left its file behind; the step writes and removes")
 	}
-	if code, _, _ := j.tool(t, j.env(), "probe-step", "read_root", filepath.Join(j.base, "no-such-file")); code == 0 {
+	if code, _ := probeChild(t, self, raw, env, nonce, "read_root", filepath.Join(j.base, "no-such-file")); code == 0 {
 		t.Fatal("read_root reported success on a file that is not there")
 	}
-	if code, _, _ := j.tool(t, j.env(), "probe-step", "read_secret", j.secret); code != 0 {
+	if code, _ := probeChild(t, self, raw, env, nonce, "read_secret", j.secret); code != 0 {
 		t.Fatal("read_secret could not open a file that is readable outside the wall")
 	}
-	code, _, errOut := j.tool(t, j.env(), "probe-step", "not_a_step", target)
-	if code != 2 || !strings.Contains(errOut, "is not a probe step") {
+	if code, errOut := probeChild(t, self, raw, env, nonce, "not_a_step", target); code != 2 || !strings.Contains(errOut, "is not a probe step") {
 		t.Fatalf("an unknown step was accepted: exit %d, stderr %q", code, errOut)
 	}
+	// It stays out of the banner: a verb a caller must not run is not offered to one.
+	if strings.Contains(usage, probeStepVerbName) {
+		t.Fatal("probe-step is in the usage banner")
+	}
+}
+
+// selfExecutable is this test binary's own path, which is the tool for the internal verb
+// (see TestMain).
+func selfExecutable(t *testing.T) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return self
 }
 
 // The falsifying read's B2, verbatim: a --secret path holding a quote and a semicolon was
@@ -800,4 +995,110 @@ func toolBinary(t *testing.T) string {
 		t.Fatalf("building the tool: %v\n%s", err, out)
 	}
 	return bin
+}
+
+// Rule 16: "a refusal names the flag and the form it wants". parse() is shared by every
+// verb, so the bare form accepted --secret (probe's) and --max (probe's and check's) and
+// then ignored them: `nova-sandbox --write <dir> --secret /etc/hosts --max 3 -- true`
+// exited 0 with the flags silently dropped, which is the opposite of rule 16.
+func TestFlagsOfAnotherVerbAreRefusedByTheBareForm(t *testing.T) {
+	j := newJob(t)
+	code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--secret", j.secret, "--max", "3", "--", "/bin/sh", "-c", "true")
+	if code != 125 {
+		t.Fatalf("exit %d, want 125; stderr %q", code, errOut)
+	}
+	for _, want := range []string{"--secret is not a flag of the bare form", "--max is not a flag of the bare form", "probe"} {
+		if !strings.Contains(errOut, want) {
+			t.Fatalf("the refusal does not say %q: %q", want, errOut)
+		}
+	}
+	// --acl is the other half of the same sentence and goes the OTHER way: the spec's verb
+	// table has it on the bare form for all three platforms and says it is accepted and
+	// ignored here, "so one caller has one script for three platforms".
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	code, _, errOut = j.tool(t, j.env(), "--write", j.write, "--acl", "caller", "--", "/bin/sh", "-c", "true")
+	if code != 0 {
+		t.Fatalf("--acl was not accepted: exit %d, stderr %q", code, errOut)
+	}
+	if !strings.Contains(errOut, "SANDBOX NOTE --acl caller is accepted and ignored") {
+		t.Fatalf("--acl was ignored in silence: %q", errOut)
+	}
+	if code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--acl", "nonsense", "--", "/bin/sh", "-c", "true"); code != 125 ||
+		!strings.Contains(errOut, "--acl wants tool or caller") {
+		t.Fatalf("a misspelt --acl value was accepted: exit %d, stderr %q", code, errOut)
+	}
+}
+
+// Build's own comment: it "creates exactly one directory, rule 8's, and only when the rest
+// of the input is sound". That was false for a run refused at not_found: the temp
+// directory was created before the command was resolved, so a refused
+// `nova-sandbox --write <fresh> -- no-such-cmd` left .nova-sandbox-tmp in a directory it
+// never ran in. A refusal makes nothing.
+func TestARefusedRunCreatesNothing(t *testing.T) {
+	j := newJob(t)
+	code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--", "no-such-command-xyz")
+	if code != 127 {
+		t.Fatalf("exit %d, want 127; stderr %q", code, errOut)
+	}
+	if _, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp")); err == nil {
+		t.Fatal("a run refused at not_found created the temp directory anyway")
+	}
+	// The same for a command that is there and is not executable. The executable BIT is
+	// rule 5's pre-flight and it is a unix idea: on windows a .txt is refused later and
+	// for another reason, so that half of this test is unix's.
+	if runtime.GOOS != "windows" {
+		notExec := filepath.Join(j.read, "data.txt")
+		if err := os.WriteFile(notExec, []byte("x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--", notExec); code != 125 {
+			t.Fatalf("exit %d, want 125; stderr %q", code, errOut)
+		}
+		if _, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp")); err == nil {
+			t.Fatal("a run refused at not_executable created the temp directory anyway")
+		}
+	}
+	// And a run that is sound still gets it, because rule 8 is the reason it exists. That
+	// half needs a backend, so it is darwin's until the linux body is built: on linux the
+	// wrap is reason=no_sandbox and no run is sound.
+	t.Run("a sound run still gets it", func(t *testing.T) {
+		needDarwin(t)
+		if code, _, errOut := j.wrapped(t, noopScript()); code != 0 {
+			t.Fatalf("a sound run was refused: exit %d, %s", code, errOut)
+		}
+		if fi, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp")); err != nil || !fi.IsDir() {
+			t.Fatalf("the one directory this tool creates was not created for a sound run: %v", err)
+		}
+	})
+}
+
+// TESTS.md's own header says every transcript line is compared with what the tool prints,
+// but no test referenced the file, so its read_root line still read path=/bin/sh long
+// after the probe stopped standing on a shell. This is the pin for the one line that goes
+// stale silently: the transcript names the tool's own binary, never a shell.
+func TestTheTranscriptNamesTheToolsOwnBinary(t *testing.T) {
+	doc, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var line string
+	for _, l := range strings.Split(string(doc), "\n") {
+		if strings.Contains(l, "PROBE STEP name=read_root") {
+			line = l
+			break
+		}
+	}
+	if line == "" {
+		t.Fatal("TESTS.md has no read_root transcript line to pin")
+	}
+	if !strings.HasSuffix(line, "/nova-sandbox") {
+		t.Fatalf("the transcript's read_root does not name the tool's own binary: %q", line)
+	}
+	for _, shell := range []string{"/bin/sh", "/bin/dash", "/bin/bash", "/usr/bin/sh"} {
+		if strings.Contains(line, shell) {
+			t.Fatalf("the transcript's read_root stands on a shell: %q", line)
+		}
+	}
 }
