@@ -191,3 +191,134 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 		}
 	}
 }
+
+// THE FIRST RUN IS A PUSH, AND THE DOCUMENT A STRANGER PASTES FROM HAS TO SAY SO.
+//
+// Johnny, dogfooding v0.12.0 (nova-tools #116, 2026-09-12): he pasted the README's first
+// run at a live repository, substituting a throwaway `--lane-branch` so he would not join
+// the family lane, and it created and pushed `johnny-dogfood/does-not-exist-on-purpose`
+// to `mas-bandwidth/nova-tools` (commit 913ccf0b, author `nova-merge@localhost`). He
+// deleted it the same minute. "No prompt. The help line `joined=false` does not say
+// 'pushed to origin'."
+//
+// The push is what SPEC-MERGE.md demands, not a bug: rule 22 puts every read and gate in
+// the lane's own branch of the repository, and demanded test 20 has `init` check out that
+// branch "created with `.gitignore` on the fake remote, `joined=false`; a second lane on
+// the same branch prints `joined=true` and creates nothing" -- a branch a second machine
+// can join is a branch at the remote. So the repair is the document, and these two tests
+// are the pair: the first pins the push as behaviour, the second pins that the first run's
+// prose says it in words, above the line a stranger copies.
+
+// laneBranchesAt lists the refs under refs/heads/ that the bare fixture repository holds.
+func (l *lab) branchesAtRemote() []string {
+	l.t.Helper()
+	out := l.git(l.remote, "for-each-ref", "--format=%(refname)", "refs/heads/")
+	if strings.TrimSpace(out) == "" {
+		return nil
+	}
+	return strings.Split(out, "\n")
+}
+
+func TestTheFirstRunPushesTheLaneBranchToTheRepository(t *testing.T) {
+	t.Parallel()
+	l := newLab(t)
+	const branch = "nova-merge/main"
+	exit, stdout, stderr := l.run("quickstart", "--lane", l.lane,
+		"--repo", "mas-bandwidth/nova-tools", "--base", "main", "--lane-branch", branch)
+	if exit != 0 {
+		t.Fatalf("quickstart: exit %d\n%s\n%s", exit, stdout, stderr)
+	}
+	contains(t, stdout, "joined=false")
+
+	ref := "refs/heads/" + branch
+	if got := l.branchesAtRemote(); !containsString(got, ref) {
+		t.Fatalf("the first run left no %s at the remote; the refs there are %q.\nIf this tool has stopped pushing the record branch, rule 22 has no transport and README's `### First run` is now wrong in the other direction", ref, got)
+	}
+	if got := l.pushes(); !anyHasPrefix(got, ref+" ") {
+		t.Errorf("the remote's update hook recorded %q; the first run's push of %s is not among them", got, ref)
+	}
+	// The commit the first run leaves in a shared repository, named exactly as the
+	// README now names it -- Johnny read this author off the commit he had to delete.
+	who := l.git(l.remote, "log", "-1", "--format=%an <%ae>%n%cn <%ce>%n%s", ref)
+	for _, want := range []string{"nova-merge <nova-merge@localhost>", "nova-merge: the lane's record branch"} {
+		contains(t, who, want)
+	}
+}
+
+// firstRunProse is docs/CLI.md's `## nova-merge` -> `### First run`, up to the first line a
+// stranger copies. What is AFTER that line was not read before the push happened.
+func firstRunProse(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	section, ok := onboarding.Section(string(raw), "nova-merge")
+	if !ok {
+		t.Fatal("docs/CLI.md has no `## nova-merge` section")
+	}
+	_, block, ok := strings.Cut(section, onboarding.FirstRunHeading+"\n")
+	if !ok {
+		t.Fatalf("docs/CLI.md `## nova-merge` has no `%s`", onboarding.FirstRunHeading)
+	}
+	paste, _, ok := strings.Cut(block, "$ nova-merge quickstart")
+	if !ok {
+		t.Fatal("docs/CLI.md `## nova-merge` `### First run` holds no `$ nova-merge quickstart` line; this test is looking in the wrong place")
+	}
+	return strings.ToLower(paste)
+}
+
+func TestTheFirstRunSectionSaysThatTheFirstRunPushes(t *testing.T) {
+	t.Parallel()
+	prose := firstRunProse(t)
+	for _, want := range []struct{ phrase, because string }{
+		{"pushes", "the first run is a push, and the word has to be in the prose"},
+		{"origin", "a push says where it lands"},
+		{"--lane-branch", "the ref it creates is the one the reader typed"},
+		{"nova-merge@localhost", "the commit a shared repository keeps carries this author (nova-tools #116)"},
+		{"--remote", "the rehearsal form: a bare repository of your own, nothing reaching the host"},
+	} {
+		if !strings.Contains(prose, want.phrase) {
+			t.Errorf("docs/CLI.md's nova-merge `### First run`, above the line a stranger copies, never says %q: %s.\nwhat it says there:\n%s", want.phrase, want.because, prose)
+		}
+	}
+}
+
+// docs/TESTS.md carries the same transcript, and it is the one the test above executes, so the
+// warning belongs on both pages: a reader who pastes from the ledger pastes the same push.
+func TestTheTestsLedgerFirstRunSaysThatTheFirstRunPushes(t *testing.T) {
+	t.Parallel()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	section, ok := onboarding.Section(string(raw), "nova-merge")
+	if !ok {
+		t.Fatal("docs/TESTS.md has no `## nova-merge` section")
+	}
+	paste, _, ok := strings.Cut(section, "$ nova-merge quickstart")
+	if !ok {
+		t.Fatal("docs/TESTS.md `## nova-merge` holds no `$ nova-merge quickstart` line")
+	}
+	if !strings.Contains(strings.ToLower(paste), "pushes") {
+		t.Errorf("docs/TESTS.md's nova-merge first run does not say the first run pushes, above the line it invites a reader to run:\n%s", paste)
+	}
+}
+
+func containsString(hay []string, needle string) bool {
+	for _, s := range hay {
+		if s == needle {
+			return true
+		}
+	}
+	return false
+}
+
+func anyHasPrefix(hay []string, prefix string) bool {
+	for _, s := range hay {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
+}

@@ -173,6 +173,11 @@ repository, so this transcript reaches no network.
 
 ### First run
 
+Run against a live `--repo` rather than this fixture, the first line **pushes** the
+`--lane-branch` to `origin` of that repository — the lane's record branch, one
+commit, author `nova-merge <nova-merge@localhost>`. docs/CLI.md's `### First run`
+gives the rehearsal form (`--remote ./rehearsal.git`) that reaches no forge.
+
 ```
 $ nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
 INIT OK lane=./lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
