@@ -2,6 +2,7 @@ package update
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -15,6 +16,19 @@ import (
 )
 
 const ChildCap = 64 * 1024
+
+// killGrace is how long Run waits for a child's pipes AFTER the child itself is
+// gone or killed. It is not a second timeout on the version command: a bounded
+// capture reads the pipe until it CLOSES, and a grandchild the version command
+// left behind inherits that pipe and holds it open. The grace has to be a real
+// one. Ten milliseconds was not: a healthy child that printed its version was
+// reported UNKNOWN whenever the copy of its output lost that race under load,
+// which is every other repo in this tree's reason for the same two seconds.
+const killGrace = 2 * time.Second
+
+// leakRemedy names the one thing a person can do about a held pipe: the version
+// command, not this tool, decides whether its children keep stdout open.
+const leakRemedy = "make the version command wait for its own children, or send their output elsewhere"
 
 var dotted = regexp.MustCompile(`[0-9]\.[0-9]`)
 var digit = regexp.MustCompile(`[0-9]`)
@@ -105,7 +119,7 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	cmd.Stdin = input
 	cmd.Stdout = out
 	cmd.Stderr = errs
-	cmd.WaitDelay = 10 * time.Millisecond
+	cmd.WaitDelay = killGrace
 	configureProcess(cmd)
 	err = cmd.Run()
 	r.Stdout = string(out.Bytes())
@@ -118,11 +132,29 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	case err != nil:
 		if e, ok := err.(*exec.ExitError); ok {
 			r.Reason = fmt.Sprintf("exit %d", e.ExitCode())
+		} else if errors.Is(err, exec.ErrWaitDelay) {
+			// The process itself is gone and its status is unknown to us, so the
+			// output we did capture is not proof of a version. Name the leaked
+			// pipe rather than blaming the version command, which ran.
+			r.Reason = "output_not_closed"
 		} else {
-			r.Reason = "execution failed"
+			// The cause of a start or wait failure is the tool's own argv and the
+			// operating system's answer, never the child's output, so naming it
+			// here cannot echo unsupported content. It is bounded to one short
+			// clause for the same reason every other field on this line is.
+			r.Reason = "execution failed: " + clip(err.Error(), 160)
 		}
 	}
 	return r
+}
+
+// clip bounds a diagnostic clause. A reason a person cannot read is not a
+// record, so the cut is marked rather than silent.
+func clip(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max] + "..."
 }
 func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool) Read {
 	if ctx.Err() != nil {
@@ -145,6 +177,9 @@ func Installed(ctx context.Context, e Entry, timeout time.Duration, report bool)
 		}
 		if p.Reason == "timeout" {
 			r.Remedy = "increase --timeout or repair the version command"
+		}
+		if p.Reason == "output_not_closed" {
+			r.Remedy = leakRemedy
 		}
 	}
 	if ctx.Err() != nil {

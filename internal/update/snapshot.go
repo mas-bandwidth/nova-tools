@@ -34,6 +34,81 @@ type snapshot struct {
 	Pending   map[string]pending  `json:"pending"`
 }
 
+// Go's decoder keeps the LAST of two identical keys and reports nothing, so a
+// prepared artifact or a snapshot can carry two different values for the same
+// field and still decode. Neither input is this tool's own: one is another
+// binary's stdout, the other a file on disk that a crash or an editor may have
+// touched. A second value for one field is ambiguity about an identity, and
+// ambiguity is refused before anything is mutated rather than resolved by a
+// rule nobody wrote down. The key's name is never quoted back: the name is
+// content this tool does not support, and a diagnostic never echoes content.
+func noDuplicateKeys(raw []byte) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	t, err := d.Token()
+	if err != nil {
+		return fmt.Errorf("malformed JSON")
+	}
+	return walkJSON(d, t, 0)
+}
+
+// maxJSONDepth bounds the reader the same way every other reader here is
+// bounded. The shapes this tool decodes are three deep; anything far past that
+// is not a snapshot or an artifact, and is refused rather than descended.
+const maxJSONDepth = 32
+
+func walkJSON(d *json.Decoder, t json.Token, depth int) error {
+	delim, ok := t.(json.Delim)
+	if !ok {
+		return nil
+	}
+	if depth >= maxJSONDepth {
+		return fmt.Errorf("JSON nested deeper than %d", maxJSONDepth)
+	}
+	switch delim {
+	case '{':
+		seen := map[string]bool{}
+		for {
+			k, err := d.Token()
+			if err != nil {
+				return fmt.Errorf("malformed JSON")
+			}
+			if end, ok := k.(json.Delim); ok && end == '}' {
+				return nil
+			}
+			name, ok := k.(string)
+			if !ok {
+				return fmt.Errorf("malformed JSON")
+			}
+			if seen[name] {
+				return fmt.Errorf("duplicate key")
+			}
+			seen[name] = true
+			v, err := d.Token()
+			if err != nil {
+				return fmt.Errorf("malformed JSON")
+			}
+			if err = walkJSON(d, v, depth+1); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for {
+			v, err := d.Token()
+			if err != nil {
+				return fmt.Errorf("malformed JSON")
+			}
+			if end, ok := v.(json.Delim); ok && end == ']' {
+				return nil
+			}
+			if err = walkJSON(d, v, depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func emptySnapshot() *snapshot {
 	return &snapshot{map[string]observed{}, map[string]delivery{}, map[string]pending{}}
 }
@@ -45,6 +120,9 @@ func readSnapshot(path string) (*snapshot, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("cannot read snapshot (supply a readable --snapshot)")
+	}
+	if err = noDuplicateKeys(b); err != nil {
+		return nil, fmt.Errorf("invalid snapshot: %s (preserve it and select a valid --snapshot)", err)
 	}
 	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
@@ -145,6 +223,9 @@ func lockSnapshot(ctx context.Context, path string) (func(), error) {
 // grant. The bus must additionally validate the artifact before it can mutate.
 func validatePrepared(raw []byte) (string, error) {
 	var a struct{ Schema, ID, Path, Note, SHA256 string }
+	if err := noDuplicateKeys(raw); err != nil {
+		return "", fmt.Errorf("bus prepare returned an invalid artifact: %s", err)
+	}
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
 	if d.Decode(&a) != nil || a.Schema != "nova.bus.prepared/1" || a.ID == "" || a.Path == "" || !strings.HasSuffix(a.Note, "\n") || len(a.SHA256) != 64 {

@@ -196,3 +196,50 @@ func TestDeliveryScopeAndPreparedArtifactChecks(t *testing.T) {
 		t.Fatal("wrong digest accepted")
 	}
 }
+
+// A second value for one field of a prepared artifact or a snapshot is an
+// ambiguous identity. Both readers must refuse it, and must do so without
+// quoting the offending key or any of the note back into the diagnostic.
+func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
+	note := "a note\n"
+	sum := shaText(note)
+	good := fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":%q,"sha256":%q}`, note, sum)
+	if id, err := validatePrepared([]byte(good)); err != nil || id != "fixture-1" {
+		t.Fatalf("valid artifact refused: %v %q", err, id)
+	}
+	secret := "tell-nobody"
+	bad := map[string]string{
+		"duplicate id":         fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","id":"fixture-2","path":"from-fixture/f.md","note":%q,"sha256":%q}`, note, sum),
+		"duplicate note":       fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":%q,"note":%q,"sha256":%q}`, note, secret+"\n", sum),
+		"unknown field":        fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":%q,"sha256":%q,"extra":%q}`, note, sum, secret),
+		"wrong type":           fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":7,"path":"from-fixture/f.md","note":%q,"sha256":%q}`, note, sum),
+		"trailing data":        good + `{"schema":"nova.bus.prepared/1"}`,
+		"digest mismatch":      fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":%q,"sha256":%q}`, note, shaText(secret)),
+		"note without newline": fmt.Sprintf(`{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":"no lf","sha256":%q}`, shaText("no lf")),
+		"too deeply nested":    `{"schema":` + strings.Repeat("[", 40) + strings.Repeat("]", 40) + "}",
+	}
+	for name, raw := range bad {
+		id, err := validatePrepared([]byte(raw))
+		if err == nil {
+			t.Fatalf("%s accepted, id=%q", name, id)
+		}
+		if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "a note") {
+			t.Fatalf("%s diagnostic echoed content: %v", name, err)
+		}
+	}
+	dir := t.TempDir()
+	dup := filepath.Join(dir, "dup.json")
+	if e := os.WriteFile(dup, []byte(`{"observed":{},"observed":{"x":{"raw":"`+secret+`","status":"tool","at":"t"}},"delivered":{},"pending":{}}`), 0600); e != nil {
+		t.Fatal(e)
+	}
+	s, err := readSnapshot(dup)
+	if err == nil {
+		t.Fatalf("ambiguous snapshot accepted: %v", s)
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("snapshot diagnostic echoed content: %v", err)
+	}
+	if b, _ := os.ReadFile(dup); !strings.Contains(string(b), secret) {
+		t.Fatal("refusal did not preserve the snapshot byte for byte")
+	}
+}

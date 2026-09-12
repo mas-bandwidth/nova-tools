@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -61,6 +62,25 @@ func TestHelperProcess(t *testing.T) {
 		}
 	case "args":
 		fmt.Print(strings.Join(a[1:], "|"))
+	case "linger":
+		// Print the version, then leave a grandchild holding stdout open and
+		// exit. This is what a real version command that starts a helper and
+		// does not wait for it does, and the pipe stays open after the command
+		// a caller named is gone.
+		b, _ := base64.StdEncoding.DecodeString(a[1])
+		fmt.Print(string(b))
+		c := exec.Command(os.Args[0], "-test.run=TestHelperProcess", "--", "hold", a[2])
+		c.Env = append(os.Environ(), "NOVA_UPDATE_HELPER=1")
+		c.Stdout = os.Stdout
+		if c.Start() != nil {
+			os.Exit(5)
+		}
+	case "hold":
+		d, err := time.ParseDuration(a[1])
+		if err != nil {
+			os.Exit(6)
+		}
+		time.Sleep(d)
 	default:
 		os.Exit(20)
 	}
@@ -384,4 +404,55 @@ func TestCheckCapsAndFilterActuallyAvoidsReads(t *testing.T) {
 	if strings.Contains(o, "excluded") {
 		t.Fatal(o)
 	}
+}
+
+// A held pipe is the cause the hosted macOS red had: the version command exits
+// cleanly, its output is complete, and only the copy of that output is still
+// finishing. A ten millisecond grace lost that race under load and reported a
+// healthy tool as UNKNOWN. The grace has to outlast an ordinary handoff.
+func TestHealthyCommandWithLingeringGrandchildStillReads(t *testing.T) {
+	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte("x 1.2.3\n")), "300ms"))}
+	r := Installed(context.Background(), e, 5*time.Second, false)
+	if !r.Known() || r.Version != "1.2.3" {
+		t.Fatalf("healthy read refused: reason=%q version=%q raw=%q", r.Reason, r.Version, r.Raw)
+	}
+}
+
+// Past the grace the refusal must name the pipe rather than blame the version
+// command, and it must say so without echoing a byte the child wrote.
+func TestHeldPipePastGraceIsNamedAndEchoesNoContent(t *testing.T) {
+	secret := "x 9.9.9-secret"
+	e := Entry{Name: "x", Kind: "tool", Installed: mustArgv(t, command(t, "linger", base64.StdEncoding.EncodeToString([]byte(secret+"\n")), (killGrace+time.Second).String()))}
+	r := Installed(context.Background(), e, killGrace+5*time.Second, false)
+	if r.Known() || r.Reason != "output_not_closed" {
+		t.Fatalf("reason=%q remedy=%q", r.Reason, r.Remedy)
+	}
+	if r.Remedy != leakRemedy {
+		t.Fatalf("remedy=%q", r.Remedy)
+	}
+	if strings.Contains(r.Reason, "9.9.9") || strings.Contains(r.Remedy, "9.9.9") {
+		t.Fatalf("diagnostic echoed child content: %q %q", r.Reason, r.Remedy)
+	}
+}
+
+// The three process failures a person acts on differently must stay
+// distinguishable in the reason, which one collapsed "execution failed" did not.
+func TestProcessFailuresAreDistinguishable(t *testing.T) {
+	if r := process(context.Background(), nil, nil, ChildCap); r.Reason != "empty argv" {
+		t.Fatal(r.Reason)
+	}
+	if r := process(context.Background(), []string{"nova-no-such-tool-exists"}, nil, ChildCap); r.Reason != "not_found" {
+		t.Fatal(r.Reason)
+	}
+	if r := process(context.Background(), mustArgv(t, command(t, "fail")), nil, ChildCap); r.Reason != "exit 3" {
+		t.Fatal(r.Reason)
+	}
+}
+func mustArgv(t *testing.T, s string) []string {
+	t.Helper()
+	a, err := argv(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return a
 }

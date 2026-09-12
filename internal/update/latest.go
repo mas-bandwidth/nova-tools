@@ -48,6 +48,9 @@ func Latest(ctx context.Context, e Entry, timeout time.Duration, client *http.Cl
 		if p.Reason != "" {
 			r.Reason = p.Reason
 			r.Remedy = "repair the declared local version command"
+			if p.Reason == "output_not_closed" {
+				r.Remedy = leakRemedy
+			}
 		}
 		return r
 	}
