@@ -69,11 +69,51 @@ func (j job) tool(t *testing.T, env []string, args ...string) (int, string, stri
 	return code, out.String(), errb.String()
 }
 
-// wrapped runs one /bin/sh script INSIDE the wall with this job's lists.
+// shell is the command the tests wrap, and its flag: /bin/sh -c on unix, cmd.exe /c on
+// windows. The tests that RUN a script inside the wall are darwin's; the ones that assert a
+// REFUSAL run everywhere, and on windows a hard-coded /bin/sh made them pass on
+// "/bin/sh is on no PATH entry" — a green about the wrong refusal.
+func (j job) shell(t *testing.T) []string {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return []string{"/bin/sh", "-c"}
+	}
+	for _, candidate := range []string{os.Getenv("COMSPEC"), filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")} {
+		if candidate == "" {
+			continue
+		}
+		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+			return []string{candidate, "/c"}
+		}
+	}
+	t.Skip("skipped: this windows machine has no cmd.exe, and rule 5 resolves the command before any policy")
+	return nil
+}
+
+// noopScript and touchScript are the two scripts these tests need, in the shell of the
+// platform: one that does nothing and one that would create a file. The second is what makes
+// "the command did NOT run" an assertion rather than a hope.
+func noopScript() string {
+	if runtime.GOOS == "windows" {
+		return "exit /b 0"
+	}
+	return "true"
+}
+
+func touchScript(path string) string {
+	if runtime.GOOS == "windows" {
+		return `type nul > "` + path + `"`
+	}
+	return "touch '" + path + "'"
+}
+
+// wrapped runs one shell script INSIDE the wall with this job's lists.
 func (j job) wrapped(t *testing.T, script string, extraEnv ...string) (int, string, string) {
 	t.Helper()
-	return j.tool(t, j.env(extraEnv...),
-		"--read", j.read, "--write", j.write, "--", "/bin/sh", "-c", script)
+	args := []string{"--read", j.read, "--write", j.write, "--"}
+	args = append(args, j.shell(t)...)
+	args = append(args, script)
+	return j.tool(t, j.env(extraEnv...), args...)
 }
 
 // Rule 1 and rule 12: a wrapped command runs, the OK line names the wall, and the exit
@@ -334,13 +374,16 @@ func TestProbeProvesTheWall(t *testing.T) {
 // Rule 4 and the refusal grammar, through the binary's own argv.
 func TestRefusalsThroughTheArgv(t *testing.T) {
 	j := newJob(t)
+	// The command is this platform's shell, not /bin/sh: every case below is about a FLAG,
+	// and a command that resolves on no PATH entry would answer them with its own refusal.
+	nop := append(append([]string{}, j.shell(t)...), noopScript())
 	for _, tc := range []struct {
 		name, want string
 		args       []string
 	}{
-		{"no_write", "reason=bad_write", []string{"--read", j.read, "--", "/bin/sh", "-c", "true"}},
-		{"no_dashdash", "reason=no_command", []string{"--write", j.write, "/bin/sh"}},
-		{"home_outside", "reason=home_outside", []string{"--write", j.write, "--", "/bin/sh", "-c", "true"}},
+		{"no_write", "reason=bad_write", append([]string{"--read", j.read, "--"}, nop...)},
+		{"no_dashdash", "reason=no_command", []string{"--write", j.write, nop[0]}},
+		{"home_outside", "reason=home_outside", append([]string{"--write", j.write, "--"}, nop...)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			env := j.env()
@@ -395,7 +438,7 @@ func TestUnbuiltPlatformsRefuse(t *testing.T) {
 	}
 	j := newJob(t)
 	marker := filepath.Join(j.write, "ran")
-	code, _, errOut := j.wrapped(t, "touch '"+marker+"'")
+	code, _, errOut := j.wrapped(t, touchScript(marker))
 	if code != 125 || !strings.Contains(errOut, "reason=no_sandbox") || !strings.Contains(errOut, runtime.GOOS) {
 		t.Fatalf("exit %d, stderr %q; want 125, reason=no_sandbox and the platform named", code, errOut)
 	}

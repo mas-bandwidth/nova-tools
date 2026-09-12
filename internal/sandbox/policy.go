@@ -150,7 +150,8 @@ func underAny(path string, prefixes []string) bool {
 
 // Inside reports whether path is dir or lies beneath it. Both are expected resolved.
 func Inside(path, dir string) bool {
-	return path == dir || strings.HasPrefix(path, strings.TrimSuffix(dir, "/")+string(os.PathSeparator))
+	sep := string(os.PathSeparator)
+	return path == dir || strings.HasPrefix(path, strings.TrimSuffix(dir, sep)+sep)
 }
 
 // insideAny is Inside over a list, and it is what rules 9 and 13 ask of HOME and --cwd.
@@ -163,16 +164,29 @@ func insideAny(path string, dirs []string) bool {
 	return false
 }
 
-// sbplMetacharacters are the characters a path may not carry. The ancestor literals of
-// the darwin profile put a path INTO the profile text (the -D parameters do not), so a
-// path holding a quote, a backslash or a paren could rewrite the policy — and a measured
-// run with a path holding a space and a paren aborted at exit 134 (spec, "to verify at
-// build" item 2). The decision taken here is the first of the two the spec offered:
-// the tool REFUSES such a path, naming the flag, rather than trying to quote it.
+// sbplMetacharacters are the characters a path may not carry ON DARWIN. The ancestor
+// literals of the darwin profile put a path INTO the profile text (the -D parameters do
+// not), so a path holding a quote, a backslash or a paren could rewrite the policy — and a
+// measured run with a path holding a space and a paren aborted at exit 134 (spec, "to
+// verify at build" item 2). The decision taken here is the first of the two the spec
+// offered: the tool REFUSES such a path, naming the flag, rather than trying to quote it.
 const sbplMetacharacters = "\"\\()"
 
-func badPathText(path string) string {
-	if i := strings.IndexAny(path, sbplMetacharacters); i >= 0 {
+func badPathText(path string) string { return badPathTextFor(runtime.GOOS, path) }
+
+// badPathTextFor is badPathText with the platform named, so that a test on one machine can
+// ask what the tool would say on another.
+//
+// The metacharacter set is DARWIN'S, and applying it everywhere was the windows failure of
+// run 34663812025: a backslash is windows's path separator, so every absolute windows path
+// carried one and every --write was SANDBOX REFUSED reason=bad_write before the run reached
+// the refusal it was about. `%ProgramFiles(x86)%` is in the spec's own windows root table,
+// parens and all. Neither the Landlock body nor the AppContainer one writes a path into a
+// policy TEXT — they pass file descriptors and ACEs — so neither has this hazard. A control
+// character is refused on every platform: no caller means one, and a path holding one
+// corrupts any line that prints it.
+func badPathTextFor(goos, path string) string {
+	if i := strings.IndexAny(path, sbplMetacharacters); goos == "darwin" && i >= 0 {
 		return fmt.Sprintf("holds %q, which the generated policy cannot carry", string(path[i]))
 	}
 	for _, r := range path {
@@ -480,13 +494,22 @@ func DroppedEnv(env []string) []string {
 // unique. It is what the darwin profile's file-read-metadata literals are built from,
 // and it is here rather than in the darwin body so that a test on any platform can
 // assert its shape.
-func Ancestors(paths ...string) []string {
+func Ancestors(paths ...string) []string { return ancestors(filepath.Dir, paths...) }
+
+// ancestors is Ancestors with the parent function named, so that a test on one platform can
+// walk the other's paths: filepath.Dir's answer at the top of the tree differs per platform
+// and the stop condition is the whole of this function's correctness.
+func ancestors(dir func(string) string, paths ...string) []string {
 	seen := map[string]bool{}
 	for _, p := range paths {
 		if p == "" {
 			continue
 		}
-		for d := filepath.Dir(p); d != "/" && d != "." && d != ""; d = filepath.Dir(d) {
+		// The stop is "d is its own parent", not the literal "/": on windows the top of
+		// the tree is `C:\` (and filepath.Dir(`C:\`) is `C:\`), so a loop that waited for
+		// "/" spun on the volume root forever — the 600s timeout of run 34663812025. Asking the
+		// parent function where IT stops is the one form that is right on every platform.
+		for d := dir(p); d != "." && d != "" && dir(d) != d; d = dir(d) {
 			seen[d] = true
 		}
 	}

@@ -2,7 +2,9 @@ package sandbox
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -35,6 +37,39 @@ func scratch(t *testing.T) (write, read, home, secret string) {
 	return write, read, home, secret
 }
 
+// anExecutable is a command this platform actually has, because rule 5 resolves the argv's
+// first word before any policy exists and a test that hard-coded /bin/echo asserted
+// "not_found" on windows while claiming to assert the thing it was written about.
+func anExecutable(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS != "windows" {
+		return "/bin/echo"
+	}
+	for _, candidate := range []string{os.Getenv("COMSPEC"), filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe")} {
+		if candidate == "" {
+			continue
+		}
+		if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+			return candidate
+		}
+	}
+	found, err := exec.LookPath("cmd.exe")
+	if err != nil {
+		t.Skip("skipped: this windows machine has no cmd.exe to resolve, and rule 5 resolves the command before the policy")
+	}
+	return found
+}
+
+// needUnixPaths skips a test whose subject is the TEXT of the darwin sandbox-exec profile.
+// Its literals are absolute unix paths; a windows path is not one, and the AppContainer body
+// writes no policy text at all. Darwin and linux both run these.
+func needUnixPaths(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipped on windows: this asserts the darwin profile text, whose literals are unix paths")
+	}
+}
+
 func in(t *testing.T, write, read, home string, argv ...string) Input {
 	t.Helper()
 	return Input{Reads: []string{read}, Writes: []string{write}, Home: home, Argv: argv}
@@ -42,7 +77,7 @@ func in(t *testing.T, write, read, home string, argv ...string) Input {
 
 // Rule 4: --write has no default, and zero of it is a refusal that names the flag.
 func TestRefusesToGuessAWriteSet(t *testing.T) {
-	_, bad := Build(Input{Argv: []string{"/bin/echo"}, Home: "/"})
+	_, bad := Build(Input{Argv: []string{anExecutable(t)}, Home: "/"})
 	if len(bad) == 0 {
 		t.Fatal("a run with no --write was built; rule 4 refuses to guess")
 	}
@@ -61,7 +96,7 @@ func TestRefusesToGuessAWriteSet(t *testing.T) {
 func TestPathsAreResolvedAbsoluteAndExisting(t *testing.T) {
 	write, read, home, _ := scratch(t)
 
-	_, bad := Build(in(t, "relative/dir", read, home, "/bin/echo"))
+	_, bad := Build(in(t, "relative/dir", read, home, anExecutable(t)))
 	if len(bad) == 0 || !strings.Contains(bad[0].Text, "is relative") {
 		t.Fatalf("a relative --write was not refused: %v", bad)
 	}
@@ -71,7 +106,7 @@ func TestPathsAreResolvedAbsoluteAndExisting(t *testing.T) {
 	}
 
 	missing := filepath.Join(write, "not-there")
-	_, bad = Build(in(t, missing, read, home, "/bin/echo"))
+	_, bad = Build(in(t, missing, read, home, anExecutable(t)))
 	if len(bad) == 0 || !strings.Contains(bad[0].Text, "does not exist") {
 		t.Fatalf("an absent --write was not refused: %v", bad)
 	}
@@ -83,7 +118,7 @@ func TestPathsAreResolvedAbsoluteAndExisting(t *testing.T) {
 // Rule 4: a path in both lists is a refusal naming both flags, never a silent merge.
 func TestSamePathInBothListsIsARefusal(t *testing.T) {
 	write, _, home, _ := scratch(t)
-	_, bad := Build(Input{Reads: []string{write}, Writes: []string{write}, Home: home, Argv: []string{"/bin/echo"}})
+	_, bad := Build(Input{Reads: []string{write}, Writes: []string{write}, Home: home, Argv: []string{anExecutable(t)}})
 	if len(bad) == 0 {
 		t.Fatal("a path in both lists was merged")
 	}
@@ -95,7 +130,7 @@ func TestSamePathInBothListsIsARefusal(t *testing.T) {
 // Rule 9: a HOME outside every --write is refused BEFORE the command runs.
 func TestHomeOutsideTheWriteSetIsRefused(t *testing.T) {
 	write, read, _, _ := scratch(t)
-	_, bad := Build(in(t, write, read, os.TempDir(), "/bin/echo"))
+	_, bad := Build(in(t, write, read, os.TempDir(), anExecutable(t)))
 	var found bool
 	for _, r := range bad {
 		if r.Reason == "home_outside" {
@@ -105,7 +140,7 @@ func TestHomeOutsideTheWriteSetIsRefused(t *testing.T) {
 	if !found {
 		t.Fatalf("a HOME outside every --write was accepted: %v", bad)
 	}
-	if p, bad := Build(in(t, write, read, filepath.Join(write, "home"), "/bin/echo")); len(bad) > 0 || p.Home == "" {
+	if p, bad := Build(in(t, write, read, filepath.Join(write, "home"), anExecutable(t))); len(bad) > 0 || p.Home == "" {
 		t.Fatalf("a HOME inside the write set was refused: %v", bad)
 	}
 }
@@ -114,7 +149,7 @@ func TestHomeOutsideTheWriteSetIsRefused(t *testing.T) {
 // explicit one outside the write set is refused.
 func TestCwdAndTmpAreInsideTheWall(t *testing.T) {
 	write, read, home, _ := scratch(t)
-	p, bad := Build(in(t, write, read, home, "/bin/echo"))
+	p, bad := Build(in(t, write, read, home, anExecutable(t)))
 	if len(bad) > 0 {
 		t.Fatalf("refused: %v", bad)
 	}
@@ -127,7 +162,7 @@ func TestCwdAndTmpAreInsideTheWall(t *testing.T) {
 	if fi, err := os.Stat(p.Tmp); err != nil || !fi.IsDir() {
 		t.Fatalf("the one directory the tool creates was not created: %v", err)
 	}
-	iv := in(t, write, read, home, "/bin/echo")
+	iv := in(t, write, read, home, anExecutable(t))
 	iv.Cwd = read
 	if _, bad = Build(iv); len(bad) == 0 || bad[0].Reason != "bad_cwd" {
 		t.Fatalf("a --cwd outside the write set was accepted: %v", bad)
@@ -141,13 +176,17 @@ func TestCommandPreflight(t *testing.T) {
 	if err := os.WriteFile(notExec, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	_, bad := Build(in(t, write, read, home, notExec))
-	if len(bad) == 0 || bad[0].Reason != "not_executable" || bad[0].Code() != ExitRefused {
+	if runtime.GOOS == "windows" {
+		// Windows has no executable bit, and resolveCommand says so in one place: the
+		// preflight there is the stat and the directory check, not the mode. Asserting a
+		// refusal that cannot fire would be asserting the assertion.
+		t.Log("the executable-bit half of the preflight is skipped on windows: there is no such bit")
+	} else if _, bad := Build(in(t, write, read, home, notExec)); len(bad) == 0 || bad[0].Reason != "not_executable" || bad[0].Code() != ExitRefused {
 		t.Fatalf("a command with no executable bit was accepted: %v", bad)
 	}
 	iv := in(t, write, read, home, "definitely-not-a-command-here")
 	iv.LookAt = write
-	_, bad = Build(iv)
+	_, bad := Build(iv)
 	if len(bad) == 0 || bad[0].Reason != "not_found" || bad[0].Code() != ExitNotFound {
 		t.Fatalf("a command on no PATH entry was not 127 not_found: %v", bad)
 	}
@@ -156,12 +195,13 @@ func TestCommandPreflight(t *testing.T) {
 // The build's own decision, from "to verify at build" item 2: a path carrying an SBPL
 // metacharacter is refused, because the ancestor literals put a path INTO the profile.
 func TestPathWithSbplMetacharacterIsRefused(t *testing.T) {
+	needUnixPaths(t) // `C:\Program Files (x86)` is an ordinary windows directory
 	write, read, home, _ := scratch(t)
 	odd := filepath.Join(write, `a (paren)`)
 	if err := os.MkdirAll(odd, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	iv := in(t, odd, read, home, "/bin/echo")
+	iv := in(t, odd, read, home, anExecutable(t))
 	if _, bad := Build(iv); len(bad) == 0 {
 		t.Fatal("a path holding a paren was accepted into the generated policy")
 	}
@@ -191,14 +231,16 @@ func TestChildEnv(t *testing.T) {
 func TestAncestors(t *testing.T) {
 	// Only the directories ABOVE each path are ancestors: c and d are the paths
 	// themselves, and they are granted by their own subpath rule.
-	got := Ancestors("/a/b/c", "/a/b/d")
-	want := []string{"/a", "/a/b"}
+	got := Ancestors(filepath.FromSlash("/a/b/c"), filepath.FromSlash("/a/b/d"))
+	want := []string{filepath.FromSlash("/a"), filepath.FromSlash("/a/b")}
 	if strings.Join(got, " ") != strings.Join(want, " ") {
 		t.Fatalf("Ancestors = %v, want %v", got, want)
 	}
+	// The top of the tree is excluded, and it is asked for rather than spelled: "/" on unix
+	// and `C:\` on windows are the same fact about the same loop.
 	for _, d := range got {
-		if d == "/" {
-			t.Fatal(`"/" is in the ancestor list; it is granted file-read* above`)
+		if filepath.Dir(d) == d {
+			t.Fatalf("%q is the top of the tree and is in the ancestor list; it is granted file-read* above", d)
 		}
 	}
 }
@@ -207,8 +249,9 @@ func TestAncestors(t *testing.T) {
 // the caller's paths only as parameters, and grants IP plus unix sockets under the write
 // set — never (allow network*), which reaches the SSH agent socket.
 func TestDarwinProfileIsGenerated(t *testing.T) {
+	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
-	p, bad := Build(in(t, write, read, home, "/bin/echo"))
+	p, bad := Build(in(t, write, read, home, anExecutable(t)))
 	if len(bad) > 0 {
 		t.Fatalf("refused: %v", bad)
 	}
@@ -287,8 +330,9 @@ func grantLines(profile string) string {
 // Rule 7 of revision 6: inbound is granted only under --net-listen, and --net-deny with
 // --net-listen is a refusal rather than a tool picking which the caller meant.
 func TestInboundIsOnlyGrantedWhenAsked(t *testing.T) {
+	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
-	p, bad := Build(in(t, write, read, home, "/bin/echo"))
+	p, bad := Build(in(t, write, read, home, anExecutable(t)))
 	if len(bad) > 0 {
 		t.Fatalf("refused: %v", bad)
 	}
@@ -307,7 +351,7 @@ func TestInboundIsOnlyGrantedWhenAsked(t *testing.T) {
 	if !strings.Contains(grantLines(listening), "(allow network-inbound (local ip))") {
 		t.Fatalf("--net-listen granted no inbound:\n%s", listening)
 	}
-	iv := in(t, write, read, home, "/bin/echo")
+	iv := in(t, write, read, home, anExecutable(t))
 	iv.NetDeny, iv.NetListen = true, true
 	if _, bad := Build(iv); len(bad) == 0 || bad[0].Reason != "bad_net" {
 		t.Fatalf("--net-deny with --net-listen was accepted: %v", bad)
@@ -350,8 +394,9 @@ func TestScrubSetIsExactlyTheSpecs(t *testing.T) {
 
 // Rule 7, revision 7: mach-lookup is narrowed and the unqualified form is gone.
 func TestMachLookupIsNarrowed(t *testing.T) {
+	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
-	pol, bad := Build(in(t, write, read, home, "/bin/echo"))
+	pol, bad := Build(in(t, write, read, home, anExecutable(t)))
 	if len(bad) > 0 {
 		t.Fatalf("refused: %v", bad)
 	}
