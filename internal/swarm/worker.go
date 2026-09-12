@@ -323,26 +323,50 @@ func (w Worker) DefaultDeadline() time.Duration {
 // workerDir spelled <base>-<digits>, which is what SlotDir builds -- or "" when path is
 // under no slot. A path that IS a slot directory is not held by it, which matches insideDir.
 //
-// AND THIS ONE IS STILL A NAME COMPARISON, WHICH IS THE GAP #145 OWNS. `insideDir` above asks
-// the filesystem (`os.SameFile`) because the directories it compares exist at load; a slot
-// directory need not -- slots are created at run -- so there is no inode to compare and
-// `<dir>/Worker-1/.key` under a `worker_dir` of `<dir>/worker` folds past `base+"-"` on a
-// case-insensitive filesystem. Not fixed here (#100 is worker_dir and read_roots); #145.
+// AND THE SLOT'S NAME IS JUDGED UNDER THE FILESYSTEM'S OWN EQUALITY, NOT AS TEXT (#145). The
+// previous revision cut `<base>-` off the first path component with `strings.CutPrefix`, a
+// case-SENSITIVE comparison, while APFS is case-INsensitive by default: with `worker_dir`
+// `<dir>/worker`, a `key_file` at `<dir>/Worker-1/.key` is in the directory `RefreshSlot`
+// opens and hands to `--read`, `CutPrefix("Worker-1", "worker-")` said no, and the job read
+// the key inside the wall under a green `SANDBOX OK` (SPEC-SANDBOX rule 6; #100 one directory
+// over). Lowercasing is not the repair either: on a case-SENSITIVE filesystem `<dir>/Worker-1`
+// and `<dir>/worker-1` are two directories and folding them refuses a sound placement.
+//
+// THE CANDIDATE COMES FROM THE PATH, NOT FROM workerDir, WHICH IS WHY THIS REPAIR IS A
+// DIFFERENT SHAPE FROM insideDir's. insideDir can ask `os.SameFile` of the two directories
+// because both exist at load; a slot directory need not -- slots are created at run -- so
+// there may be no `<parent>/<base>-<n>` inode to compare, while the directory holding the key
+// is right there in the path. So the ancestors of the path are walked toward
+// `filepath.Dir(workerDir)`, and the ancestor that is a direct child of that parent has its
+// name judged: `<digits>` as digits, and `<base>` under the filesystem's own equality
+// (namesOneFile, which measures the fold rather than reading runtime.GOOS).
+//
+// The walk starts at the path's PARENT, so a path that IS a slot directory is still not held
+// by it. Both spellings of workerDir are still asked by the caller, for the reason read 3 of
+// #88 gave: `SlotDir` builds the slot from the TYPED spelling.
 func slotDirHolding(path, workerDir string) string {
 	parent, base := filepath.Dir(workerDir), filepath.Base(workerDir)
-	rel, err := filepath.Rel(parent, path)
-	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return ""
+	for dir := filepath.Dir(path); ; {
+		up := filepath.Dir(dir)
+		if up == dir {
+			return "" // the root is its own parent: the walk is over
+		}
+		if sameDir(up, parent) {
+			name := filepath.Base(dir)
+			i := strings.LastIndex(name, "-")
+			if i <= 0 {
+				return "" // no slot number, so not a slot directory
+			}
+			if digits := name[i+1:]; digits == "" || strings.TrimLeft(digits, "0123456789") != "" {
+				return ""
+			}
+			if !namesOneFile(up, name[:i], base) {
+				return "" // another worker's slot, or a neighbour that merely reads alike
+			}
+			return dir
+		}
+		dir = up
 	}
-	first, _, under := strings.Cut(rel, string(os.PathSeparator))
-	if !under || first == "" {
-		return "" // the path is the sibling itself, not something inside it
-	}
-	digits, ok := strings.CutPrefix(first, base+"-")
-	if !ok || digits == "" || strings.TrimLeft(digits, "0123456789") != "" {
-		return ""
-	}
-	return filepath.Join(parent, first)
 }
 
 // SlotDir is a slot's own working directory, <worker-dir>-<slot>.

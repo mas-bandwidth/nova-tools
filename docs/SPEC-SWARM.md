@@ -840,7 +840,13 @@ that directory (rule 12).
 **`--net-deny` is never passed:** the provider's API is the work, and the line
 says `net=nopromise`. The key reaches the child the way it always has — read as
 data before the wrap, passed by environment, the file itself in neither list
-(rule 6 here and rule 6 there are the same rule seen from two sides).
+(rule 6 here and rule 6 there are the same rule seen from two sides). **A
+`key_file` inside a SLOT directory is refused at load**, and because a slot
+directory need not exist yet at load — slots are created at run, so there may be
+no inode to compare — the candidate slot is derived from the key's own ancestors
+and its `<worker_dir basename>-<digits>` name is judged under the filesystem's
+own equality, measured on the directory in question rather than read off
+`runtime.GOOS`; that names a mechanism and adds no rule.
 
 **And "inside" is a question for the filesystem, not for two strings.** A
 `key_file` whose placement would put it inside `worker_dir` or inside a
