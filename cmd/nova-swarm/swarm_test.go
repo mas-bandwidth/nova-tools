@@ -229,6 +229,20 @@ func (b *bench) swarmTry(args ...string) (exit int, stdout, stderr string, err e
 
 func (b *bench) add(task string, extra ...string) string {
 	b.t.Helper()
+	// THE FIXTURE'S OWN CAP, ENFORCED HERE (#132; fixture_guards_test.go carries the why):
+	// a hold -- `FAKE-SLEEP` plus `FAKE-AWAIT-NOTE`, in that order, as the fake runs them --
+	// that reaches the deadline this job will run under is refused before the job is queued,
+	// because the wait and the reaper would come due together and the silent `end=killed` of
+	// #126 would be back. The deadline READ HERE is the one standing at add time; `b.run`
+	// applies the same cap against the description the run hands the dispatcher, which is
+	// what covers a rewrite after the add and the verbs that skip `add`.
+	deadline, err := benchJobDeadline(b.worker, extra)
+	if err != nil {
+		b.t.Fatalf("reading the deadline this job would run under: %v", err)
+	}
+	if err := awaitNoteCap(task, deadline); err != nil {
+		b.t.Fatalf("this fixture would recreate the silent kill of #126: %v", err)
+	}
 	file := filepath.Join(b.dir, fmt.Sprintf("task-%d.md", time.Now().UnixNano()))
 	write(b.t, file, task)
 	args := append([]string{"add", "--pool", b.pool, "--task", file, "--files", "5", "--tokens", "100000"}, extra...)
@@ -242,6 +256,18 @@ func (b *bench) add(task string, extra ...string) string {
 func (b *bench) run(args ...string) (int, string, string) {
 	b.t.Helper()
 	all := append([]string{"run", "--pool", b.pool, "--workers", "1", "--hours", "0.25", "--worker", b.worker}, args...)
+	// THE CAP AGAIN, WHERE THE JOB'S DEADLINE IS ACTUALLY RESOLVED (#132, the #140 read's
+	// finding 2): every task still pending, against the description THIS run hands the
+	// dispatcher -- so a deadline rewritten after the add, another `--worker`, and the jobs
+	// `batch` and `requeue --task-file` queue without going through `add` are all covered.
+	// fixture_guards_test.go names what stays uncovered.
+	worker := b.worker
+	if named, ok := flagAfter(all, "--worker"); ok {
+		worker = named
+	}
+	if err := capPendingTasks(b.pool, worker); err != nil {
+		b.t.Fatalf("this fixture would recreate the silent kill of #126: %v", err)
+	}
 	return b.swarm(withSandbox(all)...)
 }
 
