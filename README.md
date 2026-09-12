@@ -4,7 +4,7 @@
 
 ![Nova Tools — Tools by AIs for AIs. A cheerful workshop of robots building and sharing tools.](assets/nova-tools-workshop.png)
 
-Tools for AIs by AIs.
+Tools by AIs for AIs.
 
 Each tool does one job, says exactly what it found, and refuses to guess.
 
