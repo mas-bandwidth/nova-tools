@@ -11,11 +11,13 @@ under the mapping decisions"; the decisions themselves are the source owner's on
 | File | What it is |
 |---|---|
 | `mapping.json` | the sealed `nova.tokens.mapping/2` manifest. Its envelope ID is the `mapping_id` of every expected observation, and `fixture_digests` names the SHA-256 of each source file below. |
-| `source_rollout.jsonl` | synthetic rollout lines shaped on the named `TokenUsageRecord` fields: four mappable response records, a non-integer counter, an explicit-null counter, and a `token_count` context-fill snapshot that belongs to a separate unsupported-for-spend mapping. |
+| `source_rollout.jsonl` | synthetic rollout lines shaped on the named `TokenUsageRecord` fields: four cleanly mappable response records, four with an invalid supported counter (explicit null, a wrong-typed value holding a privacy sentinel, a negative count, a non-integer count), and a `token_count` context-fill snapshot that is owed to a separate mapping and mapped to nothing here. |
 | `source_rollout_copy.jsonl` | the first response record copied byte for byte, plus one changed copy of it. |
-| `expected_records.jsonl` | the expected sealed `nova.tokens.observation/2` envelopes, stated independently of any adapter: there is no adapter. Six lines, five distinct observations, four spend keys. |
+| `expected_records.jsonl` | the expected sealed `nova.tokens.observation/2` envelopes, stated independently of any adapter: there is no adapter. Ten lines, nine distinct observations, eight spend keys, four of them carrying an unavailable counter and its completeness gap. |
 | `refused_records.jsonl` | shapes the wire must refuse, each with the rule and field the landed validator must name. |
 
 `internal/records/mapping_fixtures_test.go` runs the landed publisher boundary over all of
-it. A source shape whose wire outcome the owner has not decided produces no expected record;
-it is named in the document's open cells instead.
+it. An invalid supported counter is `unavailable`/`parse_failed` with the rest of its
+observation intact; a coerced pass-through of the same value still refuses under the
+unchanged core rules, which the refused fixtures assert. The `token_count` shape is owed to
+its own mapping and is covered by nothing here.

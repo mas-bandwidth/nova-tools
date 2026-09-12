@@ -102,6 +102,34 @@
       "modelUsage": {},
       "promptText": "SENTINEL-PRIVATE-PROMPT-DO-NOT-PUBLISH-7f3a",
       "exportPath": "SENTINEL-PRIVATE-PATH-DO-NOT-PUBLISH-9c21"
+    },
+    {
+      "turnNumber": 5,
+      "endedAt": "2026-09-12T18:00:00Z",
+      "inputTokens": null,
+      "outputTokens": "SENTINEL-PRIVATE-PROMPT-DO-NOT-PUBLISH-7f3a",
+      "cachedReadTokens": 100,
+      "cacheCreationTokens": -3,
+      "reasoningTokens": 20,
+      "totalTokens": 600,
+      "modelCalls": 1,
+      "costUsdTicks": 12,
+      "turnCount": 1,
+      "primaryModelId": "grok-model-example",
+      "modelUsage": {
+        "grok-model-example": {
+          "inputTokens": null,
+          "outputTokens": "SENTINEL-PRIVATE-PROMPT-DO-NOT-PUBLISH-7f3a",
+          "cachedReadTokens": 100,
+          "cacheCreationTokens": -3,
+          "reasoningTokens": 20,
+          "totalTokens": 600,
+          "modelCalls": 1,
+          "costUsdTicks": 12
+        }
+      },
+      "promptText": "SENTINEL-PRIVATE-PROMPT-DO-NOT-PUBLISH-7f3a",
+      "exportPath": "SENTINEL-PRIVATE-PATH-DO-NOT-PUBLISH-9c21"
     }
   ]
 }

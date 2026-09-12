@@ -23,9 +23,11 @@ No private prompts or raw transcript files were sent. This is source and mapping
 
 Every cell below is the source owner's decision on this PR (Stella, comment
 [5647652764](https://github.com/mas-bandwidth/nova-tools/pull/142#issuecomment-5647652764)).
-A cell her decision does not reach reads `UNDECIDED (Stella)` rather than a guess, and the
-open cells are listed together at the end of this section. Where an earlier paragraph of
-this document defers a question these tables decide, the tables are the decision.
+The seven cells this section first left open were closed in comment
+[5647800085](https://github.com/mas-bandwidth/nova-tools/pull/142#issuecomment-5647800085);
+what those decisions place outside this initial mapping is listed as owed at the end, and
+owed is not covered. Where an earlier paragraph of this document defers a question these
+tables decide, the tables are the decision.
 
 The executable form is `testdata/tokens/codex/`: the sealed mapping manifest, the synthetic
 source records, the expected observation envelopes and the shapes the wire must refuse. The
@@ -39,7 +41,7 @@ landed publisher boundary checks all of it in
 | `schema` | `nova.tokens.observation/2` |
 | `source.kind` | `codex_desktop` |
 | `source.namespace` | `nova.codex-desktop.responses` |
-| `source.producer_version` | the producer version in the source record's own metadata, never the installed CLI's; null when the source carries none. The exact source key is `UNDECIDED (Stella)`; the fixture names it `producer_version`. |
+| `source.producer_version` | null for this initial mapping, unless the adapter has an explicitly allowlisted, verified source metadata field or a separately recorded owner-supplied version binding for the original source. No guessed key, no installed collector version, no version inferred from a filename. Adding an evidence-backed field later is a mapping revision, and a missing producer version never blocks a valid response-ID observation. |
 | `source.session_id` | the native containing thread/session ID, retained as provenance only |
 | `source.event_key` | `[response_id]`. A containing or forked thread never enters the event key. |
 | `kind` | `request` |
@@ -56,9 +58,9 @@ landed publisher boundary checks all of it in
 | `mapping_id` | the content ID of the sealed mapping manifest that read this shape (`testdata/tokens/codex/mapping.json`), never a fixture placeholder |
 | `receipt` | `response_id` and `turn_id` only, strings only |
 
-† Not a cell of her comment. `TokenUsageRecord` carries no model field (her cited fact) and
-the format reads an empty array as "no split supplied", so an empty array is the only
-faithful mapping of a source that supplies no per-model split.
+† `TokenUsageRecord` carries no model field, and the format reads an empty array as "no
+split supplied", so an empty array is the only faithful mapping of a source that supplies no
+per-model split. Accepted for this source in comment 5647800085.
 
 ### `raw_usage`: the per-mapping allowlist
 
@@ -67,24 +69,29 @@ landed `internal/records/testdata/allowlists.json` vocabulary, which is a fixtur
 the core tests rather than a global field vocabulary; raw names are never renamed to
 resemble another fixture.
 
-| Source field | `number_kind` | `unit` | `zero_semantics` | Role | Absent on the wire |
-|---|---|---|---|---|---|
-| `input_tokens` | `integer` | `tokens` | `measured` | base counter | `presence: absent`, `value: null`, `reason: not_supplied` |
-| `output_tokens` | `integer` | `tokens` | `measured` | base counter | same |
-| `total_tokens` | `integer` | `tokens` | `measured` | base counter | same |
-| `cached_input_tokens` | `integer` | `tokens` | `default_may_mask_absence` | subset of input | same |
-| `cache_write_input_tokens` | `integer` | `tokens` | `default_may_mask_absence` | subset of input | same |
-| `reasoning_output_tokens` | `integer` | `tokens` | `default_may_mask_absence` | subset of output | same |
+| Source field | `number_kind` | `unit` | `zero_semantics` | Role | Missing key | Invalid value |
+|---|---|---|---|---|---|---|
+| `input_tokens` | `integer` | `tokens` | `measured` | base counter | `absent` / `null` / `not_supplied` | `unavailable` / `null` / `parse_failed` |
+| `output_tokens` | `integer` | `tokens` | `measured` | base counter | same | same |
+| `total_tokens` | `integer` | `tokens` | `measured` | base counter | same | same |
+| `cached_input_tokens` | `integer` | `tokens` | `default_may_mask_absence` | subset of input | same | same |
+| `cache_write_input_tokens` | `integer` | `tokens` | `default_may_mask_absence` | subset of input | same | same |
+| `reasoning_output_tokens` | `integer` | `tokens` | `default_may_mask_absence` | subset of output | same | same |
 
 The three base counters are `measured` for this pinned `ResponseCompletedUsage` path only:
 at `b5bffd3ec4db487e7e3dec59663875b0ef7b72ca`, `responses.rs` lines 128-150 has required
 `i64` base counters and copies them directly. The three detail counters keep the defaulting
 uncertainty this document already records. A present numeric key retains its original
 lexeme with `reason: null`; a missing supported key is `absent`/`null`/`not_supplied`; an
-explicit null or non-numeric value is a named unsupported source-shape outcome and never a
-coerced zero — the bounded reason code for that outcome is `UNDECIDED (Stella)`, so no
-observation is emitted for it here. Other optional producer metrics are outside this
-supported set and are not silently promoted into it.
+explicit null, wrong-typed, negative or non-integer value is `presence: unavailable`,
+`value: null`, `reason: parse_failed`, keeping the same declared `number_kind` and `unit`:
+never a coerced zero, and never the source value stringified onto the wire or echoed into a
+diagnostic. The observation's other valid fields survive it, and the normalized result
+carries the affected completeness gap rather than a fabricated total. An invalid raw source
+shape is a different thing from a malformed retained envelope: the latter still refuses
+under the unchanged core rules, which is what this directory's refused fixtures assert.
+Other optional producer metrics are outside this supported set and are not silently promoted
+into it.
 
 ### Arithmetic, overlap and conflict
 
@@ -95,7 +102,7 @@ supported set and are not silently promoted into it.
 | missing raw `total_tokens` | stays absent; a view may derive a total from both known base components, labelled derived, without modifying the raw field |
 | unknown defaulted-zero detail | stays unknown and makes detail completeness false |
 | `turn_token_usage`, `thread_token_usage` | supporting snapshots, never additional spend |
-| fallback `token_count` snapshots | a separate, explicitly unsupported-for-spend mapping; never summed and never mixed into preferred response spend. Its `namespace`, `kind` and `event_key` are `UNDECIDED (Stella)`. |
+| fallback `token_count` snapshots | outside this initial mapping and **owed**, not covered: no request identity and no additive spend is synthesized from a cumulative snapshot. Its `namespace`, `kind` and key are to be specified from actual source evidence in that separate mapping. |
 | one response copied to another bench or path | the same observation: identical copies deduplicate |
 | the same `response_id` with changed counters | a conflict, retained and excluded from spend; there is no newest-wins rule |
 | a fresh collector run or copied path | creates no new event identity |
@@ -107,22 +114,25 @@ completion/observation day labels that convention and never claims exact call-da
 allocation. This is the format's point-timestamp rule, not an interval delta dropped onto
 its final day.
 
-### Open cells
+### Owed, not covered
 
-1. The bounded reason code for an explicit null or non-numeric counter (her decision names
-   a "named unsupported source-shape outcome" without choosing the code).
-2. The exact source metadata key that carries `producer_version`.
-3. The fallback `token_count` snapshot mapping's `namespace`, `kind` and `event_key`.
+The cumulative `token_count` snapshot shape is a separate mapping and adapter coverage task,
+tracked as owed. It is an explicit coverage limit, not an open literal blocking this response
+adapter: the response mapping can be built without it. A report must name unhandled
+`token_count` coverage — especially during September backfill — and cannot claim complete
+Codex history while that shape is unsupported. The manifest names the owed task in
+`overlap_rule.owed_coverage_tasks`, and the fixture keeps a `token_count` line beside the
+response records so the unmapped shape stays visible.
 
 ### The fixtures
 
 | File | Contents |
 |---|---|
 | `mapping.json` | the sealed `nova.tokens.mapping/2` manifest; its ID is the `mapping_id` of every expected envelope, and it names the digest of each source file |
-| `source_rollout.jsonl` | four mappable response records (full, present-zero base counter, no timestamp/model, arithmetic mismatch), one non-integer counter, one explicit-null counter, and a `token_count` context-fill snapshot beside them |
+| `source_rollout.jsonl` | four cleanly mappable response records (full, present-zero base counter, no timestamp/model, arithmetic mismatch), four with an invalid supported counter (explicit null, a wrong-typed value holding a privacy sentinel, a negative count, a non-integer count), and a `token_count` context-fill snapshot beside them |
 | `source_rollout_copy.jsonl` | the first record copied byte for byte, and one changed copy of it |
-| `expected_records.jsonl` | six sealed observation envelopes: four spend keys, one exact duplicate that deduplicates, one changed copy that conflicts |
-| `refused_records.jsonl` | three shapes the wire must refuse, each with its rule and field: a non-integer counter, a receipt field outside the allowlist, and a missing entry of the closed allowlist |
+| `expected_records.jsonl` | ten sealed observation envelopes: eight spend keys (four of them carrying an unavailable counter and its completeness gap), one exact duplicate that deduplicates, one changed copy that conflicts |
+| `refused_records.jsonl` | four shapes the wire must refuse, each with its rule and field: a non-integer counter and a negative counter passed through as lexemes instead of mapped to `unavailable`, a receipt field outside the allowlist, and a missing entry of the closed allowlist |
 
 ## Wire boundary and remaining acceptance
 

@@ -60,9 +60,11 @@ Before adapter acceptance: confirm the identity/finality rule and mixed-model mo
 
 Every cell below is the source owner's decision on this PR (Stella, comment
 [5647652764](https://github.com/mas-bandwidth/nova-tools/pull/142#issuecomment-5647652764)).
-A cell her decision does not reach reads `UNDECIDED (Stella)` rather than a guess, and the
-open cells are listed together at the end of this section. Where an earlier paragraph of
-this document defers a question these tables decide, the tables are the decision.
+The seven cells this section first left open were closed in comment
+[5647800085](https://github.com/mas-bandwidth/nova-tools/pull/142#issuecomment-5647800085);
+what those decisions place outside this initial mapping is listed as owed at the end, and
+owed is not covered. Where an earlier paragraph of this document defers a question these
+tables decide, the tables are the decision.
 
 The executable form is `testdata/tokens/grok/`, checked by the landed publisher boundary in
 `internal/records/mapping_fixtures_test.go` (`TestGrokRetainedMappingFixtures`).
@@ -74,7 +76,7 @@ The executable form is `testdata/tokens/grok/`, checked by the landed publisher 
 | `schema` | `nova.tokens.observation/2` |
 | `source.kind` | `grok` |
 | `source.namespace` | `nova.grok.turns` |
-| `source.producer_version` | the export's reported producer version (`grok usage v1.0.30` for the read sample; the fixture carries `1.0.30`); null when absent |
+| `source.producer_version` | the exact bounded version string supplied by the original producer metadata or by an explicit owner binding, with its spelling intact. The earlier reported `grok usage v1.0.30` is an owner report, not a required source key and not a version to stamp on every export. Without a binding for the source: null, which is what these synthetic fixtures carry. |
 | `source.session_id` | the original native `sessionId`; a containing session ID is never substituted |
 | `source.event_key` | `[original_session_id, turn_number_as_string]`, an array of strings, never concatenated text |
 | `kind` | `turn` |
@@ -110,10 +112,16 @@ tests rather than a global field vocabulary.
 
 `zero_semantics` is `unknown` for all nine until the producer's semantics are verified: a
 raw present zero is preserved and normalizes to nothing. A missing supported field is
-`presence: absent`, `value: null`, `reason: not_supplied`. `costUsdTicks` keeps its exact
-decimal lexeme — the sample's `77` is retained as the string `"77"` — with no dollars
-conversion and no guessed unit. The outcome for an explicit null or non-numeric counter is
-`UNDECIDED (Stella)`.
+`presence: absent`, `value: null`, `reason: not_supplied`. An explicit null, wrong-typed,
+negative or non-integer supported counter is `presence: unavailable`, `value: null`,
+`reason: parse_failed`, keeping its declared `number_kind` and `unit`: never a coerced zero,
+never the source value stringified onto the wire or echoed into a diagnostic. The other valid
+fields of that turn survive, and the normalized result carries the completeness gap instead
+of a fabricated total. The same rule applies inside a `model_usage` entry. A valid decimal
+cost tick keeps its exact JSON-number lexeme — the sample's `77` is retained as `"77"` — with
+no dollars conversion and no guessed unit. An invalid raw source shape is a different thing
+from a malformed retained envelope: the latter still refuses under the unchanged core
+rules.
 
 ### Identity, overlap and mixed models
 
@@ -123,8 +131,8 @@ conversion and no guessed unit. The outcome for an explicit null or non-numeric 
 | a copied export | identical copied keys deduplicate; the copy is the same observation |
 | the same key with changed content | a conflict, retained and excluded from spend; there is no newest-wins rule and no filename or commit order |
 | a turn with no `endedAt` | retained with partial coverage; never assigned the export's date or a collection timestamp |
-| session totals vs turn rows | a scoped checksum only, never a second spend row; a mismatch is a mapping conflict |
-| a request-grain Grok mapping | not established by a generic request/decimal fixture; that fixture is structural evidence, not a producer contract. Its literals are `UNDECIDED (Stella)`. |
+| session totals vs turn rows | preserved as non-spend source evidence through a separate aggregate mapping, **owed** and not covered here: never used to fill a missing turn's spend, never counted in addition to the turns. A checksum claim still requires independently evidenced complete matching interval and turn coverage; a mismatch is a mapping conflict. |
+| a request-grain Grok mapping | outside this mapping, with no literals invented. The generic request/decimal fixture stays distinct from evidence of a real Grok request source: it is structural evidence, not a producer contract. Build at the grain the source actually supplies, and reconcile the overlap explicitly if a real request source arrives. |
 | evidenced request-level overlap over the same session/interval | the view selects one evidenced source and grain; no union of request plus turn plus session totals |
 | more than one model ID | `model.basis = mixed`; the turn aggregate is the counting candidate and the split is retained, never counted again. No model split is normalized until its source relationship is verified. |
 
@@ -135,25 +143,27 @@ turn completing at `2026-09-11T23:30:00-04:00` allocates to `2026-09-12`. An unk
 is `unallocated`. A completion-day report labels that convention and never claims exact
 call-day allocation for a turn spanning midnight.
 
-### Open cells
+### Owed, not covered
 
-1. The outcome and reason code for an explicit null or non-numeric counter.
-2. Whether the session aggregate is itself retained as a `kind: aggregate` observation; the
-   decision fixes only that it is a checksum and never a second spend row.
-3. The `namespace`, `kind` and `event_key` of a future request-grain Grok mapping.
-4. Whether `producer_version` carries the bare version (`1.0.30`) or the full reported
-   producer string.
+The session aggregate is a separate retained mapping with its own stable namespace and source
+identity contract, tracked as owed; its literals are not fabricated from this turn mapping.
+The turn mapping and its adapter proceed independently, and this scope split stays visible in
+collection coverage and in the source fixtures — the export here keeps its `session` totals,
+and no observation maps them. It is not permission to call partial collection complete. A
+future request-grain mapping is owed in the same sense. Grok's unresolved stable-identity and
+zero-semantic limits stand: these decisions do not turn its candidate keys into verified
+normalized spend. The manifest names the owed task in `overlap_rule.owed_coverage_tasks`.
 
 ### The fixtures
 
 | File | Contents |
 |---|---|
 | `mapping.json` | the sealed `nova.tokens.mapping/2` manifest; its ID is the `mapping_id` of every expected envelope, and it names the digest of each source file |
-| `source_export.json` | one export with four turns: single model, mixed model, missing fields with no `endedAt`, and all-zero counters; each turn also carries unsupported fields holding privacy sentinels |
+| `source_export.json` | one export with all four declared top-level keys and five turns: single model, mixed model, missing fields with no `endedAt`, all-zero counters, and one turn whose counters include an explicit null, a wrong-typed value holding a privacy sentinel and a negative count, in the turn and in its `modelUsage` entry alike. Every turn carries unsupported fields holding privacy sentinels, and the `session` totals stay visible as owed evidence. |
 | `source_export_copy.json` | the first turn copied byte for byte to another bench |
 | `source_export_changed.json` | the same session and turn number with changed counters |
-| `expected_records.jsonl` | six sealed observation envelopes: four spend keys, one exact duplicate that deduplicates, one changed copy that conflicts |
-| `refused_records.jsonl` | four shapes the wire must refuse, each with its rule and field: a source field outside the allowlist, a receipt field outside it, a missing entry of the closed nine, and `costUsdTicks` declared as an integer |
+| `expected_records.jsonl` | seven sealed observation envelopes: five spend keys (one carrying unavailable counters and its completeness gap), one exact duplicate that deduplicates, one changed copy that conflicts |
+| `refused_records.jsonl` | five shapes the wire must refuse, each with its rule and field: a source field outside the allowlist, a receipt field outside it, a missing entry of the closed nine, `costUsdTicks` declared as an integer, and a wrong-typed source value stringified onto the wire instead of mapped to `unavailable` |
 
 ## Wire boundary and remaining acceptance
 

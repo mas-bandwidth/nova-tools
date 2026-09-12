@@ -32,12 +32,14 @@ const (
 // mappingManifest is the sealed nova.tokens.mapping/2 body each fixture directory ships.
 // The allowlists the validator needs come from it, so the test cannot quietly widen them.
 type fieldRule struct {
-	NumberKind     string `json:"number_kind"`
-	Unit           string `json:"unit"`
-	ZeroSemantics  string `json:"zero_semantics"`
-	AbsentPresence string `json:"absent_presence"`
-	AbsentReason   string `json:"absent_reason"`
-	SpendRole      string `json:"spend_role"`
+	NumberKind      string `json:"number_kind"`
+	Unit            string `json:"unit"`
+	ZeroSemantics   string `json:"zero_semantics"`
+	AbsentPresence  string `json:"absent_presence"`
+	AbsentReason    string `json:"absent_reason"`
+	InvalidPresence string `json:"invalid_presence"`
+	InvalidReason   string `json:"invalid_reason"`
+	SpendRole       string `json:"spend_role"`
 }
 
 type mappingManifest struct {
@@ -73,6 +75,9 @@ type mappingManifest struct {
 		ModelUsageFields []string `json:"model_usage_fields"`
 		ForbiddenKeys    []string `json:"forbidden_wire_keys"`
 	} `json:"model_rule"`
+	OverlapRule struct {
+		OwedCoverageTasks []string `json:"owed_coverage_tasks"`
+	} `json:"overlap_rule"`
 	FixtureDigests   map[string]string `json:"fixture_digests"`
 	ImplementationID *string           `json:"implementation_id"`
 }
@@ -226,6 +231,20 @@ func checkRefused(t *testing.T, dir string, v *Validator) int {
 	return len(lines)
 }
 
+func sentinelsInSource(t *testing.T, dir string, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		raw, err := os.ReadFile(filepath.Join(dir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if !bytes.Contains(raw, []byte(mappingSentinelPrompt)) ||
+			!bytes.Contains(raw, []byte(mappingSentinelPath)) {
+			t.Errorf("%s must carry the privacy sentinels in its unsupported fields, or the exclusion check proves nothing", name)
+		}
+	}
+}
+
 func noSentinels(t *testing.T, dir string, names ...string) {
 	t.Helper()
 	for _, name := range names {
@@ -292,15 +311,34 @@ func rawMatches(raw map[string]RawField, src map[string]interface{}, rules map[s
 			}
 			continue
 		}
+		// An explicit null, a wrong-typed, a negative or a non-integer supported counter is
+		// an invalid raw source shape: unavailable with reason parse_failed, the source
+		// value never stringified onto the wire. Validity is decided by the same lexeme
+		// rule the wire enforces, not by a second grammar written here.
 		n, isNum := v.(json.Number)
-		if !isNum {
-			return false
+		if !isNum || checkValueLexeme(n.String(), rule.NumberKind, "source") != nil {
+			if f.Presence != rule.InvalidPresence || f.Value != nil ||
+				f.Reason == nil || *f.Reason != rule.InvalidReason {
+				return false
+			}
+			continue
 		}
 		if !f.Present() || f.Value == nil || *f.Value != n.String() {
 			return false
 		}
 	}
 	return true
+}
+
+// gapped reports whether any supported field of this observation is unavailable, which is
+// the completeness gap a normalized result must carry instead of a fabricated total.
+func gapped(raw map[string]RawField) bool {
+	for _, f := range raw {
+		if f.Presence == "unavailable" {
+			return true
+		}
+	}
+	return false
 }
 
 func lexeme(t *testing.T, f RawField, field string) string {
@@ -351,6 +389,10 @@ func TestCodexRetainedMappingFixtures(t *testing.T) {
 		t.Errorf("no refused fixtures")
 	}
 	noSentinels(t, dir, "expected_records.jsonl", "refused_records.jsonl", "mapping.json")
+	sentinelsInSource(t, dir, "source_rollout.jsonl", "source_rollout_copy.jsonl")
+	if len(m.OverlapRule.OwedCoverageTasks) == 0 {
+		t.Errorf("the owed token_count snapshot mapping must be named in the manifest")
+	}
 
 	if m.IdentityRule.SourceKind != "codex_desktop" ||
 		m.IdentityRule.Namespace != "nova.codex-desktop.responses" ||
@@ -419,6 +461,9 @@ func TestCodexRetainedMappingFixtures(t *testing.T) {
 			t.Fatalf("%s: no source row matches observation %s", id, env.ID)
 		}
 		seen[id] = true
+		if o.Source.ProducerVersion != nil {
+			t.Errorf("%s: producer_version is null until an allowlisted verified source field or an owner binding supplies it", id)
+		}
 		if o.Source.SessionID != rec.SessionID {
 			t.Errorf("%s: session_id %q is not the native containing thread %q", id, o.Source.SessionID, rec.SessionID)
 		}
@@ -458,9 +503,6 @@ func TestCodexRetainedMappingFixtures(t *testing.T) {
 				t.Errorf("%s.%s: number_kind/unit are %s/%s, the mapping says %s/%s",
 					id, name, f.NumberKind, f.Unit, rule.NumberKind, rule.Unit)
 			}
-			if src, inSource := rec.Usage[name]; inSource && src == nil {
-				t.Errorf("%s.%s: an explicit null counter has no decided outcome and must not be on the wire", id, name)
-			}
 			// zero_semantics, applied by the landed normaliser rather than restated.
 			meas := Normalize(f, ZeroSemantics(rule.ZeroSemantics))
 			if f.Present() && f.IsZero() {
@@ -475,16 +517,24 @@ func TestCodexRetainedMappingFixtures(t *testing.T) {
 			}
 		}
 	}
-	// The shapes with no decided outcome produce no accepted record.
-	for _, id := range []string{"resp-r1", "resp-u1"} {
-		if seen[id] {
-			t.Errorf("%s has no decided wire outcome and must not be an accepted record", id)
+	// The invalid-counter shapes are retained observations now, not gaps in the fixture:
+	// their other valid fields survive and the affected field is unavailable.
+	for _, id := range []string{"resp-r1", "resp-u1", "resp-u2", "resp-u3"} {
+		if !seen[id] {
+			t.Errorf("%s is a retained observation with an unavailable counter", id)
+		}
+	}
+	// The cumulative token_count snapshot beside the response records is owed to a separate
+	// mapping: it maps to no observation here, and the coverage limit is explicit.
+	for _, rec := range readCodexSource(t, filepath.Join(dir, "source_rollout.jsonl")) {
+		if rec.Type == "token_count" && seen[rec.ResponseID] {
+			t.Errorf("a cumulative snapshot must synthesize no request identity")
 		}
 	}
 	// Copy and conflict: the identical copy is one observation, the changed one conflicts.
 	groups := keyGroups(envs)
-	if len(envs) != 6 {
-		t.Errorf("the fixture ships 6 expected record lines, found %d", len(envs))
+	if len(envs) != 10 {
+		t.Errorf("the fixture ships 10 expected record lines, found %d", len(envs))
 	}
 	conflicts, singles := 0, map[string]string{}
 	for k, ids := range groups {
@@ -501,8 +551,8 @@ func TestCodexRetainedMappingFixtures(t *testing.T) {
 	if conflicts != 1 {
 		t.Errorf("one spend key conflicts (the changed copy of resp-c1), found %d", conflicts)
 	}
-	if len(singles) != 3 {
-		t.Errorf("three spend keys have a single observation, found %d", len(singles))
+	if len(singles) != 7 {
+		t.Errorf("seven spend keys have a single observation, found %d", len(singles))
 	}
 	if m.RevisionRule.NewestWins || m.RevisionRule.ChangedSameKey == "" {
 		t.Errorf("the revision rule must refuse a newest-wins resolution")
@@ -510,10 +560,15 @@ func TestCodexRetainedMappingFixtures(t *testing.T) {
 
 	// Arithmetic: a mismatch conflicts and is excluded; a missing total stays absent and is
 	// only derived in a view, labelled derived, without touching the raw field.
-	spendable := 0
+	spendable, gaps := 0, 0
 	for _, env := range envs {
 		o := env.Observation
 		if len(groups[eventKeyOf(o)]) != 1 {
+			continue
+		}
+		if gapped(o.RawUsage) {
+			// An unavailable counter is a named completeness gap, never a fabricated total.
+			gaps++
 			continue
 		}
 		in, out, total := o.RawUsage["input_tokens"], o.RawUsage["output_tokens"], o.RawUsage["total_tokens"]
@@ -541,7 +596,10 @@ func TestCodexRetainedMappingFixtures(t *testing.T) {
 		spendable++
 	}
 	if spendable != 2 {
-		t.Errorf("two of the four keys are spendable (one conflicts on identity, one on arithmetic), found %d", spendable)
+		t.Errorf("two keys are spendable (one conflicts on identity, one on arithmetic, four carry a completeness gap), found %d", spendable)
+	}
+	if gaps != 4 {
+		t.Errorf("four keys carry an unavailable counter, found %d", gaps)
 	}
 	if m.ImplementationID != nil {
 		t.Errorf("no adapter implementation exists at this revision")
@@ -581,6 +639,10 @@ func TestGrokRetainedMappingFixtures(t *testing.T) {
 		t.Errorf("no refused fixtures")
 	}
 	noSentinels(t, dir, "expected_records.jsonl", "refused_records.jsonl", "mapping.json")
+	sentinelsInSource(t, dir, "source_export.json", "source_export_copy.json", "source_export_changed.json")
+	if len(m.OverlapRule.OwedCoverageTasks) == 0 {
+		t.Errorf("the owed session aggregate mapping must be named in the manifest")
+	}
 
 	if m.IdentityRule.SourceKind != "grok" || m.IdentityRule.Namespace != "nova.grok.turns" ||
 		m.IdentityRule.ObservationKind != "turn" ||
@@ -642,6 +704,9 @@ func TestGrokRetainedMappingFixtures(t *testing.T) {
 		}
 		if matches == 0 {
 			t.Fatalf("turn %s: no source turn matches observation %s", num, env.ID)
+		}
+		if o.Source.ProducerVersion != nil {
+			t.Errorf("turn %s: producer_version is null without producer metadata or an owner binding", num)
 		}
 		if o.Receipt["turn_number"] != num {
 			t.Errorf("turn %s: receipt turn_number %q", num, o.Receipt["turn_number"])
@@ -762,15 +827,26 @@ func TestGrokRetainedMappingFixtures(t *testing.T) {
 	// `unallocated` when the instant is unknown. Turn 2 completes at 23:30-04:00, which is
 	// the next UTC day: the completion-day convention, not a call-day claim.
 	for num, want := range map[string]string{
-		"1": "2026-09-12", "2": "2026-09-12", "3": "unallocated", "4": "2026-09-12"} {
+		"1": "2026-09-12", "2": "2026-09-12", "3": "unallocated", "4": "2026-09-12",
+		"5": "2026-09-12"} {
 		if days[num] != want {
 			t.Errorf("turn %s allocates to %q, want %q", num, days[num], want)
 		}
 	}
 	// Copied and changed exports: one key, two observations, a visible conflict.
 	groups := keyGroups(envs)
-	if len(envs) != 6 {
-		t.Errorf("the fixture ships 6 expected record lines, found %d", len(envs))
+	if len(envs) != 7 {
+		t.Errorf("the fixture ships 7 expected record lines, found %d", len(envs))
+	}
+	// The export's session totals are owed to a separate aggregate mapping: no observation
+	// here carries them, and they can never fill a missing turn.
+	if len(export.Session) == 0 {
+		t.Fatalf("the source export must keep its session totals visible as owed evidence")
+	}
+	for _, env := range envs {
+		if env.Observation.Kind == "aggregate" {
+			t.Errorf("the turn mapping emits no session aggregate; that mapping is owed")
+		}
 	}
 	conflicts := 0
 	for k, ids := range groups {

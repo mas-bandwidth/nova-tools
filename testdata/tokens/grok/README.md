@@ -12,12 +12,14 @@ under the mapping decisions"; the decisions themselves are the source owner's on
 | File | What it is |
 |---|---|
 | `mapping.json` | the sealed `nova.tokens.mapping/2` manifest. Its envelope ID is the `mapping_id` of every expected observation, and `fixture_digests` names the SHA-256 of each source file below. |
-| `source_export.json` | one export with all four declared top-level keys and four turns: single model, mixed model, missing fields with no `endedAt`, and all-zero counters. |
+| `source_export.json` | one export with all four declared top-level keys and five turns: single model, mixed model, missing fields with no `endedAt`, all-zero counters, and one turn carrying an explicit null, a wrong-typed sentinel value and a negative count in both the turn and its `modelUsage` entry. Its `session` totals stay visible as evidence owed to a separate aggregate mapping. |
 | `source_export_copy.json` | the first turn copied byte for byte to another bench. |
 | `source_export_changed.json` | the same session and turn number with changed counters. |
-| `expected_records.jsonl` | the expected sealed `nova.tokens.observation/2` envelopes, stated independently of any adapter. Six lines, five distinct observations, four spend keys. |
+| `expected_records.jsonl` | the expected sealed `nova.tokens.observation/2` envelopes, stated independently of any adapter. Seven lines, six distinct observations, five spend keys. |
 | `refused_records.jsonl` | shapes the wire must refuse, each with the rule and field the landed validator must name. |
 
 `internal/records/mapping_fixtures_test.go` runs the landed publisher boundary over all of
 it. Turn identity stability is unverified, so the manifest declares normalized spend
-unsupported for this key and the test asserts that declaration rather than a spend total.
+unsupported for this key and the test asserts that declaration rather than a spend total. The
+session aggregate and any future request-grain mapping are owed separately: neither is
+covered here, and neither may fill a missing turn.
