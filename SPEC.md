@@ -4109,6 +4109,19 @@ normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
 
+## nova-go — a work pool over OpenCode Go (owed; specified, not built)
+
+One binary at the **capacity layer**, a provider for `nova-swarm` and never a line's
+session: it holds Go's doors — model, endpoint, cap, prices, retention — as a versioned
+fixture, asks before each one-shot job which door still has room in the current window,
+records the door actually used and its cost, and refuses by name when nothing is open.
+
+Verbs: `doors`, `refresh`, `choose`, `ask`, `record`, `bake-off`, `help`.
+
+Its governing text is **[docs/SPEC-GO.md](docs/SPEC-GO.md)**, a draft for the group's read;
+the Conventions above apply to it unchanged and are not restated there.
+
+
 ## What this harness is not
 
 The six checks stop at the record layer. They prove the files were present,
