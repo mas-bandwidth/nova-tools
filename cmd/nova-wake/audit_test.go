@@ -31,6 +31,13 @@ var wakeAudit = audit.Config{
 		// build information, writes nothing and shadows nothing, and what it
 		// returns is printed through oneline.Field like everything else.
 		`"runtime/debug"`,
+		// errors, for errors.Is over internal/wake's ErrRecoveryPending: a held
+		// advance is the tool obeying step 4 and not a source that failed, so
+		// the loop tells the two apart by sentinel rather than by a string
+		// (#164, F1, 2026-09-12). It compares errors, writes nothing and
+		// shadows nothing; the sentence the caller prints is a constant, printed
+		// through w.note like every other WAKE NOTE.
+		`"errors"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/wake"`,
 	},
