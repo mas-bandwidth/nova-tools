@@ -10,13 +10,23 @@
 # pass by being impossible.
 #
 # One line per check: CHECK OK name=... / CHECK FAIL name=...  Exit 1 on any FAIL.
-# No /tmp: the scratch lives beside this script. Works from any cwd.
+# The count is the script's own: every expect_ok, expect_deny, control_ok and report
+# below is one line, and no prose anywhere states a number that this file can outgrow.
+# No /tmp: the scratch lives beside this script by default. Works from any cwd.
+#
+# Two environment variables, both for a caller that is a TEST rather than an operator:
+#   NOVA_CHECK_SCRATCH     put the scratch tree here instead of beside the script, so a
+#                          Go test can hand it t.TempDir() and reach outside nothing
+#                          (SPEC-SANDBOX test 16, CONTRIBUTING.md: test code is code).
+#   NOVA_CHECK_NO_NETWORK  1 to SKIP the two DNS checks, which are the only ones that
+#                          touch the network. The operator run keeps them: they are the
+#                          rule-7 measurement and a Go test is the wrong place for it.
 
 set -euo pipefail
 
 SELF_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 TMPL="$SELF_DIR/darwin.sb.tmpl"
-SCRATCH="$SELF_DIR/../.darwin-check-scratch.$$"
+SCRATCH="${NOVA_CHECK_SCRATCH:-$SELF_DIR/../.darwin-check-scratch.$$}"
 
 [[ "$(uname -s)" == "Darwin" ]] || { echo "CHECK FAIL name=platform (this script is darwin only)"; exit 1; }
 [[ -f "$TMPL" ]] || { echo "CHECK FAIL name=template_present path=$TMPL"; exit 1; }
@@ -92,9 +102,14 @@ done < "$TMPL"
 
 # ---- the child environment (rule 9: the wrapper scrubs the agent) ------------
 # The caller's environment as a swarm worker's launcher really holds it: an SSH agent
-# socket and an agent-shaped name beside a variable that must survive. The wrapper
-# builds the child environment from it by EXCLUSION -- SSH_AUTH_SOCK and every name
-# containing AGENT are dropped -- and that is what is passed through the wall below.
+# socket and an agent-shaped name beside a variable that must survive. The wrapper builds
+# the child environment from it by EXCLUSION, and the set is rule 9's EXACT one, by name:
+# SSH_AUTH_SOCK, SSH_AGENT_*, GPG_AGENT_INFO, *_AGENT_PID, *_AGENT_INFO, *_AGENT_SOCK.
+# It is NOT "every name containing AGENT" -- that width was measured to drop AI_AGENT and
+# CLAUDE_AGENT_SDK_VERSION, which say what is RUNNING the job and address nothing.
+# This filter is the SCRIPT's, so it can only agree with itself; the tool's own scrub is
+# asserted in Go, in internal/sandbox/policy_test.go TestScrubSetIsExactlyTheSpecs and
+# TestChildEnv, and end to end in cmd/nova-sandbox TestTheNoteNamesExactlyWhatWasDropped.
 CALLER_AGENT_SOCK="$SCRATCH/secret/agent.sock"
 CALLER_ENV=$(printf '%s\n' \
   "SSH_AUTH_SOCK=$CALLER_AGENT_SOCK" \
@@ -102,7 +117,7 @@ CALLER_ENV=$(printf '%s\n' \
   "NOVA_KEEP=kept")
 CHILD_ENV=()
 while IFS= read -r kv; do
-  case "${kv%%=*}" in SSH_AUTH_SOCK|*AGENT*) continue;; esac
+  case "${kv%%=*}" in SSH_AUTH_SOCK|SSH_AGENT_*|GPG_AGENT_INFO|*_AGENT_PID|*_AGENT_INFO|*_AGENT_SOCK) continue;; esac
   CHILD_ENV+=("$kv")
 done <<< "$CALLER_ENV"
 
@@ -200,6 +215,10 @@ expect_ok unix_socket_inside "nc -U ./job.sock < /dev/null"
 # curl to a NAME, not an IP: any HTTP status at all means the name resolved and the
 # connection was made (200 and 404 both count). rc=6 / 000 is "could not resolve host".
 dns_cmd="curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://example.com"
+if [[ "${NOVA_CHECK_NO_NETWORK:-0}" == "1" ]]; then
+  echo "CHECK SKIP name=dns_resolves reason=no_network"
+  echo "CHECK SKIP name=dns_resolves_control reason=no_network"
+else
 set +e; DNS_OUT="$(walled "$dns_cmd" 2>/dev/null)"; set -e
 case "$DNS_OUT" in
   000|"") report fail dns_resolves "http_code=$DNS_OUT (the name did not resolve)";;
@@ -220,6 +239,7 @@ case "$DNS_CTL" in
   000|"") report ok dns_resolves_control ;;
   *)      report fail dns_resolves_control "http_code=$DNS_CTL WITHOUT the socket: DNS is reaching the resolver some other way";;
 esac
+fi
 
 # --- rule 7: mach-lookup is narrowed, and the clipboard is the witness ---------
 expect_deny clipboard_denied "pbpaste > /dev/null"

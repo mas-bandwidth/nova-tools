@@ -27,7 +27,9 @@ const (
 	ExitProbeFailed  = 1   // probe/check grammar: the verb ran and said NO
 	ExitCannotRun    = 2   // probe/check grammar: the verb could not run
 	tmpDirName       = ".nova-sandbox-tmp"
-	profileFilePerm  = 0o600
+	// profileFilePrefx is the name NO file carries: the darwin body passes the profile
+	// inline with -p, and wrap_darwin_test.go asserts that nothing with this prefix is
+	// ever written. The companion profileFilePerm went with the file it was for.
 	profileFilePrefx = ".nova-sandbox-"
 )
 
@@ -234,6 +236,51 @@ func resolvePath(reason, flag, raw string) (string, *Refusal) {
 	}
 	if bad := badPathText(resolved); bad != "" {
 		r := refuse(reason, "%s %s %s", flag, resolved, bad)
+		return "", &r
+	}
+	return resolved, nil
+}
+
+// ResolveCallerFile is rule 5 for a caller path that names a FILE rather than a
+// directory: --secret is the only one, and before this it was the one caller path the
+// tool never resolved and never metacharacter-checked. It is absolute, it exists, it is
+// not a directory, its symlinks are followed, and it carries nothing the generated policy
+// cannot. A path that does not exist is a refusal, because a probe that "could not read"
+// a file that was never there is a pass about nothing.
+func ResolveCallerFile(flag, raw string) (string, *Refusal) {
+	if strings.TrimSpace(raw) == "" {
+		r := refuse("bad_read", "%s wants a path to the file this probe proves it cannot read: %s <path>", flag, flag)
+		return "", &r
+	}
+	if !filepath.IsAbs(raw) {
+		abs, err := filepath.Abs(raw)
+		if err != nil {
+			abs = raw
+		}
+		r := refuse("bad_read", "%s %s is relative; %s wants an absolute path, which here would be %s", flag, raw, flag, abs)
+		return "", &r
+	}
+	fi, err := os.Stat(raw)
+	if err != nil {
+		r := refuse("bad_read", "%s %s does not exist; a probe against a file that is not there proves nothing", flag, raw)
+		return "", &r
+	}
+	if fi.IsDir() {
+		r := refuse("bad_read", "%s %s is a directory; %s wants the credential file itself", flag, raw, flag)
+		return "", &r
+	}
+	resolved, err := filepath.EvalSymlinks(raw)
+	if err != nil {
+		r := refuse("bad_read", "%s %s could not be resolved: %v", flag, raw, err)
+		return "", &r
+	}
+	resolved, err = filepath.Abs(resolved)
+	if err != nil {
+		r := refuse("bad_read", "%s %s could not be made absolute: %v", flag, raw, err)
+		return "", &r
+	}
+	if bad := badPathText(resolved); bad != "" {
+		r := refuse("bad_read", "%s %s %s", flag, resolved, bad)
 		return "", &r
 	}
 	return resolved, nil

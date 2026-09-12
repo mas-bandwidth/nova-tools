@@ -1,10 +1,11 @@
 //go:build darwin
 
 // The darwin body: sandbox-exec with a profile generated from
-// profiles/darwin.sb.tmpl for this one run. sandbox-exec applies the profile and execs
-// the command IN PLACE, so no second process sits between the tool and the command — but
-// the tool WAITS (rule 12), because it must remove the generated profile file when the
-// command ends.
+// profiles/darwin.sb.tmpl for this one run. The profile is passed INLINE with -p, so no
+// file is written anywhere at any point and there is nothing to clean up. sandbox-exec
+// applies the profile and execs the command IN PLACE, so no second process sits between
+// the tool and the command — but the tool WAITS (rule 12), because it forwards SIGINT and
+// SIGTERM to the child's process group and returns the command's status.
 package sandbox
 
 import (
