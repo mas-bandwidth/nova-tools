@@ -311,6 +311,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (1) after reserve: slot orphaned, task pending again only after aborted.json or removal
 	t.Run("after-reserve", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task after reserve\nFAKE-FINDINGS 0\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-reserve"}
 		b.run() // runner killed right after reserve
@@ -350,6 +351,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (2) after spawn: supervisor identifies itself anyway and next run adopts it
 	t.Run("after-spawn", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task after spawn\nFAKE-FINDINGS 0\nFAKE-SLEEP 1\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-spawn"}
 		b.run() // runner killed after spawn
@@ -367,6 +369,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (3) after identify: runner dies after identify, next run adopts live supervisor
 	t.Run("after-identify", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task after identify\nFAKE-FINDINGS 0\nFAKE-SLEEP 1\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-identify"}
 		b.run() // runner killed right after identify
@@ -383,6 +386,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (4) after handshake: runner dies after handshake, next run adopts live supervisor
 	t.Run("after-handshake", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task after handshake\nFAKE-FINDINGS 0\nFAKE-SLEEP 1\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-handshake"}
 		b.run() // runner killed after handshake
@@ -399,6 +403,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (5) supervisor killed after release with harness alive -> dead leader with live survivor
 	t.Run("after-release", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task after release\nFAKE-SLEEP 15\nFAKE-FINDINGS 0\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=supervisor-after-release"}
 		b.run() // supervisor killed right after release
@@ -421,6 +426,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (6) between exit and exit.json: supervisor killed before exit.json written -> end=unknown into failed/
 	t.Run("between-exit-and-exit-json", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task between exit and exit.json\nFAKE-FINDINGS 0\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=between-exit-and-exit-json"}
 		b.run()
@@ -437,6 +443,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (7) fake supervisor that never writes identity is killed at --launch-timeout
 	t.Run("fake-supervisor-never-identifies", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task timeout\n")
 		b.extraEnv = []string{"NOVA_SWARM_PAUSEPOINT=before-identify"}
 		exit, stdout, _ := b.swarm(withSandbox([]string{"run", "--pool", b.pool, "--workers", "1", "--hours", "0.1",
@@ -479,6 +486,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (9) the reverse schedule (Stella, 2026-09-11)
 	t.Run("reverse-schedule", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task reverse schedule\nFAKE-FINDINGS 0\n")
 		jobDir := filepath.Join(b.dir, "worker-home-1", "jobs", taskID)
 
@@ -586,6 +594,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// finishes rule 18's losing path on its own.
 	t.Run("a-hangup-never-costs-the-acknowledgement", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task hangup\nFAKE-FINDINGS 0\n")
 		jobDir := filepath.Join(b.dir, "worker-home-1", "jobs", taskID)
 		mark := filepath.Join(b.dir, "supervisor-stopped")
@@ -630,6 +639,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (10) between aborted.json and exit
 	t.Run("between-aborted-and-exit", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task abort kill\nFAKE-FINDINGS 0\n")
 		jobDir := filepath.Join(b.dir, "worker-home-1", "jobs", taskID)
 
