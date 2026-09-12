@@ -842,6 +842,18 @@ says `net=nopromise`. The key reaches the child the way it always has — read a
 data before the wrap, passed by environment, the file itself in neither list
 (rule 6 here and rule 6 there are the same rule seen from two sides).
 
+**And "inside" is a question for the filesystem, not for two strings.** A
+`key_file` whose placement would put it inside `worker_dir`, inside a slot
+directory `<worker-dir>-<n>` or inside a `read_roots` entry is refused **at
+load**, where a person can still move the file; the comparison that decides it
+is `os.SameFile` over the existing resolved ancestors of the key path, with a
+string prefix kept only as the cheap first answer and as the only answer for a
+path that does not exist yet. A prefix alone is case-sensitive and a
+case-insensitive filesystem — APFS by default — folds a `key_file` typed
+`<dir>/Worker/.key` and a `worker_dir` of `<dir>/worker` into one file: the
+spelling said the key was outside while the slot copy put it inside the wall
+(#100). This paragraph names a mechanism; it adds no rule.
+
 **The probe runs once, before the first worker** (SPEC-SANDBOX rule 10): `run`
 asks the machine what it can enforce and then proves the wall with the real
 policy for this platform. A machine with no backend is `RUN REFUSED
