@@ -28,7 +28,7 @@ dated and live here rather than in the spec.
 | ollama's store setting | `OLLAMA_MODELS` **unset** on the running daemon (its only `OLLAMA_*` environment is `FLASH_ATTENTION=1`, `KV_CACHE_TYPE=q8_0`), so the store is that account's `~/.ollama/models` |
 | ollama's store size | `/Users/glenn/.ollama` = **162 GB**, twelve tags advertised by `/api/tags` |
 | ds4's weights | **528 GB** under `/Users/rowan/rowan-working/ds4` (2026-09-12, read 4), the other account's home; no ds4 server running |
-| ds4's `ds4flash.gguf` | a **hard link** to the 464 GB **Pro** file, not a separate Flash GGUF (2026-09-12, `research/2026-09-12-local-model-bakeoff.md` on standard, `c94ee4d`), so a `ds4-server` started with no `-m` loads Pro; this box's job must pass an explicit `-m` to the Flash weights |
+| ds4's `ds4flash.gguf` | a **symlink** to the 464 GB **Pro** file, not a separate Flash GGUF (`ls -li`, 2026-09-12: `lrwxr-xr-x`, and the Pro inode's link count is **1**; the bake-off's "same inode", `research/2026-09-12-local-model-bakeoff.md` on standard `c94ee4d`, is `stat` through that link), so a `ds4-server` started with no `-m` loads Pro; this box's job must pass an explicit `-m` to the Flash weights |
 | ds4's lock file | `/tmp/ds4.lock` is created `rowan:0600` (same source), so the second account cannot start ds4 unless `DS4_LOCK_FILE` names a group-writable path — the recipe puts it under the shared store |
 | ollama's sharing today | already shared across accounts: **one** daemon on `127.0.0.1:11434`, one store, pulls done by the daemon (same source); only the store's location **under a home** is what this recipe moves |
 | the two homes | `/Users/glenn` and `/Users/rowan` are both `drwxr-x---` (**750**) `<user>:staff` — each account reads the other's **only** because of that mode |
@@ -87,10 +87,14 @@ boot, bound to loopback, with its account named in the plist's `UserName` — a 
 is **root** if no `UserName` is set, and the recipe should not run an engine as root. On
 this box ollama is installed by Homebrew, so the switch goes through `brew services`
 rather than by hand, and the existing per-user agent must be stopped first. `brew
-services` writes a `UserName` **only** when given `--sudo-service-user <user>` (Homebrew
-`services/cli.rb:535-541`: `plist_data["UserName"] = sudo_service_user`); a plain `sudo
+services` writes a `UserName` **only** when given `--sudo-service-user <user>`
+(`cli.rb:535-540`: `if sudo_service_user && System.launchctl?` … `plist_data["UserName"]
+= sudo_service_user`); a plain `sudo
 brew services start ollama` only warns and runs the engine as root, which is the thing
-this step forbids. **The switch unloads every loaded model once** — one restart, one cold
+this step forbids. Every Homebrew line number in this document was read at **Homebrew
+6.0.22-306-gb48a6f3**, in `/opt/homebrew/Library/Homebrew/` — `services/cli.rb` and
+`service.rb` live in Homebrew itself now, not in a `homebrew/services` tap.
+**The switch unloads every loaded model once** — one restart, one cold
 load on the next `serve`; until then `status` shows `loaded=0` and the derived tags are
 still listed. On linux it is a **systemd system unit** with the same two facts: a service
 user, and the store in the unit's environment (`OLLAMA_MODELS`) — systemd does not rewrite
@@ -100,19 +104,33 @@ own plist or unit argv.
 
 **The store is not named in the darwin plist, on purpose.** `brew services start`
 regenerates the plist from the formula's own `service do` block on **every** start
-(`cli.rb:531-547` removes the old file and writes `service.service_contents`; `restart` is
-stop+start), and `brew cat ollama`'s block carries exactly `OLLAMA_FLASH_ATTENTION` and
+(`cli.rb:531-560`: it writes `service.service_contents` to a tempfile, `remove_service_files`
+at `:550` removes the installed plist, and the tempfile is copied over it; `restart` is
+stop+start, `subcommand/restart.rb:36-39`), and `brew cat ollama`'s block carries
+exactly `OLLAMA_FLASH_ATTENTION` and
 `OLLAMA_KV_CACHE_TYPE` and nothing else. So an `OLLAMA_MODELS` added by hand — a
 `PlistBuddy -c 'Add :EnvironmentVariables:OLLAMA_MODELS …'` line, which does work when run
-— is gone at the next `brew services restart ollama` or `brew upgrade ollama`, and the
+— is gone at the next `brew services restart ollama`, including the restart that puts an
+upgrade's new service files in place (`restart.rb:42-45`; `brew upgrade` does not itself
+restart the service), and the
 daemon comes back on the service user's own empty `~/.ollama`. Brew's documented user
 override file is no better here: `$HOMEBREW_USER_CONFIG_HOME/services/ollama.env` is
 merged into the plist by `service.rb:486-500`, but that method skips the file when the
 definition is generated as root — *"user env overrides are not supported for root
 services"* — which is exactly a `sudo brew services` daemon. **So the recipe uses the one
 thing brew never rewrites: the engine's default path itself.** `~/.ollama/models` in the
-service user's home becomes a symlink to the shared store; the daemon resolves it on every
+service user's home becomes a symlink to the shared store; launchd runs a `UserName` job
+with **that user's `HOME`** (`man launchd.plist` documents the user, not the variable;
+step 4's `status` is what confirms it here), the daemon resolves the symlink on every
 start, whatever brew regenerates, and no `OLLAMA_MODELS` is needed on this box at all.
+
+**The `--sudo-service-user glenn` flag is part of every start of this daemon, not a
+one-time setting.** Homebrew writes `UserName` only when the flag is present at *that*
+invocation (`cli.rb:535-540`) and reads it back from the installed plist for nothing but
+reporting the owner (`formula_wrapper.rb:288`), so a `sudo brew services start|restart
+ollama` without it regenerates a plist with **no** `UserName`: the engine comes back as
+**root**, its `HOME` is `/var/root`, and its store is an empty `/var/root/.ollama/models`
+— the outcome this step forbids.
 
 ```
 brew services stop ollama
@@ -126,9 +144,8 @@ sudo brew services start ollama --sudo-service-user glenn
 
 Lines 2-4 are step 2's copy and its two mode repairs again, after the daemon is stopped:
 incremental, seconds, and what catches a tag pulled during step 2's window. The mode
-lines repeat because `rsync -a` re-applies the source's `755` directories, so without
-them step 2's `g+w`/`g+s` is undone and the non-root service user cannot write a new
-blob. `~` on lines 5 and 6 is the **service
+lines repeat for step 2's reason: `rsync -a` re-applies the source's `755`, undoing them.
+`~` on lines 5 and 6 is the **service
 user's** home — the account open question 1 below picks, `glenn` today because that
 account owns the weights and is in `staff` — and those two lines are run in that account,
 not under `sudo`, so the symlink is that user's. Nothing is deleted here either: the old
@@ -140,8 +157,10 @@ same models and the same `store=` with `shared=yes`, then one `nova-local serve`
 real task. That is rule 15's test 17, run for real instead of against a fake, and it is
 where the two-account requirement is enforced on this box — with `serve
 --require-shared-store` passed by whatever starts a model here thereafter. Then one more
-check that belongs to step 3's choice: `brew services restart ollama` and `status` again,
-which is what proves the store survived a plist regeneration rather than merely a boot.
+check that belongs to step 3's choice — `sudo brew services restart ollama
+--sudo-service-user glenn`, the flag again because it is not sticky (step 3) — and
+`status` again, which is what proves the store survived a plist regeneration rather than
+merely a boot.
 `~/.ollama/models.pre-nova-local` goes only after both.
 
 ## What the recipe must still decide, and this document does not
@@ -151,7 +170,11 @@ These are open, and a builder will ask them before writing the plist:
 - **The service account** on darwin: a dedicated `_nova-local` user, or the account that
   already owns the weights? (`nova-local` never needs to know; the store's group does.)
 - **Whether `brew services` stays the installer** for ollama once the daemon is a
-  LaunchDaemon, or the recipe writes its own plist and stops using brew for it.
+  LaunchDaemon, or the recipe writes its own plist and stops using brew for it. The
+  argument for its own plist is step 3's: `--sudo-service-user glenn` is **not sticky** —
+  every start and every restart must carry it or brew regenerates a plist with no
+  `UserName` and the engine comes back as root on an empty store — and a plist the recipe
+  owns is not regenerated behind it at all.
 - **The linux service user's name** — `nova-local` is the working assumption in the
   spec's path (`/var/lib/nova-local`) and nothing else depends on it.
 - **What happens to the old `~/.ollama/models.pre-nova-local`** after the verify:

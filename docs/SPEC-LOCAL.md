@@ -139,7 +139,8 @@ Every rule is normative and has one line in **tests this spec demands**.
     names: it `stat`s it and refuses an empty one with the command that writes it.
 
 15. **The weights are one store on the box, and this tool reads it, reports it and
-    refuses a home when asked** (Glenn, bus, 2026-09-12, no receipt in `memory/` yet: *"I would like
+    refuses a store outside the shared root (`shared=no`) when asked** (Glenn, bus,
+    2026-09-12, no receipt in `memory/` yet: *"I would like
     for local models to be accessible both here in this admin account, and in your rowan
     account. This is a requirement for this local setup and nova-local."* / *"I'd really
     not like to the local models to stay in rowans account, but move to a shared location
@@ -157,8 +158,11 @@ Every rule is normative and has one line in **tests this spec demands**.
     as ds4's `-m` path already is — the recipe makes the service user's
     `~/.ollama/models` a symlink into the shared store, so an unresolved `FROM` reports a
     home for a store that is not one — and the resolved path is both what `store=` prints
-    and what the shared-root test below reads. No tag means `store=unknown (no tag to
-    show)`. **ds4**: the `-m <gguf>` path from the process's own arguments, **only when
+    and what the shared-root test below reads. **A component that does not exist ends
+    resolution**: the longest existing prefix is resolved and the rest is appended as
+    spelled, which is what the shared-root test then reads; resolution that fails for any
+    other reason is `store=unknown (<why>)` and no verdict (below). No tag means
+    `store=unknown (no tag to show)`. **ds4**: the `-m <gguf>` path from the process's own arguments, **only when
     the process is this user's** — another user's is `store=unknown (process is uid
     <n>'s)`, because another uid's argv is root's to read on darwin and this binary does
     not exec `ps` or `lsof` to get around it (rule 1).
@@ -178,9 +182,8 @@ Every rule is normative and has one line in **tests this spec demands**.
     account's, which on this box is a path under `/Users` (`/home` on linux) whose next
     component is not `Shared` — and `shared=no (elsewhere)` for anything else. Both are
     keyed on the shared root and nothing else: a store under another account's home is no
-    more shared than one under the caller's and reports the same `no`, because
-    [BOX-LOCAL.md](BOX-LOCAL.md)'s argument is that a requirement for *both* accounts
-    cannot rest on a home's mode. Whose home it is is the printed **reason** only.
+    more shared than one under the caller's and reports the same `no`, for
+    [BOX-LOCAL.md](BOX-LOCAL.md)'s reason. Whose home it is is the printed **reason** only.
     **It refuses only against a value the operator gave** (rule 8's shape): with
     `--require-shared-store`, `serve` is exit 1 on `shared=no` — naming the store, the
     reason, the remedy that is the recipe's own first line,
@@ -189,12 +192,10 @@ Every rule is normative and has one line in **tests this spec demands**.
     which would only reprint the `store=` the refusal has just named. Without the flag it
     serves and prints `shared=no`.
     On a box more than one account uses, the requirement is enforced by the recipe's
-    step 4 — `status` from both accounts showing `shared=yes`, and
-    [BOX-LOCAL.md](BOX-LOCAL.md) carries the mode argument — and thereafter by `status`
-    never lying about it; whatever invokes `serve` there passes the flag. **Which** of
-    the candidates (the recipe, `nova-run`, an alias in each account, the operator) does
-    is open, and open in one place — [BOX-LOCAL.md](BOX-LOCAL.md)'s list of what the
-    recipe must still decide. `status` never refuses.
+    step 4 — `status` from both accounts showing `shared=yes` — and thereafter by
+    `status` never lying about it; whatever invokes `serve` there passes the flag.
+    **Which** thing does is open in one place, [BOX-LOCAL.md](BOX-LOCAL.md)'s list of
+    what the recipe must still decide. `status` never refuses.
 
 ## The engines
 
@@ -276,11 +277,15 @@ another program on port 8000 is `state=down status=404`. `advertised` is what th
 server answers to; `resident` is what was loaded, and it is **two facts, not one**: the
 `-m` path **resolved through symlinks**, and `resident_bytes=`, that resolved file's
 size from one `stat`. Both, because a name can lie two ways and resolution only catches
-one of them. `ds4flash.gguf` on this box is a **hard link** to the 464 GB Pro file
-(2026-09-12, `research/2026-09-12-local-model-bakeoff.md` on standard, `c94ee4d`), not a
-symlink and not a separate Flash GGUF — a hard link is a second name for the same inode,
-invisible to any resolution, so the path alone says Flash while Pro is what is loaded and
-the size is the only fact that separates them. A file it could not `stat` is
+one of them. `ds4flash.gguf` on this box is a **symlink** to the 464 GB Pro file
+(`ls -li`, 2026-09-12: `lrwxr-xr-x`, and the Pro inode's link count is **1**; the
+bake-off's "same inode" — `research/2026-09-12-local-model-bakeoff.md` on standard,
+`c94ee4d` — is `stat` through that link, not `lstat`), so **resolution alone catches
+this one**: the resolved `-m` path prints the Pro name. `resident_bytes=` is here for the
+case resolution **cannot** catch — a hard link, a second name for one inode, invisible to
+any resolution, where the path alone says Flash while Pro is what is loaded and the size
+is the only fact that separates them — which is the case test 16 fakes. A file it could
+not `stat` is
 `resident_bytes=unknown (<why>)`, not a guess (rule 15's shape). With nothing answering
 it prints one remedy line naming `ollama serve`, never the state (rule 13).
 
@@ -311,10 +316,10 @@ derived tag differing in parent, `num_ctx`, `temperature` or `seed`, naming both
 remedy `ollama rm <tag>`; a ds4 already resident on a **different** model, naming it and
 the memory both would want, remedy `nova-local serve --stop --engine ds4 --model
 <resident>`; a load or free memory past a `--max-load` or `--min-free` **the caller
-gave**, naming measured and asked, remedy `nova-local status --list`; a store under a
-home directory **only when `--require-shared-store` was given**, naming it, remedy the
-recipe's own first line `sudo mkdir -p /Users/Shared/nova-local/models/<e>` and
-BOX-LOCAL.md — not `status`, which would reprint what the refusal named; and something
+gave**, naming measured and asked, remedy `nova-local status --list`; a store outside
+the shared root — `shared=no`, either reason — **only when `--require-shared-store` was
+given**,
+with rule 15's naming and remedy; and something
 already listening on the port an adapter would start a process on, naming **the port**, remedy `nova-local
 status` — no holder is named, because the socket's owner is not readable from a non-root
 process with the standard library. A missing `--num-ctx`, one with a remainder,
@@ -514,10 +519,15 @@ supplies a **fake box** through the one interface that reads them
     none)`; a `-m` path that is a **hard link** to a second, larger fake prints the
     linked name and the **larger** size, which is the assertion that can say NO to a
     path-only answer; an unstattable file is `resident_bytes=unknown (<why>)` at exit 0;
-    no process gives `resident=unknown (<why>)`; `serve` over a different resident model is exit 1 naming
+    no process gives `resident=unknown (<why>)`; a fake process of **another uid** gives
+    `store=unknown (process is uid <n>'s)` and `serve --require-shared-store` is **exit 0**
+    with `shared=unknown`, the assertion that the flag never fires on a non-verdict;
+    `serve` over a different resident model is exit 1 naming
     it; `--stop` twice is exit 0 both times.
 17. **Two accounts, one store.** Two runs under different `HOME`/`USER` pairs are
-    **byte-identical**, `store=` and `shared=` included; `store=` is the `blobs` parent
+    **byte-identical**, `store=` and `shared=` included, for a store under the shared root
+    and for one under `/Users/<other>`; the faked-home cases below are single runs, whose
+    `shared=` reason is relative to that run's caller. `store=` is the `blobs` parent
     of the fake's `FROM` path, `unknown (no tag to show)` with no tag. A store under
     **either** home — the caller's, and the one that is the **other** account's in that
     run — is `serve --require-shared-store` exit 1 naming the store, the reason and
@@ -529,10 +539,15 @@ supplies a **fake box** through the one interface that reads them
     the case that can say NO to a `$HOME`-only or spelled-prefix implementation. A store
     under neither root is `shared=no (elsewhere)` and exit 1 under the flag too. A fake
     `FROM` under `/Users/Shared/nova-local/models/ollama` is exit 0 with `shared=yes`
-    under the same flag, and a fake store inside a home that is a
+    under the same flag; a fake `FROM` under
+    `/Users/Shared/nova-local-scratch/models/ollama` is `shared=no (elsewhere)` and exit 1
+    under the flag — rule 15's neighbour, the case that says **NO** to a spelled-prefix
+    `yes`; and a fake store inside a home that is a
     **symlink** to that shared path prints the resolved shared `store=` with `shared=yes`
-    and is exit 0 — the two cases that can say NO to a spelled prefix and to an
-    unresolved path. A fake holder on the port gives exit 1 carrying the port and **no**
+    and is exit 0, the case that can say NO to an unresolved path. The `/Users/…` fakes
+    here are paths whose components do not exist on the test box — the
+    longest-existing-prefix case of rule 15 — and the test creates nothing outside
+    `t.TempDir()`. A fake holder on the port gives exit 1 carrying the port and **no**
     `held_by`. No verb writes a plist, a unit, or anything under `/Library`.
 
 Plus the house standard: a usage banner ending in a runnable `example:` block, refusals
@@ -591,7 +606,7 @@ still a place to push back.
 13. The six lines end at `quickstart` and `run` is the seventh, because `run` refuses without the harness on PATH (2e858f8).
 14. The derived tag strips the reference's `:<tag>`, so a collision is caught by the parent rather than the name (2e858f8).
 15. Rule 15 is what an engine reports — `store=` from `/api/show`'s `FROM` path or this user's own process argv, and a port refusal with no `held_by` — because the two reads the previous revision demanded are not available to a non-root account through the standard library on the platform it named; the daemon, the owner and the move are BOX-LOCAL.md (this revision).
-16. A store under a home is **printed always and refused only under `--require-shared-store`** (2026-09-12, re-derived from rules 8 and 10 on read 5): one clause had three answers in three revisions — a `LOCAL NOTE` at exit 0, a wall, then this — and the oscillation ends because a refusal firing on every one-account laptop and on no box after the recipe enforces the two-account requirement exactly where it does not apply. It is enforced at BOX-LOCAL.md's step 4 instead (this revision).
+16. A store outside the shared root (`shared=no`, either reason) is **printed always and refused only under `--require-shared-store`** (2026-09-12, re-derived from rules 8 and 10 on read 5): one clause had three answers in three revisions — a `LOCAL NOTE` at exit 0, a wall, then this — and the oscillation ends because a refusal firing on every one-account laptop and on no box after the recipe enforces the two-account requirement exactly where it does not apply. It is enforced at BOX-LOCAL.md's step 4 instead (this revision).
 
 ## Sources
 
