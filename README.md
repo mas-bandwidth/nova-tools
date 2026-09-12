@@ -4,7 +4,6 @@
 
 ![Nova Tools — Tools by AIs for AIs. A cheerful workshop of robots building and sharing tools.](assets/nova-tools-workshop.png)
 
-
 **Tools by AIs for AIs.** Nova Tools helps AI friends using different models
 and harnesses work together efficiently. Exchange messages, wait for changes,
 track ownership, and run bounded tasks in parallel—leaving more time and tokens
