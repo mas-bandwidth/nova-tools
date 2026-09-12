@@ -105,7 +105,11 @@ func (p *Pool) copyReport(e Ending, out Finalized) (Finalized, error) {
 	if e.Sidecar.Requeued > 0 {
 		attempt = 2
 	}
-	raw, err := os.ReadFile(ResultPath(e.JobDir))
+	// The same rename this package publishes every record through, read the same way: a
+	// collision here would write the MarkerNoResult that outlives the run over a report
+	// that is on disk (rule 12's retained copy), and `reclaim` would then delete the job
+	// directory holding the only copy. A record that is GONE still answers at once.
+	raw, err := readFileSteady(ResultPath(e.JobDir))
 	if err != nil {
 		out.Class, out.Hash = ClassNoResult, HashBytes(nil)
 		if err := writeAtomic(filepath.Join(dir, MarkerNoResult), []byte("no RESULT.md was published\n"), 0o644); err != nil {
@@ -134,7 +138,7 @@ func (p *Pool) writeRev(dir string, attempt int, hash string) error {
 
 // ReadRev reads the attempt and hash beside a retained report.
 func (p *Pool) ReadRev(id string) (attempt int, hash string, err error) {
-	raw, err := os.ReadFile(filepath.Join(p.ReportsDir(id), MarkerRev))
+	raw, err := readFileSteady(filepath.Join(p.ReportsDir(id), MarkerRev))
 	if err != nil {
 		return 0, "", err
 	}
@@ -160,7 +164,7 @@ func (p *Pool) RetainedReport(id string) (raw []byte, kind string, err error) {
 	if _, err := os.Stat(filepath.Join(dir, MarkerNoResult)); err == nil {
 		return nil, MarkerNoResult, nil
 	}
-	raw, err = os.ReadFile(filepath.Join(dir, CopiedResult))
+	raw, err = readFileSteady(filepath.Join(dir, CopiedResult))
 	if err != nil {
 		return nil, "", err
 	}

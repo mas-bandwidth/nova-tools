@@ -452,35 +452,85 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	childStarted := StartStamp(cmd.Process.Pid)
 	_ = os.WriteFile(filepath.Join(jobDir, "supervisor.pid"), []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
 	CheckKillPoint("after-spawn")
-	go func() { _ = cmd.Wait() }()
+	// THE SUPERVISOR'S OWN END IS AN OBSERVABLE, and the handshake below waits on it as
+	// well as on the identity. A supervisor that DIED before it identified itself -- it
+	// lost its compare-and-swap, or it could not write the slot file at all -- will never
+	// write one, and the whole launch timeout spent waiting for it is a diagnosis
+	// postponed, not a chance taken (#92, `no identity within 10s`). The clock stays as
+	// the OUTER bound, for the supervisor that is alive and merely slow.
+	gone := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(gone) }()
 
 	// (4) THE HANDSHAKE, holding run.lock and no other lock while it waits.
 	timeout := in.LaunchTimeout
 	if timeout <= 0 {
 		timeout = DefaultLaunchTimeout
 	}
-	waited := time.Duration(0)
-	for waited < timeout {
-		sf, err := p.ReadSlot(slot)
-		if err == nil && sf.State == SlotLaunched && sf.Nonce == nonce {
-			CheckKillPoint("after-identify")
-			CheckKillPoint("after-handshake")
-			CheckKillPoint("after-release")
-			r := &running{sc: sc, slot: slot, nonce: nonce, jobDir: jobDir, started: in.Now(), deadline: taskDeadline(sc, in.Worker)}
-			return r, fmt.Sprintf("RUN START id=%s slot=%d pid=%d pgid=%d started=%s deadline=%s tokens=%s job=%s",
-				oneline.Field(sc.ID), slot, sf.Pid, sf.Pgid, oneline.Field(Stamp(r.started)),
-				trimDuration(r.deadline), oneline.Field(sc.BudgetWord()), oneline.Field(jobDir)), 0
-		}
-		time.Sleep(20 * time.Millisecond)
-		waited += 20 * time.Millisecond
+	// ONE DEADLINE FOR THE WHOLE HANDSHAKE, taken once, off the monotonic clock (Stella,
+	// #126). The old loop counted its own sleeps -- `waited += 20ms` -- and a count of
+	// sleeps is not a measure of time spent: the read between two sleeps may now wait out a
+	// Windows collision for up to SteadyWindow, and 500 turns of that is 1010s inside a 10s
+	// bound, with run.lock held. So the clock is read, not counted; the read is given only
+	// what is LEFT of it (ReadSlotBy); and `after=` reports the time that actually passed
+	// rather than the sleeps that were scheduled.
+	start := time.Now()
+	sf, identified, supervisorGone := in.awaitIdentity(slot, nonce, start.Add(timeout), gone)
+	if identified {
+		CheckKillPoint("after-identify")
+		CheckKillPoint("after-handshake")
+		CheckKillPoint("after-release")
+		r := &running{sc: sc, slot: slot, nonce: nonce, jobDir: jobDir, started: in.Now(), deadline: taskDeadline(sc, in.Worker)}
+		return r, fmt.Sprintf("RUN START id=%s slot=%d pid=%d pgid=%d started=%s deadline=%s tokens=%s job=%s",
+			oneline.Field(sc.ID), slot, sf.Pid, sf.Pgid, oneline.Field(Stamp(r.started)),
+			trimDuration(r.deadline), oneline.Field(sc.BudgetWord()), oneline.Field(jobDir)), 0
 	}
+	waited := time.Since(start)
 	KillGroup(cmd.Process.Pid, childStarted)
 	sc.Launch = "failed"
 	_ = p.WriteSidecar(Running, sc)
 	_ = p.Claim(sc.ID, Running, Failed)
 	_ = p.Free(slot)
+	if supervisorGone {
+		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=%s: the supervisor exited without writing an identity%s",
+			oneline.Field(sc.ID), slot, trimDuration(waited), abortedReason(jobDir, nonce)), 1
+	}
 	return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=%s: no identity within %ds",
 		oneline.Field(sc.ID), slot, trimDuration(waited), int(timeout.Seconds())), 1
+}
+
+// awaitIdentity is the handshake's wait: the slot file polled for THIS launch's identity
+// until the deadline, with the supervisor's own exit as the other observable.
+//
+// THE DEADLINE IS THE WHOLE BOUND, and it is the caller's, taken once off the monotonic
+// clock. Every retrying read inside the loop is handed the same deadline (ReadSlotBy), so a
+// collision waited out on Windows is spent INSIDE the launch timeout and never added to it:
+// the loop returns by `deadline` whether the reads are instant or every one of them
+// collides for its whole SteadyWindow. The last poll is shortened to what is left, so a
+// short configured timeout is not rounded up to the next 20ms either.
+func (in RunInput) awaitIdentity(slot int, nonce string, deadline time.Time, gone <-chan struct{}) (SlotFile, bool, bool) {
+	supervisorGone := false
+	for time.Now().Before(deadline) {
+		sf, err := in.Pool.ReadSlotBy(slot, deadline)
+		if err == nil && sf.State == SlotLaunched && sf.Nonce == nonce {
+			return sf, true, supervisorGone
+		}
+		// A supervisor that has EXITED is read one last time -- its identify may have
+		// landed in the same instant it died -- and then believed.
+		if supervisorGone {
+			break
+		}
+		poll := 20 * time.Millisecond
+		if left := time.Until(deadline); left < poll {
+			poll = left
+		}
+		select {
+		case <-gone:
+			supervisorGone = true
+			continue
+		case <-time.After(poll):
+		}
+	}
+	return SlotFile{}, false, supervisorGone
 }
 
 // prepare builds the job directory: the slot refreshed one way from the home copy, the
@@ -518,7 +568,7 @@ func (in RunInput) prepare(sc Sidecar, text []byte, slot int, jobDir string) err
 func (in RunInput) state(r *running, now time.Time) (alive, over bool) {
 	sf, err := in.Pool.ReadSlot(r.slot)
 	if err != nil {
-		return false, false
+		return in.unreadable(r, err, now)
 	}
 	// THE SLOT FILE IS THE IDENTITY, read afresh on every poll: the supervisor's pid AND
 	// the start stamp it wrote beside it. A pid alone let a re-issued number read as the
@@ -529,4 +579,53 @@ func (in RunInput) state(r *running, now time.Time) (alive, over bool) {
 		return false, false
 	}
 	return true, now.Sub(r.started) > r.deadline+TerminateGrace*2
+}
+
+// unreadable is what this pass does about a slot file it could not read.
+//
+// A READ THAT FAILED IS NOT EVIDENCE THAT A JOB IS OVER. `state` finalized on any error at
+// all, and on Windows a read of a path whose old file is delete-pending fails for
+// microseconds every time somebody replaces it -- which the supervisor does, to its own
+// slot file, milliseconds after it identifies and exactly when this poll first lands. One
+// such read finished a RUNNING job: the dispatcher reaped a live supervisor at `after=0s`,
+// then found no exit.json where it had just killed the process that writes it, and the
+// pass exited 1 over `rc=-1 end=unknown` with the worker's own finished report beside it
+// (run 34698330796). fileretry.go now waits that collision out; this is the rule underneath
+// it, which holds for any unreadable record and not only that one.
+//
+// So the question is asked of an OBSERVABLE instead: the record is GONE (an answer), or
+// the supervisor's own completion evidence carries this launch's nonce (an answer), or the
+// job is still running. The clock is only the outer bound -- a record that stays unreadable
+// past the job's own deadline is finalized rather than watched forever.
+func (in RunInput) unreadable(r *running, err error, now time.Time) (alive, over bool) {
+	if missing(err) {
+		return false, false
+	}
+	var ex ExitRecord
+	if readErr := ReadJSON(ExitPath(r.jobDir), &ex); readErr == nil && ex.Nonce == r.nonce {
+		return false, false
+	}
+	// THE OUTER BOUND IS THE JOB'S OWN CLOCK, from the job's START, which is the bound the
+	// paragraph above, the PR body and the test all name (Rowan's read of #126, MEDIUM 1).
+	// Measured from the first unreadable read instead, it was a SECOND clock stacked on the
+	// first: a slot file that turned unreadable at the deadline was held to roughly twice
+	// the deadline plus 12s. And `over` is dead on this path -- the caller answers
+	// `alive && over` by reading the same slot file again, which fails for the same reason,
+	// so nothing is ever reaped by it and the loop would spin to the second clock anyway.
+	if now.Sub(r.started) > r.deadline+TerminateGrace*2 {
+		return false, false
+	}
+	return true, false
+}
+
+// abortedReason is the supervisor's OWN word about why it never identified, where it left
+// one: rule 18's aborted.json, carrying this launch's nonce. A LAUNCH-FAILED line with the
+// reason on it is a line a person can act on; before this the only diagnosis of a lost
+// launch was a file no verb prints.
+func abortedReason(jobDir, nonce string) string {
+	var ab AbortedRecord
+	if err := ReadJSON(AbortedPath(jobDir), &ab); err == nil && ab.Nonce == nonce && ab.Reason != "" {
+		return ": " + oneline.Escape(oneline.Cap(ab.Reason, oneline.TailBytes))
+	}
+	return ""
 }

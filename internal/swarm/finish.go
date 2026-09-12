@@ -35,18 +35,25 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 			Reap(sf.JobPgid, sf.JobStarted, TerminateGrace) || Reap(sf.Pgid, sf.PidStarted, TerminateGrace))
 	}
 
+	// THE COMPLETION EVIDENCE LIVES IN THE JOB'S OWN DIRECTORY, and reading it was gated
+	// on reading the SLOT file first -- so a slot file this pass could not read threw away
+	// a whole exit.json that was sitting on disk and made the job `rc=-1 end=unknown`. The
+	// nonce is what the evidence is checked against, and the launch's nonce is carried by
+	// the job this pass is watching; the slot file is only one place it is also written.
+	nonce := r.nonce
+	if slotErr == nil && sf.Nonce != "" {
+		nonce = sf.Nonce
+	}
 	rec := ExitRecord{RC: -1}
 	end := EndUnknown
-	if slotErr == nil {
-		var got ExitRecord
-		if err := ReadJSON(ExitPath(r.jobDir), &got); err == nil && got.Nonce == sf.Nonce {
-			rec, end = got, got.End
-			if end == "" {
-				end = EndDone
-			}
-			if got.Survivors > survivors {
-				survivors = got.Survivors
-			}
+	var got ExitRecord
+	if err := ReadJSON(ExitPath(r.jobDir), &got); err == nil && got.Nonce == nonce {
+		rec, end = got, got.End
+		if end == "" {
+			end = EndDone
+		}
+		if got.Survivors > survivors {
+			survivors = got.Survivors
 		}
 	}
 
@@ -63,7 +70,15 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		rec.RC, end = 429, EndFailed
 	}
 
-	raw, readErr := os.ReadFile(ResultPath(r.jobDir))
+	// THE REPORT IS A DURABLE RECORD, PUBLISHED BY A RENAME, and a read of it that
+	// COLLIDED is not evidence the worker published nothing. The harness writes RESULT.md
+	// the way everything here is written -- a .tmp beside it, then a rename -- so on
+	// Windows a read landing in that replace window fails ERROR_ACCESS_DENIED, and this
+	// line turned that microsecond into `result=no-result`, `dest=failed`, and a finding
+	// the worker had already published thrown away. Exactly the class this pass closed for
+	// exit.json, one file over. The collision is waited out; a file that is NOT THERE
+	// still answers at once, so a genuinely unpublished report is ClassNoResult as before.
+	raw, readErr := readFileSteady(ResultPath(r.jobDir))
 	report := Report{Class: ClassNoResult}
 	if readErr == nil {
 		report = ParseReport(raw)
@@ -122,7 +137,14 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	// The slot is released in the SAME step that finalizes the job -- never on a timer and
 	// never by a scan of directories. A slot whose child survived the kill is RETIRED for
 	// the rest of the run: a data home that may still have a writer in it is not free.
-	if survivors > 0 {
+	// A SLOT FILE THIS PASS COULD NOT READ IS NOT A SLOT IT MAY HAND OUT AGAIN. At start-up
+	// rule 17 quarantines exactly this file; mid-run the job ended `unknown` and the slot
+	// was then FREED, so the same unreadable file was the next job's slot -- one ending
+	// treated two ways by the same run. It is retired for the rest of the pass instead, on
+	// the same grounds as a surviving child: what this dispatcher could not read, it cannot
+	// say is free. A file that is GONE is an answer, not a collision, and is freed as before.
+	unreadableSlot := slotErr != nil && !missing(slotErr)
+	if survivors > 0 || unreadableSlot {
 		// RULE 11 QUARANTINES THE RESULT (SPEC-SWARM.md:154), and rule 17's QUARANTINE is
 		// about a slot FILE. What this does to the slot is neither: it RETIRES it for the
 		// rest of the run, because a data home that may still have a writer in it is not
@@ -378,8 +400,12 @@ func remedy(p *Pool, failed, killed, pending, quarantined int) string {
 	return "the pool drained: nova-swarm triage --pool " + p.Dir
 }
 
+// countLines counts the lines of a record -- the job's `note` file, created through a
+// rename before the worker starts and appended to by the coordinator afterwards. A read
+// that collided with that creation would print `notes=0` for notes that were sent, so it
+// waits the collision out; a file that is not there is still 0.
 func countLines(path string) int {
-	raw, err := os.ReadFile(path)
+	raw, err := readFileSteady(path)
 	if err != nil {
 		return 0
 	}
