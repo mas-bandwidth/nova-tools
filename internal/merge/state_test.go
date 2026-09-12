@@ -22,6 +22,26 @@ func TestAnUnknownFieldRefuses(t *testing.T) {
 	}
 }
 
+func TestNeedsReadIsClosedToYesAndNo(t *testing.T) {
+	// F3: needs_read is closed to exactly "yes" or "no", and a missing or empty field
+	// refuses. "true", "Yes", "y", "1" and a missing key all fall off the package's
+	// comparison against the word "yes", which is the direction that merges unread.
+	for _, tc := range []struct{ name, json string }{
+		{"an unrecognised spelling", `{"version":1,"repo":"o/n","base":"main","lane_branch":"l","prs":[{"pr":951,"needs_read":"true","reads":[],"head":"b","oid":"","state":"NEW","last":"","detail":""}],"branches":[],"gates":[]}`},
+		{"the key absent", `{"version":1,"repo":"o/n","base":"main","lane_branch":"l","prs":[{"pr":951,"reads":[],"head":"b","oid":"","state":"NEW","last":"","detail":""}],"branches":[],"gates":[]}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Decode([]byte(tc.json))
+			if err == nil {
+				t.Fatalf("needs_read must be exactly \"yes\" or \"no\": the spec says a record missing any does not decode (rules 18, 19 and 21)")
+			}
+			if !strings.Contains(err.Error(), "needs_read") {
+				t.Errorf("the refusal must name needs_read, got %v", err)
+			}
+		})
+	}
+}
+
 func TestAStringWhereANumberBelongsRefuses(t *testing.T) {
 	_, err := Decode([]byte(`{"version":1,"repo":"o/n","base":"main","lane_branch":"l","prs":[{"pr":951,"needs_read":"yes","reads":[],"head":"b","oid":"","state":"NEW","last":"","detail":"","green":"24","pending":0,"red":0}],"branches":[],"gates":[]}`))
 	if err == nil {
