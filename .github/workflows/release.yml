@@ -103,6 +103,15 @@ jobs:
           # cmd/*/ rather than a list, so a tool added to this repository ships without
           # anyone remembering this file, and a tool that must NOT ship is excluded here
           # in one visible place rather than by omission from a list nobody rereads.
+          # THE LDFLAGS ARE COMPOSED BY A SCRIPT THAT CAN REFUSE, and composed ONCE, before
+          # the first target is built. `-X main.version=` with an empty value is a legal
+          # linker flag: it stamps the empty string, every binary falls back to `devel`,
+          # and nothing in this job noticed -- release.yml:119 in #118. Since #107 that
+          # release's nova-wake would refuse every nova-bus the same release shipped.
+          # A failed substitution here aborts the step under `set -e` rather than building
+          # 55 unstamped artifacts. ci.yml's release-dry-run asserts the refusal.
+          LDFLAGS=$(.github/scripts/release-ldflags.sh "$TAG")
+          echo "ldflags: $LDFLAGS"
           built=0
           for target in "linux amd64" "linux arm64" "darwin arm64" "darwin amd64" "windows amd64"; do
             set -- $target
@@ -112,11 +121,11 @@ jobs:
               name=$(basename "$dir")
               # -trimpath so the binary holds no path from this runner; -s -w because a
               # symbol table nobody has the source layout for is only size. -X stamps the
-              # tag into main.version, which is read by `nova-bus version`; the linker
-              # ignores it silently for a tool that has no such var, which is why the
-              # assertion below runs the binary rather than trusting the flag.
+              # tag into main.version, which the version verbs read; the linker ignores it
+              # silently for a tool that has no such var, which is why the assertion below
+              # runs the binaries rather than trusting the flag.
               GOOS="$goos" GOARCH="$goarch" CGO_ENABLED=0 go build \
-                -trimpath -ldflags "-s -w -X main.version=${TAG}" \
+                -trimpath -ldflags "$LDFLAGS" \
                 -o "dist/${name}_${TAG}_${goos}_${goarch}${ext}" "./${dir%/}"
               built=$((built + 1))
             done
@@ -125,31 +134,26 @@ jobs:
           [ -f "dist/nova-bus_${TAG}_linux_amd64" ] || { echo "nova-bus is not in the shipped set"; exit 1; }
           ls -l dist
 
-      - name: the binaries report the tag they were built from
+      - name: every shipped binary reports the tag it was built from
         shell: bash
         run: |
           set -euo pipefail
-          # The runner is linux/amd64, so one of the artifacts is directly runnable here.
+          # The runner is linux/amd64, so one artifact per tool is directly runnable here.
           # This is the whole check on the -X stamp: the flag is silently ignored when the
           # symbol is missing or renamed, so a release could otherwise carry binaries that
           # answer `devel` while the release page says v1.2.3 -- and the one question this
           # verb exists to answer is which build somebody is running.
-          # Every tool that HAS the verb is asserted, not one of them: a stamp read by one
-          # binary says nothing about the others built by the same loop above.
-          for name in nova-bus nova-board; do
-            bin="dist/${name}_${TAG}_linux_amd64"
-            [ -x "$bin" ] || { echo "$name is not in the shipped set"; exit 1; }
-            set +e; out=$("$bin" version 2>&1); rc=$?; set -e
-            if [ "$rc" -ne 0 ]; then
-              echo "\`$name version\` exited $rc: $out"
-              echo "if this says 'unknown subcommand' or 'unknown verb', the verb is not wired into main.go's dispatch yet"
-              exit 1
-            fi
-            case "$out" in
-              "$name $TAG linux/amd64 go"*) echo "ok: $out" ;;
-              *) echo "want '$name $TAG linux/amd64 go...', got: $out"; exit 1 ;;
-            esac
-          done
+          #
+          # EVERY tool in the build loop above, not the two this step used to name. A stamp
+          # read by two binaries says nothing about the other nine, and since #107 it is
+          # nova-wake's stamp that decides which nova-bus it accepts: an unstamped nova-wake
+          # in a release refuses every nova-bus in that same release (#118).
+          #
+          # The script walks cmd/*/ the way the build loop does, asserts the tag on every
+          # tool that declares the stamp, and prints a NOTE naming the tools that have no
+          # version print today -- with #121, which owns the common verb -- rather than
+          # passing over them in silence. It is exercised by ci.yml's release-dry-run.
+          .github/scripts/assert-version-stamp.sh "$TAG" "dist/%s_${TAG}_linux_amd64"
 
       - name: SHA256SUMS over the whole shipped set
         shell: bash

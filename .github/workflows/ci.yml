@@ -541,6 +541,56 @@ jobs:
           done
           ls -R dist
 
+      - name: the release stamp refuses a missing ldflag, and the assertion catches it
+        shell: bash
+        run: |
+          set -euo pipefail
+          # THIS IS THE TEST OF THE ASSERTION, which is the half of #118 that is easy to
+          # leave out: a release job that asserts the stamp is worth nothing if the
+          # assertion itself has never been seen to fail. A tag is the one thing here that
+          # cannot be quietly amended, so both outcomes are proved on every pull request.
+          #
+          # It runs the same two scripts release.yml runs, over the same cmd/*/ tree, so a
+          # tool added tomorrow is in this check too.
+          stamp=v0.0.0-dry-run
+
+          # ONE: the ldflags helper refuses an empty stamp instead of composing
+          # `-X main.version=` and letting the build stamp the empty string.
+          if .github/scripts/release-ldflags.sh "" >/dev/null 2>&1; then
+            echo "release-ldflags.sh accepted an empty stamp: a release could ship binaries that answer devel"
+            exit 1
+          fi
+          echo "ok: an empty stamp is refused"
+          ldflags=$(.github/scripts/release-ldflags.sh "$stamp")
+          case "$ldflags" in
+            *"-X main.version=$stamp"*) echo "ok: $ldflags" ;;
+            *) echo "release-ldflags.sh composed something else: $ldflags"; exit 1 ;;
+          esac
+
+          # TWO: binaries built with NO stamp fail the assertion, by name. This is the
+          # release that #118 describes -- every tool answering its vcs pseudo-version or
+          # devel while the release page names a tag -- and it must be red.
+          rm -rf "${RUNNER_TEMP}/unstamped" "${RUNNER_TEMP}/stamped"
+          go build -o "${RUNNER_TEMP}/unstamped/" ./cmd/...
+          set +e
+          out=$(.github/scripts/assert-version-stamp.sh "$stamp" "${RUNNER_TEMP}/unstamped/%s" 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          if [ "$rc" -eq 0 ]; then
+            echo "the assertion PASSED a set of binaries nothing stamped; it would pass a broken release"
+            exit 1
+          fi
+          case "$out" in
+            *"does not report the tag it was built from"*) echo "ok: unstamped binaries are refused by name" ;;
+            *) echo "the assertion failed, but not for the missing stamp; that is a different defect"; exit 1 ;;
+          esac
+
+          # THREE: the same binaries, stamped the way release.yml stamps them, pass -- so
+          # the red above is the stamp and not the harness.
+          go build -ldflags "$ldflags" -o "${RUNNER_TEMP}/stamped/" ./cmd/...
+          .github/scripts/assert-version-stamp.sh "$stamp" "${RUNNER_TEMP}/stamped/%s"
+
       - name: upload the cross-built binaries
         # So that the smoke job runs THE BINARY THIS WOULD SHIP rather than one it builds
         # itself with different flags. The job above already builds with -trimpath and
