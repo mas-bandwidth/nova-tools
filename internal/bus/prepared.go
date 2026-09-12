@@ -1,11 +1,13 @@
 package bus
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -56,11 +58,71 @@ func RenderPreparedArtifact(p Prepared) (string, error) {
 	return string(data) + "\n", nil
 }
 
+func checkJSONNoDuplicates(dec *json.Decoder) error {
+	t, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	delim, ok := t.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '{':
+		seen := make(map[string]bool)
+		for dec.More() {
+			keyTok, err := dec.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyTok.(string)
+			if !ok {
+				return errors.New("expected string key in JSON object")
+			}
+			if seen[key] {
+				return fmt.Errorf("duplicate key %q in JSON object", key)
+			}
+			seen[key] = true
+			if err := checkJSONNoDuplicates(dec); err != nil {
+				return err
+			}
+		}
+		if _, err := dec.Token(); err != nil {
+			return err
+		}
+	case '[':
+		for dec.More() {
+			if err := checkJSONNoDuplicates(dec); err != nil {
+				return err
+			}
+		}
+		if _, err := dec.Token(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // ValidatePreparedArtifact parses and validates a raw JSON artifact against the current
 // bus configuration, participant roster, and deterministic ID invariants.
 func ValidatePreparedArtifact(raw []byte, busDir string, c *Config, as string) (PreparedArtifact, Prepared, error) {
 	var art PreparedArtifact
-	if err := json.Unmarshal(raw, &art); err != nil {
+
+	decCheck := json.NewDecoder(bytes.NewReader(raw))
+	if err := checkJSONNoDuplicates(decCheck); err != nil {
+		return art, Prepared{}, fmt.Errorf("malformed prepared artifact: %w", err)
+	}
+	var extra json.RawMessage
+	if err := decCheck.Decode(&extra); !errors.Is(err, io.EOF) {
+		return art, Prepared{}, errors.New("malformed prepared artifact: more than one JSON value")
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&art); err != nil {
+		if strings.Contains(err.Error(), "unknown field") {
+			return art, Prepared{}, errors.New("malformed prepared artifact: unknown field")
+		}
 		return art, Prepared{}, fmt.Errorf("malformed prepared artifact: %w", err)
 	}
 	if art.Schema != PreparedSchema {
@@ -151,6 +213,10 @@ func queryRemote(busDir, ref string, p Prepared, art PreparedArtifact) (bool, st
 	remoteNote, errNote := git(busDir, "show", ref+":"+art.Path)
 	remoteIndex, errIndex := git(busDir, "show", ref+":"+IndexPath(p.Sender.Lane))
 
+	wantIndexLine := IndexLine(p.Index)
+	indexCount := 0
+	indexMatch := false
+
 	if errIndex == nil {
 		for _, line := range strings.Split(remoteIndex, "\n") {
 			line = strings.TrimSpace(line)
@@ -159,23 +225,35 @@ func queryRemote(busDir, ref string, p Prepared, art PreparedArtifact) (bool, st
 			}
 			fields := strings.Split(line, "\t")
 			if len(fields) > 0 && fields[0] == art.ID {
+				indexCount++
 				if len(fields) > 1 && fields[1] != art.Path {
 					return false, "", fmt.Errorf("the id %q is already on remote on %s, not %s", art.ID, fields[1], art.Path)
 				}
-				if errNote != nil {
-					return false, "", fmt.Errorf("remote index carries %q but note %s is absent remotely", art.ID, art.Path)
+				if line != wantIndexLine {
+					return false, "", fmt.Errorf("remote index in %s has conflicting record for %s (want %q, got %q)", IndexPath(p.Sender.Lane), art.ID, wantIndexLine, line)
 				}
-				if remoteNote != art.Note {
-					return false, "", fmt.Errorf("remote note at %s has different content than the prepared note", art.Path)
-				}
-				commitOut, _ := git(busDir, "log", "-1", "--format=%H", ref, "--", art.Path)
-				commitSHA := strings.TrimSpace(commitOut)
-				if commitSHA == "" {
-					commitSHA, _ = ResolveCommit(busDir, ref)
-				}
-				return true, commitSHA, nil
+				indexMatch = true
 			}
 		}
+	}
+
+	if indexCount > 1 {
+		return false, "", fmt.Errorf("remote index in %s has multiple records for %s", IndexPath(p.Sender.Lane), art.ID)
+	}
+
+	if indexMatch {
+		if errNote != nil {
+			return false, "", fmt.Errorf("remote index carries %q but note %s is absent remotely", art.ID, art.Path)
+		}
+		if remoteNote != art.Note {
+			return false, "", fmt.Errorf("remote note at %s has different content than the prepared note", art.Path)
+		}
+		commitOut, _ := git(busDir, "log", "-1", "--format=%H", ref, "--", art.Path)
+		commitSHA := strings.TrimSpace(commitOut)
+		if commitSHA == "" {
+			commitSHA, _ = ResolveCommit(busDir, ref)
+		}
+		return true, commitSHA, nil
 	}
 
 	if errNote == nil {
@@ -188,6 +266,117 @@ func queryRemote(busDir, ref string, p Prepared, art PreparedArtifact) (bool, st
 	}
 
 	return false, "", nil
+}
+
+var sendPreparedKillPoint string
+
+func checkSendKillPoint(point string) error {
+	if sendPreparedKillPoint != "" && sendPreparedKillPoint == point {
+		return fmt.Errorf("injected kill at %s", point)
+	}
+	if kp := os.Getenv("NOVA_BUS_KILLPOINT"); kp != "" && kp == point {
+		return fmt.Errorf("injected kill at %s", point)
+	}
+	return nil
+}
+
+// verifyPermittedDeltas verifies that any dirty changes in the working tree or staged index
+// belong strictly to this prepared send, refusing any unrelated content or paths.
+func verifyPermittedDeltas(busDir, ref string, p Prepared, art PreparedArtifact) error {
+	out, err := git(busDir, "status", "--porcelain", "-z", "--untracked-files=all")
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(out) == "" {
+		return nil
+	}
+
+	refIndexPath := IndexPath(p.Sender.Lane)
+	refIndex, err := git(busDir, "show", ref+":"+refIndexPath)
+	if err != nil {
+		refIndex = ""
+	}
+	wantIndexLine := IndexLine(p.Index)
+	expectedAppendedIndex := refIndex
+	if expectedAppendedIndex != "" && !strings.HasSuffix(expectedAppendedIndex, "\n") {
+		expectedAppendedIndex += "\n"
+	}
+	expectedAppendedIndex += wantIndexLine + "\n"
+
+	refAttrs, err := git(busDir, "show", ref+":"+AttributesName)
+	if err != nil {
+		refAttrs = ""
+	}
+	expectedAttrs, _ := ExpectedMergeAttributes(refAttrs)
+
+	permitted := map[string]bool{
+		art.Path:       true,
+		refIndexPath:   true,
+		AttributesName: true,
+	}
+
+	recs := strings.Split(out, "\x00")
+	for i := 0; i < len(recs); i++ {
+		rec := recs[i]
+		if len(rec) < 4 {
+			continue
+		}
+		status, path := rec[:2], rec[3:]
+		if strings.ContainsAny(status, "RC") {
+			if i+1 < len(recs) {
+				i++
+			}
+			return fmt.Errorf("unrelated dirty rename or copy in working tree: %s", path)
+		}
+		if !permitted[path] {
+			return fmt.Errorf("unrelated dirty file in working tree: %s", path)
+		}
+
+		switch path {
+		case art.Path:
+			full := filepath.Join(busDir, filepath.FromSlash(art.Path))
+			if b, err := os.ReadFile(full); err == nil {
+				if string(b) != art.Note {
+					return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", art.Path)
+				}
+			}
+			if status[0] != ' ' && status[0] != '?' {
+				staged, err := git(busDir, "show", ":"+art.Path)
+				if err == nil && staged != art.Note {
+					return fmt.Errorf("unrelated staged changes in %s; refusing to publish", art.Path)
+				}
+			}
+		case refIndexPath:
+			full := filepath.Join(busDir, filepath.FromSlash(refIndexPath))
+			if b, err := os.ReadFile(full); err == nil {
+				s := string(b)
+				if s != refIndex && s != expectedAppendedIndex {
+					return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", refIndexPath)
+				}
+			}
+			if status[0] != ' ' && status[0] != '?' {
+				staged, err := git(busDir, "show", ":"+refIndexPath)
+				if err == nil && staged != refIndex && staged != expectedAppendedIndex {
+					return fmt.Errorf("unrelated staged changes in %s; refusing to publish", refIndexPath)
+				}
+			}
+		case AttributesName:
+			full := filepath.Join(busDir, AttributesName)
+			if b, err := os.ReadFile(full); err == nil {
+				s := string(b)
+				if s != refAttrs && s != expectedAttrs {
+					return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", AttributesName)
+				}
+			}
+			if status[0] != ' ' && status[0] != '?' {
+				staged, err := git(busDir, "show", ":"+AttributesName)
+				if err == nil && staged != refAttrs && staged != expectedAttrs {
+					return fmt.Errorf("unrelated staged changes in %s; refusing to publish", AttributesName)
+				}
+			}
+		}
+	}
+	return nil
 }
 
 // SendPreparedArtifact publishes or confirms delivery of a prepared note artifact.
@@ -230,8 +419,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 	}
 
 	// Step 3 & 4: If absent remotely, refuse unrelated work and reconcile local attempt
-	permitted := []string{art.Path, IndexPath(p.Sender.Lane), AttributesName}
-	if err := EnsureClean(busDir, permitted); err != nil {
+	if err := verifyPermittedDeltas(busDir, ref, p, art); err != nil {
 		return PushResult{}, err
 	}
 
@@ -269,10 +457,84 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 				}
 			}
 			noteInCommit, err := git(busDir, "show", sha+":"+art.Path)
-			if err != nil || noteInCommit != art.Note {
+			if err == nil && noteInCommit != art.Note {
 				return PushResult{}, fmt.Errorf("ahead commit %s has conflicting note content for %s; %s", sha, art.Path, pullRebaseAdvice)
 			}
 		}
+
+		headNote, errNote := git(busDir, "show", "HEAD:"+art.Path)
+		if errNote != nil || headNote != art.Note {
+			return PushResult{}, fmt.Errorf("ahead commits do not contain valid note %s; %s", art.Path, pullRebaseAdvice)
+		}
+
+		refIndexPath := IndexPath(p.Sender.Lane)
+		wantIndexLine := IndexLine(p.Index)
+		headIndex, _ := git(busDir, "show", "HEAD:"+refIndexPath)
+
+		headHasIndex := false
+		for _, l := range strings.Split(headIndex, "\n") {
+			l = strings.TrimSpace(l)
+			if l == "" {
+				continue
+			}
+			f := strings.Split(l, "\t")
+			if len(f) > 0 && f[0] == art.ID {
+				if l == wantIndexLine {
+					headHasIndex = true
+					break
+				}
+				return PushResult{}, fmt.Errorf("ahead commits have conflicting index record for %s; %s", art.ID, pullRebaseAdvice)
+			}
+		}
+
+		if !headHasIndex {
+			fullIndexPath := filepath.Join(busDir, filepath.FromSlash(refIndexPath))
+			needAppend := true
+			if diskIndex, err := os.ReadFile(fullIndexPath); err == nil {
+				for _, l := range strings.Split(string(diskIndex), "\n") {
+					l = strings.TrimSpace(l)
+					if l == "" {
+						continue
+					}
+					f := strings.Split(l, "\t")
+					if len(f) > 0 && f[0] == art.ID {
+						if l == wantIndexLine {
+							needAppend = false
+							break
+						}
+						return PushResult{}, fmt.Errorf("local index in %s has conflicting record for %s", refIndexPath, art.ID)
+					}
+				}
+			}
+			if needAppend {
+				if err := p.AppendIndex(busDir); err != nil {
+					return PushResult{}, err
+				}
+			}
+			wroteAttrs, err := EnsureMergeAttributes(busDir)
+			if err != nil {
+				return PushResult{}, err
+			}
+			pathsToStage := []string{refIndexPath}
+			if wroteAttrs {
+				pathsToStage = append(pathsToStage, AttributesName)
+			}
+			id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
+			if _, err := git(busDir, append([]string{"add"}, pathsToStage...)...); err != nil {
+				return PushResult{}, err
+			}
+			if ahead == 1 {
+				if _, err := git(busDir, append(identityArgs(id), "commit", "--amend", "--no-edit")...); err != nil {
+					return PushResult{}, err
+				}
+			} else {
+				msg := WithTrailer(p.Message, wantTrailer)
+				if _, err := git(busDir, append(identityArgs(id), "commit", "-m", msg)...); err != nil {
+					return PushResult{}, err
+				}
+			}
+		}
+
 		headSha, err := HeadCommit(busDir)
 		if err != nil {
 			return PushResult{}, err
@@ -295,6 +557,10 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			if err := p.Save(busDir); err != nil {
 				return PushResult{}, err
 			}
+		}
+
+		if err := checkSendKillPoint("after-note-write"); err != nil {
+			return PushResult{}, err
 		}
 
 		// Reconcile index on disk
@@ -322,6 +588,10 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			}
 		}
 
+		if err := checkSendKillPoint("after-index-write"); err != nil {
+			return PushResult{}, err
+		}
+
 		wroteAttrs, err := EnsureMergeAttributes(busDir)
 		if err != nil {
 			return PushResult{}, err
@@ -338,6 +608,10 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			return PushResult{}, err
 		}
 		reusedCommit = cSha
+	}
+
+	if err := checkSendKillPoint("after-commit"); err != nil {
+		return PushResult{}, err
 	}
 
 	// Step 5: Push loop with bounded race handling

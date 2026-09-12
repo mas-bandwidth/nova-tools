@@ -140,9 +140,13 @@ func TestSendPreparedDecidingTests(t *testing.T) {
 	rRecover := invoke(t, "", "send", "--bus", checkout, "--as", "Ada", "--remote", "origin", "--branch", "main", "--prepared", artFile3)
 	rRecover.mustCode(t, 0).mustContain(t, "stdout", "state=published")
 
-	// Verify on bare remote
+	// Verify on bare remote: both the note file and the INDEX entry must be present
 	files := gitIn(t, bare, "ls-tree", "-r", "--name-only", "main")
 	if !strings.Contains(files, art3.Path) {
 		t.Fatalf("recovered note not found on remote: %s", files)
+	}
+	indexContent := gitIn(t, bare, "show", "main:from-ada/INDEX")
+	if !strings.Contains(indexContent, art3.ID) {
+		t.Fatalf("recovered note missing from remote index: %s", indexContent)
 	}
 }

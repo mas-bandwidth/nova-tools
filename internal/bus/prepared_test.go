@@ -2,6 +2,7 @@ package bus
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -329,3 +330,145 @@ func TestSendPreparedArtifactConcurrentRemoteLanding(t *testing.T) {
 		t.Fatalf("Bo's note missing from bare remote: %v", err)
 	}
 }
+
+func stellaPrepared(t *testing.T) (string, string, Prepared, PreparedArtifact) {
+	t.Helper()
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+	tab := loadBus(t, clone)
+	p, e := PrepareDraft(tab, "From: Ada\nTo: Bo\nSubject: Boundary fixture\n\nSynthetic note.\n", at("2026-09-12T17:00:00Z"), "boundary", "Ada")
+	if e != nil {
+		t.Fatal(e)
+	}
+	a, e := MakePreparedArtifact(p)
+	if e != nil {
+		t.Fatal(e)
+	}
+	return bare, clone, p, a
+}
+
+func TestStellaPreparedRequiresCompleteRemoteIndex(t *testing.T) {
+	_, clone, p, a := stellaPrepared(t)
+	if _, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1); e != nil {
+		t.Fatal(e)
+	}
+	path := filepath.Join(clone, IndexPath(p.Sender.Lane))
+	b, e := os.ReadFile(path)
+	if e != nil {
+		t.Fatal(e)
+	}
+	expected := IndexLine(p.Index)
+	fields := strings.Split(expected, "\t")
+	fields[len(fields)-1] = "SYNTHETIC_WRONG_INDEX_SUBJECT"
+	changed := strings.Replace(string(b), expected, strings.Join(fields, "\t"), 1)
+	if changed == string(b) {
+		t.Fatal("did not mutate index")
+	}
+	os.WriteFile(path, []byte(changed), 0644)
+	id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
+	if _, e := stageAndCommit(clone, id, []string{IndexPath(p.Sender.Lane)}, "mutate synthetic index"); e != nil {
+		t.Fatal(e)
+	}
+	if _, e := git(clone, "push", "origin", "HEAD:main"); e != nil {
+		t.Fatal(e)
+	}
+	if r, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1); e == nil && r.Pushed {
+		t.Fatal("claimed already-published with a different INDEX record")
+	}
+}
+
+func TestStellaPreparedCannotConfirmCommitWithoutIndex(t *testing.T) {
+	bare, clone, p, a := stellaPrepared(t)
+	if e := p.Save(clone); e != nil {
+		t.Fatal(e)
+	}
+	id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
+	if _, e := stageAndCommit(clone, id, []string{p.Path}, WithTrailer(p.Message, TrailerSend+" "+a.ID)); e != nil {
+		t.Fatal(e)
+	}
+	r, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+	if e != nil {
+		t.Fatalf("SendPreparedArtifact failed: %v", e)
+	}
+	index, e := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
+	if r.Pushed && (e != nil || !strings.Contains(index, IndexLine(p.Index))) {
+		t.Fatal("claimed success after publishing note-only commit without INDEX entry")
+	}
+}
+
+func TestStellaPreparedPreservesUnrelatedAttributeEdit(t *testing.T) {
+	bare, clone, p, a := stellaPrepared(t)
+	path := filepath.Join(clone, AttributesName)
+	old, _ := os.ReadFile(path)
+	sentinel := "# synthetic_private_unrelated_attribute_edit\n"
+	want := append(old, []byte(sentinel)...)
+	os.WriteFile(path, want, 0644)
+	r, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+	if e == nil && r.Pushed {
+		remote, _ := git(bare, "show", "main:"+AttributesName)
+		if strings.Contains(remote, sentinel) {
+			t.Fatal("published unrelated dirty attribute content during prepared delivery")
+		}
+	}
+	now, _ := os.ReadFile(path)
+	if string(now) != string(want) {
+		t.Fatal("refusal changed unrelated dirty attribute content")
+	}
+}
+
+func TestStellaPreparedRefusesUnknownArtifactField(t *testing.T) {
+	_, clone, p, a := stellaPrepared(t)
+	b, _ := json.Marshal(a)
+	b = append(b[:len(b)-1], []byte(`,"unsupported":"synthetic"}`)...)
+	if _, _, e := ValidatePreparedArtifact(b, clone, loadBus(t, clone).Config, p.Sender.Name); e == nil {
+		t.Fatal("accepted unknown artifact field")
+	}
+}
+
+func TestPreparedRefusesDuplicateKeys(t *testing.T) {
+	_, clone, p, a := stellaPrepared(t)
+	dupJSON := fmt.Sprintf(`{"schema":%q,"id":%q,"id":"duplicate-id","path":%q,"note":%q,"sha256":%q}`,
+		a.Schema, a.ID, a.Path, a.Note, a.SHA256)
+	if _, _, err := ValidatePreparedArtifact([]byte(dupJSON), clone, loadBus(t, clone).Config, p.Sender.Name); err == nil {
+		t.Fatal("accepted artifact with duplicate key")
+	}
+}
+
+func TestSendPreparedKillPointsRecovery(t *testing.T) {
+	killPoints := []string{"after-note-write", "after-index-write", "after-commit"}
+
+	for _, kp := range killPoints {
+		t.Run(kp, func(t *testing.T) {
+			bare, clone, p, a := stellaPrepared(t)
+
+			// First run with injected kill point
+			sendPreparedKillPoint = kp
+			_, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+			if err == nil || !strings.Contains(err.Error(), "injected kill at "+kp) {
+				t.Fatalf("expected injected kill at %s, got %v", kp, err)
+			}
+
+			// Clear kill point and retry delivery
+			sendPreparedKillPoint = ""
+			res, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+			if err != nil {
+				t.Fatalf("recovery send failed: %v", err)
+			}
+			if !res.Pushed || res.State != "published" {
+				t.Fatalf("recovery res = %+v, want published", res)
+			}
+
+			// Remote bare repository MUST contain both the note and the exact INDEX line
+			remoteNote, err := git(bare, "show", "main:"+p.Path)
+			if err != nil || remoteNote != a.Note {
+				t.Fatalf("bare remote missing note or note mismatch: %v", err)
+			}
+			remoteIndex, err := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
+			if err != nil || !strings.Contains(remoteIndex, IndexLine(p.Index)) {
+				t.Fatalf("bare remote missing expected index line: %v", err)
+			}
+		})
+	}
+}
+

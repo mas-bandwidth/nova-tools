@@ -43,16 +43,10 @@ var attributeLines = []string{
 // replaced: the file belongs to the bus and this tool owns two lines of it. A bus that
 // already carries both rules is left exactly as it is, so this is a no-op on every send but
 // the first.
-func EnsureMergeAttributes(root string) (bool, error) {
-	full := filepath.Join(root, AttributesName)
-	if err := insideRoot(root, full); err != nil {
-		return false, err
-	}
-	raw, err := os.ReadFile(full)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, err
-	}
-	existing := string(raw)
+// ExpectedMergeAttributes calculates the expected content of .gitattributes after
+// ensuring the required merge attribute rules are present. It returns the expected
+// content and whether any changes were made.
+func ExpectedMergeAttributes(existing string) (string, bool) {
 	var missing []string
 	for _, line := range attributeLines {
 		if strings.HasPrefix(line, "#") {
@@ -63,7 +57,7 @@ func EnsureMergeAttributes(root string) (bool, error) {
 		}
 	}
 	if len(missing) == 0 {
-		return false, nil
+		return existing, false
 	}
 	var b strings.Builder
 	if existing != "" {
@@ -80,7 +74,23 @@ func EnsureMergeAttributes(root string) (bool, error) {
 			b.WriteString(line + "\n")
 		}
 	}
-	if err := os.WriteFile(full, []byte(b.String()), 0o644); err != nil {
+	return b.String(), true
+}
+
+func EnsureMergeAttributes(root string) (bool, error) {
+	full := filepath.Join(root, AttributesName)
+	if err := insideRoot(root, full); err != nil {
+		return false, err
+	}
+	raw, err := os.ReadFile(full)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	expected, changed := ExpectedMergeAttributes(string(raw))
+	if !changed {
+		return false, nil
+	}
+	if err := os.WriteFile(full, []byte(expected), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil
