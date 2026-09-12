@@ -27,13 +27,18 @@ import (
 
 // SuperviseInput is everything `supervise` is handed.
 type SuperviseInput struct {
-	Pool           *Pool
-	Task           string
-	Slot           int
-	Nonce          string
-	Worker         Worker
-	Sidecar        Sidecar
-	Key            string
+	Pool    *Pool
+	Task    string
+	Slot    int
+	Nonce   string
+	Worker  Worker
+	Sidecar Sidecar
+	Key     string
+	// THE LAUNCH SEAM (docs/SPEC-SANDBOX.md, the dispatcher caller). Sandbox is the
+	// resolved nova-sandbox binary the harness is wrapped in; an EMPTY one is rule 11's
+	// one loud workaround, which the dispatcher has already announced for this job, and
+	// it is reachable only from a `--no-sandbox` a person typed.
+	Sandbox        string
 	UsageInterval  time.Duration
 	Stdout, Stderr io.Writer
 	Now            func() time.Time
@@ -44,6 +49,11 @@ func Supervise(in SuperviseInput) int {
 	p := in.Pool
 	jobDir := in.Worker.JobDir(in.Slot, in.Task)
 	self := os.Getpid()
+
+	// BEFORE ANYTHING ELSE, and before the pause point below can make this process a
+	// stopped member of a group its runner's death orphans: the kernel's hangup is not a
+	// way for a supervisor to die (hangup_unix.go carries the measurement and the rule).
+	ignoreHangup()
 
 	CheckPausePoint("before-identify")
 	CheckKillPoint("before-identify")
@@ -77,8 +87,30 @@ func Supervise(in SuperviseInput) int {
 	if resolved, err := exec.LookPath(harness); err == nil {
 		harness = resolved
 	}
-	cmd := exec.Command(harness, harnessArgs(in.Worker, jobDir)...)
-	cmd.Dir = in.Worker.SlotDir(in.Slot)
+	// THE WRAP. Every job runs inside nova-sandbox, and the argv is built HERE, by the
+	// dispatcher's own child, from the job it was handed -- never from the task text.
+	// The cwd is the job directory (SPEC-SANDBOX rule 13): a cwd outside every named path
+	// denies getcwd(3) and kills every git command before it reads anything, and the
+	// harness's own fence evaluates `external_directory` relative to the cwd, so a job
+	// directory that is not the cwd is "external" to the harness working in it.
+	argv := harnessArgs(in.Worker, jobDir)
+	dir := jobDir
+	if in.Sandbox != "" {
+		job := SandboxJob{
+			Sandbox: in.Sandbox, PoolName: filepath.Base(p.Dir),
+			SlotDir: in.Worker.SlotDir(in.Slot), JobDir: jobDir,
+			DataHome: in.Worker.DataHome(in.Slot, in.Task), ReadRoots: in.Worker.ReadRoots,
+			Command: harness, Args: argv,
+		}
+		whole := job.SandboxCommand()
+		harness, argv = whole[0], whole[1:]
+		// The wrapper itself runs OUTSIDE the wall and its own cwd is the slot directory,
+		// which is where this tool's config for the harness lives; the child's cwd is the
+		// --cwd in the argv above and is the job directory.
+		dir = in.Worker.SlotDir(in.Slot)
+	}
+	cmd := exec.Command(harness, argv...)
+	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	cmd.Env = childEnv(in.Worker, in.Slot, in.Task, in.Key)
 	ownGroup(cmd)
@@ -190,7 +222,7 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 	rec.Nonce, rec.Ended = in.Nonce, Stamp(in.Now())
 	// Rule 11's group check, made by the process that owns the group: anything still in the
 	// job's own group after its leader has gone is a background subtask the prompt forbids.
-	if jobPgid, jobStarted := readJobProc(jobDir); jobPgid > 0 && GroupAlive(jobPgid, jobStarted) {
+	if jobPgid, jobStarted := readJobProc(jobDir); jobPgid > 0 && groupStillAlive(jobPgid, jobStarted) {
 		if n, ok := GroupMembers(jobPgid, os.Getpid()); ok {
 			rec.Survivors = n
 		} else if rec.Survivors == 0 {
@@ -205,6 +237,37 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 	}
 	return 0
 }
+
+// groupStillAlive is the group check of rule 11 with a BOUNDED WAIT in front of it, and the
+// wait is what the wrap made necessary. The job's group now holds the wrapper as well as the
+// work (nova-sandbox waits for the harness and then exits), so in the instant between the
+// harness's exit -- which is what `cmd.Wait` returned on -- and the wrapper's own last
+// breath, `kill(-pgid, 0)` can still say yes. On darwin the members cannot be enumerated
+// (proc_darwin.go), so that yes becomes `survivors=1` and a clean job is quarantined as a
+// violation: seen on the macOS CI runner, one job in four, 2026-09-12.
+//
+// A REAL survivor is a process the prompt forbids, and it is a worker's background subtask
+// that outlives its parent -- it is still there a second later, and every second after that.
+// So the check waits a bounded moment for the group to drain and reports what is left. It
+// ends on its own, it never waits for a process to appear, and a group that still has a
+// member at the end of it is the violation rule 11 names -- which is what TRUE means here.
+// It was called `groupDrained` and answered the opposite of its own name, so the next
+// reader to invert a caller would have re-broken rule 11's survivor check with a change
+// that read correctly (DeepSeek's read of #88 at d0c1841, LOW 4).
+func groupStillAlive(jobPgid int, jobStarted string) bool {
+	for waited := time.Duration(0); waited < GroupDrainWait; waited += 20 * time.Millisecond {
+		if !GroupAlive(jobPgid, jobStarted) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return GroupAlive(jobPgid, jobStarted)
+}
+
+// GroupDrainWait is how long the check above gives a job's group to empty. It is a tool
+// property, not a fact about anybody's job: long enough for a wrapper's exit to land after
+// the work's, short enough that it is invisible beside a launch.
+const GroupDrainWait = 300 * time.Millisecond
 
 // abort is rule 18's losing path, and its ORDER is the rule: never spawn the harness; count
 // the processes in its own group other than itself; write aborted.json through .tmp, fsync
@@ -303,6 +366,15 @@ func childEnv(w Worker, slot int, id, key string) []string {
 		"PATH=" + pathVal,
 		"XDG_DATA_HOME=" + w.DataHome(slot, id),
 		"NOVA_SWARM_JOB=" + w.JobDir(slot, id),
+		// HOME IS THE JOB'S OWN DATA HOME, and it is inside the write set (SPEC-SANDBOX
+		// rule 9). The caller sets it, never the wall: a run whose HOME resolves outside
+		// every --write is SANDBOX REFUSED reason=home_outside and the job does not start.
+		// Measured on this Mac: with the caller's HOME inherited, `git status` inside the
+		// wall is `fatal: unable to access '/Users/<user>/.gitconfig': Operation not
+		// permitted`, and a harness that writes ~/.config/opencode dies the same way.
+		// XDG_DATA_HOME stays beside it because the usage source reads the harness's
+		// database from exactly that directory (rule 13 of SPEC-SWARM).
+		"HOME=" + w.DataHome(slot, id),
 	}
 	if runtime.GOOS == "windows" {
 		env = append(env, "Path="+pathVal)

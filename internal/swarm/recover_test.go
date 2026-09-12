@@ -61,7 +61,11 @@ func TestARecoveredJobMovesOutOfRunning(t *testing.T) {
 
 			var out, errb bytes.Buffer
 			code := Run(RunInput{Pool: p, Worker: w, Workers: 1, Hours: 0.0001, Stdout: &out, Stderr: &errb,
-				Now: func() time.Time { return time.Now().UTC() }})
+				// The RECOVERY path is what this test is about and it starts no worker; the
+				// wall is the launch seam's and is proved in cmd/nova-swarm's own tests, so
+				// this unit takes rule 11's loud workaround rather than needing a binary.
+				NoSandbox: true,
+				Now:       func() time.Time { return time.Now().UTC() }})
 			if !strings.Contains(out.String(), "RUN RECLAIM slot=1 id="+id) {
 				t.Fatalf("a dead dispatcher's ended job is RECLAIMED:\n%s%s", out.String(), errb.String())
 			}
@@ -166,7 +170,11 @@ func TestARecoveredKilledJobRunsOnceMore(t *testing.T) {
 
 			var out, errb bytes.Buffer
 			Run(RunInput{Pool: p, Worker: w, Workers: 1, Hours: 0.0001, Stdout: &out, Stderr: &errb,
-				Now: func() time.Time { return time.Now().UTC() }})
+				// The RECOVERY path is what this test is about and it starts no worker; the
+				// wall is the launch seam's and is proved in cmd/nova-swarm's own tests, so
+				// this unit takes rule 11's loud workaround rather than needing a binary.
+				NoSandbox: true,
+				Now:       func() time.Time { return time.Now().UTC() }})
 			stdout := out.String()
 			want := "RUN RECLAIM slot=1 id=" + id + " end=killed dest=failed"
 			if !strings.Contains(stdout, want) {

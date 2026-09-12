@@ -52,7 +52,11 @@ func TestARecoveredBackgroundViolationIsQuarantined(t *testing.T) {
 
 	var out, errb bytes.Buffer
 	Run(RunInput{Pool: p, Worker: w, Workers: 1, Hours: 0.0001, Stdout: &out, Stderr: &errb,
-		Now: func() time.Time { return time.Now().UTC() }})
+		// The RECOVERY path is what this test is about and it starts no worker; the
+		// wall is the launch seam's and is proved in cmd/nova-swarm's own tests, so
+		// this unit takes rule 11's loud workaround rather than needing a binary.
+		NoSandbox: true,
+		Now:       func() time.Time { return time.Now().UTC() }})
 	stdout := out.String()
 	if !strings.Contains(stdout, "RUN RECLAIM slot=1 id="+id+" end="+EndViolation+" dest="+Failed) {
 		t.Errorf("a recovered job with a survivor is rule 11's violation, into failed/:\n%s%s", stdout, errb.String())

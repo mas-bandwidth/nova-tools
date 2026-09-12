@@ -36,6 +36,15 @@ type Worker struct {
 	WorkerDir   string   `json:"worker_dir"`
 	Deadline    string   `json:"deadline"`
 	Board       string   `json:"board,omitempty"`
+	// READ ROOTS: the one field the wall added (docs/SPEC-SANDBOX.md, "there is no --root
+	// flag"). Every job runs inside nova-sandbox, whose read set is the OS and toolchain
+	// roots plus what the caller names; a toolchain installed into a USER directory -- Go
+	// under ~/go, node under ~/.nvm, the Studio's /Users/<user>/toolchains -- is under no
+	// system root, so a harness that needs one dies inside the wall and runs outside it.
+	// It is OPTIONAL, it is a list of absolute existing directories, and it is READ-ONLY:
+	// the write set is the job's own and is never configurable from a file. A worker that
+	// needs nothing beyond the system roots names nothing here.
+	ReadRoots []string `json:"read_roots,omitempty"`
 }
 
 // The usage sources a description may declare (rule 13). There are two.
@@ -118,12 +127,153 @@ func LoadWorker(path string) (Worker, []error) {
 	if !placed {
 		problems = append(problems, fmt.Errorf("%s: harness_args is required and must place %s, so the model this description names reaches the harness; for OpenCode it is [\"run\", \"--model\", \"{model}\", \"--\", \"{prompt}\"] -- %s is the prompt FILE, and is appended last where harness_args does not name it", path, ModelPlaceholder, PromptPlaceholder))
 	}
+	// Rule 5 of the wall is "paths are resolved, absolute and existing", and a read root
+	// that is not there is refused BY THE WALL at every launch, one job at a time. It is
+	// worth one sentence here instead, at the one moment the caller can still fix it.
+	for i, root := range w.ReadRoots {
+		switch fi, err := os.Stat(root); {
+		case strings.TrimSpace(root) == "":
+			problems = append(problems, fmt.Errorf("%s: read_roots[%d] is empty; it wants an absolute directory a job may READ, such as a toolchain under a user directory", path, i))
+		case !filepath.IsAbs(root):
+			problems = append(problems, fmt.Errorf("%s: read_roots[%d] %q is relative; it wants an absolute directory, because the wall resolves every path before it grants anything", path, i, root))
+		case err != nil:
+			problems = append(problems, fmt.Errorf("%s: read_roots[%d] %s does not exist; the wall names every path and creates none", path, i, root))
+		case !fi.IsDir():
+			problems = append(problems, fmt.Errorf("%s: read_roots[%d] %s is not a directory; a read root is a directory and everything beneath it", path, i, root))
+		}
+	}
+	// THE KEY FILE IS IN NEITHER LIST, AND THE TOOL MUST NOT PUT IT IN ONE. The wall's
+	// caller section says "the key FILE is in neither list, so the job cannot read it even
+	// if it is told to" (SPEC-SANDBOX rule 6), and the job's read set is the SLOT
+	// directory -- which `RefreshSlot` fills by copying every regular file of `worker_dir`
+	// into it (copyTree). A `key_file` under `worker_dir` is therefore COPIED INSIDE THE
+	// WALL by this tool, at every refresh, and the job reads the copy under a green
+	// `SANDBOX OK` and a probe that passed: the probe's own `secret_inside_allow` check is
+	// made against the PROBE's lists, never against a job's (Rowan's Fable read of #88 at
+	// d0c1841, M1). A `read_roots` entry holding the key is the same hole without the copy.
+	// Both are refused HERE, at the one moment a person can still move the file.
+	if key := resolvePath(w.KeyFile); key != "" {
+		// AND THE REFUSAL NAMES THE KEY AS THE DESCRIPTION SPELLED IT. Every check below
+		// MATCHES on the resolved spelling, because that is the file the wall opens (rule
+		// 5) -- but the resolved spelling is a string that appears in no description and in
+		// no editor, so a line that leads with it names a path the reader cannot grep for
+		// and cannot edit. On windows a directory typed
+		// `C:\Users\RUNNER~1\AppData\Local\Temp\x` resolves to the long name and shares
+		// no prefix with what was typed; on darwin `/var/...` resolves to `/private/var/...`
+		// and merely hid the same fault behind a substring (windows CI of #88 at d8a5824).
+		// So the line leads with the TYPED, cleaned path and appends the resolved one ONCE
+		// when it differs -- one problem line per case, either way.
+		typedKey, typedDir := filepath.Clean(w.KeyFile), filepath.Clean(w.WorkerDir)
+		if dir := resolvePath(w.WorkerDir); dir != "" && insideDir(key, dir) {
+			problems = append(problems, fmt.Errorf("%s: key_file %s is inside worker_dir %s%s, which is copied into the slot directory before every job and IS the job's --read: the job would read a copy of the key inside the wall. Keep the key file outside worker_dir, such as ~/.keys/<provider>",
+				path, typedKey, typedDir, resolvedTail(insideDir(typedKey, typedDir), key, dir)))
+		}
+		for i, root := range w.ReadRoots {
+			if r := resolvePath(root); r != "" && insideDir(key, r) {
+				typedRoot := filepath.Clean(root)
+				problems = append(problems, fmt.Errorf("%s: key_file %s is inside read_roots[%d] %s%s, which every job of this worker may READ: the key reaches the job by environment (env_var) and its FILE is in neither list. Keep the key file outside every read root",
+					path, typedKey, i, typedRoot, resolvedTail(insideDir(typedKey, typedRoot), key, r)))
+			}
+		}
+		// AND THE SLOT DIRECTORIES, WHICH ARE SIBLINGS OF worker_dir, NOT UNDER IT. A job's
+		// `--read` is its slot, `<worker_dir>-<n>` (SlotDir), so a key file placed directly in a
+		// slot -- `<worker_dir>-1/.key`, or anything beneath it such as under its `jobs/` -- is
+		// READ INSIDE THE WALL under a probe that passed, and neither check above sees it:
+		// `insideDir` treats `worker-1` as a sibling of `worker` by design, and no `read_roots`
+		// entry names it (Rowan's Fable read 2 of #88 at fc400ce, L1). It is refused HERE rather
+		// than in `Run` beside the gate so that it holds for EVERY slot number, not only the ones
+		// one run happens to use, and so that `run` and `supervise` say it too.
+		//
+		// BOTH SPELLINGS OF worker_dir, TYPED AND RESOLVED. The check above resolves because what
+		// the wall COPIES is the target's contents; this one is different in kind. `SlotDir` is
+		// `fmt.Sprintf("%s-%d", w.WorkerDir, slot)` on the TYPED spelling, and `worker_dir` is only
+		// made absolute at load, never symlink-resolved -- so with `worker_dir` a symlink
+		// `/typed/worker -> /real/worker` the slot the tool creates and hands to `--read` is
+		// `/typed/worker-1`, while the resolved sibling `/real/worker-1` is a directory nobody
+		// builds. Asking only the resolved one let a key at `/typed/worker-1/.key` pass (Rowan's
+		// Fable read 3 of #88 at 56c7dcc, L1). The typed spelling is the one the slot is built
+		// from; the resolved one stays as defence in depth. Deduped, so the ordinary case where
+		// the two coincide refuses once.
+		for _, dir := range spellings(w.WorkerDir) {
+			slot, hit := "", ""
+			for _, k := range spellings(w.KeyFile) {
+				if slot = slotDirHolding(k, dir); slot != "" {
+					hit = k
+					break
+				}
+			}
+			if slot != "" {
+				// `slot` and `dir` are the spelling this hit was found under, and the typed
+				// one is tried first, so the ordinary case and a symlinked `worker_dir` both
+				// name the directory the tool would actually build and hand to `--read`.
+				problems = append(problems, fmt.Errorf("%s: key_file %s is inside slot directory %s%s, which IS the job's --read: the job would read the key inside the wall under a probe that passed. Keep the key file outside worker_dir and outside every slot directory %s-<n>, such as ~/.keys/<provider>",
+					path, typedKey, slot, resolvedTail(hit == typedKey, hit, slot), dir))
+				break
+			}
+		}
+	}
 	if w.Deadline != "" {
 		if _, err := time.ParseDuration(w.Deadline); err != nil {
 			problems = append(problems, fmt.Errorf("%s: deadline wants a duration such as 20m, got %q", path, w.Deadline))
 		}
 	}
 	return w, problems
+}
+
+// resolvePath is a path with its symlinks followed, which is how the wall reads one (rule
+// 5): a check made on the typed spelling is a check a symlink walks around. A path that
+// cannot be resolved -- it does not exist yet, most often -- is cleaned and answered as
+// typed, because a refusal is worth more than a silence and the caller can still see it.
+func resolvePath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(real)
+	}
+	return filepath.Clean(path)
+}
+
+// spellings is the distinct ways one path can be written for a check: as typed (cleaned)
+// and as resolved. A check that asks only one of them is a check the other walks around --
+// which side matters depends on what the wall does with the path, so a check that cannot
+// choose asks both (read 3 of #88, L1). An empty path has no spellings.
+func spellings(path string) []string {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	typed, real := filepath.Clean(path), resolvePath(path)
+	if typed == real {
+		return []string{typed}
+	}
+	return []string{typed, real}
+}
+
+// resolvedTail is the ONE tail a key refusal grows, and only where the resolution is the
+// thing that made the match: a `key_file` that is a symlink into the read set, or a
+// `worker_dir` that is one. Everything else in the line is the spelling the DESCRIPTION
+// used, because that is the string a person greps for and the one they will edit; the
+// resolved spelling appears in no file they have.
+//
+// Naming the resolved path unconditionally is what the windows CI of #88 at d8a5824 caught:
+// a temp directory typed `C:\Users\RUNNER~1\AppData\Local\Temp\x` resolves to the long
+// name and shares no prefix with what was typed, so the refusal named a path nobody had
+// written; on darwin the same fault hid behind a substring, because `/var/...` resolves to
+// `/private/var/...` and merely gains a prefix. One problem line per case, either way.
+func resolvedTail(typedShowsIt bool, key, dir string) string {
+	if typedShowsIt {
+		return ""
+	}
+	return fmt.Sprintf(" (through symlinks: %s is inside %s)", key, dir)
+}
+
+// insideDir says whether a path lies under a directory. The directory itself is not inside
+// itself, and a sibling whose name merely starts the same way is not either.
+func insideDir(path, dir string) bool {
+	if path == dir {
+		return false
+	}
+	return strings.HasPrefix(path, strings.TrimSuffix(dir, string(os.PathSeparator))+string(os.PathSeparator))
 }
 
 // DefaultDeadline is the worker description's own, which add --deadline overrides per task.
@@ -133,6 +283,26 @@ func (w Worker) DefaultDeadline() time.Duration {
 		return 0
 	}
 	return d
+}
+
+// slotDirHolding answers the slot directory of workerDir that holds path -- a sibling of
+// workerDir spelled <base>-<digits>, which is what SlotDir builds -- or "" when path is
+// under no slot. A path that IS a slot directory is not held by it, which matches insideDir.
+func slotDirHolding(path, workerDir string) string {
+	parent, base := filepath.Dir(workerDir), filepath.Base(workerDir)
+	rel, err := filepath.Rel(parent, path)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return ""
+	}
+	first, _, under := strings.Cut(rel, string(os.PathSeparator))
+	if !under || first == "" {
+		return "" // the path is the sibling itself, not something inside it
+	}
+	digits, ok := strings.CutPrefix(first, base+"-")
+	if !ok || digits == "" || strings.TrimLeft(digits, "0123456789") != "" {
+		return ""
+	}
+	return filepath.Join(parent, first)
 }
 
 // SlotDir is a slot's own working directory, <worker-dir>-<slot>.

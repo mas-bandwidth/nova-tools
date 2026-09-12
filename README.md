@@ -644,7 +644,7 @@ the natural `&&` chain would file exactly the duplicates.
 ```
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered   # queue one task from a file, never from an argument
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered           # queue a directory of them under one batch id
-nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file>                  # the dispatcher: one slot, one data home, one deadline per worker
+nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sandbox <path>] [--no-sandbox]   # the dispatcher: one slot, one data home, one deadline, one WALL per worker
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
 nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
@@ -671,6 +671,32 @@ $ nova-swarm status --pool ./pool --max 20
 STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
 ```
 
+**`run` needs `nova-sandbox` before it needs anything else.** Every job runs inside it
+(docs/SPEC-SANDBOX.md): the job directory and its data home are the only writable paths, the
+worker home and whatever `read_roots` names are readable, and the key file, `~/.ssh` and the
+`gh` configuration are outside both lists and unreadable to the worker. `run` proves the
+wall ONCE, before the first worker, and refuses the pass if it cannot:
+
+```
+$ go build -o ~/bin/nova-sandbox ./cmd/nova-sandbox      # or name it with --sandbox <path>
+$ nova-swarm run --pool ./pool --workers 4 --hours 2 --worker ./worker.json
+RUN POOL workers=4 hours=2 worker=deepseek-1 model=deepseek/deepseek-chat pool=./pool
+RUN START id=20260912T0141Z-task-1a2b3c slot=1 pid=41321 pgid=41321 started=2026-09-12T01:41:07Z deadline=20m tokens=100000 job=/home/you/worker-1/jobs/20260912T0141Z-task-1a2b3c
+```
+
+A machine with no backend, or a wall that fails a check, starts no worker at all:
+
+```
+$ nova-swarm run --pool ./pool --workers 4 --hours 2 --worker ./worker.json
+RUN POOL workers=4 hours=2 worker=deepseek-1 model=deepseek/deepseek-chat pool=./pool
+RUN REFUSED reason=no_sandbox: this machine has no sandbox backend, and a job this tool cannot contain does not run: CHECK OK backend=none abi=- net=unenforceable note=the linux body of docs/SPEC-SANDBOX.md is not built yet. The one workaround is `--no-sandbox`, which runs every job with no OS containment and says so once per job
+```
+
+`--no-sandbox` is that workaround and nothing else is: no environment variable and no file
+turns the wall off, and a pass that takes it says so once per job, on stderr, before the job
+starts — `RUN UNSANDBOXED id=<id> slot=<n>: no OS containment; every read and write this job
+makes is yours`.
+
 **The one input `run` cannot proceed without** is the worker description, and every field
 below is required. This one ran two real DeepSeek workers end to end on 2026-09-11:
 
@@ -685,9 +711,28 @@ below is required. This one ran two real DeepSeek workers end to end on 2026-09-
   "harness": "opencode",
   "harness_args": ["run", "--model", "{model}", "--title", "nova-swarm", "--", "{prompt}"],
   "worker_dir": "/home/you/worker",
-  "deadline": "20m"
+  "deadline": "20m",
+  "read_roots": ["/home/you/toolchains"]
 }
 ```
+
+`read_roots` is the one optional field, and it is the wall's: a toolchain installed under a
+user directory — Go under `~/go`, node under `~/.nvm`, the Studio's `/Users/<you>/toolchains`
+— is under no system root, so a harness that needs one runs outside the wall and dies inside
+it. Name those directories here and they are READ-ONLY for every job of this worker, named
+once so that N workers read one copy. A worker that needs nothing beyond the system roots
+names nothing, and an absolute directory that does not exist is refused when the description
+is read, not at every launch.
+
+`key_file` lives **outside `worker_dir` and outside every `read_roots` entry**, which is why
+the example keeps it in `~/.keys`. `worker_dir` is copied into the slot directory before
+every job and the slot directory is the job's one readable path, so a key file inside it
+would be copied INSIDE the wall and read by the worker under a green line; a key inside a
+read root is readable without even the copy. The key reaches the harness by `env_var` and
+its FILE is in neither list (docs/SPEC-SANDBOX.md rule 6). A key file inside a SLOT
+directory — `<worker_dir>-1/.key`, or anything under it such as its `jobs/` — is the same
+hole from the other side, since the slot IS the job's readable path, and it is refused too.
+All three placements are refused when the description is read.
 
 `harness_args` is the invocation the harness needs, and `{model}` is where the model goes:
 a harness handed nothing but a path reads that path as a project directory and does
@@ -711,9 +756,26 @@ one file a first run cannot start without is the one file you do not have to inv
 A harness is any program on `PATH` that can be handed a prompt file and left to work. This
 is everything `nova-swarm` promises it, and everything it asks back:
 
-- **Its working directory is the SLOT directory**, `<worker_dir>-<n>`: the one-way copy of
-  your `worker_dir`, refreshed before every job. Relative paths in a worker description are
-  made absolute at load, so the child always gets paths it can open from where it stands.
+- **Its working directory is the JOB directory**, `<worker_dir>-<n>/jobs/<id>`, and the
+  SLOT directory above it — the one-way copy of your `worker_dir`, refreshed before every
+  job — is readable from there. The cwd is the job directory because the wall is: a cwd
+  outside every named path denies `getcwd(3)` and kills every `git` command before it reads
+  anything, and a harness that evaluates its own `external_directory` permission relative to
+  its cwd would call the job directory "external" to itself. Relative paths in a worker
+  description are made absolute at load, so the child always gets paths it can open from
+  where it stands.
+- **It is contained by the operating system.** The job directory and its data home are
+  writable; the slot directory and `read_roots` are readable; everything else on disk,
+  including the key file it was given the VALUE of, is denied by the kernel. A refused read
+  or write is not an error and does not end the run — the prompt says so — and a command
+  that runs outside the wall and dies inside it is missing a `read_roots` entry. **Unless it
+  lives directly in your home directory**: the directory of the resolved command is itself a
+  read root, so the wall refuses `SANDBOX REFUSED reason=bad_read` at every launch rather
+  than make the whole of `$HOME` — `.ssh`, `.config/gh`, the keychain — readable inside it.
+  The remedy there is to move the harness into a directory of its own, `~/.local/bin/` being
+  the usual one, and `read_roots` is no remedy at all if what you name is the bare home.
+- **`HOME` is the job's own data home**, inside the write set, so the harness's own config
+  and cache land in the job and not in yours.
 - **Its arguments are `harness_args`**, with `{model}` replaced by the description's model,
   `{prompt}` by the path of the prompt file, and `{base_url}` by `base_url`. Where
   `harness_args` names no `{prompt}`, the prompt file is appended LAST. The task text is

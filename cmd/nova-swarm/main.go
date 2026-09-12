@@ -40,8 +40,8 @@ const usage = `nova-swarm: a pool of one-task workers, with the ways a swarm fai
 usage:
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
-  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>]
-  nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file>   (spawned by run; refused by hand)
+  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
+  nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
   nova-swarm status    --pool <dir> [--max <n>]
   nova-swarm stop      --pool <dir>
   nova-swarm requeue   --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>]
@@ -77,6 +77,20 @@ THE KEY IS READ AS DATA AND NEVER SOURCED. It lives in one file the worker
 description names -- one line, the bare key or NAME=<key>, mode 0600 -- and it is
 never an argument, never a log line, never in a file this tool writes. The
 harness config this tool writes carries the variable's NAME, never its value.
+
+EVERY JOB RUNS INSIDE nova-sandbox (docs/SPEC-SANDBOX.md). The job directory and
+its data home are the only writable paths; the slot directory and whatever
+read_roots names in the worker description are readable; the key file, ~/.ssh and
+the gh configuration are in neither list and the kernel denies them. The run verb
+proves
+the wall ONCE before the first worker and refuses the pass if it cannot --
+RUN REFUSED reason=no_sandbox on a machine with no backend, reason=sandbox_probe
+on a wall that failed a check -- and starts no worker either way. --sandbox names
+the binary when it is not on PATH under its own name. --no-sandbox is the ONE
+workaround: it runs every job with no OS containment and says so once per job, on
+stderr, before the job starts. No environment variable and no file turns the wall
+off; it is argv, where ps shows it. A command that runs outside the wall and dies
+inside it is missing a read_roots entry.
 
 --workers is capped at 64 and a request above it is a REFUSAL, not a silent
 clamp: a caller who asked for 200 workers has a belief about throughput that a
@@ -410,8 +424,16 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	launchTimeout := f.fs.Int("launch-timeout", 10, "")
 	usageInterval := f.fs.Int("usage-interval", 5, "")
 	backoff := f.fs.Int("backoff", int(swarm.DefaultBackoff/time.Second), "")
+	// THE WALL (docs/SPEC-SANDBOX.md). Every job runs inside nova-sandbox: --sandbox names
+	// the binary when it is not on PATH under its own name, and --no-sandbox is rule 11's
+	// ONE loud workaround, which a person types and no environment variable can produce.
+	sandboxPath := f.fs.String("sandbox", "", "")
+	noSandbox := f.fs.Bool("no-sandbox", false, "")
 	if !f.parse(args, stderr) {
 		return 2
+	}
+	if *noSandbox && *sandboxPath != "" {
+		f.add("--no-sandbox and --sandbox together: one asks for no wall at all and the other names the wall to use; pass at most one")
 	}
 	f.wantMax(*max)
 	if *backoff < 1 {
@@ -453,6 +475,23 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 			oneline.Field(w.Harness), oneline.Field(*worker))
 		return 2
 	}
+	// The wall is resolved ONCE, here, before the lock and before the first worker, so
+	// that every job of this pass runs inside the same binary and a miss is one refusal
+	// rather than one per job.
+	wall := ""
+	if !*noSandbox {
+		found, err := swarm.LookSandbox(*sandboxPath)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-swarm run: %s\n", oneline.Err(err))
+			return 2
+		}
+		wall = found
+	}
+	// There is NO `RUN NOTE` about --no-sandbox: a pass prints exactly one RUN NOTE, the
+	// remedy line at the end (SPEC-SWARM's output grammar, and a test that counts them).
+	// The loudness of the workaround is one RUN UNSANDBOXED line per job, which is where
+	// rule 11 puts it anyway: before the job starts, on stderr, in every log that holds
+	// the run.
 	// A budget nothing can observe is a promise this tool cannot keep, and the moment to
 	// say so is BEFORE the first worker, which is the point at which the caller can still
 	// fix it.
@@ -483,7 +522,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		UsageInterval: time.Duration(*usageInterval) * time.Second,
 		Backoff:       time.Duration(*backoff) * time.Second,
 		Stdout:        stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
-		Supervisor: self, WorkerFile: *worker,
+		Supervisor: self, WorkerFile: *worker, Sandbox: wall, NoSandbox: *noSandbox,
 	})
 }
 
@@ -495,6 +534,10 @@ func cmdSupervise(args []string, stdout, stderr io.Writer, now time.Time) int {
 	nonce := f.fs.String("nonce", "", "")
 	worker := f.fs.String("worker", "", "")
 	usageInterval := f.fs.Int("usage-interval", 5, "")
+	// The wall this job runs inside, handed down by the dispatcher that resolved it. A
+	// supervisor is run's child and nobody's verb, so neither flag is one a person types.
+	sandboxPath := f.fs.String("sandbox", "", "")
+	noSandbox := f.fs.Bool("no-sandbox", false, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -520,6 +563,13 @@ func cmdSupervise(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return refuse(stderr, " supervise", "no `nova-swarm run` holds this pool's lock, and supervise is run's child rather than a verb; it wants to be spawned by `nova-swarm run --pool <dir> --workers <n> --hours <h> --worker <file>`")
 		}
 	}
+	// The wall this job runs inside is the dispatcher's, handed down: one of the two is
+	// required, and neither is a thing a person types. It is checked HERE, after the door
+	// above, so that a hand-typed `supervise` is told about the door rather than about a
+	// flag it was never meant to pass.
+	if *sandboxPath == "" && !*noSandbox {
+		return refuse(stderr, " supervise", "--sandbox is required and names the nova-sandbox binary this job runs inside (docs/SPEC-SANDBOX.md); `nova-swarm run` resolves it once and passes it to every supervisor, and --no-sandbox is the one workaround it passes instead")
+	}
 	w, problems := swarm.LoadWorker(*worker)
 	if len(problems) > 0 {
 		for _, problem := range problems {
@@ -539,6 +589,7 @@ func cmdSupervise(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	return swarm.Supervise(swarm.SuperviseInput{
 		Pool: p, Task: *task, Slot: *slot, Nonce: *nonce, Worker: w, Sidecar: sc, Key: key,
+		Sandbox:       *sandboxPath,
 		UsageInterval: time.Duration(*usageInterval) * time.Second,
 		Stdout:        stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
 	})

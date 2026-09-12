@@ -38,6 +38,12 @@ type RunInput struct {
 	Now            func() time.Time
 	Supervisor     string // this binary, re-invoked as `supervise`
 	WorkerFile     string // the worker description, handed on to the supervisor
+	// THE LAUNCH SEAM (docs/SPEC-SANDBOX.md, the dispatcher caller). Sandbox is the
+	// resolved nova-sandbox binary every job runs inside. NoSandbox is rule 11's one loud
+	// workaround, typed by a person: it runs the jobs with no OS containment and says so
+	// once per job. The two are exclusive and the verb refuses both at once.
+	Sandbox   string
+	NoSandbox bool
 }
 
 // WorkerCap is the ceiling on --workers (Glenn, 2026-09-10). A request above it is a
@@ -70,6 +76,18 @@ func Run(in RunInput) int {
 
 	fmt.Fprintf(out, "RUN POOL workers=%d hours=%s worker=%s model=%s pool=%s\n",
 		in.Workers, trimFloat(in.Hours), oneline.Field(in.Worker.Name), oneline.Field(in.Worker.Model), oneline.Field(p.Dir))
+
+	// THE PROBE, ONCE, BEFORE THE FIRST WORKER (SPEC-SANDBOX rule 10 and test 23). It
+	// costs a process and it answers a question about the MACHINE, not about a job, so it
+	// runs here rather than per task -- and a machine that cannot prove its wall starts no
+	// worker at all. `--no-sandbox` is the one workaround and it skips the probe, because
+	// there is then nothing to prove.
+	if !in.NoSandbox {
+		if reason, text := SandboxGate(in.Sandbox, p.Dir, in.Worker.KeyFile, errOut); reason != "" {
+			fmt.Fprintf(errOut, "RUN REFUSED reason=%s: %s\n", oneline.Field(reason), oneline.Escape(text))
+			return 2
+		}
+	}
 
 	said := false // anything that makes this run exit 1
 	// TWO DIFFERENT THINGS, counted apart. `quarantined` is rule 17's: a SLOT FILE this
@@ -210,14 +228,22 @@ func Run(in RunInput) int {
 			// which is neither done nor failed: the dash the grammar names for exactly that.
 			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=unlaunched dest=%s usage=- requeued=false\n", n, oneline.Field(d.File.Job), Dash)
 		default:
-			said = true
-			quarantined[n] = true
 			// A reservation whose launch is unproven is rewritten to `orphaned` with its
 			// nonce KEPT -- under slots.lock, after a recheck that it still reads reserved
 			// with that nonce, and adopting instead if an identify landed in between.
+			//
+			// THE ADOPTION IS NOT A QUARANTINE, and the exit code is written after the
+			// recheck rather than before it. SPEC-SWARM.md:541 gives exit 1 to "a run that
+			// ended with a quarantined slot or a LAUNCH-FAILED job", and an adopted slot
+			// is neither: it is a supervisor that identified while this dispatcher was
+			// reading, whose job this pass then finishes. Before this the pass printed
+			// RUN ADOPT, RUN DONE, `RUN OK done=1` and `RUN NOTE the pool drained` -- and
+			// exited 1 over them, because `said` had been set a few lines above and the
+			// adopting branch only took the slot back out of the quarantine map. Seen on
+			// ubuntu CI 2026-09-12 by the hangup test, which is the one test that reaches
+			// this branch with a supervisor that really is alive.
 			if d.File.State == SlotReserved {
 				if adopted, sf, err := p.Orphan(n, d.File.Nonce); err == nil && adopted {
-					delete(quarantined, n)
 					sc, _ := p.ReadSidecar(Running, sf.Job)
 					started := parseStamp(sf.LaunchedAt, now())
 					watching[n] = &running{sc: sc, slot: n, nonce: sf.Nonce, jobDir: sf.JobDir, started: started,
@@ -227,6 +253,8 @@ func Run(in RunInput) int {
 					continue
 				}
 			}
+			said = true
+			quarantined[n] = true
 			fmt.Fprintf(out, "RUN QUARANTINE slot=%d id=%s: %s\n", n, oneline.Field(dashOr(d.File.Job)), oneline.Escape(d.Reason))
 		}
 	}
@@ -393,6 +421,17 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	// fork, and every job sampled at the supervisor's own default.
 	supervisorArgs := []string{"supervise", "--pool", p.Dir, "--task", sc.ID,
 		"--slot", strconv.Itoa(slot), "--nonce", nonce, "--worker", in.WorkerFile}
+	// THE WALL TRAVELS WITH THE JOB. The supervisor is the process that spawns the
+	// harness, so it is the process that wraps it; the dispatcher hands it the binary it
+	// resolved once, so that thirty jobs do not do thirty PATH lookups and a machine that
+	// changes underneath a pass cannot give two jobs two different walls.
+	if in.NoSandbox {
+		// Rule 11: one loud line per job, on stderr, BEFORE the job starts.
+		fmt.Fprintln(in.Stderr, UnsandboxedLine(sc.ID, slot))
+		supervisorArgs = append(supervisorArgs, "--no-sandbox")
+	} else {
+		supervisorArgs = append(supervisorArgs, "--sandbox", in.Sandbox)
+	}
 	if in.UsageInterval > 0 {
 		supervisorArgs = append(supervisorArgs, "--usage-interval", strconv.Itoa(int(in.UsageInterval.Seconds())))
 	}

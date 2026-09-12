@@ -34,6 +34,13 @@ type bench struct {
 	keyFile  string
 	path     string
 	extraEnv []string
+	// THE LAUNCH SEAM (docs/SPEC-SANDBOX.md, "the two callers"): every job runs inside
+	// nova-sandbox, so every bench knows where that binary is. `sandbox` is the REAL one,
+	// built from this repository, which has a wall on darwin and refuses elsewhere;
+	// `fakeSandbox` is the stand-in that records its argv and enforces nothing, so the
+	// seam itself is testable on a platform whose body is not built.
+	sandbox     string
+	fakeSandbox string
 }
 
 const fakeKey = "sk-fake-0123456789-not-a-key"
@@ -50,6 +57,7 @@ func newBench(t *testing.T) *bench {
 	// a child inside its deadline turns a contract test into a race: three tests that kill
 	// a worker went red under the load and green on their own (2026-09-11).
 	b.binary, b.path = builtBinaries(t)
+	b.sandbox, b.fakeSandbox = builtSandbox, builtFakeSandbox
 
 	home := filepath.Join(dir, "worker-home")
 	if err := os.MkdirAll(home, 0o755); err != nil {
@@ -106,6 +114,17 @@ func builtBinaries(t *testing.T) (string, string) {
 		if _, buildErr = build(t, harnessDir, "sqlite3", "./internal/swarm/testdata/fakesqlite"); buildErr != nil {
 			return
 		}
+		// THE WALL AND THE STAND-IN. nova-sandbox is the binary every job now runs inside
+		// (docs/SPEC-SANDBOX.md); it is built here, from this repository, so that no test
+		// depends on what is installed on the machine. The fake beside it records the argv
+		// the dispatcher built and enforces nothing, which is how the seam is tested on a
+		// platform whose sandbox body is not built.
+		if builtSandbox, buildErr = build(t, harnessDir, "nova-sandbox", "./cmd/nova-sandbox"); buildErr != nil {
+			return
+		}
+		if builtFakeSandbox, buildErr = build(t, harnessDir, "fake-sandbox", "./cmd/nova-swarm/testdata/fakesandbox"); buildErr != nil {
+			return
+		}
 		builtPath = harnessDir + string(os.PathListSeparator) + os.Getenv("PATH")
 	})
 	if buildErr != nil {
@@ -115,11 +134,13 @@ func builtBinaries(t *testing.T) (string, string) {
 }
 
 var (
-	buildOnce sync.Once
-	builtDir  string
-	builtTool string
-	builtPath string
-	buildErr  error
+	buildOnce        sync.Once
+	builtDir         string
+	builtTool        string
+	builtPath        string
+	builtSandbox     string
+	builtFakeSandbox string
+	buildErr         error
 )
 
 // TestMain removes the one directory these tests keep outside a t.TempDir(): the two
@@ -207,7 +228,25 @@ func (b *bench) add(task string, extra ...string) string {
 func (b *bench) run(args ...string) (int, string, string) {
 	b.t.Helper()
 	all := append([]string{"run", "--pool", b.pool, "--workers", "1", "--hours", "0.25", "--worker", b.worker}, args...)
-	return b.swarm(all...)
+	return b.swarm(withSandbox(all)...)
+}
+
+// withSandbox is how every `run` in this package names the wall, and it is one function
+// rather than a flag typed thirty times: on darwin, whose body is built, the contract tests
+// run INSIDE the real nova-sandbox, which is the whole point of the seam -- the transaction
+// is proved where it actually runs. On a platform whose body is not built, nova-sandbox
+// REFUSES (rule 1), so the tests take rule 11's one loud workaround and say so in the argv
+// where a reader can see it. A caller that already named one is left alone.
+func withSandbox(args []string) []string {
+	for _, a := range args {
+		if a == "--sandbox" || a == "--no-sandbox" {
+			return args
+		}
+	}
+	if runtime.GOOS == "darwin" {
+		return append(args, "--sandbox", builtSandbox)
+	}
+	return append(args, "--no-sandbox")
 }
 
 func field(t *testing.T, out, key string) string {
