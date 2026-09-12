@@ -1322,7 +1322,12 @@ var fuseAudit = audit.Config{
 	// hintFor is the fourth: it returns this package's own boxHint constant, or the empty
 	// string, and nothing else -- a check on a flag name, with no caller text in it. The
 	// classifier walks its body like the others, so the claim is checked rather than taken.
-	Escapers: []string{"fuse.OneLine", "why", "since", "hintFor"},
+	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
+	// every one of its four fields through oneline.Field inside internal/buildinfo, where
+	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
+	// a release stamp holding a newline, which is the one field of that line that comes
+	// from outside the toolchain.
+	Escapers: []string{"fuse.OneLine", "why", "since", "hintFor", "buildinfo.Line"},
 	// One entry per site, keyed by file, function and source text. Each is a claim, and
 	// each claim is either checked by a test named here or stated as the reason a reader
 	// would accept. The usage constant needs no entry: a package constant is a literal.
@@ -1333,6 +1338,11 @@ var fuseAudit = audit.Config{
 	},
 	Shadows: []string{"fuse", "OneLine", "Fold", "why", "since"},
 	Imports: []string{
+		// version.go, and the reason it cannot write past the escape: buildinfo reads
+		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
+		// its own, and returns a STRING that this package prints -- rendered field by
+		// field through oneline.Field before it is returned.
+		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"sort"`, `"strings"`, `"time"`,
 		// bounded prints the capped quarantine listing and the one MORE line that stands
 		// for what it did not print. Every line reaching it is rendered by a fmt.Sprintf

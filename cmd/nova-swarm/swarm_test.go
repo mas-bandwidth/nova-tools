@@ -187,9 +187,23 @@ func write(t *testing.T, path, body string) {
 	}
 }
 
-// swarm runs the built binary, which is what a stranger meets at a shell prompt.
+// swarm runs the built binary, which is what a stranger meets at a shell prompt. It fails
+// the test on a binary that would not run at all, so it belongs to the TEST GOROUTINE:
+// anything running beside the test calls swarmTry and hands the answer back.
 func (b *bench) swarm(args ...string) (exit int, stdout, stderr string) {
 	b.t.Helper()
+	exit, stdout, stderr, err := b.swarmTry(args...)
+	if err != nil {
+		b.t.Fatalf("running nova-swarm %s: %v", strings.Join(args, " "), err)
+	}
+	return exit, stdout, stderr
+}
+
+// swarmTry is swarm with the failure RETURNED rather than reported: t.Fatalf from a
+// goroutine other than the test's own ends that goroutine and not the test, and after
+// t.TempDir has been cleaned it panics (#122). Every caller off the test goroutine uses
+// this one and the test goroutine does the asserting.
+func (b *bench) swarmTry(args ...string) (exit int, stdout, stderr string, err error) {
 	cmd := exec.Command(b.binary, args...)
 	cmd.Dir = b.dir
 	cmd.Env = append([]string{"PATH=" + b.path, "Path=" + b.path, "HOME=" + b.dir}, b.extraEnv...)
@@ -203,14 +217,14 @@ func (b *bench) swarm(args ...string) (exit int, stdout, stderr string) {
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	var exitErr *exec.ExitError
-	switch err := cmd.Run(); {
-	case err == nil:
-	case errors.As(err, &exitErr):
+	switch runErr := cmd.Run(); {
+	case runErr == nil:
+	case errors.As(runErr, &exitErr):
 		exit = exitErr.ExitCode()
 	default:
-		b.t.Fatalf("running nova-swarm %s: %v", strings.Join(args, " "), err)
+		err = runErr
 	}
-	return exit, out.String(), errb.String()
+	return exit, out.String(), errb.String(), err
 }
 
 func (b *bench) add(task string, extra ...string) string {
@@ -576,21 +590,97 @@ func mustReadDirNames(t *testing.T, dir string) []string {
 // Rule 10: the note file, appended by the tool, counted in the report.
 func TestANoteReachesARunningWorker(t *testing.T) {
 	b := newBench(t)
-	id := b.add("a worker that reads its notes\nFAKE-SLEEP 2\nFAKE-FINDINGS 1\n")
+	// 20s, UNDER THIS BENCH'S 30s DEADLINE, and the cap is this fixture's to set. A wait
+	// bounded BY the deadline is not bounded at all: the wait and the reaper come due in the
+	// same instant, so a note that never arrives fails as `end=killed` -- rule 7's re-queue
+	// and a second reap -- and says nothing about the wait that caused it. Ten seconds under
+	// it, the worker outlives its own wait, publishes its report, and the fake names the
+	// wait it gave up on in one line of stderr that the harness log carries.
+	id := b.add("a worker that reads its notes\nFAKE-AWAIT-NOTE 20\nFAKE-FINDINGS 1\n")
+	// THE WORKER HOLDS FOR THE NOTE, AND NOTHING HERE IS A CLOCK. The fake waits for the
+	// note file to carry a line (`FAKE-AWAIT-NOTE`, bounded by its own seconds, which this
+	// fixture keeps under the job's deadline) instead of sleeping two seconds: with a sleep,
+	// a sender delayed past it -- a loaded runner, or a 3s stall in front of the send, which
+	// reproduces it as `NOTE REFUSED` at 5.16s -- posts to a job that has already ended.
+	// Both sides now wait on an observable: the sender on the running record, the worker on
+	// the note.
+	//
+	// THE NOTE GOROUTINE OWNS NOTHING IT CANNOT HAND BACK (#122). It waits for an
+	// OBSERVABLE -- the running record carrying this job's directory, which `run` writes
+	// before the handshake and which is exactly what `note` needs to exist -- sends ONE
+	// note, and puts its exit and its stderr on a channel. It never calls t.Fatal: a
+	// t.Fatal off the test goroutine ends only that goroutine, and after t.TempDir's
+	// cleanup it panics, which is the panic #120 logged. The test goroutine JOINS it below
+	// and does every assertion itself.
+	type noteRun struct {
+		exit   int
+		stderr string
+		err    error
+	}
+	sent := make(chan noteRun, 1)
 	go func() {
-		// The note lands while the job is running, which is the whole point of the file.
-		for i := 0; i < 100; i++ {
-			if exit, _, _ := b.swarm("note", "--pool", b.pool, "--task", id, "--text", "look at the owed list first"); exit == 0 {
-				return
+		res := noteRun{exit: -1, err: errors.New("the job never published a running record with a job directory")}
+		defer func() { sent <- res }()
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			if !runningJobDir(b.pool, id) {
+				time.Sleep(25 * time.Millisecond)
+				continue
 			}
-			time.Sleep(50 * time.Millisecond)
+			exit, _, errOut, err := b.swarmTry("note", "--pool", b.pool, "--task", id, "--text", "look at the owed list first")
+			res = noteRun{exit: exit, stderr: errOut, err: err}
+			return
 		}
 	}()
 	exit, stdout, stderr := b.run()
+	note := <-sent
+	if note.err != nil {
+		t.Fatalf("the note could not be sent: %v", note.err)
+	}
+	if note.exit != 0 {
+		t.Fatalf("the note exited %d: %s", note.exit, note.stderr)
+	}
 	if exit != 0 {
 		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
 	}
 	mustContain(t, "the run", stdout, "notes=1/1")
+}
+
+// A WAIT THAT GIVES UP IS BOUNDED UNDER THE DEADLINE AND SAYS SO.
+//
+// The other half of the fixture above, and cheap: no note is ever sent. A `FAKE-AWAIT-NOTE`
+// bound EQUAL to the job's deadline would end this run as `end=killed` -- rule 7's re-queue
+// and a second reap -- with nothing anywhere naming the wait that caused it, which is the
+// silent failure both ratifying reads of #126 named. Bounded UNDER the deadline the worker
+// outlives its own wait, publishes its report, and the run is `dest=done`; and the wait
+// names itself in one line the harness log carries, so a person reading the log after a
+// green run still learns that no note arrived.
+func TestAWorkerThatWaitedForANoteThatNeverCameSaysSo(t *testing.T) {
+	b := newBench(t)
+	id := b.add("a worker that waits for a note nobody sends\nFAKE-AWAIT-NOTE 1\nFAKE-FINDINGS 1\n")
+
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	// The wait ended on its own, well under the 30s deadline: the report was published.
+	mustContain(t, "the run", stdout, "result=ok")
+	mustContain(t, "the run", stdout, "dest=done")
+	mustContain(t, "the harness log", b.jobFile(id, "harness.log"), "the wait gave up")
+}
+
+// runningJobDir is the observable the note goroutine waits on: <pool>/running/<id>.json
+// with a `job` in it. `note` REFUSES a task that is not running with a job directory, so
+// this is the same question the verb asks, asked before it is asked -- not a sleep.
+func runningJobDir(pool, id string) bool {
+	raw, err := os.ReadFile(filepath.Join(pool, "running", id+".json"))
+	if err != nil {
+		return false
+	}
+	var sc struct {
+		Job string `json:"job"`
+	}
+	return json.Unmarshal(raw, &sc) == nil && sc.Job != ""
 }
 
 // Rule 13, the rate-limit half: a provider's 429 is not a failed task. The dispatcher

@@ -40,6 +40,7 @@ import (
 const usage = `nova-merge: an ordered lane onto one base, with the races taken out (see docs/SPEC-MERGE.md)
 
 usage:
+  nova-merge version    print this build identity (--version also accepted)
   nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name>
   nova-merge add        --lane <dir> --pr <n> [--needs-read]
   nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
@@ -178,8 +179,7 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
-		fmt.Fprintf(stdout, "nova-merge %s\n", oneline.Field(deps.BuildID()))
-		return 0
+		return cmdVersion(rest, stdout, stderr, deps)
 	}
 	// The three lane properties and the one base-sha spelling, refused by NAME off the
 	// verb that owns them, before anything is parsed: a --base on a queueing verb would

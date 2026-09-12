@@ -288,3 +288,213 @@ func TestTheReadmeFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 		t.Errorf("the README shows %d of the %d lines this command prints; an abridgement presented as a run is a claim about output nobody checked", shown, count)
 	}
 }
+
+// Emma, dogfooding v0.12.0 (nova-tools #104, 2026-09-12): `nova-board quickstart
+// --dir ./board --stale 10m` "Expected: `quickstart` to create the directory if
+// it does not already exist (consistent with `nova-swarm quickstart --pool
+// ./pool` which creates the pool directory)", and instead:
+//
+//	nova-board quickstart: --dir wants a directory of .board card files: stat
+//	/Users/glenn/emma-working/scratch/test-board: no such file or directory;
+//	run: nova-board help
+//
+// Glenn ruled on nova-tools #109: "It is best to do the right thing if a friend
+// uses it a certain way, or to correct docs to show only right way. Pick one."
+// The right thing: `quickstart` MAKES the directory (TestQuickstartMakesTheDirectory
+// below), as `nova-swarm quickstart --pool` makes its pool. Every other verb still
+// refuses a directory that is not there -- quickstart is the one verb whose whole
+// job is a first run, and a first run has nowhere to write yet, while a `list` or a
+// `take` against a directory that does not exist is a caller who named the wrong
+// path, and making it for them would hide the typo behind an empty board.
+//
+// The refusal those verbs print carries the way forward. A refusal names what the
+// flag wants (SPEC-BOARD.md:808-814, BUILD item 6 -- an entry in the build list,
+// not a numbered rule), and here what it wants is a directory that exists.
+func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "board")
+	for _, verb := range []string{"list", "check", "add"} {
+		args := []string{verb, "--dir", missing, "--stale", "10m"}
+		switch verb {
+		case "check":
+			args = []string{verb, "--dir", missing, "--words", "anything"}
+		case "add":
+			args = []string{verb, "--dir", missing, "--as", "rowan", "--text", "a card",
+				"--by", "4h", "--default", "the filer files it as a known gap"}
+		}
+		var out, errb bytes.Buffer
+		exit := run(args, &out, &errb, time.Now().UTC(), &seq{})
+		if exit != 2 {
+			t.Errorf("%s against a missing --dir exits %d, want 2: this tool does not make the directory a caller named", verb, exit)
+		}
+		got := errb.String()
+		if !strings.Contains(got, "mkdir -p \""+missing+"\"") {
+			t.Errorf("%s refuses without naming the command that fixes it:\n%s", verb, got)
+		}
+		if !strings.Contains(got, "does not create one") {
+			t.Errorf("%s does not say that the directory is the caller's to make:\n%s", verb, got)
+		}
+		if lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n"); len(lines) != 1 {
+			t.Errorf("%s printed %d lines; the one-line guarantee holds for refusals too:\n%s", verb, len(lines), got)
+		}
+		if strings.Contains(got, "no such file or directory") {
+			t.Errorf("%s still leans on the stat error rather than saying what it wants:\n%s", verb, got)
+		}
+	}
+
+	// A path that exists and is a FILE is a different mistake and keeps its own
+	// message: mkdir -p would not fix it.
+	file := filepath.Join(t.TempDir(), "board")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if exit := run([]string{"list", "--dir", file, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 2 {
+		t.Errorf("a --dir that is a file exits %d, want 2", exit)
+	}
+	if !strings.Contains(errb.String(), "is a file") || strings.Contains(errb.String(), "mkdir -p") {
+		t.Errorf("a --dir that is a file is not a missing directory:\n%s", errb.String())
+	}
+}
+
+// TestTheMkdirRemedyIsOnePastableCommandWhenTheDirHasASpace is the other half of the
+// remedy: a command a reader cannot paste is not a way forward, it is a second mistake
+// for them to find. A --dir with a space printed raw makes `mkdir -p /a/my board` two
+// operands, so the paste creates `/a/my` and `board` and the next verb refuses again on
+// the same path. The tool already quotes the lines quickstart prints so they can be
+// pasted; the refusal's remedy is a line to be pasted too, and it is quoted the same way.
+//
+// Read by Fable and DeepSeek on nova-tools #109. The two of them also caught the citation
+// in the test above: SPEC-BOARD's item 6 is a BUILD list entry (SPEC-BOARD.md:808-814),
+// not a numbered rule.
+func TestTheMkdirRemedyIsOnePastableCommandWhenTheDirHasASpace(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "my board", "cards")
+	var out, errb bytes.Buffer
+	if exit := run([]string{"list", "--dir", missing, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 2 {
+		t.Fatalf("a missing --dir exits %d, want 2", exit)
+	}
+	got := errb.String()
+	_, rest, ok := strings.Cut(got, "make it first: ")
+	if !ok {
+		t.Fatalf("the refusal carries no remedy:\n%s", got)
+	}
+	remedy, _, _ := strings.Cut(rest, "; run: nova-board help")
+	if words := shellWords(t, remedy); len(words) != 3 || words[0] != "mkdir" || words[1] != "-p" || words[2] != missing {
+		t.Errorf("the remedy %q is not one pastable `mkdir -p <dir>`; a shell reads it as %q, and the directory a caller named was %q", remedy, words, missing)
+	}
+}
+
+// TestQuickstartMakesTheDirectory is Glenn's ruling on nova-tools #109 in a test:
+// "It is best to do the right thing if a friend uses it a certain way, or to correct
+// docs to show only right way. Pick one." Emma used quickstart the way nova-swarm's
+// quickstart works -- `--pool ./pool` makes the pool -- so quickstart here makes the
+// board directory, with MkdirAll and 0755, exactly as cmd/nova-swarm/main.go does.
+//
+// AND IT SAYS SO. A verb that creates a directory silently is a verb a reader cannot
+// tell apart from one that found it already there, and the difference is whether the
+// empty board they are looking at is new or is the wrong path. `created=` is a FIELD on
+// the line quickstart already prints, not a new line kind, and it is spelled the way this
+// tool spells every other boolean field -- `close` prints override=true|false through the
+// same yesNo -- rather than the yes|no a sibling tool uses.
+func TestQuickstartMakesTheDirectory(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "board")
+	var out, errb bytes.Buffer
+	if exit := run([]string{"quickstart", "--dir", missing, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 0 {
+		t.Fatalf("quickstart against a missing --dir exits %d, want 0: it makes the directory, as `nova-swarm quickstart --pool` makes its pool; stderr: %s", exit, errb.String())
+	}
+	info, err := os.Stat(missing)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("quickstart returned 0 and %s is not a directory (%v); a first run has nowhere to write", missing, err)
+	}
+	// THE MODE IS COMPARED AGAINST A CONTROL, NOT AGAINST THE LITERAL 0755. What this
+	// test is for is that quickstart asks for the same mode `nova-swarm quickstart
+	// --pool` asks for; what a directory ENDS UP with is the platform's and the umask's
+	// business -- windows reports every writable directory as 0777 (the runner's log:
+	// `the directory is -rwxrwxrwx, want 0755`) and a bench at `umask 077` would report
+	// 0700. A sibling made by os.MkdirAll(0o755) in this same test runs on the same
+	// platform under the same umask, so the two agree exactly when the tool asked for
+	// the same thing, and the assertion stops being a bet on the runner.
+	control := filepath.Join(filepath.Dir(missing), "control")
+	if err := os.MkdirAll(control, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.Stat(control)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != want.Mode().Perm() {
+		t.Errorf("the directory is %v; a plain os.MkdirAll(0o755) on this platform and umask is %v, and quickstart makes its board the way nova-swarm's quickstart makes its pool", got, want.Mode().Perm())
+	}
+	if !strings.Contains(out.String(), "created=true") {
+		t.Errorf("quickstart made the directory and did not say so; want created=true on the QUICKSTART OK line:\n%s", out.String())
+	}
+
+	// A SECOND RUN IS NOT A FIRST RUN. The same line, the other value: a reader who
+	// pastes quickstart twice can tell which run made the board.
+	out.Reset()
+	errb.Reset()
+	if exit := run([]string{"quickstart", "--dir", missing, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 0 {
+		t.Fatalf("quickstart against the directory it just made exits %d, want 0; stderr: %s", exit, errb.String())
+	}
+	if !strings.Contains(out.String(), "created=false") {
+		t.Errorf("a second quickstart found the directory already there and did not say so; want created=false:\n%s", out.String())
+	}
+
+	// A --dir that exists and is a FILE is still a refusal: MkdirAll would not fix it,
+	// and a board is not a file this tool overwrites.
+	file := filepath.Join(t.TempDir(), "board")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errb.Reset()
+	if exit := run([]string{"quickstart", "--dir", file, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 2 {
+		t.Errorf("quickstart against a --dir that is a file exits %d, want 2", exit)
+	}
+	if !strings.Contains(errb.String(), "is a file") {
+		t.Errorf("a --dir that is a file is not a directory this verb makes:\n%s", errb.String())
+	}
+}
+
+// TestQuickstartRefusedMakesNothing is DeepSeek's read of nova-tools #109: quickstart is
+// the one verb that makes its --dir, and it was making it in f.backend() BEFORE the rest
+// of the line had been judged. A first run that fat-fingers --stale is exactly the run
+// that has no board yet, and "making it would answer the typo with an empty board" -- a
+// reader would then be looking at a directory the tool created on their behalf while
+// refusing them. A REFUSED RUN LEAVES NOTHING BEHIND: every flag and every problem is
+// found first, and only a line that will be obeyed is allowed to touch the filesystem.
+func TestQuickstartRefusedMakesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"--stale missing", []string{"quickstart", "--dir", "", "--stale", ""}},
+		{"--stale not a duration", []string{"quickstart", "--dir", "", "--stale", "10"}},
+		{"--stale not a window", []string{"quickstart", "--dir", "", "--stale", "0s"}},
+		{"a positional argument", []string{"quickstart", "--dir", "", "--stale", "10m", "board"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			missing := filepath.Join(t.TempDir(), "board")
+			args := append([]string(nil), tc.args...)
+			for i, a := range args {
+				if a == "--dir" {
+					args[i+1] = missing
+				}
+			}
+			// --stale "" is the flag left off the line entirely, not given empty.
+			for i := 0; i+1 < len(args); i++ {
+				if args[i] == "--stale" && args[i+1] == "" {
+					args = append(args[:i], args[i+2:]...)
+					break
+				}
+			}
+			var out, errb bytes.Buffer
+			exit := run(args, &out, &errb, time.Now().UTC(), &seq{})
+			if exit != 2 {
+				t.Errorf("%v exits %d, want 2; stderr: %s", args, exit, errb.String())
+			}
+			if _, err := os.Stat(missing); !os.IsNotExist(err) {
+				t.Errorf("%v was refused and still made %s (%v); a refused run makes no board", args, missing, err)
+			}
+		})
+	}
+}

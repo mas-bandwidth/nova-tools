@@ -26,6 +26,11 @@ var tokensAudit = audit.Config{
 		"main.go|cmdReport|body": "the report's stdout IS the artifact: every line of it was rendered by tokens.BodyLine, which puts each of its stored fields through oneline.Field, and the lines are joined with \\n by this function. Escaping the join again would escape those newlines and destroy the note body this verb exists to print",
 	},
 	Imports: []string{
+		// version.go's resolution order, which now lives once in internal/buildinfo
+		// rather than in a copy per binary: it reads debug.ReadBuildInfo, holds no
+		// writer of its own, and returns a string this package renders through
+		// oneline.Field at the print site below.
+		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"runtime"`, `"sort"`, `"strconv"`, `"strings"`, `"time"`,
 		`"runtime/debug"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
