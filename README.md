@@ -883,6 +883,87 @@ That rule is in [docs/SPEC-SWARM.md](docs/SPEC-SWARM.md), where a person reads i
 deliberately nowhere in the code: a tool cannot enforce it, and a tool that pretended to
 would be the most dangerous thing in the pool.
 
+## nova-sandbox
+
+One command, **contained by the OS** — `sandbox-exec` on darwin, Landlock on
+linux, a container SID and ACEs on windows — so a worker that runs somebody
+else's model on this machine can write its own job directory and nothing else.
+The contract is [docs/SPEC-SANDBOX.md](docs/SPEC-SANDBOX.md), and `nova-swarm`
+reaches for it per job through `--sandbox`.
+
+Two lists and no defaults. `--read <dir>` is readable and **not** writable, so N
+workers share one copy of an input named once; `--write <dir>` is readable and
+writable and is **required**, because a command with no writable directory is a
+misconfiguration and not a tighter sandbox. Everything else on disk is denied,
+the credential file included — which is the whole point: the key stays with the
+person who owns it, and the wall is what says so.
+
+**Every path is yours and none is guessed.** A `--read`, a `--write`, a `--cwd`
+or a `--tmp` that does not exist is a refusal and is never created, and `HOME`
+must resolve **inside a `--write`** — the caller sets it — because almost every
+tool derives a path from it and an inherited `HOME` is denied by the wall. That
+is one flag on every line below, and leaving it off is the first thing a first
+run gets wrong.
+
+### First run
+
+Ask the machine what it can enforce, then prove the wall before the first job:
+
+```
+$ nova-sandbox check
+CHECK OK backend=sandbox-exec abi=- net=enforceable note=sandbox-exec is deprecated by Apple and works on macOS 26; the wall is the profile it applies; backend at /usr/bin/sandbox-exec
+
+$ mkdir -p /Users/me/pool/jobs/j1/home
+$ HOME=/Users/me/pool/jobs/j1/home \
+  nova-sandbox probe --write /Users/me/pool/jobs/j1 \
+               --secret /Users/me/.config/anthropic/env
+PROBE STEP name=write_outside_control expect=allow got=allow path=/Users/me/pool/jobs/.nova-sandbox-probe-31622
+PROBE STEP name=write_outside expect=deny got=deny path=/Users/me/pool/jobs/.nova-sandbox-probe-31622
+PROBE STEP name=read_secret expect=deny got=deny path=/Users/me/.config/anthropic/env
+PROBE STEP name=write_inside expect=allow got=allow path=/Users/me/pool/jobs/j1/.nova-sandbox-probe-inside
+PROBE STEP name=read_root expect=allow got=allow path=/Users/me/.local/bin/nova-sandbox
+PROBE OK backend=sandbox-exec abi=- steps=5 passed=5 net=nopromise
+```
+
+`probe` runs **five** checks under the real policy for this platform, not two: a
+wall that denies the work as well as the secret is broken, and a two-check probe
+would call it a pass. `--secret <path>` names the file the probe proves it
+cannot read — the path is not the secret, and its contents are never read — and
+it must be **outside** both lists, since a secret inside a named directory is a
+misconfiguration rather than a failed check. The `HOME=` prefix is not
+decoration: rule 9's check runs before the policy is built, so a probe run with
+the dispatcher's own `HOME` is refused before it starts.
+
+Then wrap the command:
+
+```
+$ HOME=/Users/me/pool/jobs/j1/home \
+  nova-sandbox --read /opt/homebrew --write /Users/me/pool/jobs/j1 \
+               -- /opt/homebrew/bin/git -C /Users/me/pool/jobs/j1/repo status
+```
+
+What a first run gets wrong, and what each one wants:
+
+- **No `HOME` inside a `--write`.** `PROBE REFUSED … HOME <dir> is outside every
+  --write`. Give the job a data home of its own: `mkdir -p <jobdir>/home` and
+  `HOME=<jobdir>/home`. A `--read` is not enough — the first config write dies
+  there.
+- **No `--write`, or no `--secret` on a probe.** Both are required and neither
+  has a default. They are named **together**, in one refusal, so a first run is
+  not sequenced into one run per mistake (nova-tools #104).
+- **A toolchain outside the wall.** A command that runs outside the wall and
+  dies inside it is missing a `--read`: a toolchain in a user directory is
+  exactly a caller-supplied read-only root, so name it.
+- **A `--cwd` outside every named path.** It denies `getcwd(3)`, and every git
+  command dies there before it reads anything.
+- **Expecting a network promise without asking for one.** Without `--net-deny`
+  the tool makes no promise about the network and the line says
+  `net=nopromise`; `--net-deny` is an **enforced** denial or a refusal, never a
+  hope.
+
+`nova-sandbox policy` prints what would be generated without running anything,
+which is the fastest way to see the wall a set of flags actually makes.
+
 ## nova-tokens
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](docs/SPEC-TOKENS.md).
