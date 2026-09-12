@@ -66,6 +66,11 @@ var messageBusAudit = audit.Config{
 		"oneline.Quote", "quoteList",
 	},
 	Imports: []string{
+		// version.go's resolution order, which now lives once in internal/buildinfo
+		// rather than in a copy per binary: it reads debug.ReadBuildInfo, holds no
+		// writer of its own, and returns a string this package renders through
+		// oneline.Field at the print site below.
+		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		// bytes is `wait`'s buffer and holds no writer of its own: a bytes.Buffer is
 		// written by the same fmt calls this walk classifies -- inboxListing prints INTO
 		// one -- and read back as a string that is printed at the single exempted site
