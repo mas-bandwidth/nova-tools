@@ -290,11 +290,45 @@ func resolvedTail(typedShowsIt bool, key, dir string) string {
 
 // insideDir says whether a path lies under a directory. The directory itself is not inside
 // itself, and a sibling whose name merely starts the same way is not either.
+//
+// AND THE ANSWER IS NOT A STRING COMPARISON, BECAUSE A FILESYSTEM IS NOT A STRING.
+// `strings.HasPrefix` over cleaned, resolved paths is case-SENSITIVE and APFS is
+// case-INsensitive by default, so a `key_file` typed `/x/Worker/.key` under a `worker_dir` of
+// `/x/worker` is THE SAME FILE the slot copy picks up and the prefix said no: the load passed
+// and `RefreshSlot` put the key inside the wall under a green `SANDBOX OK` (both cold readers
+// of #88 at fc400ce; issue #100). `filepath.EvalSymlinks` does not fold case on darwin, so
+// resolving the path does not close it either -- nor would lowercasing, which is wrong on a
+// case-sensitive filesystem where `/x/Worker` and `/x/worker` are two directories.
+//
+// So the string prefix stays as the CHEAP answer, and it is the only answer available for a
+// path that does not exist yet -- `resolvePath` answers as typed for one, and a refusal is
+// worth more than a silence. Where it says no, each EXISTING ancestor of the path is asked
+// `os.SameFile` against the directory: device and inode is the question the filesystem itself
+// answers, so it holds for a case fold, for a mount of the same directory at two names, and
+// for a hard-linked directory where one exists. The walk starts at the path's parent, so a
+// path that IS the directory under another spelling is still not inside it, which is what the
+// first line of this function says. This runs at load, once per description, never per job.
 func insideDir(path, dir string) bool {
 	if path == dir {
 		return false
 	}
-	return strings.HasPrefix(path, strings.TrimSuffix(dir, string(os.PathSeparator))+string(os.PathSeparator))
+	if strings.HasPrefix(path, strings.TrimSuffix(dir, string(os.PathSeparator))+string(os.PathSeparator)) {
+		return true
+	}
+	target, err := os.Stat(dir)
+	if err != nil {
+		return false // a directory that is not there holds nothing
+	}
+	for parent := filepath.Dir(path); ; {
+		if fi, err := os.Stat(parent); err == nil && os.SameFile(fi, target) {
+			return true
+		}
+		up := filepath.Dir(parent)
+		if up == parent {
+			return false // the root is its own parent: the walk is over
+		}
+		parent = up
+	}
 }
 
 // DefaultDeadline is the worker description's own, which add --deadline overrides per task.
@@ -309,21 +343,55 @@ func (w Worker) DefaultDeadline() time.Duration {
 // slotDirHolding answers the slot directory of workerDir that holds path -- a sibling of
 // workerDir spelled <base>-<digits>, which is what SlotDir builds -- or "" when path is
 // under no slot. A path that IS a slot directory is not held by it, which matches insideDir.
+//
+// AND THE SLOT'S NAME IS JUDGED UNDER THE FILESYSTEM'S OWN EQUALITY, NOT AS TEXT (#145). The
+// previous revision cut `<base>-` off the first path component with `strings.CutPrefix`, a
+// case-SENSITIVE comparison, while APFS is case-INsensitive by default: with `worker_dir`
+// `<dir>/worker`, a `key_file` at `<dir>/Worker-1/.key` is in the directory `RefreshSlot`
+// opens and hands to `--read`, `CutPrefix("Worker-1", "worker-")` said no, and the job read
+// the key inside the wall under a green `SANDBOX OK` (SPEC-SANDBOX rule 6; #100 one directory
+// over). Lowercasing is not the repair either: on a case-SENSITIVE filesystem `<dir>/Worker-1`
+// and `<dir>/worker-1` are two directories and folding them refuses a sound placement.
+//
+// THE CANDIDATE COMES FROM THE PATH, NOT FROM workerDir, WHICH IS WHY THIS REPAIR IS A
+// DIFFERENT SHAPE FROM insideDir's. insideDir can ask `os.SameFile` of the two directories
+// because both exist at load; a slot directory need not -- slots are created at run -- so
+// there may be no `<parent>/<base>-<n>` inode to compare, while the directory holding the key
+// is right there in the path. So the ancestors of the path are walked toward
+// `filepath.Dir(workerDir)`, and the ancestor that is a direct child of that parent has its
+// name judged: `<digits>` as digits, and `<base>` under the filesystem's own equality
+// (namesOneFile, which measures the fold rather than reading runtime.GOOS).
+//
+// The walk starts at the path's PARENT, so a path that IS a slot directory is still not held
+// by it. Both spellings of workerDir are still asked by the caller, for the reason read 3 of
+// #88 gave: `SlotDir` builds the slot from the TYPED spelling.
 func slotDirHolding(path, workerDir string) string {
 	parent, base := filepath.Dir(workerDir), filepath.Base(workerDir)
-	rel, err := filepath.Rel(parent, path)
-	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return ""
+	for dir := filepath.Dir(path); ; {
+		up := filepath.Dir(dir)
+		if up == dir {
+			return "" // the root is its own parent: the walk is over
+		}
+		if sameDir(up, parent) {
+			name := filepath.Base(dir)
+			i := strings.LastIndex(name, "-")
+			if i <= 0 {
+				return "" // no slot number, so not a slot directory
+			}
+			digits := name[i+1:]
+			if digits == "" || strings.TrimLeft(digits, "0123456789") != "" {
+				return ""
+			}
+			// The FULL spellings, the candidate against the slot `SlotDir` would build for
+			// that number: where both are there the two directories answer for themselves
+			// and no fold is guessed (Stella's read of #159, comment 5648066751).
+			if !namesOneFile(up, name, base+"-"+digits) {
+				return "" // another worker's slot, or a neighbour that merely reads alike
+			}
+			return dir
+		}
+		dir = up
 	}
-	first, _, under := strings.Cut(rel, string(os.PathSeparator))
-	if !under || first == "" {
-		return "" // the path is the sibling itself, not something inside it
-	}
-	digits, ok := strings.CutPrefix(first, base+"-")
-	if !ok || digits == "" || strings.TrimLeft(digits, "0123456789") != "" {
-		return ""
-	}
-	return filepath.Join(parent, first)
 }
 
 // SlotDir is a slot's own working directory, <worker-dir>-<slot>.

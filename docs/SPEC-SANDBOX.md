@@ -11,7 +11,7 @@ nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] -- <co
 ```
 
 This spec is normative. If the code and this document disagree, one of them has
-a bug, and the tests decide which. It stands beside [SPEC.md](../SPEC.md), whose
+a bug, and the tests decide which. It stands beside [SPEC.md](SPEC.md), whose
 **Conventions** section — no guessed paths, the one-line output grammar, the
 cap-and-count rule, `internal/oneline` and `internal/bounded` — applies here
 unchanged and is not restated. The one deliberate departure from it is the exit
@@ -534,6 +534,18 @@ only, recursively. Shared inputs — one reference checkout, a corpus, the specs
 the worker home with its `AGENTS.md` — belong in the read set, named once, so
 that N workers read one copy.
 
+**"Inside" is asked of the filesystem, not of a string prefix.** The one predicate
+behind rule 6's `--secret`, rule 10's outside path, rule 9's `HOME`, rule 13's
+`--cwd`, rule 8's `--tmp` and the command-directory home guard — and behind no
+other question — asks `os.SameFile` of the path and its existing ancestors against
+the directory, keeping the string prefix as the cheap first answer and, for a
+directory that is not there to be asked, falling back to that prefix
+case-insensitively only where a probe file written and removed in the nearest
+directory that does exist measures a fold (a spelling that differs only in case is
+one file on APFS and on NTFS, and the backend grants it: measured, a `--secret` at
+`<base>/R/env` under a `--read` of `<base>/r` was READABLE inside the wall); that
+names a mechanism and adds no rule.
+
 **The roots** are what any command needs to run at all: read only, recursively
 unless marked otherwise. They are a per-platform list in one data file in the
 source, not a string built in three places, and `policy` prints them:
@@ -990,6 +1002,20 @@ line cannot supply:
    the wall, and `ps` is setuid root (`-rwsr-xr-x root wheel` for `/bin/ps` on
    macOS 26) while a set-id exec is denied inside the wall, so `ps` there is
    `/bin/ps: Operation not permitted`, exit 126.
+
+**What a refused step prints.** The verb refuses in **three places**, and all
+three print the same line: the **argument count** — the verb takes `<nonce>
+<name> <path>` and nothing else, and it is the one a caller typing the verb by
+hand meets first — then the **guard**, whose three mechanisms above answer with
+one line between them, then the **absolute path** the verb insists on
+afterwards. Each refusal is one line on standard error, exit 2, nothing opened:
+`PROBE REFUSED reason=probe_step_not_a_child: <text>`. That token is the **one
+`PROBE REFUSED` reason outside the fixed set above**, and it is outside it on
+purpose: the set is the contract a caller's parser stands on, nothing but this
+binary's own probe runs this verb, and so no parser ever sees this line. It is
+written down here because the grammar above is fixed at six, and a refusal the
+tool can print that the spec never names is a line whose reader has nowhere to
+look it up.
 
 **The honest bound.** The verb grants **no capability the caller lacks**, because
 everything it does is bounded by the wall it runs in. A same-user caller can open

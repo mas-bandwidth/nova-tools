@@ -37,7 +37,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-memory: membership is a lookup, never a scan (see SPEC.md)
+const usage = `nova-memory: membership is a lookup, never a scan (see docs/SPEC.md)
 
 usage:
   nova-memory version    print this build identity (--version also accepted)

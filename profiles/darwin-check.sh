@@ -17,7 +17,7 @@
 # Two environment variables, both for a caller that is a TEST rather than an operator:
 #   NOVA_CHECK_SCRATCH     put the scratch tree here instead of beside the script, so a
 #                          Go test can hand it t.TempDir() and reach outside nothing
-#                          (SPEC-SANDBOX test 16, CONTRIBUTING.md: test code is code).
+#                          (SPEC-SANDBOX test 16, docs/CONTRIBUTING.md: test code is code).
 #   NOVA_CHECK_NO_NETWORK  1 to SKIP the two DNS checks, which are the only ones that
 #                          touch the network. The operator run keeps them: they are the
 #                          rule-7 measurement and a Go test is the wrong place for it.

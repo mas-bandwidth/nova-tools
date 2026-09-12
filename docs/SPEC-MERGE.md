@@ -7,7 +7,7 @@ cannot name.
 
 This spec is normative. If the code and this document disagree, one of them has
 a bug, and the tests decide which. It stands beside
-[SPEC.md](../SPEC.md), whose **Conventions** section — exit codes, no guessed
+[SPEC.md](SPEC.md), whose **Conventions** section — exit codes, no guessed
 paths, the one-line output grammar, the cap-and-count rule, `internal/oneline`
 and `internal/bounded` — applies here unchanged and is not restated. Where this
 tool needs something the Conventions do not cover, it is below and it says so.
@@ -423,7 +423,7 @@ the day it was learned.
 ## The verbs
 
 ```
-nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name>
+nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
 nova-merge add        --lane <dir> --pr <n> [--needs-read]
 nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
 nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>]
@@ -451,6 +451,21 @@ interval and `run --hours` no default deadline for the opposite reason: a loop
 with no deadline is a lane that is stuck rather than working, and nobody outside
 can tell the two apart (Glenn, 2026-09-09: **every ask, child or read has a
 written deadline and a default action; never wait forever**).
+
+**`init --remote <url>` names the URL the lane clones from and pushes to, and a
+first run is told to rehearse with it.** (Additive, 2026-09-12, Stella's ruling on
+nova-tools #116: the flag is in the tool and was in no verb list here.) Without it
+the URL comes from `--repo` through the host, which means nothing about a lane
+could be exercised without a live repository, and git's own config was the only
+way in — so the *environment* could move where a lane pushes with no flag saying
+so. Given a bare repository of the caller's own it is the whole first run with
+nothing reaching a forge, which is what `docs/CLI.md`'s `### First run` shows before
+the live form, because `init` creating the lane branch **is a push** (rule 20,
+rule 22) and a first run that has not been told so is a first run that mutates a
+shared repository to say hello. It wants an absolute path or a URL: git runs in
+the lane directory, so a relative one resolves against the lane and the run is
+refused. It is `init`'s alone, for rule 20's reason — a lane's remote, like its
+repository and its base, is written once and not overridable by a flag afterwards.
 
 The repository and the base are properties of the **lane**, written into its
 state once, by `init` (rule 20), and never overridable by a flag afterwards.
@@ -1447,7 +1462,7 @@ check never seen failing is not a check).
     `--lane-branch` on any verb but `init` is exit 2 naming the flag, `gate
     --base <sha>` is exit 2 naming `--base-sha`, and `--base-sha` on any verb
     but `gate` is exit 2 naming `gate`; a state file with `version: 2` is
-    exit 2 naming both numbers; the `### First run` in `README.md` starts with
+    exit 2 naming both numbers; the `### First run` in `docs/CLI.md` starts with
     `init` and a test executes it.
 21. `TestOnlyTheGatedObjectIsPublished`: with a green record for `(A, X, M)`
     the fake remote receives exactly one push, a lease on `refs/heads/<base>`
@@ -1526,7 +1541,7 @@ standard library only, no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard — a usage banner ending in a
 runnable `example:` block, refusals that say what the flag wants and report every
-independent problem at once, a `### First run` in `README.md`, a `quickstart`
+independent problem at once, a `### First run` in `docs/CLI.md`, a `quickstart`
 verb, and tests that pin all three by executing them.
 
 1. **`internal/merge/state.go`** — the state file: `version` checked first,
@@ -1612,7 +1627,7 @@ verb, and tests that pin all three by executing them.
     `--who`'s read, `last_read` from the fold, the range, holds as pointers,
     `--max` through `internal/bounded`, no write and no lock (rule 23).
     Tests: demanded test 23.
-13. **`README.md`'s `### First run`** and the `quickstart` verb: `init` a
+13. **`docs/CLI.md`'s `### First run`** and the `quickstart` verb: `init` a
     lane with its repository and base, add one entry, print the status, with
     every path a flag (demanded test 20).
 

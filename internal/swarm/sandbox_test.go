@@ -327,6 +327,89 @@ func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 	}
 }
 
+// DEMANDED (SPEC-SANDBOX.md rule 6, "the secret is never inside either list"), and the hole
+// both cold readers of #88 at fc400ce found: `insideDir` answered with `strings.HasPrefix`
+// over cleaned, symlink-resolved paths, and that comparison is case-SENSITIVE while APFS is
+// case-INsensitive by default. A `key_file` typed `<dir>/Worker/.key` under a `worker_dir` of
+// `<dir>/worker` is THE SAME FILE on such a filesystem -- `RefreshSlot` copies it into the
+// slot before every job and the slot IS the job's `--read` -- and the prefix said no, so the
+// load passed and the key was read inside the wall under a green `SANDBOX OK`.
+// `filepath.EvalSymlinks` does not fold case on darwin, so resolving the path did not close
+// it either; the answer has to come from the filesystem, `os.SameFile` over the ancestors.
+//
+// THE FILESYSTEM DECIDES WHETHER THIS TEST CAN RUN, NOT `runtime.GOOS`: APFS can be formatted
+// case-sensitive and a linux mount can fold, so the test WRITES a file and asks for it back
+// in another case. Where the answer is no, the placement this test is about cannot exist on
+// this machine and the test skips with that reason named.
+func TestAKeyFileSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "CaseProbe"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "caseprobe")); err != nil {
+		t.Skipf("the filesystem under %s is case-SENSITIVE: caseprobe is not CaseProbe, so a key file spelled in another case is a different file here and the fold this test is about cannot happen", dir)
+	}
+	home := filepath.Join(dir, "worker")
+	tools := filepath.Join(dir, "toolchains")
+	for _, d := range []string{home, tools} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	desc := func(key string) string {
+		raw, _ := json.MarshalIndent(map[string]any{
+			"name": "w", "provider": "p", "model": "m", "env_var": "K", "key_file": key,
+			"usage": "none", "harness": "h", "worker_dir": home, "deadline": "1m",
+			"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
+			"read_roots":   []string{tools},
+		}, "", "  ")
+		path := filepath.Join(dir, "worker.json")
+		if err := os.WriteFile(path, raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	// The key inside worker_dir, spelled in another case. The write itself goes through the
+	// fold -- there is no `<dir>/Worker` directory, only `<dir>/worker` -- so the file this
+	// description names IS the file the slot copy would pick up.
+	folded := filepath.Join(dir, "Worker", ".key")
+	if err := os.WriteFile(folded, []byte("sk-not-a-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, problems := LoadWorker(desc(folded))
+	if len(problems) != 1 {
+		t.Fatalf("a key file inside worker_dir spelled in another case reported %d problems, want 1: %v", len(problems), problems)
+	}
+	said := problems[0].Error()
+	for _, want := range []string{folded, home, "copied into the slot", "--read", "Keep the key file outside worker_dir"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal does not say %q:\n%s", want, said)
+		}
+	}
+	// And the other list: a read root spelled in another case is the same hole without the
+	// copy, because every job of this worker may read that directory directly.
+	foldedRoot := filepath.Join(dir, "Toolchains", "key")
+	if err := os.WriteFile(foldedRoot, []byte("sk-not-a-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, problems = LoadWorker(desc(foldedRoot))
+	if len(problems) != 1 || !strings.Contains(problems[0].Error(), "read_roots[0]") {
+		t.Fatalf("a key file inside a read root spelled in another case is not refused: %v", problems)
+	}
+	// And the placement the README teaches is still sound with the new comparison: a
+	// directory that is not the worker directory under any spelling is not inside it.
+	outside := filepath.Join(dir, "keys", "provider")
+	if err := os.MkdirAll(filepath.Dir(outside), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("sk-not-a-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, problems := LoadWorker(desc(outside)); len(problems) != 0 {
+		t.Errorf("a key file outside both lists is refused: %v", problems)
+	}
+}
+
 // DEMANDED (SPEC-SANDBOX.md test 10, "all five checks run even when the first fails"). The
 // line RUN REFUSED quotes is the line that said NO. The probe keeps going after a failed
 // check, so the refusal is not last, and the tool used to quote a PASSING step as the reason

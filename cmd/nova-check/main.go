@@ -21,7 +21,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-check: record-layer checks for a nova self repo (see SPEC.md)
+const usage = `nova-check: record-layer checks for a nova self repo (see docs/SPEC.md)
 
 usage:
   nova-check version    print this build identity (--version also accepted)

@@ -7,7 +7,7 @@ day files into a month. It reads sources. It never estimates, never fills a
 gap, and never removes a file.
 
 This spec is normative. If the code and this document disagree, one of them
-has a bug, and the tests decide which. It stands beside [SPEC.md](../SPEC.md),
+has a bug, and the tests decide which. It stands beside [SPEC.md](SPEC.md),
 whose **Conventions** section (exit codes, no guessed paths, the one-line
 output grammar, the cap-and-count rule, `internal/oneline` and
 `internal/bounded`) applies here unchanged and is not restated. Where this tool
@@ -1155,7 +1155,7 @@ standard library only, no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard: a usage banner ending in a
 runnable `example:` block, refusals that say what the flag wants and report
-every independent problem at once, a `### First run` in `README.md`, a
+every independent problem at once, a `### First run` in `docs/CLI.md`, a
 `quickstart` verb or the sentence saying why there is none, and tests that
 pin all three by executing them.
 
@@ -1225,7 +1225,7 @@ pin all three by executing them.
     largest plausible state measured (demanded test 11), the audit over
     every printed argument (`internal/oneline/audit`), and no test reaching
     outside `t.TempDir()` or the fake `sqlite3`.
-13. **`README.md`'s `### First run`**: fold one fixture transcript and one
+13. **`docs/CLI.md`'s `### First run`**: fold one fixture transcript and one
     fixture bus note into a temp directory, `check` it, `sum` it, every path
     a flag, the transcript produced by running the tool. The fixture bus
     lane uses `example.com`.

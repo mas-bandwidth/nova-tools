@@ -232,9 +232,54 @@ func commandDirRefusal(command string, named []string) *Refusal {
 }
 
 // Inside reports whether path is dir or lies beneath it. Both are expected resolved.
+//
+// AND "BENEATH" IS A QUESTION FOR THE FILESYSTEM, NOT FOR A STRING PREFIX (#145). This was
+// `strings.HasPrefix`, a case-SENSITIVE comparison, and APFS is case-INsensitive by default
+// (NTFS too): a `--secret` spelled in another case than the `--read` it actually sits inside
+// passed rule 6's own `secret_inside_allow` check and the probe reported a pass, and a `HOME`
+// inside a `--write` under a spelling the filesystem folds was refused `home_outside` -- the
+// same fold, read the other way about, refusing a configuration that is sound.
+// `filepath.EvalSymlinks` does not fold case on darwin, so a resolved path does not close it,
+// and lowercasing is not the repair: on a case-SENSITIVE filesystem `/x/Read` and `/x/read` are
+// two directories and folding them would answer a neighbour wrong.
+//
+// So the answers, in order:
+//   - `path == dir` is inside, which is this function's own contract and the swarm's
+//     `insideDir` differs from it deliberately;
+//   - the string prefix stays as the CHEAP first answer, where it says yes it is right;
+//   - where it says no and dir EXISTS, `os.SameFile` against path and each of its ancestors
+//     that exists -- device and inode is the question the filesystem itself answers, so it
+//     holds for a case fold, for one directory mounted at two names and for a hard-linked
+//     directory. The walk starts at PATH, not its parent, because a path that IS dir under
+//     another spelling is inside it by the contract above. When dir exists this walk is the
+//     whole answer: an ancestor of path at dir's own depth either is dir or is not;
+//   - where dir is NOT there, nothing has an inode and the name is all there is: the prefix
+//     again, case-insensitively, and only where the filesystem is MEASURED to fold
+//     (dirFoldsCase, never runtime.GOOS). Every caller path of this package exists by rule 5,
+//     so this last answer is defence in depth.
+//
+// This runs while the policy is built, never per operation inside the wall.
 func Inside(path, dir string) bool {
-	sep := string(os.PathSeparator)
-	return path == dir || strings.HasPrefix(path, strings.TrimSuffix(dir, sep)+sep)
+	if path == dir {
+		return true
+	}
+	under := strings.TrimSuffix(dir, string(os.PathSeparator)) + string(os.PathSeparator)
+	if strings.HasPrefix(path, under) {
+		return true
+	}
+	if target, err := os.Stat(dir); err == nil {
+		for at := path; ; {
+			if fi, err := os.Stat(at); err == nil && os.SameFile(fi, target) {
+				return true
+			}
+			up := filepath.Dir(at)
+			if up == at {
+				return false // the root is its own parent: the walk is over
+			}
+			at = up
+		}
+	}
+	return len(path) > len(under) && strings.EqualFold(path[:len(under)], under) && dirFoldsCase(dir)
 }
 
 // insideAny is Inside over a list, and it is what rules 9 and 13 ask of HOME and --cwd.

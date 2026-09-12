@@ -6,7 +6,7 @@ working directory, its own data home, its own job directory and its own deadline
 held by the machinery rather than by the worker.
 
 This spec is normative. If the code and this document disagree, one of them has
-a bug, and the tests decide which. It stands beside [SPEC.md](../SPEC.md), whose
+a bug, and the tests decide which. It stands beside [SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line output
 grammar, the cap-and-count rule, `internal/oneline` and `internal/bounded` —
 applies here unchanged and is not restated.
@@ -844,6 +844,29 @@ says `net=nopromise`. The key reaches the child the way it always has — read a
 data before the wrap, passed by environment, the file itself in neither list
 (rule 6 here and rule 6 there are the same rule seen from two sides).
 
+**And "inside" is a question for the filesystem, not for two strings.** A
+`key_file` whose placement would put it inside `worker_dir` or inside a
+`read_roots` entry is refused **at load**, where a person can still move the
+file, and the comparison that decides **those two** is `os.SameFile` over the
+existing resolved ancestors of the key path, with a string prefix kept only as
+the cheap first answer and as the only answer for a path that does not exist
+yet. A prefix alone is case-sensitive and a case-insensitive filesystem — APFS
+by default — folds a `key_file` typed `<dir>/Worker/.key` and a `worker_dir` of
+`<dir>/worker` into one file: the spelling said the key was outside while the
+slot copy put it inside the wall (#100).
+
+**And the slot directory asks it too.** A `key_file` inside a slot directory
+`<worker-dir>-<n>` is refused at load as well — that rule stands unchanged — and
+because such a directory **need not exist at load** (slots are created at run, so
+there may be no inode to compare) the candidate is derived from the key's own
+ancestors and judged against the slot spelling `SlotDir` would build, under the
+filesystem's own equality: the two directories themselves where both are there,
+and otherwise the case behaviour of the directory holding them, **measured at load
+by writing and removing one probe file inside that directory** — the parent of
+`worker_dir`, where this tool creates slot directories anyway — rather than read
+off `runtime.GOOS` (#145). These two paragraphs name mechanisms; they add no
+rule.
+
 **The probe runs once, before the first worker** (SPEC-SANDBOX rule 10): `run`
 asks the machine what it can enforce and then proves the wall with the real
 policy for this platform. A machine with no backend is `RUN REFUSED
@@ -1642,7 +1665,7 @@ standard library only, no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard — a usage banner ending in a
 runnable `example:` block, refusals that say what the flag wants and report every
-independent problem at once, a `### First run` in `README.md`, a `quickstart`
+independent problem at once, a `### First run` in `docs/CLI.md`, a `quickstart`
 verb, and tests that pin all three by executing them.
 
 1. **`internal/swarm/pool.go`** — the pool directory: `pending/`, `running/`,
