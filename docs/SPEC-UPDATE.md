@@ -80,12 +80,12 @@ nothing reacts to its exit code automatically.
     `https://registry.ollama.ai/v2/library/<model>/manifests/<tag>`, no token, the tag's
     digest being the SHA-256 of the body. A body that is not JSON, or carries no
     `schemaVersion`, or no `layers` — any one — is a shape change: UNKNOWN, never OK (status
-    first, rule 7). **Compared**, both sides cut to their first twelve hex characters, per
-    rule 17: measured, two of three installed tags match the registry and `qwen3.6:35b-a3b`
-    reads `07d35212591f` against `096fdbd02fe6` — one real STALE. **STALE for a model is a
-    new weight under the same tag**: a tag moves, and a differing digest is different
-    weights, not a newer number. It is *listed as available*, never pulled — an invitation,
-    not an install (rules 9, 11).
+    first, rule 7). **Compared**, both sides cut to their first twelve lowercase hex
+    characters, per rule 17: measured, two of three installed tags match the registry and
+    `qwen3.6:35b-a3b` reads `07d35212591f` against `096fdbd02fe6` — one real STALE. **STALE
+    for a model is a new weight under the same tag**: a tag moves, and a differing digest is
+    different weights, not a newer number. It is *listed as available*, never pulled — an
+    invitation, not an install (rules 9, 11).
 
 5. **Five kinds, and the kind decides what may happen.** `harness` (OpenCode),
    `engine` (ollama), `model` (a weight in the ollama library — checked, never pulled,
@@ -150,12 +150,12 @@ nothing reacts to its exit code automatically.
     the file it read and its entry count.
 13. **`apply` runs exactly the entry's `apply` argv, and the only thing interpolated is the
     version.** The token `{version}`, wherever it appears, is the version being installed:
-    the latest the source just reported, or `--version <v>` when the person named one. A
-    latest the source did not answer, with no `--version`, is a refusal, exit 2 — *latest
-    unknown; pass `--version <v>`* — and no process starts. Nothing else is substituted, and
-    rule 3 leaves no shell to substitute in. An entry whose `apply` is `none` is refused:
-    *this one is installed by hand* — as is `--version <v>` against an argv with no
-    `{version}`: *this entry's apply does not take a version*, the flag a lie.
+    the latest the source reported, or `--version <v>` when the person named one. A latest
+    the source did not answer, with no `--version`, is a refusal, exit 2 — *latest unknown;
+    pass `--version <v>`, or ask again when the source answers* — and no process starts.
+    Nothing else is substituted, and rule 3 leaves no shell to substitute in. An entry whose
+    `apply` is `none` is refused: *this one is installed by hand* — as is `--version <v>`
+    against an argv with no `{version}`: *this entry's apply does not take a version*.
 14. **`apply` prints before and after, and after must equal the target.** `APPLY
     BEFORE` before the install, `APPLY AFTER` after it, both read by the entry's
     `installed` command through rule 4, and the **target** is the version echoed on
@@ -259,7 +259,7 @@ version carrying a space arrives escaped.
 $ go install ./cmd/nova-update
 $ nova-update check --file ./cmd/nova-update/testdata/versions.tsv --max 3
 UPDATE at=2026-09-12T01:00:00Z file=./cmd/nova-update/testdata/versions.tsv entries=5 kinds=harness,model,pin,tool timeout=5s budget=60s max=3
-UPDATE UNKNOWN name=nova-wake-pin-nova-bus kind=pin installed=- path=- source=local:nova-bus\x20version: not_found (nova-wake is nowhere on /opt/homebrew/bin:/usr/bin:/bin — install it or add its dir to PATH)
+UPDATE UNKNOWN name=nova-wake-pin-nova-bus kind=pin installed=- path=- source=local:nova-bus\x20version: not_found (nova-wake is nowhere on /Users/x/go/bin:/opt/homebrew/bin:/usr/bin:/bin — install it or add its dir to PATH)
 UPDATE STALE name=gh kind=tool installed=2.100.0 latest=2.101.0 path=/opt/homebrew/bin/gh source=github:cli/cli owner=rowan
 UPDATE STALE name=qwen3-coder:30b kind=model installed=07d35212591f latest=096fdbd02fe6 path=/opt/homebrew/bin/ollama source=ollama:qwen3-coder:30b owner=stella
 UPDATE UNKNOWN name=opencode kind=harness installed=1.18.30 path=/opt/homebrew/bin/opencode source=npm:opencode-ai: no answer in 5s (raise --timeout, or ask again when the registry answers)
@@ -281,17 +281,17 @@ apply writing a version to a temp dir; the fixture's model digests are the measu
 installing nothing: which is why the last line applies a fixture, not `gh`, since **`apply`
 of a real entry runs the real installer on the box it is pasted into** and `check` of a real
 file reaches the real internet. Do both on purpose. The `kind=pin` entry is UNKNOWN twice
-over here: nova-wake grows `version --pin` only with open question 2, and is not on the
-nightly's PATH. Once both hold it reads STALE, first per rule 15, with `pins=1`.
+over here: nova-wake grows `version --pin` only with open question 2, and is not on this
+box's PATH. Once both hold it reads STALE, first per rule 15, with `pins=1`.
 
 ## Tests this spec demands
 
-One test per rule, named for it, each proven able to fail by a mutation first. Every
-latest source is a local `httptest` server, and the tripwires live together: outside
-the parser's table and the docs, no `api.github.com`, `registry.npmjs.org`,
-`formulae.brew.sh` or `registry.ollama.ai`; nowhere `localhost:11434` — nothing asks
-it — `os.Getwd`, `os.UserHomeDir`, a hardcoded path, `exec.Command("sh"`, `"-c"`,
-`ollama pull`, `brew install` or `npm install`.
+One test per rule, named for it, each proven able to fail by a mutation first. Every latest
+source is a local `httptest` server, and the tripwires live together: outside the parser's
+table and the docs, no `api.github.com`, `registry.npmjs.org`, `formulae.brew.sh` or
+`registry.ollama.ai`; nowhere `localhost:11434` — nova-update never asks it — `os.Getwd`,
+`os.UserHomeDir`, a hardcoded path, `exec.Command("sh"`, `"-c"`, `ollama pull`, `brew
+install` or `npm install`.
 
 1. `TestTheFileComesFromAFlag`: no `--file` is exit 2 printing `refusing to guess` and
    naming `--file`; a `--file` that does not exist is exit 2 naming the path.
@@ -299,7 +299,7 @@ it — `os.Getwd`, `os.UserHomeDir`, a hardcoded path, `exec.Command("sh"`, `"-c
    number and the count; a first line that is not the header is exit 2 naming line 1 with
    the put-it-back remedy, entry 1 never skipped; a header plus a `#` comment loads,
    `entries=` counting neither and neither refused as an unknown kind; the refusal appears
-   once, not per line; 500 good lines and one bad refuse on the bad one only.
+   once, not per line; 500 good lines and one bad refuse on the bad one and start nothing.
 3. `TestACommandIsArgvNeverAShell`: `sh -c echo 1.2.3` execs `sh` with four arguments,
    so `sh` runs `echo` with `1.2.3` as `$0` and prints an empty line: UNKNOWN, never
    `1.2.3`; `;`, `&&`, `|`, `$(`, backtick and `*` exec once with those bytes literal
@@ -316,7 +316,7 @@ it — `os.Getwd`, `os.UserHomeDir`, a hardcoded path, `exec.Command("sh"`, `"-c
     ID, no matching row and an entry named without its tag each being UNKNOWN with the
     not-on-this-box remedy; a fixture registry-v2 body yields its own SHA-256, and that body
     without `layers`, and again without `schemaVersion`, is UNKNOWN reason `shape`; equal
-    twelve-hex digests are OK, different ones STALE with both on the line.
+    lowercase twelve-hex digests are OK, different ones STALE with both on the line.
 5. `TestAnUnknownKindRefuses`: each of the five kinds loads; `kind=weights` is exit 2
    naming the line and listing the five.
 6. `TestOneBoundedGetPerEntry`: each scheme reads its documented field and a `tag_name` of
@@ -326,12 +326,12 @@ it — `os.Getwd`, `os.UserHomeDir`, a hardcoded path, `exec.Command("sh"`, `"-c
    `0.11.0`, names that endpoint in `source=`, and whose `[]` is UNKNOWN reason `no
    release and no tag`; a 257 KB body and a four-hop redirect are UNKNOWN; `npm:` requests
    a path ending `/latest`; `source=` equals `latest`.
-7. `TestADeadSourceIsNeverOk`: a 500, a 403 and a 429 each naming its `x-ratelimit-reset`, a
-   registry 404 giving `tag_not_found` with the library page as its remedy, never `shape`
-   and never rule 4's `not_found`, a hang past the timeout, a `{}` and invalid JSON each
-   give one `UPDATE UNKNOWN` and exit 1; `up to date` never appears; every source dead exits
-   1 with `current=0`; a dead source is asked once in a run and again in the next — the
-   no-retry, no-cache assertion.
+7. `TestADeadSourceIsNeverOk`: a 500, then a 403 and a 429 each naming its
+   `x-ratelimit-reset`, a registry 404 giving `tag_not_found`, remedy
+   `https://ollama.com/library/<model>/tags`, never `shape` and never rule 4's `not_found`,
+   a hang past the timeout, a `{}` and invalid JSON each give one `UPDATE UNKNOWN` and exit
+   1; `up to date` never appears; every source dead exits 1 with `current=0`; a dead source
+   is asked once in a run and again in the next — the no-retry, no-cache assertion.
 8. `TestTheRunIsBounded`: with an injected clock and 40 entries against a server
    answering after 3s, `--budget 10s` returns inside 10s, prints a count line, marks
    unreached entries UNKNOWN reason `budget` and exits 1; an httptest handler counting
@@ -368,9 +368,9 @@ it — `os.Getwd`, `os.UserHomeDir`, a hardcoded path, `exec.Command("sh"`, `"-c
 17. `TestDifferentIsStaleAndNothingIsOrdered`: `1.9.0` against `1.10.0` is STALE and
     so is `1.10.0` against `1.9.0`; `newer`, `older`, `downgrade` and `ahead` appear
     nowhere in the output; `at=` is the injected clock, never a body.
-18. `TestEveryRefusalNamesItsRemedy`: every refusal in the package lives in one table,
-    which the test walks: each ends in a parenthesised remedy naming a command or a
-    file, and removing one turns the test red.
+18. `TestEveryRefusalNamesItsRemedy`: every refusal in the package lives in one table, which
+    the test walks: each ends in a parenthesised remedy naming a command, a file, or the
+    values allowed, and removing one turns the test red.
 19. `TestTheKindFilterRestrictsTheRun`: `--kind tool` over a file of all five kinds starts
     only the tool entries' `installed` argvs and only their GETs — a counting handler sees
     no others — prints no line of another kind, and its `kinds=` and `checked=` are the
