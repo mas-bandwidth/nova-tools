@@ -119,14 +119,23 @@ func TestTheInternalVerbsRefusalIsOutsideTheSetAndNamedInTheSpec(t *testing.T) {
 	// And the section that describes the verb has to name what it prints. Bounded to that
 	// section on purpose: the token appearing anywhere in the file would be satisfied by a
 	// changelog line, and a reader looking for this refusal reads the verb's section.
+	//
+	// The window ends at the next heading of the same level or higher -- whichever of
+	// `### ` and `## ` comes first. Cutting only at the next `## ` was the read's LOW: a
+	// sibling `###` added after this section would sit inside the window, so a token there
+	// would satisfy the test, and the sentence above would have stopped being true with
+	// nothing saying so. Measured: with the paragraph moved into a sibling `###` section,
+	// the `## `-only cut stayed green and this cut goes red.
 	const heading = "### The internal verb, and what its guard is and is not"
 	spec := specSandbox(t)
 	_, after, ok := strings.Cut(spec, heading)
 	if !ok {
 		t.Fatalf("docs/SPEC-SANDBOX.md has no %q section; this test cannot say where the refusal belongs", heading)
 	}
-	if next := strings.Index(after, "\n## "); next >= 0 {
-		after = after[:next]
+	for _, next := range []string{"\n### ", "\n## "} {
+		if i := strings.Index(after, next); i >= 0 {
+			after = after[:i]
+		}
 	}
 	if !strings.Contains(after, probeStepRefusalReason) {
 		t.Errorf("the internal verb's section does not name `PROBE REFUSED reason=%s`, the refusal its guard prints; the grammar above is fixed at six, so a reader has nowhere to learn that this seventh token exists", probeStepRefusalReason)
