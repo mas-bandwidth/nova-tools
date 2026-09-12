@@ -43,6 +43,18 @@ import (
 // BEHAVIOUR is the thing this repo's review reads twice.
 var serveKillPoint string
 
+// DeadlineFloor is the shortest --hours this verb will take. --hours is a
+// FLOAT, and a float can name a deadline no run can reach: `--hours 1e-12` is
+// `time.Duration(3.6e-3 ns)` == 0, so the deadline equals the start, the first
+// `now.Before(end)` is already false, and the process exits 0 having polled
+// nothing -- `WAKE SERVE fired=0 notes=0 ... idle=0s`, a green that did nothing.
+// A deadline shorter than a second is that case or too close to it to tell
+// apart from it, so it is refused by name instead (SPEC.md Conventions:
+// refusals over silence). A deadline SHORTER THAN ONE --interval is not
+// refused: it polls once and ends, which is what a first run and this package's
+// own tests ask for.
+const DeadlineFloor = time.Second
+
 // DefaultBatchMax is the listing law's 20: every note queued at the moment the
 // command is not running is handed to one invocation, in bus order, at most this
 // many ids. One turn reads k notes rather than k turns reading one.
@@ -93,6 +105,10 @@ func cmdServe(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		}
 		if *hours <= 0 {
 			p.missing("hours")
+		}
+		if d := time.Duration(*hours * float64(time.Hour)); *hours > 0 && d < DeadlineFloor {
+			p.add("--hours "+strconv.FormatFloat(*hours, 'g', -1, 64)+" is a deadline of "+wake.Dur(d)+", below the "+wake.Dur(DeadlineFloor)+" floor",
+				"  a deadline this short can round to zero and exit 0 having polled nothing; 0.02 is about a minute\n")
 		}
 	}
 	var every time.Duration

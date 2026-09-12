@@ -385,11 +385,19 @@ pinned:
   where it was, and `nova-wake v0.12.0` refused the `nova-bus` of its own
   release — `WAKE REFUSED: nova-bus v0.12.0; this tool is written against
   v0.10.3`. A pin no release can update is a pin that expires, and a check that
-  expires is not a check. So the pin is **derived** instead: one tag stamps both
-  programs with the same `-ldflags -X main.version=<tag>` (and an unstamped
-  build of either half of one tree reports the same vcs revision), so *the
-  `nova-bus` this tool is written against* is exactly *the `nova-bus` built from
-  the same tree as me*, and the two versions match as a fact about the build.
+  expires is not a check. So the pin is **derived** instead: the check is
+  `AcceptBus(tool, found)`, which is **string equality** between this build's
+  own version and the second token of `nova-bus version` — nothing is parsed,
+  compared as a range, or ordered. One tag stamps both programs with the same
+  `-ldflags -X main.version=<tag>`, so a released pair is equal by the stamp; in
+  an unstamped `go build` both halves take `Main.Version`, the toolchain's
+  module pseudo-version for the tree (`v0.12.1-0.<stamp>-<12hex>`, `+dirty`
+  included), so they are equal there too. So *the `nova-bus` this tool is
+  written against* is exactly *the `nova-bus` built from the same tree as me*,
+  and the two versions match as a fact about the build. (Under `go run`, where
+  neither half has a stamp or a module version, both report `devel` and
+  `AcceptBus` accepts the pair: a developer's own risk, never a release — the
+  release workflow stamps every binary in `cmd/`.)
   The guard is not weakened: an older release's `nova-bus`, a foreign one, or
   one from another tree is still refused by name before the opening line, and
   the tool still names both versions. The measurement above is what argues the
@@ -826,7 +834,11 @@ spec forbids**.
     --on-note <command> --interval <duration> --state <file> --hours <h>`
     runs as its own process outside any session — `<h>` is a **decimal**
     number of hours and not a whole one, as `nova-swarm run --hours` is, so a
-    first run can ask for `0.02` of one and a working day is `8` — fetches the
+    first run can ask for `0.02` of one and a working day is `8`, and a
+    `--hours` naming a deadline **under one second** is refused by name (a
+    float can name one no run reaches: `1e-12` rounds to `0s`, and a process
+    that exits 0 having polled nothing is a green that did nothing; a deadline
+    shorter than one `--interval` is not refused and polls once) — fetches the
     bus every `--interval` (a git fetch costs no tokens; the interval matches the
     latency a person will accept, never the second), and for each new note
     whose `To:` names `<name>` runs `<command> <id> [<id>…]`: **once, and a

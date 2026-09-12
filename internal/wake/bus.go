@@ -27,10 +27,13 @@ import (
 //
 // So the pin is derived rather than written down: the two programs ship from
 // one tag in one repository, so "the nova-bus this tool is written against" is
-// exactly "the nova-bus built from the same tree as me". Both take their
-// version from the same -ldflags stamp the release workflow applies (and, in an
-// unstamped build, from the same vcs revision), so a matching pair is a fact
-// about the build rather than a constant either side can drift from. The check
+// exactly "the nova-bus built from the same tree as me". AcceptBus compares the
+// two version STRINGS and nothing else: no parse, no range, no ordering. A
+// released pair is equal because one tag stamps both with the same -ldflags -X
+// main.version=<tag>; an unstamped `go build` pair is equal because both take
+// Main.Version, the toolchain's module pseudo-version for the tree, "+dirty"
+// included. So a matching pair is a fact about the build rather than a constant
+// either side can drift from. The check
 // is no weaker: a foreign nova-bus, an older release's, or one from another
 // tree is still refused by name, before the opening line.
 //

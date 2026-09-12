@@ -499,7 +499,8 @@ and is not this.
 
 ```
 $ nova-wake serve --bus ./bus --as rowan --on-note ./wake-me --interval 60s \
-    --state ./serve.state --hours 8 --remote origin --branch main
+    --state ./serve.state --hours 8 --remote origin --branch main \
+    --receipt-max-words 40
 ```
 
 Every flag above is required, and `serve` names **all** of the missing ones in
@@ -521,11 +522,15 @@ one refusal rather than one per run:
   delivered, what was queued and what is `uncertain`.
 - `--hours <h>` **this process's own deadline**, after which it starts nothing
   new — every ask, child or read has a written deadline (Glenn, 2026-09-09). A
-  `stop` file in the state file's directory does the same thing on demand.
+  `<state>.stop` file — the state file's own path with `.stop` after it, beside
+  it in the same directory — does the same thing on demand.
   It is a **decimal number of hours**, not an integer: `--hours 8` is a working
   day, `--hours 0.5` is thirty minutes and `--hours 0.02` is about a minute,
-  which is how the tests and a first run try it. It must be more than 0, and
-  `--interval` must fit inside it.
+  which is how the tests and a first run try it. It must name a deadline of at
+  least a second: a float can name one no run reaches (`--hours 1e-12` rounds to
+  `0s`), and a process that exits 0 having polled nothing is a green that did
+  nothing, so it is refused by name instead. A deadline shorter than one
+  `--interval` is **not** refused — it polls once and ends.
 - `--remote <name> --branch <name>` what it fetches. A `serve` that cannot fetch
   is a `serve` that cannot see its mail, so these are required with the rest.
 - `--receipt-max-words <n>` how much of a receipt is printed. Add `--receipt` to

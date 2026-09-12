@@ -82,6 +82,14 @@ func TestAnUnstampedVersionIsNotAWildcard(t *testing.T) {
 	if wake.AcceptBus("", "v0.12.0") {
 		t.Error("a nova-wake that cannot say what it is accepted a nova-bus anyway")
 	}
+	// `devel` == `devel` is a DEVELOPER'S WILDCARD, not a same-tree proof: a
+	// `go run` nova-wake accepts a `go run` nova-bus from any checkout of any
+	// fork, because neither half has a stamp or a module version to be equal
+	// by. It is dev-only -- no released binary ever says `devel`, since the
+	// release workflow stamps every binary in cmd/ -- and the alternative,
+	// refusing every unstamped pair, would make `go run` unusable against a bus
+	// built the same way. Blessed here so that the wildcard is written down
+	// rather than found.
 	if !wake.AcceptBus("devel", "devel") {
 		t.Error("two halves of one unstamped tree must still be a pair")
 	}
