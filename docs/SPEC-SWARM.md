@@ -314,7 +314,14 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     and appended in place — is not folded this run, prints `TRIAGE SKIPPED
     id=<id>: changed while read`, and is folded by the next run when it holds
     still; nothing is recorded as consumed unless the bytes recorded are the
-    bytes in the page. After the job's process group is dead, a leftover
+    bytes in the page. **A read that COLLIDED is not a change.** Every read of
+    a report — the live `RESULT.md`, the retained copy, and the second hash —
+    waits out a concurrent replace at that path, bounded, the way rule 17's
+    reads do; a record that is GONE still answers at once. Only a second hash
+    that DIFFERS is `changed while read`. Without that wait, on a platform
+    where a read inside a replace window fails, a report that had not changed
+    by one byte is skipped, and one that was published is counted as one that
+    was not. After the job's process group is dead, a leftover
     `RESULT.md.tmp` is left where it is as data, never renamed by the tool and
     never read, and the job's `RUN` line carries `unpublished=true`; the
     published revision is what is counted. (Stella, 2026-09-11: a copy taken

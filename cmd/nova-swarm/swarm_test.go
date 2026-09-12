@@ -590,13 +590,20 @@ func mustReadDirNames(t *testing.T, dir string) []string {
 // Rule 10: the note file, appended by the tool, counted in the report.
 func TestANoteReachesARunningWorker(t *testing.T) {
 	b := newBench(t)
-	id := b.add("a worker that reads its notes\nFAKE-AWAIT-NOTE 30\nFAKE-FINDINGS 1\n")
+	// 20s, UNDER THIS BENCH'S 30s DEADLINE, and the cap is this fixture's to set. A wait
+	// bounded BY the deadline is not bounded at all: the wait and the reaper come due in the
+	// same instant, so a note that never arrives fails as `end=killed` -- rule 7's re-queue
+	// and a second reap -- and says nothing about the wait that caused it. Ten seconds under
+	// it, the worker outlives its own wait, publishes its report, and the fake names the
+	// wait it gave up on in one line of stderr that the harness log carries.
+	id := b.add("a worker that reads its notes\nFAKE-AWAIT-NOTE 20\nFAKE-FINDINGS 1\n")
 	// THE WORKER HOLDS FOR THE NOTE, AND NOTHING HERE IS A CLOCK. The fake waits for the
-	// note file to carry a line (`FAKE-AWAIT-NOTE`, bounded by its own seconds and by the
-	// job's deadline) instead of sleeping two seconds: with a sleep, a sender delayed past
-	// it -- a loaded runner, or a 3s stall in front of the send, which reproduces it as
-	// `NOTE REFUSED` at 5.16s -- posts to a job that has already ended. Both sides now wait
-	// on an observable: the sender on the running record, the worker on the note.
+	// note file to carry a line (`FAKE-AWAIT-NOTE`, bounded by its own seconds, which this
+	// fixture keeps under the job's deadline) instead of sleeping two seconds: with a sleep,
+	// a sender delayed past it -- a loaded runner, or a 3s stall in front of the send, which
+	// reproduces it as `NOTE REFUSED` at 5.16s -- posts to a job that has already ended.
+	// Both sides now wait on an observable: the sender on the running record, the worker on
+	// the note.
 	//
 	// THE NOTE GOROUTINE OWNS NOTHING IT CANNOT HAND BACK (#122). It waits for an
 	// OBSERVABLE -- the running record carrying this job's directory, which `run` writes
@@ -637,6 +644,29 @@ func TestANoteReachesARunningWorker(t *testing.T) {
 		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
 	}
 	mustContain(t, "the run", stdout, "notes=1/1")
+}
+
+// A WAIT THAT GIVES UP IS BOUNDED UNDER THE DEADLINE AND SAYS SO.
+//
+// The other half of the fixture above, and cheap: no note is ever sent. A `FAKE-AWAIT-NOTE`
+// bound EQUAL to the job's deadline would end this run as `end=killed` -- rule 7's re-queue
+// and a second reap -- with nothing anywhere naming the wait that caused it, which is the
+// silent failure both ratifying reads of #126 named. Bounded UNDER the deadline the worker
+// outlives its own wait, publishes its report, and the run is `dest=done`; and the wait
+// names itself in one line the harness log carries, so a person reading the log after a
+// green run still learns that no note arrived.
+func TestAWorkerThatWaitedForANoteThatNeverCameSaysSo(t *testing.T) {
+	b := newBench(t)
+	id := b.add("a worker that waits for a note nobody sends\nFAKE-AWAIT-NOTE 1\nFAKE-FINDINGS 1\n")
+
+	exit, stdout, stderr := b.run()
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	// The wait ended on its own, well under the 30s deadline: the report was published.
+	mustContain(t, "the run", stdout, "result=ok")
+	mustContain(t, "the run", stdout, "dest=done")
+	mustContain(t, "the harness log", b.jobFile(id, "harness.log"), "the wait gave up")
 }
 
 // runningJobDir is the observable the note goroutine waits on: <pool>/running/<id>.json

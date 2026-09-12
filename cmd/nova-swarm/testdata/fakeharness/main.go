@@ -192,6 +192,16 @@ func main() {
 // until the bound runs out. A note is ONE LINE appended by the tool, so a file with any
 // content at all is the observable; an empty file is the one `run` creates before the
 // worker starts and is not a note.
+//
+// THE BOUND IS UNDER THE JOB'S DEADLINE, AND A WAIT THAT GIVES UP SAYS SO (#126, both
+// ratifying reads). A bound EQUAL to the deadline is no bound at all: the wait and the
+// reaper come due together, so a note that never arrives is read as a worker killed at its
+// deadline -- rule 7's re-queue, `end=killed`, a second reap -- and the one fact that
+// explains it, that this worker was holding for a note nobody sent, is nowhere. The
+// fixture that sets the directive caps its seconds BELOW the deadline it configured, so
+// the worker outlives its own wait and publishes; and the wait names itself on stderr,
+// which the harness log carries, so the giving-up is legible rather than silent. Every
+// wait here still ends on its own.
 func awaitNote(job string, within time.Duration) {
 	if job == "" || within <= 0 {
 		return
@@ -203,6 +213,8 @@ func awaitNote(job string, within time.Duration) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
+	fmt.Fprintf(os.Stderr, "fake harness: no note reached %s within %s; the wait gave up and the work goes on\n",
+		filepath.Join(job, "note"), within)
 }
 
 // notesRead is how many notes this worker read before it wrote its report.
