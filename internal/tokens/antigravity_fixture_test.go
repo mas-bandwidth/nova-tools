@@ -191,11 +191,11 @@ type ObservationEnvelopeFixture struct {
 	Body struct {
 		Schema string `json:"schema"`
 		Source struct {
-			Kind            string `json:"kind"`
-			ProducerVersion string `json:"producer_version"`
-			Namespace       string `json:"namespace"`
-			SessionID       string `json:"session_id"`
-			EventKey        string `json:"event_key"`
+			Kind            string   `json:"kind"`
+			ProducerVersion string   `json:"producer_version"`
+			Namespace       string   `json:"namespace"`
+			SessionID       string   `json:"session_id"`
+			EventKey        []string `json:"event_key"`
 		} `json:"source"`
 		Kind string `json:"kind"`
 		Time struct {
@@ -309,12 +309,13 @@ func TestAntigravitySyntheticFixturesAndJoin(t *testing.T) {
 			}
 			expected := env.Body
 
-			// Verify Spend Key: ["antigravity", session_id, event_key]
+			// Verify Spend Key: [source.namespace, source.event_key...]
 			if expected.Source.Namespace != "antigravity" {
 				t.Errorf("expected namespace 'antigravity', got %q", expected.Source.Namespace)
 			}
-			if expected.Source.EventKey != strconv.Itoa(row.Idx) {
-				t.Errorf("event_key mismatch: got %q, expected %d", expected.Source.EventKey, row.Idx)
+			expectedEventKey := []string{expected.Source.SessionID, strconv.Itoa(row.Idx)}
+			if len(expected.Source.EventKey) != len(expectedEventKey) || expected.Source.EventKey[0] != expectedEventKey[0] || expected.Source.EventKey[1] != expectedEventKey[1] {
+				t.Errorf("event_key mismatch: got %v, expected %v", expected.Source.EventKey, expectedEventKey)
 			}
 
 			// Verify 1:1 join with transcript step_index
