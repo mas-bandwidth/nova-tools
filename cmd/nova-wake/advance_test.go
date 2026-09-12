@@ -43,15 +43,17 @@ func realBus(t *testing.T) {
 		if runtime.GOOS == "windows" {
 			out += ".exe"
 		}
-		// Built FROM THIS TREE, and stamped with the version the spec pins.
-		// nova-bus takes its version from debug.ReadBuildInfo, which gives a
-		// dirty-tree build a pseudo-version, and nova-wake refuses any nova-bus
-		// that is not the pin -- so an unstamped tree build could not be
-		// measured at all. The stamp says which LINE of nova-bus this is; what
+		// Built FROM THIS TREE, and stamped with the version THIS nova-wake
+		// answers -- which is the pin, since 2026-09-12: one tag ships both
+		// programs and the release stamps both with it. nova-bus takes its
+		// version from debug.ReadBuildInfo, which gives a dirty-tree build a
+		// pseudo-version, so without the stamp the two halves of one tree could
+		// answer differently and the pair could not be measured at all. What
 		// these tests measure is the behaviour of the code in this tree, and if
 		// that behaviour ever diverges from the measurement in "How the
 		// checkout receives mail" these tests are what says so.
-		build := []string{"build", "-ldflags", "-X main.version=" + wake.PinnedBusVersion, "-o", out, "../nova-bus"}
+		stamp := buildVersion()
+		build := []string{"build", "-ldflags", "-X main.version=" + stamp, "-o", out, "../nova-bus"}
 		if raw, err := exec.Command("go", build...).CombinedOutput(); err != nil {
 			busBuild = fmt.Errorf("building nova-bus from this tree: %v\n%s", err, raw)
 			return
@@ -76,15 +78,15 @@ func realBus(t *testing.T) {
 			return
 		}
 		busVersion = toks[1]
+		// Read back OUT OF THE BINARY rather than trusted from the flag that
+		// stamped it: a build that did not take the stamp would otherwise be
+		// measured as if it had.
+		if busVersion != stamp {
+			busBuild = fmt.Errorf("the nova-bus built from this tree answers %s and this nova-wake is %s; the advancing tests are a measurement of the pair that ships", busVersion, stamp)
+		}
 	})
 	if busBuild != nil {
 		t.Fatal(busBuild)
-	}
-	// Read back OUT OF THE BINARY rather than trusted from the constant that
-	// stamped it: a build that did not take the stamp would otherwise be
-	// measured as if it had.
-	if busVersion != wake.PinnedBusVersion {
-		t.Fatalf("the nova-bus built from this tree answers %s and the spec pins %s; the advancing tests are a measurement of the pinned program", busVersion, wake.PinnedBusVersion)
 	}
 	bin := t.TempDir()
 	real := filepath.Join(bin, "nova-bus-real")
@@ -227,7 +229,7 @@ func TestTheRealBusRelaysNewMailWithinTwoAdvancingPolls(t *testing.T) {
 	if !strings.Contains(first.stdout, "WAKE BUS id=stella-aaaaaaaaaaaa") {
 		t.Fatalf("the note the checkout already held was not relayed:\n%s", first.all())
 	}
-	if !strings.Contains(first.stdout, "nova-bus="+wake.PinnedBusVersion) {
+	if !strings.Contains(first.stdout, "nova-bus="+busVersion) {
 		t.Errorf("the opening line does not carry the version it measured against:\n%s", first.stdout)
 	}
 	// The cursor moved, behind the print -- and the note is now on the

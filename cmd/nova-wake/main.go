@@ -110,7 +110,7 @@ const (
 	wordsHint      = `--receipt-max-words <n> is handed to nova-bus and decides how much of a receipt it prints; nova-bus has no default for it and neither has this`
 	remoteHint     = `--refresh fetches through nova-bus wait, which needs --remote <name> and --branch <name> -- the same two you would hand nova-bus yourself`
 	onNoteHint     = `--on-note <command> is the command a landed note starts, and it receives note ids and nothing else; what it is (a claude -p, an opencode run, a grok invocation) is your business and never this tool's`
-	hoursHint      = `--hours <h> is how long this serve runs before it ends on its own; a process with no end is the orphaned shell of 2026-09-09`
+	hoursHint      = `--hours <h> is how long this serve runs before it ends on its own, as a DECIMAL number of hours rather than a whole one: 8 is a working day, 0.5 is thirty minutes and 0.02 is about a minute, which is how a first run tries it. A process with no end is the orphaned shell of 2026-09-09`
 	redeliverHint  = `--redeliver <id> runs an uncertain dispatch once more, and it is a person's act: you have ended the earlier command or watched it return. It needs --on-note, because the state stores no command`
 )
 
@@ -158,8 +158,12 @@ const DefaultMaxLines = 40
 // DefaultGHTimeout is the budget for one gh, git or nova-bus call.
 const DefaultGHTimeout = 45
 
-// Version is this build, printed by `nova-wake version` and nowhere else.
-const Version = "v0.1.0"
+// Version is this build, printed by `nova-wake version` and read by the nova-bus
+// pin: one tag ships nova-wake and nova-bus together, so the version of this
+// build IS the nova-bus version this build is written against (internal/wake's
+// AcceptBus). It was a hand-written literal until 2026-09-12, when a release the
+// literal could not follow locked nova-wake out of its own nova-bus.
+func Version() string { return buildVersion() }
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr)) }
 
@@ -182,7 +186,7 @@ func runWith(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 		// The first question after a table misbehaves is which build each line
 		// is running, and a tool that cannot answer it costs a person the
 		// asking (lesson 142).
-		fmt.Fprintf(stdout, "nova-wake %s %s/%s %s\n", oneline.Field(Version),
+		fmt.Fprintf(stdout, "nova-wake %s %s/%s %s\n", oneline.Field(Version()),
 			oneline.Field(runtime.GOOS), oneline.Field(runtime.GOARCH), oneline.Field(runtime.Version()))
 		return 0
 	case "help", "-h", "--help":
@@ -433,8 +437,8 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 			// its bus needs to hear so now. Only a nova-bus that answers with
 			// the wrong version is refused.
 			busVersion = "-"
-		case found != wake.PinnedBusVersion:
-			return refused(stderr, "nova-bus "+found+"; this tool is written against "+wake.PinnedBusVersion+" and its fetch is a property of the push")
+		case !wake.AcceptBus(Version(), found):
+			return refused(stderr, wake.BusRefusal(Version(), found))
 		default:
 			busVersion = found
 		}

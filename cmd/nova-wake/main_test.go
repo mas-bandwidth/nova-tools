@@ -119,6 +119,11 @@ func fakes(t *testing.T) (busDir, ghDir string) {
 	install(t, bin, "gh")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
 	t.Setenv("NOVA_WAKE_FAKE_BUS", busDir)
+	// The fake answers the version this build of nova-wake is written against,
+	// which since 2026-09-12 is this build's OWN version rather than a literal:
+	// one tag ships nova-wake and nova-bus together. A test that wants the
+	// refusal writes its own version file over this one.
+	write(t, filepath.Join(busDir, "version"), "nova-bus "+buildVersion()+" darwin/arm64 go1.27.1\n")
 	t.Setenv("NOVA_WAKE_FAKE_GH", ghDir)
 	return busDir, ghDir
 }
@@ -780,7 +785,7 @@ func TestNewMailReachesTheCheckoutThroughTheAdvance(t *testing.T) {
 		if r.exit != 2 {
 			t.Fatalf("exit = %d, want 2:\n%s", r.exit, r.all())
 		}
-		for _, want := range []string{"v0.10.4", wake.PinnedBusVersion} {
+		for _, want := range []string{"v0.10.4", buildVersion()} {
 			if !strings.Contains(r.stderr, want) {
 				t.Errorf("the refusal must name both versions; %q is missing:\n%s", want, r.stderr)
 			}
@@ -865,14 +870,28 @@ func TestAQuietVerdictSaysHowManySourcesCouldNotBeRead(t *testing.T) {
 }
 
 // The first question after a table misbehaves is which build each line is
-// running (lesson 142).
+// running (lesson 142). Since 2026-09-12 the answer is the build STAMP rather
+// than a literal in the source -- the same stamp the nova-bus pin is derived
+// from -- so an unstamped build answers `devel` and a released one answers its
+// tag, and both are one line naming the build.
 func TestTheToolSaysWhichBuildItIs(t *testing.T) {
 	r := wakeRun(t, "version")
 	if r.exit != 0 {
 		t.Fatalf("exit = %d; %s", r.exit, r.all())
 	}
-	if !strings.HasPrefix(r.stdout, "nova-wake v") || countLines(r.stdout, "nova-wake ") != 1 {
+	if !strings.HasPrefix(r.stdout, "nova-wake "+buildVersion()+" ") || countLines(r.stdout, "nova-wake ") != 1 {
 		t.Errorf("version is not one line naming the build:\n%s", r.stdout)
+	}
+
+	// A released build says the tag, and the tag is the pin: the version verb
+	// and the nova-bus the tool accepts are one fact, so they cannot drift.
+	stampRelease(t, "v0.12.0")
+	r = wakeRun(t, "version")
+	if !strings.HasPrefix(r.stdout, "nova-wake v0.12.0 ") {
+		t.Errorf("a stamped build does not report its tag:\n%s", r.stdout)
+	}
+	if !wake.AcceptBus(Version(), "v0.12.0") {
+		t.Error("the version this tool reports is not the nova-bus it accepts")
 	}
 }
 

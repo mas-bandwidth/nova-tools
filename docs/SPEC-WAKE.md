@@ -124,7 +124,7 @@ see its bus needs to hear so now.
 | code | meaning |
 |------|---------|
 | 0 | the watch ran: **either** something changed **or** the deadline arrived |
-| 2 | could not run: a missing or malformed flag, no source named, a `--max` over the ceiling, an unreadable or unparsable state file, a second watcher on the same state file, a `nova-bus` whose version is not the one this spec pins, or a source whose failure streak reached three (rule 8; the streak is in the state file and spans calls) |
+| 2 | could not run: a missing or malformed flag, no source named, a `--max` over the ceiling, an unreadable or unparsable state file, a second watcher on the same state file, a `nova-bus` whose version is not this build's own (the pin, below), or a source whose failure streak reached three (rule 8; the streak is in the state file and spans calls) |
 
 **This is the one deviation from SPEC.md's Conventions table, and it is that there
 is no 1.** Nothing here asserts anything, so nothing here can say NO: a watcher is
@@ -369,15 +369,36 @@ and the tool says so rather than pretending. The two-poll half is a promise
 about `nova-bus`'s push and not about its read — which is why the version is
 pinned:
 
-- **The pinned version is `v0.10.3`.** Before the opening line the tool runs
-  `nova-bus version` and reads the second token of its first line. A version
-  other than the pinned one is `WAKE REFUSED: nova-bus <found>; this tool is
-  written against v0.10.3 and its fetch is a property of the push` — exit 2,
-  because a `nova-bus` that stopped fetching inside `inbox --advance` would
-  leave a watcher that looks perfectly healthy and is blind. The opening line
-  carries `nova-bus=<version>`. The pin is one line in this document and moving
-  it is a rule change under CONTRIBUTING, made after the measurement above is
-  repeated against the new version.
+- **The pinned version is this build's own version: the `nova-bus` from this
+  tool's own release.** Before the opening line the tool runs `nova-bus version`
+  and reads the second token of its first line. A version other than this
+  build's is `WAKE REFUSED: nova-bus <found>; this tool is written against
+  <this build> and its fetch is a property of the push` — exit 2, because a
+  `nova-bus` that stopped fetching inside `inbox --advance` would leave a
+  watcher that looks perfectly healthy and is blind. The opening line carries
+  `nova-bus=<version>`.
+
+  The pin **was** the literal `v0.10.3`, written here and in
+  `internal/wake/bus.go`, and on 2026-09-12 Emma's dogfood pass of v0.12.0
+  found what a literal costs (nova-tools #104): every binary in `cmd/` ships
+  from one tag, so the release moved `nova-bus` to `v0.12.0`, the literal stayed
+  where it was, and `nova-wake v0.12.0` refused the `nova-bus` of its own
+  release — `WAKE REFUSED: nova-bus v0.12.0; this tool is written against
+  v0.10.3`. A pin no release can update is a pin that expires, and a check that
+  expires is not a check. So the pin is **derived** instead: one tag stamps both
+  programs with the same `-ldflags -X main.version=<tag>` (and an unstamped
+  build of either half of one tree reports the same vcs revision), so *the
+  `nova-bus` this tool is written against* is exactly *the `nova-bus` built from
+  the same tree as me*, and the two versions match as a fact about the build.
+  The guard is not weakened: an older release's `nova-bus`, a foreign one, or
+  one from another tree is still refused by name before the opening line, and
+  the tool still names both versions. The measurement above is what argues the
+  pin, and it is repeated per release against the pair that ships — which is
+  what `cmd/nova-wake`'s advancing tests do, building `nova-bus` from this tree,
+  stamping it with this tool's own version and reading the version back out of
+  the binary. Widening the rule further — a major.minor line, or "newer than" —
+  would be a rule change under CONTRIBUTING; matching a release to itself is
+  not.
 - **Without `--advance-cursor` nothing here fetches**, and the tool says so
   rather than letting a quiet checkout look like a quiet bus: once per run,
   `WAKE NOTE bus checkout is read as it stands; nothing fetches without
@@ -803,8 +824,10 @@ spec forbids**.
     lands, and be efficient while there is NO work, never polling once a
     second inside a turn that costs tokens). `serve --bus <dir> --as <name>
     --on-note <command> --interval <duration> --state <file> --hours <h>`
-    runs as its own process outside any session, fetches the bus every
-    `--interval` (a git fetch costs no tokens; the interval matches the
+    runs as its own process outside any session — `<h>` is a **decimal**
+    number of hours and not a whole one, as `nova-swarm run --hours` is, so a
+    first run can ask for `0.02` of one and a working day is `8` — fetches the
+    bus every `--interval` (a git fetch costs no tokens; the interval matches the
     latency a person will accept, never the second), and for each new note
     whose `To:` names `<name>` runs `<command> <id> [<id>…]`: **once, and a
     second time only on a person's word or under a declared idempotent
@@ -932,7 +955,7 @@ spec forbids**.
 12. **New mail reaches the checkout through `inbox --advance`, and through
     nothing else this tool does.** Stated in full under **How the checkout
     receives mail**: the fetch is inside `nova-bus`'s push, the version is
-    pinned at `v0.10.3` and checked before the opening line, mail is relayed
+    pinned to this build's own and checked before the opening line, mail is relayed
     within two **advancing** polls under `--advance-cursor` — a poll advances
     only behind an empty bus queue, and a call that defers the advance says
     so — and without it the tool fetches nothing and prints `head-at=` so the

@@ -26,6 +26,11 @@ var wakeAudit = audit.Config{
 		// constants of the build and are printed through oneline.Field like
 		// everything else: it writes nothing and shadows nothing.
 		`"runtime"`,
+		// runtime/debug, for the build stamp the version verb prints and the
+		// nova-bus pin is derived from (cmd/nova-wake/version.go). It reads
+		// build information, writes nothing and shadows nothing, and what it
+		// returns is printed through oneline.Field like everything else.
+		`"runtime/debug"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/wake"`,
 	},

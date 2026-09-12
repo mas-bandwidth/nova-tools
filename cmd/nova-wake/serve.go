@@ -150,8 +150,8 @@ func cmdServe(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 	switch found, verr := wake.BusVersion(context.Background(), time.Duration(*gitTimeout)*time.Second); {
 	case verr != nil:
 		// A program missing from PATH is a failed poll and not a refusal.
-	case found != wake.PinnedBusVersion:
-		return refused(stderr, "nova-bus "+found+"; this tool is written against "+wake.PinnedBusVersion+" and its fetch is a property of the push")
+	case !wake.AcceptBus(Version(), found):
+		return refused(stderr, wake.BusRefusal(Version(), found))
 	}
 
 	s := &server{

@@ -471,7 +471,7 @@ func TestServeFetchesEveryIntervalAndPinsTheVersion(t *testing.T) {
 		r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 			"--interval", "30s", "--state", filepath.Join(t.TempDir(), "s"), "--hours", "1",
 			"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
-		if r.exit != 2 || !strings.Contains(r.stderr, "v0.10.4") || !strings.Contains(r.stderr, "v0.10.3") {
+		if r.exit != 2 || !strings.Contains(r.stderr, "v0.10.4") || !strings.Contains(r.stderr, buildVersion()) {
 			t.Errorf("exit %d; a nova-bus that stopped fetching inside its push leaves a serve that looks healthy and is blind:\n%s", r.exit, r.stderr)
 		}
 	})
