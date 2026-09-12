@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -495,13 +496,27 @@ func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
 	}
 	cmd := exec.Command("bash", script)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), "NOVA_SANDBOX_FILL="+bin)
+	// Test 16 is absolute: no test reaches outside t.TempDir() or touches the network.
+	// The script's own scratch lives beside it, in the repo working tree, and its two DNS
+	// checks curl a third-party host — right for the operator run and for the mac CI job,
+	// where the spec's work list puts them, and wrong for a Go test on a machine with an
+	// egress policy, where they would go red for a reason that is not about the wall.
+	cmd.Env = append(os.Environ(),
+		"NOVA_SANDBOX_FILL="+bin,
+		"NOVA_CHECK_SCRATCH="+filepath.Join(t.TempDir(), "check"),
+		"NOVA_CHECK_NO_NETWORK=1")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("darwin-check.sh against the tool's generated profile failed: %v\n%s", err, out)
 	}
+	// The count is the SCRIPT's, and no number here or in the spec states it: a test that
+	// named one would go red every time a check was added. What is asserted is that the
+	// script ran a real suite and that none of it failed.
 	if n := strings.Count(string(out), "CHECK OK name="); n < 20 {
-		t.Fatalf("only %d checks passed; the script prints twenty:\n%s", n, out)
+		t.Fatalf("only %d checks passed; the script's own count is higher than that:\n%s", n, out)
+	}
+	if n := strings.Count(string(out), "CHECK SKIP name="); n != 2 {
+		t.Fatalf("want the two DNS checks skipped under NOVA_CHECK_NO_NETWORK, got %d SKIP lines:\n%s", n, out)
 	}
 	if strings.Contains(string(out), "CHECK FAIL") {
 		t.Fatalf("a check failed against the tool's profile:\n%s", out)
@@ -526,4 +541,263 @@ func repoRoot(t *testing.T) string {
 		}
 		dir = parent
 	}
+}
+
+// TestMain is the half of rule 10's re-exec that lives in the test binary: the probe
+// re-executes os.Executable() with an internal verb, and under `go test` os.Executable()
+// is THIS binary. Dispatching probe-step here makes the test binary the tool for that one
+// verb, so the probe under test is the real re-exec and not a stub of it.
+func TestMain(m *testing.M) {
+	if len(os.Args) > 1 && os.Args[1] == "probe-step" {
+		os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr, os.Environ()))
+	}
+	os.Exit(m.Run())
+}
+
+// Rule 10, revision 9: "the child is the same binary with an internal verb, never a
+// shell", and read_root "reads the first byte of the probe's own executable
+// (os.Executable())". Before this test the probe wrapped `sh -c <script>` and read_root
+// read /bin/sh, which lies under the FIXED root /bin — so the one check written to
+// exercise the run-time root "the directory of the resolved command" exercised a root
+// that is in the profile verbatim. This is the test the spec said would decide which.
+func TestProbeReExecsTheToolAndNeverAShell(t *testing.T) {
+	needDarwin(t)
+	j := newJob(t)
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r, err := filepath.EvalSymlinks(self); err == nil {
+		self = r
+	}
+	code, out, errOut := j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write, "--secret", j.secret)
+	if code != 0 {
+		t.Fatalf("probe exit %d\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	want := "PROBE STEP name=read_root expect=allow got=allow path=" + self
+	if !strings.Contains(out, want) {
+		t.Fatalf("read_root did not read the probe's own executable.\nwant a line %q\ngot:\n%s", want, out)
+	}
+	// No step stands on a shell. /bin and /usr/bin are fixed roots, so a read under one
+	// of them proves nothing about the root the generator computes at run time.
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "PROBE STEP ") {
+			continue
+		}
+		for _, shell := range []string{"path=/bin/sh", "path=/bin/dash", "path=/bin/bash", "path=/usr/bin/sh"} {
+			if strings.Contains(line, shell) {
+				t.Fatalf("the probe still stands on a shell: %s", line)
+			}
+		}
+	}
+}
+
+// The internal verb itself: it does the open, the write and the one-byte read in Go, so
+// no probe step is ever a shell string and no path the caller handed the tool is ever
+// re-parsed (rule 12: never through a shell).
+func TestProbeStepIsTheInternalVerb(t *testing.T) {
+	j := newJob(t)
+	target := filepath.Join(j.write, "step")
+	if code, _, errOut := j.tool(t, j.env(), "probe-step", "write_inside", target); code != 0 {
+		t.Fatalf("probe-step write_inside exit %d: %s", code, errOut)
+	}
+	if _, err := os.Stat(target); err == nil {
+		t.Fatal("write_inside left its file behind; the step writes and removes")
+	}
+	if code, _, _ := j.tool(t, j.env(), "probe-step", "read_root", filepath.Join(j.base, "no-such-file")); code == 0 {
+		t.Fatal("read_root reported success on a file that is not there")
+	}
+	if code, _, _ := j.tool(t, j.env(), "probe-step", "read_secret", j.secret); code != 0 {
+		t.Fatal("read_secret could not open a file that is readable outside the wall")
+	}
+	code, _, errOut := j.tool(t, j.env(), "probe-step", "not_a_step", target)
+	if code != 2 || !strings.Contains(errOut, "is not a probe step") {
+		t.Fatalf("an unknown step was accepted: exit %d, stderr %q", code, errOut)
+	}
+}
+
+// The falsifying read's B2, verbatim: a --secret path holding a quote and a semicolon was
+// concatenated into the probe's shell script, so the injected command RAN inside the wall
+// and read_secret's verdict flipped from deny to allow. Two halves, and both must hold:
+// the path never reaches an interpreter, and rule 5 resolves --secret like every other
+// path the caller hands the tool, so a path that does not exist is a refusal rather than
+// a silent pass (the reader's m7).
+func TestSecretPathIsNeverInterpreted(t *testing.T) {
+	needDarwin(t)
+	j := newJob(t)
+	injected := filepath.Join(j.write, "INJECTED")
+	evil := "/etc/hosts' ; : > '" + injected
+	code, out, errOut := j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write, "--secret", evil)
+	if _, err := os.Stat(injected); err == nil {
+		t.Fatalf("a --secret path injected a command that ran inside the wall: %s exists\nstdout: %s", injected, out)
+	}
+	if strings.Contains(out, "name=read_secret expect=deny got=allow") {
+		t.Fatalf("the injected command flipped read_secret's verdict:\n%s", out)
+	}
+	if code == 0 {
+		t.Fatalf("a --secret that names no file was a probe PASS: exit %d\n%s\n%s", code, out, errOut)
+	}
+	// A --secret that simply does not exist is the same refusal, and it is rule 5's.
+	code, _, errOut = j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write,
+		"--secret", filepath.Join(j.base, "secret", "NO-SUCH-FILE"))
+	if code == 0 {
+		t.Fatalf("a misspelled --secret was a probe PASS: %s", errOut)
+	}
+}
+
+// Rule 9's NOTE line, which no test pinned: it is printed before the command starts,
+// whenever the scrub removed anything, naming EXACTLY what was dropped — and never
+// otherwise. A NOTE that names a variable the child still has is a false statement about
+// the wall, which is the silent-sandbox failure in reverse.
+func TestTheNoteNamesExactlyWhatWasDropped(t *testing.T) {
+	needDarwin(t)
+	j := newJob(t)
+	env := j.env("SSH_AUTH_SOCK=/private/tmp/a.sock", "GPG_AGENT_INFO=/private/tmp/g:1:1",
+		"AI_AGENT=rowan", "CLAUDE_AGENT_SDK_VERSION=1.2.3", "FOO_TOKEN=keep-me")
+	code, _, errOut := j.tool(t, env, "--read", j.read, "--write", j.write, "--", "/bin/sh", "-c", "true")
+	if code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut)
+	}
+	want := "SANDBOX NOTE dropped from the child's environment: GPG_AGENT_INFO SSH_AUTH_SOCK; an agent socket speaks for a key the wall denies"
+	if !strings.Contains(errOut, want) {
+		t.Fatalf("the NOTE line is not the grammar rule 9 fixes.\nwant: %s\ngot:  %s", want, errOut)
+	}
+	for _, kept := range []string{"AI_AGENT", "CLAUDE_AGENT_SDK_VERSION", "FOO_TOKEN"} {
+		if strings.Contains(errOut, kept) {
+			t.Fatalf("the NOTE claims to have dropped %s, which rule 9 passes through: %s", kept, errOut)
+		}
+	}
+	// And never otherwise: nothing dropped, no NOTE.
+	if _, _, errOut := j.tool(t, j.env(), "--read", j.read, "--write", j.write, "--", "/bin/sh", "-c", "true"); strings.Contains(errOut, "SANDBOX NOTE") {
+		t.Fatalf("a NOTE was printed with nothing dropped: %s", errOut)
+	}
+}
+
+// Rule 12: "every file it opens is CLOEXEC and only 0, 1 and 2 are passed". The observable
+// is cheap and the spec names it: a wrapped listing of /dev/fd. The second half is the
+// measured hazard the same rule states — /dev/fd/N re-opens a descriptor the caller held,
+// so the tool must hand the child none of its own.
+func TestOnlyStdinStdoutStderrArePassedToTheChild(t *testing.T) {
+	needDarwin(t)
+	j := newJob(t)
+	code, out, errOut := j.tool(t, j.env(), "--read", j.read, "--write", j.write, "--",
+		"/bin/sh", "-c", "ls /dev/fd")
+	if code != 0 {
+		t.Fatalf("ls /dev/fd inside the wall: exit %d; %s", code, errOut)
+	}
+	// The control is the SAME listing outside the wall: `ls` opens the directory it is
+	// listing, so a bare count would assert the shape of ls rather than the shape of the
+	// wrap. What the rule claims is that the tool adds none of its own, and the two
+	// listings being equal is exactly that claim.
+	control, err := exec.Command("/bin/sh", "-c", "ls /dev/fd").Output()
+	if err != nil {
+		t.Fatalf("control: ls /dev/fd outside the wall: %v", err)
+	}
+	if strings.Fields(out) == nil || strings.Join(strings.Fields(out), " ") != strings.Join(strings.Fields(string(control)), " ") {
+		t.Fatalf("the child's descriptors differ from the same command's outside the wall:\ninside:  %q\noutside: %q", out, control)
+	}
+	for _, fd := range []string{"0", "1", "2"} {
+		if !strings.Contains(out, fd) {
+			t.Fatalf("the child is missing descriptor %s: %q", fd, out)
+		}
+	}
+	// A descriptor THIS process holds onto the secret does not reach the child.
+	f, err := os.Open(j.secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	_, out, _ = j.tool(t, j.env(), "--read", j.read, "--write", j.write, "--",
+		"/bin/sh", "-c", "cat /dev/fd/"+strconv.Itoa(int(f.Fd()))+" 2>/dev/null; exit 0")
+	if strings.Contains(out, "not-a-real-key") {
+		t.Fatalf("a descriptor the caller held reached the child: %q", out)
+	}
+}
+
+// Test 15: the `policy` verb prints the generated policy and runs NOTHING, twice
+// identically, and there is no flag by which a caller hands the tool a profile of its own.
+// It is also the verb the spec's reader command now uses, so a reader who pastes that
+// command gets what this test asserts.
+func TestPolicyVerbPrintsAndRunsNothing(t *testing.T) {
+	needDarwin(t)
+	j := newJob(t)
+	marker := filepath.Join(j.write, "ran")
+	code, out, errOut := j.tool(t, j.env(), "policy", "--read", j.read, "--write", j.write)
+	if code != 0 {
+		t.Fatalf("policy exit %d: %s", code, errOut)
+	}
+	if !strings.Contains(out, "(version 1)") || !strings.Contains(out, "(deny default)") {
+		t.Fatalf("the printed policy is not a profile:\n%s", out)
+	}
+	if !strings.Contains(errOut, "POLICY OK backend=sandbox-exec") {
+		t.Fatalf("the POLICY OK line is not the grammar the spec fixes: %q", errOut)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("the policy verb ran something")
+	}
+	_, again, _ := j.tool(t, j.env(), "policy", "--read", j.read, "--write", j.write)
+	if again != out {
+		t.Fatal("the same lists printed two different policies")
+	}
+	// Rule 15: the tool never accepts a caller-supplied profile file, and the way a
+	// reader can tell is that no such flag exists.
+	for _, flag := range []string{"--profile", "--policy-file", "-f", "--print-policy"} {
+		code, _, errOut := j.tool(t, j.env(), "policy", "--write", j.write, flag, "x")
+		if code == 0 {
+			t.Fatalf("%s was accepted by the policy verb", flag)
+		}
+		if !strings.Contains(errOut, "is not a flag this tool has") {
+			t.Fatalf("%s was refused for the wrong reason: %s", flag, errOut)
+		}
+	}
+}
+
+// Test 10's two unexecuted branches: the named outside path must be OUTSIDE every list,
+// and it must be writable by this user anyway, or the probe cannot answer its question
+// and says so at exit 2 rather than reporting a check that failed.
+func TestProbeRefusesWhenItCannotAnswerTheQuestion(t *testing.T) {
+	needDarwin(t)
+	j := newJob(t)
+	// The outside path is <parent of the first --write>/.nova-sandbox-probe-<pid>. A
+	// --read that covers that parent puts it INSIDE a named list. The nest keeps the
+	// secret out of that --read, so the refusal under test is the one that fires.
+	nest := filepath.Join(j.base, "nest")
+	nestWrite := filepath.Join(nest, "w")
+	if err := os.MkdirAll(filepath.Join(nestWrite, "home"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	nestEnv := []string{"HOME=" + filepath.Join(nestWrite, "home"), "PATH=/opt/homebrew/bin:/usr/bin:/bin"}
+	code, _, errOut := j.tool(t, nestEnv, "probe", "--read", nest, "--write", nestWrite, "--secret", j.secret)
+	if code != 2 || !strings.Contains(errOut, "reason=probe_outside_inside") {
+		t.Fatalf("exit %d, stderr %q; want 2 and reason=probe_outside_inside", code, errOut)
+	}
+	// And a parent this user cannot write to: a deny there proves nothing, because it was
+	// never possible.
+	ro := filepath.Join(j.base, "ro")
+	if err := os.MkdirAll(filepath.Join(ro, "w", "home"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(ro, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(ro, 0o755) })
+	env := []string{"HOME=" + filepath.Join(ro, "w", "home"), "PATH=/opt/homebrew/bin:/usr/bin:/bin"}
+	code, _, errOut = j.tool(t, env, "probe", "--write", filepath.Join(ro, "w"), "--secret", j.secret)
+	if code != 2 || !strings.Contains(errOut, "reason=probe_outside_unwritable") {
+		t.Fatalf("exit %d, stderr %q; want 2 and reason=probe_outside_unwritable", code, errOut)
+	}
+}
+
+// toolBinary builds nova-sandbox once for a test that needs a REAL process, not run() in
+// this one: a process group is a property of a process, and the tests above that call
+// run() in process share the test binary's group.
+func toolBinary(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "nova-sandbox")
+	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-sandbox")
+	build.Dir = repoRoot(t)
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building the tool: %v\n%s", err, out)
+	}
+	return bin
 }

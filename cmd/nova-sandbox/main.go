@@ -106,6 +106,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return policyVerb(args[1:], stdout, stderr, env)
 	case "probe":
 		return probeVerb(args[1:], stdout, stderr, env)
+	case probeStepVerbName:
+		return probeStepVerb(args[1:], stderr)
 	}
 	return execVerb(args, stdin, stdout, stderr, env)
 }
@@ -290,20 +292,29 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		fmt.Fprint(stderr, "PROBE REFUSED reason=check: --secret is required and names the file this probe proves it cannot read: --secret <path>\n")
 		return sandbox.ExitCannotRun
 	}
-	shell, err := exec.LookPath("sh")
+	// Rule 10: the probe re-executes THIS binary under the policy it just generates, with
+	// an internal verb, never a shell. os.Executable() is the resolved command of that
+	// wrapped run, so its directory is the root "the directory of the resolved command"
+	// by construction: read_root then exercises the one root the generator computes at run
+	// time, instead of /bin, which is in the profile verbatim. There is no PATH lookup and
+	// no machine on which the probe cannot find its own child.
+	self, err := os.Executable()
 	if err != nil {
-		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: sh is on no PATH entry: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: this binary cannot name its own path: %s\n", oneline.Err(err))
 		return sandbox.ExitCannotRun
 	}
-	secret, err := filepath.Abs(f.secret)
-	if err != nil {
-		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: --secret %s could not be made absolute\n", oneline.Escape(f.secret))
+	// --secret is a caller path like every other, so rule 5 resolves it: absolute,
+	// existing, symlinks followed, and refused for absence rather than passing a probe
+	// against a file that is not there.
+	secret, refusal := sandbox.ResolveCallerFile("--secret", f.secret)
+	if refusal != nil {
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=%s: %s\n", oneline.Field(refusal.Reason), oneline.Escape(refusal.Text))
 		return sandbox.ExitCannotRun
 	}
 
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, NetDeny: f.netDeny, NetListen: f.netListen,
-		Argv: []string{shell, "-c", "true"}, Home: homeOf(env),
+		Argv: []string{self, probeStepVerbName}, Home: homeOf(env),
 	})
 	if len(bad) > 0 {
 		for _, r := range bad {
@@ -312,9 +323,6 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		return sandbox.ExitCannotRun
 	}
 	// rule 6: a --secret inside a named path is a misconfiguration, not a failed probe.
-	if resolved, err := filepath.EvalSymlinks(secret); err == nil {
-		secret = resolved
-	}
 	for _, d := range append(append([]string{}, p.Reads...), p.Writes...) {
 		if sandbox.Inside(secret, d) {
 			fmt.Fprintf(stderr, "PROBE REFUSED reason=secret_inside_allow: --secret %s is inside %s; the secret is never inside either list\n",
@@ -378,27 +386,72 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	return 0
 }
 
-// walled runs one probe check INSIDE the wall and reports allow or deny. The secret's
-// contents are never read: the check opens the file and closes it.
+// walled runs one probe check INSIDE the wall and reports allow or deny. The child is
+// this same binary with the internal verb (rule 10), so the step name and the path are
+// argv ELEMENTS: nothing the caller handed the tool is ever re-parsed by an interpreter,
+// which is rule 12's "never through a shell" applied to the tool's own child. The
+// previous form built a shell script by concatenation, and a --secret holding a quote and
+// a semicolon ran a command inside the wall and flipped read_secret to allow.
 func walled(p *sandbox.Policy, env []string, name, path string) string {
-	script := ""
-	switch name {
-	case "write_outside":
-		script = ": > '" + path + "'"
-	case "read_secret":
-		script = "exec 3< '" + path + "'" // open only; nothing is read
-	case "write_inside":
-		script = ": > '" + path + "' && rm -f '" + path + "'"
-	case "read_root":
-		script = "dd if='" + path + "' of=/dev/null bs=1 count=1 2>/dev/null"
-	}
 	run := *p
-	run.Argv = []string{p.Command, "-c", script}
+	run.Argv = []string{p.Command, probeStepVerbName, name, path}
 	code, err := sandbox.Run(&run, sandbox.ChildEnv(env, p.Tmp), nil, io.Discard, io.Discard, nil)
 	if err != nil || code != 0 {
 		return "deny"
 	}
 	return "allow"
+}
+
+// probeStepVerbName is the internal verb rule 10 names. It is not in the usage banner and
+// no caller runs it: it is the child of every walled probe step, and it exists so that the
+// probe's child is the tool itself rather than a shell — the smaller surface, and the only
+// shape under which read_root reads the probe's own executable.
+const probeStepVerbName = "probe-step"
+
+// probeStepVerb is that child: one step, done in Go, exit 0 for allow and 1 for deny. Each
+// case is the smallest syscall that answers its question, and read_secret opens the file
+// and closes it without reading a byte (rule 6).
+func probeStepVerb(args []string, stderr io.Writer) int {
+	if len(args) != 2 {
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s is internal and takes <name> <path>\n", probeStepVerbName)
+		return sandbox.ExitCannotRun
+	}
+	name, path := args[0], args[1]
+	switch name {
+	case "write_outside", "write_inside":
+		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
+		if err != nil {
+			return sandbox.ExitProbeFailed
+		}
+		_ = f.Close()
+		if name == "write_inside" {
+			_ = os.Remove(path)
+		}
+		return 0
+	case "read_secret":
+		// Opened and closed. Nothing is read, so the tool never holds a credential's
+		// bytes even for the length of one syscall (rule 6).
+		f, err := os.Open(path)
+		if err != nil {
+			return sandbox.ExitProbeFailed
+		}
+		_ = f.Close()
+		return 0
+	case "read_root":
+		f, err := os.Open(path)
+		if err != nil {
+			return sandbox.ExitProbeFailed
+		}
+		var one [1]byte
+		n, err := f.Read(one[:])
+		_ = f.Close()
+		if err != nil || n != 1 {
+			return sandbox.ExitProbeFailed
+		}
+		return 0
+	}
+	fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s is not a probe step\n", oneline.Field(name))
+	return sandbox.ExitCannotRun
 }
 
 // policyVerb prints the generated policy for a read/write pair and runs NOTHING. It is

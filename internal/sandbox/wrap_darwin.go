@@ -1,10 +1,11 @@
 //go:build darwin
 
 // The darwin body: sandbox-exec with a profile generated from
-// profiles/darwin.sb.tmpl for this one run. sandbox-exec applies the profile and execs
-// the command IN PLACE, so no second process sits between the tool and the command — but
-// the tool WAITS (rule 12), because it must remove the generated profile file when the
-// command ends.
+// profiles/darwin.sb.tmpl for this one run. The profile is passed INLINE with -p, so no
+// file is written anywhere at any point and there is nothing to clean up. sandbox-exec
+// applies the profile and execs the command IN PLACE, so no second process sits between
+// the tool and the command — but the tool WAITS (rule 12), because it forwards SIGINT and
+// SIGTERM to the child's process group and returns the command's status.
 package sandbox
 
 import (
@@ -87,23 +88,14 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	// THE WRAPPED TREE STAYS IN THE CALLER'S PROCESS GROUP, and this is a change the
-	// nova-swarm seam made to this body rather than a preference. A `Setpgid: true` here
-	// puts sandbox-exec and everything it execs into a NEW group whose id no caller can
-	// learn: os/exec hands back the tool's pid and nothing below it, and a launcher that
-	// must reap a job -- nova-swarm's supervisor, which puts the whole job in one group
-	// and counts what is left in it after the leader has gone (SPEC-SWARM rule 11) -- then
-	// holds a group that contains the wrapper and not the work. Measured on this Mac
-	// 2026-09-12: with the new group, a wrapped harness that forks a background child left
-	// that child alive after the run and the supervisor's survivor count was 0, and the
-	// job was recorded `done`; without it, the same child is counted and killed, which is
-	// what rule 11 demands. Inheriting the caller's group costs nothing here: a launcher
-	// that wants the tree in a group of its own puts THIS process in one (the swarm does),
-	// and then the whole tree is in it by inheritance.
-	//
-	// The signal forwarding below therefore targets the CHILD'S PID rather than a group:
-	// the child's group is now the tool's own, and `kill(-pgid)` from inside it would
-	// deliver the signal back to this process, over and over, through its own handler.
+	// NO Setpgid: the wrapped tree stays in the CALLER's process group, and the caller
+	// owns pgid and reaping. A group of the tool's own looked tidier and was wrong: a
+	// swarm supervisor puts each job in a group of its making and reaps that group at the
+	// deadline (SPEC-SWARM rule 11), and a command that forked a background child left
+	// that child in the tool's group, outside the one the supervisor kills -- measured by
+	// the seam read, survivors=0 reported while a process was still alive, which is the
+	// silent failure that rule exists to prevent. Signals are forwarded to the CHILD
+	// (below), not to a group, for the same reason: the group is not the tool's to signal.
 
 	// SANDBOX OK is printed and FLUSHED before the command starts, so a log that ends in
 	// a crash still says what the wall was.
@@ -122,9 +114,9 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 			select {
 			case s := <-sigs:
 				if sig, ok := s.(syscall.Signal); ok && cmd.Process != nil {
-					// The child, not the group: the group is this process's own, and
-					// signalling it would signal this process again (see above).
-					_ = syscall.Kill(cmd.Process.Pid, sig)
+					// The CHILD, not -pid: with no group of its own, -pid would name a
+					// process group this tool never created and does not own.
+					_ = cmd.Process.Signal(sig)
 				}
 			case <-done:
 				return

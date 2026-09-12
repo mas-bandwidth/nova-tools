@@ -60,6 +60,19 @@ func anExecutable(t *testing.T) string {
 	return found
 }
 
+// needSbpl skips where this refusal does not apply. It is the DARWIN profile's: its ancestor
+// literals put a path into the policy TEXT, so a quote, a backslash or a paren there could
+// rewrite the policy. Landlock takes file descriptors and AppContainer takes ACEs — neither
+// renders a path into a text — and on windows a backslash is the path separator and
+// `C:\Program Files (x86)` is in the spec's own root table. The per-platform decision itself
+// is asserted on every platform in winpath_test.go.
+func needSbpl(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "darwin" {
+		t.Skipf("skipped on %s: the SBPL metacharacter refusal is the darwin profile's, and %s renders no path into a policy text", runtime.GOOS, runtime.GOOS)
+	}
+}
+
 // needUnixPaths skips a test whose subject is the TEXT of the darwin sandbox-exec profile.
 // Its literals are absolute unix paths; a windows path is not one, and the AppContainer body
 // writes no policy text at all. Darwin and linux both run these.
@@ -124,6 +137,12 @@ func TestSamePathInBothListsIsARefusal(t *testing.T) {
 	}
 	if !strings.Contains(bad[0].Text, "--read") || !strings.Contains(bad[0].Text, "--write") {
 		t.Fatalf("the refusal did not name both flags: %q", bad[0].Text)
+	}
+	// The reason token, which no test pinned and which the spec's exit table got wrong:
+	// it is bad_read, because the --read is the flag that adds nothing (a --write already
+	// carries read) and is therefore the one to delete.
+	if bad[0].Reason != "bad_read" {
+		t.Fatalf("reason %q, want bad_read; the exit table names it and nothing pinned it", bad[0].Reason)
 	}
 }
 
@@ -195,15 +214,40 @@ func TestCommandPreflight(t *testing.T) {
 // The build's own decision, from "to verify at build" item 2: a path carrying an SBPL
 // metacharacter is refused, because the ancestor literals put a path INTO the profile.
 func TestPathWithSbplMetacharacterIsRefused(t *testing.T) {
-	needUnixPaths(t) // `C:\Program Files (x86)` is an ordinary windows directory
-	write, read, home, _ := scratch(t)
+	needSbpl(t)
+	write, read, _, _ := scratch(t)
 	odd := filepath.Join(write, `a (paren)`)
-	if err := os.MkdirAll(odd, 0o755); err != nil {
+	// HOME goes INSIDE the odd write set. The previous form left HOME under the ordinary
+	// write set, so the odd path was refused reason=home_outside and the test passed with
+	// the metacharacter refusal deleted — measured: comment out the badPathTextFor branch
+	// and it still went green. A test that cannot go red for its own subject is a green
+	// about something else.
+	oddHome := filepath.Join(odd, "home")
+	if err := os.MkdirAll(oddHome, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	iv := in(t, odd, read, home, anExecutable(t))
-	if _, bad := Build(iv); len(bad) == 0 {
+	iv := in(t, odd, read, oddHome, anExecutable(t))
+	_, bad := Build(iv)
+	if len(bad) == 0 {
 		t.Fatal("a path holding a paren was accepted into the generated policy")
+	}
+	found := false
+	for _, r := range bad {
+		if r.Reason == "bad_write" && strings.Contains(r.Text, "the generated policy cannot carry") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the refusal is not the metacharacter one this test is about: %v", bad)
+	}
+	// A control: the same shape without the metacharacter is accepted, so the refusal is
+	// about the paren and not about the directory being new.
+	plain := filepath.Join(write, "a-paren")
+	if err := os.MkdirAll(filepath.Join(plain, "home"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, bad := Build(in(t, plain, read, filepath.Join(plain, "home"), anExecutable(t))); len(bad) > 0 {
+		t.Fatalf("control: the same shape without the paren was refused: %v", bad)
 	}
 }
 
@@ -351,10 +395,26 @@ func TestInboundIsOnlyGrantedWhenAsked(t *testing.T) {
 	if !strings.Contains(grantLines(listening), "(allow network-inbound (local ip))") {
 		t.Fatalf("--net-listen granted no inbound:\n%s", listening)
 	}
+}
+
+// Rule 7's bad_net, in its OWN test and on EVERY platform. It lived at the end of the test
+// above until this revision, and that test is gated on needUnixPaths because its first two
+// thirds assert the darwin PROFILE TEXT — so the windows gating took the repository's only
+// bad_net assertion with it. This refusal is a Build-level flag refusal with no profile
+// text in it at all, and the spec's exit table lists it at 125 for every platform.
+func TestNetDenyWithNetListenIsRefusedOnEveryPlatform(t *testing.T) {
+	write, read, home, _ := scratch(t)
 	iv := in(t, write, read, home, anExecutable(t))
 	iv.NetDeny, iv.NetListen = true, true
-	if _, bad := Build(iv); len(bad) == 0 || bad[0].Reason != "bad_net" {
-		t.Fatalf("--net-deny with --net-listen was accepted: %v", bad)
+	_, bad := Build(iv)
+	if len(bad) == 0 {
+		t.Fatal("--net-deny with --net-listen was accepted; the tool picked which the caller meant")
+	}
+	if bad[0].Reason != "bad_net" {
+		t.Fatalf("reason %q, want bad_net: %v", bad[0].Reason, bad)
+	}
+	if !strings.Contains(bad[0].Text, "--net-deny") || !strings.Contains(bad[0].Text, "--net-listen") {
+		t.Fatalf("the refusal did not name both flags: %q", bad[0].Text)
 	}
 }
 
