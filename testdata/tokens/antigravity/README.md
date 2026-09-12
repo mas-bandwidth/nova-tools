@@ -24,8 +24,8 @@ Inside `CortexStepGeneratorMetadata` (Field 1: `ChatModelMetadata`, Field 1.4: `
 
 ## Presence Rules (Preserving Absence vs Present-Zero)
 1. **Omitted on Wire**:
-   - In Proto3, a missing tag represents an *unmeasured* or *unavailable* field (such as network drop before response generation, e.g. Turn 2 in these fixtures).
-   - In `nova.tokens.observation/2`, omitted wire tags MUST be mapped to `{presence: "absent", reason: "omitted_from_wire"}`. They MUST NOT default to 0.
+   - In Proto3, an omitted tag establishes wire absence only; it does not establish whether the original measurement was unavailable or zero. Normalized measurement semantics must remain unknown unless explicit source evidence resolves them.
+   - In `nova.tokens.observation/2`, omitted wire tags MUST be mapped faithfully to `{presence: "absent", reason: "omitted_from_wire"}` without asserting measurement semantics or defaulting to 0.
 2. **Explicit Wire Zero**:
    - When a field is explicitly present with varint 0 (e.g. `thinking_output_tokens = 0` in Turn 3), it MUST be preserved as `{presence: "present", value: "0"}`.
 3. **Provisional Total Field Outside Spend**:
