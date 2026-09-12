@@ -981,22 +981,33 @@ line cannot supply:
    a pipe, that it carries exactly those 16 bytes, and that it carries no more.
 2. Those bytes, hex-encoded, equal the value in the child's **argv** and the
    value in its **environment** — three copies, compared in constant time, all
-   three required to agree. The environment copy is stripped from anything the
-   child in turn starts.
+   three required to agree. The environment copy is the guard's second factor and
+   nothing else reads it.
 3. The child asks the OS for its **parent's executable** and refuses unless that
    is this same binary. `sandbox-exec` execs in place, so the probe's child has
    the tool for a parent and nothing else does. On darwin the question is
    `proc_pidpath(2)` and **not** `ps -o comm= -p`: the child asks it *inside*
-   the wall, and `ps` is setgid, so `ps` there is
+   the wall, and `ps` is setuid root (`-rwsr-xr-x root wheel` for `/bin/ps` on
+   macOS 26) while a set-id exec is denied inside the wall, so `ps` there is
    `/bin/ps: Operation not permitted`, exit 126.
 
-**The honest bound.** None of this grants a protection against the person at the
-keyboard. A same-user caller can open and truncate that file with `>` and needs
-no verb of ours to do it, so the guard gives such a caller **no capability they
-lack**. What it buys is that no path driven by *content* — a script, a
-`Makefile`, a repository's own hook, a job running inside another wall — can
-reach this verb's `O_TRUNC` by guessing a word, and that the spec's "nothing
-else runs it" is therefore true by mechanism.
+**The honest bound.** The verb grants **no capability the caller lacks**, because
+everything it does is bounded by the wall it runs in. A same-user caller can open
+and truncate a file with `>` and needs no verb of ours to do it. What the guard
+buys is that no invocation from **outside** that wall — by hand, or driven by
+*content*: a script, a `Makefile`, a repository's own hook — reaches this verb's
+`O_TRUNC` by guessing a word.
+
+A caller already **inside** the wall gains nothing by it, and that is measured,
+not assumed. On `676d432` a shell under this tool's own exec verb built a
+16-byte pipe as its fd 3, minted one value for both the argv and the
+environment, and `exec`'d `probe-step`: `sandbox-exec` and the shell both exec
+in place, so the child's parent *is* the tool, and all three halves passed. The
+`O_TRUNC` it reached was on a file **inside** the wall — one the wall already
+allowed, which content there could empty with `: > file` anyway. The same run
+against a file **outside** the wall was refused by the wall: exit 1, the file
+intact. So "nothing else runs it" is not a property the guard makes true by
+mechanism; what bounds anything else that reaches the verb is the wall.
 
 It is stated because the first form was **not** true by mechanism. It compared
 the argv copy to the environment copy, and both of those are the caller's own to
@@ -1579,11 +1590,15 @@ And one for each thing the rules above assert but no test yet reached:
     inside the wall without `--read` — the wrapped command fails (126 or a
     signal death) — and with `--read` it runs. **The directory is named by the
     test and lies outside the caller's home**, because the home guard of the
-    roots section now refuses a command whose directory is the home or an
-    ancestor of it: under that guard a toolchain at `~/tools/x.sh` is not a
-    126 inside the wall at all, it is exit **125** `reason=bad_read` before
+    roots section now refuses a command whose directory **is** the home or an
+    ancestor of it: under that guard a toolchain at `~/x.sh` is not a 126
+    inside the wall at all, it is exit **125** `reason=bad_read` before
     anything runs, and a test that took the 125 for the 126 it was written
-    about would be green for the wrong reason. `<tmp>/toolchain/x.sh` with
+    about would be green for the wrong reason. (One directory deeper,
+    `~/tools/x.sh`, is a directory of its own and **is** a bounded root — test
+    29, and the guard as built: it refuses only `dir == home` or an ancestor —
+    so it is not refused at all. The shape this test needs is one where neither
+    outcome can be confused for the 126.) `<tmp>/toolchain/x.sh` with
     `HOME` pointed at the job's data home is the shape this test uses. The test asserts that **no**
     `SANDBOX NOTE` is printed after the command has started, on every platform
     (the linux body cannot, and the others must not diverge), and that the
