@@ -103,9 +103,13 @@ func TestAJobCannotReadTheKeyFile(t *testing.T) {
 // line. This runs on every platform, against the fake sandbox, because the refusal is the
 // dispatcher's own and not the operating system's.
 func TestRunRefusesWhenTheWallIsNotThere(t *testing.T) {
-	for _, c := range []struct{ mode, reason string }{
-		{"probefail", "sandbox_probe"},
-		{"none", "no_sandbox"},
+	for _, c := range []struct{ mode, reason, says, never string }{
+		// The probe runs all five checks even when one fails (SPEC-SANDBOX test 10), so
+		// the refusal is followed by passing steps and is NOT the last line. The line
+		// RUN REFUSED quotes is the one that said NO, never a check that passed after it
+		// (DeepSeek's read of #88 at d0c1841, MEDIUM 2).
+		{"probefail", "sandbox_probe", "write_outside expected deny and got allow", "read_root"},
+		{"none", "no_sandbox", "", ""},
 	} {
 		t.Run(c.mode, func(t *testing.T) {
 			b := newBench(t)
@@ -117,6 +121,13 @@ func TestRunRefusesWhenTheWallIsNotThere(t *testing.T) {
 			}
 			if want := "RUN REFUSED reason=" + c.reason; !strings.Contains(stdout+stderr, want) {
 				t.Errorf("no %q in:\n%s%s", want, stdout, stderr)
+			}
+			refused := refusedLine(stdout + stderr)
+			if c.says != "" && !strings.Contains(refused, c.says) {
+				t.Errorf("the refusal does not quote the line that said NO (%q):\n%s", c.says, refused)
+			}
+			if c.never != "" && strings.Contains(refused, c.never) {
+				t.Errorf("the refusal quotes a check that PASSED after the failure (%q):\n%s", c.never, refused)
 			}
 			if strings.Contains(stdout, "RUN START") {
 				t.Errorf("a worker started under a refused run:\n%s", stdout)
@@ -247,6 +258,17 @@ func TestTheWorkerArgvIsTheDispatchersAndNotTheTasks(t *testing.T) {
 	if i, j := strings.Index(wrap, "--write "+jobDir), strings.Index(wrap, "--write "+filepath.Join(jobDir, "data")); i < 0 || j < 0 || i > j {
 		t.Errorf("the job directory is not the FIRST --write, which is what the cwd and the temp directory default to:\n%s", wrap)
 	}
+}
+
+// refusedLine is the RUN REFUSED line of a pass, which is where the probe's own reason is
+// quoted.
+func refusedLine(out string) string {
+	for _, line := range strings.Split(out, "\n") {
+		if strings.HasPrefix(line, "RUN REFUSED ") {
+			return line
+		}
+	}
+	return ""
 }
 
 // harnessLog is what the worker said, which is where a refused read or write appears.

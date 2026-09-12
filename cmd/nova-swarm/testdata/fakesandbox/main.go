@@ -55,8 +55,15 @@ func main() {
 			os.Exit(1)
 		}
 		if mode == "probefail" {
+			// ALL FIVE CHECKS RUN EVEN WHEN ONE FAILS (SPEC-SANDBOX test 10), so the
+			// refusal is NOT the last line: the checks after it pass and print. The
+			// stand-in says so on purpose, because the dispatcher used to quote the last
+			// line and told a reader that `read_root expect=allow got=allow` was the
+			// reason no worker started.
 			fmt.Println("PROBE STEP name=write_outside expect=deny got=allow path=-")
 			fmt.Fprintln(os.Stderr, "PROBE REFUSED reason=check: write_outside expected deny and got allow")
+			fmt.Println("PROBE STEP name=read_root expect=allow got=allow path=-")
+			fmt.Println("PROBE STEP name=secret_outside expect=deny got=deny path=-")
 			os.Exit(1)
 		}
 		fmt.Println("PROBE STEP name=write_outside expect=deny got=deny path=-")

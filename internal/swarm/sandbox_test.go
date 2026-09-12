@@ -147,6 +147,33 @@ func TestReadRootsAreRefusedBeforeTheyReachTheWall(t *testing.T) {
 	}
 }
 
+// DEMANDED (SPEC-SANDBOX.md test 10, "all five checks run even when the first fails"). The
+// line RUN REFUSED quotes is the line that said NO. The probe keeps going after a failed
+// check, so the refusal is not last, and the tool used to quote a PASSING step as the reason
+// no worker started (DeepSeek's read of #88 at d0c1841, MEDIUM 2).
+func TestTheRefusalQuotesTheLineThatSaidNo(t *testing.T) {
+	for _, c := range []struct{ name, body, want string }{
+		{"the refusal is followed by checks that passed",
+			"PROBE STEP name=write_outside expect=deny got=allow path=-\n" +
+				"PROBE REFUSED reason=check: write_outside expected deny and got allow\n" +
+				"PROBE STEP name=read_root expect=allow got=allow path=-\n",
+			"PROBE REFUSED reason=check: write_outside expected deny and got allow"},
+		{"no refusal line, so the first step whose got is not its expect",
+			"PROBE STEP name=read_root expect=allow got=allow path=-\n" +
+				"PROBE STEP name=write_outside expect=deny got=allow path=-\n" +
+				"PROBE STEP name=secret_outside expect=deny got=deny path=-\n",
+			"PROBE STEP name=write_outside expect=deny got=allow path=-"},
+		{"neither, so the last line is all there is",
+			"the wall said something this tool does not parse\nand then a last word\n",
+			"and then a last word"},
+		{"nothing at all", "", "the probe said nothing"},
+	} {
+		if got := refusalLine(c.body); got != c.want {
+			t.Errorf("%s:\n got  %q\n want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // DEMANDED (SPEC-SANDBOX.md rule 11). The one loud line names the job and says what is
 // missing, in the words the rule gives it.
 func TestTheLoudLineSaysWhatIsMissing(t *testing.T) {

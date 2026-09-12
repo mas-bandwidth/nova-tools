@@ -189,7 +189,7 @@ func SandboxGate(sandboxPath, poolDir, secret string) (reason, text string) {
 		return "", ""
 	}
 	return "sandbox_probe", fmt.Sprintf("the wall did not prove itself on this machine, so no worker started: %s",
-		oneline.Cap(lastLine(string(probeOut)), oneline.TailBytes))
+		oneline.Cap(refusalLine(string(probeOut)), oneline.TailBytes))
 }
 
 // environWithout is the environment minus one name, so that the caller can set it and be
@@ -205,8 +205,55 @@ func environWithout(env []string, name string) []string {
 	return out
 }
 
-// lastLine is the one line a refusal is read from: the tool's output is bounded by design,
-// and a probe that failed says why on its last line.
+// refusalLine is the ONE line of a failed probe that RUN REFUSED quotes, and it is the line
+// that says NO -- not the last one. The probe runs all five checks even when one fails
+// (SPEC-SANDBOX test 10), so the refusal is followed by whatever passed after it, and
+// `lastLine` quoted a PASSING step under `RUN REFUSED reason=sandbox_probe`: a reader was
+// told `read_root expect=allow got=allow` as the reason no worker started (DeepSeek's read
+// of #88 at d0c1841, MEDIUM 2).
+//
+// The order is the probe's own grammar: its `PROBE REFUSED` line first, because that is the
+// line the wall wrote to say why; then the first step whose `got=` is not its `expect=`,
+// for a probe that failed without one; then the last line, which is all a probe that said
+// something else has.
+func refusalLine(body string) string {
+	var firstFailedStep string
+	for _, raw := range strings.Split(body, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, "REFUSED") {
+			return line
+		}
+		if firstFailedStep == "" && stepFailed(line) {
+			firstFailedStep = line
+		}
+	}
+	if firstFailedStep != "" {
+		return firstFailedStep
+	}
+	return lastLine(body)
+}
+
+// stepFailed reads one `PROBE STEP name=<n> expect=<x> got=<y>` line and says whether the
+// machine did something other than what the check expected. A line with neither field is
+// not a step and is never a reason.
+func stepFailed(line string) bool {
+	expect, got := "", ""
+	for _, field := range strings.Fields(line) {
+		switch name, value, _ := strings.Cut(field, "="); name {
+		case "expect":
+			expect = value
+		case "got":
+			got = value
+		}
+	}
+	return expect != "" && got != "" && expect != got
+}
+
+// lastLine is the one line a refusal is read from when the probe named none: the tool's
+// output is bounded by design, and a line is all a refusal gets.
 func lastLine(body string) string {
 	lines := strings.Split(strings.TrimRight(body, "\n"), "\n")
 	for i := len(lines) - 1; i >= 0; i-- {
