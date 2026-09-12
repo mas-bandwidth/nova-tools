@@ -232,6 +232,8 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     One `REPORT TOOL` line per entry that answered: `version=` is the key — rule 4's read,
     or rule 15's for `kind=pin` — and `raw=` is the observed first line, whole, one
     `internal/oneline` token; `+dirty`, `-rc1` and the pseudo-version stamp stay in both.
+    For a model, `raw` is the matched `ollama list` row from rule 4a, so a changed
+    digest changes the retained observation; the unchanged table header cannot hide it.
     Both are on the line because they differ in what they can say: an opaque commit or a
     `devel` build is an identity this bench honestly runs though no order is known for it
     (rule 17), so it is reported, never dropped for lacking a dotted number. A first line
@@ -278,6 +280,9 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     one atomically (a temp file beside it, then rename) and prints `changed=<yes|no>` on the
     count line with one `REPORT CHANGED name= was= now=` per entry that moved; the first
     run is the baseline, `changed=yes`, `was=-`; a tool turning UNKNOWN, or back, moved.
+    A caller-named snapshot uses a sibling `<snapshot>.lock` kernel lock to serialize
+    writers across atomic renames; process death releases ownership. The stable empty
+    lock file is not evidence of a running process and is not automatically deleted.
     The file is JSON with `observed`, `delivered` and `pending`. `observed` is keyed
     by `name`, each value
     `raw`, `status` (`known` or `unknown`) and `at` — the machine-readable snapshot #121
@@ -285,7 +290,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     only in their stamps are `changed=no` — a timestamp refresh is not a changed version
     (#121). **Observed state and delivered state are two records** (Stella, #127): every run
     with `--snapshot` writes `observed`; only a `SEND OK … pushed=true` writes `delivered`,
-    keyed by the send's scope — `as`, `to` sorted, `bus`, `remote`, `branch`, joined — and
+    keyed by the send's scope — `as`, `to` sorted, absolute `bus`, `remote`, `branch`, and explicit `host`, joined — and
     holding the `observed` map the body carried, nova-bus's `id` and the `at`. A local-only
     run, a `--draft`, a refused or a failed send write no `delivered`. With `--snapshot`,
     `--send` composes and sends when the scope has no `delivered` record, when that record's

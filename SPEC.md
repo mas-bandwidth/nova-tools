@@ -241,11 +241,11 @@ stamp when there is one, the module version the toolchain recorded when there
 is not, then `<utc revision time>-<12 hex of the revision>[-dirty]` from the vcs
 stamp, and the word `devel` for a build with none of those. **It is never a
 dotted number this repo made up**: a version string nobody can trace invites
-the comparison it cannot support. Nine binaries share the resolution order in
+the comparison it cannot support. Eleven binaries share the resolution order in
 `internal/buildinfo`. `nova-wake` and `nova-sandbox` retain their existing
 resolvers: their VCS fallback reports the revision alone, without the
 revision time or dirty marker. Release-stamped and installed-module versions
-retain the same identity across all eleven; the release assertion handles
+retain the same identity across all thirteen; the release assertion handles
 the sandbox output separately. `nova-merge` adds a fifth field,
 `build=<12 hex>`, the sha256 of its own file on disk, which is a different fact and its own section's;
 `nova-sandbox` answers with its `SANDBOX VERSION` line, which carries the
@@ -4226,3 +4226,13 @@ about what a reader has read, understood or acted on — a tool cannot know the
 second thing and this one does not pretend to — and the moment the history it
 names is rewritten the cursor is worthless, which is why it is refused rather
 than trusted. And its transport is git: what it cannot do is make anybody pull.
+
+
+## nova-update and nova-version
+
+[SPEC-UPDATE.md](docs/SPEC-UPDATE.md) defines the shared inventory reader, optional
+updates and reporting. [Prepared delivery](docs/SPEC-BUS-DELIVERY.md) keeps one
+identity across retries. UPDATE/APPLY/REPORT are the primary tokens. TOOL, UNKNOWN,
+CHANGED, MORE, SENT, NOTE, BEFORE, RUN, AFTER, STALE, NEWER and DIFFERENT are
+informational second tokens; OK/FAIL are final verdicts, REFUSED is an invocation
+refusal. All data fields use internal/oneline.
