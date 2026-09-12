@@ -991,6 +991,16 @@ line cannot supply:
    macOS 26) while a set-id exec is denied inside the wall, so `ps` there is
    `/bin/ps: Operation not permitted`, exit 126.
 
+**What a refused step prints.** Every one of those three checks — and the
+absolute-path check that follows them — refuses with one line on standard error,
+`PROBE REFUSED reason=probe_step_not_a_child: <text>`, exit 2, nothing opened.
+That token is the **one `PROBE REFUSED` reason outside the fixed set above**, and
+it is outside it on purpose: the set is the contract a caller's parser stands on,
+nothing but this binary's own probe runs this verb, and so no parser ever sees
+this line. It is written down here because the grammar above is fixed at six, and
+a refusal the tool can print that the spec never names is a line whose reader has
+nowhere to look it up.
+
 **The honest bound.** The verb grants **no capability the caller lacks**, because
 everything it does is bounded by the wall it runs in. A same-user caller can open
 and truncate a file with `>` and needs no verb of ours to do it. What the guard
