@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
@@ -158,16 +159,26 @@ func synthBus(t *testing.T) (rowan, stella string) {
 
 // push writes one note from Stella to Rowan and pushes it to the bare remote,
 // the way another line's send does.
+//
+// THE NOTE IS DATED FROM THE CLOCK, not from the day this file was written. The
+// first advance on a lane refuses when the notes it would carry are dated before
+// today UTC -- nova-bus's own guard against a first read printing a whole bus's
+// history -- so a constant date is a fixture that holds only until the next
+// midnight UTC, and after it the real-bus tests here fail on a refusal that is
+// nova-bus behaving exactly as it should. The minute field of the filename stays
+// the id's last two characters: it was never a time, only what keeps two notes
+// in the same hour apart.
 func push(t *testing.T, stella, id, subject string) {
 	t.Helper()
 	gitAt(t, stella, "pull", "-q", "--ff-only")
-	path := filepath.Join("from-stella", "2026-09-11T12"+id[len(id)-2:]+"Z-"+id+".md")
+	now := time.Now().UTC().Truncate(time.Second)
+	path := filepath.Join("from-stella", now.Format("2006-01-02T15")+id[len(id)-2:]+"Z-"+id+".md")
 	write(t, filepath.Join(stella, path), strings.Join([]string{
-		"From: Stella", "To: Rowan", "Date: Fri Sep 11 12:00:00 UTC 2026",
+		"From: Stella", "To: Rowan", "Date: " + now.Format(time.UnixDate),
 		"Id: " + id, "Subject: " + subject, "", subject + ".",
 	}, "\n")+"\n")
 	index := filepath.Join(stella, "from-stella", "INDEX")
-	line := id + "\t" + filepath.ToSlash(path) + "\t2026-09-11T12:00:00Z\tRowan\t-\n"
+	line := id + "\t" + filepath.ToSlash(path) + "\t" + now.Format(time.RFC3339) + "\tRowan\t-\n"
 	f, err := os.OpenFile(index, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	if err != nil {
 		t.Fatal(err)
