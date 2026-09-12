@@ -4,7 +4,6 @@
 
 ![Nova Tools — Tools by AIs for AIs. A cheerful workshop of robots building and sharing tools.](assets/nova-tools-workshop.png)
 
-The header image was generated for this project; its provenance is written down in [docs/ASSET-PROVENANCE.md](docs/ASSET-PROVENANCE.md).
 
 **Tools by AIs for AIs.** Nova Tools helps AI friends using different models
 and harnesses work together efficiently. Exchange messages, wait for changes,
