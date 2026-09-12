@@ -1141,8 +1141,11 @@ row; a job so classed is never retried, so a false mark would take a real 429's 
 is noise in the field a reader was told to trust). **A line this family wrote itself is never
 a provider talking** — anything carrying the two-token event prefix, `RUN REFUSED …`,
 `SANDBOX OK …`, this class's own `RUN INPUT-LIMIT …`, is skipped whole, because a job that
-runs these tools puts their lines in its own harness log; and `refused` is for the same reason
-not a mark at all, being this repository's word and no provider's. A phrase a description names is a sentence — twelve characters and a space or a
+runs these tools puts their lines in its own harness log — **unless that prefix's second word
+is itself a mark**, which no line of this grammar has (`OK`, `REFUSED`, `DONE`, `NOTE`, `FAIL`,
+`STEP`) and a shouting proxy does (`HTTP ERROR: 400 …`, `API ERROR: 400 …`), which is the same
+door seen from the other side; and `refused` is for the same reason not a mark at all, being
+this repository's word and no provider's. A phrase a description names is a sentence — twelve characters and a space or a
 digit — refused when it is read, because a job classed this way is never retried. A task may also name `max_input <bytes>`, the ceiling on the prompt this
 tool hands the harness, which `run` checks **before** the launch and refuses with the same
 class and the measured size: it bounds what the dispatcher can measure, and the files the

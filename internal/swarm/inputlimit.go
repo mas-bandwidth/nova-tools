@@ -79,12 +79,36 @@ var ProviderErrorMarks = []string{"error", "err", "fatal", "exception", "rejecte
 // The FIRST token carries no colon, which is what keeps a provider's own shout out of this:
 // `ERROR: RATE LIMIT REACHED: INPUT TOKEN LIMIT EXCEEDED` is not an event line, and neither is
 // `API Error: 400 …`, whose second word is not all-caps.
+//
+// AND THE SECOND TOKEN IS NOT ITSELF A MARK, which is the shape rule's MIRROR DOOR (the swarm
+// dispatcher's hand-check of 46c5e3c). A provider or a proxy that SHOUTS its label wears this
+// family's shape exactly -- `HTTP ERROR: 400 input token limit exceeded`,
+// `API ERROR: 400 prompt is too long`, `OPENAI ERROR: request too large` -- and was skipped
+// whole, so the job went unclassed and the door the exclusion closed opened its mirror. No
+// event line in this repository's grammar has a mark for its second word: they are `OK`,
+// `REFUSED`, `DONE`, `NOTE`, `FAIL`, `WARN`, `STEP`, `START`. So a second word that IS a mark
+// says this line is a provider's, not ours -- `RUN REFUSED`, `ADD REFUSED:` and `SANDBOX OK`
+// stay excluded, and `API ERROR:` comes through to be read.
 func isOwnEventLine(line string) bool {
 	words := strings.Fields(line)
 	if len(words) < 2 {
 		return false
 	}
-	return capsToken(words[0], false) && capsToken(words[1], true)
+	if !capsToken(words[0], false) || !capsToken(words[1], true) {
+		return false
+	}
+	return !isAMarkWord(strings.ToLower(strings.TrimSuffix(words[1], ":")))
+}
+
+// isAMarkWord is the mark table asked about one WHOLE word: the discriminator above needs to
+// know whether a verb's second word is a mark, not whether a line contains one.
+func isAMarkWord(word string) bool {
+	for _, mark := range ProviderErrorMarks {
+		if word == mark {
+			return true
+		}
+	}
+	return false
 }
 
 // capsToken is one token of that prefix: at least two characters of A-Z, 0-9, `-` or `_` with

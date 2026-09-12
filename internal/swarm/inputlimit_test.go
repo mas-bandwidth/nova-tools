@@ -126,6 +126,31 @@ func TestAMarkIsTheHarnessesOwnLabelAndNotAWordInASentence(t *testing.T) {
 			`openai.BadRequestError: Error code: 400 - {'error': {'message': "This model's maximum context length is 4096 tokens"}}` + "\n",
 			`openai.BadRequestError: Error code: 400 - {'error': {'message': "This model's maximum context length is 4096 tokens"}}`,
 		},
+		{
+			"a proxy that SHOUTS its label, which is the shape rule's mirror door",
+			"HTTP ERROR: 400 input token limit exceeded\n",
+			"HTTP ERROR: 400 input token limit exceeded",
+		},
+		{
+			"the same from an SDK",
+			"API ERROR: 400 prompt is too long\n",
+			"API ERROR: 400 prompt is too long",
+		},
+		{
+			"and from a gateway naming the provider",
+			"OPENAI ERROR: request too large\n",
+			"OPENAI ERROR: request too large",
+		},
+		{
+			"this family's own line whose second token carries the colon",
+			"ADD REFUSED: the pool holds no task file: input token limit exceeded\n",
+			"",
+		},
+		{
+			"a one-letter first token is no verb of this family",
+			"E ERROR: prompt is too long\n",
+			"E ERROR: prompt is too long",
+		},
 		// And the transcript. Every one is a line a WORKER writes about this very class.
 		{
 			"a RESULT.md bullet quoting the sentence beside the word error",
@@ -185,6 +210,33 @@ func TestAMarkIsTheHarnessesOwnLabelAndNotAWordInASentence(t *testing.T) {
 		}
 		if got != c.want {
 			t.Errorf("%s: the line quoted is\n  %q\nwant\n  %q", c.name, got, c.want)
+		}
+	}
+}
+
+// capsToken's OWN TWO BRANCHES, which the line cases reach only by accident: the trailing
+// colon that only the SECOND token of an event prefix may carry, and the two-character floor
+// that keeps a single letter from being a verb of this family.
+func TestTheEventPrefixIsTwoCapsTokens(t *testing.T) {
+	for _, c := range []struct {
+		token       string
+		colonOK, ok bool
+	}{
+		{"RUN", false, true},
+		{"SANDBOX", false, true},
+		{"INPUT-LIMIT", false, true},
+		{"A1", false, true},
+		{"REFUSED:", true, true},
+		{"REFUSED:", false, false},
+		{"R", false, false},
+		{"R", true, false},
+		{"Error:", true, false},
+		{"error", false, false},
+		{"--", false, false},
+		{":", true, false},
+	} {
+		if got := capsToken(c.token, c.colonOK); got != c.ok {
+			t.Errorf("capsToken(%q, colonAllowed=%t)=%t, want %t", c.token, c.colonOK, got, c.ok)
 		}
 	}
 }
