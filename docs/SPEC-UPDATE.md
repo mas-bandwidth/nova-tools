@@ -54,10 +54,13 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
    `-0.20260912135226-0459069`, `-rc1`, `+dirty` stay, because two builds that differ only
    there are two builds, and a read that kept the dotted number alone once collapsed them
    into one (Stella, #121). A command that exits non-zero, times out, or prints no such
-   token is UNKNOWN, remedy *wrap it in a script that prints the version alone* — except a
-   line whose second token is `devel` or a bare commit, rule 21's, which under `check` (a
-   `pin` aside, rule 15) is UNKNOWN reason `no_release_identity`, never the toolchain's
-   number. **argv[0] resolves
+   token is UNKNOWN, remedy *wrap it in a script that prints the version alone*; its stdout
+   and stderr go through `internal/bounded`, rule 23's 64 KB cap, a child reaching it
+   UNKNOWN reason `output`, the same remedy. Before the read, a first line whose second
+   token is `devel` or a bare commit (rule 21) has no release identity: under `check`, a
+   `pin` aside (rule 15), UNKNOWN reason `no_release_identity`, remedy *install a stamped
+   build, or read it with `report`*; the toolchain's number on that line is never the
+   tool's. **argv[0] resolves
    against the PATH nova-update was started with**, echoed as `path=`; a name resolving
    nowhere on it is UNKNOWN, reason `not_found`, remedy naming argv[0] and the PATH
    searched, never the wrap-it remedy; an argv[0] carrying a `/` is that executable, no
@@ -215,9 +218,12 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     so a bench with two installation roots names each path (Johnny, #121); a bare name
     resolves as rule 4 says; no home-directory scan, no wildcard discovery, no shell, no
     read of any private self. A shipped Nova-only example, `testdata/nova.tsv`, names the
-    estate's own tools by their `version` verb. The host is the caller's word: `--host
-    <label>` prints as given, absent `-`; nothing on the box is asked to name it. `--kind`
-    (rule 19) and `--max` (rule 16, per line kind: `TOOL`, `UNKNOWN`, `CHANGED`) hold.
+    estate's own tools by their `version` verb; its `latest` column is
+    `github:mas-bandwidth/nova-tools` on every line, a real source `report` never asks, so
+    rule 2 holds as written and `check` over the same file is a check. The host is the
+    caller's word: `--host <label>` prints as given, absent `-`; nothing on the box is asked
+    to name it. `--kind` (rule 19) and `--max` (rule 16, per line kind: `TOOL`, `UNKNOWN`,
+    `CHANGED`) hold.
     **`nova-version` is a second entry point on this one implementation** — its `report` and
     `send` are these flags under that name, the same code, no second reader and no second
     spec — so whichever name starts it, rules 20–26 and 9–13 hold for it (#121: one shared
@@ -248,14 +254,21 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     `output`, wrap-it remedy — a tool that prints a banner is wrapped, not trusted to stop.
 24. **`--draft` and `--send` are explicit; delivery is nova-bus's.** Absent both, nothing
     is composed. `--draft --as <friend> --to <who,who>` prints the report as a bus note body
-    — the same lines under a From, To and Subject the flags name — and sends nothing.
-    `--send` takes the draft's flags plus `--bus <path> --remote <r> --branch <b>` and hands
-    the body to `nova-bus send --stdin` with those flags, one argv (rule 3): the note+INDEX
-    write, the speaker check and the receipt are nova-bus's; this tool composes and stops —
-    no git of its own, no guessed recipients, no default `--to`, never the file's `owner`
-    column as a recipient. Any of `--as`, `--to`, `--bus`, `--remote`, `--branch` missing is
-    a refusal, exit 2, naming the flag; nova-bus exiting non-zero is `REPORT FAIL` naming
-    its code and first line, `sent=no`; success prints `REPORT SENT` with the bus receipt.
+    and sends nothing. The body is `From: <friend>`, `To: <who,who>`, one fixed
+    `Subject: versions on <host> at <stamp>` — `host` as `--host` says or `-`, the stamp the
+    run's `at=`; no flag names a Subject — a blank line, since nova-bus reads every line
+    before the first blank one as a header, then the same lines the report printed, `--max`
+    included: past `--max` tools the body carries the `MORE` line, a partial inventory that
+    says so (rule 22), never a bug; `--max 0` sends them all. `--send` takes the draft's
+    flags plus `--bus <path> --remote <r> --branch <b>` and hands the body to `nova-bus send
+    --stdin` with those flags, one argv (rule 3): the note+INDEX write, the speaker check
+    and the `SEND OK` line are nova-bus's — "receipt" is nova-bus's word for a reader
+    marking a note heard, so this spec never uses it for that line; this tool composes and
+    stops — no git of its own, no guessed recipients, no default `--to`, never the file's
+    `owner` column as a recipient. Any of `--as`, `--to`, `--bus`, `--remote`, `--branch`
+    missing is a refusal, exit 2, naming the flag; nova-bus exiting non-zero is `REPORT
+    FAIL` naming its code and first line, `sent=no`; success prints `REPORT SENT` carrying
+    nova-bus's `SEND OK` line whole, as `line=`.
 25. **Unchanged state is the caller's to suppress, through a snapshot file the caller
     names.** Absent `--snapshot <path>`, no file is read or written (rule 9: nothing under
     `$HOME`, no state file of this tool's own). Present, the run reads the previous
@@ -263,6 +276,8 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     one atomically (a temp file beside it, then rename) and prints `changed=<yes|no>` on the
     count line with one `REPORT CHANGED name= was= now=` per entry that moved; the first
     run is the baseline, `changed=yes`, `was=-`; a tool turning UNKNOWN, or back, moved.
+    The file is JSON, one object keyed by `name`, each value `raw`, `status` (`known` or
+    `unknown`) and `at`, nothing else — the machine-readable snapshot #121 asked for.
     **`at=` is never compared**: two snapshots differing only in their stamps are
     `changed=no` — a timestamp refresh is not a changed version (#121). With `--snapshot`,
     `--send` sends only when `changed=yes` and otherwise prints `REPORT NOTE unchanged;
@@ -297,7 +312,7 @@ DIFFERENT line, so the morning names a person, not only a number.
 ```
 nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
-nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft|--send --as <friend> --to <who,who> [--bus <path> --remote <r> --branch <b>]] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update help
 ```
 
@@ -306,6 +321,8 @@ in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
 name, `send` implying `--send` (rule 20); its `help` prints those two lines the same way.
+`nova-version report --as x --to y` prints the inventory and composes nothing (rule 26);
+Emma's ready-to-send draft (#121) is `nova-version report --draft …`, the flag typed.
 
 ## Exit codes and the output grammar
 
@@ -333,7 +350,7 @@ REPORT TOOL name=<name> kind=<kind> version=<v|-> raw=<first line, escaped> path
 REPORT UNKNOWN name=<name> kind=<kind> path=<path|-> raw=<line|->: <reason> (<remedy>)
 REPORT CHANGED name=<name> was=<raw|-> now=<raw|->
 REPORT MORE kind=<tool|unknown|changed> shown=<n> total=<t> <remedy>
-REPORT SENT to=<who,who> via=<nova-bus argv, escaped> receipt=<nova-bus's first line, escaped>
+REPORT SENT to=<who,who> via=<nova-bus argv, escaped> line=<nova-bus's SEND OK line, escaped>
 REPORT <OK|FAIL> checked=<n> known=<n> unknown=<n> changed=<yes|no|-> sent=<yes|no|-> took=<d> file=<path>
 REPORT NOTE <something true about this run that is not a finding>
 REPORT REFUSED: <reason> (<remedy>)
@@ -492,8 +509,9 @@ install` or `npm install`.
     `nova-merge 0459069` and `nova-wake devel darwin/arm64 go1.27.1` each print `REPORT
     TOOL` with `version=-` and the whole raw line — never UNKNOWN, and `1.27.1` nowhere on
     the line, the mutation that matters; under `check` the same two lines are UNKNOWN reason
-    `no_release_identity`, never `installed=1.27.1`; a `kind=pin` entry's key is the second
-    token whole; `+dirty` survives in both fields.
+    `no_release_identity` with the stamped-build remedy, never `installed=1.27.1`, and a
+    `check` script printing 1 MB is UNKNOWN reason `output` (rule 4's cap); a `kind=pin`
+    entry's key is the second token whole; `+dirty` survives in both fields.
 22. `TestAMissingToolIsUnknownNeverZero`: `nosuchbinary version`, a script exiting 3 after
     printing a version (`raw=` kept, reason `exit 3`), a hang past `--timeout`, and an empty
     stdout and stderr are each one `REPORT UNKNOWN` naming reason and remedy, exit 1, the
@@ -503,19 +521,23 @@ install` or `npm install`.
 23. `TestEachSubprocessIsBounded`: a script sleeping past `--timeout 1s` is UNKNOWN reason
     `timeout` in about a second, not the budget; 40 entries at 3s each under `--budget 10s`
     end inside 10s, the unreached UNKNOWN reason `budget`; a script printing 1 MB is
-    UNKNOWN reason `output` with the wrap-it remedy and the process's peak memory stays
-    bounded; a counting fixture sees no fifth child alive at once.
+    UNKNOWN reason `output` with the wrap-it remedy; a counting fixture sees no fifth child
+    alive at once.
 24. `TestTheBaseReportNeedsNoBus`: with no bus checkout, no `--as`, no `--to` and a `PATH`
     without `nova-bus`, `report` prints its lines and exits by its inventory; `--draft --as
-    rowan --to stella` prints a body whose first lines are `From:`, `To:` and `Subject:` as
-    the flags say and starts no `nova-bus` (a fake on `PATH` counts zero runs); `--send`
+    rowan --to stella --host studio` prints a body whose first four lines are `From: rowan`,
+    `To: stella`, `Subject: versions on studio at <the run's at=>` and a blank line — any
+    other Subject is the mutation that matters here — then the report's lines, a 30-tool
+    file under `--max 20` carrying its `REPORT MORE` line in the body, and starts no
+    `nova-bus` (a fake on `PATH` counts zero runs); `--send`
     missing any one of its five flags is exit 2 naming that flag; `--send` complete runs the
     fake `nova-bus send` once with `--stdin`, `--bus`, `--remote`, `--branch`, `--as`
     and the body on its stdin; the fake exiting 1 with a first line is `REPORT FAIL`
     quoting code and line, `sent=no`; a file whose `owner` column names `stella` and no
     `--to` never sends to her — the mutation that matters.
 25. `TestUnchangedStateIsTheCallersToSuppress`: without `--snapshot`, `HOME` and the cwd are
-    fresh temp dirs and empty after the run; `--snapshot s.json` first writes it and prints
+    fresh temp dirs and empty after the run; `--snapshot s.json` first writes it — JSON, one
+    object keyed by `name`, each value exactly `raw`, `status`, `at` — and prints
     `changed=yes`; a second run with identical raw lines and an injected clock one hour on
     prints `changed=no` and no `REPORT CHANGED` line — the mutation that matters; a third
     with one raw differing prints one `REPORT CHANGED name= was= now=` and `changed=yes`; a
