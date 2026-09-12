@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -1009,12 +1010,29 @@ func (w *watcher) recoverAdvance(ctx context.Context, now time.Time) {
 	}
 }
 
+// heldByRecovery is the one sentence a call prints when an advance is held by a
+// recovery that has not finished. It is a WAKE NOTE -- something true about this
+// run that is not a change -- and it is printed once per call, by w.note.
+const heldByRecovery = "bus advance deferred: a recovery is unresolved; nothing fetches until the carried list is reached"
+
 // advanceOrDefer is steps 2 and 3. Mail consumed is mail spooled; mail spooled
 // is mail printed, under the cap like everything else; and a cap that elides a
 // note DEFERS THE FETCH rather than losing the note. It answers whether the
 // injected kill of test 11 landed.
 func (w *watcher) advanceOrDefer(ctx context.Context, now time.Time) bool {
 	if w.advancer == nil {
+		return false
+	}
+	// AND ONLY WITH NO RECOVERY OUTSTANDING. Step 4's short path is "the marker
+	// stays, nothing advances", and this gate is what the second clause means:
+	// an empty bus queue was the only condition here, so a call whose recovery
+	// ended incomplete polled the bus again, found nothing queued, advanced, and
+	// wrote a fresh marker over the unresolved one -- leaving the notes the
+	// recovery could not reach behind the cursor with nothing naming them
+	// (#164, F1, 2026-09-12). The recovery runs at the start of every call, so
+	// the held advance resumes the moment the carried list is reached.
+	if wake.Interrupted(w.st) {
+		w.note(heldByRecovery)
 		return false
 	}
 	if n := wake.BusQueued(w.st); n > 0 {
@@ -1024,6 +1042,13 @@ func (w *watcher) advanceOrDefer(ctx context.Context, now time.Time) bool {
 	res, killed, err := w.advancer.Advance(ctx, w.st, w.head, w.save)
 	if killed {
 		return true
+	}
+	if errors.Is(err, wake.ErrRecoveryPending) {
+		// The invariant inside Advance, reached by a path that got past the gate
+		// above. It is the tool doing what step 4 says and not a source that
+		// failed, so it says so and never counts toward the streak.
+		w.note(heldByRecovery)
+		return false
 	}
 	w.observe("bus", res, now, err != nil)
 	w.save()
