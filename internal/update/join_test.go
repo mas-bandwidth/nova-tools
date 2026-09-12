@@ -489,9 +489,21 @@ func joinWrapper() {
 	if boundary == killLostResult {
 		observed, alive = true, false
 	}
+	// A SIGKILLed git does not leave the process group in the same instant its
+	// parent is reaped, and "nothing owns the lock" is the fact the operator's
+	// repair turns on, so it is waited for -- bounded -- rather than sampled
+	// once. A group that never clears is recorded as such and no repair follows.
+	gone := false
+	for until := time.Now().Add(2 * time.Second); time.Now().Before(until); {
+		if groupGone(c) {
+			gone = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if rec := os.Getenv("NOVA_UPDATE_JOIN_RECORD"); rec != "" {
 		_ = os.WriteFile(rec, []byte(fmt.Sprintf("boundary=%s observed=%t killed-alive=%t group-gone=%t\nbus said: %s\n",
-			boundary, observed, alive, groupGone(c), clip(strings.TrimSpace(said.String()), 2000))), 0600)
+			boundary, observed, alive, gone, clip(strings.TrimSpace(said.String()), 2000))), 0600)
 	}
 	// Whatever happened, this process says nothing a caller could read as a
 	// confirmation, which is the whole point of a lost answer.
