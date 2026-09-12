@@ -55,6 +55,42 @@ func TestTheWrapArgvIsTheTwoListsAndNothingElse(t *testing.T) {
 	}
 }
 
+// DEMANDED (SPEC-SANDBOX.md rule 5, "paths are resolved, absolute and existing"). Every path
+// this seam hands the wall is ABSOLUTE at the point the argv is built, whatever the caller
+// typed. `--pool ./pool` is the README's own line and `Pool.Dir` keeps it as typed, so the
+// probe was handed `--write pool/sandbox-probe`, the wall refused it as relative, and `run`
+// refused the pass and started no worker (DeepSeek's read of #88 at d0c1841, HIGH 1). This
+// says NO on the tool before the fix: the probe directory is relative, and so is the argv.
+func TestEveryPathTheSeamHandsTheWallIsAbsolute(t *testing.T) {
+	if got := SandboxProbeDir("pool"); !filepath.IsAbs(got) {
+		t.Errorf("a relative --pool makes a relative probe directory %q, and rule 5 refuses a relative path", got)
+	}
+	if got, want := SandboxProbeDir("/w/pool"), filepath.Join("/w/pool", "sandbox-probe"); got != want {
+		t.Errorf("an absolute pool is left alone: got %q, want %q", got, want)
+	}
+	job := SandboxJob{
+		Sandbox: "nova-sandbox",
+		SlotDir: "home-1", JobDir: "home-1/jobs/j1", DataHome: "home-1/jobs/j1/data",
+		ReadRoots: []string{"toolchains"},
+		Command:   "/opt/homebrew/bin/opencode", Args: []string{"run", "--", "home-1/jobs/j1/PROMPT.md"},
+	}
+	argv := job.SandboxArgv()
+	for i, a := range argv {
+		if i == 0 || argv[i-1] != "--read" && argv[i-1] != "--write" && argv[i-1] != "--cwd" {
+			continue
+		}
+		if !filepath.IsAbs(a) {
+			t.Errorf("%s %s is relative, and the wall resolves every path before it grants anything:\n%s",
+				argv[i-1], a, strings.Join(argv, " "))
+		}
+	}
+	// The harness's own argv after -- is the harness's, verbatim: this seam does not
+	// rewrite a path a harness was given (rule 12).
+	if got := argv[len(argv)-1]; got != "home-1/jobs/j1/PROMPT.md" {
+		t.Errorf("the harness's own argument was rewritten: %q", got)
+	}
+}
+
 // DEMANDED (SPEC-SANDBOX.md rule 5, "there is no --root flag"). read_roots is the one field
 // the wall added to the worker description, and a root that is relative, absent or a file
 // is refused at LOAD -- once, where a person can fix it -- rather than by the wall at every

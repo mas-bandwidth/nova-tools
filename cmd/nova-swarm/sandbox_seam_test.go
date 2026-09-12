@@ -130,6 +130,33 @@ func TestRunRefusesWhenTheWallIsNotThere(t *testing.T) {
 	}
 }
 
+// DEMANDED (SPEC-SANDBOX.md rule 5 and test 23, against the REAL wall). The pool as a person
+// types it is relative -- `--pool ./pool` is the line in README.md and in TESTS.md -- and
+// `Pool.Dir` keeps it as typed. The probe's `--write` is built from it, so before the fix the
+// wall refused `pool/sandbox-probe` as relative, `run` answered
+// `RUN REFUSED reason=sandbox_probe` and the documented invocation started NO WORKER
+// (DeepSeek's read of #88 at d0c1841, HIGH 1). This is the wall test that says NO: the same
+// task, the same worker, the pool named relative to the caller's own directory.
+func TestARelativePoolStillProvesTheWall(t *testing.T) {
+	wallOnly(t)
+	b := newBench(t)
+	id := b.add("FAKE-FINDINGS 1\nFAKE-USAGE 100 50 - - -\n")
+	// b.swarm runs with its working directory at b.dir, which is what a person has when
+	// they type ./pool: the pool is b.dir/pool.
+	exit, stdout, stderr := b.swarm(withSandbox([]string{
+		"run", "--pool", "./pool", "--workers", "1", "--hours", "0.25", "--worker", b.worker,
+	})...)
+	if strings.Contains(stdout+stderr, "RUN REFUSED reason=sandbox_probe") {
+		t.Fatalf("the wall refused its own probe because --pool was typed relative:\n%s%s", stdout, stderr)
+	}
+	if exit != 0 {
+		t.Fatalf("the pass exited %d:\n%s%s", exit, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "RUN START id="+id) {
+		t.Errorf("no worker started under a relative pool:\n%s%s", stdout, stderr)
+	}
+}
+
 // DEMANDED (SPEC-SANDBOX.md rule 11, "the one loud workaround"). --no-sandbox runs the jobs
 // with no wall and says so ONCE PER JOB, on stderr, before the job starts. It is never a
 // default and no environment variable turns it on.

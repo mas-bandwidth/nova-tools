@@ -83,14 +83,15 @@ type SandboxJob struct {
 // Everything after -- is the harness's own argv unchanged, so no argument is re-parsed and
 // no quote re-interpreted (rule 12).
 func (j SandboxJob) SandboxArgv() []string {
-	argv := []string{"--read", j.SlotDir}
+	jobDir := absPath(j.JobDir)
+	argv := []string{"--read", absPath(j.SlotDir)}
 	for _, root := range j.ReadRoots {
-		argv = append(argv, "--read", root)
+		argv = append(argv, "--read", absPath(root))
 	}
 	// Rule 4: the job directory is the FIRST --write, because the cwd and the temp
 	// directory default to it. The data home is named beside it because the spec names it
 	// -- it is where the harness keeps its database, and it is the child's HOME.
-	argv = append(argv, "--write", j.JobDir, "--write", j.DataHome, "--cwd", j.JobDir)
+	argv = append(argv, "--write", jobDir, "--write", absPath(j.DataHome), "--cwd", jobDir)
 	if j.PoolName != "" {
 		// On windows the container name is required; on darwin and linux it is accepted
 		// and ignored, so one caller builds one argv for three platforms.
@@ -125,7 +126,32 @@ func LookSandbox(path string) (string, error) {
 // SandboxProbeDir is the directory the probe of rule 10 writes in, and it is the
 // dispatcher's own: the probe needs a --write whose PARENT is outside every named path, so
 // that the write it expects to be denied has somewhere to be attempted.
-func SandboxProbeDir(poolDir string) string { return filepath.Join(poolDir, "sandbox-probe") }
+//
+// It is ABSOLUTE, because `--pool` is used as typed and the README's own invocation types it
+// relative (`--pool ./pool`). Rule 5 of the wall is "paths are resolved, absolute and
+// existing", so a relative pool sent the probe `--write pool/sandbox-probe`, the wall
+// refused it as relative, and `run` refused the whole pass and started NO WORKER for the
+// documented line (DeepSeek's read of #88 at d0c1841, HIGH 1).
+func SandboxProbeDir(poolDir string) string {
+	return filepath.Join(absPath(poolDir), "sandbox-probe")
+}
+
+// absPath is every path this seam hands the wall, made absolute at the point the argv is
+// built. The seam is the LAST place a path is the tool's own: after this it is a flag the
+// wall resolves under rule 5, and a relative one there is a refusal, never a path relative
+// to the child. It is resolved against THIS process's directory, which is the directory the
+// same process would have opened the path from anyway; an empty path stays empty, because an
+// empty field is the caller's absence and not a path to the current directory.
+func absPath(path string) string {
+	if path == "" || filepath.IsAbs(path) {
+		return path
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return abs
+}
 
 // SandboxGate is what `run` does ONCE, before the first worker: it asks the machine what it
 // can enforce and then proves the wall with the real policy. A failure is a REFUSED RUN
@@ -156,7 +182,7 @@ func SandboxGate(sandboxPath, poolDir, secret string) (reason, text string) {
 	// The probe itself: five checks under the REAL policy for this platform, run once
 	// before the first task. HOME is the probe's own write set, because rule 9 refuses a
 	// run whose HOME is outside it -- and the dispatcher's own HOME is.
-	probe := exec.Command(sandboxPath, "probe", "--write", probeDir, "--secret", secret)
+	probe := exec.Command(sandboxPath, "probe", "--write", probeDir, "--secret", absPath(secret))
 	probe.Env = append(environWithout(os.Environ(), "HOME"), "HOME="+probeDir)
 	probeOut, err := probe.CombinedOutput()
 	if err == nil {
