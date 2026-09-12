@@ -4,7 +4,7 @@ Status: proposed replacement accounting contract for #117; not a claim about the
 
 ## Result and compatibility boundary
 
-Keep usage evidence before aggregation. A daily or monthly report can group by UTC day, friend, execution bench, repository and actual model without losing any of those dimensions. Different reports use the same retained records. Collection and reporting run mechanically; interpretation and anomalous mappings deserve thought.
+Keep usage evidence before aggregation. A daily or monthly report can group by UTC day, friend, execution bench, repository and model with its evidence basis without losing any of those dimensions. Different reports use the same retained records. Collection and reporting run mechanically; interpretation and anomalous mappings deserve thought.
 
 [SPEC-TOKENS v1](SPEC-TOKENS.md) deliberately discards friend, bench and event identity in its day rows; its repo rule selects the first matching tool path and carries the previous repo forward; it provides no guarantee of excluding overlapping sources and disallows Git publication. The implementation warns about some shared IDs but still sums both declarations. Those are explicit contracts, not incidental implementation details. This proposal changes them through a separately versioned record/report interface. Do not silently reinterpret old TSVs as detailed records or put overlapping counters into v1's five-type Total().
 
@@ -29,12 +29,12 @@ Reporting selects a consistent set of observations under a named mapping version
 | `kind`, `revision` | Per-request, cumulative, streamed revision or aggregate; source ordering/revision evidence as the mapping defines it. |
 | `occurred_at`, `interval`, `day_basis` | Original event time or measured interval; a zoned daily aggregate keeps its actual basis. Unknown time is not collection time. |
 | `friend`, `execution_bench` | Whose work and where it ran, with provenance. `studio` and `air` are labels, not inferred from whichever host now holds a copy. Unknown is explicit. |
-| `model` | Actual source model ID for this event; provider namespace if needed. Mixed-model aggregate stays mixed unless the source gives a split. |
+| `model` | Source model ID with provider-reported, harness-reported, requested, mixed or unknown basis; provider namespace if needed. Available requested/harness model views are useful without claiming independent server verification. Mixed-model aggregate stays mixed unless the source gives a split. |
 | `repository`, `attribution` | Repository identity and the evidence/rule that assigned it, or `unattributed`. Touched repositories can be a separate list with no numeric allocation. |
 | `raw_usage` | Allowlisted original numeric field names, values and units, including unknown/absent distinction. No serialized transcript object. |
 | `mapping_id`, `source_receipt` | Mapping revision and portable metadata-only receipt needed to trace this observation locally. Private paths stay in a local side index. |
 
-Exact JSON encoding, identifier grammar and CLI flags are the next spec layer, after agreement on these semantics. Arbitrary extension objects are not a route for private prompt content. A source with no stable native event identifier needs an explicitly reviewed deterministic identity method; ambiguity is a conflict, not permission to count twice.
+The [format and command decision packet](PROPOSAL-TOKENS-FORMAT.md) proposes exact encoding, identifiers and a separate records command namespace for review. Arbitrary extension objects are not a route for private prompt content. A source with no stable native event identifier needs an explicitly reviewed deterministic identity method; ambiguity is a conflict, not permission to count twice.
 
 ## Identity, revisions and overlap
 
@@ -58,7 +58,7 @@ Per-request usage counts once. Cumulative snapshots are retained as snapshots; d
 
 A cumulative difference spanning midnight belongs to the measured interval unless the source provides finer timestamps. Do not put the entire difference on its final day and call that an accurate UTC daily allocation. The monthly view can report an interval total within its month while the daily allocation remains unknown; intervals crossing the month boundary stay unallocated unless evidence supplies the split. Original event time and collection time are separate.
 
-Antigravity field1.4.5 is reported by Emma as context-window size, and must not become spend. Codex `total_token_usage` and `last_token_usage` need separately documented identities/scopes. Grok `costUsdTicks` remains a raw value with unverified unit, not dollars. These mapping gates are still open.
+Antigravity field1.4.5 is owner-interpreted as context-window size; producer symbols name it GetTotalTokens but do not establish that interpretation. Preserve it provisionally and do not add it to spend. Codex Desktop's supported top-level token_usage_record supplies per-response usage; turn/thread totals and token_count snapshots are not additional spend. Grok costUsdTicks remains a raw value with unverified unit, not dollars. Source-specific mappings document these distinctions; uncertain semantics need not block retaining supported raw evidence.
 
 ## Repository attribution
 
