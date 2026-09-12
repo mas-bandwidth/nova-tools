@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestMakeAndValidatePreparedArtifact(t *testing.T) {
@@ -435,38 +437,175 @@ func TestPreparedRefusesDuplicateKeys(t *testing.T) {
 	}
 }
 
-func TestSendPreparedKillPointsRecovery(t *testing.T) {
-	killPoints := []string{"after-note-write", "after-index-write", "after-commit"}
+func TestStellaPreparedPreservesUnrelatedAheadAttributeEdit(t *testing.T) {
+	bare, clone, p, a := stellaPrepared(t)
+	if e := p.Save(clone); e != nil {
+		t.Fatal(e)
+	}
+	if e := p.AppendIndex(clone); e != nil {
+		t.Fatal(e)
+	}
+	path := filepath.Join(clone, AttributesName)
+	old, _ := os.ReadFile(path)
+	sentinel := "# synthetic_unrelated_ahead_attribute_edit\n"
+	if e := os.WriteFile(path, append(old, []byte(sentinel)...), 0644); e != nil {
+		t.Fatal(e)
+	}
+	id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
+	if _, e := stageAndCommit(clone, id, []string{p.Path, IndexPath(p.Sender.Lane), AttributesName}, WithTrailer(p.Message, TrailerSend+" "+a.ID)); e != nil {
+		t.Fatal(e)
+	}
+	r, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+	if e == nil && r.Pushed {
+		remote, _ := git(bare, "show", "main:"+AttributesName)
+		if strings.Contains(remote, sentinel) {
+			t.Fatal("published unrelated committed attribute content with an allowed trailer")
+		}
+	}
+}
 
-	for _, kp := range killPoints {
-		t.Run(kp, func(t *testing.T) {
+func TestSendPreparedProcessDeathHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_PREPARED_DEATH_HELPER") != "1" {
+		return
+	}
+	busDir := os.Getenv("PREPARED_HELPER_BUS")
+	barrierFile := os.Getenv("PREPARED_HELPER_BARRIER")
+	mode := os.Getenv("PREPARED_HELPER_MODE")
+	artFile := os.Getenv("PREPARED_HELPER_ART")
+
+	raw, err := os.ReadFile(artFile)
+	if err != nil {
+		os.Exit(2)
+	}
+	var art PreparedArtifact
+	if err := json.Unmarshal(raw, &art); err != nil {
+		os.Exit(2)
+	}
+
+	tab := loadBus(t, busDir)
+	_, p, err := ValidatePreparedArtifact(raw, busDir, tab.Config, "Ada")
+	if err != nil {
+		os.Exit(2)
+	}
+
+	switch mode {
+	case "after-note-write":
+		if err := p.Save(busDir); err != nil {
+			os.Exit(3)
+		}
+	case "after-index-write":
+		if err := p.Save(busDir); err != nil {
+			os.Exit(3)
+		}
+		if err := p.AppendIndex(busDir); err != nil {
+			os.Exit(3)
+		}
+	case "after-note-commit":
+		if err := p.Save(busDir); err != nil {
+			os.Exit(3)
+		}
+		id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
+		if _, err := stageAndCommit(busDir, id, []string{p.Path}, WithTrailer(p.Message, TrailerSend+" "+art.ID)); err != nil {
+			os.Exit(3)
+		}
+	case "after-commit":
+		if err := p.Save(busDir); err != nil {
+			os.Exit(3)
+		}
+		if err := p.AppendIndex(busDir); err != nil {
+			os.Exit(3)
+		}
+		EnsureMergeAttributes(busDir)
+		id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
+		if _, err := stageAndCommit(busDir, id, p.Paths(), WithTrailer(p.Message, TrailerSend+" "+art.ID)); err != nil {
+			os.Exit(3)
+		}
+	default:
+		os.Exit(4)
+	}
+
+	// Signal observable barrier to parent
+	if err := os.WriteFile(barrierFile, []byte("ready\n"), 0644); err != nil {
+		os.Exit(5)
+	}
+
+	// Block indefinitely until killed by parent via SIGKILL
+	time.Sleep(10 * time.Minute)
+}
+
+func TestSendPreparedProcessDeathRecovery(t *testing.T) {
+	modes := []string{"after-note-write", "after-index-write", "after-note-commit", "after-commit"}
+
+	for _, mode := range modes {
+		t.Run(mode, func(t *testing.T) {
 			bare, clone, p, a := stellaPrepared(t)
+			scratch := t.TempDir()
+			barrierFile := filepath.Join(scratch, "barrier.ready")
+			artFile := filepath.Join(scratch, "prepared.json")
+			artJSON, _ := RenderPreparedArtifact(p)
+			os.WriteFile(artFile, []byte(artJSON), 0644)
 
-			// First run with injected kill point
-			sendPreparedKillPoint = kp
-			_, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
-			if err == nil || !strings.Contains(err.Error(), "injected kill at "+kp) {
-				t.Fatalf("expected injected kill at %s, got %v", kp, err)
+			cmd := exec.Command(os.Args[0], "-test.run=TestSendPreparedProcessDeathHelper")
+			cmd.Env = append(os.Environ(),
+				"GO_WANT_PREPARED_DEATH_HELPER=1",
+				"PREPARED_HELPER_BUS="+clone,
+				"PREPARED_HELPER_BARRIER="+barrierFile,
+				"PREPARED_HELPER_MODE="+mode,
+				"PREPARED_HELPER_ART="+artFile,
+			)
+
+			if err := cmd.Start(); err != nil {
+				t.Fatalf("failed to start helper process: %v", err)
 			}
 
-			// Clear kill point and retry delivery
-			sendPreparedKillPoint = ""
+			// Wait for observable barrier
+			deadline := time.Now().Add(5 * time.Second)
+			for {
+				if _, err := os.Stat(barrierFile); err == nil {
+					break
+				}
+				if time.Now().After(deadline) {
+					_ = cmd.Process.Kill()
+					t.Fatal("timed out waiting for helper process barrier")
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+
+			// Terminate child violently with SIGKILL
+			if err := cmd.Process.Kill(); err != nil {
+				t.Fatalf("failed to kill helper process: %v", err)
+			}
+			// Wait for process death
+			_ = cmd.Wait()
+
+			// Fresh process / execution retries prepared delivery against the bare remote
 			res, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
 			if err != nil {
-				t.Fatalf("recovery send failed: %v", err)
+				t.Fatalf("recovery after process death failed: %v", err)
 			}
 			if !res.Pushed || res.State != "published" {
-				t.Fatalf("recovery res = %+v, want published", res)
+				t.Fatalf("res = %+v, want published", res)
 			}
 
-			// Remote bare repository MUST contain both the note and the exact INDEX line
+			// Verify exact note on bare remote
 			remoteNote, err := git(bare, "show", "main:"+p.Path)
 			if err != nil || remoteNote != a.Note {
 				t.Fatalf("bare remote missing note or note mismatch: %v", err)
 			}
+
+			// Verify bare remote contains EXACTLY ONE index line
 			remoteIndex, err := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
-			if err != nil || !strings.Contains(remoteIndex, IndexLine(p.Index)) {
-				t.Fatalf("bare remote missing expected index line: %v", err)
+			if err != nil {
+				t.Fatalf("bare remote missing index: %v", err)
+			}
+			matchCount := 0
+			for _, l := range strings.Split(strings.TrimSpace(remoteIndex), "\n") {
+				if l == IndexLine(p.Index) {
+					matchCount++
+				}
+			}
+			if matchCount != 1 {
+				t.Fatalf("bare remote has %d occurrences of index line, want exactly 1:\n%s", matchCount, remoteIndex)
 			}
 		})
 	}
