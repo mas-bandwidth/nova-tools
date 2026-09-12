@@ -31,13 +31,10 @@ var checkAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; two sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|parseFlags|fs.Name()":      "the verb's own name, chosen by this file at every flag.NewFlagSet",
-		"main.go|checkFailMax|fs.Name()":    "the verb's own name, chosen by this file at every flag.NewFlagSet",
-		"main.go|requireFlags|fs.Name()":    "the verb's own name, chosen by this file at every flag.NewFlagSet",
-		"main.go|requireFlags|name":         "a required flag's name, a key of the map this file's callers build from literals",
-		"main.go|cmdAttest|att.SHA256":      "sixty-four hex digits from encoding/hex over a SHA-256 sum",
-		"main.go|cmdNoCode|source":          "one of the three provenance constants in package check (DenyFloor, DenyReplaced, DenyExtended), as effectiveDenyList returns it; two sites",
-		"main.go|cmdNoCode|check.DenyFloor": "a constant in package check",
+		"main.go|checkFailMax|fs.Name()": "the verb's own name, chosen by this file at every flag.NewFlagSet",
+		"main.go|requireFlags|fs.Name()": "the verb's own name, chosen by this file at every flag.NewFlagSet",
+		"main.go|requireFlags|name":      "a required flag's name, a key of the map this file's callers build from literals",
+		"main.go|cmdAttest|att.SHA256":   "sixty-four hex digits from encoding/hex over a SHA-256 sum",
 	},
 	Imports: []string{
 		// version.go, and the reason it cannot write past the escape: buildinfo reads

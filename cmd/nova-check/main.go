@@ -184,7 +184,10 @@ func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 		return false
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "nova-check %s: unexpected argument %q\n", fs.Name(), fs.Arg(0))
+		// Through refuse like every other unusable invocation: this site printed its own
+		// line and dropped the `; run: nova-check help` door, so a stray word after a
+		// verb said what was wrong and nothing about where to look.
+		refuse(stderr, " "+fs.Name(), fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 		return false
 	}
 	return true
@@ -442,8 +445,9 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, " nocode", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "nova-check nocode: unexpected argument %q\n", fs.Arg(0))
-		return 2
+		// nocode parses its own flags rather than through parse(), so it carried the
+		// second copy of the door-less refusal; both go through refuse now.
+		return refuse(stderr, " nocode", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 	}
 	if *denyExt != "" && *denyExtAdd != "" {
 		fmt.Fprintln(stderr, "nova-check nocode: --deny-ext and --deny-ext-add are mutually exclusive")
@@ -471,11 +475,11 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "nova-check nocode: %s\n", oneline.Err(nerr))
 			return 2
 		}
-		fmt.Fprintf(stdout, "NOCODE DENY-LIST source=%s count=%d\n", source, len(deny))
+		fmt.Fprintf(stdout, "NOCODE DENY-LIST source=%s count=%d\n", oneline.Field(source), len(deny))
 		for _, e := range deny {
 			fmt.Fprintf(stdout, "%s\n", oneline.Escape(e))
 		}
-		fmt.Fprintf(stdout, "NOCODE NAME-LIST source=%s names=%d paths=%d\n", check.DenyFloor, len(names), len(prefixes))
+		fmt.Fprintf(stdout, "NOCODE NAME-LIST source=%s names=%d paths=%d\n", oneline.Field(check.DenyFloor), len(names), len(prefixes))
 		for _, n := range sortedNames(names) {
 			fmt.Fprintf(stdout, "name:%s\n", oneline.Escape(n))
 		}
@@ -503,7 +507,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 			list.Line(fmt.Sprintf("NOCODE FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
 		}
 		list.More()
-		fmt.Fprintf(stderr, "NOCODE FAIL files=%d findings=%d shown=%d deny-list=%s\n", scanned, list.Total(), list.Shown(), source)
+		fmt.Fprintf(stderr, "NOCODE FAIL files=%d findings=%d shown=%d deny-list=%s\n", scanned, list.Total(), list.Shown(), oneline.Field(source))
 		return 1
 	}
 	// A run that classified nothing should not read as a run that found
@@ -513,7 +517,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		// or unreadable tree read as a clean repo with nothing to say.
 		fmt.Fprintf(stderr, "nova-check nocode: classified NOTHING under %s — an empty tree, everything allowed, or the wrong directory\n", oneline.Escape(*dir))
 	}
-	fmt.Fprintf(stdout, "NOCODE OK files=%d clean deny-list=%s\n", scanned, source)
+	fmt.Fprintf(stdout, "NOCODE OK files=%d clean deny-list=%s\n", scanned, oneline.Field(source))
 	return 0
 }
 

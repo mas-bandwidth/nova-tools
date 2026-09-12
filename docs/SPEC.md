@@ -108,7 +108,7 @@ LINKS FAIL files=<n> links=<n> broken=<n> shown=<n>
 KERNEL OK bytes=<n> budget=<n>
 KERNEL OK tokens=<n> budget=<n> bytes=<n> divisor=<r>
 KERNEL FAIL <file>: <reason>
-NOCODE OK files=<n> clean
+NOCODE OK files=<n> clean deny-list=<source>
 NOCODE FAIL <path>: <reason>
 NOCODE FAIL files=<n> findings=<n> shown=<n> deny-list=<source>
 FLOORS OK floors=<n>
@@ -314,7 +314,15 @@ named no build.
 `<reason>` on the lines above, and every path an error's text carries into a
 refusal or a note, renders through `internal/oneline`; `ledger=` on
 `CORPUS OK` is a field and prints as one token; `deny-list=` names one of
-three constants from the deny-list machinery and is not caller text. The flag
+three constants from the deny-list machinery, so it is not caller text — **and
+it is a field, which is the half that was missed**: two of the three labels
+carry a space, so `deny-list=floor list` read as `deny-list=floor` to a
+whitespace-splitting scanner and `list` read as a further field. The escape is
+not only for text a caller wrote; a field is one token whoever wrote it, so
+these three go through `oneline.Field` like every other field and print as
+`floor\x20list`, `--deny-ext` and `floor\x20list\x20+\x20--deny-ext-add`.
+The label is rendered rather than renamed: a reader who has seen `floor list`
+in a finding reads the same words on the summary line. The flag
 parser is given no stream, so an unknown flag after a verb is this tool's own
 one-line refusal — `nova-check <verb>: <what was wrong>; run: nova-check help`,
 and nothing else — at exit 2, `-h` included. Pinned by
@@ -483,7 +491,17 @@ tool supplied would make the whole answer a guess while still looking like an
 instrument — the no-guessing law, applied to a number rather than a path.
 The derivation is `tokens = ceil(bytes / r)`: a size check must never report
 fewer tokens than its own estimate, and rounding down would let a kernel one
-token over budget read as exactly at it.
+token over budget read as exactly at it. **Nor may it report a number the
+conversion invented.** A divisor small enough to derive more tokens than an
+`int64` can hold is a scientific-notation typo away from a usable one, and the
+float-to-integer conversion is where the language leaves the answer to the
+hardware: `1e-20` saturated to `MaxInt64` and failed on arm64, wrapped to
+`MinInt64` and passed — `KERNEL OK tokens=-9223372036854775808 budget=400`,
+exit 0 — on the three amd64 targets of the five that ship. So the range is
+checked BEFORE the conversion and an uncountable estimate is over budget:
+`KERNEL FAIL <file>: over budget: the divisor derives more tokens than can be
+counted (measured <bytes> bytes at <r> bytes/token, budget <n>)`, the same
+verdict on every GOARCH.
 
 **The line teaches the unit it printed.** Token mode prints the derived
 tokens, the budget, the measured bytes, and the divisor, so any reader can
@@ -666,7 +684,11 @@ wholesale** — for the line that legitimately keeps a language inside its own
 self — **`--deny-ext-add` extends it**, and the two are mutually exclusive.
 Every finding **names the list that produced it** (`floor list`, `--deny-ext`,
 or `floor list + --deny-ext-add`), and the `NOCODE OK` line names it too, so
-neither a red nor a green hides the basis it was reached on.
+neither a red nor a green hides the basis it was reached on. In a finding's
+reason the label is prose and keeps its spaces; on the `deny-list=` field of
+the OK and FAIL summary lines, and on `--print-deny-list`'s two `source=`
+fields, it is a field and prints as one token (`floor\x20list`) — the same
+words, rendered so a scanner counts the fields the tool wrote.
 `--print-deny-list` prints what is actually in force and exits 0 — **both
 lists**, the extensions under `NOCODE DENY-LIST` and the name floor under
 `NOCODE NAME-LIST`, each entry spelled as `name:` or `path:` so the output can
