@@ -298,7 +298,12 @@ this family can already read and write it, from any machine, with no clone and n
 write access to a repo's branches.
 
 **`--dir <path>` — a directory of card files in a repository, tomorrow.** One
-file per card, `<dir>/<id>.board`, created by `add`. One event per line, appended,
+file per card, `<dir>/<id>.board`, created by `add`. **The directory itself is made
+by `quickstart` and by no other verb** (`created=` on its `QUICKSTART OK` line says
+whether that run made it): a first run has nowhere to write yet, while every other
+verb refuses a directory that is not there and names the `mkdir -p` that fixes it,
+because a `list` or a `take` against a missing directory is a path typed wrong and
+making it would answer the typo with an empty board. One event per line, appended,
 read whole; the board is a fold over every file in the directory (rule 3). The
 first line of every card file is exactly `BOARD v1` and nothing else, for the
 reason `OPEN v2` has a version line: a later format read as this one would be
@@ -815,7 +820,9 @@ shared packages used rather than re-spelled.
 7. **`cmd/nova-board/check.go`** — the dumb matcher, `--all`, `CHECK HIT` capped,
    `matched=` never capped, and **exit 1 on a match**. The test is named for the
    mnemonic: `TestCheckExitsOneOnMatchSoTheShellGuardReads`.
-8. **`quickstart`** — the natural first run: read the board, print the counts, print
+8. **`quickstart`** — the natural first run: make the `--dir` directory when it is
+   missing (`MkdirAll`, `0755`, as `nova-swarm quickstart --pool` makes its pool) and
+   report it as `created=`, read the board, print the counts, print
    the `check … || { [ $? -eq 1 ] && exit 0; exit 2; }; add … --by … --default …`
    pair with this board's own values in it, quoted
    the way `nova-bus names` quotes — a value meant to be pasted rather than

@@ -195,6 +195,10 @@ type flags struct {
 	issue, dir string
 	ghTimeout  int
 	problems   []string
+
+	// makeDir is quickstart's alone: the first run makes the board directory it is
+	// pointed at, and created says whether this run is the one that made it.
+	makeDir, created bool
 }
 
 func newFlags(verb string) *flags {
@@ -255,6 +259,17 @@ func (f *flags) backend() (board.Backend, string, string) {
 	case f.issue != "" && f.dir != "":
 		f.want(twoBackends)
 	case f.dir != "":
+		// QUICKSTART MAKES THE DIRECTORY; every other verb refuses one that is not
+		// there and names the mkdir -p that fixes it (internal/board/dir.go).
+		if f.makeDir {
+			b, created, err := board.MakeDir(f.dir)
+			if err != nil {
+				f.want(oneline.Err(err))
+				return nil, "", ""
+			}
+			f.created = created
+			return b, "dir", b.Source()
+		}
 		b, err := board.NewDir(f.dir)
 		if err != nil {
 			f.want(oneline.Err(err))
@@ -636,8 +651,15 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Rea
 	return 0
 }
 
+// cmdQuickstart is the natural first run, and it is THE ONE VERB HERE THAT MAKES ITS
+// DIRECTORY. Glenn, on nova-tools #109 and Emma's report that it refused a --dir that was
+// not there: "It is best to do the right thing if a friend uses it a certain way, or to
+// correct docs to show only right way. Pick one." A first run has nowhere to write yet, and
+// `nova-swarm quickstart --pool ./pool` already makes its pool; created=yes|no on the OK
+// line says which run made this one, so a reader can tell a new board from a wrong path.
 func cmdQuickstart(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("quickstart")
+	f.makeDir = true
 	var staleFlag string
 	f.fs.StringVar(&staleFlag, "stale", "", "")
 	if !f.parse(args, stderr) {
@@ -652,8 +674,8 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !ok {
 		return 2
 	}
-	fmt.Fprintf(stdout, "QUICKSTART OK backend=%s source=%s stale=%s: the board, then the rule every filer runs in front of add\n",
-		oneline.Field(kind), oneline.Field(source), oneline.Field(stale.String()))
+	fmt.Fprintf(stdout, "QUICKSTART OK backend=%s source=%s stale=%s created=%s: the board, then the rule every filer runs in front of add\n",
+		oneline.Field(kind), oneline.Field(source), oneline.Field(stale.String()), oneline.Field(yesNo(f.created)))
 	printBoard(stdout, b, kind, source, false, false, "", bounded.Default)
 	words, text := quickstartWords(b)
 	fmt.Fprintf(stdout, "QUICKSTART LINE n=1 what=check: %s\n", oneline.Quote(

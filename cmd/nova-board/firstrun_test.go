@@ -298,21 +298,28 @@ func TestTheReadmeFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 //	/Users/glenn/emma-working/scratch/test-board: no such file or directory;
 //	run: nova-board help
 //
-// The refusal stands and the message changes. SPEC-BOARD grants this backend one
-// creation and names it -- "One file per card, `<dir>/<id>.board`, created by
-// `add`" -- and nothing in it makes a verb create the directory itself; SPEC.md's
-// Conventions govern here unchanged ("No guessed paths ... There are no default
-// directories"), and a board directory is one directory in somebody's repository
-// whose tracking is the caller's, where a swarm pool is a layout this family
-// owns. What the old message lacked was the way forward: a refusal names what the
+// Glenn ruled on nova-tools #109: "It is best to do the right thing if a friend
+// uses it a certain way, or to correct docs to show only right way. Pick one."
+// The right thing: `quickstart` MAKES the directory (TestQuickstartMakesTheDirectory
+// below), as `nova-swarm quickstart --pool` makes its pool. Every other verb still
+// refuses a directory that is not there -- quickstart is the one verb whose whole
+// job is a first run, and a first run has nowhere to write yet, while a `list` or a
+// `take` against a directory that does not exist is a caller who named the wrong
+// path, and making it for them would hide the typo behind an empty board.
+//
+// The refusal those verbs print carries the way forward. A refusal names what the
 // flag wants (SPEC-BOARD.md:808-814, BUILD item 6 -- an entry in the build list,
 // not a numbered rule), and here what it wants is a directory that exists.
 func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "board")
-	for _, verb := range []string{"quickstart", "list", "check"} {
+	for _, verb := range []string{"list", "check", "add"} {
 		args := []string{verb, "--dir", missing, "--stale", "10m"}
-		if verb == "check" {
+		switch verb {
+		case "check":
 			args = []string{verb, "--dir", missing, "--words", "anything"}
+		case "add":
+			args = []string{verb, "--dir", missing, "--as", "rowan", "--text", "a card",
+				"--by", "4h", "--default", "the filer files it as a known gap"}
 		}
 		var out, errb bytes.Buffer
 		exit := run(args, &out, &errb, time.Now().UTC(), &seq{})
@@ -373,5 +380,61 @@ func TestTheMkdirRemedyIsOnePastableCommandWhenTheDirHasASpace(t *testing.T) {
 	remedy, _, _ := strings.Cut(rest, "; run: nova-board help")
 	if words := shellWords(t, remedy); len(words) != 3 || words[0] != "mkdir" || words[1] != "-p" || words[2] != missing {
 		t.Errorf("the remedy %q is not one pastable `mkdir -p <dir>`; a shell reads it as %q, and the directory a caller named was %q", remedy, words, missing)
+	}
+}
+
+// TestQuickstartMakesTheDirectory is Glenn's ruling on nova-tools #109 in a test:
+// "It is best to do the right thing if a friend uses it a certain way, or to correct
+// docs to show only right way. Pick one." Emma used quickstart the way nova-swarm's
+// quickstart works -- `--pool ./pool` makes the pool -- so quickstart here makes the
+// board directory, with MkdirAll and 0755, exactly as cmd/nova-swarm/main.go does.
+//
+// AND IT SAYS SO. A verb that creates a directory silently is a verb a reader cannot
+// tell apart from one that found it already there, and the difference is whether the
+// empty board they are looking at is new or is the wrong path. `created=` is a FIELD on
+// the line quickstart already prints, not a new line kind, and it is spelled the way this
+// tool spells every other boolean field -- `close` prints override=true|false through the
+// same yesNo -- rather than the yes|no a sibling tool uses.
+func TestQuickstartMakesTheDirectory(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "board")
+	var out, errb bytes.Buffer
+	if exit := run([]string{"quickstart", "--dir", missing, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 0 {
+		t.Fatalf("quickstart against a missing --dir exits %d, want 0: it makes the directory, as `nova-swarm quickstart --pool` makes its pool; stderr: %s", exit, errb.String())
+	}
+	info, err := os.Stat(missing)
+	if err != nil || !info.IsDir() {
+		t.Fatalf("quickstart returned 0 and %s is not a directory (%v); a first run has nowhere to write", missing, err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o755 {
+		t.Errorf("the directory is %v, want 0755, the mode nova-swarm's quickstart makes its pool with", perm)
+	}
+	if !strings.Contains(out.String(), "created=true") {
+		t.Errorf("quickstart made the directory and did not say so; want created=true on the QUICKSTART OK line:\n%s", out.String())
+	}
+
+	// A SECOND RUN IS NOT A FIRST RUN. The same line, the other value: a reader who
+	// pastes quickstart twice can tell which run made the board.
+	out.Reset()
+	errb.Reset()
+	if exit := run([]string{"quickstart", "--dir", missing, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 0 {
+		t.Fatalf("quickstart against the directory it just made exits %d, want 0; stderr: %s", exit, errb.String())
+	}
+	if !strings.Contains(out.String(), "created=false") {
+		t.Errorf("a second quickstart found the directory already there and did not say so; want created=false:\n%s", out.String())
+	}
+
+	// A --dir that exists and is a FILE is still a refusal: MkdirAll would not fix it,
+	// and a board is not a file this tool overwrites.
+	file := filepath.Join(t.TempDir(), "board")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errb.Reset()
+	if exit := run([]string{"quickstart", "--dir", file, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 2 {
+		t.Errorf("quickstart against a --dir that is a file exits %d, want 2", exit)
+	}
+	if !strings.Contains(errb.String(), "is a file") {
+		t.Errorf("a --dir that is a file is not a directory this verb makes:\n%s", errb.String())
 	}
 }

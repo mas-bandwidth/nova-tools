@@ -34,7 +34,8 @@ type Dir struct {
 	path string
 }
 
-// NewDir returns the backend for a directory of card files. The directory must exist: a
+// NewDir returns the backend for a directory of card files. The directory must exist for
+// every verb but quickstart, which makes it (MakeDir below). For the rest: a
 // tool that made one would be guessing at where a caller meant to keep a board -- the
 // board lives in somebody's repository, and which directory is tracked, and by which
 // clone, is the caller's decision and not this tool's. SPEC-BOARD grants this backend one
@@ -61,6 +62,37 @@ func NewDir(path string) (*Dir, error) {
 		return nil, fmt.Errorf("--dir wants a directory of .board card files, and %s is a file", path)
 	}
 	return &Dir{path: path}, nil
+}
+
+// MakeDir is NewDir for QUICKSTART, and it is the one entry here that creates the
+// directory. Glenn ruled it on nova-tools #109, on Emma's report that quickstart refused a
+// --dir that was not there: "It is best to do the right thing if a friend uses it a certain
+// way, or to correct docs to show only right way. Pick one." The right thing is the one a
+// friend already reached for -- `nova-swarm quickstart --pool ./pool` makes its pool, with
+// MkdirAll and 0755, and this makes the board directory the same way.
+//
+// IT IS QUICKSTART'S ALONE. Every other verb goes through NewDir and still refuses, because
+// quickstart is the verb whose whole job is a first run and a first run has nowhere to write
+// yet, while a `list` or a `take` against a directory that is not there is a caller who named
+// the wrong path -- making it for them would answer a typo with an empty board. The created
+// bool goes back to the caller because a verb that makes a directory silently leaves a reader
+// unable to tell a new board from the wrong one.
+//
+// A path that exists and is a FILE is untouched and keeps NewDir's refusal: MkdirAll would
+// not fix that one, and a board is not a file this tool replaces.
+func MakeDir(path string) (*Dir, bool, error) {
+	created := false
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return nil, false, fmt.Errorf("--dir wants a directory of .board card files it can make, and %s could not be made: %w", path, err)
+		}
+		created = true
+	}
+	d, err := NewDir(path)
+	if err != nil {
+		return nil, false, err
+	}
+	return d, created, nil
 }
 
 // Quote wraps a value for a shell line this tool prints to be pasted -- quickstart's pair
