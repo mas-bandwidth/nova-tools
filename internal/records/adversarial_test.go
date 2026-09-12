@@ -125,7 +125,11 @@ func TestAWithoutValidatorCannotSealWhatTheStrictBoundaryRefuses(t *testing.T) {
 		t.Errorf("a refused seal returned %d bytes; it returns none", len(raw))
 	}
 
-	// Every rule, not just the one the reader tried: no skip set buys a seal.
+	// Every skip, over the SAME defect: 38 iterations showing that one unknown kind is not
+	// waved through by any skip set. That is what this loop shows and all it shows -- a
+	// whole-PR read pointed out that it reads stronger than it is, because the body under test
+	// carries one defect rather than one per rule. The per-rule version is
+	// TestEveryRuleThatSurvivesATypedRoundTripIsRefusedOnReseal below.
 	for _, rule := range AllRules {
 		if _, _, err := v.Without(rule).SealObservation(obs); err == nil {
 			t.Errorf("Without(%s).SealObservation sealed an unknown enum", rule)
@@ -215,7 +219,7 @@ func TestABuilderRefusalNeverEchoesTheCallersMemberName(t *testing.T) {
 // calls and no refusal.
 //
 // The repair: every object the strict parser builds is sealed at birth, so the exported Set
-// refuses it -- deeply, since the parser builds every nested object the same way. NewObject's
+// refuses it, and the two exported READS hand out copies rather than the live arrays -- deeply, since the parser builds every nested object the same way. NewObject's
 // are the caller's own and stay writable. There is no new rule name for this, deliberately:
 // it is an API misuse rather than a defect in a record's bytes, and every Rule* constant owes
 // testdata a fixture that fails only that rule.
@@ -232,6 +236,33 @@ func TestAValidatedBodyCannotBeMutated(t *testing.T) {
 	}
 	if before != env.ID {
 		t.Fatalf("the fixture's ID is not its body's digest: %s vs %s", env.ID, before)
+	}
+
+	// The two live handles a whole-PR read found one method over from finding 1 (#146 comment
+	// 5648000286): Keys() handed out o.keys itself, and Get handed out the live []Value, so
+	// `env.Body.Keys()[0] = sentinel` and `event_key[0] = sentinel` each moved the body out
+	// from under env.ID with err nil. A seal that only guards Set is not a seal.
+	env.Body.Keys()[0] = sentinel
+	if got, _ := ContentID(env.Body); got != env.ID {
+		t.Errorf("writing through Keys() moved the body: env.ID %s is now %s", env.ID, got)
+	}
+	srcv, ok := env.Body.Get("source")
+	if !ok {
+		t.Fatal("the fixture has no source member")
+	}
+	ekv, ok := srcv.(*Object).Get("event_key")
+	if !ok {
+		t.Fatal("the fixture's source has no event_key")
+	}
+	ek, ok := ekv.([]Value)
+	if !ok {
+		t.Fatalf("event_key is %T", ekv)
+	}
+	if len(ek) > 0 {
+		ek[0] = sentinel
+	}
+	if got, _ := ContentID(env.Body); got != env.ID {
+		t.Errorf("writing through a []Value from Get moved the body: env.ID %s is now %s", env.ID, got)
 	}
 
 	if err := env.Body.Set(sentinel, "x"); err == nil {
@@ -299,5 +330,152 @@ func TestAValidatorsAllowlistIsNotALiveHandle(t *testing.T) {
 	_ = fields
 	if _, _, err := v.SealObservation(obs); err == nil {
 		t.Error("a field outside the allowlist sealed after the caller appended")
+	}
+}
+
+// The per-rule half of finding 2's repair, driven by the refused fixtures rather than by one
+// hand-made defect: for every rule that a typed round trip can still carry, take the fixture
+// that fails only that rule, read it under Without(rule) so an Observation exists at all, and
+// require the strict re-seal to refuse it BY THE SAME RULE.
+//
+// The three sets below partition AllRules, and their sizes are pinned: a rule that moves
+// between them is a change in what the encoder can and cannot carry, and it should be read
+// rather than discovered.
+func TestEveryRuleThatSurvivesATypedRoundTripIsRefusedOnReseal(t *testing.T) {
+	// Defects the typed round trip legitimately loses, because Observation cannot represent
+	// them and Body() writes the schema's twelve members whatever it was handed:
+	//   - duplicate_key, invalid_utf8, lone_surrogate: properties of the BYTES or of a member
+	//     NAME, and the encoder writes its own names;
+	//   - missing_field, unknown_field: the member list is not the caller's to choose, so a
+	//     body short one member or carrying a thirteenth comes back with exactly twelve;
+	//   - envelope_id_mismatch: the ID is derived on the way out, never copied.
+	// Each of these is refused on the way IN, by ValidateEnvelope, which is where a record
+	// arriving from another harness is judged. That is the boundary that matters for them.
+	lostInTheRoundTrip := map[string]string{
+		RuleDuplicateKey:       "a duplicate member name is a property of the bytes; the encoder writes each name once",
+		RuleInvalidUTF8:        "the fixture's invalid bytes are not in a value the schema carries",
+		RuleLoneSurrogate:      "the same: an escape in a name the encoder does not reproduce",
+		RuleMissingField:       "Body() writes all twelve members, so a short body cannot be re-encoded short",
+		RuleUnknownField:       "and cannot be re-encoded long",
+		RuleEnvelopeIDMismatch: "the ID is derived from the body on the way out, never carried over",
+	}
+	// Defects that stop the read before an Observation exists, so there is nothing to re-seal.
+	noObservation := map[string]bool{
+		RuleNotJSON:          true,
+		RuleEnvelopeShape:    true,
+		RuleEnvelopeIDSyntax: true,
+		RuleRawJSONNumber:    true,
+		RuleWrongType:        true,
+	}
+
+	resealed := map[string]bool{}
+	for _, path := range fixtures(t, "refused") {
+		raw, want := readFixture(t, path)
+		base := filepath.Base(path)
+		t.Run(base, func(t *testing.T) {
+			v := validatorForRefused(t, path, raw)
+			env, err := v.Without(want.Rule).ValidateEnvelope(raw)
+			if err != nil {
+				if !noObservation[want.Rule] {
+					t.Errorf("the fixture does not read even under Without(%s), and %s is not one of the rules that stop the read: %v",
+						want.Rule, want.Rule, err)
+				}
+				return
+			}
+			if noObservation[want.Rule] {
+				t.Errorf("%s is listed as stopping the read, and the fixture read fine under Without", want.Rule)
+			}
+			_, _, err = NewValidator(v.allow).SealObservation(*env.Observation)
+			if why, lost := lostInTheRoundTrip[want.Rule]; lost {
+				if err != nil {
+					t.Errorf("%s is listed as lost in the round trip (%s), and the re-seal refused it: %v", want.Rule, why, err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatalf("the strict re-seal SEALED a body that fails %s", want.Rule)
+			}
+			var ref *Refusal
+			if !asRefusal(err, &ref) || ref.Rule != want.Rule {
+				t.Errorf("the re-seal refused with %v, want rule %s", err, want.Rule)
+				return
+			}
+			resealed[want.Rule] = true
+		})
+	}
+
+	// The partition, pinned.
+	if len(AllRules) != 38 {
+		t.Errorf("AllRules has %d rules; testdata/refused holds 38 fixtures, one per rule", len(AllRules))
+	}
+	if got, want := len(resealed), len(AllRules)-len(lostInTheRoundTrip)-len(noObservation); got != want {
+		t.Errorf("%d rules were refused on re-seal, want %d (%d rules, %d lost in the round trip, %d stopping the read)",
+			got, want, len(AllRules), len(lostInTheRoundTrip), len(noObservation))
+	}
+	for _, rule := range AllRules {
+		if resealed[rule] || lostInTheRoundTrip[rule] != "" || noObservation[rule] {
+			continue
+		}
+		t.Errorf("rule %s is in none of the three sets; it was neither re-seal-refused nor accounted for", rule)
+	}
+}
+
+// Stella's addition to the seal repair: an array inside an array. Copying only the top-level
+// []Value would leave the inner one shared, and a body with a nested array would still move
+// under its own ID -- the same finding two levels down. parseStrict is the shape under test
+// here rather than a fixture, because an observation body has no nested array and the
+// property belongs to the sealed object rather than to the schema.
+func TestASealedObjectsNestedArraysAreCopiedToo(t *testing.T) {
+	const doc = `{"outer":[["a","b"],["c"]],"flat":["d"]}`
+	parsed, err := parseStrict([]byte(doc), nil, "body")
+	if err != nil {
+		t.Fatalf("the fixture document does not parse: %v", err)
+	}
+	obj, ok := parsed.(*Object)
+	if !ok {
+		t.Fatalf("parseStrict returned %T", parsed)
+	}
+	if !obj.sealed {
+		t.Fatal("a parsed object is not sealed; the whole repair rests on that")
+	}
+	before, err := ContentID(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// The inner array, two Gets and two index writes down.
+	outerv, _ := obj.Get("outer")
+	outer, ok := outerv.([]Value)
+	if !ok || len(outer) == 0 {
+		t.Fatalf("outer is %T", outerv)
+	}
+	inner, ok := outer[0].([]Value)
+	if !ok || len(inner) == 0 {
+		t.Fatalf("outer[0] is %T", outer[0])
+	}
+	inner[0] = sentinel
+	outer[1] = sentinel
+
+	// And the flat one, for the shape the Fable read measured.
+	flatv, _ := obj.Get("flat")
+	if flat, ok := flatv.([]Value); ok && len(flat) > 0 {
+		flat[0] = sentinel
+	}
+
+	after, err := ContentID(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after != before {
+		t.Errorf("writing through a nested array moved the sealed object: %s is now %s", before, after)
+	}
+	// And the object still reads as it did.
+	againv, _ := obj.Get("outer")
+	again, _ := againv.([]Value)
+	if len(again) != 2 {
+		t.Fatalf("outer came back with %d elements", len(again))
+	}
+	if in0, ok := again[0].([]Value); !ok || len(in0) != 2 || in0[0] != "a" {
+		t.Errorf("the nested array came back %#v", again[0])
 	}
 }
