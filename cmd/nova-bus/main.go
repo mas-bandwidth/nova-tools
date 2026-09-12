@@ -62,7 +62,7 @@ usage:
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
         [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
-        [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
+        [--legacy-before <date-or-instant>|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
