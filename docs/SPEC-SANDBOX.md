@@ -656,13 +656,16 @@ The script's child-environment filter is the **script's**, so it can only agree
 with itself: what it measures is the profile, not the tool's scrub. The scrub is
 asserted in Go, and rule 9 names those tests rather than this check.
 
-Two environment variables exist for a caller that is a **test** rather than an
-operator, because test 16 is absolute — no test reaches outside `t.TempDir()` or
-touches the network. `NOVA_CHECK_SCRATCH` puts the scratch tree where the caller
-says instead of beside the script; `NOVA_CHECK_NO_NETWORK=1` skips the two DNS
+The script takes two environment variables for a caller that is a **test**
+rather than an operator, because test 16 is absolute — no test reaches outside
+`t.TempDir()` or touches the network, and a Go wrapper around this script was
+doing both. `NOVA_CHECK_SCRATCH` puts the scratch tree where the caller says
+instead of beside the script; `NOVA_CHECK_NO_NETWORK=1` skips the two DNS
 checks, which are the only ones that leave the machine, and prints
 `CHECK SKIP name=... reason=no_network` for each. The operator run and the mac
-CI job set neither: there the DNS checks are the rule-7 measurement and they run.
+CI job set neither: there the DNS checks are the rule-7 measurement and they
+run. (Built on #73 alongside `NOVA_SANDBOX_FILL`; this branch carries only the
+rule 9 scrub fix to the script.)
 
 A third thing the script measured, small and load-bearing: `sun_path` is **104
 bytes**, and a socket bound by absolute path under a deep scratch directory

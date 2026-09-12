@@ -10,8 +10,6 @@
 # pass by being impossible.
 #
 # One line per check: CHECK OK name=... / CHECK FAIL name=...  Exit 1 on any FAIL.
-# The count is the script's own: every expect_ok, expect_deny, control_ok and report
-# below is one line, and no prose anywhere states a number that this file can outgrow.
 # No /tmp: the scratch lives beside this script. Works from any cwd.
 
 set -euo pipefail
