@@ -117,9 +117,9 @@ func ReadProvider(kind, name, path string, _ *Rules) *Source {
 	var fileLine []int
 	// A `#` is a comment only where a comment can be. Inside a quoted field a line is the
 	// field's own text, and deleting it parses the record from the wrong bytes: the count
-	// of quote characters so far is odd exactly while the reader is inside one (an escaped
-	// `""` per RFC 4180 is two, which keeps the parity), so that is the test. Non-standard
-	// backslash escapes (`\"`) are unsupported dialects and are rejected by standard CSV parsing.
+	// count of quote characters so far is odd exactly while the reader is inside one (an escaped
+	// `""` per RFC 4180 is two, which keeps the parity), so that is the test. In standard CSV,
+	// backslashes are ordinary characters, not quote escapes.
 	inQuotes := false
 	for i, line := range strings.Split(text, "\n") {
 		if !inQuotes && strings.HasPrefix(line, "#") {
