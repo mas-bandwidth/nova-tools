@@ -21,12 +21,12 @@ import (
 // 0/1/2, because its status belongs to the wrapped command; the departure and its reason
 // are in the spec's exit-codes section.
 const (
-	ExitRefused      = 125 // nova-sandbox itself said NO before the command ran
-	ExitNotExecuted  = 126 // the command could not be executed and the tool was still there
-	ExitNotFound     = 127 // the command could not be resolved on the caller's PATH
-	ExitProbeFailed  = 1   // probe/check grammar: the verb ran and said NO
-	ExitCannotRun    = 2   // probe/check grammar: the verb could not run
-	tmpDirName       = ".nova-sandbox-tmp"
+	ExitRefused     = 125 // nova-sandbox itself said NO before the command ran
+	ExitNotExecuted = 126 // the command could not be executed and the tool was still there
+	ExitNotFound    = 127 // the command could not be resolved on the caller's PATH
+	ExitProbeFailed = 1   // probe/check grammar: the verb ran and said NO
+	ExitCannotRun   = 2   // probe/check grammar: the verb could not run
+	tmpDirName      = ".nova-sandbox-tmp"
 	// profileFilePrefx is the name NO file carries: the darwin body passes the profile
 	// inline with -p, and wrap_darwin_test.go asserts that nothing with this prefix is
 	// ever written. The companion profileFilePerm went with the file it was for.
