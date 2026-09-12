@@ -396,6 +396,12 @@ computed from the command ("the directory of the resolved command"), so a
 most needs to see. With no `--`, `sh` is the floor every wrapped shell command
 already stands on.
 
+> **Unimplemented proposal (2026-09-12).** The `fence`, `grant` and `release`
+> verbs described in the paragraphs below are not implemented: the `nova-sandbox`
+> binary built today has no `fence`, no `grant` and no `release` verb. Their
+> requirements are preserved below, word for word, as the owed work for when they
+> are built; nothing below is a promise the current binary keeps.
+
 `fence` writes the `opencode.json` `permission` block of rule 14 to a file, so
 that the block is generated from one place rather than copied by hand.
 
@@ -737,6 +743,13 @@ waits rather than `exec`s in order to forward signals and return the command's
 status, not to clean anything up.
 
 ## Linux — Landlock, no root
+
+> **Unimplemented proposal (2026-09-12).** The Linux (Landlock) backend
+> described in this section is not implemented: the linux body of `nova-sandbox`
+> is not built today (`cmd/nova-sandbox/parent_linux.go` carries only the
+> probe's parent-executable guard), so no Landlock wall is applied on linux. Its
+> requirements are preserved below, word for word, as the owed work for when the
+> body is built; nothing below is a promise the current binary keeps.
 
 Landlock is an LSM available from kernel **5.13**, usable by an unprivileged
 process, and inherited across `execve(2)` so that the child cannot lift it. The
