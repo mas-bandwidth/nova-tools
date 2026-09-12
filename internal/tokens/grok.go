@@ -361,8 +361,9 @@ func grokTurnRecord(v *records.Validator, sessionID string, turn map[string]inte
 		return rec, err
 	}
 	// Read the observation back out of the bytes that were sealed, so what a caller inspects
-	// is what the boundary accepted and not the struct that went in.
-	read, err := records.NewValidator(GrokAllowlists()).ValidateEnvelope(env)
+	// is what the boundary accepted and not the struct that went in. Same validator, built
+	// from this decoder's own allowlists in DecodeGrokTurns and never relaxed.
+	read, err := v.ValidateEnvelope(env)
 	if err != nil {
 		return rec, err
 	}
