@@ -26,6 +26,7 @@ import (
 const usage = `nova-self-talk: the self-talk register, classified (see SPEC.md)
 
 usage:
+  nova-self-talk version    print this build identity (--version also accepted)
   nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
   nova-self-talk help
 

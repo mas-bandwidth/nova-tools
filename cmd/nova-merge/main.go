@@ -40,6 +40,7 @@ import (
 const usage = `nova-merge: an ordered lane onto one base, with the races taken out (see docs/SPEC-MERGE.md)
 
 usage:
+  nova-merge version    print this build identity (--version also accepted)
   nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name>
   nova-merge add        --lane <dir> --pr <n> [--needs-read]
   nova-merge add-branch --lane <dir> --branch <name> [--needs-read]

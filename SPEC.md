@@ -207,14 +207,16 @@ prints ONE line, four tokens, exit 0, on stdout:
 
 The identity in field two is the release's `-ldflags "-X main.version=<tag>"`
 stamp when there is one, the module version the toolchain recorded when there
-is not, then `<utc build time>-<12 hex of the revision>[-dirty]` from the vcs
+is not, then `<utc revision time>-<12 hex of the revision>[-dirty]` from the vcs
 stamp, and the word `devel` for a build with none of those. **It is never a
 dotted number this repo made up**: a version string nobody can trace invites
-the comparison it cannot support. The order, the floor and the line are one
-implementation, `internal/buildinfo`, so that eleven binaries answer this
-question in one spelling and a release can assert over the set by reading
-field two. `nova-merge` adds a fifth field, `build=<12 hex>`, the sha256 of
-its own file on disk, which is a different fact and its own section's;
+the comparison it cannot support. Nine binaries share the resolution order in
+`internal/buildinfo`. `nova-wake` and `nova-sandbox` retain their existing
+resolvers: their VCS fallback reports the revision alone, without the
+revision time or dirty marker. Release-stamped and installed-module versions
+retain the same identity across all eleven; the release assertion handles
+the sandbox output separately. `nova-merge` adds a fifth field,
+`build=<12 hex>`, the sha256 of its own file on disk, which is a different fact and its own section's;
 `nova-sandbox` answers with its `SANDBOX VERSION` line, which carries the
 backend and the platform a sandbox is judged by. The verb takes no flags and
 no arguments — a second output shape is a second thing to agree about — and

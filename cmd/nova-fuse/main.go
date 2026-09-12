@@ -35,6 +35,7 @@ import (
 const usage = `nova-fuse: the ingestion fuse -- lockdown and quarantine (see SPEC.md)
 
 usage:
+  nova-fuse version    print this build identity (--version also accepted)
   nova-fuse status --box <path> [--max <n>]                what is blown, and since when (REPORTS; never gate on it)
   nova-fuse check --box <path> [surface]                   may I read? -- the gate; act only on exit 0
   nova-fuse lockdown --box <path> "<reason>"               blow the one hard fuse: all untrusted reads stop

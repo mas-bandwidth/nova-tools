@@ -38,6 +38,7 @@ import (
 const usage = `nova-swarm: a pool of one-task workers, with the ways a swarm fails taken out (see docs/SPEC-SWARM.md)
 
 usage:
+  nova-swarm version    print this build identity (--version also accepted)
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
   nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]

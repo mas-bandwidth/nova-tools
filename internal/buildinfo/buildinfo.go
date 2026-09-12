@@ -13,7 +13,7 @@
 //
 //	-ldflags "-X main.version=..."  what the release workflow stamps: the tag, exactly
 //	the module version              what `go install ...@v1.2.3` records for itself
-//	the vcs stamp                   <utc build time>-<12 hex of the revision>[-dirty]
+//	the vcs stamp                   <utc revision time>-<12 hex of the revision>[-dirty]
 //	devel                           a build with none of the above, SAYING it has none
 //
 // The middle two come from debug.ReadBuildInfo, which the toolchain fills in with no help
@@ -94,8 +94,8 @@ func Resolve(stamped string, info *debug.BuildInfo, ok bool) string {
 	}
 	v := revision
 	// Time first, revision second, the way a Go pseudo-version orders them: two builds
-	// of the same tree sort by when they were built, which is the comparison a person
-	// holding two of these lines actually makes.
+	// of different revisions carry the commit timestamp. Rebuilding one revision
+	// does not change vcs.time; this is not the compilation time.
 	if t, err := time.Parse(time.RFC3339, stamp); err == nil {
 		v = t.UTC().Format("20060102150405") + "-" + revision
 	}
