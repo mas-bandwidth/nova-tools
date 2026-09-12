@@ -41,7 +41,7 @@ const usage = `nova-merge: an ordered lane onto one base, with the races taken o
 
 usage:
   nova-merge version    print this build identity (--version also accepted)
-  nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
+  nova-merge init       --lane <dir> --repo rehearsal-team/rehearsal --base <branch> --lane-branch <name> [--remote <url>]
   nova-merge add        --lane <dir> --pr <n> [--needs-read]
   nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
   nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>]
@@ -50,7 +50,7 @@ usage:
   nova-merge status     --lane <dir> [--max <n>] [--reads <entry>]
   nova-merge dry-run    --lane <dir> [--max <n>]
   nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>]
-  nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
+  nova-merge quickstart --lane <dir> --repo rehearsal-team/rehearsal --base <branch> --lane-branch <name> [--remote <url>]
   nova-merge stop       --lane <dir>
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
@@ -85,7 +85,7 @@ nothing was pushed.
 REHEARSE FIRST, against a bare repository of your own, and nothing reaches a forge:
 
   git init -q --bare ./rehearsal.git
-  nova-merge quickstart --lane ./rehearsal-lane --repo <owner>/<name> --base main \
+  nova-merge quickstart --lane ./rehearsal-lane --repo rehearsal-team/rehearsal --base main \
              --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
 
 --remote is the URL the lane clones from and pushes to, and it wants an ABSOLUTE
@@ -120,7 +120,7 @@ conflicting file named and the exact hand command on the line; no code path here
 writes a resolved file.
 
 example:
-  nova-merge quickstart --lane ./rehearsal-lane --repo <owner>/<name> --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
+  nova-merge quickstart --lane ./rehearsal-lane --repo rehearsal-team/rehearsal --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
   nova-merge add --lane ./rehearsal-lane --pr 949 --needs-read
   nova-merge status --lane ./rehearsal-lane
   nova-merge packet --lane ./rehearsal-lane --who emma --all
