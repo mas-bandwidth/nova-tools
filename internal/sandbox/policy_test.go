@@ -60,6 +60,19 @@ func anExecutable(t *testing.T) string {
 	return found
 }
 
+// needSbpl skips where this refusal does not apply. It is the DARWIN profile's: its ancestor
+// literals put a path into the policy TEXT, so a quote, a backslash or a paren there could
+// rewrite the policy. Landlock takes file descriptors and AppContainer takes ACEs — neither
+// renders a path into a text — and on windows a backslash is the path separator and
+// `C:\Program Files (x86)` is in the spec's own root table. The per-platform decision itself
+// is asserted on every platform in winpath_test.go.
+func needSbpl(t *testing.T) {
+	t.Helper()
+	if runtime.GOOS != "darwin" {
+		t.Skipf("skipped on %s: the SBPL metacharacter refusal is the darwin profile's, and %s renders no path into a policy text", runtime.GOOS, runtime.GOOS)
+	}
+}
+
 // needUnixPaths skips a test whose subject is the TEXT of the darwin sandbox-exec profile.
 // Its literals are absolute unix paths; a windows path is not one, and the AppContainer body
 // writes no policy text at all. Darwin and linux both run these.
@@ -195,7 +208,7 @@ func TestCommandPreflight(t *testing.T) {
 // The build's own decision, from "to verify at build" item 2: a path carrying an SBPL
 // metacharacter is refused, because the ancestor literals put a path INTO the profile.
 func TestPathWithSbplMetacharacterIsRefused(t *testing.T) {
-	needUnixPaths(t) // `C:\Program Files (x86)` is an ordinary windows directory
+	needSbpl(t)
 	write, read, home, _ := scratch(t)
 	odd := filepath.Join(write, `a (paren)`)
 	if err := os.MkdirAll(odd, 0o755); err != nil {
