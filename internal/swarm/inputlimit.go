@@ -45,8 +45,26 @@ var InputLimitPhrases = []string{
 	"request too large",                    // a request the provider would not read at all
 }
 
+// ProviderErrorMarks are how a harness says THIS IS THE PROVIDER TALKING, and a phrase counts
+// only on a line that carries one of them, or directly under one.
+//
+// THE PHRASE ALONE IS NOT ENOUGH, because a harness log is a TRANSCRIPT and the sentences in
+// the table above now live in this repository's own source, README and spec: a worker reading
+// nova-tools quotes `input token limit exceeded` in its RESULT.md, and if it then died of a
+// real 429 the whole transcript search would call that death an input limit and refuse it the
+// retry a 429 has earned (Fable's read of #150, finding 3). It is the D13 rule one file over:
+// a diagnosis that fires on the word for the thing, wherever it appears, is noise in the one
+// field a reader was told to trust. Every real specimen carries a mark -- OpenCode's
+// `Error: `, Anthropic's `API Error: 400 {"type":"error"...}`, OpenAI's `Error code: 400 -
+// {'error': ...}` -- and a harness that puts the mark on its own line above the message is
+// why the line ABOVE counts too.
+var ProviderErrorMarks = []string{"error", "err:", "fatal", "exception", "rejected", "aborted"}
+
 // InputLimited reports the provider's own words when the harness log says the request did
-// not fit, and whether it said so at all.
+// not fit, and whether it said so at all. A phrase counts only on a line that carries a
+// provider error mark, or on the line directly under one (ProviderErrorMarks): the table's
+// sentences appear in transcripts that merely QUOTE them, this repository's own docs
+// included.
 //
 // The quote is the LINE the phrase was found on, with the terminal paint stripped: OpenCode
 // wrote `\x1b[91m\x1b[1mError: \x1b[0mRate limit reached: ...`, and a line that carries the
@@ -60,12 +78,19 @@ func InputLimited(log []byte, extra []string) (string, bool) {
 			phrases = append(phrases, p)
 		}
 	}
+	previousWasAMark := false
 	for _, raw := range strings.Split(string(log), "\n") {
 		line := strings.TrimSpace(stripPaint(raw))
 		if line == "" {
 			continue
 		}
 		lower := strings.ToLower(line)
+		mark := carriesAMark(lower)
+		marked := previousWasAMark || mark
+		previousWasAMark = mark
+		if !marked {
+			continue
+		}
 		for _, p := range phrases {
 			if strings.Contains(lower, p) {
 				return oneline.Cap(line, oneline.TailBytes), true
@@ -73,6 +98,15 @@ func InputLimited(log []byte, extra []string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func carriesAMark(lower string) bool {
+	for _, mark := range ProviderErrorMarks {
+		if strings.Contains(lower, mark) {
+			return true
+		}
+	}
+	return false
 }
 
 // RetriableRateLimit is the question `finish` asks before it holds a slot and spends a
@@ -96,19 +130,27 @@ func RetriableRateLimit(log []byte, extra []string) bool {
 // HISTORY -- the completion evidence the supervisor wrote is the outcome -- and a reap's own
 // end (the deadline, the budget ceiling, an unreadable usage source) is the supervisor's
 // verdict from inside the job and is never written over.
-func InputLimitEnd(jobDir, end string, rc int, extra []string) (string, string) {
+// AND THE SENTENCE HAS TWO SOURCES, IN THIS ORDER: the harness log, and the supervisor's own
+// `exit.json` record (`recorded`) when the log gives nothing. The supervisor classified this
+// job from inside it and wrote the words down; a log that cannot be read at finish -- a
+// Windows replace window, a directory already reclaimed, a disk that moved -- left the class
+// standing with `sc.Limit` empty and `TRIAGE INPUT-LIMIT … : -`, which is the one line this
+// class exists to print (Fable's read of #150, finding 2).
+func InputLimitEnd(jobDir, end string, rc int, recorded string, extra []string) (string, string) {
 	if !inputLimitedOutcome(end, rc) {
 		return end, ""
 	}
-	raw, err := os.ReadFile(filepath.Join(jobDir, "harness.log"))
-	if err != nil {
-		return end, ""
+	if raw, err := os.ReadFile(filepath.Join(jobDir, "harness.log")); err == nil {
+		if said, tooBig := InputLimited(raw, extra); tooBig {
+			return EndInputLimit, said
+		}
 	}
-	said, tooBig := InputLimited(raw, extra)
-	if !tooBig {
-		return end, ""
+	// The log said nothing, or could not be read. The CLASS may still stand, because the
+	// supervisor named it on the exit record; then its own sentence is the quote.
+	if end == EndInputLimit && strings.TrimSpace(recorded) != "" {
+		return EndInputLimit, oneline.Cap(strings.TrimSpace(stripPaint(recorded)), oneline.TailBytes)
 	}
-	return EndInputLimit, said
+	return end, ""
 }
 
 // inputLimitedOutcome is rateLimitedOutcome's question, in its own words and for its own
@@ -134,16 +176,46 @@ func OverMaxInput(sc Sidecar, prompt int) (string, bool) {
 	return fmt.Sprintf("the prompt is %d bytes and this task's max_input is %d; re-queue it with a smaller task -- one section instead of a whole spec -- or a worker whose window holds it", prompt, sc.MaxInput), true
 }
 
-// PromptOf is the prompt this tool handed the harness, read back from the job directory --
-// the one input size the dispatcher can measure, and the thing `max_input` is a ceiling on.
-// A prompt that cannot be read is no bytes, which no ceiling refuses: a check the tool
-// cannot make is never a refusal it invents.
-func PromptOf(jobDir string) []byte {
-	raw, err := os.ReadFile(filepath.Join(jobDir, "PROMPT.md"))
-	if err != nil {
-		return nil
+// PhraseFloor is the shortest a provider's sentence may be, in characters, and it is a FLOOR
+// because a phrase is a knife: a job classed `input-limit` is a job that is never retried.
+const PhraseFloor = 12
+
+// TooShortForAPhrase is what a description's own phrase must clear, and the reason when it
+// does not. `input_limit_phrases: ["limit"]` would class every failed job whose log holds the
+// word `limit` and refuse each one its retry, and non-emptiness was the only floor there was
+// (Fable's read of #150, finding 4). A provider's refusal is a SENTENCE: PhraseFloor
+// characters at least, and a space or a digit in it, so that no single word can be one. The
+// table this repo ships clears its own floor, and a test says so.
+func TooShortForAPhrase(phrase string) (string, bool) {
+	trimmed := strings.TrimSpace(phrase)
+	switch {
+	case trimmed == "":
+		return "it is empty", false
+	case len([]rune(trimmed)) < PhraseFloor:
+		return fmt.Sprintf("it is %d characters and a provider's sentence is at least %d", len([]rune(trimmed)), PhraseFloor), false
+	case !strings.ContainsAny(trimmed, " \t") && !strings.ContainsAny(trimmed, "0123456789"):
+		return "it is one word, and one word appears in a transcript that quotes it", false
 	}
-	return raw
+	return "", true
+}
+
+// PromptSize is the size of the prompt this tool handed the harness, read back from the job
+// directory -- the one input size the dispatcher can measure, and the thing `max_input` is a
+// ceiling on.
+// It reports whether it could measure at all, so the two callers can differ where they must:
+// the pre-launch check reads an unmeasurable prompt as no bytes, which no ceiling refuses --
+// a check the tool cannot make is never a refusal it invents -- and the line prints the dash
+// that is rule 12's word for an absence, never a zero.
+func PromptSize(jobDir string) (int, bool) {
+	fi, err := os.Stat(filepath.Join(jobDir, "PROMPT.md"))
+	if err != nil {
+		return 0, false
+	}
+	const maxInt = int64(^uint(0) >> 1)
+	if fi.Size() > maxInt {
+		return int(maxInt), true
+	}
+	return int(fi.Size()), true
 }
 
 // stripPaint removes the ANSI escape sequences a harness writes to a terminal, so the

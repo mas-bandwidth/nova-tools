@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -136,12 +137,15 @@ func LoadWorker(path string) (Worker, []error) {
 	if !placed {
 		problems = append(problems, fmt.Errorf("%s: harness_args is required and must place %s, so the model this description names reaches the harness; for OpenCode it is [\"run\", \"--model\", \"{model}\", \"--\", \"{prompt}\"] -- %s is the prompt FILE, and is appended last where harness_args does not name it", path, ModelPlaceholder, PromptPlaceholder))
 	}
-	// A PHRASE THAT IS NOTHING MATCHES NOTHING, silently: `input_limit_phrases: [""]` is a
-	// description that believes it taught the tool a provider's sentence and taught it
-	// nothing. It is refused here, at the one moment the caller can still type the sentence.
+	// A PHRASE IS A KNIFE, AND IT HAS A FLOOR. A job classed `input-limit` is a job that is
+	// never retried, and the only floor on a description's phrase was that it not be empty:
+	// `input_limit_phrases: ["limit"]` would class every failed job whose log carries the
+	// word (Fable's read of #150, finding 4). It is refused HERE, at the one moment a person
+	// can still type the sentence, and the refusal QUOTES what they typed.
 	for i, phrase := range w.InputLimitPhrases {
-		if strings.TrimSpace(phrase) == "" {
-			problems = append(problems, fmt.Errorf("%s: input_limit_phrases[%d] is empty; it wants the provider's own sentence for a request that did not fit, such as `input token limit exceeded`", path, i))
+		if why, ok := TooShortForAPhrase(phrase); !ok {
+			problems = append(problems, fmt.Errorf("%s: input_limit_phrases[%d] %s: %s; it wants the provider's own sentence for a request that did not fit, such as `input token limit exceeded`",
+				path, i, strconv.Quote(phrase), why))
 		}
 	}
 	// Rule 5 of the wall is "paths are resolved, absolute and existing", and a read root

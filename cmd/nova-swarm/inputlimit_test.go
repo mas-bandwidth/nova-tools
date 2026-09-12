@@ -79,6 +79,12 @@ func TestATaskOverItsMaxInputIsRefusedBeforeTheLaunch(t *testing.T) {
 	}
 	mustContain(t, "the run", stdout, "RUN INPUT-LIMIT id="+id)
 	mustContain(t, "the run", stdout, "max=200")
+	// THE COUNTS ARE THE TRUTH ABOUT THE POOL (SPEC-SWARM.md, the output grammar), "never
+	// about the output" -- D2's own lesson, arriving on the launch side: this task is in
+	// failed/ with `end=input-limit`, so the line that describes the pool afterwards counts
+	// it there. Before this it was counted nowhere and only RUN NOTE's remedy saw it
+	// (Fable's read of #150, finding 1).
+	mustContain(t, "the run", stdout, "RUN OK started=0 done=0 failed=1")
 	if strings.Contains(stdout, "RUN START id="+id) {
 		t.Errorf("the check is BEFORE the launch; nothing is paid for a task that cannot fit:\n%s", stdout)
 	}

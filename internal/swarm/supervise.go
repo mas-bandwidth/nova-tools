@@ -179,7 +179,7 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 			// class belongs on the completion evidence, where every later reader --
 			// `finish`, rule 17's recovery pass, the usage row the ledger reads -- finds
 			// it without opening a log.
-			end, reason := InputLimitEnd(jobDir, end, rc, in.Worker.InputLimitPhrases)
+			end, reason := InputLimitEnd(jobDir, end, rc, "", in.Worker.InputLimitPhrases)
 			return ExitRecord{RC: rc, Signal: signal, End: end, Spent: spent, Observed: observed, Partial: partial, Reason: reason}
 		case <-timer.C:
 			// The default action at the deadline: reap the worker and record what is on

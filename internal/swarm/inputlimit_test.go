@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -49,9 +50,19 @@ func TestTheProvidersInputLimitIsItsOwnFailureClass(t *testing.T) {
 		},
 		{
 			name:  "a provider whose words this table does not hold, taught by the worker description",
-			log:   "provider: the conversation exceeds this deployment's intake\n",
-			want:  "provider: the conversation exceeds this deployment's intake",
+			log:   "provider error: the conversation exceeds this deployment's intake\n",
+			want:  "provider error: the conversation exceeds this deployment's intake",
 			extra: []string{"exceeds this deployment's intake"},
+		},
+		{
+			name: "THIS REPOSITORY'S OWN SPEC, quoted by a worker that read it and then died",
+			log:  "the phrases are a table: OpenCode's `input token limit exceeded`, Anthropic's `prompt is too long`\nfake harness: error: the provider answered HTTP 429 Too Many Requests\n",
+			want: "",
+		},
+		{
+			name: "the mark on its own line above the message, which is a shape harnesses use",
+			log:  "API Error:\n  prompt is too long: 250000 tokens > 200000 maximum\n",
+			want: "prompt is too long: 250000 tokens > 200000 maximum",
 		},
 		{
 			name: "a plain 429, which is a WAIT and not a size",
@@ -123,7 +134,7 @@ func TestTheEndAnInputLimitMayRewrite(t *testing.T) {
 		{"a job ended at its budget ceiling", EndBudget, -1, EndBudget},
 		{"a job whose usage source stopped being readable", EndUnverifiable, -1, EndUnverifiable},
 	} {
-		got, quote := InputLimitEnd(dir, c.end, c.rc, nil)
+		got, quote := InputLimitEnd(dir, c.end, c.rc, "", nil)
 		if got != c.want {
 			t.Errorf("%s: end=%s, want %s", c.name, got, c.want)
 		}
@@ -132,8 +143,25 @@ func TestTheEndAnInputLimitMayRewrite(t *testing.T) {
 		}
 	}
 	// A job directory with no log at all answers at once and changes nothing.
-	if got, _ := InputLimitEnd(t.TempDir(), EndFailed, 1, nil); got != EndFailed {
+	if got, _ := InputLimitEnd(t.TempDir(), EndFailed, 1, "", nil); got != EndFailed {
 		t.Errorf("no log is no evidence: end=%s, want %s", got, EndFailed)
+	}
+	// AND THE SUPERVISOR'S OWN SENTENCE IS THE FALLBACK (Fable's read of #150, finding 2):
+	// the supervisor classified this job from inside it and wrote the words on exit.json, so
+	// a log that cannot be read at finish -- reclaimed, replaced under a reader, gone -- must
+	// not leave the class standing with nothing to say.
+	gone := t.TempDir()
+	got, quote := InputLimitEnd(gone, EndInputLimit, 1, "\x1b[91mError: \x1b[0mRate limit reached: input token limit exceeded", nil)
+	if got != EndInputLimit {
+		t.Errorf("the class the supervisor named stands: end=%s", got)
+	}
+	if quote != "Error: Rate limit reached: input token limit exceeded" {
+		t.Errorf("the recorded sentence is the quote, with its paint stripped, got %q", quote)
+	}
+	// A record with no sentence in it is still no sentence, and the class is not invented
+	// from a log that said nothing.
+	if got, _ := InputLimitEnd(gone, EndFailed, 1, "the harness would not start", nil); got != EndFailed {
+		t.Errorf("a recorded reason for another end is not this class: end=%s", got)
 	}
 }
 
@@ -192,11 +220,66 @@ func TestAWorkerDescriptionMayNameItsOwnProviderPhrases(t *testing.T) {
 	if len(problems) > 0 {
 		t.Fatalf("input_limit_phrases is a field a description may carry: %v", problems)
 	}
-	if _, ok := InputLimited([]byte("provider: the conversation is too large for this deployment\n"), w.InputLimitPhrases); !ok {
+	if _, ok := InputLimited([]byte("provider error: the conversation is too large for this deployment\n"), w.InputLimitPhrases); !ok {
 		t.Error("the phrase the description named is matched")
 	}
 	if _, ok := InputLimited(inputLimitFixture(t), w.InputLimitPhrases); !ok {
 		t.Error("and the table's own phrases still are: what a description adds, it adds")
+	}
+}
+
+// A PHRASE HAS A FLOOR, AND THE REFUSAL QUOTES IT (Fable's read of #150, finding 4). The
+// only floor was non-emptiness, so `input_limit_phrases: ["limit"]` would class every failed
+// job whose log holds the word `limit` -- and a job classed `input-limit` is a job that is
+// never retried. A provider's sentence is a SENTENCE: long enough to be one, and carrying a
+// space or a digit so that one word can never be it.
+func TestAProviderPhraseHasAFloor(t *testing.T) {
+	for _, c := range []struct {
+		phrase string
+		ok     bool
+	}{
+		{"input token limit exceeded", true},
+		{"prompt is too long", true},
+		{"exceeds 200000 tokens", true},
+		{"limit", false},
+		{"too long", false},
+		{"contextlengthexceeded", false},
+		{"  ", false},
+	} {
+		dir := t.TempDir()
+		if err := os.MkdirAll(filepath.Join(dir, "home"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(dir, "worker.json")
+		body := `{"name":"w","provider":"p","model":"m","env_var":"P_KEY","key_file":"` +
+			filepath.ToSlash(filepath.Join(dir, "key")) + `","usage":"none","harness":"h",` +
+			`"harness_args":["run","--model","{model}","--","{prompt}"],"worker_dir":"` +
+			filepath.ToSlash(filepath.Join(dir, "home")) + `","deadline":"20m","input_limit_phrases":["` + c.phrase + `"]}`
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		_, problems := LoadWorker(path)
+		switch {
+		case c.ok && len(problems) > 0:
+			t.Errorf("%q is a provider's sentence and is accepted: %v", c.phrase, problems)
+		case !c.ok && len(problems) == 0:
+			t.Errorf("%q is not a sentence; a phrase this short ends healthy-looking jobs as input-limit and they are never retried", c.phrase)
+		case !c.ok:
+			// AND THE REFUSAL QUOTES THE PHRASE, so the caller reads back what they typed.
+			if !strings.Contains(problems[0].Error(), strconv.Quote(c.phrase)) {
+				t.Errorf("%q: the refusal names the phrase it refused, got %v", c.phrase, problems[0])
+			}
+		}
+	}
+}
+
+// AND THE TABLE MEETS ITS OWN FLOOR. A phrase this repo ships that a description would be
+// refused for is a rule the tool does not keep.
+func TestTheTableMeetsItsOwnFloor(t *testing.T) {
+	for _, phrase := range InputLimitPhrases {
+		if reason, ok := TooShortForAPhrase(phrase); !ok {
+			t.Errorf("the table carries %q, which a description could not: %s", phrase, reason)
+		}
 	}
 }
 

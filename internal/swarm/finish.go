@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -69,7 +68,7 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	// 215 seconds proving the same spec still does not fit. A request that did not fit is
 	// not a wait, it is its own class, and it is never retried.
 	limit := ""
-	end, limit = InputLimitEnd(r.jobDir, end, rec.RC, in.Worker.InputLimitPhrases)
+	end, limit = InputLimitEnd(r.jobDir, end, rec.RC, rec.Reason, in.Worker.InputLimitPhrases)
 	limited := false
 	if harnessLog, readLogErr := os.ReadFile(r.jobDir + "/harness.log"); readLogErr == nil && end != EndInputLimit {
 		limited = RetriableRateLimit(harnessLog, in.Worker.InputLimitPhrases)
@@ -397,11 +396,11 @@ func freshAttempt(sc Sidecar, now time.Time) Sidecar {
 // <job>/PROMPT.md, which carries the task text. A prompt that cannot be read is a dash,
 // because a dash is an absence and a zero would be a measurement (rule 12's own rule).
 func promptSizeWord(jobDir string) string {
-	fi, err := os.Stat(filepath.Join(jobDir, "PROMPT.md"))
-	if err != nil {
+	n, measured := PromptSize(jobDir)
+	if !measured {
 		return Dash
 	}
-	return strconv.FormatInt(fi.Size(), 10)
+	return strconv.Itoa(n)
 }
 
 // maxInputWord is the ceiling the task named, and a dash where it named none.

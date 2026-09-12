@@ -809,8 +809,12 @@ is read, not at every launch.
 a job that dies on an input limit is its own failure class, `input-limit`, never a 429 to
 retry, and the phrases the tool already knows (OpenCode's `input token limit exceeded`,
 Anthropic's `prompt is too long`, OpenAI's `maximum context length`) are a table this field
-ADDS to. A task may name the other half, `--max-input <bytes>`, and `run` refuses a prompt
-over it before the launch.
+ADDS to. A phrase counts only on the provider's own error line — beside an `error`, `fatal`
+or `exception` mark on that line or the one above it — and a phrase you name must be a
+sentence, twelve characters with a space or a digit in it, refused when the description is
+read: a job classed this way is never retried, so a bare word here would take the retry away
+from every failed job whose log happens to carry it. A task may name the other half,
+`--max-input <bytes>`, and `run` refuses a prompt over it before the launch.
 
 `key_file` lives **outside `worker_dir` and outside every `read_roots` entry**, which is why
 the example keeps it in `~/.keys`. `worker_dir` is copied into the slot directory before

@@ -1129,7 +1129,14 @@ name it are a table the worker description may add to (`input_limit_phrases`), b
 provider says it in its own words — and because OpenCode's own sentence, `Rate limit reached:
 input token limit exceeded`, was read as a 429 and earned a second identical launch that
 spent another 215 seconds proving the same two specs still did not fit (2026-09-12, two of
-forty Freddy jobs). A task may also name `max_input <bytes>`, the ceiling on the prompt this
+forty Freddy jobs). **A phrase counts only on the provider's own error line** — the phrase
+beside an error mark on that line or on the one above it, and never on any line of the
+transcript, because the table's sentences are printed in this repository's own source, README
+and this spec, and a worker that quotes one and then dies of a real 429 would be classed
+`input-limit` and refused the retry that 429 earned (rule 5's own lesson: a diagnosis that
+fires on the word for the thing, wherever it appears, is noise in the field a reader was told
+to trust). A phrase a description names is a sentence — twelve characters and a space or a
+digit — refused when it is read, because a job classed this way is never retried. A task may also name `max_input <bytes>`, the ceiling on the prompt this
 tool hands the harness, which `run` checks **before** the launch and refuses with the same
 class and the measured size: it bounds what the dispatcher can measure, and the files the
 worker then opens are still `--files`.
