@@ -50,7 +50,7 @@ func TestEveryRunLineParsesAgainstTheGrammar(t *testing.T) {
 func TestTheReclaimLineNamesEveryEndAJobCanHave(t *testing.T) {
 	want := readGrammar(t)["RUN RECLAIM"].enums["end"]
 	for _, end := range []string{
-		EndDone, EndKilled, EndFailed, EndBudget, EndUnverifiable, EndViolation, EndUnknown, "unlaunched",
+		EndDone, EndKilled, EndFailed, EndBudget, EndUnverifiable, EndViolation, EndUnknown, EndInputLimit, "unlaunched",
 	} {
 		if !want[end] {
 			t.Errorf("a job can end %q and RUN RECLAIM prints it; the grammar admits %v", end, keysOf(want))

@@ -120,6 +120,15 @@ func main() {
 	// A provider 429 cannot ride the exit status: POSIX truncates 429 to 173. So the fake
 	// prints the status the way a real harness does and exits non-zero, after its usage row
 	// so `cost` has the numbers a rate-limited attempt did burn.
+	// A PROVIDER'S INPUT LIMIT, IN THE PROVIDER'S OWN WORDS AND ITS OWN PAINT (#103).
+	// OpenCode on Mercury 2.5 printed exactly this, three times, and exited 1 after ~215s
+	// on two of forty Freddy jobs (2026-09-12): the ANSI is there because the quote a
+	// triage line carries has to be readable with it in the log. The words `rate limit`
+	// are in the sentence, which is why this death was read as a 429 and retried.
+	if _, ok := directive(prompt, "FAKE-INPUT-LIMIT"); ok {
+		fmt.Fprintf(os.Stderr, "\x1b[91m\x1b[1mError: \x1b[0mRate limit reached: input token limit exceeded\n")
+		os.Exit(1)
+	}
 	if _, ok := directive(prompt, "FAKE-429"); ok {
 		fmt.Println("fake harness: error: the provider answered HTTP 429 Too Many Requests (rate limit)")
 		os.Exit(1)

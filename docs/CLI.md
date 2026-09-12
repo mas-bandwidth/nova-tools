@@ -722,8 +722,8 @@ the natural `&&` chain would file exactly the duplicates.
 ## nova-swarm
 
 ```
-nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered   # queue one task from a file, never from an argument
-nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered           # queue a directory of them under one batch id
+nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--max-input <bytes>]   # queue one task from a file, never from an argument
+nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--max-input <bytes>]           # queue a directory of them under one batch id
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--sandbox <path>] [--no-sandbox]   # the dispatcher: one slot, one data home, one deadline, one WALL per worker
 nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
 nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
@@ -796,13 +796,30 @@ below is required. This one ran two real DeepSeek workers end to end on 2026-09-
 }
 ```
 
-`read_roots` is the one optional field, and it is the wall's: a toolchain installed under a
+`read_roots` and `input_limit_phrases` are the optional fields. `read_roots` is the wall's: a toolchain installed under a
 user directory — Go under `~/go`, node under `~/.nvm`, the Studio's `/Users/<you>/toolchains`
 — is under no system root, so a harness that needs one runs outside the wall and dies inside
 it. Name those directories here and they are READ-ONLY for every job of this worker, named
 once so that N workers read one copy. A worker that needs nothing beyond the system roots
 names nothing, and an absolute directory that does not exist is refused when the description
 is read, not at every launch.
+
+`input_limit_phrases` teaches this provider's own way of saying *your request did not fit*:
+a job that dies on an input limit is its own failure class, `input-limit`, never a 429 to
+retry, and the phrases the tool already knows (OpenCode's `input token limit exceeded`,
+Anthropic's `prompt is too long`, OpenAI's `maximum context length`) are a table this field
+ADDS to. A phrase counts only on the provider's own error line — a line whose own LABEL is an
+`error`, `fatal` or `exception` mark (the mark begins a word, at most two tokens before it and
+at most one of those a bare word, no list marker at the head of the line, no quote character
+before it), or the line directly under one, so a report that merely quotes the sentence beside
+the word is not one, and a line these tools wrote themselves — `RUN REFUSED …`, `SANDBOX OK …`
+— is skipped whole, since a job that runs them logs them, unless its second word is itself a
+mark, which no line of theirs has (a test over the sources keeps that true) and a shouting
+proxy does (`HTTP ERROR: 400 …`) — and a phrase you name must be a sentence, twelve characters
+with a space or a digit in it, refused when the description is read: a job classed this way is
+never retried, so a bare word here would take the retry away from every failed job whose log
+happens to carry it. A task may name the other half, `--max-input <bytes>`, and `run` refuses
+a prompt over it before the launch.
 
 `key_file` lives **outside `worker_dir` and outside every `read_roots` entry**, which is why
 the example keeps it in `~/.keys`. `worker_dir` is copied into the slot directory before

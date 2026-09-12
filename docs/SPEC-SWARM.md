@@ -496,13 +496,13 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
 ## The verbs
 
 ```
-nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
-nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
+nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
+nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--launch-timeout <s>] [--usage-interval <s>] [--sandbox <path>] [--no-sandbox]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
 nova-swarm stop     --pool <dir>
-nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>]
+nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--max-input <bytes>]
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job>
@@ -585,7 +585,7 @@ is `run`'s child and nobody's verb.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: a task queued, a batch queued, a pool drained, a page written, a report printed |
-| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report |
+| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report, a `run` that refused a task whose prompt is over its `max_input` |
 | 2 | could not run: missing flag (`--files`, `--tokens` included, on `requeue` as on `add`), a numeric `--tokens` on a pending task under a worker description whose `usage` is `none`, unreadable pool, unreadable worker description, a key file that is absent or empty, `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, bad invocation |
 
 **A failed task is not a failed `run`.** A worker that exits non-zero moves its
@@ -610,11 +610,12 @@ RUN POOL workers=<n> hours=<h> worker=<name> model=<model> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path>
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
-RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false>
+RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false>
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
 RUN MALFORMED id=<id> slot=<n> line=<n> dest=failed
+RUN INPUT-LIMIT id=<id> slot=<n> after=<d> input=<n|-> max=<n|-> dest=failed: <the provider's own words>
 RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only|malformed> findings=<n> refusals=<n> notes=<sent>/<read|-> unpublished=<true|false> budget=<spent|n+|->/<n> dest=<done|failed> [log=<one bounded line of what the harness said>]
 RUN VIOLATION id=<id> slot=<n> background=<n> dest=failed: <reason>
 RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> unpublished=<true|false> budget=<spent|n+|->/<n> survived=<true|false> requeued=<true|false> reaped=<1|2>
@@ -628,6 +629,7 @@ STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tai
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 TRIAGE REPORT id=<id> rev=<sha12> job=<name> result=<ok|clean|plan-only> items=<n> red=<n> green=<n> notdone=<n>: <head>
 TRIAGE QUARANTINED id=<id> rev=<sha12> line=<n>: not folded; nova-swarm result --pool <dir> --id <id>
+TRIAGE INPUT-LIMIT id=<id> job=<label>: <the provider's own words>
 TRIAGE SKIPPED id=<id>: changed while read
 TRIAGE FINDING jobs=<id>[,<id>...] at=<file:line|->: <one bounded finding line>
 TRIAGE MORE kind=<report|finding> shown=<n> total=<t> at=<path> --max 0
@@ -1140,6 +1142,39 @@ rather than a set of bad tasks. Three of seven workers in batch 2 came back
 with a plan and no findings and nothing in the pool said why; the cause turned
 out to be a refusal, not a limit (rule 5), but a 429 is a second road to the
 same silence and the sidecar closes both.
+
+**A provider's input limit is its own failure class, `input-limit`, and it is never
+retried.** A harness that dies because the request did not fit ends the job
+`end=input-limit` on `exit.json`, in the sidecar, in the usage row's `end` column and on one
+`RUN INPUT-LIMIT` line carrying the measured prompt size and the provider's own sentence, so
+triage says *the task was too big for the model* without opening a log; the phrases that
+name it are a table the worker description may add to (`input_limit_phrases`), because every
+provider says it in its own words — and because OpenCode's own sentence, `Rate limit reached:
+input token limit exceeded`, was read as a 429 and earned a second identical launch that
+spent another 215 seconds proving the same two specs still did not fit (2026-09-12, two of
+forty Freddy jobs). **A phrase counts only on the provider's own error line** — a line whose
+own LABEL is an error mark, or the line directly under one, and never any line of the
+transcript that merely holds the word: the mark begins a word, at most two tokens precede it
+and at most one of those is a bare word, a list marker at the head of the line makes it prose
+however the mark is placed, and a quote character before it means the line is quoting rather
+than reporting. The table's sentences are printed in this repository's own
+source, README and this spec, and a worker's RESULT.md quotes them in a bullet or a finding
+row; a job so classed is never retried, so a false mark would take a real 429's retry away
+(rule 5's own lesson: a diagnosis that fires on the word for the thing, wherever it appears,
+is noise in the field a reader was told to trust). **A line this family wrote itself is never
+a provider talking** — anything carrying the two-token event prefix, `RUN REFUSED …`,
+`SANDBOX OK …`, this class's own `RUN INPUT-LIMIT …`, is skipped whole, because a job that
+runs these tools puts their lines in its own harness log — **unless that prefix's second word
+is itself a mark**, which no line of this grammar has (`OK`, `REFUSED`, `DONE`, `NOTE`, `FAIL`,
+`STEP`, `ABORTED`) and a shouting proxy does (`HTTP ERROR: 400 …`, `API ERROR: 400 …`), which is
+the same door seen from the other side; and `refused` and `aborted` are for the same reason not
+marks at all, being this repository's words and no provider's. **That the grammar holds no
+event line whose second word is a mark is asserted by a test over the sources**, not by a list
+anybody keeps: a claim about every printed line is one only machinery may make. A phrase a description names is a sentence — twelve characters and a space or a
+digit — refused when it is read, because a job classed this way is never retried. A task may also name `max_input <bytes>`, the ceiling on the prompt this
+tool hands the harness, which `run` checks **before** the launch and refuses with the same
+class and the measured size: it bounds what the dispatcher can measure, and the files the
+worker then opens are still `--files`.
 
 ## `requeue` — the same task, changed
 
