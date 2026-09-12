@@ -240,7 +240,6 @@ RUN POOL workers=1 hours=0.25 worker=fake-1 model=fake-model pool=./pool
 RUN REFUSED reason=sandbox_probe: the wall did not prove itself on this machine, so no worker started: PROBE REFUSED reason=check: write_outside expected deny and got allow
 
 $ nova-swarm run --pool ./pool --workers 1 --hours 0.25 --worker ./worker.json --no-sandbox
-RUN NOTE --no-sandbox: this pass runs every job with NO OS containment, and says so once per job; the wall is docs/SPEC-SANDBOX.md and the remedy is to drop the flag
 RUN POOL workers=1 hours=0.25 worker=fake-1 model=fake-model pool=./pool
 RUN UNSANDBOXED id=20260912T0146Z-task-c44c5e slot=1: no OS containment; every read and write this job makes is yours
 RUN START id=20260912T0146Z-task-c44c5e slot=1 pid=31027 pgid=31027 started=2026-09-12T01:46:02Z deadline=30s tokens=100000 job=./worker-home-1/jobs/20260912T0146Z-task-c44c5e
