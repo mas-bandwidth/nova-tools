@@ -194,7 +194,7 @@ Fixture: `cmd/nova-board/testdata/example-board`.
 
 ```
 $ nova-board quickstart --dir ./board --stale 10m
-QUICKSTART OK backend=dir source=./board stale=10m0s: the board, then the rule every filer runs in front of add
+QUICKSTART OK backend=dir source=./board stale=10m0s created=false: the board, then the rule every filer runs in front of add
 BOARD LINE name=emma open=1 overdue=1 stale=1
 BOARD LINE name=bo open=1 overdue=0 stale=1
 BOARD LINE name=rowan open=1 overdue=0 stale=1

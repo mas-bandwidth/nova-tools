@@ -510,9 +510,15 @@ func quickstartPair(t *testing.T, stdout string) (check, add string) {
 	return check, add
 }
 
-// shellWords splits one of the printed lines the way a shell would: double quotes group, and
-// a backslash inside them escapes the next byte. That is the whole of what quote() emits, so
-// anything else appearing here is a bug in this helper rather than in the tool.
+// shellWords splits one of the printed lines the way a shell would: double quotes group,
+// and INSIDE THEM A BACKSLASH IS ORDINARY unless the byte after it is one of $ ` " \ or a
+// newline -- that is the POSIX double-quote rule, and `sh -c 'printf "%s" "a\b"'` prints
+// `a\b`. The helper used to swallow every backslash inside quotes, which read a Windows
+// --dir (`C:\...\my board\cards`) back as `C:...my boardcards` and failed
+// TestTheMkdirRemedyIsOnePastableCommandWhenTheDirHasASpace on the windows runner while
+// the tool's own output was right. THE HELPER WAS THE BUG, NOT THE TOOL: board.Quote
+// escapes the one byte a double-quoted shell word cannot carry raw, and this reads it back
+// the way a shell does. Anything else appearing here is still a bug in this helper.
 func shellWords(t *testing.T, line string) []string {
 	t.Helper()
 	var out []string
@@ -521,7 +527,7 @@ func shellWords(t *testing.T, line string) []string {
 	for i := 0; i < len(line); i++ {
 		c := line[i]
 		switch {
-		case quoted && c == '\\' && i+1 < len(line):
+		case quoted && c == '\\' && i+1 < len(line) && strings.IndexByte("$`\"\\\n", line[i+1]) >= 0:
 			i++
 			cur.WriteByte(line[i])
 		case c == '"':
@@ -1507,5 +1513,39 @@ func TestTheCapWidensAndEachKindIsCappedSeparately(t *testing.T) {
 	}
 	if count(narrow, "BOARD LINE") != 2 {
 		t.Errorf("--max caps the owner lines by their own ceiling: %d\n%s", count(narrow, "BOARD LINE"), narrow)
+	}
+}
+
+// TestShellWordsReadsADoubleQuotedWordTheWayAShellDoes pins the helper above, because a
+// broken reader of the tool's output fails a good line and sends somebody to fix the tool
+// instead. The windows case is here so it is caught on every platform rather than only on
+// the runner: a path full of backslashes inside double quotes comes back whole. Every
+// `want` below is what `sh -c 'printf "%s|\n" <the word>'` prints.
+func TestShellWordsReadsADoubleQuotedWordTheWayAShellDoes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+		want []string
+	}{
+		{"a windows path", `mkdir -p "C:\Users\RUNNER~1\Temp\my board\cards"`,
+			[]string{"mkdir", "-p", `C:\Users\RUNNER~1\Temp\my board\cards`}},
+		{"a posix path with a space", `mkdir -p "/a/my board/cards"`,
+			[]string{"mkdir", "-p", "/a/my board/cards"}},
+		{"the one byte board.Quote escapes", `mkdir -p "a\"b"`,
+			[]string{"mkdir", "-p", `a"b`}},
+		{"an escaped backslash", `mkdir -p "a\\b"`, []string{"mkdir", "-p", `a\b`}},
+		{"a dollar is escapable too", `mkdir -p "a\$b"`, []string{"mkdir", "-p", "a$b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shellWords(t, tc.line)
+			if len(got) != len(tc.want) {
+				t.Fatalf("shellWords(%q) = %q (%d words), want %q (%d)", tc.line, got, len(got), tc.want, len(tc.want))
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("word %d of %q is %q, want %q, which is what a shell prints", i, tc.line, got[i], tc.want[i])
+				}
+			}
+		})
 	}
 }

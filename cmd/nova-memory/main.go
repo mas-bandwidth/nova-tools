@@ -40,6 +40,7 @@ import (
 const usage = `nova-memory: membership is a lookup, never a scan (see SPEC.md)
 
 usage:
+  nova-memory version    print this build identity (--version also accepted)
   nova-memory quickstart --root <dir> [--words <w>]... [--draft <file>] [--exclude <glob>]...
   nova-memory stats  --root <dir> [--exclude <glob>]...
   nova-memory search --root <dir> --channels <list> --k <n> [--exclude <glob>]... <words>...
@@ -188,6 +189,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return cmdVerify(args[1:], stdout, stderr)
 	case "eval":
 		return cmdEval(args[1:], stdout, stderr)
+	case "version", "--version":
+		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

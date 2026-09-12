@@ -32,7 +32,18 @@ var swarmAudit = audit.Config{
 		"main.go|cmdTemplate|body": "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
 		"main.go|cmdFinalize|line": "the other verbatim site, `finalize`'s line: swarm.FinalizeByHand BUILDS the whole sentence and passes every caller-supplied value through oneline.Field or oneline.Err, so the one-line guarantee is already made over the finished line. Escaping it a second time here would fold that line into one unreadable \\x0a form. Both print sites in this function share this entry; TestADispatcherRunsAJobEndToEnd exercises the path.",
 	},
+	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
+	// every one of its four fields through oneline.Field inside internal/buildinfo, where
+	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
+	// a release stamp holding a newline, which is the one field of that line that comes
+	// from outside the toolchain.
+	Escapers: []string{"buildinfo.Line"},
 	Imports: []string{
+		// version.go, and the reason it cannot write past the escape: buildinfo reads
+		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
+		// its own, and returns a STRING that this package prints -- rendered field by
+		// field through oneline.Field before it is returned.
+		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		// package flag's two mouths are closed in newFlags: SetOutput(io.Discard) and a
 		// no-op Usage, so it cannot print an argument this audit never sees. fmt, io, os,
 		// os/exec, path/filepath, strings and time hold writers, and none here writes to a

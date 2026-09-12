@@ -433,6 +433,7 @@ nova-merge status     --lane <dir> [--max <n>] [--reads <entry>]
 nova-merge stop       --lane <dir>
 nova-merge dry-run    --lane <dir> [--max <n>]
 nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>]
+nova-merge version
 
 every verb takes [--lane <dir>]; every verb that runs git or gh also takes
 [--timeout <seconds>], default 120
@@ -470,6 +471,17 @@ performs, prints the whole plan rather than stopping at the first merge, and
 22), and `state.json` and the checkout are byte-identical afterwards. Nothing
 in `dry-run`'s code path can reach the mutating
 helper at all, which is a property a test can pin and a flag never is.
+
+**`version` is the Conventions' line, plus this binary's own `build=`.** It
+prints `nova-merge <build identity> <goos>/<goarch> <go version>
+build=<12 hex>`, one line, exit 0. The first four tokens are what every binary
+in the set prints, so a release assertion and a person comparing two pastes
+read the identity out of field two here as everywhere else. The fifth is the
+sha256 of this binary's own file on disk — rule 16's answer to "is the binary
+under this run the one it started with", which a stamped identity cannot give,
+because two builds of one tag are two files. Before this verb printed the four,
+it printed the file hash ALONE, standing where every other binary puts its
+identity.
 
 `status`, `dry-run` and `packet` **report** and exit 0 whatever the lane holds. `run` is
 the verb that acts, and `run`'s exit code is about the pass, not about the lane:

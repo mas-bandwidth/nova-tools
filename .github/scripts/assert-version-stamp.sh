@@ -22,14 +22,16 @@
 # required set must not be a function of the thing being checked. So the required set is
 # the shipped set, and the only tools not in it are named below, one by one, by a person.
 #
-# THE EXEMPTIONS ARE A DEBT, NOT A CLASSIFICATION. nova-tools#121 owns the common version
-# verb across the set; until it lands these six refuse `version` (nova-check, nova-fuse,
-# nova-memory, nova-self-talk, nova-swarm) or print a build identity that is not the
-# release stamp (nova-merge: a sha256 of its own bytes). EACH NAME COMES OFF THIS LIST THE
-# DAY ITS VERSION VERB LANDS, and the list is empty when #121 closes -- which is also when
-# #118's all-binaries requirement is genuinely met. A name here can only be removed by
-# editing this line, so a tool cannot quietly rejoin the exempt set by losing a symbol.
-LEGACY_NO_VERSION_VERB="nova-check nova-fuse nova-memory nova-self-talk nova-swarm nova-merge"
+# THE EXEMPTIONS ARE A DEBT, NOT A CLASSIFICATION, and the debt is PAID. The list held six
+# names -- nova-check, nova-fuse, nova-memory, nova-self-talk and nova-swarm refused
+# `version`, and nova-merge printed a sha256 of its own bytes where every other binary
+# prints its build identity. #121's common verb landed on all six, so all eleven shipped
+# tools are required to report the tag and the list is empty, which is where #118's
+# all-binaries requirement is genuinely met. It stays here, empty, because the property is
+# worth keeping readable: a name can only be added or removed by editing this line, so a
+# tool cannot quietly rejoin the exempt set by losing a symbol, and the stale-name check
+# below still refuses a list that has drifted from the tree.
+LEGACY_NO_VERSION_VERB=""
 
 set -euo pipefail
 
