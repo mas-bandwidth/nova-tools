@@ -172,15 +172,29 @@ func TestModelDigestAndPinIdentity(t *testing.T) {
 	}
 }
 func TestProcessesAreBoundedAndRawSurvivesFailure(t *testing.T) {
-	for _, tc := range []struct{ cmd, want string }{{command(t, "fail"), "exit 3"}, {command(t, "huge"), "output"}, {command(t, "hang"), "timeout"}, {"nova-version-no-such-binary", "not_found"}} {
+	// Each case carries its own timeout because they measure two different
+	// things. The hang needs a timeout SHORT enough to fire; the others need one
+	// long enough that starting a race-instrumented child on a loaded box is not
+	// mistaken for a hang -- at 100ms for all four, the exit-3 case read
+	// "timeout" on a busy machine and the assertion it was making was lost.
+	for _, tc := range []struct {
+		cmd, want string
+		timeout   time.Duration
+		bound     time.Duration
+	}{
+		{command(t, "fail"), "exit 3", 5 * time.Second, 6 * time.Second},
+		{command(t, "huge"), "output", 5 * time.Second, 6 * time.Second},
+		{command(t, "hang"), "timeout", 100 * time.Millisecond, time.Second + killGrace},
+		{"nova-version-no-such-binary", "not_found", 5 * time.Second, time.Second},
+	} {
 		a, _ := argv(tc.cmd)
 		start := time.Now()
-		r := Installed(context.Background(), Entry{Kind: "tool", Installed: a}, 100*time.Millisecond, true)
+		r := Installed(context.Background(), Entry{Kind: "tool", Installed: a}, tc.timeout, true)
 		if r.Reason != tc.want {
 			t.Fatalf("%s: %+v", tc.want, r)
 		}
-		if time.Since(start) > time.Second {
-			t.Fatal("not bounded")
+		if took := time.Since(start); took > tc.bound {
+			t.Fatalf("%s: %s is past the %s bound", tc.want, took, tc.bound)
 		}
 		if tc.want == "exit 3" && r.Raw != "v9.9.9" {
 			t.Fatal(r)

@@ -42,6 +42,16 @@ type snapshot struct {
 // ambiguity is refused before anything is mutated rather than resolved by a
 // rule nobody wrote down. The key's name is never quoted back: the name is
 // content this tool does not support, and a diagnostic never echoes content.
+//
+// "Identical" has to mean identical TO THE DECODER, not byte for byte. The
+// decoder matches a field name case-insensitively, so a first version of this
+// check, which compared bytes, still let two values through for one field:
+// {"id":"fixture-1","ID":"fixture-2"} decoded to the second one. Keys are
+// therefore folded the way the decoder folds them, and a key holding any byte
+// outside ASCII is refused outright rather than folded: the decoder's own fold
+// maps U+017F (the long s) onto "s" and U+212A (the Kelvin sign) onto "k", so
+// "ſha256" would otherwise name the digest field, and no bus writes a key
+// like that.
 func noDuplicateKeys(raw []byte) error {
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.UseNumber()
@@ -50,6 +60,25 @@ func noDuplicateKeys(raw []byte) error {
 		return fmt.Errorf("malformed JSON")
 	}
 	return walkJSON(d, t, 0)
+}
+
+// foldKey renders a key the way the decoder will match it. ASCII letters fold by
+// case; anything outside ASCII is refused, because the decoder's fold reaches
+// beyond ASCII and a key this tool supports never needs to.
+func foldKey(name string) (string, error) {
+	var b strings.Builder
+	b.Grow(len(name))
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c >= 0x80 {
+			return "", fmt.Errorf("a key outside ASCII")
+		}
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		b.WriteByte(c)
+	}
+	return b.String(), nil
 }
 
 // maxJSONDepth bounds the reader the same way every other reader here is
@@ -80,10 +109,14 @@ func walkJSON(d *json.Decoder, t json.Token, depth int) error {
 			if !ok {
 				return fmt.Errorf("malformed JSON")
 			}
-			if seen[name] {
-				return fmt.Errorf("duplicate key")
+			folded, err := foldKey(name)
+			if err != nil {
+				return err
 			}
-			seen[name] = true
+			if seen[folded] {
+				return fmt.Errorf("two keys naming one field")
+			}
+			seen[folded] = true
 			v, err := d.Token()
 			if err != nil {
 				return fmt.Errorf("malformed JSON")
@@ -146,7 +179,7 @@ func writeSnapshot(path string, s *snapshot) error {
 		return err
 	}
 	b = append(b, '\n')
-	f, err := os.CreateTemp(filepath.Dir(path), ".nova-version-snapshot-*")
+	f, err := os.CreateTemp(filepath.Dir(path), snapshotTempPrefix+"*")
 	if err != nil {
 		return fmt.Errorf("cannot create snapshot temporary file (create its parent directory)")
 	}
@@ -168,7 +201,29 @@ func writeSnapshot(path string, s *snapshot) error {
 	if err = os.Rename(temp, path); err != nil {
 		return fmt.Errorf("cannot replace snapshot atomically (check destination permissions)")
 	}
+	sweepStaleTemporaries(path)
 	return nil
+}
+
+// snapshotTempPrefix is this tool's own name for its half-written snapshots.
+const snapshotTempPrefix = ".nova-version-snapshot-"
+
+// sweepStaleTemporaries removes the temporaries a KILLED writer left beside the
+// snapshot. The rename above is what makes a snapshot atomic, and it is why a
+// reporter killed mid-write leaves the saved identity intact -- but a SIGKILL
+// runs no deferred cleanup, so each one left a file behind, forever, in the
+// caller's own directory. Only the holder of the snapshot lock writes here and
+// this call is made under it, so a temporary other than the one just renamed
+// belonged to a process that is gone. Nothing but this tool's own temporaries is
+// touched: no user file, no lock, no snapshot.
+func sweepStaleTemporaries(path string) {
+	matches, err := filepath.Glob(filepath.Join(filepath.Dir(path), snapshotTempPrefix+"*"))
+	if err != nil {
+		return
+	}
+	for _, stale := range matches {
+		_ = os.Remove(stale)
+	}
 }
 func sameObserved(a, b map[string]observed) bool {
 	if len(a) != len(b) {
@@ -226,6 +281,13 @@ func validatePrepared(raw []byte) (string, error) {
 	if err := noDuplicateKeys(raw); err != nil {
 		return "", fmt.Errorf("bus prepare returned an invalid artifact: %s", err)
 	}
+	// The artifact is a fixed five-field object and rule 25 calls for the EXACT
+	// prepared artifact, so its keys are required by their exact spelling rather
+	// than by whatever the decoder would match. That is what makes a lone "ID"
+	// a refusal and not a second spelling of the identity.
+	if err := exactKeys(raw, "schema", "id", "path", "note", "sha256"); err != nil {
+		return "", fmt.Errorf("bus prepare returned an invalid artifact: %s", err)
+	}
 	d := json.NewDecoder(bytes.NewReader(raw))
 	d.DisallowUnknownFields()
 	if d.Decode(&a) != nil || a.Schema != "nova.bus.prepared/1" || a.ID == "" || a.Path == "" || !strings.HasSuffix(a.Note, "\n") || len(a.SHA256) != 64 {
@@ -238,6 +300,25 @@ func validatePrepared(raw []byte) (string, error) {
 		return "", fmt.Errorf("bus prepare digest mismatch")
 	}
 	return a.ID, nil
+}
+
+// exactKeys requires a flat object to carry exactly these keys, spelled exactly.
+// DisallowUnknownFields refuses what it does not know; this refuses what the
+// decoder WOULD have accepted under a different spelling.
+func exactKeys(raw []byte, want ...string) error {
+	var got map[string]json.RawMessage
+	if json.Unmarshal(raw, &got) != nil {
+		return fmt.Errorf("not an object")
+	}
+	if len(got) != len(want) {
+		return fmt.Errorf("%d fields where %d are named", len(got), len(want))
+	}
+	for _, k := range want {
+		if _, ok := got[k]; !ok {
+			return fmt.Errorf("a field is missing or spelled otherwise")
+		}
+	}
+	return nil
 }
 func confirmed(line, id string) bool {
 	f := strings.Fields(line)

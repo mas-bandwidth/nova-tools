@@ -52,14 +52,30 @@ func refusal(w io.Writer, token string, err error) int {
 	fmt.Fprintf(w, "%s REFUSED: %s\n", token, oneline.Err(err))
 	return 2
 }
+
+// updateVerbs and versionVerbs are SPEC-UPDATE's verbs block, byte for byte,
+// including its placeholder spellings: <k> not <kind>, <v> not <version>,
+// <who,who> not <recipients>, <r> and <b> for the remote and the branch, and the
+// report line's alternation showing that --send is the one that needs a bus. A
+// change here belongs in the spec first, and TestHelpIsTheSpecsVerbsBlock reads
+// the spec file and compares the two.
+const updateVerbs = `nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
+nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update help`
+
+const versionVerbs = `nova-version report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-version send --file <path> --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]
+nova-version help`
+
 func help(name string, w io.Writer) {
+	// SPEC-UPDATE's "The verbs" block says these lines are what help prints,
+	// BYTE FOR BYTE, and names one string in the binary as the reason the spec
+	// and the help cannot drift apart. This is that string.
 	if name == "nova-version" {
-		fmt.Fprintln(w, "nova-version report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <recipients>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <kind>]")
-		fmt.Fprintln(w, "nova-version send --file <path> --as <friend> --to <recipients> --bus <path> --remote <name> --branch <name> [--snapshot <path>] [--host <label>]")
+		fmt.Fprintln(w, versionVerbs)
 	} else {
-		fmt.Fprintln(w, "nova-update check --file <path> [--kind <kind>] [--max <n>] [--timeout <d>] [--budget <d>]")
-		fmt.Fprintln(w, "nova-update apply --file <path> <name> [--version <version>] [--timeout <d>]")
-		fmt.Fprintln(w, "nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft | --send] [--as <friend> --to <recipients> --bus <path> --remote <name> --branch <name>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <kind>]")
+		fmt.Fprintln(w, updateVerbs)
 	}
 	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s. Repeat --kind to select kinds.\n", name)
 	fmt.Fprintln(w, "Report needs no bus or network. Updates require an explicit apply name. Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running.")

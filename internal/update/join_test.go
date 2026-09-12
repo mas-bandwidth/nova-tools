@@ -48,6 +48,19 @@ func exeName(n string) string {
 // happens to have installed can never be what a gate was proven against.
 func joinBinaries(t *testing.T) string {
 	t.Helper()
+	dir := buildTreeBinaries(t)
+	if !joinPrepared {
+		t.Skip("waits on #138: nova-bus in this tree has no prepared verbs (no --prepared-stdin in help)")
+	}
+	return dir
+}
+
+// buildTreeBinaries builds this tree's nova-bus and nova-update once per package
+// run, without deciding anything about them. A test that needs a real reporter
+// process but no bus uses this; the join uses joinBinaries, which adds the
+// capability probe and the skip.
+func buildTreeBinaries(t *testing.T) string {
+	t.Helper()
 	joinOnce.Do(func() {
 		dir, err := os.MkdirTemp("", "nova-join-")
 		if err != nil {
@@ -68,9 +81,6 @@ func joinBinaries(t *testing.T) string {
 	})
 	if joinBuildErr != nil {
 		t.Fatal(joinBuildErr)
-	}
-	if !joinPrepared {
-		t.Skip("waits on #138: nova-bus in this tree has no prepared verbs (no --prepared-stdin in help)")
 	}
 	return joinDir
 }
@@ -299,21 +309,29 @@ func TestJoinRealBusPublishesOneNoteAndOneIndexRow(t *testing.T) {
 // the original identity lands.
 func TestJoinRefusedPushRecoversToOneNoteWithTheSameID(t *testing.T) {
 	r := newReporter(t, "v1.2.3")
-	refuse := r.bus.hookPath(t, "pre-receive")
-	r.bus.writeHook(t, refuse, "#!/bin/sh\necho 'synthetic refusal' >&2\nexit 1\n")
+	restore, how := r.bus.refusePushes(t)
+	t.Logf("pushes are refused by %s", how)
+	started := time.Now()
 	code, out, errs := r.send(t, r.bin)
+	refusedIn := time.Since(started)
 	if code != 1 {
 		t.Fatalf("a refused push was not reported as a failure: %d\n%s\n%s", code, out, errs)
 	}
-	if !strings.Contains(errs, "sent=uncertain") && !strings.Contains(out, "sent=uncertain") {
+	if !strings.Contains(errs+out, "sent=uncertain") {
 		t.Fatalf("a refused push was not reported as uncertain:\n%s\n%s", out, errs)
 	}
 	id := r.pendingID(t)
+	restore()
 	if notes, index := r.bus.published(t); len(notes) != 0 || len(index) != 0 {
 		t.Fatalf("a refused push published something: %v %v", notes, index)
 	}
-	if err := os.Remove(refuse); err != nil {
-		t.Fatal(err)
+	// The reporter hands the bus finite --attempts and --git-timeout out of its
+	// own remaining budget, so a remote that refuses every push costs seconds
+	// rather than the bus's implicit twenty-five tries. The witness is printed
+	// because the seconds are the point.
+	t.Logf("a remote refusing every push was reported uncertain in %s", refusedIn.Round(time.Millisecond))
+	if refusedIn > 30*time.Second {
+		t.Fatalf("a refused push took %s, which is not a bound anybody chose", refusedIn)
 	}
 	code, out, errs = r.send(t, r.bin)
 	if code != 0 {
@@ -325,22 +343,37 @@ func TestJoinRefusedPushRecoversToOneNoteWithTheSameID(t *testing.T) {
 	r.bus.exactlyOneContribution(t, id)
 }
 
-func (b busFixture) hookPath(t *testing.T, name string) string {
+// refusePushes makes the named remote refuse, and reports how. A pre-receive
+// hook is the truer seam -- the push arrives and is rejected -- and it needs a
+// shell, so where there is none the remote is moved aside instead, which is the
+// spec's other wording for this case: "reject the first push, recover the
+// remote". Both run everywhere the join runs; neither is skipped.
+func (b busFixture) refusePushes(t *testing.T) (restore func(), how string) {
 	t.Helper()
-	dir := filepath.Join(b.bare, "hooks")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if runtime.GOOS != "windows" {
+		dir := filepath.Join(b.bare, "hooks")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		hook := filepath.Join(dir, "pre-receive")
+		if err := os.WriteFile(hook, []byte("#!/bin/sh\necho 'synthetic refusal' >&2\nexit 1\n"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		return func() {
+			if err := os.Remove(hook); err != nil {
+				t.Fatal(err)
+			}
+		}, "a pre-receive hook that rejects every push"
+	}
+	aside := b.bare + ".aside"
+	if err := os.Rename(b.bare, aside); err != nil {
 		t.Fatal(err)
 	}
-	return filepath.Join(dir, name)
-}
-func (b busFixture) writeHook(t *testing.T, path, script string) {
-	t.Helper()
-	if runtime.GOOS == "windows" {
-		t.Skip("a shell hook on the bare remote is the refusal seam, and it is not portable to Windows")
-	}
-	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	return func() {
+		if err := os.Rename(aside, b.bare); err != nil {
+			t.Fatal(err)
+		}
+	}, "moving the bare remote aside so the push cannot land"
 }
 
 // ------------------------------------------------- a real death, really observed
@@ -457,7 +490,8 @@ func joinWrapper() {
 		observed, alive = true, false
 	}
 	if rec := os.Getenv("NOVA_UPDATE_JOIN_RECORD"); rec != "" {
-		_ = os.WriteFile(rec, []byte(fmt.Sprintf("boundary=%s observed=%t killed-alive=%t\nbus said: %s\n", boundary, observed, alive, clip(strings.TrimSpace(said.String()), 2000))), 0600)
+		_ = os.WriteFile(rec, []byte(fmt.Sprintf("boundary=%s observed=%t killed-alive=%t group-gone=%t\nbus said: %s\n",
+			boundary, observed, alive, groupGone(c), clip(strings.TrimSpace(said.String()), 2000))), 0600)
 	}
 	// Whatever happened, this process says nothing a caller could read as a
 	// confirmation, which is the whole point of a lost answer.
@@ -511,63 +545,128 @@ func clearWrapper(t *testing.T) {
 // which boundary the death landed on.
 func TestJoinChildDeathAtWriteBoundariesRecoversOneContribution(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("the staged deaths use SIGKILL on a process group; the Windows join is a separate gate")
+		t.Skip("SIGKILL on a process group is what stages these deaths, so this case claims NO Windows coverage: the owed validation is a Windows termination (TerminateProcess on a job object) staged at these same boundaries, named in the pull request and asserted nowhere yet")
 	}
-	for _, boundary := range []string{killBeforeNote, killAfterNote, killAfterIndex, killAfterAttrs, killAfterCmt, killLostResult} {
+	for _, boundary := range []string{killBeforeNote, killAfterNote, killAfterIndex, killAfterAttrs, killAfterCmt} {
 		t.Run(boundary, func(t *testing.T) {
-			r := newReporter(t, "v1.2.3")
-			wrap, record := r.wrapperOnPath(t, boundary)
-			code, out, errs := r.send(t, wrap)
-			if code != 1 {
-				t.Fatalf("a killed bus was not reported as a failure: %d\n%s\n%s", code, out, errs)
+			missed := 0
+			for attempt := 1; attempt <= stagingAttempts; attempt++ {
+				if stagedADeath(t, boundary, attempt) {
+					return
+				}
+				missed++
+				t.Logf("%s: the bus finished before the kill landed (miss %d of %d allowed); staging it again", boundary, missed, stagingAttempts)
 			}
-			if !strings.Contains(errs+out, "sent=uncertain") {
-				t.Fatalf("a killed bus was not reported as uncertain:\n%s\n%s", out, errs)
-			}
-			id := r.pendingID(t)
-			b, err := os.ReadFile(record)
-			if err != nil {
-				t.Fatalf("the wrapper left no record of what it staged: %v", err)
-			}
-			staged := strings.TrimSpace(string(b))
-			if !strings.Contains(staged, "observed=true") {
-				t.Fatalf("the boundary was never observed, so no death was staged: %s", staged)
-			}
-			if boundary != killLostResult && !strings.Contains(staged, "killed-alive=true") {
-				t.Skipf("the bus finished before the kill landed, so this run staged a lost answer rather than %s: %s", boundary, staged)
-			}
-			leftover := r.leftInTheLane(t)
-			// A SIGKILL inside git's own index update leaves .git/index.lock
-			// behind, and no tool may delete a lock it cannot prove is stale --
-			// the bus names it and stops, which is its documented repair. The
-			// test performs that named repair, out loud, because the alternative
-			// is a gate that measures git's lock discipline instead of recovery.
-			// Whether the bus should be allowed to remove a provably stale lock
-			// itself is an open question for the spec; see the pull request.
-			if repaired := r.removeStaleIndexLock(t); repaired {
-				t.Logf("%s: the killed git left .git/index.lock; the test performed the bus's named repair before retrying", boundary)
-			}
-			clearWrapper(t)
-			code, out, errs = r.send(t, r.bin)
-			if code != 0 {
-				t.Fatalf("recovery failed: %d\n%s\n%s\nstaged: %s\nwhat the kill left: %s\nlocks: %v\nthe bus, asked directly: %s\n%s",
-					code, out, errs, staged, leftover, r.locks(), r.busAskedDirectly(t), r.checkoutState(t))
-			}
-			if got := r.deliveredID(t); got != id {
-				t.Fatalf("recovery delivered %q, not the retained %q", got, id)
-			}
-			r.bus.exactlyOneContribution(t, id)
-			if boundary == killLostResult && !strings.Contains(out, "already-published") {
-				t.Fatalf("a lost answer was recovered by publishing again rather than by finding the note: %s", out)
-			}
-			before := git(t, r.bus.bare, "rev-parse", "main")
-			if code, out, errs = r.send(t, r.bin); code != 0 || !strings.Contains(out, "nothing sent") {
-				t.Fatalf("the recovered report did not settle: %d\n%s\n%s", code, out, errs)
-			}
-			if after := git(t, r.bus.bare, "rev-parse", "main"); after != before {
-				t.Fatal("a settled report moved the remote again")
-			}
+			t.Skipf("%s: no kill landed on a live bus in %d staged attempts, so this boundary is UNPROVEN in this run rather than green", boundary, stagingAttempts)
 		})
+	}
+}
+
+// stagingAttempts bounds how many times a boundary is staged before the case
+// calls itself unproven. A death has to be caught on a LIVE process to be a
+// death, catching it races a local push, and a skip nobody counted would let a
+// green run mean nothing.
+const stagingAttempts = 5
+
+// stagedADeath stages one death at the named boundary and proves the recovery.
+// It returns false only when the kill missed a live process, which is the one
+// outcome that earns another attempt; every real failure fails the test here.
+func stagedADeath(t *testing.T, boundary string, attempt int) bool {
+	t.Helper()
+	r := newReporter(t, "v1.2.3")
+	wrap, record := r.wrapperOnPath(t, boundary)
+	code, out, errs := r.send(t, wrap)
+	if code != 1 {
+		t.Fatalf("a killed bus was not reported as a failure: %d\n%s\n%s", code, out, errs)
+	}
+	if !strings.Contains(errs+out, "sent=uncertain") {
+		t.Fatalf("a killed bus was not reported as uncertain:\n%s\n%s", out, errs)
+	}
+	id := r.pendingID(t)
+	b, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("the wrapper left no record of what it staged: %v", err)
+	}
+	staged := strings.TrimSpace(string(b))
+	if !strings.Contains(staged, "observed=true") {
+		t.Fatalf("the boundary was never observed, so no death was staged: %s", staged)
+	}
+	if !strings.Contains(staged, "killed-alive=true") {
+		return false
+	}
+	leftover := r.leftInTheLane(t)
+	// A SIGKILL inside git's own index update leaves .git/index.lock behind. The
+	// tool has no business removing it: it cannot prove the lock is unowned, so
+	// it names it and stops, and the repair is an operator's. This test is that
+	// operator, and it does what an operator must do FIRST -- establish that no
+	// process is left to own the lock -- before removing anything, out loud.
+	if _, err := os.Stat(filepath.Join(r.bus.checkout, ".git", "index.lock")); err == nil {
+		if !strings.Contains(staged, "group-gone=true") {
+			t.Fatalf("a process may still own the index lock, so the named repair is not available: %s", staged)
+		}
+		if r.removeStaleIndexLock(t) {
+			t.Logf("%s (attempt %d): the killed git left .git/index.lock; with the whole process group verified gone, the test performed the operator's named repair before retrying", boundary, attempt)
+		}
+	}
+	clearWrapper(t)
+	code, out, errs = r.send(t, r.bin)
+	if code != 0 {
+		t.Fatalf("recovery failed: %d\n%s\n%s\nstaged: %s\nwhat the kill left: %s\nlocks: %v\nthe bus, asked directly: %s\n%s",
+			code, out, errs, staged, leftover, r.locks(), r.busAskedDirectly(t), r.checkoutState(t))
+	}
+	if got := r.deliveredID(t); got != id {
+		t.Fatalf("recovery delivered %q, not the retained %q", got, id)
+	}
+	r.bus.exactlyOneContribution(t, id)
+	before := git(t, r.bus.bare, "rev-parse", "main")
+	if code, out, errs = r.send(t, r.bin); code != 0 || !strings.Contains(out, "nothing sent") {
+		t.Fatalf("the recovered report did not settle: %d\n%s\n%s", code, out, errs)
+	}
+	if after := git(t, r.bus.bare, "rev-parse", "main"); after != before {
+		t.Fatal("a settled report moved the remote again")
+	}
+	return true
+}
+
+// A lost confirmation needs no signal at all: the bus is allowed to finish and
+// its answer is thrown away, which is what a reporter that dies between the push
+// and reading the answer leaves behind. Nothing here is platform-specific, so
+// this case runs on Windows too.
+func TestJoinLostConfirmationRecoversWithoutASecondNote(t *testing.T) {
+	r := newReporter(t, "v1.2.3")
+	wrap, record := r.wrapperOnPath(t, killLostResult)
+	code, out, errs := r.send(t, wrap)
+	if code != 1 {
+		t.Fatalf("a lost answer was not reported as a failure: %d\n%s\n%s", code, out, errs)
+	}
+	if !strings.Contains(errs+out, "sent=uncertain") {
+		t.Fatalf("a lost answer was not reported as uncertain:\n%s\n%s", out, errs)
+	}
+	id := r.pendingID(t)
+	if b, err := os.ReadFile(record); err != nil {
+		t.Fatalf("the wrapper left no record: %v", err)
+	} else if !strings.Contains(string(b), "boundary="+killLostResult) {
+		t.Fatalf("the wrapper staged something else: %s", b)
+	}
+	notes, _ := r.bus.published(t)
+	if len(notes) != 1 {
+		t.Fatalf("the bus was allowed to finish, so the note should be published: %v", notes)
+	}
+	head := git(t, r.bus.bare, "rev-parse", "main")
+	clearWrapper(t)
+	code, out, errs = r.send(t, r.bin)
+	if code != 0 {
+		t.Fatalf("recovery failed: %d\n%s\n%s\nthe bus, asked directly: %s", code, out, errs, r.busAskedDirectly(t))
+	}
+	if got := r.deliveredID(t); got != id {
+		t.Fatalf("recovery confirmed %q, not the pending %q", got, id)
+	}
+	r.bus.exactlyOneContribution(t, id)
+	if after := git(t, r.bus.bare, "rev-parse", "main"); after != head {
+		t.Fatalf("recovery published a second time: %s became %s", head, after)
+	}
+	if !strings.Contains(out, "already-published") {
+		t.Fatalf("recovery republished instead of finding its own note: %s", out)
 	}
 }
 

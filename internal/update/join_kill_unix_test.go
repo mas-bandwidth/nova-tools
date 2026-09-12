@@ -17,3 +17,13 @@ func killGroup(c *exec.Cmd) error {
 	}
 	return syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
 }
+
+// groupGone answers the question the lock repair turns on: is there still a
+// process that could own the git index lock? Signal 0 asks the kernel without
+// sending anything, and ESRCH is the whole group being gone.
+func groupGone(c *exec.Cmd) bool {
+	if c.Process == nil {
+		return true
+	}
+	return syscall.Kill(-c.Process.Pid, syscall.Signal(0)) == syscall.ESRCH
+}

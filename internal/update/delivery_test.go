@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -33,11 +34,20 @@ func fakeBus() {
 	verb := os.Args[1]
 	log, _ := os.OpenFile(os.Getenv("NOVA_UPDATE_BUS_CALLS"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
 	fmt.Fprintln(log, verb)
+	// The whole argv too, on its own line, so a test can assert what bounds the
+	// reporter handed the bus rather than trusting that it handed any.
+	fmt.Fprintln(log, "argv "+strings.Join(os.Args[1:], " "))
 	log.Close()
 	mode := os.Getenv("NOVA_UPDATE_BUS_MODE")
 	if verb == "prepare" {
 		if mode == "prepare-fail" {
 			fmt.Fprintln(os.Stderr, "PREPARE FAIL synthetic refusal")
+			os.Exit(1)
+		}
+		if mode == "prepare-alien" {
+			// A binary that answers in no grammar this tool knows. It must not
+			// get to put its words on the caller's event line.
+			fmt.Fprintln(os.Stderr, "gobbledegook tell-nobody-this")
 			os.Exit(1)
 		}
 		if mode == "prepare-shouty" {
@@ -102,6 +112,15 @@ func TestPendingBeforeDispatchAndQuietRetry(t *testing.T) {
 			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
 			statePath := filepath.Join(t.TempDir(), "s.json")
 			args := []string{"report", "--file", p, "--send", "--snapshot", statePath, "--as", "fixture", "--to", "integrator", "--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--timeout", "5s"}
+			if mode == "hang" {
+				// A bus that never answers is now bounded by the BUDGET, not by
+				// the version probe's --timeout: that was the repair. So the
+				// fixture names a budget, and the hang is cut off by the same
+				// allowance a real delivery gets. Ten seconds: enough that a real
+				// prepare and the start of a send fit, far less than the fixture's
+				// thirty-second sleep.
+				args = append(args, "--budget", "10s")
+			}
 			t.Setenv("NOVA_UPDATE_BUS_MODE", mode)
 			code, _, errout := run(t, Environment{}, args...)
 			if code != 1 {
@@ -263,14 +282,16 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 	if got := busSaid(ProcessResult{Stderr: "SEND FAIL one\nSEND FAIL two\n"}); got != "SEND FAIL one" {
 		t.Fatalf("%q", got)
 	}
-	if got := busSaid(ProcessResult{Stdout: "only stdout\nmore"}); got != "only stdout" {
+	// Stdout is the fallback when the bus said nothing on stderr: a SEND OK for
+	// some other id is the bus's grammar and worth relaying.
+	if got := busSaid(ProcessResult{Stdout: "SEND OK id=other\nmore"}); got != "SEND OK id=other" {
 		t.Fatalf("%q", got)
 	}
 	if got := busSaid(ProcessResult{}); got != "nothing" {
 		t.Fatalf("%q", got)
 	}
-	if got := busSaid(ProcessResult{Stderr: strings.Repeat("x", 500)}); len(got) != 203 || !strings.HasSuffix(got, "...") {
-		t.Fatalf("unbounded: %d bytes", len(got))
+	if got := busSaid(ProcessResult{Stderr: "SEND FAIL " + strings.Repeat("x", 500)}); len(got) != 203 || !strings.HasSuffix(got, "...") {
+		t.Fatalf("unbounded: %d bytes: %q", len(got), got)
 	}
 	for _, mode := range []string{"prepare-fail", "prepare-shouty"} {
 		t.Run(mode, func(t *testing.T) {
@@ -301,4 +322,158 @@ func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Go's decoder matches a struct field case-insensitively, so refusing only
+// BYTE-identical duplicate keys left the ambiguity it was written to close: two
+// keys that fold to one field still carried two values, and the LAST won. The
+// witness the cold read measured is the first case below.
+func TestStrictDecodingRefusesKeysThatFoldTogether(t *testing.T) {
+	note := "a note\n"
+	sum := shaText(note)
+	artifact := func(pairs string) string {
+		return `{"schema":"nova.bus.prepared/1",` + pairs + `,"path":"from-fixture/f.md","note":` +
+			fmt.Sprintf("%q", note) + `,"sha256":` + fmt.Sprintf("%q", sum) + `}`
+	}
+	for name, raw := range map[string]string{
+		"id and ID":         artifact(`"id":"fixture-1","ID":"fixture-2"`),
+		"id and Id":         artifact(`"id":"fixture-1","Id":"fixture-2"`),
+		"ID alone":          artifact(`"ID":"fixture-2"`),
+		"long s in a key":   `{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":` + fmt.Sprintf("%q", note) + `,"ſha256":` + fmt.Sprintf("%q", sum) + `}`,
+		"a key short":       `{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":` + fmt.Sprintf("%q", note) + `}`,
+		"kelvin in a key":   `{"schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":` + fmt.Sprintf("%q", note) + `,"sha256":` + fmt.Sprintf("%q", sum) + `,"K":"x"}`,
+		"schema and Schema": `{"schema":"nova.bus.prepared/1","Schema":"nova.bus.prepared/1","id":"fixture-1","path":"from-fixture/f.md","note":` + fmt.Sprintf("%q", note) + `,"sha256":` + fmt.Sprintf("%q", sum) + `}`,
+	} {
+		if id, err := validatePrepared([]byte(raw)); err == nil {
+			t.Errorf("%s accepted, id=%q", name, id)
+		}
+	}
+	if id, err := validatePrepared([]byte(artifact(`"id":"fixture-1"`))); err != nil || id != "fixture-1" {
+		t.Fatalf("the exact artifact was refused: %v %q", err, id)
+	}
+	dir := t.TempDir()
+	for name, body := range map[string]string{
+		"observed and Observed":   `{"observed":{"x":{"raw":"one","status":"tool","at":"t"}},"Observed":{"x":{"raw":"tell-nobody","status":"tool","at":"t"}},"delivered":{},"pending":{}}`,
+		"nested raw and Raw":      `{"observed":{"x":{"raw":"one","Raw":"tell-nobody","status":"tool","at":"t"}},"delivered":{},"pending":{}}`,
+		"delivered and DELIVERED": `{"observed":{},"delivered":{},"DELIVERED":{},"pending":{}}`,
+	} {
+		p := filepath.Join(dir, strings.ReplaceAll(name, " ", "-")+".json")
+		if err := os.WriteFile(p, []byte(body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		s, err := readSnapshot(p)
+		if err == nil {
+			t.Errorf("%s accepted: %+v", name, s)
+		}
+		if err != nil && strings.Contains(err.Error(), "tell-nobody") {
+			t.Errorf("%s echoed content: %v", name, err)
+		}
+	}
+}
+
+// Rule 23's --timeout bounds one version probe. It was also bounding the bus
+// child, so a default --send killed its own delivery at five seconds. The
+// delivery allowance is what is left of the budget, and the bus is handed finite
+// retry controls that fit inside it.
+func TestTheBusIsHandedFiniteBoundsOutOfTheRemainingBudget(t *testing.T) {
+	for _, c := range []struct {
+		remaining            time.Duration
+		attempts, gitSeconds int
+	}{
+		{60 * time.Second, 3, 20},
+		{10 * time.Minute, 10, 60},
+		{2 * time.Second, 2, 1},
+		{500 * time.Millisecond, 1, 1},
+		{0, 1, 1},
+	} {
+		// Below a second there is no whole number of seconds to name, so one is
+		// named and the caller's own deadline stays the tighter of the two.
+		a, g := busBounds(c.remaining)
+		if a != c.attempts || g != c.gitSeconds {
+			t.Errorf("%s left: attempts=%d git-timeout=%d, want %d and %d", c.remaining, a, g, c.attempts, c.gitSeconds)
+		}
+		if a < 1 || g < 1 {
+			t.Errorf("%s left: a bound below one is not a bound", c.remaining)
+		}
+		if want := c.remaining; want >= time.Second && time.Duration(g)*time.Second > want {
+			t.Errorf("%s left: a git timeout of %ds promises more than remains", want, g)
+		}
+	}
+	log := fakeBusPath(t)
+	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
+	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
+		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main", "--budget", "60s")
+	if c != 0 {
+		t.Fatalf("%d %s %s", c, out, errs)
+	}
+	b, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sendArgv := ""
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, "argv send ") {
+			sendArgv = line
+		}
+	}
+	if sendArgv == "" {
+		t.Fatalf("no send argv was logged:\n%s", b)
+	}
+	for _, want := range []string{"--attempts ", "--git-timeout ", "--prepared-stdin"} {
+		if !strings.Contains(sendArgv, want) {
+			t.Errorf("the send argv does not carry %s: %s", want, sendArgv)
+		}
+	}
+	fields := strings.Fields(sendArgv)
+	for i, f := range fields {
+		if f != "--attempts" && f != "--git-timeout" {
+			continue
+		}
+		if i+1 >= len(fields) {
+			t.Fatalf("%s names no value: %s", f, sendArgv)
+		}
+		n, err := strconv.Atoi(fields[i+1])
+		if err != nil || n < 1 {
+			t.Errorf("%s is %q, which is not a finite bound", f, fields[i+1])
+		}
+		if f == "--git-timeout" && n > 60 {
+			t.Errorf("--git-timeout %d exceeds the 60s budget", n)
+		}
+	}
+	// prepare takes neither: it runs no Git and touches no network.
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, "argv prepare ") && (strings.Contains(line, "--attempts") || strings.Contains(line, "--git-timeout")) {
+			t.Errorf("prepare was handed a Git bound it has no use for: %s", line)
+		}
+	}
+}
+
+// A binary on PATH called nova-bus that answers in no grammar this tool knows
+// must not get to write on the caller's event line.
+func TestALineOutsideTheBusGrammarIsNotRelayed(t *testing.T) {
+	if got := busSaid(ProcessResult{Stderr: "SEND FAIL from-x/n.md: a named reason"}); got != "SEND FAIL from-x/n.md: a named reason" {
+		t.Fatalf("the bus's own grammar was not relayed: %q", got)
+	}
+	// Leading whitespace is normalised away before the grammar is checked, so the
+	// cases below are lines whose CONTENT is in no grammar this tool knows.
+	for _, alien := range []string{"gobbledegook tell-nobody-this", "bash: nova-bus: command not found", "Traceback (most recent call last):", "sendfail", "the bus says SEND FAIL later on"} {
+		got := busSaid(ProcessResult{Stderr: alien})
+		if strings.Contains(got, "tell-nobody-this") || got != "a line outside the bus's refusal grammar, not relayed" {
+			t.Errorf("%q was relayed as %q", alien, got)
+		}
+	}
+	fakeBusPath(t)
+	p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
+	t.Setenv("NOVA_UPDATE_BUS_MODE", "prepare-alien")
+	c, out, errs := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+		filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
+		"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
+	if c != 1 {
+		t.Fatal(c)
+	}
+	if strings.Contains(out+errs, "tell-nobody-this") {
+		t.Fatalf("an alien binary's words reached the event line:\n%s%s", out, errs)
+	}
+	need(t, errs, "a line outside the bus's refusal grammar, not relayed")
 }

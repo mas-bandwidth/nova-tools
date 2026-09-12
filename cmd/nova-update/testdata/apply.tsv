@@ -1,0 +1,2 @@
+name	kind	installed	latest	apply	owner
+fixture-tool	tool	./testdata/fixture-tool	github:example/fixture	./testdata/fake-install.sh {version}	rowan

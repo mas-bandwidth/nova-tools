@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -126,13 +127,29 @@ func dash(s string) string {
 	return s
 }
 
+// busRefusals are the openings of nova-bus's own refusal grammar. A line is
+// relayed only if it begins with one of them.
+var busRefusals = []string{"SEND FAIL ", "SEND REFUSED: ", "SEND OK ", "PREPARE FAIL ", "PREPARE REFUSED: "}
+
 // busSaid carries the bus's OWN first line into the caller's diagnostic. Without
 // it an operator reading a failed delivery is told "exit 1" and nothing else,
 // and the one thing that would tell them what to repair -- a stale index lock, a
 // roster that no longer resolves the speaker, a same-id note with other bytes --
-// stays in a pipe nobody reads. One line, clipped: the rest of the bus's output
-// is not this tool's to relay, and oneline.Err keeps the grammar one line no
-// matter what a binary on PATH prints.
+// stays in a pipe nobody reads.
+//
+// What is relayed is bounded twice over. It must be ONE line that opens with the
+// bus's own refusal grammar, so an arbitrary binary that happens to be called
+// nova-bus on somebody's PATH cannot use this tool's event line to say anything
+// it likes; and it is clipped. A line that is not in that grammar is named as
+// unrelayed rather than repeated, and the caller still has its own reason for
+// the failure beside it -- that reason (not_found, timeout, exit <n>,
+// output_not_closed, the operating system's own words) is about this tool's argv
+// and is never the bus's text.
+//
+// What the bus's own reasons may contain, read at #138 aeb45c9: a note header
+// VALUE (a From or a Subject, truncated), a roster name, an id, a lane, a path,
+// one remote INDEX line. They do not contain a note body and they cannot contain
+// a version command's output, which reaches the bus only inside the note.
 func busSaid(r ProcessResult) string {
 	said := firstLine(strings.TrimSpace(r.Stderr))
 	if said == "" {
@@ -141,7 +158,58 @@ func busSaid(r ProcessResult) string {
 	if said == "" {
 		return "nothing"
 	}
-	return clip(said, 200)
+	for _, opening := range busRefusals {
+		if strings.HasPrefix(said, opening) {
+			return clip(said, 200)
+		}
+	}
+	return "a line outside the bus's refusal grammar, not relayed"
+}
+
+// busBounds are the finite retry controls the reporter hands the bus, computed
+// from what is LEFT of the reporter's own budget.
+//
+// Rule 23's --timeout bounds one version probe; it was also bounding the bus
+// child, which made a default run kill its own delivery at five seconds. The
+// delivery allowance is the remaining budget instead (rule 25 and
+// SPEC-BUS-DELIVERY both name the budget as the resolution horizon), and these
+// two flags are what let the bus stop on its own inside that horizon rather than
+// be killed at the end of it: one git operation gets a third of what remains,
+// capped at a minute and never more than remains, and the attempt count is how
+// many such operations fit, never more than the bus's own 25.
+func busBounds(remaining time.Duration) (attempts, gitSeconds int) {
+	git := remaining / 3
+	if git > time.Minute {
+		git = time.Minute
+	}
+	if git > remaining {
+		git = remaining
+	}
+	gitSeconds = int(git / time.Second)
+	if gitSeconds < 1 {
+		// The bus counts this flag in whole seconds, so below a second there is
+		// no number to name but one. The caller's own deadline is then the
+		// tighter of the two bounds, which is the safe way round.
+		gitSeconds = 1
+	}
+	attempts = int(remaining / (time.Duration(gitSeconds) * time.Second))
+	if attempts < 1 {
+		attempts = 1
+	}
+	if attempts > 25 {
+		attempts = 25
+	}
+	return attempts, gitSeconds
+}
+
+// deliveryAllowance is what is left of the budget. A delivery that cannot start
+// inside it is a pending gate, not a kill.
+func deliveryAllowance(ctx context.Context, now time.Time) time.Duration {
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		return 0
+	}
+	return deadline.Sub(now)
 }
 func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observed, body []byte, out io.Writer, env Environment) (string, error) {
 	scope := snapshotScope(o)
@@ -152,8 +220,14 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 		return nil
 	}
 	send := func(p pending) (string, error) {
-		args := []string{"nova-bus", "send", "--prepared-stdin", "--bus", o.bus, "--remote", o.remote, "--branch", o.branch, "--as", o.as}
-		child, cancel := context.WithTimeout(ctx, o.timeout)
+		allowance := deliveryAllowance(ctx, env.Now())
+		if allowance <= 0 {
+			return "uncertain", fmt.Errorf("pending %s not sent: the budget is spent (retry this --send with the same --snapshot; do not prepare again)", p.ID)
+		}
+		attempts, gitSeconds := busBounds(allowance)
+		args := []string{"nova-bus", "send", "--prepared-stdin", "--bus", o.bus, "--remote", o.remote, "--branch", o.branch, "--as", o.as,
+			"--attempts", strconv.Itoa(attempts), "--git-timeout", strconv.Itoa(gitSeconds)}
+		child, cancel := context.WithTimeout(ctx, allowance)
 		r := captureRun(child, args, p.Artifact, ChildCap)
 		cancel()
 		line := ""
@@ -195,7 +269,14 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 	if ctx.Err() != nil {
 		return sent, fmt.Errorf("delivery budget exhausted (retry --send with the same --snapshot)")
 	}
-	child, cancel := context.WithTimeout(ctx, o.timeout)
+	// prepare runs no Git and touches no network, so it takes no attempt or
+	// git-timeout flag; what it must not take is the version probe's timeout,
+	// which is a bound on reading a tool's version and not on a delivery.
+	allowance := deliveryAllowance(ctx, env.Now())
+	if allowance <= 0 {
+		return sent, fmt.Errorf("delivery budget exhausted (retry --send with the same --snapshot)")
+	}
+	child, cancel := context.WithTimeout(ctx, allowance)
 	prepared := captureRun(child, []string{"nova-bus", "prepare", "--bus", o.bus, "--as", o.as, "--stdin"}, body, ChildCap)
 	cancel()
 	if prepared.Reason != "" {
