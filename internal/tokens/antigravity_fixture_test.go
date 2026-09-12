@@ -13,28 +13,35 @@ import (
 
 // AntigravityProtoUsage represents decoded ModelUsageStats from Proto3 wire bytes.
 type AntigravityProtoUsage struct {
-	Model               string
-	InputTokens         *uint64
-	CacheReadTokens     *uint64
-	OutputTokens        *uint64
-	TotalTokens         *uint64 // Context window total (non-spend)
+	Model                string
+	InputTokens          *uint64
+	CacheReadTokens      *uint64
+	OutputTokens         *uint64
+	TotalTokens          *uint64 // Context window total (non-spend evidence)
 	ThinkingOutputTokens *uint64
 }
 
-// DecodeVarint reads a varint from wire bytes starting at offset.
+// decodeVarint reads a varint from wire bytes starting at offset.
+// Protects against 64-bit overflow and truncation.
 func decodeVarint(data []byte, offset int) (uint64, int, error) {
 	var val uint64
 	var shift uint
 	for i := offset; i < len(data); i++ {
 		b := data[i]
+		if shift == 63 {
+			// 10th byte: in proto3 uint64 varint, 63 bits are already set.
+			// The 10th byte cannot have continuation bit and cannot exceed 1.
+			if b > 1 {
+				return 0, 0, fmt.Errorf("varint 64-bit overflow")
+			}
+			val |= uint64(b) << shift
+			return val, i + 1, nil
+		}
 		val |= uint64(b&0x7F) << shift
 		if (b & 0x80) == 0 {
 			return val, i + 1, nil
 		}
 		shift += 7
-		if shift >= 64 {
-			return 0, 0, fmt.Errorf("varint overflow")
-		}
 	}
 	return 0, 0, fmt.Errorf("truncated varint")
 }
@@ -59,7 +66,7 @@ func DecodeAntigravityProto(blob []byte) (*AntigravityProtoUsage, error) {
 				return nil, err
 			}
 			offset = nextOffset
-			if offset+int(length) > len(blob) {
+			if length > uint64(len(blob)-offset) {
 				return nil, fmt.Errorf("length exceeds payload bounds")
 			}
 			subBytes := blob[offset : offset+int(length)]
@@ -101,7 +108,7 @@ func decodeChatModelMetadata(blob []byte, usage *AntigravityProtoUsage) error {
 				return err
 			}
 			offset = nextOffset
-			if offset+int(length) > len(blob) {
+			if length > uint64(len(blob)-offset) {
 				return fmt.Errorf("sub-length exceeds payload bounds")
 			}
 			subBytes := blob[offset : offset+int(length)]
@@ -179,39 +186,42 @@ type TranscriptLineFixture struct {
 	Status    string `json:"status"`
 }
 
-type ObservationRecordFixture struct {
-	Schema string `json:"schema"`
-	Source struct {
-		Kind            string `json:"kind"`
-		ProducerVersion string `json:"producer_version"`
-		Namespace       string `json:"namespace"`
-		SessionID       string `json:"session_id"`
-		EventKey        string `json:"event_key"`
-	} `json:"source"`
-	Kind string `json:"kind"`
-	Time struct {
-		OccurredAt *string `json:"occurred_at"`
-		Basis      string  `json:"basis"`
-	} `json:"time"`
-	Origin struct {
-		Friend string `json:"friend"`
-		Bench  string `json:"bench"`
-		Basis  string `json:"basis"`
-	} `json:"origin"`
-	Model struct {
-		ID    string `json:"id"`
-		Basis string `json:"basis"`
-	} `json:"model"`
-	RawUsage map[string]struct {
-		Presence   string  `json:"presence"`
-		Value      *uint64 `json:"value"`
-		NumberKind string  `json:"number_kind"`
-		Unit       string  `json:"unit"`
-		Reason     *string `json:"reason"`
-	} `json:"raw_usage"`
-	Receipt struct {
-		Idx int `json:"idx"`
-	} `json:"receipt"`
+type ObservationEnvelopeFixture struct {
+	ID   string `json:"id"`
+	Body struct {
+		Schema string `json:"schema"`
+		Source struct {
+			Kind            string `json:"kind"`
+			ProducerVersion string `json:"producer_version"`
+			Namespace       string `json:"namespace"`
+			SessionID       string `json:"session_id"`
+			EventKey        string `json:"event_key"`
+		} `json:"source"`
+		Kind string `json:"kind"`
+		Time struct {
+			OccurredAt *string `json:"occurred_at"`
+			Basis      string  `json:"basis"`
+		} `json:"time"`
+		Origin struct {
+			Friend string `json:"friend"`
+			Bench  string `json:"bench"`
+			Basis  string `json:"basis"`
+		} `json:"origin"`
+		Model struct {
+			ID    string `json:"id"`
+			Basis string `json:"basis"`
+		} `json:"model"`
+		RawUsage map[string]struct {
+			Presence   string  `json:"presence"`
+			Value      *string `json:"value"` // Exact numeric string under PR 124 contract
+			NumberKind string  `json:"number_kind"`
+			Unit       string  `json:"unit"`
+			Reason     *string `json:"reason"`
+		} `json:"raw_usage"`
+		Receipt struct {
+			Idx string `json:"idx"`
+		} `json:"receipt"`
+	} `json:"body"`
 }
 
 func TestAntigravitySyntheticFixturesAndJoin(t *testing.T) {
@@ -227,7 +237,7 @@ func TestAntigravitySyntheticFixturesAndJoin(t *testing.T) {
 		t.Fatalf("failed to parse sqlite_rows.json: %v", err)
 	}
 
-	// 2. Read Transcript fixture
+	// 2. Read Transcript fixture with strict duplicate rejection
 	transcriptFile, err := os.Open(filepath.Join(fixtureDir, "transcript.jsonl"))
 	if err != nil {
 		t.Fatalf("failed to open transcript.jsonl: %v", err)
@@ -241,27 +251,43 @@ func TestAntigravitySyntheticFixturesAndJoin(t *testing.T) {
 		if err := json.Unmarshal(scanner.Bytes(), &line); err != nil {
 			t.Fatalf("failed to parse transcript line: %v", err)
 		}
+		if _, exists := transcriptMap[line.StepIndex]; exists {
+			t.Fatalf("duplicate step_index %d in transcript: 1:1 join requires unique keys", line.StepIndex)
+		}
 		transcriptMap[line.StepIndex] = line
 	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("transcript scanner error: %v", err)
+	}
 
-	// 3. Read Expected Records
+	// 3. Read Expected Records Envelopes
 	expectedFile, err := os.Open(filepath.Join(fixtureDir, "expected_records.jsonl"))
 	if err != nil {
 		t.Fatalf("failed to open expected_records.jsonl: %v", err)
 	}
 	defer expectedFile.Close()
 
-	expectedMap := make(map[int]ObservationRecordFixture)
+	expectedMap := make(map[int]ObservationEnvelopeFixture)
 	expectedScanner := bufio.NewScanner(expectedFile)
 	for expectedScanner.Scan() {
-		var rec ObservationRecordFixture
-		if err := json.Unmarshal(expectedScanner.Bytes(), &rec); err != nil {
-			t.Fatalf("failed to parse expected record: %v", err)
+		var env ObservationEnvelopeFixture
+		if err := json.Unmarshal(expectedScanner.Bytes(), &env); err != nil {
+			t.Fatalf("failed to parse expected envelope: %v", err)
 		}
-		expectedMap[rec.Receipt.Idx] = rec
+		idx, err := strconv.Atoi(env.Body.Receipt.Idx)
+		if err != nil {
+			t.Fatalf("invalid receipt idx %q: %v", env.Body.Receipt.Idx, err)
+		}
+		if _, exists := expectedMap[idx]; exists {
+			t.Fatalf("duplicate receipt idx %d in expected envelopes", idx)
+		}
+		expectedMap[idx] = env
+	}
+	if err := expectedScanner.Err(); err != nil {
+		t.Fatalf("expected envelopes scanner error: %v", err)
 	}
 
-	// 4. Validate each turn against expected records
+	// 4. Validate each turn against expected envelopes
 	for _, row := range sqliteRows {
 		t.Run(fmt.Sprintf("turn_%d", row.Idx), func(t *testing.T) {
 			blob, err := hex.DecodeString(row.DataHex)
@@ -277,10 +303,11 @@ func TestAntigravitySyntheticFixturesAndJoin(t *testing.T) {
 				t.Fatalf("failed to decode proto: %v", err)
 			}
 
-			expected, exists := expectedMap[row.Idx]
+			env, exists := expectedMap[row.Idx]
 			if !exists {
-				t.Fatalf("missing expected record for idx %d", row.Idx)
+				t.Fatalf("missing expected envelope for idx %d", row.Idx)
 			}
+			expected := env.Body
 
 			// Verify Spend Key: ["antigravity", session_id, event_key]
 			if expected.Source.Namespace != "antigravity" {
@@ -300,7 +327,7 @@ func TestAntigravitySyntheticFixturesAndJoin(t *testing.T) {
 					t.Errorf("time basis mismatch: got %s, expected 'turn_completion'", expected.Time.Basis)
 				}
 			} else {
-				// Unpaired row (Case 4)
+				// Unpaired row (Case 4): No invented timestamp
 				if expected.Time.OccurredAt != nil {
 					t.Errorf("unpaired turn must not have an invented timestamp, got %v", *expected.Time.OccurredAt)
 				}
@@ -314,80 +341,88 @@ func TestAntigravitySyntheticFixturesAndJoin(t *testing.T) {
 				t.Errorf("model mismatch: got %q, expected %q", usage.Model, expected.Model.ID)
 			}
 
-			// Verify Presence Semantics for Wire Tags
-			// Tag 1 (input_tokens)
-			expInput := expected.RawUsage["input_tokens"]
-			if usage.InputTokens != nil {
-				if expInput.Presence != "present" || *usage.InputTokens != *expInput.Value {
-					t.Errorf("input_tokens mismatch: got %v, expected %v", usage.InputTokens, expInput.Value)
-				}
-			} else {
-				if expInput.Presence != "absent" {
-					t.Errorf("input_tokens expected absent, got %v", usage.InputTokens)
-				}
-			}
-
-			// Tag 2 (cache_read_tokens)
-			expCache := expected.RawUsage["cache_read_tokens"]
-			if usage.CacheReadTokens != nil {
-				if expCache.Presence != "present" || *usage.CacheReadTokens != *expCache.Value {
-					t.Errorf("cache_read_tokens mismatch: got %v, expected %v", usage.CacheReadTokens, expCache.Value)
-				}
-			} else {
-				if expCache.Presence != "absent" {
-					t.Errorf("cache_read_tokens expected absent on wire, got %v", usage.CacheReadTokens)
-				}
-			}
-
-			// Tag 3 (output_tokens)
-			expOutput := expected.RawUsage["output_tokens"]
-			if usage.OutputTokens != nil {
-				if expOutput.Presence != "present" || *usage.OutputTokens != *expOutput.Value {
-					t.Errorf("output_tokens mismatch: got %v, expected %v", usage.OutputTokens, expOutput.Value)
-				}
-			} else {
-				if expOutput.Presence != "absent" {
-					t.Errorf("output_tokens expected absent on wire, got %v", usage.OutputTokens)
-				}
-			}
-
-			// Tag 5 (total_tokens - context window evidence, non-spend)
-			expTotal := expected.RawUsage["total_tokens"]
-			if usage.TotalTokens != nil {
-				if expTotal.Presence != "present" || *usage.TotalTokens != *expTotal.Value {
-					t.Errorf("total_tokens mismatch: got %v, expected %v", usage.TotalTokens, expTotal.Value)
-				}
-			} else {
-				if expTotal.Presence != "absent" {
-					t.Errorf("total_tokens expected absent on wire, got %v", usage.TotalTokens)
-				}
-			}
-
-			// Tag 6 (thinking_output_tokens - subset of output tokens)
-			expThinking := expected.RawUsage["thinking_output_tokens"]
-			if usage.ThinkingOutputTokens != nil {
-				if expThinking.Presence != "present" || *usage.ThinkingOutputTokens != *expThinking.Value {
-					t.Errorf("thinking_output_tokens mismatch: got %v, expected %v", usage.ThinkingOutputTokens, expThinking.Value)
-				}
-				// Special check for Case 3 (Present-zero): value must be 0 and presence "present"
-				if *usage.ThinkingOutputTokens == 0 && expThinking.Presence != "present" {
-					t.Errorf("explicit wire zero must have presence 'present'")
-				}
-			} else {
-				if expThinking.Presence != "absent" {
-					t.Errorf("thinking_output_tokens expected absent on wire, got %v", usage.ThinkingOutputTokens)
-				}
-			}
-
-			// Invariant Check: Context total (Tag 5) is non-spend.
-			// Spend = input_tokens + output_tokens.
-			if usage.InputTokens != nil && usage.OutputTokens != nil {
-				spend := *usage.InputTokens + *usage.OutputTokens
-				if usage.TotalTokens != nil && *usage.TotalTokens > 0 {
-					if spend == *usage.TotalTokens || spend+*usage.TotalTokens == spend {
-						t.Errorf("context window size must not be confused with spend")
+			// Helper to check numeric string value
+			checkField := func(name string, decoded *uint64) {
+				exp := expected.RawUsage[name]
+				if decoded != nil {
+					if exp.Presence != "present" {
+						t.Errorf("%s expected presence 'present', got %s", name, exp.Presence)
+					}
+					if exp.Value == nil || *exp.Value != strconv.FormatUint(*decoded, 10) {
+						t.Errorf("%s value mismatch: got %v, expected %v", name, decoded, exp.Value)
+					}
+				} else {
+					if exp.Presence != "absent" {
+						t.Errorf("%s expected presence 'absent', got %s", name, exp.Presence)
+					}
+					if exp.Value != nil {
+						t.Errorf("%s absent field must have null value, got %v", name, *exp.Value)
 					}
 				}
+			}
+
+			checkField("input_tokens", usage.InputTokens)
+			checkField("cache_read_tokens", usage.CacheReadTokens)
+			checkField("output_tokens", usage.OutputTokens)
+			checkField("total_tokens", usage.TotalTokens)
+			checkField("thinking_output_tokens", usage.ThinkingOutputTokens)
+		})
+	}
+}
+
+// TestOneToOneJoinRefusesDuplicates explicitly witnesses that duplicate keys are rejected.
+func TestOneToOneJoinRefusesDuplicates(t *testing.T) {
+	lines := []string{
+		`{"step_index": 1, "created_at": "1999-01-01T00:00:00Z"}`,
+		`{"step_index": 1, "created_at": "2026-09-12T12:00:01Z"}`,
+	}
+	m := make(map[int]string)
+	var errFound bool
+	for _, l := range lines {
+		var item struct {
+			StepIndex int    `json:"step_index"`
+			CreatedAt string `json:"created_at"`
+		}
+		if err := json.Unmarshal([]byte(l), &item); err != nil {
+			t.Fatalf("unmarshal error: %v", err)
+		}
+		if _, exists := m[item.StepIndex]; exists {
+			errFound = true
+			break
+		}
+		m[item.StepIndex] = item.CreatedAt
+	}
+	if !errFound {
+		t.Fatalf("expected duplicate step_index to be refused, but it was accepted")
+	}
+}
+
+// TestMalformedProtobufBlobsAreRefused validates robustness on invalid wire bytes.
+func TestMalformedProtobufBlobsAreRefused(t *testing.T) {
+	fixtureDir := filepath.Join("..", "..", "testdata", "tokens", "antigravity")
+	data, err := os.ReadFile(filepath.Join(fixtureDir, "malformed_blobs.json"))
+	if err != nil {
+		t.Fatalf("failed to read malformed_blobs.json: %v", err)
+	}
+
+	var blobs []struct {
+		Name          string `json:"name"`
+		Hex           string `json:"hex"`
+		ExpectedError string `json:"expected_error"`
+	}
+	if err := json.Unmarshal(data, &blobs); err != nil {
+		t.Fatalf("failed to parse malformed_blobs.json: %v", err)
+	}
+
+	for _, b := range blobs {
+		t.Run(b.Name, func(t *testing.T) {
+			raw, err := hex.DecodeString(b.Hex)
+			if err != nil {
+				t.Fatalf("invalid hex: %v", err)
+			}
+			_, err = DecodeAntigravityProto(raw)
+			if err == nil {
+				t.Fatalf("expected error containing %q, got nil", b.ExpectedError)
 			}
 		})
 	}

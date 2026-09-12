@@ -1,0 +1,17 @@
+[
+  {
+    "name": "overflow_varint_10th_byte",
+    "hex": "80808080808080808002",
+    "expected_error": "varint 64-bit overflow"
+  },
+  {
+    "name": "truncated_varint",
+    "hex": "80",
+    "expected_error": "truncated varint"
+  },
+  {
+    "name": "length_exceeds_payload",
+    "hex": "0a640102",
+    "expected_error": "length exceeds payload bounds"
+  }
+]
