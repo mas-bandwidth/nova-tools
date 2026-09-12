@@ -151,7 +151,7 @@ cold start on purpose.
 ```
 WAKE at=<stamp> as=<name|-> max=<d> interval=<d> on-deadline=<word> sources=<bus,entries,reports> state=<file> cold=<true|false> nova-bus=<version|-> pending=<n>
 WAKE CHANGE after=<d> polls=<n> bus=<n> entries=<n> reports=<n> lines=<n> pending=<n>
-WAKE QUIET after=<d> polls=<n> default=<word>: deadline, default taken
+WAKE QUIET after=<d> polls=<n> default=<word> sources-failing=<n>: deadline, default taken
 WAKE BROKEN source=<bus|entries|reports> failures=<n> since=<stamp>: <reason>
 WAKE BUS id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> commit=<sha|-> path=<path>: <subject>
 WAKE BUS LINE <the bus's own line, verbatim>
@@ -169,10 +169,10 @@ WAKE FIRED ids=<n> first=<id> rc=<n> redelivered=<0|1>
 WAKE UNCERTAIN id=<id> attempt=<n>: dispatch interrupted; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> runs it again
 WAKE UNCERTAIN id=<id> attempt=<n> rc=<n>: retry not terminal; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> runs it again
 WAKE BLOCKED as=<name> uncertain=<id> queued=<n>: a dispatch may still own this receiver; end it, then nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
-WAKE SERVE fired=<n> notes=<n> redelivered=<n> uncertain=<n> queued=<n> cc=<n> max_wait=<d> idle=<duration>
+WAKE SERVE fired=<n> notes=<n> redelivered=<n> uncertain=<n> queued=<n> cc=<n> failed=<n> max_wait=<d> idle=<duration>
 ```
 
-The last three are `serve`'s (rule 10); everything above them is `watch`'s.
+The last five are `serve`'s (rule 10); everything above them is `watch`'s.
 
 `WAKE CHANGE`, `WAKE QUIET` and `WAKE BROKEN` are the **last** line and the three
 possible verdicts, and `pending=<n>` on each of the first two is the length of
@@ -358,12 +358,9 @@ Therefore:
   <carrying>` once per run on the first poll, so a cold watcher lists what it
   is owed before what is new. `--refresh` and `--advance-cursor` together are
   exit 2: one fetch per poll, never two.
-- **`--advance-cursor` is specified here and is not in the first build.** Work
-  list item 3a ships it after item 3 is read and test 11 is green against the
-  pinned binary; until then the flag is `WAKE REFUSED: --advance-cursor is not
-  in this build; use --refresh`, exit 2. Advancement is an acknowledgement
-  optimisation and not a prerequisite for delivery (Stella and Johnny,
-  2026-09-11), and a v1 that cannot move a cursor cannot lose a note.
+- **`--advance-cursor` is specified here and was shipped under work list item 3a.**
+  Advancement is an acknowledgement optimisation and not a prerequisite for delivery
+  (Stella and Johnny, 2026-09-11), and a v1 that cannot move a cursor cannot lose a note.
 
 **The bus is the exception to the cold-start rule.** See **The cold-start rule**.
 
@@ -891,10 +888,15 @@ spec forbids**.
     file, each written through the same temp-file-and-rename as everything
     else: `queued|<stamp>` when the note is first seen; `dispatching|<stamp>|
     attempt=<n>` written **before** the spawn, for every id in the batch;
-    `delivered|<stamp>|rc=<n>|redelivered=<0|1>` written **after** the
-    command exits, with its exit code, for every id in the batch. Exit 0 is
+    `delivered|<stamp>|rc=0|redelivered=<0|1>` written **after** the
+    command exits 0, for every id in the batch. Exit 0 is
     the one acceptance boundary an arbitrary command offers, so `delivered
-    rc=0` is *accepted* and there is no separate *completed*. **A restart
+    rc=0` is *accepted* and there is no separate *completed*. A command that
+    does not exit 0 has not accepted the note: the batch becomes
+    `uncertain|<stamp>|attempt=<n>|rc=<rc>`, is counted `failed=`, prints
+    `WAKE UNCERTAIN id=<id> attempt=<n> rc=<rc>: dispatch did not accept; …`,
+    and blocks subsequent dispatches until resolved with `--redeliver` (never a
+    silent loss, and never an automatic retry of an arbitrary command). **A restart
     first establishes that the receiver is idle, and only then runs what it
     finds `queued`.** Killing `serve` does not prove that the command it
     started died: the child may be alive and mid-turn, and the harness is
@@ -1193,8 +1195,8 @@ Each is proven able to fail by a mutation before it is trusted.
   pinned `nova-bus`.** New mail arrives through the push inside `inbox
   --advance` and is listed by the following `inbox`; a poll advances only
   behind an empty bus queue, so a window that has been shown more than it has
-  read is not fetched for until it reads; a `nova-bus` other than `v0.10.3`
-  is refused until this document is re-measured against it.
+  read is not fetched for until it reads; a `nova-bus` other than this build's
+  derived pin (`AcceptBus`) is refused.
 - **A `serve` dispatch can be uncertain, and a person clears it.** After a
   kill between the `dispatching` write and the `delivered` write the note is
   `uncertain` and waits for `--redeliver`; only under `--on-note-idempotent`
