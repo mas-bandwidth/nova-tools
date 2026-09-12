@@ -267,8 +267,11 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     stops — no git of its own, no guessed recipients, no default `--to`, never the file's
     `owner` column as a recipient. Any of `--as`, `--to`, `--bus`, `--remote`, `--branch`
     missing is a refusal, exit 2, naming the flag; nova-bus exiting non-zero is `REPORT
-    FAIL` naming its code and first line, `sent=no`; success prints `REPORT SENT` carrying
-    nova-bus's `SEND OK` line whole, as `line=`.
+    FAIL` naming its code and first line — `sent=no` when that line is `SEND REFUSED` or a
+    `SEND FAIL` naming no commit, the bus untouched by nova-bus's own rule; `sent=uncertain`
+    when it names a commit NOT pushed, because an interrupted push may have landed (rule
+    25); success, `SEND OK … pushed=true`, prints `REPORT SENT` carrying nova-bus's `SEND
+    OK` line whole, as `line=`.
 25. **Unchanged state is the caller's to suppress, through a snapshot file the caller
     names.** Absent `--snapshot <path>`, no file is read or written (rule 9: nothing under
     `$HOME`, no state file of this tool's own). Present, the run reads the previous
@@ -276,14 +279,39 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     one atomically (a temp file beside it, then rename) and prints `changed=<yes|no>` on the
     count line with one `REPORT CHANGED name= was= now=` per entry that moved; the first
     run is the baseline, `changed=yes`, `was=-`; a tool turning UNKNOWN, or back, moved.
-    The file is JSON, one object keyed by `name`, each value `raw`, `status` (`known` or
-    `unknown`) and `at`, nothing else — the machine-readable snapshot #121 asked for.
-    **`at=` is never compared**: two snapshots differing only in their stamps are
-    `changed=no` — a timestamp refresh is not a changed version (#121). With `--snapshot`,
-    `--send` sends only when `changed=yes` and otherwise prints `REPORT NOTE unchanged;
-    nothing sent`, `sent=no`; without it every `--send` sends. Exit is the inventory's (rule
-    22), never `changed=`'s; what a line does with `changed=no` — skip the wake, read at
-    wrap — is that line's policy, chosen locally (#121), never this tool's.
+    The file is JSON, two objects and nothing else: `observed`, keyed by `name`, each value
+    `raw`, `status` (`known` or `unknown`) and `at` — the machine-readable snapshot #121
+    asked for — and `delivered`, below. **`at=` is never compared**: two snapshots differing
+    only in their stamps are `changed=no` — a timestamp refresh is not a changed version
+    (#121). **Observed state and delivered state are two records** (Stella, #127): every run
+    with `--snapshot` writes `observed`; only a `SEND OK … pushed=true` writes `delivered`,
+    keyed by the send's scope — `as`, `to` sorted, `bus`, `remote`, `branch`, joined — and
+    holding the `observed` map the body carried, nova-bus's `id` and the `at`. A local-only
+    run, a `--draft`, a refused or a failed send write no `delivered`. With `--snapshot`,
+    `--send` composes and sends when the scope has no `delivered` record, when that record's
+    `observed` differs from tonight's, or when a `pending` stands (below); otherwise it
+    prints `REPORT NOTE unchanged since <id> to <to>; nothing sent`, `sent=no`. The
+    suppression compares against what that recipient was confirmed to have, never the last
+    observation, so a report before a send, a failed send before its retry, and a snapshot
+    made for another recipient never quiet a send. Without `--snapshot` every `--send`
+    sends. **An uncertain delivery keeps its identity.** nova-bus exiting non-zero with a
+    `SEND FAIL` naming a commit NOT pushed has written the note under its own `id` into the
+    bus checkout: the run records `pending` for the scope — that `id`, `path` and commit
+    from nova-bus's line, the exact body, the `observed` it carried — and says
+    `sent=uncertain`, never `sent=no`. The next `--send` in that scope reconciles before it
+    replays, through nova-bus's own recovery: a commit nova-bus made is carried by its next
+    push, or found level when the push had landed and only the answer was lost, so this tool
+    never composes the pending body again under a new `id`. Tonight's observation equal to
+    the pending one is nothing new to say — `REPORT NOTE pending <id> commit=<sha> not
+    confirmed; nova-bus's next push from <bus> carries it`, `sent=uncertain`, no nova-bus
+    run; different, the new body is sent as usual, and its `SEND OK … pushed=true` confirms
+    the pending too, a push publishing the branch and every commit under it: `delivered`
+    takes the new record, `pending` clears, `REPORT NOTE <id> landed with this push` says
+    so. A nova-bus killed before any `SEND` line is `sent=uncertain` with `id=-` and replays
+    next time — the one place a duplicate can arise, named (open question 4). Exit is the
+    inventory's (rule 22) and the send's (`sent=uncertain` is 1), never `changed=`'s; what a
+    line does with `changed=no` — skip the wake, read at wrap — is that line's policy,
+    chosen locally (#121), never this tool's.
 26. **No hidden timer, install or automatic send.** `report` has no `--watch`, no loop, no
     daemon; it runs when a person or a unit a person wrote starts it, and ends inside its
     budget. It installs nothing, pulls nothing, and no report line is a name for `apply`
@@ -329,8 +357,8 @@ Emma's ready-to-send draft (#121) is `nova-version report --draft …`, the flag
 Per SPEC.md: **0** every entry current, an `apply` that left the box on the target, or a
 `report` whose every entry answered (and, under `--send`, whose note nova-bus took); **1**
 the tool saying NO — anything STALE, NEWER, DIFFERENT or UNKNOWN, an `apply` whose after
-is not the target, a `report` with an UNKNOWN or a send nova-bus refused; **2** could not
-run, every refusal the rules name.
+is not the target, a `report` with an UNKNOWN or a send nova-bus refused or did not
+confirm (`sent=uncertain`); **2** could not run, every refusal the rules name.
 
 ```
 UPDATE at=<stamp> file=<path> entries=<n> kinds=<k,k,k> timeout=<d> budget=<d> max=<n>
@@ -351,7 +379,7 @@ REPORT UNKNOWN name=<name> kind=<kind> path=<path|-> raw=<line|->: <reason> (<re
 REPORT CHANGED name=<name> was=<raw|-> now=<raw|->
 REPORT MORE kind=<tool|unknown|changed> shown=<n> total=<t> <remedy>
 REPORT SENT to=<who,who> via=<nova-bus argv, escaped> line=<nova-bus's SEND OK line, escaped>
-REPORT <OK|FAIL> checked=<n> known=<n> unknown=<n> changed=<yes|no|-> sent=<yes|no|-> took=<d> file=<path>
+REPORT <OK|FAIL> checked=<n> known=<n> unknown=<n> changed=<yes|no|-> sent=<yes|no|uncertain|-> took=<d> file=<path>
 REPORT NOTE <something true about this run that is not a finding>
 REPORT REFUSED: <reason> (<remedy>)
 ```
@@ -507,8 +535,9 @@ install` or `npm install`.
 21. `TestTheReportKeepsRawBesideTheKey`: rule 4's eleven fixture lines each print `raw=`
     equal to the first line, escaped, and `version=` equal to the stated read;
     `nova-merge 0459069` and `nova-wake devel darwin/arm64 go1.27.1` each print `REPORT
-    TOOL` with `version=-` and the whole raw line — never UNKNOWN, and `1.27.1` nowhere on
-    the line, the mutation that matters; under `check` the same two lines are UNKNOWN reason
+    TOOL` with `version=-` and the whole raw line, `go1.27.1` inside `raw=` — never UNKNOWN,
+    and `version=1.27.1` nowhere, the mutation that matters; under `check` the same two
+    lines are UNKNOWN reason
     `no_release_identity` with the stamped-build remedy, never `installed=1.27.1`, and a
     `check` script printing 1 MB is UNKNOWN reason `output` (rule 4's cap); a `kind=pin`
     entry's key is the second token whole; `+dirty` survives in both fields.
@@ -532,18 +561,32 @@ install` or `npm install`.
     `nova-bus` (a fake on `PATH` counts zero runs); `--send`
     missing any one of its five flags is exit 2 naming that flag; `--send` complete runs the
     fake `nova-bus send` once with `--stdin`, `--bus`, `--remote`, `--branch`, `--as`
-    and the body on its stdin; the fake exiting 1 with a first line is `REPORT FAIL`
-    quoting code and line, `sent=no`; a file whose `owner` column names `stella` and no
-    `--to` never sends to her — the mutation that matters.
+    and the body on its stdin; the fake exiting 1 with `SEND REFUSED: …` is `REPORT FAIL`
+    quoting code and line, `sent=no`; the fake exiting 1 with `SEND FAIL p: … commit abc1234
+    … NOT pushed` is `REPORT FAIL`, `sent=uncertain`, and `sent=no` nowhere — a mutation
+    that matters; a file whose `owner` column names `stella` and no `--to` never sends to
+    her — the other.
 25. `TestUnchangedStateIsTheCallersToSuppress`: without `--snapshot`, `HOME` and the cwd are
-    fresh temp dirs and empty after the run; `--snapshot s.json` first writes it — JSON, one
-    object keyed by `name`, each value exactly `raw`, `status`, `at` — and prints
-    `changed=yes`; a second run with identical raw lines and an injected clock one hour on
-    prints `changed=no` and no `REPORT CHANGED` line — the mutation that matters; a third
-    with one raw differing prints one `REPORT CHANGED name= was= now=` and `changed=yes`; a
-    tool turning UNKNOWN is a change, and back is another; `--send --snapshot s.json` on the
-    unchanged run starts no `nova-bus`, prints `REPORT NOTE unchanged; nothing sent` and
-    `sent=no`; a run killed mid-write leaves the old snapshot whole.
+    fresh temp dirs and empty after the run; `--snapshot s.json` first writes it — JSON,
+    `observed` keyed by `name`, each value exactly `raw`, `status`, `at`, and `delivered`
+    empty — and prints `changed=yes`; a second run with identical raw lines and an injected
+    clock one hour on prints `changed=no` and no `REPORT CHANGED` line — the mutation that
+    matters; a third with one raw differing prints one `REPORT CHANGED name= was= now=` and
+    `changed=yes`; a tool turning UNKNOWN is a change, and back is another. Delivery, with a
+    fake `nova-bus` on `PATH`: a `--send --snapshot s.json` the fake confirms (`SEND OK …
+    pushed=true`) writes `delivered` for its scope, and the same send on the unchanged run
+    starts no `nova-bus`, prints `REPORT NOTE unchanged since <id> to stella; nothing sent`
+    and `sent=no` — the quiet repeat; a local-only `--snapshot` run, then the first `--send`
+    for that scope, sends — a send quieted by an observation nobody was sent is the mutation
+    that matters; the fake refusing (`SEND REFUSED`), then the same send unchanged, sends
+    again; a send confirmed `--to stella`, then the same observation `--to emma`, sends; the
+    fake printing `SEND FAIL p: … commit abc1234 … NOT pushed` and exiting 1 leaves
+    `sent=uncertain` and a `pending` holding that commit and the body, the unchanged retry
+    starts no `nova-bus` and prints `REPORT NOTE pending`, and a changed retry the fake
+    confirms clears `pending`, prints `REPORT NOTE <id> landed with this push` and writes
+    `delivered`, the pending body appearing on no stdin the fake saw — the lost
+    acknowledgement after a landed push, resolved without a second copy; a run killed
+    mid-write leaves the old snapshot whole.
 26. `TestTheReportHasNoClockNoInstallNoAutomaticSend`: `--watch`, `--every` and `--loop` are
     unknown flags costing one line; over a file whose every entry is UNKNOWN or changed, no
     `apply` argv and none of `brew`, `npm`, `go install` or `ollama pull` starts; a plain
@@ -566,3 +609,10 @@ A registry that stops answering registry-v2 JSON is UNKNOWN, never OK.
 arrive either way and the two disagree by days. Default: the file names the source
 that installed the copy on this box; a mismatch is a one-line fix to the file, not a
 second source per entry.
+4. **A pending note waits for a push nova-bus makes for another reason.** No nova-bus verb
+pushes a committed note without adding one, so a `pending` report whose observation does
+not change sits in the bus checkout until the next changed send or any nova-bus push from
+that checkout carries it (rule 25). Default: that wait, said on the line as `sent=uncertain`
+and a `REPORT NOTE pending`; a verb that lands a pending commit alone, or says whether a
+commit is on the remote, is nova-bus's to add and would close the `id=-` duplicate too. No
+timer and no git of this tool's own either way.
