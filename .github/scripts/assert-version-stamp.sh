@@ -10,8 +10,11 @@
 # THE TOOL LIST IS DISCOVERED FROM THE TREE, never written here. The build loop ships
 # every `cmd/*/`, so this walks the same directories; a tool added tomorrow is asserted
 # without anyone remembering this file. What is discovered per tool is whether it declares
-# the stamp -- `var version string` in package main is the symbol `-X main.version` writes
-# and is the tool's own statement that it intends to report the release it came from.
+# the stamp -- a package-level string `version` in package main is the symbol
+# `-X main.version` writes and is the tool's own statement that it intends to report the
+# release it came from. Every spelling the LINKER accepts counts as that statement; see
+# declares_stamp below for why a narrower test is the same silent demotion this file
+# exists to refuse.
 #
 # THREE CLASSES, and the difference between them is the point:
 #
@@ -52,6 +55,66 @@ case "$template" in
 	;;
 esac
 
+# declares_stamp <file> -- does this file declare the package-level string variable that
+# `-X main.version=` writes?
+#
+# WHAT THE LINKER ACCEPTS is the whole of the rule, and cmd/link states it: -X
+# importpath.name=value "is only effective if the variable is declared in the source code
+# either uninitialized or initialized to a constant string expression". So all of these
+# are stamped, and an earlier revision of this file recognised only the first:
+#
+#   var version string              var version = "devel"        var (
+#   var version string = "devel"    var version = `devel`                version string
+#                                                                )
+#
+# The one that made this worth widening: `var version = ""` is stamped by the linker
+# exactly as `var version string` is, and a single exact-line grep demoted that tool to a
+# NOTE -- a shipped binary quietly dropped out of the asserted set, which is this file's
+# own argument against silent demotion turned on itself. A `version` initialised to
+# something that is NOT a constant string -- `var version = buildID()` -- the linker
+# genuinely cannot write, so it is genuinely not a stamp and is not recognised here.
+#
+# TOP-LEVEL declarations only. gofmt indents every declaration inside a function, so a
+# line beginning `var` at column zero, and the body of a top-level `var (` block, are
+# exactly the package-level ones.
+declares_stamp() {
+	awk '
+		function names_version(names,   n, p, i, s) {
+			n = split(names, p, ",")
+			for (i = 1; i <= n; i++) {
+				s = p[i]
+				gsub(/^[ \t]+|[ \t]+$/, "", s)
+				if (s == "version") return 1
+			}
+			return 0
+		}
+		{ line = $0; sub(/\/\/.*$/, "", line) }
+		!inblock && line ~ /^var[ \t]*\([ \t]*$/ { inblock = 1; next }
+		inblock && line ~ /^[ \t]*\)/ { inblock = 0; next }
+		{
+			if (line ~ /^var[ \t]+/) { decl = line; sub(/^var[ \t]+/, "", decl) }
+			else if (inblock && line ~ /^[ \t]+[A-Za-z_]/) { decl = line; sub(/^[ \t]+/, "", decl) }
+			else next
+
+			eq = index(decl, "=")
+			if (eq > 0) { names = substr(decl, 1, eq - 1); init = substr(decl, eq + 1) }
+			else { names = decl; init = "" }
+			gsub(/^[ \t]+|[ \t]+$/, "", names)
+			gsub(/^[ \t]+|[ \t]+$/, "", init)
+
+			# the type, when written, is the last word of the name list
+			typed = 0
+			if (names ~ /[ \t]string$/) { typed = 1; sub(/[ \t]+string$/, "", names) }
+			if (!names_version(names)) next
+
+			# uninitialised must say `string`; initialised must be a string literal
+			if (init == "") { if (typed) found = 1 }
+			else if (init ~ /^"/ || init ~ /^`/) found = 1
+		}
+		END { exit found ? 0 : 1 }
+	' "$1"
+}
+
 notes=""
 note() { notes="${notes}NOTE: $1"$'\n'; }
 
@@ -75,7 +138,7 @@ for dir in "$cmddir"/*/; do
 		*_test.go) continue ;;
 		esac
 		[ -f "$f" ] || continue
-		if grep -Eq '^var version string$' "$f"; then
+		if declares_stamp "$f"; then
 			stamped=yes
 			break
 		fi
@@ -85,16 +148,22 @@ for dir in "$cmddir"/*/; do
 	out=$("$bin" version 2>&1)
 	rc=$?
 	set -e
-	# One line and BOUNDED. A refusal can be a whole usage message -- nova-self-talk's is
-	# several hundred characters -- and a check that pastes eleven of those is a check
-	# nobody reads to the end. The first 200 characters carry the reason.
-	out=$(printf '%s' "$out" | tr '\n' ' ' | cut -c1-200)
+	# One line, MATCHED WHOLE, SHOWN bounded. A refusal can be a whole usage message --
+	# nova-self-talk's is several hundred characters -- and a check that pastes eleven of
+	# those is a check nobody reads to the end, so what is PRINTED is cut at 200
+	# characters and marked when it was cut. What is MATCHED below is the full output: a
+	# tool whose version line carries the tag past character 200 would otherwise fail the
+	# assertion for a defect in this file rather than for anything wrong with the binary,
+	# and would do it in a message naming the tag the binary had just printed.
+	out=$(printf '%s' "$out" | tr '\n' ' ')
+	shown=$(printf '%s' "$out" | cut -c1-200)
+	[ "${#shown}" -eq "${#out}" ] || shown="$shown..."
 
 	if [ "$stamped" = no ]; then
 		if [ "$rc" -ne 0 ]; then
-			note "$name has no version print today: \`$name version\` exited $rc: $out"
+			note "$name has no version print today: \`$name version\` exited $rc: $shown"
 		else
-			note "$name prints an identity that is not the release stamp: $out"
+			note "$name prints an identity that is not the release stamp: $shown"
 		fi
 		note "  the common version verb across the set is #121; this job does not decide it"
 		continue
@@ -102,7 +171,7 @@ for dir in "$cmddir"/*/; do
 
 	if [ "$rc" -ne 0 ]; then
 		echo "FAIL: $name declares the -X main.version stamp but \`$name version\` exited $rc"
-		echo "  it printed: $out"
+		echo "  it printed: $shown"
 		echo "  a stamp no verb can read is a stamp nobody can check; wire version into main.go's dispatch"
 		exit 1
 	fi
@@ -115,7 +184,7 @@ for dir in "$cmddir"/*/; do
 	*)
 		echo "FAIL: $name does not report the tag it was built from"
 		echo "  want the token: $tag"
-		echo "  \`$name version\` printed: $out"
+		echo "  \`$name version\` printed: $shown"
 		echo "  the linker ignores -X main.version in silence when the symbol is missing or renamed"
 		exit 1
 		;;
@@ -127,12 +196,12 @@ for dir in "$cmddir"/*/; do
 	*"$name"*) ;;
 	*)
 		echo "FAIL: $name version does not name the tool it is reporting for"
-		echo "  \`$name version\` printed: $out"
+		echo "  \`$name version\` printed: $shown"
 		exit 1
 		;;
 	esac
 
-	echo "ok: $out"
+	echo "ok: $shown"
 	asserted=$((asserted + 1))
 done
 
