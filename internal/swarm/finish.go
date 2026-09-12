@@ -35,18 +35,25 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 			Reap(sf.JobPgid, sf.JobStarted, TerminateGrace) || Reap(sf.Pgid, sf.PidStarted, TerminateGrace))
 	}
 
+	// THE COMPLETION EVIDENCE LIVES IN THE JOB'S OWN DIRECTORY, and reading it was gated
+	// on reading the SLOT file first -- so a slot file this pass could not read threw away
+	// a whole exit.json that was sitting on disk and made the job `rc=-1 end=unknown`. The
+	// nonce is what the evidence is checked against, and the launch's nonce is carried by
+	// the job this pass is watching; the slot file is only one place it is also written.
+	nonce := r.nonce
+	if slotErr == nil && sf.Nonce != "" {
+		nonce = sf.Nonce
+	}
 	rec := ExitRecord{RC: -1}
 	end := EndUnknown
-	if slotErr == nil {
-		var got ExitRecord
-		if err := ReadJSON(ExitPath(r.jobDir), &got); err == nil && got.Nonce == sf.Nonce {
-			rec, end = got, got.End
-			if end == "" {
-				end = EndDone
-			}
-			if got.Survivors > survivors {
-				survivors = got.Survivors
-			}
+	var got ExitRecord
+	if err := ReadJSON(ExitPath(r.jobDir), &got); err == nil && got.Nonce == nonce {
+		rec, end = got, got.End
+		if end == "" {
+			end = EndDone
+		}
+		if got.Survivors > survivors {
+			survivors = got.Survivors
 		}
 	}
 

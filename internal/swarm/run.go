@@ -66,6 +66,11 @@ type running struct {
 	deadline time.Duration
 	adopted  bool
 	notes    int
+	// unreadableSince is when this pass first FAILED to read this job's slot file for a
+	// reason other than the file being gone. A failed read is not a fact about a job
+	// (fileretry.go), so it is not finalized on -- but the wait for a readable one ends
+	// on its own like every wait here, and this is the stamp that ends it.
+	unreadableSince time.Time
 }
 
 // Run is the dispatcher. It returns the exit code.
@@ -452,7 +457,14 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	childStarted := StartStamp(cmd.Process.Pid)
 	_ = os.WriteFile(filepath.Join(jobDir, "supervisor.pid"), []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
 	CheckKillPoint("after-spawn")
-	go func() { _ = cmd.Wait() }()
+	// THE SUPERVISOR'S OWN END IS AN OBSERVABLE, and the handshake below waits on it as
+	// well as on the identity. A supervisor that DIED before it identified itself -- it
+	// lost its compare-and-swap, or it could not write the slot file at all -- will never
+	// write one, and the whole launch timeout spent waiting for it is a diagnosis
+	// postponed, not a chance taken (#92, `no identity within 10s`). The clock stays as
+	// the OUTER bound, for the supervisor that is alive and merely slow.
+	gone := make(chan struct{})
+	go func() { _ = cmd.Wait(); close(gone) }()
 
 	// (4) THE HANDSHAKE, holding run.lock and no other lock while it waits.
 	timeout := in.LaunchTimeout
@@ -460,6 +472,7 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		timeout = DefaultLaunchTimeout
 	}
 	waited := time.Duration(0)
+	supervisorGone := false
 	for waited < timeout {
 		sf, err := p.ReadSlot(slot)
 		if err == nil && sf.State == SlotLaunched && sf.Nonce == nonce {
@@ -471,7 +484,17 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 				oneline.Field(sc.ID), slot, sf.Pid, sf.Pgid, oneline.Field(Stamp(r.started)),
 				trimDuration(r.deadline), oneline.Field(sc.BudgetWord()), oneline.Field(jobDir)), 0
 		}
-		time.Sleep(20 * time.Millisecond)
+		// A supervisor that has EXITED is read one last time -- its identify may have
+		// landed in the same instant it died -- and then believed.
+		if supervisorGone {
+			break
+		}
+		select {
+		case <-gone:
+			supervisorGone = true
+			continue
+		case <-time.After(20 * time.Millisecond):
+		}
 		waited += 20 * time.Millisecond
 	}
 	KillGroup(cmd.Process.Pid, childStarted)
@@ -479,6 +502,10 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	_ = p.WriteSidecar(Running, sc)
 	_ = p.Claim(sc.ID, Running, Failed)
 	_ = p.Free(slot)
+	if supervisorGone {
+		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=%s: the supervisor exited without writing an identity%s",
+			oneline.Field(sc.ID), slot, trimDuration(waited), abortedReason(jobDir, nonce)), 1
+	}
 	return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=%s: no identity within %ds",
 		oneline.Field(sc.ID), slot, trimDuration(waited), int(timeout.Seconds())), 1
 }
@@ -518,8 +545,9 @@ func (in RunInput) prepare(sc Sidecar, text []byte, slot int, jobDir string) err
 func (in RunInput) state(r *running, now time.Time) (alive, over bool) {
 	sf, err := in.Pool.ReadSlot(r.slot)
 	if err != nil {
-		return false, false
+		return in.unreadable(r, err, now)
 	}
+	r.unreadableSince = time.Time{}
 	// THE SLOT FILE IS THE IDENTITY, read afresh on every poll: the supervisor's pid AND
 	// the start stamp it wrote beside it. A pid alone let a re-issued number read as the
 	// still-running supervisor of a job whose exit.json was already on disk, and an ADOPTED
@@ -529,4 +557,49 @@ func (in RunInput) state(r *running, now time.Time) (alive, over bool) {
 		return false, false
 	}
 	return true, now.Sub(r.started) > r.deadline+TerminateGrace*2
+}
+
+// unreadable is what this pass does about a slot file it could not read.
+//
+// A READ THAT FAILED IS NOT EVIDENCE THAT A JOB IS OVER. `state` finalized on any error at
+// all, and on Windows a read of a path whose old file is delete-pending fails for
+// microseconds every time somebody replaces it -- which the supervisor does, to its own
+// slot file, milliseconds after it identifies and exactly when this poll first lands. One
+// such read finished a RUNNING job: the dispatcher reaped a live supervisor at `after=0s`,
+// then found no exit.json where it had just killed the process that writes it, and the
+// pass exited 1 over `rc=-1 end=unknown` with the worker's own finished report beside it
+// (run 34698330796). fileretry.go now waits that collision out; this is the rule underneath
+// it, which holds for any unreadable record and not only that one.
+//
+// So the question is asked of an OBSERVABLE instead: the record is GONE (an answer), or
+// the supervisor's own completion evidence carries this launch's nonce (an answer), or the
+// job is still running. The clock is only the outer bound -- a record that stays unreadable
+// past the job's own deadline is finalized rather than watched forever.
+func (in RunInput) unreadable(r *running, err error, now time.Time) (alive, over bool) {
+	if missing(err) {
+		return false, false
+	}
+	var ex ExitRecord
+	if readErr := ReadJSON(ExitPath(r.jobDir), &ex); readErr == nil && ex.Nonce == r.nonce {
+		return false, false
+	}
+	if r.unreadableSince.IsZero() {
+		r.unreadableSince = now
+	}
+	if now.Sub(r.unreadableSince) > r.deadline+TerminateGrace*2 {
+		return false, false
+	}
+	return true, now.Sub(r.started) > r.deadline+TerminateGrace*2
+}
+
+// abortedReason is the supervisor's OWN word about why it never identified, where it left
+// one: rule 18's aborted.json, carrying this launch's nonce. A LAUNCH-FAILED line with the
+// reason on it is a line a person can act on; before this the only diagnosis of a lost
+// launch was a file no verb prints.
+func abortedReason(jobDir, nonce string) string {
+	var ab AbortedRecord
+	if err := ReadJSON(AbortedPath(jobDir), &ab); err == nil && ab.Nonce == nonce && ab.Reason != "" {
+		return ": " + oneline.Escape(oneline.Cap(ab.Reason, oneline.TailBytes))
+	}
+	return ""
 }

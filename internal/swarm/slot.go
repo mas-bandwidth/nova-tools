@@ -109,7 +109,7 @@ func (p *Pool) slotPath(n int) string { return p.Path(Slots, strconv.Itoa(n)+".j
 // ReadSlot reads one slot file.
 func (p *Pool) ReadSlot(n int) (SlotFile, error) {
 	var sf SlotFile
-	raw, err := os.ReadFile(p.slotPath(n))
+	raw, err := readFileSteady(p.slotPath(n))
 	if err != nil {
 		return sf, err
 	}
@@ -258,7 +258,7 @@ func (p *Pool) Free(n int) error {
 	defer release()
 	path := p.slotPath(n)
 	gone := path + ".freed"
-	if err := os.Rename(path, gone); err != nil {
+	if err := renameSteady(path, gone); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
@@ -287,7 +287,7 @@ func WriteJSON(path string, v any) error {
 
 // ReadJSON reads one of them back.
 func ReadJSON(path string, v any) error {
-	raw, err := os.ReadFile(path)
+	raw, err := readFileSteady(path)
 	if err != nil {
 		return err
 	}

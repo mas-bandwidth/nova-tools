@@ -307,7 +307,10 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	// The rename waits out a reader that has this path open (fileretry.go): on Windows
+	// that collision is an error, and a durable record dropped because somebody was
+	// reading it is how a supervisor aborted its own launch (#92).
+	return renameSteady(tmp, path)
 }
 
 // Stopped reports whether a person has asked this pool to stop.
