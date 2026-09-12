@@ -80,14 +80,25 @@ func exampleLines(t *testing.T, l *lab) []string {
 
 // (a) The usage banner ends in an `example:` block of lines that ACTUALLY RUN. "Run" is
 // this repo's exit law: 0 or 1 is an answer and 2 is "could not run".
+//
+// The first example is the REHEARSAL: it leans on --remote, so it never touches RepoURL.
+// RepoURL here is pointed at a repository that is not there, so an example that drops the
+// --remote and leans on a concrete --repo would fail to run and this test goes red.
 func TestUsageBannerExamplesRun(t *testing.T) {
 	t.Parallel()
 	l := firstRunLab(t)
+	l.urlFor = func(repo string) string { return "https://example.invalid/" + repo + ".git" }
 	exs := exampleLines(t, l)
 	if len(exs) != 5 {
 		t.Fatalf("want the five-line sitting under `example:`, got %d: %q", len(exs), exs)
 	}
 	for _, ex := range exs {
+		// A STATIC ASSERTION, because the dynamic one above only fires when the example
+		// is run: no example names a concrete --repo while omitting --remote, which is the
+		// only way an example could reach RepoURL and the live forge it points at.
+		if namesConcreteRepoWithoutRemote(ex) {
+			t.Errorf("the usage example %q names a concrete --repo with no --remote; the first run must rehearse against a bare repository of the reader's own", ex)
+		}
 		args := l.localize(strings.Fields(ex)[1:])
 		exit, stdout, stderr := l.run(args...)
 		if exit == 2 {
@@ -98,6 +109,29 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 			t.Errorf("the usage example %q printed nothing", ex)
 		}
 	}
+}
+
+// namesConcreteRepoWithoutRemote reports whether an example line names a --repo whose value
+// is a CONCRETE repository (not the <owner>/<name> placeholder) and omits --remote. Such a
+// line leans on RepoURL, which points at the live forge; the rehearsal must carry --remote.
+func namesConcreteRepoWithoutRemote(line string) bool {
+	fields := strings.Fields(line)
+	repoValue := ""
+	hasRemote := false
+	for i := 0; i < len(fields); i++ {
+		switch fields[i] {
+		case "--remote":
+			hasRemote = true
+		case "--repo":
+			if i+1 < len(fields) {
+				repoValue = fields[i+1]
+			}
+		}
+	}
+	if repoValue == "" || strings.HasPrefix(repoValue, "<") {
+		return false
+	}
+	return !hasRemote
 }
 
 // (b) A refusal says what the flag or input WANTS, not only what was wrong.
