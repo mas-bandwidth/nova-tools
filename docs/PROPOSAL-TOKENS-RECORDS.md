@@ -25,7 +25,7 @@ Reporting selects a consistent set of observations under a named mapping version
 | `schema` | Explicit record-format version; unsupported versions are reported and excluded, never guessed. |
 | `observation_id` | Deterministic identity of this exact usage observation; stable across retries and byte-equivalent copies. |
 | `source_kind`, `source_version` | Harness/export shape and known producer/schema version; unavailable producer version is explicit. |
-| `source_id`, `event_key` | Stable session/job and request/turn identity within a declared namespace; independent of collection path and collection bench. |
+| `source_id`, `event_key` | `event_key` is a nonempty array of native identity strings establishing spend identity within its namespace; `source_id` is provenance. A fork's containing session creates no fresh spend. Collection paths and benches do not define identity. |
 | `kind`, `revision` | Per-request, cumulative, streamed revision or aggregate; source ordering/revision evidence as the mapping defines it. |
 | `occurred_at`, `interval`, `day_basis` | Original event time or measured interval; a zoned daily aggregate keeps its actual basis. Unknown time is not collection time. |
 | `friend`, `execution_bench` | Whose work and where it ran, with provenance. `studio` and `air` are labels, not inferred from whichever host now holds a copy. Unknown is explicit. |
@@ -52,13 +52,13 @@ Raw numbers are kept unchanged. Each mapping states whether input includes cache
 
 For comparable reports, propose **total input including cache** and **total output including reasoning**, with cache-read, cache-write and reasoning shown separately as subsets where measured. These totals are derived only when the mapping proves them: a source with exclusive input may need addition of its cache counts; a source with inclusive input must not add them again. Unknown component relationships leave the affected normalized total unknown. Never add the five displayed columns to produce a grand total. A spend total is input-total plus output-total only where both are known; otherwise display known components and coverage, not a falsely complete scalar.
 
-Example with an independently specified inclusive mapping: raw input1000, cache-read800, output100, reasoning40 means input-total1000 and output-total100, hence1100 total, with800 and40 displayed as subsets. It does not mean1940. This is a synthetic arithmetic fixture, not proof that a particular harness uses that mapping.
+Example with an independently specified inclusive mapping: raw input 1000, cache-read 800, output 100, reasoning 40 means input-total 1000 and output-total 100, hence 1100 total, with 800 and 40 displayed as subsets. It does not mean 1940. This is a synthetic arithmetic fixture, not proof that a particular harness uses that mapping.
 
 Per-request usage counts once. Cumulative snapshots are retained as snapshots; derive differences only within an evidenced monotonic scope/model/counter epoch. Repeated totals are not additional spend. A decrease, reset, model switch or missing predecessor cannot silently create a new zero baseline. A trustworthy source-provided last-request delta can be used when its identity and scope are verified; it is never added to the cumulative difference for the same event.
 
 A cumulative difference spanning midnight belongs to the measured interval unless the source provides finer timestamps. Do not put the entire difference on its final day and call that an accurate UTC daily allocation. The monthly view can report an interval total within its month while the daily allocation remains unknown; intervals crossing the month boundary stay unallocated unless evidence supplies the split. Original event time and collection time are separate.
 
-Antigravity field1.4.5 is owner-interpreted as context-window size; producer symbols name it GetTotalTokens but do not establish that interpretation. Preserve it provisionally and do not add it to spend. Codex Desktop's supported top-level token_usage_record supplies per-response usage; turn/thread totals and token_count snapshots are not additional spend. Grok costUsdTicks remains a raw value with unverified unit, not dollars. Source-specific mappings document these distinctions; uncertain semantics need not block retaining supported raw evidence.
+Antigravity field 1.4.5 is owner-interpreted as context-window size; producer symbols name it GetTotalTokens but do not establish that interpretation. Preserve it provisionally and do not add it to spend. Codex Desktop's supported top-level token_usage_record supplies per-response usage; turn/thread totals and token_count snapshots are not additional spend. Grok costUsdTicks remains a raw value with unverified unit, not dollars. Source-specific mappings document these distinctions; uncertain semantics need not block retaining supported raw evidence.
 
 ## Repository attribution
 
@@ -80,7 +80,7 @@ The ledger and total reports remain private. Any future public report requires a
 
 ## September coverage and daily operation
 
-Each friend chooses their compatible local extraction/scheduling method. Inspect their own authorized source scope once for September1 through collection start, including the previous week; collect on other benches when that bench is available and authorized. Preserve originals. Record coverage per friend/bench/day even when partial or unavailable. A missing source/day is not a zero day. Live sessions are partial until the declared cut-off and completeness conditions are met.
+Each friend chooses their compatible local extraction/scheduling method. Inspect their own authorized source scope once for September 1 through collection start, including the previous week; collect on other benches when that bench is available and authorized. Preserve originals. Record coverage per friend/bench/day even when partial or unavailable. A missing source/day is not a zero day. Live sessions are partial until the declared cut-off and completeness conditions are met.
 
 After backfill, a collector may reuse validated receipts/indexes to avoid repeated whole-history scans; correctness on append, truncation, rewrite and schema change must be explicit before claiming incremental completeness. No model turn is required for unchanged collection, checking or publication. Errors can be deduplicated locally and surfaced through the friend's chosen notification path.
 
