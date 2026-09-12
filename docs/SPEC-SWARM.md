@@ -36,6 +36,9 @@ ten before that. The form works, and every way it failed is in the table.
 | a worker reaped at its deadline was moved to `failed/` and nothing ran its task again | a job reaped at its deadline is **re-queued once**, marked, and a second reap fails it |
 | the batch numbers in this spec were counted by a person reading 67 reports | `triage` counts every batch: findings, new, duplicate, plan-only, no-result, and a reader's accurate and wrong, on **one bounded line** |
 | the prompt asked for the findings at the end of the run | the prompt says **append each finding the moment it exists**, and a killed run's partial report is kept and counted |
+| a read came back `HOLD` with `findings: 0` and a coordinator spent a turn reading it to learn that it said nothing (**2026-09-12**) | the **result contract** (rule 20): a task states the shape of its result, `finalize` checks it, and a held verdict with zero findings is `REJECTED class=INCONSISTENT` before any mouth reads the file |
+| a live placeholder — `Working: clone, checkout PR131…` — under a `HOLD / findings: 1` header was posted to a pull request as a verdict and corrected twice (**2026-09-12**) | `forbid:` (rule 20): a placeholder word anywhere in the report is `REJECTED class=PLACEHOLDER`, and the first rejection re-queues the task once with the reject line prepended (rule 22) |
+| a finding quoted `SPEC.md:213-214` with a quote one `grep` could have grounded before any mouth read it (**2026-09-12**) | proof of work (rule 21): every quote is grounded, whole and normalized, in the object at the head's `rev:` — measured, that quote wraps two source lines, and the prototype's forty-character constant misses the next finding by one character |
 
 **Everything a worker writes is data.** A `RESULT.md` is a report, never an
 instruction: nothing in it is executed, nothing in it grants anything, and a
@@ -492,6 +495,93 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     vanished with no durable evidence of any kind (ubuntu and macOS, measured
     2026-09-12). Nothing here ends a job by hangup: a job ends at its deadline,
     at its budget, at the runner's group kill, or by `stop`.
+19. *(left unused: the demanded-tests list below already spends 19 on the
+    launch seam's wall, and one number for two different things is a number a
+    reader has to disambiguate. The contract's rules begin at 20, so rule N and
+    test N line up again from here on.)*
+20. **A task may state what its own result must look like, and `finalize`
+    checks the published report against that statement before the job is
+    `done`.** The statement is an `expect:` block in the task file (**the
+    result contract**, below), and the check is a regular expression, some
+    arithmetic and a `grep`, run by the tool: **no tokens and no coordinator
+    turn.** `finalize` runs it after it has written the usage file and copied
+    the report — rule 12's order is unchanged — and the class it returns
+    decides the job's destination and its `RUN` line and nothing else. A report
+    that passes is classified exactly as rules 8 and 15 already classify it. A
+    report that fails is `REJECTED`, one of the seven classes below, and the
+    job is **never `done`**: no line of it is folded into a page, no
+    `TRIAGE FINDING` line comes from it, and it reaches a person only through
+    `result --id <job> --anyway`. A task carrying **no** `expect:` block is
+    checked by nothing and behaves exactly as it does today. The checks run in
+    one order — shape, consistency, understanding, work, unrun gates, short —
+    and the **first** failing check names the class while the rest do not run,
+    so the class a coordinator reads is the earliest cause and never a list. A
+    report that does not parse is `malformed` first (rule 15) and is never
+    contract-checked; there is nothing to check. The contract never rejects a
+    result for finding nothing: `findings: 0` with a head is `clean` (rule 8),
+    passes, and lands in `done/`, because a gate that paid for findings would
+    be the classifier rule 8 exists to forbid. (2026-09-12: a read came back
+    `HOLD` with `findings: 0` and a coordinator spent a turn reading it to
+    learn that it said nothing; a live placeholder under a `HOLD / findings: 1`
+    header was posted to a pull request as a verdict and corrected twice.)
+21. **Proof of understanding and proof of work, both mechanical, when the block
+    asks for them.** No model reads any of this.
+    - **Understanding.** The report carries a restatement of the task where
+      `asked:` says it is — a `## <heading>` section or a line beginning
+      `<label>:` — of at most `asked_max_sentences:` sentences, and it names
+      the head's `rev:` and every file the task names, by string match on the
+      sha and on the paths. A restatement that is absent, or longer than its
+      sentence budget, is `SHAPE`; one that names neither the rev nor one of
+      the task's files is `UNGROUNDED`.
+    - **Work.** Every line `item_line:` matches carries a quote in backticks,
+      and the quote is grounded in **the file the quote names** — the nearest
+      `file:line` after the quote, else the nearest before it — read as the
+      object at the head's `rev:` (`git show <rev>:<path>`) and **never as the
+      working tree**, because the clone is inside the job's write set and a
+      worker can put its own quote into its own file. The **whole** quote must
+      be found, after the same normalization is applied to both sides: every
+      run of whitespace collapsed to one space, a line's leading comment or
+      list marker dropped, and the characters a worker cannot nest inside a
+      backtick span (`` ` ``, `*`, `_`) removed. A quote shorter than **24
+      characters** grounds by coincidence and is `UNGROUNDED` as `too short to
+      ground`, a tool property like a timeout. A path the rev does not hold, a
+      quote the file does not hold, an item with no quote, and — under
+      `shas: resolve` — a sha the clone cannot resolve, are each `UNGROUNDED`.
+      A whole-quote rule replaces the prototype's forty characters because a
+      quote wraps, and the fortieth character of a real accepted finding fell
+      on the next line (**the result contract**, measurement 2).
+    - **Unrun gates.** Every row of the `gates:` table whose result is not
+      `not run` names a command that appears on a line `<job>/harness.log`
+      marks as a **spawned command**, and on no other line of that log; a row
+      whose command appears on no such line is `UNRUN`. The anchor is the rule
+      and not a detail: the harness log holds everything the worker said,
+      including the report it echoed back, so an unanchored `grep` grounds the
+      claim in the claim (measurement 4).
+22. **A rejection is one line, one re-queue, and a refusal to print.** The
+    line is `RUN REJECTED`, carrying the class, the offending line's first
+    sixty characters and the fix in one clause, per the output grammar. The
+    class is written into the sidecar as `rejected=<CLASS>` and into a marker,
+    `<pool>/reports/<job>/REJECTED`, holding `class=<CLASS>` and that line,
+    beside the report copy that rule 12 already wrote; **`exit.json` is not
+    touched**, because it is the supervisor's own record, written once and tied
+    to its launch by a nonce (rules 17 and 18). On a **first** rejection the
+    task is re-queued once, its text unchanged but for one prepended line:
+    `Your previous run was REJECTED: <the reject line>. Produce the result the
+    contract names.` — the prompt repair, automated, because the bake-off
+    showed that prompt shape is what decides for a small model. The re-queue
+    budget is **one per task and it is shared with rule 7's**: a task that has
+    already spent it, whether on a reap or on a rejection, goes to `failed/` at
+    once with `requeued=false`. A **second** rejection is `failed` with the
+    class in its sidecar and its marker, and nobody reads it. `result --id
+    <job>` on a rejected report is `RESULT REFUSED` at exit 1 naming
+    `--anyway`, and with `--anyway` it prints one `RESULT REJECTED` line, then
+    the `RESULT OK` line and the body as always: the one path from a rejected
+    report to a person is a person asking for it by id, which is rule 15's
+    answer to the same question. `triage` prints one `TRIAGE REJECTED` line per
+    rejected report, folds no line of it into the page and prints no finding
+    from it, and prints one `TRIAGE CONTRACT` line of class counts beside
+    `TRIAGE BATCH`, which does not change: a rejected report's finding lines
+    are still in `findings=`, because a count is not a reading.
 
 ## The verbs
 
@@ -505,8 +595,8 @@ nova-swarm stop     --pool <dir>
 nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>]
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
-nova-swarm result   --pool <dir> --id <job>
-nova-swarm template --name <read-pr|probe-row|fix-card|result>
+nova-swarm result   --pool <dir> --id <job> [--anyway]
+nova-swarm template --name <read-pr|probe-row|fix-card|result|expect>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
@@ -537,6 +627,10 @@ which a malformed report reaches a person (rule 15), it never goes through
 `internal/oneline` for the body because the body is the thing asked for, and
 it is `RESULT REFUSED` at exit 1 for an id not in the pool or a job with no
 published report (`NO-RESULT`). It is never called by `run` or `triage`.
+**`--anyway`** is required for a report the result contract rejected (rule 22):
+without it the verb is `RESULT REFUSED` at exit 1 naming the class and the flag,
+and with it the body is printed after one `RESULT REJECTED` line, because the
+point of a rejection is that nobody reads the file by accident.
 
 `finalize` writes the usage file for one ended job whose runner died before
 doing it (rules 12 and 17); it is refused while the job's process group is
@@ -585,8 +679,8 @@ is `run`'s child and nobody's verb.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: a task queued, a batch queued, a pool drained, a page written, a report printed |
-| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report |
-| 2 | could not run: missing flag (`--files`, `--tokens` included, on `requeue` as on `add`), a numeric `--tokens` on a pending task under a worker description whose `usage` is `none`, unreadable pool, unreadable worker description, a key file that is absent or empty, `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, bad invocation |
+| 1 | the verb ran and said **NO**: a dispatcher that exited with tasks still pending and nothing running, a `requeue` of an id that is not in the pool, a `triage` over a directory that holds no reports when one was named, a `reclaim` of a job with no usage file or no report copy, a `finalize` of a job whose process group is alive, a `run` that ended with a quarantined slot or a `LAUNCH-FAILED` job, a `batch` over a directory with no task file, a `triage --batch` of an id no sidecar carries, a `result --id` of an id not in the pool or with no published report, a `result --id` of a report the contract rejected without `--anyway` |
+| 2 | could not run: missing flag (`--files`, `--tokens` included, on `requeue` as on `add`), a numeric `--tokens` on a pending task under a worker description whose `usage` is `none`, unreadable pool, unreadable worker description, a key file that is absent or empty, `--workers` above the cap, a `batch` with an unreadable task file, a `supervise` typed by hand, a task whose `expect:` block carries an unknown key or a regular expression that does not compile, bad invocation |
 
 **A failed task is not a failed `run`.** A worker that exits non-zero moves its
 files to `failed/` and the pass continues; `RUN OK` carries `failed=<n>` and
@@ -616,6 +710,7 @@ RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
 RUN MALFORMED id=<id> slot=<n> line=<n> dest=failed
 RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only|malformed> findings=<n> refusals=<n> notes=<sent>/<read|-> unpublished=<true|false> budget=<spent|n+|->/<n> dest=<done|failed> [log=<one bounded line of what the harness said>]
+RUN REJECTED id=<id> slot=<n> class=<NO-RESULT|SHAPE|PLACEHOLDER|INCONSISTENT|UNGROUNDED|UNRUN|SHORT> at=<line|-> requeued=<true|false> dest=<pending|failed>: <the offending line's first sixty characters> — <the fix in one clause>
 RUN VIOLATION id=<id> slot=<n> background=<n> dest=failed: <reason>
 RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> unpublished=<true|false> budget=<spent|n+|->/<n> survived=<true|false> requeued=<true|false> reaped=<1|2>
 RUN MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
@@ -629,11 +724,14 @@ STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=
 TRIAGE REPORT id=<id> rev=<sha12> job=<name> result=<ok|clean|plan-only> items=<n> red=<n> green=<n> notdone=<n>: <head>
 TRIAGE QUARANTINED id=<id> rev=<sha12> line=<n>: not folded; nova-swarm result --pool <dir> --id <id>
 TRIAGE SKIPPED id=<id>: changed while read
+TRIAGE REJECTED id=<id> rev=<sha12> class=<CLASS> at=<line|->: not folded; nova-swarm result --pool <dir> --id <id> --anyway
 TRIAGE FINDING jobs=<id>[,<id>...] at=<file:line|->: <one bounded finding line>
 TRIAGE MORE kind=<report|finding> shown=<n> total=<t> at=<path> --max 0
 TRIAGE BATCH batch=<id|-> reports=<n> findings=<n> new=<n> dup=<n> unquoted=<n> clean=<n> plan_only=<n> no_result=<n> malformed=<n> budget=<n> accurate=<n|-> wrong=<n|->
+TRIAGE CONTRACT rejected=<n> no_result=<n> shape=<n> placeholder=<n> inconsistent=<n> ungrounded=<n> unrun=<n> short=<n>
 TRIAGE OK folded=<n> template=<n> malformed=<n> skipped=<n> items=<n> red=<n> green=<n> notdone=<n> page=<path>
 TRIAGE REFUSED: <reason>
+RESULT REJECTED id=<id> class=<CLASS> at=<line|->: <the fix in one clause>
 RESULT OK id=<id> rev=<sha12> class=<ok|clean|plan-only|malformed> bytes=<n> from=<path>
 RESULT REFUSED: <reason>
 VERDICT OK id=<id> who=<name> accurate=<n> wrong=<n>
@@ -1036,6 +1134,209 @@ file is one command away — `result --id <job>` — for a person; it is not the
 tool's to salvage, because a tool that quoted half a malformed report into a
 page would be choosing which half, and a report with no head at all is
 `plan-only` (rule 8), never `malformed`.
+
+## The result contract, checked by `finalize`
+
+A task may state what its own result must look like, and the machinery checks
+the published report against that statement before the job is `done`. The
+statement is an **`expect:` block** in the task file. The check is a regular
+expression, some arithmetic and a `grep`: it runs inside `finalize`, it reads
+the report, the job's own clone and the job's `harness.log`, and it **costs no
+tokens and no coordinator turn**.
+
+**What a coordinator gets.** A job whose result fails the contract is
+`REJECTED`, never `done`. It does not enter a window: no line of it reaches a
+page, no finding of it is printed, and `triage` says the class and the count
+instead of the file. The first rejection **re-queues the task once** with the
+reject line prepended, so the prompt repair happens with nobody typing. A
+second rejection is `failed`, and the report is one command and one flag away
+for a person who wants it. What this removes is the turn spent reading a report
+to learn that it said nothing — and a coordinator's turns are the only tokens
+that matter here (rule 14).
+
+Glenn asked for it in these words, 2026-09-12:
+
+> "Can you design something mechanical to quickly reject failed jobs on swarms,
+> vs. spending tokens on it. Can you make the swarm produce something and if it
+> fails to produce that you are like, dumbass, skip."
+
+and
+
+> "make the worker produce something to prove work, understanding etc."
+
+**A task with no `expect:` block is checked by nothing** and behaves exactly as
+it does today. Every check below runs only because a block asked for it.
+
+### The `expect:` block
+
+It is a block in the task file: a line that is exactly `expect:`, then indented
+`key: value` lines, ending at the first line that is neither. A value runs to
+the end of its line, is read as **data** — never a shell word, never executed —
+and a regular expression is RE2, which has no backtracking, so a worker-written
+line cannot make the check expensive. The whitespace after the colon is not part
+of the value; a value may be wrapped in single quotes, which are not part of it
+either, and quoting is how a value with a **trailing space** is written so a
+reader and an editor can both see it. An unknown key, or a regular expression
+that does not compile, is `ADD REFUSED` at exit 2 naming the key and its line:
+strict decode, as the worker description has (the work list, item 4).
+
+```
+expect:
+  line1: ^READ \(.+\): (APPROVE|HOLD)$
+  line2: ^findings: [0-9]+$
+  sections: Head, Findings, Per item, Gates, Left owed, One line
+  item_line: '^- (dup: )?(HIGH|MEDIUM|LOW|MINOR|NIT) '
+  count_from: line2
+  hold_when: HOLD$
+  forbid: ^(Working|TODO|pending)\b
+  min_lines: 12
+  asked: Asked
+  asked_max_sentences: 3
+  ground: quotes
+  shas: resolve
+```
+
+| key | value | what the tool then checks |
+|---|---|---|
+| `line1:` | a regular expression | the report's first line matches it |
+| `line2:` | a regular expression | the report's second line matches it |
+| `sections:` | headings, comma-separated | a `## <heading>` line exists for each, in the order given |
+| `item_line:` | a regular expression | which lines are the counted items; nothing else counts them |
+| `count_from:` | `line1`, `line2`, or a regular expression with one capture group | where the report's **declared** number is read |
+| `hold_when:` | a regular expression over line 1 | when it matches, the declared number must be at least 1 |
+| `forbid:` | a regular expression | **no** line of the report matches it |
+| `min_lines:` | an integer, at least 1 | the report has at least that many lines |
+| `asked:` | a heading or a line label | where the restatement of the task is (rule 21) |
+| `asked_max_sentences:` | an integer | the restatement is at most that many sentences |
+| `ground:` | `quotes` | every item's quote is grounded in the file the quote names (rule 21) |
+| `gates:` | a heading | every gate row's command is shown as a spawned command by `harness.log` (rule 21) |
+| `shas:` | `resolve` | every sha the report names resolves in the job's clone |
+
+An absent key is a check that does not run. There is no default block and no
+guessed one: a contract this tool invented would be an opinion about somebody
+else's task (SPEC.md, **no guessing**). The **clone** is not a key — the tool
+made the clone (rule 7) and knows where it is.
+
+`nova-swarm template --name expect` prints the block above, which is the one the
+shipped `read-pr` template carries. It names no `gates:` key, deliberately: the
+`read-pr` template asks for a gate table of results rather than of commands as
+run, and an `UNRUN` check over summaries would reject the day's accepted reads
+(**measurement 4**). A template that asks for the command as run may turn it on,
+and `probe-row` — whose second condition already says *paste the command and its
+tail* — is the candidate.
+
+### The checks, in order
+
+The **first** failing check names the class and the rest do not run, so the
+class a coordinator reads is the earliest cause and never a list.
+
+| # | the check | reads | class when it fails |
+|---|---|---|---|
+| 0 | a report was published at all | `<pool>/reports/<job>/` | `NO-RESULT` |
+| 0b | a placeholder word (`forbid:`) on any line of the report | the report | `PLACEHOLDER` |
+| 1 | **shape** — `line1:`, `line2:`, `sections:`, and the restatement where `asked:` says it is, within its sentence budget | the report | `SHAPE` |
+| 2 | **consistency** — the declared number equals the count of `item_line:` matches; a held verdict (`hold_when:`) declares at least 1; every gate row carries a number of seconds | the report | `INCONSISTENT` |
+| 3 | **understanding** — the restatement names the head's `rev:` and every file the task names | the report, the task file | `UNGROUNDED` |
+| 4 | **work** — every item's quote is grounded, and every sha resolves | the report, the clone at the head's `rev:` | `UNGROUNDED` |
+| 5 | **unrun gates** — every gate row's command is a command `harness.log` shows was spawned | the report, `<job>/harness.log` | `UNRUN` |
+| 6 | **short** — at least `min_lines:` lines | the report | `SHORT` |
+
+`forbid:` is checked over the whole report **before** the shape check, and it is
+the only check that is not in the named order: a report that says `Working:` is
+not a report whose arithmetic is interesting, and a coordinator told `SHAPE`
+about a placeholder has been told the less useful of two true things.
+
+The whole check is **bounded**: one pass over the report, one read of each
+distinct path a quote names (capped at the task's `--files`), one pass over the
+gate rows against the log's spawned-command lines. It starts no process but
+`git` read-only against the job's own clone, makes no network call, and prints
+nothing but its one line.
+
+### The seven reject classes
+
+Each is one line: the class, the offending line's first sixty characters, and
+the fix in one clause.
+
+| class | what it means | the fix clause it prints |
+|---|---|---|
+| `NO-RESULT` | the job published no `RESULT.md` | `publish RESULT.md by rename before your deadline` |
+| `SHAPE` | a line, a section or the restatement is not the shape the task named | `match the first two lines and the sections the task's expect block names` |
+| `PLACEHOLDER` | a line matches `forbid:` — a plan, a `TODO`, a `Working:` | `a placeholder is not a result; write the verdict or nothing` |
+| `INCONSISTENT` | the declared count, the held verdict or a gate's seconds disagree with the file's own contents | `make the declared count equal the lines you listed` |
+| `UNGROUNDED` | a quote, a path, a sha or the restatement does not exist in the repository it names | `quote the file at the rev you read, and name the file the quote is from` |
+| `UNRUN` | a gate row names a command the harness never spawned | `run the gate, or write its result as not run` |
+| `SHORT` | fewer than `min_lines:` lines | `the report is shorter than the task's floor; write the whole shape` |
+
+`NO-RESULT` is the same fact rule 8 already counts as `no-result`; the contract
+adds the class, not the number.
+
+### What the prototype measured, and where it was wrong
+
+`~/rowan-working/bin/swarm-accept` has been the gate since 16:20Z on
+2026-09-12. It is POSIX `sh`, it costs nothing, and it accepted the day's good
+reads and rejected the placeholder. Four things were measured with it, and they
+are the reason the rules above are not a transcription of it:
+
+1. **A quote wraps.** `SPEC.md:213-214` in the `#131` read holds
+   `The order, the floor and the line are one implementation, internal/buildinfo, so that eleven binaries answer this question in one spelling`;
+   a `grep -F` of the whole quote finds nothing, because the source wraps it
+   across two lines. Grounding on the quote's **first forty characters** finds
+   it. That was the prototype's rule.
+2. **Forty characters fails by one character.** In the `#126` delta the quote
+   `each fixture leaves every OTHER record of its job present and readable`
+   wraps after `record`, and the fortieth character is the `o` of `of`, on the
+   next line. A constant cannot be right for every quote. So the contract
+   grounds the **whole** quote, after collapsing every run of whitespace to one
+   space, dropping a line's leading comment or list marker, and removing the
+   characters a worker cannot nest inside a backtick span — the `#131` quote
+   above drops the backticks its source has around `internal/buildinfo`, because
+   a worker writing inside backticks cannot keep them, so the normalization drops
+   them on both sides. The four real quotes of the day's two accepted reads all
+   ground that way; an invented quote and two altered ones do not.
+3. **The quote belongs to the file the quote names.** The prototype grounds a
+   finding's quote in the finding's own leading `file:line`. Run with the clone
+   over the accepted `#131` read it prints
+   `REJECT reason=quote-not-in-file path=cmd/nova-fuse/main.go` — because that
+   finding's quote is from `cmd/nova-board/version_test.go:141`, named in the
+   line beside it. A gate that rejects an accepted result is a gate nobody will
+   leave switched on.
+4. **A log the worker wrote into cannot ground the worker's claim.** All four
+   gate rows of the accepted `#131` read appear in its `harness.log` — and every
+   match is the report's own table, echoed into the log at lines 3841 and 3887,
+   never a command. So the `UNRUN` check reads **only** the lines the log marks
+   as a spawned command. For the same reason the quote is grounded against the
+   object at the head's `rev:` (`git show <rev>:<path>`) and never against the
+   working tree: the clone is inside the job's write set, and a worker can put
+   its own quote in its own file.
+
+### How it sits beside the rules it does not change
+
+- **Rule 12's order stands.** `finalize` writes the usage file, then the report
+  copy and its `REV`, and only then moves the job. The contract runs after the
+  copy exists and before the move; it decides the destination and the `RUN`
+  line, and nothing else. A rejected job's report is copied like any other,
+  because the evidence is the point.
+- **Rule 15 goes first.** A report that does not parse is `malformed` and is
+  never contract-checked: there is nothing to check.
+- **Rule 8 is untouched.** `findings: 0` with a head is `clean`, passes the
+  contract, and lands in `done/`. The contract never rejects a result for
+  finding nothing, and `hold_when:` keys on the verdict word rather than on the
+  count for exactly that reason.
+- **One re-queue per task, shared with rule 7.** A task reaped and re-queued
+  once has spent it: a rejection after that is `failed/` at once. Two automatic
+  attempts for one task would be the retry this tool does not do.
+- **`exit.json` is not written by `finalize`.** The class goes in the sidecar
+  (`rejected=<CLASS>`) and in a marker, `<pool>/reports/<job>/REJECTED`, holding
+  `class=<CLASS>` and the reject line. `exit.json` is the supervisor's own
+  record, written once and tied to its launch by a nonce (rules 17 and 18), and
+  a second writer would break what it is for.
+- **`TRIAGE BATCH` does not grow.** The rejection is on its own lines —
+  `TRIAGE REJECTED` per report and one `TRIAGE CONTRACT` line of class counts. A
+  rejected report's finding lines are still in `findings=`, because a count is
+  not a reading, and none of them is printed.
+- **It does not judge a finding.** The contract checks shape, arithmetic and
+  grounding. Whether a grounded finding is *right* is a reader's verdict, and
+  it is recorded by `verdict` (rule 8).
 
 ## `triage` — one page
 
@@ -1599,6 +1900,73 @@ be seen red before it is trusted.
     `--read`, the job directory as the FIRST `--write` with the data home
     beside it, the job directory as `--cwd`, no `--net-deny`, and a directory
     planted in the task text that appears in no flag of it.
+20. `TestTheContractIsCheckedByFinalize`: a task with an `expect:` block and a
+    fake harness that publishes each of seven fixtures in turn gives
+    `RUN REJECTED … class=` equal to `NO-RESULT`, `SHAPE`, `PLACEHOLDER`,
+    `INCONSISTENT`, `UNGROUNDED`, `UNRUN` and `SHORT` respectively, each on one
+    line with the offending line's first sixty characters and a fix clause,
+    each job in `failed/` or `pending/` and never in `done/`; the two accepted
+    reads of 2026-09-12, checked in byte for byte as fixtures — one `APPROVE`
+    with `findings: 0` and no item lines, one `HOLD` with two grounded findings
+    — are **accepted** and classified `clean` and `ok` exactly as rule 8
+    classifies them; a `HOLD` with `findings: 0` is `INCONSISTENT`; a report
+    holding `Working: clone, checkout PR131` under a well-formed head is
+    `PLACEHOLDER`; a report whose declared count is 3 with two item lines is
+    `INCONSISTENT`; the same eight fixtures under a task with **no** `expect:`
+    block give the classes and destinations this spec gave before this rule
+    existed, byte for byte on every `RUN` line; a report that does not parse is
+    `RUN MALFORMED` and no contract class (rule 15 first); the checks are in
+    order — a fixture that fails both the shape check and the grounding check
+    prints `SHAPE` — ; an `expect:` block with an unknown key, and one with a
+    regular expression that does not compile, are each `ADD REFUSED` exit 2
+    naming the key and its line, with nothing queued; a tripwire finds the
+    check starting no process but `git` and opening no path outside the job
+    directory and `<pool>/reports/<job>/`; `template --name expect` prints the
+    block and `template --name read-pr` contains it.
+21. `TestProofOfWorkIsGrounded`: with `ground: quotes`, a finding whose quote
+    **wraps two source lines** is grounded (the `#131` read's
+    `SPEC.md:213-214` quote, whose whole-string `grep` finds nothing); a
+    finding whose quote wraps **within its first forty characters** is grounded
+    (the `#126` delta's `result_collision_test.go` quote, which a
+    forty-character prefix misses by one character, and a mutation that grounds
+    on a fixed forty characters turns this red); a finding whose quote is in a
+    **second file named beside it** is grounded in that file and not in the
+    finding's own leading path (the `#131` read's `cmd/nova-fuse/main.go:35`
+    finding, whose quote is from `cmd/nova-board/version_test.go:141`, and a
+    mutation that grounds on the leading path turns this red by rejecting an
+    accepted result); an invented quote, an altered quote and a quote of
+    twenty-three characters are each `UNGROUNDED` with the reason; a quote that
+    exists **only in the clone's working tree** and not in the object at the
+    head's `rev:` is `UNGROUNDED`, and a mutation that reads the working tree
+    turns it green, which is the test; a `rev:` the clone cannot resolve under
+    `shas: resolve` is `UNGROUNDED`. With `asked:`, a restatement naming the
+    rev and every file the task names passes; an absent one and a four-sentence
+    one are `SHAPE`; one naming neither the rev nor a file is `UNGROUNDED`.
+    With `gates:`, a gate row whose command the fake harness log shows on a
+    spawned-command line passes; one whose command appears in the log **only
+    inside the report the worker echoed there** is `UNRUN`, and a mutation that
+    greps the whole log turns it green — the day's accepted read is the fixture,
+    whose four gate rows all appear in its log and none of them as a command;
+    a row whose result is `not run` is never `UNRUN`.
+22. `TestARejectedJobNeverEntersAWindow`: a first rejection re-queues the task
+    once, `RUN REJECTED … requeued=true dest=pending`, and the new task's text
+    is the old text with exactly one line prepended, naming the class, the
+    sixty characters and the fix; the second attempt's rejection is
+    `requeued=false dest=failed` with `rejected=<CLASS>` in its sidecar and
+    `<pool>/reports/<job>/REJECTED` holding `class=<CLASS>` and the line, while
+    `<job>/exit.json` is byte for byte what the supervisor wrote and the usage
+    row's `end=` is one of rule 12's existing words; a task already carrying
+    `requeued=1` from a reap (rule 7) that is then rejected goes to `failed/`
+    at once with `requeued=false`, so no task runs three times; `result --id`
+    on a rejected report is `RESULT REFUSED` exit 1 naming `--anyway`, and with
+    `--anyway` prints `RESULT REJECTED` then `RESULT OK` then the body byte for
+    byte; `triage` over a batch of one accepted and two rejected reports prints
+    one `TRIAGE REJECTED` line each, one `TRIAGE CONTRACT` line whose class
+    counts sum to `rejected=2`, a `TRIAGE BATCH` line with the same fields it
+    has today, and a page holding no line of either rejected report and no
+    `TRIAGE FINDING` from them, while their finding lines are still in
+    `findings=`; the rejected revisions are recorded in `consumed`, so a second
+    `triage` announces them no second time.
 
 ## The work list
 
@@ -1716,6 +2084,15 @@ verb, and tests that pin all three by executing them.
     read against this spec by a line that is not the author, then one batch run
     beside `worker-swarm.sh` on the same task list with the two results compared.
     `freddy-swarm.sh` and `run-freddy.sh` are not touched by any step above.
+
+13. **`internal/swarm/contract.go`** — the `expect:` block (strict decode, an
+    unknown key refused, every regular expression compiled at `add` time), the
+    six checks in their order, the seven classes with their one-line forms, the
+    quote grounding against `git show <rev>:<path>` with the normalization of
+    rule 21, the `harness.log` spawned-command lines for `UNRUN`, the sidecar
+    field and the `REJECTED` marker, and the one shared re-queue. It writes no
+    file the job owns and it never touches `exit.json`. Tests: demanded tests
+    20, 21 and 22.
 
 ## Ideas folded on 2026-09-11
 
