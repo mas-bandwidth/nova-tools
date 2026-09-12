@@ -17,6 +17,10 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
+// testAttest is the secret the fixtures plant as the supervisor's own, so the exit.json they
+// write carries an attestation whose hash matches the slot file they plant beside it.
+const testAttest = "test-supervisor-secret"
+
 // ---------------------------------------------------------------------------------------
 // Demanded test 17 (SPEC-SWARM line 1363):
 // TestADeadDispatcherIsRecoveredOrQuarantined: a dispatcher SIGKILLed with one worker alive,
@@ -65,13 +69,14 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 	write(t, filepath.Join(b.pool, "running", task2ID+".task"), "exited task\n")
 	sf2 := swarm.SlotFile{
 		Job: task2ID, JobDir: task2Dir, State: swarm.SlotLaunched,
-		Pid: 999990, Pgid: 999990, Nonce: "nonce-2", RunnerPid: 999998,
+		Pid: 999990, Pgid: 999990, Nonce: "nonce-2", ExitAttest: swarm.ExitAttestHash(testAttest),
+		RunnerPid: 999998,
 	}
 	if err := swarm.WriteJSON(filepath.Join(b.pool, "slots", "2.json"), sf2); err != nil {
 		t.Fatal(err)
 	}
 	if err := swarm.WriteJSON(filepath.Join(task2Dir, "exit.json"), swarm.ExitRecord{
-		RC: 0, End: swarm.EndDone, Nonce: "nonce-2", Ended: swarm.Stamp(time.Now()),
+		RC: 0, End: swarm.EndDone, Nonce: "nonce-2", Attest: testAttest, Ended: swarm.Stamp(time.Now()),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +187,7 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 		Pid: liveCmd.Process.Pid, Pgid: livePgid, JobPgid: livePgid,
 		PidStarted: swarm.StartStamp(liveCmd.Process.Pid),
 		LaunchedAt: swarm.Stamp(time.Now().Add(-1 * time.Second)),
-		Nonce:      "nonce-1", RunnerPid: 999998,
+		Nonce:      "nonce-1", ExitAttest: swarm.ExitAttestHash(testAttest), RunnerPid: 999998,
 	}
 	if err := swarm.WriteJSON(filepath.Join(b.pool, "slots", "1.json"), sf1); err != nil {
 		t.Fatal(err)
@@ -232,7 +237,7 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 			completion <- fmt.Errorf("slot 1's adoption was not decided within 5s (%s never landed in done/), so this pass raced the dispatcher instead of waiting for it", task2ID+".task")
 		}
 		if err := swarm.WriteJSON(filepath.Join(task1Dir, "exit.json"), swarm.ExitRecord{
-			RC: 0, End: swarm.EndDone, Nonce: "nonce-1", Ended: swarm.Stamp(time.Now()),
+			RC: 0, End: swarm.EndDone, Nonce: "nonce-1", Attest: testAttest, Ended: swarm.Stamp(time.Now()),
 		}); err != nil {
 			completion <- fmt.Errorf("writing the adopted job's exit.json: %w", err)
 		}

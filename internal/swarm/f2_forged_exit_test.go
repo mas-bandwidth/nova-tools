@@ -9,6 +9,11 @@ import (
 	"time"
 )
 
+// fixtureAttest is the secret the fixtures plant as the supervisor's own, so the completion
+// evidence they write carries an attestation whose hash matches the slot file they plant
+// beside it.
+const fixtureAttest = "the-fixture-supervisor-secret"
+
 // PACKET 2 FINDING 2 (issue #164): A WORKER'S OWN WRITING IS NEVER COMPLETION EVIDENCE.
 //
 // The job directory is the FIRST `--write` of the wall (sandbox.go), so every byte of it is
@@ -117,5 +122,76 @@ func TestTheIdentityRecordBesideTheJobCarriesNoLaunchNonce(t *testing.T) {
 	}
 	if strings.Contains(string(raw), "nonce") {
 		t.Errorf("<job>/pid is inside the worker's write set and carries the launch nonce: %s", raw)
+	}
+}
+
+// THE GREEN CONTRACT: a reclaim needs the launch's attestation, not only its nonce. The
+// nonce is a name a worker can read (the supervisor's argv, the pid record, supervisor.log,
+// aborted.json); the attestation is a secret the supervisor minted in its own memory, whose
+// hash alone lives in the slot file (a file in neither sandbox list). So the three shapes of
+// a nonce-matching exit.json are decided apart: an absent or wrong attestation is quarantine,
+// and only a true attestation is the supervisor's own word and reclaims.
+func TestAnExitRecordIsReclaimedOnlyWithTheLaunchAttestation(t *testing.T) {
+	for _, c := range []struct {
+		name   string
+		attest string
+		want   string
+	}{
+		{"absent attestation", "", DecideQuarantine},
+		{"wrong attestation", "a-worker-forged-secret", DecideQuarantine},
+		{"true attestation", fixtureAttest, DecideReclaim},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p, w := recoveryPool(t, dir)
+			id := NewID(time.Now().UTC(), "attested")
+			jobDir := w.JobDir(1, id)
+			if err := os.MkdirAll(jobDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			sc := Sidecar{ID: id, Files: 1, Tokens: 1000, RC: -1, Job: jobDir, Slot: 1, Started: Stamp(time.Now().UTC())}
+			if err := p.Add([]byte("a task whose evidence carries, or does not, the attestation"), sc); err != nil {
+				t.Fatal(err)
+			}
+			if err := p.Claim(id, Pending, Running); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeAtomic(ResultPath(jobDir), []byte(recoveredReport), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			nonce, err := Nonce()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := writeSlot(p.slotPath(1), SlotFile{
+				Job: id, JobDir: jobDir, State: SlotLaunched, Pid: 0, Pgid: 0, JobPgid: 0,
+				PidStarted: "-", RunnerPid: 0, Nonce: nonce, ExitAttest: ExitAttestHash(fixtureAttest),
+				LaunchedAt: Stamp(time.Now().UTC()),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if err := WriteJSON(ExitPath(jobDir), ExitRecord{
+				RC: 0, End: EndDone, Survivors: 0, Nonce: nonce, Attest: c.attest,
+				Ended: Stamp(time.Now().UTC()),
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if d := p.Decide(1); d.Kind != c.want {
+				t.Fatalf("%s: a nonce-matching exit.json decided %s (%q), want %s", c.name, d.Kind, d.Reason, c.want)
+			}
+
+			var out, errb bytes.Buffer
+			Run(RunInput{Pool: p, Worker: w, Workers: 1, Hours: 0.0001, Stdout: &out, Stderr: &errb,
+				NoSandbox: true, Now: func() time.Time { return time.Now().UTC() }})
+			if c.want == DecideReclaim {
+				if !strings.Contains(out.String(), "dest=done") {
+					t.Errorf("%s: a true attestation reclaims into done/:\n%s%s", c.name, out.String(), errb.String())
+				}
+				return
+			}
+			if strings.Contains(out.String(), "done=1") {
+				t.Errorf("%s: a nonce without the attestation must not print done=1:\n%s%s", c.name, out.String(), errb.String())
+			}
+		})
 	}
 }

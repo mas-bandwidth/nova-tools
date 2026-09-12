@@ -54,7 +54,7 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 		}
 		// Everything else this pass reads is THERE, so the only unread record is the one
 		// under test: the supervisor's completion evidence, the harness log, the note file.
-		if err := WriteJSON(ExitPath(jobDir), ExitRecord{RC: 0, End: EndDone, Nonce: "abc123"}); err != nil {
+		if err := WriteJSON(ExitPath(jobDir), ExitRecord{RC: 0, End: EndDone, Nonce: "abc123", Attest: fixtureAttest}); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(jobDir, "harness.log"), []byte("the harness said nothing of note\n"), 0o644); err != nil {
@@ -70,7 +70,7 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 
 		hits := collideUntilRead(t, ResultPath(jobDir), body)
 		in := RunInput{Pool: p, Stdout: io.Discard, Stderr: io.Discard, Now: func() time.Time { return now }}
-		r := &running{sc: sc, slot: 1, nonce: "abc123", jobDir: jobDir, started: now, deadline: 30 * time.Second}
+		r := &running{sc: sc, slot: 1, nonce: "abc123", exitAttest: ExitAttestHash(fixtureAttest), jobDir: jobDir, started: now, deadline: 30 * time.Second}
 		line, end, dest := in.finish(r, map[int]bool{}, now)
 
 		if strings.Contains(line, "result="+ClassNoResult) {
