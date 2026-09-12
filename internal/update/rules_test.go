@@ -407,3 +407,71 @@ func readFixture(t *testing.T, name string) string {
 	}
 	return string(b)
 }
+
+// The tripwires SPEC-UPDATE's rule list ends on, asserted rather than grepped by
+// hand: this tool has no cwd, no home directory, no shell, no hostname of its
+// own, no hard-coded model port, and it reads exactly one environment variable.
+// A tripwire measured by a person is a tripwire that goes quiet the first busy
+// week; this one fails a build.
+func TestTripwiresStayOutOfShippingCode(t *testing.T) {
+	shipping := map[string]string{}
+	entries, err := os.ReadDir(".")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		name := e.Name()
+		if e.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		b, err := os.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		shipping[name] = string(b)
+	}
+	if len(shipping) < 8 {
+		t.Fatalf("only %d shipping files were read; the sweep is not sweeping", len(shipping))
+	}
+	for _, forbidden := range []string{"os.Getwd", "os.UserHomeDir", "os.Hostname", "11434", `"sh"`, `"bash"`, `"cmd.exe"`, "os/user", "time.Ticker", "time.Tick(", "http.DefaultClient"} {
+		for name, body := range shipping {
+			if strings.Contains(body, forbidden) {
+				t.Errorf("%s carries %s, which rule 26 and the tripwire list keep out of this tool", name, forbidden)
+			}
+		}
+	}
+	// The two hosts this tool may name live in one file, so a third one added
+	// anywhere else is a diff somebody reads.
+	for name, body := range shipping {
+		for _, host := range []string{"api.github.com", "ollama.com", "registry.npmjs.org"} {
+			if strings.Contains(body, host) && name != "latest.go" {
+				t.Errorf("%s names the host %s; the sources belong in latest.go alone", name, host)
+			}
+		}
+	}
+	// One environment read, and it is PATH inside a remedy, never a setting.
+	reads := 0
+	for name, body := range shipping {
+		n := strings.Count(body, "os.Getenv")
+		reads += n
+		if n > 0 && name != "read.go" {
+			t.Errorf("%s reads the environment; a path comes from a flag (rule 1)", name)
+		}
+		if n > 0 && !strings.Contains(body, `os.Getenv("PATH")`) {
+			t.Errorf("%s reads an environment variable that is not PATH", name)
+		}
+	}
+	if reads != 1 {
+		t.Errorf("shipping code reads the environment %d times, want exactly the one PATH in a remedy", reads)
+	}
+	if strings.Count(strings.Join(valuesOf(shipping), "\n"), "NOVA_UPDATE_") != 0 {
+		t.Error("shipping code reads a NOVA_UPDATE_ variable; the test seams are not settings")
+	}
+}
+func valuesOf(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for _, v := range m {
+		out = append(out, v)
+	}
+	return out
+}
