@@ -907,25 +907,33 @@ func TestARefusedRunCreatesNothing(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp")); err == nil {
 		t.Fatal("a run refused at not_found created the temp directory anyway")
 	}
-	// The same for a command that is there and is not executable, which is the other
-	// refusal that lives below the temp directory's creation.
-	notExec := filepath.Join(j.read, "data.txt")
-	if err := os.WriteFile(notExec, []byte("x\n"), 0o600); err != nil {
-		t.Fatal(err)
+	// The same for a command that is there and is not executable. The executable BIT is
+	// rule 5's pre-flight and it is a unix idea: on windows a .txt is refused later and
+	// for another reason, so that half of this test is unix's.
+	if runtime.GOOS != "windows" {
+		notExec := filepath.Join(j.read, "data.txt")
+		if err := os.WriteFile(notExec, []byte("x\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--", notExec); code != 125 {
+			t.Fatalf("exit %d, want 125; stderr %q", code, errOut)
+		}
+		if _, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp")); err == nil {
+			t.Fatal("a run refused at not_executable created the temp directory anyway")
+		}
 	}
-	if code, _, errOut := j.tool(t, j.env(), "--write", j.write, "--", notExec); code != 125 {
-		t.Fatalf("exit %d, want 125; stderr %q", code, errOut)
-	}
-	if _, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp")); err == nil {
-		t.Fatal("a run refused at not_executable created the temp directory anyway")
-	}
-	// And a run that is sound still gets it, because rule 8 is the reason it exists.
-	if code, _, errOut := j.wrapped(t, noopScript()); code != 0 {
-		t.Fatalf("a sound run was refused: exit %d, %s", code, errOut)
-	}
-	if fi, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp")); err != nil || !fi.IsDir() {
-		t.Fatalf("the one directory this tool creates was not created for a sound run: %v", err)
-	}
+	// And a run that is sound still gets it, because rule 8 is the reason it exists. That
+	// half needs a backend, so it is darwin's until the linux body is built: on linux the
+	// wrap is reason=no_sandbox and no run is sound.
+	t.Run("a sound run still gets it", func(t *testing.T) {
+		needDarwin(t)
+		if code, _, errOut := j.wrapped(t, noopScript()); code != 0 {
+			t.Fatalf("a sound run was refused: exit %d, %s", code, errOut)
+		}
+		if fi, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp")); err != nil || !fi.IsDir() {
+			t.Fatalf("the one directory this tool creates was not created for a sound run: %v", err)
+		}
+	})
 }
 
 // TESTS.md's own header says every transcript line is compared with what the tool prints,
