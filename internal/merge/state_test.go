@@ -64,6 +64,33 @@ func TestVersionIsCheckedBeforeAnyOtherField(t *testing.T) {
 	}
 }
 
+// HostedRedBlocks is rule 15's derivation as a table, because the run-path tests in
+// cmd/nova-merge drive the same derivation through a real pass but a table pins every arm.
+func TestHostedRedBlocksDerivation(t *testing.T) {
+	for _, tc := range []struct {
+		name                                       string
+		hostedRed, defaultBranch, base, discovered string
+		want                                       bool
+	}{
+		{"explicit blocks wins", HostedRedBlocksValue, "", "main", "", true},
+		{"explicit names wins", HostedRedNamesValue, "main", "main", "", false},
+		{"explicit names even when the base is the default", HostedRedNamesValue, "main", "main", "main", false},
+		{"derived: base is the recorded default", "", "main", "main", "", true},
+		{"derived: base is the freshly discovered default", "", "main", "trunk", "trunk", true},
+		{"derived: a matching recorded default keeps blocks across a rename", "", "trunk", "trunk", "master", true},
+		{"derived: a successful discovery of a different default derives names", "", "main", "rowan/step-2", "main", false},
+		{"derived: a failed discovery blocks even with a stale recorded name", "", "main", "trunk", "", true},
+		{"derived: no recorded fact and a failed discovery blocks", "", "", "trunk", "", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &State{HostedRed: tc.hostedRed, DefaultBranch: tc.defaultBranch, Base: tc.base}
+			if got := s.HostedRedBlocks(tc.discovered); got != tc.want {
+				t.Errorf("HostedRedBlocks(%q) = %v, want %v", tc.discovered, got, tc.want)
+			}
+		})
+	}
+}
+
 func TestARoundTripPreservesOrder(t *testing.T) {
 	lane := t.TempDir()
 	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "main", LaneBranch: "nova-merge/l"}); err != nil {

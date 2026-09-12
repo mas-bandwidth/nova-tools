@@ -95,14 +95,15 @@ const (
 )
 
 // HostedRedBlocks is rule 15's fork, as a function of the recorded policy, the recorded
-// default branch, and a default branch discovered this pass (empty when discovery was not
-// attempted or did not answer).
+// default branch, and a default branch discovered this pass (empty when the discovery
+// failed or did not answer).
 //
-// THE DERIVATION IS MONOTONE TOWARD PROTECTION. An absent policy and an unknown default
-// branch take the stronger arm; a rename cannot downgrade a lane, because the base is
-// compared against the recorded AND the discovered name and either match is enough; and a
-// failed discovery answers exactly what it answered before the failure. The only way to
-// the weaker arm is a policy that says so, or a KNOWN default branch that the base is not.
+// An explicit policy is the arm it states, outright. A DERIVED policy is: blocks when the
+// discovery failed or did not answer -- a failed discovery never downgrades a lane, even
+// when an older non-matching name is recorded -- blocks when the base matches the recorded
+// OR the freshly discovered default, and names only when a successful current discovery
+// establishes a default the base is not. The recorded fact is evidence, not perpetual
+// proof: the weaker arm is never taken on a stale name.
 func (s *State) HostedRedBlocks(discovered string) bool {
 	switch s.HostedRed {
 	case HostedRedBlocksValue:
@@ -110,10 +111,10 @@ func (s *State) HostedRedBlocks(discovered string) bool {
 	case HostedRedNamesValue:
 		return false
 	}
-	if s.DefaultBranch == "" && discovered == "" {
+	if discovered == "" {
 		return true
 	}
-	return s.Base == s.DefaultBranch || (discovered != "" && s.Base == discovered)
+	return s.Base == s.DefaultBranch || s.Base == discovered
 }
 
 // HostedRedUnknown is the NOTE's condition: the policy is derived and there is no default

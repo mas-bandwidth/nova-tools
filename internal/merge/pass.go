@@ -43,9 +43,8 @@ type Pass struct {
 	LaneTip  string
 
 	// DefaultBranch is the repository's default branch as discovered THIS PASS, from the
-	// remote's own HEAD. Empty means it was not attempted or did not answer, and an empty
-	// one never weakens the policy: State.HostedRedBlocks falls back to the recorded fact
-	// and, with neither, to the stronger rule.
+	// remote's own HEAD. Empty means the discovery failed or did not answer, and an empty
+	// one never weakens the policy: State.HostedRedBlocks takes the stronger arm.
 	DefaultBranch string
 
 	// basePending is set by baseLine: the base has no evidence for its head, which is
@@ -93,9 +92,9 @@ func (p *Pass) Run(n int) *Result {
 	if p.Survey {
 		return p.survey(res)
 	}
-	fmt.Fprintf(p.Stdout, "RUN PASS n=%d at=%s build=%s pulled=%d planned_red=%s\n",
+	fmt.Fprintf(p.Stdout, "RUN PASS n=%d at=%s build=%s pulled=%d planned_red=%s hosted_red_policy=%s\n",
 		n, oneline.Field(p.Now.UTC().Format(Stamp)), oneline.Field(p.Build), p.Pulled,
-		oneline.Field(dashIfEmpty(p.PlannedRed)))
+		oneline.Field(dashIfEmpty(p.PlannedRed)), oneline.Field(p.hostedRedPolicy()))
 
 	// THE FOLD REFUSES, IT NEVER SKIPS. An unreadable record file is preserved untouched
 	// and said out loud, because the file nobody could read may be the hold or the newer
@@ -292,4 +291,34 @@ func dashIfEmpty(s string) string {
 		return "-"
 	}
 	return s
+}
+
+// DiscoverDefaultBranch reads the repository's default branch from the remote's own HEAD,
+// through the pass's clone and its existing timeout, and stores it on the pass. It is the
+// one result run, dry-run and status share, so the three verbs cannot disagree about which
+// arm of rule 15 is in effect.
+//
+// An empty answer is not a refusal: a failed or unavailable discovery simply leaves the
+// pass on the stronger arm (HostedRedBlocks). It returns an error only for a name this
+// tool would refuse to hand to git, which is malformed configuration and is refused before
+// the pass decides anything.
+func (p *Pass) DiscoverDefaultBranch() error {
+	name := DefaultBranchOf(p.Clone, p.Remote)
+	if name != "" {
+		if err := ValidRefName(name); err != nil {
+			return fmt.Errorf("the repository's default branch, read from the remote's own HEAD, is not a name this tool will hand to git: %w", err)
+		}
+	}
+	p.DefaultBranch = name
+	return nil
+}
+
+// hostedRedPolicy is the effective arm of rule 15 in the policy's own two words, for the
+// RUN PASS line: the arm this pass applies to every entry, so an explicit `names` is
+// visible on the line that decides and never silent.
+func (p *Pass) hostedRedPolicy() string {
+	if p.State.HostedRedBlocks(p.DefaultBranch) {
+		return HostedRedBlocksValue
+	}
+	return HostedRedNamesValue
 }

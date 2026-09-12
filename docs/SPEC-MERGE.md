@@ -193,6 +193,20 @@ the day it was learned.
     10 applied to the evidence and not only to placement.
     (2026-09-11: eleven gate-green pull requests below `main` sat behind a
     hosted red the hosted lane had caused itself.)
+    (2026-09-12: `main` in this rule is the lane's **important base** — the
+    repository's default branch — and never the literal string, so a
+    repository whose default branch is `trunk`, `master` or `release` takes
+    the same rule. Which arm applies is the lane's `hosted_red` policy: stated
+    outright as `blocks` or `names` with `--hosted-red`, or derived. The
+    derived arm is conservative, and it is stated in one sentence: a failed
+    or unavailable discovery of the default branch is `blocks`, even when an
+    older non-matching name is recorded; a matching recorded OR freshly
+    discovered default is `blocks`; and only a successful current discovery
+    establishing a different default derives `names`. A recorded fact is
+    evidence, not perpetual proof — the weaker arm is never taken on a stale
+    name. The effective policy is printed on the `RUN PASS` line,
+    `hosted_red_policy=<blocks|names>`, so an explicit `names` is visible and
+    never silent.)
 16. **`run` prints its build id and steps aside for a newer binary.** Every
     `RUN PASS` line carries `build=<id>`, the id compiled into the running
     binary. At the end of every pass under `--loop`, the tool reads the build
@@ -542,7 +556,7 @@ READ REFUSED: <reason>
 GATE OK entry=<n-or-name> head=<sha12> base=<sha12> merge=<sha12> verdict=<green|red> summary=<path> in_lane=<true|false> newest=<true|false> file=<path> pushed=true
 GATE FAIL entry=<n-or-name> head=<sha12> base=<sha12> merge=<sha12> file=<path> pushed=false: <reason>; re-run the same verb to push it
 GATE REFUSED: <reason>
-RUN PASS n=<k> at=<stamp> build=<id> pulled=<n> planned_red=<text|->
+RUN PASS n=<k> at=<stamp> build=<id> pulled=<n> planned_red=<text|-> hosted_red_policy=<blocks|names>
 RUN NEWER build=<id> on_disk=<id>: the binary changed; this loop ends after this pass; restart it by hand
 RUN BASE base=<branch> head=<sha12> checks=g<n>/p<n>/r<n> gate=<green|-> state=<GREEN|RED|PENDING|PLANNED-RED>
 RUN STOPPED base=<branch>: the base is red (<n> failing); nothing merges onto a red base
@@ -1101,6 +1115,8 @@ file whose owner believes a read is required.
   "repo": "<owner>/<name>",
   "base": "<branch>",
   "lane_branch": "nova-merge/schema-main",
+  "default_branch": "main",
+  "hosted_red": "blocks",
   "prs": [
     {"pr": 951, "needs_read": "yes",
      "reads": [{"who": "emma", "verdict": "approve", "note": "", "at": "2026-09-11T12:31:07Z",
@@ -1154,6 +1170,21 @@ is worth stating as a rule: **a list whose items have two shapes is two lists.**
 The counts (`green`, `pending`, `red`) are numbers here and strings in the
 prototype, because `jq --arg` writes strings. A count that is a string compares
 as a string, and `"10" < "9"`. This spec makes them numbers.
+
+`default_branch` and `hosted_red` are the two facts rule 15 turns on (added
+2026-09-12). `default_branch` is the repository's default branch as a recorded
+fact, discovered by `init` from the remote's own HEAD or seeded with
+`--default-branch`; empty means the fact is not recorded, and an unrecorded
+fact takes the stronger arm. `hosted_red` is the policy stated outright,
+`blocks` or `names`; it is a closed vocabulary — an unknown value is a refusal
+at load, never an arm — and empty derives the arm from `default_branch`. The
+derivation is exactly rule 15's dated clause: `blocks` when the discovery of
+the default branch failed or did not answer (even when an older non-matching
+name is recorded), `blocks` when the base matches the recorded OR the freshly
+discovered default, and `names` only when a successful current discovery
+establishes a default the base is not. `--default-branch` may seed the recorded
+fact and skip `init`'s lookup, but it cannot disable the discovery the pass
+performs; a recorded fact is evidence, not perpetual proof.
 
 ## The log
 

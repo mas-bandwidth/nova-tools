@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -122,7 +123,7 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 		discovered = merge.DefaultBranchOf(merge.NewGit(*f.lane, f.dur(), deps.Runner), url)
 		if discovered == "" {
 			fmt.Fprintf(stderr, "INIT NOTE the repository's default branch could not be read from %s, so this lane records none and takes the STRONGER hosted-red rule: a hosted red stops the entry (rule 15). nova-merge init --lane %s --default-branch <branch> records it, and --hosted-red names states the other arm outright\n",
-				oneline.Field(url), oneline.Field(*f.lane))
+				oneline.Field(stripUserinfo(url)), oneline.Field(*f.lane))
 		}
 	}
 	if err := merge.Init(*f.lane, merge.LaneConfig{Repo: *repo, Base: *base, LaneBranch: *laneBranch,
@@ -148,6 +149,18 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 		return 0
 	}
 	return cmdStatus([]string{"--lane", *f.lane, "--timeout", strconv.Itoa(*f.timeout), "--max", strconv.Itoa(*f.max)}, stdout, stderr, deps)
+}
+
+// stripUserinfo removes the credential a URL carries so a diagnostic never prints a token
+// or password: `https://user:token@host/repo.git` becomes `https://host/repo.git`. A value
+// that does not parse as a URL, or that carries no userinfo, is returned unchanged.
+func stripUserinfo(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
 }
 
 // undoInit is what a refused init says about what it made. A directory init created is
