@@ -399,10 +399,12 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// INHERITED PIPE (fd 3), which a caller cannot conjure by typing: the parent mints the
 	// value, writes the 16 raw bytes into the pipe, closes its end, and the child must read
 	// exactly those bytes from fd 3 and find them equal to the argv copy. The argv copy
-	// stays so that a mismatch still refuses; the environment copy stays because
-	// darwin-check.sh and the step bodies read it, and it is stripped from anything the
-	// child in turn starts. The child then asks the OS who its parent is and refuses
-	// unless that process is this same binary.
+	// stays so that a mismatch still refuses; the environment copy stays as the guard's
+	// second factor — a third copy required to agree — and nothing else reads it
+	// (measured: no reader of NOVA_SANDBOX_PROBE_NONCE exists outside this guard;
+	// darwin-check.sh never mentions it and the step bodies take path and name from argv).
+	// The child then asks the OS who its parent is and refuses unless that process is this
+	// same binary.
 	rawNonce, err := probeNonce()
 	if err != nil {
 		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: this machine has no random source for the probe's one-time value: %s\n", oneline.Err(err))
@@ -542,12 +544,17 @@ func probeNonce() ([probeNonceLen]byte, error) {
 //  3. The parent process is THIS binary. sandbox-exec execs in place, so the probe's
 //     child has the tool for a parent; a child started by anything else does not.
 //
-// The honest bound on all three is in docs/SPEC-SANDBOX.md's probe section: none of this
-// grants a same-user caller anything they lack, because a same-user caller can already
-// open and truncate the file themselves. What it buys is that no path DRIVEN BY CONTENT
-// — a script, a Makefile, a repository's own hook, a job inside another wall — can reach
-// this verb's O_TRUNC by guessing a word, so the spec's "nothing else runs it" is held by
-// a mechanism rather than by a sentence.
+// The honest bound on all three is in docs/SPEC-SANDBOX.md's probe section: the verb
+// grants NO CAPABILITY THE CALLER LACKS, because everything it does is bounded by the wall
+// it runs in. What the guard stops is an invocation from OUTSIDE that wall — by hand, or
+// driven by CONTENT: a script, a Makefile, a repository's own hook — reaching this verb's
+// O_TRUNC by guessing a word. A caller already INSIDE the wall gains nothing by it:
+// measured on 676d432, a shell under this tool's own exec verb built a 16-byte pipe as
+// fd 3, minted a value for argv and the environment, and exec'd probe-step (sandbox-exec
+// and the shell both exec in place, so the parent IS the tool); all three halves passed,
+// and the O_TRUNC it reached was one the wall already allowed — a file INSIDE the wall,
+// which content there could empty with `: > file` anyway. The same run against a file
+// OUTSIDE the wall was refused by the wall, exit 1, the file intact.
 func notTheProbesChild(nonce string, env []string) string {
 	got, err := probeNonceOnFD()
 	if err != nil {
@@ -556,8 +563,8 @@ func notTheProbesChild(nonce string, env []string) string {
 	if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(got[:])), []byte(nonce)) != 1 {
 		return "the value on fd 3 is not the one in the argv"
 	}
-	// The environment copy is the one the step bodies and darwin-check.sh read; it is
-	// checked too, so that the three copies cannot disagree.
+	// The environment copy is the guard's second factor and nothing else reads it: it is
+	// checked here so that the three copies cannot disagree.
 	want := ""
 	for _, kv := range env {
 		if n, v, _ := strings.Cut(kv, "="); n == probeNonceVar {

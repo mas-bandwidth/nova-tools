@@ -12,9 +12,10 @@ import (
 // parentExecutable answers "what binary is pid?" for the ONE pid the probe's child cares
 // about: its own parent. It is proc_pidpath(2) through the proc_info syscall and NOT
 // `ps -o comm= -p`, because the child asks this question INSIDE the wall and ps is
-// setgid kmem: measured on macOS 26 with this tool's own profile, `ps` inside the wall is
-// `/bin/ps: Operation not permitted`, exit 126, while proc_pidpath answers with the
-// parent's full path. A guard that only works outside the wall would be no guard at all.
+// setuid root (`-rwsr-xr-x root wheel` for /bin/ps on macOS 26), and a set-id exec is
+// denied inside the wall: measured on macOS 26 with this tool's own profile, `ps` inside
+// the wall is `/bin/ps: Operation not permitted`, exit 126, while proc_pidpath answers
+// with the parent's full path. A guard that only works outside the wall would be no guard at all.
 //
 // sandbox-exec execs the command IN PLACE (wrap_darwin.go), so there is no process
 // between the tool and this child and the parent pid IS the tool's.

@@ -616,11 +616,7 @@ func TestProbeReExecsTheToolAndNeverAShell(t *testing.T) {
 // own child and a copy of it for the foreign-parent case. raw nil means no fd 3 at all.
 func probeChild(t *testing.T, exe string, raw []byte, nonceVar string, args ...string) (int, string) {
 	t.Helper()
-	cmd := exec.Command(exe, append([]string{"probe-step"}, args...)...)
-	cmd.Env = append(os.Environ(), nonceVar)
-	var out, errb bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
+	var fd3 *os.File
 	if raw != nil {
 		pr, pw, err := os.Pipe()
 		if err != nil {
@@ -633,7 +629,37 @@ func probeChild(t *testing.T, exe string, raw []byte, nonceVar string, args ...s
 		if err := pw.Close(); err != nil {
 			t.Fatal(err)
 		}
-		cmd.ExtraFiles = []*os.File{pr}
+		fd3 = pr
+	}
+	return probeChildOnFD(t, exe, fd3, nonceVar, args...)
+}
+
+// probeChildFile is fd 3 as a REGULAR FILE holding the same bytes: the shape a caller
+// reaches for first, and the one the Fstat half refuses before it reads anything.
+func probeChildFile(t *testing.T, exe string, raw []byte, nonceVar string, args ...string) (int, string) {
+	t.Helper()
+	name := filepath.Join(t.TempDir(), "fd3")
+	if err := os.WriteFile(name, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.Open(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer f.Close()
+	return probeChildOnFD(t, exe, f, nonceVar, args...)
+}
+
+// probeChildOnFD runs the verb with whatever descriptor it is handed on fd 3, or none.
+func probeChildOnFD(t *testing.T, exe string, fd3 *os.File, nonceVar string, args ...string) (int, string) {
+	t.Helper()
+	cmd := exec.Command(exe, append([]string{"probe-step"}, args...)...)
+	cmd.Env = append(os.Environ(), nonceVar)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if fd3 != nil {
+		cmd.ExtraFiles = []*os.File{fd3}
 	}
 	_ = cmd.Run()
 	if cmd.ProcessState == nil {
@@ -722,6 +748,16 @@ func TestProbeStepIsTheInternalVerb(t *testing.T) {
 	// A SHORT pipe is refused: fewer bytes than the parent promised is not the parent.
 	if code, errOut := probeChild(t, selfExecutable(t), raw[:8], probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
 		t.Fatalf("a short pipe was accepted: exit %d, stderr %q", code, errOut)
+	}
+	// MORE bytes than the parent promised is refused too: the parent writes exactly
+	// probeNonceLen and closes, so a longer pipe is not the parent's pipe.
+	if code, errOut := probeChild(t, selfExecutable(t), append(append([]byte{}, raw...), 'x'), probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("a pipe carrying more than the promised bytes was accepted: exit %d, stderr %q", code, errOut)
+	}
+	// fd 3 a REGULAR FILE holding the right bytes is refused: what the guard wants is the
+	// parent's pipe, and a file is a thing a caller can make.
+	if code, errOut := probeChildFile(t, selfExecutable(t), raw, probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("a regular file on fd 3 was accepted: exit %d, stderr %q", code, errOut)
 	}
 	// The right value in the argv, in the environment AND on the pipe, and still refused,
 	// because the parent is not this binary. This is the half a caller who has learned the
