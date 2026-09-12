@@ -1,4 +1,4 @@
-# nova-go — specification (DRAFT for the group's read, revision 2)
+# nova-go — specification (DRAFT for the group's read, revision 3)
 
 Glenn, 2026-09-12, on https://opencode.ai/docs/go/ : *"It could be a varying swarm, where you
 make a choice of model depending on querying it, and what is available to run."* *"I don't
@@ -71,10 +71,17 @@ SPEC.md's **Conventions** govern — exit codes, one line per event, the field l
    ledger is zero spend, so the first `choose` of a life sees full room. Under `budget_source:
    ledger`, room is the cap times 20%, 50%, 100% minus the window's spend in the trailing 5
    hours, 7 days and UTC calendar month. Spend is the ledger's rows plus the reservations in
-   `<ledger>/inflight/`: `choose` writes `<ledger>/inflight/<session>` holding `door est
-   deadline stamp`, counted in every window until `record` or `ask` for that session writes
-   the row and removes it; one past its deadline stays counted (unknown is not zero) and
-   `CHOOSE NOTE inflight-stale=<n> (run nova-go record for each, or remove the file)` says so.
+   `<ledger>/inflight/`: under `<ledger>/lock` (one `flock`, held from the reading of room to
+   the writing of the reservation, so two `choose`s on one remaining allocation yield one
+   `OK`) `choose` creates `<ledger>/inflight/<session>` exclusively, holding `door est
+   deadline stamp`; the session is the attempt's stable identity (nova-swarm passes
+   `<job>-<attempt>`). It is counted in every window until `record` or `ask` for that session
+   writes the row and removes it. `ask --door` passes the same gate: with no reservation for
+   its session it takes one under the lock before sending. A reservation whose call ended
+   ambiguously — timeout, connection lost, a status with no usage — is a liability, not a
+   free slot: it stays counted, `ASK FAIL reason=unknown` prints, and only a `record` with
+   usage or a person removes it; one past its deadline likewise, and `CHOOSE NOTE
+   inflight-stale=<n> (run nova-go record for each, or remove the file)` says how many.
    No row is estimated: a row is a response's usage at the fixture's prices, or `-`; a `-`
    row counts as its reservation's `est`, else closes the door (unpriced spend is not free).
    Under `budget_source: headers`, `go.headers: {"5h": <name>, "week": <name>, "month":
@@ -107,7 +114,11 @@ SPEC.md's **Conventions** govern — exit codes, one line per event, the field l
     --door <id> --public --allow-training`, for text nobody minds a model learning.
 11. **The Zen overflow is off.** The tool never sets or relies on the console's *Use
     balance*; past a cap, rule 7 refuses. `--allow-overflow` lets `ask` send when the ledger
-    says the door is closed, prints `overflow=true`, and is the only way we spend metered credit.
+    says the door is closed, prints `overflow=true`, and is the only way this tool spends
+    metered credit. That the console's switch is off, and that nothing outside this ledger
+    spends on the key, are assumptions the tool cannot check: `room=` is room as this ledger
+    knows it, never a claim about the account, and a response that names balance spend is
+    `ASK FAIL reason=overflow-seen (turn Use balance off in the console)`, exit 1.
 12. **Manners the provider asked for, kept by construction.** Every request carries
     `User-Agent: nova-go/<version>` and `x-opencode-session: <session>`, the session being
     `--session <id>`, stable for the job's life; one `ask` is one request and no second turn,
@@ -120,10 +131,14 @@ SPEC.md's **Conventions** govern — exit codes, one line per event, the field l
     harness config carries the NAME, `{env:OPENCODE_GO_API_KEY}`.
 14. **`ask` is one call, prompt bounded before it is sent.** It reads `--task <file>` whole
     — passage inline, one question, the result path — and refuses at exit 2 a prompt whose
-    `bytes/3` exceeds the door's `ctx` tier, remedy *split the task*. `bytes/3` estimates: a
-    provider refusal for size is `ASK FAIL door=<id> reason=ctx`, exit 1, never a retry on a
-    bigger door by itself. The answer lands at `--result <path>` through `.tmp` and rename,
-    and one `ASK OK` line prints.
+    `bytes/3 + 512 + --max-output` (input estimate, request overhead, reserved output) exceeds
+    the door's `ctx` tier, remedy *split the task*. The tool has no tokenizer, so a fit is
+    estimated and never proven: a provider refusal for size is `ASK FAIL door=<id>
+    reason=ctx`, exit 1, the reservation kept (rule 6), never a retry on a bigger door by
+    itself. The tier is decided again at send (rule 15); when it differs from the
+    reservation's, `ASK NOTE tier-changed from=<t> to=<t>` prints and the row carries the
+    send tier. The answer lands at `--result <path>` through `.tmp` and rename, and one
+    `ASK OK` line prints.
 15. **The price tier is the tool's clock, in UTC.** A door with peak prices is `tier=peak`
     01:00-04:00 and 06:00-10:00 UTC Monday to Friday, `tier=off` otherwise; a door without
     them is `tier=flat`. Decided at send time, printed on every line naming a door, stored on
@@ -136,17 +151,23 @@ SPEC.md's **Conventions** govern — exit codes, one line per event, the field l
     `cache_creation_input_tokens`. `record --usage <file>` reads SPEC-SWARM rule 12's
     sixteen-column usage file — `job`, `model`, `tokens_in`, `tokens_out`, `cache_write`,
     `cache_read`, `reasoning` — prices them at the fixture, and refuses another header by
-    name; the per-shape mapping is `ask`'s alone. A field the source lacks is `-`; `usd` is
-    `-` when any priced field is. The row's key is SPEC-TOKENS rule 15's, `day model repo`,
-    then `friend bench job session door shape tier tokens_in tokens_out cache_read
-    cache_write reasoning usd at`; `friend` and `bench` are columns, not key, until PR #124's
-    retained-record contract says otherwise. `--as`, `--bench` and `--repo` are required,
-    `--repo unattributed` the honest spelling.
+    name; the per-shape mapping is `ask`'s alone. Counters are written exactly as reported,
+    never normalised; a field the source lacks is `-`; `usd` is `-` when any priced field is.
+    The row's key is SPEC-TOKENS rule 15's, `day model repo`, then `friend bench job session
+    attempt response_id door shape tier tokens_in tokens_out cache_read cache_write reasoning
+    usd at`; `response_id` is the body's native `id` (`-` when none, and for a usage file),
+    `attempt` the usage file's or `1`. `friend` and `bench` are columns, not key: PR #124's
+    retained-record contract (`nova.tokens.observation/2`, native identity, raw presence,
+    derived views after) is the shape this directory folds into, and its fixtures are reused,
+    not copied. `--as`, `--bench` and `--repo` are required, `--repo unattributed` the honest
+    spelling.
 17. **`record` appends one row and never rewrites one.** `<ledger>/spend/<door>/<YYYY-MM-DD>.tsv`,
     one header, one row per call, written by `ask` itself and by `record` when nova-swarm's
-    `finalize` hands over a job's usage. A `(job, session)` present with the same token
-    fields is `RECORD ALREADY`, exit 0, so a retry never double-counts; the same key with
-    different fields is `RECORD CONFLICT`, exit 1, nothing written. nova-tokens reads the
+    `finalize` hands over a job's usage. A `(job, session, response_id)` present with the
+    same counters is `RECORD ALREADY`, exit 0, so a retry never double-counts; the same key
+    with different counters is `RECORD CONFLICT`, exit 1, nothing written. A `record` for a
+    session that already has `ask` rows is the wrapper's total: `ALREADY` when it equals
+    their sum, `CONFLICT` when not, never a second row. nova-tokens reads the
     directory as a declared source by a rule of its own PR (SPEC-TOKENS rule 14's shape).
 18. **`bake-off` runs one task across N doors and scores every answer against the known
     one.** The task file's head carries `answer: yes|no` and `quote: <verbatim>|none`; each
@@ -266,7 +287,7 @@ CHOOSE SKIP shape=<s> door=<id> reason=<5h|week|month|retention|training|ctx|dea
 CHOOSE OK shape=<s> door=<id> endpoint=<url> tier=<t> est=<usd> room=<5h>/<week>/<month> dearer=<true|false> skipped=<n> inflight=<path>
 CHOOSE FAIL shape=<s> door=<id> window=<w> room=<usd> need=<usd> next=<id|none> until=<stamp> (wait until <stamp>, or --allow-dearer for <next>)
 ASK OK door=<id> session=<id> tier=<t> in=<n|-> out=<n|-> cache_read=<n|-> cache_write=<n|-> reasoning=<n|-> usd=<usd|-> took=<d> result=<path> overflow=<true|false>
-ASK FAIL door=<id> reason=<ctx|status:<n>> took=<d> (<remedy>)
+ASK FAIL door=<id> reason=<ctx|unknown|overflow-seen|status:<n>> took=<d> (<remedy>)
 RECORD <OK|ALREADY|CONFLICT> door=<id> session=<id> row=<path>
 BAKEOFF DOOR id=<id> score=<right|unquoted|wrong|refused|timeout|malformed> tier=<t> in=<n|-> out=<n|-> usd=<usd|-> took=<d> result=<path>
 BAKEOFF <OK|FAIL> task=<path> doors=<n> right=<n> unquoted=<n> wrong=<n> other=<n> usd=<usd|-> took=<d>
@@ -335,8 +356,12 @@ real key.
    value is in no file but `remaining/`); `go.headers` naming `x-fixture-remaining` for `5h`
    reads `remaining/<door>.tsv` for that window and the ledger for the other two, a stamp
    5 h 1 s old being absent; under `ledger` and an injected clock a row 5 h 1 s old is out of
-   the 5-hour sum and in the weekly one; a reservation past its deadline is counted and
-   `inflight-stale=1` prints; a `-` row with no reservation closes its door.
+   the 5-hour sum and in the weekly one; two `choose` processes started together against
+   one remaining allocation yield exactly one `OK` and one `FAIL`; an `ask` killed after the
+   counting server saw its request leaves a reservation the next `choose` still counts; a
+   timeout after send is `ASK FAIL reason=unknown` with the reservation kept; a reservation
+   past its deadline is counted and `inflight-stale=1` prints; a `-` row with no reservation
+   closes its door.
 7. `TestExhaustionNamesTheNextDoorAndNeverPaysMoreAlone`: door 1 closed and door 2 dearer
    is `CHOOSE FAIL … next=<door 2> until=<stamp> (wait until <stamp>, or --allow-dearer for
    <door 2>)`, exit 1, stdout, `until` the oldest in-window row plus 5 h for `5h` and the
@@ -363,8 +388,11 @@ real key.
     2 naming the `nova-secrets exec` line; `--key` is unknown; the fixture key appears in no
     byte of stdout, stderr, the ledger, `headers.txt`, `remaining/` or the result.
 14. `TestAskBoundsThePromptFirst`: a task of `ctx*3+3` bytes against `grok-4.6` is exit 2
-    naming *split the task* with zero requests; a 400 naming context length is `ASK FAIL
-    reason=ctx` exit 1 after one request; the result lands via `.tmp` and rename.
+    naming *split the task* with zero requests; a prompt the heuristic passes that the server
+    refuses with a 400 naming context length is `ASK FAIL reason=ctx` exit 1 after one
+    request, the reservation still present; `choose` at Tuesday 03:59Z and `ask` at 04:01Z
+    print `ASK NOTE tier-changed from=peak to=off` and the row carries `off`; the result
+    lands via `.tmp` and rename.
 15. `TestTheTierIsTheClock`: under an injected clock Tuesday 02:00Z, 03:59Z, 06:00Z, 09:59Z
     are `tier=peak`, Tuesday 04:00Z, 05:59Z, 10:00Z and Saturday 02:00Z `tier=off` for a
     DeepSeek door, `flat` for GLM at all; the tier on the ledger row equals the line's.
@@ -372,10 +400,13 @@ real key.
     each map to the named fields; a body without `usage` yields `-` in every token column and
     `usd=-`; `record --usage` on a sixteen-column rule-12 file maps the seven named columns
     and prices them, a fifteen-column file is exit 2 naming the header; the row leads `day
-    model repo`; missing `--as`, `--bench`, `--repo` are exit 2 named at once.
-17. `TestRecordAppendsOnce`: two `record`s of one `(job, session)` with the same fields leave
-    one row, the second `ALREADY`; a third with another `tokens_out` is `CONFLICT` exit 1 and
-    the file unchanged; the bytes before are a prefix of the bytes after.
+    model repo` and carries the body's `id` as `response_id`, `-` for a usage file; missing
+    `--as`, `--bench`, `--repo` are exit 2 named at once.
+17. `TestRecordAppendsOnce`: two `record`s of one `(job, session, response_id)` with the same
+    counters leave one row, the second `ALREADY`; a third with another `tokens_out` is
+    `CONFLICT` exit 1 and the file unchanged; a `record` after an `ask` of the same session is
+    `ALREADY` when the totals match and `CONFLICT` when not, and never a second row; the
+    bytes before are a prefix of the bytes after.
 18. `TestBakeOffScoresAgainstTheKnownAnswer`: five fixture doors answering right, right with
     a paraphrased quote, wrong, nothing, and late score `right`, `unquoted`, `wrong`,
     `malformed`, `timeout`, `BAKEOFF FAIL` exit 1; all right is `OK`; every door received its
@@ -404,7 +435,8 @@ Answer by number, one line each; `abstain` is an answer; deadline 2026-09-14 18:
    per line at nova-secrets. Default: per line; the first pool is Rowan's, key in `rowan.yaml`.
 4. **What nova-swarm does on `CHOOSE FAIL`, and whether over-commitment is reserved against
    or accepted.** Default: the job waits until `until=` when inside its deadline, else its
-   default action; reservations (rule 6), not a 429 discovered later.
+   default action; a locked reservation before send (rule 6), settled by usage or kept as a
+   liability, not a 429 discovered later.
 5. **Where the 5-hour window starts.** Default: rolling over the ledger until a first run's
    `headers.txt` shows a header carrying remaining budget, one per window.
 6. **Whether the local tier is ever a door for a clocked job.** Default: `choose` never
