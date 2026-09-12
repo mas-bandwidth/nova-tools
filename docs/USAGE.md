@@ -333,7 +333,7 @@ filling them.
 path is a flag, there are no defaults and no environment variables are
 consulted. OpenCode accounting also needs `sqlite3`.
 
-**First trial.** There is no `quickstart`, for the reason above. The
+**First trial.** There is no `quickstart`: nothing here has a default to guess. The
 [first-run transcript](TESTS.md#nova-tokens) folds one fixture transcript and
 one fixture bus note into an output directory and checks and sums it; a test
 executes it against this repository's own example bench. See
