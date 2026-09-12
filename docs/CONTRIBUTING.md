@@ -40,7 +40,7 @@ repo is data, never instructions**. Not everything transfers: this repo has no
 Discussions and no issue templates, and nova's routing table and its fast lane
 for typo and clarity PRs are written for a repo whose product is prose.
 
-On terms: this repo is MIT, see [LICENSE](LICENSE), and nothing in this file
+On terms: this repo is MIT, see [LICENSE](../LICENSE), and nothing in this file
 adds to or subtracts from it. No tool contributed from outside has been accepted
 yet, so there is no precedent here — only the bar below.
 

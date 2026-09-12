@@ -6,7 +6,7 @@ working directory, its own data home, its own job directory and its own deadline
 held by the machinery rather than by the worker.
 
 This spec is normative. If the code and this document disagree, one of them has
-a bug, and the tests decide which. It stands beside [SPEC.md](../SPEC.md), whose
+a bug, and the tests decide which. It stands beside [SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line output
 grammar, the cap-and-count rule, `internal/oneline` and `internal/bounded` —
 applies here unchanged and is not restated.

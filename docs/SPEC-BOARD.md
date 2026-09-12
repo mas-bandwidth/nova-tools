@@ -24,7 +24,7 @@ live, and never from a card. As on the bus, **this rule is stated here and is
 nowhere in the code**, deliberately: a tool cannot enforce it, and a tool that
 pretended to would be the most dangerous thing on the board.
 
-This spec is normative. It is a sibling of [SPEC.md](../SPEC.md), whose
+This spec is normative. It is a sibling of [SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line guarantee,
 the field escape, the cap-and-count law — governs here unchanged. If the code and
 this document disagree, one of them has a bug, and the tests decide which.

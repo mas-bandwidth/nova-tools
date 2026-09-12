@@ -20,7 +20,7 @@ the tool hands it, and ends with a model serving and a worker description
 `nova-swarm` accepts. That is demanded test 1.
 
 This spec is normative; if the code and this document disagree, one of them has a bug
-and the tests decide which. It stands beside [SPEC.md](../SPEC.md), whose
+and the tests decide which. It stands beside [SPEC.md](SPEC.md), whose
 **Conventions** — exit codes, no guessed paths, the one-line grammar, cap-and-count,
 `internal/oneline`, `internal/bounded` — apply unchanged and are not restated. The
 **box's** side of rule 15 (the daemon, the store's owner, the one-time move) is

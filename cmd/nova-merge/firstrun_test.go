@@ -148,7 +148,7 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 // compared, so the transcript stays a document rather than becoming a fixture.
 func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

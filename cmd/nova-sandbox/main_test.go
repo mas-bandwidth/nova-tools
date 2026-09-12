@@ -1079,7 +1079,7 @@ func TestARefusedRunCreatesNothing(t *testing.T) {
 // after the probe stopped standing on a shell. This is the pin for the one line that goes
 // stale silently: the transcript names the tool's own binary, never a shell.
 func TestTheTranscriptNamesTheToolsOwnBinary(t *testing.T) {
-	doc, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

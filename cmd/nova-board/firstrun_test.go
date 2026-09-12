@@ -168,7 +168,7 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 // run's own business and are deliberately NOT compared: pinning those would make the
 // document a fixture.
 func TestTheFirstRunTranscriptMatchesWhatTheToolPrints(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,13 +236,14 @@ func TestTheFixtureIsSmallEnoughToReadInASitting(t *testing.T) {
 	}
 }
 
-// [194] THE README TRANSCRIPT IS COMPARED AGAINST REAL OUTPUT. The transcript test above
-// reads TESTS.md; README.md carried a second `### First run` for this tool that nothing
-// executed, and it had drifted — an abridged run presented as a run, with a count line
-// copied from a different command. A transcript nothing runs is a claim about a message
-// that has since moved, and the README is where a first run reads it.
-func TestTheReadmeFirstRunMatchesWhatTheToolPrints(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "README.md"))
+// [194] THE COMMAND-REFERENCE TRANSCRIPT IS COMPARED AGAINST REAL OUTPUT. The transcript
+// test above reads docs/TESTS.md; the command reference carried a second `### First run`
+// for this tool that nothing executed, and it had drifted — an abridged run presented as a
+// run, with a count line copied from a different command. A transcript nothing runs is a
+// claim about a message that has since moved, and the command reference is where a first
+// run reads it. That reference is docs/CLI.md since the README became an adoption guide.
+func TestTheCommandReferenceFirstRunMatchesWhatTheToolPrints(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "CLI.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +251,7 @@ func TestTheReadmeFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	block := section[strings.Index(section, "### First run"):]
 	start := strings.Index(block, "```\n$ nova-board ")
 	if start < 0 {
-		t.Fatal("the README's nova-board ### First run holds no runnable transcript")
+		t.Fatal("docs/CLI.md's nova-board ### First run holds no runnable transcript")
 	}
 	block = block[start+4:]
 	block = block[:strings.Index(block, "\n```")]
@@ -261,7 +262,7 @@ func TestTheReadmeFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 	}
 	exit, stdout, stderr := runFixture(t, strings.Fields(cmd)...)
 	if exit == 2 {
-		t.Fatalf("the README's transcript command does not run: exit 2, stderr: %s", stderr)
+		t.Fatalf("docs/CLI.md's transcript command does not run: exit 2, stderr: %s", stderr)
 	}
 	printed := map[string]bool{}
 	count := 0

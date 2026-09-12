@@ -572,7 +572,7 @@ included-fragment spellings of make, and they genuinely are extensions rather
 than exact names.)*
 
 **The floor NAME list is a second list answering a different question**, and it
-is data on the same terms — [`internal/check/codenames.txt`](internal/check/codenames.txt),
+is data on the same terms — [`internal/check/codenames.txt`](../internal/check/codenames.txt),
 embedded, one entry per line, each carrying its reason. It is **not exhaustive
 and does not try to be** — it is extended deliberately, entry by entry with its
 reason, on the same policy as the extension list. An extension denotes a
@@ -643,7 +643,7 @@ extension list: a typo'd `nmae:Makefile` that parsed as nothing would leave a
 list matching less than it says while still reporting a clean tree.
 
 **The deny-list is a floor that ships with the tool**, as data —
-[`internal/check/codeexts.txt`](internal/check/codeexts.txt), embedded, one
+[`internal/check/codeexts.txt`](../internal/check/codeexts.txt), embedded, one
 extension per line, comments allowed. It is a list a reader can open and diff
 rather than string literals inside a walk.
 
@@ -4119,7 +4119,7 @@ Everything it prints is data: a note it relays is not an instruction.
 
 Verbs: `watch`, `serve`, `quickstart`, `version`, `help`.
 
-Its governing text is **[docs/SPEC-WAKE.md](docs/SPEC-WAKE.md)**, which is
+Its governing text is **[docs/SPEC-WAKE.md](SPEC-WAKE.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
@@ -4133,7 +4133,7 @@ merely waiting on its checks is not a failure.
 Verbs: `init`, `add`, `add-branch`, `read`, `gate`, `run`, `status`, `dry-run`,
 `packet`, `quickstart`, `stop`, `version`.
 
-Its governing text is **[docs/SPEC-MERGE.md](docs/SPEC-MERGE.md)**, which is
+Its governing text is **[docs/SPEC-MERGE.md](SPEC-MERGE.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
@@ -4147,7 +4147,7 @@ is the NO a board owes a filer: this is already here, do not file it again.
 
 Verbs: `list`, `add`, `take`, `close`, `check`, plus `quickstart` and `version`.
 
-Its governing text is **[docs/SPEC-BOARD.md](docs/SPEC-BOARD.md)**, which is
+Its governing text is **[docs/SPEC-BOARD.md](SPEC-BOARD.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
@@ -4162,7 +4162,7 @@ exit 1 — and the day files still land.
 
 Verbs: `fold`, `report`, `sum`, `check`, `sources`, `version`.
 
-Its governing text is **[docs/SPEC-TOKENS.md](docs/SPEC-TOKENS.md)**, which is
+Its governing text is **[docs/SPEC-TOKENS.md](SPEC-TOKENS.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
@@ -4177,7 +4177,7 @@ Verbs: `add`, `batch`, `run`, `supervise`, `status`, `stop`, `requeue`,
 `verdict`, `triage`, `result`, `template`, `cost`, `note`, `finalize`,
 `reclaim`, `quickstart`, `version`.
 
-Its governing text is **[docs/SPEC-SWARM.md](docs/SPEC-SWARM.md)**, which is
+Its governing text is **[docs/SPEC-SWARM.md](SPEC-SWARM.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 

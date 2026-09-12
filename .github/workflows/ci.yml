@@ -84,7 +84,7 @@ jobs:
   build-windows:
     # `go build ./...` and `go vet ./...` ON WINDOWS, which the fan-out would otherwise have
     # dropped: the `test` job carries them and the `test` job is ubuntu and macOS now, while
-    # `test-windows` runs `go test -race` per package and nothing else. CONTRIBUTING.md
+    # `test-windows` runs `go test -race` per package and nothing else. docs/CONTRIBUTING.md
     # promises all three on all three platforms, and two of them had quietly become a
     # two-platform promise -- `internal/onboarding` and `internal/oneline/audit` have no
     # test files, so nothing would have compiled them on Windows at all, and `go test`'s

@@ -207,7 +207,7 @@ func shape(line string) string {
 // one run that printed everything, and two runs a reader types themselves.
 func readmeFirstRun(t *testing.T) [][]string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

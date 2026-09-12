@@ -29,7 +29,7 @@ not built, so transport-independence is proven by two rather than asserted by
 one. The name stays: the alternatives (`nova-session`, `nova-presence`) name the
 mechanism, and what a person wants is to keep talking.
 
-This spec is normative. It is a sibling of [SPEC.md](../SPEC.md), whose
+This spec is normative. It is a sibling of [SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line guarantee,
 the field escape, the cap-and-count law, and the rule that **every stamp is the
 tool's own clock and a typed time orders nothing** — governs here unchanged except

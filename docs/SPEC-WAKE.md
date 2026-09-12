@@ -16,7 +16,7 @@ failing check is not a verdict about whose fault it is, and a report file is pro
 somebody else wrote. A watcher that acted on what it saw would be a window with no
 person in it.
 
-This spec is normative. It is a sibling of [SPEC.md](../SPEC.md), whose
+This spec is normative. It is a sibling of [SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line guarantee,
 the field escape, the cap-and-count law — governs here unchanged except where this
 document says otherwise, and it says so by name in one place only (**Exit codes**).

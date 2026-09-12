@@ -32,7 +32,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-fuse: the ingestion fuse -- lockdown and quarantine (see SPEC.md)
+const usage = `nova-fuse: the ingestion fuse -- lockdown and quarantine (see docs/SPEC.md)
 
 usage:
   nova-fuse version    print this build identity (--version also accepted)

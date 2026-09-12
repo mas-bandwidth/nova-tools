@@ -13,7 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
 )
 
-// ONBOARDING.md, asserted for EVERY directory under cmd/ — by walking it, not
+// docs/ONBOARDING.md, asserted for EVERY directory under cmd/ — by walking it, not
 // by listing the tools. The point of the walk is the binary nobody has written
 // yet: a sixth command joins the standard on the day it appears, rather than on
 // the day somebody remembers to add it to a table here.
@@ -22,25 +22,29 @@ import (
 //
 //	(a) `<tool> help` prints usage ending in an `example:` block, and a bare
 //	    command refuses in ONE line that names that door
-//	(c) README.md carries a `### First run` inside that tool's `## <tool>` section
+//	(c) docs/TESTS.md carries a `### First run` inside that tool's `## <tool>`
+//	    section -- the transcript document the tests execute, which is the file
+//	    this test reads. It is NOT README.md: the comments here said README for
+//	    long enough to be believed, while the code below has always opened
+//	    docs/TESTS.md (TESTS.md before this move).
 //
 // The rest are per-binary and live in each command's own firstrun_test.go,
 // because only that package knows its fixture: the example lines are EXECUTED
-// there, the refusal sentences are asserted there, and the README transcript is
+// there, the refusal sentences are asserted there, and the transcript is
 // compared against real output there.
 
 // notYetOnTheStandard names the commands whose onboarding work is in flight on
 // another branch, with the branch named, so that a skip here is a dated pointer
 // rather than a permanent exemption. Each entry earns its skip only while the
-// README section is genuinely still missing: the moment that branch merges, the
-// condition below stops firing and the entry can be deleted.
+// docs/TESTS.md section is genuinely still missing: the moment that branch
+// merges, the condition below stops firing and the entry can be deleted.
 var notYetOnTheStandard = map[string]string{
 	"nova-bus": "nova-bus-first-send (a draft verb, a tolerant send with notices, all refusals at once, and a `### First run`)",
 }
 
 func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 	root := repoRoot(t)
-	readme := readFile(t, filepath.Join(root, "TESTS.md"))
+	transcripts := readFile(t, filepath.Join(root, "docs", "TESTS.md"))
 
 	entries, err := os.ReadDir(filepath.Join(root, "cmd"))
 	if err != nil {
@@ -55,14 +59,14 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 		tool := e.Name()
 		t.Run(tool, func(t *testing.T) {
 			t.Parallel()
-			_, firstRunErr := onboarding.FirstRun(readme, tool)
+			_, firstRunErr := onboarding.FirstRun(transcripts, tool)
 			if branch, inFlight := notYetOnTheStandard[tool]; inFlight && firstRunErr != nil {
 				t.Skipf("%s is being brought up to this standard on branch %s; delete its entry from notYetOnTheStandard when that branch merges (%v)", tool, branch, firstRunErr)
 			}
 
-			// (c) The README section a stranger reads before anything else.
+			// (c) The transcript section in docs/TESTS.md that a test executes.
 			if firstRunErr != nil {
-				t.Errorf("%v\n(ONBOARDING.md point 3: every tool's README section opens with `%s`)", firstRunErr, onboarding.FirstRunHeading)
+				t.Errorf("%v\n(docs/ONBOARDING.md point 5(c): every tool's docs/TESTS.md section opens with `%s`)", firstRunErr, onboarding.FirstRunHeading)
 			}
 
 			// (a), first half: the bare command REFUSES in one line and names the
@@ -99,7 +103,7 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 			}
 			examples, err := onboarding.ExampleLines(banner, tool)
 			if err != nil {
-				t.Fatalf("%v\n(ONBOARDING.md point 1)\n\nwhat it printed:\n%s", err, banner)
+				t.Fatalf("%v\n(docs/ONBOARDING.md point 1)\n\nwhat it printed:\n%s", err, banner)
 			}
 			for _, ex := range examples {
 				if strings.Contains(ex, "<") || strings.Contains(ex, ">") {

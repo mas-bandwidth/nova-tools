@@ -7,7 +7,7 @@ day files into a month. It reads sources. It never estimates, never fills a
 gap, and never removes a file.
 
 This spec is normative. If the code and this document disagree, one of them
-has a bug, and the tests decide which. It stands beside [SPEC.md](../SPEC.md),
+has a bug, and the tests decide which. It stands beside [SPEC.md](SPEC.md),
 whose **Conventions** section (exit codes, no guessed paths, the one-line
 output grammar, the cap-and-count rule, `internal/oneline` and
 `internal/bounded`) applies here unchanged and is not restated. Where this tool
