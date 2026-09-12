@@ -574,8 +574,10 @@ live line then uses is `INIT REFUSED` on the next command. The push, the clone
 and the record branch all land in `./rehearsal.git`; a rehearsal repository with
 no `--base` branch in it prints one `STATUS NOTE` and `base_state=UNKNOWN` at
 exit 0, which is the rehearsal saying it has no base to read rather than a
-failure. That transcript, and the live one below, are both executed by
-[TESTS.md](TESTS.md)'s `## nova-merge`.
+failure. The twins of both blocks — this rehearsal and the live form below — are
+the ones executed, in [TESTS.md](TESTS.md)'s `## nova-merge`; what holds the two
+copies together is a test over this page's words, so a rehearsal that changed
+here and nowhere else is red rather than quietly wrong.
 
 Then the live form, whose first line creates and pushes `nova-merge/main` in
 `mas-bandwidth/nova-tools`:

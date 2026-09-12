@@ -31,14 +31,38 @@ func firstRunLab(t *testing.T) *lab {
 // localize points an example or transcript command at this test's lane. The example says
 // ./lane because a stranger types a path of their own; the test gives it one under
 // t.TempDir(), and the repository resolves to the bare fixture repo.
+//
+// Three substitutions, and the last two are the REHEARSAL the first run is told to do
+// first: a lane of its own (rehearsing into the live lane's directory would be INIT
+// REFUSED on the line after), and "$PWD/rehearsal.git", which is the absolute path a
+// shell hands the tool -- git runs inside the lane directory, so a relative --remote
+// resolves against the lane and is refused. The documented line is substituted, never
+// rewritten: what runs here is what a reader pastes.
 func (l *lab) localize(args []string) []string {
 	out := append([]string(nil), args...)
 	for i, a := range out {
-		if a == "./lane" {
+		switch a {
+		case "./lane":
 			out[i] = l.lane
+		case "./rehearsal-lane":
+			out[i] = filepath.Join(l.dir, "rehearsal-lane")
+		case `"$PWD/rehearsal.git"`, "$PWD/rehearsal.git":
+			out[i] = l.rehearsalRemote()
 		}
 	}
 	return out
+}
+
+// rehearsalRemote is `git init -q --bare ./rehearsal.git`: a bare repository of the
+// reader's own, with no branches in it at all, which is what the rehearsal's
+// base_state=UNKNOWN and its one STATUS NOTE are about.
+func (l *lab) rehearsalRemote() string {
+	l.t.Helper()
+	path := filepath.Join(l.dir, "rehearsal.git")
+	if _, err := os.Stat(path); err != nil {
+		l.git(l.dir, "init", "-q", "--bare", path)
+	}
+	return path
 }
 
 func exampleLines(t *testing.T, l *lab) []string {
@@ -185,9 +209,13 @@ func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 		}
 		seen[strings.Join(strings.Fields(s)[:2], " ")]++
 	}
-	for prefix, want := range map[string]int{"INIT OK": 1, "STATUS OK": 2, "ADD OK": 1, "STATUS ENTRY": 1} {
+	// Two INIT OK and three STATUS OK: the REHEARSAL against a bare repository of the
+	// reader's own comes first (nova-tools #116), and then the live form. A transcript
+	// that shows the live push without the rehearsal in front of it is the document
+	// Johnny pasted.
+	for prefix, want := range map[string]int{"INIT OK": 2, "STATUS OK": 3, "STATUS NOTE": 1, "ADD OK": 1, "STATUS ENTRY": 1} {
 		if seen[prefix] != want {
-			t.Errorf("README First run shows %d %s lines, want %d", seen[prefix], prefix, want)
+			t.Errorf("docs/CLI.md First run shows %d %s lines, want %d", seen[prefix], prefix, want)
 		}
 	}
 }
@@ -232,7 +260,7 @@ func TestTheFirstRunPushesTheLaneBranchToTheRepository(t *testing.T) {
 
 	ref := "refs/heads/" + branch
 	if got := l.branchesAtRemote(); !containsString(got, ref) {
-		t.Fatalf("the first run left no %s at the remote; the refs there are %q.\nIf this tool has stopped pushing the record branch, rule 22 has no transport and README's `### First run` is now wrong in the other direction", ref, got)
+		t.Fatalf("the first run left no %s at the remote; the refs there are %q.\nIf this tool has stopped pushing the record branch, rule 22 has no transport and docs/CLI.md's `### First run` is now wrong in the other direction", ref, got)
 	}
 	if got := l.pushes(); !anyHasPrefix(got, ref+" ") {
 		t.Errorf("the remote's update hook recorded %q; the first run's push of %s is not among them", got, ref)
@@ -276,12 +304,72 @@ func TestTheFirstRunSectionSaysThatTheFirstRunPushes(t *testing.T) {
 		{"origin", "a push says where it lands"},
 		{"--lane-branch", "the ref it creates is the one the reader typed"},
 		{"nova-merge@localhost", "the commit a shared repository keeps carries this author (nova-tools #116)"},
+		{"placeholder", "and that author is a placeholder identity rather than a person (Stella, 2026-09-12)"},
 		{"--remote", "the rehearsal form: a bare repository of your own, nothing reaching the host"},
+		{`"$pwd/rehearsal.git"`, "the rehearsal's --remote is ABSOLUTE, because a relative one resolves against the lane and is refused"},
+		{"./rehearsal-lane", "and the rehearsal gets a lane of its own, or the live line after it is INIT REFUSED"},
 	} {
 		if !strings.Contains(prose, want.phrase) {
 			t.Errorf("docs/CLI.md's nova-merge `### First run`, above the line a stranger copies, never says %q: %s.\nwhat it says there:\n%s", want.phrase, want.because, prose)
 		}
 	}
+}
+
+// And the BANNER says it, on the page Johnny actually read: his complaint was that the
+// help line `joined=false` does not say "pushed to origin" (nova-tools #116). Stella,
+// 2026-09-12: the rehearsal form has to work end to end in help, the CLI and TESTS.md with
+// an absolute remote, and the placeholder identity has to be named as one.
+func TestTheUsageBannerSaysThatTheFirstRunPushes(t *testing.T) {
+	t.Parallel()
+	l := firstRunLab(t)
+	exit, banner, stderr := l.run("help")
+	if exit != 0 {
+		t.Fatalf("help: exit %d; stderr: %s", exit, stderr)
+	}
+	for _, want := range []struct{ phrase, because string }{
+		{"pushes it to", "the banner is where joined=false was read, so the push is named there too"},
+		{"origin of the repository --repo names", "a push says where it lands"},
+		{"nova-merge <nova-merge@localhost>", "the author a shared repository keeps"},
+		{"PLACEHOLDER", "which is a placeholder identity, not a person"},
+		{"REHEARSE FIRST", "the rehearsal comes before the live line here as well"},
+		{"git init -q --bare ./rehearsal.git", "the whole rehearsal, runnable"},
+		{`--remote "$PWD/rehearsal.git"`, "with the absolute path a relative --remote does not give"},
+		{"--lane ./rehearsal-lane", "and a lane of its own, or the live line after it is INIT REFUSED"},
+	} {
+		if !strings.Contains(banner, want.phrase) {
+			t.Errorf("the usage banner never says %q: %s", want.phrase, want.because)
+		}
+	}
+	// The rehearsal the banner prints is the one TESTS.md runs: same flags, same
+	// spellings. A banner that drifts from the executed transcript is two first runs.
+	for _, flag := range []string{"--lane ./rehearsal-lane", "--lane-branch nova-merge/main", `--remote "$PWD/rehearsal.git"`} {
+		if !strings.Contains(rehearsalTranscriptLine(t), flag) {
+			t.Errorf("docs/TESTS.md's rehearsal line does not carry %q, which the banner prints", flag)
+		}
+	}
+}
+
+// rehearsalTranscriptLine is the `$ nova-merge quickstart ... --remote ...` line of
+// docs/TESTS.md's nova-merge `### First run` -- the one the transcript test EXECUTES.
+// docs/CLI.md carries a twin of it that nothing runs, held to this one by the phrase
+// assertions above, which is why they name the flags rather than only the word "remote".
+func rehearsalTranscriptLine(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := onboarding.FirstRun(string(raw), "nova-merge")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range lines {
+		if strings.HasPrefix(line, "$ nova-merge quickstart") && strings.Contains(line, "--remote") {
+			return line
+		}
+	}
+	t.Fatal("docs/TESTS.md's nova-merge `### First run` holds no quickstart line with --remote; the rehearsal is not in the transcript that gets executed")
+	return ""
 }
 
 // docs/TESTS.md carries the same transcript, and it is the one the test above executes, so the
