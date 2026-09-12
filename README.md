@@ -17,6 +17,11 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 | `nova-fuse` | a safety switch for what a mind reads | quarantine one hostile source, or lock down all untrusted reading; the lockdown can only be lifted by a person |
 | `nova-memory` | answers "do I already know this?" | a lexical index over your own tree, rebuilt each run; hands back receipts, never a verdict |
 | `nova-bus` | a postal service over git | several minds and people send notes to each other through one repository, with the races taken out |
+| `nova-wake` | one blocking call at the attention layer | a window pays one turn per change instead of one turn per tick: it watches a bus inbox, a set of entries and other lines' `RESULT.md` files, and returns the moment one of them moves |
+| `nova-merge` | an ordered merge lane onto one base | lands entries one at a time on evidence it can name: a green gate for this head against this base, a compare-and-swap push, a conflict that is BLOCKED with its file list |
+| `nova-board` | the list of things a group of lines owes | append-only cards with owners, deadlines and defaults; `check` exits 1 when your words are already on the board, so it guards an `add` in one line of shell |
+| `nova-swarm` | a pool of one-task workers | any provider, any model, through one harness: each running worker gets its own slot, its own data home and a deadline the machinery holds, and a worker's report is data a person reads, never an instruction |
+| `nova-tokens` | token spend per day, model and repo | folds declared sources into one file per day, keyed exactly by `(day, model, repo)` with the five token types kept apart; it never estimates, never fills a gap and removes nothing |
 
 **The rules every tool keeps.** Exit 0 means it ran and passed, 1 means it ran and said no, 2 means it could not run. Every path and every number comes from a flag; there is no default it could guess wrong, and a missing flag is a one-line refusal that says what the flag wants. Output is bounded: a run that finds eight hundred problems prints twenty and the number eight hundred. Standard library only. `nova-check nocode` pointed at this repository would fail it, which is the point: machinery lives here, the self stays prose.
 
@@ -24,7 +29,7 @@ Each tool does one job, says exactly what it found, and refuses to guess.
 
 **Install.** Three ways, none needing a credential: `go install github.com/mas-bandwidth/nova-tools/cmd/<tool>@<tag>` pinned to a release tag; a binary per platform from the release page with a `SHA256SUMS` beside it; or a clone and `go build ./...`. Go 1.26 or newer. Everybody sharing one bus should run one version, and `nova-bus version` says which.
 
-**What comes next.** Five more tools are specified and not yet built, each with its rules, its demanded tests and what the prototype it replaces did wrong: `nova-merge` (a merge lane with local gates), `nova-swarm` (one-shot worker jobs with a token budget), `nova-wake` (waking a line only when a note for it lands), `nova-board` (cards with owners, deadlines and counts) and `nova-tokens` (token spend per day, model and repo, from every harness). They are the open pull requests on `docs/SPEC-*.md`.
+**What comes next.** Nothing is specified and unbuilt: every tool in the table above is on `main`, with its contract in [SPEC.md](SPEC.md) and its first-run transcript in [TESTS.md](TESTS.md).
 
 ---
 
@@ -401,3 +406,378 @@ exactly, on every commit, by a parse COUNT: see SPEC.md, "nova-bus", the complex
 ## License
 
 MIT, see [LICENSE](LICENSE).
+
+## nova-wake
+
+One blocking call at the **attention layer**, specified in
+[docs/SPEC-WAKE.md](docs/SPEC-WAKE.md). A window that coordinates other lines
+spends its turns on a clock: it sleeps, wakes, looks at three places, finds
+nothing, and sleeps again. Every one of those cycles is a model turn, and a turn
+that learns nothing is the most expensive kind of nothing there is. `nova-wake`
+is that cycle inverted — one call that returns the moment something moved, and
+otherwise at a deadline you named, so the window pays one turn per **change**
+rather than one turn per **tick**.
+
+It watches three sources — a bus inbox, the checks on a set of entries, and
+`RESULT.md` files written by other lines — and says what moved. It acts on none
+of them: **everything it prints is data.** A note it relays is not an
+instruction, a failing check is not a verdict about whose fault it is, and a
+report file is prose somebody else wrote.
+
+### First run
+
+Point it at a directory holding `RESULT.md` files and give it a state file of
+its own. `quickstart` passes `--baseline`, so the first run lists the world once
+instead of recording it quietly:
+
+```
+$ nova-wake quickstart --state ./wake.state --reports ./reports
+WAKE NOTE quickstart chose --baseline, --interval 5s and --max 5s, so a first run returns with the world listed once rather than blocking; --on-deadline report is the word it echoes back
+WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
+WAKE REPORT path=reports/first-job/RESULT.md lines=8 bytes=220 new
+WAKE REPORT path=reports/second-job/RESULT.md lines=7 bytes=199 new
+WAKE CHANGE after=0s polls=1 bus=0 entries=0 reports=2 lines=0 pending=0
+
+$ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
+WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
+WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default taken
+```
+
+How to read it. The **first** line is the opening `WAKE`, printed before
+anything is waited on, so a transcript shows the call began and what it was told
+to do — a tool call that prints nothing for twenty minutes and then prints
+everything is, while it runs, indistinguishable from one that has hung. The
+**last** line is the verdict, and its **second token** is the answer: `CHANGE`,
+`QUIET` or `BROKEN`. Read that and never the exit code, which is 0 for both of
+the first two — a deadline is not an error, it is the answer *nothing yet*, and
+a change is not a failure even when what changed is a red check.
+
+What a first run gets wrong, and what each one wants:
+
+- **No `--max`, or no `--on-deadline`.** Both are required. The deadline is the
+  one thing only you can state, because a watcher with no deadline is a window
+  that is stuck rather than waiting and nobody outside can tell the two apart;
+  the default is what *you* will do if nothing moves, echoed back on the verdict
+  so the transcript records the decision. This tool takes no action itself.
+- **No `--interval`.** The right cadence is a fact about the watched thing's
+  rate, which only you know. Entries have their own, `--entry-interval`, and it
+  is the expected length of the hosted run: an 8-minute CI run deserves one
+  check at 8 minutes, not eight checks at one minute.
+- **No source.** A watch with nothing to watch is a `sleep` with a longer name,
+  and it is the one invocation that would look like it was working.
+- **A `--max` over 60m.** A watch runs inside a tool call and every harness kills
+  a call that runs too long. Ask your harness what its limit is and sit under
+  it; 20m is the recommendation.
+- **A second watch on one `--state`.** Two runs each write the whole map, so the
+  later write erases what the earlier one learned. One state file per watch.
+
+By default nothing here fetches: the bus checkout is read as it stands, and
+every `WAKE SOURCE bus` line carries `head=` and `head-at=` so you can see it
+stand still. Two flags change that, and never both at once — one fetch per poll,
+never two:
+
+- `--refresh --remote <name> --branch <name>` fetches through `nova-bus wait`
+  and **moves no cursor**. Nothing is consumed, so any number of watchers may
+  run. This is the one to reach for.
+- `--advance-cursor` is specified in docs/SPEC-WAKE.md and is **not in this
+  build**: it answers `WAKE REFUSED: --advance-cursor is not in this build; use
+  --refresh`, exit 2. Its own gate is that the advancing tests are green against
+  the pinned `nova-bus` binary, which is work list item 3a and a branch of its
+  own. Advancement is an acknowledgement optimisation and not a prerequisite for
+  delivery, and a v1 that cannot move a cursor cannot lose a note.
+
+## nova-merge
+
+`nova-merge` lands an **ordered lane** of entries — pull requests, or branches
+with no pull request at all — onto one base branch, one at a time, and it refuses
+to land anything whose evidence it cannot name. Its contract is
+[docs/SPEC-MERGE.md](docs/SPEC-MERGE.md), which is normative; this section is the
+door.
+
+A lane in this shape landed 30-odd pull requests onto one base in a morning, and
+failed in every way a shell loop around `gh pr merge` fails. The tool is those
+failures closed, one rule each: `--auto` and every force-push refused in the one
+function that runs a mutating command; a merge that rests on **one predicate** —
+the newest gate record for `(the entry's head, the base sha read this pass)` being
+green, for an **integration commit this tool built and publishes unchanged**; a
+compare-and-swap push whose lease is the expected base, so a base that moved is
+`MERGE RACED` *before* anything lands; reads and gates as **immutable files in the
+lane's own branch**, so a reader on another machine records a verdict where every
+lane folds it; a conflict that is `BLOCKED` with its file list and the exact hand
+command, because the lane never edits an entry's content.
+
+### First run
+
+Make a lane, queue an entry, and look at it. Every path is a flag; there is no
+default lane, no default repository and no default base.
+
+```
+$ nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
+INIT OK lane=./lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
+STATUS OK prs=0 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=0 reads=0a/0h
+
+$ nova-merge add --lane ./lane --pr 949 --needs-read
+ADD OK kind=pr entry=949 needs_read=yes lane=1/0
+
+$ nova-merge status --lane ./lane
+STATUS ENTRY kind=pr entry=949 head=deade72d3f50 checks=g4/p1/r0 read=0a/0h stale=0 gate=- state=PENDING last=-
+STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=1 reads=0a/0h
+```
+
+`quickstart` is `init` and then `status`: the lane is created once, with its
+repository, its base and the branch its records live in, and no other verb takes
+those three. `joined=false` says this lane created the record branch; a second
+lane on the same branch — a reader on another machine — prints `joined=true` and
+creates nothing.
+
+Reading that status: `state=PENDING` is an entry **waiting**, which is not a
+failure and exits 0. `checks=g4/p1/r0` counts green, pending and red **separately**
+— zero red is not the same news as zero pending, and the merge condition wants
+zero of both. `gate=-` means no gate record; `head` means one for this head against
+an older base (a candidate); `merge` means one for this head against the base as it
+is now, which is the only thing that merges. `read=0a/0h` are approves and holds
+for **this** head, and `stale=` counts the verdicts recorded for a head that has
+since moved: kept, counted, and authorizing nothing.
+
+The things a first run gets wrong, and what each one wants:
+
+- **`add --base main`** — exit 2. The base is a property of the lane, written by
+  `init`; a `--base` on a queueing verb would let two invocations disagree about
+  where the lane lands.
+- **`gate --base <sha>`** — exit 2, naming `--base-sha`. The lane's branch and the
+  base **sha** a gate was taken against are different words on purpose.
+- **`read` with no `--head`** — exit 2. A verdict binds to the sha the reader had
+  open, never to whatever the entry's head is when the verb runs: an approve
+  recorded a minute after the author pushed is an approve for code nobody read.
+- **`run --loop 5m` with no `--hours`** — exit 2. Every loop ends on its own.
+- **a verb on a directory that is not a lane** — exit 2, with the whole `init`
+  command in the refusal, and nothing written on the way past.
+
+## nova-board
+
+```
+nova-board list  (--issue <owner/repo>#<n> --gh-timeout <seconds> | --dir <path>) --stale <duration> [--list] [--open] [--owner <name>] [--max <n>]
+nova-board add   (--issue ... | --dir ...) --as <name> --text <text> --by <duration-or-stamp> --default <text>
+                 [--owner <name>] [--thing <name> --leg <name>] [--evidence <path>] [--id <thirty-two hex>]
+nova-board take  (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> [--anyway]
+nova-board close (--issue ... | --dir ...) --as <name> --card <id> --stale <duration> (--how <text> | --landed <repo>#<n> | --probed <evidence>) [--anyway]
+nova-board check (--issue ... | --dir ...) --words <text> [--max <n>] [--all]     # EXIT 1 WHEN IT MATCHES
+nova-board quickstart (--issue ... | --dir ...) --stale <duration>
+```
+
+A **board** is the list of things a group of lines owes: one **card** per item, appended
+when it is noticed, taken by whoever picks it up, closed with a sentence saying how.
+Nothing on it is ever deleted and nothing is ever edited — it is an append-only log of
+events, and the list of open cards is *derived* from that log rather than stored anywhere.
+The rules, the failures each one closes and what the prototype did wrong are in
+[docs/SPEC-BOARD.md](docs/SPEC-BOARD.md), which is the contract.
+
+**The verb that earns the tool is `check`, and it exits 1 when it matches.** The NO a board
+owes a filer is *this is already on the board, do not file it*, so the rule every reader and
+fixer follows is one line of shell — and the guard tells a NO from a could-not-run:
+
+```sh
+nova-board check --dir ./board --words "windows runner skips" || { [ $? -eq 1 ] && exit 0; exit 2; }
+nova-board add   --dir ./board --as rowan --text "the Windows runner skips three steps" \
+                 --by 4h --default "rowan files it on the schema board as a known gap"
+```
+
+**A card matches only when EVERY word appears** in its text (lower-cased, as a substring):
+more words is a *narrower* check, never a broader one — `--words "the Windows CI skips
+steps"` does not match the card *the windows runner skips three steps*. Two or three rare
+words is the query that works, and `matched=0` over three or more words says so in a
+`BOARD NOTE`. A check whose every word is in more than half the board still **exits 1** —
+a matched check exits 1, always — and says so in a `BOARD NOTE`: the hits are about the
+board's prose rather than about your finding, and narrowing `--words` is what sharpens it.
+
+**The default view is counts, not cards**: one line per owner, one per leg, one `BOARD OK`
+and exactly one `BOARD NEXT` naming the one thing to do first. At 500 cards across 20 lines
+it is 27 lines and under 4 KB, and it does not grow with the number of cards. Cards print
+under `--list`, capped at `--max` with one `MORE` line; `--list --owner <name>` is one
+line's own batch.
+
+**Every card has a deadline and a default** (`--by`, `--default`): nothing here waits
+forever. **Every path and every duration comes from a flag** — there is no default board,
+no default `--stale` and no default `--gh-timeout` (required under `--issue`, which is the
+backend that runs `gh`), and no environment variable configures anything. A card taken by a
+line that then goes silent is `stale=true` past `--stale` and is takeable again without
+`--anyway`; a take or a close over somebody's *live* take is refused at exit 1 and names
+the holder. Two backends, one format: a directory of card files (`--dir`, which this tool
+appends to and never commits — landing it is yours) and issue comments (`--issue` with
+`--gh-timeout <seconds>`, durable when the command returns).
+
+### First run
+
+`quickstart` needs a board and a stale window. It prints the board's counts and then the
+check-then-add pair with this board's own values in it, quoted so it can be pasted.
+`cmd/nova-board/testdata/example-board` is a board the size of a first run, and the
+transcript the tests execute against it is in [TESTS.md](TESTS.md#nova-board).
+
+```
+$ nova-board quickstart --dir ./board --stale 10m
+QUICKSTART OK backend=dir source=./board stale=10m0s: the board, then the rule every filer runs in front of add
+BOARD LINE name=emma open=1 overdue=1 stale=1
+BOARD LINE name=bo open=1 overdue=0 stale=1
+BOARD LINE name=rowan open=1 overdue=0 stale=1
+BOARD LINE name=freddy open=1 overdue=0 stale=1
+BOARD LEG leg=cpp owed=1 probed=0
+BOARD LEG leg=go owed=0 probed=1
+BOARD NEXT the oldest OVERDUE card 283e2dd1e5c5424d7637d28488365e98, owed by emma, due 2026-09-11T09:00:00Z -- the token ledger has no September rows yet
+BOARD OK cards=5 open=4 closed=1 stale=4 overdue=1 owed=1 lines=4 conflicts=0 quarantined=0 shown=8 backend=dir source=./board
+QUICKSTART LINE n=1 what=check: "nova-board check --dir ./board --words \"the token ledger\" || { [ $? -eq 1 ] && exit 0; exit 2; }"
+QUICKSTART LINE n=2 what=add: "nova-board add --dir ./board --as <your-name> --text \"the token ledger has no September rows yet\" --by 4h --default \"the filer files it as a known gap\""
+QUICKSTART NOTE check EXITS 1 WHEN IT MATCHES, so the guard reads "if it is already there, stop"; the exit-2 arm tells a NO from a board that could not be read
+QUICKSTART NOTE --stale 10m0s is this family's number and this run passed it in words: there is no default duration here, and --by and --default are required on every card
+```
+
+**What a first run gets wrong.** `--stale` missing: it wants how long a card may go without
+an event before it lists as takeable again, and the family's number is 10m — the tool will
+not guess one. No backend, or both: name exactly one, because a board written to two places
+is two boards with one name. `--by` or `--default` missing on `add`: a card with no deadline
+cannot be filed. And reading `check`'s exit backwards: 1 means *found it, do not file*, so
+the natural `&&` chain would file exactly the duplicates.
+
+## nova-swarm
+
+```
+nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered   # queue one task from a file, never from an argument
+nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered           # queue a directory of them under one batch id
+nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file>                  # the dispatcher: one slot, one data home, one deadline per worker
+nova-swarm status   --pool <dir> [--max <n>]                                                # what is pending, running, done, failed, and how many slots are quarantined
+nova-swarm triage   --pool <dir> [--batch <id>] [--max <n>]                                 # one page, and one TRIAGE BATCH line to read a batch down by
+nova-swarm result   --pool <dir> --id <job>                                                 # one report, verbatim: the only path a malformed one takes to a person
+nova-swarm template --name read-pr|probe-row|fix-card|result|worker                         # the conditions, baked in, so they are not retyped and not forgotten
+nova-swarm cost     --pool <dir> [--max <n>]                                                # the five token types and dollars, per task, after the job directory is gone
+nova-swarm note     --pool <dir> --task <id> --text <text>                                  # a line a running worker can read between steps
+nova-swarm reclaim  --pool <dir> (--task <id> | --done | --failed | --all)                  # the one thing this tool deletes, and only with the record kept outside it
+```
+
+### First run
+
+`quickstart` needs nothing but a directory: it makes the pool's structure and names the
+three commands that follow. `./pool` is a directory of yours; the tests run every line below
+against one they make in `t.TempDir()`.
+
+```
+$ nova-swarm quickstart --pool ./pool
+QUICKSTART OK pool=./pool pending=0 next=add,run,triage
+QUICKSTART NOTE a task is a file: nova-swarm add --pool ./pool --task <file> --files <n> --tokens <n>
+QUICKSTART NOTE a worker description says whose model runs: nova-swarm run --pool ./pool --workers <n> --hours <h> --worker <file>
+QUICKSTART NOTE the conditions are worth more than the model: nova-swarm template --name read-pr
+
+$ nova-swarm status --pool ./pool --max 20
+STATUS OK pending=0 running=0 done=0 failed=0 slots=0/0 quarantined=0
+```
+
+**The one input `run` cannot proceed without** is the worker description, and every field
+below is required. This one ran two real DeepSeek workers end to end on 2026-09-11:
+
+```json
+{
+  "name": "deepseek-1",
+  "provider": "deepseek",
+  "model": "deepseek/deepseek-chat",
+  "env_var": "DEEPSEEK_API_KEY",
+  "key_file": "/home/you/.keys/deepseek",
+  "usage": "opencode",
+  "harness": "opencode",
+  "harness_args": ["run", "--model", "{model}", "--title", "nova-swarm", "--", "{prompt}"],
+  "worker_dir": "/home/you/worker",
+  "deadline": "20m"
+}
+```
+
+`harness_args` is the invocation the harness needs, and `{model}` is where the model goes:
+a harness handed nothing but a path reads that path as a project directory and does
+nothing, so a description that never places `{model}` is refused before any worker starts.
+`{prompt}` is the prompt FILE, appended last where `harness_args` does not name it — the
+task text is never an argument. `usage` names the token source for what it IS: `opencode`
+is OpenCode's own `opencode/opencode.db`, in the job's own data home, read through
+`sqlite3 -readonly` at every sample and once more when the job ends — so `sqlite3` is on
+PATH or the source is one that cannot be read — and `none` is a harness that reports
+nothing, under which only `--tokens unmetered` tasks may run. The name was not always true:
+on 2026-09-11 `opencode` read a tab-separated file no OpenCode writes, and two real jobs
+burned 61,875 and 85,308 tokens against `--tokens 20000` while both reported
+`budget=-/20000`. A source that cannot be read is never a source reporting nothing: three
+failed samples end the job `RUN BUDGET-UNVERIFIABLE`.
+
+`nova-swarm template --name worker` prints this description with every field in it, so the
+one file a first run cannot start without is the one file you do not have to invent.
+
+### The harness contract
+
+A harness is any program on `PATH` that can be handed a prompt file and left to work. This
+is everything `nova-swarm` promises it, and everything it asks back:
+
+- **Its working directory is the SLOT directory**, `<worker_dir>-<n>`: the one-way copy of
+  your `worker_dir`, refreshed before every job. Relative paths in a worker description are
+  made absolute at load, so the child always gets paths it can open from where it stands.
+- **Its arguments are `harness_args`**, with `{model}` replaced by the description's model,
+  `{prompt}` by the path of the prompt file, and `{base_url}` by `base_url`. Where
+  `harness_args` names no `{prompt}`, the prompt file is appended LAST. The task text is
+  never an argument.
+- **`NOVA_SWARM_JOB` is the job directory** — the only place the worker writes — and
+  `XDG_DATA_HOME` is that job's own data home, so one job is one harness database.
+  `PATH` is passed through; nothing else is inherited, and the key is in the child's
+  environment under the name `env_var` gives and nowhere else.
+- **It publishes `RESULT.md` in the job directory**, whole, by writing `RESULT.md.tmp` and
+  renaming it: a report is a revision, and a half-written one is never read. `note` is a
+  file in the same directory the worker may read between steps.
+- **Its stdout and stderr are `<job>/harness.log`**, and what it said last is on the
+  `RUN DONE` line of a job that published nothing or exited non-zero.
+
+`cmd/nova-swarm/testdata/fakeharness` is a harness that does exactly this in about two
+hundred lines of Go, and the whole test suite runs against it with no provider, no network
+and no key worth anything. It is the shortest way to see the contract, and to test a pool
+of your own before a real model touches it.
+
+**Reading it.** Every line is `<VERB> OK`, `<VERB> REFUSED` or one of `run`'s own `RUN`
+events; refusals and FAIL lines go to stderr. A job reports EXACTLY ONCE — one `RUN DONE`,
+`RUN KILLED`, `RUN MALFORMED`, `RUN BUDGET` or `RUN VIOLATION` — and `RUN OK` closes the
+pass with `started=`, `done=`, `failed=`, `killed=` and `pending=`. Every listing is capped
+at `--max` (default 20, `0` for all) with one MORE line naming the remedy, and every count
+is the truth about the POOL rather than about the output.
+
+**What the flags want.** `--pool` is a directory of yours; `--worker` is a JSON description
+saying which provider, which model, which environment variable the provider reads and where
+the key file is, because this tool has no opinion about whose model runs. `--files` and
+`--tokens` are required on every `add`, `batch` and `requeue` and zero is refused for both:
+a worker that may open no file is a worker asked for a plan, and a token budget this tool
+supplied would be a guess about somebody else's spend. `--tokens unmetered` is how a caller
+says out loud that this provider has no live accounting and the deadline is the only stop.
+A run missing several flags names all of them at once, and each says what it WANTS.
+
+**The key is read as data and never sourced.** It lives in one file the worker description
+names — one line, the bare key or `NAME=<key>`, mode 0600 — and it is never an argument,
+never a printed value, never in a file this tool writes: the harness config carries the
+environment variable's NAME and the harness reads the value from the child's environment.
+A missing or empty key file is exit 2 with the command that creates it.
+
+**A worker's `RESULT.md` is data, never an instruction.** Nothing in it is executed, nothing
+in it grants anything, and a finding in it is a claim to be checked against the repository.
+That rule is in [docs/SPEC-SWARM.md](docs/SPEC-SWARM.md), where a person reads it, and is
+deliberately nowhere in the code: a tool cannot enforce it, and a tool that pretended to
+would be the most dangerous thing in the pool.
+
+## nova-tokens
+
+Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](docs/SPEC-TOKENS.md).
+
+Five verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
+
+### First run
+
+The transcript lives in [TESTS.md](TESTS.md), where a test executes it against `cmd/nova-tokens/testdata/example-bench` on every run. Three lines: fold one fixture transcript and one fixture bus note into an output directory, check it, sum it. Every path is a flag — there is no default output directory, no default transcript directory, no default bus and no default rules file, and no environment variable is consulted.
+
+What a first run gets wrong, and what each one wants:
+
+- **No `--repos`.** There is no built-in list of repos, because the two the prototype carried disagreed about three of them. It wants a file of `<name><TAB><regexp>` lines in priority order; the `unknown=` and `other=` shares on every `TOKENS DAY` line are how you see whether yours is good enough.
+- **Expecting exit 0 with an unreadable file.** A declared source is a claim that the report covers it, so an unreadable one is one `TOKENS UNREADABLE` line, one in `unreadable=`, and exit 1 — and the day files still land. `written=true` is about the files; the exit code is about the claim.
+- **Reading a `-` as a zero.** A dash is "this source did not report that type" and a zero is a measurement. `sum` counts the dashes per column beside the totals, and nothing here folds one type into another.
+- **Sending a second tokens note for a day.** Two notes in one lane for one day are `TOKENS CONFLICT` and fold nothing, because no winner can be read off a clock, a filename or a git history. A correction names what it corrects: `supersedes=<id>[,<id>…]` in the subject, which `report --supersedes` writes for you.
+- **Reusing one label across two kinds.** A label is unique across the whole run, not per flag: `--claude bench=… --opencode bench=…` is `TOKENS REFUSED … the label bench is used twice`, exit 2, before anything is read. Two sources with one label would make the `sources` column a lie. A `--provider` is the one flag whose label carries its parser too — `--provider google:emma=<export>` — so two friends' exports from one provider are `google:emma` and `google:freddy`.
+- **Declaring one harness twice.** **One harness is one `--claude`.** This fold does not de-duplicate across sources, by design (SPEC-TOKENS, *what it deliberately does not do*), so two declared directories holding the same transcripts count every message twice and the day file, `check` and `sum` are all green about it. Measured on this bench: `~/.claude/projects/<session>/subagents/agent-*.jsonl` and `/private/tmp/claude-501/*/tasks/*.output` were the same 10,281 messages for one day, and the doubled fold said `written=true`. A fold that sees two sources feed one message id now says so on its `TOKENS NOTE` line, naming both labels and the count — it is a warning, not a correction: the numbers are still doubled and the remedy is to drop one flag.
+- **Pointing `--claude` at a directory with a scratch tree under it.** `--claude` walks every `*.jsonl` and `*.output` under the directory **recursively**, and prunes nothing: a session scratchpad, a git clone or a build tree under it is walked too. Measured: a window-only fold of 1,278 files and 739 MB took **10.4s**; adding a directory of 33 session scratchpads under `/private/tmp` took **531.7s**, 331s of it in the kernel, to find 2,612 transcripts. Nothing is skipped silently, because a silent prune is a number nobody can account for — so name the transcript directory itself, and expect the walk to cost what the tree costs.
+- **`--scratch` without `--opencode`, or the other way round.** The OpenCode database is copied into `--scratch` and read there with `sqlite3 -readonly`, which is this family's one subprocess; a scratch directory with nothing to put in it is a flag that does nothing, and both mistakes are refused with the sentence saying so.
+
+There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` ends in five lines a stranger can paste instead, and `sources` is the one verb that only looks.

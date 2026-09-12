@@ -1,0 +1,2 @@
+BOARD v1
+card d6eb281bc6989353f795319319f8f84d as=freddy at=2026-09-10T11:00:00Z override=false hash=c358b4b76e46 owner=freddy by=2126-01-01T00:00:00Z default=freddy\x20files\x20it\x20as\x20a\x20known\x20gap evidence=./seeds/crash-176549.bin: a fuzzer crash seed nobody has triaged

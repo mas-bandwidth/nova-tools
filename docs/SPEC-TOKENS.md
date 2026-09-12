@@ -133,6 +133,15 @@ is the day it was learned.
 9. **One file per day. A month is a sum of day files. The tool removes
    nothing.** There is no month file. `sum` reads day files and writes
    nothing. No verb deletes, truncates or trims any file, including any log.
+   The exception is a file THIS RUN makes, named here and nowhere else: the
+   fold's own `fold.lock`, the copy under `--scratch`, the fixed
+   `<day>.tsv.tmp` a day is written through, and, on a platform with no
+   flock, the lock sentinel the release removes. A file the tool was given is
+   never one of them, and the tripwire that enforces this searches for every
+   call that can empty a file -- `os.Remove`, `os.RemoveAll`, `os.Truncate`,
+   `.Truncate(`, `os.Create(`, `os.WriteFile(`, `os.O_TRUNC` (the flag that
+   empties the file an `os.OpenFile` opens) -- carving out those four by
+   file, with the reason, and failing when a carve-out has gone stale.
    A file under `--out` that is not a day file and not the temp name is
    named by `check` and left alone.
 10. **A day that would shrink is refused.** Before writing a day file that
@@ -425,9 +434,9 @@ after `: ` is capped at `oneline.TailBytes`.
 
 ```
 TOKENS FOLD at=<stamp> build=<id> out=<dir> sources=<n> days=<all|d> repos=<file>
-TOKENS SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|zone> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
+TOKENS SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|mixed|<zone>> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
 TOKENS UNREADABLE label=<label> path=<path>: <why>
-TOKENS UNPARSED label=bus:<name> note=<id> line=<n>: <text or why>
+TOKENS UNPARSED label=<kind>:<name> note=<id> line=<n>: <text or why>
 TOKENS SUPERSEDED label=bus:<name> note=<id> by=<id> day=<d>
 TOKENS CONFLICT label=bus:<name> day=<d> notes=<id,id,…>: competing reports; send a correction whose subject carries supersedes=<id>
 TOKENS TOUCHED label=bus:<name> day=<d> repos=<list>
@@ -457,13 +466,21 @@ CHECK MORE kind=<file|row|missing|stray> shown=<n> total=<t> nova-tokens check -
 CHECK OK at=<stamp> build=<id> files=<n> rows=<n> first=<d> last=<d> missing=0 stray=0
 CHECK FAIL files=<n> rows=<n> first=<d> last=<d> bad=<n> missing=<n> stray=<n>
 CHECK REFUSED: <reason>
-SOURCES SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|zone> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
+SOURCES SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|mixed|<zone>> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
 SOURCES UNREADABLE label=<label> path=<path>: <why>
-SOURCES UNPARSED label=bus:<name> note=<id> line=<n>: <text>
+SOURCES UNPARSED label=<kind>:<name> note=<id> line=<n>: <text>
 SOURCES MORE kind=<source|unreadable|unparsed> shown=<n> total=<t> nova-tokens sources … --max 0
 SOURCES OK sources=<n> files=<n> messages=<n> unreadable=<n> unparsed=<n> rows=<n>
 SOURCES REFUSED: <reason>
 ```
+
+Every `label=` in the block is `<kind>:<name>`, the kind one of the five
+(`claude`, `opencode`, `swarm`, `bus`, `provider`) and the name the one the
+caller declared, so a line names the reader that could not read something as
+well as the source: a transcript line this tool cannot date is
+`TOKENS UNPARSED label=claude:<name> note=<path> line=<n>: <text or why>`, and
+`note=` is the note id for a bus note and the file the line came from for every
+other kind.
 
 `TOKENS FOLD` is the first line of every fold and it says what the fold will
 count before it counts: how many sources, which days, which rules file. A
@@ -485,7 +502,10 @@ named), so a reader of a mixed row can see which source could not have
 covered which cell (rule 15). `day_basis=` is `utc` for every kind but a
 provider export of local-day totals, where it is the export's zone, and a
 bus lane whose lines carry a seventh field, where it is that zone, or
-`mixed` when one lane's lines carry more than one (rule 17); a lane is
+`mixed` when one lane's lines carry more than one (rule 17); `<zone>` in the
+block is that zone NAME as rule 17 declares it and rule 13 accepts it
+(`America/Los_Angeles`, `+02:00`: no whitespace, never `utc`), not the word
+`zone`, which this tool never prints; a lane is
 allowed to be mixed across days, a row never. The fields that do not apply to a kind print `-`, never `0`: a
 transcript has no unparsed lines and a bus lane has no duplicate ids, and a
 dash is an absence where a zero is a measurement. The same rule is why a
