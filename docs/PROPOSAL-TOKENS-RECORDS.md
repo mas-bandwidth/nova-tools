@@ -70,11 +70,11 @@ An operator may select an explicit accounting policy such as charging a whole bo
 
 The agreed private ledger is provisioned; the record contract is still under review. Use existing authorized access. The `friend` field identifies usage, independently of Git commit authorship. This design neither creates accounts nor changes credentials or access controls.
 
-Observations and coverage contributions use immutable, collision-safe names, for example `records/<friend>/<bench>/<day>/<contribution-id>.jsonl` and `coverage/<friend>/<bench>/<day>/<contribution-id>.json`. Undated/interval evidence has an explicit unallocated location, never a guessed day. A fixed coverage filename can only be a generated index, not the sole retained history. Publication validates the entire contribution before adding only its named files.
+Observations and coverage contributions use the immutable shard-digest and coverage-digest names specified in the format packet. Record paths partition original execution friend/bench and honest day allocation; coverage paths describe collection provenance, with the inspected source interval explicit in the body. Undated/interval evidence has an explicit unallocated location, never a guessed day. A fixed coverage filename can only be a generated index, not the sole retained history. Publication validates the entire contribution before adding only its named files.
 
 A bounded publisher stages an immutable batch and pushes one atomic commit; on a race it fetches and retries while preserving both writers. Identical identities/content are already-published; conflicting content is refused. Dirty unrelated work is preserved, there is no force push, reset, clean, removal or broad staging. Ambiguous push results are resolved by querying exact contribution identity before retrying. No blind replay with a fresh identity.
 
-The accounting reader remains read-only. Decide in review whether publication is a separate nova-tokens verb or a shared publishing helper; either must preserve that boundary and expose its exact writes. No hidden network access in collect/report/check.
+The accounting reader remains read-only. The format packet selects the separate `nova-tokens records publish` verb, which preserves that boundary and exposes its exact writes. No hidden network access in collect/report/check.
 
 The ledger and total reports remain private. Any future public report requires an explicit reviewed allowlist of open-source repositories, removes friend/bench/source identifiers unless deliberately included, excludes unattributed/private work and is published only by a separate deliberate step. A repository label alone is not a publication grant. No autonomous public export is part of daily collection.
 
