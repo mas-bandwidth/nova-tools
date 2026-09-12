@@ -534,16 +534,17 @@ only, recursively. Shared inputs — one reference checkout, a corpus, the specs
 the worker home with its `AGENTS.md` — belong in the read set, named once, so
 that N workers read one copy.
 
-**"Inside" is asked of the filesystem, not of a string prefix.** Every check that
-asks whether a path lies inside a named one — rule 6's `--secret`, rule 10's
-outside path, and rules 9 and 13's `HOME` and `--cwd` — asks `os.SameFile` of the
-path and its existing ancestors against the directory, keeping the string prefix
-as the cheap first answer and, for a directory that is not there to be asked,
-falling back to that prefix case-insensitively only where the filesystem is
-measured to fold (a spelling that differs only in case is one file on APFS and on
-NTFS, and the backend grants it: measured, a `--secret` at `<base>/R/env` under a
-`--read` of `<base>/r` was READABLE inside the wall); that names a mechanism and
-adds no rule.
+**"Inside" is asked of the filesystem, not of a string prefix.** The one predicate
+behind rule 6's `--secret`, rule 10's outside path, rule 9's `HOME`, rule 13's
+`--cwd`, rule 8's `--tmp` and the command-directory home guard — and behind no
+other question — asks `os.SameFile` of the path and its existing ancestors against
+the directory, keeping the string prefix as the cheap first answer and, for a
+directory that is not there to be asked, falling back to that prefix
+case-insensitively only where a probe file written and removed in the nearest
+directory that does exist measures a fold (a spelling that differs only in case is
+one file on APFS and on NTFS, and the backend grants it: measured, a `--secret` at
+`<base>/R/env` under a `--read` of `<base>/r` was READABLE inside the wall); that
+names a mechanism and adds no rule.
 
 **The roots** are what any command needs to run at all: read only, recursively
 unless marked otherwise. They are a per-platform list in one data file in the

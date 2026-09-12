@@ -8,12 +8,12 @@ import (
 
 // A FILESYSTEM IS NOT A STRING, and this file is the one place in this package that says so.
 // APFS is case-INsensitive by default and NTFS is too, so two spellings that differ only in
-// case are ONE file while a `strings` comparison says they are two. `Inside` is what rule 6
-// asks of `--secret`, what rule 10 asks of the probe's outside path, and -- through
-// `insideAny` -- what rules 9 and 13 ask of `HOME` and `--cwd`, so a containment answer a case
-// fold walks around is either a secret the tool says is outside the lists it sits inside
-// (issue #145) or a sound `HOME` refused as `home_outside` (rule 1's silent sandbox, the other
-// way about).
+// case are ONE file while a `strings` comparison says they are two. `Inside` and `insideAny` are
+// the predicate behind six questions and no others: rule 6's `--secret`, rule 10's outside path,
+// rule 9's `HOME`, rule 13's `--cwd`, rule 8's `--tmp`, and the command-directory home guard's
+// "did the caller already name this". So a containment answer a case fold walks around is either
+// a secret the tool says is outside the lists it sits inside (issue #145) or a sound `HOME`
+// refused as `home_outside` (rule 1's silent sandbox, the other way about).
 //
 // `os.SameFile` is the answer wherever both sides EXIST, because device and inode is the
 // question the filesystem itself answers: it holds for a case fold, for one directory mounted
@@ -22,23 +22,27 @@ import (
 // there the filesystem's case behaviour is MEASURED, on the nearest directory that exists,
 // never guessed from `runtime.GOOS`.
 
-// dirFoldsCase says whether the filesystem holding dir treats two spellings of one name as one
-// name. It is asked read-only first: where dir exists, its own name in another case either
-// answers to the same device and inode -- the filesystem folded -- or does not answer at all.
-// Where dir's name carries no letter to re-case, the question is put by WRITING a probe file
-// and asking for it back in another case.
+// dirFoldsCase says whether a lookup INSIDE dir treats two spellings of one name as one name.
 //
-// Where neither can run the answer is NO, which is the answer this package gave before the
+// AND THE MEASUREMENT IS MADE IN THE DIRECTORY BEING JUDGED, NEVER ON ITS OWN NAME IN ITS
+// PARENT. A previous revision took a read-only shortcut -- re-case dir's own name and ask the
+// parent for it back -- and that measures the PARENT's filesystem, which differs at a mount
+// boundary and on a filesystem with a per-directory casefold setting (both eyes of #159:
+// Stella, comment 5648066751; the Fable read, comment 5648102050; measured on a case-sensitive
+// APFS image mounted under the folding `/Volumes`, where the mountpoint's own name folds and
+// nothing inside it does). The shortcut was never REACHED from this package -- `Inside` asks
+// this only about a directory that does not exist, and the shortcut needed it to exist -- but
+// it is gone from here too, because the next caller would not know that.
+//
+// So the question is put by WRITING one probe file and asking for it back in another case.
+// `Inside` reaches this only for a directory that is not there, so the write lands in the
+// nearest existing ancestor and the climb is named at `writtenProbeFolds`.
+//
+// Where no write can be made the answer is NO, which is the answer this package gave before the
 // fold was measured at all: `Inside` has callers on both sides -- a `true` refuses a `--secret`
 // and a `true` ADMITS a `HOME` -- so a filesystem that said nothing leaves today's answer
 // standing rather than inventing one in a direction that is safe for only half of them.
 func dirFoldsCase(dir string) bool {
-	if base := filepath.Base(dir); recased(base) != base {
-		if orig, err := os.Lstat(dir); err == nil {
-			other, err := os.Lstat(filepath.Join(filepath.Dir(dir), recased(base)))
-			return err == nil && os.SameFile(orig, other)
-		}
-	}
 	return writtenProbeFolds(dir, false)
 }
 
@@ -54,12 +58,17 @@ func recased(name string) string {
 	return name
 }
 
-// writtenProbeFolds puts the question to the filesystem by writing: one probe file whose name
-// carries capitals, asked for again in lower case, and removed either way. It climbs to the
-// nearest EXISTING ancestor, because the directory asked about is one that is not there; it
-// does not climb past a directory that IS there and refused the write, because the next one up
-// may be another filesystem. `unanswerable` is what it answers where the probe could not be
-// written at all -- the one case where the filesystem said nothing.
+// writtenProbeFolds puts the question to the filesystem by writing IN THE DIRECTORY ASKED
+// ABOUT: one probe file whose name carries capitals, asked for again in another case, and
+// removed either way. The write is the only way to ask a directory about its own lookups, and
+// it happens while the policy is BUILT, never inside the wall.
+//
+// THE CLIMB IS THE ONE INFERENCE LEFT, and it is only for a directory that IS NOT THERE: a path
+// nobody has created cannot be asked, so the nearest existing ancestor answers for it, and that
+// ancestor can be on another filesystem. It does not climb past a directory that IS there and
+// refused the write, because that would answer about a volume nobody asked about.
+// `unanswerable` is what it answers where no write could be made at all -- the one case where
+// the filesystem said nothing, and `dirFoldsCase` says which way this package then leans.
 func writtenProbeFolds(dir string, unanswerable bool) bool {
 	d := dir
 	for {
@@ -83,6 +92,6 @@ func writtenProbeFolds(dir string, unanswerable bool) bool {
 	if err != nil {
 		return unanswerable
 	}
-	other, err := os.Lstat(filepath.Join(d, strings.ToLower(filepath.Base(name))))
+	other, err := os.Lstat(filepath.Join(d, recased(filepath.Base(name))))
 	return err == nil && os.SameFile(orig, other)
 }

@@ -357,10 +357,14 @@ func slotDirHolding(path, workerDir string) string {
 			if i <= 0 {
 				return "" // no slot number, so not a slot directory
 			}
-			if digits := name[i+1:]; digits == "" || strings.TrimLeft(digits, "0123456789") != "" {
+			digits := name[i+1:]
+			if digits == "" || strings.TrimLeft(digits, "0123456789") != "" {
 				return ""
 			}
-			if !namesOneFile(up, name[:i], base) {
+			// The FULL spellings, the candidate against the slot `SlotDir` would build for
+			// that number: where both are there the two directories answer for themselves
+			// and no fold is guessed (Stella's read of #159, comment 5648066751).
+			if !namesOneFile(up, name, base+"-"+digits) {
 				return "" // another worker's slot, or a neighbour that merely reads alike
 			}
 			return dir

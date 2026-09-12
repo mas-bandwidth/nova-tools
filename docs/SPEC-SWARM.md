@@ -844,8 +844,11 @@ data before the wrap, passed by environment, the file itself in neither list
 `key_file` inside a SLOT directory is refused at load**, and because a slot
 directory need not exist yet at load — slots are created at run, so there may be
 no inode to compare — the candidate slot is derived from the key's own ancestors
-and its `<worker_dir basename>-<digits>` name is judged under the filesystem's
-own equality, measured on the directory in question rather than read off
+and judged against the slot spelling `<worker_dir>-<n>` under the filesystem's
+own equality: the two directories themselves where both are there, and otherwise
+the case behaviour of the directory holding them, **measured at load by writing
+and removing one probe file inside that directory** — the parent of `worker_dir`,
+where this tool creates slot directories anyway — rather than read off
 `runtime.GOOS`; that names a mechanism and adds no rule.
 
 **And "inside" is a question for the filesystem, not for two strings.** A

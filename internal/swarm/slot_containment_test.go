@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -187,5 +188,118 @@ func TestNamesOneFileAsksTheFilesystem(t *testing.T) {
 	// A directory that is not there is answered by the nearest one that is.
 	if got := dirFoldsCase(filepath.Join(dir, "not", "yet", "123")); got != folds {
 		t.Errorf("dirFoldsCase of an absent directory = %v, the filesystem folds = %v", got, folds)
+	}
+}
+
+// measuredFold is the GROUND TRUTH about one directory: a file written INSIDE it and asked
+// for again in another case. ok is false where the directory would not take the write, which
+// is the one case no measurement can answer.
+func measuredFold(dir string) (folds, ok bool) {
+	f, err := os.CreateTemp(dir, "GroundTruth")
+	if err != nil {
+		return false, false
+	}
+	name := f.Name()
+	f.Close()
+	defer os.Remove(name)
+	orig, err := os.Lstat(name)
+	if err != nil {
+		return false, false
+	}
+	other, err := os.Lstat(filepath.Join(dir, strings.ToLower(filepath.Base(name))))
+	return err == nil && os.SameFile(orig, other), true
+}
+
+// nameFoldsInParent is the answer the REMOVED shortcut gave: the spelling of the directory's
+// own name, looked up in its PARENT. It is kept here as the wrong answer this test is about.
+func nameFoldsInParent(dir string) (folds, ok bool) {
+	base := filepath.Base(dir)
+	lower := strings.ToLower(base)
+	if lower == base {
+		return false, false // no letter to re-case, so the shortcut could not answer either
+	}
+	orig, err := os.Lstat(dir)
+	if err != nil {
+		return false, false
+	}
+	other, err := os.Lstat(filepath.Join(filepath.Dir(dir), lower))
+	return err == nil && os.SameFile(orig, other), true
+}
+
+// caseBoundaryDir finds a directory whose OWN NAME folds one way in its parent while lookups
+// INSIDE it fold the other way. A MOUNT BOUNDARY is where the two can differ -- a
+// case-sensitive volume mounted under the folding `/Volumes`, or the reverse -- and it is the
+// one place a fold inferred from the parent is wrong (Stella's read of #159, comment
+// 5648066751).
+//
+// It looks along the ancestors of `t.TempDir()` up to one level above `os.TempDir()`, which is
+// the builder's own case-sensitive-image setup: `TMPDIR=<volume>/tmp` puts the volume root on
+// that path. The walk is bounded there so that the probe writes land in temp directories and
+// their volume root, never anywhere else on the machine.
+func caseBoundaryDir(t *testing.T) (dir string, folds bool, found bool) {
+	t.Helper()
+	stop := filepath.Dir(filepath.Clean(os.TempDir()))
+	for d := t.TempDir(); ; {
+		inside, okInside := measuredFold(d)
+		byName, okName := nameFoldsInParent(d)
+		if okInside && okName && inside != byName {
+			return d, inside, true
+		}
+		if d == stop {
+			return "", false, false
+		}
+		up := filepath.Dir(d)
+		if up == d {
+			return "", false, false
+		}
+		d = up
+	}
+}
+
+// DEMANDED by Stella's read of #159 (comment 5648066751): `dirFoldsCase` measured the spelling
+// of the directory's own name IN ITS PARENT and treated that as the lookup behaviour INSIDE the
+// directory. Those differ at a mount boundary, and the slot check asks the question about
+// CHILDREN of the directory -- `<base>-<digits>` siblings of `worker_dir` -- so the parent's
+// answer is the wrong one. A case-sensitive volume mounted under the folding `/Volumes` is the
+// case: the mountpoint's name folds, everything inside it does not.
+//
+// This test needs such a boundary to exist on the path it can reach, so run it with `TMPDIR`
+// inside a case-sensitive image, which is the setup this PR already uses to prove its skips.
+// Where no boundary is reachable it skips by name rather than passing about nothing.
+func TestTheFoldIsMeasuredInsideTheDirectoryNotInItsParent(t *testing.T) {
+	boundary, folds, found := caseBoundaryDir(t)
+	if !found {
+		t.Skip("no case-sensitivity boundary is reachable from this machine's temp directory: every directory on that path answers the same inside as its own name does in its parent, so the inference this test is about cannot be observed here. Run with TMPDIR inside a case-sensitive image mounted under a folding parent")
+	}
+	if got := dirFoldsCase(boundary); got != folds {
+		t.Errorf("dirFoldsCase(%s) = %v, but a file written INSIDE it says %v: the answer is being inferred from the directory's own name in its parent, which is a different filesystem here", boundary, got, folds)
+	}
+	// AND THE FULL SLOT-NAME COMPARISON AT THAT BOUNDARY, which is what the check actually
+	// asks. `<boundary>/<base>-1` is the slot the tool would build; the key sits in a
+	// sibling spelled in another case. Whether that is ONE directory is the boundary's own
+	// answer, so the refusal must follow the measured fold and not the mountpoint's name.
+	base := fmt.Sprintf("nf%dworker", os.Getpid())
+	home := filepath.Join(boundary, base)
+	candidate := filepath.Join(boundary, strings.ToUpper(base)+"-1")
+	t.Cleanup(func() {
+		os.RemoveAll(home)
+		os.RemoveAll(candidate)
+	})
+	for _, d := range []string{home, candidate} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	key := filepath.Join(candidate, ".key")
+	if err := os.WriteFile(key, []byte("sk-not-a-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := 0
+	if folds {
+		want = 1 // one directory under two spellings: the key is in the slot
+	}
+	_, problems := LoadWorker(slotDesc(t, t.TempDir(), home, key))
+	if len(problems) != want {
+		t.Fatalf("a key file at %s with worker_dir %s reported %d problems, want %d on a filesystem that folds=%v: %v", key, home, len(problems), want, folds, problems)
 	}
 }
