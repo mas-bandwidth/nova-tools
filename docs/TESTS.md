@@ -173,6 +173,26 @@ repository, so this transcript reaches no network.
 
 ### First run
 
+Run against a live `--repo` rather than this fixture, `quickstart` **pushes** the
+`--lane-branch` to `origin` of that repository — the lane's record branch, one
+commit, author `nova-merge <nova-merge@localhost>`, a placeholder identity rather
+than a person. So the rehearsal comes first, against a bare repository of your
+own (`git init -q --bare ./rehearsal.git`), whose absolute path is what `--remote`
+wants: git runs inside the lane directory, so a relative one resolves against the
+lane and is refused. Both lines below are executed by
+`cmd/nova-merge/firstrun_test.go`.
+
+```
+$ nova-merge quickstart --lane ./rehearsal-lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
+INIT OK lane=./rehearsal-lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
+STATUS NOTE the lane's base main could not be read from origin, so base_state is UNKNOWN: git fetch origin main: exit status 128: fatal: couldn't find remote ref main
+STATUS OK prs=0 branches=0 base=main base_state=UNKNOWN ready=0 blocked=0 waiting=0 reads=0a/0h
+```
+
+The rehearsal's `base_state=UNKNOWN` is the empty bare repository having no base to
+read, not a failure: it exits 0. Then the live form, whose first line creates and
+pushes `nova-merge/main` in the repository `--repo` names.
+
 ```
 $ nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
 INIT OK lane=./lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1

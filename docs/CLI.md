@@ -540,6 +540,46 @@ command, because the lane never edits an entry's content.
 Make a lane, queue an entry, and look at it. Every path is a flag; there is no
 default lane, no default repository and no default base.
 
+**The first run pushes, and this is the line that says so.** `init` — and so
+`quickstart`, which is `init` and then `status` — creates the lane's **record
+branch**, the name given to `--lane-branch`, and when the repository does not have
+that branch already it **pushes it to `origin`** of the repository `--repo` names:
+one commit holding `.gitignore`, subject `nova-merge: the lane's record branch`,
+author and committer **`nova-merge <nova-merge@localhost>`** — the tool's own
+placeholder identity, not a person and not an account anywhere, so a commit on
+that branch says the lane made it wherever the lane ran. That push is not a side
+effect to be tidied up later — the record branch is where every read and gate
+lives, so that a reader on another machine records a verdict where every lane
+folds it ([SPEC-MERGE.md](SPEC-MERGE.md) rule 22). `joined=false` on the
+`INIT OK` line says this lane created that branch and pushed it; `joined=true`
+says the branch was already there and nothing was created or pushed.
+
+So the line below, pasted as it stands, writes a ref to
+`mas-bandwidth/nova-tools`. **Rehearse against a bare repository of your own
+first.** `--remote <url>` is the URL this lane clones from and pushes to, and
+with a local bare repository the whole first run reaches no forge:
+
+```sh
+git init -q --bare ./rehearsal.git
+nova-merge quickstart --lane ./rehearsal-lane --repo mas-bandwidth/nova-tools --base main \
+           --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
+```
+
+Both paths are deliberate. `--remote` is handed to git **inside the lane's own
+directory**, so it wants an absolute path or a URL — `"$PWD/rehearsal.git"` is
+that, and a relative `./rehearsal.git` resolves against the lane and is refused
+with git's own sentence and nothing left behind. And the rehearsal gets a lane of
+its own, because `init` creates a lane once: rehearsing into the directory the
+live line then uses is `INIT REFUSED` on the next command. The push, the clone
+and the record branch all land in `./rehearsal.git`; a rehearsal repository with
+no `--base` branch in it prints one `STATUS NOTE` and `base_state=UNKNOWN` at
+exit 0, which is the rehearsal saying it has no base to read rather than a
+failure. The corresponding transcripts in [TESTS.md](TESTS.md) are executed by
+tests; selected flags and warning phrases on this page are checked too.
+
+Then the live form, whose first line creates and pushes `nova-merge/main` in
+`mas-bandwidth/nova-tools`:
+
 ```
 $ nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
 INIT OK lane=./lane repo=mas-bandwidth/nova-tools base=main lane_branch=nova-merge/main joined=false version=1
@@ -553,11 +593,10 @@ STATUS ENTRY kind=pr entry=949 head=deade72d3f50 checks=g4/p1/r0 read=0a/0h stal
 STATUS OK prs=1 branches=0 base=main base_state=GREEN ready=0 blocked=0 waiting=1 reads=0a/0h
 ```
 
-`quickstart` is `init` and then `status`: the lane is created once, with its
-repository, its base and the branch its records live in, and no other verb takes
-those three. `joined=false` says this lane created the record branch; a second
-lane on the same branch — a reader on another machine — prints `joined=true` and
-creates nothing.
+The lane is created once, with its repository, its base and the branch its
+records live in, and no other verb takes those three. A second lane on the same
+branch — a reader on another machine — joins it: `joined=true`, and it creates
+and pushes nothing.
 
 Reading that status: `state=PENDING` is an entry **waiting**, which is not a
 failure and exits 0. `checks=g4/p1/r0` counts green, pending and red **separately**
@@ -570,6 +609,12 @@ since moved: kept, counted, and authorizing nothing.
 
 The things a first run gets wrong, and what each one wants:
 
+- **pasting the live line to see what the tool does** — the record branch is
+  created and pushed to `--repo` before there is any output to read, and a
+  throwaway `--lane-branch` is still a ref in a shared repository (Johnny,
+  nova-tools #116, who deleted the one his first run left). Rehearse with
+  `--remote "$PWD/rehearsal.git"` first; the live line is for the lane you mean
+  to keep.
 - **`add --base main`** — exit 2. The base is a property of the lane, written by
   `init`; a `--base` on a queueing verb would let two invocations disagree about
   where the lane lands.
