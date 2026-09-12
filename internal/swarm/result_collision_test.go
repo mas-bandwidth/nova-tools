@@ -1,9 +1,7 @@
 package swarm
 
 import (
-	"errors"
 	"io"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,31 +39,37 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 		}
 		var hits atomic.Int64
 		var lifted atomic.Bool
-		// The seam is scoped to THIS path by the error's own PathError, so every other
-		// record this pass reads keeps the platform's rule (false off Windows) and no
-		// other read in the test loops twice.
+		// ARMED, then LIFTED: while this fixture is replacing the path, EVERY failed read is
+		// a collision -- the same seam `TestTheLaunchHandshakeEndsAtItsOwnTimeoutWhenEveryReadCollides`
+		// uses, and for the same reason: what a directory read fails WITH is the platform's
+		// business (EISDIR here, something else on Windows) and the rule under test is not.
+		// The arming lasts the few polls it takes the reader to hit the path once, and the
+		// fixture leaves every OTHER record of this job present and readable so that the
+		// only read that can fail in that window is the one under test. After the lift the
+		// platform's own rule decides again -- false everywhere but Windows -- so nothing
+		// here loops twice.
 		forceTransientIO = func(err error) bool {
-			var pe *fs.PathError
-			if err == nil || lifted.Load() || !errors.As(err, &pe) || pe.Path != path {
+			if err == nil || lifted.Load() {
 				return transientIO(err)
-			}
-			if errors.Is(err, fs.ErrNotExist) {
-				// The instant between the directory going and the file arriving is part of
-				// the replace, and on Windows it is the same collision: while this fixture
-				// is replacing the path, "not there yet" is not an answer either.
-				return true
 			}
 			hits.Add(1)
 			return true
 		}
 		t.Cleanup(func() { forceTransientIO = nil })
 		go func() {
+			// The replace ENDS the collision, so it is retried until it lands: on Windows a
+			// directory with a reader in it does not come away on the first ask either.
 			deadline := time.Now().Add(SteadyWindow / 2)
 			for hits.Load() < 3 && time.Now().Before(deadline) {
 				time.Sleep(steadyPoll)
 			}
-			_ = os.Remove(path)
-			_ = os.WriteFile(path, []byte(body), 0o644)
+			for time.Now().Before(deadline) {
+				_ = os.Remove(path)
+				if err := os.WriteFile(path, []byte(body), 0o644); err == nil {
+					break
+				}
+				time.Sleep(steadyPoll)
+			}
 			lifted.Store(true)
 		}()
 		return &hits
@@ -101,6 +105,10 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(NotePath(jobDir), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := p.Reserve(1, sc.ID, jobDir, "abc123", os.Getpid(), now); err != nil {
 			t.Fatal(err)
 		}
 
