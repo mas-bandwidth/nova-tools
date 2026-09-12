@@ -169,10 +169,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # --verify-tag: gh will otherwise CREATE a tag that does not exist, which on a
-          # rerun with a typo'd ref would publish a release for a commit nobody tagged.
-          gh release create "$TAG" \
-            --verify-tag \
-            --title "$TAG" \
-            --generate-notes \
-            dist/*
+          # The release may already exist: v0.11.0 was published by hand before its tag's
+          # run reached this step, `gh release create` refused the duplicate tag name, and
+          # the release kept its notes and got none of its binaries. An existing release is
+          # therefore the case this branch handles rather than the case that fails -- the
+          # artifacts are the thing this job is for, and the notes are already right.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            # --clobber so a rerun replaces what a partial upload left, rather than erroring
+            # on the names already attached.
+            gh release upload "$TAG" --clobber dist/*
+          else
+            # --verify-tag: gh will otherwise CREATE a tag that does not exist, which on a
+            # rerun with a typo'd ref would publish a release for a commit nobody tagged.
+            gh release create "$TAG" \
+              --verify-tag \
+              --title "$TAG" \
+              --generate-notes \
+              dist/*
+          fi
