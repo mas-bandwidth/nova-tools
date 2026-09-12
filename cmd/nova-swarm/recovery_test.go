@@ -197,13 +197,30 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 		ID: task1ID, Deadline: "10s", Job: task1Dir, Slot: 1, Started: sf1.LaunchedAt,
 	})
 
-	// Goroutine to complete task 1 after 300ms by writing exit.json, RESULT.md, and killing liveCmd
+	// Goroutine to complete task 1 -- but only ONCE THE ADOPTION HAS BEEN DECIDED.
+	//
+	// The adoption is decided from the live pid alone (Decide: "pid alive under its
+	// recorded start stamp"), so ending the live worker on a bare timer races the
+	// dispatcher's start-up scan: under the whole-repo `go test -race ./...` this machine
+	// reached slot 1 AFTER the 300ms timer had already written exit.json and killed the
+	// worker, and the pass said `RUN RECLAIM slot=1 ... end=done` instead of `RUN ADOPT`.
+	// The slots are scanned in ascending order (Pool.SlotNumbers sorts), so slot 2's task
+	// arriving in done/ is proof that slot 1 was decided first: the signal is that file,
+	// and the clock is only a bound. It has to be a short one -- an adopted job holds the
+	// deadline from its RECORDED start -- and in practice the file lands in the same
+	// millisecond, because slot 2 is reclaimed immediately after slot 1 is adopted.
 	go func() {
-		time.Sleep(300 * time.Millisecond)
+		reclaimed := filepath.Join(b.pool, "done", task2ID+".task")
+		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
+			if _, err := os.Stat(reclaimed); err == nil {
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
 		_ = swarm.WriteJSON(filepath.Join(task1Dir, "exit.json"), swarm.ExitRecord{
 			RC: 0, End: swarm.EndDone, Nonce: "nonce-1", Ended: swarm.Stamp(time.Now()),
 		})
-		write(t, filepath.Join(task1Dir, "RESULT.md"), "# a recovered job\n\n## Head\nfindings: 0\nnotes read: 0\nrepo: o/n\nrev: abc\nit finished before its dispatcher died.\n\n## Findings\n- none\n")
+		_ = os.WriteFile(filepath.Join(task1Dir, "RESULT.md"), []byte("# a recovered job\n\n## Head\nfindings: 0\nnotes read: 0\nrepo: o/n\nrev: abc\nit finished before its dispatcher died.\n\n## Findings\n- none\n"), 0o644)
 		waitLiveCmd()
 	}()
 
