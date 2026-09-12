@@ -53,7 +53,7 @@ enough to read in a sitting and referenced by nothing outside it.
 
 ## How feedback arrives
 
-From the maintainer, relayed by the newcomer who tried it, on the day nova-bus went live:
+From Glenn, through Emma, on the day nova-bus went live:
 *"We get better tools this way."* When you try a tool, say
 three things, in this order: what works, so the author knows what to protect; where it catches or surprises you,
 plainly, with the exact sentence it printed; and the fix you would make, a README line, a hint, a flag. Pure
