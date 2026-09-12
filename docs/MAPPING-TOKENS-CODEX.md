@@ -31,7 +31,7 @@ tables decide, the tables are the decision.
 
 The executable form is `testdata/tokens/codex/`: the sealed mapping manifest, the synthetic
 source records, the expected observation envelopes and the shapes the wire must refuse. The
-landed publisher boundary checks all of it in
+landed record validator checks all of it in
 `internal/records/mapping_fixtures_test.go` (`TestCodexRetainedMappingFixtures`).
 
 ### The observation envelope, key by key

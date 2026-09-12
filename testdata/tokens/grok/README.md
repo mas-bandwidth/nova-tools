@@ -18,7 +18,7 @@ under the mapping decisions"; the decisions themselves are the source owner's on
 | `expected_records.jsonl` | the expected sealed `nova.tokens.observation/2` envelopes, stated independently of any adapter. Seven lines, six distinct observations, five spend keys. |
 | `refused_records.jsonl` | shapes the wire must refuse, each with the rule and field the landed validator must name. |
 
-`internal/records/mapping_fixtures_test.go` runs the landed publisher boundary over all of
+`internal/records/mapping_fixtures_test.go` runs the landed record validator over all of
 it. Turn identity stability is unverified, so the manifest declares normalized spend
 unsupported for this key and the test asserts that declaration rather than a spend total. The
 session aggregate and any future request-grain mapping are owed separately: neither is

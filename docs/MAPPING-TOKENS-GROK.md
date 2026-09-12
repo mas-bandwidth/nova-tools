@@ -66,7 +66,7 @@ what those decisions place outside this initial mapping is listed as owed at the
 owed is not covered. Where an earlier paragraph of this document defers a question these
 tables decide, the tables are the decision.
 
-The executable form is `testdata/tokens/grok/`, checked by the landed publisher boundary in
+The executable form is `testdata/tokens/grok/`, checked by the landed record validator in
 `internal/records/mapping_fixtures_test.go` (`TestGrokRetainedMappingFixtures`).
 
 ### The observation envelope, key by key

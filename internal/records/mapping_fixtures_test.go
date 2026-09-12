@@ -17,7 +17,7 @@ import (
 
 // The Codex and Grok source mappings of PR #142, made executable. Every expected
 // observation in these fixtures is stated independently of any adapter -- there is no
-// adapter -- and validated by the landed publisher boundary in this package, so a shape the
+// adapter -- and validated by the landed record validator in this package, so a shape the
 // documents describe but the wire refuses shows up here as a failure rather than as prose.
 // Nothing in this file relaxes a rule: the refused fixtures assert the refusal a mapping
 // mistake must produce, with the rule and field named.

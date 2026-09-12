@@ -16,7 +16,7 @@ under the mapping decisions"; the decisions themselves are the source owner's on
 | `expected_records.jsonl` | the expected sealed `nova.tokens.observation/2` envelopes, stated independently of any adapter: there is no adapter. Ten lines, nine distinct observations, eight spend keys, four of them carrying an unavailable counter and its completeness gap. |
 | `refused_records.jsonl` | shapes the wire must refuse, each with the rule and field the landed validator must name. |
 
-`internal/records/mapping_fixtures_test.go` runs the landed publisher boundary over all of
+`internal/records/mapping_fixtures_test.go` runs the landed record validator over all of
 it. An invalid supported counter is `unavailable`/`parse_failed` with the rest of its
 observation intact; a coerced pass-through of the same value still refuses under the
 unchanged core rules, which the refused fixtures assert. The `token_count` shape is owed to
