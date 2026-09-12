@@ -168,10 +168,28 @@ func LoadWorker(path string) (Worker, []error) {
 		// `insideDir` treats `worker-1` as a sibling of `worker` by design, and no `read_roots`
 		// entry names it (Rowan's Fable read 2 of #88 at fc400ce, L1). It is refused HERE rather
 		// than in `Run` beside the gate so that it holds for EVERY slot number, not only the ones
-		// one run happens to use, and so that `check` and `supervise` say it too.
-		if dir := resolvePath(w.WorkerDir); dir != "" {
-			if slot := slotDirHolding(key, dir); slot != "" {
+		// one run happens to use, and so that `run` and `supervise` say it too.
+		//
+		// BOTH SPELLINGS OF worker_dir, TYPED AND RESOLVED. The check above resolves because what
+		// the wall COPIES is the target's contents; this one is different in kind. `SlotDir` is
+		// `fmt.Sprintf("%s-%d", w.WorkerDir, slot)` on the TYPED spelling, and `worker_dir` is only
+		// made absolute at load, never symlink-resolved -- so with `worker_dir` a symlink
+		// `/typed/worker -> /real/worker` the slot the tool creates and hands to `--read` is
+		// `/typed/worker-1`, while the resolved sibling `/real/worker-1` is a directory nobody
+		// builds. Asking only the resolved one let a key at `/typed/worker-1/.key` pass (Rowan's
+		// Fable read 3 of #88 at 56c7dcc, L1). The typed spelling is the one the slot is built
+		// from; the resolved one stays as defence in depth. Deduped, so the ordinary case where
+		// the two coincide refuses once.
+		for _, dir := range spellings(w.WorkerDir) {
+			slot := ""
+			for _, k := range spellings(w.KeyFile) {
+				if slot = slotDirHolding(k, dir); slot != "" {
+					break
+				}
+			}
+			if slot != "" {
 				problems = append(problems, fmt.Errorf("%s: key_file %s is inside slot directory %s, which IS the job's --read: the job would read the key inside the wall under a probe that passed. Keep the key file outside worker_dir and outside every slot directory %s-<n>, such as ~/.keys/<provider>", path, key, slot, dir))
+				break
 			}
 		}
 	}
@@ -195,6 +213,21 @@ func resolvePath(path string) string {
 		return filepath.Clean(real)
 	}
 	return filepath.Clean(path)
+}
+
+// spellings is the distinct ways one path can be written for a check: as typed (cleaned)
+// and as resolved. A check that asks only one of them is a check the other walks around --
+// which side matters depends on what the wall does with the path, so a check that cannot
+// choose asks both (read 3 of #88, L1). An empty path has no spellings.
+func spellings(path string) []string {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	typed, real := filepath.Clean(path), resolvePath(path)
+	if typed == real {
+		return []string{typed}
+	}
+	return []string{typed, real}
 }
 
 // insideDir says whether a path lies under a directory. The directory itself is not inside

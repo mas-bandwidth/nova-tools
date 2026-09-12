@@ -170,10 +170,10 @@ func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	desc := func(key string) string {
+	descFor := func(workerDir, key string) string {
 		raw, _ := json.MarshalIndent(map[string]any{
 			"name": "w", "provider": "p", "model": "m", "env_var": "K", "key_file": key,
-			"usage": "none", "harness": "h", "worker_dir": home, "deadline": "1m",
+			"usage": "none", "harness": "h", "worker_dir": workerDir, "deadline": "1m",
 			"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
 			"read_roots":   []string{tools},
 		}, "", "  ")
@@ -183,6 +183,7 @@ func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 		}
 		return path
 	}
+	desc := func(key string) string { return descFor(home, key) }
 	// The key file a description may NOT name: one inside the worker directory, which is
 	// copied into the slot before every job.
 	inside := filepath.Join(home, ".key")
@@ -270,6 +271,37 @@ func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 	}
 	if _, problems := LoadWorker(desc(link)); len(problems) != 1 {
 		t.Errorf("a symlink walks around the check: %v", problems)
+	}
+	// AND A SYMLINKED worker_dir DOES NOT WALK AROUND THE SLOT CHECK. `SlotDir` builds the
+	// slot from the TYPED spelling, so with `worker_dir` a link the slot the tool creates and
+	// hands to `--read` is a sibling of the LINK, not of its target: asking only the resolved
+	// spelling left a key inside the wall under a green line (Rowan's Fable read 3 of #88 at
+	// 56c7dcc, L1). Exactly one refusal, naming the key and the slot the tool would build.
+	realDir := filepath.Join(dir, "real", "worker")
+	if err := os.MkdirAll(realDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	typedDir := filepath.Join(dir, "typed-worker")
+	if err := os.Symlink(realDir, typedDir); err != nil {
+		t.Fatal(err)
+	}
+	linkedSlot := Worker{WorkerDir: typedDir}.SlotDir(1)
+	if err := os.MkdirAll(linkedSlot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inLinkedSlot := filepath.Join(linkedSlot, ".key")
+	if err := os.WriteFile(inLinkedSlot, []byte("sk-not-a-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, problems = LoadWorker(descFor(typedDir, inLinkedSlot))
+	if len(problems) != 1 {
+		t.Fatalf("a key file inside the slot of a SYMLINKED worker_dir reported %d problems, want 1: %v", len(problems), problems)
+	}
+	said = problems[0].Error()
+	for _, want := range []string{inLinkedSlot, linkedSlot, "--read", "~/.keys/<provider>"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the symlinked-slot refusal does not say %q:\n%s", want, said)
+		}
 	}
 }
 
