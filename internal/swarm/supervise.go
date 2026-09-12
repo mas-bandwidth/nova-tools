@@ -50,6 +50,11 @@ func Supervise(in SuperviseInput) int {
 	jobDir := in.Worker.JobDir(in.Slot, in.Task)
 	self := os.Getpid()
 
+	// BEFORE ANYTHING ELSE, and before the pause point below can make this process a
+	// stopped member of a group its runner's death orphans: the kernel's hangup is not a
+	// way for a supervisor to die (hangup_unix.go carries the measurement and the rule).
+	ignoreHangup()
+
 	CheckPausePoint("before-identify")
 	CheckKillPoint("before-identify")
 

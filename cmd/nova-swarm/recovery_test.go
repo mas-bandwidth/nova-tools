@@ -439,9 +439,16 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		taskID := b.add("task reverse schedule\nFAKE-FINDINGS 0\n")
 		jobDir := filepath.Join(b.dir, "worker-home-1", "jobs", taskID)
 
-		// Supervisor stops before identify, runner dies after spawn
+		// Supervisor stops before identify, runner dies after spawn -- and THE ORDER OF
+		// THE TWO DEATHS IS FIXED, not hoped for: the supervisor stops only once its
+		// parent is gone. A supervisor that stops FIRST is a stopped member of a group
+		// the runner's death orphans, and the kernel hangs that group up (killpoint_unix.go
+		// carries the measurement); the test below that names the hangup stages exactly
+		// that order on purpose. Ubuntu CI got it by accident on 2026-09-12 and this
+		// subtest was red with `aborted.json was not written`.
 		b.extraEnv = []string{
 			"NOVA_SWARM_PAUSEPOINT=before-identify",
+			"NOVA_SWARM_PAUSE_AFTER_ORPHAN=1",
 			"NOVA_SWARM_KILLPOINT=after-spawn",
 		}
 		b.run()
@@ -476,14 +483,24 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 			t.Fatalf("slot 1 state = %s, want orphaned", sf.State)
 		}
 
-		// Resume supervisor with SIGCONT
+		// Resume the supervisor and then WAIT FOR ITS DEATH, rather than for a fixed
+		// number of milliseconds. Rule 18 says aborted.json is on disk BEFORE the exit
+		// status is observable, so the moment the process is gone is the moment the file
+		// must already be there: that is the assertion, and it is also the only wait that
+		// does not turn a loaded runner red. (The abort takes 34 ms on an idle linux box
+		// and 147 ms on one with four spinners on its only core; 300 ms was a guess.)
+		// AND THE STOP IS WAITED FOR, not assumed: a SIGCONT that arrives before the
+		// SIGSTOP is a signal nobody ever sent -- the supervisor stops a moment later and
+		// stays stopped for the rest of the test's life. The stop is observable, so the
+		// test observes it.
+		waitStopped(t, supPID)
 		_ = syscall.Kill(supPID, syscall.SIGCONT)
-		time.Sleep(300 * time.Millisecond)
+		waitGone(t, supPID)
 
-		// aborted.json is on disk before exit status is observable
+		// aborted.json is on disk before the exit status is observable
 		var ab swarm.AbortedRecord
 		if err := swarm.ReadJSON(filepath.Join(jobDir, "aborted.json"), &ab); err != nil {
-			t.Fatalf("aborted.json was not written: %v", err)
+			t.Fatalf("aborted.json was not on disk when the supervisor's exit became observable: %v", err)
 		}
 		if ab.Nonce != sf.Nonce || ab.Survivors != 0 {
 			t.Fatalf("aborted.json: nonce=%s survivors=%d, want nonce=%s survivors=0", ab.Nonce, ab.Survivors, sf.Nonce)
@@ -516,6 +533,57 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 		mustContain(t, "stdout", stdout, "RUN DONE id="+taskID)
 	})
 
+	// (9b) A HANGUP NEVER COSTS THE ACKNOWLEDGEMENT (rule 18: "a supervisor's death cannot
+	// precede its acknowledgement"). The order of (9) reversed, staged on purpose: the
+	// supervisor stops BEFORE the runner dies, so the runner's death orphans a process
+	// group with a stopped member and POSIX has the kernel send it SIGHUP and SIGCONT.
+	// SIGHUP's default action ends the supervisor where it stands -- no aborted.json, no
+	// exit.json, an empty supervisor.log, a job that vanished mid-transaction. The
+	// supervisor ignores the hangup, is resumed by the SIGCONT that comes with it, and
+	// finishes rule 18's losing path on its own.
+	t.Run("a-hangup-never-costs-the-acknowledgement", func(t *testing.T) {
+		b := newBench(t)
+		taskID := b.add("task hangup\nFAKE-FINDINGS 0\n")
+		jobDir := filepath.Join(b.dir, "worker-home-1", "jobs", taskID)
+		mark := filepath.Join(b.dir, "supervisor-stopped")
+
+		// THE ORDER: the supervisor marks the moment before it stops, and the runner's
+		// injected death waits for that mark. Without this the two deaths race and the
+		// hangup is delivered on some runs and not on others.
+		b.extraEnv = []string{
+			"NOVA_SWARM_PAUSEPOINT=before-identify",
+			"NOVA_SWARM_PAUSE_MARK=" + mark,
+			"NOVA_SWARM_KILLPOINT=after-spawn",
+			"NOVA_SWARM_KILL_AFTER=" + mark,
+		}
+		b.run()
+		b.extraEnv = nil
+
+		rawPid, err := os.ReadFile(filepath.Join(jobDir, "supervisor.pid"))
+		if err != nil {
+			t.Fatalf("could not read supervisor.pid: %v", err)
+		}
+		supPID, err := strconv.Atoi(strings.TrimSpace(string(rawPid)))
+		if err != nil {
+			t.Fatalf("bad supervisor pid: %v", err)
+		}
+		if _, err := os.Stat(mark); err != nil {
+			t.Fatalf("the supervisor never reached its pause point, so no hangup was staged: %v", err)
+		}
+
+		// The kernel's SIGHUP and SIGCONT have already been delivered. The supervisor is
+		// alive because it ignored the first, and running because of the second: it
+		// identifies, finds the reservation it was handed unchanged, and runs the job. The
+		// evidence that it survived the hangup is that the launch transaction completed.
+		exit, stdout, stderr := b.run("--workers", "1")
+		if exit != 0 {
+			t.Fatalf("exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+		}
+		if _, err := os.Stat(filepath.Join(jobDir, "exit.json")); err != nil {
+			t.Fatalf("the hangup ended supervisor %d before its evidence: no exit.json and no aborted.json: %v", supPID, err)
+		}
+	})
+
 	// (10) between aborted.json and exit
 	t.Run("between-aborted-and-exit", func(t *testing.T) {
 		b := newBench(t)
@@ -524,6 +592,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 
 		b.extraEnv = []string{
 			"NOVA_SWARM_PAUSEPOINT=before-identify",
+			"NOVA_SWARM_PAUSE_AFTER_ORPHAN=1",
 			"NOVA_SWARM_KILLPOINT=after-spawn",
 		}
 		b.run()
@@ -592,4 +661,39 @@ func assertTripwire(t *testing.T) {
 			}
 		}
 	}
+}
+
+// waitGone waits for a process THIS PROCESS DID NOT FORK to be gone, and it has a deadline:
+// a supervisor whose runner was killed is init's child, so there is nothing to reap here and
+// the only observable is the pid. The deadline is long because it is not a measurement --
+// what is measured is what is on disk at the moment the process is gone.
+func waitGone(t *testing.T, pid int) {
+	t.Helper()
+	for waited := time.Duration(0); waited < 30*time.Second; waited += 5 * time.Millisecond {
+		if syscall.Kill(pid, 0) != nil {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("supervisor %d was still alive 30s after its SIGCONT", pid)
+}
+
+// waitStopped waits for a process to actually be stopped, and it has a deadline. `ps` is
+// the one answer both platforms of this test give: T is "stopped", on darwin and on linux
+// alike.
+func waitStopped(t *testing.T, pid int) {
+	t.Helper()
+	last := ""
+	for waited := time.Duration(0); waited < 30*time.Second; waited += 5 * time.Millisecond {
+		out, err := exec.Command("ps", "-o", "stat=", "-p", strconv.Itoa(pid)).Output()
+		last = strings.TrimSpace(string(out))
+		if err == nil && strings.HasPrefix(last, "T") {
+			return
+		}
+		if err != nil || last == "" {
+			t.Fatalf("supervisor %d was gone before it ever stopped: a hangup, not a pause (ps: %q, %v)", pid, last, err)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatalf("supervisor %d never reached its pause point; ps says %q", pid, last)
 }
