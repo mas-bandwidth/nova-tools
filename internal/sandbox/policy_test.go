@@ -294,8 +294,13 @@ func TestAncestors(t *testing.T) {
 // (allow file-read* (subpath "/Users/<user>")) — .ssh, .config/gh, the login keychain —
 // while the SANDBOX OK line said read=0. Measured at 1922f9d with a key planted beside the
 // command: the key printed. The roots section says "The home directory is never a root".
+// It runs on EVERY platform. It was gated behind needUnixPaths, whose own doc reserves it
+// for tests "whose subject is the TEXT of the darwin sandbox-exec profile" — and this one
+// is not: the guard is in Build, it is about the roots table entry "the directory of the
+// resolved command", and that entry is in the spec for all three platforms. Windows is
+// where a home directory is most often the place a script sits, so windows is the last
+// place this should have been skipped.
 func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
-	needUnixPaths(t)
 	write, read, home, _ := scratch(t)
 	base := t.TempDir()
 	if got, err := filepath.EvalSymlinks(base); err == nil {
@@ -311,10 +316,17 @@ func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
 	}
 	t.Setenv("HOME", callerHome)
 
+	// The command is named in this platform's own spelling. Nothing here RUNS it — Build
+	// resolves it and stops — but a test that hard-codes a unix name on windows is the
+	// mistake anExecutable above exists to record, and rule 5 does look at the file.
 	plant := func(dir string) string {
 		t.Helper()
-		script := filepath.Join(dir, "x.sh")
-		if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		name, body := "x.sh", "#!/bin/sh\nexit 0\n"
+		if runtime.GOOS == "windows" {
+			name, body = "x.cmd", "@exit /b 0\r\n"
+		}
+		script := filepath.Join(dir, name)
+		if err := os.WriteFile(script, []byte(body), 0o700); err != nil {
 			t.Fatal(err)
 		}
 		return script

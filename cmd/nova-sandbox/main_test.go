@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -607,6 +608,65 @@ func TestProbeReExecsTheToolAndNeverAShell(t *testing.T) {
 	}
 }
 
+// probeChild runs the internal verb as a REAL CHILD of this test binary, with the pipe on
+// fd 3 the probe's parent hands its child. It cannot be j.tool: that runs the verb IN
+// PROCESS, where os.Getppid() is `go test`'s and fd 3 is whatever the test binary happens
+// to hold — so the two halves of the guard that are about the PROCESS can only be
+// exercised from a process. exe is the binary to run, which is this one for the probe's
+// own child and a copy of it for the foreign-parent case. raw nil means no fd 3 at all.
+func probeChild(t *testing.T, exe string, raw []byte, nonceVar string, args ...string) (int, string) {
+	t.Helper()
+	cmd := exec.Command(exe, append([]string{"probe-step"}, args...)...)
+	cmd.Env = append(os.Environ(), nonceVar)
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+	if raw != nil {
+		pr, pw, err := os.Pipe()
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer pr.Close()
+		if _, err := pw.Write(raw); err != nil {
+			t.Fatal(err)
+		}
+		if err := pw.Close(); err != nil {
+			t.Fatal(err)
+		}
+		cmd.ExtraFiles = []*os.File{pr}
+	}
+	_ = cmd.Run()
+	if cmd.ProcessState == nil {
+		t.Fatalf("probe-step child never ran: %s", errb.String())
+	}
+	return cmd.ProcessState.ExitCode(), errb.String()
+}
+
+// copyOfThisBinary is a second executable with the same bytes and a different path. It is
+// the foreign parent's side of the guard: the child's os.Executable() is this copy and its
+// parent is the test binary, so "the parent process is this binary" is false while every
+// other half of the guard is true.
+func copyOfThisBinary(t *testing.T) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(self)
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := "nova-sandbox-copy"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	copied := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(copied, b, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	return copied
+}
+
 // The internal verb itself: it does the open, the write and the one-byte read in Go, so
 // no probe step is ever a shell string and no path the caller handed the tool is ever
 // re-parsed (rule 12: never through a shell).
@@ -617,8 +677,7 @@ func TestProbeStepIsTheInternalVerb(t *testing.T) {
 	// TRUNCATES and reads the path it is handed, and at 1922f9d it was dispatched from
 	// run()'s switch with nothing between an ordinary shell and that O_TRUNC. Measured:
 	// `nova-sandbox probe-step write_outside <file>` emptied a file outside every wall and
-	// exited 0. The parent's one-time value, in the argv AND in the environment, is what
-	// makes it the tool's own child.
+	// exited 0.
 	if err := os.WriteFile(target, []byte("MUST-SURVIVE\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -629,48 +688,84 @@ func TestProbeStepIsTheInternalVerb(t *testing.T) {
 	if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
 		t.Fatalf("the refused step still touched the file: %q, %v", string(got), err)
 	}
-	// The right shape with the WRONG value is refused too, and a value in the environment
-	// alone is not enough.
-	nonce := "0123456789abcdef0123456789abcdef"
-	if code, _, errOut := j.tool(t, j.env(probeNonceVar+"="+nonce), "probe-step", "not-the-nonce", "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
-		t.Fatalf("a wrong nonce was accepted: exit %d, stderr %q", code, errOut)
+	// The second measurement, on 29646c1, and the reason the guard is no longer a
+	// comparison between the argv and the environment: BOTH of those are the caller's own
+	// to set, so `NOVA_SANDBOX_PROBE_NONCE=<x> nova-sandbox probe-step <x> write_outside
+	// <file>` agreed with itself, ran, exited 0 and truncated the file. It is now refused
+	// in process and as a child, and the file survives both.
+	raw := []byte("0123456789abcdef")
+	nonce := hex.EncodeToString(raw)
+	if code, _, errOut := j.tool(t, j.env(probeNonceVar+"="+nonce), "probe-step", nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("argv equal to the environment was accepted in process: exit %d, stderr %q", code, errOut)
 	}
-	if code, _, errOut := j.tool(t, j.env(), "probe-step", nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
-		t.Fatalf("a nonce with nothing in the environment was accepted: exit %d, stderr %q", code, errOut)
+	if code, errOut := probeChild(t, selfExecutable(t), nil, probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("argv equal to the environment was accepted as a child: exit %d, stderr %q", code, errOut)
+	}
+	// A pipe on fd 3 carrying the WRONG value is refused too: the value is what the
+	// descriptor is for, and holding a descriptor is not holding the probe's secret.
+	if code, errOut := probeChild(t, selfExecutable(t), []byte("fedcba9876543210"), probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("a pipe carrying the wrong value was accepted: exit %d, stderr %q", code, errOut)
+	}
+	// A SHORT pipe is refused: fewer bytes than the parent promised is not the parent.
+	if code, errOut := probeChild(t, selfExecutable(t), raw[:8], probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("a short pipe was accepted: exit %d, stderr %q", code, errOut)
+	}
+	// The right value in the argv, in the environment AND on the pipe, and still refused,
+	// because the parent is not this binary. This is the half a caller who has learned the
+	// shape of the guard cannot supply without already being the tool.
+	if runtime.GOOS != "windows" {
+		if code, errOut := probeChild(t, copyOfThisBinary(t), raw, probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+			t.Fatalf("a foreign parent was accepted: exit %d, stderr %q", code, errOut)
+		}
 	}
 	if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
 		t.Fatalf("a refused step touched the file: %q, %v", string(got), err)
 	}
+
+	if runtime.GOOS == "windows" {
+		t.Skip("skipped on windows: the steps below need the child to name its parent's executable, and no windows sandbox body is built for a probe to have a child at all")
+	}
+	// With everything the parent passes — the pipe, the argv copy, the environment copy
+	// and this binary for a parent — the steps are themselves.
+	env := probeNonceVar + "=" + nonce
+	self := selfExecutable(t)
 	// A relative path is not the parent's: the parent builds every step path absolute.
-	if code, _, errOut := j.tool(t, j.env(probeNonceVar+"="+nonce), "probe-step", nonce, "write_inside", "step"); code != 2 || !strings.Contains(errOut, "absolute") {
+	if code, errOut := probeChild(t, self, raw, env, nonce, "write_inside", "step"); code != 2 || !strings.Contains(errOut, "absolute") {
 		t.Fatalf("a relative step path was accepted: exit %d, stderr %q", code, errOut)
 	}
-
-	// With the value the parent passes, the steps are themselves.
-	env := j.env(probeNonceVar + "=" + nonce)
 	if err := os.Remove(target); err != nil {
 		t.Fatal(err)
 	}
-	if code, _, errOut := j.tool(t, env, "probe-step", nonce, "write_inside", target); code != 0 {
+	if code, errOut := probeChild(t, self, raw, env, nonce, "write_inside", target); code != 0 {
 		t.Fatalf("probe-step write_inside exit %d: %s", code, errOut)
 	}
 	if _, err := os.Stat(target); err == nil {
 		t.Fatal("write_inside left its file behind; the step writes and removes")
 	}
-	if code, _, _ := j.tool(t, env, "probe-step", nonce, "read_root", filepath.Join(j.base, "no-such-file")); code == 0 {
+	if code, _ := probeChild(t, self, raw, env, nonce, "read_root", filepath.Join(j.base, "no-such-file")); code == 0 {
 		t.Fatal("read_root reported success on a file that is not there")
 	}
-	if code, _, _ := j.tool(t, env, "probe-step", nonce, "read_secret", j.secret); code != 0 {
+	if code, _ := probeChild(t, self, raw, env, nonce, "read_secret", j.secret); code != 0 {
 		t.Fatal("read_secret could not open a file that is readable outside the wall")
 	}
-	code, _, errOut = j.tool(t, env, "probe-step", nonce, "not_a_step", target)
-	if code != 2 || !strings.Contains(errOut, "is not a probe step") {
+	if code, errOut := probeChild(t, self, raw, env, nonce, "not_a_step", target); code != 2 || !strings.Contains(errOut, "is not a probe step") {
 		t.Fatalf("an unknown step was accepted: exit %d, stderr %q", code, errOut)
 	}
 	// It stays out of the banner: a verb a caller must not run is not offered to one.
 	if strings.Contains(usage, probeStepVerbName) {
 		t.Fatal("probe-step is in the usage banner")
 	}
+}
+
+// selfExecutable is this test binary's own path, which is the tool for the internal verb
+// (see TestMain).
+func selfExecutable(t *testing.T) string {
+	t.Helper()
+	self, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return self
 }
 
 // The falsifying read's B2, verbatim: a --secret path holding a quote and a semicolon was

@@ -90,6 +90,10 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
+	// The descriptors above stderr, in order from fd 3. sandbox-exec execs the command in
+	// place, so what is fd 3 here is fd 3 in the command: the probe's nonce pipe survives
+	// the backend without the backend knowing about it.
+	cmd.ExtraFiles = p.Extra
 	// NO Setpgid: the wrapped tree stays in the CALLER's process group, and the caller
 	// owns pgid and reaping. A group of the tool's own looked tidier and was wrong: a
 	// swarm supervisor puts each job in a group of its making and reaps that group at the

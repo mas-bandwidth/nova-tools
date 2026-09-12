@@ -389,17 +389,26 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// Rule 10's child is this binary, and NOTHING ELSE may be: the verb opens, truncates
 	// and reads paths it is handed, so a caller who types it by hand truncates a file with
 	// no wall around it (measured at 1922f9d: `nova-sandbox probe-step write_outside
-	// <path>` emptied an ordinary file from an ordinary shell, exit 0). The parent mints
-	// one 128-bit value per probe, keeps it only in this function's memory, hands it to
-	// the child as its first argv element AND in the child's environment, and the child
-	// refuses unless the two match. Neither half alone is enough: a value in the argv is
-	// visible in ps, and a value only in the environment would be inherited by anything
-	// the child in turn started.
-	nonce, err := probeNonce()
+	// <path>` emptied an ordinary file from an ordinary shell, exit 0).
+	//
+	// The first form of this guard put the one 128-bit value in the argv AND in the
+	// environment and had the child compare the two. Both halves are the CALLER'S to set,
+	// so the guard was a check that a caller had agreed with itself — measured on
+	// 29646c1: `NOVA_SANDBOX_PROBE_NONCE=<x> nova-sandbox probe-step <x> write_outside
+	// <file>` ran by hand, exit 0, the file truncated. The value now travels on an
+	// INHERITED PIPE (fd 3), which a caller cannot conjure by typing: the parent mints the
+	// value, writes the 16 raw bytes into the pipe, closes its end, and the child must read
+	// exactly those bytes from fd 3 and find them equal to the argv copy. The argv copy
+	// stays so that a mismatch still refuses; the environment copy stays because
+	// darwin-check.sh and the step bodies read it, and it is stripped from anything the
+	// child in turn starts. The child then asks the OS who its parent is and refuses
+	// unless that process is this same binary.
+	rawNonce, err := probeNonce()
 	if err != nil {
 		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: this machine has no random source for the probe's one-time value: %s\n", oneline.Err(err))
 		return sandbox.ExitCannotRun
 	}
+	nonce := hex.EncodeToString(rawNonce[:])
 
 	type step struct{ name, path, expect string }
 	steps := []step{
@@ -425,7 +434,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 			_ = os.Remove(s.path)
 			got = "allow"
 		default:
-			got = walled(p, env, nonce, s.name, s.path)
+			got = walled(p, env, rawNonce, nonce, s.name, s.path)
 		}
 		fmt.Fprintf(stdout, "PROBE STEP name=%s expect=%s got=%s path=%s\n",
 			oneline.Field(s.name), oneline.Field(s.expect), oneline.Field(got), oneline.Escape(s.path))
@@ -451,9 +460,26 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 // which is rule 12's "never through a shell" applied to the tool's own child. The
 // previous form built a shell script by concatenation, and a --secret holding a quote and
 // a semicolon ran a command inside the wall and flipped read_secret to allow.
-func walled(p *sandbox.Policy, env []string, nonce, name, path string) string {
+func walled(p *sandbox.Policy, env []string, raw [probeNonceLen]byte, nonce, name, path string) string {
 	run := *p
 	run.Argv = []string{p.Command, probeStepVerbName, nonce, name, path}
+	// fd 3: the half of the guard a caller cannot type. The read end is handed to the
+	// child (Policy.Extra -> cmd.ExtraFiles, so it IS fd 3 there), the parent writes the
+	// raw value and closes its end at once — 16 bytes never fill a pipe buffer, so this
+	// cannot block, and the close gives the child an EOF after exactly those bytes.
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return "deny"
+	}
+	defer pr.Close()
+	if _, err := pw.Write(raw[:]); err != nil {
+		pw.Close()
+		return "deny"
+	}
+	if err := pw.Close(); err != nil {
+		return "deny"
+	}
+	run.Extra = []*os.File{pr}
 	// An inherited NOVA_SANDBOX_PROBE_NONCE would be the value os.Getenv returns in the
 	// child (Go keeps the FIRST of a duplicated name), so it is dropped before ours is
 	// appended: the guard must answer to this probe and no earlier one.
@@ -482,13 +508,88 @@ const probeStepVerbName = "probe-step"
 // It is set by the parent on the child's environment only, never on a wrapped command's.
 const probeNonceVar = "NOVA_SANDBOX_PROBE_NONCE"
 
+// probeNonceLen is the width of that value in bytes: 128 bits, and the exact number of
+// bytes the child reads from fd 3. It is a constant on both sides so that "short" is a
+// thing the child can tell from "enough".
+const probeNonceLen = 16
+
+// probeNonceFD is the descriptor the parent hands the child the value on. 0, 1 and 2 are
+// the command's own, so the first one above them is the first the parent can choose.
+const probeNonceFD = 3
+
 // probeNonce is 128 bits from the OS, per probe, held only in the parent's memory.
-func probeNonce() (string, error) {
-	var b [16]byte
+func probeNonce() ([probeNonceLen]byte, error) {
+	var b [probeNonceLen]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return "", err
+		return b, err
 	}
-	return hex.EncodeToString(b[:]), nil
+	return b, nil
+}
+
+// notTheProbesChild is the whole of the internal verb's safety, and it returns the empty
+// string only for a process the probe itself started. It answers in three parts, and each
+// one is a thing a caller typing a command line cannot supply:
+//
+//  1. fd 3 is an inherited PIPE carrying exactly probeNonceLen bytes. The parent writes
+//     them and closes; anything else — no fd 3, an fd 3 that is a file or a terminal, a
+//     short read, or more bytes than were promised — is a refusal. This is the part that
+//     the argv-against-environment form did not have: both of those are the caller's own
+//     to set, so that form checked only that a caller agreed with itself (measured on
+//     29646c1: `NOVA_SANDBOX_PROBE_NONCE=<x> nova-sandbox probe-step <x> write_outside
+//     <file>` truncated the file, exit 0).
+//  2. The bytes on the pipe, hex-encoded, equal the argv copy — compared in constant
+//     time. The argv copy is kept so that a mismatched pair still refuses.
+//  3. The parent process is THIS binary. sandbox-exec execs in place, so the probe's
+//     child has the tool for a parent; a child started by anything else does not.
+//
+// The honest bound on all three is in docs/SPEC-SANDBOX.md's probe section: none of this
+// grants a same-user caller anything they lack, because a same-user caller can already
+// open and truncate the file themselves. What it buys is that no path DRIVEN BY CONTENT
+// — a script, a Makefile, a repository's own hook, a job inside another wall — can reach
+// this verb's O_TRUNC by guessing a word, so the spec's "nothing else runs it" is held by
+// a mechanism rather than by a sentence.
+func notTheProbesChild(nonce string, env []string) string {
+	got, err := probeNonceOnFD()
+	if err != nil {
+		return err.Error()
+	}
+	if subtle.ConstantTimeCompare([]byte(hex.EncodeToString(got[:])), []byte(nonce)) != 1 {
+		return "the value on fd 3 is not the one in the argv"
+	}
+	// The environment copy is the one the step bodies and darwin-check.sh read; it is
+	// checked too, so that the three copies cannot disagree.
+	want := ""
+	for _, kv := range env {
+		if n, v, _ := strings.Cut(kv, "="); n == probeNonceVar {
+			want = v
+			break
+		}
+	}
+	if want == "" || subtle.ConstantTimeCompare([]byte(nonce), []byte(want)) != 1 {
+		return "the environment does not carry the same one-time value"
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return "this process cannot name its own path"
+	}
+	parent, err := parentExecutable(os.Getppid())
+	if err != nil {
+		return "the parent process cannot be named"
+	}
+	if resolve(self) != resolve(parent) {
+		return "the parent process is not this binary"
+	}
+	return ""
+}
+
+// resolve is EvalSymlinks with the unresolved path as its own answer: the two paths
+// compared above come from different syscalls (os.Executable and the OS's per-pid path),
+// and one of them may still be a symlink while the other is not.
+func resolve(path string) string {
+	if got, err := filepath.EvalSymlinks(path); err == nil {
+		return got
+	}
+	return path
 }
 
 // probeStepVerb is that child: one step, done in Go, exit 0 for allow and 1 for deny. Each
@@ -500,18 +601,10 @@ func probeStepVerb(args []string, stderr io.Writer, env []string) int {
 		return sandbox.ExitCannotRun
 	}
 	nonce, name, path := args[0], args[1], args[2]
-	// The guard, BEFORE anything is opened: the parent's one-time value, in the argv and
-	// in the environment, or this is not the parent's child. A mismatch opens no file,
-	// truncates no file and creates no file — the line is the whole of the answer.
-	want := ""
-	for _, kv := range env {
-		if n, v, _ := strings.Cut(kv, "="); n == probeNonceVar {
-			want = v
-			break
-		}
-	}
-	if want == "" || subtle.ConstantTimeCompare([]byte(nonce), []byte(want)) != 1 {
-		fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_step_not_a_child: %s runs only as the child of a probe this binary started, and this invocation is not one; nothing was opened. Run: nova-sandbox probe --write <dir> --secret <path>\n", probeStepVerbName)
+	// The guard, BEFORE anything is opened. A refusal here opens no file, truncates no
+	// file and creates no file — the line is the whole of the answer.
+	if r := notTheProbesChild(nonce, env); r != "" {
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_step_not_a_child: %s runs only as the child of a probe this binary started, and this invocation is not one (%s); nothing was opened. Run: nova-sandbox probe --write <dir> --secret <path>\n", probeStepVerbName, r)
 		return sandbox.ExitCannotRun
 	}
 	// Rule 5's shape for the one path this verb is handed: absolute, never relative. The

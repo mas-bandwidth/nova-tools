@@ -87,6 +87,14 @@ type Policy struct {
 	NetListen bool
 	Command   string   // the resolved absolute path of the executable
 	Argv      []string // Command followed by its arguments, verbatim
+
+	// Extra is the file descriptors the child gets ABOVE stdin/stdout/stderr, in order,
+	// starting at fd 3. It is never built from caller input: Build leaves it nil and the
+	// only writer is the probe, which hands its child one end of a pipe carrying the
+	// one-time value that makes the child the probe's own (cmd/nova-sandbox/main.go).
+	// A descriptor cannot be forged by a caller who merely knows an argument, which is
+	// why the probe's guard stands on one.
+	Extra []*os.File
 }
 
 // Net is the word rule 7 puts on the SANDBOX OK line. There is no net=unenforced: a
