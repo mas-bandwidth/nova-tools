@@ -157,28 +157,37 @@ Every rule is normative and has one line in **tests this spec demands**.
     as ds4's `-m` path already is — the recipe makes the service user's
     `~/.ollama/models` a symlink into the shared store, so an unresolved `FROM` reports a
     home for a store that is not one — and the resolved path is both what `store=` prints
-    and what the home test below reads. No tag means `store=unknown (no tag to
+    and what the shared-root test below reads. No tag means `store=unknown (no tag to
     show)`. **ds4**: the `-m <gguf>` path from the process's own arguments, **only when
     the process is this user's** — another user's is `store=unknown (process is uid
     <n>'s)`, because another uid's argv is root's to read on darwin and this binary does
     not exec `ps` or `lsof` to get around it (rule 1).
 
-    **It reports, always**: `store=` and `shared=<yes|no|unknown>` on every `LOCAL
+    **It reports, always**: `store=` and `shared=<yes|no (<why>)|unknown>` on every `LOCAL
     ENGINE` line and on the serving `SERVE OK` line — not on `SERVE OK stopped`, which
     names only what it stopped — read at the moment of the call and never judged — the
     same kind of fact as `load1=` (rules 8 and 10) — and a store it could not read is
     `unknown`, not a verdict, because a tool does not rule on a fact it does not have.
-    `shared=yes` is exactly a resolved `store=` the home test below does not match;
-    `shared=no` is one it matches.
+    `shared=yes` is exactly a resolved `store=` **under this box's shared root** — the
+    two paths above, matched a whole component at a time, never as a spelling like
+    `/Users/Shared/nova-local…`, which also matches a `nova-local-scratch` beside it —
+    and **every** other resolved store is `shared=no` carrying the reason it is not:
+    `shared=no (under a home)` when the resolved store lies under a home directory — the
+    caller's, read through the box interface (the passwd home of the calling uid, and
+    `$HOME` when it differs, each taken as a resolved directory), or any **other**
+    account's, which on this box is a path under `/Users` (`/home` on linux) whose next
+    component is not `Shared` — and `shared=no (elsewhere)` for anything else. Both are
+    keyed on the shared root and nothing else: a store under another account's home is no
+    more shared than one under the caller's and reports the same `no`, because
+    [BOX-LOCAL.md](BOX-LOCAL.md)'s argument is that a requirement for *both* accounts
+    cannot rest on a home's mode. Whose home it is is the printed **reason** only.
     **It refuses only against a value the operator gave** (rule 8's shape): with
-    `--require-shared-store`, `serve` is exit 1 on a store **under the caller's own home
-    directory** — the passwd home of the calling uid, and `$HOME` when it differs, each
-    taken as a resolved directory and matched a whole component at a time, never as a
-    spelling like `/Users/<x>/…`, because that spelling also matches
-    `/Users/Shared/nova-local`, the recipe's own store — naming it, remedy the recipe's own
-    first line, `sudo mkdir -p /Users/Shared/nova-local/models/<e>`, and [BOX-LOCAL.md](BOX-LOCAL.md) — not
-    `status`, which would only reprint the `store=` the refusal has just named. Without
-    the flag it serves and prints `shared=no`.
+    `--require-shared-store`, `serve` is exit 1 on `shared=no` — naming the store, the
+    reason, the remedy that is the recipe's own first line,
+    `sudo mkdir -p /Users/Shared/nova-local/models/<e>`, and [BOX-LOCAL.md](BOX-LOCAL.md)
+    — never on `shared=unknown`, which is not a verdict (above), and never on `status`,
+    which would only reprint the `store=` the refusal has just named. Without the flag it
+    serves and prints `shared=no`.
     On a box more than one account uses, the requirement is enforced by the recipe's
     step 4 — `status` from both accounts showing `shared=yes`, and
     [BOX-LOCAL.md](BOX-LOCAL.md) carries the mode argument — and thereafter by `status`
@@ -255,7 +264,7 @@ nothing, writes nothing.
 
 ```
 LOCAL OK engines=<n> answering=<n> loaded=<n> models=<n> mem_used=<n> mem_free=<n> mem_total=<n> wired_cap=<n|unset> load1=<f>
-LOCAL ENGINE <name> state=<up|down|timeout> [status=<code>] base=<url> [loaded=<n>] [advertised=<n>] [resident=<file|unknown (<why>)>] [resident_bytes=<n|unknown (<why>)>] [num_ctx=<n>] store=<dir|unknown (<why>)> shared=<yes|no|unknown>
+LOCAL ENGINE <name> state=<up|down|timeout> [status=<code>] base=<url> [loaded=<n>] [advertised=<n>] [resident=<file|unknown (<why>)>] [resident_bytes=<n|unknown (<why>)>] [num_ctx=<n>] store=<dir|unknown (<why>)> shared=<yes|no (<why>)|unknown>
 LOCAL MODEL engine=<e> model=<ref> digest=<sha256:…|none (<e> reports none)> weights=<n> loaded=<yes|no> [num_ctx=<n>]
 LOCAL NOTE <text>
 LOCAL MORE kind=<kind> shown=<n> total=<n> remedy=<command>
@@ -287,7 +296,7 @@ compared parameters and the store, or the port and this user's own process (ds4)
 own wall clock across the warm-up.
 
 ```
-SERVE OK engine=<e> model=<ref> serve_as=<ref> digest=<sha256:…|none (<e> reports none)> num_ctx=<n> keep_alive=<d> temperature=<0|unset> seed=<n|unset> load=<t> mem_free=<n> load1=<f> engines=<n> store=<dir|unknown (<why>)> shared=<yes|no|unknown> [pid=<n>]
+SERVE OK engine=<e> model=<ref> serve_as=<ref> digest=<sha256:…|none (<e> reports none)> num_ctx=<n> keep_alive=<d> temperature=<0|unset> seed=<n|unset> load=<t> mem_free=<n> load1=<f> engines=<n> store=<dir|unknown (<why>)> shared=<yes|no (<why>)|unknown> [pid=<n>]
 SERVE OK stopped engine=<e> model=<ref> [already stopped]
 SERVE REFUSED <ref>: <reason> — remedy: <command>
 ```
@@ -368,8 +377,8 @@ $ nova-swarm run --pool $PWD/pool --workers 1 --hours 1 --worker $PWD/workers/ge
   ./cmd/nova-local ./cmd/nova-swarm` from a clone (Go 1.26, `go.mod`) puts them in
   `$(go env GOPATH)/bin`, which a fresh Mac does **not** have on PATH. The box recipe
   ([BOX-LOCAL.md](BOX-LOCAL.md)) is **not** a prerequisite of these six lines: line 3
-  serves from whatever store the engine reports and prints `shared=no` for one under a
-  home. It is the prerequisite of a box more than one account uses (rule 15), where it
+  serves from whatever store the engine reports and prints `shared=no` for any store
+  outside the shared root. It is the prerequisite of a box more than one account uses (rule 15), where it
   is a 162 GB move done once (BOX-LOCAL.md's dated table).
 - **Line 1** is the stranger's own tool: it assumes the ollama daemon is running, that
   `gemma4:12b` is a tag in ollama's library, and one download of the weights, whose size
@@ -510,10 +519,17 @@ supplies a **fake box** through the one interface that reads them
 17. **Two accounts, one store.** Two runs under different `HOME`/`USER` pairs are
     **byte-identical**, `store=` and `shared=` included; `store=` is the `blobs` parent
     of the fake's `FROM` path, `unknown (no tag to show)` with no tag. A store under
-    either home is `serve --require-shared-store` exit 1 naming it and BOX-LOCAL.md, and
-    plain `serve` exit 0 printing `shared=no`, while `status` stays exit 0 with
-    `shared=no`. A fake `FROM` under `/Users/Shared/nova-local/models/ollama` is exit 0
-    with `shared=yes` under the same flag, and a fake store inside a home that is a
+    **either** home — the caller's, and the one that is the **other** account's in that
+    run — is `serve --require-shared-store` exit 1 naming the store, the reason and
+    BOX-LOCAL.md, and plain `serve` exit 0 printing `shared=no (under a home)`, while
+    `status` stays exit 0 with the same value; the other account's is the case that can
+    say NO to a caller-relative test. The caller's-home half is driven by a **faked
+    home** through the box interface (`internal/local/box.go`) — passwd home and `$HOME`
+    two different temp directories, neither under `/Users` — each refused in its own run,
+    the case that can say NO to a `$HOME`-only or spelled-prefix implementation. A store
+    under neither root is `shared=no (elsewhere)` and exit 1 under the flag too. A fake
+    `FROM` under `/Users/Shared/nova-local/models/ollama` is exit 0 with `shared=yes`
+    under the same flag, and a fake store inside a home that is a
     **symlink** to that shared path prints the resolved shared `store=` with `shared=yes`
     and is exit 0 — the two cases that can say NO to a spelled prefix and to an
     unresolved path. A fake holder on the port gives exit 1 carrying the port and **no**
@@ -530,10 +546,12 @@ hardcoded paths, the exit grammar above, `internal/oneline` for every printed va
 `internal/bounded` for every listing.
 
 1. **`internal/local/engine.go`** — the adapter interface, the loopback pin, the
-   `--timeout` budget, the registry, rule 15's shared-store paths, the home test and
+   `--timeout` budget, the registry, rule 15's shared-root test, the `shared=no` reason
+   (the home read from `box.go`) and
    `--require-shared-store`. Tests 3, 4, 17.
-2. **`internal/local/box.go`** — load average, memory, the live wired cap, read at the
-   moment of the call, behind one interface a test can fake. Tests 9, 11.
+2. **`internal/local/box.go`** — load average, memory, the live wired cap **and the
+   caller's home** (the passwd home of the calling uid, and `$HOME`), read at the
+   moment of the call, behind one interface a test can fake. Tests 9, 11, 17.
 3. **`internal/local/ollama.go`** — `/api/tags`, `/api/ps`, `/api/show` (parameters
    **and** the `FROM` blob path), the derived tag via `/api/create`, the warm-up, the
    unload. Tests 5, 6, 7, 8, 17.

@@ -2,8 +2,8 @@
 
 This is the **box's** side of [SPEC-LOCAL.md](SPEC-LOCAL.md) rule 15. `nova-local`
 starts no daemon, writes no unit and moves no weights; it reads what an engine reports,
-prints `store=` and `shared=` always, and refuses a store under a home only when asked
-(`serve --require-shared-store`). Everything that makes `shared=yes` true is here, and
+prints `store=` and `shared=` always, and refuses a store outside the shared root only
+when asked (`serve --require-shared-store`). Everything that makes `shared=yes` true is here, and
 `nova-line`'s recipe will consume this document.
 
 Why it exists, in Glenn's words (bus, 2026-09-12; no receipt in `memory/` yet):
