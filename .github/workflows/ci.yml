@@ -186,9 +186,12 @@ jobs:
 
   ci-ok:
     # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
-    # in a branch ruleset. It needs every job in this file, and `needs` on a matrix job is
-    # success only when EVERY leg succeeded, so a leg renamed out of existence shows up here
-    # as a missing success and not as silence.
+    # in a branch ruleset. It aggregates EXACTLY the jobs of this file and nothing else —
+    # the CL tier: what a change is required to pass in two minutes, ideally one. `needs`
+    # on a matrix job is success only when EVERY leg succeeded, so a leg renamed out of
+    # existence shows up here as a missing success and not as silence. The certification
+    # tier has its own aggregate, certification-ok; a red certification is a blocker for
+    # the next release, never for a CL.
     needs: [lint, test]
     if: always()
     runs-on: ubuntu-latest

@@ -915,3 +915,35 @@ jobs:
         # goroutine, rather than as a job cancellation, which names nothing. The gap is five
         # minutes so the panic has room to print.
         run: go test -tags perf -count=1 -v -p 1 -parallel 1 -timeout 25m ./...
+
+  certification-ok:
+    # THE ONE CHECK THAT SAYS A RELEASE IS READY, and the reason it exists rather than a
+    # list of check names in a branch ruleset. It aggregates EXACTLY the jobs of this file
+    # — the certification tier — and `needs` on a matrix job is success only when EVERY leg
+    # succeeded, so a leg renamed out of existence shows up here as a missing success and
+    # not as silence. A red certification is a blocker for the next release, never for a
+    # CL, whose gate is ci-ok in ci.yml.
+    needs: [test, build-windows, windows-packages, test-windows, smoke, release-dry-run, perf]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: every job succeeded
+        shell: bash
+        run: |
+          set -uo pipefail
+          bad=0
+          for pair in \
+            "test:${{ needs.test.result }}" \
+            "build-windows:${{ needs.build-windows.result }}" \
+            "windows-packages:${{ needs.windows-packages.result }}" \
+            "test-windows:${{ needs.test-windows.result }}" \
+            "smoke:${{ needs.smoke.result }}" \
+            "release-dry-run:${{ needs.release-dry-run.result }}" \
+            "perf:${{ needs.perf.result }}"
+          do
+            job="${pair%:*}"; result="${pair##*:}"
+            echo "$result	$job"
+            [ "$result" = "success" ] || bad=$((bad + 1))
+          done
+          [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
