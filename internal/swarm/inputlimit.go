@@ -58,7 +58,59 @@ var InputLimitPhrases = []string{
 // `Error: `, Anthropic's `API Error: 400 {"type":"error"...}`, OpenAI's `Error code: 400 -
 // {'error': ...}` -- and a harness that puts the mark on its own line above the message is
 // why the line ABOVE counts too.
-var ProviderErrorMarks = []string{"error", "err", "fatal", "exception", "rejected", "aborted", "refused"}
+var ProviderErrorMarks = []string{"error", "err", "fatal", "exception", "rejected", "aborted"}
+
+// AND `refused` IS NOT ONE OF THEM, because it is THIS FAMILY'S OWN WORD (the swarm
+// dispatcher's check of #150). No provider specimen says a bare `refused`: they say `Error:`,
+// `Error code:`, `invalid_request_error`, `exception`. Every tool in this repository, on the
+// other hand, ends a verb with it -- `ADD REFUSED:`, `BUS REFUSED:`, `RUN REFUSED reason=…` --
+// and a nova-swarm line lands in a harness log whenever a job runs these tools, which is what
+// dogfooding IS here. `RUN REFUSED reason=sandbox_probe: … input token limit exceeded` was
+// classed: one bare token (`run`) before the mark, and the phrase further along the same line.
+// `rejected` stays: it is in no grammar line in this repository, and a provider may say it.
+
+// isOwnEventLine reports whether a line is one of this family's own event lines, which are
+// never a provider talking. It is the SHAPE rather than a list of verbs (SPEC.md's two-token
+// event prefix): an ALL-CAPS verb with no colon, then an ALL-CAPS word -- `RUN REFUSED`,
+// `SANDBOX OK`, `PROBE STEP`, `TRIAGE BATCH`, and every other tool's, including this class's
+// own `RUN INPUT-LIMIT … : <the provider's own words>` nested in a job that ran nova-swarm.
+// A shape holds for the tool written tomorrow; a list of verbs holds until then.
+//
+// The FIRST token carries no colon, which is what keeps a provider's own shout out of this:
+// `ERROR: RATE LIMIT REACHED: INPUT TOKEN LIMIT EXCEEDED` is not an event line, and neither is
+// `API Error: 400 …`, whose second word is not all-caps.
+func isOwnEventLine(line string) bool {
+	words := strings.Fields(line)
+	if len(words) < 2 {
+		return false
+	}
+	return capsToken(words[0], false) && capsToken(words[1], true)
+}
+
+// capsToken is one token of that prefix: at least two characters of A-Z, 0-9, `-` or `_` with
+// a letter among them, and a trailing colon only where one is allowed.
+func capsToken(token string, colonAllowed bool) bool {
+	if strings.HasSuffix(token, ":") {
+		if !colonAllowed {
+			return false
+		}
+		token = strings.TrimSuffix(token, ":")
+	}
+	if len(token) < 2 {
+		return false
+	}
+	letters := 0
+	for i := 0; i < len(token); i++ {
+		switch c := token[i]; {
+		case c >= 'A' && c <= 'Z':
+			letters++
+		case c >= '0' && c <= '9', c == '-', c == '_':
+		default:
+			return false
+		}
+	}
+	return letters > 0
+}
 
 // MarkWords is how many tokens may come BEFORE the mark and leave it a label.
 //
@@ -112,6 +164,13 @@ func InputLimited(log []byte, extra []string) (string, bool) {
 	for _, raw := range strings.Split(string(log), "\n") {
 		line := strings.TrimSpace(stripPaint(raw))
 		if line == "" {
+			continue
+		}
+		if isOwnEventLine(line) {
+			// A LINE THIS FAMILY WROTE IS NOT EVIDENCE ABOUT THIS JOB'S PROVIDER, and it is
+			// skipped whole: it carries no mark, and it does not inherit the mark of the line
+			// above it either.
+			previousWasAMark = false
 			continue
 		}
 		lower := strings.ToLower(line)
@@ -171,6 +230,14 @@ func isALabel(before []string) bool {
 	if len(before) > MarkWords {
 		return false
 	}
+	// A LIST MARKER IS PROSE, WHATEVER FOLLOWS IT (Fable's delta read of 110b745). `-` is one
+	// bare token and `1.` carries a digit, so a RESULT.md bullet that LEADS with the mark --
+	// `- error: the harness said prompt is too long and died`, `1. error: prompt is too long`
+	// -- was a label by both bounds and classed the job. A bulleted quotation is the shape a
+	// worker writes a finding in, and no harness writes its label under one.
+	if len(before) > 0 && isListMarker(before[0]) {
+		return false
+	}
 	bare := 0
 	for _, token := range before {
 		if labelToken(token) {
@@ -179,6 +246,24 @@ func isALabel(before []string) bool {
 		bare++
 	}
 	return bare <= MarkBareWords
+}
+
+// isListMarker is the head of a bullet or a numbered item: `-`, `*`, `+`, `<n>.`, `<n>)`.
+func isListMarker(token string) bool {
+	switch token {
+	case "-", "*", "+":
+		return true
+	}
+	body := strings.TrimRight(token, ".)")
+	if body == token || body == "" {
+		return false
+	}
+	for i := 0; i < len(body); i++ {
+		if body[i] < '0' || body[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // labelToken is a stamp or a prefix: a token carrying a digit (a date, a clock, a pid, a

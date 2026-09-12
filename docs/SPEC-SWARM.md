@@ -1132,12 +1132,17 @@ spent another 215 seconds proving the same two specs still did not fit (2026-09-
 forty Freddy jobs). **A phrase counts only on the provider's own error line** — a line whose
 own LABEL is an error mark, or the line directly under one, and never any line of the
 transcript that merely holds the word: the mark begins a word, at most two tokens precede it
-and at most one of those is a bare word, and a quote character before it means the line is
-quoting rather than reporting. The table's sentences are printed in this repository's own
+and at most one of those is a bare word, a list marker at the head of the line makes it prose
+however the mark is placed, and a quote character before it means the line is quoting rather
+than reporting. The table's sentences are printed in this repository's own
 source, README and this spec, and a worker's RESULT.md quotes them in a bullet or a finding
 row; a job so classed is never retried, so a false mark would take a real 429's retry away
 (rule 5's own lesson: a diagnosis that fires on the word for the thing, wherever it appears,
-is noise in the field a reader was told to trust). A phrase a description names is a sentence — twelve characters and a space or a
+is noise in the field a reader was told to trust). **A line this family wrote itself is never
+a provider talking** — anything carrying the two-token event prefix, `RUN REFUSED …`,
+`SANDBOX OK …`, this class's own `RUN INPUT-LIMIT …`, is skipped whole, because a job that
+runs these tools puts their lines in its own harness log; and `refused` is for the same reason
+not a mark at all, being this repository's word and no provider's. A phrase a description names is a sentence — twelve characters and a space or a
 digit — refused when it is read, because a job classed this way is never retried. A task may also name `max_input <bytes>`, the ceiling on the prompt this
 tool hands the harness, which `run` checks **before** the launch and refuses with the same
 class and the measured size: it bounds what the dispatcher can measure, and the files the

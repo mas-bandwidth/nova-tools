@@ -143,6 +143,36 @@ func TestAMarkIsTheHarnessesOwnLabelAndNotAWordInASentence(t *testing.T) {
 			"",
 		},
 		{
+			"a RESULT.md bullet that LEADS with the mark",
+			"- error: the harness said prompt is too long and died\n",
+			"",
+		},
+		{
+			"a numbered finding that leads with the mark",
+			"1. error: prompt is too long\n",
+			"",
+		},
+		{
+			"a report quoting the provider's line, the quote guard's own case",
+			"nova-swarm: \"error: input token limit exceeded\" is the line it prints\n",
+			"",
+		},
+		{
+			"a sentence about a report that quotes it",
+			"he wrote \"error: input token limit exceeded\" in his report\n",
+			"",
+		},
+		{
+			"THIS FAMILY'S OWN EVENT LINE, which every harness log carries",
+			"RUN REFUSED reason=sandbox_probe: the wall did not prove itself: input token limit exceeded\n",
+			"",
+		},
+		{
+			"and its nested report of this very class",
+			"RUN INPUT-LIMIT id=x slot=1 after=1s input=4399 max=- dest=failed: Error: Rate limit reached: input token limit exceeded\n",
+			"",
+		},
+		{
 			"a mark that is the tail of a longer word",
 			"nova-swarm: a swarmerror input token limit exceeded line nobody prints\n",
 			"",
