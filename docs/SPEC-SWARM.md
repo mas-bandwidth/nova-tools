@@ -331,7 +331,10 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     written by the launch transaction of rule 18 and holding, once launched,
     `{job, state, pid, pgid, pid_started, runner_pid}` where `pid_started` is
     the process start stamp the kernel reports for that pid; each job also
-    holds `<job>/pid` with the same fields. There are **two kernel locks, and
+    holds `<job>/pid` with the same fields. (2026-09-12: the launched slot
+    file also holds `exit_attest`, the sha256 of a per-launch secret the
+    supervisor mints in its own memory, and `<job>/pid` carries no `nonce` —
+    see rule 18.) There are **two kernel locks, and
     each dies with its holder**: `<pool>/run.lock` excludes dispatchers only
     and is held by `run` for its whole life; `<pool>/slots.lock` protects
     each brief slot-state transition — reserve, identify, orphan, release —
@@ -475,7 +478,13 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     record from an earlier launch of the same job cannot finalize a later
     one — then exits; the runner, or an adopting dispatcher, reads that
     file, runs the group check of rule 11 and `finalize` of rule 12, and
-    prints the job's one `RUN` line. The runner never allocates a slot whose
+    prints the job's one `RUN` line. (2026-09-12: `exit.json` also carries
+    `attest`, the per-launch secret itself, written only in `endWith` after the
+    job's whole process group is dead; its sha256 lives in the slot file's
+    `exit_attest`, and a reader accepts the record as the supervisor's own word
+    only when both the `nonce` and the `attest` match — an `exit.json` whose
+    `nonce` matches but whose attestation is absent or wrong is quarantined,
+    never reclaimed.) The runner never allocates a slot whose
     file exists in any state, so the worker cap `--workers` counts reserved
     slots as held; a `supervise` typed by hand is refused at exit 2 when no
     live `run` holds `<pool>/run.lock`. (Stella, 2026-09-11: two files
