@@ -187,9 +187,23 @@ func write(t *testing.T, path, body string) {
 	}
 }
 
-// swarm runs the built binary, which is what a stranger meets at a shell prompt.
+// swarm runs the built binary, which is what a stranger meets at a shell prompt. It fails
+// the test on a binary that would not run at all, so it belongs to the TEST GOROUTINE:
+// anything running beside the test calls swarmTry and hands the answer back.
 func (b *bench) swarm(args ...string) (exit int, stdout, stderr string) {
 	b.t.Helper()
+	exit, stdout, stderr, err := b.swarmTry(args...)
+	if err != nil {
+		b.t.Fatalf("running nova-swarm %s: %v", strings.Join(args, " "), err)
+	}
+	return exit, stdout, stderr
+}
+
+// swarmTry is swarm with the failure RETURNED rather than reported: t.Fatalf from a
+// goroutine other than the test's own ends that goroutine and not the test, and after
+// t.TempDir has been cleaned it panics (#122). Every caller off the test goroutine uses
+// this one and the test goroutine does the asserting.
+func (b *bench) swarmTry(args ...string) (exit int, stdout, stderr string, err error) {
 	cmd := exec.Command(b.binary, args...)
 	cmd.Dir = b.dir
 	cmd.Env = append([]string{"PATH=" + b.path, "Path=" + b.path, "HOME=" + b.dir}, b.extraEnv...)
@@ -203,14 +217,14 @@ func (b *bench) swarm(args ...string) (exit int, stdout, stderr string) {
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	var exitErr *exec.ExitError
-	switch err := cmd.Run(); {
-	case err == nil:
-	case errors.As(err, &exitErr):
+	switch runErr := cmd.Run(); {
+	case runErr == nil:
+	case errors.As(runErr, &exitErr):
 		exit = exitErr.ExitCode()
 	default:
-		b.t.Fatalf("running nova-swarm %s: %v", strings.Join(args, " "), err)
+		err = runErr
 	}
-	return exit, out.String(), errb.String()
+	return exit, out.String(), errb.String(), err
 }
 
 func (b *bench) add(task string, extra ...string) string {
@@ -577,20 +591,59 @@ func mustReadDirNames(t *testing.T, dir string) []string {
 func TestANoteReachesARunningWorker(t *testing.T) {
 	b := newBench(t)
 	id := b.add("a worker that reads its notes\nFAKE-SLEEP 2\nFAKE-FINDINGS 1\n")
+	// THE NOTE GOROUTINE OWNS NOTHING IT CANNOT HAND BACK (#122). It waits for an
+	// OBSERVABLE -- the running record carrying this job's directory, which `run` writes
+	// before the handshake and which is exactly what `note` needs to exist -- sends ONE
+	// note, and puts its exit and its stderr on a channel. It never calls t.Fatal: a
+	// t.Fatal off the test goroutine ends only that goroutine, and after t.TempDir's
+	// cleanup it panics, which is the panic #120 logged. The test goroutine JOINS it below
+	// and does every assertion itself.
+	type noteRun struct {
+		exit   int
+		stderr string
+		err    error
+	}
+	sent := make(chan noteRun, 1)
 	go func() {
-		// The note lands while the job is running, which is the whole point of the file.
-		for i := 0; i < 100; i++ {
-			if exit, _, _ := b.swarm("note", "--pool", b.pool, "--task", id, "--text", "look at the owed list first"); exit == 0 {
-				return
+		res := noteRun{exit: -1, err: errors.New("the job never published a running record with a job directory")}
+		defer func() { sent <- res }()
+		deadline := time.Now().Add(60 * time.Second)
+		for time.Now().Before(deadline) {
+			if !runningJobDir(b.pool, id) {
+				time.Sleep(25 * time.Millisecond)
+				continue
 			}
-			time.Sleep(50 * time.Millisecond)
+			exit, _, errOut, err := b.swarmTry("note", "--pool", b.pool, "--task", id, "--text", "look at the owed list first")
+			res = noteRun{exit: exit, stderr: errOut, err: err}
+			return
 		}
 	}()
 	exit, stdout, stderr := b.run()
+	note := <-sent
+	if note.err != nil {
+		t.Fatalf("the note could not be sent: %v", note.err)
+	}
+	if note.exit != 0 {
+		t.Fatalf("the note exited %d: %s", note.exit, note.stderr)
+	}
 	if exit != 0 {
 		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
 	}
 	mustContain(t, "the run", stdout, "notes=1/1")
+}
+
+// runningJobDir is the observable the note goroutine waits on: <pool>/running/<id>.json
+// with a `job` in it. `note` REFUSES a task that is not running with a job directory, so
+// this is the same question the verb asks, asked before it is asked -- not a sleep.
+func runningJobDir(pool, id string) bool {
+	raw, err := os.ReadFile(filepath.Join(pool, "running", id+".json"))
+	if err != nil {
+		return false
+	}
+	var sc struct {
+		Job string `json:"job"`
+	}
+	return json.Unmarshal(raw, &sc) == nil && sc.Job != ""
 }
 
 // Rule 13, the rate-limit half: a provider's 429 is not a failed task. The dispatcher
