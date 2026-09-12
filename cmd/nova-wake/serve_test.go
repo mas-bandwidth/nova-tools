@@ -471,7 +471,7 @@ func TestServeFetchesEveryIntervalAndPinsTheVersion(t *testing.T) {
 		r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
 			"--interval", "30s", "--state", filepath.Join(t.TempDir(), "s"), "--hours", "1",
 			"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
-		if r.exit != 2 || !strings.Contains(r.stderr, "v0.10.4") || !strings.Contains(r.stderr, "v0.10.3") {
+		if r.exit != 2 || !strings.Contains(r.stderr, "v0.10.4") || !strings.Contains(r.stderr, buildVersion()) {
 			t.Errorf("exit %d; a nova-bus that stopped fetching inside its push leaves a serve that looks healthy and is blind:\n%s", r.exit, r.stderr)
 		}
 	})
@@ -672,6 +672,46 @@ func TestServeRefusesABudgetThatCanNeverFinish(t *testing.T) {
 	}
 }
 
+// --hours is a FLOAT, and a float can name a deadline no run reaches: at
+// `--hours 1e-12` the deadline is `time.Duration(3.6e-3 ns)` == 0, the first
+// `now.Before(end)` is already false, and serve exits 0 with `fired=0 notes=0
+// ... idle=0s` -- a green that polled nothing. SPEC.md's Conventions put
+// refusals over silence, so a deadline under a second is refused by name and
+// the remedy is in the refusal. A deadline shorter than one --interval is NOT
+// refused: it polls once and ends, which is what this package's own tests ask
+// for.
+func TestServeRefusesADeadlineItWouldPollNothingInside(t *testing.T) {
+	note, _ := fakeNote(t)
+	for _, tc := range []struct{ name, hours string }{
+		{"a deadline that rounds to zero", "1e-12"},
+		{"a deadline under a second", "0.0001"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
+				"--interval", "30s", "--state", filepath.Join(t.TempDir(), "s"), "--hours", tc.hours,
+				"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
+			if r.exit != 2 {
+				t.Fatalf("exit = %d, want 2: a deadline no poll happens inside must be refused, not exited 0 with zeros\n%s", r.exit, r.all())
+			}
+			for _, want := range []string{"--hours", "floor", "0.02"} {
+				if !strings.Contains(r.stderr, want) {
+					t.Errorf("the refusal must name the flag, the floor and the remedy; %q is missing:\n%s", want, r.stderr)
+				}
+			}
+		})
+	}
+	// The one-poll deadline stays legal: shorter than --interval, longer than
+	// the floor.
+	t.Run("a deadline shorter than one interval is allowed", func(t *testing.T) {
+		r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
+			"--interval", "5s", "--state", filepath.Join(t.TempDir(), "s"), "--hours", "0.0005",
+			"--remote", "origin", "--branch", "main", "--receipt-max-words", "40")
+		if r.exit == 2 && strings.Contains(r.stderr, "floor") {
+			t.Errorf("a 1.8s deadline polls once and ends; it is not the zero-poll case:\n%s", r.stderr)
+		}
+	})
+}
+
 // The process budget must cover the fetch it asked for. serve hands `wait` a
 // --timeout of one interval and then wrapped the process in --git-timeout, so a
 // `serve --interval 60s` at the default 45s killed its own fetch every poll and
@@ -686,7 +726,7 @@ func TestServesPollBudgetCoversTheIntervalItFetchesFor(t *testing.T) {
 	note, _ := fakeNote(t)
 	state := filepath.Join(t.TempDir(), "serve.state")
 	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
-		"--interval", "5s", "--state", state, "--hours", "0.001",
+		"--interval", "5s", "--state", state, "--hours", "0.0003",
 		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40", "--git-timeout", "1")
 	if strings.Contains(r.stderr, "timed out") {
 		t.Errorf("serve killed its own fetch: the budget for the process must cover the interval the wait was told to block for\n%s", r.stderr)

@@ -488,6 +488,66 @@ never two:
   reader has been shown, so it needs `--as`, it is one advancing watcher per bus
   and name, and there is no flag that advances somebody else's.
 
+### serve: the process outside a session
+
+`watch` runs **inside** a tool call and returns to a session that is already
+awake. `serve` is the other shape — a process **outside** any session that
+fetches the bus on an interval, and for each new note whose `To:` names you runs
+one command with the note ids and nothing else. An empty minute costs one git
+fetch and **zero tokens**; a harness interval that runs a model is not a wake
+and is not this.
+
+```
+$ nova-wake serve --bus ./bus --as rowan --on-note ./wake-me --interval 60s \
+    --state ./serve.state --hours 8 --remote origin --branch main \
+    --receipt-max-words 40
+```
+
+Every flag above is required, and `serve` names **all** of the missing ones in
+one refusal rather than one per run:
+
+- `--bus <dir>` the bus checkout, `--as <name>` the name whose `To:` wakes you.
+  **`To:` wakes; `Cc:` does not** — a note that names you on `Cc:` only is
+  recorded and counted, never dispatched.
+- `--on-note <command>` what to run. It is started for a note and for nothing
+  else — never on the interval, never to receipt, never to look — and it
+  receives note ids as arguments and no body: the line's own model opens the
+  note. Dispatch is **coalesced**: every note queued when the command is not
+  running is handed to one invocation, in bus order, at most `--batch-max`
+  (default 20).
+- `--interval <duration>` how often it fetches. The interval is the latency a
+  person will accept, never the second.
+- `--state <file>` its own state file; one writer per state file, and the
+  delivery record of every note lives here, so a restart knows what was
+  delivered, what was queued and what is `uncertain`.
+- `--hours <h>` **this process's own deadline**, after which it starts nothing
+  new — every ask, child or read has a written deadline (Glenn, 2026-09-09). A
+  `<state>.stop` file — the state file's own path with `.stop` after it, beside
+  it in the same directory — does the same thing on demand.
+  It is a **decimal number of hours**, not an integer: `--hours 8` is a working
+  day, `--hours 0.5` is thirty minutes and `--hours 0.02` is about a minute,
+  which is how the tests and a first run try it. It must name a deadline of at
+  least a second: a float can name one no run reaches (`--hours 1e-12` rounds to
+  `0s`), and a process that exits 0 having polled nothing is a green that did
+  nothing, so it is refused by name instead. A deadline shorter than one
+  `--interval` is **not** refused — it polls once and ends.
+- `--remote <name> --branch <name>` what it fetches. A `serve` that cannot fetch
+  is a `serve` that cannot see its mail, so these are required with the rest.
+- `--receipt-max-words <n>` how much of a receipt is printed. Add `--receipt` to
+  send the bus receipt for every dispatched note; `--on-note-idempotent` if your
+  receiver is safe to run twice, which buys one retry of an interrupted first
+  attempt and never a third run.
+
+A dispatch interrupted by a kill is `uncertain`, not lost, and it blocks that
+receiver's queue rather than guessing: the exit line names the id and the
+`nova-wake serve … --redeliver <id> --on-note <command>` that runs it again on a
+person's word.
+
+`serve` checks `nova-bus version` before its first line and refuses a `nova-bus`
+that is not the one from its own release, because the freshness it promises is a
+property of that program's push (docs/SPEC-WAKE.md, *How the checkout receives
+mail*).
+
 ## nova-merge
 
 `nova-merge` lands an **ordered lane** of entries — pull requests, or branches

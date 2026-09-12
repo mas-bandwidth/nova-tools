@@ -10,16 +10,49 @@ import (
 	"time"
 )
 
-// PinnedBusVersion is the nova-bus this tool is written against.
+// The nova-bus this tool is written against is the nova-bus from its OWN
+// release, and that is what AcceptBus checks.
 //
 // The pin is here because the two-poll freshness promise is a property of
 // nova-bus's PUSH and not of its read: new mail reaches the checkout through
 // the fetch inside `inbox --advance`'s push, and a nova-bus that stopped
 // fetching there would leave a watcher that looks perfectly healthy and is
-// blind. Moving it is a rule change under CONTRIBUTING, made after the
-// measurement in SPEC-WAKE's "How the checkout receives mail" is repeated
-// against the new version.
-const PinnedBusVersion = "v0.10.3"
+// blind.
+//
+// It used to be a literal -- `const PinnedBusVersion = "v0.10.3"` -- and that
+// is the defect Emma's dogfood pass found on 2026-09-12: nova-tools ships every
+// binary in cmd/ from ONE tag, so a release moved nova-bus to v0.12.0 and left
+// the literal where it was, and nova-wake v0.12.0 refused the nova-bus from its
+// own release. A pin no release can update is a pin that expires.
+//
+// So the pin is derived rather than written down: the two programs ship from
+// one tag in one repository, so "the nova-bus this tool is written against" is
+// exactly "the nova-bus built from the same tree as me". AcceptBus compares the
+// two version STRINGS and nothing else: no parse, no range, no ordering. A
+// released pair is equal because one tag stamps both with the same -ldflags -X
+// main.version=<tag>; an unstamped `go build` pair is equal because both take
+// Main.Version, the toolchain's module pseudo-version for the tree, "+dirty"
+// included. So a matching pair is a fact about the build rather than a constant
+// either side can drift from. The check
+// is no weaker: a foreign nova-bus, an older release's, or one from another
+// tree is still refused by name, before the opening line.
+//
+// The measurement that argues the pin -- SPEC-WAKE's "How the checkout receives
+// mail" -- is repeated per release against the pair that ships, which is what
+// cmd/nova-wake's advancing tests do against the nova-bus built from this tree.
+
+// AcceptBus answers whether a nova-wake built at tool may run against a
+// nova-bus that reports found. Both arguments are passed in rather than read,
+// so the rule is a pure function of them.
+func AcceptBus(tool, found string) bool { return tool != "" && found == tool }
+
+// BusRefusal is the one refusal sentence, with the versions in it. The wording
+// is the spec's and is unchanged; only the pinned version is now this build's
+// own rather than a literal.
+func BusRefusal(tool, found string) string {
+	return "nova-bus " + found + "; this tool is written against " + tool +
+		" and its fetch is a property of the push"
+}
 
 // suppressed names the bookkeeping tokens: the lines that say the same thing
 // every poll. They are COUNTED and not printed.
