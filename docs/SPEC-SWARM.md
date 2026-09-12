@@ -6,7 +6,7 @@ working directory, its own data home, its own job directory and its own deadline
 held by the machinery rather than by the worker.
 
 This spec is normative. If the code and this document disagree, one of them has
-a bug, and the tests decide which. It stands beside [SPEC.md](../SPEC.md), whose
+a bug, and the tests decide which. It stands beside [SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line output
 grammar, the cap-and-count rule, `internal/oneline` and `internal/bounded` —
 applies here unchanged and is not restated.
@@ -1630,7 +1630,7 @@ standard library only, no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard — a usage banner ending in a
 runnable `example:` block, refusals that say what the flag wants and report every
-independent problem at once, a `### First run` in `README.md`, a `quickstart`
+independent problem at once, a `### First run` in `docs/CLI.md`, a `quickstart`
 verb, and tests that pin all three by executing them.
 
 1. **`internal/swarm/pool.go`** — the pool directory: `pending/`, `running/`,

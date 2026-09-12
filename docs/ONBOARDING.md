@@ -27,23 +27,25 @@ without saying what it wanted. Every binary under `cmd/` meets all five points.
    first run back three times for three independent flags is three refusals the
    first one already knew about. Flags that depend on one another may still be
    reported in order.
-3. **The tool's README section opens with `### First run`:** the one or two
+3. **The tool's section in [`docs/CLI.md`](CLI.md) opens with `### First run`:** the one or two
    commands a stranger runs first, the real transcript shape they print, how to
    read it, and the things a first run gets wrong with what each one wants. The
    transcript is produced by RUNNING the tool on its fixture, never written by
    hand.
 4. **A `quickstart` verb where the tool has a natural first run** — one line
-   needing nothing the caller has to invent. Where there is none, the README
-   says so and why: a verb added for symmetry writes state nobody asked for.
+   needing nothing the caller has to invent. Where there is none, the command
+   reference says so and why: a verb added for symmetry writes state nobody
+   asked for.
 5. **Tests pin the first three.** (a) by EXECUTING the example lines against
    the tool's fixture; (b) by asserting the sentence each refusal must carry,
    and that one run names every independent problem; (c) by comparing the
-   README transcript's event prefixes and field names against what the tool
+   [`docs/TESTS.md`](TESTS.md) transcript's event prefixes and field names
+   against what the tool
    actually prints — values are deliberately not compared, so the transcript
    stays a document instead of becoming a fixture.
 
 `internal/ci/onboarding_test.go` asserts (a) and (c) for every directory under
-`cmd/`, so a sixth binary joins the standard on the day it appears; each
+`cmd/`, so a new binary joins the standard on the day it appears; each
 binary's own `firstrun_test.go` does the rest, and `internal/onboarding` holds
 the shared parsing so that "the examples run" means one thing here rather than
 five similar things. Each tool's fixture lives in `cmd/<tool>/testdata/`, small

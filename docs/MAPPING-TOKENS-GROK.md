@@ -66,6 +66,7 @@ what those decisions place outside this initial mapping is listed as owed at the
 owed is not covered. Where an earlier paragraph of this document defers a question these
 tables decide, the tables are the decision.
 
+The fixtures are described in [docs/fixtures/tokens/grok.md](fixtures/tokens/grok.md).
 The executable form is `testdata/tokens/grok/`, checked by the landed record validator in
 `internal/records/mapping_fixtures_test.go` (`TestGrokRetainedMappingFixtures`).
 

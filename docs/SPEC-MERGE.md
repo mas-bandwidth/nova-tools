@@ -7,7 +7,7 @@ cannot name.
 
 This spec is normative. If the code and this document disagree, one of them has
 a bug, and the tests decide which. It stands beside
-[SPEC.md](../SPEC.md), whose **Conventions** section — exit codes, no guessed
+[SPEC.md](SPEC.md), whose **Conventions** section — exit codes, no guessed
 paths, the one-line output grammar, the cap-and-count rule, `internal/oneline`
 and `internal/bounded` — applies here unchanged and is not restated. Where this
 tool needs something the Conventions do not cover, it is below and it says so.
@@ -1447,7 +1447,7 @@ check never seen failing is not a check).
     `--lane-branch` on any verb but `init` is exit 2 naming the flag, `gate
     --base <sha>` is exit 2 naming `--base-sha`, and `--base-sha` on any verb
     but `gate` is exit 2 naming `gate`; a state file with `version: 2` is
-    exit 2 naming both numbers; the `### First run` in `README.md` starts with
+    exit 2 naming both numbers; the `### First run` in `docs/CLI.md` starts with
     `init` and a test executes it.
 21. `TestOnlyTheGatedObjectIsPublished`: with a green record for `(A, X, M)`
     the fake remote receives exactly one push, a lease on `refs/heads/<base>`
@@ -1526,7 +1526,7 @@ standard library only, no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard — a usage banner ending in a
 runnable `example:` block, refusals that say what the flag wants and report every
-independent problem at once, a `### First run` in `README.md`, a `quickstart`
+independent problem at once, a `### First run` in `docs/CLI.md`, a `quickstart`
 verb, and tests that pin all three by executing them.
 
 1. **`internal/merge/state.go`** — the state file: `version` checked first,
@@ -1612,7 +1612,7 @@ verb, and tests that pin all three by executing them.
     `--who`'s read, `last_read` from the fold, the range, holds as pointers,
     `--max` through `internal/bounded`, no write and no lock (rule 23).
     Tests: demanded test 23.
-13. **`README.md`'s `### First run`** and the `quickstart` verb: `init` a
+13. **`docs/CLI.md`'s `### First run`** and the `quickstart` verb: `init` a
     lane with its repository and base, add one entry, print the status, with
     every path a flag (demanded test 20).
 

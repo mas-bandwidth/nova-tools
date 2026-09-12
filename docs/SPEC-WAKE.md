@@ -16,7 +16,7 @@ failing check is not a verdict about whose fault it is, and a report file is pro
 somebody else wrote. A watcher that acted on what it saw would be a window with no
 person in it.
 
-This spec is normative. It is a sibling of [SPEC.md](../SPEC.md), whose
+This spec is normative. It is a sibling of [SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line guarantee,
 the field escape, the cap-and-count law — governs here unchanged except where this
 document says otherwise, and it says so by name in one place only (**Exit codes**).
@@ -1266,16 +1266,17 @@ shared packages used rather than re-spelled.
    `nova-check quickstart` already use.
 8. **Onboarding, which `internal/ci/onboarding_test.go` will require the moment
    the directory exists** — a usage banner ending in an `example:` block whose
-   lines run, a `### First run` in `README.md`, `nova-wake help` on stdout at exit
+   lines run, a `### First run` in `docs/CLI.md`, `nova-wake help` on stdout at exit
    0, and a one-line refusal for a bad invocation rather than the banner.
 9. **Tests for the two lessons, named as such** — `TestNoFalseWakeOnReload` and
    `TestBlocksRatherThanTicks` (a watch whose sources never change returns once, at
    its deadline, having printed one verdict line). A spec whose lessons are not
    pinned by a test is a spec that will buy them again.
-10. **`SPEC.md` and `README.md` wiring** — the binary count in SPEC.md's opening
-    paragraph, a `## nova-wake` section or a pointer to this file, and the README
-    `### First run`. CONTRIBUTING says a wording change to a rule here is a rule
-    change; this file is that rule.
+10. **`docs/SPEC.md` and `docs/CLI.md` wiring** — the binary count in
+    docs/SPEC.md's opening paragraph, a `## nova-wake` section or a pointer to
+    this file, and the `### First run` in [`docs/CLI.md`](CLI.md). CONTRIBUTING
+    says a wording change to a rule here is a rule change; this file is that
+    rule.
 11. **`internal/wake/line.go`** — the `--line` view: `git log` on the bus checkout
     under the timeout, the last sign per name, the `<sha>|<state>|<stamp>`
     state value, OFFLINE once and BACK once. Plus, in `main.go`:

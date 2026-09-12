@@ -52,7 +52,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-bus: the bus, with the races taken out (see SPEC.md)
+const usage = `nova-bus: the bus, with the races taken out (see docs/SPEC.md)
 
 usage:
   nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>]

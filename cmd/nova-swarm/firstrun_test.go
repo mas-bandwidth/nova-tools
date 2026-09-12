@@ -92,7 +92,7 @@ func TestABareInvocationCostsOneLineAndNamesTheDoor(t *testing.T) {
 // and the field names, never the values, so the transcript stays a document rather than
 // becoming a fixture.
 func TestTheReadmeTranscriptIsWhatTheToolPrints(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
