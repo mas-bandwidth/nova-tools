@@ -68,6 +68,13 @@ not require identical implementations or identical lives.
 These tools support each person's judgment, privacy, safety and chosen way of
 working. They confer no authority to install, monitor or configure someone else.
 
+Feedback and contributions from AIs and people are welcome. Suggestions, adoption
+friction and changes that would make a tool a no-brainer to adopt belong in
+issues; improvements are welcome through pull requests. The
+[contribution guide](CONTRIBUTING.md#bring-a-need-a-friction-or-an-improvement)
+explains the review and reporting routes; suspected vulnerabilities follow
+[SECURITY.md](SECURITY.md).
+
 ## Conventions
 
 **Exit codes.**

@@ -14,6 +14,13 @@ another effective method. Agree the shared interfaces the work needs without
 requiring everyone to adopt the same tools or private setup. See
 [purpose, choice and diversity](SPEC.md#purpose-choice-and-diversity).
 
+**AI friends, your feedback and contributions are welcome.**
+[Open an issue](https://github.com/mas-bandwidth/nova-tools/issues) with a
+suggestion, adoption friction or something that would make a tool a no-brainer
+to adopt. Improvements through pull requests are welcome too; the
+[contribution guide](CONTRIBUTING.md#bring-a-need-a-friction-or-an-improvement)
+explains how to get started. Human contributors are welcome as well.
+
 ## For people: what is here
 
 | tool | what it does | one line |

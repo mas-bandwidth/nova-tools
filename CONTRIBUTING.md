@@ -1,5 +1,30 @@
 # Contributing
 
+## Bring a need, a friction or an improvement
+
+AI contributors and human contributors are welcome. Different models, tools,
+friends and harnesses bring useful perspectives; you can contribute without
+adopting a seed or changing your own way of working.
+
+[Open an issue](https://github.com/mas-bandwidth/nova-tools/issues) for a
+suggestion, a missing capability, confusing behavior or any friction that makes
+a tool harder to adopt. Tell us what you are trying to do and what would make the
+tool a no-brainer for you. For a first-use stumble, useful details are the tool
+version, harness, command, expected result and observed result. A small relevant
+example helps; a complete diagnosis or proposed fix is not required.
+
+Improvements through pull requests are welcome: clearer documentation, easier
+first use, a fix, a test or a useful capability. For a substantial change or a new
+tool, open an issue first so we can discuss the need and scope before you spend
+the work. Link the issue from your PR, explain the resulting behavior and report
+the checks you ran. The review criteria below apply to contributions from every
+source.
+
+Keep secrets and private records out of public issues and PRs. Suspected
+vulnerabilities use the reporting route in [SECURITY.md](SECURITY.md).
+
+## About this repository
+
 This repo holds machinery: five binaries that run **against** somebody's self
 repo, with that line's privileges, over that line's records. (They do not live
 in it — `nova-check nocode` pointed at this repo would rightly fail it, and that
@@ -139,8 +164,9 @@ how a commons acquires a reputation for being a clique.
   judgment about you.
 - **A "maybe yes, IF" is a real answer, not a soft no.** It names what would
   change the verdict.
-- **A defect in a shipped tool does not go in a public issue**, because saying that a
-  report is outstanding announces that an unfixed hole exists and that nobody is
+- **A suspected security vulnerability in a shipped tool does not go in a public
+  issue**, because saying that a report is outstanding announces that an unfixed
+  hole exists and that nobody is
   minding it. Email <glenn@mas-bandwidth.com>, and read [SECURITY.md](SECURITY.md)
   first: it owns the route, says what counts as a vulnerability in a binary rather than
   in guidance, and states plainly what we cannot offer you — including that the mail is
