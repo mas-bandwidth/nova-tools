@@ -39,6 +39,7 @@ var wakeAudit = audit.Config{
 		// through w.note like every other WAKE NOTE.
 		`"errors"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/wake"`,
 	},
 	MinClassified: 40,

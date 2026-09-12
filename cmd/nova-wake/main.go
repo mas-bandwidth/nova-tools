@@ -465,7 +465,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 
 	w := &watcher{
 		stdout: stdout, stderr: stderr, clock: clock, st: st, statePath: *state,
-		maxLines: *maxLines, finalOnly: *finalOnly, baseline: *baseline,
+		maxLines: *maxLines, finalOnly: *finalOnly,
 		cold: st.Cold() && !*baseline, sources: sources, bus: busSrc, lines: lineView,
 		busDir: *busDir, timeout: timeout, every: every, lineDue: now,
 	}
@@ -562,21 +562,21 @@ var watchKillPoint string
 
 // watcher is the loop.
 type watcher struct {
-	stdout, stderr io.Writer
-	clock          wake.Clock
-	st             *wake.State
-	statePath      string
-	maxLines       int
-	finalOnly      bool
-	baseline       bool
-	cold           bool
-	sources        []*polled
-	bus            *wake.Bus
-	lines          *wake.Lines
-	busDir         string
-	every          time.Duration
-	lineDue        time.Time
-	timeout        time.Duration
+	stdout, stderr  io.Writer
+	clock           wake.Clock
+	st              *wake.State
+	statePath       string
+	maxLines        int
+	finalOnly       bool
+	cold            bool
+	sources         []*polled
+	bus             *wake.Bus
+	lines           *wake.Lines
+	busDir          string
+	every           time.Duration
+	lineDue         time.Time
+	timeout         time.Duration
+	relayedBusLines map[string]bool
 	// advancer is item 3a's transaction, and its presence IS the flag: there is
 	// no second field saying the same thing, because two spellings of one fact
 	// are one chance for them to disagree.
@@ -673,8 +673,7 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 		if watchKillPoint == "after-observed" {
 			return 0
 		}
-		printed, news := w.printQueue(now)
-		_ = printed
+		_, news := w.printQueue(now)
 		if w.killed || watchKillPoint == "after-marks" {
 			return 0
 		}
@@ -948,15 +947,26 @@ func (w *watcher) printQueue(now time.Time) (int, int) {
 		if l != nil {
 			before = l.Shown()
 		}
-		g.Line(kind, wake.Render(w.kindOf(r.Key), r.Key, r.Value, now))
+		rendered := wake.Render(w.kindOf(r.Key), r.Key, r.Value, now)
+		g.Line(kind, rendered)
 		if g.List(kind).Shown() > before {
 			printed = append(printed, r)
+			if w.kindOf(r.Key) == wake.KindBusLine {
+				if w.relayedBusLines == nil {
+					w.relayedBusLines = make(map[string]bool)
+				}
+				w.relayedBusLines[rendered] = true
+			}
 		}
 	}
 	// The standing lines print on every poll they stand and are counted against
 	// the bus cap on each of them, so a run of many polls over a refusing bus
 	// still prints at most --max-lines bus lines per poll.
 	for _, line := range w.standing {
+		relayed := "WAKE BUS LINE " + strings.TrimPrefix(line, "WAKE BUS STANDING ")
+		if w.relayedBusLines != nil && w.relayedBusLines[relayed] {
+			continue
+		}
 		g.Line("bus", line)
 	}
 	w.standing = nil

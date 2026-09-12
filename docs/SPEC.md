@@ -2390,7 +2390,8 @@ nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open 
       [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
-      [--interval <duration>] [--open] [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
+      [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
+      [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
 nova-bus names --bus <dir>
@@ -2868,6 +2869,7 @@ the writer meant rather than about what they cannot have meant:
 |---|---|
 | a recipient the roster does not know | a name from `nova-bus names`; the refusal lists every known name |
 | no `To:` line at all | a `To:` line; there is nobody to guess |
+| the note has no body | a body; an empty note says nothing |
 | a key nobody knows, once any asterisks are off — `Branch:` | one of the eight keys, which the refusal lists |
 | a `Re:` naming nothing on this bus | an id, a path that exists, or the exact subject of a note on your open list; a slug is not a thread |
 | an `Id:` line | no `Id:` line; the tool assigns it |
@@ -3835,7 +3837,8 @@ catalogue is what would make the other choice available later.
 
 ```
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
-      [--interval <duration>] [--open] [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
+      [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
+      [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
 ```
 
 **The failure it closes is not a failure of the bus.** A line reading this bus
@@ -3971,8 +3974,9 @@ receipt line parses and names something that exists; every `from-*` lane on disk
 has an owner in the roster; every `CURSOR`, `OPEN` and `INDEX` on the bus
 parses, because a malformed one is a reader who will refuse on their next run
 with nothing on the bus saying why; and a lane holds notes, its `RECEIPTS`,
-`CURSOR`, `OPEN` and `INDEX`, a `README.md`, and nothing else. It reports
-**every** finding in one run, not the first.
+`CURSOR`, `OPEN` and `INDEX`, a `README.md` (dotfiles such as `.DS_Store` are
+tolerated and ignored), and nothing else. It reports **every** finding in one
+run, not the first.
 
 **A lane's `README.md` is not a note**, and until this was written it was read
 as one: it ends in `.md`, it sits in a lane, so the walk parsed it, failed, told
