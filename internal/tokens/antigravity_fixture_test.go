@@ -218,7 +218,8 @@ type ObservationEnvelopeFixture struct {
 			Unit       string  `json:"unit"`
 			Reason     *string `json:"reason"`
 		} `json:"raw_usage"`
-		Receipt struct {
+		MappingID string `json:"mapping_id"`
+		Receipt   struct {
 			Idx string `json:"idx"`
 		} `json:"receipt"`
 	} `json:"body"`
@@ -310,12 +311,25 @@ func TestAntigravitySyntheticFixturesAndJoin(t *testing.T) {
 			expected := env.Body
 
 			// Verify Spend Key: [source.namespace, source.event_key...]
+			if expected.Source.Kind != "antigravity" {
+				t.Errorf("expected source.kind 'antigravity', got %q", expected.Source.Kind)
+			}
 			if expected.Source.Namespace != "antigravity" {
 				t.Errorf("expected namespace 'antigravity', got %q", expected.Source.Namespace)
 			}
 			expectedEventKey := []string{expected.Source.SessionID, strconv.Itoa(row.Idx)}
 			if len(expected.Source.EventKey) != len(expectedEventKey) || expected.Source.EventKey[0] != expectedEventKey[0] || expected.Source.EventKey[1] != expectedEventKey[1] {
 				t.Errorf("event_key mismatch: got %v, expected %v", expected.Source.EventKey, expectedEventKey)
+			}
+
+			// Verify origin bench conforms to label syntax (no dots)
+			if expected.Origin.Bench != "studio" {
+				t.Errorf("expected origin.bench 'studio', got %q", expected.Origin.Bench)
+			}
+
+			// Verify content-addressed mapping ID
+			if expected.MappingID != "sha256:1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b" {
+				t.Errorf("expected content-addressed mapping_id, got %q", expected.MappingID)
 			}
 
 			// Verify 1:1 join with transcript step_index
