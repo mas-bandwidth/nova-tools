@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Every shipped binary that carries the release stamp reports the tag it was built from.
+# Every shipped binary reports the tag it was built from.
 #
 # Before #118 this was two names -- nova-bus and nova-board -- hand-written into
 # release.yml beside a build loop that ships `cmd/*/`. A stamp read by two binaries says
@@ -8,28 +8,29 @@
 # released bus, so the whole release refuses itself while the release page looks finished.
 #
 # THE TOOL LIST IS DISCOVERED FROM THE TREE, never written here. The build loop ships
-# every `cmd/*/`, so this walks the same directories; a tool added tomorrow is asserted
-# without anyone remembering this file. What is discovered per tool is whether it declares
-# the stamp -- a package-level string `version` in package main is the symbol
-# `-X main.version` writes and is the tool's own statement that it intends to report the
-# release it came from. Every spelling the LINKER accepts counts as that statement; see
-# declares_stamp below for why a narrower test is the same silent demotion this file
-# exists to refuse.
+# every `cmd/*/`, so this walks the same directories; a tool added tomorrow is REQUIRED to
+# report the tag without anyone editing this file.
 #
-# THREE CLASSES, and the difference between them is the point:
+# WHAT IS REQUIRED IS NOT DISCOVERED. An earlier revision of this file decided per tool,
+# from its source, whether it DECLARED the stamp -- a package-level `version` that
+# `-X main.version` can write -- and asserted the tag only on the tools that did. Stella's
+# review of #125 is the hole in that, and it is the hole #118 itself names: renaming or
+# removing that declaration is one of the failure modes this check exists to catch, and
+# under a declaration-based rule it makes the tool ELIGIBLE FOR NOTHING -- `stamped=no`, a
+# NOTE, exit 0. The check reported on the property by asking the property's own question.
+# No amount of parser widening repairs that, because the parser was never the defect: the
+# required set must not be a function of the thing being checked. So the required set is
+# the shipped set, and the only tools not in it are named below, one by one, by a person.
 #
-#   declares the stamp          MUST print the tag. A mismatch fails the job by name.
-#   no stamp, has a print       NOTE. nova-merge prints a hash of its own bytes: a real
-#                               build identity that is not the release stamp.
-#   no stamp, no print          NOTE. nova-check, nova-fuse, nova-memory, nova-self-talk
-#                               and nova-swarm refuse `version` today.
-#
-# The NOTEs are printed and named, never skipped in silence -- silence is how the first
-# two-name loop survived nine tools. Making the print common across the set is the
-# packaging question in #121 and is deliberately NOT decided here: this file asserts what
-# the tools claim today and says out loud what is missing. Stella's addition to #121 is
-# the rule the first class enforces: a development build must not silently impersonate a
-# release.
+# THE EXEMPTIONS ARE A DEBT, NOT A CLASSIFICATION. nova-tools#121 owns the common version
+# verb across the set; until it lands these six refuse `version` (nova-check, nova-fuse,
+# nova-memory, nova-self-talk, nova-swarm) or print a build identity that is not the
+# release stamp (nova-merge: a sha256 of its own bytes). EACH NAME COMES OFF THIS LIST THE
+# DAY ITS VERSION VERB LANDS, and the list is empty when #121 closes -- which is also when
+# #118's all-binaries requirement is genuinely met. A name here can only be removed by
+# editing this line, so a tool cannot quietly rejoin the exempt set by losing a symbol.
+LEGACY_NO_VERSION_VERB="nova-check nova-fuse nova-memory nova-self-talk nova-swarm nova-merge"
+
 set -euo pipefail
 
 if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
@@ -89,177 +90,26 @@ case "$tag" in
 	;;
 esac
 
-# declares_stamp <file> -- does this file declare the package-level string variable that
-# `-X main.version=` writes?
-#
-# WHAT THE LINKER ACCEPTS is the whole of the rule, and cmd/link states it: -X
-# importpath.name=value "is only effective if the variable is declared in the source code
-# either uninitialized or initialized to a constant string expression". So all of these
-# are stamped, and an earlier revision of this file recognised only the first:
-#
-#   var version string              var version = "devel"        var (
-#   var version string = "devel"    var version = `devel`                version string
-#                                                                )
-#
-# The one that made this worth widening: `var version = ""` is stamped by the linker
-# exactly as `var version string` is, and a single exact-line grep demoted that tool to a
-# NOTE -- a shipped binary quietly dropped out of the asserted set, which is this file's
-# own argument against silent demotion turned on itself. A `version` initialised to
-# something that is NOT a constant string expression -- `var version = buildID()`, `var
-# version = "x" + suffix` -- the linker genuinely cannot write, so it is genuinely not a stamp and
-# is not recognised here. THE TWO ERRORS ARE NOT SYMMETRIC but both are real: reading a
-# stamp as absent drops a shipped binary out of the asserted set in silence, and reading
-# an absent stamp as present fails a release for a tool that never claimed the tag.
-#
-# TOP-LEVEL declarations only. gofmt indents every declaration inside a function, so a
-# line beginning `var` at column zero, and the body of a top-level `var (` block, are
-# exactly the package-level ones. A `var (` block ENDS ON A `)` AT COLUMN ZERO: gofmt
-# indents the closing paren of every multi-line call inside the block, so closing the
-# block on any indented `)` ended it early at the first
-#
-#   var (
-#           greeting = strings.Join(
-#                   []string{"a"},
-#           )                          <- not the end of the block
-#           version string             <- and this was read as a function body, demoted
-#   )
-#
-# COMMENTS ARE STRIPPED, AND ONLY OUTSIDE STRING LITERALS. `//` alone was stripped, so a
-# declaration sitting inside a top-level `/* ... */` -- commented out, which is exactly
-# the way a stamp gets removed -- counted as a declaration and held the tool to a tag it
-# no longer carries. The stripper walks the line rather than substituting, because a `//`
-# or a `/*` inside a string literal (`var version = "//devel"`) is text, not a comment,
-# and cutting there would leave an unbalanced literal behind.
-declares_stamp() {
-	awk '
-		# Comments removed outside string literals; `incomment` carries a /* across lines.
-		function strip_comments(s,   i, c, n, out, q) {
-			out = ""; i = 1; n = length(s)
-			while (i <= n) {
-				c = substr(s, i, 1)
-				if (incomment) {
-					if (c == "*" && substr(s, i + 1, 1) == "/") { incomment = 0; i += 2 }
-					else i++
-					continue
-				}
-				if (c == "\"" || c == "`" || c == "'\''") {
-					q = c; out = out c; i++
-					while (i <= n) {
-						c = substr(s, i, 1); out = out c; i++
-						if (c == "\\" && q != "`") {
-							if (i <= n) { out = out substr(s, i, 1); i++ }
-							continue
-						}
-						if (c == q) break
-					}
-					continue
-				}
-				if (c == "/" && substr(s, i + 1, 1) == "/") break
-				if (c == "/" && substr(s, i + 1, 1) == "*") { incomment = 1; i += 2; out = out " "; continue }
-				out = out c; i++
-			}
-			return out
-		}
-		# Split on the commas that separate the declaration'\''s elements: depth zero, and
-		# not inside a literal, so `f(a, b)` and "a,b" stay one element.
-		function split_top(s, arr, sep,   i, c, n, depth, cur, k, q) {
-			if (sep == "") sep = ","
-			n = length(s); depth = 0; cur = ""; k = 0
-			for (i = 1; i <= n; i++) {
-				c = substr(s, i, 1)
-				if (c == "\"" || c == "`" || c == "'\''") {
-					q = c; cur = cur c; i++
-					while (i <= n) {
-						c = substr(s, i, 1); cur = cur c
-						if (c == "\\" && q != "`") { i++; if (i <= n) cur = cur substr(s, i, 1); i++; continue }
-						i++
-						if (c == q) break
-					}
-					i--
-					continue
-				}
-				if (c == "(" || c == "[" || c == "{") depth++
-				else if (c == ")" || c == "]" || c == "}") depth--
-				else if (c == sep && depth == 0) { k++; arr[k] = cur; cur = ""; continue }
-				cur = cur c
-			}
-			k++; arr[k] = cur
-			return k
-		}
-		# A single string literal: `"devel"`, `` `devel` ``, `""`.
-		function is_lone_string(s,   n, i, c, q) {
-			gsub(/^[ \t]+|[ \t]+$/, "", s)
-			n = length(s)
-			if (n < 2) return 0
-			q = substr(s, 1, 1)
-			if (q == "`") { return index(substr(s, 2), "`") == n - 1 }
-			if (q != "\"") return 0
-			for (i = 2; i <= n; i++) {
-				c = substr(s, i, 1)
-				if (c == "\\") { i++; continue }
-				if (c == "\"") return i == n
-			}
-			return 0
-		}
-		# A CONSTANT string expression, which is what cmd/link writes: one string literal,
-		# or literals joined by `+`. `"x" + suffix` is not one -- suffix is a variable and
-		# the linker cannot fold it -- and neither is `f()`. `prefix + "x"` where prefix is
-		# a declared constant IS one to the compiler, and is not recognised here: telling a
-		# constant identifier from a variable one needs the type information this file does
-		# not have, and nobody spells a stamp that way.
-		function is_const_string(s,   n, i, parts) {
-			gsub(/^[ \t]+|[ \t]+$/, "", s)
-			if (s == "") return 0
-			n = split_top(s, parts, "+")
-			for (i = 1; i <= n; i++) if (!is_lone_string(parts[i])) return 0
-			return 1
-		}
-		function version_pos(names, parts,   n, i, s) {
-			n = split_top(names, parts)
-			for (i = 1; i <= n; i++) {
-				s = parts[i]
-				gsub(/^[ \t]+|[ \t]+$/, "", s)
-				if (s == "version") return i
-			}
-			return 0
-		}
-		{ line = strip_comments($0) }
-		!inblock && line ~ /^var[ \t]*\([ \t]*$/ { inblock = 1; next }
-		# Column zero only: an indented `)` closes a call inside the block, not the block.
-		inblock && line ~ /^\)/ { inblock = 0; next }
-		{
-			if (line ~ /^var[ \t]+/) { decl = line; sub(/^var[ \t]+/, "", decl) }
-			else if (inblock && line ~ /^[ \t]+[A-Za-z_]/) { decl = line; sub(/^[ \t]+/, "", decl) }
-			else next
-
-			eq = index(decl, "=")
-			if (eq > 0) { names = substr(decl, 1, eq - 1); init = substr(decl, eq + 1) }
-			else { names = decl; init = "" }
-			gsub(/^[ \t]+|[ \t]+$/, "", names)
-			gsub(/^[ \t]+|[ \t]+$/, "", init)
-
-			# the type, when written, is the last word of the name list
-			typed = 0
-			if (names ~ /[ \t]string$/) { typed = 1; sub(/[ \t]+string$/, "", names) }
-			pos = version_pos(names, nameparts)
-			if (!pos) next
-
-			# uninitialised must say `string`; initialised must be a lone string literal
-			# IN VERSION'\''S OWN POSITION: `var x, version = "a", 1` stamps nothing.
-			if (init == "") { if (typed) found = 1 }
-			else {
-				ninit = split_top(init, initparts)
-				if (ninit == split_top(names, nameparts) && is_const_string(initparts[pos])) found = 1
-			}
-		}
-		END { exit found ? 0 : 1 }
-	' "$1"
-}
+# A STALE EXEMPTION IS A DEFECT, and it is checked before anything is run. A name that no
+# longer has a directory is either a tool that was renamed -- in which case the new name is
+# silently required, which is right, but the old line still reads as a live debt against
+# #121 -- or a list that was never pointed at this tree. Either way the list has stopped
+# saying what it claims to say, and this file's whole argument is against a rule nobody can
+# read off the page.
+for exempt_name in $LEGACY_NO_VERSION_VERB; do
+	if [ ! -d "$cmddir/$exempt_name" ]; then
+		echo "FAIL: $exempt_name is exempted from the stamp assertion but $cmddir/$exempt_name does not exist"
+		echo "  the exemption list is a debt against #121, not a place names are left behind"
+		echo "  take the name off LEGACY_NO_VERSION_VERB, or point this check at the shipped tree"
+		exit 1
+	fi
+done
 
 notes=""
 note() { notes="${notes}NOTE: $1"$'\n'; }
 
 asserted=0
+exempted=0
 seen=0
 for dir in "$cmddir"/*/; do
 	name=$(basename "$dir")
@@ -270,20 +120,6 @@ for dir in "$cmddir"/*/; do
 		echo "FAIL: $name is built by the release loop but there is no runnable binary at $bin"
 		exit 1
 	fi
-
-	# Top-level files only, and not the tests: cmd/nova-wake/testdata holds a second
-	# package main that is a fixture, and a fixture's stamp is not shipped.
-	stamped=no
-	for f in "$dir"*.go; do
-		case "$f" in
-		*_test.go) continue ;;
-		esac
-		[ -f "$f" ] || continue
-		if declares_stamp "$f"; then
-			stamped=yes
-			break
-		fi
-	done
 
 	set +e
 	out=$("$bin" version 2>&1)
@@ -300,20 +136,27 @@ for dir in "$cmddir"/*/; do
 	shown=$(printf '%s' "$out" | cut -c1-200)
 	[ "${#shown}" -eq "${#out}" ] || shown="$shown..."
 
-	if [ "$stamped" = no ]; then
+	# The exempt six, named and printed rather than skipped in silence -- silence over
+	# nine tools is how the two-name loop survived. What they print today is shown so
+	# that the day one of them starts answering the tag is visible on the release log.
+	case " $LEGACY_NO_VERSION_VERB " in
+	*" $name "*)
 		if [ "$rc" -ne 0 ]; then
 			note "$name has no version print today: \`$name version\` exited $rc: $shown"
 		else
 			note "$name prints an identity that is not the release stamp: $shown"
 		fi
-		note "  the common version verb across the set is #121; this job does not decide it"
+		note "  it is exempt by name until the common version verb lands: #121"
+		exempted=$((exempted + 1))
 		continue
-	fi
+		;;
+	esac
 
 	if [ "$rc" -ne 0 ]; then
-		echo "FAIL: $name declares the -X main.version stamp but \`$name version\` exited $rc"
+		echo "FAIL: $name is a shipped binary and must report the tag, but \`$name version\` exited $rc"
 		echo "  it printed: $shown"
 		echo "  a stamp no verb can read is a stamp nobody can check; wire version into main.go's dispatch"
+		echo "  (the only tools not held to the tag are the #121 legacy six, named in this script)"
 		exit 1
 	fi
 
@@ -350,11 +193,14 @@ if [ "$seen" -eq 0 ]; then
 	echo "FAIL: $cmddir/ matched no tool directories; this check asserted nothing and would pass"
 	exit 1
 fi
+# Every shipped tool exempt is a run that asserted nothing while printing eleven NOTEs.
+# It cannot happen while one name is required, and it says so rather than exiting 0.
 if [ "$asserted" -eq 0 ]; then
-	echo "FAIL: not one shipped binary declares the release stamp; either the stamp was removed"
-	echo "  from every tool or $cmddir is not this repository's tree"
+	echo "FAIL: every one of the $seen shipped tools is on the #121 exemption list, so this check"
+	echo "  asserted no stamp at all; either the list has outgrown the tree or $cmddir is not"
+	echo "  this repository's tree"
 	exit 1
 fi
 
 printf '%s' "$notes"
-echo "asserted the $tag stamp on $asserted of $seen shipped tools"
+echo "asserted the $tag stamp on $asserted of $seen shipped tools ($exempted exempt until #121)"

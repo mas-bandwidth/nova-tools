@@ -591,6 +591,91 @@ jobs:
           go build -ldflags "$ldflags" -o "${RUNNER_TEMP}/stamped/" ./cmd/...
           .github/scripts/assert-version-stamp.sh "$stamp" "${RUNNER_TEMP}/stamped/%s"
 
+      - name: a required tool that loses its stamp fails the assertion, and the rest still pass
+        shell: bash
+        run: |
+          set -euo pipefail
+          # STELLA'S NEGATIVE CONTROL (#125 review). The step above builds the whole tree
+          # unstamped, which is red at the FIRST tool and therefore says nothing about the
+          # tool-by-tool rule: one binary losing its stamp while the other ten keep theirs
+          # is the failure mode #118 names -- a rename or a removal the linker ignores in
+          # silence -- and until this job it was the case nothing exercised. Under the
+          # declaration-based eligibility this file carried until #125 it was worse than
+          # unexercised: renaming `version` made the tool exempt from the check, so the
+          # broken binary passed AS A NOTE and the job went green. The required set is the
+          # shipped set now, so both mutations must be red, and red BY NAME.
+          stamp=v0.0.0-dry-run
+          ldflags=$(.github/scripts/release-ldflags.sh "$stamp")
+          cp cmd/nova-tokens/version.go "${RUNNER_TEMP}/nova-tokens-version.go.orig"
+          restore() { cp "${RUNNER_TEMP}/nova-tokens-version.go.orig" cmd/nova-tokens/version.go; }
+          trap restore EXIT
+
+          # The mutation is asserted to have LANDED before the binaries are built. A sed
+          # that matched nothing would rebuild the unmutated tree, the assertion would go
+          # red for no reason at all, and this step would be green while proving nothing.
+          mutate() {
+            restore
+            case "$1" in
+            rename)
+              sed -i 's/^var version string$/var Version string/; s/resolveVersion(version, info, ok)/resolveVersion(Version, info, ok)/' cmd/nova-tokens/version.go
+              if ! grep -q '^var Version string$' cmd/nova-tokens/version.go; then
+                echo "the rename fixture did not apply; this step would prove nothing"; exit 1
+              fi
+              ;;
+            remove)
+              sed -i '/^var version string$/d; s/resolveVersion(version, info, ok)/resolveVersion("", info, ok)/' cmd/nova-tokens/version.go
+              if grep -q '^var version string$' cmd/nova-tokens/version.go; then
+                echo "the removal fixture did not apply; this step would prove nothing"; exit 1
+              fi
+              ;;
+            esac
+            rm -rf "${RUNNER_TEMP}/mutated"
+            go build -ldflags "$ldflags" -o "${RUNNER_TEMP}/mutated/" ./cmd/...
+          }
+
+          for how in rename remove; do
+            mutate "$how"
+            set +e
+            out=$(.github/scripts/assert-version-stamp.sh "$stamp" "${RUNNER_TEMP}/mutated/%s" 2>&1)
+            rc=$?
+            set -e
+            printf '%s\n' "$out"
+            if [ "$rc" -eq 0 ]; then
+              echo "the assertion PASSED a release whose nova-tokens answers a pseudo-version ($how)"
+              exit 1
+            fi
+            case "$out" in
+              *"FAIL: nova-tokens does not report the tag it was built from"*) ;;
+              *) echo "the assertion failed, but not for nova-tokens' missing stamp ($how); that is a different defect"; exit 1 ;;
+            esac
+            case "$out" in
+              *"NOTE: nova-tokens"*) echo "nova-tokens was demoted to a NOTE ($how); a required tool cannot become exempt by losing a symbol"; exit 1 ;;
+            esac
+            # The other tools are untouched, so the red above is this tool and not the harness.
+            case "$out" in
+              *"ok: nova-board $stamp"*) ;;
+              *) echo "nova-board stopped reporting the tag while only nova-tokens was mutated ($how)"; exit 1 ;;
+            esac
+            echo "ok: a $how of the stamp is refused by name, with nova-board still asserted"
+          done
+          restore
+
+          # AND A STALE EXEMPTION IS ITSELF RED. The six names are a debt against #121 and
+          # come off one at a time; a list that has drifted from the tree has stopped
+          # saying what it claims to say, and this is the check that says so.
+          rm -rf "${RUNNER_TEMP}/one-tool"
+          mkdir -p "${RUNNER_TEMP}/one-tool/cmd/nova-board"
+          set +e
+          out=$(.github/scripts/assert-version-stamp.sh "$stamp" "${RUNNER_TEMP}/mutated/%s" "${RUNNER_TEMP}/one-tool/cmd" 2>&1)
+          rc=$?
+          set -e
+          printf '%s\n' "$out"
+          [ "$rc" -ne 0 ] || { echo "an exemption naming a tool that does not exist was accepted"; exit 1; }
+          case "$out" in
+            *"is exempted from the stamp assertion but"*) echo "ok: a stale exemption is refused by name" ;;
+            *) echo "the run failed, but not for the stale exemption; that is a different defect"; exit 1 ;;
+          esac
+
       - name: upload the cross-built binaries
         # So that the smoke job runs THE BINARY THIS WOULD SHIP rather than one it builds
         # itself with different flags. The job above already builds with -trimpath and

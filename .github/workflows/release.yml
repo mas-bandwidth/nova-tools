@@ -149,10 +149,15 @@ jobs:
           # nova-wake's stamp that decides which nova-bus it accepts: an unstamped nova-wake
           # in a release refuses every nova-bus in that same release (#118).
           #
-          # The script walks cmd/*/ the way the build loop does, asserts the tag on every
-          # tool that declares the stamp, and prints a NOTE naming the tools that have no
-          # version print today -- with #121, which owns the common verb -- rather than
-          # passing over them in silence. It is exercised by ci.yml's release-dry-run.
+          # The script walks cmd/*/ the way the build loop does and REQUIRES the tag from
+          # every tool it finds. The only exceptions are the six legacy tools named in the
+          # script itself, which have no version verb until #121 lands; they print a NOTE
+          # naming themselves and #121 rather than being passed over in silence, and each
+          # name comes off that list the day its verb lands. Nothing about a tool's source
+          # decides whether it is required -- a renamed or deleted `version` symbol is the
+          # failure this step exists to catch, so it cannot also be what excuses a tool
+          # from the check. It is exercised by ci.yml's release-dry-run, which proves both
+          # outcomes and the rename on every pull request.
           .github/scripts/assert-version-stamp.sh "$TAG" "dist/%s_${TAG}_linux_amd64"
 
       - name: SHA256SUMS over the whole shipped set
