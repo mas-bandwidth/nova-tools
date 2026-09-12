@@ -689,13 +689,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # THE TAG ALPHABET -- the half of this job that was left owed. The step above
-          # proves the EMPTY stamp is refused; `%`, `=` and whitespace are legal in a git
-          # refname too, both scripts refuse all three by name, and until this step
-          # nothing exercised any of those refusals. From the fourth read of #125, carried
-          # as the last open low of #118: "ci.yml's release-dry-run exercises the
-          # empty-stamp refusal only; the `%` and `=` (and whitespace) refusals in
+          # THE TAG ALPHABET -- the half of this job that was left owed. From the fourth
+          # read of #125, the last open low of #118: "ci.yml's release-dry-run exercises
+          # the empty-stamp refusal only; the `%` and `=` (and whitespace) refusals in
           # release-ldflags.sh and in the assertion have no negative control."
+          #
+          # WHAT A TAG CAN ACTUALLY CARRY, measured rather than assumed:
+          # `git check-ref-format refs/tags/'v1.0%s-rc1'` and `…/'v1.0=rc1'` are ACCEPTED,
+          # so `%` and `=` are tags a person can really push; `…/'v0.13.0 rc1'` is REFUSED,
+          # so whitespace is not a legal refname, and release.yml:83 takes `TAG` from
+          # `github.ref_name`, which no trigger can hand in with a space. The whitespace
+          # cases below therefore prove the scripts' own refusal fires -- defence in depth
+          # for a stamp arriving by some other path, a future input or a future caller --
+          # and not a tag anyone can push today. Said plainly because a comment that calls
+          # whitespace a legal refname is a comment a reader would have to check.
           #
           # These refusals exist because the failure each one replaces is LATE and
           # unreadable. A `%` tag travels into the assertion's printf FORMAT -- release.yml
@@ -707,7 +714,42 @@ jobs:
           # fired on a legal tag would stop the next release for nothing, so both
           # directions are proved here -- each refusal by its own reason, and legal tags
           # through both scripts to the assertion's `ok:` lines.
+          #
+          # THE COUNT, read off the two scripts. Twelve refusals fire before any binary is
+          # run: release-ldflags.sh six -- its usage (:19), the empty stamp (:29),
+          # whitespace (:38), `%` (:53), `=` (:69), and a belt-and-braces check on the
+          # composed string (:81) that cannot fire while the empty-stamp refusal stands;
+          # assert-version-stamp.sh six -- its usage (:42), an empty expected tag (:51), a
+          # template with no `%s` (:57), a `%` beyond the single `%s` (:74), whitespace in
+          # the tag (:86), `=` in the tag (:91). This step exercises ten of them and the
+          # step above exercises the eleventh (the empty stamp); the twelfth is the
+          # composed-string check, which no argument can reach, and it is named here rather
+          # than pretended about. The FAIL class further down the assertion -- a missing
+          # binary, a verb that exited, a tool not reporting the tag, a stale exemption --
+          # is what the two steps above exercise.
           stamp=v0.0.0-dry-run
+
+          # The usage refusals first, because they are the cheapest thing in either script
+          # to break: an argument added to one of these calls and not to the other end
+          # would otherwise be a release that skipped its own check.
+          refuse_usage() {
+            local what=$1 out rc
+            shift
+            set +e
+            out=$("$@" 2>&1)
+            rc=$?
+            set -e
+            printf '%s\n' "$out"
+            [ "$rc" -eq 2 ] || { echo "$what did not refuse $(($# - 1)) argument(s) as a usage error: rc=$rc"; exit 1; }
+            case "$out" in
+              *"usage:"*) echo "ok: $what refuses $(($# - 1)) argument(s) with its usage" ;;
+              *) echo "$what exited 2 without printing its usage; a caller has nothing to read"; exit 1 ;;
+            esac
+          }
+          refuse_usage release-ldflags.sh .github/scripts/release-ldflags.sh
+          refuse_usage release-ldflags.sh .github/scripts/release-ldflags.sh "$stamp" extra
+          refuse_usage assert-version-stamp.sh .github/scripts/assert-version-stamp.sh "$stamp"
+          refuse_usage assert-version-stamp.sh .github/scripts/assert-version-stamp.sh "$stamp" 'dist/%s' cmd extra
 
           # ONE: the ldflags helper, called the way release.yml calls it -- a command
           # substitution under `set -euo pipefail`. The proof is that the line after it
@@ -758,6 +800,27 @@ jobs:
           # shipped tool, so the refusals below are the tag alphabet and not this fixture.
           .github/scripts/assert-version-stamp.sh "$stamp" "$dist/%s_${stamp}_linux_amd64"
 
+          # refuse_assertion_args is the same three assertions with the arguments handed in
+          # raw, for the refusals whose fixture is not a tag inside release.yml's template.
+          refuse_assertion_args() {
+            local phrase=$1 out rc
+            shift
+            set +e
+            out=$(.github/scripts/assert-version-stamp.sh "$@" 2>&1)
+            rc=$?
+            set -e
+            printf '%s\n' "$out"
+            [ "$rc" -eq 2 ] || { echo "the assertion did not refuse <$*> as a usage error: rc=$rc"; exit 1; }
+            case "$out" in
+              *"$phrase"*) ;;
+              *) echo "<$*> was refused by the assertion, but not for $phrase; that is a different defect"; exit 1 ;;
+            esac
+            case "$out" in
+              *"ok: "* | *"FAIL: "*) echo "the assertion ran the tools before refusing <$*>; this refusal is meant to precede them"; exit 1 ;;
+            esac
+            echo "ok: the assertion refuses a call it cannot check ($phrase) before it runs a binary"
+          }
+
           refuse_assertion() {
             local tag=$1 phrase=$2 out rc
             set +e
@@ -781,6 +844,15 @@ jobs:
           refuse_assertion 'v1.0%s-rc1' 'beyond its single %s'
           refuse_assertion 'v1.0=rc1' 'contains ='
           refuse_assertion 'v0.13.0 rc1' 'carries whitespace'
+
+          # And the two refusals that are not about the tag's alphabet at all: an empty
+          # expected tag, and a template that names one path for every tool. Neither can
+          # come from a release.yml that is written correctly, which is exactly why they
+          # are worth a control -- they are the refusals that catch this workflow being
+          # edited, and both say in the script that they exist because the alternative is a
+          # check that asserts nothing and passes.
+          refuse_assertion_args 'no expected tag given' "" "$dist/%s_${stamp}_linux_amd64"
+          refuse_assertion_args 'holds no %s' "$stamp" "$dist/nova-board_${stamp}_linux_amd64"
 
       - name: upload the cross-built binaries
         # So that the smoke job runs THE BINARY THIS WOULD SHIP rather than one it builds
