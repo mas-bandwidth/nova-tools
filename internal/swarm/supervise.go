@@ -59,10 +59,17 @@ func Supervise(in SuperviseInput) int {
 	CheckKillPoint("before-identify")
 
 	// (3) IDENTIFY, before doing anything else. The write lands only if the slot file still
-	// reads reserved with the nonce this supervisor was handed.
+	// reads reserved with the nonce this supervisor was handed. Before it, this supervisor
+	// mints its per-launch attestation secret in its own memory; only its hash reaches the
+	// slot file here, and the secret itself is written into <job>/exit.json in endWith,
+	// after the job's whole process group is dead.
+	attest, err := NewExitAttest()
+	if err != nil {
+		return abort(in, jobDir, err)
+	}
 	identity := SlotFile{
 		State: SlotLaunched, Pid: self, Pgid: pgidOf(self), PidStarted: StartStamp(self),
-		LaunchedAt: Stamp(in.Now()),
+		LaunchedAt: Stamp(in.Now()), ExitAttest: ExitAttestHash(attest),
 	}
 	if err := p.Identify(in.Slot, in.Nonce, identity); err != nil {
 		return abort(in, jobDir, err)
@@ -81,7 +88,7 @@ func Supervise(in SuperviseInput) int {
 	logPath := filepath.Join(jobDir, "harness.log")
 	logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
-		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness log could not be opened: " + redactedReason(err)})
+		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness log could not be opened: " + redactedReason(err)}, attest)
 	}
 	harness := in.Worker.Harness
 	if resolved, err := exec.LookPath(harness); err == nil {
@@ -116,7 +123,7 @@ func Supervise(in SuperviseInput) int {
 	ownGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
-		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness would not start: " + redactedReason(err)})
+		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness would not start: " + redactedReason(err)}, attest)
 	}
 	jobPgid := cmd.Process.Pid
 	// THE HARNESS'S OWN IDENTITY, learned at the one moment it is not in doubt: on a
@@ -138,7 +145,7 @@ func Supervise(in SuperviseInput) int {
 	record := watch(in, cmd, jobDir, jobPgid, jobStarted, started)
 	logFile.Close()
 	CheckKillPoint("between-exit-and-exit-json")
-	return endWith(in, jobDir, started, record)
+	return endWith(in, jobDir, started, record, attest)
 }
 
 // watch holds the deadline and the budget beside the harness (rules 7 and 13).
@@ -224,9 +231,10 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 
 // endWith writes the completion evidence and exits. The evidence is written through .tmp and
 // a rename AFTER the harness exits and BEFORE the supervisor exits, so a replacement
-// dispatcher reads a whole record or none.
-func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord) int {
-	rec.Nonce, rec.Ended = in.Nonce, Stamp(in.Now())
+// dispatcher reads a whole record or none. The attestation secret is written here, into the
+// record itself, and nowhere earlier: the whole process group is dead before this runs.
+func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord, attest string) int {
+	rec.Nonce, rec.Ended, rec.Attest = in.Nonce, Stamp(in.Now()), attest
 	// Rule 11's group check, made by the process that owns the group: anything still in the
 	// job's own group after its leader has gone is a background subtask the prompt forbids.
 	if jobPgid, jobStarted := readJobProc(jobDir); jobPgid > 0 && groupStillAlive(jobPgid, jobStarted) {
