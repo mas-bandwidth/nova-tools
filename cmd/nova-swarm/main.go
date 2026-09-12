@@ -126,6 +126,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
+	case "version", "--version":
+		return cmdVersion(rest, stdout, stderr)
 	case "add":
 		return cmdAdd(rest, stdin, stdout, stderr, now)
 	case "batch":

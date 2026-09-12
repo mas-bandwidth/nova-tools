@@ -120,6 +120,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
+	case "version", "--version":
+		return cmdVersion(rest, stdout, stderr)
 	}
 
 	// LIFT IS DISPATCHED BEFORE ANY FLAG IS PARSED, because its hard half must not depend

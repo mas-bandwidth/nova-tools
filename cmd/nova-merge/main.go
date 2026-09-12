@@ -178,8 +178,7 @@ func run(args []string, stdout, stderr io.Writer, deps Deps) int {
 		fmt.Fprint(stdout, usage)
 		return 0
 	case "version", "--version":
-		fmt.Fprintf(stdout, "nova-merge %s\n", oneline.Field(deps.BuildID()))
-		return 0
+		return cmdVersion(rest, stdout, stderr, deps)
 	}
 	// The three lane properties and the one base-sha spelling, refused by NAME off the
 	// verb that owns them, before anything is parsed: a --base on a queueing verb would
