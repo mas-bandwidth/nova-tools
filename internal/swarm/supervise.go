@@ -217,7 +217,7 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 	rec.Nonce, rec.Ended = in.Nonce, Stamp(in.Now())
 	// Rule 11's group check, made by the process that owns the group: anything still in the
 	// job's own group after its leader has gone is a background subtask the prompt forbids.
-	if jobPgid, jobStarted := readJobProc(jobDir); jobPgid > 0 && GroupAlive(jobPgid, jobStarted) {
+	if jobPgid, jobStarted := readJobProc(jobDir); jobPgid > 0 && groupDrained(jobPgid, jobStarted) {
 		if n, ok := GroupMembers(jobPgid, os.Getpid()); ok {
 			rec.Survivors = n
 		} else if rec.Survivors == 0 {
@@ -232,6 +232,34 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 	}
 	return 0
 }
+
+// groupDrained is the group check of rule 11 with a BOUNDED WAIT in front of it, and the
+// wait is what the wrap made necessary. The job's group now holds the wrapper as well as the
+// work (nova-sandbox waits for the harness and then exits), so in the instant between the
+// harness's exit -- which is what `cmd.Wait` returned on -- and the wrapper's own last
+// breath, `kill(-pgid, 0)` can still say yes. On darwin the members cannot be enumerated
+// (proc_darwin.go), so that yes becomes `survivors=1` and a clean job is quarantined as a
+// violation: seen on the macOS CI runner, one job in four, 2026-09-12.
+//
+// A REAL survivor is a process the prompt forbids, and it is a worker's background subtask
+// that outlives its parent -- it is still there a second later, and every second after that.
+// So the check waits a bounded moment for the group to drain and reports what is left. It
+// ends on its own, it never waits for a process to appear, and a group that still has a
+// member at the end of it is the violation rule 11 names.
+func groupDrained(jobPgid int, jobStarted string) bool {
+	for waited := time.Duration(0); waited < GroupDrainWait; waited += 20 * time.Millisecond {
+		if !GroupAlive(jobPgid, jobStarted) {
+			return false
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return GroupAlive(jobPgid, jobStarted)
+}
+
+// GroupDrainWait is how long the check above gives a job's group to empty. It is a tool
+// property, not a fact about anybody's job: long enough for a wrapper's exit to land after
+// the work's, short enough that it is invisible beside a launch.
+const GroupDrainWait = 300 * time.Millisecond
 
 // abort is rule 18's losing path, and its ORDER is the rule: never spawn the harness; count
 // the processes in its own group other than itself; write aborted.json through .tmp, fsync

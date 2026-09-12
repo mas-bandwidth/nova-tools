@@ -486,9 +486,12 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 		wall = found
-	} else {
-		fmt.Fprintf(stdout, "RUN NOTE --no-sandbox: this pass runs every job with NO OS containment, and says so once per job; the wall is docs/SPEC-SANDBOX.md and the remedy is to drop the flag\n")
 	}
+	// There is NO `RUN NOTE` about --no-sandbox: a pass prints exactly one RUN NOTE, the
+	// remedy line at the end (SPEC-SWARM's output grammar, and a test that counts them).
+	// The loudness of the workaround is one RUN UNSANDBOXED line per job, which is where
+	// rule 11 puts it anyway: before the job starts, on stderr, in every log that holds
+	// the run.
 	// A budget nothing can observe is a promise this tool cannot keep, and the moment to
 	// say so is BEFORE the first worker, which is the point at which the caller can still
 	// fix it.
