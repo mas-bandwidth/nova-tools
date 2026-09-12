@@ -1143,9 +1143,11 @@ a provider talking** — anything carrying the two-token event prefix, `RUN REFU
 `SANDBOX OK …`, this class's own `RUN INPUT-LIMIT …`, is skipped whole, because a job that
 runs these tools puts their lines in its own harness log — **unless that prefix's second word
 is itself a mark**, which no line of this grammar has (`OK`, `REFUSED`, `DONE`, `NOTE`, `FAIL`,
-`STEP`) and a shouting proxy does (`HTTP ERROR: 400 …`, `API ERROR: 400 …`), which is the same
-door seen from the other side; and `refused` is for the same reason not a mark at all, being
-this repository's word and no provider's. A phrase a description names is a sentence — twelve characters and a space or a
+`STEP`, `ABORTED`) and a shouting proxy does (`HTTP ERROR: 400 …`, `API ERROR: 400 …`), which is
+the same door seen from the other side; and `refused` and `aborted` are for the same reason not
+marks at all, being this repository's words and no provider's. **That the grammar holds no
+event line whose second word is a mark is asserted by a test over the sources**, not by a list
+anybody keeps: a claim about every printed line is one only machinery may make. A phrase a description names is a sentence — twelve characters and a space or a
 digit — refused when it is read, because a job classed this way is never retried. A task may also name `max_input <bytes>`, the ceiling on the prompt this
 tool hands the harness, which `run` checks **before** the launch and refuses with the same
 class and the measured size: it bounds what the dispatcher can measure, and the files the

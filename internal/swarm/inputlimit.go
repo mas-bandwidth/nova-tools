@@ -58,16 +58,24 @@ var InputLimitPhrases = []string{
 // `Error: `, Anthropic's `API Error: 400 {"type":"error"...}`, OpenAI's `Error code: 400 -
 // {'error': ...}` -- and a harness that puts the mark on its own line above the message is
 // why the line ABOVE counts too.
-var ProviderErrorMarks = []string{"error", "err", "fatal", "exception", "rejected", "aborted"}
+var ProviderErrorMarks = []string{"error", "err", "fatal", "exception", "rejected"}
 
-// AND `refused` IS NOT ONE OF THEM, because it is THIS FAMILY'S OWN WORD (the swarm
-// dispatcher's check of #150). No provider specimen says a bare `refused`: they say `Error:`,
-// `Error code:`, `invalid_request_error`, `exception`. Every tool in this repository, on the
-// other hand, ends a verb with it -- `ADD REFUSED:`, `BUS REFUSED:`, `RUN REFUSED reason=…` --
-// and a nova-swarm line lands in a harness log whenever a job runs these tools, which is what
-// dogfooding IS here. `RUN REFUSED reason=sandbox_probe: … input token limit exceeded` was
-// classed: one bare token (`run`) before the mark, and the phrase further along the same line.
-// `rejected` stays: it is in no grammar line in this repository, and a provider may say it.
+// AND NEITHER `refused` NOR `aborted` IS ONE OF THEM, because they are THIS FAMILY'S OWN WORDS.
+// No provider specimen says either as a bare word: providers say `Error:`, `Error code:`,
+// `invalid_request_error`, `exception`. Every tool in this repository, on the other hand, ends
+// a verb with `REFUSED` -- `ADD REFUSED:`, `BUS REFUSED:`, `RUN REFUSED reason=…` -- and the
+// supervisor prints `SUPERVISE ABORTED slot=… id=…: reservation changed` (supervise.go). Those
+// lines land in a harness log whenever a job runs these tools, which is what dogfooding IS
+// here: `RUN REFUSED reason=sandbox_probe: … input token limit exceeded` classed on one bare
+// token before the mark, and `SUPERVISE ABORTED …` classed the QUOTING LINE BELOW IT, by the
+// line-above rule.
+//
+// `SUPERVISE ABORTED` was missed twice over: the grep that established the discriminator was
+// anchored at the start of a spec line, and the spec mentions that line only mid-sentence. So
+// the claim is now made by machinery over the sources themselves
+// (TestNoEventLineOfThisFamilyHasAMarkForItsSecondWord), which is the only kind of claim about
+// every printed line that a reader may trust. `rejected` stays: no event line in this
+// repository has it, the test says so at every run, and a provider may say it.
 
 // isOwnEventLine reports whether a line is one of this family's own event lines, which are
 // never a provider talking. It is the SHAPE rather than a list of verbs (SPEC.md's two-token
@@ -87,8 +95,9 @@ var ProviderErrorMarks = []string{"error", "err", "fatal", "exception", "rejecte
 // whole, so the job went unclassed and the door the exclusion closed opened its mirror. No
 // event line in this repository's grammar has a mark for its second word: they are `OK`,
 // `REFUSED`, `DONE`, `NOTE`, `FAIL`, `WARN`, `STEP`, `START`. So a second word that IS a mark
-// says this line is a provider's, not ours -- `RUN REFUSED`, `ADD REFUSED:` and `SANDBOX OK`
-// stay excluded, and `API ERROR:` comes through to be read.
+// says this line is a provider's, not ours -- `RUN REFUSED`, `ADD REFUSED:`, `SANDBOX OK` and
+// `SUPERVISE ABORTED` stay excluded, and `API ERROR:` comes through to be read. The list of
+// second words is not kept anywhere: a test reads it out of the sources at every run.
 func isOwnEventLine(line string) bool {
 	words := strings.Fields(line)
 	if len(words) < 2 {

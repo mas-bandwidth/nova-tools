@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -127,6 +128,16 @@ func TestAMarkIsTheHarnessesOwnLabelAndNotAWordInASentence(t *testing.T) {
 			`openai.BadRequestError: Error code: 400 - {'error': {'message': "This model's maximum context length is 4096 tokens"}}`,
 		},
 		{
+			"SUPERVISE ABORTED, this family's own line, with a quoting line under it",
+			"SUPERVISE ABORTED slot=1 id=x: reservation changed\nthe job it gave up on asked for input token limit exceeded\n",
+			"",
+		},
+		{
+			"a lower-case component before a shouted mark is a provider's line still",
+			"gateway ERROR: prompt is too long\n",
+			"gateway ERROR: prompt is too long",
+		},
+		{
 			"a proxy that SHOUTS its label, which is the shape rule's mirror door",
 			"HTTP ERROR: 400 input token limit exceeded\n",
 			"HTTP ERROR: 400 input token limit exceeded",
@@ -228,6 +239,17 @@ func TestTheEventPrefixIsTwoCapsTokens(t *testing.T) {
 		{"A1", false, true},
 		{"REFUSED:", true, true},
 		{"REFUSED:", false, false},
+		// A PROVIDER'S SECOND TOKEN CARRIES ITS COLON TOO, and this row is why the
+		// discriminator and not this function is what refuses `HTTP ERROR: 400 …`.
+		{"ERROR:", true, true},
+		{"429:", true, false},
+		// The character classes, one row each: the underscore and the digit belong to a
+		// provider's own field names, the dot and the space do not belong to a token at all,
+		// and one lower-case letter is enough to say this is not a verb of ours.
+		{"INVALID_REQUEST", false, true},
+		{"RUN.", false, false},
+		{"Run", false, false},
+		{"OK", true, true},
 		{"R", false, false},
 		{"R", true, false},
 		{"Error:", true, false},
@@ -238,6 +260,56 @@ func TestTheEventPrefixIsTwoCapsTokens(t *testing.T) {
 		if got := capsToken(c.token, c.colonOK); got != c.ok {
 			t.Errorf("capsToken(%q, colonAllowed=%t)=%t, want %t", c.token, c.colonOK, got, c.ok)
 		}
+	}
+}
+
+// NO EVENT LINE OF THIS FAMILY HAS A MARK FOR ITS SECOND WORD, and this test is what keeps
+// that sentence true tomorrow.
+//
+// The discriminator in isOwnEventLine rests on it, and it was established by a grep over the
+// SPECS anchored at line starts -- which missed `SUPERVISE ABORTED` (supervise.go), a line the
+// spec only ever mentions mid-sentence, and `aborted` was in the table. So the own line read
+// as a provider's label and the line under it inherited its mark (the swarm dispatcher's
+// enumeration of 928ea65). A claim about every printed line is a claim only a reader of every
+// printed line may make, so it is made HERE, by machinery, over the sources themselves --
+// exactly as the output grammar's own test reads the printed formats rather than a list
+// somebody kept.
+//
+// A collision is fixed on EITHER side: drop the word from the table when no provider specimen
+// says it (`refused`, `aborted`), or rename the event line. Never by leaving both.
+func TestNoEventLineOfThisFamilyHasAMarkForItsSecondWord(t *testing.T) {
+	prefix := regexp.MustCompile(`"([A-Z][A-Z0-9-]+) ([A-Z][A-Z0-9-]*):?`)
+	seen := 0
+	err := filepath.WalkDir(filepath.Join("..", ".."), func(path string, d os.DirEntry, err error) error {
+		switch {
+		case err != nil:
+			return err
+		case d.IsDir():
+			if d.Name() == ".git" {
+				return filepath.SkipDir
+			}
+			return nil
+		case !strings.HasSuffix(d.Name(), ".go") || strings.HasSuffix(d.Name(), "_test.go"):
+			return nil
+		}
+		raw, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		for _, m := range prefix.FindAllStringSubmatch(string(raw), -1) {
+			seen++
+			if word := strings.ToLower(m[2]); isAMarkWord(word) {
+				t.Errorf("%s prints `%s %s`, whose second word is a provider error mark: this tool's own line reads as a provider's label and the line under it inherits the mark. Drop %q from ProviderErrorMarks if no provider specimen says it, or rename the line",
+					path, m[1], m[2], word)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seen < 50 {
+		t.Fatalf("only %d event prefixes were found in the sources; this test would pass over anything", seen)
 	}
 }
 

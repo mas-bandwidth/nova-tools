@@ -815,8 +815,9 @@ at most one of those a bare word, no list marker at the head of the line, no quo
 before it), or the line directly under
 one, so a report that merely quotes the sentence beside the word is not one, and a line these
 tools wrote themselves — `RUN REFUSED …`, `SANDBOX OK …` — is skipped whole, since a job that
-runs them logs them, unless its second word is itself a mark, which no line of theirs has and a
-shouting proxy does (`HTTP ERROR: 400 …`) — and a phrase you name must be a
+runs them logs them, unless its second word is itself a mark, which no line of theirs has (a test
+over the sources keeps that true) and a shouting proxy does (`HTTP ERROR: 400 …`) — and a
+phrase you name must be a
 sentence, twelve characters with a space or a digit in it, refused when the description is
 read: a job classed this way is never retried, so a bare word here would take the retry away
 from every failed job whose log happens to carry it. A task may name the other half,
