@@ -17,7 +17,7 @@ type AntigravityProtoUsage struct {
 	InputTokens          *uint64
 	CacheReadTokens      *uint64
 	OutputTokens         *uint64
-	TotalTokens          *uint64 // Context window total (non-spend evidence)
+	TotalTokens          *uint64 // Uninterpreted producer total (preserved provisionally outside spend)
 	ThinkingOutputTokens *uint64
 }
 
@@ -324,8 +324,8 @@ func TestAntigravitySyntheticFixturesAndJoin(t *testing.T) {
 				if expected.Time.OccurredAt == nil || *expected.Time.OccurredAt != transcriptLine.CreatedAt {
 					t.Errorf("timestamp join mismatch: got %v, expected %s", expected.Time.OccurredAt, transcriptLine.CreatedAt)
 				}
-				if expected.Time.Basis != "turn_completion" {
-					t.Errorf("time basis mismatch: got %s, expected 'turn_completion'", expected.Time.Basis)
+				if expected.Time.Basis != "response_observation" {
+					t.Errorf("time basis mismatch: got %s, expected 'response_observation'", expected.Time.Basis)
 				}
 			} else {
 				// Unpaired row (Case 4): No invented timestamp
