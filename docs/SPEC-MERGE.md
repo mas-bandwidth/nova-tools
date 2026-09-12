@@ -459,7 +459,7 @@ the URL comes from `--repo` through the host, which means nothing about a lane
 could be exercised without a live repository, and git's own config was the only
 way in — so the *environment* could move where a lane pushes with no flag saying
 so. Given a bare repository of the caller's own it is the whole first run with
-nothing reaching a forge, which is what `README.md`'s `### First run` shows before
+nothing reaching a forge, which is what `docs/CLI.md`'s `### First run` shows before
 the live form, because `init` creating the lane branch **is a push** (rule 20,
 rule 22) and a first run that has not been told so is a first run that mutates a
 shared repository to say hello. It wants an absolute path or a URL: git runs in
