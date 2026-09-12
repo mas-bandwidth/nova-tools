@@ -56,18 +56,22 @@ func TestCLTierJobsStayWithinTheBudget(t *testing.T) {
 	for _, name := range names {
 		mins, ok := timeouts[name]
 		if !ok {
-			t.Errorf("CL-tier job %q has no timeout-minutes; the budget cannot be enforced on a job that does not declare one", name)
+			t.Errorf("CL-tier job %q has no timeout-minutes; the per-job cap cannot be guarded on a job that does not declare one", name)
 			continue
 		}
-		// The aggregate ci-ok is allowed to be 1; every other CL-tier job must be 2 or less.
+		// This pins the per-job CAP only. timeout-minutes is a ceiling on one
+		// job, not a proof that the whole required path fits two minutes: the
+		// path is the CI run, measured as a present total of 80 s in run
+		// 34725991419, and no per-job ceiling can see that sum. The aggregate
+		// ci-ok is capped at 1; every other CL-tier job at 2.
 		if name == "ci-ok" {
 			if mins > 1 {
-				t.Errorf("the ci-ok aggregate has timeout-minutes %d, want <= 1", mins)
+				t.Errorf("the ci-ok aggregate has timeout-minutes %d, want a cap <= 1", mins)
 			}
 			continue
 		}
 		if mins > 2 {
-			t.Errorf("CL-tier job %q has timeout-minutes %d, want <= 2 (the maintainer's two-minute maximum)", name, mins)
+			t.Errorf("CL-tier job %q has timeout-minutes %d, want a cap <= 2", name, mins)
 		}
 	}
 }
