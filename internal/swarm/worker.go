@@ -322,6 +322,12 @@ func (w Worker) DefaultDeadline() time.Duration {
 // slotDirHolding answers the slot directory of workerDir that holds path -- a sibling of
 // workerDir spelled <base>-<digits>, which is what SlotDir builds -- or "" when path is
 // under no slot. A path that IS a slot directory is not held by it, which matches insideDir.
+//
+// AND THIS ONE IS STILL A NAME COMPARISON, WHICH IS THE GAP #145 OWNS. `insideDir` above asks
+// the filesystem (`os.SameFile`) because the directories it compares exist at load; a slot
+// directory need not -- slots are created at run -- so there is no inode to compare and
+// `<dir>/Worker-1/.key` under a `worker_dir` of `<dir>/worker` folds past `base+"-"` on a
+// case-insensitive filesystem. Not fixed here (#100 is worker_dir and read_roots); #145.
 func slotDirHolding(path, workerDir string) string {
 	parent, base := filepath.Dir(workerDir), filepath.Base(workerDir)
 	rel, err := filepath.Rel(parent, path)

@@ -843,16 +843,27 @@ data before the wrap, passed by environment, the file itself in neither list
 (rule 6 here and rule 6 there are the same rule seen from two sides).
 
 **And "inside" is a question for the filesystem, not for two strings.** A
-`key_file` whose placement would put it inside `worker_dir`, inside a slot
-directory `<worker-dir>-<n>` or inside a `read_roots` entry is refused **at
-load**, where a person can still move the file; the comparison that decides it
-is `os.SameFile` over the existing resolved ancestors of the key path, with a
-string prefix kept only as the cheap first answer and as the only answer for a
-path that does not exist yet. A prefix alone is case-sensitive and a
-case-insensitive filesystem — APFS by default — folds a `key_file` typed
-`<dir>/Worker/.key` and a `worker_dir` of `<dir>/worker` into one file: the
-spelling said the key was outside while the slot copy put it inside the wall
-(#100). This paragraph names a mechanism; it adds no rule.
+`key_file` whose placement would put it inside `worker_dir` or inside a
+`read_roots` entry is refused **at load**, where a person can still move the
+file, and the comparison that decides **those two** is `os.SameFile` over the
+existing resolved ancestors of the key path, with a string prefix kept only as
+the cheap first answer and as the only answer for a path that does not exist
+yet. A prefix alone is case-sensitive and a case-insensitive filesystem — APFS
+by default — folds a `key_file` typed `<dir>/Worker/.key` and a `worker_dir` of
+`<dir>/worker` into one file: the spelling said the key was outside while the
+slot copy put it inside the wall (#100).
+
+**The slot directory is a separate check, and it does not ask the filesystem
+yet.** A `key_file` inside a slot directory `<worker-dir>-<n>` is refused at
+load as well — that rule stands unchanged — but the refusal matches the slot's
+`<base>-<n>` name as **text**, so on a case-insensitive filesystem a key at
+`<dir>/Worker-1/.key` under a `worker_dir` of `<dir>/worker` is in the same
+directory the tool hands to `--read` and the name comparison says no. The slot
+directory a fold names **need not exist at load** — slots are created at run —
+so there is no inode to compare and the repair is a different shape from the
+one above; it is owned by #145 and is not closed here. This spec does not claim
+the gap is covered. These two paragraphs name mechanisms and one known gap;
+they add no rule.
 
 **The probe runs once, before the first worker** (SPEC-SANDBOX rule 10): `run`
 asks the machine what it can enforce and then proves the wall with the real
