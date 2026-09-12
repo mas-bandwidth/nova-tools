@@ -262,6 +262,14 @@ func (f *flags) backend() (board.Backend, string, string) {
 		// QUICKSTART MAKES THE DIRECTORY; every other verb refuses one that is not
 		// there and names the mkdir -p that fixes it (internal/board/dir.go).
 		if f.makeDir {
+			// A REFUSED RUN MAKES NOTHING. The caller judges every other flag
+			// BEFORE it asks for the backend, and this is the second lock on the
+			// same door: making the directory for a line that is about to be
+			// refused would answer a typo with an empty board, and a first run
+			// cannot tell that board from the one at the path they meant.
+			if len(f.problems) > 0 {
+				return nil, "", ""
+			}
 			b, created, err := board.MakeDir(f.dir)
 			if err != nil {
 				f.want(oneline.Err(err))
@@ -655,8 +663,9 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Rea
 // DIRECTORY. Glenn, on nova-tools #109 and Emma's report that it refused a --dir that was
 // not there: "It is best to do the right thing if a friend uses it a certain way, or to
 // correct docs to show only right way. Pick one." A first run has nowhere to write yet, and
-// `nova-swarm quickstart --pool ./pool` already makes its pool; created=yes|no on the OK
-// line says which run made this one, so a reader can tell a new board from a wrong path.
+// `nova-swarm quickstart --pool ./pool` already makes its pool; created=true|false on the
+// OK line says which run made this one, so a reader can tell a new board from a wrong
+// path. A run that is REFUSED makes nothing: every flag is judged before f.backend().
 func cmdQuickstart(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("quickstart")
 	f.makeDir = true
@@ -665,8 +674,12 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	backend, kind, source := f.backend()
+	// EVERY FLAG IS JUDGED BEFORE THE BACKEND IS ASKED FOR, because this verb's backend
+	// MAKES the directory (flags.backend, makeDir) and that is a side effect on the
+	// filesystem. A first run that fat-fingers --stale is exactly the run with no board
+	// yet, and making it would answer the typo with an empty board.
 	stale := f.duration(staleFlag, staleHint)
+	backend, kind, source := f.backend()
 	if len(f.problems) > 0 {
 		return f.refused(stderr)
 	}

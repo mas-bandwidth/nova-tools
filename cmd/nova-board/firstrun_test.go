@@ -405,8 +405,24 @@ func TestQuickstartMakesTheDirectory(t *testing.T) {
 	if err != nil || !info.IsDir() {
 		t.Fatalf("quickstart returned 0 and %s is not a directory (%v); a first run has nowhere to write", missing, err)
 	}
-	if perm := info.Mode().Perm(); perm != 0o755 {
-		t.Errorf("the directory is %v, want 0755, the mode nova-swarm's quickstart makes its pool with", perm)
+	// THE MODE IS COMPARED AGAINST A CONTROL, NOT AGAINST THE LITERAL 0755. What this
+	// test is for is that quickstart asks for the same mode `nova-swarm quickstart
+	// --pool` asks for; what a directory ENDS UP with is the platform's and the umask's
+	// business -- windows reports every writable directory as 0777 (the runner's log:
+	// `the directory is -rwxrwxrwx, want 0755`) and a bench at `umask 077` would report
+	// 0700. A sibling made by os.MkdirAll(0o755) in this same test runs on the same
+	// platform under the same umask, so the two agree exactly when the tool asked for
+	// the same thing, and the assertion stops being a bet on the runner.
+	control := filepath.Join(filepath.Dir(missing), "control")
+	if err := os.MkdirAll(control, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want, err := os.Stat(control)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := info.Mode().Perm(); got != want.Mode().Perm() {
+		t.Errorf("the directory is %v; a plain os.MkdirAll(0o755) on this platform and umask is %v, and quickstart makes its board the way nova-swarm's quickstart makes its pool", got, want.Mode().Perm())
 	}
 	if !strings.Contains(out.String(), "created=true") {
 		t.Errorf("quickstart made the directory and did not say so; want created=true on the QUICKSTART OK line:\n%s", out.String())
@@ -436,5 +452,49 @@ func TestQuickstartMakesTheDirectory(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "is a file") {
 		t.Errorf("a --dir that is a file is not a directory this verb makes:\n%s", errb.String())
+	}
+}
+
+// TestQuickstartRefusedMakesNothing is DeepSeek's read of nova-tools #109: quickstart is
+// the one verb that makes its --dir, and it was making it in f.backend() BEFORE the rest
+// of the line had been judged. A first run that fat-fingers --stale is exactly the run
+// that has no board yet, and "making it would answer the typo with an empty board" -- a
+// reader would then be looking at a directory the tool created on their behalf while
+// refusing them. A REFUSED RUN LEAVES NOTHING BEHIND: every flag and every problem is
+// found first, and only a line that will be obeyed is allowed to touch the filesystem.
+func TestQuickstartRefusedMakesNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"--stale missing", []string{"quickstart", "--dir", "", "--stale", ""}},
+		{"--stale not a duration", []string{"quickstart", "--dir", "", "--stale", "10"}},
+		{"--stale not a window", []string{"quickstart", "--dir", "", "--stale", "0s"}},
+		{"a positional argument", []string{"quickstart", "--dir", "", "--stale", "10m", "board"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			missing := filepath.Join(t.TempDir(), "board")
+			args := append([]string(nil), tc.args...)
+			for i, a := range args {
+				if a == "--dir" {
+					args[i+1] = missing
+				}
+			}
+			// --stale "" is the flag left off the line entirely, not given empty.
+			for i := 0; i+1 < len(args); i++ {
+				if args[i] == "--stale" && args[i+1] == "" {
+					args = append(args[:i], args[i+2:]...)
+					break
+				}
+			}
+			var out, errb bytes.Buffer
+			exit := run(args, &out, &errb, time.Now().UTC(), &seq{})
+			if exit != 2 {
+				t.Errorf("%v exits %d, want 2; stderr: %s", args, exit, errb.String())
+			}
+			if _, err := os.Stat(missing); !os.IsNotExist(err) {
+				t.Errorf("%v was refused and still made %s (%v); a refused run makes no board", args, missing, err)
+			}
+		})
 	}
 }

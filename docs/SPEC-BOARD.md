@@ -390,7 +390,7 @@ CLOSE OK id=<id> how=<closed|landed|probed> where=<repo#n|path|-> at=<stamp> own
 CLOSE REFUSED: <reason>
 CHECK HIT id=<id> state=<OPEN|CLOSED> owner=<name|->: <text>
 CHECK OK matched=<n> cards=<n> scanned=<OPEN|ALL> words=<n>
-QUICKSTART OK backend=<issue|dir> source=<where> stale=<d>: <what the two lines below are>
+QUICKSTART OK backend=<issue|dir> source=<where> stale=<d> created=<true|false>: <what the two lines below are>
 QUICKSTART LINE n=<n> what=<check|add>: "<a line meant to be pasted, quoted as nova-bus names quotes>"
 QUICKSTART NOTE <something a first run needs said in words>
 ```
@@ -820,9 +820,13 @@ shared packages used rather than re-spelled.
 7. **`cmd/nova-board/check.go`** — the dumb matcher, `--all`, `CHECK HIT` capped,
    `matched=` never capped, and **exit 1 on a match**. The test is named for the
    mnemonic: `TestCheckExitsOneOnMatchSoTheShellGuardReads`.
-8. **`quickstart`** — the natural first run: make the `--dir` directory when it is
+8. **`quickstart`** — the natural first run: judge **every** flag first and make the
+   `--dir` directory only when the whole line is accepted — a refused run makes
+   nothing, because a first run that fat-fingers `--stale` is exactly the run with no
+   board yet and making it would answer the typo with an empty board — then make it
+   when it is
    missing (`MkdirAll`, `0755`, as `nova-swarm quickstart --pool` makes its pool) and
-   report it as `created=`, read the board, print the counts, print
+   report it as `created=true|false`, read the board, print the counts, print
    the `check … || { [ $? -eq 1 ] && exit 0; exit 2; }; add … --by … --default …`
    pair with this board's own values in it, quoted
    the way `nova-bus names` quotes — a value meant to be pasted rather than
