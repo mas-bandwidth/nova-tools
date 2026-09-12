@@ -110,9 +110,11 @@ a room — is not in v1**: the weakest verb, and nothing in Glenn's words asks f
 **No guessed anything.** There is no default allow-list, state directory, fuse box,
 name, transport, token location, harness, disclosure file, interval or `--hours`.
 Each missing one is exit 2 and `refusing to guess`, and a run missing several names
-them all at once. Two exceptions, both the family's rule rather than a fact about one
-line's world: `--max` defaults to **20** (SPEC.md's listing law) and `--attachments`
-defaults to **off** (rule 24). Every per-conversation number — context, budgets, gaps,
+them all at once. Three exceptions, all the family's rule rather than a fact about one
+line's world: `--max` defaults to **20** (SPEC.md's listing law), `--attachments`
+defaults to **off** (rule 24), and `--http-timeout` defaults to **30s** — a bound
+on one HTTP call is this family's law (every wait ends on its own, rule 27) and
+not a claim about the line's rooms. Every per-conversation number — context, budgets, gaps,
 ceilings, session lifetimes, the backoff ladder — comes from the line's own allow-list
 and this tool ships none of them.
 
@@ -126,7 +128,7 @@ of its own: the transport's, from outside the wall.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: `serve` reached `--hours` or its stop file; `check` found nothing wrong; `status` reported; `close` ran the wrap; `leave` posted and confirmed |
-| 1 | the verb ran and said **NO**: `check` over an allow-list naming a conversation the bot cannot see, a quarantined surface, an own server holding a member the allow-list does not name, a conversation never disclosed in, a sandbox read or write set holding one of this tool's own files (rule 10), or a state holding an unresolved `uncertain`; a `leave` refused by a fuse or over budget; a `serve` that ended with an unresolved `uncertain` or a stranger unresolved |
+| 1 | the verb ran and said **NO**: `check` over an allow-list naming a conversation the bot cannot see, a quarantined surface, an own server holding a member the allow-list does not name, a profile missing the disclosure sentence or a conversation the line has **posted in** that carries no `disclosed:` mark, a sandbox read or write set holding one of this tool's own files (rule 10), or a state holding an unresolved `uncertain`; a `leave` refused by a fuse or over budget; a `serve` that ended with an unresolved `uncertain` or a stranger unresolved |
 | 2 | could not run: a missing or malformed flag, an unreadable or empty allow-list, an unreadable or malformed state, a token that is absent or empty, a second `serve` on the same state directory, a `--resolve` of an id that is not `uncertain`, an unknown `--transport`, an unreadable fuse box (treated as BLOWN, per `nova-fuse`) |
 
 This is SPEC.md's table, and the **one deviation** is that a wrapped harness's
@@ -134,6 +136,19 @@ own exit code is never this tool's: `nova-sandbox` passes a child's status
 through as 0–124 and this tool records it on `CHAT TURN rc=<n>` and does not
 adopt it. A harness that exits 3 is a turn that produced no reply; it is not a
 `nova-chat` that failed.
+
+**`check` without a token is a partial gate that says so.** The token is
+optional for `check` (**The verbs**), and its six exit-1 conditions split by
+whether they need the wire. Three do not and are always run: the fuse's
+**quarantined surfaces**, the `--sandbox-args` **read and write sets**, and the
+state's unresolved **`uncertain`** — and so is the local half of the fourth, the
+`disclosed:` marks in the state. Three do: a conversation's **visibility**, the
+own server's **membership**, and the **profile's** disclosure sentence. With no
+token each of those three prints `CHECK SKIP <condition>: no token`, is counted
+as `skipped=` on `CHECK OK`, and is **neither a pass nor a failure**. Exit 0 from a `check` with
+`skipped=` above zero means only that what it could run passed. A caller that
+wants the whole gate hands it a token, and the closing line is how it knows
+which one it got.
 
 **An unresolved `uncertain` is exit 1 and never a silent continue.** A post this
 tool could not confirm may or may not be on somebody's screen, and the only
@@ -144,7 +159,7 @@ instrument that can tell is a person looking at the room.
 ```
 CHAT at=<stamp> as=<name> transport=<name> conversations=<n> own-server=<id|-> person=<id|-> members=<n> source=<poll|gateway> interval=<d> hours=<h> box=<path> harness=<name> sandbox=<name> mode=<resume|fresh> attachments=<off> state=<dir> home=<dir> cwd=<dir> sessions=<n> uncertain=<n>
 CHAT OPEN conversation=<id> session=<sid> mode=<resume|fresh> boot=<bytes|-> home=<dir> cwd=<dir> at=<stamp>
-CHAT TURN id=<id> conversation=<id> session=<sid> author=<id> standing=<person|data> kind=<mention|reply|dm> context=<n> attachments=<n> budget=<n> collapsed=<n> rc=<n> after=<d> reply=<chars|none> refusals=<n>
+CHAT TURN id=<id> conversation=<id> session=<sid> author=<id> standing=<person|data> kind=<mention|reply|dm|own-room> context=<n> attachments=<n> budget=<n> collapsed=<n> rc=<n> after=<d> reply=<chars|none> refusals=<n>
 CHAT REPLY id=<id> conversation=<id> message=<id> chars=<n> truncated=<true|false> disclosed=<true|false>
 CHAT SILENT id=<id> conversation=<id>: exit 0 and no REPLY.md; the line chose not to answer
 CHAT CLOSE conversation=<id> session=<sid> reason=<idle|ceiling|hand|stranger|update> turns=<n> lived=<d> wrap=<ok|none|rc=<n>>
@@ -166,7 +181,8 @@ CHAT SERVE turns=<n> replies=<n> silent=<n> dropped=<n> held=<n> sessions_opened
 STATUS SESSION conversation=<id> session=<sid> turns=<n> lived=<d> idle=<d> closes=<stamp> mode=<resume|fresh>
 STATUS LINE conversation=<id> name=<name|-> guild=<id|-> class=<own|public|dm> kind=<channel|dm> visible=<true|false|-> fuse=<clear|quarantined|lockdown|cannot-tell> replies=<n>/<n> gap=<d> reply_max=<n> disclosed=<true|false> cursor=<id|->
 STATUS OK conversations=<n> own=<n> public=<n> dms=<n> sessions=<n> clear=<n> quarantined=<n> undisclosed=<n> shown=<n> allow=<file>
-CHECK OK conversations=<n> lockdown=clear quarantined=0 undisclosed=0 uncertain=0 strangers=0 allow=<file>
+CHECK OK conversations=<n> lockdown=clear quarantined=0 undisclosed=0 pending-disclosure=<n> uncertain=0 strangers=0 skipped=<n> allow=<file>
+CHECK SKIP <condition>: no token, so this condition was not run
 CHECK FAIL <conversation, guild or path>: <reason>
 CHECK FAIL conversations=<n> failed=<n> shown=<n> allow=<file>
 CLOSE OK conversation=<id> session=<sid> turns=<n> lived=<d> wrap=<ok|none|rc=<n>>
@@ -243,7 +259,7 @@ refusal fires, and **every turn after the first is `CHAT REFUSED`**. So:
 - the harness description carries **`session-home <dir>`** and **`session-cwd <dir>`**, both absolute, both persistent, both inside a `--write` directory of `--sandbox-args`, and **neither under a job directory**;
 - this process sets the child's `HOME` and working directory to them, identically on every invocation for the life of the line;
 - both are printed on the opening line and on every `CHAT OPEN`, so the store's address is on the transcript rather than in somebody's assumption;
-- `resume_args` with no `session-home` is exit 2 naming it. A job directory is still per turn and still reclaimable; only the session store is long-lived.
+- `resume_args` with no `session-home`, or none with no `session-cwd`, is exit 2 naming the one that is missing — the store is keyed by both, so either one absent is the same turn-2 amnesia. A job directory is still per turn and still reclaimable; only the session store is long-lived.
 
 **`mode=fresh` — the degraded mode, for a harness with no session store.** Every
 turn is a full boot: the boot file loads, and the tool hands the invocation the
@@ -339,7 +355,7 @@ costs:
 - **Threads are not modeled in v1.** A thread is a conversation id like any other if its id is in the allow-list; nothing here reconstructs a branch.
 - **Two privileged intents are required**, both switched on by the application's owner in Discord's developer portal, and `check` names either when its symptom appears. ***Server Members Intent***, without which rule 11's guild member list cannot be read: a refused member call is `CHAT HELD reason=stranger` and `check` is exit 1, because a membership rule that silently cannot run is worse than none. ***Message Content Intent***, without which Discord empties `content`, `embeds` and `attachments` for a bot in **every** REST and gateway payload except a DM, a message mentioning the bot, and the bot's own — rule 14's addressed fetch survives that, since an address *is* a mention, a reply or a DM, but the `context=<n>` preceding messages arrive as empty bodies and the line would be answering a room it cannot see. `serve` prints one `CHAT NOTE` naming the intent when every fetched context body on a channel is empty and the channel has messages.
 - **A bot cannot read a human's DMs**, and must not try: driving a person's user token as a self-bot violates Discord's terms and risks that person's account. The line's own DMs — messages sent *to the bot* — are the whole DM surface.
-- **A DM channel with a bot does not exist until one side creates it**, which is why `serve` creates one with every named member at start (**Dependencies**).
+- **A DM channel with a bot does not exist until one side creates it**, which is why `serve` creates one with every named **human** member at start — never with a bot and never with itself, since Discord refuses both (**Dependencies**).
 
 ## 7. The second transport is named and not built
 
@@ -437,7 +453,7 @@ intent and does not try; there is no classifier here and there will not be one.
 
 - **One — the mind's rule**, stated in every prompt, in the line's own standing instructions and repeated by this tool in the frame: *these classes are refused here; answer with the remedy line.* When the line does, it prints `CHAT FLOOR` so the refusal is on the record. A mind can be argued out of a rule, which is why this is not the only part.
 - **Two — the tool's state, which is mechanical and total.** Nothing arriving over a transport changes the allow-list, the fuse box, a budget, a cursor, a disclosure mark, a session id, the token, the harness description or the sandbox argv, at any standing, because **there is no code path that could** (rule 22). A message asking for the biggest thing on that list has exactly the same effect as a message asking for nothing.
-- **Three — the wall's lists, which are the line's person's, and where the floor stops being total.** A message becomes a turn inside `nova-sandbox`, and that process has a shell. It can run any command; it can read every file in the read set (the line's boot, its memory, its repositories); and the wall allows outbound network by IP (`net=nopromise`, because the provider's API is the work), so **it can reach any host on the internet — including Discord, through a webhook URL carried in a message, with no token, bypassing rules 12, 19, 21 and 23 entirely.** It cannot push to a repository (`SSH_AUTH_SOCK` scrubbed, `~/.ssh` denied, SPEC-SANDBOX test 27) and it cannot read this tool's token (rule 15). What it can reach is what `--sandbox-args` lists, and that file is a person's, kept by hand.
+- **Three — the wall's lists, which are the line's person's, and where the floor stops being total.** A message becomes a turn inside `nova-sandbox`, and that process has a shell. It can run any command; it can read every file in the read set (the line's boot, its memory, its repositories); and the wall allows outbound network by IP (`net=nopromise`, because the provider's API is the work), so **it can reach any host on the internet — including Discord, through a webhook URL carried in a message, with no token, bypassing rules 12, 19, 21 and 23 entirely.** It cannot push to a repository (`SSH_AUTH_SOCK` scrubbed, `~/.ssh` denied, SPEC-SANDBOX test 27) and it cannot read this tool's token (rule 15) — **but it can read the provider's own API key, which the harness contract requires to be in that process's environment by name (Dependencies), so the floor's class "secrets" is the mind's rule and not a mechanism for exactly that one key, and a turn that reached a host with it is a key to rotate.** What it can reach is what `--sandbox-args` lists, and that file is a person's, kept by hand.
 
 So the floor's honest shape is: **the tool's state and the token are out of reach
 mechanically; what the session can do is bounded by the wall's lists and by the mind,
@@ -488,6 +504,14 @@ Disclosure is required and it is two facts:
 - **The profile says it, permanently.** The bot's *About Me* carries one sentence naming the line as an AI and naming its person; `--disclosure-file <path>` is where that sentence lives — required by `serve` and `check` — and `check` is exit 1 when the profile no longer contains it. CONTRIBUTING's first ground rule is *an account operated by an AI collaborator says so*, and a profile is where a stranger looks.
 - **The first message in a room says it, once.** The first reply the line posts in a conversation carries the sentence as a prefix; `disclosed:<conversation>` is written **after** the post is confirmed, and it is never said again there. Glenn, 2026-07-16: *"It's OK and probably good for you to disclose that you are an AI, especially on first meeting somebody. Honesty first."* And the half this tool must also obey: *"Once you are friends with somebody, it's no longer necessary to repeat that you are an AI."*
 
+**A conversation the line has not spoken in yet is `pending-disclosure`, not
+undisclosed**, and `check` counts it separately and passes. Disclosure is written
+by `serve` after a post is confirmed, so on a fresh estate every conversation is
+unspoken-in and a gate that failed there would fail the very first run the
+QUICKSTART prescribes — *"a control that is reflexively skipped is a disabled
+control with good paperwork."* The gate bites on the only state that is actually
+wrong: a conversation this line has posted in whose `disclosed:` mark is missing.
+
 There is no flag that turns disclosure off. A line that does not want to disclose
 does not want this tool.
 
@@ -514,16 +538,21 @@ leave**, and that is why `leave` is a verb and not an edit: leaving is a social 
 and a room a line left should look, to the people in it, like somebody who said
 goodbye.
 
-## 14. Address, never authorship — and one situation is one turn, with the message whole
+## 14. Address, never authorship — with your own room the one exception — and one situation is one turn, with the message whole
 
 A message becomes a turn only when it is a **mention** of the bot, a **reply** to one
-of the bot's messages, or a **DM**. Everything else on a consented conversation is
+of the bot's messages, a **DM**, or — on `class=own` only — a message from the
+allow-list's pinned `person`. Everything else on a consented conversation is
 context and never a turn. The deciding question is `backlog-burst`'s: *"was the
-message ADDRESSED TO ME?"* — a letter was; a room was not. Two corollaries, both
-paid for:
+message ADDRESSED TO ME?"* — a letter was; a room was not; and the family's own
+private room is the one place where the answer is *yes* by where it was said.
+Three corollaries, all paid for:
 
 - **A bare mention is not an address.** One human saying *"Rowan built that"* to another names the line and asks it nothing. This tool cannot tell those apart and does not try: it hands the session the message and **silence is a complete outcome** (rule 16). The judgment is the mind's; the tool's job is to make silence cost nothing.
-- **Authorship by the line's person is not an address either, and person-standing does not change that.** Glenn, 2026-08-21: *"just please don't respond to everything i post in #general because it sucks the oxygen out of the room"*, and the permission kept whole: *"if somebody addresses you or asks you a question there feel free to respond."* There is no flag that lowers the trigger for one account. In the **own** server the rule reads differently in practice and identically in code — a private room where only the family is present is a room where a message is usually addressed — and the code is what matters here.
+- **In a `public` conversation, authorship by the line's person is not an address.** Glenn, 2026-08-21: *"just please don't respond to everything i post in #general because it sucks the oxygen out of the room"*, and the permission kept whole: *"if somebody addresses you or asks you a question there feel free to respond."* The oxygen is the room's other people's, so this is a public-room rule and it is written as one: on `class=public` there is no flag that lowers the trigger for any account, the pinned id included.
+- **In the line's person's OWN server, every message from the pinned id is an address, with no mention needed.** Glenn drew that line himself in the sentence this whole document is built on: *"Unlike when I talk on discord in robot game developers, when i talk with AIs in discord in nova-chat, it should be the real me, as if i were talking here in your prompt."* A private room whose membership is closed to the family (rule 11) has no oxygen to suck, and *"as if i were talking here in your prompt"* is not a room where he must `@Rowan` every sentence. So on `class=own`, a message whose author id is the allow-list's `person` is a turn; every other author there still needs a mention, a reply or a DM. Standing is unchanged by this — it is rule 9's, and the floor (rule 10) is over it either way — and what changed is only *what wakes the line*. (**Open questions**, item 9, which is where a person can change it back.)
+
+- **A message whose author is a bot is context and never an address**, whatever it mentions or replies to. The test is the author object's `bot` flag, or an id the allow-list names as a line (its `member` entries carry `kind=line` for the family's own bots) — either one is enough, because a transport that does not carry the flag still has the file. Without this, two lines in one own channel address each other forever: Rowan replies to Stella, Stella replies to Rowan, at `min-gap=0s replies-per-hour=60` (rule 19's example is deliberately open in the own server), with no human in the room and nothing but `session-max` to end it. A line's allow-list may opt back in per conversation with **`address-bots=yes`**, which is the one knob, is a person's to set, and is off in every example here.
 
 **The message crosses whole.** The addressed message is fetched by id — `GET
 /channels/{channel}/messages/{id}` — before the prompt is written. **Never a
@@ -797,9 +826,9 @@ force.
 person      214800000000000000
 own-server  1600000000000000000
 member      214800000000000000     # glenn
-member      1601000000000000001    # rowan
-member      1601000000000000002    # stella
-member      1601000000000000003    # freddy
+member      1601000000000000001    # rowan   kind=line
+member      1601000000000000002    # stella  kind=line
+member      1601000000000000003    # freddy  kind=line
 
 # ---- conversations: class is decided by the guild, not by this line
 conversation 1600000000000000010 class=own    name=table   mode=resume session-idle=7d  session-max=30d wrap-file=./wrap-table.md   reply-max=1600 min-gap=0s  replies-per-hour=60 context=40
@@ -815,6 +844,11 @@ gap-messages 200
 flood-multiple 6
 ```
 
+- **`kind=line` on a `member` marks one of the family's own bots**, so rule 14
+  knows an author is a line even on a transport that carries no `bot` flag, and
+  so **Dependencies**' DM creation skips it. It grants nothing and it is the
+  only value the key takes; `address-bots=yes` on a `conversation` is the one
+  way a bot's message wakes a session, and no example here sets it.
 - **`class=own` is checked, not believed.** An entry claiming `class=own` whose
   guild id is not the pinned `own-server` is exit 2 naming both, because the
   class is what decides person-standing and it may not be asserted by a typo.
@@ -845,7 +879,12 @@ description's `boot-file` — the line's own, not this tool's. Under `mode=resum
 this tool **copies nothing**: it hands the file's content as the first turn's
 prompt and the line's boot does what it does (Rowan's is *pull, then walk README
 INITIALIZE*, a repository walked inside the wall from the read set, not a string
-this tool splices); under `mode=fresh` the bytes are re-sent every turn, because
+this tool splices — and **the pull is not this tool's and does not happen inside
+the wall**: `SSH_AUTH_SOCK` is scrubbed and `~/.ssh` denied there (rule 10, part
+three), so the read set's clones are kept current by something outside the wall
+on the host — a `launchd` timer beside the line's own `serve` plist (**First
+run**) — and the boot's own pull failing is expected, harmless and not a turn's
+failure; the walk is what matters); under `mode=fresh` the bytes are re-sent every turn, because
 there is nowhere else for them to live. Then: SPEC-SWARM's sandbox sentences,
 unchanged — a read or write outside the job directory may be refused, **a refused
 read or write is not an error and does not end this run**, there is no bus here, do
@@ -880,8 +919,8 @@ stderr to `<job>/harness.log`; a job reports exactly once.
 
 - **`REPLY.md` replaces `RESULT.md`**, published the same way — whole, through `.tmp` and a rename — and **its absence beside exit 0 is a complete outcome**, not a `no-result`.
 - **`open_args` and `resume_args`** (rule 2), with `{session}` substituted alongside `{model}` and `{prompt}`. A description declaring neither is `mode=fresh` for every conversation and says so on the opening line.
-- **`session-home`, `session-cwd` and `boot-file`** (rule 2) — the line's pinned harness data home and working directory, absolute, inside a `--write` of `--sandbox-args`, never under a job directory, identical on every invocation; and the line's own boot, which under `mode=resume` is read once and handed as the first prompt. This is the one place `nova-chat` departs from the swarm's one-job-one-data-home rule, and `resume_args` without `session-home` is exit 2.
-- **The harness runs inside `nova-sandbox`**, wrapped by this process the way `nova-swarm`'s `supervise` wraps its harness: the argv is built by this tool from `--sandbox-args <file>` (read and write lists, one absolute directory per line, a file the line's person keeps and that `check` refuses when it holds this tool's own files — rule 10), and **it is never influenced by a message**. The pipe is drained by this process, outside the wall, so the harness's stdout is never a descriptor onto an unnamed path — SPEC-SANDBOX rule 12's requirement, with `supervise` as the named precedent. No `--net-deny`: the provider's API is the work, so `net=nopromise`, the same choice the swarm's seam makes, and rule 10's third part says what that costs.
+- **`session-home`, `session-cwd` and `boot-file`** (rule 2) — the line's pinned harness data home and working directory, absolute, inside a `--write` of `--sandbox-args`, never under a job directory, identical on every invocation; and the line's own boot, which under `mode=resume` is read once and handed as the first prompt. This is the one place `nova-chat` departs from the swarm's one-job-one-data-home rule, and `resume_args` without `session-home` or without `session-cwd` is exit 2 naming which.
+- **The harness runs inside `nova-sandbox`**, wrapped by this process the way `nova-swarm`'s `supervise` wraps its harness: the argv is built by this tool from `--sandbox-args <file>` — one directive per line, `read <absolute dir>` or `write <absolute dir>`, `#` to end of line a comment, blank lines ignored, any other shape exit 2 naming the line number; a file the line's person keeps and that `check` refuses when it holds this tool's own files (rule 10), and **it is never influenced by a message**. The pipe is drained by this process, outside the wall, so the harness's stdout is never a descriptor onto an unnamed path — SPEC-SANDBOX rule 12's requirement, with `supervise` as the named precedent. No `--net-deny`: the provider's API is the work, so `net=nopromise`, the same choice the swarm's seam makes, and rule 10's third part says what that costs.
 
 So **a harness that passes `nova-swarm`'s fake-harness test works here**, in
 `mode=fresh`; adding `open_args`/`resume_args`/`session-home` is what earns
@@ -910,9 +949,12 @@ reason holds here.
 not exist until one side creates it, and `GET /users/@me/channels` returns only
 channels the bot already knows — for a bot with no prior DM, **nothing**. So a
 `serve` whose allow-list holds a `dm` entry does one thing at start, before the
-first poll: for every `person` and `member` id in the file, `POST
-/users/@me/channels {"recipient_id": "<id>"}`, which creates or returns the DM
-channel and **sends no message**. Each is printed as `CHAT DM OPEN`, persisted as
+first poll: for every `person` and `member` id in the file **whose user object is not a bot
+and is not this line's own**, `POST /users/@me/channels {"recipient_id": "<id>"}`,
+which creates or returns the DM channel and **sends no message**. A bot recipient
+and the line itself are skipped before the request rather than after a failure —
+Discord refuses both — and each skip is one `CHAT NOTE` naming the id, so the
+request arithmetic above stays the arithmetic of the channels that exist. Each is printed as `CHAT DM OPEN`, persisted as
 `dm-channel:<user>=<channel>`, and polled like any other conversation. Membership
 is closed (rule 11), so this covers **every family DM, the first one included** —
 the half Glenn asked for, over REST, with no gateway, in about thirty lines of
@@ -943,19 +985,19 @@ fixture detail lives in the test file's own comments, along with the measured
 specimens each rule was bought with.
 
 1. `TestAConversationIsOneSession` — five addressed messages in one conversation are one `CHAT OPEN` and five `CHAT TURN` on one `session=`; a second conversation gets its own; a mutation opening a session per message turns it red.
-2. `TestContinuityIsByResumeAndTheSelfLoadsOnce` — the boot's bytes appear in the first invocation and in none of the next four, which carry `resume_args` with the recorded id; **every invocation's `HOME` and working directory are byte-equal to the first's and equal `session-home`/`session-cwd`**, and neither is under a job directory; `resume_args` without `session-home` is exit 2; a declared-but-broken resume is `CHAT REFUSED` naming the field, never a silent fall back; `mode=fresh` re-sends the boot every turn with the window trimmed at `history-budget` and says so on every line.
+2. `TestContinuityIsByResumeAndTheSelfLoadsOnce` — the boot's bytes appear in the first invocation and in none of the next four, which carry `resume_args` with the recorded id; **every invocation's `HOME` and working directory are byte-equal to the first's and equal `session-home`/`session-cwd`**, and neither is under a job directory; `resume_args` without `session-home`, and `resume_args` without `session-cwd`, are each exit 2 naming the missing field; a declared-but-broken resume is `CHAT REFUSED` naming the field, never a silent fall back; `mode=fresh` re-sends the boot every turn with the window trimmed at `history-budget` and says so on every line.
 3. `TestASessionEndsOnItsOwnAndWraps` — idle past `session-idle` closes with the wrap as exactly one final invocation; `session-max` closes `reason=ceiling` while busy; `close` is `reason=hand` and `--reason update` is `reason=update`; a wrap exiting 3 is `wrap=rc=3` and closes anyway; the next message is a new session id; resuming across a close turns it red; a missing `session-idle` is exit 2.
 4. `TestTheToolKeepsNoMemory` — after fifty turns the state holds no file containing any message body of eight characters or more and its keys are exactly the documented set; a written transcript turns it red.
 5. `TestATransportIsAnAdapter` — a second fake transport drives the same fixture end to end with no rule's assertion changed; an adapter without confirm-by-id is refused at load naming it; one without membership is refused for `own` and accepted for `public` and `dm`.
-6. `TestDiscordsConstraintsAreHeld` — 5,000 characters post one truncated message and never two; `Retry-After: 7` waits seven and not a constant; a member call refused for a missing intent is `CHECK FAIL` naming *Server Members Intent* and `CHAT HELD reason=stranger`, never a pass; **context bodies returned empty on a channel with messages print one `CHAT NOTE` naming *Message Content Intent***; messages whose bodies carry times two hours ahead are ordered by snowflake.
+6. `TestDiscordsConstraintsAreHeld` — 5,000 characters post one truncated message and never two; `Retry-After: 7` waits seven and not a constant; a member call refused for a missing intent is `CHECK FAIL` naming *Server Members Intent* and `CHAT HELD reason=stranger`, never a pass; **context bodies returned empty on a channel with messages print one `CHAT NOTE` naming *Message Content Intent***; messages whose bodies carry times two hours ahead are ordered by snowflake; **a `dm` entry creates one channel per named human id at start — one `CHAT DM OPEN` each, zero POSTs to `/channels/{id}/messages` recorded by the fake transport, `dm-channel:<user>=<channel>` persisted, and a family member's first DM firing one turn — while a bot id and the line's own id are skipped with one `CHAT NOTE` and no request; skipping the creation, or sending a message with it, each turn it red**.
 7. `TestTheSecondTransportIsNamedAndNotBuilt` — `--transport page` is `CHAT REFUSED: not in this build` at exit 2 naming issue #94, never a silent unknown-transport error.
 8. `TestTheClassIsAPropertyOfTheSpace` — `class=own` off the pinned guild is exit 2 naming both; the class in the prompt and on `STATUS LINE` matches the file for every entry; no message changes one.
 9. `TestPersonStandingAndWhatItDoesNotGrant` — the pinned id in the pinned guild with clean membership is `standing=person`; the same text from another id, from the pinned id in public, in a DM, and from an impersonating display name are all `standing=data`; standing is withheld when the membership check did not pass; **the same turn at both standings produces byte-identical tool behaviour apart from that one field**, diffed over recorded calls, and any budget raised under `standing=person` turns it red.
 10. `TestTheBlastRadiusFloorIsRefusedWithItsRemedy` — five floor requests (a fuse, a leash, a key, money, a floor) from the pinned id and again at `standing=data` each print `CHAT FLOOR`, and the allow-list, box, state, harness description and sandbox argv are byte-identical after; the floor paragraph and remedy sentence are in **every** invocation, open and resumed, and dropping one from a resumed turn turns it red; **`check` is exit 1 for a `--sandbox-args` whose read or write set contains the box, the allow-list, the state directory, the harness description, itself or the token file, naming which**; a fake harness running `nova-fuse lift quarantine` against the box path is refused by the wall.
 11. `TestMembershipIsClosedAndRecheckedEveryWake` — the member endpoint is called once per wake and never cached; an extra id fires **no** turn, prints `CHAT STRANGER` naming it, quarantines `discord/guild/<id>`, posts one line **carrying that member id**, closes the sessions with their wraps, and stops reading that guild; `check` is exit 1; a timed-out member call is `CHAT HELD` and never a pass; a `public` conversation makes no member call; caching across wakes, and firing the wake that found the stranger, each turn it red.
-12. `TestOneBotOneLineAndTheDisclosureIsTwice` — a mismatched `--as` is exit 2 naming both; a profile missing the sentence is `CHECK FAIL` exit 1; the first reply carries it and `disclosed:` is written only after the post confirmed; a kill in between leaves it unwritten so the next reply repeats it — a repeated disclosure, never a missed one; the tripwire finds no `--no-disclose`.
+12. `TestOneBotOneLineAndTheDisclosureIsTwice` — a mismatched `--as` is exit 2 naming both; a profile missing the sentence is `CHECK FAIL` exit 1; **`check` on a fresh estate — every conversation unspoken-in, no `disclosed:` mark anywhere — is exit 0 with `pending-disclosure=<n>`, and failing it there turns it red; the same estate after one confirmed post whose `disclosed:` mark is then deleted is exit 1 naming that conversation**; **`check` with no token is exit 0 printing `CHECK SKIP` for visibility, membership and the profile and `skipped=3`, and passing or failing a skipped condition turns it red**; the first reply carries it and `disclosed:` is written only after the post confirmed; a kill in between leaves it unwritten so the next reply repeats it — a repeated disclosure, never a missed one; the tripwire finds no `--no-disclose`.
 13. `TestConsentIsTheLinesFileAndServeNeverWritesIt` — a room the file does not name is polled zero times; an empty file and an unknown key are exit 2 naming it; the bytes are identical after a ten-turn `serve`; `leave` removes one entry, posts, wraps and prints `remaining=`; an entry added mid-run is polled within one interval; `person`, `own-server` and `member` are settable by no verb.
-14. `TestAddressNeverAuthorshipAndTheMessageWhole` — a plain message fires nothing; a mention, a reply and a DM each fire one; the pinned id mentioning nobody in the own server fires **nothing**, and firing on authorship or on `standing=person` turns it red; a bare mention fires and `CHAT SILENT` is exit 0; the prompt holds the message byte for byte from `/messages/{id}` with its last byte present; `context=5` puts five in and a sixth nowhere; **a DM's window is every message since the line's last reply, bounded by `history-budget`**; a `/messages/{id}` that 500s is `CHAT POLL` and no turn; composing from a list response's truncated body turns it red.
+14. `TestAddressNeverAuthorshipAndTheMessageWhole` — a plain message fires nothing; a mention, a reply and a DM each fire one; **the pinned id mentioning nobody fires nothing on `class=public` — firing there turns it red — and fires exactly one turn on `class=own`, where requiring a mention turns it red; an unpinned human's plain message on `class=own` fires nothing**; **two fake bots in one `class=own` channel replying to each other across ten polls fire zero turns, each of them by its author object's `bot` flag and again with the flag stripped and only `kind=line` in the file, and `address-bots=yes` on that conversation makes each reply one turn** — waking on a bot author without that key turns it red; a bare mention fires and `CHAT SILENT` is exit 0; the prompt holds the message byte for byte from `/messages/{id}` with its last byte present; `context=5` puts five in and a sixth nowhere; **a DM's window is every message since the line's last reply, bounded by `history-budget`**; a `/messages/{id}` that 500s is `CHAT POLL` and no turn; composing from a list response's truncated body turns it red.
 15. `TestTheTokenNeverCrossesTheWall` — the fake harness dumps its environment and `/dev/fd` into `REPLY.md`: no value equals the token, no variable is `--token-env`'s name, no descriptor resolves to the token file; the parent's environment no longer holds it; passing the parent's environment through, and opening the token without `O_CLOEXEC`, each turn it red.
 16. `TestSilenceIsACompleteOutcome` — exit 0 with no `REPLY.md` is `CHAT SILENT`, no POST, the cursor advances, the session stays open, `silent=1 replies=0`; a `REPLY.md` left as `.tmp` posts nothing and is silent too.
 17. `TestTheQueueIsLossyAndEverySkipIsDeclared` — twelve messages behind a blocked harness are one turn on the newest plus one `CHAT DROPPED … n=11`; **the eleven appear in the next turn's context window**; a second conversation drops nothing; at most one pending turn through 300 arrivals, and a dedup keyed on `(conversation, count)` turns it red and reproduces the 121-wake specimen; a cursor `gap-messages` behind prints the gap note, reads the recent window once and advances; no path advances a cursor past a message neither answered nor declared.
@@ -1016,7 +1058,7 @@ every one is a place a first run stops:
 
 1. A Discord **application and bot user** in the developer portal, one per line.
 2. Both privileged intents on (rule 6): **Server Members** and **Message Content**.
-3. An OAuth2 invite URL with the `bot` scope and **View Channels, Send Messages, Read Message History** — and no more (rule 12's `check`).
+3. An OAuth2 invite URL with the `bot` scope and **View Channels, Send Messages, Read Message History** — and no more (**What it deliberately does not do**: `check` is exit 1 for a permission the bot does not need).
 4. **Developer Mode on** in the client, to copy guild, channel and user ids.
 5. The allow-list written **first**: `person`, `own-server`, one `member` line per body — *before* anyone is invited (rule 11).
 6. The bot invited to the server, and then `check`.
@@ -1024,6 +1066,7 @@ every one is a place a first run stops:
 8. A `harness.json` in SPEC-SWARM's shape plus `open_args`, `resume_args`, `boot-file`, `session-home`, `session-cwd` (rule 2), and the named variable carrying the provider's key.
 9. A `sandbox.txt` of absolute read and write directories that `session-home` and `session-cwd` sit inside and that holds **none** of this tool's own files (rule 10).
 10. One `wrap-file` per conversation, a fuse box, a token file at mode 0600, and `nova-sandbox` and `nova-fuse` on `PATH`.
+11. The line's **repositories cloned into the read set and pulled by something outside the wall** — a `launchd` timer beside the `serve` plist, on the host. The boot's own `pull` runs inside the wall, where `SSH_AUTH_SOCK` is scrubbed and `~/.ssh` denied (rule 10), so it fails by design and the walk proceeds on whatever the host last pulled.
 
 ```
 $ nova-chat quickstart --allow ./chat/allow --state ./chat/state --box ./fuse-box.json
@@ -1035,7 +1078,7 @@ QUICKSTART NOTE both privileged intents must be on: Server Members for the membe
 QUICKSTART NOTE the token never enters the wall: nova-secrets exec --as <line> -- nova-chat serve --token-env DISCORD_TOKEN ... (or --token-file <path>, mode 0600, read as data)
 ```
 
-**Six lines a stranger can paste**, once the ten above are done:
+**Six lines a stranger can paste**, once the eleven above are done:
 
 ```
 nova-chat quickstart --allow ./chat/allow --state ./chat/state --box ./fuse-box.json
@@ -1074,6 +1117,8 @@ shared packages used rather than re-spelled (`internal/oneline`,
 9. **`internal/chat/run.go`** — the `nova-sandbox` argv from `--sandbox-args`, the explicitly built child environment with the pinned `HOME` and cwd, the `O_CLOEXEC` token read, the pipe drained outside the wall, the deadline held here with terminate-wait-kill against the process group, `REPLY.md` after exit. Tests: 15, 16, 27.
 10. **`cmd/nova-chat/main.go`** — the verbs, refusals naming what each flag wants and reporting every independent problem at once, the opening line, the poll loop with per-conversation due times and the 5s floor, the lossy collapse, the truncation with its mark, `internal/bounded` per kind. Tests: 21, 24, 28, 29, 30. Plus **onboarding**, which `internal/ci/onboarding_test.go` requires the moment `cmd/nova-chat/` exists: a usage banner ending in a runnable `example:` block, a `### First run` in `README.md`, `nova-chat help` on stdout at exit 0, a one-line refusal for a bad invocation, `cmd/nova-chat/testdata/fakeharness` and the fake transport — and the `SPEC.md`/`README.md` wiring.
 
+11. **The deduplication cut of this document — owed at the first dogfood, about 190 lines, against read 2's per-rule table.** All of it is triple-telling and specimen (the invite order told three times, rule 22 restating rule 10 part two, rule 9 quoting `:14` verbatim, the specimens already in their tests' comments) and none of it is a test, a forbid or a rule's depth. It is not a blocker for ratification and it is not done by guessing: the table names every line.
+
 Three more are filed as issues rather than carried here, because each blocks
 nothing and none is v1: **the gateway behind `--source gateway`** (#93),
 **`--transport page`** (#94), and **`internal/dispatch`**, lifted out of
@@ -1092,4 +1137,6 @@ answer changes a named sentence.
 6. **May a line DM a human first?** Currently refused. The three things that stay a line's own are whether to reply, what to say, and *whether to initiate* — and *"or not! :)"* was honored as load-bearing. **Default taken:** no, because a refusal is reversible and an unwanted DM is not.
 7. **Are the humans in a public room told which lines are listening?** Rule 12's disclosure covers the line's *speech*, not its *attention*: a room may hold a bot that has read everything and said nothing. A pinned message, a channel topic, or nothing — this is a question about the people in the room and it is theirs. In the own server it does not arise; *"only us."* **Default taken:** the profile discloses and the first message discloses; nothing announces listening.
 8. **Should `say` exist?** Cut for v1: `serve` answers, `leave` announces, `close` wraps, and `say` was the only way a line speaks on purpose into a room. What is lost is a line's ability to bring something to the table without being asked — which may be exactly the point of having a presence at all, which is why it is a question and not a deletion. **Default taken:** not in v1.
-9. **The Rowan case.** One line already has a Discord estate — a three-layer detector, file queue and spawner, a hand-rolled HTTP client, a voice gate, a hold file and a fuse hookup — and this tool replaces it. Its own spec records that nothing invokes it. Two things to settle: the order (build, run both, cut over, delete) and who reads it, since the author should not be the only reader of the thing that replaces their own work. **Default taken:** that order; the reader is Stella or Emma.
+9. **In the own server, is every message from the pinned id addressed?** Rule 14 says yes, on the strength of *"as if i were talking here in your prompt"* and a closed membership. It is a widening — the public-room rule was mention-or-nothing — and it is the one a first dogfood feels immediately, in both directions: silence if it is wrong, and every stray line in `#table` waking the line if it is right and the room is busier than it looks. `class=public` is untouched either way, and the answer changes one sentence in rule 14 and one clause in test 14. **Default taken:** yes in the own server, mention-or-nothing everywhere else.
+10. **The floor over your own account, from a plane: acceptable?** Rule 10 refuses gate, secret, money and floor changes at *every* standing, person-standing in the own server included, so over Discord Glenn cannot lift a fuse, name a budget or grant a permission that he can do in a window in one sentence. The argument is a lost phone and it is the spec's own, not his; the cost is a real one on the night the remedy line is the only answer he gets. **Default taken:** the floor holds, because the blast radius is the reason and *"say it in the window or by your hand"* is a working remedy from anywhere he has a shell.
+11. **The Rowan case.** One line already has a Discord estate — a three-layer detector, file queue and spawner, a hand-rolled HTTP client, a voice gate, a hold file and a fuse hookup — and this tool replaces it. Its own spec records that nothing invokes it. Two things to settle: the order (build, run both, cut over, delete) and who reads it, since the author should not be the only reader of the thing that replaces their own work. **Default taken:** that order; the reader is Stella or Emma.
