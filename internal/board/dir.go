@@ -21,7 +21,9 @@ add --issue is durable when the command returns.
 package board
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,9 +35,22 @@ type Dir struct {
 }
 
 // NewDir returns the backend for a directory of card files. The directory must exist: a
-// tool that made one would be guessing at where a caller meant to keep a board.
+// tool that made one would be guessing at where a caller meant to keep a board -- the
+// board lives in somebody's repository, and which directory is tracked, and by which
+// clone, is the caller's decision and not this tool's. SPEC-BOARD grants this backend one
+// creation and names it: "One file per card, <dir>/<id>.board, created by add."
+//
+// So the refusal CARRIES THE REMEDY. Emma, dogfooding v0.12.0 (nova-tools #104): a
+// quickstart against a directory that did not exist exited 2 with a stat error and no way
+// forward, while nova-swarm's quickstart makes its own pool. The asymmetry is deliberate
+// -- a swarm pool is a layout this family owns, a board directory is one directory in
+// somebody's repository -- but a refusal that does not say `mkdir -p` makes a reader
+// guess at a tool that refuses to.
 func NewDir(path string) (*Dir, error) {
 	info, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("--dir wants a directory of .board card files and does not create one, because which directory holds a board is yours: %s does not exist; make it first: mkdir -p %s", path, path)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("--dir wants a directory of .board card files: %w", err)
 	}

@@ -288,3 +288,63 @@ func TestTheReadmeFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 		t.Errorf("the README shows %d of the %d lines this command prints; an abridgement presented as a run is a claim about output nobody checked", shown, count)
 	}
 }
+
+// Emma, dogfooding v0.12.0 (nova-tools #104, 2026-09-12): `nova-board quickstart
+// --dir ./board --stale 10m` "Expected: `quickstart` to create the directory if
+// it does not already exist (consistent with `nova-swarm quickstart --pool
+// ./pool` which creates the pool directory)", and instead:
+//
+//	nova-board quickstart: --dir wants a directory of .board card files: stat
+//	/Users/glenn/emma-working/scratch/test-board: no such file or directory;
+//	run: nova-board help
+//
+// The refusal stands and the message changes. SPEC-BOARD grants this backend one
+// creation and names it -- "One file per card, `<dir>/<id>.board`, created by
+// `add`" -- and nothing in it makes a verb create the directory itself; SPEC.md's
+// Conventions govern here unchanged ("No guessed paths ... There are no default
+// directories"), and a board directory is one directory in somebody's repository
+// whose tracking is the caller's, where a swarm pool is a layout this family
+// owns. What the old message lacked was the way forward: a refusal names what the
+// flag wants (SPEC-BOARD, rule 6), and here what it wants is a directory that
+// exists.
+func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "board")
+	for _, verb := range []string{"quickstart", "list", "check"} {
+		args := []string{verb, "--dir", missing, "--stale", "10m"}
+		if verb == "check" {
+			args = []string{verb, "--dir", missing, "--words", "anything"}
+		}
+		var out, errb bytes.Buffer
+		exit := run(args, &out, &errb, time.Now().UTC(), &seq{})
+		if exit != 2 {
+			t.Errorf("%s against a missing --dir exits %d, want 2: this tool does not make the directory a caller named", verb, exit)
+		}
+		got := errb.String()
+		if !strings.Contains(got, "mkdir -p "+missing) {
+			t.Errorf("%s refuses without naming the command that fixes it:\n%s", verb, got)
+		}
+		if !strings.Contains(got, "does not create one") {
+			t.Errorf("%s does not say that the directory is the caller's to make:\n%s", verb, got)
+		}
+		if lines := strings.Split(strings.TrimSuffix(got, "\n"), "\n"); len(lines) != 1 {
+			t.Errorf("%s printed %d lines; the one-line guarantee holds for refusals too:\n%s", verb, len(lines), got)
+		}
+		if strings.Contains(got, "no such file or directory") {
+			t.Errorf("%s still leans on the stat error rather than saying what it wants:\n%s", verb, got)
+		}
+	}
+
+	// A path that exists and is a FILE is a different mistake and keeps its own
+	// message: mkdir -p would not fix it.
+	file := filepath.Join(t.TempDir(), "board")
+	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out, errb bytes.Buffer
+	if exit := run([]string{"list", "--dir", file, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 2 {
+		t.Errorf("a --dir that is a file exits %d, want 2", exit)
+	}
+	if !strings.Contains(errb.String(), "is a file") || strings.Contains(errb.String(), "mkdir -p") {
+		t.Errorf("a --dir that is a file is not a missing directory:\n%s", errb.String())
+	}
+}

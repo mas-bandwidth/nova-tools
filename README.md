@@ -615,6 +615,8 @@ check-then-add pair with this board's own values in it, quoted so it can be past
 `cmd/nova-board/testdata/example-board` is a board the size of a first run, and the
 transcript the tests execute against it is in [TESTS.md](TESTS.md#nova-board).
 
+The directory is yours and no verb here creates one, so `mkdir -p ./board` first:
+
 ```
 $ nova-board quickstart --dir ./board --stale 10m
 QUICKSTART OK backend=dir source=./board stale=10m0s: the board, then the rule every filer runs in front of add
@@ -632,7 +634,10 @@ QUICKSTART NOTE check EXITS 1 WHEN IT MATCHES, so the guard reads "if it is alre
 QUICKSTART NOTE --stale 10m0s is this family's number and this run passed it in words: there is no default duration here, and --by and --default are required on every card
 ```
 
-**What a first run gets wrong.** `--stale` missing: it wants how long a card may go without
+**What a first run gets wrong.** `--dir` naming a directory that is not there: no verb
+here creates it, because which directory holds a board — and which clone tracks it — is
+yours, where a `nova-swarm` pool is a layout that tool owns. The refusal says so and names
+the `mkdir -p` that fixes it. `--stale` missing: it wants how long a card may go without
 an event before it lists as takeable again, and the family's number is 10m — the tool will
 not guess one. No backend, or both: name exactly one, because a board written to two places
 is two boards with one name. `--by` or `--default` missing on `add`: a card with no deadline
