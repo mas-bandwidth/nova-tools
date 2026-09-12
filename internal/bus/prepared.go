@@ -336,30 +336,57 @@ func verifyPermittedDeltas(busDir, ref string, p Prepared, art PreparedArtifact)
 			}
 		case refIndexPath:
 			full := filepath.Join(busDir, filepath.FromSlash(refIndexPath))
-			if b, err := os.ReadFile(full); err == nil {
+			b, readErr := os.ReadFile(full)
+			if refIndex != "" {
+				if readErr != nil {
+					return fmt.Errorf("unrelated deletion of %s; refusing to publish", refIndexPath)
+				}
 				s := string(b)
 				if s != refIndex && s != expectedAppendedIndex {
 					return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", refIndexPath)
 				}
+			} else {
+				if readErr == nil {
+					s := string(b)
+					if s != "" && s != wantIndexLine && s != wantIndexLine+"\n" {
+						return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", refIndexPath)
+					}
+				}
 			}
 			if status[0] != ' ' && status[0] != '?' {
 				staged, err := git(busDir, "show", ":"+refIndexPath)
-				if err == nil && staged != refIndex && staged != expectedAppendedIndex {
-					return fmt.Errorf("unrelated staged changes in %s; refusing to publish", refIndexPath)
+				if refIndex != "" {
+					if err != nil || (staged != refIndex && staged != expectedAppendedIndex) {
+						return fmt.Errorf("unrelated staged changes in %s; refusing to publish", refIndexPath)
+					}
+				} else {
+					if err == nil && staged != "" && staged != wantIndexLine && staged != wantIndexLine+"\n" {
+						return fmt.Errorf("unrelated staged changes in %s; refusing to publish", refIndexPath)
+					}
 				}
 			}
 		case AttributesName:
 			full := filepath.Join(busDir, AttributesName)
-			if b, err := os.ReadFile(full); err == nil {
-				s := string(b)
-				if s != refAttrs && s != expectedAttrs {
+			b, readErr := os.ReadFile(full)
+			if refAttrs != "" {
+				if readErr != nil || (string(b) != refAttrs && string(b) != expectedAttrs) {
+					return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", AttributesName)
+				}
+			} else {
+				if readErr == nil && string(b) != expectedAttrs {
 					return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", AttributesName)
 				}
 			}
 			if status[0] != ' ' && status[0] != '?' {
 				staged, err := git(busDir, "show", ":"+AttributesName)
-				if err == nil && staged != refAttrs && staged != expectedAttrs {
-					return fmt.Errorf("unrelated staged changes in %s; refusing to publish", AttributesName)
+				if refAttrs != "" {
+					if err != nil || (staged != refAttrs && staged != expectedAttrs) {
+						return fmt.Errorf("unrelated staged changes in %s; refusing to publish", AttributesName)
+					}
+				} else {
+					if err == nil && staged != expectedAttrs {
+						return fmt.Errorf("unrelated staged changes in %s; refusing to publish", AttributesName)
+					}
 				}
 			}
 		}
@@ -434,6 +461,15 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 		}
 		expectedAttrs, _ := ExpectedMergeAttributes(refAttrs)
 
+		var refNonArtLines []string
+		for _, l := range strings.Split(refIndex, "\n") {
+			l = strings.TrimSpace(l)
+			if l == "" {
+				continue
+			}
+			refNonArtLines = append(refNonArtLines, l)
+		}
+
 		logOut, err := git(busDir, "log", "-z", "--format=%H%n%B", ref+"..HEAD")
 		if err != nil {
 			return PushResult{}, err
@@ -463,23 +499,45 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			}
 
 			// Validate attributes in each commit
-			commitAttrs, err := git(busDir, "show", sha+":"+AttributesName)
-			if err == nil && commitAttrs != refAttrs && commitAttrs != expectedAttrs {
-				return PushResult{}, fmt.Errorf("ahead commit %s has unrelated changes in %s; %s", sha, AttributesName, pullRebaseAdvice)
+			commitAttrs, errAttr := git(busDir, "show", sha+":"+AttributesName)
+			if refAttrs != "" {
+				if errAttr != nil || (commitAttrs != refAttrs && commitAttrs != expectedAttrs) {
+					return PushResult{}, fmt.Errorf("ahead commit %s has unrelated changes in %s; %s", sha, AttributesName, pullRebaseAdvice)
+				}
+			} else {
+				if errAttr == nil && commitAttrs != expectedAttrs {
+					return PushResult{}, fmt.Errorf("ahead commit %s has unrelated changes in %s; %s", sha, AttributesName, pullRebaseAdvice)
+				}
 			}
 
 			// Validate index in each commit
-			commitIndex, err := git(busDir, "show", sha+":"+refIndexPath)
-			if err == nil {
+			commitIndex, errIndex := git(busDir, "show", sha+":"+refIndexPath)
+			if refIndex != "" && errIndex != nil {
+				return PushResult{}, fmt.Errorf("ahead commit %s deleted index in %s; %s", sha, refIndexPath, pullRebaseAdvice)
+			}
+			if errIndex == nil {
+				var commitNonArtLines []string
+				artCount := 0
 				for _, l := range strings.Split(commitIndex, "\n") {
 					l = strings.TrimSpace(l)
 					if l == "" {
 						continue
 					}
 					f := strings.Split(l, "\t")
-					if len(f) > 0 && f[0] == art.ID && l != wantIndexLine {
-						return PushResult{}, fmt.Errorf("ahead commit %s has conflicting index record for %s; %s", sha, art.ID, pullRebaseAdvice)
+					if len(f) > 0 && f[0] == art.ID {
+						artCount++
+						if l != wantIndexLine {
+							return PushResult{}, fmt.Errorf("ahead commit %s has conflicting index record for %s; %s", sha, art.ID, pullRebaseAdvice)
+						}
+					} else {
+						commitNonArtLines = append(commitNonArtLines, l)
 					}
+				}
+				if artCount > 1 {
+					return PushResult{}, fmt.Errorf("ahead commit %s has multiple index records for %s; %s", sha, art.ID, pullRebaseAdvice)
+				}
+				if strings.Join(commitNonArtLines, "\n") != strings.Join(refNonArtLines, "\n") {
+					return PushResult{}, fmt.Errorf("ahead commit %s has unrelated changes in %s; %s", sha, refIndexPath, pullRebaseAdvice)
 				}
 			}
 		}
@@ -490,13 +548,22 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 		}
 
 		// Validate attributes at HEAD
-		headAttrs, err := git(busDir, "show", "HEAD:"+AttributesName)
-		if err == nil && headAttrs != refAttrs && headAttrs != expectedAttrs {
-			return PushResult{}, fmt.Errorf("ahead commits have unrelated changes in %s; %s", AttributesName, pullRebaseAdvice)
+		headAttrs, errAttr := git(busDir, "show", "HEAD:"+AttributesName)
+		if refAttrs != "" {
+			if errAttr != nil || (headAttrs != refAttrs && headAttrs != expectedAttrs) {
+				return PushResult{}, fmt.Errorf("ahead commits have unrelated changes in %s; %s", AttributesName, pullRebaseAdvice)
+			}
+		} else {
+			if errAttr == nil && headAttrs != expectedAttrs {
+				return PushResult{}, fmt.Errorf("ahead commits have unrelated changes in %s; %s", AttributesName, pullRebaseAdvice)
+			}
 		}
 
-		headIndex, err := git(busDir, "show", "HEAD:"+refIndexPath)
-		if err != nil {
+		headIndex, errIndex := git(busDir, "show", "HEAD:"+refIndexPath)
+		if refIndex != "" && errIndex != nil {
+			return PushResult{}, fmt.Errorf("ahead commits deleted index in %s; %s", refIndexPath, pullRebaseAdvice)
+		}
+		if errIndex != nil {
 			headIndex = ""
 		}
 
@@ -525,14 +592,6 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			return PushResult{}, fmt.Errorf("ahead commits have multiple index records for %s; %s", art.ID, pullRebaseAdvice)
 		}
 
-		var refNonArtLines []string
-		for _, l := range strings.Split(refIndex, "\n") {
-			l = strings.TrimSpace(l)
-			if l == "" {
-				continue
-			}
-			refNonArtLines = append(refNonArtLines, l)
-		}
 		if strings.Join(headNonArtLines, "\n") != strings.Join(refNonArtLines, "\n") {
 			return PushResult{}, fmt.Errorf("ahead commits have unrelated changes in %s; %s", refIndexPath, pullRebaseAdvice)
 		}

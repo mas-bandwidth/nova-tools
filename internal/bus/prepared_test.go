@@ -489,6 +489,8 @@ func TestSendPreparedProcessDeathHelper(t *testing.T) {
 	}
 
 	switch mode {
+	case "before-note-write":
+		// Pre-note case: helper started, no bus mutations made yet
 	case "after-note-write":
 		if err := p.Save(busDir); err != nil {
 			os.Exit(3)
@@ -520,6 +522,16 @@ func TestSendPreparedProcessDeathHelper(t *testing.T) {
 		if _, err := stageAndCommit(busDir, id, p.Paths(), WithTrailer(p.Message, TrailerSend+" "+art.ID)); err != nil {
 			os.Exit(3)
 		}
+	case "send-call":
+		res, err := SendPreparedArtifact(busDir, "origin", "main", p, art, 1)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "send-call failed: %v\n", err)
+			os.Exit(6)
+		}
+		if !res.Pushed || res.State != "published" {
+			os.Exit(7)
+		}
+		os.Exit(0)
 	default:
 		os.Exit(4)
 	}
@@ -533,8 +545,39 @@ func TestSendPreparedProcessDeathHelper(t *testing.T) {
 	time.Sleep(10 * time.Minute)
 }
 
+func TestSendPreparedRecoveryHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_PREPARED_RECOVERY_HELPER") != "1" {
+		return
+	}
+	busDir := os.Getenv("PREPARED_RECOVERY_BUS")
+	artFile := os.Getenv("PREPARED_RECOVERY_ART")
+	as := os.Getenv("PREPARED_RECOVERY_AS")
+
+	raw, err := os.ReadFile(artFile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "read art file failed: %v\n", err)
+		os.Exit(1)
+	}
+	tab := loadBus(t, busDir)
+	art, p, err := ValidatePreparedArtifact(raw, busDir, tab.Config, as)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "validate prepared artifact failed: %v\n", err)
+		os.Exit(2)
+	}
+	res, err := SendPreparedArtifact(busDir, "origin", "main", p, art, 1)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "send prepared artifact failed: %v\n", err)
+		os.Exit(3)
+	}
+	if !res.Pushed || (res.State != "published" && res.State != "already-published") {
+		fmt.Fprintf(os.Stderr, "unexpected res state: %+v\n", res)
+		os.Exit(4)
+	}
+	os.Exit(0)
+}
+
 func TestSendPreparedProcessDeathRecovery(t *testing.T) {
-	modes := []string{"after-note-write", "after-index-write", "after-note-commit", "after-commit"}
+	modes := []string{"before-note-write", "after-note-write", "after-index-write", "after-note-commit", "after-commit"}
 
 	for _, mode := range modes {
 		t.Run(mode, func(t *testing.T) {
@@ -578,13 +621,17 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 			// Wait for process death
 			_ = cmd.Wait()
 
-			// Fresh process / execution retries prepared delivery against the bare remote
-			res, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+			// Fresh recovery child process reconstructs and validates saved artifact from disk, then delivers
+			recCmd := exec.Command(os.Args[0], "-test.run=TestSendPreparedRecoveryHelper")
+			recCmd.Env = append(os.Environ(),
+				"GO_WANT_PREPARED_RECOVERY_HELPER=1",
+				"PREPARED_RECOVERY_BUS="+clone,
+				"PREPARED_RECOVERY_ART="+artFile,
+				"PREPARED_RECOVERY_AS="+p.Sender.Name,
+			)
+			out, err := recCmd.CombinedOutput()
 			if err != nil {
-				t.Fatalf("recovery after process death failed: %v", err)
-			}
-			if !res.Pushed || res.State != "published" {
-				t.Fatalf("res = %+v, want published", res)
+				t.Fatalf("fresh recovery child failed: %v\noutput:\n%s", err, string(out))
 			}
 
 			// Verify exact note on bare remote
@@ -608,5 +655,45 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 				t.Fatalf("bare remote has %d occurrences of index line, want exactly 1:\n%s", matchCount, remoteIndex)
 			}
 		})
+	}
+}
+
+func TestSendPreparedChildExecutionAndRecovery(t *testing.T) {
+	bare, clone, p, a := stellaPrepared(t)
+	scratch := t.TempDir()
+	artFile := filepath.Join(scratch, "prepared.json")
+	artJSON, _ := RenderPreparedArtifact(p)
+	os.WriteFile(artFile, []byte(artJSON), 0644)
+
+	// 1. Initial child executes the actual sending call
+	cmdSend := exec.Command(os.Args[0], "-test.run=TestSendPreparedProcessDeathHelper")
+	cmdSend.Env = append(os.Environ(),
+		"GO_WANT_PREPARED_DEATH_HELPER=1",
+		"PREPARED_HELPER_BUS="+clone,
+		"PREPARED_HELPER_MODE=send-call",
+		"PREPARED_HELPER_ART="+artFile,
+	)
+	out, err := cmdSend.CombinedOutput()
+	if err != nil {
+		t.Fatalf("sending child failed: %v\noutput:\n%s", err, string(out))
+	}
+
+	// Verify on bare remote
+	remoteNote, err := git(bare, "show", "main:"+p.Path)
+	if err != nil || remoteNote != a.Note {
+		t.Fatalf("bare remote missing note after child send: %v", err)
+	}
+
+	// 2. Fresh recovery child confirms delivery via already-published
+	recCmd := exec.Command(os.Args[0], "-test.run=TestSendPreparedRecoveryHelper")
+	recCmd.Env = append(os.Environ(),
+		"GO_WANT_PREPARED_RECOVERY_HELPER=1",
+		"PREPARED_RECOVERY_BUS="+clone,
+		"PREPARED_RECOVERY_ART="+artFile,
+		"PREPARED_RECOVERY_AS="+p.Sender.Name,
+	)
+	outRec, err := recCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("subsequent recovery child failed: %v\noutput:\n%s", err, string(outRec))
 	}
 }
