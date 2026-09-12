@@ -308,6 +308,35 @@ Therefore:
      recovery is complete and not paginated: `--open-max` takes any positive
      number, measured to 100000, and `n` is the whole carried list.
 
+     **Added 2026-09-12, after the audit of packet 1 (#164, findings F1 and F2);
+     nothing above is withdrawn.** Two clauses, because the code was measured
+     against both and was wrong on both:
+
+     - **`<k>` is counted over the listing's own entries, and `carrying=` counts
+       all of them.** `carrying=` is the size of the whole open list — "every
+       entry on it, the heard and the unreadable included" (SPEC.md, **inbox**) —
+       so the count compared against it is every entry the `--open` listing HELD:
+       `INBOX NOTE`, `INBOX HEARD`, `INBOX RECEIPT` and the `INBOX UNREADABLE`
+       lines of the entries carried as unreadable. It is never a count of what
+       this tool relayed, and never a count of the `NOTE` lines alone: a note
+       this tool has already printed is suppressed and is still an entry the bus
+       listed, and a receipt is an entry with no `NOTE` line at all. A reader who
+       has been shown notes it has not answered **and** has receipted anything
+       carries both at once, and each partial count is short of `carrying=` for
+       that ordinary list, which made the recovery unendable.
+     - **While a recovery is unresolved nothing advances — in this call and in
+       every later one — and the marker outranks an empty bus queue.** A poll
+       whose queue holds no bus record still does not advance while
+       `bus:advance=inflight` stands: the marker is the only thing naming a
+       carried list this tool has not reached, and a fresh advance would write
+       its own marker over it and move the cursor, putting those notes behind the
+       cursor with nothing naming them. Such a poll prints, once per call, `WAKE
+       NOTE bus advance deferred: a recovery is unresolved; nothing fetches until
+       the carried list is reached`, and it is **not** a failed source: it counts
+       toward no streak and cannot say `BROKEN`. The recovery runs at the start of
+       every call, so the advance resumes on the first call that reaches the
+       carried list.
+
   `nova-bus` moves a cursor to `HEAD` and nowhere else, so this is the only way
   to keep the cursor behind the print. Mail consumed is mail spooled; mail
   spooled is mail printed, **under the cap** like everything else (**Bounded
