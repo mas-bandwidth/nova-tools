@@ -416,8 +416,11 @@ func (p *Pool) Decide(n int) Decision {
 		}
 		var ex ExitRecord
 		switch err := ReadJSON(ExitPath(sf.JobDir), &ex); {
-		case err == nil && ex.Nonce == sf.Nonce:
+		case err == nil && ex.Nonce == sf.Nonce && ExitAttestOK(ex.Attest, sf.ExitAttest):
 			d.Kind, d.Reason, d.Exit = DecideReclaim, "the group is dead and exit.json carries this launch's nonce", &ex
+			return d
+		case err == nil && ex.Nonce == sf.Nonce:
+			d.Kind, d.Reason = DecideQuarantine, "exit.json carries this launch's nonce but not its attestation"
 			return d
 		case err == nil:
 			d.Kind, d.Reason = DecideQuarantine, "exit.json carries a nonce from another launch"

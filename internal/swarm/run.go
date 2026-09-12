@@ -654,7 +654,7 @@ func (in RunInput) unreadable(r *running, err error, now time.Time) (alive, over
 		return false, false
 	}
 	var ex ExitRecord
-	if readErr := ReadJSON(ExitPath(r.jobDir), &ex); readErr == nil && ex.Nonce == r.nonce {
+	if readErr := ReadJSON(ExitPath(r.jobDir), &ex); readErr == nil && ex.Nonce == r.nonce && ExitAttestOK(ex.Attest, r.exitAttest) {
 		return false, false
 	}
 	// THE OUTER BOUND IS THE JOB'S OWN CLOCK, from the job's START, which is the bound the

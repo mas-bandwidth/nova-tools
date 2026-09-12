@@ -60,7 +60,21 @@ func FinalizeByHand(p *Pool, id string, now time.Time) (int, string) {
 	}
 	rec := ExitRecord{RC: -1}
 	end := EndUnknown
-	if err := ReadJSON(ExitPath(sc.Job), &rec); err == nil {
+	// THE COMPLETION EVIDENCE IS THE SUPERVISOR'S OWN WORD, and a supervisor's word carries
+	// the per-launch attestation whose hash the slot file holds. When a slot file exists for
+	// this job, the exit.json is accepted only if it carries both this launch's nonce AND the
+	// attestation the slot file names. When there is no slot file (it was already freed, or
+	// the job never launched far enough to write one), this keeps its current behaviour and
+	// reads the exit.json as-is.
+	if sf, err := p.ReadSlot(sc.Slot); err == nil {
+		var got ExitRecord
+		if err := ReadJSON(ExitPath(sc.Job), &got); err == nil && got.Nonce == sf.Nonce && ExitAttestOK(got.Attest, sf.ExitAttest) {
+			rec, end = got, got.End
+			if end == "" {
+				end = EndDone
+			}
+		}
+	} else if err := ReadJSON(ExitPath(sc.Job), &rec); err == nil {
 		end = rec.End
 		if end == "" {
 			end = EndDone
