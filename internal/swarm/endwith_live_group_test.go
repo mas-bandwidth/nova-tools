@@ -29,7 +29,7 @@ func TestATamperedPidCannotPublishAttestationToALiveGroup(t *testing.T) {
 		t.Fatal(err)
 	}
 	in := SuperviseInput{Nonce: "public-nonce", Now: time.Now, Stderr: io.Discard}
-	rc := endWith(in, job, time.Now(), ExitRecord{RC: 0, End: EndDone}, "synthetic-secret")
+	rc := endWith(in, job, time.Now(), ExitRecord{RC: 0, End: EndDone}, "synthetic-secret", pgid, stamp)
 	var rec ExitRecord
 	err := ReadJSON(ExitPath(job), &rec)
 	if rc == 0 && err == nil && rec.Attest == "synthetic-secret" && GroupAlive(pgid, stamp) {

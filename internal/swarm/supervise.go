@@ -88,7 +88,7 @@ func Supervise(in SuperviseInput) int {
 	logPath := filepath.Join(jobDir, "harness.log")
 	logFile, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
 	if err != nil {
-		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness log could not be opened: " + redactedReason(err)}, attest)
+		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness log could not be opened: " + redactedReason(err)}, attest, 0, "")
 	}
 	harness := in.Worker.Harness
 	if resolved, err := exec.LookPath(harness); err == nil {
@@ -123,7 +123,7 @@ func Supervise(in SuperviseInput) int {
 	ownGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		logFile.Close()
-		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness would not start: " + redactedReason(err)}, attest)
+		return endWith(in, jobDir, started, ExitRecord{RC: -1, End: EndFailed, Reason: "the harness would not start: " + redactedReason(err)}, attest, 0, "")
 	}
 	jobPgid := cmd.Process.Pid
 	// THE HARNESS'S OWN IDENTITY, learned at the one moment it is not in doubt: on a
@@ -145,7 +145,7 @@ func Supervise(in SuperviseInput) int {
 	record := watch(in, cmd, jobDir, jobPgid, jobStarted, started)
 	logFile.Close()
 	CheckKillPoint("between-exit-and-exit-json")
-	return endWith(in, jobDir, started, record, attest)
+	return endWith(in, jobDir, started, record, attest, jobPgid, jobStarted)
 }
 
 // watch holds the deadline and the budget beside the harness (rules 7 and 13).
@@ -233,17 +233,43 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 // a rename AFTER the harness exits and BEFORE the supervisor exits, so a replacement
 // dispatcher reads a whole record or none. The attestation secret is written here, into the
 // record itself, and nowhere earlier: the whole process group is dead before this runs.
-func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord, attest string) int {
-	rec.Nonce, rec.Ended, rec.Attest = in.Nonce, Stamp(in.Now()), attest
-	// Rule 11's group check, made by the process that owns the group: anything still in the
-	// job's own group after its leader has gone is a background subtask the prompt forbids.
-	if jobPgid, jobStarted := readJobProc(jobDir); jobPgid > 0 && groupStillAlive(jobPgid, jobStarted) {
-		if n, ok := GroupMembers(jobPgid, os.Getpid()); ok {
-			rec.Survivors = n
-		} else if rec.Survivors == 0 {
-			rec.Survivors = 1
+//
+// The group identity this asks about is the one the supervisor RETAINED when it started the
+// harness (jobPgid, jobStarted), never the worker-writable pid file: a pid file the worker
+// rewrote to garbage cannot make the supervisor skip its own group check. The attestation is
+// published only after the group is CONFIRMED dead; a group that cannot be confirmed dead by
+// the deadline is recorded without the attestation and with `end=unknown`.
+func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord, attest string, jobPgid int, jobStarted string) int {
+	rec.Nonce, rec.Ended = in.Nonce, Stamp(in.Now())
+	switch {
+	case jobPgid <= 0:
+		// The harness never started: there is no job group to confirm dead, and the
+		// attestation is this supervisor's own word about an end it caused itself.
+		rec.Attest = attest
+	default:
+		// Rule 11's group check, made by the process that owns the group and using the
+		// identity it retained at launch: anything still in the job's own group after its
+		// leader has gone is a background subtask the prompt forbids.
+		if groupStillAlive(jobPgid, jobStarted) {
+			if n, ok := GroupMembers(jobPgid, os.Getpid()); ok {
+				rec.Survivors = n
+			} else if rec.Survivors == 0 {
+				rec.Survivors = 1
+			}
 		}
-		KillGroup(jobPgid, jobStarted)
+		// THE ATTESTATION IS PUBLISHED ONLY ONCE THE GROUP IS CONFIRMED DEAD, from the
+		// retained identity: kill the group and wait, bounded by the reap's grace, for the
+		// kernel to agree nothing of it remains. A group that cannot be confirmed dead by
+		// that deadline is recorded WITHOUT the attestation and with `end=unknown` -- the
+		// attestation would otherwise be reusable while a survivor of the group still ran.
+		if groupConfirmedDead(jobPgid, jobStarted) {
+			rec.Attest = attest
+		} else {
+			rec.Attest = ""
+			rec.End, rec.RC = EndUnknown, -1
+			fmt.Fprintf(in.Stderr, "SUPERVISE FAILED slot=%d id=%s: the job's process group could not be confirmed dead before the deadline, so the attestation was withheld and the outcome is unknown\n",
+				in.Slot, in.Task)
+		}
 	}
 	if err := WriteJSON(ExitPath(jobDir), rec); err != nil {
 		fmt.Fprintf(in.Stderr, "SUPERVISE FAILED slot=%d id=%s: the completion evidence could not be written: %s\n",
@@ -251,6 +277,21 @@ func endWith(in SuperviseInput, jobDir string, started time.Time, rec ExitRecord
 		return 2
 	}
 	return 0
+}
+
+// groupConfirmedDead kills the job's group from the retained identity and waits, bounded by
+// the reap's grace, for the kernel to agree nothing of it remains. It answers whether the
+// group was CONFIRMED dead: the per-launch attestation is published only on true.
+func groupConfirmedDead(jobPgid int, jobStarted string) bool {
+	KillGroup(jobPgid, jobStarted)
+	deadline := time.Now().Add(TerminateGrace)
+	for time.Now().Before(deadline) {
+		if !GroupAlive(jobPgid, jobStarted) {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return !GroupAlive(jobPgid, jobStarted)
 }
 
 // groupStillAlive is the group check of rule 11 with a BOUNDED WAIT in front of it, and the
@@ -403,17 +444,6 @@ func childEnv(w Worker, slot int, id, key string) []string {
 		env = append(env, w.EnvVar+"="+key)
 	}
 	return env
-}
-
-// readJobProc is the job's own process AND the identity recorded beside it, from the pid
-// file this supervisor wrote. The pid alone was enough on unix, where the question is put
-// to a process group; it is not enough where a pid is a number the kernel re-issues.
-func readJobProc(jobDir string) (int, string) {
-	var pr PidRecord
-	if err := ReadJSON(PidPath(jobDir), &pr); err != nil {
-		return 0, ""
-	}
-	return pr.JobPgid, pr.JobStarted
 }
 
 func exitOf(err error) (int, string) {
