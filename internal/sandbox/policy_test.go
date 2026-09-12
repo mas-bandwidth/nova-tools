@@ -226,8 +226,8 @@ func TestDarwinProfileIsGenerated(t *testing.T) {
 		t.Fatal("(allow network*) grants every unix-domain socket, including the SSH agent's")
 	}
 	for _, want := range []string{
-		`(allow network-outbound (remote ip "*:*"))`,
-		`(allow network-outbound (remote unix-socket (subpath (param "WRITE0"))))`,
+		`(allow network-outbound (remote ip))`,
+		`(allow network-outbound (subpath (param "WRITE0")))`,
 		`(allow file-read* (subpath (param "READ0")))`,
 		`(allow file-read* file-write* (subpath (param "WRITE0")))`,
 		`(allow file-read-metadata (literal "` + filepath.Dir(write) + `"))`,
@@ -256,8 +256,14 @@ func TestDarwinProfileIsGenerated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(grantLines(denied), "network") {
-		t.Fatalf("--net-deny left a network grant in the profile:\n%s", denied)
+	// Under --net-deny the IP grants are withheld. The per-write
+	// (allow network-outbound (subpath (param "WRITEn"))) line stays, because the
+	// template emits it with the write grant: it reaches a unix socket that is the job's
+	// own file inside its own write set, which --net-deny is not about.
+	for _, gone := range []string{"(remote ip)", "network-inbound"} {
+		if strings.Contains(grantLines(denied), gone) {
+			t.Fatalf("--net-deny left %s in the profile:\n%s", gone, denied)
+		}
 	}
 	if p.Net() != "denied" {
 		t.Fatalf("net = %q, want denied", p.Net())
@@ -276,4 +282,34 @@ func grantLines(profile string) string {
 		out = append(out, line)
 	}
 	return strings.Join(out, "\n")
+}
+
+// Rule 7 of revision 6: inbound is granted only under --net-listen, and --net-deny with
+// --net-listen is a refusal rather than a tool picking which the caller meant.
+func TestInboundIsOnlyGrantedWhenAsked(t *testing.T) {
+	write, read, home, _ := scratch(t)
+	p, bad := Build(in(t, write, read, home, "/bin/echo"))
+	if len(bad) > 0 {
+		t.Fatalf("refused: %v", bad)
+	}
+	text, _, err := DarwinProfile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(grantLines(text), "network-inbound") {
+		t.Fatal("inbound was granted to a job that did not ask to listen")
+	}
+	p.NetListen = true
+	listening, _, err := DarwinProfile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(grantLines(listening), "(allow network-inbound (local ip))") {
+		t.Fatalf("--net-listen granted no inbound:\n%s", listening)
+	}
+	iv := in(t, write, read, home, "/bin/echo")
+	iv.NetDeny, iv.NetListen = true, true
+	if _, bad := Build(iv); len(bad) == 0 || bad[0].Reason != "bad_net" {
+		t.Fatalf("--net-deny with --net-listen was accepted: %v", bad)
+	}
 }

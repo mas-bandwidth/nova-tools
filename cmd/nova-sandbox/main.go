@@ -33,9 +33,10 @@ const readRemedy = "A command that runs OUTSIDE the wall and dies inside it is m
 const usage = `nova-sandbox: one command, contained by the OS (see docs/SPEC-SANDBOX.md)
 
 usage:
-  nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>]
+  nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>]
                [--tmp <dir>] [--name <container>] -- <command> <args...>
   nova-sandbox probe --write <dir>... [--read <dir>...] --secret <path> [--net-deny]
+  nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
   nova-sandbox check [--max <n>]
   nova-sandbox version
   nova-sandbox help
@@ -55,6 +56,8 @@ usage:
   --net-deny      an ENFORCED network denial, or a refusal. Without it the tool
                   makes no promise about the network and the line says
                   net=nopromise.
+  --net-listen    grant INBOUND ip as well; without it a job that does not
+                  listen cannot be listened to. Never with --net-deny.
   --name <c>      the windows container name. Accepted and ignored on darwin, so
                   one caller builds one argv for three platforms.
   --secret <path> probe only: the file a probe proves it cannot read. A path is
@@ -99,6 +102,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 		return 0
 	case "check":
 		return checkVerb(stdout)
+	case "policy":
+		return policyVerb(args[1:], stdout, stderr, env)
 	case "probe":
 		return probeVerb(args[1:], stdout, stderr, env)
 	}
@@ -110,7 +115,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 type flags struct {
 	reads, writes          []string
 	cwd, tmp, name, secret string
-	netDeny                bool
+	netDeny, netListen     bool
 	max                    int
 	maxSet                 bool
 	argv                   []string
@@ -152,6 +157,8 @@ func parse(args []string) flags {
 			f.secret, i = want(i, "--secret")
 		case "--net-deny":
 			f.netDeny = true
+		case "--net-listen":
+			f.netListen = true
 		case "--max":
 			v, i = want(i, "--max")
 			n := 0
@@ -200,7 +207,7 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 	}
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
-		NetDeny: f.netDeny, Argv: f.argv, Home: homeOf(env),
+		NetDeny: f.netDeny, NetListen: f.netListen, Argv: f.argv, Home: homeOf(env),
 	})
 	if len(bad) > 0 {
 		return refuseAll(stderr, bad)
@@ -284,7 +291,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	}
 
 	p, bad := sandbox.Build(sandbox.Input{
-		Reads: f.reads, Writes: f.writes, NetDeny: f.netDeny,
+		Reads: f.reads, Writes: f.writes, NetDeny: f.netDeny, NetListen: f.netListen,
 		Argv: []string{shell, "-c", "true"}, Home: homeOf(env),
 	})
 	if len(bad) > 0 {
@@ -381,4 +388,44 @@ func walled(p *sandbox.Policy, env []string, name, path string) string {
 		return "deny"
 	}
 	return "allow"
+}
+
+// policyVerb prints the generated policy for a read/write pair and runs NOTHING. It is
+// how a reader checks the wall without trusting the document — and it is how
+// profiles/darwin-check.sh can be run against the profile THIS TOOL generates, so that
+// the script and the tool cannot drift apart (rule 15: generated, never hand-edited).
+func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
+	f := parse(args)
+	if len(f.bad) > 0 {
+		for _, r := range f.bad {
+			fmt.Fprintf(stderr, "POLICY REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.Escape(r.Text))
+		}
+		return sandbox.ExitCannotRun
+	}
+	// The policy is about the two lists, so the command is only what rule 5 resolves a
+	// root from: /bin/sh is the floor every wrapped shell command already stands on.
+	shell, err := exec.LookPath("sh")
+	if err != nil {
+		fmt.Fprintf(stderr, "POLICY REFUSED reason=bad_read: sh is on no PATH entry: %s\n", oneline.Err(err))
+		return sandbox.ExitCannotRun
+	}
+	p, bad := sandbox.Build(sandbox.Input{
+		Reads: f.reads, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
+		NetDeny: f.netDeny, NetListen: f.netListen, Argv: []string{shell, "-c", "true"}, Home: homeOf(env),
+	})
+	if len(bad) > 0 {
+		for _, r := range bad {
+			fmt.Fprintf(stderr, "POLICY REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.Escape(r.Text))
+		}
+		return sandbox.ExitCannotRun
+	}
+	text, _, err := sandbox.DarwinProfile(p)
+	if err != nil {
+		fmt.Fprintf(stderr, "POLICY REFUSED reason=bad_write: %s\n", oneline.Err(err))
+		return sandbox.ExitCannotRun
+	}
+	fmt.Fprint(stdout, text)
+	fmt.Fprintf(stderr, "POLICY OK backend=%s read=%d write=%d bytes=%d\n",
+		oneline.Field(sandbox.Backend), len(p.Reads), len(p.Writes), len(text))
+	return 0
 }

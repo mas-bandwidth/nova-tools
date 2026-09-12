@@ -46,6 +46,11 @@ printf 'ref\n' > "$REF/file.txt"
        -c commit.gpgsign=false commit -q -m seed
 
 # ---- fill the template -------------------------------------------------------
+# NOVA_SANDBOX_FILL, when set, is a nova-sandbox binary, and the profile under test is
+# the one THAT TOOL generates for this scratch write set rather than the one filled
+# below. It is how the tool's build runs this script against its own generator: one
+# text, filled two ways, and a drift between them is a FAIL here rather than a surprise
+# in a job. Unset -- a reader running this script by hand -- nothing changes.
 PROFILE="$SCRATCH/p.sb"
 ancestors_of() { local d; d="$(dirname -- "$1")"; while [[ "$d" != "/" ]]; do printf '%s\n' "$d"; d="$(dirname -- "$d")"; done; }
 
@@ -100,6 +105,11 @@ while IFS= read -r kv; do
   case "${kv%%=*}" in SSH_AUTH_SOCK|*AGENT*) continue;; esac
   CHILD_ENV+=("$kv")
 done <<< "$CALLER_ENV"
+
+if [[ -n "${NOVA_SANDBOX_FILL:-}" ]]; then
+  HOME="$HOME_DIR" "$NOVA_SANDBOX_FILL" policy --read "$REF" --write "$W" > "$PROFILE" \
+    || { echo "CHECK FAIL name=tool_generated_profile ($NOVA_SANDBOX_FILL policy refused)"; exit 1; }
+fi
 
 # ---- the runner --------------------------------------------------------------
 FAILED=0

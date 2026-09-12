@@ -62,6 +62,11 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	for i, w := range p.Writes {
 		name := fmt.Sprintf("WRITE%d", i)
 		writes = append(writes, fmt.Sprintf("(allow file-read* file-write* (subpath (param %q)))", name))
+		// The ONLY unix-domain socket reach this policy grants: a socket is a file, and
+		// a socket under the write set is the job's own. The SSH agent's socket under
+		// /private/tmp, the launchd Listeners socket and a sibling job's socket are all
+		// denied — which (allow network*) would not have been.
+		writes = append(writes, fmt.Sprintf("(allow network-outbound (subpath (param %q)))", name))
 		params = append(params, name+"="+w)
 	}
 	// The template names (param "HOME") unconditionally, so HOME is always passed. Build
@@ -69,21 +74,15 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	// the WRITEn grants did not already grant: it is the profile stating the requirement.
 	params = append(params, "HOME="+p.Home)
 
-	// The network grants, and they are deliberately NOT (allow network*). A second read
-	// of PR #70 found the defect and this build measured it on this Mac: (allow
-	// network*) grants every unix-domain socket too, so SSH_AUTH_SOCK's agent socket is
-	// connectable from inside the wall and the spec's "no SSH agent socket is reachable"
-	// is false. What is granted instead is IP, plus unix sockets under the write set —
-	// measured: a unix socket outside the write set is denied, one inside it connects,
-	// and TCP to the internet connects.
+	// Rule 7: IP only, never (allow network*), which grants every unix-domain socket on
+	// the machine as well — including an inherited SSH agent's. Inbound is not granted
+	// at all unless the caller asks with --net-listen: a job that does not listen cannot
+	// be listened to. Under --net-deny the marker is emitted empty.
 	var net string
-	if !p.NetDeny { // rule 7: under --net-deny every grant is WITHHELD and the line says net=denied
-		lines := []string{
-			`(allow network-outbound (remote ip "*:*"))`,
-			`(allow network-inbound (local ip "*:*"))`,
-		}
-		for i := range p.Writes {
-			lines = append(lines, fmt.Sprintf(`(allow network-outbound (remote unix-socket (subpath (param "WRITE%d"))))`, i))
+	if !p.NetDeny {
+		lines := []string{`(allow network-outbound (remote ip))`}
+		if p.NetListen {
+			lines = append(lines, `(allow network-inbound (local ip))`)
 		}
 		net = strings.Join(lines, "\n")
 	}

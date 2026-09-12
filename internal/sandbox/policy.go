@@ -57,31 +57,33 @@ func refuse(reason, format string, a ...any) Refusal {
 // Input is the argv as the caller typed it, before any resolution. Everything here is a
 // claim about this job; Build turns it into a Policy or into refusals.
 type Input struct {
-	Reads   []string
-	Writes  []string
-	Cwd     string // empty: the first --write (rule 13)
-	Tmp     string // empty: <first --write>/.nova-sandbox-tmp (rule 8)
-	Name    string // windows container name; accepted and ignored elsewhere
-	NetDeny bool
-	Argv    []string // the command and its arguments, everything after --
-	Home    string   // the caller's HOME as the child will see it (rule 9)
-	LookAt  string   // PATH to resolve the command on; empty means the process's own
+	Reads     []string
+	Writes    []string
+	Cwd       string // empty: the first --write (rule 13)
+	Tmp       string // empty: <first --write>/.nova-sandbox-tmp (rule 8)
+	Name      string // windows container name; accepted and ignored elsewhere
+	NetDeny   bool
+	NetListen bool
+	Argv      []string // the command and its arguments, everything after --
+	Home      string   // the caller's HOME as the child will see it (rule 9)
+	LookAt    string   // PATH to resolve the command on; empty means the process's own
 }
 
 // Policy is one run's wall: resolved, absolute, existing paths and nothing guessed. The
 // two named exceptions to "never guessed" are rule 4's, and both are recorded here as
 // the caller's own first --write.
 type Policy struct {
-	Reads    []string // resolved, read-only, recursive
-	Writes   []string // resolved, read+write, recursive; the first is load-bearing
-	OptRoots []string // the platform's optional roots that EXIST on this machine
-	Cwd      string
-	Tmp      string
-	Home     string
-	Name     string
-	NetDeny  bool
-	Command  string   // the resolved absolute path of the executable
-	Argv     []string // Command followed by its arguments, verbatim
+	Reads     []string // resolved, read-only, recursive
+	Writes    []string // resolved, read+write, recursive; the first is load-bearing
+	OptRoots  []string // the platform's optional roots that EXIST on this machine
+	Cwd       string
+	Tmp       string
+	Home      string
+	Name      string
+	NetDeny   bool
+	NetListen bool
+	Command   string   // the resolved absolute path of the executable
+	Argv      []string // Command followed by its arguments, verbatim
 }
 
 // Net is the word rule 7 puts on the SANDBOX OK line. There is no net=unenforced: a
@@ -227,7 +229,13 @@ func resolvePath(reason, flag, raw string) (string, *Refusal) {
 // creates exactly one directory, rule 8's, and only when the rest of the input is sound.
 func Build(in Input) (*Policy, []Refusal) {
 	var bad []Refusal
-	p := &Policy{NetDeny: in.NetDeny, Name: in.Name}
+	p := &Policy{NetDeny: in.NetDeny, NetListen: in.NetListen, Name: in.Name}
+
+	// --net-deny and --net-listen ask for opposite things, and a tool that picked one
+	// would be deciding which of the two the caller meant.
+	if in.NetDeny && in.NetListen {
+		bad = append(bad, refuse("bad_net", "--net-deny and --net-listen together: one asks for an enforced denial and the other for an inbound grant; pass at most one"))
+	}
 
 	if len(in.Argv) == 0 {
 		bad = append(bad, refuse("no_command", "nothing after --; usage: nova-sandbox --read <dir>... --write <dir>... -- <command> <args...>"))
@@ -424,16 +432,19 @@ func ChildEnv(env []string, tmp string) []string {
 	return append(out, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
 }
 
-// isAgentVar is the narrow list: a variable that names a running agent's SOCKET or its
-// pid, and nothing else. It is deliberately not "anything holding AGENT" — a worker's
-// environment is full of variables that say what is running it, and dropping those would
-// be this tool deciding what a caller may pass (rule 9: the environment passes through).
+// isAgentVar is rule 9's scrub, and it is by EXCLUSION on the name: SSH_AUTH_SOCK and
+// every variable whose name contains AGENT — SSH_AGENT_PID, GPG_AGENT_INFO, and whatever
+// the next agent invents, so a new one needs no new release. The wall denies the agent's
+// socket and the scrub removes its address; a command that would otherwise sign a push
+// with a key it cannot read has neither half. Everything else passes through untouched,
+// because rule 6's credential must still arrive.
+//
+// Measured cost of the width, recorded rather than narrowed: a worker's own environment
+// carried AI_AGENT and CLAUDE_AGENT_SDK_VERSION, and both are dropped. They are names
+// that say what is running the job, not addresses of anything, and the SANDBOX NOTE
+// names every variable dropped so that a reader sees it.
 func isAgentVar(name string) bool {
-	switch name {
-	case "SSH_AUTH_SOCK", "SSH_AGENT_PID", "GPG_AGENT_INFO":
-		return true
-	}
-	return strings.HasSuffix(name, "_AUTH_SOCK") || strings.HasSuffix(name, "_AGENT_SOCK") || strings.HasSuffix(name, "_AGENT_SOCKET")
+	return name == "SSH_AUTH_SOCK" || strings.Contains(name, "AGENT")
 }
 
 // DroppedEnv names the variables ChildEnv removes that are not the three temp ones, for

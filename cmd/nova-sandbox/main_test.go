@@ -432,3 +432,55 @@ func mustOutput(t *testing.T, name string, args ...string) string {
 	}
 	return string(out)
 }
+
+// profiles/darwin-check.sh, run against the profile THIS TOOL generates rather than the
+// one the script fills for itself. One text, filled two ways: if the generator and the
+// script ever disagree, this is where it shows, and it shows as a named check rather
+// than as a job that dies in its first second.
+func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
+	needDarwin(t)
+	root := repoRoot(t)
+	script := filepath.Join(root, "profiles", "darwin-check.sh")
+	if _, err := os.Stat(script); err != nil {
+		t.Skipf("skipped: %s is not in this checkout", script)
+	}
+	bin := filepath.Join(t.TempDir(), "nova-sandbox")
+	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-sandbox")
+	build.Dir = root
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building the tool: %v\n%s", err, out)
+	}
+	cmd := exec.Command("bash", script)
+	cmd.Dir = root
+	cmd.Env = append(os.Environ(), "NOVA_SANDBOX_FILL="+bin)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("darwin-check.sh against the tool's generated profile failed: %v\n%s", err, out)
+	}
+	if n := strings.Count(string(out), "CHECK OK name="); n < 20 {
+		t.Fatalf("only %d checks passed; the script prints twenty:\n%s", n, out)
+	}
+	if strings.Contains(string(out), "CHECK FAIL") {
+		t.Fatalf("a check failed against the tool's profile:\n%s", out)
+	}
+}
+
+// repoRoot walks up from this package to the module root, so the test can find the
+// script without a guessed path (SPEC.md: no guessed paths).
+func repoRoot(t *testing.T) string {
+	t.Helper()
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
+			return dir
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatal("no go.mod above this package")
+		}
+		dir = parent
+	}
+}
