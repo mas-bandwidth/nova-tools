@@ -27,7 +27,12 @@ var memoryAudit = audit.Config{
 	// through oneline.Escape and then that platform's shell quoting, and joins them with
 	// single spaces, so the echo is one line whatever an argument holds. The
 	// classifier walks each body like the others, so every claim here is checked.
-	Escapers: []string{"hitLine", "scoreFields", "chanNames", "hintFor", "commandLine"},
+	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
+	// every one of its four fields through oneline.Field inside internal/buildinfo, where
+	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
+	// a release stamp holding a newline, which is the one field of that line that comes
+	// from outside the toolchain.
+	Escapers: []string{"hitLine", "scoreFields", "chanNames", "hintFor", "commandLine", "buildinfo.Line"},
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
@@ -46,6 +51,11 @@ var memoryAudit = audit.Config{
 		"main.go|cmdVerify|*links":                "validated above the site to be exactly gate or info",
 	},
 	Imports: []string{
+		// version.go, and the reason it cannot write past the escape: buildinfo reads
+		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
+		// its own, and returns a STRING that this package prints -- rendered field by
+		// field through oneline.Field before it is returned.
+		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		// runtime is read for GOOS alone, in commandLine: which shell the echoed
 		// quickstart line has to paste into is a property of the machine printing it.
 		// It writes to no stream.

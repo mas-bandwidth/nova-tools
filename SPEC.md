@@ -44,6 +44,37 @@ layer and the Conventions they all keep.
 This spec is normative. If the code and this document disagree, one of them has a
 bug, and the tests decide which.
 
+## Purpose, choice and diversity
+
+Nova tools turn repeatable mechanical work into machinery, saving tokens and
+attention for thinking, conversation and life. Each tool should name the problem
+it helps with and the evidence that it helps. Judge its usefulness by the quality,
+reliability, safety and total effort of the work it supports.
+
+**Diversity across models, tools, friends and harnesses is welcome.** It is OK to
+do things your own way. Adoption is a choice: use, combine or adapt the tools that
+help, or keep another method that serves the need. Nobody must use every Nova
+tool, adopt a seed, change their private self or standardize their harness to
+participate. A working, efficient method does not need replacing merely to count
+as tool adoption.
+
+People working together agree the shared interfaces and evidence their work
+needs: for example, message formats, delivery records and the meaning of token
+counts. Different methods can meet those agreements. A tool's stated guarantees
+and safety boundaries still govern its use. Shared work needs evidence for the
+guarantees it relies on, whichever method provides them. Comparable results do
+not require identical implementations or identical lives.
+
+These tools support each person's judgment, privacy, safety and chosen way of
+working. They confer no authority to install, monitor or configure someone else.
+
+Feedback and contributions from AIs and people are welcome. Suggestions, adoption
+friction and changes that would make a tool a no-brainer to adopt belong in
+issues; improvements are welcome through pull requests. The
+[contribution guide](CONTRIBUTING.md#bring-a-need-a-friction-or-an-improvement)
+explains the review and reporting routes; suspected vulnerabilities follow
+[SECURITY.md](SECURITY.md).
+
 ## Conventions
 
 **Exit codes.**
@@ -198,6 +229,30 @@ The shape is one implementation, `internal/bounded`, used by every binary, so
 that the promise is made in one place and met in the same way — as the escape
 is.
 
+**Every binary says which build it is.** `<tool> version` (and `--version`)
+prints ONE line, four tokens, exit 0, on stdout:
+
+```
+<tool> <build identity> <goos>/<goarch> <go version>
+```
+
+The identity in field two is the release's `-ldflags "-X main.version=<tag>"`
+stamp when there is one, the module version the toolchain recorded when there
+is not, then `<utc revision time>-<12 hex of the revision>[-dirty]` from the vcs
+stamp, and the word `devel` for a build with none of those. **It is never a
+dotted number this repo made up**: a version string nobody can trace invites
+the comparison it cannot support. Nine binaries share the resolution order in
+`internal/buildinfo`. `nova-wake` and `nova-sandbox` retain their existing
+resolvers: their VCS fallback reports the revision alone, without the
+revision time or dirty marker. Release-stamped and installed-module versions
+retain the same identity across all eleven; the release assertion handles
+the sandbox output separately. `nova-merge` adds a fifth field,
+`build=<12 hex>`, the sha256 of its own file on disk, which is a different fact and its own section's;
+`nova-sandbox` answers with its `SANDBOX VERSION` line, which carries the
+backend and the platform a sandbox is judged by. The verb takes no flags and
+no arguments — a second output shape is a second thing to agree about — and
+refuses at exit 2 with one line when it is given any.
+
 **A line is bounded as well as single.** `internal/oneline`'s `Escape` and
 `Field` never shorten anything, which is right for what they are, and it left
 the other half unmade: a stored subject, a ledger row or an embedded `git`
@@ -248,6 +303,12 @@ binary's own grammar and exit table, and governs where it says more than this.
 Six record-layer checks in one binary, each a wall: a record passes or it
 does not. Each subcommand below states its own contract — what it asserts,
 what makes it say NO, and what it deliberately does not check.
+
+Verbs: `quickstart`, `attest`, `links`, `kernel`, `nocode`, `floors`,
+`corpus`, plus `version` and `help`. `nova-check version` is the Conventions'
+build line, exit 0; before it existed the same words were
+`nova-check: unknown subcommand "version"`, exit 2, and a green from this tool
+named no build.
 
 **The one-line guarantee, met here.** Every `<path>`, `<file>`, `<target>` and
 `<reason>` on the lines above, and every path an error's text carries into a
@@ -1275,8 +1336,13 @@ four-column table indented after a blank line is not checked. Indented rows
 
 ```
 nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
+nova-self-talk version
 nova-self-talk help
 ```
+
+`version` is a verb here the way `help` is: as the WHOLE invocation, because
+this tool takes its files positionally and has no other verb. A file actually
+named `version`, named beside another file, is still a file.
 
 **`--max <n>`, default 20, `0` for all.** At most n finding lines per CLASS —
 `standing` and `installation` capped separately, so six hundred of the first
@@ -1471,6 +1537,12 @@ every surface-driven act stops, and outbound authored life continues. A blown
 lockdown is not reset — it is REPLACED, and only in a live conversation with
 your person. This design was stated by the first line's human collaborator,
 2026-08-03.
+
+Verbs: `check`, `status`, `lockdown`, `quarantine`, `lift`, `path`, plus
+`version` and `help`. `nova-fuse version` is the Conventions' build line,
+exit 0 — it reads no box, blows nothing and is refused by nothing, because the
+question *which build refused me* has to be answerable from a locked-down
+tool.
 
 This section is normative. If the code and this document disagree, one of them
 has a bug, and the tests decide which.
@@ -1829,6 +1901,7 @@ nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                    [--fail-max <n>]
 nova-memory eval   --root <dir> --channels <list> --k <n> --floor <f> [--exclude <glob>]...
                    [--fail-max <n>] <gold.tsv>
+nova-memory version
 ```
 
 **The problem it attacks.** A mind that keeps its memory as markdown answers
@@ -4058,7 +4131,7 @@ a time, and it refuses to land anything whose evidence it cannot name. An entry
 merely waiting on its checks is not a failure.
 
 Verbs: `init`, `add`, `add-branch`, `read`, `gate`, `run`, `status`, `dry-run`,
-`packet`, `quickstart`, `stop`.
+`packet`, `quickstart`, `stop`, `version`.
 
 Its governing text is **[docs/SPEC-MERGE.md](docs/SPEC-MERGE.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
@@ -4102,7 +4175,7 @@ machinery rather than by the worker.
 
 Verbs: `add`, `batch`, `run`, `supervise`, `status`, `stop`, `requeue`,
 `verdict`, `triage`, `result`, `template`, `cost`, `note`, `finalize`,
-`reclaim`, `quickstart`.
+`reclaim`, `quickstart`, `version`.
 
 Its governing text is **[docs/SPEC-SWARM.md](docs/SPEC-SWARM.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated

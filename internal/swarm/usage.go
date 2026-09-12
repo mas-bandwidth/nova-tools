@@ -92,7 +92,9 @@ func (p *Pool) ReadUsage() ([]UsageRow, error) {
 }
 
 func readUsageFile(path string) (UsageRow, error) {
-	raw, err := os.ReadFile(path)
+	// The usage row is written by writeAtomic (WriteUsage) and read back by `report` and
+	// `reclaim` while a run is still finalizing other jobs: same rename, same collision.
+	raw, err := readFileSteady(path)
 	if err != nil {
 		return nil, err
 	}

@@ -43,7 +43,18 @@ var mergeAudit = audit.Config{
 		"verbs.go|cmdAdd|yn":                                            "the literals \"yes\" and \"no\", assigned from --needs-read above the site",
 		"verbs.go|cmdRead|current":                                      "the literals \"true\", \"false\" and \"-\", returned by standingOf in this file",
 	},
+	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
+	// every one of its four fields through oneline.Field inside internal/buildinfo, where
+	// TestLineShape and TestLineHoldsWhateverTheStampContains pin it -- including against
+	// a release stamp holding a newline, which is the one field of that line that comes
+	// from outside the toolchain.
+	Escapers: []string{"buildinfo.Line"},
 	Imports: []string{
+		// version.go, and the reason it cannot write past the escape: buildinfo reads
+		// debug.ReadBuildInfo and runtime's GOOS, GOARCH and Version, holds no writer of
+		// its own, and returns a STRING that this package prints -- rendered field by
+		// field through oneline.Field before it is returned.
+		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"crypto/sha256"`, `"encoding/hex"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`,
 		`"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,

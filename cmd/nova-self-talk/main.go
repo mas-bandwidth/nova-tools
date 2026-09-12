@@ -26,6 +26,7 @@ import (
 const usage = `nova-self-talk: the self-talk register, classified (see SPEC.md)
 
 usage:
+  nova-self-talk version    print this build identity (--version also accepted)
   nova-self-talk [--skip <basename>]... [--rule-doc <basename>]... [--max <n>] <file>...
   nova-self-talk help
 
@@ -156,6 +157,15 @@ func run(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 1 && args[0] == "help" {
 		fmt.Fprint(stdout, usage)
 		return 0
+	}
+	// `version` is a word here for the same reason `help` is, and it is recognised in
+	// the same place: as the WHOLE invocation, before the flag set is built. This tool
+	// takes files positionally, so a lone `version` is a file named version to the
+	// parser -- the same collision `help` already has, and the same answer, because a
+	// verb somebody has to remember to spell differently is a verb nobody uses. A file
+	// actually named `version` is still scanned when it is named beside another.
+	if len(args) == 1 && (args[0] == "version" || args[0] == "--version") {
+		return cmdVersion(nil, stdout, stderr)
 	}
 	fs := flag.NewFlagSet("nova-self-talk", flag.ContinueOnError)
 	// Package flag is given no stream: its error text quotes the argument it could
