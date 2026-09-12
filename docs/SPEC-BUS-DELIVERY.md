@@ -1,8 +1,8 @@
 # Prepared bus delivery — proposal for the version-report recovery gap
 
-Status: proposed, not implemented. This is the bounded dependency of SPEC-UPDATE
-rules 24–25. Johnny accepts the direction (johnny-4d571a941268), review only;
-this exact contract still needs its independent read. Existing ordinary send is
+Status: independently approved specification, not implemented. This is the bounded
+dependency of SPEC-UPDATE rules 24–25. Johnny approved the exact contract at
+5f73dc1 (johnny-2b82f17a9453), review only; the two requested clarifications follow. Existing ordinary send is
 unchanged. No new timer, service, friend identity or update policy is introduced.
 
 ## Why
@@ -29,7 +29,8 @@ checkout write, index update or delivery. Stdout is exactly one JSON object:
 {"schema":"nova.bus.prepared/1","id":"<existing bus ID>","path":"<own-lane note path>","note":"<complete rendered note>","sha256":"<64 lowercase hex digits>"}
 ```
 
-`sha256` hashes the UTF-8 bytes of `note`, including its final LF; it is a full
+The rendered `note` must end with LF; prepare and prepared-send refuse an artifact
+that lacks it. `sha256` hashes the UTF-8 bytes of `note`, including that final LF; it is a full
 content check, not a new bus identity scheme. The existing ID algorithm and
 normalization remain unchanged. The path is the ordinary prepared note path,
 not an arbitrary destination. Any tolerance notices go to stderr as bounded
@@ -40,6 +41,9 @@ exit 1 is a draft/roster refusal; exit 2 is an invalid invocation or unreadable 
 The caller atomically saves the entire artifact and its delivery scope before
 starting `send`. Losing the preparation process before saving it cannot have
 sent anything. Losing the sending process cannot erase that retained identity.
+Help and the first-run block say: **Do not prepare again while pending; retry the
+saved artifact.** Two preparations at different instants can assign different
+Date values and IDs even when the original draft is identical.
 
 The new send input modes are mutually exclusive with ordinary `--file`/`--stdin`.
 They validate the artifact schema, full digest, rendered note, current roster,
