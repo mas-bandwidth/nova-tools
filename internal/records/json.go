@@ -80,7 +80,7 @@ func parseFrom(dec *json.Decoder, tok json.Token, field string, skip map[string]
 		switch t {
 		case '{':
 			o := &Object{}
-			for {
+			for i := 0; ; i++ {
 				kt, err := dec.Token()
 				if err != nil {
 					return nil, refuse(RuleNotJSON, field, "the document does not parse")
@@ -92,7 +92,7 @@ func parseFrom(dec *json.Decoder, tok json.Token, field string, skip map[string]
 				if !ok {
 					return nil, refuse(RuleNotJSON, field, "a member name is not a string")
 				}
-				child := field + "." + key
+				child := indexPath(field, i)
 				if _, dup := o.vals[key]; dup && !skip[RuleDuplicateKey] {
 					return nil, refuse(RuleDuplicateKey, child, "the member name occurs twice")
 				}

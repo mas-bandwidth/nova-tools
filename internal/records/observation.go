@@ -104,18 +104,7 @@ var (
 	// noOffsetTimestamp is the same instant written without one, checked only so the
 	// refusal can name the missing offset instead of a generic syntax failure.
 	noOffsetTimestamp = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?$`)
-	// safeKeyLexeme matches standard lowercase identifier keys [a-z0-9_]{1,64}.
-	// Unsupported member names that fail this are not echoed into diagnostics,
-	// keeping arbitrary prompt, private path, or newline-forged data out of diagnostics.
-	safeKeyLexeme = regexp.MustCompile(`^[a-z0-9_]{1,64}$`)
 )
-
-func safeField(path, key string) string {
-	if safeKeyLexeme.MatchString(key) {
-		return path + "." + key
-	}
-	return path
-}
 
 // A Validator performs the publisher boundary's structural validation. It holds the
 // mapping-supplied allowlists and nothing else: it opens no file, resolves no path and
@@ -524,10 +513,9 @@ func (v *Validator) repository(body *Object) (Repository, error) {
 func (v *Validator) rawUsage(o *Object, p string) (map[string]RawField, error) {
 	allow := v.allow.rawUsage()
 	out := map[string]RawField{}
-	for _, name := range o.Keys() {
-		fp := safeField(p, name)
+	for i, name := range o.Keys() {
 		if !allow[name] {
-			if err := v.refused(RuleFieldNotAllowlisted, fp, "the field is not in the mapping's raw usage allowlist"); err != nil {
+			if err := v.refused(RuleFieldNotAllowlisted, indexPath(p, i), "the field is not in the mapping's raw usage allowlist"); err != nil {
 				return nil, err
 			}
 		}
@@ -535,6 +523,7 @@ func (v *Validator) rawUsage(o *Object, p string) (map[string]RawField, error) {
 		if err != nil {
 			return nil, err
 		}
+		fp := p + "." + name
 		if err := v.exactKeys(fo, fp, "presence", "value", "number_kind", "unit", "reason"); err != nil {
 			return nil, err
 		}
@@ -608,7 +597,7 @@ func (v *Validator) rawUsage(o *Object, p string) (map[string]RawField, error) {
 	if p == "body.raw_usage" {
 		for _, req := range sortedSet(v.allow.RawUsageFields) {
 			if _, ok := o.Get(req); !ok {
-				if err := v.refused(RuleMissingField, safeField(p, req), "the mapping requires every supported field to have an entry"); err != nil {
+				if err := v.refused(RuleMissingField, p+"."+req, "the mapping requires every supported field to have an entry"); err != nil {
 					return nil, err
 				}
 			}
@@ -668,20 +657,23 @@ func (v *Validator) receipt(body *Object) (map[string]string, error) {
 	p := "body.receipt"
 	allow := v.allow.receipt()
 	out := map[string]string{}
-	for _, name := range o.Keys() {
-		fp := safeField(p, name)
+	for i, name := range o.Keys() {
 		if !allow[name] {
 			// This is the rule that keeps a prompt, a private filename or a source blob
 			// out of a shared file: a receipt carries mapping-allowlisted native locator
 			// fields and nothing else, and an unknown one is refused rather than dropped.
-			if err := v.refused(RuleReceiptNotAllowed, fp, "a receipt carries only mapping-allowlisted native locator fields"); err != nil {
+			if err := v.refused(RuleReceiptNotAllowed, indexPath(p, i), "a receipt carries only mapping-allowlisted native locator fields"); err != nil {
 				return nil, err
 			}
 		}
 		val, _ := o.Get(name)
 		str, ok := val.(string)
 		if !ok {
-			return nil, refuse(RuleWrongType, fp, "a receipt value is a string")
+			loc := indexPath(p, i)
+			if allow[name] {
+				loc = p + "." + name
+			}
+			return nil, refuse(RuleWrongType, loc, "a receipt value is a string")
 		}
 		out[name] = str
 	}
@@ -693,9 +685,9 @@ func (v *Validator) receipt(body *Object) (map[string]string, error) {
 
 func (v *Validator) exactKeys(o *Object, path string, want ...string) error {
 	allowed := set(want)
-	for _, k := range o.Keys() {
+	for i, k := range o.Keys() {
 		if !allowed[k] {
-			if err := v.refused(RuleUnknownField, safeField(path, k), "the field is outside this schema's allowlist"); err != nil {
+			if err := v.refused(RuleUnknownField, indexPath(path, i), "the field is outside this schema's allowlist"); err != nil {
 				return err
 			}
 		}

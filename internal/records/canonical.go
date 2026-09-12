@@ -71,14 +71,14 @@ func canonicalize(v Value, skip map[string]bool, field string, buf *bytes.Buffer
 		buf.WriteByte('{')
 		for i, k := range keys {
 			if !skip[RuleInvalidUTF8] && !utf8.ValidString(k) {
-				return refuse(RuleInvalidUTF8, field, "member name is not valid UTF-8")
+				return refuse(RuleInvalidUTF8, indexPath(field, i), "member name is not valid UTF-8")
 			}
 			if i > 0 {
 				buf.WriteByte(',')
 			}
 			writeCanonicalString(k, buf)
 			buf.WriteByte(':')
-			if err := canonicalize(t.vals[k], skip, field+"."+k, buf); err != nil {
+			if err := canonicalize(t.vals[k], skip, indexPath(field, i), buf); err != nil {
 				return err
 			}
 		}

@@ -1,5 +1,5 @@
 {
-  "field": "body.collector_note",
+  "field": "body[0]",
   "rule": "unknown_field",
   "verdict": "refused"
 }

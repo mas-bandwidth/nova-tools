@@ -76,6 +76,48 @@ func TestStellaCanonicalAPICannotEmitInvalidUTF8(t *testing.T) {
 	}
 }
 
+func TestStellaDiagnosticSourceNamesStayPrivate(t *testing.T) {
+	const sentinel = "synthetic_private_sentinel"
+	t.Run("structural", func(t *testing.T) {
+		body, allow := stellaFixture(t)
+		body.set(sentinel, "synthetic")
+		raw, _, err := Seal(body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = NewValidator(allow).ValidateEnvelope(raw)
+		if err == nil {
+			t.Fatal("unexpected acceptance")
+		}
+		if strings.Contains(err.Error(), sentinel) {
+			t.Fatalf("source name leaked: %s", err)
+		}
+	})
+	for name, raw := range map[string]string{
+		"duplicate": `{"synthetic_private_sentinel":"a","synthetic_private_sentinel":"b"}`,
+		"number":    `{"synthetic_private_sentinel":1}`,
+		"malformed": `{"synthetic_private_sentinel":`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := parseStrict([]byte(raw), nil, "envelope")
+			if err == nil {
+				t.Fatal("unexpected acceptance")
+			}
+			if strings.Contains(err.Error(), sentinel) {
+				t.Fatalf("source name leaked: %s", err)
+			}
+		})
+	}
+}
+
+func TestStellaCanonicalRejectsInvalidUTF8MemberName(t *testing.T) {
+	o := &Object{}
+	o.set(string([]byte{0xff}), "synthetic")
+	if _, err := Canonicalize(o); err == nil {
+		t.Fatal("invalid UTF-8 member name accepted")
+	}
+}
+
 func TestAntigravity129Join134Validator(t *testing.T) {
 	// 1. Explicit per-source mapping allowlist for Antigravity synthetic source
 	allow := Allowlists{
