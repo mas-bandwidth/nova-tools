@@ -80,7 +80,11 @@ func DarwinProfile(p *Policy) (text string, params []string, err error) {
 	// be listened to. Under --net-deny the marker is emitted empty.
 	var net string
 	if !p.NetDeny {
-		lines := []string{`(allow network-outbound (remote ip))`}
+		// The mDNSResponder socket is the DNS grant (rule 7): macOS resolves names over
+		// that unix socket, so IP-only outbound without it is a wall with a network and
+		// no name resolution — measured rc=6/000 without, 200 with. It sits inside this
+		// branch so that --net-deny takes the resolver away with the network.
+		lines := []string{`(allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))`}
 		if p.NetListen {
 			lines = append(lines, `(allow network-inbound (local ip))`)
 		}

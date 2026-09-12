@@ -176,12 +176,23 @@ func parse(args []string) flags {
 
 // refuseAll prints one SANDBOX REFUSED line per independent problem — rule 16 asks for
 // every problem at once, and one line per problem is how a scanner reads them — and
-// returns the status of the first, which is 125 for everything but not_found.
+// returns 125 unless EVERY problem is not_found, in which case it returns 127. Returning
+// the first problem's code made the status depend on the order the flags were typed: two
+// problems, one of them a missing command, exited 127 or 125 by argv order. 125 is the
+// tool's own refusal and it is the answer whenever anything but "the command is not
+// there" is among the reasons.
 func refuseAll(stderr io.Writer, bad []sandbox.Refusal) int {
+	allNotFound := true
 	for _, r := range bad {
 		fmt.Fprintf(stderr, "SANDBOX REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.Escape(r.Text))
+		if r.Reason != "not_found" {
+			allNotFound = false
+		}
 	}
-	return bad[0].Code()
+	if allNotFound {
+		return sandbox.ExitNotFound
+	}
+	return sandbox.ExitRefused
 }
 
 func homeOf(env []string) string {

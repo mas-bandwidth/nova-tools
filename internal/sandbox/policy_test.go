@@ -226,7 +226,7 @@ func TestDarwinProfileIsGenerated(t *testing.T) {
 		t.Fatal("(allow network*) grants every unix-domain socket, including the SSH agent's")
 	}
 	for _, want := range []string{
-		`(allow network-outbound (remote ip))`,
+		`(allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))`,
 		`(allow network-outbound (subpath (param "WRITE0")))`,
 		`(allow file-read* (subpath (param "READ0")))`,
 		`(allow file-read* file-write* (subpath (param "WRITE0")))`,
@@ -311,5 +311,66 @@ func TestInboundIsOnlyGrantedWhenAsked(t *testing.T) {
 	iv.NetDeny, iv.NetListen = true, true
 	if _, bad := Build(iv); len(bad) == 0 || bad[0].Reason != "bad_net" {
 		t.Fatalf("--net-deny with --net-listen was accepted: %v", bad)
+	}
+}
+
+// Rule 9, revision 7: the scrub set is exactly what the spec names. AI_AGENT and
+// CLAUDE_AGENT_SDK_VERSION are names that say what is RUNNING the job; they address
+// nothing and must arrive, or the SANDBOX NOTE line is a false statement.
+func TestScrubSetIsExactlyTheSpecs(t *testing.T) {
+	caller := []string{
+		"SSH_AUTH_SOCK=/private/tmp/agent.sock",
+		"SSH_AGENT_PID=4242",
+		"GPG_AGENT_INFO=/private/tmp/gpg:1:1",
+		"PODMAN_AGENT_SOCK=/private/tmp/p.sock",
+		"AI_AGENT=rowan",
+		"CLAUDE_AGENT_SDK_VERSION=1.2.3",
+		"FOO_TOKEN=secret-that-must-arrive",
+	}
+	got := map[string]bool{}
+	for _, kv := range ChildEnv(caller, "/w/.nova-sandbox-tmp") {
+		name, _, _ := strings.Cut(kv, "=")
+		got[name] = true
+	}
+	for _, gone := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID", "GPG_AGENT_INFO", "PODMAN_AGENT_SOCK"} {
+		if got[gone] {
+			t.Errorf("%s survived the scrub", gone)
+		}
+	}
+	for _, kept := range []string{"AI_AGENT", "CLAUDE_AGENT_SDK_VERSION", "FOO_TOKEN"} {
+		if !got[kept] {
+			t.Errorf("%s was dropped; it names what runs the job, not an address", kept)
+		}
+	}
+	dropped := strings.Join(DroppedEnv(caller), " ")
+	if strings.Contains(dropped, "AI_AGENT") || strings.Contains(dropped, "CLAUDE_AGENT_SDK_VERSION") {
+		t.Errorf("the NOTE line claims to have dropped a variable it did not: %q", dropped)
+	}
+}
+
+// Rule 7, revision 7: mach-lookup is narrowed and the unqualified form is gone.
+func TestMachLookupIsNarrowed(t *testing.T) {
+	write, read, home, _ := scratch(t)
+	pol, bad := Build(in(t, write, read, home, "/bin/echo"))
+	if len(bad) > 0 {
+		t.Fatalf("refused: %v", bad)
+	}
+	text, _, err := DarwinProfile(pol)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.TrimSpace(line) == "(allow mach-lookup)" {
+			t.Fatal("the template still carries the unqualified (allow mach-lookup): pbpaste reads the clipboard under it")
+		}
+	}
+	for _, name := range []string{
+		"com.apple.system.opendirectoryd.libinfo",
+		"com.apple.SecurityServer",
+		"com.apple.system.logger",
+	} {
+		if !strings.Contains(text, name) {
+			t.Errorf("the measured mach-lookup set is missing %s", name)
+		}
 	}
 }

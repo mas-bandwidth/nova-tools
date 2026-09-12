@@ -432,19 +432,32 @@ func ChildEnv(env []string, tmp string) []string {
 	return append(out, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
 }
 
-// isAgentVar is rule 9's scrub, and it is by EXCLUSION on the name: SSH_AUTH_SOCK and
-// every variable whose name contains AGENT — SSH_AGENT_PID, GPG_AGENT_INFO, and whatever
-// the next agent invents, so a new one needs no new release. The wall denies the agent's
+// isAgentVar is rule 9's scrub, and it is by EXCLUSION on the name. Revision 7 states the
+// set exactly: SSH_AUTH_SOCK, SSH_AGENT_*, GPG_AGENT_INFO and any *_AGENT_PID/INFO/SOCK. The wall denies the agent's
 // socket and the scrub removes its address; a command that would otherwise sign a push
 // with a key it cannot read has neither half. Everything else passes through untouched,
 // because rule 6's credential must still arrive.
 //
-// Measured cost of the width, recorded rather than narrowed: a worker's own environment
-// carried AI_AGENT and CLAUDE_AGENT_SDK_VERSION, and both are dropped. They are names
-// that say what is running the job, not addresses of anything, and the SANDBOX NOTE
-// names every variable dropped so that a reader sees it.
+// The previous "name contains AGENT" width dropped AI_AGENT and CLAUDE_AGENT_SDK_VERSION,
+// which are names that say what is RUNNING the job and address nothing. Under the set
+// above both pass through, and the SANDBOX NOTE line is true as it is written.
 func isAgentVar(name string) bool {
-	return name == "SSH_AUTH_SOCK" || strings.Contains(name, "AGENT")
+	switch name {
+	case "SSH_AUTH_SOCK", "GPG_AGENT_INFO":
+		return true
+	}
+	if strings.HasPrefix(name, "SSH_AGENT_") {
+		return true
+	}
+	// *_AGENT_PID / *_AGENT_INFO / *_AGENT_SOCK: an agent's pid, address or socket under
+	// whatever prefix the next agent invents. AI_AGENT and CLAUDE_AGENT_SDK_VERSION end
+	// in none of these and pass through, which is what makes the NOTE line true.
+	for _, suffix := range []string{"_AGENT_PID", "_AGENT_INFO", "_AGENT_SOCK"} {
+		if strings.HasSuffix(name, suffix) {
+			return true
+		}
+	}
+	return false
 }
 
 // DroppedEnv names the variables ChildEnv removes that are not the three temp ones, for

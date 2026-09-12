@@ -8,12 +8,10 @@
 package sandbox
 
 import (
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 )
 
@@ -29,7 +27,15 @@ const ABI = "-"
 const sandboxExecPath = "/usr/bin/sandbox-exec"
 
 // Available answers rule 1's question for this machine: is the backend there at all?
-func Available() (string, bool) {
+// available is the seam rule 1's refusal is tested through: a test sets it to a function
+// that says no, and the tool must then REFUSE rather than run. It is a variable and not a
+// build tag because the refusal is the behaviour under test, not the platform.
+var available = lookupSandboxExec
+
+// Available answers rule 1's question for this machine: is the backend there at all?
+func Available() (string, bool) { return available() }
+
+func lookupSandboxExec() (string, bool) {
 	if p, err := exec.LookPath("sandbox-exec"); err == nil {
 		return p, true
 	}
@@ -52,6 +58,11 @@ func Note() string {
 // with. A Refusal returned here is the tool saying NO before the command ran; it is
 // fatal either way, because there is no fallback and no degraded mode (rule 1).
 func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okLine func()) (int, error) {
+	// Rule 2: no root. The wall is a wall for an ordinary user, and a policy applied by
+	// a root process is a different thing than the one this spec describes.
+	if os.Geteuid() == 0 {
+		return ExitRefused, refuse("sandbox_failed", "this tool does not run as root: rule 2 is that the wall holds for an ordinary unprivileged user, and a root child is outside what this policy was measured against")
+	}
 	backend, ok := Available()
 	if !ok {
 		return ExitRefused, refuse("no_sandbox", "sandbox-exec is on no PATH entry and is not at %s; this tool does not run a command it cannot contain", sandboxExecPath)
@@ -61,15 +72,9 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 		return ExitRefused, refuse("sandbox_failed", "the profile could not be generated: %v", err)
 	}
 
-	// The filled profile lives inside the first --write, at 0600, under a name the tool
-	// chooses, and is removed when the command ends — which is why this body waits.
-	profile := filepath.Join(p.Writes[0], fmt.Sprintf("%s%d.sb", profileFilePrefx, os.Getpid()))
-	if err := os.WriteFile(profile, []byte(text), profileFilePerm); err != nil {
-		return ExitRefused, refuse("sandbox_failed", "the generated profile could not be written to %s: %v", profile, err)
-	}
-	defer os.Remove(profile)
-
-	argv := []string{"-f", profile}
+	// Rule 12 / revision 7: the profile is passed INLINE. No file, so nothing in the
+	// write set to race with and nothing to unlink on a signal death.
+	argv := []string{"-p", text}
 	for _, kv := range params {
 		argv = append(argv, "-D", kv)
 	}
