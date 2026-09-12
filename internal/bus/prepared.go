@@ -483,7 +483,26 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			if !HasExactTrailer(body, wantTrailer) {
 				return PushResult{}, fmt.Errorf("branch has ahead commits that are not this prepared send; %s", pullRebaseAdvice)
 			}
-			diffOut, _ := git(busDir, "diff-tree", "--no-commit-id", "--name-only", "-r", sha)
+			// Refuse ahead merge commits outright
+			parentsOut, err := git(busDir, "rev-list", "--parents", "-n", "1", sha)
+			if err == nil {
+				parts := strings.Fields(parentsOut)
+				if len(parts) > 2 {
+					return PushResult{}, fmt.Errorf("ahead commit %s is a merge commit; prepared delivery does not publish merge commits; %s", sha, pullRebaseAdvice)
+				}
+			}
+			// Validate full tree against ref
+			diffRefOut, _ := git(busDir, "diff-tree", "--no-commit-id", "--name-only", "-r", ref, sha)
+			for _, touched := range strings.Split(strings.TrimSpace(diffRefOut), "\n") {
+				touched = strings.TrimSpace(touched)
+				if touched == "" {
+					continue
+				}
+				if touched != art.Path && touched != refIndexPath && touched != AttributesName {
+					return PushResult{}, fmt.Errorf("ahead commit %s touches unrelated path %s; %s", sha, touched, pullRebaseAdvice)
+				}
+			}
+			diffOut, _ := git(busDir, "diff-tree", "--no-commit-id", "--name-only", "-r", "-m", sha)
 			for _, touched := range strings.Split(strings.TrimSpace(diffOut), "\n") {
 				touched = strings.TrimSpace(touched)
 				if touched == "" {
@@ -596,6 +615,17 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			return PushResult{}, fmt.Errorf("ahead commits have unrelated changes in %s; %s", refIndexPath, pullRebaseAdvice)
 		}
 
+		diffHeadRef, _ := git(busDir, "diff-tree", "--no-commit-id", "--name-only", "-r", ref, "HEAD")
+		for _, touched := range strings.Split(strings.TrimSpace(diffHeadRef), "\n") {
+			touched = strings.TrimSpace(touched)
+			if touched == "" {
+				continue
+			}
+			if touched != art.Path && touched != refIndexPath && touched != AttributesName {
+				return PushResult{}, fmt.Errorf("ahead commits touch unrelated path %s; %s", touched, pullRebaseAdvice)
+			}
+		}
+
 		if !headHasIndex {
 			fullIndexPath := filepath.Join(busDir, filepath.FromSlash(refIndexPath))
 			needAppend := true
@@ -630,15 +660,24 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			}
 			id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
 			if _, err := git(busDir, append([]string{"add"}, pathsToStage...)...); err != nil {
+				if isIndexLockError(busDir, err) {
+					return PushResult{}, fmt.Errorf("prepared delivery %s: git index is locked by %s; if an interrupted process died, remove the stale lock and retry", art.ID, filepath.Join(busDir, ".git", "index.lock"))
+				}
 				return PushResult{}, err
 			}
 			if ahead == 1 {
 				if _, err := git(busDir, append(identityArgs(id), "commit", "--amend", "--no-edit")...); err != nil {
+					if isIndexLockError(busDir, err) {
+						return PushResult{}, fmt.Errorf("prepared delivery %s: git index is locked by %s; if an interrupted process died, remove the stale lock and retry", art.ID, filepath.Join(busDir, ".git", "index.lock"))
+					}
 					return PushResult{}, err
 				}
 			} else {
 				msg := WithTrailer(p.Message, wantTrailer)
 				if _, err := git(busDir, append(identityArgs(id), "commit", "-m", msg)...); err != nil {
+					if isIndexLockError(busDir, err) {
+						return PushResult{}, fmt.Errorf("prepared delivery %s: git index is locked by %s; if an interrupted process died, remove the stale lock and retry", art.ID, filepath.Join(busDir, ".git", "index.lock"))
+					}
 					return PushResult{}, err
 				}
 			}
@@ -706,6 +745,9 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 		msg := WithTrailer(p.Message, wantTrailer)
 		cSha, err := stageAndCommit(busDir, id, paths, msg)
 		if err != nil {
+			if isIndexLockError(busDir, err) {
+				return PushResult{}, fmt.Errorf("prepared delivery %s: git index is locked by %s; if an interrupted process died, remove the stale lock and retry", art.ID, filepath.Join(busDir, ".git", "index.lock"))
+			}
 			return PushResult{}, err
 		}
 		reusedCommit = cSha
@@ -757,4 +799,17 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 		res.Commit = headSha
 	}
 	return res, fmt.Errorf("the push was refused %d times; your commit %s is on the branch and was NOT pushed; the next run of this tool will carry it, or land it now with `git pull --rebase && git push`", res.Attempts, res.Commit)
+}
+
+func isIndexLockError(busDir string, err error) bool {
+	if err == nil {
+		return false
+	}
+	if strings.Contains(err.Error(), "index.lock") {
+		return true
+	}
+	if _, statErr := os.Stat(filepath.Join(busDir, ".git", "index.lock")); statErr == nil {
+		return true
+	}
+	return false
 }

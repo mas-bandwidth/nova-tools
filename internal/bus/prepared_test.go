@@ -697,3 +697,63 @@ func TestSendPreparedChildExecutionAndRecovery(t *testing.T) {
 		t.Fatalf("subsequent recovery child failed: %v\noutput:\n%s", err, string(outRec))
 	}
 }
+
+func TestRowanProbeAheadMergeCommitPublishesUnrelatedTree(t *testing.T) {
+	bare, clone, p, a := stellaIndependentPrepared(t)
+	id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
+	msg := WithTrailer(p.Message, TrailerSend+" "+a.ID)
+	if err := p.Save(clone); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.AppendIndex(clone); err != nil {
+		t.Fatal(err)
+	}
+	noteSha, err := stageAndCommit(clone, id, []string{p.Path, IndexPath(p.Sender.Lane)}, msg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := git(clone, "rev-parse", "origin/main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(clone, "SYNTHETIC_UNRELATED_LEAK.txt"), []byte("synthetic unrelated payload\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(clone, "add", "SYNTHETIC_UNRELATED_LEAK.txt"); err != nil {
+		t.Fatal(err)
+	}
+	tree, err := git(clone, "write-tree")
+	if err != nil {
+		t.Fatal(err)
+	}
+	merge, err := git(clone, append(identityArgs(id), "commit-tree", strings.TrimSpace(tree),
+		"-p", strings.TrimSpace(noteSha), "-p", strings.TrimSpace(base), "-m", msg)...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(clone, "reset", "--hard", strings.TrimSpace(merge)); err != nil {
+		t.Fatal(err)
+	}
+	r, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+	if e == nil && r.Pushed {
+		if _, err := git(bare, "show", "main:SYNTHETIC_UNRELATED_LEAK.txt"); err == nil {
+			t.Fatal("published unrelated content through an ahead merge commit")
+		}
+	}
+}
+
+func TestRowanProbeStaleIndexLock(t *testing.T) {
+	_, clone, p, a := stellaIndependentPrepared(t)
+	lockFile := filepath.Join(clone, ".git", "index.lock")
+	if err := os.WriteFile(lockFile, []byte("stale lock\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Remove(lockFile)
+	_, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+	if err == nil {
+		t.Fatal("expected error with index.lock present")
+	}
+	if !strings.Contains(err.Error(), "index is locked") || !strings.Contains(err.Error(), a.ID) {
+		t.Fatalf("expected bounded index lock refusal with prepared ID %q, got: %v", a.ID, err)
+	}
+}
