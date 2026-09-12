@@ -553,6 +553,19 @@ alive, and it is a no-op with `FINALIZE OK` if the file already exists. `run`
 does the same thing for every ended job it adopts or reclaims, so the verb is
 for a person and never for a loop.
 
+(2026-09-12: a slot file that cannot be READ, and a slot file that is GONE,
+never authenticate worker-written evidence. `finalize` reads the slot file
+first; a read ERROR is a refusal that names the slot path, and an ABSENT slot
+file is accepted only when a record the tool itself wrote outside the worker's
+write set — the usage file — proves the job was already finalized; otherwise
+the worker-written `exit.json` is refused and the outcome stays `unknown`.
+Likewise the supervisor publishes the per-launch attestation only after it has
+confirmed the job's process group is dead, using the identity it retained at
+launch — the pgid and start stamp it recorded when it started the harness,
+never the worker-writable pid file — and if the group cannot be confirmed dead
+by the deadline it writes `exit.json` without the attestation and with
+`end=unknown`.)
+
 `--files <n>` is the file budget (rule 4). It has no default: a budget this
 tool supplied would be a guess about somebody else's task. Zero is refused,
 because a worker that may open no file is a worker asked for a plan.
