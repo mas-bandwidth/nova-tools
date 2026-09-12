@@ -1,0 +1,331 @@
+package bus
+
+import (
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+func TestMakeAndValidatePreparedArtifact(t *testing.T) {
+	t.Parallel()
+	root := writeBus(t, nil)
+	tab := loadBus(t, root)
+	now := at("2026-09-12T12:00:00Z")
+
+	draft := "From: Ada\nTo: Bo\nSubject: Prepared test\n\nTesting prepared artifact round-trip.\n"
+	p, err := PrepareDraft(tab, draft, now, "prepared-test", "Ada")
+	if err != nil {
+		t.Fatalf("PrepareDraft: %v", err)
+	}
+
+	art, err := MakePreparedArtifact(p)
+	if err != nil {
+		t.Fatalf("MakePreparedArtifact: %v", err)
+	}
+	if art.Schema != PreparedSchema {
+		t.Fatalf("art.Schema = %q, want %q", art.Schema, PreparedSchema)
+	}
+	if !strings.HasSuffix(art.Note, "\n") {
+		t.Fatal("art.Note must end with LF")
+	}
+	if len(art.SHA256) != 64 {
+		t.Fatalf("art.SHA256 length = %d, want 64", len(art.SHA256))
+	}
+
+	raw, err := json.Marshal(art)
+	if err != nil {
+		t.Fatalf("json.Marshal: %v", err)
+	}
+
+	// Successful validation
+	c := tab.Config
+	gotArt, gotP, err := ValidatePreparedArtifact(raw, root, c, "Ada")
+	if err != nil {
+		t.Fatalf("ValidatePreparedArtifact: %v", err)
+	}
+	if gotArt.ID != art.ID || gotP.Note.Header.ID != art.ID {
+		t.Fatalf("id mismatch: got %q, want %q", gotArt.ID, art.ID)
+	}
+
+	// Failure: malformed json
+	if _, _, err := ValidatePreparedArtifact([]byte("not-json"), root, c, "Ada"); err == nil {
+		t.Fatal("ValidatePreparedArtifact accepted malformed JSON")
+	}
+
+	// Failure: bad schema
+	badSchema := art
+	badSchema.Schema = "nova.bus.prepared/99"
+	badRaw, _ := json.Marshal(badSchema)
+	if _, _, err := ValidatePreparedArtifact(badRaw, root, c, "Ada"); err == nil {
+		t.Fatal("ValidatePreparedArtifact accepted bad schema")
+	}
+
+	// Failure: invalid sha256
+	badSHA := art
+	badSHA.SHA256 = "invalid-sha"
+	badRaw, _ = json.Marshal(badSHA)
+	if _, _, err := ValidatePreparedArtifact(badRaw, root, c, "Ada"); err == nil {
+		t.Fatal("ValidatePreparedArtifact accepted invalid sha256")
+	}
+
+	// Failure: digest mismatch
+	badDigest := art
+	badDigest.SHA256 = strings.Repeat("0", 64)
+	badRaw, _ = json.Marshal(badDigest)
+	if _, _, err := ValidatePreparedArtifact(badRaw, root, c, "Ada"); err == nil {
+		t.Fatal("ValidatePreparedArtifact accepted mismatched digest")
+	}
+
+	// Failure: missing LF
+	noLF := art
+	noLF.Note = strings.TrimRight(art.Note, "\n")
+	noLF.SHA256 = MakeSHA256(noLF.Note)
+	badRaw, _ = json.Marshal(noLF)
+	if _, _, err := ValidatePreparedArtifact(badRaw, root, c, "Ada"); err == nil {
+		t.Fatal("ValidatePreparedArtifact accepted note without final LF")
+	}
+
+	// Failure: outside lane path
+	outsideLane := art
+	outsideLane.Path = "from-bo/" + filepath.Base(art.Path)
+	badRaw, _ = json.Marshal(outsideLane)
+	if _, _, err := ValidatePreparedArtifact(badRaw, root, c, "Ada"); err == nil {
+		t.Fatal("ValidatePreparedArtifact accepted path outside sender lane")
+	}
+
+	// Failure: path traversal
+	traversal := art
+	traversal.Path = "../outside.md"
+	badRaw, _ = json.Marshal(traversal)
+	if _, _, err := ValidatePreparedArtifact(badRaw, root, c, "Ada"); err == nil {
+		t.Fatal("ValidatePreparedArtifact accepted path leaving root")
+	}
+
+	// Failure: speaker mismatch
+	if _, _, err := ValidatePreparedArtifact(raw, root, c, "Bo"); err == nil {
+		t.Fatal("ValidatePreparedArtifact accepted mismatched speaker")
+	}
+
+	// Failure: tampered body with same ID
+	tampered := art
+	tampered.Note = strings.Replace(art.Note, "Testing", "Tampered", 1)
+	tampered.SHA256 = MakeSHA256(tampered.Note)
+	badRaw, _ = json.Marshal(tampered)
+	if _, _, err := ValidatePreparedArtifact(badRaw, root, c, "Ada"); err == nil {
+		t.Fatal("ValidatePreparedArtifact accepted note with tampered body and mismatched id")
+	}
+}
+
+func MakeSHA256(s string) string {
+	var art PreparedArtifact
+	art.Note = s
+	p := Prepared{Note: Note{}}
+	// Quick helper for test
+	p.Note.Header.ID = "dummy"
+	h, _ := MakePreparedArtifact(Prepared{Note: Note{Body: s}})
+	return h.SHA256
+}
+
+func TestSendPreparedArtifactAlreadyPublished(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+	tab := loadBus(t, clone)
+	now := at("2026-09-12T14:00:00Z")
+
+	draft := "From: Ada\nTo: Bo\nSubject: Fresh publish\n\nA note to test already-published.\n"
+	p, err := PrepareDraft(tab, draft, now, "fresh-publish", "Ada")
+	if err != nil {
+		t.Fatalf("PrepareDraft: %v", err)
+	}
+	art, err := MakePreparedArtifact(p)
+	if err != nil {
+		t.Fatalf("MakePreparedArtifact: %v", err)
+	}
+
+	// First send: should publish
+	res1, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3)
+	if err != nil {
+		t.Fatalf("SendPreparedArtifact first send: %v", err)
+	}
+	if !res1.Pushed || res1.State != "published" {
+		t.Fatalf("res1 = %+v, want published", res1)
+	}
+
+	headBefore, err := git(bare, "rev-parse", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Second send: should detect already-published without second commit or push
+	res2, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3)
+	if err != nil {
+		t.Fatalf("SendPreparedArtifact retry: %v", err)
+	}
+	if !res2.Pushed || res2.Attempts != 0 || res2.State != "already-published" {
+		t.Fatalf("res2 = %+v, want already-published with attempts=0", res2)
+	}
+
+	headAfter, err := git(bare, "rev-parse", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if headBefore != headAfter {
+		t.Fatalf("bare HEAD moved during already-published retry: before %s, after %s", headBefore, headAfter)
+	}
+}
+
+func TestSendPreparedArtifactRefusals(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+	tab := loadBus(t, clone)
+	now := at("2026-09-12T15:00:00Z")
+
+	draft := "From: Ada\nTo: Bo\nSubject: Refusal checks\n\nTesting refusals.\n"
+	p, err := PrepareDraft(tab, draft, now, "refusal-checks", "Ada")
+	if err != nil {
+		t.Fatalf("PrepareDraft: %v", err)
+	}
+	art, err := MakePreparedArtifact(p)
+	if err != nil {
+		t.Fatalf("MakePreparedArtifact: %v", err)
+	}
+
+	// 1. Unrelated dirty file in checkout
+	write(t, clone, "unrelated.txt", "dirty content\n")
+	if _, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3); err == nil {
+		t.Fatal("SendPreparedArtifact accepted dirty checkout")
+	}
+	// Verify dirty file is preserved
+	if data, err := os.ReadFile(filepath.Join(clone, "unrelated.txt")); err != nil || string(data) != "dirty content\n" {
+		t.Fatal("SendPreparedArtifact failed to preserve unrelated dirty file")
+	}
+	os.Remove(filepath.Join(clone, "unrelated.txt"))
+
+	// 2. Unrelated ahead commit on branch
+	write(t, clone, "manual.txt", "manual work\n")
+	git(clone, "add", "manual.txt")
+	git(clone, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "commit", "-m", "manual commit")
+	if _, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3); err == nil {
+		t.Fatal("SendPreparedArtifact accepted unrelated ahead commit")
+	}
+	// Reset that manual commit for next test
+	git(clone, "reset", "--hard", "origin/main")
+
+	// 3. Same ID with different bytes on remote
+	// Publish the note first
+	if _, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3); err != nil {
+		t.Fatalf("initial send: %v", err)
+	}
+	// Forge an artifact with the same ID and path, but different note bytes
+	tamperedNote := strings.Replace(art.Note, "Testing refusals.", "Conflicting content.", 1)
+	tamperedArt := art
+	tamperedArt.Note = tamperedNote
+	// Try sending tampered artifact
+	if _, err := SendPreparedArtifact(clone, "origin", "main", p, tamperedArt, 3); err == nil {
+		t.Fatal("SendPreparedArtifact accepted conflicting remote note content")
+	}
+}
+
+func TestSendPreparedArtifactInterruptedRecoveries(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+	tab := loadBus(t, clone)
+	now := at("2026-09-12T16:00:00Z")
+
+	draft := "From: Ada\nTo: Bo\nSubject: Interrupted recovery\n\nTesting partial writes.\n"
+	p, err := PrepareDraft(tab, draft, now, "interrupted-recovery", "Ada")
+	if err != nil {
+		t.Fatalf("PrepareDraft: %v", err)
+	}
+	art, err := MakePreparedArtifact(p)
+	if err != nil {
+		t.Fatalf("MakePreparedArtifact: %v", err)
+	}
+
+	// Scenario A: Interrupted after note save, before INDEX append
+	if err := p.Save(clone); err != nil {
+		t.Fatal(err)
+	}
+	// SendPreparedArtifact should recover the partial write, append INDEX, commit and push
+	res, err := SendPreparedArtifact(clone, "origin", "main", p, art, 3)
+	if err != nil {
+		t.Fatalf("recovery after note save: %v", err)
+	}
+	if !res.Pushed || res.State != "published" {
+		t.Fatalf("res = %+v, want published", res)
+	}
+
+	// Verify exactly one note and one INDEX line on remote
+	noteOnRemote, err := git(bare, "show", "main:"+art.Path)
+	if err != nil || noteOnRemote != art.Note {
+		t.Fatalf("note on remote: %v, content = %q", err, noteOnRemote)
+	}
+	indexOnRemote, err := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Count(indexOnRemote, art.ID) != 1 {
+		t.Fatalf("expected exactly 1 index entry for %s, got:\n%s", art.ID, indexOnRemote)
+	}
+}
+
+func TestSendPreparedArtifactConcurrentRemoteLanding(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	bare := bareBus(t)
+	bench1 := cloneBus(t, bare)
+	bench2 := cloneBus(t, bare)
+
+	tab1 := loadBus(t, bench1)
+	tab2 := loadBus(t, bench2)
+	now := at("2026-09-12T16:30:00Z")
+
+	// Bench 1 prepares note from Ada
+	p1, err := PrepareDraft(tab1, "From: Ada\nTo: Bo\nSubject: Ada's note\n\nNote from Ada.\n", now, "adas-note", "Ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	art1, err := MakePreparedArtifact(p1)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Bench 2 prepares and pushes note from Bo
+	p2, err := PrepareDraft(tab2, "From: Bo\nTo: Ada\nSubject: Bo's note\n\nNote from Bo.\n", now, "bos-note", "Bo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	art2, err := MakePreparedArtifact(p2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res2, err := SendPreparedArtifact(bench2, "origin", "main", p2, art2, 3)
+	if err != nil || !res2.Pushed {
+		t.Fatalf("bench2 send failed: %v", err)
+	}
+
+	// Bench 1 sends its prepared note; it will encounter a non-fast-forward push, fetch, rebase, and succeed
+	res1, err := SendPreparedArtifact(bench1, "origin", "main", p1, art1, 5)
+	if err != nil {
+		t.Fatalf("bench1 send failed: %v", err)
+	}
+	if !res1.Pushed || res1.State != "published" {
+		t.Fatalf("res1 = %+v, want published", res1)
+	}
+
+	// Both notes must be on the remote branch
+	if _, err := git(bare, "show", "main:"+art1.Path); err != nil {
+		t.Fatalf("Ada's note missing from bare remote: %v", err)
+	}
+	if _, err := git(bare, "show", "main:"+art2.Path); err != nil {
+		t.Fatalf("Bo's note missing from bare remote: %v", err)
+	}
+}

@@ -1,0 +1,389 @@
+package bus
+
+import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+)
+
+// PreparedSchema is the exact schema identifier for prepared bus delivery artifacts.
+const PreparedSchema = "nova.bus.prepared/1"
+
+// PreparedArtifact is the complete, self-contained JSON artifact representing a
+// prepared note before delivery or mutation on the bus.
+type PreparedArtifact struct {
+	Schema string `json:"schema"`
+	ID     string `json:"id"`
+	Path   string `json:"path"`
+	Note   string `json:"note"`
+	SHA256 string `json:"sha256"`
+}
+
+// MakePreparedArtifact constructs a valid PreparedArtifact from a Prepared note.
+// It verifies that the rendered note ends with LF and computes the full sha256 digest.
+func MakePreparedArtifact(p Prepared) (PreparedArtifact, error) {
+	note := p.Note.Render()
+	if !strings.HasSuffix(note, "\n") {
+		return PreparedArtifact{}, errors.New("rendered note must end with LF")
+	}
+	h := sha256.Sum256([]byte(note))
+	digest := hex.EncodeToString(h[:])
+	return PreparedArtifact{
+		Schema: PreparedSchema,
+		ID:     p.Note.Header.ID,
+		Path:   p.Path,
+		Note:   note,
+		SHA256: digest,
+	}, nil
+}
+
+// RenderPreparedArtifact returns the JSON artifact string ending with LF.
+func RenderPreparedArtifact(p Prepared) (string, error) {
+	art, err := MakePreparedArtifact(p)
+	if err != nil {
+		return "", err
+	}
+	data, err := json.Marshal(art)
+	if err != nil {
+		return "", err
+	}
+	return string(data) + "\n", nil
+}
+
+// ValidatePreparedArtifact parses and validates a raw JSON artifact against the current
+// bus configuration, participant roster, and deterministic ID invariants.
+func ValidatePreparedArtifact(raw []byte, busDir string, c *Config, as string) (PreparedArtifact, Prepared, error) {
+	var art PreparedArtifact
+	if err := json.Unmarshal(raw, &art); err != nil {
+		return art, Prepared{}, fmt.Errorf("malformed prepared artifact: %w", err)
+	}
+	if art.Schema != PreparedSchema {
+		return art, Prepared{}, fmt.Errorf("unknown prepared artifact schema %q (want %q)", art.Schema, PreparedSchema)
+	}
+	if len(art.SHA256) != 64 {
+		return art, Prepared{}, fmt.Errorf("invalid sha256 in prepared artifact: %q (want 64 lowercase hex digits)", art.SHA256)
+	}
+	for _, r := range art.SHA256 {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return art, Prepared{}, fmt.Errorf("invalid sha256 in prepared artifact: %q (must be lowercase hex digits)", art.SHA256)
+		}
+	}
+	if !strings.HasSuffix(art.Note, "\n") {
+		return art, Prepared{}, errors.New("prepared note must end with LF")
+	}
+	h := sha256.Sum256([]byte(art.Note))
+	actualSHA := hex.EncodeToString(h[:])
+	if actualSHA != art.SHA256 {
+		return art, Prepared{}, fmt.Errorf("sha256 digest mismatch: artifact says %s, note hashes to %s", art.SHA256, actualSHA)
+	}
+	if as == "" {
+		return art, Prepared{}, errors.New("--as is required with --prepared")
+	}
+	me, known := c.Lookup(as)
+	if !known {
+		return art, Prepared{}, fmt.Errorf("--as %q names no one on this bus (known: %s)", as, strings.Join(c.KnownNames(), "; "))
+	}
+	if me.Lane == "" {
+		return art, Prepared{}, fmt.Errorf("%q has no lane on this bus, so has nowhere to send from", me.Name)
+	}
+
+	// The prepared path must be inside the sender's own lane
+	if !strings.HasPrefix(art.Path, me.Lane+"/") {
+		return art, Prepared{}, fmt.Errorf("prepared path %q is outside lane %q", art.Path, me.Lane)
+	}
+	fullPath := filepath.Join(busDir, filepath.FromSlash(art.Path))
+	if err := insideRoot(busDir, fullPath); err != nil {
+		return art, Prepared{}, err
+	}
+
+	// Parse the note content
+	n, parseProblems := ParseNoteAll(art.Path, art.Note)
+	if len(parseProblems) > 0 {
+		return art, Prepared{}, problemsOf(parseProblems)
+	}
+	if n.Header.ID != art.ID {
+		return art, Prepared{}, fmt.Errorf("note header id %q does not match artifact id %q", n.Header.ID, art.ID)
+	}
+	headerProblems := n.Header.Problems(c)
+	if len(headerProblems) > 0 {
+		return art, Prepared{}, problemsOf(headerProblems)
+	}
+	sender, senderKnown := c.ResolveOne(n.Header.From)
+	if !senderKnown || sender.Name != me.Name {
+		return art, Prepared{}, fmt.Errorf("--as %q, but note's From line says %q; send does not send one line's note as another", me.Name, n.Header.From)
+	}
+	if n.Lane != me.Lane {
+		return art, Prepared{}, fmt.Errorf("note lane %q does not match sender lane %q", n.Lane, me.Lane)
+	}
+
+	// Check deterministic ID calculation
+	expectedID, err := AssignID(c, me, n.Header, n.Body, n.Header.Date)
+	if err != nil {
+		return art, Prepared{}, err
+	}
+	if expectedID != art.ID {
+		return art, Prepared{}, fmt.Errorf("note id %q does not match deterministic id %q", art.ID, expectedID)
+	}
+
+	// Check canonical rendering equality
+	if n.Render() != art.Note {
+		return art, Prepared{}, errors.New("note content does not match canonical rendering")
+	}
+
+	p := Prepared{
+		Note:    n,
+		Sender:  me,
+		Path:    art.Path,
+		Index:   IndexEntryFor(c, n),
+		Message: me.Slug() + ": " + n.Header.Subject,
+	}
+	return art, p, nil
+}
+
+// queryRemote checks whether the prepared note and its INDEX entry already exist on the remote tracking ref.
+func queryRemote(busDir, ref string, p Prepared, art PreparedArtifact) (bool, string, error) {
+	remoteNote, errNote := git(busDir, "show", ref+":"+art.Path)
+	remoteIndex, errIndex := git(busDir, "show", ref+":"+IndexPath(p.Sender.Lane))
+
+	if errIndex == nil {
+		for _, line := range strings.Split(remoteIndex, "\n") {
+			line = strings.TrimSpace(line)
+			if line == "" {
+				continue
+			}
+			fields := strings.Split(line, "\t")
+			if len(fields) > 0 && fields[0] == art.ID {
+				if len(fields) > 1 && fields[1] != art.Path {
+					return false, "", fmt.Errorf("the id %q is already on remote on %s, not %s", art.ID, fields[1], art.Path)
+				}
+				if errNote != nil {
+					return false, "", fmt.Errorf("remote index carries %q but note %s is absent remotely", art.ID, art.Path)
+				}
+				if remoteNote != art.Note {
+					return false, "", fmt.Errorf("remote note at %s has different content than the prepared note", art.Path)
+				}
+				commitOut, _ := git(busDir, "log", "-1", "--format=%H", ref, "--", art.Path)
+				commitSHA := strings.TrimSpace(commitOut)
+				if commitSHA == "" {
+					commitSHA, _ = ResolveCommit(busDir, ref)
+				}
+				return true, commitSHA, nil
+			}
+		}
+	}
+
+	if errNote == nil {
+		return false, "", fmt.Errorf("remote note at %s exists but is not in the remote index", art.Path)
+	}
+
+	logOut, _ := git(busDir, "log", "-1", "--format=%H", ref, "--grep=Nova-Bus: send "+art.ID)
+	if strings.TrimSpace(logOut) != "" {
+		return false, "", fmt.Errorf("the id %q was already committed on remote with different path or index", art.ID)
+	}
+
+	return false, "", nil
+}
+
+// SendPreparedArtifact publishes or confirms delivery of a prepared note artifact.
+func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art PreparedArtifact, attempts int) (PushResult, error) {
+	if attempts < 1 {
+		return PushResult{}, fmt.Errorf("attempts must be at least 1, got %d", attempts)
+	}
+	if err := ValidGitArg("remote", remote); err != nil {
+		return PushResult{}, err
+	}
+	if err := ValidGitArg("branch", branch); err != nil {
+		return PushResult{}, err
+	}
+
+	on, err := CurrentBranch(busDir)
+	if err != nil {
+		return PushResult{}, err
+	}
+	if on != branch {
+		return PushResult{}, fmt.Errorf("the bus's checkout is on branch %q, not %q", on, branch)
+	}
+
+	if _, err := git(busDir, "fetch", remote, branch); err != nil {
+		return PushResult{}, fmt.Errorf("the fetch that would say whether %s/%s holds this note failed: %w", remote, branch, err)
+	}
+	ref := trackingRef(busDir, remote, branch)
+
+	// Step 1 & 2: Remote verification under checkout lock
+	published, commitSHA, err := queryRemote(busDir, ref, p, art)
+	if err != nil {
+		return PushResult{}, err
+	}
+	if published {
+		return PushResult{
+			Commit:   commitSHA,
+			Attempts: 0,
+			Pushed:   true,
+			State:    "already-published",
+		}, nil
+	}
+
+	// Step 3 & 4: If absent remotely, refuse unrelated work and reconcile local attempt
+	permitted := []string{art.Path, IndexPath(p.Sender.Lane), AttributesName}
+	if err := EnsureClean(busDir, permitted); err != nil {
+		return PushResult{}, err
+	}
+
+	countOut, err := git(busDir, "rev-list", "--count", ref+"..HEAD")
+	if err != nil {
+		return PushResult{}, err
+	}
+	ahead, _ := strconv.Atoi(strings.TrimSpace(countOut))
+
+	var reusedCommit string
+	wantTrailer := TrailerSend + " " + art.ID
+
+	if ahead > 0 {
+		logOut, err := git(busDir, "log", "-z", "--format=%H%n%B", ref+"..HEAD")
+		if err != nil {
+			return PushResult{}, err
+		}
+		for _, rec := range strings.Split(logOut, "\x00") {
+			if strings.TrimSpace(rec) == "" {
+				continue
+			}
+			sha, body, _ := strings.Cut(strings.TrimLeft(rec, "\n"), "\n")
+			sha = strings.TrimSpace(sha)
+			if !HasExactTrailer(body, wantTrailer) {
+				return PushResult{}, fmt.Errorf("branch has ahead commits that are not this prepared send; %s", pullRebaseAdvice)
+			}
+			diffOut, _ := git(busDir, "diff-tree", "--no-commit-id", "--name-only", "-r", sha)
+			for _, touched := range strings.Split(strings.TrimSpace(diffOut), "\n") {
+				touched = strings.TrimSpace(touched)
+				if touched == "" {
+					continue
+				}
+				if touched != art.Path && touched != IndexPath(p.Sender.Lane) && touched != AttributesName {
+					return PushResult{}, fmt.Errorf("ahead commit %s touches unrelated path %s; %s", sha, touched, pullRebaseAdvice)
+				}
+			}
+			noteInCommit, err := git(busDir, "show", sha+":"+art.Path)
+			if err != nil || noteInCommit != art.Note {
+				return PushResult{}, fmt.Errorf("ahead commit %s has conflicting note content for %s; %s", sha, art.Path, pullRebaseAdvice)
+			}
+		}
+		headSha, err := HeadCommit(busDir)
+		if err != nil {
+			return PushResult{}, err
+		}
+		reusedCommit = headSha
+	}
+
+	if reusedCommit == "" {
+		// Reconcile note on disk
+		fullNotePath := filepath.Join(busDir, filepath.FromSlash(art.Path))
+		if _, err := os.Stat(fullNotePath); err == nil {
+			diskBytes, err := os.ReadFile(fullNotePath)
+			if err != nil {
+				return PushResult{}, err
+			}
+			if string(diskBytes) != art.Note {
+				return PushResult{}, fmt.Errorf("local file %s has conflicting content", art.Path)
+			}
+		} else {
+			if err := p.Save(busDir); err != nil {
+				return PushResult{}, err
+			}
+		}
+
+		// Reconcile index on disk
+		fullIndexPath := filepath.Join(busDir, filepath.FromSlash(IndexPath(p.Sender.Lane)))
+		wantIndexLine := IndexLine(p.Index)
+		needAppend := true
+		if diskIndex, err := os.ReadFile(fullIndexPath); err == nil {
+			for _, l := range strings.Split(string(diskIndex), "\n") {
+				if strings.TrimSpace(l) == "" {
+					continue
+				}
+				f := strings.Split(l, "\t")
+				if len(f) > 0 && f[0] == art.ID {
+					if l == wantIndexLine {
+						needAppend = false
+						break
+					}
+					return PushResult{}, fmt.Errorf("local index in %s has conflicting record for %s", IndexPath(p.Sender.Lane), art.ID)
+				}
+			}
+		}
+		if needAppend {
+			if err := p.AppendIndex(busDir); err != nil {
+				return PushResult{}, err
+			}
+		}
+
+		wroteAttrs, err := EnsureMergeAttributes(busDir)
+		if err != nil {
+			return PushResult{}, err
+		}
+		paths := p.Paths()
+		if wroteAttrs {
+			paths = append(paths, AttributesName)
+		}
+
+		id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
+		msg := WithTrailer(p.Message, wantTrailer)
+		cSha, err := stageAndCommit(busDir, id, paths, msg)
+		if err != nil {
+			return PushResult{}, err
+		}
+		reusedCommit = cSha
+	}
+
+	// Step 5: Push loop with bounded race handling
+	id := Identity{Name: p.Sender.GitName, Email: p.Sender.GitEmail}
+	var res PushResult
+	res.Commit = reusedCommit
+	for attempt := 1; attempt <= attempts; attempt++ {
+		res.Attempts = attempt
+		if _, err := git(busDir, "push", remote, "HEAD:refs/heads/"+branch); err == nil {
+			headSha, _ := HeadCommit(busDir)
+			res.Commit = headSha
+			res.Pushed = true
+			res.State = "published"
+			return res, nil
+		}
+		if attempt == attempts {
+			break
+		}
+		sleepBetweenAttempts(pushBackoff(attempt))
+		if _, err := git(busDir, "fetch", remote, branch); err != nil {
+			return PushResult{}, fmt.Errorf("the push was refused and the fetch that would explain it failed: %w", err)
+		}
+		ref = trackingRef(busDir, remote, branch)
+		if pub, cSha, _ := queryRemote(busDir, ref, p, art); pub {
+			res.Commit = cSha
+			res.Pushed = true
+			res.State = "published"
+			return res, nil
+		}
+		if _, err := git(busDir, append(identityArgs(id), "rebase", "FETCH_HEAD")...); err != nil {
+			if settleErr := settleRebase(busDir, id); settleErr != nil {
+				if abortErr := abortRebase(busDir); abortErr != nil {
+					return PushResult{}, abortErr
+				}
+				return PushResult{}, &ConflictError{
+					Reason: fmt.Sprintf("the rebase over what arrived conflicted on %s, which this tool will not settle for you; your commit %s is on the branch and was NOT pushed; recover with `git pull --rebase`, fix the files it names, `git rebase --continue`, then `git push`",
+						oneLineOf(settleErr.Error()), res.Commit),
+					Output: transcriptOf(err),
+				}
+			}
+		}
+		headSha, err := HeadCommit(busDir)
+		if err != nil {
+			return PushResult{}, err
+		}
+		res.Commit = headSha
+	}
+	return res, fmt.Errorf("the push was refused %d times; your commit %s is on the branch and was NOT pushed; the next run of this tool will carry it, or land it now with `git pull --rebase && git push`", res.Attempts, res.Commit)
+}

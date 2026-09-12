@@ -54,6 +54,7 @@ type PushResult struct {
 	Commit   string
 	Attempts int
 	Pushed   bool
+	State    string
 }
 
 // gitError carries the command and git's own stderr, which is the part a person needs.
@@ -248,6 +249,17 @@ func WithTrailer(message, what string) string {
 func HasTrailer(message string) bool {
 	for _, line := range strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n") {
 		if strings.HasPrefix(strings.TrimSpace(line), TrailerKey+":") {
+			return true
+		}
+	}
+	return false
+}
+
+// HasExactTrailer reports whether a commit message carries the exact trailer key and value.
+func HasExactTrailer(message, what string) bool {
+	want := strings.TrimSpace(TrailerKey + ": " + what)
+	for _, line := range strings.Split(strings.ReplaceAll(message, "\r\n", "\n"), "\n") {
+		if strings.TrimSpace(line) == want {
 			return true
 		}
 	}
