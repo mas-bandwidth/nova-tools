@@ -3,6 +3,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -209,23 +210,43 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 	// and the clock is only a bound. It has to be a short one -- an adopted job holds the
 	// deadline from its RECORDED start -- and in practice the file lands in the same
 	// millisecond, because slot 2 is reclaimed immediately after slot 1 is adopted.
+	// NEITHER FAILURE PATH IS SILENT. `t.Fatal` is illegal off the test goroutine, so the
+	// two ways this one can fail -- the 5 s bound expiring, which puts the old race back,
+	// and a dropped write error, which makes the job's evidence a lie -- are reported
+	// through a channel and read by the test after `b.run` returns (Rowan's Fable read of
+	// #88 at d0c1841, L3). A goroutine that fails silently turns this test green on a
+	// machine where it proved nothing.
+	completion := make(chan error, 2)
 	go func() {
+		defer close(completion)
 		reclaimed := filepath.Join(b.pool, "done", task2ID+".task")
+		decided := false
 		for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); {
 			if _, err := os.Stat(reclaimed); err == nil {
+				decided = true
 				break
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		_ = swarm.WriteJSON(filepath.Join(task1Dir, "exit.json"), swarm.ExitRecord{
+		if !decided {
+			completion <- fmt.Errorf("slot 1's adoption was not decided within 5s (%s never landed in done/), so this pass raced the dispatcher instead of waiting for it", task2ID+".task")
+		}
+		if err := swarm.WriteJSON(filepath.Join(task1Dir, "exit.json"), swarm.ExitRecord{
 			RC: 0, End: swarm.EndDone, Nonce: "nonce-1", Ended: swarm.Stamp(time.Now()),
-		})
-		_ = os.WriteFile(filepath.Join(task1Dir, "RESULT.md"), []byte("# a recovered job\n\n## Head\nfindings: 0\nnotes read: 0\nrepo: o/n\nrev: abc\nit finished before its dispatcher died.\n\n## Findings\n- none\n"), 0o644)
+		}); err != nil {
+			completion <- fmt.Errorf("writing the adopted job's exit.json: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(task1Dir, "RESULT.md"), []byte("# a recovered job\n\n## Head\nfindings: 0\nnotes read: 0\nrepo: o/n\nrev: abc\nit finished before its dispatcher died.\n\n## Findings\n- none\n"), 0o644); err != nil {
+			completion <- fmt.Errorf("writing the adopted job's RESULT.md: %w", err)
+		}
 		waitLiveCmd()
 	}()
 
 	// Run dispatcher with 6 workers
 	exit, stdout, stderr := b.run("--workers", "6")
+	for err := range completion {
+		t.Errorf("the goroutine that completes the adopted job: %v", err)
+	}
 	if exit != 1 {
 		t.Fatalf("run with quarantined slots: exit = %d, want 1;\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	}
