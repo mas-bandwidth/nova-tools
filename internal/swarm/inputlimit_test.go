@@ -91,6 +91,74 @@ func TestTheProvidersInputLimitIsItsOwnFailureClass(t *testing.T) {
 	}
 }
 
+// A MARK IS A LABEL THE HARNESS WROTE, NOT A WORD IN A SENTENCE (the swarm delta eye on
+// #150, MEDIUM at inputlimit.go:105). The mark test was a substring search over the whole
+// lowercased line, so a RESULT.md line that QUOTES the provider's sentence beside the word
+// `error` -- a finding row, a bullet, a heading -- was "marked" and classed `input-limit`,
+// which is exactly the line the mark rule was added to exclude. A job classed this way is
+// never retried, so a false mark takes a real 429's retry away.
+//
+// The rule: the mark begins a word, at most MarkWords tokens precede it (a stamp, a
+// component name, an error prefix -- prose has more), and no quote character comes before it
+// on the line.
+func TestAMarkIsTheHarnessesOwnLabelAndNotAWordInASentence(t *testing.T) {
+	for _, c := range []struct {
+		name, log, want string
+	}{
+		// The specimens. Every one is a line a provider or a harness really prints.
+		{
+			"OpenCode, the mark first",
+			"Error: Rate limit reached: input token limit exceeded\n",
+			"Error: Rate limit reached: input token limit exceeded",
+		},
+		{
+			"a harness prefix, then the mark",
+			"opencode: error: prompt is too long: 250000 tokens > 200000 maximum\n",
+			"opencode: error: prompt is too long: 250000 tokens > 200000 maximum",
+		},
+		{
+			"a timestamp, then the mark",
+			"2026-09-12T12:24:31Z error: request too large for this model\n",
+			"2026-09-12T12:24:31Z error: request too large for this model",
+		},
+		{
+			"the SDK's own class name, then its code",
+			`openai.BadRequestError: Error code: 400 - {'error': {'message': "This model's maximum context length is 4096 tokens"}}` + "\n",
+			`openai.BadRequestError: Error code: 400 - {'error': {'message': "This model's maximum context length is 4096 tokens"}}`,
+		},
+		// And the transcript. Every one is a line a WORKER writes about this very class.
+		{
+			"a RESULT.md bullet quoting the sentence beside the word error",
+			"- the provider printed error: input token limit exceeded, and the job was classed\n",
+			"",
+		},
+		{
+			"a RESULT.md finding row with a red cell called error",
+			"| 3 | red | error | the log says input token limit exceeded | swarm/finish.go:72 |\n",
+			"",
+		},
+		{
+			"the sentence inside backticks beside the word",
+			"the harness error is `input token limit exceeded` and it is its own class\n",
+			"",
+		},
+		{
+			"a mark that is the tail of a longer word",
+			"nova-swarm: a swarmerror input token limit exceeded line nobody prints\n",
+			"",
+		},
+	} {
+		got, ok := InputLimited([]byte(c.log), nil)
+		if (c.want != "") != ok {
+			t.Errorf("%s: classed=%t, want %t (%q)", c.name, ok, c.want != "", got)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("%s: the line quoted is\n  %q\nwant\n  %q", c.name, got, c.want)
+		}
+	}
+}
+
 // AND IT IS NOT A RATE LIMIT (#103, beside the rc=429 misclass of #80). `RateLimited`
 // matches the words `rate limit`, which are IN the provider's sentence -- so this death was
 // read as a 429: the slot was held for the backoff and the SAME task was launched again, to

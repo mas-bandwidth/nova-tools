@@ -46,7 +46,7 @@ var InputLimitPhrases = []string{
 }
 
 // ProviderErrorMarks are how a harness says THIS IS THE PROVIDER TALKING, and a phrase counts
-// only on a line that carries one of them, or directly under one.
+// only on a line whose own LABEL is one of them, or directly under such a line.
 //
 // THE PHRASE ALONE IS NOT ENOUGH, because a harness log is a TRANSCRIPT and the sentences in
 // the table above now live in this repository's own source, README and spec: a worker reading
@@ -58,13 +58,43 @@ var InputLimitPhrases = []string{
 // `Error: `, Anthropic's `API Error: 400 {"type":"error"...}`, OpenAI's `Error code: 400 -
 // {'error': ...}` -- and a harness that puts the mark on its own line above the message is
 // why the line ABOVE counts too.
-var ProviderErrorMarks = []string{"error", "err:", "fatal", "exception", "rejected", "aborted"}
+var ProviderErrorMarks = []string{"error", "err", "fatal", "exception", "rejected", "aborted", "refused"}
+
+// MarkWords is how many tokens may come BEFORE the mark and leave it a label.
+//
+// A SUBSTRING SEARCH IS NOT A LABEL (the swarm delta eye on #150). `strings.Contains(lower,
+// mark)` accepted the word anywhere on the line, so a RESULT.md bullet, a finding row or a
+// heading that QUOTED the provider's sentence beside the word `error` was marked and classed
+// -- the very line the mark rule was added to exclude, and a job classed this way is never
+// retried, so the false mark takes a real 429's retry away.
+//
+// A harness's label is a stamp, a component name and the mark: `Error: …`,
+// `opencode: error: …`, `2026-09-12T12:24:31Z error: …`, `API Error: 400 …`,
+// `openai.BadRequestError: Error code: 400 …` -- never more than two tokens before it. Prose
+// has more (`- the provider printed error: …` has four), and a quote character before the mark
+// means the line is quoting rather than reporting.
+//
+// AND AT MOST ONE OF THOSE TOKENS IS A BARE WORD. Two alone is not enough: `the harness error
+// is …` and `| 3 | red | error | …` are a sentence and a table row, and both put a mark two
+// tokens in. A label token is a STAMP (it carries a digit) or a PREFIX (it ends in `:`, `]`,
+// `|` or `>`); anything else is a bare word, and a harness writes at most one of them before
+// its mark -- the `API` of `API Error:`, the `provider` of `provider error:`. A second bare
+// word is prose.
+const (
+	MarkWords     = 2
+	MarkBareWords = 1
+)
+
+// quoteRunes are the characters that turn the rest of a line into somebody's quotation: after
+// one of these, a mark is a mark somebody WROTE DOWN, and this class is about what a provider
+// said.
+const quoteRunes = "`\"'\u201c\u201d\u2018\u2019"
 
 // InputLimited reports the provider's own words when the harness log says the request did
-// not fit, and whether it said so at all. A phrase counts only on a line that carries a
-// provider error mark, or on the line directly under one (ProviderErrorMarks): the table's
-// sentences appear in transcripts that merely QUOTE them, this repository's own docs
-// included.
+// not fit, and whether it said so at all. A phrase counts only on a line whose own label is a
+// provider error mark, or on the line directly under one (ProviderErrorMarks, MarkWords): the
+// table's sentences appear in transcripts that merely QUOTE them, this repository's own docs
+// and a worker's own RESULT.md included.
 //
 // The quote is the LINE the phrase was found on, with the terminal paint stripped: OpenCode
 // wrote `\x1b[91m\x1b[1mError: \x1b[0mRate limit reached: ...`, and a line that carries the
@@ -100,13 +130,81 @@ func InputLimited(log []byte, extra []string) (string, bool) {
 	return "", false
 }
 
+// carriesAMark reports whether this line's own label is a provider error mark: the mark
+// begins a word, at most MarkWords tokens precede it, and no quote character comes before it.
 func carriesAMark(lower string) bool {
 	for _, mark := range ProviderErrorMarks {
-		if strings.Contains(lower, mark) {
-			return true
+		for at := 0; at >= 0 && at < len(lower); {
+			i := strings.Index(lower[at:], mark)
+			if i < 0 {
+				break
+			}
+			i += at
+			at = i + 1
+			if !wordStarts(lower, i, len(mark)) {
+				continue
+			}
+			before := lower[:i]
+			if strings.ContainsAny(before, quoteRunes) {
+				// The line is quoting somebody. A quotation is not a report.
+				break
+			}
+			fields := strings.Fields(before)
+			if isALabel(fields) {
+				return true
+			}
+			// THE WORK IS BOUNDED TO THE HEAD OF THE LINE. Every later occurrence of this
+			// mark has at least as many tokens before it, so once the count is past the
+			// bound this line cannot be labelled by this mark -- a 31KB transcript is
+			// scanned across its lines and never across each line twice.
+			if len(fields) > MarkWords {
+				break
+			}
 		}
 	}
 	return false
+}
+
+// isALabel reports whether the tokens before a mark are a harness's LABEL and not the start
+// of a sentence: at most MarkWords of them, of which at most MarkBareWords is a bare word.
+func isALabel(before []string) bool {
+	if len(before) > MarkWords {
+		return false
+	}
+	bare := 0
+	for _, token := range before {
+		if labelToken(token) {
+			continue
+		}
+		bare++
+	}
+	return bare <= MarkBareWords
+}
+
+// labelToken is a stamp or a prefix: a token carrying a digit (a date, a clock, a pid, a
+// code) or one ending in a separator a harness writes its label with.
+func labelToken(token string) bool {
+	if strings.ContainsAny(token, "0123456789") {
+		return true
+	}
+	return strings.HasSuffix(token, ":") || strings.HasSuffix(token, "]") ||
+		strings.HasSuffix(token, "|") || strings.HasSuffix(token, ">")
+}
+
+// wordStarts reports whether the match at i is a WHOLE word: a mark that is the tail of a
+// longer word is not a label. `openai.badrequesterror` carries no mark; the `Error code:` that
+// follows it does. The boundary is any character that is not a letter or a digit, so `_` in
+// `invalid_request_error` is a boundary too -- that IS the provider's own field name.
+func wordStarts(s string, i, n int) bool {
+	if i > 0 && isWordRune(s[i-1]) {
+		return false
+	}
+	end := i + n
+	return end >= len(s) || !isWordRune(s[end])
+}
+
+func isWordRune(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
 }
 
 // RetriableRateLimit is the question `finish` asks before it holds a slot and spends a
