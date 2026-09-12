@@ -629,6 +629,12 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 
 	searchArgs := append([]string{"search"}, common...)
 	searchArgs = append(searchArgs, "--channels", "bm25", "--k", quickstartSearchK)
+	for _, w := range words {
+		if strings.HasPrefix(w, "-") {
+			searchArgs = append(searchArgs, "--")
+			break
+		}
+	}
 	searchArgs = append(searchArgs, words...)
 	if code := step(searchArgs, strings.NewReader(""), stdout, stderr); code != 0 {
 		return stepFailed("search", code, stderr)

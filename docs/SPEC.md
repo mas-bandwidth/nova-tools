@@ -1499,7 +1499,7 @@ must not masquerade as a verdict).
 
 **The all-skipped green.** A run whose every named file was skipped is not a
 refusal: it completes and exits 0 with `SELFTALK OK files=0 claims=0
-standing=0 installations=0` — every skip was the caller's own, stated this run.
+standing=0 installations=0 dated=0` — every skip was the caller's own, stated this run.
 A caller gating on the exit code alone must therefore also require `files>0`
 from the OK line, or its green can mean nothing was scanned at all.
 

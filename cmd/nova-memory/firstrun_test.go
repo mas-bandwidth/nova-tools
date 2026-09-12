@@ -216,11 +216,11 @@ func readmeFirstRun(t *testing.T) [][]string {
 	// would hand this test another binary's transcript to run.
 	_, section, found := strings.Cut(string(raw), "\n## nova-memory\n")
 	if !found {
-		t.Fatal("README.md has no `## nova-memory` section")
+		t.Fatal("docs/TESTS.md has no `## nova-memory` section")
 	}
 	_, tail, found := strings.Cut(section, "\n### First run\n")
 	if !found {
-		t.Fatal("README.md `## nova-memory` has no `### First run` section; it is what a stranger reads before anything else here")
+		t.Fatal("docs/TESTS.md `## nova-memory` has no `### First run` section; it is what a stranger reads before anything else here")
 	}
 	body, _, found := strings.Cut(tail, "\n## ")
 	if !found {
@@ -645,5 +645,15 @@ func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
 	welded := "cannot bury the one frontmatter finding. the words the demonstration search runs."
 	if strings.Contains(stdout, welded) {
 		t.Errorf("the --fail-max and --words help text are still welded together:\n%s", stdout)
+	}
+}
+
+func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--words", "-glazing")
+	if exit != 0 {
+		t.Fatalf("quickstart with dash-leading word failed: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "$ nova-memory search ") || !strings.Contains(stdout, "SEARCH OK query=-glazing") {
+		t.Errorf("quickstart did not complete search step with dash-leading word:\n%s", stdout)
 	}
 }
