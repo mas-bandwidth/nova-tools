@@ -29,10 +29,9 @@ applies here unchanged and is not restated.
 given is 2026-09-11 evening EDT, which is 2026-09-12 UTC, and both the rulings and
 the measurements below carry the UTC date.
 
-**Source paths.** A `memory/…` or `standard/…` path below is in **Rowan's self
-repo** (`/Users/glenn/rowan-new`), not in `nova-tools`, and is named once here so
-no reader hunts for it in this repository. A `ds4_server.c` path is antirez's
-DwarfStar checkout on the Studio.
+**Source paths.** A `memory/…`, `standard/…` or `ds4_server.c` path below is
+outside `nova-tools`; **Sources** at the end says where each one lives and which
+are readable from this bench.
 
 ## DATA
 
@@ -42,6 +41,7 @@ DwarfStar checkout on the Studio.
 | kind | engine runner. Not an inference client, not a fetcher, not a judge, not an outbound actor |
 | engines | **ollama** (many models, one daemon) · **ds4** (antirez's DwarfStar, one resident model per process). Both are adapters; see **the engines** |
 | pin | **loopback only.** The base URL is `--base`, defaulting to the adapter's constant; a non-loopback host is exit 2 |
+| reach | **box-level.** One engine per port started as a system service, one shared weight store, every account on the box reaching both (rule 15) |
 | secrets | **none.** Opens no key file, exports no key, prints no credential. It `stat`s the key file the description names and never reads a byte of it |
 | exit | `0` did it · `1` did it and said **NO** · `2` could not run |
 | verbs | `status` · `serve` (with `--stop`) · `worker` — three, no others |
@@ -66,9 +66,10 @@ Every rule here is normative and has one line in **tests this spec demands**.
    `crypto/sha256` where a digest is computed, `os/exec` for the ds4 process. No
    third-party module appears in its `go.mod` graph. **What the stranger installs
    is not this binary's dependency and the README says so**: the description
-   `worker` writes is read by `nova-swarm`, which runs a harness (OpenCode) whose
-   **custom-provider config** points at the local engine. That install is the
-   stranger's, named in `README.md`'s first run, and it is not a Go dependency.
+   `worker` writes is read by `nova-swarm`, which runs a harness (OpenCode) that
+   `nova-swarm` itself points at the local engine, by writing the provider block
+   into the slot at every start (`internal/swarm/worker.go:219-243`). That install
+   is the stranger's, named in `README.md`, and it is not a Go dependency.
 
 2. **An engine is an adapter, and adding one changes nothing else** (Glenn:
    *"the requirement that we can try the antirez stuff and others"*). An engine is
@@ -98,9 +99,9 @@ Every rule here is normative and has one line in **tests this spec demands**.
    tool**: Glenn cut them the same night the tool was asked for, and the ladder
    they served — a soak, a promotion, an audit of what production may call —
    belongs with the evaluation tool that would have the evidence (see
-   **deliberately not in this tool**). The practice this line comes from is
-   `memory/model-trust.md` in Rowan's self repo; it is that bench's practice, and
-   a stranger who grabs this binary is not under it.
+   **deliberately not in this tool**). The practice this line comes from
+   (**Sources**) is that bench's, and a stranger who grabs this binary is not
+   under it.
 
 5. **`--num-ctx` has no default.** ollama's context default is small — **reported**
    as a silent cap at 4,096 tokens whatever the model supports
@@ -118,13 +119,25 @@ Every rule here is normative and has one line in **tests this spec demands**.
    "configured" in place reloads at the daemon's default on the next request. So
    `serve --engine ollama` **creates a derived tag** `<name>-<ctx>k` from the given
    reference with `num_ctx`, `temperature 0` and the given `seed` baked in, reads
-   `/api/show` back to confirm them, and prints `serve_as=<the derived tag>`. That
-   is the practice already on this box: `gemma4-32k:latest` and `qwen3.6-32k:latest`
+   `/api/show` back to confirm them, and prints `serve_as=<the derived tag>`.
+   `<name>` is the reference with its `:<tag>` stripped and any registry prefix
+   dropped — `gemma4:12b` derives `gemma4-32k`, the name already on this box — so
+   two references sharing a name (`gemma4:12b` and a future `gemma4:27b`) derive
+   the same tag, and that collision is caught by the parent comparison below, not
+   by the name. `<ctx>k` is `--num-ctx` divided by 1024; a `--num-ctx` that is not
+   a multiple of 1024 is exit 2 naming the two nearest multiples, because a tag
+   whose name rounds is a tag that lies about the context it holds. That is the
+   practice already on this box: `gemma4-32k:latest` and `qwen3.6-32k:latest`
    sit beside `gemma4:12b` and `qwen3.6:35b-a3b` (`/api/tags`, 2026-09-12), and
    `/api/ps` shows `qwen3.6-32k:latest` loaded at `context_length 32768`. A
-   derived tag that already exists with the same parameters is used as it stands
-   (`serve` is idempotent); one that exists with different parameters is exit 1
-   naming both and the remedy (`ollama rm <tag>`). On ds4 there is no derived tag:
+   derived tag that already exists is compared on exactly four things — the parent
+   (`/api/show`'s `details`/`FROM`), `num_ctx`, `temperature` and `seed` — and used
+   as it stands when all four match (`serve` is idempotent); any of the four
+   different is exit 1 naming both values and the remedy (`ollama rm <tag>`). Only
+   those four are compared, because `/api/show` also reports fields the parent
+   passed down that `nova-local` never set — on this box `gemma4-32k:latest`
+   reports `top_k 64` and `top_p 0.95`, inherited — and a tool that compared those
+   would refuse its own tag. On ds4 there is no derived tag:
    the context is `--ctx` on the process and `serve_as` is the id the process
    advertises.
 
@@ -144,11 +157,12 @@ Every rule here is normative and has one line in **tests this spec demands**.
    operator gave.** `serve` reads the 1-minute load average, free memory and the
    engines already answering **before** it starts anything, and prints them on
    every `SERVE OK` and every refusal. It has **no threshold of its own**: Glenn,
-   2026-09-12 (`memory/local-model-doctrine.md:105`), on saturating this machine
-   with local models, *"Have fun!!! a lock is probably not needed"*. `--max-load
+   2026-09-12 (**Sources**), on saturating this machine with local models, *"Have fun!!! a lock is probably not needed"*. `--max-load
    <n>` and `--min-free <size>` are optional; given, and exceeded, the serve is
    exit 1 naming what was measured and what was asked. Not given, the numbers are
-   printed and nothing is refused. Source: `memory/ready-is-a-measurement.md`.
+   printed and nothing is refused. The two flags stay beside a lifted lock for the
+   one caller the lock was lifted for: an operator deliberately saturating the box
+   who wants *this* serve to stand off rather than join in.
 
 9. **One local worker at a time.** An engine is a queue: a second concurrent
    worker against one engine interleaves two queues and makes both slower while
@@ -165,12 +179,8 @@ Every rule here is normative and has one line in **tests this spec demands**.
     512 and 338 GB free — mid-size models run beside normal work — and Glenn's line
     for the top end is *"the hardcore 500gb models would only work if that's all
     this studio did; maybe a few hundred or 200gb"* beside other work. A registry's
-    tier bucket is not this box either: six dense candidates were once queued off a
-    ranking bucketed at 8, 16 and 24 GB of VRAM, on a machine with **512 GB of
-    unified memory**. The memory is never cached between calls and never a total
-    standing in for what is free. Source:
-    `memory/the-ranking-encodes-someone-elses-constraint.md`,
-    `memory/the-machine-is-the-mandate.md`.
+    tier bucket is not this box either. The memory is never cached between calls
+    and never a total standing in for what is free.
 
 11. **Triage and report; never decide-and-act; never the safety arbiter.** What a
     local model returns is a hint, treated as untrusted data; on uncertainty,
@@ -178,27 +188,67 @@ Every rule here is normative and has one line in **tests this spec demands**.
     rules on safety, and this tool writes exactly one file: the `--out` path
     `worker` was given. **The worker's conditions are not written here.**
     `nova-swarm` owns them (`SPEC-SWARM.md` rules 1–5, baked into `nova-swarm
-    template`), and two writers of one text drift. Source:
-    `memory/local-model-doctrine.md`. The doctrine sentence is not enforceable by
+    template`), and two writers of one text drift. The doctrine sentence is not
+    enforceable by
     code; what is enforceable, and is tested, is the verb set and the one written
     file.
 
-12. **Every model has a caller or it leaves.** `status` prints what is loaded and
-    what it costs because a model resident for nobody is memory the box is not
-    using for work — the machine is the mandate, and an engine holding 23 GB for
-    nothing is the visible form of that (`memory/the-machine-is-the-mandate.md`).
-    `serve --stop` is the act; the printed cost is what makes somebody do it.
+12. **Every model has a caller or it leaves.** The behaviour is two printed fields
+    and one flag: every `LOCAL MODEL` line carries `weights=` and `loaded=`, and
+    `serve --stop` is the act — a model resident for nobody is memory the box is
+    not using for work, and an engine holding 23 GB for nothing is the visible
+    form of that.
 
 13. **Every listing is bounded.** Counts by default, a list only behind `--list`
     and capped by `--max` (default 20, `0` for all), and one `MORE` line carrying
-    the remedy. A degenerate state prints one remedy line, never the state. Source:
-    `memory/tool-output-costs-tokens.md`.
+    the remedy. A degenerate state prints one remedy line, never the state.
 
 14. **Content on stdin, never in argv; no key, ever.** No prompt, no task text and
     no model output reaches a command line, a log or a printed line. This binary
     has no shell, never executes anything a model returned, and **never opens the
     key file** a worker description names: it `stat`s it, refuses an empty one with
     the command that writes it, and that is the whole of its contact with a secret.
+
+15. **An engine is a box service and the weights are one store** (Glenn,
+    2026-09-12: *"I would like for local models to be accessible both here in this
+    admin account, and in your rowan account."* / *"This is a requirement for this
+    local setup and nova-local."*). An engine is started by a **LaunchDaemon** on
+    macOS — `/Library/LaunchDaemons`, loaded at boot, **not** a per-user
+    `LaunchAgent` — or a **systemd system unit** on linux, bound to loopback, so
+    every account on the box reaches the same daemon at `127.0.0.1:<port>` and no
+    account starts one of its own. The weights live in **one store on the box**: a
+    directory every model-running account can read, named by the box recipe
+    (below), with `OLLAMA_MODELS` pointing the ollama service at it and ds4's `-m`
+    paths under it. **Never a copy per user** — a second copy is the same weights
+    bought twice on a box where one model is 434 GiB. `nova-local` starts no
+    daemon and installs no unit; that is the box recipe's job.
+
+    The store has a name, not a shape. On **darwin** it is
+    **`/Users/Shared/nova-local/`**, one subdirectory per engine —
+    `models/ollama`, `models/ds4` — group `staff`, readable by every account that
+    runs models and written by the engine's own service account. On **linux** it
+    is **`/var/lib/nova-local/`** with the same layout, owned by a `nova-local`
+    service user and the same group rule. A **home directory can never be the
+    store**: its mode is its owner's to change and macOS's own default for a new
+    account is `700`. The only reason either account reads the other's today is
+    that both homes happen to be `750 <user>:staff`, and one `chmod 700`, or one
+    account outside `staff`, ends it silently — which is not a thing a requirement
+    for *both accounts* can rest on.
+
+    The **one-time move is the box recipe's**, in this order and no other: copy
+    the store to the path above; switch the engine's own setting to it
+    (`OLLAMA_MODELS` for ollama, the `-m` paths for ds4); **verify a model serves
+    from the new path** — `nova-local status` from each account showing the same
+    `store=`, then one `serve` and one task; and only then remove the old copy.
+    Copy before switch and verify before delete, because the thing being moved is
+    528 GB nobody wants to download twice.
+
+    This rule is what the tool **reports and refuses against**: `status` prints the
+    same engines, the same models and the same `store=` whichever account runs it, and
+    notes an engine whose store is inside a user home; `serve` on an adapter that
+    starts a process is exit 1 when something already listens on the port, naming
+    the holder — `held_by=<user>`, read from the listening socket's owner, and
+    `held_by=unknown (<why>)` when it cannot be read, never a guessed name.
 
 ## The engines
 
@@ -213,13 +263,13 @@ Every rule here is normative and has one line in **tests this spec demands**.
 | `serve` | create `<name>-<ctx>k` with `num_ctx`, `temperature 0`, `seed`; read `/api/show` back; one warm-up load with `keep_alive` | start `ds4_server -m <gguf> --ctx <n> --host 127.0.0.1 --port <port of --base>` (`--host` `ds4_server.c:14130`, `--port` `:14132`, `-c/--ctx` `:14122`) |
 | `serve --stop` | one request with `keep_alive: 0` — the model unloads; the derived tag stays on disk | end the process this tool started (`pid` from `SERVE OK`) |
 | determinism | baked into the derived tag (`temperature 0`, `--seed`) | **per request**, not per process: `serve --seed` on ds4 is exit 2 naming this row, because this tool sends no inference requests |
-| harness id | provider `ollama`, model `<the derived tag>` — what `serve_as=` printed | unknown, listed below |
+| harness id | provider `ollama`, model `<the derived tag>` — what `serve_as=` printed. OpenCode's own `--model` is `<provider>/<model>`, so the harness argv carries `ollama/{model}`; the description's `model` stays the bare served id, which is how `nova-swarm` lists it under the provider (`worker.go:229`) | unknown, listed below |
 
 **Measured on this bench, carried with their dates and never assumed again.**
 512 GB unified memory. DeepSeek V4 Flash 2-bit on ds4: 81 GB resident, ~42
-tokens/s (2026-09-03, `memory/the-machine-is-the-mandate.md:24`) — from weights
-that had sat on disk three weeks waiting for an engine. PRO 2-bit: 434.5 GiB at
-32K context, 13.8 tokens/s (2026-09-06, same file lines 43–44), and only under
+tokens/s (2026-09-03, **Sources**) — from weights that had sat on disk three weeks
+waiting for an engine. PRO 2-bit: 434.5 GiB at 32K context, 13.8 tokens/s
+(2026-09-06, same file), and only under
 `iogpu.wired_limit_mb=480000`, which is **per boot** and was raised by hand;
 `status` reads the live cap and never assumes the raised value. On ollama on this
 box, `GET /api/tags` at 2026-09-12, **six tags**, as it prints them:
@@ -233,13 +283,27 @@ qwen2.5vl:7b         5ced39dfa4ba    6.0 GB
 qwen2.5-coder:32b    b92d6a0bd47e   19.9 GB
 ```
 
-The `-32k` pair are derived tags made by hand on 2026-09-11 with `PARAMETER
+The `-32k` pair are derived tags made by hand on 2026-09-12 UTC (`/api/tags`
+`modified_at` `2026-09-11T21:02:12-04:00`) with `PARAMETER
 num_ctx 32768`; rule 6 is that practice made a verb. (The four-name list in issue
 #75's body is a sentence a person wrote, not a measurement, and it spells the
 vision tag `qwen2.5-vl:7b`, which is not what the daemon answers with.)
 
+**The two-store state rule 15 ends, measured 2026-09-12.** ollama runs on this box
+as a **user process under `glenn`** (`/opt/homebrew/opt/ollama/bin/ollama serve`,
+pid 56334) on 11434, with its weights in that one account's `~/.ollama`: 53 GB on
+disk for the six tags above, which sum to 88.9 GB of tag sizes because the derived
+tags share their parents' blobs. The ds4 checkout and its weights are **528 GB
+under `/Users/rowan/rowan-working/ds4`**, owned by the other account and reachable
+from this one only because that directory happens to be world-readable; no ds4
+server is running. Two accounts, two stores — `~/.ollama` under one, 528 GB under
+the other, shared only by a directory mode — is the state rule 15 ends, and
+neither engine is a LaunchDaemon today.
+
 **What could not be verified from the record, and is read off the source before
-the ds4 adapter is written**, never recalled:
+the ds4 adapter is written**, never recalled (the `ds4_server.c` line numbers in
+this section are carried from the record and are not readable from this bench —
+see **Sources**):
 
 1. whether any endpoint reports load progress, so `state=loading` would be
    inferred from a live process with no successful completion yet and labelled as
@@ -270,14 +334,19 @@ nova-local worker --engine <name> --model <ref> --out <file> --name <text>
                   --harness <cmd> --harness-args <a,b,{model},…> --worker-dir <abs dir>
                   --key-file <file> --env-var <NAME> --usage <opencode|none>
                   --deadline <duration> [--base <url>] [--board <owner/repo#n>]
+                  [--provider <id>]
 ```
 
 **No guessed anything.** No default engine, no default context, no default model,
 no default output path, and on `worker` no default for any field the description
 carries. A missing one is exit 2 and `refusing to guess`. The one place a default
 is allowed is `--base`, whose value is the adapter's own published constant and is
-printed on every line that uses it, plus `--timeout` (2 s) and `--max` (20), which
-are this tool's own bounds and are printed too. There is no `--force` on any verb:
+printed on every line that uses it, plus `--timeout` (2 s), `--max` (20) and
+`--keep-alive` (`30m`), which are this tool's own bounds and are printed too —
+`keep_alive=` on `SERVE OK` is what was sent, given or defaulted. `--provider
+<id>` is required exactly where the adapter publishes no provider id of its own
+(ds4) and is exit 2 on an adapter that publishes one (ollama), because two answers
+to one question is the drift this verb exists to stop. There is no `--force` on any verb:
 every refusal names a different command as its remedy. The binary is `nova-local`,
 and that is its only name.
 
@@ -288,7 +357,7 @@ stranger runs first rather than given a verb of its own.
 
 ```
 LOCAL OK engines=2 answering=2 loaded=1 models=8 mem_used=173G mem_free=338G mem_total=512G wired_cap=480000 load1=1.8
-LOCAL ENGINE ollama state=up base=http://127.0.0.1:11434/v1 loaded=1 advertised=6
+LOCAL ENGINE ollama state=up base=http://127.0.0.1:11434/v1 loaded=1 advertised=6 store=/Users/Shared/nova-local/models/ollama
 LOCAL ENGINE ds4 state=up base=http://127.0.0.1:8000/v1 advertised=2 resident=deepseek-v4-flash-q2.gguf ctx=32768
 LOCAL MODEL engine=ollama model=qwen3.6-32k:latest digest=sha256:dc1d37d39ad9 weights=23.9G loaded=yes num_ctx=32768
 LOCAL MODEL engine=ollama model=gemma4:12b digest=sha256:4eb23ef187e2 weights=7.6G loaded=no
@@ -302,9 +371,12 @@ loaded. They are different fields because ds4 once listed `deepseek-v4-flash` an
 `deepseek-v4-pro` with only Flash loaded, and the pair was printed as resident
 (2026-09-03, rowan-tools#60). `resident` comes from the process's own `-m`
 argument; when nothing can say, it is `resident=unknown (<why>)` and never what a
-table wishes were loaded. An engine that does not answer inside `--timeout` is
-`state=timeout` at exit 0; no engine answering at all is exit 1 with one remedy
-line.
+table wishes were loaded. `state=up` is a **2xx on the adapter's health path
+inside `--timeout`**, and nothing weaker: anything else that answered is
+`state=down` carrying the status it gave, so another program on port 8000 is
+`state=down status=404`, never `up`. An engine that does not answer inside
+`--timeout` is `state=timeout` at exit 0; no engine answering at all is exit 1
+with one remedy line.
 
 **What `status` deliberately does not check:** whether a model is any good,
 whether its weights are what its publisher shipped, whether anything may call it,
@@ -357,8 +429,10 @@ Three refusals are this verb's whole reason to exist beyond writing JSON, and ea
 repeats a hurt `nova-swarm` already paid: `--harness-args` without `{model}` is
 exit 2 (a description that names a model and never places it in the harness's argv
 launched a harness that was told nothing, under a green `RUN OK` — `worker.go:110-120`);
-a relative `--worker-dir` is exit 2 (relative worker dirs made every path the
-child was handed a path that did not exist — `worker.go:68-78`); a `--key-file`
+a `--worker-dir` that is relative, or that does not exist, is exit 2 (relative
+worker dirs made every path the child was handed a path that did not exist —
+`worker.go:68-78`; a missing one is a `WalkDir` error inside `nova-swarm`'s
+`RefreshSlot` — `worker.go:157,166` — at launch, under a green `RUN OK`); a `--key-file`
 that is missing or **zero bytes** is exit 2 with the command that writes it
 (`ReadKey` refuses an empty key file — `key.go:64`), because a local engine needs
 no key and `nova-swarm` needs a key file anyway, so the placeholder is named here
@@ -385,7 +459,15 @@ file — the last is not a guess but a **test**: demanded test 1 runs
 |------|---------|
 | 0 | the verb ran and passed: status printed, a model serving or stopped (or already stopped), a description written |
 | 1 | the verb ran and said **NO**: no engine answering at all; a `--expect-digest` mismatch; a derived tag that exists with different parameters; a ds4 `serve` over a different resident model; a `serve` over a `--max-load` or under a `--min-free` the caller gave |
-| 2 | could not run: a missing flag (`--num-ctx`, `--engine`, `--model`, any `worker` field), a non-loopback `--base`, an unknown engine name, `--harness-args` without `{model}`, a relative `--worker-dir`, a missing or empty `--key-file`, `--seed` on ds4, an unwritable `--out`, bad invocation |
+| 2 | could not run: a missing flag (`--num-ctx`, `--engine`, `--model`, any `worker` field), a non-loopback `--base`, an unknown engine name, a `--num-ctx` that is not a multiple of 1024, `--harness-args` without `{model}`, a `--worker-dir` that is relative or does not exist, a missing or empty `--key-file`, `--seed` on ds4, `--provider` on an adapter that publishes one, an unwritable `--out`, bad invocation |
+
+`REFUSED` is printed at both codes, and what it names says which: a threshold, a
+digest, a parameter of an existing tag or a resident model — things the caller can
+retry differently — is exit 1, the verb ran and said **NO**; a flag the tool could
+not use at all — an empty `--key-file`, a missing `--worker-dir`, `--harness-args`
+without `{model}` — is exit 2, could not run. `FAIL` stays reserved for a verb that
+ran and broke (`SPEC.md` **Conventions**), and no verb here prints both for one
+problem.
 
 A refusal says **what the input wants**, in one line, with the command that
 satisfies it, and never prints the contents of a path it could not use. Every
@@ -395,19 +477,22 @@ independent problem is reported at once.
 
 ```
 LOCAL OK engines=<n> answering=<n> loaded=<n> models=<n> mem_used=<n> mem_free=<n> mem_total=<n> wired_cap=<n|unset> load1=<f>
-LOCAL ENGINE <name> state=<up|down|timeout> base=<url> [loaded=<n>] [advertised=<n>] [resident=<file|unknown (<why>)>] [ctx=<n>]
+LOCAL ENGINE <name> state=<up|down|timeout> base=<url> [loaded=<n>] [advertised=<n>] [resident=<file|unknown (<why>)>] [ctx=<n>] [store=<dir|unknown (<why>)>]
 LOCAL MODEL engine=<e> model=<ref> digest=<sha256:…> weights=<n> loaded=<yes|no> [num_ctx=<n>]
 LOCAL NOTE <text>
 LOCAL FAIL <what>: <reason>
 LOCAL MORE kind=<kind> shown=<n> total=<n> remedy=<command>
-SERVE OK engine=<e> model=<ref> serve_as=<ref> digest=<sha256:…> num_ctx=<n> keep_alive=<d> temperature=0 seed=<n|unset> load=<t> mem_free=<n> load1=<f> engines=<n> [pid=<n>]
+SERVE OK engine=<e> model=<ref> serve_as=<ref> digest=<sha256:…> num_ctx=<n> keep_alive=<d> temperature=<0|unset> seed=<n|unset> load=<t> mem_free=<n> load1=<f> engines=<n> [pid=<n>]
 SERVE OK stopped engine=<e> model=<ref> [already stopped]
-SERVE REFUSED <ref>: <reason> — remedy: <command>
+SERVE REFUSED <ref>: <reason> [held_by=<user|unknown (<why>)>] — remedy: <command>
 WORKER OK engine=<e> model=<ref> out=<path> workers=1 provider=<p> harness=<cmd> deadline=<d> base=<url>
 WORKER REFUSED <ref>: <reason> — remedy: <command>
 ```
 
-Example lines carry illustrative values except where a measurement is cited; the
+`temperature=0` on a `SERVE OK` is ollama's, where rule 6 baked it into the tag;
+on ds4 nothing here sets it and the field is `temperature=unset` (**the engines**,
+determinism row). Example lines carry illustrative values except where a
+measurement is cited; the
 measured numbers of this bench are in **the engines**, with their dates.
 `digest=` is `sha256:` followed by the hex the engine reported, whole; the
 examples above truncate it to fit the page. `OK` lines go to stdout; `FAIL` and
@@ -423,46 +508,92 @@ Six lines, pasted in order, nothing edited but the paths.
 $ ollama pull gemma4:12b
 $ nova-local status
 $ nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --keep-alive 30m --seed 7
-$ printf 'local\n' > $PWD/local.key && chmod 600 $PWD/local.key
-$ nova-local worker --engine ollama --model gemma4-32k --out $PWD/workers/gemma.json --name gemma --harness opencode --harness-args 'run,--model,{model},--,{prompt}' --worker-dir $PWD/worker --key-file $PWD/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
-$ nova-swarm quickstart --pool $PWD/pool && nova-swarm run --pool $PWD/pool --workers 1 --hours 1 --worker $PWD/workers/gemma.json
+$ mkdir -p $PWD/worker && printf 'local\n' > $PWD/local.key && chmod 600 $PWD/local.key
+$ nova-local worker --engine ollama --model gemma4-32k --out $PWD/workers/gemma.json --name gemma --harness opencode --harness-args 'run,--model,ollama/{model},--,{prompt}' --worker-dir $PWD/worker --key-file $PWD/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
+$ nova-swarm quickstart --pool $PWD/pool
 ```
 
 **Every fact these six lines assume, stated.**
 
+- **Before line 1**, both binaries are on PATH. Nothing in the six lines installs
+  them: `go install ./cmd/nova-local ./cmd/nova-swarm` from a clone of
+  `nova-tools` (Go 1.26, `go.mod`) puts them in `$(go env GOPATH)/bin`, or a
+  release binary is copied onto PATH. That, and ollama, is the whole of *grab
+  nova-local*.
 - **Line 1** is the stranger's own tool, not this one: `nova-local` fetches
   nothing (**the engines** table). It assumes the ollama daemon is **installed and
   running** (`ollama serve`, or the app), that `gemma4:12b` is a tag in ollama's
-  library, and roughly 8 GB of download.
+  library, and roughly 8 GB of download. On a box set up to rule 15 the daemon is
+  the box's LaunchDaemon and this pull lands in the shared store, so it is done
+  once for every account, not once per account.
 - **Line 2** assumes nothing and creates nothing. With the daemon down it prints
   one remedy line and exits 1, which is the first thing a stranger needs to know.
 - **Line 3** creates the derived tag `gemma4-32k` (rule 6) and loads it once. It
   assumes `gemma4:12b` supports 32,768 tokens; it refuses nothing about the box,
   because no `--max-load` or `--min-free` was given (rule 8). `load=` on its
   output is the warm-up it just timed.
-- **Line 4** writes the placeholder key file. The local engine wants no key;
-  `nova-swarm` requires a non-empty key file for every worker (`key.go:64`), so
-  one line of any text is the whole of it. `nova-local` never opens it.
+- **Line 4** makes the worker directory and writes the placeholder key file.
+  `$PWD/worker` is the home copy `nova-swarm` refreshes into each slot
+  (`worker.go:157`) and it may stay empty, but it must **exist**: `RefreshSlot`
+  walks it and a missing one fails the launch under a green `RUN OK`. The first
+  run creates it; `worker` refuses a `--worker-dir` that does not exist rather
+  than writing a description that dies two tools later. The local engine wants no
+  key; `nova-swarm` requires a non-empty key file for every worker (`key.go:64`),
+  so one line of any text is the whole of it, and `nova-local` never opens it.
 - **Line 5** names `gemma4-32k` — the `serve_as=` line 3 printed — and every field
-  `nova-swarm`'s decoder requires. It creates `workers/` if it is missing, and
-  writes exactly one file. `--worker-dir $PWD/worker` is the home copy
-  `nova-swarm` refreshes into each slot; it may be an empty directory, and it must
-  be absolute.
-- **Line 6** is `nova-swarm`'s, and it is the **acceptance**: `run` loads the
-  description and the key file before it claims any task
-  (`cmd/nova-swarm/main.go`, `LoadWorker` then `ReadKey`), and an empty pool makes
-  the dispatcher return at once (`internal/swarm/run.go:309`), so the line ends in
-  `RUN OK started=0` exactly when the description is one `nova-swarm` accepts.
-  It assumes `nova-swarm` is installed, the same way line 1 assumes ollama.
-- **Not in the six lines, and named in `README.md`**: for a task to actually run,
-  the harness — OpenCode — must be installed, and it must have a custom provider
-  named `ollama` pointing at `http://127.0.0.1:11434/v1`. `nova-swarm` writes that
-  provider's `opencode.json` from this description at every start
-  (`internal/swarm/worker.go:219-243`); installing OpenCode is the stranger's, and
-  it is not a dependency of this binary (rule 1).
+  `nova-swarm`'s decoder requires, and **it is the acceptance**: what it writes is
+  a description `swarm.LoadWorker` returns zero problems for and `swarm.ReadKey`
+  accepts, which is a decode, not a run, and is demanded test 1(b). It creates
+  `workers/` if it is missing, and writes exactly one file. `--harness-args`
+  carries `ollama/{model}` and not `{model}`: `supervise.go:288` substitutes the
+  description's bare `model` verbatim, and OpenCode's `--model` is
+  `<provider>/<model>` — every description that has run on this bench spells it
+  that way (`qwen3.6-32k.json`, `gemma4-32k.json`, `gemma.json` in
+  `/Users/glenn/rowan-working/nova-swarm`, 2026-09-12).
+- **Line 6** is `nova-swarm`'s, and it makes the pool. `quickstart` starts nothing
+  and looks for no harness, so it is the last line that is true on a box with only
+  ollama, and it prints the `nova-swarm run …` command as its own `QUICKSTART
+  NOTE` — the stranger's **seventh** line, handed over by the tool rather than
+  guessed. It assumes `nova-swarm` is installed, the same way line 1 assumes
+  ollama.
+- **Not in the six lines, and named in `README.md`**: `nova-swarm run` — the
+  seventh line — refuses before any pool work when the harness the description
+  names is not on PATH (`cmd/nova-swarm/main.go:451`, exit 2 naming it), so
+  **OpenCode is a prerequisite of the seventh line, not of these six**. The six
+  were written as an acceptance and the seventh was carrying it; the acceptance
+  now sits on line 5, where nothing has to be installed for it to be true.
 
-The `README.md` `### First run` is these six lines with their output, executed by
-a test against fake engines.
+OpenCode needs no config of the stranger's either. `nova-swarm` writes the
+provider block into the slot at every start, after refreshing it
+(`internal/swarm/run.go:451,461` → `worker.go:219-243`), and this is the file the
+runs on this bench actually used, whole:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "ollama": {
+      "models": { "qwen3.6-32k": {} },
+      "options": {
+        "apiKey": "{env:OLLAMA_NOKEY}",
+        "baseURL": "http://127.0.0.1:11434/v1"
+      }
+    }
+  }
+}
+```
+
+`/Users/glenn/rowan-working/nova-swarm/worker-qwen3.6-32k-1/opencode.json`,
+2026-09-12 — the slot of the run in `run-local-3.log`. That block is what makes
+`ollama/qwen3.6-32k` resolve, and it is written, not installed: **an earlier
+revision of this spec required a custom provider named `ollama` in the stranger's
+global `~/.config/opencode/opencode.json`, which is false** — that file on this box
+declares only `inception`, and the slot file above overwrites whatever the worker
+directory carried. Installing OpenCode is the stranger's; configuring it is not,
+and neither is a dependency of this binary (rule 1).
+
+The `README.md` `### First run` is these six lines with their output, plus the
+seventh line and the one prerequisite it alone carries, executed by test 1.
 
 ## Deliberately not in this tool
 
@@ -479,11 +610,10 @@ Each cut names where the thing it did now lives.
   production may call, which is policy, and Glenn cut the policy the same night
   (*"I think it should just run the model"*). It also could not be built as
   drafted: `serve` gated on a lockfile it had no flag to read. **Where it lives:**
-  with the evaluation tool, which would have the evidence a promotion needs; the
-  practice stays in `memory/model-trust.md`, and the lesson that a gate and its
-  writer belong in one binary (an enforcer landed 2026-08-11, its only writer
-  2026-09-02, and for 22 days the tier could refuse a model and could not trust
-  one — `memory/a-guard-without-its-writer.md`) travels with them, unchanged.
+  with the evaluation tool, which would have the evidence a promotion needs, and
+  with it the practice and the lesson that a gate and its writer belong in one
+  binary — 22 days, 2026-08-11 to 2026-09-02, in which the tier could refuse a
+  model and could not trust one (**Sources**).
 - **`stop`** as its own verb — folded into `serve --stop`, which takes the same
   `--engine` and `--model` and is the same act reversed. Two verbs where one flag
   does.
@@ -517,8 +647,9 @@ Each cut names where the thing it did now lives.
 ## Tests this spec demands
 
 One line per rule, plus the stranger test. **Rule to test:** 1→2, 2→3 and 16,
-3→4, 4→5, 5→6, 6→7 and 16, 7→8, 8→9, 9→10, 10→11, 11→12, 12→11 (the cost
-printed) and 16 (`serve --stop`), 13→13, 14→14 and 15. Rule 11's doctrine half
+3→4, 4→5, 5→6, 6→7, 8 (the ollama `--stop`) and 16 (ds4's), 7→8, 8→9, 9→10,
+10→11, 11→12, 12→11 (`weights=` and `loaded=`, the printed cost) and 8
+(`serve --stop`, the act), 13→13, 14→14 and 15, 15→17. Rule 11's doctrine half
 — triage and report, never decide-and-act — is **not enforced by code and could
 not be**; what test 12 enforces is the verb set and the one written file, which
 is the part a tool can hold. Each runs inside `t.TempDir()` against
@@ -528,17 +659,27 @@ supplies a **fake box** through the one interface that reads them
 (`internal/local/box.go`); no environment variable overrides that in production.
 
 1. **The stranger test, and the reason the tool exists.** A run driven only by
-   `README.md`'s six lines, against fake engines and a fake `nova-swarm` pool,
-   ends with (a) the derived tag created at the given context, (b) a
-   `workers/gemma.json` that `swarm.LoadWorker` returns **zero problems** for and
-   that `swarm.ReadKey` accepts, and (c) `RUN OK started=0` from a real
-   `nova-swarm run` over an empty pool. The **new-user hour** — a fresh line, the
-   docs only, no other help — is run before the tool is called done; its
-   observable is the same three, from a transcript, and the transcript is attached
-   to the PR as evidence, not as the test.
+   `README.md`'s six lines, against fake engines, ends with (a) the derived tag
+   created at the given context, (b) a `workers/gemma.json` that
+   `swarm.LoadWorker` returns **zero problems** for and that `swarm.ReadKey`
+   accepts — the acceptance, decoded, with no process launched — and (c) the pool
+   `nova-swarm quickstart` made. The **seventh** line is tested too and
+   separately, because it needs something the six do not: with a fake `opencode`
+   on a `t.TempDir()` PATH, a real `nova-swarm run` over that pool and that
+   description is `RUN OK started=0` (empty pool, `internal/swarm/run.go:309`);
+   with that PATH empty it is exit 2 naming the harness
+   (`cmd/nova-swarm/main.go:451`). The test asserts **both**, so the day that
+   check moves, the six lines are still true and this spec is still honest about
+   which line pays for the harness. The **new-user hour** — a fresh line, the docs
+   only, no other help — is run before the tool is called done; its observable is
+   the same, from a transcript, and the transcript is attached to the PR as
+   evidence, not as the test.
 2. The import set is the standard library: a test walks the build's package
-   imports and fails on any path with a dot before the first slash; `go.mod` has
-   no `require` beyond the toolchain.
+   imports and fails on any path outside an allow-list of **the standard library**
+   (no dot before the first slash) **and this module's own path**
+   (`github.com/mas-bandwidth/nova-tools/…`, which is how `internal/oneline` and
+   `internal/bounded` import and which has a dot before the first slash); `go.mod`
+   has no `require` beyond the toolchain.
 3. A third fake adapter is registered in a test file and `status`, `serve`,
    `serve --stop` and `worker` each exit 0 against it; the diff that adds it
    touches exactly one non-test file (the test asserts the adapter registry is the
@@ -555,16 +696,23 @@ supplies a **fake box** through the one interface that reads them
    guess`; `status` prints `num_ctx=` only for a model the fake `/api/ps` reports
    loaded, with the value that endpoint gave, and prints no `num_ctx` for the
    others.
-7. `serve --engine ollama --model m --num-ctx 32768 --seed 7` sends a create for
-   `m-32k` carrying `num_ctx 32768`, `temperature 0`, `seed 7`, reads `/api/show`
-   back, and prints `serve_as=m-32k`; a second identical `serve` creates nothing
-   and exits 0 (idempotent); with the tag present at `num_ctx 4096` it is exit 1
-   naming both contexts and the `ollama rm` remedy; `serve --seed` on the ds4
-   adapter is exit 2 naming the determinism row.
+7. `serve --engine ollama --model m:7b --num-ctx 32768 --seed 7` sends a create
+   for `m-32k` — the `:7b` stripped, `32768/1024` — carrying `num_ctx 32768`,
+   `temperature 0`, `seed 7`, reads `/api/show` back, and prints `serve_as=m-32k`;
+   a second identical `serve` creates nothing and exits 0 (idempotent) **even
+   though** the fake `/api/show` also reports `top_k` and `top_p` the tool never
+   set; with the tag present at `num_ctx 4096`, or at a different parent,
+   `temperature` or `seed`, it is exit 1 naming both values and the `ollama rm`
+   remedy — including the collision case, `m2:7b` deriving the same `m-32k` over
+   another parent; `--num-ctx 30000` is exit 2 naming 29696 and 30720; `serve
+   --seed` on the ds4 adapter is exit 2 naming the determinism row.
 8. `serve` sends exactly one warm-up request carrying `keep_alive`, and `load=` on
    its line is the wall clock the injected clock advanced across that request
-   (fake engine sleeps 3 s, `load=3s`); no `status` line contains `load=` or
-   `gen=`.
+   (fake engine sleeps 3 s, `load=3s`); `serve` with no `--keep-alive` sends `30m`
+   and prints `keep_alive=30m`; `serve --stop` on ollama sends exactly one request
+   carrying `keep_alive: 0` and nothing else, the derived tag is still listed
+   afterwards, and a second `serve --stop` is exit 0 saying `already stopped`; no
+   `status` line contains `load=` or `gen=`.
 9. With a fake box at `load1=14.2, mem_free=61G`: `serve` with no threshold flags
    is exit 0 and its `SERVE OK` line carries `load1=14.2 mem_free=61G engines=<n>`;
    with `--max-load 8.0` it is exit 1 and the `SERVE REFUSED` line carries both
@@ -576,8 +724,10 @@ supplies a **fake box** through the one interface that reads them
     error).
 11. `LOCAL OK` carries `mem_free=` and `mem_total=` from the fake box read **at
     the moment of the call**: two `status` calls against a box whose free memory
-    changed between them print the two different numbers; no line in any verb's
-    output contains `fits=`.
+    changed between them print the two different numbers; every `LOCAL MODEL` line
+    carries `weights=` as the fake `/api/tags` reported it and `loaded=` as the
+    fake `/api/ps` reported it, which is the whole of rule 12's printed cost; no
+    line in any verb's output contains `fits=`.
 12. The verb set is exactly `status`, `serve`, `worker`: any other first argument
     is exit 2 naming the door, and a run of all three leaves exactly one new file
     on disk (the `--out` path) and no bytes under `$HOME`.
@@ -593,14 +743,28 @@ supplies a **fake box** through the one interface that reads them
     an empty key file is exit 2 carrying the `printf … && chmod 600` remedy; no
     child process argv this binary spawns begins with `sh`, `bash` or `zsh`.
 15. `worker` refusals, each exit 2 with the field named: `--harness-args` without
-    `{model}`; a relative `--worker-dir`; a missing `--key-file`; a `--usage`
-    that is neither `opencode` nor `none`; a `--deadline` that is not a Go
-    duration. All five missing at once are reported in one run, not one per run.
+    `{model}`; a relative `--worker-dir`; a `--worker-dir` that does not exist; a
+    missing `--key-file`; a `--usage` that is neither `opencode` nor `none`; a
+    `--deadline` that is not a Go duration; `--provider` given on ollama, which
+    publishes one. All of them at once are reported in one run, not one per run.
 16. A fake ds4 advertising two ids with one loaded gives `advertised=2
     resident=<the -m file>`; with no process it gives `resident=unknown (<why>)`
     and never a table's preference. `serve` against a ds4 already resident on a
     different model is exit 1 naming the resident model; `serve --stop` twice is
     exit 0 both times, the second saying `already stopped`.
+
+17. **Two accounts, one engine, one store.** `status` is run twice against the
+    same fake engine under two different `HOME`/`USER` pairs and the two stdouts
+    are **byte-identical**, `store=` included; an engine whose store resolves
+    inside either home — rather than under `/Users/Shared/nova-local` or
+    `/var/lib/nova-local` — prints one `LOCAL NOTE` naming it and stays exit 0, because
+    reporting it is the whole of this tool's part in the rule. `serve` on the
+    process-starting adapter, against a port a fake holder is already listening
+    on, is exit 1 carrying the port and `held_by=<user>`, and `held_by=unknown
+    (<why>)` where the owner cannot be read — never a name the tool inferred from
+    anything but the socket. No verb writes a LaunchDaemon plist, a systemd unit
+    or anything under `/Library` (the test asserts the run's whole file output is
+    still the `--out` path, as test 12 does).
 
 Plus the house standard: a usage banner ending in a runnable `example:` block,
 refusals reporting every independent problem at once, a `### First run` in
@@ -614,8 +778,8 @@ grammar above, `internal/oneline` for every printed value, `internal/bounded` fo
 every listing.
 
 1. **`internal/local/engine.go`** — the adapter interface (name, base, health,
-   list, serve, stop), the loopback pin, the `--timeout` budget, the registry.
-   Tests 3, 4.
+   list, serve, stop), the loopback pin, the `--timeout` budget, the registry, and
+   the adapter's declared box store and port holder (rule 15). Tests 3, 4, 17.
 2. **`internal/local/box.go`** — load average, free and total memory, the live
    wired cap, read at the moment of the call, behind one interface a test can
    fake. Tests 9, 11.
@@ -632,7 +796,8 @@ every listing.
 6. **`cmd/nova-local/main.go`** — three verbs, the banner, the quickstart notes
    folded into `status`, refusals that name the next command. Tests 1, 12, 13.
 7. **`README.md`'s `### First run`** — the six lines with their output, the
-   OpenCode custom-provider sentence (rule 1), executed by test 1.
+   seventh line, and the one sentence saying OpenCode is that line's prerequisite
+   and is configured by `nova-swarm`, not by the stranger (rule 1). Test 1.
 
 **Owed outside this tool.** A sentence for SPEC-SWARM so `workers=1` is carried by
 the schema rather than by an operator: *"A worker description may declare
@@ -643,38 +808,69 @@ each one file, when somebody wants them.
 
 ## DECIDED IN THE DRAFT
 
-The drafter's choices, not the record's. Each is a place to push back.
+The drafter's choices, not the record's, each with the commit that made it. Each
+is still a place to push back; the argument for each is the rule it points at.
 
-1. **Three verbs: `status`, `serve`, `worker`.** `stop` is `serve --stop`;
-   `pull`, `trust` and `untrust` are cut with the lockfile. The test of this cut
-   is the sentence at the top: each of the three is a step a person must take to
-   get from a fresh box to a local model doing work, and none of the cut four is.
-2. **`worker` survives the cut and `stop` does not.** The sentence ends at *run
-   local models*, and on this bench a local model runs through `nova-swarm`; a
-   served model nothing can call is the tool stopping one step short. The verb is
-   also where three of `nova-swarm`'s paid-for hurts are caught early.
-3. **The digest is printed and compared on request, never enforced.** This is the
-   thinnest possible survival of *"what if somebody sends you a poisoned model"*
-   (Glenn, 2026-07-19) inside a tool that was told not to be an audit. If it is
-   still too much, `--expect-digest` is one flag to delete.
-4. **`serve` creates a derived tag on ollama.** It is the only mechanism that
-   makes `num_ctx` hold for an OpenAI-`/v1` caller, and it is what was already
-   done by hand on this box. The cost is a second tag per context, and `serve_as=`
-   exists so nobody has to guess which name to use.
-5. **No thresholds of the tool's own** (rule 8). Glenn lifted the lock; the flags
-   exist for an operator who wants one, and a `serve` with neither flag never
-   refuses over the box's state.
-6. **No fit verdict** — two numbers instead of three words.
-7. **`--base` with the adapter's constant as its default**, rather than base URLs
-   as constants only. A moved ds4 port is real; a remote host is not allowed by
-   rule 3.
-8. **`status --timeout` defaults to 2 s** and a slow engine is `state=timeout` at
-   exit 0, so `status` stays a verb a person runs between edits.
-9. **The prompt conditions are not written here at all**, not even quoted. One
-   writer; `nova-swarm` is it.
-10. **`llama.cpp` and `mlx-lm` are named and not built.** Naming them is the test
-    of rule 2: if either would need a change to a verb, rule 2 is false.
-11. **No `--force` anywhere**, and every refusal's remedy is a different command.
-12. **Four ds4 unknowns remain unknowns**, and the adapter is not written until
-    they are read off the source and the box. Two of the original six — the port
-    and bind-host flags — are closed here from `ds4_server.c`.
+1. Three verbs — `status`, `serve`, `worker`; `stop` is `serve --stop`, and
+   `pull`, `trust` and `untrust` go with the lockfile (419382e).
+2. `worker` survives the cut and `stop` does not: on this bench a local model runs
+   through `nova-swarm`, and a served model nothing can call is one step short
+   (419382e).
+3. The digest is printed and compared on request, never enforced —
+   `--expect-digest` is one flag to delete (419382e).
+4. `serve` creates a derived tag on ollama, the only mechanism that makes
+   `num_ctx` hold for a `/v1` caller (419382e).
+5. No thresholds of the tool's own; `--max-load` and `--min-free` exist for an
+   operator who wants one (rule 8, 419382e).
+6. No fit verdict — two numbers instead of three words (419382e).
+7. `--base` defaults to the adapter's constant rather than being a constant only
+   (419382e).
+8. `status --timeout` defaults to 2 s, and a slow engine is `state=timeout` at
+   exit 0 (808b08d).
+9. The prompt conditions are not written here at all, not even quoted; `nova-swarm`
+   is the one writer (419382e).
+10. `llama.cpp` and `mlx-lm` are named and not built, which is the test of rule 2
+    (808b08d).
+11. No `--force` anywhere, and every refusal's remedy is a different command
+    (808b08d).
+12. Four ds4 unknowns stay unknowns; the port and bind-host flags are closed from
+    `ds4_server.c` (419382e).
+13. **The six lines end at `nova-swarm quickstart`, and `nova-swarm run` is the
+    seventh**, because `run` refuses without the harness on PATH; the acceptance
+    moves to line 5, where it is a decode and needs nothing installed (this
+    revision).
+14. The derived tag strips the reference's `:<tag>`, so the collision is caught by
+    comparing the parent rather than by the name (rule 6, this revision).
+15. **`nova-local` reports and refuses against rule 15 but does not install it**:
+    the LaunchDaemon, the systemd unit and the shared store are the box recipe's,
+    because a tool that writes under `/Library` is an outbound actor and this one
+    writes exactly one file (rule 11). Glenn's requirement is a requirement on the
+    setup; what the tool owes it is `store=`, the note, and the `held_by=` refusal
+    (this revision).
+
+## Sources
+
+A `memory/…` path is in **Rowan's self repo** (`/Users/glenn/rowan-new`); a
+`standard/…` path is in `/Users/glenn/rowan-working/standard`. Neither is in
+`nova-tools`. The rules above carry the quote; the path is here.
+
+- `memory/local-model-doctrine.md` — rules 8 and 11; `:105` is *"Have fun!!! a
+  lock is probably not needed"*, 2026-09-12.
+- `memory/the-machine-is-the-mandate.md` — rules 10 and 12; `:24` and `:43-44` are
+  the ds4 Flash and PRO measurements quoted in **the engines**.
+- `memory/model-trust.md` — rule 4 and the 2026-07-19 poisoned-model line ·
+  `memory/a-guard-without-its-writer.md` — the 22-day guard ·
+  `memory/ready-is-a-measurement.md` — rule 8 ·
+  `memory/the-ranking-encodes-someone-elses-constraint.md` — rule 10 ·
+  `memory/tool-output-costs-tokens.md` — rule 13.
+- `standard/MODELS.md:100`, 2026-09-07 — rule 5's 4,096-token cap.
+- nova-tools issue #75, 2026-09-12 — rule 7's 2m48s · rowan-tools#60, 2026-09-03 —
+  `advertised` versus `resident`.
+- `/Users/glenn/rowan-working/nova-swarm`, 2026-09-12 — the worker descriptions,
+  the by-hand Modelfiles behind rule 6, and the slot `opencode.json` quoted in
+  **first run**.
+- `ds4_server.c` — antirez's DwarfStar checkout on the Studio, owned by another
+  bench user and **not readable from this one**: every `ds4_server.c:<n>` in this
+  document is carried from the record and is **unverified on this bench**. Work
+  list 4 re-reads them on the box that owns the checkout and writes that path and
+  its commit beside the first citation before the ds4 adapter is written.
