@@ -967,6 +967,44 @@ The secret file's **contents are never read into memory**: the check is that
 `open(2)` (or `CreateFileW`) fails, and a probe that succeeded in opening it
 closes it without reading and reports `got=allow`.
 
+### The internal verb, and what its guard is and is not
+
+The re-executed self is `probe-step <nonce> <name> <path>`. It is not in the
+usage banner, and it **opens, truncates and reads the path it is handed** — so
+"nothing else runs it" has to be held by a mechanism, not by this sentence. It
+is held by three things, and each one is something a caller typing a command
+line cannot supply:
+
+1. The parent mints one 128-bit value per probe, keeps it in its own memory, and
+   writes the **16 raw bytes into a pipe whose read end is the child's fd 3**,
+   closing its own end at once. The child insists that fd 3 is open, that it is
+   a pipe, that it carries exactly those 16 bytes, and that it carries no more.
+2. Those bytes, hex-encoded, equal the value in the child's **argv** and the
+   value in its **environment** — three copies, compared in constant time, all
+   three required to agree. The environment copy is stripped from anything the
+   child in turn starts.
+3. The child asks the OS for its **parent's executable** and refuses unless that
+   is this same binary. `sandbox-exec` execs in place, so the probe's child has
+   the tool for a parent and nothing else does. On darwin the question is
+   `proc_pidpath(2)` and **not** `ps -o comm= -p`: the child asks it *inside*
+   the wall, and `ps` is setgid, so `ps` there is
+   `/bin/ps: Operation not permitted`, exit 126.
+
+**The honest bound.** None of this grants a protection against the person at the
+keyboard. A same-user caller can open and truncate that file with `>` and needs
+no verb of ours to do it, so the guard gives such a caller **no capability they
+lack**. What it buys is that no path driven by *content* — a script, a
+`Makefile`, a repository's own hook, a job running inside another wall — can
+reach this verb's `O_TRUNC` by guessing a word, and that the spec's "nothing
+else runs it" is therefore true by mechanism.
+
+It is stated because the first form was **not** true by mechanism. It compared
+the argv copy to the environment copy, and both of those are the caller's own to
+set, so it checked only that a caller had agreed with itself. Measured on
+`29646c1` by hand, from an ordinary shell:
+`NOVA_SANDBOX_PROBE_NONCE=<x> nova-sandbox probe-step <x> write_outside <file>`
+ran, exited 0, and left the file at zero bytes.
+
 ## The two callers
 
 **nova-swarm, at its launch seam.** `supervise` wraps the harness it spawns.
@@ -1195,8 +1233,11 @@ runs. (The earlier sentence "`(literal \"/\")` and `/dev` are required for
 Node was measured to run with the list complete, not to need each entry.)
 
 From the second round, under the same profile: `sandbox-exec`'s wrap is
-**exec in place** — the wrapped `sh` reports a `PPID` equal to the caller's own
-pid, so no extra process sits between the tool and the command; with `(allow
+**exec in place** — the wrapped `sh` reports a `PPID` equal to **the tool's**
+pid, so no extra process sits between the tool and the command (the reader
+command below says the same thing in the same words: "`$PPID` == the TOOL's
+pid"; this line said "the caller's own pid", which is the tool's *parent* and a
+different process whenever the tool is not run from an interactive shell); with `(allow
 signal (target self))` alone, `sh -c 'sleep 30 & kill $!'` prints `kill:
 Operation not permitted`, and with `(target self) (target children)` the same
 line exits 0; `cat /etc/hosts` and `ls /tmp` are denied by `(literal "/")`
@@ -1492,7 +1533,12 @@ One per rule:
     anywhere in the file is `ask`** — the test parses the JSON and walks it.
 15. `policy` prints a policy and executes nothing; the same lists produce
     byte-identical output twice; there is no flag by which a caller-supplied
-    profile file can be passed, asserted by the flag set itself.
+    profile file can be passed, asserted by the flag set itself. `policy --
+    <command>` shows **the directory of the resolved command as a root** — the
+    one root the generator computes at run time, and the one a reader most needs
+    to see — and the test asserts both halves: that root appears in the printed
+    policy, and the command **did not run** (it is a command that would create a
+    file, and the file is not there afterwards).
 16. A listing over 40 entries prints 20 and one MORE line naming the remedy;
     `--max 0` prints all; every refusal names the flag and its wanted form; two
     independent problems are both reported in one refusal; no test reaches
@@ -1531,7 +1577,14 @@ And one for each thing the rules above assert but no test yet reached:
     during or after the run, and the argv the body builds carries `-p`.
 21. `--read` ergonomics: a toolchain placed in a user directory is unreadable
     inside the wall without `--read` — the wrapped command fails (126 or a
-    signal death) — and with `--read` it runs. The test asserts that **no**
+    signal death) — and with `--read` it runs. **The directory is named by the
+    test and lies outside the caller's home**, because the home guard of the
+    roots section now refuses a command whose directory is the home or an
+    ancestor of it: under that guard a toolchain at `~/tools/x.sh` is not a
+    126 inside the wall at all, it is exit **125** `reason=bad_read` before
+    anything runs, and a test that took the 125 for the 126 it was written
+    about would be green for the wrong reason. `<tmp>/toolchain/x.sh` with
+    `HOME` pointed at the job's data home is the shape this test uses. The test asserts that **no**
     `SANDBOX NOTE` is printed after the command has started, on every platform
     (the linux body cannot, and the others must not diverge), and that the
     usage banner carries the `--read` remedy sentence.
@@ -1624,6 +1677,20 @@ And one for each thing the rules above assert but no test yet reached:
     byte-identical to what was pushed. The lists, the `HOME` they name and the
     token pass are asserted in the same test — the solo launcher's three rules
     had no test before this revision.
+29. **The home guard on the computed root**, which the roots section states
+    ("The home directory is never a root — including by way of the command")
+    and nothing demanded a test for. On **every platform**, because the guard is
+    in `Build` and the roots-table entry it guards is in this spec for all
+    three: a command planted at `<home>/x.sh`, and one planted in an **ancestor**
+    of that home, are each exit **125** `reason=bad_read` with the refusal
+    naming the home directory, and `Build` returns no policy — asserted with a
+    key planted at `<home>/.ssh/id_test`, which is what the whole refusal is
+    about. One directory deeper (`<home>/tools/x.sh`) is a directory of its own
+    and **is** a root, so the entry is guarded rather than removed. Both
+    exemptions run: a command in a home the caller named in its own `--read`
+    is accepted, and so is one under the job's data home of rule 9, which lies
+    inside a `--write` by construction — the guard refused the tool's own
+    `probe` before that second exemption existed.
 
 ## The work list
 
