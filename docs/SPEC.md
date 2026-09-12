@@ -491,7 +491,17 @@ tool supplied would make the whole answer a guess while still looking like an
 instrument — the no-guessing law, applied to a number rather than a path.
 The derivation is `tokens = ceil(bytes / r)`: a size check must never report
 fewer tokens than its own estimate, and rounding down would let a kernel one
-token over budget read as exactly at it.
+token over budget read as exactly at it. **Nor may it report a number the
+conversion invented.** A divisor small enough to derive more tokens than an
+`int64` can hold is a scientific-notation typo away from a usable one, and the
+float-to-integer conversion is where the language leaves the answer to the
+hardware: `1e-20` saturated to `MaxInt64` and failed on arm64, wrapped to
+`MinInt64` and passed — `KERNEL OK tokens=-9223372036854775808 budget=400`,
+exit 0 — on the three amd64 targets of the five that ship. So the range is
+checked BEFORE the conversion and an uncountable estimate is over budget:
+`KERNEL FAIL <file>: over budget: the divisor derives more tokens than can be
+counted (measured <bytes> bytes at <r> bytes/token, budget <n>)`, the same
+verdict on every GOARCH.
 
 **The line teaches the unit it printed.** Token mode prints the derived
 tokens, the budget, the measured bytes, and the divisor, so any reader can

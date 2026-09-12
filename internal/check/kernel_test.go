@@ -91,6 +91,14 @@ func TestKernelTokens(t *testing.T) {
 		{name: "the derivation rounds up", content: strings.Repeat("a", 241), create: true, max: 200, divisor: 2.4, wantTokens: 101},
 		{name: "over budget fails in tokens, with the bytes and the divisor", content: strings.Repeat("a", 241), create: true, max: 100, divisor: 2.4, wantTokens: 101,
 			wantFail: []string{"over budget: 101 tokens, budget 100, over by 1", "measured 241 bytes at 2.4 bytes/token"}},
+		// F5-4: a divisor small enough to derive more tokens than an int64 can
+		// hold. Go leaves the out-of-range float-to-int conversion to the
+		// hardware -- arm64 saturates to MaxInt64 and amd64 wraps to MinInt64,
+		// which compared as UNDER budget and exited 0 on three of the five
+		// shipped targets. The row asserts the FAILURE and a countable token
+		// number, never the saturated one, so it is the same red on every GOARCH.
+		{name: "a divisor too small to count fails rather than wrapping", content: strings.Repeat("a", 241), create: true, max: 100, divisor: 1e-20, wantTokens: 0,
+			wantFail: []string{"over budget", "more tokens than can be counted", "measured 241 bytes at 1e-20 bytes/token"}},
 		{name: "missing kernel fails", create: false, max: 100, divisor: 2.4,
 			wantFail: []string{"does not exist"}},
 		{name: "empty kernel fails despite being under budget", content: "", create: true, max: 100, divisor: 2.4,
@@ -151,5 +159,35 @@ func TestKernelTokensRefusesSymlink(t *testing.T) {
 	wantFailures(t, failures, []string{"not a regular file", "symlink"})
 	if measured != 0 || tokens != 0 {
 		t.Errorf("measured = %d bytes / %d tokens, want 0/0: a symlink must not be measured", measured, tokens)
+	}
+}
+
+// TestKernelTokensNeverReportsFewerTokensThanItsEstimate is the invariant the
+// derivation's own comment states -- "A size check must never report fewer
+// tokens than its own estimate" -- held at the edge where the estimate stops
+// being representable. The conversion at the heart of it is the one Go leaves
+// implementation-defined, so this asserts the helper's ANSWER (a failure, and a
+// token count that is not negative) rather than either platform's rounding, and
+// is therefore the same test on amd64, arm64 and any future GOARCH.
+func TestKernelTokensNeverReportsFewerTokensThanItsEstimate(t *testing.T) {
+	dir := t.TempDir()
+	writeMode(t, dir, "KERNEL.md", strings.Repeat("a", 241), 0o644)
+	file := filepath.Join(dir, "KERNEL.md")
+	// Each divisor derives an estimate above math.MaxInt64 from 241 bytes:
+	// 2.41e21, 2.41e23, and a denormal one whose quotient is +Inf.
+	for _, divisor := range []float64{1e-20, 1e-22, math.SmallestNonzeroFloat64} {
+		measured, tokens, failures, err := KernelTokens(file, 400, divisor)
+		if err != nil {
+			t.Fatalf("divisor %g: unexpected error: %v", divisor, err)
+		}
+		if len(failures) == 0 {
+			t.Errorf("divisor %g: an uncountable estimate passed the budget; tokens = %d", divisor, tokens)
+		}
+		if tokens < 0 {
+			t.Errorf("divisor %g: tokens = %d, a negative count is not an estimate", divisor, tokens)
+		}
+		if measured != 241 {
+			t.Errorf("divisor %g: measured = %d bytes, want 241", divisor, measured)
+		}
 	}
 }
