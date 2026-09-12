@@ -853,17 +853,17 @@ by default — folds a `key_file` typed `<dir>/Worker/.key` and a `worker_dir` o
 `<dir>/worker` into one file: the spelling said the key was outside while the
 slot copy put it inside the wall (#100).
 
-**The slot directory is a separate check, and it does not ask the filesystem
-yet.** A `key_file` inside a slot directory `<worker-dir>-<n>` is refused at
-load as well — that rule stands unchanged — but the refusal matches the slot's
-`<base>-<n>` name as **text**, so on a case-insensitive filesystem a key at
-`<dir>/Worker-1/.key` under a `worker_dir` of `<dir>/worker` is in the same
-directory the tool hands to `--read` and the name comparison says no. The slot
-directory a fold names **need not exist at load** — slots are created at run —
-so there is no inode to compare and the repair is a different shape from the
-one above; it is owned by #145 and is not closed here. This spec does not claim
-the gap is covered. These two paragraphs name mechanisms and one known gap;
-they add no rule.
+**And the slot directory asks it too.** A `key_file` inside a slot directory
+`<worker-dir>-<n>` is refused at load as well — that rule stands unchanged — and
+because such a directory **need not exist at load** (slots are created at run, so
+there may be no inode to compare) the candidate is derived from the key's own
+ancestors and judged against the slot spelling `SlotDir` would build, under the
+filesystem's own equality: the two directories themselves where both are there,
+and otherwise the case behaviour of the directory holding them, **measured at load
+by writing and removing one probe file inside that directory** — the parent of
+`worker_dir`, where this tool creates slot directories anyway — rather than read
+off `runtime.GOOS` (#145). These two paragraphs name mechanisms; they add no
+rule.
 
 **The probe runs once, before the first worker** (SPEC-SANDBOX rule 10): `run`
 asks the machine what it can enforce and then proves the wall with the real
