@@ -137,9 +137,10 @@ echo "run-worker: start $stamp label=$label slot=$slot dir=$wdir deadline=${dead
 # files live under $wdir.
 #
 # stdout and stderr go to $log, which the LAUNCHER opens out here and which lives
-# OUTSIDE the write set: rule 12 wants a pipe the caller drains or a path inside
-# the write set, so the wrap's output is piped through `cat`, which writes the log
-# from outside the wall.
+# OUTSIDE the write set: the redirect is applied by the launcher before the wrap,
+# so the sandboxed child only ever writes to a descriptor the caller opened, and
+# $! is the worker itself rather than a collector whose exit would hide the
+# worker's. No pipe through cat: wait must report the worker's status.
 (
   cd "$wdir" || exit 3
   PATH="/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
@@ -147,7 +148,7 @@ echo "run-worker: start $stamp label=$label slot=$slot dir=$wdir deadline=${dead
   "$sandbox" --read "$wdir/self" --write "$wdir" --write "$jobdir" \
     --cwd "$wdir" --name "worker-$label" \
     -- "$harness" ${model:+--model "$model"} -- "$prompt"
-) 2>&1 | cat >"$log" &
+) >"$log" 2>&1 &
 pid=$!
 
 elapsed=0
