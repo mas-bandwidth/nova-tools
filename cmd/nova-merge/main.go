@@ -82,15 +82,17 @@ every read and gate, so a lane is not usable without it; joined=false on INIT OK
 says this lane created and pushed it, joined=true says it was already there and
 nothing was pushed.
 
-REHEARSE FIRST, against a bare repository of your own, and nothing reaches a forge:
+REHEARSE FIRST, against a bare repository of your own:
 
   git init -q --bare ./rehearsal.git
   nova-merge quickstart --lane ./rehearsal-lane --repo rehearsal-team/rehearsal --base main \
              --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
 
---remote is the URL the lane clones from and pushes to, and it wants an ABSOLUTE
-path or a URL: git runs inside the lane directory, so a relative one resolves
-against the lane and the run is refused. Give the rehearsal a lane of its own --
+--remote only controls where git clones from and pushes to: the clone and the push
+writes go to the local bare remote you name with --remote, but hosted status and
+check reads can still occur against the repository named by --repo. --remote wants
+an ABSOLUTE path or a URL: git runs inside the lane directory, so a relative one
+resolves against the lane and the run is refused. Give the rehearsal a lane of its own --
 init creates a lane once, so rehearsing into the live lane's directory is INIT
 REFUSED on the line after. A bare repository with no --base branch in it prints one
 STATUS NOTE and base_state=UNKNOWN at exit 0, which is a rehearsal with no base to
@@ -127,7 +129,7 @@ example:
   nova-merge dry-run --lane ./rehearsal-lane
 
 Those five are one sitting against a bare repository of your own, in order: make the
-lane against nothing that reaches a forge, queue an entry, look at it, ask what a
+lane, queue an entry, look at it, ask what a
 reader would be handed, and see what a pass would do without doing it. ./rehearsal-lane
 is a path of yours and nothing is guessed from it.
 `
