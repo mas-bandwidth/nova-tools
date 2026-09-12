@@ -1,0 +1,42 @@
+{
+  "sessionId": "fixture-grok-session",
+  "updatedAt": "2026-09-12T13:00:00Z",
+  "session": {
+    "inputTokens": 3010,
+    "outputTokens": 305,
+    "totalTokens": 3315,
+    "modelCalls": 7,
+    "costUsdTicks": 227,
+    "turnCount": 4
+  },
+  "turns": [
+    {
+      "turnNumber": 1,
+      "endedAt": "2026-09-12T00:05:00Z",
+      "inputTokens": 9999,
+      "outputTokens": 100,
+      "cachedReadTokens": 800,
+      "cacheCreationTokens": 0,
+      "reasoningTokens": 40,
+      "totalTokens": 10099,
+      "modelCalls": 2,
+      "costUsdTicks": 77,
+      "turnCount": 1,
+      "primaryModelId": "grok-model-example",
+      "modelUsage": {
+        "grok-model-example": {
+          "inputTokens": 1000,
+          "outputTokens": 100,
+          "cachedReadTokens": 800,
+          "cacheCreationTokens": 0,
+          "reasoningTokens": 40,
+          "totalTokens": 1100,
+          "modelCalls": 2,
+          "costUsdTicks": 77
+        }
+      },
+      "promptText": "SENTINEL-PRIVATE-PROMPT-DO-NOT-PUBLISH-7f3a",
+      "exportPath": "SENTINEL-PRIVATE-PATH-DO-NOT-PUBLISH-9c21"
+    }
+  ]
+}
