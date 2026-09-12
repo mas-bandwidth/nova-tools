@@ -376,7 +376,7 @@ near the end.
 ```
 nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] [--no-sandbox] -- <command> <args...>
 nova-sandbox probe   --write <dir>... [--read <dir>...] --secret <path> [--net-deny] [--max <n>]
-nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>]
+nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>] [-- <command> <args...>]
 nova-sandbox fence   --out <file> [--webfetch allow|deny]
 nova-sandbox grant   --name <container> [--read <dir>]... [--write <dir>]...
 nova-sandbox release --name <container> [--read <dir>]... [--write <dir>]...
@@ -389,7 +389,12 @@ not about the job. `nova-swarm run` runs it before it starts the first worker
 and refuses the pass on a failure with `RUN REFUSED reason=sandbox_probe`.
 
 `policy` prints the generated policy for a read/write pair and runs nothing. It
-is how a reader checks the wall without trusting this document.
+is how a reader checks the wall without trusting this document. The command
+after `--` is optional and is **not run**: it is there because one root is
+computed from the command ("the directory of the resolved command"), so a
+`policy` that always stood on `/bin/sh` could not print the one root a reader
+most needs to see. With no `--`, `sh` is the floor every wrapped shell command
+already stands on.
 
 `fence` writes the `opencode.json` `permission` block of rule 14 to a file, so
 that the block is generated from one place rather than copied by hand.
@@ -579,7 +584,19 @@ is gone by then (rule 12) — so the sentence lives in the usage banner instead:
 *a command that runs outside the wall and dies inside it is missing a
 `--read`.*
 
-The home directory is never a root.
+The home directory is never a root — **including by way of the command**. One
+root is computed rather than named, "the directory of the resolved command", and
+a command placed in a home directory would hand the wall that whole home:
+`~/x.sh` grants read on `~/.ssh`, the `gh` configuration and the login keychain,
+while the `SANDBOX OK` line says `read=0` (measured, #73 at `1922f9d`). So the
+tool **refuses** when the directory of the resolved command is the caller's home
+directory — the passwd home, and `$HOME` as the tool inherited it — or an
+ancestor of it, naming the directory and the home: "install the command in a
+directory of its own". The refusal is `bad_read` and it happens before anything
+runs. Two exemptions, both of them rule 3's "a caller that adds one back has
+done so in its own argv": a directory the caller named in its own `--read` or
+`--write`, and a home that lies inside the caller's own lists, which is what the
+job's data home of rule 9 always is.
 
 ## macOS — `sandbox-exec` with a generated profile
 
@@ -894,8 +911,14 @@ object has no filesystem scope; WSL2 Landlock forces WSL on everyone.
 ## The probe
 
 ```
-nova-sandbox probe --write <jobdir> --secret ~/.config/<provider>/env
+HOME=<jobdir>/home nova-sandbox probe --write <jobdir> --secret ~/.config/<provider>/env
 ```
+
+`HOME` is set here for the same reason it is set on the reader commands: rule 9's
+check runs before the policy is built, so a probe run with the dispatcher's own
+`HOME` — which is outside every `--write` by construction — is
+`PROBE REFUSED reason=check ... home_outside` and every swarm pass would refuse
+with it. A caller that runs the probe runs it with the job's data home.
 
 Five checks, under the real policy for this platform, each one line — the five
 are the five rows below, `write_outside_control` included, and the names in the
@@ -1017,16 +1040,15 @@ shell cannot delete it (#69's worked specimen).
 **A solo line's launcher.** A line started by hand gets no swarm, and it gets
 the wall only through its launcher. Its launcher calls `nova-sandbox` with lists **per line** — its home,
 its lane clones and its scratch as `--write`, shared references as `--read` —
-read from **one file the line's person keeps**, one absolute directory per line
-prefixed by its flag, `#` comments ignored. A launcher that builds its lists in its own
-argv instead is the same contract by another spelling — what matters is that the
-lists are written down in one place per line and are not guessed — and
-`run-freddy.sh` does it that way (2026-09-11).
+**written down in one place per line and never guessed**. Where that one place
+is, is the launcher's: `run-freddy.sh` builds the lists in its own argv, which
+is the form this document describes, and a launcher that reads them from a file
+its person keeps is the same contract by another spelling.
 
 The launcher does two more things, and without them a solo line is refused at
 every start. It **sets `HOME` to a per-line data directory inside its write
-set** — `<line home>/.data`, created by the launcher, named in the lists file
-as a `--write` like any other — because the inherited `/Users/<user>` is in
+set** — `<line home>/.data`, created by the launcher and named as a `--write`
+like any other of the line's — because the inherited `/Users/<user>` is in
 neither list and rule 9 is `SANDBOX REFUSED reason=home_outside` for every run
 that keeps it. And it **passes the line's write token by environment**
 (`GH_TOKEN`, read by the launcher from wherever its person keeps it, outside
@@ -1248,8 +1270,9 @@ header says what each marker is replaced by.
 #    getcwd(3), and every git command dies there before it reads anything) and
 #    stdout a PIPE the caller drains or a file inside it — a wrapped /bin/cat
 #    whose stdout is a file outside every named path is denied (rule 12).
-#    Expect: PPID == the wrapped shell's pid, the first line of /etc/hosts, and
-#    no "Operation not permitted".
+#    Expect: $PPID == the TOOL's pid — rule 12: sandbox-exec execs the command in
+#    place and the tool waits, so the shell's parent is nova-sandbox itself —
+#    the first line of /etc/hosts, and no "Operation not permitted".
 #    HOME is set on BOTH lines: rule 9's check runs before the policy is built,
 #    so `policy` refuses an outside HOME even though it runs nothing.
 mkdir -p w/home && cd w
@@ -1598,9 +1621,9 @@ And one for each thing the rules above assert but no test yet reached:
     it never reports success. And the recovery is asserted end to end, because
     that is the ruling: after a `rm -rf` of the line's self **outside** the wall
     (inside it is test 25's `EPERM`), a fresh clone of the remote is
-    byte-identical to what was pushed. The lists file, the `HOME` it names and
-    the token pass are asserted in the same test — the solo launcher's three
-    rules had no test before this revision.
+    byte-identical to what was pushed. The lists, the `HOME` they name and the
+    token pass are asserted in the same test — the solo launcher's three rules
+    had no test before this revision.
 
 ## The work list
 
@@ -1652,7 +1675,7 @@ them.
    and `release` at teardown, runs the probe once, and a solo launcher sets
    `HOME` to the line's `.data` and passes the line's token by environment; `supervise` builds each worker's
    read and write argv and makes the `tree: yes` clone before the wrap; the
-   solo line's launcher reads its lists file and **pushes the line's self on
+   solo line's launcher builds its lists and **pushes the line's self on
    exit** (#69's second guard); Freddy's `AGENTS.md` names the command. Tests
    23, 24, 25, 27, 28. `nova-swarm` does not change before test 26;
    `run-freddy.sh` already did, on 2026-09-11, and that is the named deviation
@@ -1687,7 +1710,7 @@ thing revision 6 got wrong rather than merely left out.
    (`gemini --sandbox` dropped), homebrew `git` before `/usr/bin`.
 7. **`profiles/darwin-check.sh` gains `dns_resolves` (with a control that
    removes the socket from the same profile), `clipboard_denied` and
-   `nested_sandbox_refused`** — 24 checks, all OK on this Mac.
+   `nested_sandbox_refused`** — all OK on this Mac; the count is the script's.
 
 ### Revision 9, after read 8 of this document and read 3 of the build
 
@@ -1741,3 +1764,24 @@ and what a test now pins; the demanded-test lines for the DNS literal, the
 command 2 is the `policy` verb and is pasteable as written; the `--print-policy`
 alias is deleted; `POLICY REFUSED`'s grammar is the refusal set; and rule 1
 names `sandbox.Run` without a signature the code does not have.
+
+### Revision 10, after four reads at `1922f9d` and read 8's leftovers
+
+1. **The home directory is never a root, including by way of the command.** The
+   roots section gains the guard: the tool refuses when the directory of the
+   resolved command is the caller's home or an ancestor of it, with rule 3's two
+   argv exemptions. The roots table keeps "the directory of the resolved
+   command" on all three platforms — the entry is right, it was unguarded.
+2. **The probe synopsis sets `HOME`.** It had the exact defect revision 9 fixed
+   for reader command 2, and through `nova-swarm run` it made every pass
+   `RUN REFUSED reason=sandbox_probe`.
+3. **Reader command 2's `$PPID` is the tool's pid**, which is what rule 12's
+   "execs the command in place and waits" means; it said the wrapped shell's.
+4. **The `24 checks` of the revision 7 note is gone** — the third count, and the
+   last, so "no prose states a check count" is now true of the whole document.
+5. **The four surviving lists-file claims are gone**, which is read 8's finding
+   4 finished rather than half-applied: the lists are written down in one place
+   per line and not guessed, and where that place is, is the launcher's.
+6. **`policy` takes an optional `-- <command>`**, not run, so that rule 15's
+   "prints exactly what a wrapped run would apply" is true of the one root that
+   is computed from the command.
