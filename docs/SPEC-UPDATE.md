@@ -260,18 +260,17 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     before the first blank one as a header, then the same lines the report printed, `--max`
     included: past `--max` tools the body carries the `MORE` line, a partial inventory that
     says so (rule 22), never a bug; `--max 0` sends them all. `--send` takes the draft's
-    flags plus `--bus <path> --remote <r> --branch <b>` and hands the body to `nova-bus send
-    --stdin` with those flags, one argv (rule 3): the note+INDEX write, the speaker check
-    and the `SEND OK` line are nova-bus's — "receipt" is nova-bus's word for a reader
-    marking a note heard, so this spec never uses it for that line; this tool composes and
-    stops — no git of its own, no guessed recipients, no default `--to`, never the file's
-    `owner` column as a recipient. Any of `--as`, `--to`, `--bus`, `--remote`, `--branch`
-    missing is a refusal, exit 2, naming the flag; nova-bus exiting non-zero is `REPORT
-    FAIL` naming its code and first line — `sent=no` when that line is `SEND REFUSED` or a
-    `SEND FAIL` naming no commit, the bus untouched by nova-bus's own rule; `sent=uncertain`
-    when it names a commit NOT pushed, because an interrupted push may have landed (rule
-    25); success, `SEND OK … pushed=true`, prints `REPORT SENT` carrying nova-bus's `SEND
-    OK` line whole, as `line=`.
+    flags plus `--bus <path> --remote <r> --branch <b>`. Delivery uses the prepared
+    artifact protocol in [SPEC-BUS-DELIVERY.md](SPEC-BUS-DELIVERY.md): `nova-bus prepare`
+    validates and assigns identity without sending, then `nova-bus send --prepared-stdin`
+    publishes or confirms the same artifact. The reporter does no Git of its own.
+    Missing `--as`, `--to`, `--bus`, `--remote` or `--branch` is exit 2 naming the flag.
+    No recipients come from the inventory's owner column. Only a confirmed `SEND OK`
+    with `pushed=true` records delivery; failures and interrupted attempts never do.
+    The whole successful SEND line is preserved as `line=`. With `--snapshot`, the
+    pending artifact is saved before the sending child starts; without it, each
+    explicit send is a new intention with in-process retry only. Help states that
+    cross-process recovery needs the caller-named snapshot.
 25. **Unchanged state is the caller's to suppress, through a snapshot file the caller
     names.** Absent `--snapshot <path>`, no file is read or written (rule 9: nothing under
     `$HOME`, no state file of this tool's own). Present, the run reads the previous
@@ -279,7 +278,8 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     one atomically (a temp file beside it, then rename) and prints `changed=<yes|no>` on the
     count line with one `REPORT CHANGED name= was= now=` per entry that moved; the first
     run is the baseline, `changed=yes`, `was=-`; a tool turning UNKNOWN, or back, moved.
-    The file is JSON, two objects and nothing else: `observed`, keyed by `name`, each value
+    The file is JSON with `observed`, `delivered` and `pending`. `observed` is keyed
+    by `name`, each value
     `raw`, `status` (`known` or `unknown`) and `at` — the machine-readable snapshot #121
     asked for — and `delivered`, below. **`at=` is never compared**: two snapshots differing
     only in their stamps are `changed=no` — a timestamp refresh is not a changed version
@@ -294,24 +294,19 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     suppression compares against what that recipient was confirmed to have, never the last
     observation, so a report before a send, a failed send before its retry, and a snapshot
     made for another recipient never quiet a send. Without `--snapshot` every `--send`
-    sends. **An uncertain delivery keeps its identity.** nova-bus exiting non-zero with a
-    `SEND FAIL` naming a commit NOT pushed has written the note under its own `id` into the
-    bus checkout: the run records `pending` for the scope — that `id`, `path` and commit
-    from nova-bus's line, the exact body, the `observed` it carried — and says
-    `sent=uncertain`, never `sent=no`. The next `--send` in that scope reconciles before it
-    replays, through nova-bus's own recovery: a commit nova-bus made is carried by its next
-    push, or found level when the push had landed and only the answer was lost, so this tool
-    never composes the pending body again under a new `id`. Tonight's observation equal to
-    the pending one is nothing new to say — `REPORT NOTE pending <id> commit=<sha> not
-    confirmed; nova-bus's next push from <bus> carries it`, `sent=uncertain`, no nova-bus
-    run; different, the new body is sent as usual, and its `SEND OK … pushed=true` confirms
-    the pending too, a push publishing the branch and every commit under it: `delivered`
-    takes the new record, `pending` clears, `REPORT NOTE <id> landed with this push` says
-    so. A nova-bus killed before any `SEND` line is `sent=uncertain` with `id=-` and replays
-    next time — the one place a duplicate can arise, named (open question 4). Exit is the
-    inventory's (rule 22) and the send's (`sent=uncertain` is 1), never `changed=`'s; what a
-    line does with `changed=no` — skip the wake, read at wrap — is that line's policy,
-    chosen locally (#121), never this tool's.
+    sends. **Preparation and pending precede mutation.** Save the delivery scope,
+    exact prepared artifact and observed map atomically before starting send. A failed
+    preparation cannot have delivered; an interrupted send retains the prepared ID.
+    On the next explicit `--send`, resolve pending first through the same prepared-send
+    protocol even when the observation is unchanged. Confirmed publication, including
+    already-published, advances `delivered` and clears pending atomically. If the current
+    observation differs, resolve the older pending report before preparing another.
+    If unresolved within budget, print its ID and an explicit pending gate, exit 1,
+    and do not send a newer report. No report is silently discarded or recreated under
+    another ID. Unrelated local commits are never published as a side effect of retry.
+    Exit combines inventory completeness and delivery outcome; `changed=` alone never
+    makes a complete invocation fail. A stateless invocation has no retained recovery
+    promise across process death; the caller chooses that by omitting `--snapshot`.
 26. **No hidden timer, install or automatic send.** `report` has no `--watch`, no loop, no
     daemon; it runs when a person or a unit a person wrote starts it, and ends inside its
     budget. It installs nothing, pulls nothing, and no report line is a name for `apply`
@@ -560,16 +555,16 @@ install` or `npm install`.
     file under `--max 20` carrying its `REPORT MORE` line in the body, and starts no
     `nova-bus` (a fake on `PATH` counts zero runs); `--send`
     missing any one of its five flags is exit 2 naming that flag; `--send` complete runs the
-    fake `nova-bus send` once with `--stdin`, `--bus`, `--remote`, `--branch`, `--as`
-    and the body on its stdin; the fake exiting 1 with `SEND REFUSED: …` is `REPORT FAIL`
-    quoting code and line, `sent=no`; the fake exiting 1 with `SEND FAIL p: … commit abc1234
-    … NOT pushed` is `REPORT FAIL`, `sent=uncertain`, and `sent=no` nowhere — a mutation
-    that matters; a file whose `owner` column names `stella` and no `--to` never sends to
-    her — the other.
+    fake `nova-bus prepare` with the draft on stdin, then `nova-bus send` with
+    `--prepared-stdin`, `--bus`, `--remote`, `--branch`, `--as` and the prepared artifact
+    on stdin. Preparation refusal is `REPORT FAIL`, `sent=no`; interrupted or unconfirmed
+    dispatch is `REPORT FAIL`, `sent=uncertain` with its prepared ID. No absent result
+    line establishes that nothing was sent. A file whose owner names `stella` and no
+    `--to` never sends to her.
 25. `TestUnchangedStateIsTheCallersToSuppress`: without `--snapshot`, `HOME` and the cwd are
     fresh temp dirs and empty after the run; `--snapshot s.json` first writes it — JSON,
     `observed` keyed by `name`, each value exactly `raw`, `status`, `at`, and `delivered`
-    empty — and prints `changed=yes`; a second run with identical raw lines and an injected
+    and `pending` empty — and prints `changed=yes`; a second run with identical raw lines and an injected
     clock one hour on prints `changed=no` and no `REPORT CHANGED` line — the mutation that
     matters; a third with one raw differing prints one `REPORT CHANGED name= was= now=` and
     `changed=yes`; a tool turning UNKNOWN is a change, and back is another. Delivery, with a
@@ -580,13 +575,13 @@ install` or `npm install`.
     for that scope, sends — a send quieted by an observation nobody was sent is the mutation
     that matters; the fake refusing (`SEND REFUSED`), then the same send unchanged, sends
     again; a send confirmed `--to stella`, then the same observation `--to emma`, sends; the
-    fake printing `SEND FAIL p: … commit abc1234 … NOT pushed` and exiting 1 leaves
-    `sent=uncertain` and a `pending` holding that commit and the body, the unchanged retry
-    starts no `nova-bus` and prints `REPORT NOTE pending`, and a changed retry the fake
-    confirms clears `pending`, prints `REPORT NOTE <id> landed with this push` and writes
-    `delivered`, the pending body appearing on no stdin the fake saw — the lost
-    acknowledgement after a landed push, resolved without a second copy; a run killed
-    mid-write leaves the old snapshot whole.
+    real bare-Git cases from SPEC-BUS-DELIVERY.md prove recovery: refused push followed
+    by an unchanged retry lands one original note; lost acknowledgment finds the same
+    published note; child death before output reuses saved pending identity. Exercise
+    death before/after note, INDEX and commit writes; changed observation behind pending;
+    unrelated local work refusal and a racing remote writer. Assert remote note bytes,
+    ID and INDEX count, not just a fake success line. A run killed mid-snapshot-write
+    leaves the previous snapshot whole. A confirmed unchanged run invokes no bus process.
 26. `TestTheReportHasNoClockNoInstallNoAutomaticSend`: `--watch`, `--every` and `--loop` are
     unknown flags costing one line; over a file whose every entry is UNKNOWN or changed, no
     `apply` argv and none of `brew`, `npm`, `go install` or `ollama pull` starts; a plain
@@ -609,10 +604,8 @@ A registry that stops answering registry-v2 JSON is UNKNOWN, never OK.
 arrive either way and the two disagree by days. Default: the file names the source
 that installed the copy on this box; a mismatch is a one-line fix to the file, not a
 second source per entry.
-4. **A pending note waits for a push nova-bus makes for another reason.** No nova-bus verb
-pushes a committed note without adding one, so a `pending` report whose observation does
-not change sits in the bus checkout until the next changed send or any nova-bus push from
-that checkout carries it (rule 25). Default: that wait, said on the line as `sent=uncertain`
-and a `REPORT NOTE pending`; a verb that lands a pending commit alone, or says whether a
-commit is on the remote, is nova-bus's to add and would close the `id=-` duplicate too. No
-timer and no git of this tool's own either way.
+4. **Prepared delivery is a required implementation dependency.** The bounded protocol
+in SPEC-BUS-DELIVERY.md replaces waiting for an unrelated future push. Until that bus
+mode is implemented and its real-Git recovery witnesses pass, the reporter's sending
+path is not ready for adoption. Local inventory, draft and update-choice implementation
+can proceed independently. No timer or reporter-owned Git is added.
