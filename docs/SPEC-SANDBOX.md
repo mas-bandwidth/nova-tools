@@ -991,10 +991,11 @@ line cannot supply:
    macOS 26) while a set-id exec is denied inside the wall, so `ps` there is
    `/bin/ps: Operation not permitted`, exit 126.
 
-**What a refused step prints.** Four checks refuse, and all four print the same
-line: the **argument count** — the verb takes `<nonce> <name> <path>` and
-nothing else, and it is the check a caller typing the verb by hand meets first —
-then each of the three above, then the **absolute path** the verb insists on
+**What a refused step prints.** The verb refuses in **three places**, and all
+three print the same line: the **argument count** — the verb takes `<nonce>
+<name> <path>` and nothing else, and it is the one a caller typing the verb by
+hand meets first — then the **guard**, whose three mechanisms above answer with
+one line between them, then the **absolute path** the verb insists on
 afterwards. Each refusal is one line on standard error, exit 2, nothing opened:
 `PROBE REFUSED reason=probe_step_not_a_child: <text>`. That token is the **one
 `PROBE REFUSED` reason outside the fixed set above**, and it is outside it on
