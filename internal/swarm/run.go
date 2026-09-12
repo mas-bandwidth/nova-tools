@@ -67,14 +67,15 @@ const (
 
 // running is one job this dispatcher is watching.
 type running struct {
-	sc       Sidecar
-	slot     int
-	nonce    string
-	jobDir   string
-	started  time.Time
-	deadline time.Duration
-	adopted  bool
-	notes    int
+	sc         Sidecar
+	slot       int
+	nonce      string
+	exitAttest string
+	jobDir     string
+	started    time.Time
+	deadline   time.Duration
+	adopted    bool
+	notes      int
 }
 
 // Run is the dispatcher. It returns the exit code.
@@ -131,7 +132,7 @@ func Run(in RunInput) int {
 		case DecideAdopt:
 			sc, _ := p.ReadSidecar(Running, d.File.Job)
 			started := parseStamp(d.File.LaunchedAt, now())
-			r := &running{sc: sc, slot: n, nonce: d.File.Nonce, jobDir: d.File.JobDir, started: started,
+			r := &running{sc: sc, slot: n, nonce: d.File.Nonce, exitAttest: d.File.ExitAttest, jobDir: d.File.JobDir, started: started,
 				deadline: taskDeadline(sc, in.Worker), adopted: true}
 			watching[n] = r
 			fmt.Fprintf(out, "RUN ADOPT id=%s slot=%d pid=%d started=%s remaining=%s\n",
@@ -265,7 +266,7 @@ func Run(in RunInput) int {
 				if adopted, sf, err := p.Orphan(n, d.File.Nonce); err == nil && adopted {
 					sc, _ := p.ReadSidecar(Running, sf.Job)
 					started := parseStamp(sf.LaunchedAt, now())
-					watching[n] = &running{sc: sc, slot: n, nonce: sf.Nonce, jobDir: sf.JobDir, started: started,
+					watching[n] = &running{sc: sc, slot: n, nonce: sf.Nonce, exitAttest: sf.ExitAttest, jobDir: sf.JobDir, started: started,
 						deadline: taskDeadline(sc, in.Worker), adopted: true}
 					fmt.Fprintf(out, "RUN ADOPT id=%s slot=%d pid=%d started=%s remaining=%s\n",
 						oneline.Field(sf.Job), n, sf.Pid, oneline.Field(sf.LaunchedAt), trimDuration(taskDeadline(sc, in.Worker)-now().Sub(started)))
@@ -531,7 +532,7 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		CheckKillPoint("after-identify")
 		CheckKillPoint("after-handshake")
 		CheckKillPoint("after-release")
-		r := &running{sc: sc, slot: slot, nonce: nonce, jobDir: jobDir, started: in.Now(), deadline: taskDeadline(sc, in.Worker)}
+		r := &running{sc: sc, slot: slot, nonce: nonce, exitAttest: sf.ExitAttest, jobDir: jobDir, started: in.Now(), deadline: taskDeadline(sc, in.Worker)}
 		return r, fmt.Sprintf("RUN START id=%s slot=%d pid=%d pgid=%d started=%s deadline=%s tokens=%s job=%s",
 			oneline.Field(sc.ID), slot, sf.Pid, sf.Pgid, oneline.Field(Stamp(r.started)),
 			trimDuration(r.deadline), oneline.Field(sc.BudgetWord()), oneline.Field(jobDir)), launchStarted
@@ -654,7 +655,7 @@ func (in RunInput) unreadable(r *running, err error, now time.Time) (alive, over
 		return false, false
 	}
 	var ex ExitRecord
-	if readErr := ReadJSON(ExitPath(r.jobDir), &ex); readErr == nil && ex.Nonce == r.nonce {
+	if readErr := ReadJSON(ExitPath(r.jobDir), &ex); readErr == nil && ex.Nonce == r.nonce && ExitAttestOK(ex.Attest, r.exitAttest) {
 		return false, false
 	}
 	// THE OUTER BOUND IS THE JOB'S OWN CLOCK, from the job's START, which is the bound the

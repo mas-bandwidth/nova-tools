@@ -41,13 +41,17 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	// nonce is what the evidence is checked against, and the launch's nonce is carried by
 	// the job this pass is watching; the slot file is only one place it is also written.
 	nonce := r.nonce
+	attest := r.exitAttest
 	if slotErr == nil && sf.Nonce != "" {
 		nonce = sf.Nonce
+	}
+	if slotErr == nil && sf.ExitAttest != "" {
+		attest = sf.ExitAttest
 	}
 	rec := ExitRecord{RC: -1}
 	end := EndUnknown
 	var got ExitRecord
-	if err := ReadJSON(ExitPath(r.jobDir), &got); err == nil && got.Nonce == nonce {
+	if err := ReadJSON(ExitPath(r.jobDir), &got); err == nil && got.Nonce == nonce && ExitAttestOK(got.Attest, attest) {
 		rec, end = got, got.End
 		if end == "" {
 			end = EndDone
