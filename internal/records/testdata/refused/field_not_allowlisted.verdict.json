@@ -1,0 +1,5 @@
+{
+  "field": "body.raw_usage.prompt_text_tokens",
+  "rule": "field_not_allowlisted",
+  "verdict": "refused"
+}

@@ -1,0 +1,17 @@
+{
+  "raw_usage_fields": [
+    "cache_read",
+    "cache_write",
+    "context_window_1_4_5",
+    "cost_usd_ticks",
+    "input",
+    "output",
+    "reasoning",
+    "token_count"
+  ],
+  "receipt_fields": [
+    "idx",
+    "response_id",
+    "turn_id"
+  ]
+}

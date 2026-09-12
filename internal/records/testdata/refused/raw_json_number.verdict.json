@@ -1,0 +1,5 @@
+{
+  "field": "envelope.body.raw_usage.input.value",
+  "rule": "raw_json_number",
+  "verdict": "refused"
+}

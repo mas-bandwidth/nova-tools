@@ -1,0 +1,5 @@
+{
+  "field": "body.raw_usage.input.number_kind",
+  "rule": "unknown_number_kind",
+  "verdict": "refused"
+}

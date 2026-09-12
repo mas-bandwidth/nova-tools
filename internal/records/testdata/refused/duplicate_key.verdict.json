@@ -1,0 +1,5 @@
+{
+  "field": "envelope.body.kind",
+  "rule": "duplicate_key",
+  "verdict": "refused"
+}

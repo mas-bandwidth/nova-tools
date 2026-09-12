@@ -1,0 +1,8 @@
+{
+  "field": "body.raw_usage.input.value",
+  "green_requires": [
+    "integer_lexeme"
+  ],
+  "rule": "negative_value",
+  "verdict": "refused"
+}

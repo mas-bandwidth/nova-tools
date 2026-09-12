@@ -1,0 +1,5 @@
+{
+  "field": "body.raw_usage.input.value",
+  "rule": "integer_lexeme",
+  "verdict": "refused"
+}

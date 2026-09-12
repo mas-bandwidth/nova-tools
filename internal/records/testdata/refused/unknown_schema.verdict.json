@@ -1,0 +1,5 @@
+{
+  "field": "body.schema",
+  "rule": "unknown_schema",
+  "verdict": "refused"
+}

@@ -1,0 +1,5 @@
+{
+  "field": "envelope",
+  "rule": "lone_surrogate",
+  "verdict": "refused"
+}

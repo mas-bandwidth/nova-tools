@@ -1,0 +1,5 @@
+{
+  "field": "envelope.body.schema",
+  "rule": "not_json",
+  "verdict": "refused"
+}

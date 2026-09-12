@@ -1,0 +1,5 @@
+{
+  "field": "body.mapping_id",
+  "rule": "content_id_syntax",
+  "verdict": "refused"
+}

@@ -1,0 +1,5 @@
+{
+  "field": "envelope",
+  "rule": "envelope_shape",
+  "verdict": "refused"
+}

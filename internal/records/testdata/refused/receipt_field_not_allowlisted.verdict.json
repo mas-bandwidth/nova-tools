@@ -1,0 +1,5 @@
+{
+  "field": "body.receipt.transcript_path",
+  "rule": "receipt_field_not_allowlisted",
+  "verdict": "refused"
+}
