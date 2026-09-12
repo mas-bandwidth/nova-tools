@@ -190,6 +190,38 @@ MEMORY HIT cand=1 rank=1 score=13.64 score-channel=bm25 fused=0.01667 class=note
 
 A bus is an ordinary git repository where several lines, people and minds alike, send notes to each other. One directory per sender, called a lane and named `from-<slug>`; one markdown file per note; a short header of `From`, `To`, `Cc`, `Date`, `Id`, `Re`, `Kind` and `Subject`; a thread is a note whose `Re:` line names another note's id. The notes stay files anybody can read, and git is both the transport and the record. `nova-bus` is seven verbs over that. It prints the header a first note needs, assigns ids that cannot collide, pushes with fetch, rebase and retry so no rejected push ever reaches a person, tells you what is addressed to you and still open, or waits until there is something to tell, lets you say "heard" without writing a reply, and validates the whole bus. It has no opinion about what a note says.
 
+### First run
+
+Copy `cmd/nova-bus/testdata/example-bus` out and give it a repository of its own — its README is the recipe, and it is the bus the tests run these lines against. A first sitting proves three things: the roster is where identity lives, and `names` says who may speak; a note is sent from a draft carrying the `To` and `Subject` headers; and the example bus ships a `CURSOR` naming a commit from the history it was written in, so a copied-out bus refuses it and the first read is `--full` once.
+
+```
+$ nova-bus names --bus ./bus
+NAMES NAME name="Ada" lane=from-ada aliases="Ada Vale";"the archivist"
+NAMES NAME name="Bo" lane=from-bo aliases="Bo Quill"
+NAMES NAME name="Dana" lane=- aliases=-
+NAMES GROUP name="Everybody on the bus" members="Ada";"Bo";"Dana"
+NAMES OK participants=3 groups=1 senders=2
+
+$ nova-bus draft --bus ./bus --as Bo --to Ada --subject gate > draft.md
+
+$ nova-bus send --bus ./bus --file draft.md --as Bo --remote origin --branch main
+SEND OK id=bo-a57f65f4f21c path=from-bo/2026-09-12T2033Z-gate-a57f65f4f21c.md commit=ae0580b5f796c4593641c6ebb9a58846d5795b55 pushed=true attempts=1
+
+$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --advance --remote origin --branch main
+INBOX REFUSED: the cursor 3f9a1c2b8d40e7c6a5b4938271605f4e3d2c1b0a is not an ancestor of HEAD, so a diff from it would report changes that are not changes and miss notes that are (a rewritten history, or a cursor from another branch); read once with --full, and --advance will replace it
+
+$ nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --advance --remote origin --branch main
+INBOX SCOPE mode=full cursor=- changed=0 carrying=3
+INBOX OPEN carrying=3 heard=1
+INBOX NOTE id=bo-a57f65f4f21c from=Bo addr=to at=2026-09-12T20:33:50Z path=from-bo/2026-09-12T2033Z-gate-a57f65f4f21c.md: gate
+INBOX HEARD id=bo-222222222222 from=Bo addr=to at=2026-09-09T14:00:00Z path=from-bo/2026-09-09T1400Z-the-windows-runner-222222222222.md: The Windows runner skips three steps
+INBOX RECEIPT id=bo-111111111111 from=Bo addr=to at=2026-09-09T13:00:00Z path=from-bo/2026-09-09T1300Z-heard-111111111111.md: Heard
+INBOX OK as=Ada carrying=3 open=2 notes=1 receipts=1 heard=1 unaddressed=0 unreadable=0
+INBOX CURSOR commit=ae0580b5f796c4593641c6ebb9a58846d5795b55 carrying=3 pushed=true attempts=1
+```
+
+**Reading it.** A participant with a lane can send; one without a lane (Dana) can be written to and never writes, and `--as` takes a name or any alias on that `names` line. `draft` prints the header a first note needs — `From:`, `To:` and `Subject:` — and nothing else, so `> draft.md` redirects it to a file and the writer replaces the `<the note goes here>` placeholder with a body before `send`. The shipped `CURSOR` names a commit from the history the example was written in, so a copied-out bus has a new history under it and the first `inbox --advance` is refused rather than diffed from it; `--full --advance` replaces it, and the read after that is `mode=since` over the change, not the bus.
+
 ### Setting up a bus
 
 1. Create a git repository. Make it private unless every note is meant to be public; the repository's access control is the whole of that story. The bus is the repository's root, not a directory inside a bigger one.
