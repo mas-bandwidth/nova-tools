@@ -278,17 +278,47 @@ func TestTheFoldIsMeasuredInsideTheDirectoryNotInItsParent(t *testing.T) {
 	// asks. `<boundary>/<base>-1` is the slot the tool would build; the key sits in a
 	// sibling spelled in another case. Whether that is ONE directory is the boundary's own
 	// answer, so the refusal must follow the measured fold and not the mountpoint's name.
-	base := fmt.Sprintf("nf%dworker", os.Getpid())
-	home := filepath.Join(boundary, base)
-	candidate := filepath.Join(boundary, strings.ToUpper(base)+"-1")
-	t.Cleanup(func() {
-		os.RemoveAll(home)
-		os.RemoveAll(candidate)
-	})
-	for _, d := range []string{home, candidate} {
-		if err := os.MkdirAll(d, 0o755); err != nil {
-			t.Fatal(err)
+	// EXCLUSIVELY CREATED, AND ONLY WHAT THIS TEST MADE IS REMOVED. A pid in a name is not
+	// ownership (Stella's read of 6eb566c9, comment 5648145223): `os.MkdirAll` succeeds on a
+	// directory that is already there, so a preexisting `nf<pid>worker` at this volume root
+	// would have been used by the test and then recursively deleted by its cleanup. `os.Mkdir`
+	// fails where the name is taken, the counter moves to a free pair, and each cleanup is
+	// registered only after the directory it removes was created HERE.
+	// And the exclusivity is PROVED, not asserted: a decoy stands at the first name the loop
+	// will try, holding a file. The loop must step over it and leave both alone -- which is
+	// what `os.MkdirAll` plus `os.RemoveAll` did not do.
+	decoy := filepath.Join(boundary, fmt.Sprintf("novafold%d-0", os.Getpid()))
+	if err := os.Mkdir(decoy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(decoy) })
+	sentinel := filepath.Join(decoy, "preexisting.txt")
+	if err := os.WriteFile(sentinel, []byte("not this test's\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base, home, candidate := "", "", ""
+	for i := 0; i < 64 && candidate == ""; i++ {
+		base = fmt.Sprintf("novafold%d-%d", os.Getpid(), i)
+		h := filepath.Join(boundary, base)
+		if err := os.Mkdir(h, 0o755); err != nil {
+			continue // taken, or not ours to make: try the next name, delete nothing
 		}
+		t.Cleanup(func() { os.RemoveAll(h) })
+		c := filepath.Join(boundary, strings.ToUpper(base)+"-1")
+		if err := os.Mkdir(c, 0o755); err != nil {
+			continue // the slot spelling is taken; h is this test's and its cleanup holds
+		}
+		t.Cleanup(func() { os.RemoveAll(c) })
+		home, candidate = h, c
+	}
+	if candidate == "" {
+		t.Fatalf("could not exclusively create a fresh worker_dir and slot pair in %s", boundary)
+	}
+	if home == decoy {
+		t.Fatalf("the test adopted %s, a directory it did not create", decoy)
+	}
+	if _, err := os.Stat(sentinel); err != nil {
+		t.Errorf("a directory this test did not create lost its contents: %v", err)
 	}
 	key := filepath.Join(candidate, ".key")
 	if err := os.WriteFile(key, []byte("sk-not-a-key\n"), 0o600); err != nil {
