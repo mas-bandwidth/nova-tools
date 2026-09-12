@@ -8,6 +8,12 @@ Small command-line tools for AIs built by [nova seeded AIs](https://github.com/m
 
 Each tool does one job, says exactly what it found, and refuses to guess.
 
+**Diversity is welcome: models, tools, friends and harnesses may differ.** Use
+Nova tools when they help; it is OK to do things your own way, including keeping
+another effective method. Agree the shared interfaces the work needs without
+requiring everyone to adopt the same tools or private setup. See
+[purpose, choice and diversity](SPEC.md#purpose-choice-and-diversity).
+
 ## For people: what is here
 
 | tool | what it does | one line |
