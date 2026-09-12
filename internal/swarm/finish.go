@@ -70,7 +70,15 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		rec.RC, end = 429, EndFailed
 	}
 
-	raw, readErr := os.ReadFile(ResultPath(r.jobDir))
+	// THE REPORT IS A DURABLE RECORD, PUBLISHED BY A RENAME, and a read of it that
+	// COLLIDED is not evidence the worker published nothing. The harness writes RESULT.md
+	// the way everything here is written -- a .tmp beside it, then a rename -- so on
+	// Windows a read landing in that replace window fails ERROR_ACCESS_DENIED, and this
+	// line turned that microsecond into `result=no-result`, `dest=failed`, and a finding
+	// the worker had already published thrown away. Exactly the class this pass closed for
+	// exit.json, one file over. The collision is waited out; a file that is NOT THERE
+	// still answers at once, so a genuinely unpublished report is ClassNoResult as before.
+	raw, readErr := readFileSteady(ResultPath(r.jobDir))
 	report := Report{Class: ClassNoResult}
 	if readErr == nil {
 		report = ParseReport(raw)
@@ -392,8 +400,12 @@ func remedy(p *Pool, failed, killed, pending, quarantined int) string {
 	return "the pool drained: nova-swarm triage --pool " + p.Dir
 }
 
+// countLines counts the lines of a record -- the job's `note` file, created through a
+// rename before the worker starts and appended to by the coordinator afterwards. A read
+// that collided with that creation would print `notes=0` for notes that were sent, so it
+// waits the collision out; a file that is not there is still 0.
 func countLines(path string) int {
-	raw, err := os.ReadFile(path)
+	raw, err := readFileSteady(path)
 	if err != nil {
 		return 0
 	}

@@ -590,7 +590,14 @@ func mustReadDirNames(t *testing.T, dir string) []string {
 // Rule 10: the note file, appended by the tool, counted in the report.
 func TestANoteReachesARunningWorker(t *testing.T) {
 	b := newBench(t)
-	id := b.add("a worker that reads its notes\nFAKE-SLEEP 2\nFAKE-FINDINGS 1\n")
+	id := b.add("a worker that reads its notes\nFAKE-AWAIT-NOTE 30\nFAKE-FINDINGS 1\n")
+	// THE WORKER HOLDS FOR THE NOTE, AND NOTHING HERE IS A CLOCK. The fake waits for the
+	// note file to carry a line (`FAKE-AWAIT-NOTE`, bounded by its own seconds and by the
+	// job's deadline) instead of sleeping two seconds: with a sleep, a sender delayed past
+	// it -- a loaded runner, or a 3s stall in front of the send, which reproduces it as
+	// `NOTE REFUSED` at 5.16s -- posts to a job that has already ended. Both sides now wait
+	// on an observable: the sender on the running record, the worker on the note.
+	//
 	// THE NOTE GOROUTINE OWNS NOTHING IT CANNOT HAND BACK (#122). It waits for an
 	// OBSERVABLE -- the running record carrying this job's directory, which `run` writes
 	// before the handshake and which is exactly what `note` needs to exist -- sends ONE
