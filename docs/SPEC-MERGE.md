@@ -1107,7 +1107,9 @@ stops before touching any entry when the base is red. The only way through is
 
 `<lane>/state.json`, decoded **strictly** — an unknown field is a refusal,
 because a state file whose `needs_read` key was typed `needs_reads` is a state
-file whose owner believes a read is required.
+file whose owner believes a read is required. `needs_read` is a closed
+vocabulary of exactly `yes` and `no`, and a missing or empty field refuses
+rather than silently reading as "no read required". (2026-09-12.)
 
 ```json
 {

@@ -214,6 +214,11 @@ func checkout(lane, url, branch string, timeout time.Duration, deps Deps) (joine
 	return false, nil
 }
 
+// reloadLane is merge.Load, named here so a test can make add's re-read fail and pin that
+// the failure is refused -- ADD REFUSED, exit 2 -- and never a nil dereference. It is the
+// one seam in this verb, for the same reason records.go names its Sleep.
+var reloadLane = merge.Load
+
 // cmdAdd queues an entry into a lane that EXISTS. It creates nothing: the lane was made
 // by init, with its repository and its base, and a queueing verb that also created would
 // be a creation with two arguments nothing asked for.
@@ -275,7 +280,15 @@ func cmdAdd(args []string, stdout, stderr io.Writer, deps Deps, isBranch bool) i
 		fmt.Fprintf(stderr, "ADD REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	st, _ = merge.Load(*f.lane)
+	// The re-read feeds ADD OK's counts. Its error was assigned to `_`, so a re-read that
+	// failed left st nil and the counts dereferenced it -- a panic -- for a state that was
+	// just written. The entry IS queued; the refusal is about the counts that could not be
+	// read, and exit 2 says so rather than printing ADD OK with no counts.
+	st, err = reloadLane(*f.lane)
+	if err != nil {
+		fmt.Fprintf(stderr, "ADD REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
 	if yn == "no" {
 		// THE DEFAULT IS THE DIRECTION THAT MERGES WITH ZERO READS, and it was a field on
 		// a line rather than a sentence anybody read.

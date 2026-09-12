@@ -120,15 +120,16 @@ conflicting file named and the exact hand command on the line; no code path here
 writes a resolved file.
 
 example:
-  nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
-  nova-merge add --lane ./lane --pr 949 --needs-read
-  nova-merge status --lane ./lane
-  nova-merge packet --lane ./lane --who emma --all
-  nova-merge dry-run --lane ./lane
+  nova-merge quickstart --lane ./rehearsal-lane --repo <owner>/<name> --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
+  nova-merge add --lane ./rehearsal-lane --pr 949 --needs-read
+  nova-merge status --lane ./rehearsal-lane
+  nova-merge packet --lane ./rehearsal-lane --who emma --all
+  nova-merge dry-run --lane ./rehearsal-lane
 
-Those five are one sitting, in order: make the lane, queue an entry, look at it,
-ask what a reader would be handed, and see what a pass would do without doing it.
-./lane is a path of yours and nothing is guessed from it.
+Those five are one sitting against a bare repository of your own, in order: make the
+lane against nothing that reaches a forge, queue an entry, look at it, ask what a
+reader would be handed, and see what a pass would do without doing it. ./rehearsal-lane
+is a path of yours and nothing is guessed from it.
 `
 
 // refuse is what an unusable invocation costs: ONE line naming what was wrong and the
