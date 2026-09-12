@@ -1,0 +1,5 @@
+{
+  "field": "envelope[1][0]",
+  "rule": "not_json",
+  "verdict": "refused"
+}

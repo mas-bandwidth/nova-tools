@@ -1,0 +1,8 @@
+{
+  "field": "envelope.id",
+  "green_requires": [
+    "envelope_id_mismatch"
+  ],
+  "rule": "envelope_id_syntax",
+  "verdict": "refused"
+}

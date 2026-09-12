@@ -1,0 +1,5 @@
+{
+  "field": "body[0]",
+  "rule": "unknown_field",
+  "verdict": "refused"
+}

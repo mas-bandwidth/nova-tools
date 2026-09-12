@@ -1,0 +1,5 @@
+{
+  "field": "envelope[1][1]",
+  "rule": "duplicate_key",
+  "verdict": "refused"
+}
