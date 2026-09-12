@@ -105,8 +105,8 @@ esac
 # exactly as `var version string` is, and a single exact-line grep demoted that tool to a
 # NOTE -- a shipped binary quietly dropped out of the asserted set, which is this file's
 # own argument against silent demotion turned on itself. A `version` initialised to
-# something that is NOT a constant string -- `var version = buildID()`, `var version =
-# "x" + suffix` -- the linker genuinely cannot write, so it is genuinely not a stamp and
+# something that is NOT a constant string expression -- `var version = buildID()`, `var
+# version = "x" + suffix` -- the linker genuinely cannot write, so it is genuinely not a stamp and
 # is not recognised here. THE TWO ERRORS ARE NOT SYMMETRIC but both are real: reading a
 # stamp as absent drops a shipped binary out of the asserted set in silence, and reading
 # an absent stamp as present fails a release for a tool that never claimed the tag.
@@ -162,7 +162,8 @@ declares_stamp() {
 		}
 		# Split on the commas that separate the declaration'\''s elements: depth zero, and
 		# not inside a literal, so `f(a, b)` and "a,b" stay one element.
-		function split_top(s, arr,   i, c, n, depth, cur, k, q) {
+		function split_top(s, arr, sep,   i, c, n, depth, cur, k, q) {
+			if (sep == "") sep = ","
 			n = length(s); depth = 0; cur = ""; k = 0
 			for (i = 1; i <= n; i++) {
 				c = substr(s, i, 1)
@@ -179,14 +180,13 @@ declares_stamp() {
 				}
 				if (c == "(" || c == "[" || c == "{") depth++
 				else if (c == ")" || c == "]" || c == "}") depth--
-				else if (c == "," && depth == 0) { k++; arr[k] = cur; cur = ""; continue }
+				else if (c == sep && depth == 0) { k++; arr[k] = cur; cur = ""; continue }
 				cur = cur c
 			}
 			k++; arr[k] = cur
 			return k
 		}
-		# A lone constant string literal and nothing else: `"devel"`, `` `devel` ``, `""`.
-		# `"x" + suffix` is not one, and the linker will not write it.
+		# A single string literal: `"devel"`, `` `devel` ``, `""`.
 		function is_lone_string(s,   n, i, c, q) {
 			gsub(/^[ \t]+|[ \t]+$/, "", s)
 			n = length(s)
@@ -200,6 +200,19 @@ declares_stamp() {
 				if (c == "\"") return i == n
 			}
 			return 0
+		}
+		# A CONSTANT string expression, which is what cmd/link writes: one string literal,
+		# or literals joined by `+`. `"x" + suffix` is not one -- suffix is a variable and
+		# the linker cannot fold it -- and neither is `f()`. `prefix + "x"` where prefix is
+		# a declared constant IS one to the compiler, and is not recognised here: telling a
+		# constant identifier from a variable one needs the type information this file does
+		# not have, and nobody spells a stamp that way.
+		function is_const_string(s,   n, i, parts) {
+			gsub(/^[ \t]+|[ \t]+$/, "", s)
+			if (s == "") return 0
+			n = split_top(s, parts, "+")
+			for (i = 1; i <= n; i++) if (!is_lone_string(parts[i])) return 0
+			return 1
 		}
 		function version_pos(names, parts,   n, i, s) {
 			n = split_top(names, parts)
@@ -236,7 +249,7 @@ declares_stamp() {
 			if (init == "") { if (typed) found = 1 }
 			else {
 				ninit = split_top(init, initparts)
-				if (ninit == split_top(names, nameparts) && is_lone_string(initparts[pos])) found = 1
+				if (ninit == split_top(names, nameparts) && is_const_string(initparts[pos])) found = 1
 			}
 		}
 		END { exit found ? 0 : 1 }
