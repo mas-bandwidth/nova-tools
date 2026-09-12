@@ -168,6 +168,9 @@ func TestABuilderRefusalNeverEchoesTheCallersMemberName(t *testing.T) {
 			t.Errorf("the diagnostic echoes the caller's member name (%q):\n%s", must, got)
 		}
 	}
+	// "\r", "\n", U+2028 LINE SEPARATOR and U+2029 PARAGRAPH SEPARATOR. The last two are
+	// written as themselves and render as blanks in most editors; they are line breaks to a
+	// reader that follows Unicode, which is what makes them worth naming here.
 	for _, bad := range []string{"\r", "\n", " ", " "} {
 		if strings.Contains(got, bad) {
 			t.Errorf("the diagnostic carries %q, so one refusal can render as two lines:\n%q", bad, got)
@@ -257,5 +260,44 @@ func TestAValidatedBodyCannotBeMutated(t *testing.T) {
 	own := NewObject()
 	if err := own.Set("schema", SchemaObservation); err != nil {
 		t.Errorf("NewObject's own object refused a member: %v", err)
+	}
+}
+
+// Finding 1's sibling, one level down, closed in the same hand: a Validator used to keep the
+// caller's own backing arrays, so appending to the slice you handed to NewValidator changed
+// what the boundary enforced -- including between a SealObservation's seal and its strict
+// read-back. The allowlist is a declaration made once, not a live handle.
+func TestAValidatorsAllowlistIsNotALiveHandle(t *testing.T) {
+	fields := []string{"input"}
+	receipts := []string{"turn_id"}
+	v := NewValidator(Allowlists{RawUsageFields: fields, ReceiptFields: receipts})
+
+	obs := minimalObservation()
+	extra := "17"
+	obs.RawUsage["cost_usd_ticks"] = RawField{Presence: "present", Value: &extra, NumberKind: "integer", Unit: "ticks"}
+	if _, _, err := v.SealObservation(obs); err == nil {
+		t.Fatal("a field outside the mapping's allowlist sealed")
+	}
+
+	// The vector that BITES is writing through the array the caller still holds. Measured
+	// both ways before this test was trusted: with the copy removed, this assertion fails
+	// with `receipt_field_not_allowlisted at body.receipt[0]`.
+	receipts[0] = sentinel
+	if _, _, err := v.SealObservation(minimalObservation()); err != nil {
+		t.Errorf("overwriting the caller's receipt slice changed the validator: %v", err)
+	}
+	fields[0] = sentinel
+	if _, _, err := v.SealObservation(minimalObservation()); err != nil {
+		t.Errorf("overwriting the caller's raw-usage slice changed the validator: %v", err)
+	}
+
+	// Appending is NOT a vector and this test does not pretend it is: a stored slice header
+	// keeps its own length, so a caller's append -- reallocating or not -- is invisible to the
+	// validator with or without the copy. It is asserted here only so the next reader does not
+	// add it as a check that cannot fail.
+	fields = append(fields, "cost_usd_ticks")
+	_ = fields
+	if _, _, err := v.SealObservation(obs); err == nil {
+		t.Error("a field outside the allowlist sealed after the caller appended")
 	}
 }
