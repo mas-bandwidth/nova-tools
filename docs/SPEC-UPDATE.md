@@ -5,11 +5,10 @@ for updates regularly."* And the name: *"nova-update"*. Card #89.
 
 One tool, two verbs.
 
-- `nova-update check --file <path>` reads one versions file kept in git and asks of
-  every dependency it names what is INSTALLED on this box and what is the LATEST its
-  own source publishes. One line per finding, a count line always, exit 1 when
-  anything is not current — STALE, NEWER, DIFFERENT or UNKNOWN; it never installs,
-  never pulls.
+- `nova-update check --file <path>` reads one versions file kept in git and asks of every
+  dependency it names what is INSTALLED on this box and what is the LATEST its own source
+  publishes. One line per finding, a count line always, exit 1 when anything is not current
+  — STALE, NEWER, DIFFERENT or UNKNOWN; it never installs, never pulls.
 - `nova-update apply --file <path> <name>` installs exactly the one thing named, the
   way the file says, on a person's word — and refuses a model, a name the file does
   not carry, and any run with no name at all.
@@ -42,26 +41,29 @@ no `--watch`, no state file — nothing reacts to its exit code, no verdict star
    is refused at load time with the remedy *put it in a script and name the script* — as
    is a field carrying two adjacent spaces or a leading or trailing one, so the split
    never makes an empty argument. This makes rule 13 provable.
-4. **The installed version is read by one fixed rule, and it is the whole identity.**
-   Run the entry's `installed` argv and take the FIRST line of its stdout — stderr only
-   when stdout is empty, so no race decides it — then the first whitespace-delimited
-   token holding a digit, a dot and a digit, **from its first digit to the token's
-   end**: a leading `v` or a glued name is no part of it, and nothing after the number
-   is cut — `-0.20260912135226-0459069`, `-rc1`, `+dirty` stay, because two builds that
-   differ only there are two builds, and a read that kept the dotted number alone once
-   collapsed them into one (Stella, #121). A command that exits non-zero, times out, or
-   prints no such token is UNKNOWN, remedy *wrap it in a script that prints the version
-   alone*. **argv[0] resolves against the PATH nova-update was started with**, echoed as
-   `path=`; a name resolving nowhere on it is UNKNOWN, reason `not_found`, remedy naming
-   argv[0] and the PATH searched, never the wrap-it remedy. The child inherits the
-   environment, so the nightly's PATH is the unit's to state: under a launchd-default
-   PATH, measured, none of `gh`, `go`, `ollama`, `node` resolve. **The same read runs on
-   the latest side**, on whatever field rule 6 names: a `tag_name` `v2.101.0` and an
-   installed `2.101.0` are one version. One rule, and the two exceptions `kind` decides
-   below (4a, 15). The eleven commands this estate uses are a fixture in `testdata/`,
-   measured 2026-09-11 and -12; two argue the rule: `gh version 2.100.0 (2026-09-03)`
-   reads 2.100.0, its second line and dotless date never read; `nova-bus v0.12.1-0.`
-   `20260912135226-0459069+dirty darwin/arm64 go1.27.1` reads the whole token.
+4. **The installed version is read by one fixed rule, and it is the whole identity.** Run
+   the entry's `installed` argv and take the FIRST line of its stdout — stderr only when
+   stdout is empty, so no race decides it — then the first token holding `\d\.\d` in a row,
+   **from its first digit to the token's end**: a leading `v` or a glued name is no part of
+   it, and nothing after the number is cut — `-0.20260912135226-0459069`, `-rc1`, `+dirty`
+   stay, because two builds that differ only there are two builds, and a read that kept the
+   dotted number alone once collapsed them into one (Stella, #121). A command that exits
+   non-zero, times out, or prints no such token is UNKNOWN, remedy *wrap it in a script that
+   prints the version alone*. **argv[0] resolves against the PATH nova-update was started
+   with**, echoed as `path=`; a name resolving nowhere on it is UNKNOWN, reason `not_found`,
+   remedy naming argv[0] and the PATH searched, never the wrap-it remedy. The child inherits
+   the environment, so the nightly's PATH is the unit's to state: under a launchd-default
+   PATH, measured, none of `gh`, `go`, `ollama`, `node` resolve. **The same read runs on the
+   latest side**, on whatever field rule 6 names: a `tag_name` `v2.101.0` and an installed
+   `2.101.0` are one version. One rule; `kind` decides two exceptions below (4a, 15). The
+   eleven commands this estate uses are a fixture in `testdata/`, measured 2026-09-11 and
+   -12, first line then the read: `gh version 2.100.0 (2026-09-03)` 2.100.0, its second line
+   and dotless date never read; `go version go1.27.1 darwin/arm64` 1.27.1;
+   `ollama version is 0.33.3` 0.33.3; `v1.3.2` 1.3.2 (`age`); `1.18.30` 1.18.30
+   (`opencode`); `codex-cli 0.153.4` 0.153.4; `0.46.0` 0.46.0 (`gemini`); `sops 3.13.3`
+   3.13.3; `git version 2.55.0` 2.55.0; `v26.8.2` 26.8.2 (`node`); and
+   `nova-bus v0.12.1-0.20260912135226-0459069+dirty darwin/arm64 go1.27.1` reads the whole
+   token, `0.12.1-0.20260912135226-0459069+dirty`.
 4a. **A model's version is its digest, because a model has no version.** Measured
     2026-09-11: neither `ollama show <model> --modelfile` nor the library's tags page
     carries a dotted number, so under rule 4 every model reads UNKNOWN forever — a red
@@ -120,16 +122,14 @@ no `--watch`, no state file — nothing reacts to its exit code, no verdict star
    are in flight at once. Entries not reached inside the budget are UNKNOWN, reason
    `budget`, and the run still prints its count line and exits 1 (the two-minute rule).
 9. **`check` never installs, never pulls, never writes.** No package manager, no pull,
-   nothing written under `$HOME`, no cache file. `check` is a read of the world and a
-   report.
+   nothing under `$HOME`, no cache file: a read of the world and a report.
 10. **`apply` needs a name, from a person.** `nova-update apply --file <path>` with no
     name is a refusal, exit 2, saying a name is required. There is no `--all`, no
     `--stale`, no glob, no `-y`; no verdict of `check` — STALE, NEWER, DIFFERENT — is a
     name: the two verbs share a file and nothing else. One run installs one thing.
-11. **`apply` refuses a model, by name, with the path.** `kind=model` is refused with
-    the remedy naming nova-local: a weight arrives through nova-local's quarantine and
-    its eval, never through this tool. The refusal names the model, so a transcript
-    says which one.
+11. **`apply` refuses a model, by name, with the path.** `kind=model` is refused with the
+    remedy naming nova-local: a weight arrives through nova-local's quarantine and its eval,
+    never through this tool. The refusal names the model, so a transcript says which one.
 12. **`apply` refuses a name the file does not carry.** Not a near match, not a
     prefix, not a case-insensitive match — the exact name or a refusal, exit 2, naming
     the file it read and its entry count.
@@ -151,35 +151,36 @@ no `--watch`, no state file — nothing reacts to its exit code, no verdict star
     or a non-zero exit, named by code. Whether the box carries what the line asked is the
     question, and saying OK to anything else is a lie.
 15. **A broken pin between two of our own tools is a bug, reported the same day by the
-    entry's owner.** `kind=pin` entries print first and the count line's `pins=<n>` is
-    the number of **DIFFERENT** pins, a subset of `differ=`, never the number of pin
-    entries. Today's specimen: `internal/wake/bus.go`'s `AcceptBus(tool, found)` —
-    nova-wake accepts exactly the `nova-bus` whose `version` equals its own build's
-    version, string equality and nothing else, no parse, no range, no order (#104, #107;
-    SPEC-WAKE, *How the checkout receives mail*). The pin is **derived**, so the
-    depender's side is `nova-wake version` itself, no `--pin` verb; a pin is `local:` on
-    both sides, no network; for this kind alone both reads are the **second token of the
-    first line, whole** — `BusVersion`'s own read — and the comparison is `wake.AcceptBus`
-    **imported, never copied**, so this tool and nova-wake cannot disagree about a pair:
-    EQUAL or DIFFERENT, never an order, because two tools have no order between them. A
-    DIFFERENT pin means nova-wake is refusing the bus the estate runs: the fix is there.
+    entry's owner.** `kind=pin` entries print first and the count line's `pins=<n>` is the
+    number of **DIFFERENT** pins, a subset of `differ=`, never the number of pin entries.
+    Today's specimen: `internal/wake/bus.go`'s `AcceptBus(tool, found)` — nova-wake accepts
+    exactly the `nova-bus` whose `version` equals its own: `tool != "" && found == tool`,
+    string equality behind a non-empty guard, no parse, no range, no order (#104, #107;
+    SPEC-WAKE, *How the checkout receives mail*). The pin is **derived**, so the depender's
+    side is `nova-wake version` itself, no `--pin` verb; both sides are local commands, only
+    `latest` carrying a scheme, `local:`; no network; for this kind alone both reads are the
+    **second token of the first line, whole** — `BusVersion`'s own read; fewer than two
+    tokens is UNKNOWN, reason `BusVersion`'s own error, wrap-it remedy — and the comparison
+    is `wake.AcceptBus(installed, latest)`, nova-wake's read then the bus's, **imported,
+    never copied**, so this tool and nova-wake cannot disagree about a pair: EQUAL or
+    DIFFERENT, never an order: two tools have none between them. A DIFFERENT pin means
+    nova-wake is refusing the bus the estate runs: the fix is there.
 16. **Bounded output, per SPEC.md.** `--max <n>`, default 20, `0` means all, a negative is
     refused. The cap is **per verdict** — `stale`, `newer`, `differ` and `unknown`
     separately, so a night where six things moved does not hide the one source that
     stopped answering — and each capped verdict gets one `UPDATE MORE` line naming the
     remedy. **The count line prints on failure as well as success**, about the world.
-17. **The tool stamps, and nothing read from a file or a server is a clock.** The
-    opening `at=` is the tool's own. **A version is its whole identity string** after
-    rule 4's read or 4a's, and two of them compare to exactly one of: **EQUAL**, the
-    same bytes, current; **OLDER** or **NEWER**, an order this tool has *verified*;
-    **DIFFERENT**, unequal with no order known. Order is known in one case only: both
-    sides are release tags of the same entry — a release tag being, after the one leading
-    `v`, nothing but `\d+(\.\d+)+` — compared as integers component by component, so
-    `1.10.0` is after `1.9.0`; unequal strings that come out equal that way (`1.9` and
-    `1.9.0`) are DIFFERENT. Order is never known between a tag and a pseudo-version (Go
-    would place `v0.12.1-0.<stamp>-<commit>` between two tags; this tool has not verified
-    that and says DIFFERENT), never between two pseudo-versions, never for a digest, never
-    across two tools (rule 15). **STALE is the line for verified OLDER and for nothing
+17. **The tool stamps, and nothing read from a file or a server is a clock.** The opening
+    `at=` is the tool's own. **A version is its whole identity string** after rule 4's read
+    or 4a's, and two of them compare to exactly one of: **EQUAL**, the same bytes, current;
+    **OLDER** or **NEWER**, an order this tool has *verified*; **DIFFERENT**, unequal with
+    no order known. Order is known in one case only: both sides are release tags of the same
+    entry — a release tag being, after the one leading `v`, nothing but `\d+(\.\d+)+` — of
+    equal length, compared as integers component by component, so `1.10.0` is after `1.9.0`;
+    tags of unequal length are DIFFERENT, never ordered: `1.9` against `1.9.0` or `1.9.1` is
+    DIFFERENT. Order is never known between a tag and a pseudo-version (Go orders these;
+    this tool has not verified it), never between two pseudo-versions, never for a digest,
+    never across two tools (rule 15). **STALE is the line for verified OLDER and for nothing
     else**; NEWER and DIFFERENT print under their own names; a person looks; not EQUAL is 1.
 18. **Every refusal names its remedy.** No refusal here ends at the reason: the
     missing flag, the malformed line, the script to wrap the command in, the tool that
@@ -204,8 +205,8 @@ qwen3-coder:30b	model	ollama list	ollama:qwen3-coder:30b	none	stella
 nova-wake-pin-nova-bus	pin	nova-wake version	local:nova-bus version	none	rowan
 ```
 
-`owner` is the line who answers when that entry goes stale, on every STALE line, so
-the morning names a person, not only a number.
+`owner` is the line who answers when that entry is not current, on every STALE, NEWER or
+DIFFERENT line, so the morning names a person, not only a number.
 
 ## The verbs
 
@@ -215,10 +216,9 @@ nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
 nova-update help
 ```
 
-Those two usage lines are the string `nova-update help` prints, byte for byte: one string
-in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule 19. There
-is no `--only-stale` (the output is only findings) and no `--quiet` (the count line is the
-point).
+Those two usage lines are the string `nova-update help` prints, byte for byte: one string in
+the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule 19. No
+`--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
 
 ## Exit codes and the output grammar
 
@@ -265,14 +265,14 @@ APPLY AFTER name=fixture-tool installed=1.1.0 was=1.0.0
 APPLY OK name=fixture-tool from=1.0.0 to=1.1.0 took=0.1s
 ```
 
-Inside `go test` every GET source above is an `httptest` server the parser's table of
-hosts points at and every argv — `installed`, `local:`, `apply` — a script under
-`testdata/`; the fixture's model digests are the measured `qwen3.6:35b-a3b` pair under
-another name. Pasted in a terminal, line 2 reaches GitHub twice, npm and the registry
-once each, installing nothing — which is why the last line applies a fixture, not `gh`:
-**`apply` of a real entry runs the real installer on the box it is pasted into**. Do both
-on purpose. The `kind=pin` entry is UNKNOWN here because nova-wake is not on this box's
-PATH; from one tag with its bus it reads EQUAL; a DIFFERENT pair prints first, `pins=1`.
+Inside `go test` every GET source above is an `httptest` server the parser's table of hosts
+points at and every argv — `installed`, `local:`, `apply` — a script under `testdata/`; the
+fixture's model digests are the measured `qwen3.6:35b-a3b` pair under another name. Pasted
+in a terminal, line 2 reaches GitHub twice, npm and the registry once each, installing
+nothing; the last line applies a fixture, because **`apply` of a real entry runs the real
+installer on the box it is pasted into**. Do both on purpose. The `kind=pin` entry is
+UNKNOWN here because nova-wake is not on this box's PATH; from one tag with its bus it reads
+EQUAL; a DIFFERENT pair prints first, `pins=1`.
 
 ## Tests this spec demands
 
@@ -294,12 +294,12 @@ install` or `npm install`.
    so `sh` runs `echo` with `1.2.3` as `$0` and prints an empty line: UNKNOWN, never
    `1.2.3`; `;`, `&&`, `|`, `$(`, backtick and `*` exec once with those bytes literal at
    each of the three exec sites; two adjacent spaces in a field is exit 2 naming the line.
-4. `TestTheInstalledReadIsTheWholeIdentity`: rule 4's eleven measured outputs are a
-   fixture, each yielding its stated read; `gh`'s second line is not read; `go1.27.1`
-   yields `1.27.1`; the nova-bus line yields `0.12.1-0.20260912135226-0459069+dirty` byte
-   for byte, and a read that yields `0.12.1` is the mutation that matters; no dotted
-   number is UNKNOWN with the wrap-it remedy, exit 1; stderr is read only when stdout is
-   empty; `nosuchbinary --version` and an empty `PATH` are UNKNOWN reason `not_found`,
+4. `TestTheInstalledReadIsTheWholeIdentity`: rule 4's eleven fixture lines each yield the
+   stated read; `gh`'s second line is not read; `go1.27.1` yields `1.27.1`; the nova-bus
+   line yields `0.12.1-0.20260912135226-0459069+dirty` byte for byte, and a read that yields
+   `0.12.1` is the mutation that matters; no dotted number is UNKNOWN with the wrap-it
+   remedy, exit 1, as is a non-zero exit that printed one; stderr is read only when stdout
+   is empty; `nosuchbinary --version` and an empty `PATH` are UNKNOWN reason `not_found`,
    remedy naming argv[0] and the PATH, never the wrap-it one; a resolved entry has `path=`.
 4a. `TestAModelsVersionIsItsDigest`: `# Modelfile generated by "ollama show"` is UNKNOWN
     under rule 4, which is why 4a exists; an `ollama list` fixture yields the matching row's
@@ -323,12 +323,12 @@ install` or `npm install`.
    JSON each give one `UPDATE UNKNOWN` and exit 1; `up to date` never appears; every source
    dead exits 1 with `current=0`; a dead source is asked once in a run and again in the
    next — the no-retry, no-cache assertion.
-8. `TestTheRunIsBounded`: with an injected clock and 40 entries against a server answering
-   after 3s, `--budget 10s` returns inside 10s, prints a count line, marks unreached entries
-   UNKNOWN reason `budget` and exits 1; a counting handler never sees a fifth in flight.
-9. `TestCheckWritesNothingAndInstallsNothing`: `HOME` and the cwd are fresh temp dirs,
-   empty after a `check` over every kind, and only the entries' own `installed` argvs
-   start — over a file whose every entry is STALE, NEWER or DIFFERENT, no `apply` argv.
+8. `TestTheRunIsBounded`: an injected clock, 40 entries, a server answering in 3s:
+   `--budget 10s` ends inside 10s with a count line, the unreached UNKNOWN reason `budget`,
+   exit 1; a counting handler sees no fifth in flight; the defaults are on the first line.
+9. `TestCheckWritesNothingAndInstallsNothing`: `HOME` and the cwd are fresh temp dirs, empty
+   after a `check` over every kind, and only the entries' own `installed` argvs start — over
+   a file whose every entry is STALE, NEWER, DIFFERENT or UNKNOWN, no `apply` argv.
 10. `TestApplyNeedsANameFromAPerson`: no name is exit 2 saying a name is required;
     `--all`, `--stale` and `-y` are unknown flags; two names is exit 2.
 11. `TestApplyRefusesAModelByName`: `apply` of every `kind=model` entry is exit 2, carries
@@ -344,16 +344,16 @@ install` or `npm install`.
     `to=`; one landing `1.1.1` against a target of `1.1.2` is `APPLY FAIL` naming both and
     **not** OK, the mutation that matters; a non-zero exit is `APPLY FAIL` naming the
     code; `--version` against an argv with no `{version}` is exit 2; after uses `installed`.
-15. `TestABrokenPinPrintsFirst`: with four non-current entries of four kinds the
-    `kind=pin` line precedes the rest; two pin entries, one DIFFERENT, print `pins=1`; a
-    pin entry issues zero HTTP requests; `nova-wake version` and `nova-bus version`
-    answering one identity — `v0.12.0` twice, then one pseudo-version twice — are EQUAL
-    and current; `v0.12.0` against `v0.10.3` is DIFFERENT; two pseudo-versions differing
-    only in the commit, `…-0459069` against `…-88f0b0d`, are DIFFERENT; each verdict
-    equals `wake.AcceptBus` on the same two strings; `STALE` appears on no pin line.
-16. `TestUpdateOutputIsBoundedAtTheLargestPlausibleState`: 200 entries, 120 stale and
-    60 unknown, print at most `4 * --max + 8` lines over both streams; `stale` and
-    `unknown` each get a `MORE` line with the true total; `--max 0` prints all 180;
+15. `TestABrokenPinPrintsFirst`: with four non-current entries of four kinds the `kind=pin`
+    line precedes the rest; two pin entries, one DIFFERENT, print `pins=1`; a pin entry
+    issues zero HTTP requests; `nova-wake version` and `nova-bus version` answering one
+    identity — `v0.12.0` twice, then one pseudo-version twice, then `devel` twice — are
+    EQUAL and current; `v0.12.0` against `v0.10.3` is DIFFERENT; two pseudo-versions
+    differing only in the commit, `…-0459069` against `…-88f0b0d`, are DIFFERENT; each
+    verdict equals `wake.AcceptBus` on the same two strings; `STALE` appears on no pin line.
+16. `TestUpdateOutputIsBoundedAtTheLargestPlausibleState`: 200 entries, 60 stale, 30 newer,
+    30 differ and 60 unknown, print at most `4 * --max + 8` lines over both streams; each of
+    the four verdicts gets a `MORE` line with its true total; `--max 0` prints all 180;
     `--max -1` is exit 2.
 17. `TestOrderIsVerifiedOrNotClaimed`: `1.9.0` against a latest `1.10.0` is STALE and
     `1.10.0` against `1.9.0` is NEWER, never STALE; `1.9` against `1.9.0` is DIFFERENT,
@@ -373,25 +373,24 @@ Beside those: the first-run block runs against the fixture, compared by shape pe
 ONBOARDING.md 5(c); `nova-update help` prints the verbs block on stdout, exit 0; a
 bare invocation or a flag typo costs one line, never a banner.
 
-## Open questions for Glenn — each with a default, and the default stands unless he says otherwise
+## Open questions — each with a default, and the default stands unless Glenn says otherwise
 
-1. **Ollama publishes no JSON API, but its registry speaks registry-v2.** Default: rule
-4a's one manifest GET, digest as text; the rejected alternative, scraping
-`ollama.com/library/<model>/tags`, is 50 KB of HTML with no documented shape and no dotted
-number anyway. A registry that stops answering registry-v2 JSON is UNKNOWN, never OK.
+1. **Ollama publishes no JSON API, but its registry speaks registry-v2.** Default: rule 4a's
+one manifest GET, digest as text; the rejected alternative, scraping
+`ollama.com/library/<model>/tags`, is 50 KB of HTML, no documented shape, no dotted number.
 2. **Open for the group: the reporting surface** (Stella, #121; not decided here). Every
    bench should say which build of each Nova tool it runs without a model typing version
-   strings, and the read a report needs is rule 4's: one shared version reader, full
-   identities kept. Two shapes are on the table: **(a)** a small `nova-version` entry
-   point — `report --file <manifest> --as <friend> --to <who>` prints a bus draft, `send`
-   hands it to `nova-bus` — with no release lookup in it; or **(b)** the same job as
+   strings, and the read it needs is rule 4's: one shared reader, full identities kept. Two
+   shapes: **(a)** a small `nova-version` entry point —
+   `report --file <manifest> --as <friend> --to <who>` prints a bus draft, `send` hands it
+   to `nova-bus` — with no release lookup in it; or **(b)** the same job as
    `nova-update report`, this tool's file and read, no second manifest. Either way the
-   collector runs only argv the file names, UNKNOWN is never current, an unchanged repeat
-   does not wake a mind, and no timer, no automatic send and no install hides behind the
-   report (rules 9–13 hold for the verb too). The packaging question — one reader under
-   two entry points, or one — settles with the lines first; then this spec gains the
-   verb's rule and its test, not before. (The old question 2, *nothing today prints a
-   pin*, is closed: since #107 the pin is nova-wake's own version, which it prints.)
+   collector runs only the file's argv, UNKNOWN is never current, an unchanged repeat does
+   not wake a mind, and no timer, automatic send or install hides behind the report. The
+   packaging question — one reader under two entry points, or one — settles with the lines
+   first; only then does this spec gain the verb's rule and test. Default: none; the
+   group's. (The old question 2 is closed: since #107 nova-wake prints its own version, the
+   pin.)
 3. **Where the file lives.** Default: `versions.tsv` at the root of nova-tools, one
    for the estate, the path always from `--file`.
 4. **Brew versus a release binary for the same tool.** `gh`, `sops` and `age` each
