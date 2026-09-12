@@ -57,41 +57,83 @@ sudo chown -R root:staff /Users/Shared/nova-local && sudo chmod -R 2775 /Users/S
 
 **2. Copy the weights, before anything is switched.** The daemon keeps serving from the
 old path for the whole copy, and the derived tags (SPEC-LOCAL rule 6) travel with it —
-they are manifests and blobs in the store being copied. Nothing is removed here.
+they are manifests and blobs in the store being copied. Nothing is removed here. This
+copy is of a **live** store, so a tag pulled while it runs is not in it — step 3 runs the
+same line again once the daemon is stopped, which is what closes that window.
 
 ```
-sudo rsync -aH --info=progress2 ~/.ollama/models/ /Users/Shared/nova-local/models/ollama/
+sudo rsync -aH --progress ~/.ollama/models/ /Users/Shared/nova-local/models/ollama/
 sudo chown -R root:staff /Users/Shared/nova-local/models/ollama
+sudo chmod -R g+w /Users/Shared/nova-local/models/ollama
+sudo find /Users/Shared/nova-local/models/ollama -type d -exec chmod g+s {} +
 ```
+
+`--progress`, not `--info=progress2`: macOS ships **openrsync** (`rsync --version` →
+`openrsync: protocol version 29`), which does not have rsync 3.1's `--info=`; the
+`--info=progress2` line exits 1 on the first character of the copy. `--progress` is
+accepted by both. The two mode lines are not decoration: `rsync -a` preserves the source's
+`755` directories and `644` blobs, so step 1's `2775` reaches only the empty directories
+it made, and without `g+w`/`g+s` a **non-root** service user (step 3) cannot write a new
+blob and the first `ollama pull` after the switch fails.
 
 **3. Make the engine a box service, not a per-account agent, and point it at the new
 store.** On darwin that is a **LaunchDaemon** in `/Library/LaunchDaemons`, loaded at
-boot, bound to loopback, with its account named in the plist's `UserName` (a LaunchDaemon
-is **root** if no `UserName` is set, and the recipe should not run an engine as root) and
-its store named in the plist's `EnvironmentVariables` (`OLLAMA_MODELS`), because a shell
-`export` never reaches a launchd job. On this box ollama is installed by Homebrew, so the
-switch goes through `brew services` rather than by hand, and the existing per-user agent
-must be stopped first. **The switch unloads every loaded model once** — one restart, one
-cold load on the next `serve`; until then `status` shows `loaded=0` and the derived tags
-are still listed. On linux it is a **systemd system unit** with the same two facts: a
-service user, and the store in the unit's environment. ds4 has no store setting at all —
-its store is the `-m` path in whatever starts it, which is the recipe's own plist or unit
-argv.
+boot, bound to loopback, with its account named in the plist's `UserName` — a LaunchDaemon
+is **root** if no `UserName` is set, and the recipe should not run an engine as root. On
+this box ollama is installed by Homebrew, so the switch goes through `brew services`
+rather than by hand, and the existing per-user agent must be stopped first. `brew
+services` writes a `UserName` **only** when given `--sudo-service-user <user>` (Homebrew
+`services/cli.rb:535-541`: `plist_data["UserName"] = sudo_service_user`); a plain `sudo
+brew services start ollama` only warns and runs the engine as root, which is the thing
+this step forbids. **The switch unloads every loaded model once** — one restart, one cold
+load on the next `serve`; until then `status` shows `loaded=0` and the derived tags are
+still listed. On linux it is a **systemd system unit** with the same two facts: a service
+user, and the store in the unit's environment (`OLLAMA_MODELS`) — systemd does not rewrite
+a unit behind you, so on linux the environment is the right place for it. ds4 has no store
+setting at all — its store is the `-m` path in whatever starts it, which is the recipe's
+own plist or unit argv.
+
+**The store is not named in the darwin plist, on purpose.** `brew services start`
+regenerates the plist from the formula's own `service do` block on **every** start
+(`cli.rb:531-547` removes the old file and writes `service.service_contents`; `restart` is
+stop+start), and `brew cat ollama`'s block carries exactly `OLLAMA_FLASH_ATTENTION` and
+`OLLAMA_KV_CACHE_TYPE` and nothing else. So an `OLLAMA_MODELS` added by hand — a
+`PlistBuddy -c 'Add :EnvironmentVariables:OLLAMA_MODELS …'` line, which does work when run
+— is gone at the next `brew services restart ollama` or `brew upgrade ollama`, and the
+daemon comes back on the service user's own empty `~/.ollama`. Brew's documented user
+override file is no better here: `$HOMEBREW_USER_CONFIG_HOME/services/ollama.env` is
+merged into the plist by `service.rb:486-500`, but that method skips the file when the
+definition is generated as root — *"user env overrides are not supported for root
+services"* — which is exactly a `sudo brew services` daemon. **So the recipe uses the one
+thing brew never rewrites: the engine's default path itself.** `~/.ollama/models` in the
+service user's home becomes a symlink to the shared store; the daemon resolves it on every
+start, whatever brew regenerates, and no `OLLAMA_MODELS` is needed on this box at all.
 
 ```
 brew services stop ollama
-sudo brew services start ollama
-sudo /usr/libexec/PlistBuddy -c 'Add :EnvironmentVariables:OLLAMA_MODELS string /Users/Shared/nova-local/models/ollama' /Library/LaunchDaemons/homebrew.mxcl.ollama.plist
-sudo launchctl bootout system/homebrew.mxcl.ollama; sudo launchctl bootstrap system /Library/LaunchDaemons/homebrew.mxcl.ollama.plist
+sudo rsync -aH --progress ~/.ollama/models/ /Users/Shared/nova-local/models/ollama/
+sudo chown -R root:staff /Users/Shared/nova-local/models/ollama && sudo chmod -R g+w /Users/Shared/nova-local/models/ollama
+mv ~/.ollama/models ~/.ollama/models.pre-nova-local
+ln -s /Users/Shared/nova-local/models/ollama ~/.ollama/models
+sudo brew services start ollama --sudo-service-user glenn
 ```
+
+Line 2 is step 2's copy again, after the daemon is stopped: incremental, seconds, and it
+is what catches a tag pulled during step 2's window. `~` on lines 4 and 5 is the **service
+user's** home — the account open question 1 below picks, `glenn` today because that
+account owns the weights and is in `staff` — and those two lines are run in that account,
+not under `sudo`, so the symlink is that user's. Nothing is deleted here either: the old
+store is renamed aside and goes in step 4.
 
 **4. Check it from both accounts, and only then remove the old copy.** The observable is
 the one `nova-local` gives you: `status` from each account prints the same engines, the
 same models and the same `store=` with `shared=yes`, then one `nova-local serve` and one
 real task. That is rule 15's test 17, run for real instead of against a fake, and it is
 where the two-account requirement is enforced on this box — with `serve
---require-shared-store` passed by whatever starts a model here thereafter. `~/.ollama`
-goes only after that verify.
+--require-shared-store` passed by whatever starts a model here thereafter. Then one more
+check that belongs to step 3's choice: `brew services restart ollama` and `status` again,
+which is what proves the store survived a plist regeneration rather than merely a boot.
+`~/.ollama/models.pre-nova-local` goes only after both.
 
 ## What the recipe must still decide, and this document does not
 
@@ -103,8 +145,12 @@ These are open, and a builder will ask them before writing the plist:
   LaunchDaemon, or the recipe writes its own plist and stops using brew for it.
 - **The linux service user's name** — `nova-local` is the working assumption in the
   spec's path (`/var/lib/nova-local`) and nothing else depends on it.
-- **What happens to the old `~/.ollama`** after the verify: removed, or left until the
-  next reboot proves the daemon comes back on the new path.
+- **What happens to the old `~/.ollama/models.pre-nova-local`** after the verify:
+  removed, or left until the next reboot proves the daemon comes back on the new path.
+- **Who passes `--require-shared-store` on this box** once it is set up: `nova-run`'s
+  invocation of `serve`, an alias in each account, or the operator by hand. SPEC-LOCAL
+  rule 15 says the flag is passed there and names the candidates; choosing one is this
+  document's, not the spec's.
 
 ## What `nova-local` does about all of this
 

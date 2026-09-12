@@ -103,7 +103,7 @@ Every rule is normative and has one line in **tests this spec demands**.
    was load **is not in that record**: one number cannot tell a cold start from a slow
    model.
 
-8. **READY is a measurement, printed — and a refusal only against a number the operator
+8. **READY is a measurement, printed — and a refusal only against a value the operator
    gave.** `serve` reads the 1-minute load average, free memory and the engines already
    answering **before** starting anything, and prints them on every `SERVE OK` and
    refusal. It has **no threshold of its own** (Glenn, 2026-09-09: *"Have fun!!! a lock
@@ -146,8 +146,10 @@ Every rule is normative and has one line in **tests this spec demands**.
     not like to the local models to stay in rowans account, but move to a shared location
     explicitly."*). The store is **`/Users/Shared/nova-local/models/<engine>`** on darwin
     and **`/var/lib/nova-local/models/<engine>`** on linux; `nova-local` reads and serves
-    from it and **installs nothing** — the daemon, the directory's owner and mode and the
-    one-time move are the box recipe's, [BOX-LOCAL.md](BOX-LOCAL.md).
+    from whatever store the engine reports and **installs nothing** — on a box more than
+    one account uses, that store is the path above, and the daemon, the directory's owner
+    and mode and the one-time move that make it so are the box recipe's,
+    [BOX-LOCAL.md](BOX-LOCAL.md).
 
     **It reads** only what an engine reports, through what a non-root process can read
     with the standard library. **ollama**: `/api/tags` for the model list and
@@ -164,13 +166,17 @@ Every rule is normative and has one line in **tests this spec demands**.
     `unknown`, not a verdict, because a tool does not rule on a fact it does not have.
     **It refuses only against a value the operator gave** (rule 8's shape): with
     `--require-shared-store`, `serve` is exit 1 on a store under a home —
-    `/Users/<x>/…`, `/home/<x>/…` — naming it, remedy `nova-local status --engine <e>`
-    and [BOX-LOCAL.md](BOX-LOCAL.md); without the flag it serves and prints `shared=no`.
+    `/Users/<x>/…`, `/home/<x>/…` — naming it, remedy the recipe's own first line, `sudo
+    mkdir -p /Users/Shared/nova-local/models/<e>`, and [BOX-LOCAL.md](BOX-LOCAL.md) — not
+    `status`, which would only reprint the `store=` the refusal has just named. Without
+    the flag it serves and prints `shared=no`.
     On a box more than one account uses, the requirement is enforced by the recipe's
     step 4 — `status` from both accounts showing `shared=yes`, and
     [BOX-LOCAL.md](BOX-LOCAL.md) carries the mode argument — and thereafter by `status`
-    never lying about it; whatever invokes `serve` there (the recipe, `nova-run`, an
-    alias, the operator) passes the flag. `status` never refuses.
+    never lying about it; whatever invokes `serve` there passes the flag. **Which** of
+    the candidates (the recipe, `nova-run`, an alias in each account, the operator) does
+    is open, and open in one place — [BOX-LOCAL.md](BOX-LOCAL.md)'s list of what the
+    recipe must still decide. `status` never refuses.
 
 ## The engines
 
@@ -282,9 +288,10 @@ remedy `ollama rm <tag>`; a ds4 already resident on a **different** model, namin
 the memory both would want, remedy `nova-local serve --stop --engine ds4 --model
 <resident>`; a load or free memory past a `--max-load` or `--min-free` **the caller
 gave**, naming measured and asked, remedy `nova-local status --list`; a store under a
-home directory **only when `--require-shared-store` was given**, naming it, remedy
-`nova-local status --engine <e>` and BOX-LOCAL.md; and something already listening on
-the port an adapter would start a process on, naming **the port**, remedy `nova-local
+home directory **only when `--require-shared-store` was given**, naming it, remedy the
+recipe's own first line `sudo mkdir -p /Users/Shared/nova-local/models/<e>` and
+BOX-LOCAL.md — not `status`, which would reprint what the refusal named; and something
+already listening on the port an adapter would start a process on, naming **the port**, remedy `nova-local
 status` — no holder is named, because the socket's owner is not readable from a non-root
 process with the standard library. A missing `--num-ctx`, one with a remainder,
 `--seed` on ds4 and a non-loopback `--base` are exit 2. **Demanded test:** 5–9, 16, 17 — the tag idempotent,
