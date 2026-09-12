@@ -103,8 +103,8 @@ feature works on that platform** — see `nova-sandbox`'s limits below.
 With **Go 1.26 or newer**, install only the tools you want, pinned to a release:
 
 ```sh
-go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v0.14.0
-go install github.com/mas-bandwidth/nova-tools/cmd/nova-wake@v0.14.0
+go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v0.13.0
+go install github.com/mas-bandwidth/nova-tools/cmd/nova-wake@v0.13.0
 nova-bus version
 nova-wake help
 ```
