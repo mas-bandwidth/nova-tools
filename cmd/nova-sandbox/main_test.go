@@ -701,6 +701,19 @@ func TestProbeStepIsTheInternalVerb(t *testing.T) {
 	if code, errOut := probeChild(t, selfExecutable(t), nil, probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
 		t.Fatalf("argv equal to the environment was accepted as a child: exit %d, stderr %q", code, errOut)
 	}
+	if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
+		t.Fatalf("a refused step touched the file: %q, %v", string(got), err)
+	}
+
+	if runtime.GOOS == "windows" {
+		// Everything below hands a child a descriptor, and exec.Cmd.ExtraFiles is not
+		// supported on windows — a Start with one set returns an error, which is a test
+		// that never ran dressed as a test that failed (measured: "probe-step child never
+		// ran"). The windows body of this spec is not built either, so no probe there has
+		// a child at all; what windows does assert is every line above: the verb refuses
+		// in process and as a child, and the file survives.
+		t.Skip("skipped on windows: exec.Cmd.ExtraFiles is unsupported there, and no windows sandbox body is built for a probe to have a child at all")
+	}
 	// A pipe on fd 3 carrying the WRONG value is refused too: the value is what the
 	// descriptor is for, and holding a descriptor is not holding the probe's secret.
 	if code, errOut := probeChild(t, selfExecutable(t), []byte("fedcba9876543210"), probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
@@ -713,17 +726,11 @@ func TestProbeStepIsTheInternalVerb(t *testing.T) {
 	// The right value in the argv, in the environment AND on the pipe, and still refused,
 	// because the parent is not this binary. This is the half a caller who has learned the
 	// shape of the guard cannot supply without already being the tool.
-	if runtime.GOOS != "windows" {
-		if code, errOut := probeChild(t, copyOfThisBinary(t), raw, probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
-			t.Fatalf("a foreign parent was accepted: exit %d, stderr %q", code, errOut)
-		}
+	if code, errOut := probeChild(t, copyOfThisBinary(t), raw, probeNonceVar+"="+nonce, nonce, "write_outside", target); code != 2 || !strings.Contains(errOut, "probe_step_not_a_child") {
+		t.Fatalf("a foreign parent was accepted: exit %d, stderr %q", code, errOut)
 	}
 	if got, err := os.ReadFile(target); err != nil || string(got) != "MUST-SURVIVE\n" {
 		t.Fatalf("a refused step touched the file: %q, %v", string(got), err)
-	}
-
-	if runtime.GOOS == "windows" {
-		t.Skip("skipped on windows: the steps below need the child to name its parent's executable, and no windows sandbox body is built for a probe to have a child at all")
 	}
 	// With everything the parent passes — the pipe, the argv copy, the environment copy
 	// and this binary for a parent — the steps are themselves.
