@@ -290,7 +290,7 @@ tokens `NOTE`, `RECEIPT`, `ALREADY`, `NAME` and `GROUP`, all on stdout, all list
 in its section. `nova-memory` adds its own informational second
 tokens the same way — `CAL`, `CAND`, `DEMO`, `HIT`, `MISS`, `INFO`, `MORE`, `NOTE` — all on
 stdout, all listed in its section.
-The five binaries specified under `docs/` keep the same shape and take the same
+The tools specified in the companion `docs/SPEC-*.md` files keep the same shape and take the same
 first token from their own verb — `WATCH` is spelled `WAKE`, and `nova-board`'s
 `check` is `BOARD`, `nova-tokens`'s `fold` is `TOKENS` — with `NOTE` and `MORE`
 as informational second tokens throughout; each `docs/SPEC-*.md` carries that

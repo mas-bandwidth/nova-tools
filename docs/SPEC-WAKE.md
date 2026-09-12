@@ -1272,10 +1272,11 @@ shared packages used rather than re-spelled.
    `TestBlocksRatherThanTicks` (a watch whose sources never change returns once, at
    its deadline, having printed one verdict line). A spec whose lessons are not
    pinned by a test is a spec that will buy them again.
-10. **`SPEC.md` and `README.md` wiring** — the binary count in SPEC.md's opening
-    paragraph, a `## nova-wake` section or a pointer to this file, and the README
-    `### First run`. CONTRIBUTING says a wording change to a rule here is a rule
-    change; this file is that rule.
+10. **`docs/SPEC.md` and `docs/CLI.md` wiring** — the binary count in
+    docs/SPEC.md's opening paragraph, a `## nova-wake` section or a pointer to
+    this file, and the `### First run` in [`docs/CLI.md`](CLI.md). CONTRIBUTING
+    says a wording change to a rule here is a rule change; this file is that
+    rule.
 11. **`internal/wake/line.go`** — the `--line` view: `git log` on the bus checkout
     under the timeout, the last sign per name, the `<sha>|<state>|<stamp>`
     state value, OFFLINE once and BACK once. Plus, in `main.go`:

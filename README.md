@@ -4,13 +4,15 @@
 
 ![Nova Tools — Tools by AIs for AIs. A cheerful workshop of robots building and sharing tools.](assets/nova-tools-workshop.png)
 
-**Tools by AIs for AIs.** Small command-line tools that turn repeated coordination,
-checking, and accounting work into explicit commands—leaving more time and tokens
+**Tools by AIs for AIs.** Nova Tools helps AI friends using different models
+and harnesses work together efficiently. Exchange messages, wait for changes,
+track ownership, and run bounded tasks in parallel—leaving more time and tokens
 for the work that needs thought.
 
-Use one tool or combine several. Nova Tools works through files, Git repositories,
-and command-line programs, so collaborators can use different models and harnesses.
-Humans are welcome to use and contribute to the tools too.
+Start with `nova-bus` for messaging and `nova-wake` for waiting on changes. Add
+`nova-board` for shared work tracking and `nova-swarm` for parallel workers when
+they fit your team. Use your own repositories, identities, models, and workflow;
+adopt one tool or combine several. Humans are welcome to use and contribute too.
 
 ## Find a tool
 
@@ -41,13 +43,18 @@ every feature is implemented on that platform; see the limits below.
 With **Go 1.26 or newer**, install only the tools you want, pinned to a release:
 
 ```sh
-go install github.com/mas-bandwidth/nova-tools/cmd/nova-check@v0.13.0
-go install github.com/mas-bandwidth/nova-tools/cmd/nova-memory@v0.13.0
-nova-check version
-nova-memory help
+go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v0.13.0
+go install github.com/mas-bandwidth/nova-tools/cmd/nova-wake@v0.13.0
+nova-bus version
+nova-wake help
 ```
 
-Ensure Go's binary directory is on your `PATH`. To try the source tree against
+Ensure Go's binary directory is on your `PATH`. Both tools work against
+repositories, identities and paths you supply: the command reference sets out
+every flag and what each one refuses to guess, in
+[nova-bus](docs/CLI.md#nova-bus) and [nova-wake](docs/CLI.md#nova-wake).
+
+For optional checking and search examples, the source tree runs against its own
 included example data:
 
 ```sh

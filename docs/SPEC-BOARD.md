@@ -842,9 +842,9 @@ shared packages used rather than re-spelled.
     before it in comment order — the
     tool's own rules applied to its own arrival. It is a script that runs once and
     is reviewed as code, not a verb.
-11. **`SPEC.md` and `README.md` wiring** — the binary count in SPEC.md's opening
-    paragraph, a `## nova-board` section or a pointer to this file, and the README
-    `### First run`.
+11. **`docs/SPEC.md` and `docs/CLI.md` wiring** — the binary count in
+    docs/SPEC.md's opening paragraph, a `## nova-board` section or a pointer to
+    this file, and the `### First run` in [`docs/CLI.md`](CLI.md).
 12. **The rules of the last two days, in `main.go` and `derive.go`** — the counts
     view as the default and `--list` for cards, `--by` and `--default` required,
     `overdue`, the row fields and `probed`, `BOARD LEG` and `owed=`, `--evidence`

@@ -269,11 +269,45 @@ func resolvedTail(typedShowsIt bool, key, dir string) string {
 
 // insideDir says whether a path lies under a directory. The directory itself is not inside
 // itself, and a sibling whose name merely starts the same way is not either.
+//
+// AND THE ANSWER IS NOT A STRING COMPARISON, BECAUSE A FILESYSTEM IS NOT A STRING.
+// `strings.HasPrefix` over cleaned, resolved paths is case-SENSITIVE and APFS is
+// case-INsensitive by default, so a `key_file` typed `/x/Worker/.key` under a `worker_dir` of
+// `/x/worker` is THE SAME FILE the slot copy picks up and the prefix said no: the load passed
+// and `RefreshSlot` put the key inside the wall under a green `SANDBOX OK` (both cold readers
+// of #88 at fc400ce; issue #100). `filepath.EvalSymlinks` does not fold case on darwin, so
+// resolving the path does not close it either -- nor would lowercasing, which is wrong on a
+// case-sensitive filesystem where `/x/Worker` and `/x/worker` are two directories.
+//
+// So the string prefix stays as the CHEAP answer, and it is the only answer available for a
+// path that does not exist yet -- `resolvePath` answers as typed for one, and a refusal is
+// worth more than a silence. Where it says no, each EXISTING ancestor of the path is asked
+// `os.SameFile` against the directory: device and inode is the question the filesystem itself
+// answers, so it holds for a case fold, for a mount of the same directory at two names, and
+// for a hard-linked directory where one exists. The walk starts at the path's parent, so a
+// path that IS the directory under another spelling is still not inside it, which is what the
+// first line of this function says. This runs at load, once per description, never per job.
 func insideDir(path, dir string) bool {
 	if path == dir {
 		return false
 	}
-	return strings.HasPrefix(path, strings.TrimSuffix(dir, string(os.PathSeparator))+string(os.PathSeparator))
+	if strings.HasPrefix(path, strings.TrimSuffix(dir, string(os.PathSeparator))+string(os.PathSeparator)) {
+		return true
+	}
+	target, err := os.Stat(dir)
+	if err != nil {
+		return false // a directory that is not there holds nothing
+	}
+	for parent := filepath.Dir(path); ; {
+		if fi, err := os.Stat(parent); err == nil && os.SameFile(fi, target) {
+			return true
+		}
+		up := filepath.Dir(parent)
+		if up == parent {
+			return false // the root is its own parent: the walk is over
+		}
+		parent = up
+	}
 }
 
 // DefaultDeadline is the worker description's own, which add --deadline overrides per task.
@@ -288,6 +322,12 @@ func (w Worker) DefaultDeadline() time.Duration {
 // slotDirHolding answers the slot directory of workerDir that holds path -- a sibling of
 // workerDir spelled <base>-<digits>, which is what SlotDir builds -- or "" when path is
 // under no slot. A path that IS a slot directory is not held by it, which matches insideDir.
+//
+// AND THIS ONE IS STILL A NAME COMPARISON, WHICH IS THE GAP #145 OWNS. `insideDir` above asks
+// the filesystem (`os.SameFile`) because the directories it compares exist at load; a slot
+// directory need not -- slots are created at run -- so there is no inode to compare and
+// `<dir>/Worker-1/.key` under a `worker_dir` of `<dir>/worker` folds past `base+"-"` on a
+// case-insensitive filesystem. Not fixed here (#100 is worker_dir and read_roots); #145.
 func slotDirHolding(path, workerDir string) string {
 	parent, base := filepath.Dir(workerDir), filepath.Base(workerDir)
 	rel, err := filepath.Rel(parent, path)
