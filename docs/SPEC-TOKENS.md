@@ -2048,7 +2048,7 @@ pin all three by executing them.
     largest plausible state measured (demanded test 11), the audit over
     every printed argument (`internal/oneline/audit`), and no test reaching
     outside `t.TempDir()` or the fake `sqlite3`.
-    **Amendment, 2026-09-12 (item 15, rules 22–26).** `publish`'s tests add a
+    **Amendment, 2026-09-12 (item 15, rules 22–31).** `publish`'s tests add a
     real `git` on `PATH` and a fake one, and a bare repository and its clone,
     all of them inside `t.TempDir()`; nothing reaches outside it, no test
     touches a real remote, a credential or the private ledger, and no test
