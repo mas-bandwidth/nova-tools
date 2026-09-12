@@ -148,6 +148,41 @@ near the end.
    nothing wider; a job that does not listen cannot be listened to.
    (`profiles/darwin-check.sh`, checks `unix_socket_outside`,
    `unix_socket_outside_control` and `unix_socket_inside`.)
+   **One unix socket is granted by literal, and it is DNS.** macOS does not
+   resolve names over IP from the process: it asks `mDNSResponder` over the
+   unix socket `/private/var/run/mDNSResponder`, so IP-only outbound is a wall
+   with a working network and no name resolution — measured 2026-09-11 on this
+   Mac, `curl https://example.com` inside the wall is `rc=6`, `http_code=000`,
+   and `nslookup` is `bind: Operation not permitted`; with
+   `(allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))`
+   the same curl is `200`. Every wrapped worker would otherwise fail its first
+   request while the `SANDBOX OK` line said `net=nopromise`, which is the
+   silent sandbox rule 1 forbids. The literal is emitted **inside** the network
+   marker, so `--net-deny` takes the resolver away with the network.
+   (`profiles/darwin-check.sh`, checks `dns_resolves` and
+   `dns_resolves_control`: the same profile with the literal removed does not
+   resolve, so the check cannot pass by the socket being irrelevant.)
+   **`mach-lookup` is narrowed to three services, measured.** The previous
+   revision's unqualified `(allow mach-lookup)` left `pbpaste` **reading the
+   clipboard** inside the wall. The set was grown from empty until
+   `/bin/sh -c true`, `git status`, `curl https://example.com`,
+   `opencode --version` and `node -e 1` all passed, and stopped there:
+
+   ```
+   (allow mach-lookup
+     (global-name "com.apple.system.opendirectoryd.libinfo")   ; getpwuid, getaddrinfo
+     (global-name "com.apple.SecurityServer")                  ; TLS trust evaluation
+     (global-name "com.apple.system.logger"))                  ; os_log
+   ```
+
+   All five pass under it and `pbpaste` is `rc=1`
+   (`profiles/darwin-check.sh`, check `clipboard_denied`). **Accepted width,
+   named rather than removed:** under this narrowed set `launchctl print
+   system` still answers and `security list-keychains` still lists the keychain
+   **file names** — neither reads a secret, and both were measured to still
+   answer. `osascript` evaluates a local expression; Apple Events are denied at
+   every width. A service a future harness needs is added to this list by
+   measurement, never by widening to the unqualified form.
    With `--net-deny` the caller is asking
    for an enforced denial, and the tool either delivers it or refuses to run:
    on `darwin` and `windows` the grant is withheld and the line says
@@ -176,9 +211,21 @@ near the end.
 9. **The environment passes through minus the agent, and the caller points the
    child's home into the write set.** This is not a secrets tool: the child
    inherits the caller's environment, minus the three temp variables the tool
-   sets and minus **`SSH_AUTH_SOCK` and every variable whose name contains
-   `AGENT`** (`SSH_AGENT_PID`, `GPG_AGENT_INFO`, and whatever the next agent
-   invents — the match is on the name, so a new one needs no new release).
+   sets and minus **this exact set, by name**:
+
+   ```
+   SSH_AUTH_SOCK
+   SSH_AGENT_*                      (SSH_AGENT_PID, SSH_AGENT_LAUNCHER, ...)
+   GPG_AGENT_INFO
+   *_AGENT_PID   *_AGENT_INFO   *_AGENT_SOCK
+   ```
+
+   Each of those names an **address of, or a handle on, a running agent**.
+   The previous revision said "every variable whose name contains `AGENT`",
+   which was measured to drop `AI_AGENT` and `CLAUDE_AGENT_SDK_VERSION` — names
+   that say what is *running* the job and address nothing. Under the set above
+   both **pass through**, and the `SANDBOX NOTE` line is true as written
+   because it names exactly what was dropped.
    The scrub is the second half of rule 7's network policy: the wall denies
    the agent's *socket* and the scrub removes the *address* of it, so a
    command that would otherwise sign a push with a key it cannot read has
@@ -244,13 +291,22 @@ near the end.
     is stated per platform.** Everything after `--` is executed verbatim —
     **never** through a shell, so no argument is re-parsed and no quote is
     re-interpreted. stdin, stdout and stderr are inherited unchanged — and the caller owns what
-    they point at. A descriptor the caller opened **before** the wrap is not
-    made reachable by having been opened: measured, a wrapped `/bin/cat` whose
-    stdout is a file outside every named path is denied, while `/bin/echo`
-    writing the same descriptor succeeds, because the two reach the file
-    differently and only one of them is checked by the policy. **The rule: the
-    caller's stdout and stderr for a wrapped command are either a pipe the
-    caller drains, or a path inside the write set.** `nova-swarm`'s
+    they point at. **The rule is about stdout and stderr onto an outside
+    path, and only that:** the caller's stdout and stderr for a wrapped
+    command are either a pipe the caller drains, or a path inside the write
+    set. Measured, a wrapped `/bin/cat` whose stdout is a file outside every
+    named path is denied, while `/bin/echo` writing the same descriptor
+    succeeds, because the two reach the file differently and only one of them
+    is checked by the policy — so a write through an inherited descriptor is
+    *unreliable*, not walled. **An inherited descriptor is not walled at all
+    for reads**, and the previous revision's sentence saying otherwise was
+    false: measured 2026-09-11 on this Mac, `cat /dev/fd/9 9<secret` inside
+    the wall **printed the secret**, because `/dev` is `file-read*` and
+    `/dev/fd/9` re-opens the descriptor the caller already had. **The caller
+    rule that follows: no descriptor onto a secret is held open across the
+    exec.** The tool itself leaks none — every file it opens is `CLOEXEC` and
+    only 0, 1 and 2 are passed — so this is a rule for launchers, and a
+    launcher that reads a key file must close it before it wraps. `nova-swarm`'s
     `supervise` takes the pipe: it already reads the harness's output line by
     line, and its per-job log file is written by the supervisor outside the
     wall, never handed to the child as a descriptor onto an unnamed path. The
@@ -263,7 +319,8 @@ near the end.
     - **darwin:** the tool spawns `sandbox-exec`, which applies the profile and
       `exec`s the command in place, and **waits**; `SIGINT` and `SIGTERM` are
       forwarded to the child's process group. The tool waits so that it can
-      remove the generated profile file when the command ends.
+      the tool waits so that it can forward signals and return the command's
+      status, not to clean anything up: the profile is inline (`-p`).
     - **windows:** the tool `CreateProcessW`es the command into the container
       and **waits**, forwarding console control events, so that it can remove
       the ACEs it added when the command ends.
@@ -504,8 +561,13 @@ The home directory is never a root.
 
 ## macOS — `sandbox-exec` with a generated profile
 
-The wrap is `sandbox-exec -f <profile> -D <name>=<value>... -- <command>
-<args...>`. `sandbox-exec(1)` is present on macOS 26, is marked deprecated, and
+The wrap is `sandbox-exec -p <profile text> -D <name>=<value>... -- <command>
+<args...>` — the profile is passed **inline**, never written to a file. A
+profile file has to live somewhere the tool can write, which is inside the
+write set, and a process already inside the write set can replace it between
+the `WriteFile` and the `Start`; on a `SIGKILL` it is left behind. `-p` has no
+file, no write-set entry, no race and no cleanup, and it is why the darwin body
+has nothing to unlink when the command ends. `sandbox-exec(1)` is present on macOS 26, is marked deprecated, and
 works today; it applies the profile and `exec`s the command in place, so it is
 not a second process sitting between the tool and the command.
 
@@ -948,6 +1010,30 @@ one line on stderr naming the remote, never a silent success. Test 28.
 Freddy is the first user; his launcher and his `AGENTS.md` name the command
 (**one file is the self on a small harness**, 2026-09-10).
 
+### What every launcher must do to be wrappable
+
+Measured against the live launchers 2026-09-11; none of them satisfies all four
+yet, and the wrap is not landed on any line until its launcher does.
+
+1. **`HOME` is set to a directory inside a `--write`.** Rule 9. `run-freddy.sh`
+   sets `XDG_DATA_HOME` only, which is not `HOME`, and the first git or harness
+   config write then fails on the caller's real home.
+2. **The line's token is passed by environment, read before the wrap.** The key
+   file is read **as data** by the launcher and never named in either list, and
+   the descriptor onto it is **closed before the exec** (rule 12). The wall
+   denies the file; the environment carries the value.
+3. **No launcher nests a second sandbox.** `sandbox-exec` inside the wall is
+   `sandbox_apply: Operation not permitted`, measured. `run-emma.sh`'s
+   `gemini --sandbox` must be **dropped** under the wrap (and `GEMINI_SANDBOX`
+   left unset), because a nested sandbox is not a stronger wall, it is a dead
+   harness. (`profiles/darwin-check.sh`, check `nested_sandbox_refused`.)
+4. **Homebrew's `git` comes before `/usr/bin` on `PATH`.** `/usr/bin/git` is
+   the Xcode shim; inside the wall it cannot reach the developer directory it
+   dispatches through, so `PATH` starts `/opt/homebrew/bin:/usr/bin:...`.
+
+Rule 9's scrub set is stated so that a launcher's own markers survive: a line
+that exports `AI_AGENT` or `CLAUDE_AGENT_SDK_VERSION` keeps them.
+
 ## The harness fence that ships beside it
 
 `nova-sandbox fence --out <dir>/opencode.json` writes the block below into each
@@ -1287,9 +1373,9 @@ And one for each thing the rules above assert but no test yet reached:
     either 71 into a 126, or prints a refusal line beside it, turns the test
     red. The refusal that does fire on darwin is the pre-flight's 125
     `reason=not_executable`, asserted in the same test, before the wrap.
-20. darwin: the generated profile file is created under the first `--write`
-    with mode `0600` (the test stats it while the command runs) and is **gone**
-    after the command ends, on a clean exit and on a signal death alike.
+20. darwin: the wrap writes **no profile file**: the generated text is passed
+    with `-p`, the first `--write` holds no `.nova-sandbox-*.sb` at any point
+    during or after the run, and the argv the body builds carries `-p`.
 21. `--read` ergonomics: a toolchain placed in a user directory is unreadable
     inside the wall without `--read` — the wrapped command fails (126 or a
     signal death) — and with `--read` it runs. The test asserts that **no**
@@ -1398,8 +1484,8 @@ them.
    `profiles/darwin.sb.tmpl` (the file is embedded with `go:embed`, so the tool
    and the check script fill one text, not two): the five markers, the ancestor
    `file-read-metadata` literals, `-D` parameters, the two-clause exec/signal
-   grant, the profile file at `0600` under the first `--write` and its removal,
-   the wait, and `sandbox-exec` discovery that refuses rather than falls back.
+   grant, the inline `-p` profile (no file at all), the narrowed `mach-lookup`
+   set and the `mDNSResponder` literal, the wait, and `sandbox-exec` discovery that refuses rather than falls back.
    Tests: 1, 3, 7, 20; **to verify** items 1–2. `profiles/darwin-check.sh` is
    run by the mac CI job and its exit status is the job's.
 3. **`internal/sandbox/wrap_linux.go`** — ABI discovery, the handled-access
@@ -1433,3 +1519,34 @@ them.
    solo line's launcher reads its lists file and **pushes the line's self on
    exit** (#69's second guard); Freddy's `AGENTS.md` names the command. Tests
    23, 24, 25, 27, 28. Neither caller changes before test 26.
+
+### Revision 7, after Rowan's read of the build
+
+Seven changes, every one of them measured on this Mac and every one of them a
+thing revision 6 got wrong rather than merely left out.
+
+1. **DNS.** `(literal "/private/var/run/mDNSResponder")` joins the network
+   grant (rule 7). Without it the wall has a network and no name resolution:
+   `curl https://example.com` is `rc=6` `000`. With it, `200`. Every wrapped
+   worker would have failed its first API request under revision 6.
+2. **The profile is inline.** `sandbox-exec -p`, not `-f <file>` inside the
+   write set: no race between `WriteFile` and `Start`, no file left by a
+   `SIGKILL`, nothing to clean up (macOS section, rule 12, test 20 rewritten).
+3. **`mach-lookup` narrowed to three services**, grown by measurement until
+   `/bin/sh -c true`, `git status`, `curl`, `opencode --version` and
+   `node -e 1` all pass. `pbpaste` no longer reads the clipboard. The width
+   that remains — `launchctl print`, `security list-keychains` file names — is
+   named in the rule rather than left unsaid.
+4. **Rule 12's descriptor sentence was false** and is replaced: `/dev/fd/9`
+   re-opens an inherited descriptor and **printed the secret**. The rule is now
+   about stdout/stderr onto an outside path, plus a caller rule that no secret
+   descriptor is held open across the exec.
+5. **Rule 9's scrub set is stated exactly** (`SSH_AUTH_SOCK`, `SSH_AGENT_*`,
+   `GPG_AGENT_INFO`, `*_AGENT_PID|INFO|SOCK`), so `AI_AGENT` and
+   `CLAUDE_AGENT_SDK_VERSION` pass and the `SANDBOX NOTE` line is true.
+6. **A callers section that is a checklist**: `HOME` inside a `--write`, the
+   token by environment with the descriptor closed, no nested sandbox
+   (`gemini --sandbox` dropped), homebrew `git` before `/usr/bin`.
+7. **`profiles/darwin-check.sh` gains `dns_resolves` (with a control that
+   removes the socket from the same profile), `clipboard_denied` and
+   `nested_sandbox_refused`** — 24 checks, all OK on this Mac.

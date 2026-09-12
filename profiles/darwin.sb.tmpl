@@ -4,6 +4,11 @@
 ;; the generator's input and the only copy of the profile text; docs/SPEC-SANDBOX.md
 ;; describes it and does not restate it.
 ;;
+;; The filled text is passed to sandbox-exec INLINE with -p, never written to a file:
+;; a profile file inside the write set can be replaced by a process already inside it
+;; between WriteFile and Start, and is left behind on SIGKILL. -p has no file, no race
+;; and no cleanup -- which is also why the darwin body need not wait to unlink anything.
+;;
 ;; Caller paths never enter the text: they arrive as -D NAME=<resolved path> and are
 ;; read back as (param "NAME"). Every param named below MUST be passed with -D —
 ;; an unfilled param is `invalid data type of path filter; expected pattern, got
@@ -34,11 +39,18 @@
 ;;                  the write set succeeds rc=0; with these two clauses it is rc=1
 ;;                  inside the wall and rc=0 outside it (profiles/darwin-check.sh,
 ;;                  checks unix_socket_outside and unix_socket_outside_control).
-;;   @@NET@@        (allow network-outbound (remote ip)) -- IP only, never (allow network*),
+;;   @@NET@@        (allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))
+;;                  -- IP only, never (allow network*),
 ;;                  which grants every unix-domain socket on the machine as well.
 ;;                  Under --net-listen a second line (allow network-inbound (local ip))
 ;;                  is emitted for a job that must listen. The marker is emitted EMPTY
 ;;                  under --net-deny.
+;;                  The mDNSResponder literal is the DNS grant: macOS resolves names over
+;;                  that unix socket, and IP-only outbound without it is a wall with no
+;;                  DNS -- measured 2026-09-11, curl https://example.com is rc=6 000
+;;                  without the literal and 200 with it. It is a SOCKET grant, not a
+;;                  network one, and it is inside the @@NET@@ marker so that --net-deny
+;;                  takes the name resolver away with the network.
 ;;
 ;; HOME is not a root and gets no grant of its own: rule 9 requires HOME to resolve
 ;; inside a --write, so it is already covered by that path's WRITEn grant. The
@@ -55,7 +67,24 @@
 (allow signal (target self) (target children))
 
 (allow sysctl-read)
-(allow mach-lookup)
+
+;; mach-lookup is NARROWED to the three services the harnesses actually need, measured
+;; 2026-09-11 on this Mac by growing the set until `/bin/sh -c true`, `git status`,
+;; `curl https://example.com`, `opencode --version` and `node -e 1` all passed:
+;;   opendirectoryd.libinfo  getpwuid(3)/getaddrinfo(3) -- without it HOME lookup and
+;;                           name resolution fail;
+;;   SecurityServer          TLS trust evaluation -- without it curl to an https name fails;
+;;   system.logger           os_log(3), which libsystem calls on many paths.
+;; Unqualified (allow mach-lookup) was measured to leave `pbpaste` READING THE CLIPBOARD
+;; inside the wall; with this set pbpaste is rc=1 (darwin-check.sh, clipboard_denied).
+;; ACCEPTED WIDTH, named rather than removed: `launchctl print system` still answers and
+;; `security list-keychains` still lists the keychain FILE NAMES -- neither reads a
+;; secret, and both were measured to still answer under this narrowed set. Apple Events
+;; are denied at every width.
+(allow mach-lookup
+  (global-name "com.apple.system.opendirectoryd.libinfo")
+  (global-name "com.apple.SecurityServer")
+  (global-name "com.apple.system.logger"))
 
 ;; The symlinks macOS puts in / are granted as literals on the LINK. (literal "/")
 ;; grants the root directory only; a subpath grant on /var or /tmp is not wanted.

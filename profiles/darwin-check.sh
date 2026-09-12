@@ -69,7 +69,9 @@ WRITES='(allow file-read* file-write* (subpath (param "WRITE0")))
 (allow network-outbound (subpath (param "WRITE0")))'
 # IP only: (allow network*) would grant every unix-domain socket on the machine,
 # the inherited SSH agent's among them.
-NET='(allow network-outbound (remote ip))'
+# The mDNSResponder literal is the DNS grant: macOS resolves names over that unix
+# socket, and IP-only outbound without it is a wall with no DNS (check dns_resolves).
+NET='(allow network-outbound (remote ip) (literal "/private/var/run/mDNSResponder"))'
 
 : > "$PROFILE"
 while IFS= read -r line; do
@@ -114,7 +116,7 @@ walled() { # walled <sh-command> -> runs it inside the wall, stdout+stderr to ca
     HOME="$HOME_DIR" PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     TMPDIR="$NTMP" TMP="$NTMP" TEMP="$NTMP" \
     "${CHILD_ENV[@]}" \
-    /usr/bin/sandbox-exec -f "$PROFILE" \
+    /usr/bin/sandbox-exec -p "$(cat "$PROFILE")" \
       -D READ0="$REF" -D WRITE0="$W" -D HOME="$HOME_DIR" \
       -- /bin/sh -c "$1"
 }
@@ -183,6 +185,41 @@ fi
 listen "$W" job.sock
 wait_for_socket "$W/job.sock" || true
 expect_ok unix_socket_inside "nc -U ./job.sock < /dev/null"
+
+# --- rule 7: DNS resolves inside the wall, and does so because of the socket ---
+# curl to a NAME, not an IP: any HTTP status at all means the name resolved and the
+# connection was made (200 and 404 both count). rc=6 / 000 is "could not resolve host".
+dns_cmd="curl -s -o /dev/null -w '%{http_code}' --max-time 15 https://example.com"
+set +e; DNS_OUT="$(walled "$dns_cmd" 2>/dev/null)"; set -e
+case "$DNS_OUT" in
+  000|"") report fail dns_resolves "http_code=$DNS_OUT (the name did not resolve)";;
+  *)      report ok dns_resolves ;;
+esac
+# the control: the SAME profile with the mDNSResponder literal removed must NOT resolve,
+# so that dns_resolves cannot pass by the socket being irrelevant.
+NODNS="$SCRATCH/p-nodns.sb"
+sed 's| (literal "/private/var/run/mDNSResponder")||' "$PROFILE" > "$NODNS"
+set +e
+DNS_CTL="$(cd -- "$W" && /usr/bin/env -i HOME="$HOME_DIR" \
+  PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" TMPDIR="$NTMP" \
+  /usr/bin/sandbox-exec -p "$(cat "$NODNS")" \
+    -D READ0="$REF" -D WRITE0="$W" -D HOME="$HOME_DIR" \
+    -- /bin/sh -c "$dns_cmd" 2>/dev/null)"
+set -e
+case "$DNS_CTL" in
+  000|"") report ok dns_resolves_control ;;
+  *)      report fail dns_resolves_control "http_code=$DNS_CTL WITHOUT the socket: DNS is reaching the resolver some other way";;
+esac
+
+# --- rule 7: mach-lookup is narrowed, and the clipboard is the witness ---------
+expect_deny clipboard_denied "pbpaste > /dev/null"
+
+# --- rule 4: a sandbox cannot be nested inside this one -----------------------
+# run-emma.sh's `gemini --sandbox` is exactly this, and it dies:
+# sandbox-exec: sandbox_apply: Operation not permitted. A wrapped launcher must drop
+# its own sandbox flag rather than discover this at run time.
+expect_deny nested_sandbox_refused \
+  "/usr/bin/sandbox-exec -p '(version 1)(allow default)' /bin/sh -c true"
 
 # --- rule 9: the agent is gone from the child environment ---------------------
 # The caller's environment held SSH_AUTH_SOCK and GPG_AGENT_INFO; the child must hold
