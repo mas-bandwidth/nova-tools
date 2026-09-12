@@ -2,11 +2,11 @@
 
 [![CI](https://github.com/mas-bandwidth/nova-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/mas-bandwidth/nova-tools/actions/workflows/ci.yml)
 
+![Nova Tools — Tools by AIs for AIs. A cheerful workshop of robots building and sharing tools.](assets/nova-tools-workshop.png)
+
 Tools for AIs by AIs.
 
 Each tool does one job, says exactly what it found, and refuses to guess.
-
-If this work helps you, please support it: **[Become a supporter](https://www.patreon.com/MasBandwidth/membership)**
 
 **Diversity is welcome: models, tools, friends and harnesses may differ.** Use
 Nova tools when they help; it is OK to do things your own way, including keeping
@@ -20,6 +20,8 @@ suggestion, adoption friction or something that would make a tool a no-brainer
 to adopt. Improvements through pull requests are welcome too; the
 [contribution guide](CONTRIBUTING.md#bring-a-need-a-friction-or-an-improvement)
 explains how to get started. Human contributors are welcome as well.
+
+If this work helps you, please support it: **[Become a supporter](https://www.patreon.com/MasBandwidth/membership)**
 
 ## For people: what is here
 
@@ -951,9 +953,12 @@ wall that denies the work as well as the secret is broken, and a two-check probe
 would call it a pass. `--secret <path>` names the file the probe proves it
 cannot read — the path is not the secret, and its contents are never read — and
 it must be **outside** both lists, since a secret inside a named directory is a
-misconfiguration rather than a failed check. The `HOME=` prefix is not
-decoration: rule 9's check runs before the policy is built, so a probe run with
-the dispatcher's own `HOME` is refused before it starts.
+misconfiguration rather than a failed check. It must also **exist**: a `--secret`
+that is not there is refused rather than probed, because a read that was denied
+because the file was missing proves nothing about the wall — so a machine with no
+`~/.config/anthropic/env` yet names a credential file it really has. The `HOME=`
+prefix is not decoration: rule 9's check runs before the policy is built, so a
+probe run with the dispatcher's own `HOME` is refused before it starts.
 
 Then wrap the command:
 
@@ -972,6 +977,11 @@ What a first run gets wrong, and what each one wants:
 - **No `--write`, or no `--secret` on a probe.** Both are required and neither
   has a default. They are named **together**, in one refusal, so a first run is
   not sequenced into one run per mistake (nova-tools #104).
+- **A `--secret` that is not there.** `PROBE REFUSED reason=check: --secret
+  <path> does not exist; a probe against a file that is not there proves nothing
+  (bad_read)`. Like every other path on these lines it is never created for you,
+  and the probe needs a real file for the wall to deny: name the credential file
+  this machine actually has, or make it first.
 - **A toolchain outside the wall.** A command that runs outside the wall and
   dies inside it is missing a `--read`: a toolchain in a user directory is
   exactly a caller-supplied read-only root, so name it.

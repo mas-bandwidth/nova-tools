@@ -3,12 +3,15 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"go/ast"
+	"go/token"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -133,12 +136,76 @@ func hasGoFiles(t *testing.T, dir string) bool {
 	return false
 }
 
+// spawners are the ways a Go program can start another program. exec.Command is the ordinary
+// one; the rest are the floor beneath it, and a tripwire that knows only the first is a
+// tripwire that a publisher can walk around without hiding (#146's whole-PR read planted an
+// os.StartProcess with a built path and both tripwires passed).
+//
+// syscall's IMPORT is not forbidden: internal/tokens/lock_unix.go needs syscall.Flock for the
+// fold lock (rule 8). The call names are.
+var spawners = []string{
+	"exec.Command", "exec.CommandContext",
+	"os.StartProcess", "syscall.ForkExec", "syscall.Exec", "syscall.StartProcess",
+}
+
+// namesGit reports whether a string literal names the git PROGRAM: git, /usr/bin/git,
+// "git push", C:\bin\git.exe. Three things it deliberately does not flag, each measured on
+// this tree:
+//
+//   - an import path -- "git" sits inside github.com, which every file here imports;
+//   - the word digits -- three refusal messages say "64 lowercase hex digits";
+//   - PROSE about git. cmd/nova-tokens/main.go's usage banner tells a person that two notes
+//     are not ordered by "the directory listing, not the git history", which is the tool
+//     saying out loud that it runs none. Flagging that would make the honest tree red, and a
+//     tripwire that cries wolf gets deleted rather than obeyed.
+//
+// So the test is not "does this string contain git" but "does this string look like a program
+// to run": the literal IS git, or it carries git as a path component, or it begins a command
+// line with it, or it is a short token-shaped string. A sentence with git in the middle of it
+// is prose, and the behavioural test is what stands behind this one.
+func namesGit(lit string) bool {
+	trimmed := strings.TrimSpace(lit)
+	lower := strings.ToLower(trimmed)
+	isGit := func(tok string) bool { return strings.TrimSuffix(tok, ".exe") == "git" }
+	// The literal IS the program, or it begins a command line with it.
+	if isGit(lower) || strings.HasPrefix(lower, "git ") {
+		return true
+	}
+	// Or one whitespace-separated word is a PATH whose last-or-any component is git. The word
+	// has to carry the separator itself: "/usr/bin/git" is a path, and the bare word git in
+	// the middle of a sentence is prose -- cmd/nova-tokens/main.go's banner has one, and it is
+	// the tool telling a person it does not read the git history.
+	for _, word := range strings.Fields(lower) {
+		word = strings.Trim(word, `"'()[]{},;:=`+"`")
+		if !strings.ContainsAny(word, `/\`) {
+			continue
+		}
+		for _, comp := range strings.FieldsFunc(word, func(r rune) bool { return r == '/' || r == '\\' }) {
+			if isGit(comp) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // Rules 16 and 19, over every package of the binary rather than one of them. The one
-// subprocess is sqlite3 and it lives in internal/tokens/opencode.go; there is no network;
-// and the word git appears in no source file of this tool.
+// subprocess is sqlite3 and it lives in internal/tokens/opencode.go; there is no network; and
+// no source file of this tool spells git.
+//
+// WHAT THIS CANNOT SEE, stated so nobody reads it as more than it is: it checks source TEXT
+// and string literals, so a program name assembled at run time -- "/usr/bin/" + "gi" + "t",
+// or bytes from a file -- passes it. That is not a hole a publisher could land in by
+// accident, but it is not proof either. The behavioural half is
+// TestNoVerbTouchesACheckoutOrItsRemote, which measures the remote and the checkout rather
+// than the source; it catches a real push whatever the path was spelled like, and it catches
+// it only for the verbs it runs. Between them: a publisher cannot be written here in the
+// ordinary way, and cannot push to a fixture remote under any verb, and a determined author
+// who hides the name from the source is caught by the second and not the first.
 func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 	const theOneSubprocess = "internal/tokens/opencode.go"
 	checked := 0
+	literals := 0
 	for _, pkg := range binaryPackages(t) {
 		for name, f := range pkgFiles(t, pkg) {
 			path := pkg + "/" + name
@@ -158,16 +225,70 @@ func TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit(t *testing.T) {
 			if path == theOneSubprocess {
 				continue
 			}
-			if strings.Contains(body, "exec.Command") {
-				t.Errorf("%s starts a subprocess; there is one, and it is sqlite3 (rule 19)", path)
+			for _, spawn := range spawners {
+				if strings.Contains(body, spawn) {
+					t.Errorf("%s calls %s; this tool starts one subprocess, sqlite3, and it lives in %s (rule 19)", path, spawn, theOneSubprocess)
+				}
 			}
-			if strings.Contains(body, `"git"`) {
-				t.Errorf("%s names git; the tool runs none -- it reads a checkout as files (rule 16)", path)
+		}
+		// And the literals, in the syntax tree rather than the text, so an import path is an
+		// import path and not a string that happens to hold a program name.
+		for name, f := range pkgFiles(t, pkg) {
+			path := pkg + "/" + name
+			imports := map[*ast.BasicLit]bool{}
+			for _, imp := range f.Imports {
+				imports[imp.Path] = true
 			}
+			ast.Inspect(f, func(n ast.Node) bool {
+				lit, ok := n.(*ast.BasicLit)
+				if !ok || lit.Kind != token.STRING || imports[lit] {
+					return true
+				}
+				literals++
+				text, err := strconv.Unquote(lit.Value)
+				if err != nil {
+					text = lit.Value
+				}
+				if namesGit(text) {
+					t.Errorf("%s spells git in a string literal; the tool runs none -- it reads a checkout as files (rule 16)", path)
+				}
+				return true
+			})
 		}
 	}
 	if checked < 10 {
 		t.Fatalf("examined %d source files; this tripwire was looking in the wrong place and would have passed by checking almost nothing", checked)
+	}
+	if literals < 50 {
+		t.Fatalf("examined %d string literals; the literal half was looking in the wrong place and would have passed by checking almost nothing", literals)
+	}
+}
+
+// namesGit's own test: the tripwire above is only as good as this function, and the two
+// false positives it must not have are in every file of this repository.
+func TestNamesGitKnowsAProgramNameFromASubstring(t *testing.T) {
+	for _, yes := range []string{
+		"git", "GIT", "git.exe", "/usr/bin/git", "git push", `C:\bin\git.exe`,
+		"git -C x push", "/opt/homebrew/bin/git", "  git  ",
+	} {
+		if !namesGit(yes) {
+			t.Errorf("namesGit(%q) is false; that is a program to run", yes)
+		}
+	}
+	for _, no := range []string{
+		"github.com/mas-bandwidth/nova-tools/internal/oneline",
+		"an ID is sha256: and 64 lowercase hex digits",
+		"a \\u escape is not four hex digits",
+		"digits", "legitimate", "gitignore", "", "gi t", "(git)",
+		// The banner's own sentence, which is the tool saying it runs no git -- and the
+		// banner as one literal, paths and all, which is the shape that actually reaches
+		// the tripwire and the one that caught this predicate's first two drafts.
+		"not the Date, not the filename, not the directory listing, not the git history",
+		"usage:\n  nova-tokens fold --out ./out --repos ./repos.tsv\n\nnot the git history\n",
+	} {
+		if namesGit(no) {
+			t.Errorf("namesGit(%q) is true; a tripwire that cries wolf gets deleted", no)
+		}
 	}
 }
 

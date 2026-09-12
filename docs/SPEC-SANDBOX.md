@@ -991,6 +991,20 @@ line cannot supply:
    macOS 26) while a set-id exec is denied inside the wall, so `ps` there is
    `/bin/ps: Operation not permitted`, exit 126.
 
+**What a refused step prints.** The verb refuses in **three places**, and all
+three print the same line: the **argument count** — the verb takes `<nonce>
+<name> <path>` and nothing else, and it is the one a caller typing the verb by
+hand meets first — then the **guard**, whose three mechanisms above answer with
+one line between them, then the **absolute path** the verb insists on
+afterwards. Each refusal is one line on standard error, exit 2, nothing opened:
+`PROBE REFUSED reason=probe_step_not_a_child: <text>`. That token is the **one
+`PROBE REFUSED` reason outside the fixed set above**, and it is outside it on
+purpose: the set is the contract a caller's parser stands on, nothing but this
+binary's own probe runs this verb, and so no parser ever sees this line. It is
+written down here because the grammar above is fixed at six, and a refusal the
+tool can print that the spec never names is a line whose reader has nowhere to
+look it up.
+
 **The honest bound.** The verb grants **no capability the caller lacks**, because
 everything it does is bounded by the wall it runs in. A same-user caller can open
 and truncate a file with `>` and needs no verb of ours to do it. What the guard

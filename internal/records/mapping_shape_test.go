@@ -1,12 +1,19 @@
 package records
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
 
-// Can this wire carry the two source contracts proposed in #142
-// (docs/MAPPING-TOKENS-CODEX.md and docs/MAPPING-TOKENS-GROK.md at 5e40d20)?
+// Can this wire carry the two source contracts in docs/MAPPING-TOKENS-CODEX.md and
+// docs/MAPPING-TOKENS-GROK.md, as MERGED to main at 92eb2237 (#142)?
+//
+// Every quotation below was re-read against main at that commit, not against the draft head
+// this file first cited: the docs gained 234 lines between the two, and the Grok identity rule
+// in particular is now more specific than the draft was -- it names the event key as
+// `[source.namespace, [original_session_id, turn_number_as_string]]` and says "The event key
+// is an array, never concatenated text", which is what this test already built.
 //
 // THESE ARE NOT DECODERS. Nothing here reads a Codex rollout file or a Grok export; the two
 // decoders are their contract author's and are not this lane's. What these tests do is build
@@ -22,7 +29,7 @@ import (
 
 // The Codex contract, clause by clause:
 //
-//   - "Use its usage object once per stable namespaced response_id; retain thread/session/
+//   - "Use its **usage** object once per stable namespaced response_id; retain thread/session/
 //     turn IDs as provenance" -- the spend key is (namespace, [response_id]); the thread and
 //     the turn ride in the receipt under mapping-allowlisted locator names, NOT in event_key,
 //     because a key with the containing thread in it would make a resumed thread a second
@@ -118,6 +125,16 @@ func TestTheWireCarriesTheCodexSourceContract(t *testing.T) {
 	if err := NewObject().Set("turn_id", 3); err == nil {
 		t.Error("the builder accepted a Go int; a native numeric identifier is an exact decimal string")
 	}
+	// And a json.Number, which is the type a lenient decoder would hand a writer: refused by
+	// its own rule, because "No raw JSON numbers occur in these bodies."
+	numErr := NewObject().Set("turn_id", json.Number("3"))
+	if numErr == nil {
+		t.Fatal("the builder accepted a json.Number")
+	}
+	var numRef *Refusal
+	if !asRefusal(numErr, &numRef) || numRef.Rule != RuleRawJSONNumber {
+		t.Errorf("the refusal is %v, want %s", numErr, RuleRawJSONNumber)
+	}
 	// The model is the configured one, labelled requested, never promoted.
 	if got.Model.Basis != "requested" || got.Model.ID == nil || *got.Model.ID != requested {
 		t.Errorf("the model came back %+v; the contract says model.basis=requested", got.Model)
@@ -151,6 +168,47 @@ func TestTheWireCarriesTheCodexSourceContract(t *testing.T) {
 	if got.Origin.Basis != "owner_binding" {
 		t.Errorf("the origin basis came back %q; the collection host does not establish historical origin", got.Origin.Basis)
 	}
+	// "The turn/thread usage objects are supporting snapshots, never additional spend": the
+	// same wire carries one, as its own observation with kind=snapshot and its own event key.
+	// Nothing merges it with the request above -- they are two records, and which of them a
+	// report counts is the selection's business, not this package's.
+	snap := obs
+	snap.Kind = "snapshot"
+	snap.Source.EventKey = []string{"thread-7", "turn-3", "thread_token_usage"}
+	snapRaw, _, err := v.SealObservation(snap)
+	if err != nil {
+		t.Fatalf("a supporting snapshot does not seal: %v", err)
+	}
+	snapEnv, err := v.ValidateEnvelope(snapRaw)
+	if err != nil {
+		t.Fatalf("a supporting snapshot does not validate: %v", err)
+	}
+	if snapEnv.Observation.Kind != "snapshot" {
+		t.Errorf("the snapshot came back kind=%q", snapEnv.Observation.Kind)
+	}
+	if snapEnv.ID == env.ID {
+		t.Error("the snapshot and the request share an ID; they are two records")
+	}
+
+	// "missing timestamps stay unknown": no occurred_at and a basis that says so, written as
+	// null rather than dropped, and coming back as a nil pointer rather than an empty string.
+	undated := obs
+	undated.Time = Times{Basis: "unknown"}
+	undatedRaw, _, err := v.SealObservation(undated)
+	if err != nil {
+		t.Fatalf("an undated observation does not seal: %v", err)
+	}
+	if !strings.Contains(string(undatedRaw), `"occurred_at":null`) {
+		t.Errorf("the missing timestamp was not written as null:\n%s", undatedRaw)
+	}
+	undatedEnv, err := v.ValidateEnvelope(undatedRaw)
+	if err != nil {
+		t.Fatalf("an undated observation does not validate: %v", err)
+	}
+	if undatedEnv.Observation.Time.OccurredAt != nil || undatedEnv.Observation.Time.Basis != "unknown" {
+		t.Errorf("the missing timestamp came back %+v", undatedEnv.Observation.Time)
+	}
+
 	// And the closed allowlist is a wall: a source field the mapping did not name is refused,
 	// never admitted because the input happened to carry it.
 	unknown := "1"
@@ -163,8 +221,10 @@ func TestTheWireCarriesTheCodexSourceContract(t *testing.T) {
 // The Grok contract, clause by clause. Its synthetic fixture is the numbers below; the
 // document states them as invented.
 //
-//   - "Candidate spend key: the namespaced native sessionId plus turnNumber" -- a two-part
-//     event_key, the turn as an exact decimal string.
+//   - "Candidate spend key: `[source.namespace, [original_session_id,
+//     turn_number_as_string]]`, using the original native sessionId and exact decimal turn
+//     string. The event key is an array, never concatenated text." -- a two-part event_key,
+//     the turn as an exact decimal string, and never one joined string.
 //   - "Preserve each turn at that available grain. Do not invent per-call usage" -- kind is
 //     turn, and modelCalls is a retained raw field rather than a licence to split.
 //   - "Keep primaryModelId and the source's modelUsage detail without collapsing it" -- the
@@ -278,12 +338,31 @@ func TestTheWireCarriesTheGrokSourceContract(t *testing.T) {
 		{ModelID: primary, RawUsage: usage("inputTokens", "outputTokens")},
 	}
 	if _, _, err := v.SealObservation(mixed); err == nil {
-		t.Error("an unsorted model split was accepted; the format says sorted by model_id")
+		t.Error("an unsorted model split was accepted; PROPOSAL-TOKENS-FORMAT.md says sorted by model_id")
 	}
 	mixed.ModelUsage = []ModelUsage{
 		{ModelID: primary, RawUsage: usage("inputTokens", "outputTokens")},
 		{ModelID: second, RawUsage: usage("inputTokens", "outputTokens")},
 	}
+	// A duplicate model id is refused outright rather than merged. The clause is
+	// PROPOSAL-TOKENS-FORMAT.md's observation table -- "sorted by model_id, duplicates
+	// refused" -- not the Grok contract's, which is why it is cited here by its own document;
+	// two entries for one model would be one turn's usage counted twice.
+	dup := obs
+	dup.ModelUsage = []ModelUsage{
+		{ModelID: primary, RawUsage: usage("inputTokens", "outputTokens")},
+		{ModelID: primary, RawUsage: usage("inputTokens", "outputTokens")},
+	}
+	dupErr := func() error { _, _, e := v.SealObservation(dup); return e }()
+	if dupErr == nil {
+		t.Error("a duplicate model id sealed")
+	} else {
+		var ref *Refusal
+		if !asRefusal(dupErr, &ref) || (ref.Rule != RuleDuplicateElement && ref.Rule != RuleNotSorted) {
+			t.Errorf("the refusal is %v, want %s or %s", dupErr, RuleDuplicateElement, RuleNotSorted)
+		}
+	}
+
 	rawMixed, _, err := v.SealObservation(mixed)
 	if err != nil {
 		t.Fatalf("a mixed-model turn does not seal: %v", err)

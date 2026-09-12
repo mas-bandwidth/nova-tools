@@ -1116,6 +1116,11 @@ func TestTheTranscriptNamesTheToolsOwnBinary(t *testing.T) {
 // probeRefusalReasons is the PROBE REFUSED reason set of docs/SPEC-SANDBOX.md's output
 // grammar, copied verbatim. A probe refusal that invents a token outside it is a tool and
 // a spec that disagree, and the grammar is what a caller's parser stands on.
+//
+// The copy is held to the spec by TestProbeRefusalReasonsAreTheSpecsOwnSet in
+// grammar_test.go, which reads the grammar line and asserts this set equals it both ways.
+// Without that, a comment claiming the copy guards a disagreement was itself the
+// disagreement's hiding place: an edit to the spec's line left this green (#119).
 var probeRefusalReasons = map[string]bool{
 	"check": true, "secret_inside_allow": true, "probe_outside_inside": true,
 	"probe_outside_unwritable": true, "no_sandbox": true, "net_unenforceable": true,
