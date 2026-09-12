@@ -229,6 +229,17 @@ func (b *bench) swarmTry(args ...string) (exit int, stdout, stderr string, err e
 
 func (b *bench) add(task string, extra ...string) string {
 	b.t.Helper()
+	// THE FIXTURE'S OWN CAP, ENFORCED HERE (#132; fixture_guards_test.go carries the why):
+	// a `FAKE-AWAIT-NOTE n` that reaches the deadline this job will run under is refused
+	// before the job is queued, because the wait and the reaper would come due together and
+	// the silent `end=killed` of #126 would be back.
+	deadline, err := benchJobDeadline(b.worker, extra)
+	if err != nil {
+		b.t.Fatalf("reading the deadline this job would run under: %v", err)
+	}
+	if err := awaitNoteCap(task, deadline); err != nil {
+		b.t.Fatalf("this fixture would recreate the silent kill of #126: %v", err)
+	}
 	file := filepath.Join(b.dir, fmt.Sprintf("task-%d.md", time.Now().UnixNano()))
 	write(b.t, file, task)
 	args := append([]string{"add", "--pool", b.pool, "--task", file, "--files", "5", "--tokens", "100000"}, extra...)
