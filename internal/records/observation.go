@@ -215,9 +215,10 @@ func (v *Validator) validateObservation(body *Object) (*Observation, error) {
 			return nil, err
 		}
 	}
-	if err := v.exactKeys(body, "body",
-		"schema", "source", "kind", "revision", "time", "origin", "model",
-		"repository", "raw_usage", "model_usage", "mapping_id", "receipt"); err != nil {
+	// The member list is ObservationMembers, which the encoder writes from, so the reader
+	// and the writer cannot name different members: a twelfth member added to one side
+	// alone would be a body one half of this package produces and the other half refuses.
+	if err := v.exactKeys(body, "body", ObservationMembers...); err != nil {
 		return nil, err
 	}
 	obs := &Observation{Schema: schema}
