@@ -25,7 +25,7 @@ var SourceKinds = []string{
 // collection could not read.
 var ReasonCodes = []string{
 	"not_supplied", "not_supported_by_source", "source_unavailable",
-	"unsupported_semantics", "parse_failed", "redacted",
+	"unsupported_semantics", "parse_failed", "redacted", "omitted_from_wire",
 }
 
 // Allowlists carries the two sets that belong to a MAPPING rather than to the format: the

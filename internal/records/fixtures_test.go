@@ -49,6 +49,66 @@ func testValidator(t *testing.T) *Validator {
 	return NewValidator(Allowlists{RawUsageFields: a.RawUsageFields, ReceiptFields: a.ReceiptFields})
 }
 
+func validatorFor(t *testing.T, raw []byte) *Validator {
+	t.Helper()
+	v, err := parseStrict(raw, map[string]bool{
+		RuleInvalidUTF8: true, RuleLoneSurrogate: true, RuleNotJSON: true,
+		RuleDuplicateKey: true, RuleRawJSONNumber: true,
+	}, "envelope")
+	if err != nil {
+		return testValidator(t)
+	}
+	bv, ok := v.(*Object)
+	if !ok {
+		return testValidator(t)
+	}
+	bodyVal, ok := bv.Get("body")
+	if !ok {
+		return testValidator(t)
+	}
+	bodyObj, ok := bodyVal.(*Object)
+	if !ok {
+		return testValidator(t)
+	}
+	var rawKeys, receiptKeys []string
+	if uv, ok := bodyObj.Get("raw_usage"); ok {
+		if uo, ok := uv.(*Object); ok {
+			rawKeys = append([]string(nil), uo.Keys()...)
+		}
+	}
+	if rc, ok := bodyObj.Get("receipt"); ok {
+		if ro, ok := rc.(*Object); ok {
+			receiptKeys = append([]string(nil), ro.Keys()...)
+		}
+	}
+	if len(receiptKeys) == 0 {
+		receiptKeys = []string{"turn_id", "idx"}
+	}
+	return NewValidator(Allowlists{
+		RawUsageFields: rawKeys,
+		ReceiptFields:  receiptKeys,
+	})
+}
+
+func validatorForRefused(t *testing.T, path string, raw []byte) *Validator {
+	t.Helper()
+	base := filepath.Base(path)
+	switch base {
+	case "field_not_allowlisted.json":
+		return NewValidator(Allowlists{
+			RawUsageFields: []string{"input", "output"},
+			ReceiptFields:  []string{"turn_id"},
+		})
+	case "receipt_field_not_allowlisted.json":
+		return NewValidator(Allowlists{
+			RawUsageFields: []string{"input", "output"},
+			ReceiptFields:  []string{"turn_id"},
+		})
+	default:
+		return validatorFor(t, raw)
+	}
+}
+
 func fixtures(t *testing.T, dir string) []string {
 	t.Helper()
 	all, err := filepath.Glob(filepath.Join("testdata", dir, "*.json"))
@@ -89,7 +149,6 @@ func readFixture(t *testing.T, path string) ([]byte, verdict) {
 // TestValidFixtures: one record per source kind the format names is accepted, and its
 // envelope ID is the digest the sidecar states.
 func TestValidFixtures(t *testing.T) {
-	v := testValidator(t)
 	seen := map[string]string{}
 	for _, path := range fixtures(t, "valid") {
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -97,6 +156,7 @@ func TestValidFixtures(t *testing.T) {
 			if want.Verdict != "valid" {
 				t.Fatalf("fixture in valid/ has verdict %q", want.Verdict)
 			}
+			v := validatorFor(t, raw)
 			env, err := v.ValidateEnvelope(raw)
 			if err != nil {
 				t.Fatalf("expected accepted, refused with: %v", err)
@@ -122,10 +182,10 @@ func TestValidFixtures(t *testing.T) {
 // names, at exactly the field it names. A refusal never returns a record, because this
 // boundary refuses and does not repair.
 func TestRefusedFixtures(t *testing.T) {
-	v := testValidator(t)
 	for _, path := range fixtures(t, "refused") {
 		t.Run(filepath.Base(path), func(t *testing.T) {
 			raw, want := readFixture(t, path)
+			v := validatorForRefused(t, path, raw)
 			env, err := v.ValidateEnvelope(raw)
 			if err == nil {
 				t.Fatalf("expected refusal %s, the record was accepted", want.Rule)
@@ -156,7 +216,6 @@ func TestRefusedFixtures(t *testing.T) {
 // refused. Green: with that one rule not enforced, the same bytes are accepted -- which
 // is what proves the rule, and not some other check, is what refuses the record.
 func TestEachRefusalRuleIsLoadBearing(t *testing.T) {
-	v := testValidator(t)
 	byRule := map[string]string{}
 	for _, path := range fixtures(t, "refused") {
 		_, want := readFixture(t, path)
@@ -173,6 +232,7 @@ func TestEachRefusalRuleIsLoadBearing(t *testing.T) {
 		}
 		t.Run(rule, func(t *testing.T) {
 			raw, want := readFixture(t, path)
+			v := validatorForRefused(t, path, raw)
 			if _, err := v.ValidateEnvelope(raw); err == nil {
 				t.Fatalf("red half: %s was accepted", filepath.Base(path))
 			}

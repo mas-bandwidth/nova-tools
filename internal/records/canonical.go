@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"sort"
 	"unicode/utf16"
+	"unicode/utf8"
 )
 
 // Canonicalize writes the RFC 8785 canonical JSON of a parsed value: members sorted by the
@@ -24,7 +25,11 @@ func Canonicalize(v Value) ([]byte, error) {
 	if err := canonicalize(v, nil, "body", &buf); err != nil {
 		return nil, err
 	}
-	return buf.Bytes(), nil
+	b := buf.Bytes()
+	if !utf8.Valid(b) {
+		return nil, refuse(RuleInvalidUTF8, "body", "canonical JSON is not valid UTF-8")
+	}
+	return b, nil
 }
 
 func canonicalize(v Value, skip map[string]bool, field string, buf *bytes.Buffer) error {
@@ -38,6 +43,9 @@ func canonicalize(v Value, skip map[string]bool, field string, buf *bytes.Buffer
 			buf.WriteString("false")
 		}
 	case string:
+		if !skip[RuleInvalidUTF8] && !utf8.ValidString(t) {
+			return refuse(RuleInvalidUTF8, field, "string is not valid UTF-8")
+		}
 		writeCanonicalString(t, buf)
 	case json.Number:
 		if !skip[RuleRawJSONNumber] {
@@ -62,6 +70,9 @@ func canonicalize(v Value, skip map[string]bool, field string, buf *bytes.Buffer
 		sort.Slice(keys, func(i, j int) bool { return lessUTF16(keys[i], keys[j]) })
 		buf.WriteByte('{')
 		for i, k := range keys {
+			if !skip[RuleInvalidUTF8] && !utf8.ValidString(k) {
+				return refuse(RuleInvalidUTF8, field, "member name is not valid UTF-8")
+			}
 			if i > 0 {
 				buf.WriteByte(',')
 			}

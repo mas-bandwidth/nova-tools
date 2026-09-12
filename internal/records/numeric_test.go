@@ -129,8 +129,8 @@ func TestZeroSemantics(t *testing.T) {
 // The accepted record keeps every dimension the format names, so a reader can group by
 // them later without the observation having chosen a grouping.
 func TestAcceptedRecordKeepsItsDimensions(t *testing.T) {
-	v := testValidator(t)
 	raw := mustReadFile(t, "testdata/valid/grok_request_present_zero.json")
+	v := validatorFor(t, raw)
 	env, err := v.ValidateEnvelope(raw)
 	if err != nil {
 		t.Fatalf("refused: %v", err)

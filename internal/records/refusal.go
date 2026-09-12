@@ -1,6 +1,9 @@
 package records
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+)
 
 // The rule names. Every refusal this package can produce names exactly one of them, and
 // every one of them has a fixture under testdata/refused that fails only that rule. The
@@ -72,10 +75,12 @@ type Refusal struct {
 }
 
 func (r *Refusal) Error() string {
-	if r.Note == "" {
-		return fmt.Sprintf("refused: %s at %s", r.Rule, r.Field)
+	f := strings.ReplaceAll(r.Field, "\n", " ")
+	n := strings.ReplaceAll(r.Note, "\n", " ")
+	if n == "" {
+		return fmt.Sprintf("refused: %s at %s", r.Rule, f)
 	}
-	return fmt.Sprintf("refused: %s at %s (%s)", r.Rule, r.Field, r.Note)
+	return fmt.Sprintf("refused: %s at %s (%s)", r.Rule, f, n)
 }
 
 func refuse(rule, field, note string) *Refusal {
