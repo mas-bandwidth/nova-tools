@@ -1102,3 +1102,85 @@ func TestTheTranscriptNamesTheToolsOwnBinary(t *testing.T) {
 		}
 	}
 }
+
+// Emma, dogfooding v0.12.0 (nova-tools #104, 2026-09-12): "Running `nova-sandbox
+// probe` bare reported: `PROBE REFUSED reason=check: --secret is required …`. It
+// did not report that `--write` was also missing until `--secret` was supplied
+// on a subsequent run."
+//
+// A first run sequenced into as many runs as it had mistakes. `nova-wake serve`
+// names all nine of its missing flags at once -- the thing she praised on the
+// same pass -- and a refusal here reports EVERY independent problem in one go
+// (docs/SPEC-SANDBOX.md's onboarding, and SPEC-BOARD's rule 6 in the same
+// words). The probe's own refusals are the same rule.
+func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
+	j := newJob(t)
+
+	t.Run("bare", func(t *testing.T) {
+		code, _, errOut := j.tool(t, j.env(), "probe")
+		if code != 2 {
+			t.Fatalf("exit = %d, want 2:\n%s", code, errOut)
+		}
+		for _, want := range []string{"--secret is required", "--write is required"} {
+			if !strings.Contains(errOut, want) {
+				t.Errorf("a bare probe does not name %q; a first run must not be sequenced into one run per mistake:\n%s", want, errOut)
+			}
+		}
+		if lines := strings.Count(strings.TrimSpace(errOut), "\n") + 1; lines < 2 {
+			t.Errorf("both refusals must be printed, one line each:\n%s", errOut)
+		}
+	})
+
+	// The flags are independent, so naming one must not swallow the other in
+	// either direction.
+	t.Run("only --secret", func(t *testing.T) {
+		code, _, errOut := j.tool(t, j.env(), "probe", "--secret", j.secret)
+		if code != 2 || !strings.Contains(errOut, "--write is required") {
+			t.Errorf("exit = %d; the missing --write is not named:\n%s", code, errOut)
+		}
+	})
+
+	t.Run("only --write", func(t *testing.T) {
+		code, _, errOut := j.tool(t, j.env(), "probe", "--write", j.write)
+		if code != 2 || !strings.Contains(errOut, "--secret is required") {
+			t.Errorf("exit = %d; the missing --secret is not named:\n%s", code, errOut)
+		}
+	})
+
+	// Every refusal still carries its own reason= token, and a --secret that was
+	// named but does not exist is still its own reason rather than "check".
+	t.Run("a --secret that does not exist keeps its reason", func(t *testing.T) {
+		code, _, errOut := j.tool(t, j.env(), "probe", "--write", j.write,
+			"--secret", filepath.Join(j.base, "no-such-file"))
+		if code != 2 || !strings.Contains(errOut, "PROBE REFUSED reason=") {
+			t.Errorf("exit = %d:\n%s", code, errOut)
+		}
+		if strings.Contains(errOut, "--write is required") {
+			t.Errorf("a run that named --write was told it had not:\n%s", errOut)
+		}
+	})
+}
+
+// The pasted line runs. Emma pasted the probe example out of `nova-sandbox help`
+// and it exited 2 -- `PROBE REFUSED reason=check: HOME /Users/glenn is outside
+// every --write` -- because the example set no HOME while rule 9 requires one
+// inside a --write. An example that cannot be pasted is a documentation defect.
+func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
+	j := newJob(t)
+	code, out, _ := j.tool(t, j.env(), "help")
+	if code != 0 {
+		t.Fatalf("help exit %d", code)
+	}
+	probe := ""
+	for _, block := range strings.Split(out, "\n\n") {
+		if strings.Contains(block, "nova-sandbox probe ") {
+			probe = block
+		}
+	}
+	if probe == "" {
+		t.Fatal("the banner has no probe example at all")
+	}
+	if !strings.Contains(probe, "HOME=") {
+		t.Errorf("the probe example omits HOME=, so a reader who pastes it is refused by rule 9:\n%s", probe)
+	}
+}

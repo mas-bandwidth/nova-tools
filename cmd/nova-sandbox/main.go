@@ -84,6 +84,8 @@ example:
                --write /Users/me/pool/jobs/j1 \
                -- /opt/homebrew/bin/git -C /Users/me/pool/jobs/j1/repo status
 
+  mkdir -p /Users/me/pool/jobs/j1/home
+  HOME=/Users/me/pool/jobs/j1/home \
   nova-sandbox probe --write /Users/me/pool/jobs/j1 \
                --secret /Users/me/.config/anthropic/env
 `
@@ -326,15 +328,17 @@ func checkVerb(stdout io.Writer) int {
 // probe would call it a pass.
 func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	f := parse(args)
-	if len(f.bad) > 0 {
-		for _, r := range f.bad {
-			fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s\n", oneline.Escape(r.Text))
-		}
-		return sandbox.ExitCannotRun
-	}
+	// EVERY independent problem in ONE run. Emma, dogfooding v0.12.0 (nova-tools #104):
+	// a bare `probe` named the missing --secret, and named the missing --write only on
+	// the NEXT run, once --secret had been supplied -- a first run sequenced into as many
+	// runs as it had mistakes. `nova-wake serve` names all nine of its missing flags at
+	// once and that is the shape here too: the checks below are gathered and printed
+	// together, and the probe runs only when none of them spoke.
+	var bad []sandbox.Refusal
+	bad = append(bad, f.bad...)
 	if f.secret == "" {
-		fmt.Fprint(stderr, "PROBE REFUSED reason=check: --secret is required and names the file this probe proves it cannot read: --secret <path>\n")
-		return sandbox.ExitCannotRun
+		bad = append(bad, sandbox.Refusal{Reason: "check",
+			Text: "--secret is required and names the file this probe proves it cannot read: --secret <path>"})
 	}
 	// Rule 10: the probe re-executes THIS binary under the policy it just generates, with
 	// an internal verb, never a shell. os.Executable() is the resolved command of that
@@ -344,25 +348,36 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// no machine on which the probe cannot find its own child.
 	self, err := os.Executable()
 	if err != nil {
-		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: this binary cannot name its own path: %s\n", oneline.Err(err))
-		return sandbox.ExitCannotRun
+		bad = append(bad, sandbox.Refusal{Reason: "check",
+			Text: "this binary cannot name its own path: " + oneline.Err(err)})
 	}
 	// --secret is a caller path like every other, so rule 5 resolves it: absolute,
 	// existing, symlinks followed, and refused for absence rather than passing a probe
 	// against a file that is not there.
-	secret, refusal := sandbox.ResolveCallerFile("--secret", f.secret)
-	if refusal != nil {
-		fmt.Fprintf(stderr, "PROBE REFUSED reason=%s: %s\n", oneline.Field(refusal.Reason), oneline.Escape(refusal.Text))
-		return sandbox.ExitCannotRun
+	var secret string
+	if f.secret != "" {
+		got, refusal := sandbox.ResolveCallerFile("--secret", f.secret)
+		if refusal != nil {
+			bad = append(bad, *refusal)
+		}
+		secret = got
 	}
 
-	p, bad := sandbox.Build(sandbox.Input{
+	// The policy is built even when something above spoke, because it is what knows that
+	// --write is missing and that HOME resolves outside it: the two refusals a first run
+	// earns together belong in the same print.
+	p, policyBad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, NetDeny: f.netDeny, NetListen: f.netListen,
 		Argv: []string{self, probeStepVerbName}, Home: homeOf(env),
 	})
+	bad = append(bad, policyBad...)
 	if len(bad) > 0 {
 		for _, r := range bad {
-			fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s\n", oneline.Escape(r.Text))
+			reason := r.Reason
+			if reason == "" {
+				reason = "check"
+			}
+			fmt.Fprintf(stderr, "PROBE REFUSED reason=%s: %s\n", oneline.Field(reason), oneline.Escape(r.Text))
 		}
 		return sandbox.ExitCannotRun
 	}
