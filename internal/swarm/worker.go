@@ -45,6 +45,15 @@ type Worker struct {
 	// the write set is the job's own and is never configurable from a file. A worker that
 	// needs nothing beyond the system roots names nothing here.
 	ReadRoots []string `json:"read_roots,omitempty"`
+
+	// PROVIDER PHRASES: the second optional field, and it is the TRIAGE LINE'S (#103). A
+	// job that dies because the request did not fit is its own failure class, and the only
+	// evidence of it is a sentence the provider printed -- in the provider's own words.
+	// OpenCode says `Rate limit reached: input token limit exceeded`; the tool carries a
+	// table of the sentences it has met (InputLimitPhrases), and a description may ADD the
+	// one its provider uses. It never SUBSTITUTES: a caller teaching the tool their
+	// provider's words cannot silently un-teach it another's.
+	InputLimitPhrases []string `json:"input_limit_phrases,omitempty"`
 }
 
 // The usage sources a description may declare (rule 13). There are two.
@@ -72,7 +81,7 @@ func LoadWorker(path string) (Worker, []error) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&w); err != nil {
-		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, usage, harness, harness_args, worker_dir, deadline, board", path, err)}
+		return w, []error{fmt.Errorf("%s is not a worker description this tool can read (%v); the fields are name, provider, model, base_url, env_var, key_file, usage, harness, harness_args, worker_dir, deadline, board, read_roots, input_limit_phrases", path, err)}
 	}
 	// EVERY PATH IN A WORKER DESCRIPTION IS ABSOLUTE FROM HERE ON. The harness runs with
 	// its cwd set to the SLOT directory, and the paths this tool hands it -- the prompt
@@ -126,6 +135,14 @@ func LoadWorker(path string) (Worker, []error) {
 	}
 	if !placed {
 		problems = append(problems, fmt.Errorf("%s: harness_args is required and must place %s, so the model this description names reaches the harness; for OpenCode it is [\"run\", \"--model\", \"{model}\", \"--\", \"{prompt}\"] -- %s is the prompt FILE, and is appended last where harness_args does not name it", path, ModelPlaceholder, PromptPlaceholder))
+	}
+	// A PHRASE THAT IS NOTHING MATCHES NOTHING, silently: `input_limit_phrases: [""]` is a
+	// description that believes it taught the tool a provider's sentence and taught it
+	// nothing. It is refused here, at the one moment the caller can still type the sentence.
+	for i, phrase := range w.InputLimitPhrases {
+		if strings.TrimSpace(phrase) == "" {
+			problems = append(problems, fmt.Errorf("%s: input_limit_phrases[%d] is empty; it wants the provider's own sentence for a request that did not fit, such as `input token limit exceeded`", path, i))
+		}
 	}
 	// Rule 5 of the wall is "paths are resolved, absolute and existing", and a read root
 	// that is not there is refused BY THE WALL at every launch, one job at a time. It is

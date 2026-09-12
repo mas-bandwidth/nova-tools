@@ -797,13 +797,20 @@ below is required. This one ran two real DeepSeek workers end to end on 2026-09-
 }
 ```
 
-`read_roots` is the one optional field, and it is the wall's: a toolchain installed under a
+`read_roots` and `input_limit_phrases` are the optional fields. `read_roots` is the wall's: a toolchain installed under a
 user directory — Go under `~/go`, node under `~/.nvm`, the Studio's `/Users/<you>/toolchains`
 — is under no system root, so a harness that needs one runs outside the wall and dies inside
 it. Name those directories here and they are READ-ONLY for every job of this worker, named
 once so that N workers read one copy. A worker that needs nothing beyond the system roots
 names nothing, and an absolute directory that does not exist is refused when the description
 is read, not at every launch.
+
+`input_limit_phrases` teaches this provider's own way of saying *your request did not fit*:
+a job that dies on an input limit is its own failure class, `input-limit`, never a 429 to
+retry, and the phrases the tool already knows (OpenCode's `input token limit exceeded`,
+Anthropic's `prompt is too long`, OpenAI's `maximum context length`) are a table this field
+ADDS to. A task may name the other half, `--max-input <bytes>`, and `run` refuses a prompt
+over it before the launch.
 
 `key_file` lives **outside `worker_dir` and outside every `read_roots` entry**, which is why
 the example keeps it in `~/.keys`. `worker_dir` is copied into the slot directory before

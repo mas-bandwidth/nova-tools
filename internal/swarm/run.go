@@ -166,6 +166,13 @@ func Run(in RunInput) int {
 			if rec.Survivors > 0 && end == EndDone {
 				end = EndViolation
 			}
+			// A PROVIDER'S INPUT LIMIT IS THE SAME CLASS ON THIS PATH TOO (#103). The
+			// supervisor names it on exit.json, and this branch reads that word; the log is
+			// asked as well, for the job whose supervisor died before it could classify --
+			// one function, so an end word named on the live path and not on this one is
+			// how a class goes missing (the shape of read 6, finding 2).
+			var limit string
+			end, limit = InputLimitEnd(d.File.JobDir, end, rec.RC, in.Worker.InputLimitPhrases)
 			fin, usagePath := in.settle(sc, d.File.JobDir, rec, end, now())
 			said = said || end == EndUnknown
 			// ITS FILES MOVE AS RULE 12 SAYS (SPEC-SWARM.md:372). Finalize writes the
@@ -174,6 +181,9 @@ func Run(in RunInput) int {
 			// nothing watching it, forever.
 			sc.Class, sc.End, sc.RC, sc.Ended = fin.Class, end, rec.RC, Stamp(now())
 			sc.Violation = violationWord(end, rec.Survivors)
+			if end == EndInputLimit {
+				sc.Limit = limit
+			}
 			if fin.Class == ClassMalformed {
 				sc.Malformed = fin.MalformedLine
 			}
@@ -412,6 +422,24 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	if err := in.prepare(sc, text, slot, jobDir); err != nil {
 		_ = p.Free(slot)
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), 1
+	}
+	// THE TASK BUDGET NAMES THE WINDOW IT FITS, AND IT IS CHECKED BEFORE THE LAUNCH (#103).
+	// Two Freddy reads of whole specs spent 215 seconds each to be told by the provider that
+	// they did not fit; a task that says how big its window is can be told that here, for
+	// nothing. The size is MEASURED off the prompt this tool just wrote -- the same bytes the
+	// harness is handed -- and it is not launched, so no provider is paid for it.
+	if reason, over := OverMaxInput(sc, len(PromptOf(jobDir))); over {
+		_ = p.Free(slot)
+		// The CLASS is the record, and `launch` is left alone: `unlaunched` is rule 17's
+		// word for a reservation that never launched and goes back to PENDING, and one
+		// token has one meaning (lesson 119). This task is not pending; it cannot run as
+		// written, and `end=input-limit` is why.
+		sc.End, sc.Limit = EndInputLimit, reason
+		_ = p.WriteSidecar(Running, sc)
+		_ = p.Claim(sc.ID, Running, Failed)
+		return nil, fmt.Sprintf("RUN INPUT-LIMIT id=%s slot=%d after=0s input=%s max=%s dest=failed: %s",
+			oneline.Field(sc.ID), slot, oneline.Field(promptSizeWord(jobDir)), oneline.Field(maxInputWord(sc)),
+			oneline.Escape(oneline.Cap(reason, oneline.TailBytes))), 1
 	}
 	sc.Job, sc.Slot, sc.Started = jobDir, slot, Stamp(in.Now())
 	_ = p.WriteSidecar(Running, sc)

@@ -173,7 +173,14 @@ func watch(in SuperviseInput, cmd *exec.Cmd, jobDir string, jobPgid int, jobStar
 			if rc != 0 {
 				end = EndFailed
 			}
-			return ExitRecord{RC: rc, Signal: signal, End: end, Spent: spent, Observed: observed, Partial: partial}
+			// AND A PROVIDER'S INPUT LIMIT IS ITS OWN CLASS, named by the process that
+			// watched the harness say it (#103). Two Freddy reads of whole specs died
+			// `rc=1 end=failed` on 2026-09-12 and the dispatcher had only the rc; the
+			// class belongs on the completion evidence, where every later reader --
+			// `finish`, rule 17's recovery pass, the usage row the ledger reads -- finds
+			// it without opening a log.
+			end, reason := InputLimitEnd(jobDir, end, rc, in.Worker.InputLimitPhrases)
+			return ExitRecord{RC: rc, Signal: signal, End: end, Spent: spent, Observed: observed, Partial: partial, Reason: reason}
 		case <-timer.C:
 			// The default action at the deadline: reap the worker and record what is on
 			// disk. The swarm never waits forever.

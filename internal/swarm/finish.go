@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -61,9 +62,17 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	// hold the slot, wait the interval the provider named or --backoff, and retry the SAME
 	// task once. The status is read from the harness's own output because POSIX truncates
 	// 429 to 173, and the row records the code the provider named.
+	//
+	// AND THE INPUT LIMIT IS ASKED FIRST (#103). The provider's sentence is
+	// `Rate limit reached: input token limit exceeded`, which holds the words `rate limit`:
+	// read as a 429 it earned a backoff and a second identical launch, which spent another
+	// 215 seconds proving the same spec still does not fit. A request that did not fit is
+	// not a wait, it is its own class, and it is never retried.
+	limit := ""
+	end, limit = InputLimitEnd(r.jobDir, end, rec.RC, in.Worker.InputLimitPhrases)
 	limited := false
-	if harnessLog, readLogErr := os.ReadFile(r.jobDir + "/harness.log"); readLogErr == nil {
-		limited = RateLimited(harnessLog)
+	if harnessLog, readLogErr := os.ReadFile(r.jobDir + "/harness.log"); readLogErr == nil && end != EndInputLimit {
+		limited = RetriableRateLimit(harnessLog, in.Worker.InputLimitPhrases)
 	}
 	limited = rateLimitedOutcome(limited, end, rec.RC)
 	if limited {
@@ -104,6 +113,12 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	}
 	dest := destinationFor(end, report.Class, rec.RC)
 	sc.Class, sc.End, sc.RC, sc.Ended, sc.Notes = report.Class, end, rec.RC, Stamp(now), notesSent
+	// THE PROVIDER'S OWN WORDS OUTLIVE THE JOB DIRECTORY, in the record `triage` reads:
+	// `reclaim` deletes the harness log, and the one sentence that explains this class is
+	// the sentence a reader must not have to go looking for (#103).
+	if end == EndInputLimit {
+		sc.Limit = limit
+	}
 	// RULE 7, VERBATIM (SPEC-SWARM.md:109-111): "a job reaped a second time goes to
 	// `failed/` with `reaped=2`". IN THE SIDECAR, which is the record that outlives the
 	// run. The count was carried only by the printed line (`sc.Reaped+1`) and the durable
@@ -176,6 +191,14 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 		return fmt.Sprintf("RUN KILLED id=%s slot=%d after=%s deadline=%s findings=%d unpublished=%t budget=%s survived=%t requeued=%t reaped=%d",
 			oneline.Field(sc.ID), r.slot, after, trimDuration(r.deadline), findings, unpublished, budget,
 			survivors > 0, requeued, sc.Reaped), EndKilled, dest
+	case end == EndInputLimit:
+		// THE CLASS, THE SIZE AND THE PROVIDER'S OWN SENTENCE, so that triage can say "the
+		// task was too big for the model" without opening a log (#103). `input=` is the
+		// prompt this tool handed the harness, in bytes -- the one size it measures -- and
+		// `max=` is the ceiling the task named, a dash where it named none.
+		return fmt.Sprintf("RUN INPUT-LIMIT id=%s slot=%d after=%s input=%s max=%s dest=failed: %s",
+			oneline.Field(sc.ID), r.slot, after, oneline.Field(promptSizeWord(r.jobDir)), oneline.Field(maxInputWord(sc)),
+			oneline.Escape(oneline.Cap(limit, oneline.TailBytes))), EndInputLimit, dest
 	case report.Class == ClassMalformed:
 		return fmt.Sprintf("RUN MALFORMED id=%s slot=%d line=%d dest=failed",
 			oneline.Field(sc.ID), r.slot, report.MalformedLine), EndFailed, dest
@@ -271,7 +294,8 @@ func survivorsSeen(aliveBefore, survivedTheReap bool) int {
 // at all, and every recovered job stayed in running/ with no slot (DeepSeek, 2026-09-11).
 func destinationFor(end, class string, rc int) string {
 	switch {
-	case end == EndViolation, end == EndKilled, end == EndUnverifiable, end == EndUnknown, end == EndFailed:
+	case end == EndViolation, end == EndKilled, end == EndUnverifiable, end == EndUnknown, end == EndFailed,
+		end == EndInputLimit:
 		return Failed
 	case class == ClassMalformed, class == ClassPlanOnly, class == ClassNoResult:
 		return Failed
@@ -367,6 +391,25 @@ func freshAttempt(sc Sidecar, now time.Time) Sidecar {
 	next.Job, next.Slot, next.Started, next.Ended, next.End, next.Class = "", 0, "", "", "", ""
 	next.Violation, next.Malformed, next.Launch, next.RC, next.Notes = "", 0, "", -1, 0
 	return next
+}
+
+// promptSizeWord is the MEASURED size of what this tool handed the harness: the bytes of
+// <job>/PROMPT.md, which carries the task text. A prompt that cannot be read is a dash,
+// because a dash is an absence and a zero would be a measurement (rule 12's own rule).
+func promptSizeWord(jobDir string) string {
+	fi, err := os.Stat(filepath.Join(jobDir, "PROMPT.md"))
+	if err != nil {
+		return Dash
+	}
+	return strconv.FormatInt(fi.Size(), 10)
+}
+
+// maxInputWord is the ceiling the task named, and a dash where it named none.
+func maxInputWord(sc Sidecar) string {
+	if sc.MaxInput <= 0 {
+		return Dash
+	}
+	return strconv.Itoa(sc.MaxInput)
 }
 
 // budgetWord is rule 13's ceiling and what was observed under it: a dash for no observation,
