@@ -777,8 +777,8 @@ nova-sandbox --read <slot dir> [--read <read_roots entry>...]
 | the list | what is in it, and why |
 |---|---|
 | write | the **job directory first** — the first `--write` is what the cwd and the temp directory default to — and the job's own data home beside it. Nothing else. |
-| read | the **slot directory**, which is the worker home for this job: it holds the `opencode.json` this tool writes and the worker's own `AGENTS.md`, and without it the harness cannot read its own config. Then every `read_roots` entry of the worker description: a toolchain under a user directory is under no system root. |
-| neither | the key file, `~/.ssh`, the `gh` configuration, the keychain, the shell history, every other line's home, and this tool's own pool outside the job. |
+| read | the **slot directory**, which is the worker home for this job: it holds the `opencode.json` this tool writes and the worker's own `AGENTS.md`, and without it the harness cannot read its own config. **The jobs of this slot live under it** (`<slot dir>/jobs/<id>`), so a job may also read the EARLIER JOBS OF ITS OWN SLOT — their `PROMPT.md`, `harness.log`, `RESULT.md` and data home. That is one worker reading its own past work under one key, and it is what naming the slot directory buys; a job of ANOTHER slot, another worker or another pool is in neither list. Then every `read_roots` entry of the worker description: a toolchain under a user directory is under no system root. |
+| neither | the key file, `~/.ssh`, the `gh` configuration, the keychain, the shell history, every other line's home, every OTHER slot's directory, and this tool's own pool outside the job. |
 
 The worker's **cwd is the job directory** (SPEC-SANDBOX rule 13), and the slot
 directory above it is readable from there. It was the slot directory until the
