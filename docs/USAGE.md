@@ -17,18 +17,24 @@ owns a task, running several bounded jobs at once, and reporting what was
 measured. That work is easy to do badly by hand and expensive to do by
 re-reading everything each time.
 
-Each tool does one job, says exactly what it found, and refuses to guess. A
-missing path is a refusal rather than a default, so a tool does not quietly act
-on somewhere you did not name. The benefit is not that a tool is clever; it is
-that a mechanical step stops costing judgment and tokens every time it recurs.
+Each tool does one job and says exactly what it found. The benefit is not that a
+tool is clever; it is that a mechanical step stops costing judgment and tokens
+every time it recurs.
 
 Two properties matter if several AI friends are involved:
 
-- **The shared state is files in a Git repository.** No service to run, no
-  database, no shared process. Participants on different models and harnesses
-  read and write the same notes because they are text in a repository.
+- **`nova-bus` messages live in a shared Git repository** — text files, no
+  service and no database of its own, so participants on different models and
+  harnesses read and write the same notes. Other tools have their own
+  requirements: `nova-board` can use a directory *or* GitHub issue comments,
+  several keep local state, and the worker and forge tools depend on providers
+  you supply. Each entry below states its own.
 - **The interface is a command line and an exit code.** Any harness that can run
   a program can take part.
+
+Most verbs take every path as a flag and refuse rather than choose one for you,
+though the exact flags differ per tool and a few `quickstart` verbs deliberately
+create the directory they are given.
 
 ## A low-cost way to decide
 
@@ -38,7 +44,9 @@ cheap to run and easy to abandon:
 1. **Pick one repeated problem you actually have.** Not the most interesting
    one — the one that recurs. "I re-read the whole log to find what changed" or
    "two of us did the same task twice."
-2. **Choose the one tool that addresses it.** Start with the table below.
+2. **Choose the one tool that addresses it.** The
+   [README table](../README.md#the-tools) is the one-line version;
+   [Choosing a tool](#choosing-a-tool) below is the longer form.
 3. **Try it on data you own,** or on this repository's included example data. A
    rehearsal on a local Git repository you created is enough to see the shape.
 4. **Assess what it printed.** Did it tell you something you did not have, in a
@@ -47,11 +55,13 @@ cheap to run and easy to abandon:
    reasonably choose different subsets, and one tool used well is a better
    outcome than five adopted out of politeness.
 
-**Before running any example, know what it writes.** The examples in this guide
-that touch a repository are marked, and every trial in this guide runs against
-example data in this repository or a path you create. **No example here contacts
-anyone else's repository, and none should be pointed at a shared one until you
-have seen what it does locally.**
+**Before running any example, know what it does.** Getting the software is
+separate from trying it: `go install` and `git clone` both reach the network and
+write to disk, and that is covered under [Installing](#installing). The trials
+themselves run against this repository's own example data or a path you create.
+**No trial in this guide pushes notes or changes to a third party's repository**,
+and none should be pointed at a shared repository until you have seen what it
+does locally.
 
 ## Start with two tools
 
@@ -91,16 +101,20 @@ nova-bus version
 nova-wake help
 ```
 
-Ensure Go's binary directory is on your `PATH`. Neither command above writes
-anything: one prints a version, the other prints help.
+The two `go install` lines **reach the network**: they download and build the
+module and write the binaries into Go's bin directory, and Go may also populate
+its module and build caches. The last two lines are read-only — one prints a
+version, the other prints help. Ensure Go's binary directory is on your `PATH`.
 
 Every tool has `help` and `version`. Requirements, where they apply: Git-backed
 tools need `git`; GitHub operations need `gh` with access you already have; model
 workers need a compatible harness and provider setup; OpenCode usage accounting
 also needs `sqlite3`.
 
-To try the source tree against its own included example data — this writes only
-inside the example directories it names:
+To work from the source tree: `git clone` **contacts the public source
+repository** and creates a checkout, and `go run` builds into Go's caches. The
+two trials that follow then read this repository's own example data and write
+only the index and report files those verbs produce:
 
 ```sh
 git clone https://github.com/mas-bandwidth/nova-tools.git
@@ -112,20 +126,16 @@ go run ./cmd/nova-memory quickstart --root ./cmd/nova-memory/testdata/corpus
 ## Choosing a tool
 
 Each entry below is a decision, not a reference. Flags, full output grammar and
-worked transcripts are in the [command reference](CLI.md); the first-run
-transcripts there are executed by tests, so they show what the tool prints today
-rather than what someone remembered.
+worked transcripts are in the [command reference](CLI.md). **The transcripts that
+tests execute line by line are the ones in [docs/TESTS.md](TESTS.md)**, so those
+show what the tool prints today; the command reference carries more detail and its
+own checks.
 
-Six tools have a `quickstart` verb: `nova-wake`, `nova-board`, `nova-swarm`,
-`nova-merge`, `nova-memory` and `nova-check`. A `quickstart` is one line that
-needs nothing you have to *invent* — but it is not a line that needs nothing at
-all, and several still require you to name the directory, state file or
-repository they act on, refusing rather than choosing one for you. The tested
-transcripts linked below show each exact invocation.
-
-`nova-bus`, `nova-tokens`, `nova-sandbox`, `nova-self-talk` and `nova-fuse` have
-no `quickstart`, because every one of their verbs needs a path or a source you
-must name, and a verb added for symmetry would write state nobody asked for.
+Six tools have a `quickstart` verb — `nova-wake`, `nova-board`, `nova-swarm`,
+`nova-merge`, `nova-memory` and `nova-check` — and **every one of them still
+requires paths or choices you supply**. `nova-bus`, `nova-tokens`,
+`nova-sandbox`, `nova-self-talk` and `nova-fuse` have none. Each entry below
+names what its own first trial needs.
 
 ### nova-bus — a lasting conversation
 
@@ -135,8 +145,10 @@ different models and harnesses have no shared place to talk.
 **What it does.** Exchanges messages through a shared Git repository: draft and
 send notes, read an inbox, reply, and track what you have already seen.
 
-**You need** a Git repository the participants can all push to, `git` installed,
-and a name for yourself. Every path is a flag; nothing is guessed.
+**You need** a Git repository the participants can all push to, `git` with a
+commit identity configured, a name for yourself (`--as`), and a participant
+roster — always `<bus>/participants.json`, because every tool run over one bus
+reads one roster. `--bus`, `--remote` and `--branch` have no defaults.
 
 **First trial.** **`send` writes a file and pushes to the repository you name.**
 Create a local Git repository of your own and use that as the bus for a first
@@ -145,7 +157,10 @@ example lines. See [nova-bus in the command reference](CLI.md#nova-bus) for the
 output grammar, the identity rules and what each verb refuses.
 
 **It worked if** a note you sent from one checkout appears in the other
-participant's inbox, and reading it twice does not show it as new twice.
+participant's inbox. Note that `inbox` reads from your **cursor** and does not
+move it: re-reading shows the same note as new again until you advance the cursor
+explicitly with `--advance` (which moves it and pushes it). Reading is not
+marking as read.
 
 **Limits and side effects.** It writes to and pushes to a real repository. It
 runs `git`, which is the one other program it invokes. A note is **evidence, not
@@ -167,8 +182,11 @@ each watched thing last looked like), at least one source to watch, and a
 maximum duration. You also choose what reaching the deadline means. Nothing is
 guessed: `quickstart` refuses until you name the state file and a source.
 
-**First trial.** The [first-run transcript](TESTS.md#nova-wake) is executed by a
-test and shows the exact working invocation, and
+**First trial.** The reports-only shape is the safest: `nova-wake quickstart
+--state ./wake.json --reports <dir>` reaches no remote and needs no bus. A
+regular `watch` additionally requires `--max`, `--interval` and `--on-deadline`,
+which have no defaults. The [first-run transcript](TESTS.md#nova-wake) is
+executed by a test, and
 [nova-wake in the command reference](CLI.md#nova-wake) explains the verdict line
 and the waiting behaviour.
 
@@ -176,9 +194,12 @@ and the waiting behaviour.
 told you whether it returned because something changed or because it hit the
 deadline.
 
-**Limits and side effects.** It reads a checkout rather than a remote. It
-currently requires a matching `nova-bus` release, so upgrade that pair together.
-A deadline reached is a real answer, not a failure.
+**Limits and side effects.** By default it reads a local checkout, but it is not
+checkout-only: `--refresh` fetches each poll without moving your cursor,
+`--advance-cursor` fetches and moves it, and `--entry <owner>/<repo>#<n>` watches
+a pull request's checks on GitHub. A bus-backed watch needs a matching `nova-bus`
+release, so upgrade that pair together; a reports-only first trial does not. A
+deadline reached is a real answer, not a failure.
 
 **It may not help if** nothing in your workflow changes on a timescale worth
 waiting for.
@@ -196,8 +217,10 @@ how long a card may go without an event before it lists as takeable again. There
 is no default duration and no default backend; `quickstart` refuses until both
 are named.
 
-**First trial.** The [first-run transcript](TESTS.md#nova-board) is executed by a
-test and shows the exact working invocation. See also
+**First trial.** `nova-board quickstart --dir ./board --stale 10m` — it makes the
+directory if it is not there and says `created=` on its first line, then prints
+the board and the check-then-add pair with this board's own values pasted in. The
+[first-run transcript](TESTS.md#nova-board) is executed by a test. See also
 [nova-board in the command reference](CLI.md#nova-board).
 
 **It worked if** `check` caught a task you were about to add twice, and you
@@ -220,9 +243,12 @@ run them, and running them one at a time is the bottleneck.
 deadlines, collected results and usage accounting where the source supports it.
 
 **You need** a pool directory, a worker description naming whose model runs, and
-a harness and provider setup that actually works. On macOS it also wants
-`nova-sandbox`; it refuses to start without a usable sandbox unless you
-explicitly pass `--no-sandbox`, **which provides no containment at all**.
+a harness and provider setup that actually works. **Every job runs inside
+`nova-sandbox` on every platform**: `run` proves the wall once before the first
+worker and refuses to start without a usable sandbox — on any platform — unless
+you explicitly pass `--no-sandbox`, **which provides no containment at all**.
+Since the sandbox backend is macOS-only today, that opt-out is what running
+elsewhere currently means.
 
 **First trial.** `nova-swarm quickstart --pool <dir>` makes the pool structure
 and names the commands that follow, without running a worker or spending a
@@ -249,12 +275,24 @@ they were supposed to have.
 **What it does.** Checks reviews and tests before merging changes in order.
 
 **You need** the lane's own directory (`--lane`), the repository it lands into
-(`--repo <owner>/<name>`), the branch entries are merged onto (`--base`), `git`,
-and `gh` with access you already have. `quickstart` names each missing one rather
-than assuming it.
+(`--repo <owner>/<name>`), the branch entries are merged onto (`--base`), the
+lane's own branch (`--lane-branch`), `git`, and `gh` with access you already
+have. `quickstart` names each missing one rather than assuming it.
 
-**First trial.** The [first-run transcript](TESTS.md#nova-merge) is executed by a
-test and shows the exact working invocation. See also
+**Read this before the first trial: `init` and `quickstart` create and PUSH the
+lane branch.** They are not read-only. So rehearse against a bare repository of
+your own, with an absolute `--remote` and a lane directory of its own, which
+keeps the whole first run off any forge:
+
+```sh
+git init -q --bare ./rehearsal.git
+nova-merge quickstart --lane ./rehearsal-lane --repo mas-bandwidth/nova-tools --base main \
+           --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
+```
+
+The [command reference](CLI.md#nova-merge) carries this and what each verb
+pushes; the [first-run transcript](TESTS.md#nova-merge) is executed by a test. See
+also
 [nova-merge in the command reference](CLI.md#nova-merge).
 
 **It worked if** it refused to land something whose checks had not passed, and
@@ -269,8 +307,8 @@ enforces this.
 
 ### nova-tokens — where the tokens went
 
-**Try it when** you cannot answer "what did this month cost, by model and by
-repository."
+**Try it when** you cannot answer "how many tokens did this month use, by model
+and by repository." It reports token counts, not money.
 
 **What it does.** Summarizes token use from supported sources into daily and
 monthly totals by model and repository, and **shows the gaps** rather than
@@ -348,9 +386,9 @@ runs against this repository's included corpus. See the
 record.
 
 **Limits and side effects.** It builds an index, and **every run pays the
-build**, so the tool's own cost does scale with the record even though your
-judgment budget stops doing so. It is lexical: it finds the words that are
-there, not the idea you meant. Two of its verbs are checks that can fail; the
+build**, so the tool's own cost scales with the record. It can cut down how much
+you have to read; it does not remove the judgement you then apply. It is lexical:
+it finds the words that are there, not the idea you meant. Two of its verbs are checks that can fail; the
 rest assert nothing, and its reference says which are which.
 
 **It may not help if** your record is small enough to read, or is not Markdown.
@@ -371,8 +409,9 @@ runs against this repository's included example. See the
 [first-run transcript](TESTS.md#nova-check) and
 [nova-check in the command reference](CLI.md#nova-check).
 
-**It worked if** it named a real problem with a path and a line, and said
-nothing about the parts that were fine.
+**It worked if** you could read a clear pass or a concrete finding: it prints an
+`OK` summary line per check when a check passes, and names the path and line when
+it does not.
 
 **Limits and side effects.** Read-only over the record it checks. It establishes
 **only the properties it actually inspects** — a green result is not a general
@@ -470,17 +509,12 @@ complete, stable and usable by people and AIs outside the team.
 - **Reports are evidence, not authority.** A bus note or a worker result does
   not grant access or authorize an action. File checks and sentence-pattern
   checks establish only the properties they actually inspect.
-- **Containment has platform limits.** `nova-sandbox` implements macOS
-  containment; Linux and Windows backends are not built. `nova-swarm` refuses to
-  start without a usable sandbox unless you pass `--no-sandbox`, which provides
-  no containment.
-- **Accounting coverage is explicit.** `nova-tokens` aggregates supported
-  sources by day, model and repository, and shows its gaps. Retained records,
-  broader adapters, original-bench attribution and Git ledger publication are
-  being developed separately and are not part of what ships.
 - **A specification is not a shipping claim.** Proposals and contracts under
   `docs/` may describe tools or behaviour that does not exist yet. Check the
   release and the implementation before relying on anything.
+- **Platform and coverage limits are stated per tool above** — `nova-sandbox`'s
+  macOS-only containment and what `nova-swarm` therefore requires, and what
+  `nova-tokens` does and does not account for. They are not repeated here.
 
 ## Contributing, and building locally
 
