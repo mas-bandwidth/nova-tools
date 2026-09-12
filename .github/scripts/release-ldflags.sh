@@ -39,6 +39,37 @@ case "$stamp" in
 	;;
 esac
 
+# `%` is legal in a git refname and the tag travels into a printf FORMAT STRING one step
+# later: release.yml hands assert-version-stamp.sh the template "dist/%s_${TAG}_linux_amd64",
+# so a tag of `v1%s` or `v1%d` makes that printf read a directive that was never supplied.
+# printf exits 1, the assertion dies under `set -e` before it prints a line, and the job
+# fails with no FAIL naming a cause -- the release is red for a reason nobody can read.
+# Refused here, before 55 artifacts are built, with the reason said out loud.
+case "$stamp" in
+*%*)
+	echo "refusing: the release stamp <$stamp> contains %; it is substituted into a printf" >&2
+	echo "  format further down the release (the per-tool binary path), where % reads a" >&2
+	echo "  directive that is not there and fails the job with no message at all" >&2
+	exit 1
+	;;
+esac
+
+# `=` is legal in a refname too, and this one survives the build to fail at the end. The
+# stamp is matched as a WHOLE TOKEN by assert-version-stamp.sh, which counts `=` as a
+# separator so that nova-sandbox's `version=<tag>` form passes; and internal/oneline
+# escapes `=` inside a field, so a binary stamped `v1.0=rc1` prints it escaped. Either way
+# the printed token is not the tag and every stamped tool fails the assertion AFTER the
+# whole matrix has been built. Refused here instead, for the same reason as whitespace: a
+# stamp the release cannot check is not a stamp.
+case "$stamp" in
+*=*)
+	echo "refusing: the release stamp <$stamp> contains =, which the stamp assertion reads as" >&2
+	echo "  a token separator and internal/oneline escapes when a binary prints it; no" >&2
+	echo "  stamped tool could report this tag as the token it was built from" >&2
+	exit 1
+	;;
+esac
+
 ldflags="-s -w -X main.version=${stamp}"
 
 # The composed string is checked, not just its input: this is what the build actually

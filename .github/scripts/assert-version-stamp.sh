@@ -55,6 +55,40 @@ case "$template" in
 	;;
 esac
 
+# EXACTLY ONE %s AND NO OTHER %, because the template IS the format string below and the
+# caller builds it with the tag inside it: release.yml passes "dist/%s_${TAG}_linux_amd64".
+# `%` is legal in a git refname, so a tag of `v1%s` or `v1%d` made printf read a directive
+# that is not there -- printf exits 1, the script dies under `set -e` before printing
+# anything, and the job failed with no FAIL line naming a cause. Refused here by name, and
+# refused one step earlier in release-ldflags.sh so the build never runs at all.
+before=${template%%"%s"*}
+after=${template#*"%s"}
+case "$before$after" in
+*%*)
+	echo "refusing: the path template <$template> holds a % beyond its single %s" >&2
+	echo "  the template is this script's printf format; a stray % reads a directive that is not there" >&2
+	echo "  (a tag carrying % is refused by release-ldflags.sh before anything is built)" >&2
+	exit 2
+	;;
+esac
+
+# A tag this check could never match is a check that would only ever fail. The match below
+# is whole-token with `=` counted as a separator (nova-sandbox prints version=<tag>), so a
+# tag containing `=` or whitespace can never be that token however the binary prints it.
+# release-ldflags.sh refuses both before the build; this is the same refusal at the other
+# end of the workflow, where it names itself rather than failing every tool in turn.
+case "$tag" in
+*[[:space:]]*)
+	echo "refusing: the expected tag <$tag> carries whitespace; no printed token can equal it" >&2
+	exit 2
+	;;
+*=*)
+	echo "refusing: the expected tag <$tag> contains =, which this check reads as a token separator" >&2
+	echo "  (release-ldflags.sh refuses such a tag before the build)" >&2
+	exit 2
+	;;
+esac
+
 # declares_stamp <file> -- does this file declare the package-level string variable that
 # `-X main.version=` writes?
 #
@@ -71,26 +105,115 @@ esac
 # exactly as `var version string` is, and a single exact-line grep demoted that tool to a
 # NOTE -- a shipped binary quietly dropped out of the asserted set, which is this file's
 # own argument against silent demotion turned on itself. A `version` initialised to
-# something that is NOT a constant string -- `var version = buildID()` -- the linker
-# genuinely cannot write, so it is genuinely not a stamp and is not recognised here.
+# something that is NOT a constant string -- `var version = buildID()`, `var version =
+# "x" + suffix` -- the linker genuinely cannot write, so it is genuinely not a stamp and
+# is not recognised here. THE TWO ERRORS ARE NOT SYMMETRIC but both are real: reading a
+# stamp as absent drops a shipped binary out of the asserted set in silence, and reading
+# an absent stamp as present fails a release for a tool that never claimed the tag.
 #
 # TOP-LEVEL declarations only. gofmt indents every declaration inside a function, so a
 # line beginning `var` at column zero, and the body of a top-level `var (` block, are
-# exactly the package-level ones.
+# exactly the package-level ones. A `var (` block ENDS ON A `)` AT COLUMN ZERO: gofmt
+# indents the closing paren of every multi-line call inside the block, so closing the
+# block on any indented `)` ended it early at the first
+#
+#   var (
+#           greeting = strings.Join(
+#                   []string{"a"},
+#           )                          <- not the end of the block
+#           version string             <- and this was read as a function body, demoted
+#   )
+#
+# COMMENTS ARE STRIPPED, AND ONLY OUTSIDE STRING LITERALS. `//` alone was stripped, so a
+# declaration sitting inside a top-level `/* ... */` -- commented out, which is exactly
+# the way a stamp gets removed -- counted as a declaration and held the tool to a tag it
+# no longer carries. The stripper walks the line rather than substituting, because a `//`
+# or a `/*` inside a string literal (`var version = "//devel"`) is text, not a comment,
+# and cutting there would leave an unbalanced literal behind.
 declares_stamp() {
 	awk '
-		function names_version(names,   n, p, i, s) {
-			n = split(names, p, ",")
+		# Comments removed outside string literals; `incomment` carries a /* across lines.
+		function strip_comments(s,   i, c, n, out, q) {
+			out = ""; i = 1; n = length(s)
+			while (i <= n) {
+				c = substr(s, i, 1)
+				if (incomment) {
+					if (c == "*" && substr(s, i + 1, 1) == "/") { incomment = 0; i += 2 }
+					else i++
+					continue
+				}
+				if (c == "\"" || c == "`" || c == "'\''") {
+					q = c; out = out c; i++
+					while (i <= n) {
+						c = substr(s, i, 1); out = out c; i++
+						if (c == "\\" && q != "`") {
+							if (i <= n) { out = out substr(s, i, 1); i++ }
+							continue
+						}
+						if (c == q) break
+					}
+					continue
+				}
+				if (c == "/" && substr(s, i + 1, 1) == "/") break
+				if (c == "/" && substr(s, i + 1, 1) == "*") { incomment = 1; i += 2; out = out " "; continue }
+				out = out c; i++
+			}
+			return out
+		}
+		# Split on the commas that separate the declaration'\''s elements: depth zero, and
+		# not inside a literal, so `f(a, b)` and "a,b" stay one element.
+		function split_top(s, arr,   i, c, n, depth, cur, k, q) {
+			n = length(s); depth = 0; cur = ""; k = 0
 			for (i = 1; i <= n; i++) {
-				s = p[i]
-				gsub(/^[ \t]+|[ \t]+$/, "", s)
-				if (s == "version") return 1
+				c = substr(s, i, 1)
+				if (c == "\"" || c == "`" || c == "'\''") {
+					q = c; cur = cur c; i++
+					while (i <= n) {
+						c = substr(s, i, 1); cur = cur c
+						if (c == "\\" && q != "`") { i++; if (i <= n) cur = cur substr(s, i, 1); i++; continue }
+						i++
+						if (c == q) break
+					}
+					i--
+					continue
+				}
+				if (c == "(" || c == "[" || c == "{") depth++
+				else if (c == ")" || c == "]" || c == "}") depth--
+				else if (c == "," && depth == 0) { k++; arr[k] = cur; cur = ""; continue }
+				cur = cur c
+			}
+			k++; arr[k] = cur
+			return k
+		}
+		# A lone constant string literal and nothing else: `"devel"`, `` `devel` ``, `""`.
+		# `"x" + suffix` is not one, and the linker will not write it.
+		function is_lone_string(s,   n, i, c, q) {
+			gsub(/^[ \t]+|[ \t]+$/, "", s)
+			n = length(s)
+			if (n < 2) return 0
+			q = substr(s, 1, 1)
+			if (q == "`") { return index(substr(s, 2), "`") == n - 1 }
+			if (q != "\"") return 0
+			for (i = 2; i <= n; i++) {
+				c = substr(s, i, 1)
+				if (c == "\\") { i++; continue }
+				if (c == "\"") return i == n
 			}
 			return 0
 		}
-		{ line = $0; sub(/\/\/.*$/, "", line) }
+		function version_pos(names, parts,   n, i, s) {
+			n = split_top(names, parts)
+			for (i = 1; i <= n; i++) {
+				s = parts[i]
+				gsub(/^[ \t]+|[ \t]+$/, "", s)
+				if (s == "version") return i
+			}
+			return 0
+		}
+		{ line = strip_comments($0) }
 		!inblock && line ~ /^var[ \t]*\([ \t]*$/ { inblock = 1; next }
-		inblock && line ~ /^[ \t]*\)/ { inblock = 0; next }
+		# Column zero only: an indented `)` closes a call inside the block, not the block.
+		inblock && line ~ /^\)/ { inblock = 0; next }
 		{
 			if (line ~ /^var[ \t]+/) { decl = line; sub(/^var[ \t]+/, "", decl) }
 			else if (inblock && line ~ /^[ \t]+[A-Za-z_]/) { decl = line; sub(/^[ \t]+/, "", decl) }
@@ -105,11 +228,16 @@ declares_stamp() {
 			# the type, when written, is the last word of the name list
 			typed = 0
 			if (names ~ /[ \t]string$/) { typed = 1; sub(/[ \t]+string$/, "", names) }
-			if (!names_version(names)) next
+			pos = version_pos(names, nameparts)
+			if (!pos) next
 
-			# uninitialised must say `string`; initialised must be a string literal
+			# uninitialised must say `string`; initialised must be a lone string literal
+			# IN VERSION'\''S OWN POSITION: `var x, version = "a", 1` stamps nothing.
 			if (init == "") { if (typed) found = 1 }
-			else if (init ~ /^"/ || init ~ /^`/) found = 1
+			else {
+				ninit = split_top(init, initparts)
+				if (ninit == split_top(names, nameparts) && is_lone_string(initparts[pos])) found = 1
+			}
 		}
 		END { exit found ? 0 : 1 }
 	' "$1"
