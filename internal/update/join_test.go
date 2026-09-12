@@ -550,8 +550,8 @@ func TestJoinChildDeathAtWriteBoundariesRecoversOneContribution(t *testing.T) {
 			clearWrapper(t)
 			code, out, errs = r.send(t, r.bin)
 			if code != 0 {
-				t.Fatalf("recovery failed: %d\n%s\n%s\nstaged: %s\ncheckout: %s\nwhat the kill left: %s\nlocks: %v\nthe bus, asked directly: %s",
-					code, out, errs, staged, git(t, r.bus.checkout, "status", "--porcelain"), leftover, r.locks(), r.busAskedDirectly(t))
+				t.Fatalf("recovery failed: %d\n%s\n%s\nstaged: %s\nwhat the kill left: %s\nlocks: %v\nthe bus, asked directly: %s\n%s",
+					code, out, errs, staged, leftover, r.locks(), r.busAskedDirectly(t), r.checkoutState(t))
 			}
 			if got := r.deliveredID(t); got != id {
 				t.Fatalf("recovery delivered %q, not the retained %q", got, id)
@@ -804,4 +804,32 @@ func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.
 	if !strings.Contains(out, "already-published") {
 		t.Fatalf("recovery did not recognise the note it had already published: %s", out)
 	}
+}
+
+// checkoutState dumps everything a person repairing the bus would ask for about
+// the checkout a killed attempt left behind. A witness that cannot be acted on
+// is not a witness.
+func (r reporter) checkoutState(t *testing.T) string {
+	t.Helper()
+	var b strings.Builder
+	for _, probe := range [][]string{
+		{"status", "--porcelain", "-uall"},
+		{"diff", "--cached", "--name-status"},
+		{"diff", "--name-status"},
+		{"log", "--oneline", "-3"},
+		{"rev-parse", "HEAD", "origin/main"},
+	} {
+		out, err := exec.Command("git", append([]string{"-C", r.bus.checkout}, probe...)...).CombinedOutput()
+		if err != nil {
+			fmt.Fprintf(&b, "git %s: %v\n", strings.Join(probe, " "), err)
+			continue
+		}
+		fmt.Fprintf(&b, "git %s:\n%s", strings.Join(probe, " "), out)
+	}
+	names, _ := filepath.Glob(filepath.Join(r.bus.checkout, ".git", "*"))
+	for i := range names {
+		names[i] = filepath.Base(names[i])
+	}
+	fmt.Fprintf(&b, ".git holds: %s\n", strings.Join(names, " "))
+	return b.String()
 }
