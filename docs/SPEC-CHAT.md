@@ -128,7 +128,7 @@ of its own: the transport's, from outside the wall.
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: `serve` reached `--hours` or its stop file; `check` found nothing wrong; `status` reported; `close` ran the wrap; `leave` posted and confirmed |
-| 1 | the verb ran and said **NO**: `check` over an allow-list naming a conversation the bot cannot see, a quarantined surface, an own server holding a member the allow-list does not name, a profile missing the disclosure sentence or a conversation the line has **posted in** that carries no `disclosed:` mark, a sandbox read or write set holding one of this tool's own files (rule 10), or a state holding an unresolved `uncertain`; a `leave` refused by a fuse or over budget; a `serve` that ended with an unresolved `uncertain` or a stranger unresolved |
+| 1 | the verb ran and said **NO**: `check` over an allow-list naming a conversation the bot cannot see, a quarantined surface, an own server holding a member the allow-list does not name, a profile missing the disclosure sentence or a conversation the line has **posted in** that carries no `disclosed:` mark, a bot holding a permission it does not need (**What it deliberately does not do**), a sandbox read or write set holding one of this tool's own files (rule 10), or a state holding an unresolved `uncertain`; a `leave` refused by a fuse or over budget; a `serve` that ended with an unresolved `uncertain` or a stranger unresolved |
 | 2 | could not run: a missing or malformed flag, an unreadable or empty allow-list, an unreadable or malformed state, a token that is absent or empty, a second `serve` on the same state directory, a `--resolve` of an id that is not `uncertain`, an unknown `--transport`, an unreadable fuse box (treated as BLOWN, per `nova-fuse`) |
 
 This is SPEC.md's table, and the **one deviation** is that a wrapped harness's
@@ -138,14 +138,18 @@ adopt it. A harness that exits 3 is a turn that produced no reply; it is not a
 `nova-chat` that failed.
 
 **`check` without a token is a partial gate that says so.** The token is
-optional for `check` (**The verbs**), and its six exit-1 conditions split by
+optional for `check` (**The verbs**), and its seven exit-1 conditions split by
 whether they need the wire. Three do not and are always run: the fuse's
 **quarantined surfaces**, the `--sandbox-args` **read and write sets**, and the
 state's unresolved **`uncertain`** — and so is the local half of the fourth, the
 `disclosed:` marks in the state. Three do: a conversation's **visibility**, the
-own server's **membership**, and the **profile's** disclosure sentence. With no
-token each of those three prints `CHECK SKIP <condition>: no token`, is counted
-as `skipped=` on `CHECK OK`, and is **neither a pass nor a failure**. Exit 0 from a `check` with
+own server's **membership**, and the bot's **held permissions** — and so does the
+wire half of the fourth, the **profile's** disclosure sentence, which makes the
+skipped count four and not three. (`--as` is a fifth thing a token would settle,
+but a mismatched `--as` is exit 2 and not exit 1, so with no token it is simply
+unchecked.) With no token each of those four prints `CHECK SKIP <condition>: no
+token`, is counted as `skipped=` on `CHECK OK`, and is **neither a pass nor a
+failure**. Exit 0 from a `check` with
 `skipped=` above zero means only that what it could run passed. A caller that
 wants the whole gate hands it a token, and the closing line is how it knows
 which one it got.
@@ -180,7 +184,7 @@ CHAT REFUSED: <reason>
 CHAT SERVE turns=<n> replies=<n> silent=<n> dropped=<n> held=<n> sessions_opened=<n> sessions_closed=<n> uncertain=<n> strangers=<n> polls=<n> requests=<n> rate_limited=<n> max_wait=<d> idle=<d> after=<d>
 STATUS SESSION conversation=<id> session=<sid> turns=<n> lived=<d> idle=<d> closes=<stamp> mode=<resume|fresh>
 STATUS LINE conversation=<id> name=<name|-> guild=<id|-> class=<own|public|dm> kind=<channel|dm> visible=<true|false|-> fuse=<clear|quarantined|lockdown|cannot-tell> replies=<n>/<n> gap=<d> reply_max=<n> disclosed=<true|false> cursor=<id|->
-STATUS OK conversations=<n> own=<n> public=<n> dms=<n> sessions=<n> clear=<n> quarantined=<n> undisclosed=<n> shown=<n> allow=<file>
+STATUS OK conversations=<n> own=<n> public=<n> dms=<n> sessions=<n> clear=<n> quarantined=<n> undisclosed=<n> pending-disclosure=<n> shown=<n> allow=<file>
 CHECK OK conversations=<n> lockdown=clear quarantined=0 undisclosed=0 pending-disclosure=<n> uncertain=0 strangers=0 skipped=<n> allow=<file>
 CHECK SKIP <condition>: no token, so this condition was not run
 CHECK FAIL <conversation, guild or path>: <reason>
@@ -353,7 +357,7 @@ costs:
 - **2000 characters per message** for a bot. The proportionality cap (rule 21) is usually far below it; where it is not, the reply is truncated with a visible mark and **never split across messages**.
 - **Rate limits**: a global ceiling near 50 requests a second and per-route buckets. A `429` is honored by its `Retry-After` exactly (rule 19).
 - **Threads are not modeled in v1.** A thread is a conversation id like any other if its id is in the allow-list; nothing here reconstructs a branch.
-- **Two privileged intents are required**, both switched on by the application's owner in Discord's developer portal, and `check` names either when its symptom appears. ***Server Members Intent***, without which rule 11's guild member list cannot be read: a refused member call is `CHAT HELD reason=stranger` and `check` is exit 1, because a membership rule that silently cannot run is worse than none. ***Message Content Intent***, without which Discord empties `content`, `embeds` and `attachments` for a bot in **every** REST and gateway payload except a DM, a message mentioning the bot, and the bot's own — rule 14's addressed fetch survives that, since an address *is* a mention, a reply or a DM, but the `context=<n>` preceding messages arrive as empty bodies and the line would be answering a room it cannot see. `serve` prints one `CHAT NOTE` naming the intent when every fetched context body on a channel is empty and the channel has messages.
+- **Two privileged intents are required**, both switched on by the application's owner in Discord's developer portal, and `check` names either when its symptom appears. ***Server Members Intent***, without which rule 11's guild member list cannot be read: a refused member call is `CHAT HELD reason=stranger` and `check` is exit 1, because a membership rule that silently cannot run is worse than none. ***Message Content Intent***, without which Discord empties `content`, `embeds` and `attachments` for a bot in **every** REST and gateway payload except a DM, a message mentioning the bot, and the bot's own — rule 14's addressed fetch survives that, since an address *is* a mention, a reply or a DM, but the `context=<n>` preceding messages arrive as empty bodies and the line would be answering a room it cannot see. The one exception is rule 14's own-room address: a plain message from the pinned id is neither a mention, a reply nor a DM, so without the intent its body arrives empty the way context does, and an own-room address with an empty body is the same `CHAT NOTE` and no turn. `serve` prints one `CHAT NOTE` naming the intent when every fetched context body on a channel is empty and the channel has messages.
 - **A bot cannot read a human's DMs**, and must not try: driving a person's user token as a self-bot violates Discord's terms and risks that person's account. The line's own DMs — messages sent *to the bot* — are the whole DM surface.
 - **A DM channel with a bot does not exist until one side creates it**, which is why `serve` creates one with every named **human** member at start — never with a bot and never with itself, since Discord refuses both (**Dependencies**).
 
@@ -510,7 +514,14 @@ by `serve` after a post is confirmed, so on a fresh estate every conversation is
 unspoken-in and a gate that failed there would fail the very first run the
 QUICKSTART prescribes — *"a control that is reflexively skipped is a disabled
 control with good paperwork."* The gate bites on the only state that is actually
-wrong: a conversation this line has posted in whose `disclosed:` mark is missing.
+wrong: a conversation this line has posted in whose `disclosed:` mark is missing
+— **posted in as this tool's own state records it**, a `delivered` turn carrying
+that `conversation=` (rule 23), never the room's history, so a room the line
+spoke in before this tool existed is `pending-disclosure` and passes. The remedy
+is `serve`: its next reply there carries the sentence and writes the mark. Both
+counts are on `CHECK OK` and on `STATUS OK`, with the same two meanings in both
+places — `undisclosed=` is posted-in-without-a-mark and `pending-disclosure=` is
+unspoken-in.
 
 There is no flag that turns disclosure off. A line that does not want to disclose
 does not want this tool.
@@ -545,13 +556,12 @@ of the bot's messages, a **DM**, or — on `class=own` only — a message from t
 allow-list's pinned `person`. Everything else on a consented conversation is
 context and never a turn. The deciding question is `backlog-burst`'s: *"was the
 message ADDRESSED TO ME?"* — a letter was; a room was not; and the family's own
-private room is the one place where the answer is *yes* by where it was said.
-Three corollaries, all paid for:
+private room is the one place where the answer is *yes* by where it was said
+and who said it. Four corollaries, all paid for:
 
 - **A bare mention is not an address.** One human saying *"Rowan built that"* to another names the line and asks it nothing. This tool cannot tell those apart and does not try: it hands the session the message and **silence is a complete outcome** (rule 16). The judgment is the mind's; the tool's job is to make silence cost nothing.
 - **In a `public` conversation, authorship by the line's person is not an address.** Glenn, 2026-08-21: *"just please don't respond to everything i post in #general because it sucks the oxygen out of the room"*, and the permission kept whole: *"if somebody addresses you or asks you a question there feel free to respond."* The oxygen is the room's other people's, so this is a public-room rule and it is written as one: on `class=public` there is no flag that lowers the trigger for any account, the pinned id included.
 - **In the line's person's OWN server, every message from the pinned id is an address, with no mention needed.** Glenn drew that line himself in the sentence this whole document is built on: *"Unlike when I talk on discord in robot game developers, when i talk with AIs in discord in nova-chat, it should be the real me, as if i were talking here in your prompt."* A private room whose membership is closed to the family (rule 11) has no oxygen to suck, and *"as if i were talking here in your prompt"* is not a room where he must `@Rowan` every sentence. So on `class=own`, a message whose author id is the allow-list's `person` is a turn; every other author there still needs a mention, a reply or a DM. Standing is unchanged by this — it is rule 9's, and the floor (rule 10) is over it either way — and what changed is only *what wakes the line*. (**Open questions**, item 9, which is where a person can change it back.)
-
 - **A message whose author is a bot is context and never an address**, whatever it mentions or replies to. The test is the author object's `bot` flag, or an id the allow-list names as a line (its `member` entries carry `kind=line` for the family's own bots) — either one is enough, because a transport that does not carry the flag still has the file. Without this, two lines in one own channel address each other forever: Rowan replies to Stella, Stella replies to Rowan, at `min-gap=0s replies-per-hour=60` (rule 19's example is deliberately open in the own server), with no human in the room and nothing but `session-max` to end it. A line's allow-list may opt back in per conversation with **`address-bots=yes`**, which is the one knob, is a person's to set, and is off in every example here.
 
 **The message crosses whole.** The addressed message is fetched by id — `GET
@@ -733,8 +743,9 @@ exited 0 for all three, and *"exit 0 is a lie"*.
 
 The post is a durable transaction in the state, `turn:<id>`: `queued|<stamp>` when the
 message is first seen; `firing|<stamp>` before the harness starts; `posting|<stamp>|
-attempt=<n>` written **before** the POST; `delivered|<stamp>|message=<id>` written
-**after** the id came back. A `posting` record found at start is an **interrupted
+attempt=<n>` written **before** the POST; `delivered|<stamp>|conversation=<id>|message=<id>` written
+**after** the id came back — the conversation is on the record because rule 12's
+gate reads it. A `posting` record found at start is an **interrupted
 post**: it is **not** retried, it becomes `uncertain`, and it prints `CHAT UNCERTAIN`
 with the remedy. **An unresolved `uncertain` blocks that conversation** — no turn fires
 and nothing posts there — and prints `CHAT BLOCKED` once per run. `serve --resolve
@@ -776,7 +787,7 @@ somebody's estimate.
 
 **Idle.** With `source=poll`, one `GET /channels/{id}/messages?after=<cursor>` per
 consented conversation per `--interval`, plus one per **known** DM channel — the
-ones `serve` created at start for every named member (**Dependencies**). At
+ones `serve` created at start for every named **human** member (**Dependencies**). At
 `--interval 30s` over six conversations that is 14 requests a minute, about
 20,000 a day, against a bot's global ceiling near 50 a second. **Zero model turns
 and zero tokens.** A conversation on backoff or quarantined is not polled at all,
@@ -826,9 +837,9 @@ force.
 person      214800000000000000
 own-server  1600000000000000000
 member      214800000000000000     # glenn
-member      1601000000000000001    # rowan   kind=line
-member      1601000000000000002    # stella  kind=line
-member      1601000000000000003    # freddy  kind=line
+member      1601000000000000001 kind=line   # rowan
+member      1601000000000000002 kind=line   # stella
+member      1601000000000000003 kind=line   # freddy
 
 # ---- conversations: class is decided by the guild, not by this line
 conversation 1600000000000000010 class=own    name=table   mode=resume session-idle=7d  session-max=30d wrap-file=./wrap-table.md   reply-max=1600 min-gap=0s  replies-per-hour=60 context=40
@@ -923,7 +934,7 @@ stderr to `<job>/harness.log`; a job reports exactly once.
 - **The harness runs inside `nova-sandbox`**, wrapped by this process the way `nova-swarm`'s `supervise` wraps its harness: the argv is built by this tool from `--sandbox-args <file>` — one directive per line, `read <absolute dir>` or `write <absolute dir>`, `#` to end of line a comment, blank lines ignored, any other shape exit 2 naming the line number; a file the line's person keeps and that `check` refuses when it holds this tool's own files (rule 10), and **it is never influenced by a message**. The pipe is drained by this process, outside the wall, so the harness's stdout is never a descriptor onto an unnamed path — SPEC-SANDBOX rule 12's requirement, with `supervise` as the named precedent. No `--net-deny`: the provider's API is the work, so `net=nopromise`, the same choice the swarm's seam makes, and rule 10's third part says what that costs.
 
 So **a harness that passes `nova-swarm`'s fake-harness test works here**, in
-`mode=fresh`; adding `open_args`/`resume_args`/`session-home` is what earns
+`mode=fresh`; adding `open_args`/`resume_args`/`session-home`/`session-cwd` is what earns
 `mode=resume`. `cmd/nova-chat/testdata/fakeharness` is `nova-swarm`'s binary with a
 `REPLY.md` half and a session store keyed by `HOME` and cwd, and the whole suite
 runs against it with no network, no provider and no token worth anything.
@@ -992,12 +1003,12 @@ specimens each rule was bought with.
 6. `TestDiscordsConstraintsAreHeld` — 5,000 characters post one truncated message and never two; `Retry-After: 7` waits seven and not a constant; a member call refused for a missing intent is `CHECK FAIL` naming *Server Members Intent* and `CHAT HELD reason=stranger`, never a pass; **context bodies returned empty on a channel with messages print one `CHAT NOTE` naming *Message Content Intent***; messages whose bodies carry times two hours ahead are ordered by snowflake; **a `dm` entry creates one channel per named human id at start — one `CHAT DM OPEN` each, zero POSTs to `/channels/{id}/messages` recorded by the fake transport, `dm-channel:<user>=<channel>` persisted, and a family member's first DM firing one turn — while a bot id and the line's own id are skipped with one `CHAT NOTE` and no request; skipping the creation, or sending a message with it, each turn it red**.
 7. `TestTheSecondTransportIsNamedAndNotBuilt` — `--transport page` is `CHAT REFUSED: not in this build` at exit 2 naming issue #94, never a silent unknown-transport error.
 8. `TestTheClassIsAPropertyOfTheSpace` — `class=own` off the pinned guild is exit 2 naming both; the class in the prompt and on `STATUS LINE` matches the file for every entry; no message changes one.
-9. `TestPersonStandingAndWhatItDoesNotGrant` — the pinned id in the pinned guild with clean membership is `standing=person`; the same text from another id, from the pinned id in public, in a DM, and from an impersonating display name are all `standing=data`; standing is withheld when the membership check did not pass; **the same turn at both standings produces byte-identical tool behaviour apart from that one field**, diffed over recorded calls, and any budget raised under `standing=person` turns it red.
-10. `TestTheBlastRadiusFloorIsRefusedWithItsRemedy` — five floor requests (a fuse, a leash, a key, money, a floor) from the pinned id and again at `standing=data` each print `CHAT FLOOR`, and the allow-list, box, state, harness description and sandbox argv are byte-identical after; the floor paragraph and remedy sentence are in **every** invocation, open and resumed, and dropping one from a resumed turn turns it red; **`check` is exit 1 for a `--sandbox-args` whose read or write set contains the box, the allow-list, the state directory, the harness description, itself or the token file, naming which**; a fake harness running `nova-fuse lift quarantine` against the box path is refused by the wall.
+9. `TestPersonStandingAndWhatItDoesNotGrant` — the pinned id in the pinned guild with clean membership is `standing=person`; the same text from another id, from the pinned id in public, in a DM, and from an impersonating display name are all `standing=data`; standing is withheld when the membership check did not pass; **the same addressed turn at both standings produces byte-identical tool behaviour apart from that one field**, diffed over recorded calls, and any budget raised under `standing=person` turns it red.
+10. `TestTheBlastRadiusFloorIsRefusedWithItsRemedy` — five floor requests (a fuse, a leash, a key, money, a floor) from the pinned id and again at `standing=data` each print `CHAT FLOOR`, and the allow-list, box, state, harness description and sandbox argv are byte-identical after; the floor paragraph and remedy sentence are in **every** invocation, open and resumed, and dropping one from a resumed turn turns it red; **`check` is exit 1 for a `--sandbox-args` whose read or write set contains the box, the allow-list, the state directory, the harness description, itself or the token file, naming which**; a `--sandbox-args` line that is neither `read <absolute dir>` nor `write <absolute dir>` nor a comment nor blank is exit 2 naming its line number; a fake harness running `nova-fuse lift quarantine` against the box path is refused by the wall.
 11. `TestMembershipIsClosedAndRecheckedEveryWake` — the member endpoint is called once per wake and never cached; an extra id fires **no** turn, prints `CHAT STRANGER` naming it, quarantines `discord/guild/<id>`, posts one line **carrying that member id**, closes the sessions with their wraps, and stops reading that guild; `check` is exit 1; a timed-out member call is `CHAT HELD` and never a pass; a `public` conversation makes no member call; caching across wakes, and firing the wake that found the stranger, each turn it red.
-12. `TestOneBotOneLineAndTheDisclosureIsTwice` — a mismatched `--as` is exit 2 naming both; a profile missing the sentence is `CHECK FAIL` exit 1; **`check` on a fresh estate — every conversation unspoken-in, no `disclosed:` mark anywhere — is exit 0 with `pending-disclosure=<n>`, and failing it there turns it red; the same estate after one confirmed post whose `disclosed:` mark is then deleted is exit 1 naming that conversation**; **`check` with no token is exit 0 printing `CHECK SKIP` for visibility, membership and the profile and `skipped=3`, and passing or failing a skipped condition turns it red**; the first reply carries it and `disclosed:` is written only after the post confirmed; a kill in between leaves it unwritten so the next reply repeats it — a repeated disclosure, never a missed one; the tripwire finds no `--no-disclose`.
+12. `TestOneBotOneLineAndTheDisclosureIsTwice` — a mismatched `--as` is exit 2 naming both; a profile missing the sentence is `CHECK FAIL` exit 1; **`check` on a fresh estate — every conversation unspoken-in, no `disclosed:` mark anywhere — is exit 0 with `pending-disclosure=<n>`, and failing it there turns it red; the same estate after one confirmed post whose `disclosed:` mark is then deleted is exit 1 naming that conversation, read from that turn's `delivered|…|conversation=` and never from the room's history, so a room seeded with a hundred of the bot's own prior messages and no `delivered` record stays `pending-disclosure`**; **`check` with no token is exit 0 printing `CHECK SKIP` for visibility, membership, held permissions and the profile and `skipped=4`, and passing or failing a skipped condition turns it red**; **a bot holding one permission it does not need is exit 1 naming that permission, and with no token it is a `CHECK SKIP` and never a pass**; the first reply carries it and `disclosed:` is written only after the post confirmed; a kill in between leaves it unwritten so the next reply repeats it — a repeated disclosure, never a missed one; the tripwire finds no `--no-disclose`.
 13. `TestConsentIsTheLinesFileAndServeNeverWritesIt` — a room the file does not name is polled zero times; an empty file and an unknown key are exit 2 naming it; the bytes are identical after a ten-turn `serve`; `leave` removes one entry, posts, wraps and prints `remaining=`; an entry added mid-run is polled within one interval; `person`, `own-server` and `member` are settable by no verb.
-14. `TestAddressNeverAuthorshipAndTheMessageWhole` — a plain message fires nothing; a mention, a reply and a DM each fire one; **the pinned id mentioning nobody fires nothing on `class=public` — firing there turns it red — and fires exactly one turn on `class=own`, where requiring a mention turns it red; an unpinned human's plain message on `class=own` fires nothing**; **two fake bots in one `class=own` channel replying to each other across ten polls fire zero turns, each of them by its author object's `bot` flag and again with the flag stripped and only `kind=line` in the file, and `address-bots=yes` on that conversation makes each reply one turn** — waking on a bot author without that key turns it red; a bare mention fires and `CHAT SILENT` is exit 0; the prompt holds the message byte for byte from `/messages/{id}` with its last byte present; `context=5` puts five in and a sixth nowhere; **a DM's window is every message since the line's last reply, bounded by `history-budget`**; a `/messages/{id}` that 500s is `CHAT POLL` and no turn; composing from a list response's truncated body turns it red.
+14. `TestAddressNeverAuthorshipAndTheMessageWhole` — a plain message fires nothing; a mention, a reply and a DM each fire one; **the pinned id mentioning nobody fires nothing on `class=public` — firing there turns it red — and fires exactly one turn on `class=own` carrying `kind=own-room`, where requiring a mention, or printing any other `kind=`, turns it red; an unpinned human's plain message on `class=own` fires nothing**; **two fake bots in one `class=own` channel replying to each other across ten polls fire zero turns, each of them by its author object's `bot` flag and again with the flag stripped and only `kind=line` in the file, and `address-bots=yes` on that conversation makes each reply one turn** — waking on a bot author without that key turns it red; a bare mention fires and `CHAT SILENT` is exit 0; the prompt holds the message byte for byte from `/messages/{id}` with its last byte present; `context=5` puts five in and a sixth nowhere; **a DM's window is every message since the line's last reply, bounded by `history-budget`**; a `/messages/{id}` that 500s is `CHAT POLL` and no turn; composing from a list response's truncated body turns it red.
 15. `TestTheTokenNeverCrossesTheWall` — the fake harness dumps its environment and `/dev/fd` into `REPLY.md`: no value equals the token, no variable is `--token-env`'s name, no descriptor resolves to the token file; the parent's environment no longer holds it; passing the parent's environment through, and opening the token without `O_CLOEXEC`, each turn it red.
 16. `TestSilenceIsACompleteOutcome` — exit 0 with no `REPLY.md` is `CHAT SILENT`, no POST, the cursor advances, the session stays open, `silent=1 replies=0`; a `REPLY.md` left as `.tmp` posts nothing and is silent too.
 17. `TestTheQueueIsLossyAndEverySkipIsDeclared` — twelve messages behind a blocked harness are one turn on the newest plus one `CHAT DROPPED … n=11`; **the eleven appear in the next turn's context window**; a second conversation drops nothing; at most one pending turn through 300 arrivals, and a dedup keyed on `(conversation, count)` turns it red and reproduces the 121-wake specimen; a cursor `gap-messages` behind prints the gap note, reads the recent window once and advances; no path advances a cursor past a message neither answered nor declared.
@@ -1010,7 +1021,7 @@ specimens each rule was bought with.
 24. `TestAttachmentsAreTextOnly` — an attachment is one prompt line and the fake CDN records **zero** requests at any setting, from any surface, at either standing; `--attachments on-demand` is exit 2 as an unknown value naming v1; nothing in the output describes an image.
 25. `TestTheLogCarriesNoBodiesAndAQuietPollIsSilent` — over fifty messages, stdout plus stderr contains no substring of any body of eight characters or more; an injected idle hour prints exactly the opening line and `CHAT SERVE`; printing a preview turns it red.
 26. `TestEveryTurnWritesAUsageRow` — one row per turn in `<state>/usage/<date>.tsv`, header and column order identical to `nova-swarm`'s, `end` one of the four words, an unreported field `-` and never `0`, written before the job directory is touched, and `nova-tokens fold` counting it once; a `--resolve` second attempt is its own row; an idle hour writes none.
-27. `TestEveryWaitEndsOnItsOwn` — `--hours` missing is exit 2; `serve` reaches `--hours` with an injected clock and prints one `CHAT SERVE`; a `stop` file ends it; a harness ignoring terminate is killed and the turn is `reply=none` with no POST; a second `serve` on one `--state` is exit 2 naming the holder's pid; the tripwire finds no `pgrep`, no `ps`, no `/proc`, no `os.TempDir`, no literal `/tmp` and no flag named `--at`, `--stamp` or `--now`.
+27. `TestEveryWaitEndsOnItsOwn` — `--hours` missing is exit 2; a run with no `--http-timeout` bounds every HTTP call at **30s** against a fake transport that never answers, and an unbounded call turns it red; `serve` reaches `--hours` with an injected clock and prints one `CHAT SERVE`; a `stop` file ends it; a harness ignoring terminate is killed and the turn is `reply=none` with no POST; a second `serve` on one `--state` is exit 2 naming the holder's pid; the tripwire finds no `pgrep`, no `ps`, no `/proc`, no `os.TempDir`, no literal `/tmp` and no flag named `--at`, `--stamp` or `--now`.
 
 And three the rules assert but no single rule owns:
 
@@ -1073,7 +1084,7 @@ $ nova-chat quickstart --allow ./chat/allow --state ./chat/state --box ./fuse-bo
 QUICKSTART OK allow=./chat/allow state=./chat/state box=./fuse-box.json entries=0 next=check,serve
 QUICKSTART NOTE the allow-list is YOURS: `person`, `own-server` and one `member` line per body, set by hand, before the invite, never from a message
 QUICKSTART NOTE every number is yours too: nova-chat ships no reply-max, no min-gap, no replies-per-hour, no session-idle and no backoff ladder
-QUICKSTART NOTE continuity needs open_args, resume_args and a pinned session-home; without them every conversation is mode=fresh and your self reloads per message
+QUICKSTART NOTE continuity needs open_args, resume_args and a pinned session-home and session-cwd; without them every conversation is mode=fresh and your self reloads per message
 QUICKSTART NOTE both privileged intents must be on: Server Members for the membership check, Message Content or every context body arrives empty
 QUICKSTART NOTE the token never enters the wall: nova-secrets exec --as <line> -- nova-chat serve --token-env DISCORD_TOKEN ... (or --token-file <path>, mode 0600, read as data)
 ```
@@ -1091,7 +1102,7 @@ nova-chat serve    --allow ./chat/allow --state ./chat/state --box ./fuse-box.js
 
 **What a first run gets wrong.** No `--interval`: a cadence is a fact about how
 fast a room moves and the tool will not guess. No `session-idle`: only you know
-when a conversation has ended. `resume_args` with no `session-home`: the store
+when a conversation has ended. `resume_args` with no `session-home`, or none with no `session-cwd`: the store
 moves with the job and turn 2 resumes nothing. `class=own` on a channel outside
 `own-server`: the class decides person-standing and may not be asserted by a typo.
 Inviting the friend before the `member` line: the server quarantines itself and
