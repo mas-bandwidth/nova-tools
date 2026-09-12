@@ -91,7 +91,8 @@ flags:
                         or failed -- because a reader who wanted the number
                         should not have to pay for the list. verify caps each
                         KIND separately, so ten thousand wikilink findings
-                        cannot bury the one frontmatter finding. the words the
+                        cannot bury the one frontmatter finding.
+  --words <w>           quickstart only, repeatable: the words the
                         demonstration search runs. Default: the corpus's three
                         most frequent terms that are not function words, named
                         on the printed command line like any other choice.
@@ -572,7 +573,7 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	}
 	bad := !ok
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "nova-memory quickstart: unexpected argument %q; the words for the search go after --words\n", fs.Arg(0))
+		refuse(stderr, " quickstart", fmt.Sprintf("unexpected argument %q; the words for the search go after --words", fs.Arg(0)))
 		bad = true
 	}
 	if given["draft"] && strings.TrimSpace(*draft) == "" {
@@ -668,7 +669,7 @@ func cmdStats(args []string, stdout, stderr io.Writer) int {
 	}
 	bad := !ok
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "nova-memory stats: unexpected argument %q\n", fs.Arg(0))
+		refuse(stderr, " stats", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 		bad = true
 	}
 	if bad {
@@ -855,7 +856,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	}
 	bad := !ok
 	if fs.NArg() > 0 {
-		fmt.Fprintf(stderr, "nova-memory verify: unexpected argument %q\n", fs.Arg(0))
+		refuse(stderr, " verify", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 		bad = true
 	}
 	gateLinks := false

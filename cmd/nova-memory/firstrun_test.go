@@ -623,3 +623,27 @@ func TestTheEchoedStepPastesBackIntoThatPlatformsShell(t *testing.T) {
 		})
 	}
 }
+
+// Every flag defined by any subcommand must have a flag entry in the usage banner (F5-7).
+func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
+	exit, stdout, _ := runCLI(t, "", "help")
+	if exit != 0 {
+		t.Fatalf("help failed: %d", exit)
+	}
+	// All twelve flags supported by nova-memory subcommands.
+	flags := []string{
+		"root", "channels", "k", "exclude", "floor", "links",
+		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft",
+	}
+	for _, f := range flags {
+		target := "  --" + f + " "
+		if !strings.Contains(stdout, target) {
+			t.Errorf("flag --%s has no entry in the usage banner flags list:\n%s", f, stdout)
+		}
+	}
+	// Assert --fail-max default is not welded onto words.
+	welded := "cannot bury the one frontmatter finding. the words the demonstration search runs."
+	if strings.Contains(stdout, welded) {
+		t.Errorf("the --fail-max and --words help text are still welded together:\n%s", stdout)
+	}
+}
