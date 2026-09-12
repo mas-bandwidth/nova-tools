@@ -700,3 +700,105 @@ func TestGrokDecoderIsDeterministicAndSourceShapesAreNamed(t *testing.T) {
 		t.Errorf("the mapping ID is a sha256 content ID")
 	}
 }
+
+// The hand-written lexeme grammars, which replaced three compiled patterns because
+// internal/tokens keeps its only two to repo.go and bus.go. Two halves: the spellings
+// directly, including the ones no JSON document can carry, and then a synthetic turn per
+// valid-JSON spelling decoded end to end -- if this file called a lexeme valid and the wire
+// refused it, SealObservation would refuse the record and the decode would fail here.
+func TestGrokLexemeGrammarsAcceptWhatTheWireAccepts(t *testing.T) {
+	for _, c := range []struct {
+		lexeme string
+		intOK  bool
+		decOK  bool
+	}{
+		{"0", true, true},
+		{"1", true, true},
+		{"1100", true, true},
+		{"1180591620717411303424", true, true}, // above 2^53: no float, no rounding
+		{"007", false, false},
+		{"", false, false},
+		{"1.0", false, true},
+		{"0.50", false, true},
+		{"1.", false, false},
+		{".5", false, false},
+		{"1e3", false, true},
+		{"7E+2", false, true},
+		{"1e", false, false},
+		{"1e+", false, false},
+		{"+1", false, false},
+		{"-1", false, false},
+		{"-0.5", false, false},
+		{"77x", false, false},
+		{"0x10", false, false},
+	} {
+		if got := grokIsInteger(c.lexeme); got != c.intOK {
+			t.Errorf("grokIsInteger(%q) = %v, want %v", c.lexeme, got, c.intOK)
+		}
+		if got := grokIsDecimal(c.lexeme); got != c.decOK {
+			t.Errorf("grokIsDecimal(%q) = %v, want %v", c.lexeme, got, c.decOK)
+		}
+		// A negative is never valid under either kind: a negative count is an explicit
+		// failure and not a spelling problem.
+		if strings.HasPrefix(c.lexeme, "-") && grokValidLexeme(c.lexeme, "integer") {
+			t.Errorf("a negative counter is never a valid lexeme: %q", c.lexeme)
+		}
+	}
+	for _, c := range []struct{ id string }{
+		{"sha256:00b0ebe373b6f79f0ca1f029246273d75f84517e57a2fb99c5cd486b2dcb526c"},
+	} {
+		if !grokIsContentID(c.id) {
+			t.Errorf("grokIsContentID(%q) = false", c.id)
+		}
+	}
+	for _, bad := range []string{
+		"", "mapping.json", "sha256:", "sha1:00b0ebe373b6f79f0ca1f029246273d75f84517e57a2fb99c5cd486b2dcb526c",
+		"sha256:00B0EBE373B6F79F0CA1F029246273D75F84517E57A2FB99C5CD486B2DCB526C",
+		"sha256:00b0ebe373b6f79f0ca1f029246273d75f84517e57a2fb99c5cd486b2dcb526",
+	} {
+		if grokIsContentID(bad) {
+			t.Errorf("grokIsContentID(%q) = true; an ID is sha256: and 64 lowercase hex digits", bad)
+		}
+	}
+
+	// End to end, through the seal. Only spellings a JSON document can carry appear here.
+	_, mappingID := grokManifest(t)
+	for _, c := range []struct {
+		name        string
+		input, cost string
+		wantIn      string // "" means unavailable
+		wantCost    string
+	}{
+		{"plain", "1000", "77", "1000", "77"},
+		{"zero", "0", "0", "0", "0"},
+		{"above 2^53", "1180591620717411303424", "1180591620717411303424", "1180591620717411303424", "1180591620717411303424"},
+		{"a decimal cost keeps its fraction", "10", "0.50", "10", "0.50"},
+		{"a decimal cost keeps its exponent", "10", "7E+2", "10", "7E+2"},
+		{"an integer counter is not a decimal", "1.0", "77", "", "77"},
+		{"an integer counter carries no exponent", "1e3", "77", "", "77"},
+		{"a negative counter is unavailable", "-5", "-7", "", ""},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			raw := `{"sessionId":"lexeme-fixture","updatedAt":"2026-09-12T13:00:00Z","session":{},"turns":[{` +
+				`"turnNumber":1,"endedAt":"2026-09-12T00:05:00Z","inputTokens":` + c.input +
+				`,"outputTokens":1,"cachedReadTokens":0,"cacheCreationTokens":0,"reasoningTokens":0,` +
+				`"totalTokens":1,"modelCalls":1,"costUsdTicks":` + c.cost + `,"turnCount":1}]}`
+			recs, err := DecodeGrokTurns([]byte(raw), GrokOptions{MappingID: mappingID})
+			if err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			for field, want := range map[string]string{"inputTokens": c.wantIn, "costUsdTicks": c.wantCost} {
+				f := recs[0].Observation.RawUsage[field]
+				if want == "" {
+					if f.Presence != "unavailable" || f.Value != nil || f.Reason == nil || *f.Reason != "parse_failed" {
+						t.Errorf("%s: an invalid lexeme is unavailable/parse_failed: %+v", field, f)
+					}
+					continue
+				}
+				if !f.Present() || f.Value == nil || *f.Value != want {
+					t.Errorf("%s: the original lexeme is kept byte for byte: %+v want %q", field, f, want)
+				}
+			}
+		})
+	}
+}

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -188,7 +187,7 @@ type GrokKeyGroup struct {
 // this mapping's allowlists before returning them: a record this decoder emits is a record the
 // publisher boundary accepts, by construction rather than by review.
 func DecodeGrokTurns(raw []byte, opts GrokOptions) ([]GrokRecord, error) {
-	if !grokContentID.MatchString(opts.MappingID) {
+	if !grokIsContentID(opts.MappingID) {
 		return nil, errors.New("grok: the mapping ID is a sha256 content ID of the sealed mapping manifest")
 	}
 	if err := grokCheckProducerVersion(opts.ProducerVersion); err != nil {
@@ -382,7 +381,7 @@ func grokTurnNumber(turn map[string]interface{}) (string, error) {
 	if !ok {
 		return "", errors.New("turnNumber is a JSON number")
 	}
-	if !grokIntegerLexeme.MatchString(n.String()) {
+	if !grokIsInteger(n.String()) {
 		return "", errors.New("turnNumber is an exact decimal integer: 0 or [1-9][0-9]*")
 	}
 	return n.String(), nil
@@ -593,15 +592,92 @@ func grokValidLexeme(lexeme, numberKind string) bool {
 	}
 	switch numberKind {
 	case "integer":
-		return grokIntegerLexeme.MatchString(lexeme)
+		return grokIsInteger(lexeme)
 	case "decimal":
-		return grokDecimalLexeme.MatchString(lexeme)
+		return grokIsDecimal(lexeme)
 	}
 	return false
 }
 
-var (
-	grokIntegerLexeme = regexp.MustCompile(`^(0|[1-9][0-9]*)$`)
-	grokDecimalLexeme = regexp.MustCompile(`^(0|[1-9][0-9]*)(\.[0-9]+)?([eE][-+]?[0-9]+)?$`)
-	grokContentID     = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
-)
+// The three lexeme grammars, HAND-WRITTEN. internal/tokens keeps exactly two files that
+// compile a pattern -- repo.go's one attribution rule and bus.go's note grammar -- because the
+// prototype had two repo tables in two scripts and they disagreed about three repos, and
+// cmd/nova-tokens' TestOnlyRepoGoCarriesTheAttributionRule holds that line for every other
+// file in the package. These are scanners over bytes instead. They accept exactly what
+// internal/records enforces at the seal, which is the property that matters: a lexeme this
+// file calls valid and the wire refuses would be a record refused after its turn had already
+// been classified as present.
+
+// grokIsInteger: `0` or [1-9][0-9]*. `007`, `1.0`, `1e3`, `+1`, `-1` and "" are all invalid
+// rather than trimmed into shape.
+func grokIsInteger(s string) bool {
+	if s == "0" {
+		return true
+	}
+	if s == "" || s[0] < '1' || s[0] > '9' {
+		return false
+	}
+	for i := 1; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// grokIsDecimal: (0|[1-9][0-9]*)(.[0-9]+)?([eE][-+]?[0-9]+)? -- RFC 8259's number grammar
+// without the sign this format has no evidence for. A cost tick keeps its own spelling, so
+// the check never rewrites one.
+func grokIsDecimal(s string) bool {
+	i := 0
+	switch {
+	case i < len(s) && s[i] == '0':
+		i++
+	case i < len(s) && s[i] >= '1' && s[i] <= '9':
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+	default:
+		return false
+	}
+	if i < len(s) && s[i] == '.' {
+		i++
+		start := i
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		if i == start {
+			return false
+		}
+	}
+	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
+		i++
+		if i < len(s) && (s[i] == '+' || s[i] == '-') {
+			i++
+		}
+		start := i
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		if i == start {
+			return false
+		}
+	}
+	return i == len(s)
+}
+
+// grokIsContentID: `sha256:` and 64 LOWERCASE hex digits. Uppercase is refused rather than
+// folded, because two spellings of one digest are two identities.
+func grokIsContentID(s string) bool {
+	const prefix = "sha256:"
+	if len(s) != len(prefix)+64 || !strings.HasPrefix(s, prefix) {
+		return false
+	}
+	for i := len(prefix); i < len(s); i++ {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
+}
