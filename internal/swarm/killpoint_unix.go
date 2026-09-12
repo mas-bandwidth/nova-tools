@@ -83,12 +83,27 @@ func waitForInjectedFile(path string, within time.Duration) {
 	}
 }
 
-// waitForOrphan waits until this process has been reparented -- its parent is gone -- and
-// gives up on its own.
+// startParent is the pid of the process that FORKED this one, read at program start
+// because that is the only moment it is certainly still there. Read at the pause point
+// instead it is often already 1 -- the runner dies a millisecond after the fork and the
+// child needs ten to reach any code of its own -- and a wait for "the parent I have now to
+// change" then waits for its whole deadline and calls that an orphan.
+var startParent = os.Getppid()
+
+// waitForOrphan waits until the process that forked this one is gone, and gives up on its
+// own.
 func waitForOrphan(within time.Duration) {
-	parent := os.Getppid()
+	// ALREADY AN ORPHAN, which is the ordinary case rather than the odd one: the runner's
+	// injected death lands a microsecond after the fork and a new process needs a
+	// millisecond to reach any code of its own, so by the time this package initialised,
+	// the parent was init. Measured on ubuntu 6.8: startParent=1 every time, and a wait
+	// for "the parent I started with to change" then waits for its whole deadline and
+	// calls that an orphan.
+	if startParent <= 1 {
+		return
+	}
 	for waited := time.Duration(0); waited < within; waited += 5 * time.Millisecond {
-		if os.Getppid() != parent {
+		if os.Getppid() != startParent {
 			return
 		}
 		time.Sleep(5 * time.Millisecond)

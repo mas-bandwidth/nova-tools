@@ -450,6 +450,14 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     read: one pool lock held for `run`'s life cannot also be the lock the
     child's identify takes, and a supervisor's death cannot precede its
     acknowledgement — hence `slots.lock`, and `aborted.json` before exit.)
+    **The supervisor ignores SIGHUP**, for that same sentence: a supervisor is
+    its runner's child in a group of its own, and when the runner dies POSIX
+    has the kernel send a newly orphaned group that holds a stopped process
+    SIGHUP and then SIGCONT. The hangup's default action ended a supervisor
+    before identify, before `aborted.json` and before `exit.json` — a job that
+    vanished with no durable evidence of any kind (ubuntu and macOS, measured
+    2026-09-12). Nothing here ends a job by hangup: a job ends at its deadline,
+    at its budget, at the runner's group kill, or by `stop`.
 
 ## The verbs
 
@@ -1494,7 +1502,13 @@ be seen red before it is trusted.
     supervisor finds the file already there, and an injected kill point
     between the rename and the exit leaves the file, which the next `run`
     honours; a mutation that exits, or kills its group, before the rename
-    turns the test red; a planted `aborted.json` with `survivors=1` keeps
+    turns the test red; **a hangup never costs the acknowledgement**: with the
+    two deaths staged the other way round — the supervisor stopped BEFORE the
+    runner's death, so that the kernel hangs its newly orphaned group up — the
+    supervisor survives, is resumed by the SIGCONT that comes with the hangup,
+    and completes its launch transaction, and a mutation that lets the hangup
+    end it turns the test red with the slot quarantined `reserved, launch
+    unproven`; a planted `aborted.json` with `survivors=1` keeps
     the slot quarantined (`RUN QUARANTINE … aborted, survivors=1`) and
     never prints `RUN RECLAIM`; the next `run` reads
     `aborted.json`, prints `RUN RECLAIM … end=unlaunched`, the task is
