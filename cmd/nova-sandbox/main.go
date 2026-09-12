@@ -373,11 +373,23 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	bad = append(bad, policyBad...)
 	if len(bad) > 0 {
 		for _, r := range bad {
-			reason := r.Reason
-			if reason == "" {
-				reason = "check"
+			// The PROBE REFUSED grammar is a FIXED set of six reasons
+			// (SPEC-SANDBOX.md, Output grammar): check, secret_inside_allow,
+			// probe_outside_inside, probe_outside_unwritable, no_sandbox,
+			// net_unenforceable. Everything gathered above is refused BEFORE anything
+			// runs, so its reason is `check` -- and the spec's own worked example is
+			// exactly this line: a probe whose HOME is outside every --write is
+			// `PROBE REFUSED reason=check ... home_outside` ("The probe"). The
+			// refusal's own token is therefore named IN THE TEXT, where a reader
+			// searching for home_outside or bad_write still finds it and the grammar
+			// stays the one the spec publishes. DeepSeek's read of #108 at ab880be,
+			// finding 1: the previous revision forwarded bad_write, home_outside,
+			// bad_read and no_command into reason=, tokens the grammar does not list.
+			text := r.Text
+			if r.Reason != "" && r.Reason != "check" {
+				text += " (" + r.Reason + ")"
 			}
-			fmt.Fprintf(stderr, "PROBE REFUSED reason=%s: %s\n", oneline.Field(reason), oneline.Escape(r.Text))
+			fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s\n", oneline.Escape(text))
 		}
 		return sandbox.ExitCannotRun
 	}

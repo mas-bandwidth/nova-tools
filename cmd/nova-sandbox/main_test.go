@@ -1113,6 +1113,14 @@ func TestTheTranscriptNamesTheToolsOwnBinary(t *testing.T) {
 // same pass -- and a refusal here reports EVERY independent problem in one go
 // (docs/SPEC-SANDBOX.md's onboarding, and SPEC-BOARD's rule 6 in the same
 // words). The probe's own refusals are the same rule.
+// probeRefusalReasons is the PROBE REFUSED reason set of docs/SPEC-SANDBOX.md's output
+// grammar, copied verbatim. A probe refusal that invents a token outside it is a tool and
+// a spec that disagree, and the grammar is what a caller's parser stands on.
+var probeRefusalReasons = map[string]bool{
+	"check": true, "secret_inside_allow": true, "probe_outside_inside": true,
+	"probe_outside_unwritable": true, "no_sandbox": true, "net_unenforceable": true,
+}
+
 func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 	j := newJob(t)
 
@@ -1128,6 +1136,19 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 		}
 		if lines := strings.Count(strings.TrimSpace(errOut), "\n") + 1; lines < 2 {
 			t.Errorf("both refusals must be printed, one line each:\n%s", errOut)
+		}
+		// One refusal per problem, and every one of them inside the published
+		// grammar: a bare probe's missing --write is reason=check naming bad_write,
+		// not reason=bad_write.
+		for _, line := range strings.Split(strings.TrimSpace(errOut), "\n") {
+			reason, _, ok := strings.Cut(strings.TrimPrefix(line, "PROBE REFUSED reason="), ":")
+			if !ok || !strings.HasPrefix(line, "PROBE REFUSED reason=") {
+				t.Errorf("not a PROBE REFUSED line: %q", line)
+				continue
+			}
+			if !probeRefusalReasons[reason] {
+				t.Errorf("reason=%s is not in the PROBE REFUSED grammar of SPEC-SANDBOX.md:\n%s", reason, line)
+			}
 		}
 	})
 
@@ -1147,13 +1168,34 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 		}
 	})
 
-	// Every refusal still carries its own reason= token, and a --secret that was
-	// named but does not exist is still its own reason rather than "check".
-	t.Run("a --secret that does not exist keeps its reason", func(t *testing.T) {
+	// Every one of these refusals is a PROBE REFUSED of the SPEC-SANDBOX grammar,
+	// whose reason set is fixed at six -- and a refusal raised before anything runs
+	// is `check`, with its own token named in the TEXT, the shape the spec itself
+	// writes as `PROBE REFUSED reason=check ... home_outside`. This subtest is named
+	// for a reason, so it asserts the reason: at ab880be it asserted only the prefix
+	// `PROBE REFUSED reason=` and passed against main's main.go too (DeepSeek's read
+	// of #108, finding 3).
+	t.Run("a --secret that does not exist is reason=check naming bad_read", func(t *testing.T) {
 		code, _, errOut := j.tool(t, j.env(), "probe", "--write", j.write,
 			"--secret", filepath.Join(j.base, "no-such-file"))
-		if code != 2 || !strings.Contains(errOut, "PROBE REFUSED reason=") {
-			t.Errorf("exit = %d:\n%s", code, errOut)
+		if code != 2 {
+			t.Errorf("exit = %d, want 2:\n%s", code, errOut)
+		}
+		if !strings.Contains(errOut, "PROBE REFUSED reason=check: ") {
+			t.Errorf("the refusal does not carry a reason of the PROBE REFUSED set; SPEC-SANDBOX fixes it to check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable:\n%s", errOut)
+		}
+		if !strings.Contains(errOut, "(bad_read)") {
+			t.Errorf("the refusal drops the bad_read token a reader greps for; it belongs in the text:\n%s", errOut)
+		}
+		// And no reason= outside the published set reaches the reader.
+		for _, line := range strings.Split(errOut, "\n") {
+			if !strings.HasPrefix(line, "PROBE REFUSED reason=") {
+				continue
+			}
+			reason, _, _ := strings.Cut(strings.TrimPrefix(line, "PROBE REFUSED reason="), ":")
+			if !probeRefusalReasons[reason] {
+				t.Errorf("reason=%s is not in the PROBE REFUSED grammar of SPEC-SANDBOX.md:\n%s", reason, line)
+			}
 		}
 		if strings.Contains(errOut, "--write is required") {
 			t.Errorf("a run that named --write was told it had not:\n%s", errOut)
@@ -1167,7 +1209,7 @@ func TestProbeNamesEveryMissingRequiredFlagAtOnce(t *testing.T) {
 // inside a --write. An example that cannot be pasted is a documentation defect.
 func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
 	j := newJob(t)
-	code, out, _ := j.tool(t, j.env(), "help")
+	code, out, errOut := j.tool(t, j.env(), "help")
 	if code != 0 {
 		t.Fatalf("help exit %d", code)
 	}
@@ -1181,6 +1223,86 @@ func TestTheProbeExampleInTheBannerSetsHome(t *testing.T) {
 		t.Fatal("the banner has no probe example at all")
 	}
 	if !strings.Contains(probe, "HOME=") {
-		t.Errorf("the probe example omits HOME=, so a reader who pastes it is refused by rule 9:\n%s", probe)
+		t.Fatalf("the probe example omits HOME=, so a reader who pastes it is refused by rule 9:\n%s", probe)
 	}
+
+	// ONBOARDING.md: the example block's lines are RUN, not grepped. A grep for
+	// "HOME=" goes green on an example that still exits 2 for any other reason --
+	// a --secret that no longer exists, a flag that was renamed, a --write whose
+	// parent is unwritable. So paste the block the way a reader does: every
+	// /Users/me path becomes a path in this test's temp dir, the mkdir line is the
+	// mkdir, and the probe line is run with the HOME it carries. EXIT 2 IS "COULD
+	// NOT RUN", and that is the failure this test exists to catch (DeepSeek's read
+	// of #108 at ab880be, finding 2).
+	needDarwin(t)
+	home := ""
+	var argv []string
+	for _, line := range exampleCommands(t, probe, j.base) {
+		switch {
+		case strings.HasPrefix(line, "mkdir -p "):
+			if err := os.MkdirAll(strings.TrimPrefix(line, "mkdir -p "), 0o755); err != nil {
+				t.Fatal(err)
+			}
+		case strings.Contains(line, "nova-sandbox probe "):
+			fields := strings.Fields(line)
+			for i, f := range fields {
+				if strings.HasPrefix(f, "HOME=") {
+					home = strings.TrimPrefix(f, "HOME=")
+				}
+				if f == "nova-sandbox" {
+					argv = fields[i+1:]
+				}
+			}
+		default:
+			t.Fatalf("the probe example has a line this test cannot run: %q", line)
+		}
+	}
+	if home == "" || len(argv) == 0 {
+		t.Fatalf("the probe example is not a HOME= plus a nova-sandbox command:\n%s", probe)
+	}
+	// The one thing a reader supplies that a temp dir cannot: the credential file the
+	// example names. It is created empty -- the probe proves it CANNOT be read, and
+	// rule 5 refuses a --secret that is not there.
+	for i, a := range argv {
+		if a == "--secret" && i+1 < len(argv) {
+			if err := os.MkdirAll(filepath.Dir(argv[i+1]), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(argv[i+1], nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	code, out, errOut = j.tool(t, []string{"HOME=" + home, "PATH=/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin"}, argv...)
+	if code == 2 {
+		t.Fatalf("the pasted probe example could not run (exit 2); an example that exits 2 is a documentation defect:\n%s\nstderr: %s", probe, errOut)
+	}
+	if code != 0 || !strings.Contains(out, "PROBE OK") {
+		t.Fatalf("the pasted probe example exits %d rather than proving the wall:\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+}
+
+// exampleCommands turns one banner example block into the lines a reader would type:
+// continuations joined, indentation dropped, and every /Users/me path pointed at a
+// directory this test owns. The substitution is the only edit a reader makes.
+func exampleCommands(t *testing.T, block, base string) []string {
+	t.Helper()
+	var lines []string
+	joined := ""
+	for _, raw := range strings.Split(block, "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		if strings.HasSuffix(line, "\\") {
+			joined += strings.TrimSpace(strings.TrimSuffix(line, "\\")) + " "
+			continue
+		}
+		lines = append(lines, strings.ReplaceAll(joined+line, "/Users/me", base))
+		joined = ""
+	}
+	if joined != "" {
+		t.Fatalf("the example block ends in a continuation:\n%s", block)
+	}
+	return lines
 }
