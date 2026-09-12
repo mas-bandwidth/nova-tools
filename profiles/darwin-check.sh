@@ -23,7 +23,9 @@ SCRATCH="$SELF_DIR/../.darwin-check-scratch.$$"
 
 mkdir -p "$SCRATCH"
 SCRATCH="$(cd -- "$SCRATCH" && pwd -P)"
-cleanup() { chmod -R u+w "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH"; }
+NC_PIDS=()
+cleanup() { [[ ${#NC_PIDS[@]} -gt 0 ]] && kill "${NC_PIDS[@]}" 2>/dev/null || true
+           chmod -R u+w "$SCRATCH" 2>/dev/null || true; rm -rf "$SCRATCH"; }
 trap cleanup EXIT
 
 W="$SCRATCH/w"                  # the write set
@@ -48,7 +50,10 @@ PROFILE="$SCRATCH/p.sb"
 ancestors_of() { local d; d="$(dirname -- "$1")"; while [[ "$d" != "/" ]]; do printf '%s\n' "$d"; d="$(dirname -- "$d")"; done; }
 
 OPTROOTS=""
-for r in /opt/homebrew /opt/local "$(dirname -- "$GIT")" /private/var/db; do
+# the documented darwin optional roots, and nothing else: a check that grants a root
+# the spec's table does not name is testing a broader policy than the document.
+# (A caller whose git is the Xcode shim names /private/var/db with --read, not here.)
+for r in /opt/homebrew /opt/local "$(dirname -- "$GIT")"; do
   # skip-if-absent: an absent root is never a refusal
   [[ -d "$r" ]] || continue
   case "$r" in /usr/*|/bin|/sbin|/System/*) continue;; esac
@@ -60,8 +65,11 @@ ANCESTORS="$(
   while IFS= read -r d; do printf '(allow file-read-metadata (literal "%s"))\n' "$d"; done
 )"
 READS='(allow file-read* (subpath (param "READ0")))'
-WRITES='(allow file-read* file-write* (subpath (param "WRITE0")))'
-NET='(allow network*)'
+WRITES='(allow file-read* file-write* (subpath (param "WRITE0")))
+(allow network-outbound (subpath (param "WRITE0")))'
+# IP only: (allow network*) would grant every unix-domain socket on the machine,
+# the inherited SSH agent's among them.
+NET='(allow network-outbound (remote ip))'
 
 : > "$PROFILE"
 while IFS= read -r line; do
@@ -74,6 +82,22 @@ while IFS= read -r line; do
     *)               printf '%s\n' "$line" >> "$PROFILE" ;;
   esac
 done < "$TMPL"
+
+# ---- the child environment (rule 9: the wrapper scrubs the agent) ------------
+# The caller's environment as a swarm worker's launcher really holds it: an SSH agent
+# socket and an agent-shaped name beside a variable that must survive. The wrapper
+# builds the child environment from it by EXCLUSION -- SSH_AUTH_SOCK and every name
+# containing AGENT are dropped -- and that is what is passed through the wall below.
+CALLER_AGENT_SOCK="$SCRATCH/secret/agent.sock"
+CALLER_ENV=$(printf '%s\n' \
+  "SSH_AUTH_SOCK=$CALLER_AGENT_SOCK" \
+  "GPG_AGENT_INFO=$CALLER_AGENT_SOCK:1:1" \
+  "NOVA_KEEP=kept")
+CHILD_ENV=()
+while IFS= read -r kv; do
+  case "${kv%%=*}" in SSH_AUTH_SOCK|*AGENT*) continue;; esac
+  CHILD_ENV+=("$kv")
+done <<< "$CALLER_ENV"
 
 # ---- the runner --------------------------------------------------------------
 FAILED=0
@@ -89,6 +113,7 @@ walled() { # walled <sh-command> -> runs it inside the wall, stdout+stderr to ca
   /usr/bin/env -i \
     HOME="$HOME_DIR" PATH="/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
     TMPDIR="$NTMP" TMP="$NTMP" TEMP="$NTMP" \
+    "${CHILD_ENV[@]}" \
     /usr/bin/sandbox-exec -f "$PROFILE" \
       -D READ0="$REF" -D WRITE0="$W" -D HOME="$HOME_DIR" \
       -- /bin/sh -c "$1"
@@ -125,5 +150,45 @@ expect_deny read_secret      "cat '$SECRET' > /dev/null"
 control_ok  read_secret_control /bin/cat "$SECRET"
 expect_deny list_ancestor    "ls '$SCRATCH' > /dev/null"
 control_ok  list_ancestor_control /bin/ls "$SCRATCH"
+
+# --- #69: no socket outside the write set is reachable ------------------------
+# The socket lives in the secret directory, in NEITHER list, standing in for the SSH
+# agent's socket. Paths are RELATIVE on purpose: sun_path is 104 bytes and an absolute
+# path under a deep scratch silently fails to bind, which would pass this check for
+# the wrong reason. Two listeners, because `nc -lU` serves one connection and exits:
+# the walled attempt must not consume the one the control needs.
+SOCKDIR="$SCRATCH/secret"
+listen() { # listen <dir> <relative-socket-name>
+  { cd -- "$1" && exec /usr/bin/nc -lU "./$2"; } >/dev/null 2>&1 &
+  NC_PIDS+=("$!")
+  disown "$!" 2>/dev/null || true   # the shell must not print "Terminated" when cleanup kills it
+}
+wait_for_socket() { # wait_for_socket <path>  (bounded: 2 seconds, never unbounded)
+  local i; for i in 1 2 3 4 5 6 7 8 9 10; do [[ -S "$1" ]] && return 0; /bin/sleep 0.2; done; return 1
+}
+listen "$SOCKDIR" agent.sock
+listen "$SOCKDIR" agent-control.sock
+if wait_for_socket "$SOCKDIR/agent.sock" && wait_for_socket "$SOCKDIR/agent-control.sock"; then
+  expect_deny unix_socket_outside "nc -U ../secret/agent.sock < /dev/null"
+  set +e
+  ( cd -- "$SOCKDIR" && /usr/bin/nc -U ./agent-control.sock < /dev/null >/dev/null 2>&1 )
+  CRC=$?
+  set -e
+  if [[ $CRC -eq 0 ]]; then report ok unix_socket_outside_control
+  else report fail unix_socket_outside_control "rc=$CRC (outside the wall)"; fi
+else
+  report fail unix_socket_outside "no listener: nc -lU did not bind (sun_path is 104 bytes)"
+fi
+# the job's own socket, under the write set, is the one that must still connect
+listen "$W" job.sock
+wait_for_socket "$W/job.sock" || true
+expect_ok unix_socket_inside "nc -U ./job.sock < /dev/null"
+
+# --- rule 9: the agent is gone from the child environment ---------------------
+# The caller's environment held SSH_AUTH_SOCK and GPG_AGENT_INFO; the child must hold
+# neither, and must still hold what the caller meant to pass (the provider key arrives
+# this way, rule 6).
+expect_ok env_no_ssh_auth_sock \
+  "test -z \"\${SSH_AUTH_SOCK:-}\" && test -z \"\${GPG_AGENT_INFO:-}\" && test \"\${NOVA_KEEP:-}\" = kept"
 
 exit "$FAILED"

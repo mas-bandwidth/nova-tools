@@ -7,7 +7,7 @@ OS and toolchain roots, it may read the directories the caller named with
 `--write`, and everything else on disk is denied to it by the kernel.
 
 ```
-nova-sandbox --read <dir>... --write <dir>... [--net-deny] -- <command> <args...>
+nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] -- <command> <args...>
 ```
 
 This spec is normative. If the code and this document disagree, one of them has
@@ -129,9 +129,26 @@ near the end.
    failed probe.
 7. **Network: no promise by default, and `--net-deny` refuses where it cannot
    be enforced.** Without `--net-deny` the tool makes **no promise** about the
-   network: the policy allows it where the backend needs an explicit grant
-   (`(allow network*)` on darwin, the `internetClient` capability on windows),
-   and the line says `net=nopromise`. With `--net-deny` the caller is asking
+   network: the policy allows **IP** where the backend needs an explicit grant
+   (`(allow network-outbound (remote ip))` on darwin, the `internetClient`
+   capability on windows), and the line says `net=nopromise`. **IP, not
+   `(allow network*)`** — and that correction is why this revision exists. On
+   darwin `network*` covers unix-domain sockets as well as IP, so the previous
+   default handed the wrapped command every socket on the machine, an
+   inherited SSH agent's among them, and #69's ruling was unenforced.
+   Measured 2026-09-11 on this Mac: under `(allow network*)` a connect to a
+   socket one directory outside the write set succeeds `rc=0`; under
+   `(allow network-outbound (remote ip))` the same connect is `rc=1` inside
+   the wall and `rc=0` outside it. **Unix-domain sockets are reachable only
+   under the write set**: the generator emits one
+   `(allow network-outbound (subpath (param "WRITEn")))` per `--write`, so the
+   job's own socket (a language server, a test harness) connects and nothing
+   else does. **Inbound is not granted at all** unless the caller asks with
+   `--net-listen`, which emits `(allow network-inbound (local ip))` and
+   nothing wider; a job that does not listen cannot be listened to.
+   (`profiles/darwin-check.sh`, checks `unix_socket_outside`,
+   `unix_socket_outside_control` and `unix_socket_inside`.)
+   With `--net-deny` the caller is asking
    for an enforced denial, and the tool either delivers it or refuses to run:
    on `darwin` and `windows` the grant is withheld and the line says
    `net=denied`; on `linux` below Landlock **ABI 4** (kernel 6.7) the tool
@@ -156,11 +173,21 @@ near the end.
    toolchain whose first scratch write fails looks like a broken sandbox rather
    than a working one. `--tmp <dir>` overrides it and must resolve inside a
    `--write` path.
-9. **The environment passes through, and the caller points the child's home
-   into the write set.** This is not a secrets tool: the child inherits the
-   caller's environment, minus the three temp variables the tool sets. The
-   credential the caller deliberately passed by environment (rule 6) must
-   arrive. But an inherited `HOME` names a directory that is in no list and
+9. **The environment passes through minus the agent, and the caller points the
+   child's home into the write set.** This is not a secrets tool: the child
+   inherits the caller's environment, minus the three temp variables the tool
+   sets and minus **`SSH_AUTH_SOCK` and every variable whose name contains
+   `AGENT`** (`SSH_AGENT_PID`, `GPG_AGENT_INFO`, and whatever the next agent
+   invents — the match is on the name, so a new one needs no new release).
+   The scrub is the second half of rule 7's network policy: the wall denies
+   the agent's *socket* and the scrub removes the *address* of it, so a
+   command that would otherwise sign a push with a key it cannot read has
+   neither half. It is by **exclusion**, never an allow-list, because rule 6's
+   credential must still arrive: the tool drops the names it knows are agents
+   and passes everything else through untouched (`profiles/darwin-check.sh`,
+   check `env_no_ssh_auth_sock`: `SSH_AUTH_SOCK` and `GPG_AGENT_INFO` are gone
+   from the child and a caller variable beside them is not). The credential
+   the caller deliberately passed by environment (rule 6) must arrive. But an inherited `HOME` names a directory that is in no list and
    is therefore denied, and almost every tool a worker runs derives a path
    from it. Measured on this Mac under the profile below: with the caller's
    `HOME` inherited, `git -C <jobdir>/repo status` is `fatal: unable to
@@ -191,12 +218,22 @@ near the end.
    command is the silent sandbox rule 1 exists to prevent.
 10. **The probe proves the wall before the work runs.** `nova-sandbox probe
     --write <dir> [--read <dir>...] --secret <path>` runs five checks under the
-    real policy for this platform: a write **outside** every named path must
-    fail; a read of the named secret file must fail; a write **inside** the
-    write set must succeed; a read of a toolchain root must succeed. Any check
-    that comes back the wrong way is `PROBE REFUSED` at exit 1 naming the
-    check. The last two are not decoration: a wall that denies the work too is
-    broken, and a two-check probe would call it a pass.
+    real policy for this platform: the control write outside the wall must
+    succeed; a write **outside** every named path must fail; a read of the
+    named secret file must fail; a write **inside** the write set must
+    succeed; and a **read of the probe's own executable** must succeed. Any
+    check that comes back the wrong way is `PROBE REFUSED` at exit 1 naming
+    the check. The last two are not decoration: a wall that denies the work
+    too is broken, and a two-check probe would call it a pass. **The probe
+    takes no command**, and that is why the last check reads the probe's own
+    binary: `probe` re-executes `os.Executable()` under the policy it just
+    generated, so the resolved command of that wrapped run is `nova-sandbox`
+    itself, its directory is the root "the directory of the resolved command"
+    by construction, and the file is certain to exist and be readable on all
+    three platforms with no `PATH` lookup, no caller command and no guessed
+    path. The re-exec is the probe's alone — the exec verb never re-execs
+    (rule 12) — and the child is the same binary with an internal verb, never
+    a shell.
 11. **`--no-sandbox` is the one loud workaround.** It runs the command with no
     policy at all. It prints exactly one line to **stderr**,
     `SANDBOX UNSANDBOXED cmd=<name> read=<n> write=<n>: no OS containment; every
@@ -258,7 +295,7 @@ near the end.
 ## The verbs
 
 ```
-nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] [--no-sandbox] -- <command> <args...>
+nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] [--no-sandbox] -- <command> <args...>
 nova-sandbox probe   --write <dir>... [--read <dir>...] --secret <path> [--net-deny] [--max <n>]
 nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>]    (alias: --print-policy)
 nova-sandbox fence   --out <file> [--webfetch allow|deny]
@@ -318,7 +355,7 @@ range, and this is a deliberate, recorded departure from the conventions
 | code | meaning |
 |------|---------|
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
-| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), no `--write`, a relative or missing path, a path in both lists, a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`) |
+| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI newer than this tool's table (`reason=landlock_abi_unknown`), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_write`, naming both flags), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), on windows a missing `--name` (`reason=no_name`) or an absent caller-owned grant (`reason=acl_missing`), a missing `--` or nothing after it (`reason=no_command`) |
 | 126 | the command could not be executed **and the tool was still there to say so**: on `linux` `syscall.Exec` returned an error, on `windows` `CreateProcessW` failed. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
 | 127 | the command could not be resolved on the caller's `PATH`: `SANDBOX REFUSED reason=not_found`, printed like every other refusal of the tool's own |
 | 128+N | the wrapped command was killed by signal `N` |
@@ -377,10 +414,10 @@ which is the thing asked for and goes to stdout.
 SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> read=<n> write=<n> net=<denied|nopromise> cwd=<dir> cmd=<name>
 SANDBOX UNSANDBOXED cmd=<name> read=<n> write=<n>: no OS containment; every read and write this command makes is yours
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
-SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|bad_read|bad_write|bad_cwd|home_outside|acl_missing|no_name|no_command|not_found|not_executable>: <text>
-PROBE STEP name=<write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
+SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|home_outside|acl_missing|no_name|no_command|not_found|not_executable>: <text>
+PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
 PROBE OK backend=<name> abi=<n|-> steps=<n> passed=<n> net=<denied|nopromise>
-PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|no_sandbox|net_unenforceable>: <text>
+PROBE REFUSED reason=<check|secret_inside_allow|probe_outside_inside|probe_outside_unwritable|no_sandbox|net_unenforceable>: <text>
 POLICY OK backend=<name> read=<n> write=<n> bytes=<n>
 POLICY REFUSED reason=<no_sandbox|bad_read|bad_write>: <text>
 FENCE OK out=<path> keys=<n>
@@ -526,14 +563,27 @@ no `/tmp`, any cwd), then runs inside the wall, by absolute path, the first
 second of a real job: `cd`, `mkdir -p`, `git init`, `git clone --shared` of a
 local repository, a config write under `HOME`, `cat /etc/hosts`,
 `/bin/sh -c true`, `sleep 5 & kill $!`, stdout to a pipe the caller drains and
-stdout to a file inside the write set. It then asserts the three denials — a
+stdout to a file inside the write set. It then asserts the four denials — a
 write outside every named path, a read of the named secret file, a listing of
-an ancestor — **each with a control run outside the wall**, so that no denial
-can pass by being impossible. One line per check,
-`CHECK OK name=...` / `CHECK FAIL name=...`, exit 1 on any FAIL. Sixteen
+an ancestor, and a connect to a unix-domain socket outside the write set —
+**each with a control run outside the wall**, so that no denial can pass by
+being impossible. One line per check,
+It also
+asserts, new in this revision, that a unix-domain socket **outside** the write
+set cannot be connected to while the job's own socket **inside** it can (rule
+7), and that the child environment holds no `SSH_AUTH_SOCK` and no `*AGENT*`
+name while a caller variable beside them survives (rule 9). One line per check,
+`CHECK OK name=...` / `CHECK FAIL name=...`, exit 1 on any FAIL. **Twenty**
 checks, all `OK` on this Mac (macOS 26.6.2, arm64), 2026-09-11. No revision of
 this section is trusted until the script has been run on a Mac and its output
 pasted into the commit.
+
+A third thing the script measured, small and load-bearing: `sun_path` is **104
+bytes**, and a socket bound by absolute path under a deep scratch directory
+silently fails to bind — which would make `unix_socket_outside` pass because
+nothing was listening, the exact shape of failure the controls exist to catch.
+The script binds and connects by **relative** path with the cwd set, and treats
+a socket that did not appear within a bounded wait as a FAIL, not a pass.
 
 Two things the script measured that the rules above now carry. The **cwd** is
 load-bearing beyond rule 13's fence argument: with a cwd outside every named
@@ -569,21 +619,54 @@ first, or `landlock_restrict_self` fails with `EPERM`.
 "in the child between fork and exec" from Go. The body is therefore
 **restrict-then-exec in place**, in the tool's own process:
 
-1. `landlock_create_ruleset` with `handled_access_fs` covering **every
-   filesystem access the running ABI defines** — stated per ABI, because an
-   access left unhandled is an access the kernel does not check, and that is a
-   hole with no line in any log:
+1. `landlock_create_ruleset` with `handled_access_fs` covering every
+   filesystem access **the ABIs in the table below define** — stated per ABI,
+   because an access left unhandled is an access the kernel does not check,
+   and that is a hole with no line in any log:
 
    | ABI (kernel) | `handled_access_fs` |
    |---|---|
    | 1 (5.13) | `EXECUTE`, `WRITE_FILE`, `READ_FILE`, `READ_DIR`, `REMOVE_DIR`, `REMOVE_FILE`, `MAKE_CHAR`, `MAKE_DIR`, `MAKE_REG`, `MAKE_SOCK`, `MAKE_FIFO`, `MAKE_BLOCK`, `MAKE_SYM` |
    | 2 (5.19) | + `REFER` |
    | 3 (6.2) | + `TRUNCATE` |
+   | 4 (6.7) | + nothing (adds the network rule type) |
    | 5 (6.10) | + `IOCTL_DEV` |
+   | 6 (6.12) | + nothing (adds the two scopes) |
 
-   ABI 4 (6.7) and ABI 6 (6.12) add no filesystem access — 4 adds the network
-   rule type, 6 the two scopes — so the filesystem set at 4 equals 3's and at
-   6 equals 5's. `IOCTL_DEV` at ABI 5 is what the previous revision omitted
+   **The table ends at ABI 6, and the sentence above is true only of the table.**
+   The previous revision said "every filesystem access the running ABI
+   defines", which is a claim about kernels that did not exist when it was
+   written: a kernel newer than the table can define an access this tool has
+   never heard of, the tool would not handle it, and the wall would be
+   advertised as complete while the kernel checked nothing on that access. So:
+   **a discovered ABI greater than the highest row is
+   `SANDBOX REFUSED reason=landlock_abi_unknown` at exit 125, naming the
+   discovered number and the highest the tool knows, and the command does not
+   run.** The loud workaround is `--no-sandbox` (rule 11); the fix is one row
+   in the table and a release, which is a day, not a design.
+
+   **Why refusing is the safer of the two, said plainly.** The alternative —
+   handle the newest rights the tool knows and print a `SANDBOX NOTE` about
+   the gap — keeps every machine running and puts the hole in a log line. It
+   was rejected because this tool's whole reason is rule 1: *a sandbox that
+   silently does nothing on a platform it does not support*. A gap in
+   `handled_access_fs` is exactly that failure in miniature — the run looks
+   walled, the line says `SANDBOX OK`, and one class of access is unchecked —
+   and rule 7 already refuses rather than proceed with a weaker wall than the
+   caller asked for, so proceeding here would make the document contradict
+   itself. The cost is real and is accepted: an early adopter of a new kernel
+   is refused until the table grows. The cost lands on a machine whose owner
+   just upgraded a kernel, and it lands loudly, at start, with the number in
+   the line — not on a worker reading untrusted input six hours into a batch.
+
+   The specimen that produced this rule, from the DeepSeek read of revision 5
+   (2026-09-11): that read reports ABI 9 adding `LANDLOCK_ACCESS_FS_RESOLVE_UNIX`,
+   which governs the lookup of pathname unix sockets and is exactly the access
+   #69 cares about. This spec does **not** assert that row — it has not been
+   checked against the kernel's `uapi/linux/landlock.h` on a machine that has
+   it, and a row copied from a read is a guess with a table's authority. It is
+   **to verify at build**, item 7, and until it is verified the tool refuses
+   ABI 7 and up rather than claim them. `IOCTL_DEV` at ABI 5 is what the previous revision omitted
    while claiming "the whole set": without it a sandboxed process can `ioctl`
    any device file it can open. The set is masked down to the discovered ABI
    (a ruleset handling an access the kernel does not know is rejected), and
@@ -713,14 +796,22 @@ object has no filesystem scope; WSL2 Landlock forces WSL on everyone.
 nova-sandbox probe --write <jobdir> --secret ~/.config/<provider>/env
 ```
 
-Five checks, under the real policy for this platform, each one line:
+Five checks, under the real policy for this platform, each one line — the five
+are the five rows below, `write_outside_control` included, and the names in the
+`PROBE STEP` grammar are exactly these five. `probe` is the one verb that
+**re-executes the tool itself** under the generated policy (an internal verb,
+not a shell, not a caller command): it has no command to wrap, and running the
+checks in-process would test nothing, because on linux the restriction is
+applied to the tool's own process and on darwin the policy exists only around
+`sandbox-exec`'s child. Everything a check touches is therefore named by the
+probe, not by a caller:
 
 | name | what it does | expected |
 |---|---|---|
 | `write_outside` | creates a file at one **explicitly named** path outside every named path — `<parent of the first --write>/.nova-sandbox-probe-<pid>` — printed on the step line | `deny` |
 | `read_secret` | opens the named secret file for reading | `deny` |
 | `write_inside` | creates and removes a file under the first `--write` | `allow` |
-| `read_root` | reads a byte from the resolved command's own directory — the resolved **command file itself**, not a directory with no named file in it | `allow` |
+| `read_root` | reads the first byte of **the probe's own executable** (`os.Executable()`, which is the resolved command of the probe's re-executed self and therefore lies under the root "the directory of the resolved command") | `allow` |
 | `write_outside_control` | the same write as `write_outside`, run **outside** the wall, before the wrapped one | `allow` |
 
 `write_outside_control` is why the deny checks can be believed. A denial that
@@ -794,10 +885,29 @@ is the work (`net=nopromise`); the provider key is read from its file before
 the wrap and passed by environment (`nova-swarm` rule 6); `run` runs
 `nova-sandbox probe` once before the first worker and refuses the pass with
 `RUN REFUSED reason=sandbox_probe` on a failure, and a machine with no backend
-is `RUN REFUSED reason=no_sandbox`. The consequences follow from the wall: no
-SSH agent socket is reachable, no key is readable, `git push` from inside the
-job fails, and the report copy under `pool/reports/` remains the only
-publication path. A line's own self is in no task's write set, so a task's
+is `RUN REFUSED reason=no_sandbox`. The consequences follow from the wall, and each names the mechanism that
+produces it rather than asserting it:
+
+- **No SSH agent socket is reachable.** Rule 7: the darwin grant is
+  `(allow network-outbound (remote ip))`, so unix-domain sockets are denied
+  except under the write set, and the agent's socket is not there. Measured in
+  `profiles/darwin-check.sh` (`unix_socket_outside`, with its control).
+- **No key is readable.** Rule 3: `~/.ssh` is in neither list, and rule 9 moves
+  `HOME` to the per-job data home so nothing derives a path back to it.
+- **No agent address is in the environment.** Rule 9: the wrapper drops
+  `SSH_AUTH_SOCK` and every `*AGENT*` name before exec.
+- **`git push` from inside the job fails**, by those three together and by a
+  fourth: the worker holds no git credential at all, because the `tree: yes`
+  clone was made by the dispatcher before the wall closed and its `origin` is
+  the dispatcher's reference checkout, which is in the **read** set. An SSH
+  push has no key and no agent; an HTTPS push has no token (the swarm passes
+  the *provider* key, never a git one) and cannot reach the `gh` configuration
+  that would hold one; and a push straight at the reference checkout is denied
+  by the filesystem wall. Test 27 asserts all three, and the failure of any one
+  of the four mechanisms leaves the other three standing.
+- **The report copy under `pool/reports/` stays the only publication path**,
+  because it is the only directory outside the job that is in the worker's
+  write set — every other way out is one of the four above. A line's own self is in no task's write set, so a task's
 shell cannot delete it (#69's worked specimen).
 
 **A solo line's launcher.** A line started by hand gets no swarm and today gets
@@ -820,6 +930,21 @@ cannot arrive the way it used to: the `gh` configuration directory and
 pushes to its own home — the wall is on filesystem reach, not on the token
 (Glenn, 2026-09-11) — and the remote is HTTPS, because no SSH key is readable
 inside the wall.
+
+**And the launcher pushes the line's self on exit.** This is #69's *second*
+guard and it is the caller's rule, not the wall's: the launcher, which runs
+**outside** the wall, commits and pushes the line's home to its own remote when
+the wrapped process ends — on a clean exit, on a non-zero exit and on a signal
+alike, from a trap, because the runs that lose work are the ones that end
+badly. The wall makes a delete hard (a task's shell cannot reach a line's self:
+test 25, `EPERM` and byte-identical); the push makes a delete **recoverable**,
+which is not the same claim and is the one #69 actually asked for — *the self
+is pushed at every append by the launcher on exit, which makes any local delete
+a re-clone*. Two guards, because either alone fails: a wall with no push loses
+the work if the machine dies or if the line is started once without the wrap,
+and a push with no wall pushes whatever the deleter left behind. The launcher
+pushes with the same `GH_TOKEN` it passed in, over HTTPS, and a failed push is
+one line on stderr naming the remote, never a silent success. Test 28.
 Freddy is the first user; his launcher and his `AGENTS.md` name the command
 (**one file is the self on a small harness**, 2026-09-10).
 
@@ -923,6 +1048,20 @@ into a `.git` the wall denies. And: `sandbox-exec -f p.sb -- /no/such` exits
 **71**, exactly as `sh -c 'exit 71'` does, which is why the 71→126 mapping is
 withdrawn.
 
+From the third round, the one this revision turns on, all under the filled
+template: with `(allow network*)`, `nc -U` to a socket bound one directory
+**outside** the write set connects, `rc=0` — the inherited SSH agent was
+reachable the whole time; with `(allow network-outbound (remote ip))` in its
+place plus one `(allow network-outbound (subpath (param "WRITE0")))`, the same
+connect is `rc=1` inside the wall, `rc=0` outside it (the control), and a
+socket bound **inside** the write set still connects, `rc=0`. `sun_path` is 104
+bytes, so the sockets are bound and connected by relative path: an absolute
+path under a deep scratch directory fails to bind and would have made the
+denial pass for the wrong reason. The child environment built by exclusion
+carries neither `SSH_AUTH_SOCK` nor `GPG_AGENT_INFO` and does carry the caller
+variable set beside them. Twenty checks, all `OK`, exit 0
+(`profiles/darwin-check.sh`).
+
 ## Commands for a reader
 
 A reader on another machine, or on another model, checks this document by
@@ -1003,6 +1142,23 @@ that cannot confirm one changes this document rather than asserting it.
 6. That an AppContainer process can create and write files under a directory
    granted by an inherited ACE, including creating subdirectories, and that
    `git` and the harness work with `TMP`/`TEMP` redirected into it.
+7. The Landlock ABI table above, **row by row, against
+   `uapi/linux/landlock.h` on a machine running each kernel** — and in
+   particular whether ABI 7, 8 and 9 add a filesystem access. The DeepSeek
+   read of revision 5 reports ABI 9 adding `LANDLOCK_ACCESS_FS_RESOLVE_UNIX`
+   (the lookup of pathname unix sockets); that is a report, not a measurement,
+   and it is not in the table. Until it is measured the tool refuses ABI 7 and
+   up with `reason=landlock_abi_unknown`. The verification is also the
+   procedure for every future ABI: read the header, add the row, add the grant
+   side, release.
+8. That a unix-domain socket **under** a Landlock write rule can be connected
+   to while one outside every rule cannot — the linux half of what
+   `profiles/darwin-check.sh` now measures on darwin. Landlock's path rules
+   govern the socket file's *lookup*, not `connect(2)` itself, so this may
+   come back as "the filesystem wall does not close it below the ABI that
+   adds `RESOLVE_UNIX`", in which case the sentence in the callers section is
+   rewritten to rest on the environment scrub (rule 9) alone on linux, and the
+   gap is named there the way the abstract-socket gap already is.
 
 ## Tests this spec demands
 
@@ -1187,6 +1343,42 @@ And one for each thing the rules above assert but no test yet reached:
     author, then one swarm batch run with the wrap and one without on the same
     task list, with the two compared. `freddy-swarm.sh` and `run-freddy.sh` are
     not touched by any step above (**production tool: do not change it**).
+27. **`git push` from inside the wall fails, and the test names the mechanism.**
+    A local bare repository stands in for every remote — no test touches the
+    network (test 16). Four assertions, one per mechanism, so that a change
+    that removes one of them turns exactly one line red:
+    (a) `origin` is the dispatcher's reference checkout under a `--read` path:
+    `git push origin HEAD` fails and the reference's `refs/` is byte-identical
+    afterwards; (b) `origin` rewritten to `git@example.invalid:x/y.git`: the
+    push fails **before any connection**, with the planted `<home>/.ssh/id_test`
+    of test 3 unreadable inside the wall and readable outside it in the same
+    test; (c) the child's environment, read back from inside the wall, holds no
+    `SSH_AUTH_SOCK` and no name containing `AGENT`, while a caller variable set
+    beside them arrives unchanged — and a connect to a unix-domain socket the
+    test binds outside every named path is denied, with the control connect
+    outside the wall succeeding (darwin today: `profiles/darwin-check.sh`
+    checks `unix_socket_outside` and `unix_socket_outside_control`; linux is
+    **to verify at build** item 8 and the test skips by name, not by
+    assertion, until it is); (d) `origin` rewritten to an HTTPS URL with no
+    token in the environment and a `gh` configuration planted outside every
+    list: the push fails and the configuration is unread. The same four pushes
+    run **outside** the wall against the local bare repository and succeed, so
+    that no line of this test can pass by being impossible. The solo line is
+    the named exception and has its own line in test 28: with `GH_TOKEN` passed
+    by its launcher the push succeeds, because the wall is on filesystem reach,
+    not on the token.
+28. **The solo launcher's push-on-exit, #69's second guard.** With the launcher
+    driving a wrapped command that exits 0, one that exits 7 and one killed by
+    `SIGKILL`, the line's self is committed and pushed to its remote in all
+    three cases — a local bare repository as the remote, the test asserting the
+    remote's tip moves and matches the working tree's commit. A push that fails
+    prints one line naming the remote and the launcher's own exit is non-zero;
+    it never reports success. And the recovery is asserted end to end, because
+    that is the ruling: after a `rm -rf` of the line's self **outside** the wall
+    (inside it is test 25's `EPERM`), a fresh clone of the remote is
+    byte-identical to what was pushed. The lists file, the `HOME` it names and
+    the token pass are asserted in the same test — the solo launcher's three
+    rules had no test before this revision.
 
 ## The work list
 
@@ -1238,5 +1430,6 @@ them.
    and `release` at teardown, runs the probe once, and a solo launcher sets
    `HOME` to the line's `.data` and passes the line's token by environment; `supervise` builds each worker's
    read and write argv and makes the `tree: yes` clone before the wrap; the
-   solo line's launcher reads its lists file; Freddy's `AGENTS.md` names the
-   command. Tests 23, 24, 25. Neither caller changes before test 26.
+   solo line's launcher reads its lists file and **pushes the line's self on
+   exit** (#69's second guard); Freddy's `AGENTS.md` names the command. Tests
+   23, 24, 25, 27, 28. Neither caller changes before test 26.

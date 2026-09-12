@@ -23,9 +23,22 @@
 ;;                  `git clone` by absolute path die at /private or /Users.
 ;;                  file-read-metadata is stat only: LISTING an ancestor stays denied.
 ;;   @@READS@@      one (allow file-read* (subpath (param "READn"))) per --read, n from 0.
-;;   @@WRITES@@     one (allow file-read* file-write* (subpath (param "WRITEn"))) per
-;;                  --write, n from 0.
-;;   @@NET@@        (allow network*) — the line is emitted EMPTY under --net-deny.
+;;   @@WRITES@@     one (allow file-read* file-write* (subpath (param "WRITEn"))) AND one
+;;                  (allow network-outbound (subpath (param "WRITEn"))) per --write, n from 0.
+;;                  The second line is the ONLY unix-domain socket reach this policy
+;;                  grants: a socket is a file, and a socket under the write set is the
+;;                  job's own (a language server, a test harness). Everything else --
+;;                  the SSH agent's socket under /private/tmp, the launchd Listeners
+;;                  socket, a sibling job's socket -- is denied. Measured 2026-09-11:
+;;                  with (allow network*) a connect to a socket one directory outside
+;;                  the write set succeeds rc=0; with these two clauses it is rc=1
+;;                  inside the wall and rc=0 outside it (profiles/darwin-check.sh,
+;;                  checks unix_socket_outside and unix_socket_outside_control).
+;;   @@NET@@        (allow network-outbound (remote ip)) -- IP only, never (allow network*),
+;;                  which grants every unix-domain socket on the machine as well.
+;;                  Under --net-listen a second line (allow network-inbound (local ip))
+;;                  is emitted for a job that must listen. The marker is emitted EMPTY
+;;                  under --net-deny.
 ;;
 ;; HOME is not a root and gets no grant of its own: rule 9 requires HOME to resolve
 ;; inside a --write, so it is already covered by that path's WRITEn grant. The
@@ -70,4 +83,8 @@
 
 (allow file-write* (literal "/dev/null") (literal "/dev/tty"))
 
+;; Network is IP only. (allow network*) would also grant every unix-domain socket
+;; on the machine, including an inherited SSH agent's -- #69's whole point. The
+;; agent is closed twice: here, and by the wrapper stripping SSH_AUTH_SOCK and every
+;; *_AGENT* variable out of the child environment before exec (rule 9).
 @@NET@@
