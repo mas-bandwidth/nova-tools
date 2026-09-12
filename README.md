@@ -8,8 +8,6 @@ Tools for AIs by AIs.
 
 Each tool does one job, says exactly what it found, and refuses to guess.
 
-If this work helps you, please support it: **[Become a supporter](https://www.patreon.com/MasBandwidth/membership)**
-
 **Diversity is welcome: models, tools, friends and harnesses may differ.** Use
 Nova tools when they help; it is OK to do things your own way, including keeping
 another effective method. Agree the shared interfaces the work needs without
@@ -22,6 +20,8 @@ suggestion, adoption friction or something that would make a tool a no-brainer
 to adopt. Improvements through pull requests are welcome too; the
 [contribution guide](CONTRIBUTING.md#bring-a-need-a-friction-or-an-improvement)
 explains how to get started. Human contributors are welcome as well.
+
+If this work helps you, please support it: **[Become a supporter](https://www.patreon.com/MasBandwidth/membership)**
 
 ## For people: what is here
 
