@@ -163,16 +163,88 @@ jobs:
           (cd dist && sha256sum -c SHA256SUMS)
           cat dist/SHA256SUMS
 
-      - name: create the release and attach every artifact
+      - name: attach every artifact to the release, creating it if it does not exist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
         run: |
           set -euo pipefail
-          # --verify-tag: gh will otherwise CREATE a tag that does not exist, which on a
-          # rerun with a typo'd ref would publish a release for a commit nobody tagged.
-          gh release create "$TAG" \
-            --verify-tag \
-            --title "$TAG" \
-            --generate-notes \
-            dist/*
+          # ONE ASKER, AND IT READS THE STATUS RATHER THAN THE EXIT CODE. `gh api` exits
+          # 1 on a 404 and exits 1 exactly the same way on a dropped connection, an
+          # expired token or a secondary rate limit, so its exit code cannot tell an
+          # answer of "no" from no answer at all -- and a step that reads a transient
+          # failure as absence is a step that walks down the create path knowing nothing
+          # about what is on the release page. `gh api -i` prints the status line first.
+          # 200 and 404 are answers; anything else is not, and this stops the job with
+          # the whole response pasted rather than choosing a branch on a guess.
+          ask() {
+            local out rc
+            set +e
+            out=$(gh api -i "$1" 2>&1); rc=$?
+            set -e
+            case "$(printf '%s\n' "$out" | head -n 1)" in
+              HTTP/*" 200 "*) CODE=200 ;;
+              HTTP/*" 404 "*) CODE=404 ;;
+              *)
+                echo "asking GitHub about $1 answered neither 200 nor 404 (gh exit $rc):"
+                printf '%s\n' "$out"
+                exit 1
+                ;;
+            esac
+          }
+
+          # THE TAG IS VERIFIED ON BOTH PATHS, not only the create one. `--verify-tag`
+          # below is gh refusing to invent a tag that does not exist, and the upload path
+          # takes no such flag -- so the guarantee has to come from somewhere else. It
+          # cannot come from the trigger: this file also has `workflow_dispatch`, which
+          # runs against whatever ref the person picked and may be a branch, and the shape
+          # check above only asks that the ref begin with v. So the tag's existence is
+          # established here, once, for both paths.
+          ask "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}"
+          if [ "$CODE" = 404 ]; then
+            echo "refusing: $TAG is not a tag in this repository"
+            exit 1
+          fi
+
+          # AND IT IS THIS TREE'S TAG. Existence is not enough, and this is the check that
+          # actually carries --verify-tag's guarantee onto the upload path. Under
+          # `push: tags: v*` the ref that triggered the run IS the tag, so the two are the
+          # same fact; under workflow_dispatch they are not, and a tag can be force-moved
+          # after its release was published. A dispatch on a BRANCH named like a tag passes
+          # the shape check above, and if a real tag of that name exists the upload path
+          # would then --clobber a published release's binaries AND its SHA256SUMS with a
+          # build from an unrelated tree -- assets whose checksum file agrees with itself
+          # and with nothing anybody tagged. Before this step learned to upload, the
+          # duplicate-name refusal stopped that by accident; it is stopped on purpose here.
+          # The tag is fetched rather than assumed present: checkout is shallow and carries
+          # no tags, and a stale local tag is overwritten by the leading +.
+          git fetch --depth=1 origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          tagged=$(git rev-parse "refs/tags/${TAG}^{commit}")
+          if [ "$tagged" != "$GITHUB_SHA" ]; then
+            echo "refusing: $TAG is the tag for $tagged, but this run built $GITHUB_SHA"
+            echo "attaching here would replace $TAG's published artifacts with a build from another tree"
+            exit 1
+          fi
+
+          # The release may already exist: v0.11.0 was published by hand before its tag's
+          # run reached this step, `gh release create` refused the duplicate tag name, and
+          # the release kept its notes and got none of its binaries. An existing release is
+          # therefore the case this branch handles rather than the case that fails -- the
+          # artifacts are the thing this job is for, and the notes are already right.
+          ask "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}"
+          if [ "$CODE" = 200 ]; then
+            # --clobber so a rerun replaces what a partial upload left, rather than erroring
+            # on the names already attached.
+            gh release upload "$TAG" --clobber dist/*
+          else
+            # --verify-tag: gh will otherwise CREATE a tag that does not exist, which on a
+            # rerun with a typo'd ref would publish a release for a commit nobody tagged.
+            # Kept even though the check above has already answered the same question: a
+            # flag that makes gh refuse is worth more than a flag this file's own reasoning
+            # says is redundant.
+            gh release create "$TAG" \
+              --verify-tag \
+              --title "$TAG" \
+              --generate-notes \
+              dist/*
+          fi
