@@ -820,13 +820,12 @@ shared packages used rather than re-spelled.
 7. **`cmd/nova-board/check.go`** — the dumb matcher, `--all`, `CHECK HIT` capped,
    `matched=` never capped, and **exit 1 on a match**. The test is named for the
    mnemonic: `TestCheckExitsOneOnMatchSoTheShellGuardReads`.
-8. **`quickstart`** — the natural first run: judge **every** flag first and make the
-   `--dir` directory only when the whole line is accepted — a refused run makes
-   nothing, because a first run that fat-fingers `--stale` is exactly the run with no
-   board yet and making it would answer the typo with an empty board — then make it
-   when it is
-   missing (`MkdirAll`, `0755`, as `nova-swarm quickstart --pool` makes its pool) and
-   report it as `created=true|false`, read the board, print the counts, print
+8. **`quickstart`** — the natural first run: judge **every** flag first, then, only on
+   a line that is accepted whole, make the `--dir` directory when it is missing
+   (`MkdirAll`, `0755`, as `nova-swarm quickstart --pool` makes its pool) and report it
+   as `created=true|false`. **A refused run makes nothing**: a first run that
+   fat-fingers `--stale` is exactly the run with no board yet, and making it would
+   answer the typo with an empty board. Then read the board, print the counts, print
    the `check … || { [ $? -eq 1 ] && exit 0; exit 2; }; add … --by … --default …`
    pair with this board's own values in it, quoted
    the way `nova-bus names` quotes — a value meant to be pasted rather than
