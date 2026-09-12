@@ -1,19 +1,22 @@
 # nova-secrets — specification
 
-**Revision 5, 2026-09-12.** Reads 4 (Fable and DeepSeek) held the spec on two sentences that
-promised more than the mechanism gave: the recovery key is now **declared** in `recovery.pub`
-rather than inferred from the rule set, and the keeper's token carries `pull_requests` write.
-Also here: `check`'s public-half source named, one mutation for every rule that had none, test
-7 made writable, and the repeated sentences cut to one home each. Each read's findings and each
-revision's decisions are in this pull request's body, not in this document.
+**Revision 6, 2026-09-12.** Reads 5 (Fable and DeepSeek) held the spec on one sentence and two
+tests: the two-file edit — the rule file and `recovery.pub` in one direct push — passes every
+invariant, so what catches it is the review the demotion buys and not a check, and `check` now
+reports the ruleset's own state when it is given the means to see it; `exec`'s shape check and
+`keygen`'s printed rule get tests that can say NO. Also here: the owed `recovery.pub`, the
+clauses that had no mutation, the founding review of `recovery.pub`, and the counting rationale
+to one home. Each read's findings and each revision's decisions are in this pull request's body,
+not in this document.
 
 The tool is a thin wrapper over [sops](https://github.com/getsops/sops) and
 [age](https://age-encryption.org). Revision 1 specified a store of our own; Glenn ruled
 against it — *"something generic and open source, not evil"*, *"git is our substrate"*.
 The store is [`mas-bandwidth/secrets`](https://github.com/mas-bandwidth/secrets)
-(private), already built: `.sops.yaml` carrying one recipient rule per file, `recovery.pub`
-declaring the recovery key, sealed yaml files, and a README carrying the protocol. **That
-repository is the store. This tool never becomes one.**
+(private), already built: `.sops.yaml` carrying one recipient rule per file, sealed yaml files,
+and a README carrying the protocol — and, owed in **the store's own repair** below,
+`recovery.pub` declaring the recovery key. **That repository is the store. This tool never
+becomes one.**
 
 Four verbs at the **credential layer**, measured against one sentence:
 
@@ -26,9 +29,10 @@ person wants to do to a secret is `sops`, `git` or the provider's console, and t
 refuses it **by name, with where it lives**. In one paragraph: it reads one sealed yaml out
 of a git working copy by running `sops` at a path the caller named, keeps the plaintext in its
 own memory for the length of one call, and then execs, prints, proves or writes one key. It
-links no cryptography, opens no network socket, starts no shell, writes no state of its own,
-and reads no Keychain — about two hundred lines of Go over two binaries it did not write, and
-the day a better generic store exists it should be two hundred lines of Go over that one.
+links no cryptography, starts no shell, writes no state of its own, and reads no Keychain —
+the only socket it ever opens is `check`'s optional ruleset probe under `--github-token`. About
+two hundred lines of Go over two binaries it did not write, and the day a better generic store
+exists it should be two hundred lines of Go over that one.
 
 This spec is normative, and a sibling of [SPEC.md](../SPEC.md), whose **Conventions** govern
 unchanged except for **two deviations, both `exec`'s**: its exit table, argued in **Exit
@@ -120,10 +124,10 @@ person's hands; `keygen` writes exactly one file, outside it; and no verb reads 
 one call.
 
 **`--store <dir>` is the store's git working copy**, not a URL and not a repository name:
-this tool does no network. A working copy in the strong sense — invariant 8 reads `.git` as
-files — so a `--store` that is not a directory, holds no `.sops.yaml`, or has no `.git`, is a
-refusal naming the fact and the `git clone` line: **exit 2**, or **125** from `exec`, as every
-refusal of `exec`'s is.
+nothing here is cloned, fetched or pulled by this tool. A working copy in the strong sense —
+invariant 8 reads `.git` as files — so a `--store` that is not a directory, holds no
+`.sops.yaml`, or has no `.git`, is a refusal naming the fact and the `git clone` line: **exit
+2**, or **125** from `exec`, as every refusal of `exec`'s is.
 
 **`--as <name>` selects the file**, `<store>/<name>.yaml`. It is not an identity and proves
 nothing: the key decides what opens. A `--as` whose file is absent is a refusal listing the
@@ -234,20 +238,21 @@ file and the repair. In a fixed order, against the working copy at `--store`:
 
 1. **`.sops.yaml` parses**, every rule names a path regex **anchored at both ends** (`^…$`),
    every recipient is a syntactically valid `age1…` key, and no recipient appears twice in one
-   rule. The anchors are an invariant, not a style: measured, a rule `a\.yaml$` sealed
-   `not-a.yaml` to A's key. **And the shape of the rule set is checked against a declared
-   recovery key**, because *one bench key per file* and Glenn's split are otherwise model rules
-   nothing enforces: the store root holds **`recovery.pub`, one line, the recovery key's public
-   half**, and **every rule names exactly two recipients — one seat key, plus exactly the key
-   `recovery.pub` declares.** Declared, never inferred from the rule set: a two-rule store
-   cannot tell a recovery recipient from a second seat key by counting what its rules have in
-   common, so counting is not what this does. Two files for one seat key stays legal; two seat
-   keys on one file does not, nor does a rule whose second recipient is not the declared key. A
-   `recovery.pub` absent, unreadable, empty, holding more than one line, or holding something
-   that is not an `age1…` key is exit 1 naming the file — never a silent pass. Read from
-   `.sops.yaml` and `recovery.pub` alone, with no key at all, so every bench goes red on a
-   merged rule that widens one file or swaps the recovery key out of it, and a one-rule store
-   is as checkable as a five-rule one.
+   rule. A `.sops.yaml` that will not parse is exit **1** here and not the exit 2 of a store
+   that holds none: that store is wrong, not absent. The anchors are an invariant, not a style:
+   measured, a rule `a\.yaml$` sealed `not-a.yaml` to A's key. **And the shape of the rule set
+   is checked against a declared recovery key**, because *one bench key per file* and Glenn's
+   split are otherwise model rules nothing enforces: the store root holds **`recovery.pub`, one
+   line, the recovery key's public half**, and **every rule names exactly two recipients — one
+   seat key, plus exactly the key `recovery.pub` declares.** Declared, never inferred from the
+   rule set: a two-rule store cannot tell a recovery recipient from a second seat key by
+   counting what its rules have in common, so counting is not what this does. Two files for one
+   seat key stays legal; two seat keys on one file does not, nor does a rule whose second
+   recipient is not the declared key. A `recovery.pub` absent, unreadable, empty, holding more
+   than one line, or holding something that is not an `age1…` key is exit 1 naming the file —
+   never a silent pass. Read from `.sops.yaml` and `recovery.pub` alone, with no key at all, so
+   every bench goes red on a merged rule that widens one file or swaps the recovery key out of
+   it, and a one-rule store is as checkable as a five-rule one.
 2. **Every file's recipients are the ones its rule names**: for every `*.yaml` but
    `.sops.yaml`, the `age` set in that file's own `sops:` block equals its matching rule's set.
    `.sops.yaml` governs a **seal**, the file's own block governs a **decrypt**, the two meet
@@ -278,11 +283,12 @@ file and the repair. In a fixed order, against the working copy at `--store`:
    that is a **file** (a worktree or a submodule), whose real directory this tool does not
    follow. Both OK lines carry `head=<short sha>`, so two benches compare by eye. **What it
    notices is a fetch nobody merged, never a fetch nobody ran**: a remote-tracking ref is only
-   as fresh as the last fetch, so a clone nobody fetches satisfies invariant 8 forever, which
-   is why every launcher line carries `git -C <store> pull --ff-only &&` — the one network call
-   on this page, the launcher's and never the tool's. The cost is that a bench which cannot
-   reach GitHub cannot clear the refusal at seat start; accepted, the alternative being a seat
-   running a revoked value with a green `check` beside it, the row this tool exists to close.
+   as fresh as the last fetch, so a clone nobody fetches satisfies invariant 8 forever, which is
+   why every launcher line carries `git -C <store> pull --ff-only &&` — the launcher's and never
+   the tool's, and the only network call the launcher line makes. The cost is that a bench which
+   cannot reach GitHub cannot clear the refusal at seat start; accepted, the alternative being a
+   seat running a revoked value with a green `check` beside it, the row this tool exists to
+   close.
 
 Any of the eight is its own `SECRETS CHECK FAIL` line, every failure in one run, capped per
 kind at `--max` with a MORE line, the counts never capped and printed on failure as well as
@@ -291,15 +297,30 @@ on Rowan's keeper bench and `mine=1` plus one per pool file on the admin bench �
 dispatcher runs there, so every `swarm-<name>.yaml` is sealed to that bench's key — green on
 both.
 
+**And one thing `check` reports that is not an invariant: the store's own ruleset.** Given
+`--github-token <path>` — a file at mode `0600`, never an environment variable and never the
+store's own `GH_TOKEN` decrypted for the purpose — `check` asks the GitHub API for the store's
+rulesets and its collaborators' permissions and prints, beside the count line,
+`SECRETS CHECK WARN ruleset_editable_by=<login>` for every account that can push and can also
+edit or delete the ruleset, and `ruleset=none` when no ruleset requires review. **A warning and
+never a failure, and the flag is optional**: no flag, no network, or an answer this tool does
+not recognise is silence and not a red, because a wall that goes red when GitHub is down is a
+wall nobody keeps. It is the only call this tool itself makes, and `exec` never makes it. `WARN`
+is a **third line kind added** to Conventions' `OK` and `FAIL` — not a deviation from either,
+printed on stderr with the refusals, so a green run's stdout is still exactly the one OK line.
+What it is for is under **"Reviewed" is a control** below: the one thing a store can say about
+a control its own admin can untie is to say out loud that it can.
+
 ```
 SECRETS CHECK OK  as=<name> recipients=<n> files=<n> sealed=<n> mine=<n> foreign=<n> clear=<n> head=<sha>
 SECRETS CHECK FAIL <file>: <reason>
 SECRETS CHECK FAIL as=<name> files=<n> failed=<n> shown=<n>
+SECRETS CHECK WARN ruleset_editable_by=<login>            (only with --github-token)
 ```
 
 It does **not** check git history (a value ever committed in the clear is there forever;
-that is **Rotation**, which is revocation and not deletion), the values themselves (no
-network call), the other AIs' keys (every AI runs `check` for itself, because a store
+that is **Rotation**, which is revocation and not deletion), the values themselves (never a
+call to a provider), the other AIs' keys (every AI runs `check` for itself, because a store
 proven by one line is a store proven for one line), or who has cloned the store.
 
 ### `keygen`
@@ -309,7 +330,8 @@ nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keyg
 SECRETS KEYGEN OK as=rowan key=<path> mode=0600 pub=age1…
 SECRETS RULE   creation_rules:
 SECRETS RULE     - path_regex: ^rowan\.yaml$
-SECRETS RULE       age: age1…,<recovery key>
+SECRETS RULE       age: age1…,age1…
+SECRETS RULE NOTE  placeholder: no --store, so <recovery key> stands unfilled
 ```
 
 **What it asserts.** That a new age private key exists at `--key`, created with `O_EXCL` and
@@ -322,8 +344,12 @@ tool that added its own recipient line could grant itself access to a file, the 
 recipient list exists to make impossible without a review. The `SECRETS RULE` lines are for
 pasting into **a pull request that edits only that AI's own rule**, and the rule printed is the
 shape invariant 1 demands — anchored at both ends, this key and the recovery key and nothing
-else, `<recovery key>` a literal placeholder copied from the store's `recovery.pub`, which is
-what makes it checkable and is why it is never guessed.
+else. **With `--store` given, the recovery key is the line `keygen` reads out of that store's
+`recovery.pub`** — its one read of the store, and it writes nothing there — so the pasted block
+satisfies invariant 1 as printed, which a literal placeholder cannot now that the invariant
+demands exactly the declared key. Without `--store` the second recipient is the literal
+`<recovery key>` and the `NOTE` line prints beside it, because a block that fails invariant 1
+until it is filled must say so rather than look finished. Guessed in neither case.
 
 **"Reviewed" is a control, and today the controlled account can switch it off.** Measured
 2026-09-12: `mas-bandwidth/secrets` carries ruleset **22995725** (`secrets-review-required`),
@@ -338,14 +364,21 @@ exists for. So *every change is a pull request approved by the other account* ho
 admin touches the ruleset, and the party it should bind can untie it. What that buys an
 attacker with the cryptography intact: a direct push editing `rowan.yaml`'s own rule — that
 bench holds a current recipient key, so `updatekeys` runs — swapping Glenn's recovery key out
-of that one file, invariants 2 and 4 green afterwards. **Invariant 1 is what turns that red on
-every other bench**, not the ruleset — and it can only because the recovery key is *declared*
-in `recovery.pub`: a rule set counted against itself would pass this very store, two rules
-swapping Glenn's key for the keeper's leaving every rule at two recipients and one key in
-common. Editing `recovery.pub` is the same direct push, but a one-line change to a one-line
-file is a thing an approver's eye catches, and two `age1…` strings inside a rule are not. And
-which rule a pull request touches is read by the approver, not enforced: no code owners, no
-required reviewers.
+of that one file, invariants 2 and 4 green afterwards. **Invariant 1 is what turns the one-file
+swap red on every other bench**, not the ruleset — and it can only because the recovery key is
+*declared* (invariant 1, declared and not counted). Editing `recovery.pub` in the same push —
+declaring the keeper's key the recovery key — passes every invariant on every bench:
+`{A_admin, A_keeper}` and `{A_keeper, R}` are each the declared key plus one other, and nothing
+in the store tells that shape from an honest one. **No invariant can catch a coordinated edit of
+the rule file and `recovery.pub` by a token that can push directly**; a store does not protect a
+file from the account that administers it. A direct push has no approver, so nothing catches it;
+under `write` it is a pull request whose diff touches a one-line file, which an approver's eye
+catches where two `age1…` strings inside a rule are not. **That is what the demotion below is
+for**, and until it lands the two-file edit is this page's named gap — which is why `check`
+reports the ruleset state it is given the means to see (above), printing
+`ruleset_editable_by=<login>` beside a green run on the bench whose own token can untie the
+control. And which rule a pull request touches is read by the approver, not enforced: no code
+owners, no required reviewers.
 
 **The ruling, and it is Glenn's hand.** *Default if he is silent: `rowan-claude` is demoted to
 `write` on `mas-bandwidth/secrets`*, one line on
@@ -599,38 +632,41 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
 `recovery.pub` naming that fixture's recovery key.
 
 1. `TestASeatOpensTheFilesItsRulesNameAndNoOther` — **the negative test, and the reason the
-   model exists.** The fixture is the two-key seat: keypairs `A_admin`, `A_keeper`, `B`, `C`
-   and a recovery key `R`; files `a.yaml` → `{A_admin, R}`, `a-keeper.yaml` → `{A_keeper,
-   R}`, `b.yaml` → `{B, R}`, `swarm-p.yaml` → `{B, R}`, `c.yaml` → `{C, R}`. With `A_admin`:
-   `exec --as a` succeeds, `exec --as a-keeper` is **125 naming the key**, `sops -d
-   a-keeper.yaml` exits 128, `check` is `mine=1 foreign=4`. With `A_keeper`, the mirror:
-   `a-keeper.yaml` opens and `a.yaml` refuses. **That pair is the assertion Glenn's ruling
-   needs**, and it is proven by **recipients**, not by a filename. With `B`: `mine=2 foreign=3`,
-   green, because a seat with two files must not turn its own negative half red. `R` opens all
-   five, asserted so nobody later "fixes" the negative test by making recovery impossible. The
-   mutations, each red on its own, each naming the invariant it must turn: `sops -r --add-age
-   <A_keeper> a.yaml`, the file's block listing the keeper key while the rule does not →
-   **invariant 2** with the `updatekeys` line, invariant 4 staying **green**,
-   which is the point and not a gap (invariant 4 compares a decrypt against the file's *own*
-   recipients, so a wrongly granted decrypt shows as block-versus-rule drift; what stands
-   between the two benches is that `updatekeys` needs a **current recipient's** key — measured:
-   with a non-recipient identity it exits 128 and changes nothing — and only then the review);
-   adding `A_keeper` to `a.yaml`'s **rule** without `updatekeys` → **invariant 2**, the grant
-   that grants nothing; that same rule change **merged and then `updatekeys`-ed with `R`**, so
-   every recipient list agrees and invariants 2 and 4 are green → **invariant 1**, the ruling
-   that no file carries two seat keys; removing a recipient from `b.yaml`'s rule while the file
-   still opens for it → **invariant 2**, the revoke case; planting `A_admin` in the sops child's
-   `keys.txt` → **invariant 4** on `a-keeper.yaml`, the only way a file whose recipients do not
-   list this key can open, and the whole reason for the empty `HOME`. **The declared recovery
-   key, asserted on the shape the store actually has**: a two-rule fixture `{A_admin, R}`,
-   `{A_keeper, R}` in which `a.yaml`'s rule is re-pointed to `{A_admin, A_keeper}` and
-   `updatekeys`-ed, so every rule still names two recipients and one key is still common — red
-   on **invariant 1** on **every** bench, because `recovery.pub` says which key `R` is, and the
-   same fixture is green before the swap; a **one-rule** store `{B, R}` is green, the counting
-   form having made it red; and `recovery.pub` deleted, holding two lines, or holding
-   `not-a-key` are three refusals naming the file. Invariant 1's other three clauses get a
-   mutation each: the anchor dropped from `^a\.yaml$` so `not-a.yaml` matches, a recipient
-   truncated to `age1`, and `R` listed twice in one rule.
+   model exists.** The fixture is the two-key seat: keypairs `A_admin`, `A_keeper`, `B`, `C` and
+   a recovery key `R`; files `a.yaml` → `{A_admin, R}`, `a-keeper.yaml` → `{A_keeper, R}`,
+   `b.yaml` → `{B, R}`, `swarm-p.yaml` → `{B, R}`, `c.yaml` → `{C, R}`. With `A_admin`: `exec
+   --as a` succeeds, `exec --as a-keeper` is **125 naming the key**, `sops -d a-keeper.yaml`
+   exits 128, `check` is `mine=1 foreign=4`. With `A_keeper`, the mirror: `a-keeper.yaml` opens
+   and `a.yaml` refuses. **That pair is the assertion Glenn's ruling needs**, and it is proven
+   by **recipients**, not by a filename. With `B`: `mine=2 foreign=3`, green, because a seat
+   with two files must not turn its own negative half red. `R` opens all five, asserted so
+   nobody later "fixes" the negative test by making recovery impossible. The mutations, each red
+   on its own, each naming the invariant it must turn: `sops -r --add-age <A_keeper> a.yaml`,
+   the file's block listing the keeper key while the rule does not → **invariant 2** with the
+   `updatekeys` line, invariant 4 staying **green**, which is the point and not a gap (invariant
+   4 compares a decrypt against the file's *own* recipients, so a wrongly granted decrypt shows
+   as block-versus-rule drift; what stands between the two benches is that `updatekeys` needs a
+   **current recipient's** key — measured: with a non-recipient identity it exits 128 and
+   changes nothing — and only then the review); adding `A_keeper` to `a.yaml`'s **rule** without
+   `updatekeys` → **invariant 2**, the grant that grants nothing; that same rule change **merged
+   and then `updatekeys`-ed with `R`**, so every recipient list agrees and invariants 2 and 4
+   are green → **invariant 1**, the ruling that no file carries two seat keys; removing a
+   recipient from `b.yaml`'s rule while the file still opens for it → **invariant 2**, the
+   revoke case; planting `A_admin` in the sops child's `keys.txt` → **invariant 4** on
+   `a-keeper.yaml`, the only way a file whose recipients do not list this key can open, and the
+   whole reason for the empty `HOME`. **The declared recovery key, asserted on the shape the
+   store actually has**: a two-rule fixture `{A_admin, R}`, `{A_keeper, R}` in which `a.yaml`'s
+   rule is re-pointed to `{A_admin, A_keeper}` and `updatekeys`-ed, so every rule still names
+   two recipients and one key is still common — red on **invariant 1** on **every** bench,
+   because `recovery.pub` says which key `R` is, and the same fixture is green before the swap;
+   a **one-rule** store `{B, R}` is green, the counting form having made it red; and
+   `recovery.pub` deleted, empty, at mode `000`, holding two lines, or holding `not-a-key` are
+   five refusals naming the file. Every one of those five, **and the re-pointed declared-key
+   mismatch above, is asserted on `exec` as well** — exit **125** before the command starts, the
+   shape check `exec` makes so the launcher never guesses which recipient is the recovery key —
+   the mutation being `exec` running the command anyway on a store `check` calls red. Invariant
+   1's other three clauses get a mutation each: the anchor dropped from `^a\.yaml$` so
+   `not-a.yaml` matches, a recipient truncated to `age1`, and `R` listed twice in one rule.
 2. `TestExecSetsExactlyTheKeysInTheFile` — the child prints its own environment: every key
    `--only` named present with exact bytes, none renamed, and **no key this tool invented** (a
    mutation adding a `NOVA_SECRETS_*` marker turns it red). **Every variable and every file in
@@ -669,12 +705,16 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
    one of them; `keygen` writes rather than reads one, and its own refusals are test 14. `0600`
    in `0700` passes; a key file **inside** `--store` makes `check` red. And the other property
    of that file: an identity whose `# public key:` comment is stripped — legal to sops, and the
-   only place `check` can learn its own public half — is a refusal on `exec` and `check` naming
-   `age-keygen -y <path>`, with a mutation that treats the missing comment as "opens nothing"
+   only place `check` can learn its own public half — is a refusal on `check` naming
+   `age-keygen -y <path>` and **not on `exec`**, which never reads the public half and asserts
+   nothing about recipients, with a mutation that treats the missing comment as "opens nothing"
    and would make invariant 4 pass vacuously.
 8. `TestTheVersionProbeMakesNoNetworkCall` — the probe answers with egress blocked; `sops
    3.9.0` is refused naming `brew upgrade`; `banana` is refused as unparseable, **not**
-   accepted; absent and non-executable are two different sentences.
+   accepted; absent and non-executable are two different sentences. The ruleset warning is
+   asserted on the same blocked egress: with `--github-token` given and the API unreachable
+   `check` is **green and silent**, and against a recorded answer it prints
+   `ruleset_editable_by=` without moving the exit code.
 9. `TestARequireThatIsMissingRefusesBeforeTheCommandStarts` — the command writes a sentinel;
    after the refusal the sentinel does not exist; every missing `--require` is named in one
    run, sorted.
@@ -691,13 +731,19 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
     MORE line, the count line prints on the red run, `--max 0` prints all, a negative `--max`
     is refused.
 13. `TestCheckFailsClosedOnEverythingItCannotRead` — an unreadable `.sops.yaml`, an unreadable
-    AI file, a store that is a file, a store with no `.sops.yaml`: **absent, unreadable and
-    unrecognised pinned as three different answers**.
+    AI file, a store that is a file, a store with no `.sops.yaml`, a `.sops.yaml` that will not
+    parse: **absent, unreadable and unrecognised pinned as three different answers**, the
+    unparseable one **exit 1 on invariant 1** and the store with none **exit 2**, with a mutation
+    collapsing the two that must turn it red.
 14. `TestKeygenNeverOverwritesAndNeverTouchesTheStore` — an existing file at `--key` is refused
     with its bytes unchanged; a `0755` parent is refused naming `mkdir -m 700`; on success the
     created file is the only filesystem change anywhere, asserted by hashing the whole store tree
-    before and after; the private key appears on no stream. The printed `SECRETS RULE` block
-    satisfies invariant 1 when pasted: anchored, two recipients, the recovery placeholder.
+    before and after; the private key appears on no stream. **Run with `--store`, the printed
+    `SECRETS RULE` block satisfies invariant 1 when pasted** — anchored, two recipients, the
+    second byte-for-byte the store's `recovery.pub` — fed to `check` as a real rule and green.
+    Without `--store` the block carries the literal placeholder **and** the `NOTE` line, and the
+    same feed is **red on invariant 1**, so a placeholder is never mistaken for a finished rule;
+    the store's tree hash is unchanged by either run.
 15. `TestTheLauncherOrderWorksWithTheStoreFullyDenied` — end to end in nova-sandbox's real
     grammar at PR #70, the write set carrying the probe's `HOME` and neither the store nor the
     key directory in any read set: the probe sees the keys. The reverse nesting is asserted to
@@ -783,8 +829,11 @@ README's `space_key` line and unseal that value from `<line>.yaml` (generated on
 the old one revoked at the box); add the `rowan-keeper.yaml` rule with the keeper key alone and
 give `rowan.yaml` the admin key alone; **commit `recovery.pub` at the store root** and add that
 key as the recovery recipient of every rule. That last is necessarily Rowan's hand and Glenn's
-approval — adding `R` to a sealed file is `updatekeys` by a current recipient — and until it
-lands nothing in the store is recoverable. The store's one rule is anchored at both ends
+approval — adding `R` to a sealed file is `updatekeys` by a current recipient, and his approval
+of that one pull request is the **one review that compares `recovery.pub` against his own record
+of the public half**, character for character, a first line having no diff to catch and the pull
+request being written on the unwalled bench — and until it lands nothing in the store is
+recoverable. The store's one rule is anchored at both ends
 already, so invariant 1's anchor half is green there today; the declared-recovery half lands
 with the same pull request, and is green on a one-rule store the moment `recovery.pub` exists.
 
