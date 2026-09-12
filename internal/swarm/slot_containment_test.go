@@ -99,17 +99,14 @@ func TestAKeyFileInASlotDirectorySpelledInAnotherCaseIsRefusedWhereTheFilesystem
 	if _, problems := LoadWorker(slotDesc(t, dir, home, deeper)); len(problems) != 1 {
 		t.Fatalf("a key file under a folded slot's jobs/ is not refused: %v", problems)
 	}
-	// AND THE SLOT DIRECTORY NEED NOT BE THERE. `<dir>/Worker-9` is a directory nobody has
-	// created yet -- the fold is in the NAME, and the tool will create it at run.
-	absent := filepath.Join(dir, "Worker-9", ".key")
-	if err := os.MkdirAll(filepath.Dir(absent), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(absent, []byte("sk-not-a-key\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if _, problems := LoadWorker(slotDesc(t, dir, home, absent)); len(problems) != 1 {
-		t.Fatalf("a key file in a slot directory that does not exist as `worker-9` is not refused: %v", problems)
+	// AND NEITHER THE SLOT NOR THE WORKER DIRECTORY HAS TO BE THERE. This is the case that
+	// has no inode to compare -- `<future>/worker` does not exist, so the name is all there
+	// is -- and the answer comes from the filesystem's MEASURED fold rather than from
+	// `runtime.GOOS`: the probe climbs to the nearest directory that does exist and asks it.
+	future := filepath.Join(dir, "future", "worker")
+	absent := filepath.Join(dir, "future", "Worker-2", ".key")
+	if _, problems := LoadWorker(slotDesc(t, dir, future, absent)); len(problems) != 1 {
+		t.Fatalf("a key file in the slot of a worker_dir that does not exist yet is not refused: %v", problems)
 	}
 	// And the placements that are SOUND stay sound: a neighbour whose name merely starts
 	// the same way is not a slot, and the key file the README teaches is outside both lists.
