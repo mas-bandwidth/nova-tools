@@ -83,7 +83,7 @@ func Run(in RunInput) int {
 	// worker at all. `--no-sandbox` is the one workaround and it skips the probe, because
 	// there is then nothing to prove.
 	if !in.NoSandbox {
-		if reason, text := SandboxGate(in.Sandbox, p.Dir, in.Worker.KeyFile); reason != "" {
+		if reason, text := SandboxGate(in.Sandbox, p.Dir, in.Worker.KeyFile, errOut); reason != "" {
 			fmt.Fprintf(errOut, "RUN REFUSED reason=%s: %s\n", oneline.Field(reason), oneline.Escape(text))
 			return 2
 		}

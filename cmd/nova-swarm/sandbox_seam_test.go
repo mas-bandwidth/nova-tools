@@ -137,6 +137,8 @@ func TestRunRefusesWhenTheWallIsNotThere(t *testing.T) {
 			if _, err := os.Stat(filepath.Join(b.pool, "pending", id+".task")); err != nil {
 				t.Errorf("the task did not stay pending: %v", err)
 			}
+			// A refused run leaves no probe directory behind either.
+			mustNotHaveProbeDir(t, b)
 		})
 	}
 }
@@ -165,6 +167,18 @@ func TestARelativePoolStillProvesTheWall(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "RUN START id="+id) {
 		t.Errorf("no worker started under a relative pool:\n%s%s", stdout, stderr)
+	}
+	// The probe's own directory is the probe's, and it does not outlive it: it was left in
+	// the pool once per run, and the pool is this tool's own layout (Rowan's Fable read of
+	// #88 at d0c1841, L4).
+	mustNotHaveProbeDir(t, b)
+}
+
+// mustNotHaveProbeDir says that `run` left no probe directory behind in the pool.
+func mustNotHaveProbeDir(t *testing.T, b *bench) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(b.pool, "sandbox-probe")); err == nil {
+		t.Errorf("%s outlived the probe that made it", filepath.Join(b.pool, "sandbox-probe"))
 	}
 }
 

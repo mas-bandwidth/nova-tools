@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -162,11 +163,27 @@ func absPath(path string) string {
 // empty reason when the wall is there. The two reasons are the spec's own (test 23): a
 // machine with no backend is `no_sandbox` and a wall that failed a check is
 // `sandbox_probe`.
-func SandboxGate(sandboxPath, poolDir, secret string) (reason, text string) {
+// `notes` is where the one thing this gate can fail at without refusing the run is said:
+// the probe directory it made and could not remove. It is the caller's stderr, never
+// stdout, because a pass prints EXACTLY ONE `RUN NOTE` and that line is the remedy at the
+// end (SPEC-SWARM's output grammar).
+func SandboxGate(sandboxPath, poolDir, secret string, notes io.Writer) (reason, text string) {
 	probeDir := SandboxProbeDir(poolDir)
 	if err := os.MkdirAll(probeDir, 0o700); err != nil {
 		return "sandbox_probe", fmt.Sprintf("the probe directory %s could not be made: %s", probeDir, redactedReason(err))
 	}
+	// THE PROBE'S DIRECTORY IS THE PROBE'S, and it does not outlive it. It was left in the
+	// pool once per run, and the pool is this tool's own layout: a directory nothing in
+	// SPEC-SWARM names is a directory a later reader has to account for (Rowan's Fable
+	// read of #88 at d0c1841, L4). The removal is BEST EFFORT -- the wall proved itself or
+	// it did not, and a directory that will not go away is not a reason to start no worker
+	// -- so it is said on stderr and the gate's answer is unchanged.
+	defer func() {
+		if err := os.RemoveAll(probeDir); err != nil && notes != nil {
+			fmt.Fprintf(notes, "nova-swarm run: the probe directory %s could not be removed: %s\n",
+				oneline.Field(probeDir), oneline.Escape(redactedReason(err)))
+		}
+	}()
 	// `check` is a question and exits 0 either way, so the ANSWER is read from its line:
 	// a machine with no backend says backend=none, and that is a refusal of its own,
 	// named apart from a probe that ran and said NO.
