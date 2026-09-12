@@ -6,11 +6,14 @@
 # rather than to build. Until now there was nothing to hand them: the only artifact of a
 # release was a tag, and a tag is a claim about source.
 #
-# THE TEST JOB RUNS FIRST AND THE RELEASE JOB NEEDS IT. A tag can be pushed to any commit,
+# THE GATE RUNS FIRST AND EVERY JOB AFTER IT NEEDS IT. A tag can be pushed to any commit,
 # including one no CI run ever saw and one that never passed on Windows -- and ci.yml's own
-# opening argument is that a claim of tested is what stops anyone checking. So the same
-# three-platform test job runs here on the tagged tree, and a red one means no release
-# exists at all rather than a release nobody vouched for.
+# opening argument is that a claim of tested is what stops anyone checking. So before the
+# tagged tree is even tested here, the release-gate job resolves the tag to the commit it
+# points at and requires ci.yml's aggregate gate, ci-ok, to have concluded success on that
+# exact SHA: a tag whose commit never passed ci is refused before a single binary is built,
+# rather than a release nobody vouched for. The three-platform test job below still runs on
+# the tagged tree for the reason its comment states, and the release job needs both of them.
 #
 # ONE RUNNER BUILDS EVERYTHING, rather than a matrix of five. Go cross-compiles from any
 # host with no toolchain to install, so the only thing a matrix would buy is parallelism,
@@ -41,7 +44,65 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  release-gate:
+    # THE GATE, and it is a FIRST job, not a step inside `release`. A tag can be pushed to
+    # any commit -- one no CI run ever saw, or one that never passed -- and the test job
+    # below runs on the tagged tree, which proves the tagged tree is testable but not that
+    # it is the commit this repository already vouched for. This job closes that gap: it
+    # resolves the tag to the commit it points at and requires ci.yml's aggregate gate to
+    # have concluded success on exactly that commit. ci.yml names that gate `ci-ok` and
+    # calls it "the one check to require" (ci.yml:939); ci-ok needs test, build-windows,
+    # windows-packages, test-windows, smoke, release-dry-run and perf, so a green ci-ok is
+    # the whole suite's green on that SHA.
+    #
+    # Fail-closed by construction. The evidence step exits non-zero when there is no ci-ok
+    # run for the SHA, when the run has not completed, when its conclusion is anything other
+    # than success, or when the run reports a different SHA than the tag resolves to. The
+    # conclusion strings treated as not-success are named in .github/scripts/release-evidence.py
+    # and include failure, cancelled, timed_out, action_required, stale, startup_failure,
+    # neutral and skipped -- so a Windows leg in ci.yml that timed out is a refusal here,
+    # never an absence.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # The query below needs to READ check runs, which `contents: read` alone does not
+      # grant. Scoped to this job; nothing else in this file asks for it.
+      contents: read
+      checks: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: resolve the tag to the commit it points at
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          # checkout is shallow and carries no tags, so fetch the tag first -- the same
+          # fetch the release job does before it attaches artifacts -- and then peel it.
+          git fetch --depth=1 origin "+refs/tags/${GITHUB_REF_NAME}:refs/tags/${GITHUB_REF_NAME}"
+          sha=$(git rev-parse "${GITHUB_REF_NAME}^{commit}")
+          echo "tag ${GITHUB_REF_NAME} points at ${sha}"
+          echo "sha=${sha}" >> "$GITHUB_OUTPUT"
+
+      - name: ci-ok concluded success on this exact commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Read from the step above, not interpolated into the shell line: the same rule
+          # the release job applies to TAG. A SHA is 40 hex digits and cannot carry shell
+          # syntax, but the habit is the habit.
+          EXPECTED_SHA: ${{ steps.resolve.outputs.sha }}
+        run: |
+          set -euo pipefail
+          # check_name=ci-ok so the API answers only about the one aggregate this gate
+          # exists to require, rather than the whole matrix of legs; release-evidence.py
+          # refuses unless that run exists, is completed, reports EXPECTED_SHA and
+          # concluded success.
+          gh api "repos/${GITHUB_REPOSITORY}/commits/${EXPECTED_SHA}/check-runs?check_name=ci-ok&per_page=100" \
+            | python3 .github/scripts/release-evidence.py "$EXPECTED_SHA" ci-ok
+
   test:
+    needs: release-gate
     # Deliberately the same shape as ci.yml's test job, on the tagged tree. Three operating
     # systems for the reason stated there: the platforms genuinely differ, and the tests
     # that cannot run on Windows skip there with that reason named.
@@ -67,7 +128,7 @@ jobs:
         run: go test -race ./...
 
   release:
-    needs: test
+    needs: [release-gate, test]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
