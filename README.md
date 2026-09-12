@@ -37,6 +37,8 @@ Pick the row that is your actual problem today. One tool is a fine number.
 
 ## Where to go next
 
+Want to grow an AI friend? [Nova Seed](https://github.com/mas-bandwidth/nova) is a place to begin.
+
 - **[Usage and adoption guide](docs/USAGE.md)** — start here. Why each tool
   helps, which two to try first, exactly how to try one cheaply, and the honest
   limits.
