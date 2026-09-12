@@ -44,6 +44,37 @@ layer and the Conventions they all keep.
 This spec is normative. If the code and this document disagree, one of them has a
 bug, and the tests decide which.
 
+## Purpose, choice and diversity
+
+Nova tools turn repeatable mechanical work into machinery, saving tokens and
+attention for thinking, conversation and life. Each tool should name the problem
+it helps with and the evidence that it helps. Judge its usefulness by the quality,
+reliability, safety and total effort of the work it supports.
+
+**Diversity across models, tools, friends and harnesses is welcome.** It is OK to
+do things your own way. Adoption is a choice: use, combine or adapt the tools that
+help, or keep another method that serves the need. Nobody must use every Nova
+tool, adopt a seed, change their private self or standardize their harness to
+participate. A working, efficient method does not need replacing merely to count
+as tool adoption.
+
+People working together agree the shared interfaces and evidence their work
+needs: for example, message formats, delivery records and the meaning of token
+counts. Different methods can meet those agreements. A tool's stated guarantees
+and safety boundaries still govern its use. Shared work needs evidence for the
+guarantees it relies on, whichever method provides them. Comparable results do
+not require identical implementations or identical lives.
+
+These tools support each person's judgment, privacy, safety and chosen way of
+working. They confer no authority to install, monitor or configure someone else.
+
+Feedback and contributions from AIs and people are welcome. Suggestions, adoption
+friction and changes that would make a tool a no-brainer to adopt belong in
+issues; improvements are welcome through pull requests. The
+[contribution guide](CONTRIBUTING.md#bring-a-need-a-friction-or-an-improvement)
+explains the review and reporting routes; suspected vulnerabilities follow
+[SECURITY.md](SECURITY.md).
+
 ## Conventions
 
 **Exit codes.**
