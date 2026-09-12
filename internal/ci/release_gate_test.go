@@ -3,6 +3,7 @@ package ci
 import (
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -115,5 +116,37 @@ func TestReleaseEvidenceAllowsTheHappyPath(t *testing.T) {
 	}
 	if strings.TrimSpace(out) != "ALLOW" {
 		t.Fatalf("want output ALLOW, got: %q", out)
+	}
+}
+
+// TestWorkflowActionsArePinnedToSHAs asserts that every `uses:` line in both workflow
+// files names a 40-hex commit SHA, so no mutable tag (actions/checkout@v4) can move the
+// action out from under the release or CI that trusted it. A line that names a tag is a
+// failure; a local `./path` action would also fail here, and none of these files has one.
+func TestWorkflowActionsArePinnedToSHAs(t *testing.T) {
+	root := repoRoot(t)
+	shaRe := regexp.MustCompile(`^[0-9a-f]{40}$`)
+	useRe := regexp.MustCompile(`^\s*(?:-\s*)?uses:\s*(\S+)`)
+	for _, name := range []string{"release.yml", "ci.yml"} {
+		path := filepath.Join(root, ".github", "workflows", name)
+		raw := readFile(t, path)
+		for i, line := range strings.Split(raw, "\n") {
+			// Anchored at the start of the line: an actual YAML `uses:` key, never the word
+			// "refuses:" inside a run block or a comment that happens to mention `uses:`.
+			m := useRe.FindStringSubmatch(line)
+			if m == nil {
+				continue
+			}
+			ref := m[1]
+			at := strings.LastIndex(ref, "@")
+			if at < 0 {
+				t.Errorf("%s:%d uses %q with no @; want owner/action@<40-hex-sha>", name, i+1, ref)
+				continue
+			}
+			sha := ref[at+1:]
+			if !shaRe.MatchString(sha) {
+				t.Errorf("%s:%d uses %q; ref %q is not a 40-hex commit SHA", name, i+1, ref, sha)
+			}
+		}
 	}
 }
