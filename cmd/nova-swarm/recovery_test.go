@@ -190,7 +190,7 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 	if err := swarm.WriteJSON(filepath.Join(task1Dir, "pid"), swarm.PidRecord{
 		Job: task1ID, Slot: 1, State: swarm.SlotLaunched,
 		Pid: liveCmd.Process.Pid, Pgid: livePgid, JobPgid: livePgid,
-		PidStarted: sf1.PidStarted, Nonce: "nonce-1", Started: sf1.LaunchedAt,
+		PidStarted: sf1.PidStarted, Started: sf1.LaunchedAt,
 	}); err != nil {
 		t.Fatal(err)
 	}

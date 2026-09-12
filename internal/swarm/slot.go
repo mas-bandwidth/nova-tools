@@ -2,6 +2,7 @@ package swarm
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -51,9 +52,13 @@ type SlotFile struct {
 	ReservedAt    string `json:"reserved_at,omitempty"`
 	LaunchedAt    string `json:"launched_at,omitempty"`
 	Nonce         string `json:"nonce"`
+	ExitAttest    string `json:"exit_attest,omitempty"`
 }
 
-// PidRecord is <job>/pid: the same identity, beside the job it belongs to.
+// PidRecord is <job>/pid: the same identity, beside the job it belongs to. It carries the
+// pids and the start stamps its readers want, and NO launch nonce: the job directory is the
+// first --write of the wall, so a nonce kept here is readable and writable by the worker
+// itself (packet 2 finding 2).
 type PidRecord struct {
 	Job        string `json:"job"`
 	Slot       int    `json:"slot"`
@@ -64,18 +69,22 @@ type PidRecord struct {
 	PidStarted string `json:"pid_started"`
 	JobStarted string `json:"job_started,omitempty"`
 	RunnerPid  int    `json:"runner_pid"`
-	Nonce      string `json:"nonce"`
 	Started    string `json:"started"`
 }
 
 // ExitRecord is <job>/exit.json: the supervisor's durable completion evidence (rule 18,
-// step 6). An outcome with none is `unknown`, never guessed.
+// step 6). An outcome with none is `unknown`, never guessed. `Attest` is the per-launch
+// secret the supervisor minted in its own memory, written here only inside endWith after the
+// job's whole process group is dead; its hash lives in the slot file, and a reader accepts
+// this record as the supervisor's own word only when both the nonce AND the attestation
+// match.
 type ExitRecord struct {
 	RC        int    `json:"rc"`
 	Signal    string `json:"signal,omitempty"`
 	Ended     string `json:"ended"`
 	Survivors int    `json:"survivors"`
 	Nonce     string `json:"nonce"`
+	Attest    string `json:"attest,omitempty"`
 	End       string `json:"end,omitempty"`
 	Spent     int    `json:"spent,omitempty"`
 	Observed  bool   `json:"observed,omitempty"`
@@ -102,6 +111,34 @@ func Nonce() (string, error) {
 		return "", fmt.Errorf("the OS random source would not supply a launch nonce: %w", err)
 	}
 	return hex.EncodeToString(b[:]), nil
+}
+
+// NewExitAttest mints the per-launch attestation secret, drawn from the OS random source in
+// the supervisor's own memory and never written anywhere a worker can read. Only its hash
+// (ExitAttestHash) reaches the slot file before the launch, and the secret itself reaches
+// <job>/exit.json only inside endWith, after the job's process group is dead.
+func NewExitAttest() (string, error) {
+	var b [32]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", fmt.Errorf("the OS random source would not supply an exit attestation: %w", err)
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// ExitAttestHash is sha256(secret) in hex, the only form of the attestation that is written
+// into the slot file (a file in neither the read set nor the write set).
+func ExitAttestHash(secret string) string {
+	sum := sha256.Sum256([]byte(secret))
+	return hex.EncodeToString(sum[:])
+}
+
+// ExitAttestOK is whether a reader holds the secret that produced the slot file's hash. A
+// nonce match without this is a record a worker could have written, and is never reclaim.
+func ExitAttestOK(secret, hash string) bool {
+	if secret == "" || hash == "" {
+		return false
+	}
+	return ExitAttestHash(secret) == hash
 }
 
 func (p *Pool) slotPath(n int) string { return p.Path(Slots, strconv.Itoa(n)+".json") }

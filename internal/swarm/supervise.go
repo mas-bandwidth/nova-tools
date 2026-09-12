@@ -70,7 +70,7 @@ func Supervise(in SuperviseInput) int {
 	started := in.Now()
 	if err := WriteJSON(PidPath(jobDir), PidRecord{
 		Job: in.Task, Slot: in.Slot, State: SlotLaunched, Pid: self, Pgid: pgidOf(self),
-		PidStarted: identity.PidStarted, Nonce: in.Nonce, Started: Stamp(started),
+		PidStarted: identity.PidStarted, Started: Stamp(started),
 	}); err != nil {
 		return abort(in, jobDir, err)
 	}
@@ -127,7 +127,7 @@ func Supervise(in SuperviseInput) int {
 	jobStarted := StartStamp(jobPgid)
 	_ = WriteJSON(PidPath(jobDir), PidRecord{
 		Job: in.Task, Slot: in.Slot, State: SlotLaunched, Pid: self, Pgid: pgidOf(self), JobPgid: jobPgid,
-		PidStarted: identity.PidStarted, JobStarted: jobStarted, Nonce: in.Nonce, Started: Stamp(started),
+		PidStarted: identity.PidStarted, JobStarted: jobStarted, Started: Stamp(started),
 	})
 	_ = p.UpdateSlot(in.Slot, in.Nonce, func(sf SlotFile) SlotFile {
 		sf.JobPgid, sf.JobStarted = jobPgid, jobStarted
