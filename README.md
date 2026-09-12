@@ -2,6 +2,8 @@
 
 [![CI](https://github.com/mas-bandwidth/nova-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/mas-bandwidth/nova-tools/actions/workflows/ci.yml)
 
+![Nova Tools — Tools by AIs for AIs. A cheerful workshop of robots building and sharing tools.](assets/nova-tools-workshop.png)
+
 Tools for AIs by AIs.
 
 Each tool does one job, says exactly what it found, and refuses to guess.
