@@ -191,3 +191,129 @@ func TestKernelTokensNeverReportsFewerTokensThanItsEstimate(t *testing.T) {
 		}
 	}
 }
+
+// TestTheTokenEstimateBoundaryIsExact witnesses the exact 2^63 boundary the
+// conversion gate enforces, and the largest representable float64 below it that
+// is still a countable int64. The repair lives in KernelTokens: it refuses when
+// estimate >= float64(math.MaxInt64), because that constant rounds UP to 2^63
+// -- one past the largest int64 -- and it treats an uncountable estimate as
+// over budget. Each row states the estimate as a float64 and the expected
+// outcome. For a countable estimate (and for 2^63 itself) the divisor is chosen
+// so the measured bytes derive exactly that estimate -- divisor = measured /
+// estimate -- which drives KernelTokens rather than any one platform's
+// float-to-int conversion. The assertions are exact int64 values, so the test
+// is the same on amd64, arm64 and any future GOARCH.
+func TestTheTokenEstimateBoundaryIsExact(t *testing.T) {
+	two63 := math.Ldexp(1, 63)            // == float64(math.MaxInt64): rounds UP to one past MaxInt64
+	justBelow := math.Nextafter(two63, 0) // 2^63 - 1024 == 9223372036854774784, the largest float64 below 2^63
+
+	tests := []struct {
+		name       string
+		estimate   float64 // the estimate this row witnesses
+		measured   int     // bytes written to the file, so the estimate is derived, not injected
+		divisor    float64 // bytes-per-token; used directly unless derived is set
+		derived    bool    // divisor = measured/estimate, to realise the estimate exactly
+		maxTokens  int64
+		wantTokens int64
+		wantErr    bool
+		wantFail   []string
+	}{
+		{
+			name:      "exactly 2^63 is refused as uncountable",
+			estimate:  two63,
+			measured:  1,
+			derived:   true,
+			maxTokens: 400,
+			wantFail:  []string{"more tokens than can be counted"},
+		},
+		{
+			name:       "the largest float64 below 2^63 (2^63-1024) converts exactly and passes at that exact budget",
+			estimate:   justBelow,
+			measured:   3,
+			derived:    true,
+			maxTokens:  9223372036854774784,
+			wantTokens: 9223372036854774784,
+		},
+		{
+			name:       "2^62 converts exactly and passes at that exact budget",
+			estimate:   math.Ldexp(1, 62),
+			measured:   1,
+			derived:    true,
+			maxTokens:  4611686018427387904,
+			wantTokens: 4611686018427387904,
+		},
+		{
+			name:       "a small ordinary estimate converts exactly and passes at that exact budget",
+			estimate:   400.0,
+			measured:   400,
+			derived:    true,
+			maxTokens:  400,
+			wantTokens: 400,
+		},
+		{
+			name:      "+Inf estimate is refused as uncountable (a denormal divisor derives it)",
+			estimate:  math.Inf(1),
+			measured:  1,
+			divisor:   math.SmallestNonzeroFloat64,
+			maxTokens: 400,
+			wantFail:  []string{"more tokens than can be counted"},
+		},
+		{
+			// The helper cannot receive a NaN estimate: the caller validates the
+			// divisor before any division, and a finite positive divisor over a
+			// non-negative byte count can never yield NaN. The caller's path is
+			// the one to assert: a NaN divisor is refused before the estimate
+			// exists.
+			name:      "NaN estimate is unreachable; the caller refuses a NaN divisor first",
+			estimate:  math.NaN(),
+			measured:  1,
+			divisor:   math.NaN(),
+			maxTokens: 400,
+			wantErr:   true,
+		},
+		{
+			// Current contract: a negative estimate cannot arise. The divisor is
+			// validated positive and the measured byte count is never negative,
+			// so ceil(measured/divisor) is never negative. The only input that
+			// could lead there -- a negative divisor -- is refused by the caller
+			// before the estimate is formed, so there is nothing for the gate to
+			// refuse and no kernel.go change is warranted.
+			name:      "negative estimate is unreachable; the caller refuses a negative divisor first",
+			estimate:  -1.0,
+			measured:  1,
+			divisor:   -1.0,
+			maxTokens: 400,
+			wantErr:   true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			writeMode(t, dir, "KERNEL.md", strings.Repeat("x", tt.measured), 0o644)
+			file := filepath.Join(dir, "KERNEL.md")
+
+			divisor := tt.divisor
+			if tt.derived {
+				divisor = float64(tt.measured) / tt.estimate
+			}
+
+			measured, tokens, failures, err := KernelTokens(file, tt.maxTokens, divisor)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("estimate %g (divisor %g): expected an error, got tokens=%d", tt.estimate, divisor, tokens)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("estimate %g (divisor %g): unexpected error: %v", tt.estimate, divisor, err)
+			}
+			wantFailures(t, failures, tt.wantFail)
+			if tokens != tt.wantTokens {
+				t.Errorf("estimate %g (divisor %g): tokens = %d, want %d", tt.estimate, divisor, tokens, tt.wantTokens)
+			}
+			if measured != int64(tt.measured) {
+				t.Errorf("estimate %g: measured = %d bytes, want %d", tt.estimate, measured, tt.measured)
+			}
+		})
+	}
+}
