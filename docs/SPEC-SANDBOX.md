@@ -224,8 +224,11 @@ near the end.
    The previous revision said "every variable whose name contains `AGENT`",
    which was measured to drop `AI_AGENT` and `CLAUDE_AGENT_SDK_VERSION` — names
    that say what is *running* the job and address nothing. Under the set above
-   both **pass through**, and the `SANDBOX NOTE` line is true as written
-   because it names exactly what was dropped.
+   both **pass through**, and the `SANDBOX NOTE` line — printed before the
+   command starts whenever the scrub removed anything, and reading `SANDBOX
+   NOTE dropped from the child's environment: <names>; an agent socket speaks
+   for a key the wall denies` — is true as written, because `<names>` is
+   exactly the set above and nothing else.
    The scrub is the second half of rule 7's network policy: the wall denies
    the agent's *socket* and the scrub removes the *address* of it, so a
    command that would otherwise sign a push with a key it cannot read has
@@ -319,8 +322,8 @@ near the end.
     - **darwin:** the tool spawns `sandbox-exec`, which applies the profile and
       `exec`s the command in place, and **waits**; `SIGINT` and `SIGTERM` are
       forwarded to the child's process group. The tool waits so that it can
-      the tool waits so that it can forward signals and return the command's
-      status, not to clean anything up: the profile is inline (`-p`).
+      forward signals and return the command's status, not to clean anything
+      up: the profile is inline (`-p`).
     - **windows:** the tool `CreateProcessW`es the command into the container
       and **waits**, forwarding console control events, so that it can remove
       the ACEs it added when the command ends.
@@ -664,9 +667,11 @@ run (exit 134). Every param the filled profile names must be passed; that, and
 what the tool does with metacharacters in a path, is item 2 of **to verify at
 build**.
 
-The filled profile is written to a file inside the first `--write` under a name
-the tool chooses, is `0600`, and is removed when the command ends — which is
-why the darwin body waits rather than `exec`s (rule 12).
+The filled profile is **never written to a file**: it is handed to
+`sandbox-exec` inline with `-p` (rule 12), so no profile text lands in the
+write set and there is nothing to remove when the command ends. The darwin body
+waits rather than `exec`s in order to forward signals and return the command's
+status, not to clean anything up.
 
 ## Linux — Landlock, no root
 
@@ -956,8 +961,11 @@ produces it rather than asserting it:
   `profiles/darwin-check.sh` (`unix_socket_outside`, with its control).
 - **No key is readable.** Rule 3: `~/.ssh` is in neither list, and rule 9 moves
   `HOME` to the per-job data home so nothing derives a path back to it.
-- **No agent address is in the environment.** Rule 9: the wrapper drops
-  `SSH_AUTH_SOCK` and every `*AGENT*` name before exec.
+- **No agent address is in the environment.** Rule 9: the wrapper drops that
+  rule's exact set — `SSH_AUTH_SOCK`, `SSH_AGENT_*`, `GPG_AGENT_INFO` and any
+  `*_AGENT_PID`, `*_AGENT_INFO` or `*_AGENT_SOCK` — before exec, while
+  `AI_AGENT` and `CLAUDE_AGENT_SDK_VERSION`, which address nothing, pass
+  through.
 - **`git push` from inside the job fails**, by those three together and by a
   fourth: the worker holds no git credential at all, because the `tree: yes`
   clone was made by the dispatcher before the wall closed and its `origin` is
@@ -1203,11 +1211,14 @@ Each item is a claim in this document that was written from documentation and
 must be **executed on the machine** before the spec's word is trusted. A build
 that cannot confirm one changes this document rather than asserting it.
 
-1. That `(allow mach-lookup)` unqualified, with `/` and `/dev` in the roots, is
-   enough for a Node-based harness and a Go toolchain under the profile, and if
-   not, the exact service list — a deny-default profile that blocks
-   `mach-lookup` breaks `dyld` and process spawn in ways that look like
-   unrelated crashes.
+1. That rule 7's measured three-service `mach-lookup` set
+   (`com.apple.system.opendirectoryd.libinfo`, `com.apple.SecurityServer`,
+   `com.apple.system.logger`), with `/` and `/dev` in the roots, is enough for
+   a Node-based harness and a Go toolchain under the profile, and if not, which
+   further service each needs, added by measurement — the unqualified
+   `(allow mach-lookup)` is forbidden by rule 7 and is not the fallback, while
+   a deny-default profile that blocks `mach-lookup` outright breaks `dyld` and
+   process spawn in ways that look like unrelated crashes.
 2. `-D` parameter escaping, which is a live risk and not a formality: one
    measured run of a multi-line profile with seven parameters printed
    `invalid data type of path filter; expected pattern, got boolean`, and a
@@ -1293,7 +1304,12 @@ One per rule:
    and the command does not run — a tripwire on the exec path sees no call;
    without `--net-deny` the line says `net=nopromise` and no `SANDBOX NOTE`
    claims a denial. A mutation that proceeds with a note instead of refusing
-   turns the test red.
+   turns the test red. `--net-listen` is demanded by the same test: a wrapped
+   listener that binds a loopback TCP port accepts an inbound connection made
+   from outside the wall **only** when `--net-listen` was passed, and without
+   it that same inbound connect fails; `--net-deny --net-listen` together is
+   `SANDBOX REFUSED reason=bad_net` at exit 125 and the command does not run —
+   a tool that picks one of the two instead of refusing turns the test red.
 8. A wrapped command that writes to `$TMPDIR` succeeds and the file lands under
    the first `--write`; `TMPDIR`, `TMP` and `TEMP` all name it; `--tmp` outside
    the write set is refused.
@@ -1438,9 +1454,11 @@ And one for each thing the rules above assert but no test yet reached:
     afterwards; (b) `origin` rewritten to `git@example.invalid:x/y.git`: the
     push fails **before any connection**, with the planted `<home>/.ssh/id_test`
     of test 3 unreadable inside the wall and readable outside it in the same
-    test; (c) the child's environment, read back from inside the wall, holds no
-    `SSH_AUTH_SOCK` and no name containing `AGENT`, while a caller variable set
-    beside them arrives unchanged — and a connect to a unix-domain socket the
+    test; (c) the child's environment, read back from inside the wall, holds
+    none of rule 9's exact set — planted `SSH_AUTH_SOCK`, `SSH_AGENT_PID`,
+    `GPG_AGENT_INFO` and `PODMAN_AGENT_SOCK` are all gone — while a planted
+    `AI_AGENT` and `CLAUDE_AGENT_SDK_VERSION` and a caller variable set
+    beside them arrive unchanged — and a connect to a unix-domain socket the
     test binds outside every named path is denied, with the control connect
     outside the wall succeeding (darwin today: `profiles/darwin-check.sh`
     checks `unix_socket_outside` and `unix_socket_outside_control`; linux is
