@@ -685,6 +685,103 @@ jobs:
             *) echo "the run failed, but not for the stale exemption; that is a different defect"; exit 1 ;;
           esac
 
+      - name: a tag the release could not check is refused before anything is built
+        shell: bash
+        run: |
+          set -euo pipefail
+          # THE TAG ALPHABET -- the half of this job that was left owed. The step above
+          # proves the EMPTY stamp is refused; `%`, `=` and whitespace are legal in a git
+          # refname too, both scripts refuse all three by name, and until this step
+          # nothing exercised any of those refusals. From the fourth read of #125, carried
+          # as the last open low of #118: "ci.yml's release-dry-run exercises the
+          # empty-stamp refusal only; the `%` and `=` (and whitespace) refusals in
+          # release-ldflags.sh and in the assertion have no negative control."
+          #
+          # These refusals exist because the failure each one replaces is LATE and
+          # unreadable. A `%` tag travels into the assertion's printf FORMAT -- release.yml
+          # hands it "dist/%s_${TAG}_linux_amd64" -- so printf reads a directive nobody
+          # supplied, the script dies under `set -e` before printing a line, and the
+          # release is red with no FAIL naming a cause. An `=` tag is read by the whole-
+          # token match as a separator, so every stamped tool fails in turn AFTER the whole
+          # matrix has been built. An assertion nothing exercises is a belief; and one that
+          # fired on a legal tag would stop the next release for nothing, so both
+          # directions are proved here -- each refusal by its own reason, and legal tags
+          # through both scripts to the assertion's `ok:` lines.
+          stamp=v0.0.0-dry-run
+
+          # ONE: the ldflags helper, called the way release.yml calls it -- a command
+          # substitution under `set -euo pipefail`. The proof is that the line after it
+          # never runs: in a release that is the difference between zero artifacts and 55.
+          refuse_ldflags() {
+            local tag=$1 phrase=$2 late=$3 out rc
+            set +e
+            out=$(TAG="$tag" bash -c 'set -euo pipefail; LDFLAGS=$(.github/scripts/release-ldflags.sh "$TAG"); echo "BUILT ldflags=$LDFLAGS"' 2>&1)
+            rc=$?
+            set -e
+            printf '%s\n' "$out"
+            [ "$rc" -ne 0 ] || { echo "release-ldflags.sh ACCEPTED the tag <$tag>: $late"; exit 1; }
+            case "$out" in
+              *"$phrase"*) ;;
+              *) echo "<$tag> was refused, but not for $phrase; that is a different defect"; exit 1 ;;
+            esac
+            case "$out" in
+              *BUILT*) echo "the release ran on past a refused stamp <$tag>; 55 artifacts would have been built"; exit 1 ;;
+            esac
+            echo "ok: <$tag> is refused with the build never starting"
+          }
+          refuse_ldflags 'v1.0%s-rc1' 'contains %' 'the assertion would die inside printf with no FAIL line naming a cause'
+          refuse_ldflags 'v1.0=rc1' 'contains =' 'every stamped tool would fail the assertion after the matrix was built'
+          refuse_ldflags 'v0.13.0 rc1' 'carries whitespace' 'the linker flag would split and the binaries would be stamped with the first word'
+
+          # And a legal tag is not refused by any of the three: a check that says no to
+          # everything is not a check. These are the shapes this repository actually tags.
+          for legal in v0.13.0 v0.13.0-rc1 "$stamp"; do
+            ldflags=$(.github/scripts/release-ldflags.sh "$legal")
+            case "$ldflags" in
+              *"-X main.version=$legal") echo "ok: <$legal> composes $ldflags" ;;
+              *) echo "release-ldflags.sh composed something else for the legal tag <$legal>: $ldflags"; exit 1 ;;
+            esac
+          done
+
+          # TWO: the same three at the OTHER end of the workflow, where the tag arrives
+          # inside the path template. The fixture is named the way release.yml names its
+          # artifacts (`<tool>_<tag>_linux_amd64`, accurate on this ubuntu runner) and the
+          # template is composed the same way, so what is exercised is the real call shape
+          # of release.yml's assertion step and not a shape invented here.
+          dist="${RUNNER_TEMP}/alphabet"
+          rm -rf "$dist"
+          go build -ldflags "$(.github/scripts/release-ldflags.sh "$stamp")" -o "$dist/" ./cmd/...
+          for bin in "$dist"/*; do
+            mv "$bin" "${bin}_${stamp}_linux_amd64"
+          done
+          # The positive control first: a legal tag inside the template asserts every
+          # shipped tool, so the refusals below are the tag alphabet and not this fixture.
+          .github/scripts/assert-version-stamp.sh "$stamp" "$dist/%s_${stamp}_linux_amd64"
+
+          refuse_assertion() {
+            local tag=$1 phrase=$2 out rc
+            set +e
+            out=$(.github/scripts/assert-version-stamp.sh "$tag" "$dist/%s_${tag}_linux_amd64" 2>&1)
+            rc=$?
+            set -e
+            printf '%s\n' "$out"
+            [ "$rc" -eq 2 ] || { echo "the assertion did not refuse the tag <$tag> as a usage error: rc=$rc"; exit 1; }
+            case "$out" in
+              *"$phrase"*) ;;
+              *) echo "<$tag> was refused by the assertion, but not for $phrase; that is a different defect"; exit 1 ;;
+            esac
+            # And it refuses BY NAMING ITSELF, before a single binary is run -- the whole
+            # point of holding the refusal at this end too, rather than reporting a tag the
+            # check can never match as eleven failing tools.
+            case "$out" in
+              *"ok: "* | *"FAIL: "*) echo "the assertion ran the tools before refusing <$tag>; this refusal is meant to precede them"; exit 1 ;;
+            esac
+            echo "ok: the assertion refuses <$tag> before it runs a binary"
+          }
+          refuse_assertion 'v1.0%s-rc1' 'beyond its single %s'
+          refuse_assertion 'v1.0=rc1' 'contains ='
+          refuse_assertion 'v0.13.0 rc1' 'carries whitespace'
+
       - name: upload the cross-built binaries
         # So that the smoke job runs THE BINARY THIS WOULD SHIP rather than one it builds
         # itself with different flags. The job above already builds with -trimpath and
