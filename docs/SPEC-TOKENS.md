@@ -62,7 +62,7 @@ is the day it was learned.
    and `$TMPDIR`; a run on any other bench would have folded the wrong bench.)
    **Amendment, 2026-09-12 (rules 22, 30, 31).** `publish` adds no default
    path and consults no environment either: `--ledger`, `--batch`,
-   `--v1-day`, `--stage`, `--public` and `--public-repos` are flags, and a
+   `--v1-day`, `--public` and `--public-repos` are flags, and a
    missing one is exit 2 and `refusing to guess`. **The ledger repository is
    a required flag too**: `--repo <host>/<owner>/<name>`, host-bound, with no
    default and nothing compiled in (rule 30). It adds three named defaults,
@@ -167,7 +167,8 @@ is the day it was learned.
    reason, the list still failing when a carve-out has gone stale: this run's
    private temporary directory `<git-dir>/nova-tokens-publish.<random>/` and
    the plumbing index inside it; with `--public`, the staged
-   `<stage>/<day>.tsv.<same random>.tmp` that lands by one rename; and the
+   `<public>/<day>.tsv.<same random>.tmp` that lands by one rename in that
+   same directory; and the
    publish lock `<git-dir>/nova-tokens-publish.lock` with, on a platform
    with no flock, its sentinel — the same two carve-outs rule 8's `fold.lock`
    already has, for the same reason. `<git-dir>` is what the clone itself
@@ -409,7 +410,7 @@ nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--scratch <dir>] [--timeout <seconds>] [--max <n>]
 nova-tokens publish (--batch <dir> | --v1-day <dir> --day <YYYY-MM-DD> --seat <label>)
                     --ledger <dir> --remote <name> --branch <name> --repo <host>/<owner>/<name>
-                    [--supersede] [--stage <dir>]
+                    [--supersede]
                     [--public <dir> --public-repos <file>] [--public-sources]
                     [--deadline <seconds>] [--git-timeout <seconds>] [--attempts <n>] [--max <n>]
 nova-tokens help
@@ -440,10 +441,11 @@ be serialized (rule 30). **The ledger repository has no default**:
 repository would be exactly the guess rule 1 forbids (Stella, 2026-09-12).
 `--ledger`, `--remote`, `--branch`, `--repo` and one of `--batch` or
 `--v1-day` are required with no defaults; `--day` and `--seat` are required
-with `--v1-day` and refused with `--batch`; `--public-repos` and `--stage`
-are required when `--public` is given and refused otherwise, and
-`--public-sources` is refused without `--public`, for the reason `--scratch`
-is.
+with `--v1-day` and refused with `--batch`; `--public-repos` is required when
+`--public` is given and refused otherwise, and `--public-sources` is refused
+without `--public`, for the reason `--scratch` is. There is no staging flag:
+the subset is staged inside `--public` itself, under this run's own name, so
+the rename that lands it can never cross a filesystem (rule 31).
 
 ### `fold`
 
@@ -1035,7 +1037,7 @@ nova-tokens publish --v1-day out --day 2026-09-12 --seat studio \
                     --ledger ~/tokens --remote origin --branch main \
                     --repo github.com/mas-bandwidth/tokens
 PUBLISH PLAN at=<stamp> build=<id> kind=v1-day ledger=/Users/x/tokens repo=github.com/mas-bandwidth/tokens remote=origin branch=main seat=studio day=2026-09-12 contribution=<hex> files=1 bytes=4210 deadline=60 public=-
-PUBLISH FILE path=v1-days/studio/2026-09/2026-09-12.tsv sha256=<hex> rows_sha256=<hex> state=new
+PUBLISH FILE path=v1-days/studio/2026-09/2026-09-12.tsv sha256=<hex> rows_sha256=<hex> state=new supersedes=-
 PUBLISH OK contribution=<hex> commit=<sha> pushed=true state=published attempts=1 files=1 at=<stamp> build=<id>
 ```
 
@@ -1171,11 +1173,14 @@ remedy line. The rules are numbered on from rule 21.
     whose left side is not the object id this run built. `publish` passes no
     `-c <key>=<value>` and no `--config-env`: an inline setting is a
     configuration write with a shorter life. Every invocation runs with
-    stdin from `/dev/null` except the two fed on purpose (8 and 10), with
-    `GIT_TERMINAL_PROMPT=0`, and with `GIT_ASKPASS` set to this tool's own
-    binary in a mode whose only behaviour is to exit 1 — named, not guessed
-    (rule 1) — so a missing credential is a refusal and never a prompt, over
-    HTTPS and over SSH alike. It sets `GIT_INDEX_FILE` for invocation 9 and no
+    stdin from `/dev/null` except the two fed on purpose (8 and 10), with no
+    controlling terminal, with `GIT_TERMINAL_PROMPT=0`, and with `GIT_ASKPASS`
+    set to this tool's own binary in a mode whose only behaviour is to exit 1
+    — named, not guessed (rule 1). Those cover two different prompts: over
+    HTTPS it is `GIT_ASKPASS` and `GIT_TERMINAL_PROMPT` that turn a credential
+    prompt into a refusal, and over SSH it is the `/dev/null` stdin and the
+    absent terminal, because `GIT_ASKPASS` never reaches `ssh` — an SSH
+    passphrase prompt has nowhere to read from and fails instead of waiting. It sets `GIT_INDEX_FILE` for invocation 9 and no
     `GIT_AUTHOR_*` or `GIT_COMMITTER_*` at all. **The author and committer are
     the clone's own configured identity**, read at invocation 3 by
     `config --get` and never by `git var`, which auto-detects a
@@ -1284,10 +1289,13 @@ remedy line. The rules are numbered on from rule 21.
          `push`: the same machine decides it, so nothing is ever pushed twice
          under two identities.
       Exhaustion of `--attempts` or `--deadline` is exit 1
-      `reason=unconfirmed pushed=-` — the truth is unknown, and this spec
-      writes an unknown as `-` — with the contribution id printed and every
-      input still on disk for an explicit retry. Only the remote's own answer
-      establishes success.
+      `reason=unconfirmed`, with the contribution id printed and every input
+      still on disk for an explicit retry. `pushed=` says which kind of
+      exhaustion it was, because this spec writes an unknown as `-` and a
+      rejection is not unknown: **`pushed=false`** when the last attempt ended
+      in a rejection the remote reported, **`pushed=-`** when the last attempt
+      ended with no answer at all. Only the remote's own answer establishes
+      success.
     - **A contribution that is not there, or does not validate.** A v1 day
       file missing under `--v1-day` is exit 2; one `check`'s row rules would
       name is exit 1 `reason=malformed` naming the line. A `--batch` directory
@@ -1334,10 +1342,13 @@ remedy line. The rules are numbered on from rule 21.
       in the seam between this run's `fetch` and `push`: the push is rejected
       and, inside `--attempts`, the contribution lands on top of the other
       writer's commit with its bytes untouched; the refspec never carries `+`;
-      with `--attempts 1` the run is exit 1 `reason=unconfirmed pushed=-`, the
+      with `--attempts 1` the run is exit 1
+      `reason=unconfirmed pushed=false` — a rejection is an answer — the
       remote holds the other writer's commit alone, and the next plain
-      `publish` succeeds with no `--supersede` and no manual cleanup. With
-      `--deadline 0` refused and a deadline that expires mid-retry, the same
+      `publish` succeeds with no `--supersede` and no manual cleanup; a run
+      whose last attempt got no answer at all prints `pushed=-` instead, and a
+      test asserts the two apart. With `--deadline 0` refused and a deadline
+      that expires mid-retry, the same
       `unconfirmed`.
     - **Killed between commit and push.** SIGKILL after `commit-tree` returns
       and before `push` (the fake `git` blocks in `push` for the test): the
@@ -1357,7 +1368,8 @@ remedy line. The rules are numbered on from rule 21.
     delay the retained endpoint — so this rule is **optional to build, after
     rules 22 to 24 and 29 to 31**, and nothing in it gates them. `--public
     <dir>` writes one file, `<public>/<day>.tsv`, through rule 31's owned
-    staged path and one rename, and **pushes nothing**. It is offered for a v1
+    staged path **in that same directory** and one rename, and **pushes
+    nothing**. It is offered for a v1
     day and refused with `--batch`, whose public shape is a records-layer
     decision nobody has made. `--public-repos <file>` is required with it: a
     person's file, one exact repo name per line, no patterns, because a
@@ -1391,6 +1403,7 @@ remedy line. The rules are numbered on from rule 21.
     pre-write check handed a row the selector should have dropped is exit 1
     `reason=subset` with no file under `--public`, no staged file beside it and
     no commit — the red being that without the check the private row lands.
+    There is no `--stage` flag to test: rule 31 stages inside `--public`.
 
 26. **Identity, and the one replace transition.** A contribution's **id** is
     defined per kind, and nothing else is required to equal it:
@@ -1404,10 +1417,12 @@ remedy line. The rules are numbered on from rule 21.
     - **a v1 day**: `rows_sha256`, the digest of every line **below** the
       version line — the rows, their tabs and the final newline, and nothing
       of the stamp.
-    `inventory_sha256` is a separate, **optional** digest over the sorted
-    `<path> sha256=<hex>` lines of the paths a commit adds; it is checked only
-    against its own definition, is never required to equal a contribution id,
-    and no filename depends on it. A v1 day also prints `sha256=`, the whole
+    `inventory_sha256` is a separate digest over the sorted
+    `<path> sha256=<hex>` lines of the paths a commit adds. It is **always
+    written** in a commit's message and is **never an identity**: it is
+    checked only against its own definition, it is never required to equal a
+    contribution id, nothing is looked up by it, and no filename depends on
+    it. A v1 day also prints `sha256=`, the whole
     file.
 
     **The v1 row-equivalence exception, stated once and used everywhere.** The
@@ -1421,7 +1436,12 @@ remedy line. The rules are numbered on from rule 21.
     different `rows_sha256`** → `PUBLISH FAIL reason=differs`, exit 1, until
     `--supersede`, which replaces that one path in a new commit whose message
     carries `supersedes=<the rows_sha256 it replaces>`, the old bytes staying
-    in history. `--supersede` exists for this transition only: it is refused
+    in history. On the other two transitions `--supersede` changes nothing at
+    all: an **absent** path publishes exactly as it would without the flag,
+    and an **identical** one is the same no-op, exit 0
+    `state=already-published`, with no commit and no supersession recorded —
+    the flag is permission to replace, never an instruction to write.
+    `--supersede` exists for this transition only: it is refused
     with `--batch`, because a content-addressed path is never replaced and a
     retained correction is a new observation or a new coverage envelope
     (rule 24's conflict case). So a bench that folds and publishes on a
@@ -1440,7 +1460,9 @@ remedy line. The rules are numbered on from rule 21.
     `reason=differs` and turn every scheduled publish into a supersede chain
     of identical rows. A day whose rows changed by one cell is
     `reason=differs`, and `--supersede` lands one commit whose message carries
-    the replaced `rows_sha256`; `--supersede` with `--batch` is exit 2. A
+    the replaced `rows_sha256`; `--supersede` over an absent path publishes
+    the same commit a plain run would, and over an identical one is
+    `state=already-published` with no commit; `--supersede` with `--batch` is exit 2. A
     batch's printed `contribution=` equals the coverage envelope's content id
     recomputed by the test from the canonical body, and an
     `inventory_sha256` that disagrees with the commit's own path list fails
@@ -1452,7 +1474,7 @@ remedy line. The rules are numbered on from rule 21.
     rule 19's sentence is narrowed to exactly those five verbs by its
     amendment clause. `publish` is the only verb with a `git` subprocess, the
     only verb that takes `--ledger`, `--remote`, `--branch`, `--repo`,
-    `--batch`, `--v1-day`, `--seat`, `--supersede`, `--stage`, `--public`,
+    `--batch`, `--v1-day`, `--seat`, `--supersede`, `--public`,
     `--public-repos`, `--public-sources`, `--deadline`, `--git-timeout` or
     `--attempts`, and it reads no source: a source flag on `publish` is exit 2.
     Rule 31 owns the stronger check a flag list cannot make — that no two
@@ -1608,9 +1630,13 @@ remedy line. The rules are numbered on from rule 21.
     1's `rev-parse --git-dir`, never an assumed `.git` — created by `mkdir`,
     which fails rather than reuses, holding this run's plumbing index, whose
     file `read-tree` creates inside it (rule 23); and, with
-    `--public`, the staged file `<stage>/<day>.tsv.<same random>.tmp`,
-    created with `O_CREATE|O_EXCL` — the one place that refusal belongs — and
-    landing by one rename. The suffix is **per run, not per contribution**: a
+    `--public`, the staged file
+    `<public>/<day>.tsv.<same random>.tmp`, created with `O_CREATE|O_EXCL` —
+    the one place that refusal belongs — and landing by one rename **in its
+    own directory**, because a rename is atomic on one filesystem and fails
+    with `EXDEV` across two, and nothing could have required a separate
+    staging directory to share the subset's (which is why there is no
+    `--stage` flag). The suffix is **per run, not per contribution**: a
     contribution's identity is its content (rule 26) and must be stable, but a
     temporary name must not be, or a run killed after `read-tree` would leave
     a path the retry cannot create and cannot remove, and rule 24's plain
@@ -1627,10 +1653,10 @@ remedy line. The rules are numbered on from rule 21.
     a destination whose bytes differ, exit 2 naming it, for a person to
     resolve. **The alias check is over resolved paths, among the paths the
     verb accepts**: before any write, `--ledger`, `--batch`, `--v1-day`,
-    `--stage` and `--public` are resolved through symlinks, and any two that
-    name one directory — or a containment that would make one run's output the
-    next run's input, `--stage` or `--public` inside `--ledger`, `--public`
-    equal to `--v1-day` — is exit 2 naming both flags. `publish` takes no
+    and `--public` are resolved through symlinks, and any two that name one
+    directory — or a containment that would make one run's output the next
+    run's input, `--public` inside `--ledger`, `--public` equal to `--v1-day`
+    — is exit 2 naming both flags. `publish` takes no
     source flag, so it cannot discover that one of these is also a transcript
     directory declared to some other run; that limit is stated here rather
     than implied away (rule 27). **One snapshot**: the contribution's bytes are
@@ -1646,14 +1672,15 @@ remedy line. The rules are numbered on from rule 21.
     2. A run killed after `read-tree` leaves its directory behind and **the
     next plain `publish` succeeds**, that leftover untouched. On ordinary exit
     no temporary directory of this run's remains, and an unrelated
-    pre-existing directory under `.git` is untouched. A pre-existing staged
+    pre-existing directory under the git directory is untouched. A pre-existing staged
     path is exit 2 with the file byte-identical afterwards; a `--public`
     destination that exists with different bytes is exit 2 and untouched;
-    `--stage` missing with `--public`, and `--stage` without it, are each exit
-    2. Then the aliases, each exit 2 naming both flags and each also reached
-    **through a symlink** rather than spelled directly: `--stage` inside
-    `--ledger`, `--public` inside `--ledger`, `--public` equal to `--v1-day`,
-    `--batch` equal to `--ledger`. Finally the snapshot: a fold rewrites
+    and the staged file and its destination are in one directory, so the
+    rename cannot fail with `EXDEV` — the red being a staged path in a
+    directory a caller could put on another filesystem. Then the aliases, each
+    exit 2 naming both flags and each also reached **through a symlink**
+    rather than spelled directly: `--public` inside `--ledger`, `--public`
+    equal to `--v1-day`, `--batch` equal to `--ledger`. Finally the snapshot: a fold rewrites
     `<day>.tsv` between the lock and the push and the run is exit 1
     `reason=changed` naming the file, the remote byte-identical, nothing
     staged left behind.
@@ -1851,6 +1878,14 @@ seen red before it is trusted.
    stray; a second concurrent fold on one `--out` waits and exits 2 naming
    the holder's pid; a source test finds no `os.Remove` and no `os.RemoveAll` anywhere in
    the package.
+   **Amendment, 2026-09-12 (rules 9, 31).** This tripwire is rule 9's, and
+   rule 9's carve-out list is what it reads: it fails on any call it cannot
+   match to a carved-out file, and there are exactly two removals in the list
+   — the lock sentinel a release removes on a platform with no flock (rule 8,
+   already in rule 9 at v1), and `publish`'s own per-run temporary directory
+   and unrenamed staged file, which rule 31 requires it to release on ordinary
+   exit. A removal of anything else, including any file the tool was given, is
+   still the failure this test exists for.
 9. A fold over sources that name three days writes three files and no
    other; a pre-existing `daily-2026-09.tsv` and a `notes.txt` under
    `--out` are untouched after `fold`, `sum` and `check`; `check` names both
