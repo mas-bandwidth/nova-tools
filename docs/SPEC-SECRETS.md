@@ -1,13 +1,13 @@
 # nova-secrets — specification
 
-**Revision 6, 2026-09-12.** Reads 5 (Fable and DeepSeek) held the spec on one sentence and two
-tests: the two-file edit — the rule file and `recovery.pub` in one direct push — passes every
-invariant, so what catches it is the review the demotion buys and not a check, and `check` now
-reports the ruleset's own state when it is given the means to see it; `exec`'s shape check and
-`keygen`'s printed rule get tests that can say NO. Also here: the owed `recovery.pub`, the
-clauses that had no mutation, the founding review of `recovery.pub`, and the counting rationale
-to one home. Each read's findings and each revision's decisions are in this pull request's body,
-not in this document.
+**Revision 7, 2026-09-12.** Reads 6 (Fable and DeepSeek) held the spec on revision 6's one
+addition: `check --github-token` wanted a GitHub token in a plaintext file on the bench to buy a
+warning — a new secret with no row and no home on this page, on the very bench whose token is
+the threat. The flag is dropped, `check` asks GitHub nothing, the `WARN` line kind goes with it,
+and the ruleset question is a person's again: one `gh api` line the store's README carries. So
+this tool opens no network socket, as it did before. Also here: the synopsis lists the flags
+that exist, `keygen --store` states its refusals, and the tests follow. Each read's findings and
+each revision's decisions are in this pull request's body, not in this document.
 
 The tool is a thin wrapper over [sops](https://github.com/getsops/sops) and
 [age](https://age-encryption.org). Revision 1 specified a store of our own; Glenn ruled
@@ -29,10 +29,9 @@ person wants to do to a secret is `sops`, `git` or the provider's console, and t
 refuses it **by name, with where it lives**. In one paragraph: it reads one sealed yaml out
 of a git working copy by running `sops` at a path the caller named, keeps the plaintext in its
 own memory for the length of one call, and then execs, prints, proves or writes one key. It
-links no cryptography, starts no shell, writes no state of its own, and reads no Keychain —
-the only socket it ever opens is `check`'s optional ruleset probe under `--github-token`. About
-two hundred lines of Go over two binaries it did not write, and the day a better generic store
-exists it should be two hundred lines of Go over that one.
+links no cryptography, opens no network socket, starts no shell, writes no state of its own,
+and reads no Keychain — about two hundred lines of Go over two binaries it did not write, and
+the day a better generic store exists it should be two hundred lines of Go over that one.
 
 This spec is normative, and a sibling of [SPEC.md](../SPEC.md), whose **Conventions** govern
 unchanged except for **two deviations, both `exec`'s**: its exit table, argued in **Exit
@@ -115,19 +114,19 @@ opened what, or when, so nobody may build a belief on an audit trail that does n
 nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
 nova-secrets names  --store <dir> --as <name> [--max <n>]
 nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
-nova-secrets keygen --as <name> --key <path> --age-keygen <path>
+nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
 nova-secrets help
 ```
 
 No verb writes into the store — the store is edited by `sops` and committed by `git`, both a
-person's hands; `keygen` writes exactly one file, outside it; and no verb reads and writes in
-one call.
+person's hands; `keygen` writes exactly one file, outside it; and no verb reads the store and
+writes into it in one call.
 
 **`--store <dir>` is the store's git working copy**, not a URL and not a repository name:
-nothing here is cloned, fetched or pulled by this tool. A working copy in the strong sense —
-invariant 8 reads `.git` as files — so a `--store` that is not a directory, holds no
-`.sops.yaml`, or has no `.git`, is a refusal naming the fact and the `git clone` line: **exit
-2**, or **125** from `exec`, as every refusal of `exec`'s is.
+this tool does no network. A working copy in the strong sense — invariant 8 reads `.git` as
+files — so a `--store` that is not a directory, holds no `.sops.yaml`, or has no `.git`, is a
+refusal naming the fact and the `git clone` line: **exit 2**, or **125** from `exec`, as every
+refusal of `exec`'s is.
 
 **`--as <name>` selects the file**, `<store>/<name>.yaml`. It is not an identity and proves
 nothing: the key decides what opens. A `--as` whose file is absent is a refusal listing the
@@ -187,8 +186,8 @@ file or excluded by `--only`; an `--only` naming a key the file does not hold. O
 every independent problem it can reach, in a deterministic order: flags first, sorted; then the
 store; the key; the binary; the contents. And, so that **the launcher never guesses which
 recipient is the recovery key**, `exec` makes invariant 1's shape check too: a `recovery.pub`
-absent or malformed, or a rule whose recipients are not one seat key plus exactly the key it
-declares, is 125 before the command starts.
+absent, unreadable or malformed, or a rule whose recipients are not one seat key plus exactly
+the key it declares, is 125 before the command starts.
 
 **The plaintext path, whole, because half of it is the dangerous half.** Every value reaches
 **every child of the command**, and `--only` is the only thing that narrows that. Another
@@ -284,11 +283,10 @@ file and the repair. In a fixed order, against the working copy at `--store`:
    follow. Both OK lines carry `head=<short sha>`, so two benches compare by eye. **What it
    notices is a fetch nobody merged, never a fetch nobody ran**: a remote-tracking ref is only
    as fresh as the last fetch, so a clone nobody fetches satisfies invariant 8 forever, which is
-   why every launcher line carries `git -C <store> pull --ff-only &&` — the launcher's and never
-   the tool's, and the only network call the launcher line makes. The cost is that a bench which
-   cannot reach GitHub cannot clear the refusal at seat start; accepted, the alternative being a
-   seat running a revoked value with a green `check` beside it, the row this tool exists to
-   close.
+   why every launcher line carries `git -C <store> pull --ff-only &&` — the one network call
+   on this page, the launcher's and never the tool's. The cost is that a bench which cannot
+   reach GitHub cannot clear the refusal at seat start; accepted, the alternative being a seat
+   running a revoked value with a green `check` beside it, the row this tool exists to close.
 
 Any of the eight is its own `SECRETS CHECK FAIL` line, every failure in one run, capped per
 kind at `--max` with a MORE line, the counts never capped and printed on failure as well as
@@ -297,30 +295,30 @@ on Rowan's keeper bench and `mine=1` plus one per pool file on the admin bench �
 dispatcher runs there, so every `swarm-<name>.yaml` is sealed to that bench's key — green on
 both.
 
-**And one thing `check` reports that is not an invariant: the store's own ruleset.** Given
-`--github-token <path>` — a file at mode `0600`, never an environment variable and never the
-store's own `GH_TOKEN` decrypted for the purpose — `check` asks the GitHub API for the store's
-rulesets and its collaborators' permissions and prints, beside the count line,
-`SECRETS CHECK WARN ruleset_editable_by=<login>` for every account that can push and can also
-edit or delete the ruleset, and `ruleset=none` when no ruleset requires review. **A warning and
-never a failure, and the flag is optional**: no flag, no network, or an answer this tool does
-not recognise is silence and not a red, because a wall that goes red when GitHub is down is a
-wall nobody keeps. It is the only call this tool itself makes, and `exec` never makes it. `WARN`
-is a **third line kind added** to Conventions' `OK` and `FAIL` — not a deviation from either,
-printed on stderr with the refusals, so a green run's stdout is still exactly the one OK line.
-What it is for is under **"Reviewed" is a control** below: the one thing a store can say about
-a control its own admin can untie is to say out loud that it can.
+**And one thing `check` does not do: ask GitHub anything.** The store's ruleset and its
+collaborators' permissions are the open door under **"Reviewed" is a control** below, and the
+hand that reads them is a person's — one line, carried by the store's README beside the protocol
+(owed below) and run at a bench:
+
+```
+gh api repos/mas-bandwidth/secrets/collaborators --jq '.[] | "\(.login) \(.role_name)"'
+```
+
+The answer this page expects once the demotion lands is `gafferongames admin` and `rowan-claude
+write`; anything else is a permission somebody changed. A flag that asked the same question from
+inside `check` would want a GitHub token in a plaintext file on the bench — a fourth file-shaped
+secret, with no row in the credential table and no home in **The model** — to buy a warning,
+which is not a trade this page makes.
 
 ```
 SECRETS CHECK OK  as=<name> recipients=<n> files=<n> sealed=<n> mine=<n> foreign=<n> clear=<n> head=<sha>
 SECRETS CHECK FAIL <file>: <reason>
 SECRETS CHECK FAIL as=<name> files=<n> failed=<n> shown=<n>
-SECRETS CHECK WARN ruleset_editable_by=<login>            (only with --github-token)
 ```
 
 It does **not** check git history (a value ever committed in the clear is there forever;
-that is **Rotation**, which is revocation and not deletion), the values themselves (never a
-call to a provider), the other AIs' keys (every AI runs `check` for itself, because a store
+that is **Rotation**, which is revocation and not deletion), the values themselves (no
+network call), the other AIs' keys (every AI runs `check` for itself, because a store
 proven by one line is a store proven for one line), or who has cloned the store.
 
 ### `keygen`
@@ -330,7 +328,7 @@ nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keyg
 SECRETS KEYGEN OK as=rowan key=<path> mode=0600 pub=age1…
 SECRETS RULE   creation_rules:
 SECRETS RULE     - path_regex: ^rowan\.yaml$
-SECRETS RULE       age: age1…,age1…
+SECRETS RULE       age: age1…,<recovery key>
 SECRETS RULE NOTE  placeholder: no --store, so <recovery key> stands unfilled
 ```
 
@@ -345,7 +343,9 @@ recipient list exists to make impossible without a review. The `SECRETS RULE` li
 pasting into **a pull request that edits only that AI's own rule**, and the rule printed is the
 shape invariant 1 demands — anchored at both ends, this key and the recovery key and nothing
 else. **With `--store` given, the recovery key is the line `keygen` reads out of that store's
-`recovery.pub`** — its one read of the store, and it writes nothing there — so the pasted block
+`recovery.pub`** — its one read of the store, and it writes nothing there. A `--store` that
+fails its own refusals, or whose `recovery.pub` is in any of invariant 1's five bad states, is a
+refusal naming the file at **exit 2** — never the placeholder in silence. So the pasted block
 satisfies invariant 1 as printed, which a literal placeholder cannot now that the invariant
 demands exactly the declared key. Without `--store` the second recipient is the literal
 `<recovery key>` and the `NOTE` line prints beside it, because a block that fails invariant 1
@@ -369,16 +369,13 @@ swap red on every other bench**, not the ruleset — and it can only because the
 *declared* (invariant 1, declared and not counted). Editing `recovery.pub` in the same push —
 declaring the keeper's key the recovery key — passes every invariant on every bench:
 `{A_admin, A_keeper}` and `{A_keeper, R}` are each the declared key plus one other, and nothing
-in the store tells that shape from an honest one. **No invariant can catch a coordinated edit of
-the rule file and `recovery.pub` by a token that can push directly**; a store does not protect a
-file from the account that administers it. A direct push has no approver, so nothing catches it;
-under `write` it is a pull request whose diff touches a one-line file, which an approver's eye
-catches where two `age1…` strings inside a rule are not. **That is what the demotion below is
-for**, and until it lands the two-file edit is this page's named gap — which is why `check`
-reports the ruleset state it is given the means to see (above), printing
-`ruleset_editable_by=<login>` beside a green run on the bench whose own token can untie the
-control. And which rule a pull request touches is read by the approver, not enforced: no code
-owners, no required reviewers.
+in the store tells that shape from an honest one. A direct push has no approver, so nothing
+catches it; under `write` it is a pull request whose diff touches a one-line file, which an
+approver's eye catches where two `age1…` strings inside a rule are not. **That is what the
+demotion below is for**, and until it lands the two-file edit is this page's named gap — which
+is why the collaborator line above is a person's to run: the one thing a store can say about a
+control its own admin can untie is to say out loud that it can. And which rule a pull request touches is
+read by the approver, not enforced: no code owners, no required reviewers.
 
 **The ruling, and it is Glenn's hand.** *Default if he is silent: `rowan-claude` is demoted to
 `write` on `mas-bandwidth/secrets`*, one line on
@@ -711,10 +708,8 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
    and would make invariant 4 pass vacuously.
 8. `TestTheVersionProbeMakesNoNetworkCall` — the probe answers with egress blocked; `sops
    3.9.0` is refused naming `brew upgrade`; `banana` is refused as unparseable, **not**
-   accepted; absent and non-executable are two different sentences. The ruleset warning is
-   asserted on the same blocked egress: with `--github-token` given and the API unreachable
-   `check` is **green and silent**, and against a recorded answer it prints
-   `ruleset_editable_by=` without moving the exit code.
+   accepted; absent and non-executable are two different sentences. With egress blocked every
+   verb is green: no line of this tool opens a socket.
 9. `TestARequireThatIsMissingRefusesBeforeTheCommandStarts` — the command writes a sentinel;
    after the refusal the sentinel does not exist; every missing `--require` is named in one
    run, sorted.
@@ -743,7 +738,8 @@ real git working copy with one commit and a remote-tracking ref, invariant 8 rea
     second byte-for-byte the store's `recovery.pub` — fed to `check` as a real rule and green.
     Without `--store` the block carries the literal placeholder **and** the `NOTE` line, and the
     same feed is **red on invariant 1**, so a placeholder is never mistaken for a finished rule;
-    the store's tree hash is unchanged by either run.
+    a `--store` with no `.sops.yaml` and one whose `recovery.pub` is empty are each **exit 2**
+    naming the file and never the placeholder; the store's tree hash is unchanged by every run.
 15. `TestTheLauncherOrderWorksWithTheStoreFullyDenied` — end to end in nova-sandbox's real
     grammar at PR #70, the write set carrying the probe's `HOME` and neither the store nor the
     key directory in any read set: the probe sees the keys. The reverse nesting is asserted to
@@ -826,7 +822,8 @@ Keychain migration, one surface at a time; and `GOOS=windows go test -c` before 
 
 **The store's own repair, Rowan's hand, as a pull request under the ruleset**: remove the
 README's `space_key` line and unseal that value from `<line>.yaml` (generated on the seat now,
-the old one revoked at the box); add the `rowan-keeper.yaml` rule with the keeper key alone and
+the old one revoked at the box); add to that README the collaborator line above and the answer
+it should give; add the `rowan-keeper.yaml` rule with the keeper key alone and
 give `rowan.yaml` the admin key alone; **commit `recovery.pub` at the store root** and add that
 key as the recovery recipient of every rule. That last is necessarily Rowan's hand and Glenn's
 approval — adding `R` to a sealed file is `updatekeys` by a current recipient, and his approval
