@@ -20,7 +20,13 @@ func TestMain(m *testing.M) {
 		fakeBus()
 		return
 	}
-	os.Exit(m.Run())
+	if os.Getenv("NOVA_UPDATE_JOIN_REAL") != "" && strings.HasPrefix(filepath.Base(os.Args[0]), "nova-bus") {
+		joinWrapper()
+		return
+	}
+	code := m.Run()
+	removeJoinBinaries()
+	os.Exit(code)
 }
 func fakeBus() {
 	input, _ := io.ReadAll(os.Stdin)
@@ -32,6 +38,12 @@ func fakeBus() {
 	if verb == "prepare" {
 		if mode == "prepare-fail" {
 			fmt.Fprintln(os.Stderr, "PREPARE FAIL synthetic refusal")
+			os.Exit(1)
+		}
+		if mode == "prepare-shouty" {
+			// A binary on PATH that answers with many lines and a very long one.
+			// The caller's grammar must survive it.
+			fmt.Fprintf(os.Stderr, "PREPARE FAIL %s\nand a second line\nand a third\n", strings.Repeat("y", 4000))
 			os.Exit(1)
 		}
 		note := string(input)
@@ -241,5 +253,52 @@ func TestStrictDecodingRefusesAmbiguousAndWrongInput(t *testing.T) {
 	}
 	if b, _ := os.ReadFile(dup); !strings.Contains(string(b), secret) {
 		t.Fatal("refusal did not preserve the snapshot byte for byte")
+	}
+}
+
+// A failed delivery used to say "exit 1" and nothing else. The bus's own first
+// line now reaches the caller's diagnostic -- one line, clipped, and no binary
+// on PATH can turn one event into two.
+func TestTheBusOwnWordsReachTheCallerBoundedToOneLine(t *testing.T) {
+	if got := busSaid(ProcessResult{Stderr: "SEND FAIL one\nSEND FAIL two\n"}); got != "SEND FAIL one" {
+		t.Fatalf("%q", got)
+	}
+	if got := busSaid(ProcessResult{Stdout: "only stdout\nmore"}); got != "only stdout" {
+		t.Fatalf("%q", got)
+	}
+	if got := busSaid(ProcessResult{}); got != "nothing" {
+		t.Fatalf("%q", got)
+	}
+	if got := busSaid(ProcessResult{Stderr: strings.Repeat("x", 500)}); len(got) != 203 || !strings.HasSuffix(got, "...") {
+		t.Fatalf("unbounded: %d bytes", len(got))
+	}
+	for _, mode := range []string{"prepare-fail", "prepare-shouty"} {
+		t.Run(mode, func(t *testing.T) {
+			fakeBusPath(t)
+			p := manifest(t, row("x", "tool", printer(t, "v1.2.3"), "npm:unused", "none"))
+			t.Setenv("NOVA_UPDATE_BUS_MODE", mode)
+			c, _, errout := run(t, Environment{}, "report", "--file", p, "--send", "--snapshot",
+				filepath.Join(t.TempDir(), "s.json"), "--as", "fixture", "--to", "integrator",
+				"--bus", t.TempDir(), "--remote", "origin", "--branch", "main")
+			if c != 1 {
+				t.Fatal(c)
+			}
+			need(t, errout, "the bus said: PREPARE FAIL")
+			note := ""
+			for _, line := range strings.Split(errout, "\n") {
+				if strings.HasPrefix(line, "REPORT NOTE") {
+					if note != "" {
+						t.Fatalf("one refusal became two lines:\n%s", errout)
+					}
+					note = line
+				}
+			}
+			if note == "" {
+				t.Fatalf("no REPORT NOTE line:\n%s", errout)
+			}
+			if len(note) > 600 {
+				t.Fatalf("the refusal line is %d bytes, which is not bounded: %s", len(note), note)
+			}
+		})
 	}
 }

@@ -125,6 +125,24 @@ func dash(s string) string {
 	}
 	return s
 }
+
+// busSaid carries the bus's OWN first line into the caller's diagnostic. Without
+// it an operator reading a failed delivery is told "exit 1" and nothing else,
+// and the one thing that would tell them what to repair -- a stale index lock, a
+// roster that no longer resolves the speaker, a same-id note with other bytes --
+// stays in a pipe nobody reads. One line, clipped: the rest of the bus's output
+// is not this tool's to relay, and oneline.Err keeps the grammar one line no
+// matter what a binary on PATH prints.
+func busSaid(r ProcessResult) string {
+	said := firstLine(strings.TrimSpace(r.Stderr))
+	if said == "" {
+		said = firstLine(strings.TrimSpace(r.Stdout))
+	}
+	if said == "" {
+		return "nothing"
+	}
+	return clip(said, 200)
+}
 func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observed, body []byte, out io.Writer, env Environment) (string, error) {
 	scope := snapshotScope(o)
 	save := func() error {
@@ -146,7 +164,7 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 			}
 		}
 		if r.Reason != "" || line == "" {
-			return "uncertain", fmt.Errorf("pending %s not confirmed: %s (retry this --send with the same --snapshot; do not prepare again)", p.ID, dash(r.Reason))
+			return "uncertain", fmt.Errorf("pending %s not confirmed: %s; the bus said: %s (retry this --send with the same --snapshot; do not prepare again)", p.ID, dash(r.Reason), busSaid(r))
 		}
 		s.Delivered[scope] = delivery{cloneObserved(p.Observed), p.ID, env.Now().UTC().Format(time.RFC3339)}
 		delete(s.Pending, scope)
@@ -181,7 +199,7 @@ func deliver(ctx context.Context, o options, s *snapshot, seen map[string]observ
 	prepared := captureRun(child, []string{"nova-bus", "prepare", "--bus", o.bus, "--as", o.as, "--stdin"}, body, ChildCap)
 	cancel()
 	if prepared.Reason != "" {
-		return sent, fmt.Errorf("prepare refused: %s (check nova-bus and the named bus; retry --send)", prepared.Reason)
+		return sent, fmt.Errorf("prepare refused: %s; the bus said: %s (check nova-bus and the named bus; retry --send)", prepared.Reason, busSaid(prepared))
 	}
 	id, err := validatePrepared([]byte(prepared.Stdout))
 	if err != nil {
