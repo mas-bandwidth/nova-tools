@@ -56,6 +56,15 @@ const WorkerCap = 64
 // tool property like a timeout, not a fact about anybody's pool.
 const DefaultLaunchTimeout = 10 * time.Second
 
+// The codes `launch` answers with. They are named because the caller COUNTS by them: a task
+// refused before it ran lands in failed/ and belongs in `failed=`, and a launch that broke
+// down is a LAUNCH-FAILED job whose task may be in failed/ or still pending.
+const (
+	launchStarted = 0 // the supervisor identified itself; the job is running
+	launchBroken  = 1 // RUN LAUNCH-FAILED: the launch broke down
+	launchRefused = 2 // RUN INPUT-LIMIT: the task was refused before the launch, and is in failed/
+)
+
 // running is one job this dispatcher is watching.
 type running struct {
 	sc       Sidecar
@@ -166,6 +175,13 @@ func Run(in RunInput) int {
 			if rec.Survivors > 0 && end == EndDone {
 				end = EndViolation
 			}
+			// A PROVIDER'S INPUT LIMIT IS THE SAME CLASS ON THIS PATH TOO (#103). The
+			// supervisor names it on exit.json, and this branch reads that word; the log is
+			// asked as well, for the job whose supervisor died before it could classify --
+			// one function, so an end word named on the live path and not on this one is
+			// how a class goes missing (the shape of read 6, finding 2).
+			var limit string
+			end, limit = InputLimitEnd(d.File.JobDir, end, rec.RC, rec.Reason, in.Worker.InputLimitPhrases)
 			fin, usagePath := in.settle(sc, d.File.JobDir, rec, end, now())
 			said = said || end == EndUnknown
 			// ITS FILES MOVE AS RULE 12 SAYS (SPEC-SWARM.md:372). Finalize writes the
@@ -174,6 +190,9 @@ func Run(in RunInput) int {
 			// nothing watching it, forever.
 			sc.Class, sc.End, sc.RC, sc.Ended = fin.Class, end, rec.RC, Stamp(now())
 			sc.Violation = violationWord(end, rec.Survivors)
+			if end == EndInputLimit {
+				sc.Limit = limit
+			}
 			if fin.Class == ClassMalformed {
 				sc.Malformed = fin.MalformedLine
 			}
@@ -275,9 +294,23 @@ func Run(in RunInput) int {
 			}
 			r, line, code := in.launch(sc, text, slot, quarantined, retired)
 			switch code {
-			case 0:
+			case launchStarted:
 				started++
 				watching[slot] = r
+				tasks.Line(line)
+			case launchRefused:
+				// THE COUNTS ARE THE TRUTH ABOUT THE POOL (SPEC-SWARM.md:608-612), "never
+				// about the output" -- D2's lesson, arriving on the launch side. A task
+				// refused before its launch is in failed/ with `end=input-limit`, and it was
+				// counted NOWHERE: `RUN OK` printed `failed=` from the main loop alone and
+				// only RUN NOTE's remedy saw it (Fable's read of #150, finding 1). The
+				// LAUNCH-FAILED paths below are counted apart still, because they end in
+				// three different places -- failed/ after the handshake, running/ before it
+				// -- and one word for three destinations is the bug this line is fixing.
+				// It is counted ONCE: `remedy` is handed failed+launchFailed, so a refusal
+				// in both would be two failures in a pool that holds one.
+				said = true
+				failed++
 				tasks.Line(line)
 			default:
 				said = true
@@ -400,18 +433,37 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	p := in.Pool
 	nonce, err := Nonce()
 	if err != nil {
-		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(err.Error())), 1
+		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(err.Error())), launchBroken
 	}
 	jobDirFor := func(n int) string { return in.Worker.JobDir(n, sc.ID) }
 	got, err := p.claimFree(in.Workers, unionOf(quarantine, retired), sc.ID, nonce, os.Getpid(), in.Now(), jobDirFor)
 	if err != nil {
-		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), 1
+		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), launchBroken
 	}
 	slot, jobDir := got, jobDirFor(got)
 	CheckKillPoint("after-reserve")
 	if err := in.prepare(sc, text, slot, jobDir); err != nil {
 		_ = p.Free(slot)
-		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), 1
+		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), launchBroken
+	}
+	// THE TASK BUDGET NAMES THE WINDOW IT FITS, AND IT IS CHECKED BEFORE THE LAUNCH (#103).
+	// Two Freddy reads of whole specs spent 215 seconds each to be told by the provider that
+	// they did not fit; a task that says how big its window is can be told that here, for
+	// nothing. The size is MEASURED off the prompt this tool just wrote -- the same bytes the
+	// harness is handed -- and it is not launched, so no provider is paid for it.
+	size, _ := PromptSize(jobDir)
+	if reason, over := OverMaxInput(sc, size); over {
+		_ = p.Free(slot)
+		// The CLASS is the record, and `launch` is left alone: `unlaunched` is rule 17's
+		// word for a reservation that never launched and goes back to PENDING, and one
+		// token has one meaning (lesson 119). This task is not pending; it cannot run as
+		// written, and `end=input-limit` is why.
+		sc.End, sc.Limit = EndInputLimit, reason
+		_ = p.WriteSidecar(Running, sc)
+		_ = p.Claim(sc.ID, Running, Failed)
+		return nil, fmt.Sprintf("RUN INPUT-LIMIT id=%s slot=%d after=0s input=%s max=%s dest=failed: %s",
+			oneline.Field(sc.ID), slot, oneline.Field(promptSizeWord(jobDir)), oneline.Field(maxInputWord(sc)),
+			oneline.Escape(oneline.Cap(reason, oneline.TailBytes))), launchRefused
 	}
 	sc.Job, sc.Slot, sc.Started = jobDir, slot, Stamp(in.Now())
 	_ = p.WriteSidecar(Running, sc)
@@ -444,7 +496,7 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	ownGroup(cmd)
 	if err := cmd.Start(); err != nil {
 		_ = p.Free(slot)
-		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: the supervisor would not start: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), 1
+		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=0s: the supervisor would not start: %s", oneline.Field(sc.ID), slot, oneline.Escape(redactedReason(err))), launchBroken
 	}
 	// The identity of the child THIS dispatcher started, taken at the one moment it is not
 	// in doubt and carried to the one place that may end it. It is never stored by pid:
@@ -482,7 +534,7 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 		r := &running{sc: sc, slot: slot, nonce: nonce, jobDir: jobDir, started: in.Now(), deadline: taskDeadline(sc, in.Worker)}
 		return r, fmt.Sprintf("RUN START id=%s slot=%d pid=%d pgid=%d started=%s deadline=%s tokens=%s job=%s",
 			oneline.Field(sc.ID), slot, sf.Pid, sf.Pgid, oneline.Field(Stamp(r.started)),
-			trimDuration(r.deadline), oneline.Field(sc.BudgetWord()), oneline.Field(jobDir)), 0
+			trimDuration(r.deadline), oneline.Field(sc.BudgetWord()), oneline.Field(jobDir)), launchStarted
 	}
 	waited := time.Since(start)
 	KillGroup(cmd.Process.Pid, childStarted)
@@ -492,10 +544,10 @@ func (in RunInput) launch(sc Sidecar, text []byte, slot int, quarantine, retired
 	_ = p.Free(slot)
 	if supervisorGone {
 		return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=%s: the supervisor exited without writing an identity%s",
-			oneline.Field(sc.ID), slot, trimDuration(waited), abortedReason(jobDir, nonce)), 1
+			oneline.Field(sc.ID), slot, trimDuration(waited), abortedReason(jobDir, nonce)), launchBroken
 	}
 	return nil, fmt.Sprintf("RUN LAUNCH-FAILED id=%s slot=%d after=%s: no identity within %ds",
-		oneline.Field(sc.ID), slot, trimDuration(waited), int(timeout.Seconds())), 1
+		oneline.Field(sc.ID), slot, trimDuration(waited), int(timeout.Seconds())), launchBroken
 }
 
 // awaitIdentity is the handshake's wait: the slot file polled for THIS launch's identity

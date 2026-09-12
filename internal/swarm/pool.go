@@ -111,6 +111,8 @@ type Sidecar struct {
 	Launch     string   `json:"launch,omitempty"`
 	Malformed  int      `json:"malformed,omitempty"`
 	Violation  string   `json:"violation,omitempty"`
+	MaxInput   int      `json:"max_input,omitempty"`
+	Limit      string   `json:"limit,omitempty"`
 	Job        string   `json:"job,omitempty"`
 	Slot       int      `json:"slot,omitempty"`
 	Started    string   `json:"started,omitempty"`
