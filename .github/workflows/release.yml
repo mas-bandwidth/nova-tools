@@ -206,6 +206,26 @@ jobs:
             exit 1
           fi
 
+          # AND IT IS THIS TREE'S TAG. Existence is not enough, and this is the check that
+          # actually carries --verify-tag's guarantee onto the upload path. Under
+          # `push: tags: v*` the ref that triggered the run IS the tag, so the two are the
+          # same fact; under workflow_dispatch they are not, and a tag can be force-moved
+          # after its release was published. A dispatch on a BRANCH named like a tag passes
+          # the shape check above, and if a real tag of that name exists the upload path
+          # would then --clobber a published release's binaries AND its SHA256SUMS with a
+          # build from an unrelated tree -- assets whose checksum file agrees with itself
+          # and with nothing anybody tagged. Before this step learned to upload, the
+          # duplicate-name refusal stopped that by accident; it is stopped on purpose here.
+          # The tag is fetched rather than assumed present: checkout is shallow and carries
+          # no tags, and a stale local tag is overwritten by the leading +.
+          git fetch --depth=1 origin "+refs/tags/${TAG}:refs/tags/${TAG}"
+          tagged=$(git rev-parse "refs/tags/${TAG}^{commit}")
+          if [ "$tagged" != "$GITHUB_SHA" ]; then
+            echo "refusing: $TAG is the tag for $tagged, but this run built $GITHUB_SHA"
+            echo "attaching here would replace $TAG's published artifacts with a build from another tree"
+            exit 1
+          fi
+
           # The release may already exist: v0.11.0 was published by hand before its tag's
           # run reached this step, `gh release create` refused the duplicate tag name, and
           # the release kept its notes and got none of its binaries. An existing release is
