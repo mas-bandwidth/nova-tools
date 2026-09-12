@@ -1,0 +1,5 @@
+{
+  "field": "body.origin.binding_id",
+  "rule": "missing_field",
+  "verdict": "refused"
+}

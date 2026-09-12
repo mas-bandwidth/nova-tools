@@ -1,0 +1,5 @@
+{
+  "field": "body.time.occurred_at",
+  "rule": "timestamp_syntax",
+  "verdict": "refused"
+}

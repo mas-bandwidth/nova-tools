@@ -1,0 +1,5 @@
+{
+  "field": "body.kind",
+  "rule": "unknown_enum",
+  "verdict": "refused"
+}

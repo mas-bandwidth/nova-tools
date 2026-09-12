@@ -1,0 +1,5 @@
+{
+  "field": "body.origin.friend",
+  "rule": "label_syntax",
+  "verdict": "refused"
+}

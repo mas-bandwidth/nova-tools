@@ -1,0 +1,5 @@
+{
+  "field": "body.receipt[0]",
+  "rule": "receipt_field_not_allowlisted",
+  "verdict": "refused"
+}

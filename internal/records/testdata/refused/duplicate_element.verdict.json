@@ -1,0 +1,5 @@
+{
+  "field": "body.revision.supersedes[1]",
+  "rule": "duplicate_element",
+  "verdict": "refused"
+}

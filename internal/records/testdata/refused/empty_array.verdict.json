@@ -1,0 +1,5 @@
+{
+  "field": "body.source.event_key",
+  "rule": "empty_array",
+  "verdict": "refused"
+}

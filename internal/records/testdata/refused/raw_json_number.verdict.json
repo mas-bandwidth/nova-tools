@@ -1,0 +1,5 @@
+{
+  "field": "envelope[1][5][0][4]",
+  "rule": "raw_json_number",
+  "verdict": "refused"
+}
