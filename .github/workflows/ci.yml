@@ -660,13 +660,22 @@ jobs:
           done
           restore
 
-          # AND A STALE EXEMPTION IS ITSELF RED. The six names are a debt against #121 and
-          # come off one at a time; a list that has drifted from the tree has stopped
-          # saying what it claims to say, and this is the check that says so.
+          # AND A STALE EXEMPTION IS ITSELF RED. The six names were a debt against #121;
+          # #121's version verb has landed on all six, so the shipped list is EMPTY and the
+          # fixture has to bring its own name: the stale check is injected into a COPY of
+          # the script rather than shipped in it, because the shipped list must stay a line
+          # a person edits and nothing else can write. A list that has drifted from the
+          # tree has stopped saying what it claims to say, and this is the check that says
+          # so.
           rm -rf "${RUNNER_TEMP}/one-tool"
           mkdir -p "${RUNNER_TEMP}/one-tool/cmd/nova-board"
+          stale="${RUNNER_TEMP}/assert-with-a-stale-exemption.sh"
+          cp .github/scripts/assert-version-stamp.sh "$stale"
+          sed -i 's/^LEGACY_NO_VERSION_VERB=.*/LEGACY_NO_VERSION_VERB="nova-departed"/' "$stale"
+          grep -q '^LEGACY_NO_VERSION_VERB="nova-departed"$' "$stale" || {
+            echo "the stale-exemption fixture did not apply; this step would prove nothing"; exit 1; }
           set +e
-          out=$(.github/scripts/assert-version-stamp.sh "$stamp" "${RUNNER_TEMP}/mutated/%s" "${RUNNER_TEMP}/one-tool/cmd" 2>&1)
+          out=$("$stale" "$stamp" "${RUNNER_TEMP}/mutated/%s" "${RUNNER_TEMP}/one-tool/cmd" 2>&1)
           rc=$?
           set -e
           printf '%s\n' "$out"
