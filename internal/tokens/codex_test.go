@@ -682,3 +682,66 @@ func TestCodexMappingManifestIsTheDecidedContract(t *testing.T) {
 		t.Errorf("a decided basis is not the one this decoder writes: %+v", m)
 	}
 }
+
+// TestCodexDecoderRefusesAnUnreadableLineWithoutQuotingIt: one line is one record, and a
+// line this mapping cannot read stops the decode naming the source's index and line number
+// -- never the caller's path, and never the line's own bytes, which can hold a prompt.
+func TestCodexDecoderRefusesAnUnreadableLineWithoutQuotingIt(t *testing.T) {
+	m := codexMapping(t)
+	for _, bad := range []string{
+		`{"type":"token_usage_record","response_id":"resp-x1","session_id":"t1","usage":{"input_tokens":1}} {"type":"token_usage_record","response_id":"` + codexSentinelPrompt + `"}`,
+		`{"type":"token_usage_record","usage":` + codexSentinelPrompt,
+	} {
+		_, err := DecodeCodexReaders(m, codexFixtureBinding, []io.Reader{strings.NewReader(bad)})
+		if err == nil {
+			t.Fatalf("a line this mapping cannot read is refused, not half-retained")
+		}
+		if !strings.Contains(err.Error(), "source 0 line 1") {
+			t.Errorf("the refusal names the source index and the line: %v", err)
+		}
+		if strings.Contains(err.Error(), codexSentinelPrompt) {
+			t.Errorf("a refusal quoted the source line back")
+		}
+	}
+}
+
+// TestCodexPartialBindingIsNoBinding: a binding missing any of its three parts is not the
+// explicit owner binding the mapping requires, and an origin is never half-supplied.
+func TestCodexPartialBindingIsNoBinding(t *testing.T) {
+	m := codexMapping(t)
+	line := `{"type":"token_usage_record","response_id":"resp-p1","session_id":"t1","turn_id":"1","timestamp":"2026-09-12T00:00:00Z","turn_context_model":"gpt-5-codex","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`
+	v := records.NewValidator(m.Allowlists())
+	for _, b := range []CodexBinding{
+		{},
+		{ID: "binding-codex-desktop-studio-1"},
+		{ID: "binding-codex-desktop-studio-1", Friend: "rowan"},
+		{Friend: "rowan", Bench: "studio"},
+	} {
+		if b.Supplied() {
+			t.Fatalf("%+v is not an explicit binding", b)
+		}
+		d, err := DecodeCodexReaders(m, b, []io.Reader{strings.NewReader(line)})
+		if err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		env, err := v.ValidateEnvelope(d.Observations[0].Envelope)
+		if err != nil {
+			t.Fatalf("resp-p1: %v", err)
+		}
+		if o := env.Observation.Origin; o.Basis != "unknown" || o.Friend != nil || o.Bench != nil || o.BindingID != nil {
+			t.Errorf("%+v produced the origin %+v; a partial binding supplies none", b, o)
+		}
+	}
+	// And the whole binding does supply one, so this test cannot pass by supplying nothing.
+	d, err := DecodeCodexReaders(m, codexFixtureBinding, []io.Reader{strings.NewReader(line)})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	env, err := v.ValidateEnvelope(d.Observations[0].Envelope)
+	if err != nil {
+		t.Fatalf("resp-p1: %v", err)
+	}
+	if env.Observation.Origin.Basis != "owner_binding" {
+		t.Errorf("the explicit binding is applied: %+v", env.Observation.Origin)
+	}
+}

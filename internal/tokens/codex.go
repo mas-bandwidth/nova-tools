@@ -494,6 +494,12 @@ func (d *CodexDecoding) readCodexLine(m *CodexMapping, b CodexBinding, v *record
 		// The source line is never quoted back: it can hold a prompt.
 		return errors.New("the rollout line is not a JSON object of the shape this mapping reads")
 	}
+	// One line is ONE record. A line carrying a second value after the first is not the
+	// shape this mapping reads, and decoding the first and ignoring the rest would retain
+	// half of something nobody has looked at.
+	if dec.More() {
+		return errors.New("the rollout line carries more than one JSON value")
+	}
 	// SELECTION. A top-level token_usage_record and nothing else. An event_msg carrying the
 	// same name inside a payload is the wrapper shape the mapping rules out, and an older
 	// cumulative token_count is owed to a separate mapping: both are counted, neither is
