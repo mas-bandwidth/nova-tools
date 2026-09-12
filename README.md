@@ -724,6 +724,14 @@ once so that N workers read one copy. A worker that needs nothing beyond the sys
 names nothing, and an absolute directory that does not exist is refused when the description
 is read, not at every launch.
 
+`key_file` lives **outside `worker_dir` and outside every `read_roots` entry**, which is why
+the example keeps it in `~/.keys`. `worker_dir` is copied into the slot directory before
+every job and the slot directory is the job's one readable path, so a key file inside it
+would be copied INSIDE the wall and read by the worker under a green line; a key inside a
+read root is readable without even the copy. The key reaches the harness by `env_var` and
+its FILE is in neither list (docs/SPEC-SANDBOX.md rule 6). Either placement is refused when
+the description is read.
+
 `harness_args` is the invocation the harness needs, and `{model}` is where the model goes:
 a harness handed nothing but a path reads that path as a project directory and does
 nothing, so a description that never places `{model}` is refused before any worker starts.

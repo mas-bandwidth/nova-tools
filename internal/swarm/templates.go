@@ -111,7 +111,7 @@ const templateWorker = `{
   "provider": "<the provider id the harness config declares, such as deepseek>",
   "model": "<the model id>",
   "env_var": "<the NAME of the variable the provider reads>",
-  "key_file": "<the path of a file holding one line, mode 0600>",
+  "key_file": "<the path of a file holding one line, mode 0600, OUTSIDE worker_dir>",
   "usage": "opencode",
   "harness": "<the harness command on PATH>",
   "harness_args": ["run", "--model", "{model}", "--", "{prompt}"],

@@ -191,7 +191,7 @@ func TestTemplateWorkerPrintsADescriptionThisToolAccepts(t *testing.T) {
 		"<the harness command on PATH>", "fake-harness",
 		"<the model id>", "fake-model",
 		"<the NAME of the variable the provider reads>", "FAKE_KEY",
-		"<the path of a file holding one line, mode 0600>", jsonInner(t, b.keyFile),
+		"<the path of a file holding one line, mode 0600, OUTSIDE worker_dir>", jsonInner(t, b.keyFile),
 		"<the home copy of this worker's own directory>", jsonInner(t, filepath.Join(b.dir, "worker-home")),
 	).Replace(stdout)
 	// The bytes this test writes ARE JSON, and it says so before it blames the tool.

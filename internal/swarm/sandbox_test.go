@@ -105,13 +105,19 @@ func TestReadRootsAreRefusedBeforeTheyReachTheWall(t *testing.T) {
 	if err := os.WriteFile(file, []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	// The key file lives OUTSIDE the worker directory, because a key inside it is copied
+	// into every slot and is refused at load in its own right (the test below).
+	home := filepath.Join(dir, "worker")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	key := filepath.Join(dir, "key")
 	if err := os.WriteFile(key, []byte("k"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	desc := map[string]any{
 		"name": "w", "provider": "p", "model": "m", "env_var": "K", "key_file": key,
-		"usage": "none", "harness": "h", "worker_dir": dir, "deadline": "1m",
+		"usage": "none", "harness": "h", "worker_dir": home, "deadline": "1m",
 		"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
 		"read_roots":   []string{good, "relative/toolchain", filepath.Join(dir, "absent"), file},
 	}
@@ -144,6 +150,82 @@ func TestReadRootsAreRefusedBeforeTheyReachTheWall(t *testing.T) {
 	}
 	if _, problems := LoadWorker(path); len(problems) != 0 {
 		t.Errorf("a description naming no read root is refused: %v", problems)
+	}
+}
+
+// DEMANDED (SPEC-SANDBOX.md rule 6 and the dispatcher caller: "the key FILE is in neither
+// list, so the job cannot read it even if it is told to"). The tool must not put it in one.
+// `RefreshSlot` copies every regular file of `worker_dir` into the slot directory, and the
+// slot directory is the job's `--read`, so a `key_file` under `worker_dir` is a copy of the
+// key INSIDE the wall, under a green `SANDBOX OK` and a probe that passed -- the probe's own
+// `secret_inside_allow` is checked against the probe's lists, never against a job's (Rowan's
+// Fable read of #88 at d0c1841, M1). A key under a `read_roots` entry is the same hole
+// without the copy. Both are refused at LOAD, where a person can still move the file.
+func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "worker")
+	tools := filepath.Join(dir, "toolchains")
+	for _, d := range []string{home, tools} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	desc := func(key string) string {
+		raw, _ := json.MarshalIndent(map[string]any{
+			"name": "w", "provider": "p", "model": "m", "env_var": "K", "key_file": key,
+			"usage": "none", "harness": "h", "worker_dir": home, "deadline": "1m",
+			"harness_args": []string{"run", "--model", "{model}", "--", "{prompt}"},
+			"read_roots":   []string{tools},
+		}, "", "  ")
+		path := filepath.Join(dir, "worker.json")
+		if err := os.WriteFile(path, raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	// The key file a description may NOT name: one inside the worker directory, which is
+	// copied into the slot before every job.
+	inside := filepath.Join(home, ".key")
+	if err := os.WriteFile(inside, []byte("sk-not-a-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, problems := LoadWorker(desc(inside))
+	if len(problems) != 1 {
+		t.Fatalf("a key file inside worker_dir reported %d problems, want 1: %v", len(problems), problems)
+	}
+	said := problems[0].Error()
+	for _, want := range []string{inside, home, "copied into the slot", "--read", "Keep the key file outside worker_dir"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the refusal does not say %q:\n%s", want, said)
+		}
+	}
+	// And one inside a read root, which every job of this worker may read directly.
+	inRoot := filepath.Join(tools, "key")
+	if err := os.WriteFile(inRoot, []byte("sk-not-a-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, problems = LoadWorker(desc(inRoot))
+	if len(problems) != 1 || !strings.Contains(problems[0].Error(), "read_roots[0]") {
+		t.Fatalf("a key file inside a read root is not refused: %v", problems)
+	}
+	// The key file the README teaches -- outside both lists -- is sound, and a symlink
+	// into the worker directory does not walk around the check (rule 5 resolves paths).
+	outside := filepath.Join(dir, "keys", "provider")
+	if err := os.MkdirAll(filepath.Dir(outside), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(outside, []byte("sk-not-a-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, problems := LoadWorker(desc(outside)); len(problems) != 0 {
+		t.Errorf("a key file outside both lists is refused: %v", problems)
+	}
+	link := filepath.Join(dir, "linked-key")
+	if err := os.Symlink(inside, link); err != nil {
+		t.Fatal(err)
+	}
+	if _, problems := LoadWorker(desc(link)); len(problems) != 1 {
+		t.Errorf("a symlink walks around the check: %v", problems)
 	}
 }
 

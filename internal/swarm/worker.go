@@ -142,12 +142,55 @@ func LoadWorker(path string) (Worker, []error) {
 			problems = append(problems, fmt.Errorf("%s: read_roots[%d] %s is not a directory; a read root is a directory and everything beneath it", path, i, root))
 		}
 	}
+	// THE KEY FILE IS IN NEITHER LIST, AND THE TOOL MUST NOT PUT IT IN ONE. The wall's
+	// caller section says "the key FILE is in neither list, so the job cannot read it even
+	// if it is told to" (SPEC-SANDBOX rule 6), and the job's read set is the SLOT
+	// directory -- which `RefreshSlot` fills by copying every regular file of `worker_dir`
+	// into it (copyTree). A `key_file` under `worker_dir` is therefore COPIED INSIDE THE
+	// WALL by this tool, at every refresh, and the job reads the copy under a green
+	// `SANDBOX OK` and a probe that passed: the probe's own `secret_inside_allow` check is
+	// made against the PROBE's lists, never against a job's (Rowan's Fable read of #88 at
+	// d0c1841, M1). A `read_roots` entry holding the key is the same hole without the copy.
+	// Both are refused HERE, at the one moment a person can still move the file.
+	if key := resolvePath(w.KeyFile); key != "" {
+		if dir := resolvePath(w.WorkerDir); dir != "" && insideDir(key, dir) {
+			problems = append(problems, fmt.Errorf("%s: key_file %s is inside worker_dir %s, which is copied into the slot directory before every job and IS the job's --read: the job would read a copy of the key inside the wall. Keep the key file outside worker_dir, such as ~/.keys/<provider>", path, key, dir))
+		}
+		for i, root := range w.ReadRoots {
+			if r := resolvePath(root); r != "" && insideDir(key, r) {
+				problems = append(problems, fmt.Errorf("%s: key_file %s is inside read_roots[%d] %s, which every job of this worker may READ: the key reaches the job by environment (env_var) and its FILE is in neither list. Keep the key file outside every read root", path, key, i, r))
+			}
+		}
+	}
 	if w.Deadline != "" {
 		if _, err := time.ParseDuration(w.Deadline); err != nil {
 			problems = append(problems, fmt.Errorf("%s: deadline wants a duration such as 20m, got %q", path, w.Deadline))
 		}
 	}
 	return w, problems
+}
+
+// resolvePath is a path with its symlinks followed, which is how the wall reads one (rule
+// 5): a check made on the typed spelling is a check a symlink walks around. A path that
+// cannot be resolved -- it does not exist yet, most often -- is cleaned and answered as
+// typed, because a refusal is worth more than a silence and the caller can still see it.
+func resolvePath(path string) string {
+	if strings.TrimSpace(path) == "" {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(path); err == nil {
+		return filepath.Clean(real)
+	}
+	return filepath.Clean(path)
+}
+
+// insideDir says whether a path lies under a directory. The directory itself is not inside
+// itself, and a sibling whose name merely starts the same way is not either.
+func insideDir(path, dir string) bool {
+	if path == dir {
+		return false
+	}
+	return strings.HasPrefix(path, strings.TrimSuffix(dir, string(os.PathSeparator))+string(os.PathSeparator))
 }
 
 // DefaultDeadline is the worker description's own, which add --deadline overrides per task.
