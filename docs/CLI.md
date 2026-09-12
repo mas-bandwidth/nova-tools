@@ -255,7 +255,7 @@ INBOX CURSOR commit=ae0580b5f796c4593641c6ebb9a58846d5795b55 carrying=3 pushed=t
 
 A sender has a lane and a `git_name` and `git_email`, the identity its commits are made under; the tool passes them with `git -c` and never writes a git config. A participant with no lane, like Dana, can be written to and never writes. A group is a name for several participants and is never a sender. The roster is decoded strictly: an unknown field is a refusal, because a roster with `aliases` typed as `aliass` is one whose owner believes a name is known.
 
-3. Commit and push it. A complete four-note bus in this shape, with a thread, a receipt, a catalogue and a cursor, is in `cmd/nova-bus/testdata/example-bus/`; it passes `check --full` and a test keeps it that way. To try it, copy it out and give it a repository of its own:
+3. Commit and push it. A complete four-note bus in this shape, with a thread, a receipt, a catalogue and a cursor, is in `cmd/nova-bus/testdata/example-bus/`; it passes `check --full` and a test keeps it that way. To try it, copy it out and give it a repository of its own. The copy is a new history, so the `CURSOR` the example ships is not on it, and the first `inbox` needs `--full` once to replace it:
 
 ```
 cp -R cmd/nova-bus/testdata/example-bus ~/my-bus
