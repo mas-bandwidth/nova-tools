@@ -27,13 +27,18 @@ import (
 
 // SuperviseInput is everything `supervise` is handed.
 type SuperviseInput struct {
-	Pool           *Pool
-	Task           string
-	Slot           int
-	Nonce          string
-	Worker         Worker
-	Sidecar        Sidecar
-	Key            string
+	Pool    *Pool
+	Task    string
+	Slot    int
+	Nonce   string
+	Worker  Worker
+	Sidecar Sidecar
+	Key     string
+	// THE LAUNCH SEAM (docs/SPEC-SANDBOX.md, the dispatcher caller). Sandbox is the
+	// resolved nova-sandbox binary the harness is wrapped in; an EMPTY one is rule 11's
+	// one loud workaround, which the dispatcher has already announced for this job, and
+	// it is reachable only from a `--no-sandbox` a person typed.
+	Sandbox        string
 	UsageInterval  time.Duration
 	Stdout, Stderr io.Writer
 	Now            func() time.Time
@@ -77,8 +82,30 @@ func Supervise(in SuperviseInput) int {
 	if resolved, err := exec.LookPath(harness); err == nil {
 		harness = resolved
 	}
-	cmd := exec.Command(harness, harnessArgs(in.Worker, jobDir)...)
-	cmd.Dir = in.Worker.SlotDir(in.Slot)
+	// THE WRAP. Every job runs inside nova-sandbox, and the argv is built HERE, by the
+	// dispatcher's own child, from the job it was handed -- never from the task text.
+	// The cwd is the job directory (SPEC-SANDBOX rule 13): a cwd outside every named path
+	// denies getcwd(3) and kills every git command before it reads anything, and the
+	// harness's own fence evaluates `external_directory` relative to the cwd, so a job
+	// directory that is not the cwd is "external" to the harness working in it.
+	argv := harnessArgs(in.Worker, jobDir)
+	dir := jobDir
+	if in.Sandbox != "" {
+		job := SandboxJob{
+			Sandbox: in.Sandbox, PoolName: filepath.Base(p.Dir),
+			SlotDir: in.Worker.SlotDir(in.Slot), JobDir: jobDir,
+			DataHome: in.Worker.DataHome(in.Slot, in.Task), ReadRoots: in.Worker.ReadRoots,
+			Command: harness, Args: argv,
+		}
+		whole := job.SandboxCommand()
+		harness, argv = whole[0], whole[1:]
+		// The wrapper itself runs OUTSIDE the wall and its own cwd is the slot directory,
+		// which is where this tool's config for the harness lives; the child's cwd is the
+		// --cwd in the argv above and is the job directory.
+		dir = in.Worker.SlotDir(in.Slot)
+	}
+	cmd := exec.Command(harness, argv...)
+	cmd.Dir = dir
 	cmd.Stdout, cmd.Stderr = logFile, logFile
 	cmd.Env = childEnv(in.Worker, in.Slot, in.Task, in.Key)
 	ownGroup(cmd)
@@ -303,6 +330,15 @@ func childEnv(w Worker, slot int, id, key string) []string {
 		"PATH=" + pathVal,
 		"XDG_DATA_HOME=" + w.DataHome(slot, id),
 		"NOVA_SWARM_JOB=" + w.JobDir(slot, id),
+		// HOME IS THE JOB'S OWN DATA HOME, and it is inside the write set (SPEC-SANDBOX
+		// rule 9). The caller sets it, never the wall: a run whose HOME resolves outside
+		// every --write is SANDBOX REFUSED reason=home_outside and the job does not start.
+		// Measured on this Mac: with the caller's HOME inherited, `git status` inside the
+		// wall is `fatal: unable to access '/Users/<user>/.gitconfig': Operation not
+		// permitted`, and a harness that writes ~/.config/opencode dies the same way.
+		// XDG_DATA_HOME stays beside it because the usage source reads the harness's
+		// database from exactly that directory (rule 13 of SPEC-SWARM).
+		"HOME=" + w.DataHome(slot, id),
 	}
 	if runtime.GOOS == "windows" {
 		env = append(env, "Path="+pathVal)

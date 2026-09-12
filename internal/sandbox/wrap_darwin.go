@@ -87,8 +87,23 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	// Its own process group, so that a forwarded signal reaches the whole wrapped tree.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// THE WRAPPED TREE STAYS IN THE CALLER'S PROCESS GROUP, and this is a change the
+	// nova-swarm seam made to this body rather than a preference. A `Setpgid: true` here
+	// puts sandbox-exec and everything it execs into a NEW group whose id no caller can
+	// learn: os/exec hands back the tool's pid and nothing below it, and a launcher that
+	// must reap a job -- nova-swarm's supervisor, which puts the whole job in one group
+	// and counts what is left in it after the leader has gone (SPEC-SWARM rule 11) -- then
+	// holds a group that contains the wrapper and not the work. Measured on this Mac
+	// 2026-09-12: with the new group, a wrapped harness that forks a background child left
+	// that child alive after the run and the supervisor's survivor count was 0, and the
+	// job was recorded `done`; without it, the same child is counted and killed, which is
+	// what rule 11 demands. Inheriting the caller's group costs nothing here: a launcher
+	// that wants the tree in a group of its own puts THIS process in one (the swarm does),
+	// and then the whole tree is in it by inheritance.
+	//
+	// The signal forwarding below therefore targets the CHILD'S PID rather than a group:
+	// the child's group is now the tool's own, and `kill(-pgid)` from inside it would
+	// deliver the signal back to this process, over and over, through its own handler.
 
 	// SANDBOX OK is printed and FLUSHED before the command starts, so a log that ends in
 	// a crash still says what the wall was.
@@ -107,7 +122,9 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 			select {
 			case s := <-sigs:
 				if sig, ok := s.(syscall.Signal); ok && cmd.Process != nil {
-					_ = syscall.Kill(-cmd.Process.Pid, sig) // the child's process GROUP
+					// The child, not the group: the group is this process's own, and
+					// signalling it would signal this process again (see above).
+					_ = syscall.Kill(cmd.Process.Pid, sig)
 				}
 			case <-done:
 				return

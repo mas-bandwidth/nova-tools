@@ -221,7 +221,32 @@ already holds your words, so it can guard an `add` in one line of shell. Exit 0 
 
 ## nova-swarm
 
-Fixture: a pool this tool makes in `t.TempDir()`, and `cmd/nova-swarm/testdata/fakeharness`, a fake harness on `PATH` so the dispatcher is tested end to end with no provider.
+Fixture: a pool this tool makes in `t.TempDir()`, `cmd/nova-swarm/testdata/fakeharness`, a fake harness on `PATH` so the dispatcher is tested end to end with no provider, and the WALL every job runs inside: `nova-sandbox` itself, built from this repository into the same directory, with `cmd/nova-swarm/testdata/fakesandbox` beside it for the seam tests that must run on a platform whose sandbox body is not built.
+
+Every contract test in `cmd/nova-swarm` runs its jobs **inside the real wall** on darwin (`--sandbox <the built binary>`) and takes rule 11's one loud workaround (`--no-sandbox`) where no body is built, which is the argv a reader sees in the test's own output.
+
+### The wall at the launch seam
+
+```
+$ nova-swarm run --pool ./pool --workers 1 --hours 0.25 --worker ./worker.json
+RUN POOL workers=1 hours=0.25 worker=fake-1 model=fake-model pool=./pool
+RUN REFUSED reason=sandbox_probe: the wall did not prove itself on this machine, so no worker started: PROBE REFUSED reason=check: write_outside expected deny and got allow
+
+$ nova-swarm run --pool ./pool --workers 1 --hours 0.25 --worker ./worker.json --no-sandbox
+RUN NOTE --no-sandbox: this pass runs every job with NO OS containment, and says so once per job; the wall is docs/SPEC-SANDBOX.md and the remedy is to drop the flag
+RUN POOL workers=1 hours=0.25 worker=fake-1 model=fake-model pool=./pool
+RUN UNSANDBOXED id=20260912T0146Z-task-c44c5e slot=1: no OS containment; every read and write this job makes is yours
+RUN START id=20260912T0146Z-task-c44c5e slot=1 pid=31027 pgid=31027 started=2026-09-12T01:46:02Z deadline=30s tokens=100000 job=./worker-home-1/jobs/20260912T0146Z-task-c44c5e
+```
+
+Inside the wall, on darwin, the job's own words from `harness.log` — a write outside the job directory and a read of the key file, both denied by the kernel, with the key's VALUE arriving in the environment all the same:
+
+```
+fake harness: the key is present, length 28
+fake harness: touch /…/outside-every-list: open /…/outside-every-list: operation not permitted
+fake harness: cat /…/key: open /…/key: operation not permitted
+```
+
 
 ### First run
 

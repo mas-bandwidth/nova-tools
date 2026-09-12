@@ -201,7 +201,7 @@ func TestTemplateWorkerPrintsADescriptionThisToolAccepts(t *testing.T) {
 	path := filepath.Join(b.dir, "from-template.json")
 	write(t, path, filled)
 	b.add("a task the template's worker runs\nFAKE-FINDINGS 1\n")
-	exit, stdout, stderr = b.swarm("run", "--pool", b.pool, "--workers", "1", "--hours", "0.25", "--worker", path)
+	exit, stdout, stderr = b.swarm(withSandbox([]string{"run", "--pool", b.pool, "--workers", "1", "--hours", "0.25", "--worker", path})...)
 	if exit != 0 {
 		t.Fatalf("the description this tool PRINTS is one it reads; run exited %d:\n%s%s", exit, stdout, stderr)
 	}
@@ -308,7 +308,28 @@ func TestRequeueRefusesATaskThatIsStillRunning(t *testing.T) {
 	write(t, replacement, "a replacement\n")
 	refused := make(chan string, 1)
 	go func() {
-		for i := 0; i < 60; i++ {
+		// IT IS ASKED ONLY ONCE THE TASK IS RUNNING, and that wait is the fix this test
+		// needed when the wall landed: `run` proves the sandbox before it starts the first
+		// worker (docs/SPEC-SANDBOX.md rule 10), so the first poll of the old loop landed
+		// while the task was still PENDING -- and a requeue of a pending task is a LEGAL
+		// requeue, which quietly replaced the task this test was about and left every
+		// later poll saying `no task in pool`. The wait ends on its own, like every wait
+		// in this repository.
+		for i := 0; i < 600; i++ {
+			if _, err := os.Stat(filepath.Join(b.pool, "running", id+".task")); err == nil {
+				break
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		// THE WINDOW IS THE RUN'S, NOT A NUMBER. `run` proves the wall before it starts
+		// the first worker (docs/SPEC-SANDBOX.md rule 10), and that probe is five real
+		// wrapped runs on a machine with a backend -- so a poll loop of 60 x 25ms, which
+		// was longer than a launch before the wall landed, expired while the dispatcher
+		// was still proving it and this test failed for a reason that was not about
+		// requeue. The job sleeps 5s once it is running; the loop waits longer than the
+		// probe and the launch together, and still ends on its own (a wait loop always
+		// has a deadline).
+		for i := 0; i < 600; i++ {
 			exit, _, stderr := b.swarm("requeue", "--pool", b.pool, "--task", id,
 				"--task-file", replacement, "--files", "5", "--tokens", "100")
 			if exit == 1 && strings.Contains(stderr, "running") {

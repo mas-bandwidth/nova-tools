@@ -456,8 +456,8 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
 ```
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
-nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--launch-timeout <s>] [--usage-interval <s>]
-nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex>   (spawned by run; refused by hand, rule 18)
+nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--launch-timeout <s>] [--usage-interval <s>] [--sandbox <path>] [--no-sandbox]
+nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
 nova-swarm stop     --pool <dir>
 nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>]
@@ -574,7 +574,9 @@ RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> unpublished=<tru
 RUN MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
 RUN OK started=<n> done=<n> failed=<n> killed=<n> pending=<n> recovered=<n> after=<d>
 RUN NOTE <the one remedy line>
+RUN UNSANDBOXED id=<id> slot=<n>: no OS containment; every read and write this job makes is yours
 RUN REFUSED: <reason>
+RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 TRIAGE REPORT id=<id> rev=<sha12> job=<name> result=<ok|clean|plan-only> items=<n> red=<n> green=<n> notdone=<n>: <head>
@@ -749,9 +751,79 @@ pids it started, and it never matches a process by its command line: that is how
 
 **The job directory is the only place a worker writes.** It is created before
 the worker starts, it is named in the prompt, and everything the worker clones,
-scratches or reports goes under it. The worker's **cwd is the slot directory**,
-not the job directory, because the harness refuses reads outside its working
-directory and the worker's self and its clones live under the slot.
+scratches or reports goes under it.
+
+**And the operating system now holds that sentence, not only the prompt.** Every
+job runs inside `nova-sandbox` (docs/SPEC-SANDBOX.md, "the two callers": this
+tool is its dispatcher caller). The seam is the launch transaction of rule 18:
+the supervisor wraps the harness it spawns, and the argv is built by the
+dispatcher from the job it created and **never from the task text** — a task file
+that names a directory buys nothing.
+
+```
+nova-sandbox --read <slot dir> [--read <read_roots entry>...]
+             --write <job dir> --write <job dir>/data --cwd <job dir>
+             --name <pool> -- <harness> <harness_args...>
+```
+
+| the list | what is in it, and why |
+|---|---|
+| write | the **job directory first** — the first `--write` is what the cwd and the temp directory default to — and the job's own data home beside it. Nothing else. |
+| read | the **slot directory**, which is the worker home for this job: it holds the `opencode.json` this tool writes and the worker's own `AGENTS.md`, and without it the harness cannot read its own config. Then every `read_roots` entry of the worker description: a toolchain under a user directory is under no system root. |
+| neither | the key file, `~/.ssh`, the `gh` configuration, the keychain, the shell history, every other line's home, and this tool's own pool outside the job. |
+
+The worker's **cwd is the job directory** (SPEC-SANDBOX rule 13), and the slot
+directory above it is readable from there. It was the slot directory until the
+wall landed, and it moved for two measured reasons: a cwd outside every named
+path denies `getcwd(3)` and every `git` command dies with `shell-init: error
+retrieving current directory` before it reads anything, and OpenCode's
+`external_directory` permission is evaluated **relative to the harness's cwd**,
+so a job directory that is not the cwd is "external" to the harness that is
+supposed to be working in it.
+
+**`HOME` is the job's own data home** (SPEC-SANDBOX rule 9), which is inside the
+write set: the caller sets it, and a run whose `HOME` is outside every `--write`
+is `SANDBOX REFUSED reason=home_outside` before the job starts. With the bench's
+`HOME` inherited, the wall denies `~/.gitconfig` and the harness dies on its
+first git command — a wall that lets the job start and kills its first command is
+the silent sandbox SPEC-SANDBOX rule 1 exists to prevent. `XDG_DATA_HOME` stays
+beside it, because the usage source reads the harness's database from exactly
+that directory (rule 12).
+
+**`--net-deny` is never passed:** the provider's API is the work, and the line
+says `net=nopromise`. The key reaches the child the way it always has — read as
+data before the wrap, passed by environment, the file itself in neither list
+(rule 6 here and rule 6 there are the same rule seen from two sides).
+
+**The probe runs once, before the first worker** (SPEC-SANDBOX rule 10): `run`
+asks the machine what it can enforce and then proves the wall with the real
+policy for this platform. A machine with no backend is `RUN REFUSED
+reason=no_sandbox` and a wall that failed a check is `RUN REFUSED
+reason=sandbox_probe`; both start **no worker at all**, because a batch that runs
+unwalled under a green `RUN OK` is the failure the wall exists to close. The
+probe costs one process per pass and answers a question about the machine, never
+about a job.
+
+**`--no-sandbox` is the one loud workaround** (SPEC-SANDBOX rule 11). It runs
+every job with no OS containment and prints one line per job, on stderr, before
+the job starts:
+
+```
+RUN UNSANDBOXED id=<id> slot=<n>: no OS containment; every read and write this job makes is yours
+```
+
+It is never a default, never implied by a missing backend, and no environment
+variable or file produces it: it is argv, where `ps` shows it. A platform whose
+sandbox body is not built (linux and windows today) refuses every run that does
+not name it.
+
+**One thing the wrap changed below the seam, and it is named here because it is
+rule 11's own machinery:** the wrapped tree stays in the **job's process group**.
+`nova-sandbox`'s darwin body no longer puts its child in a group of its own,
+because a group whose id no caller can learn hides the job's own tree from the
+supervisor that must reap it — measured 2026-09-12: a wrapped harness that forked
+a background child left it alive after the run, and the survivor count was 0
+under a job recorded `done`.
 
 **The sandbox rule, stated in the prompt:**
 
@@ -1456,6 +1528,24 @@ be seen red before it is trusted.
     `slots/<n>.json` written by the runner once (reserved), by the
     supervisor once (launched) and by a recovering dispatcher at most once
     (orphaned), never by two writers for the same state.
+19. **The launch seam's wall** (docs/SPEC-SANDBOX.md, the dispatcher caller),
+    four tests, each seen red first. The two that ask the OPERATING SYSTEM run
+    against the real `nova-sandbox`, on the platform whose body is built, and
+    skip elsewhere BY NAME: a job whose task text tells it to create a file
+    outside its job directory fails, the file is absent afterwards, and the
+    same task text under `--no-sandbox` lands it (the control, so the denial
+    cannot pass by being impossible); a job cannot read the key file whose
+    VALUE it holds in its environment, with the same run asserting that the
+    value did arrive and that it is in no printed line. The two that ask THIS
+    TOOL run everywhere, against a fake sandbox on `PATH`: `run` with a failing
+    probe is `RUN REFUSED reason=sandbox_probe` and with no backend
+    `RUN REFUSED reason=no_sandbox`, both with the task still pending and no
+    `RUN START` printed; `--no-sandbox` prints exactly one `RUN UNSANDBOXED`
+    line per job, and the same bench with every plausible environment variable
+    set and the flag gone wraps anyway. And the argv itself: the worker home as
+    `--read`, the job directory as the FIRST `--write` with the data home
+    beside it, the job directory as `--cwd`, no `--net-deny`, and a directory
+    planted in the task text that appears in no flag of it.
 
 ## The work list
 

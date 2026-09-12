@@ -36,6 +36,15 @@ type Worker struct {
 	WorkerDir   string   `json:"worker_dir"`
 	Deadline    string   `json:"deadline"`
 	Board       string   `json:"board,omitempty"`
+	// READ ROOTS: the one field the wall added (docs/SPEC-SANDBOX.md, "there is no --root
+	// flag"). Every job runs inside nova-sandbox, whose read set is the OS and toolchain
+	// roots plus what the caller names; a toolchain installed into a USER directory -- Go
+	// under ~/go, node under ~/.nvm, the Studio's /Users/<user>/toolchains -- is under no
+	// system root, so a harness that needs one dies inside the wall and runs outside it.
+	// It is OPTIONAL, it is a list of absolute existing directories, and it is READ-ONLY:
+	// the write set is the job's own and is never configurable from a file. A worker that
+	// needs nothing beyond the system roots names nothing here.
+	ReadRoots []string `json:"read_roots,omitempty"`
 }
 
 // The usage sources a description may declare (rule 13). There are two.
@@ -117,6 +126,21 @@ func LoadWorker(path string) (Worker, []error) {
 	}
 	if !placed {
 		problems = append(problems, fmt.Errorf("%s: harness_args is required and must place %s, so the model this description names reaches the harness; for OpenCode it is [\"run\", \"--model\", \"{model}\", \"--\", \"{prompt}\"] -- %s is the prompt FILE, and is appended last where harness_args does not name it", path, ModelPlaceholder, PromptPlaceholder))
+	}
+	// Rule 5 of the wall is "paths are resolved, absolute and existing", and a read root
+	// that is not there is refused BY THE WALL at every launch, one job at a time. It is
+	// worth one sentence here instead, at the one moment the caller can still fix it.
+	for i, root := range w.ReadRoots {
+		switch fi, err := os.Stat(root); {
+		case strings.TrimSpace(root) == "":
+			problems = append(problems, fmt.Errorf("%s: read_roots[%d] is empty; it wants an absolute directory a job may READ, such as a toolchain under a user directory", path, i))
+		case !filepath.IsAbs(root):
+			problems = append(problems, fmt.Errorf("%s: read_roots[%d] %q is relative; it wants an absolute directory, because the wall resolves every path before it grants anything", path, i, root))
+		case err != nil:
+			problems = append(problems, fmt.Errorf("%s: read_roots[%d] %s does not exist; the wall names every path and creates none", path, i, root))
+		case !fi.IsDir():
+			problems = append(problems, fmt.Errorf("%s: read_roots[%d] %s is not a directory; a read root is a directory and everything beneath it", path, i, root))
+		}
 	}
 	if w.Deadline != "" {
 		if _, err := time.ParseDuration(w.Deadline); err != nil {

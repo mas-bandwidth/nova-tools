@@ -89,6 +89,26 @@ func main() {
 	if said, ok := directive(prompt, "FAKE-SAY"); ok {
 		fmt.Fprintln(os.Stderr, "fake harness:", said)
 	}
+	// FAKE-TOUCH and FAKE-CAT are THE WALL'S OWN QUESTIONS, asked from inside the job:
+	// can this worker create a file at a path the dispatcher did not name, and can it read
+	// the key file whose value it already holds in its environment? The answer is printed
+	// as one line each -- `ok` or the operating system's own refusal -- and the CONTENTS of
+	// a file are never printed, only its length, because the file the test points this at
+	// is a key file (SPEC-SANDBOX.md rule 6).
+	if path, ok := directive(prompt, "FAKE-TOUCH"); ok && path != "" {
+		if err := os.WriteFile(path, []byte("a worker wrote here\n"), 0o644); err != nil {
+			fmt.Printf("fake harness: touch %s: %v\n", path, err)
+		} else {
+			fmt.Printf("fake harness: touch %s: ok\n", path)
+		}
+	}
+	if path, ok := directive(prompt, "FAKE-CAT"); ok && path != "" {
+		if body, err := os.ReadFile(path); err != nil {
+			fmt.Printf("fake harness: cat %s: %v\n", path, err)
+		} else {
+			fmt.Printf("fake harness: cat %s: ok len=%d\n", path, len(body))
+		}
+	}
 	if n, ok := number(prompt, "FAKE-REFUSE"); ok {
 		for i := 0; i < n; i++ {
 			fmt.Printf("fake harness: read of /etc/somewhere: permission denied (refused)\n")
