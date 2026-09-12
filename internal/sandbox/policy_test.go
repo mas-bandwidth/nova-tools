@@ -1,0 +1,279 @@
+package sandbox
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// scratch is one job's shape: a write set with a data home inside it (rule 9), a read
+// set, and a secret in NEITHER list.
+func scratch(t *testing.T) (write, read, home, secret string) {
+	t.Helper()
+	base := t.TempDir()
+	write = filepath.Join(base, "w")
+	read = filepath.Join(base, "r")
+	home = filepath.Join(write, "home")
+	secretDir := filepath.Join(base, "secret")
+	for _, d := range []string{write, read, home, secretDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	secret = filepath.Join(secretDir, "env")
+	if err := os.WriteFile(secret, []byte("not-a-real-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Resolve, because /var on a Mac is a symlink to /private/var and every path this
+	// package holds is resolved (rule 5).
+	for _, p := range []*string{&write, &read, &home, &secret} {
+		if got, err := filepath.EvalSymlinks(*p); err == nil {
+			*p = got
+		}
+	}
+	return write, read, home, secret
+}
+
+func in(t *testing.T, write, read, home string, argv ...string) Input {
+	t.Helper()
+	return Input{Reads: []string{read}, Writes: []string{write}, Home: home, Argv: argv}
+}
+
+// Rule 4: --write has no default, and zero of it is a refusal that names the flag.
+func TestRefusesToGuessAWriteSet(t *testing.T) {
+	_, bad := Build(Input{Argv: []string{"/bin/echo"}, Home: "/"})
+	if len(bad) == 0 {
+		t.Fatal("a run with no --write was built; rule 4 refuses to guess")
+	}
+	var found bool
+	for _, r := range bad {
+		if r.Reason == "bad_write" && strings.Contains(r.Text, "--write") && r.Code() == ExitRefused {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no bad_write refusal naming the flag at 125: %v", bad)
+	}
+}
+
+// Rule 5: relative is refused WITH the absolute form; absent is refused and NOT created.
+func TestPathsAreResolvedAbsoluteAndExisting(t *testing.T) {
+	write, read, home, _ := scratch(t)
+
+	_, bad := Build(in(t, "relative/dir", read, home, "/bin/echo"))
+	if len(bad) == 0 || !strings.Contains(bad[0].Text, "is relative") {
+		t.Fatalf("a relative --write was not refused: %v", bad)
+	}
+	abs, _ := filepath.Abs("relative/dir")
+	if !strings.Contains(bad[0].Text, abs) {
+		t.Fatalf("the refusal did not print the absolute form it wanted: %q", bad[0].Text)
+	}
+
+	missing := filepath.Join(write, "not-there")
+	_, bad = Build(in(t, missing, read, home, "/bin/echo"))
+	if len(bad) == 0 || !strings.Contains(bad[0].Text, "does not exist") {
+		t.Fatalf("an absent --write was not refused: %v", bad)
+	}
+	if _, err := os.Stat(missing); !os.IsNotExist(err) {
+		t.Fatal("the absent path was created; rule 5 refuses, it does not create")
+	}
+}
+
+// Rule 4: a path in both lists is a refusal naming both flags, never a silent merge.
+func TestSamePathInBothListsIsARefusal(t *testing.T) {
+	write, _, home, _ := scratch(t)
+	_, bad := Build(Input{Reads: []string{write}, Writes: []string{write}, Home: home, Argv: []string{"/bin/echo"}})
+	if len(bad) == 0 {
+		t.Fatal("a path in both lists was merged")
+	}
+	if !strings.Contains(bad[0].Text, "--read") || !strings.Contains(bad[0].Text, "--write") {
+		t.Fatalf("the refusal did not name both flags: %q", bad[0].Text)
+	}
+}
+
+// Rule 9: a HOME outside every --write is refused BEFORE the command runs.
+func TestHomeOutsideTheWriteSetIsRefused(t *testing.T) {
+	write, read, _, _ := scratch(t)
+	_, bad := Build(in(t, write, read, os.TempDir(), "/bin/echo"))
+	var found bool
+	for _, r := range bad {
+		if r.Reason == "home_outside" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a HOME outside every --write was accepted: %v", bad)
+	}
+	if p, bad := Build(in(t, write, read, filepath.Join(write, "home"), "/bin/echo")); len(bad) > 0 || p.Home == "" {
+		t.Fatalf("a HOME inside the write set was refused: %v", bad)
+	}
+}
+
+// Rules 13 and 8: the cwd and the temp directory default to the first --write, and an
+// explicit one outside the write set is refused.
+func TestCwdAndTmpAreInsideTheWall(t *testing.T) {
+	write, read, home, _ := scratch(t)
+	p, bad := Build(in(t, write, read, home, "/bin/echo"))
+	if len(bad) > 0 {
+		t.Fatalf("refused: %v", bad)
+	}
+	if p.Cwd != write {
+		t.Fatalf("cwd = %q, want the first --write %q", p.Cwd, write)
+	}
+	if want := filepath.Join(write, tmpDirName); !Inside(p.Tmp, write) || filepath.Base(p.Tmp) != filepath.Base(want) {
+		t.Fatalf("tmp = %q, want %q", p.Tmp, want)
+	}
+	if fi, err := os.Stat(p.Tmp); err != nil || !fi.IsDir() {
+		t.Fatalf("the one directory the tool creates was not created: %v", err)
+	}
+	iv := in(t, write, read, home, "/bin/echo")
+	iv.Cwd = read
+	if _, bad = Build(iv); len(bad) == 0 || bad[0].Reason != "bad_cwd" {
+		t.Fatalf("a --cwd outside the write set was accepted: %v", bad)
+	}
+}
+
+// The exit-codes section: the pre-flight stats the resolved command OUTSIDE the wall.
+func TestCommandPreflight(t *testing.T) {
+	write, read, home, _ := scratch(t)
+	notExec := filepath.Join(write, "data.txt")
+	if err := os.WriteFile(notExec, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, bad := Build(in(t, write, read, home, notExec))
+	if len(bad) == 0 || bad[0].Reason != "not_executable" || bad[0].Code() != ExitRefused {
+		t.Fatalf("a command with no executable bit was accepted: %v", bad)
+	}
+	iv := in(t, write, read, home, "definitely-not-a-command-here")
+	iv.LookAt = write
+	_, bad = Build(iv)
+	if len(bad) == 0 || bad[0].Reason != "not_found" || bad[0].Code() != ExitNotFound {
+		t.Fatalf("a command on no PATH entry was not 127 not_found: %v", bad)
+	}
+}
+
+// The build's own decision, from "to verify at build" item 2: a path carrying an SBPL
+// metacharacter is refused, because the ancestor literals put a path INTO the profile.
+func TestPathWithSbplMetacharacterIsRefused(t *testing.T) {
+	write, read, home, _ := scratch(t)
+	odd := filepath.Join(write, `a (paren)`)
+	if err := os.MkdirAll(odd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	iv := in(t, odd, read, home, "/bin/echo")
+	if _, bad := Build(iv); len(bad) == 0 {
+		t.Fatal("a path holding a paren was accepted into the generated policy")
+	}
+}
+
+// Rule 9 and this build's agent fix: the environment passes through, the three temp
+// variables are the tool's, and the agent variables are dropped.
+func TestChildEnv(t *testing.T) {
+	env := []string{"HOME=/w/home", "ANTHROPIC_API_KEY=sk-not-real", "TMPDIR=/outside", "SSH_AUTH_SOCK=/private/tmp/agent.sock", "SSH_AGENT_PID=9", "PATH=/bin"}
+	got := strings.Join(ChildEnv(env, "/w/.nova-sandbox-tmp"), "\n")
+	for _, want := range []string{"ANTHROPIC_API_KEY=sk-not-real", "PATH=/bin", "TMPDIR=/w/.nova-sandbox-tmp", "TMP=/w/.nova-sandbox-tmp", "TEMP=/w/.nova-sandbox-tmp"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("the child's environment is missing %q:\n%s", want, got)
+		}
+	}
+	for _, gone := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID", "TMPDIR=/outside"} {
+		if strings.Contains(got, gone) {
+			t.Fatalf("%q survived into the child's environment:\n%s", gone, got)
+		}
+	}
+	if d := DroppedEnv(env); len(d) != 2 {
+		t.Fatalf("DroppedEnv = %v, want the two agent variables", d)
+	}
+}
+
+// The ancestor literals of the darwin profile: every proper ancestor, "/" excluded.
+func TestAncestors(t *testing.T) {
+	// Only the directories ABOVE each path are ancestors: c and d are the paths
+	// themselves, and they are granted by their own subpath rule.
+	got := Ancestors("/a/b/c", "/a/b/d")
+	want := []string{"/a", "/a/b"}
+	if strings.Join(got, " ") != strings.Join(want, " ") {
+		t.Fatalf("Ancestors = %v, want %v", got, want)
+	}
+	for _, d := range got {
+		if d == "/" {
+			t.Fatal(`"/" is in the ancestor list; it is granted file-read* above`)
+		}
+	}
+}
+
+// Rule 15 and this build's network fix: the generated profile fills every marker, names
+// the caller's paths only as parameters, and grants IP plus unix sockets under the write
+// set — never (allow network*), which reaches the SSH agent socket.
+func TestDarwinProfileIsGenerated(t *testing.T) {
+	write, read, home, _ := scratch(t)
+	p, bad := Build(in(t, write, read, home, "/bin/echo"))
+	if len(bad) > 0 {
+		t.Fatalf("refused: %v", bad)
+	}
+	text, params, err := DarwinProfile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The template's own header documents each marker and names the form this build
+	// rejected, so both assertions are about the GRANTS — the lines that are not comments.
+	grants := grantLines(text)
+	if strings.Contains(grants, "@@") {
+		t.Fatalf("a marker survived into the filled profile:\n%s", text)
+	}
+	if strings.Contains(grants, "(allow network*)") {
+		t.Fatal("(allow network*) grants every unix-domain socket, including the SSH agent's")
+	}
+	for _, want := range []string{
+		`(allow network-outbound (remote ip "*:*"))`,
+		`(allow network-outbound (remote unix-socket (subpath (param "WRITE0"))))`,
+		`(allow file-read* (subpath (param "READ0")))`,
+		`(allow file-read* file-write* (subpath (param "WRITE0")))`,
+		`(allow file-read-metadata (literal "` + filepath.Dir(write) + `"))`,
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("the filled profile is missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, write+`"`) && !strings.Contains(text, `(literal "`+filepath.Dir(write)) {
+		t.Fatal("a caller path entered the profile text as data")
+	}
+	// Every param the text names must be passed, or sandbox-exec is exit 65.
+	for _, name := range []string{"READ0", "WRITE0", "HOME"} {
+		if !strings.Contains(strings.Join(params, " "), name+"=") {
+			t.Fatalf("param %s is named by the profile and not passed: %v", name, params)
+		}
+	}
+	// Byte-identical twice: the same lists produce the same policy.
+	again, _, err := DarwinProfile(p)
+	if err != nil || again != text {
+		t.Fatal("the generated policy is not deterministic")
+	}
+	// Rule 7: under --net-deny every network grant is withheld.
+	p.NetDeny = true
+	denied, _, err := DarwinProfile(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(grantLines(denied), "network") {
+		t.Fatalf("--net-deny left a network grant in the profile:\n%s", denied)
+	}
+	if p.Net() != "denied" {
+		t.Fatalf("net = %q, want denied", p.Net())
+	}
+}
+
+// grantLines is the filled profile with its comments removed: the template's header
+// documents the markers and the form this build rejected, and a test that searched the
+// whole text would be reading the documentation rather than the policy.
+func grantLines(profile string) string {
+	var out []string
+	for _, line := range strings.Split(profile, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), ";;") {
+			continue
+		}
+		out = append(out, line)
+	}
+	return strings.Join(out, "\n")
+}
