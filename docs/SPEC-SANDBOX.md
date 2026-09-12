@@ -1777,8 +1777,9 @@ names `sandbox.Run` without a signature the code does not have.
    `RUN REFUSED reason=sandbox_probe`.
 3. **Reader command 2's `$PPID` is the tool's pid**, which is what rule 12's
    "execs the command in place and waits" means; it said the wrapped shell's.
-4. **The `24 checks` of the revision 7 note is gone** — the third count, and the
-   last, so "no prose states a check count" is now true of the whole document.
+4. **The check count in the revision 7 note is gone** — the third of three, and
+   the last, so "no prose states a check count" is now true of the whole
+   document rather than of its normative half.
 5. **The four surviving lists-file claims are gone**, which is read 8's finding
    4 finished rather than half-applied: the lists are written down in one place
    per line and not guessed, and where that place is, is the launcher's.
