@@ -35,6 +35,7 @@ import (
 const usage = `nova-fuse: the ingestion fuse -- lockdown and quarantine (see SPEC.md)
 
 usage:
+  nova-fuse version    print this build identity (--version also accepted)
   nova-fuse status --box <path> [--max <n>]                what is blown, and since when (REPORTS; never gate on it)
   nova-fuse check --box <path> [surface]                   may I read? -- the gate; act only on exit 0
   nova-fuse lockdown --box <path> "<reason>"               blow the one hard fuse: all untrusted reads stop
@@ -120,6 +121,8 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0
+	case "version", "--version":
+		return cmdVersion(rest, stdout, stderr)
 	}
 
 	// LIFT IS DISPATCHED BEFORE ANY FLAG IS PARSED, because its hard half must not depend

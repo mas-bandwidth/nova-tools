@@ -510,6 +510,7 @@ nova-swarm template --name <read-pr|probe-row|fix-card|result>
 nova-swarm cost     --pool <dir> [--since <stamp>] [--max <n>]
 nova-swarm note     --pool <dir> --task <id> --text <text>
 nova-swarm finalize --pool <dir> --task <id>
+nova-swarm version
 nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
 ```
 
@@ -569,6 +570,10 @@ a quoted rule carries quotes into a shell. A file or a stream, always.
 which env var the provider reads, which base URL, and where the key file is. It
 is a file because it is configuration a person wrote, and it is **required**
 because this tool has no opinion about whose model runs.
+
+**`version`** prints the Conventions' one line — `nova-swarm <build identity>
+<goos>/<goarch> <go version>`, exit 0 — from `internal/buildinfo`, the same
+resolution every binary here uses. It takes no flags and no arguments.
 
 `status`, `triage`, `result`, `template` and `cost` **report** and exit 0
 (their refusals are exit 1 as the table says). `run`, `add`, `batch`,

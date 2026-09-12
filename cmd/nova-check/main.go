@@ -24,6 +24,7 @@ import (
 const usage = `nova-check: record-layer checks for a nova self repo (see SPEC.md)
 
 usage:
+  nova-check version    print this build identity (--version also accepted)
   nova-check quickstart --dir <dir> [--fail-max <n>] the two checks a first run can make
                                                      with nothing but a directory: links,
                                                      then nocode. Both run even if the
@@ -147,6 +148,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cmdFloors(args[1:], stdout, stderr)
 	case "corpus":
 		return cmdCorpus(args[1:], stdout, stderr)
+	case "version", "--version":
+		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
 		fmt.Fprint(stdout, usage)
 		return 0

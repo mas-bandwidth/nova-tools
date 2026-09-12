@@ -35,9 +35,8 @@ import (
 	"io"
 	"runtime"
 	"runtime/debug"
-	"strings"
-	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -46,70 +45,20 @@ import (
 // only write a string var, and it is package-level and unexported for the same reason.
 var version string
 
-// unknownVersion is what a build with no stamp and no vcs information reports. It is the
-// same spelling the Go toolchain uses for an uninstalled build, so it reads as familiar
-// rather than as a bug in this tool.
-const unknownVersion = "devel"
-
-// shortRevisionLen is 12 hex digits, the length a Go pseudo-version uses, rather than
-// git's default 7: a 7-digit prefix already collides in repositories this size, and a
-// version that two commits can share is not an answer to which build is running.
-const shortRevisionLen = 12
-
 // buildVersion is resolveVersion over this binary's own build information.
 func buildVersion() string {
 	info, ok := debug.ReadBuildInfo()
 	return resolveVersion(version, info, ok)
 }
 
-// resolveVersion takes the ldflags stamp and the build information as ARGUMENTS rather
-// than reading them, so that the order above is testable: a test cannot install itself
-// from a module proxy or rebuild itself from a dirty tree, and an order asserted only by
-// the build it happens to run under is asserted by one case out of four.
+// resolveVersion is internal/buildinfo's Resolve, which is where the order above now
+// lives: five binaries held five copies of it, and a copied answer drifts -- one copy had
+// already lost the build time and the dirty marker, so two lines comparing their versions
+// were comparing two spellings of the same fact. The order, the floor and the twelve-hex
+// revision are one implementation for every binary here; this function stays as the name
+// this package's own tests drive, and they now drive the shared one through it.
 func resolveVersion(stamped string, info *debug.BuildInfo, ok bool) string {
-	if v := strings.TrimSpace(stamped); v != "" {
-		return v
-	}
-	if !ok || info == nil {
-		return unknownVersion
-	}
-	// "(devel)" is what the toolchain records for a build that is not an installed
-	// module version, and it carries no more information than the floor does -- so it
-	// falls through to the vcs stamp below, which carries a great deal more.
-	if v := strings.TrimSpace(info.Main.Version); v != "" && v != "(devel)" && v != unknownVersion {
-		return v
-	}
-	var revision, stamp string
-	var modified bool
-	for _, s := range info.Settings {
-		switch s.Key {
-		case "vcs.revision":
-			revision = s.Value
-		case "vcs.time":
-			stamp = s.Value
-		case "vcs.modified":
-			modified = s.Value == "true"
-		}
-	}
-	if revision == "" {
-		return unknownVersion
-	}
-	if len(revision) > shortRevisionLen {
-		revision = revision[:shortRevisionLen]
-	}
-	v := revision
-	// Time first, revision second, the way a Go pseudo-version orders them: two builds
-	// of the same tree sort by when they were built, which is the comparison a person
-	// holding two of these lines actually makes.
-	if t, err := time.Parse(time.RFC3339, stamp); err == nil {
-		v = t.UTC().Format("20060102150405") + "-" + revision
-	}
-	if modified {
-		// A build from an edited tree is NOT the commit it names, and the whole point of
-		// this verb is that two lines can compare what they are running.
-		v += "-dirty"
-	}
-	return v
+	return buildinfo.Resolve(stamped, info, ok)
 }
 
 // cmdVersion prints the one line. It takes no flags and no arguments: there is no --short,
