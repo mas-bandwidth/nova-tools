@@ -161,6 +161,19 @@ func LoadWorker(path string) (Worker, []error) {
 				problems = append(problems, fmt.Errorf("%s: key_file %s is inside read_roots[%d] %s, which every job of this worker may READ: the key reaches the job by environment (env_var) and its FILE is in neither list. Keep the key file outside every read root", path, key, i, r))
 			}
 		}
+		// AND THE SLOT DIRECTORIES, WHICH ARE SIBLINGS OF worker_dir, NOT UNDER IT. A job's
+		// `--read` is its slot, `<worker_dir>-<n>` (SlotDir), so a key file placed directly in a
+		// slot -- `<worker_dir>-1/.key`, or anything beneath it such as under its `jobs/` -- is
+		// READ INSIDE THE WALL under a probe that passed, and neither check above sees it:
+		// `insideDir` treats `worker-1` as a sibling of `worker` by design, and no `read_roots`
+		// entry names it (Rowan's Fable read 2 of #88 at fc400ce, L1). It is refused HERE rather
+		// than in `Run` beside the gate so that it holds for EVERY slot number, not only the ones
+		// one run happens to use, and so that `check` and `supervise` say it too.
+		if dir := resolvePath(w.WorkerDir); dir != "" {
+			if slot := slotDirHolding(key, dir); slot != "" {
+				problems = append(problems, fmt.Errorf("%s: key_file %s is inside slot directory %s, which IS the job's --read: the job would read the key inside the wall under a probe that passed. Keep the key file outside worker_dir and outside every slot directory %s-<n>, such as ~/.keys/<provider>", path, key, slot, dir))
+			}
+		}
 	}
 	if w.Deadline != "" {
 		if _, err := time.ParseDuration(w.Deadline); err != nil {
@@ -200,6 +213,26 @@ func (w Worker) DefaultDeadline() time.Duration {
 		return 0
 	}
 	return d
+}
+
+// slotDirHolding answers the slot directory of workerDir that holds path -- a sibling of
+// workerDir spelled <base>-<digits>, which is what SlotDir builds -- or "" when path is
+// under no slot. A path that IS a slot directory is not held by it, which matches insideDir.
+func slotDirHolding(path, workerDir string) string {
+	parent, base := filepath.Dir(workerDir), filepath.Base(workerDir)
+	rel, err := filepath.Rel(parent, path)
+	if err != nil || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return ""
+	}
+	first, _, under := strings.Cut(rel, string(os.PathSeparator))
+	if !under || first == "" {
+		return "" // the path is the sibling itself, not something inside it
+	}
+	digits, ok := strings.CutPrefix(first, base+"-")
+	if !ok || digits == "" || strings.TrimLeft(digits, "0123456789") != "" {
+		return ""
+	}
+	return filepath.Join(parent, first)
 }
 
 // SlotDir is a slot's own working directory, <worker-dir>-<slot>.

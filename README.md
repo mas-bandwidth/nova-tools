@@ -729,8 +729,10 @@ the example keeps it in `~/.keys`. `worker_dir` is copied into the slot director
 every job and the slot directory is the job's one readable path, so a key file inside it
 would be copied INSIDE the wall and read by the worker under a green line; a key inside a
 read root is readable without even the copy. The key reaches the harness by `env_var` and
-its FILE is in neither list (docs/SPEC-SANDBOX.md rule 6). Either placement is refused when
-the description is read.
+its FILE is in neither list (docs/SPEC-SANDBOX.md rule 6). A key file inside a SLOT
+directory — `<worker_dir>-1/.key`, or anything under it such as its `jobs/` — is the same
+hole from the other side, since the slot IS the job's readable path, and it is refused too.
+All three placements are refused when the description is read.
 
 `harness_args` is the invocation the harness needs, and `{model}` is where the model goes:
 a harness handed nothing but a path reads that path as a project directory and does

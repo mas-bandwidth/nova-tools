@@ -208,6 +208,50 @@ func TestAKeyFileInsideTheReadSetIsRefusedAtLoad(t *testing.T) {
 	if len(problems) != 1 || !strings.Contains(problems[0].Error(), "read_roots[0]") {
 		t.Fatalf("a key file inside a read root is not refused: %v", problems)
 	}
+	// And one inside a SLOT directory, which is a sibling of worker_dir and not under it:
+	// the slot IS the job's `--read`, so the key is read inside the wall under a probe that
+	// passed, and neither check above sees it (Rowan's Fable read 2 of #88 at fc400ce, L1).
+	// The refusal is at LOAD, so `nova-swarm run` returns before Run prints any RUN line --
+	// the task stays pending and no worker starts.
+	slotJobs := filepath.Join(dir, "worker-1", "jobs", "t1")
+	if err := os.MkdirAll(slotJobs, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	inSlot := filepath.Join(dir, "worker-1", ".key")
+	if err := os.WriteFile(inSlot, []byte("sk-not-a-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, problems = LoadWorker(desc(inSlot))
+	if len(problems) != 1 {
+		t.Fatalf("a key file inside a slot directory reported %d problems, want 1: %v", len(problems), problems)
+	}
+	said = problems[0].Error()
+	for _, want := range []string{inSlot, filepath.Join(dir, "worker-1"), "--read", "~/.keys/<provider>"} {
+		if !strings.Contains(said, want) {
+			t.Errorf("the slot refusal does not say %q:\n%s", want, said)
+		}
+	}
+	// The same key one level deeper, under the slot's own jobs/, is the same hole.
+	underJobs := filepath.Join(slotJobs, ".key")
+	if err := os.WriteFile(underJobs, []byte("sk-not-a-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, problems := LoadWorker(desc(underJobs)); len(problems) != 1 {
+		t.Fatalf("a key file under a slot's jobs/ is not refused: %v", problems)
+	}
+	// A sibling that merely starts the same way is NOT a slot and is sound: the tool
+	// refuses the placements it creates, not every neighbour of worker_dir.
+	neighbour := filepath.Join(dir, "worker-keys")
+	if err := os.MkdirAll(neighbour, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	sound := filepath.Join(neighbour, "provider")
+	if err := os.WriteFile(sound, []byte("sk-not-a-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, problems := LoadWorker(desc(sound)); len(problems) != 0 {
+		t.Errorf("a key file in a sibling that is not a slot is refused: %v", problems)
+	}
 	// The key file the README teaches -- outside both lists -- is sound, and a symlink
 	// into the worker directory does not walk around the check (rule 5 resolves paths).
 	outside := filepath.Join(dir, "keys", "provider")
