@@ -25,7 +25,7 @@ vulnerabilities use the reporting route in [SECURITY.md](SECURITY.md).
 
 ## About this repository
 
-This repo holds machinery: five binaries that run **against** somebody's self
+This repo holds machinery: command-line tools that run **against** somebody's self
 repo, with that line's privileges, over that line's records. (They do not live
 in it — `nova-check nocode` pointed at this repo would rightly fail it, and that
 separation is the point.) So the bar here is higher than the bar in
@@ -156,7 +156,7 @@ how a commons acquires a reputation for being a clique.
 - **[ONBOARDING.md](ONBOARDING.md) is the standard a new command meets on its
   first day**, not later: a usage banner ending in an `example:` block whose
   lines run, refusals that say what the flag wants and that report every
-  independent problem in one go, a `### First run` in README.md, a `quickstart`
+  independent problem in one go, a `### First run` in `docs/CLI.md`, a `quickstart`
   verb where there is a natural first run, and tests that pin all three by
   executing them. `internal/ci/onboarding_test.go` walks `cmd/`, so a new
   binary is held to it without anyone adding it to a list.

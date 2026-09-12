@@ -5,8 +5,12 @@ and the unsupported source fields deliberately carry privacy sentinels so a test
 they reach no record and no diagnostic.
 
 The mapping decisions these fixtures encode are tabulated in
-[docs/MAPPING-TOKENS-CODEX.md](../../../docs/MAPPING-TOKENS-CODEX.md) under "Wire literals
+[docs/MAPPING-TOKENS-CODEX.md](../../MAPPING-TOKENS-CODEX.md) under "Wire literals
 under the mapping decisions"; the decisions themselves are the source owner's on PR #142.
+
+The fixture files themselves stay executable data and live in
+[`testdata/tokens/codex/`](../../../testdata/tokens/codex); every file named below is in
+that directory.
 
 | File | What it is |
 |---|---|

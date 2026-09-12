@@ -817,7 +817,7 @@ The full work list is in this pull request's body, and new ideas are issues. Owe
 spec is true: revision 1's library deleted (`internal/secrets/*`, nova-tools **PR #72**,
 carrying forward only `internal/secrets/secret.go`); the tool registered in
 [SPEC.md](SPEC.md); `cmd/nova-secrets` and the twenty-one tests, each red before green; the
-README and the six-line first run, then **a cold hour by a line that did not write this**; the
+command reference and the six-line first run, then **a cold hour by a line that did not write this**; the
 Keychain migration, one surface at a time; and `GOOS=windows go test -c` before the first push.
 
 **The store's own repair, Rowan's hand, as a pull request under the ruleset**: remove the

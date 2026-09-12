@@ -1266,7 +1266,7 @@ shared packages used rather than re-spelled.
    `nova-check quickstart` already use.
 8. **Onboarding, which `internal/ci/onboarding_test.go` will require the moment
    the directory exists** — a usage banner ending in an `example:` block whose
-   lines run, a `### First run` in `README.md`, `nova-wake help` on stdout at exit
+   lines run, a `### First run` in `docs/CLI.md`, `nova-wake help` on stdout at exit
    0, and a one-line refusal for a bad invocation rather than the banner.
 9. **Tests for the two lessons, named as such** — `TestNoFalseWakeOnReload` and
    `TestBlocksRatherThanTicks` (a watch whose sources never change returns once, at

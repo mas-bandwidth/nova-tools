@@ -1990,7 +1990,7 @@ The law is untouched: the exit code is still 2 and the message still says
 `refusing to guess`. What changes is who does the guessing — a refusal that
 names only what was wrong hands the guess to the reader, which is the thing
 this tool exists not to do. The usage banner ends in the `quickstart` line and
-one runnable example per retrieval verb, and README's `### First run` opens on
+one runnable example per retrieval verb, and [`docs/CLI.md`](CLI.md)'s `### First run` opens on
 a real `quickstart` transcript and then shows both verbs by hand; the
 sentences, the examples and both transcripts' shapes are pinned by test.
 
