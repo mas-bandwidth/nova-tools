@@ -766,7 +766,12 @@ is everything `nova-swarm` promises it, and everything it asks back:
   writable; the slot directory and `read_roots` are readable; everything else on disk,
   including the key file it was given the VALUE of, is denied by the kernel. A refused read
   or write is not an error and does not end the run — the prompt says so — and a command
-  that runs outside the wall and dies inside it is missing a `read_roots` entry.
+  that runs outside the wall and dies inside it is missing a `read_roots` entry. **Unless it
+  lives directly in your home directory**: the directory of the resolved command is itself a
+  read root, so the wall refuses `SANDBOX REFUSED reason=bad_read` at every launch rather
+  than make the whole of `$HOME` — `.ssh`, `.config/gh`, the keychain — readable inside it.
+  The remedy there is to move the harness into a directory of its own, `~/.local/bin/` being
+  the usual one, and `read_roots` is no remedy at all if what you name is the bare home.
 - **`HOME` is the job's own data home**, inside the write set, so the harness's own config
   and cache land in the job and not in yours.
 - **Its arguments are `harness_args`**, with `{model}` replaced by the description's model,
