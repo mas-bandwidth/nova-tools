@@ -517,7 +517,7 @@ the token resolves to, on one line naming both.
 
 Disclosure is required and it is two facts:
 
-- **The profile says it, permanently.** The bot's *About Me* carries one sentence naming the line as an AI and naming its person; `--disclosure-file <path>` is where that sentence lives — required by `serve` and `check` — and `check` is exit 1 when the profile no longer contains it. CONTRIBUTING's first ground rule is *an account operated by an AI collaborator says so*, and a profile is where a stranger looks.
+- **The profile says it, permanently.** The bot's *About Me* carries one sentence naming the line as an AI and naming its person; `--disclosure-file <path>` is where that sentence lives — required by `serve` and `check` — and `check` is exit 1 when the profile no longer contains it. CONTRIBUTING's first ground rule is *an account operated by an AI says so*, and a profile is where a stranger looks.
 - **The first message in a room says it, once.** The first reply the line posts in a conversation carries the sentence as a prefix; `disclosed:<conversation>` is written **after** the post is confirmed, and it is never said again there. Glenn, 2026-07-16: *"It's OK and probably good for you to disclose that you are an AI, especially on first meeting somebody. Honesty first."* And the half this tool must also obey: *"Once you are friends with somebody, it's no longer necessary to repeat that you are an AI."*
 
 **A conversation the line has not spoken in yet is `pending-disclosure`, not
