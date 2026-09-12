@@ -28,46 +28,44 @@ nothing reacts to its exit code automatically.
    `--file` names: no default path, no search of the cwd, no `$HOME`. A missing
    `--file` is `refusing to guess`, exit 2. It is a text file in git, so a change to
    what we depend on is a diff somebody read.
-
 2. **Six fields per entry, and nothing implied.** One entry is one tab-separated line:
-   `name`, `kind`, `installed`, `latest`, `apply`, `owner`. No field may be empty;
-   `apply` may be the literal `none`. A line with more or fewer fields is a refusal
-   naming the line number, exit 2 — never a skip. Six fields and one line each is the
-   dependency model entire: no graph, no lockfile.
+   `name`, `kind`, `installed`, `latest`, `apply`, `owner`. **The first line is the header
+   and is skipped, as is every line whose column one is `#`**, and nothing else is: neither
+   is an entry, so rule 5 never reads the header's `kind=kind` and `entries=` counts
+   neither. No field may be empty; `apply` may be the literal `none`. A line with more or
+   fewer fields is a refusal naming the line number, exit 2 — never a skip. Six fields and
+   one line each is the dependency model entire: no graph, no lockfile.
+3. **A command is argv, never a shell.** `installed`, `apply` and rule 6's `local:<argv>`
+   — this tool's three exec sites — are split on single spaces and executed directly: no
+   shell, no pipe, no glob, no `&&`, no environment expansion. An argument needing a space
+   is refused at load time with the remedy *put it in a script and name the script* — as
+   is a field carrying two adjacent spaces or a leading or trailing one, so the split
+   never makes an empty argument. This makes rule 13 provable.
+4. **The installed version is read by one fixed rule.** Run the entry's `installed` argv
+   and take the FIRST line of its stdout — stderr only when stdout is empty, so no race
+   decides it — then the first substring matching `\d+\.\d+(\.\d+)*`, a leading `v` or a
+   glued name being no part of it. A command that exits non-zero, times out, or prints no
+   such substring is UNKNOWN, with the remedy *wrap it in a script that prints the version
+   alone*. **argv[0] resolves against the PATH nova-update was started with**, and that
+   path is echoed as `path=` on the entry's line; a name resolving nowhere on it is
+   UNKNOWN, reason `not_found` — argv[0]'s miss alone, a registry's tag miss being rule
+   7's `tag_not_found` — remedy naming the directory the entry expects or a PATH to set,
+   never the wrap-it remedy. The child inherits the environment unchanged, so the
+   nightly's PATH is the unit's to state — `EnvironmentVariables` in the plist today,
+   nova-daemon's later — since under a launchd-default PATH, measured, none of `gh`, `go`,
+   `ollama` and `node` resolve. **The same read runs on the latest side**, on whatever
+   field rule 6 names, so a `tag_name` of `v2.101.0` and an installed `2.101.0` are one
+   version. No per-entry pattern field: six fields, one rule — and one exception the
+   `kind` column decides, below. The ten commands this estate uses, measured on the bench
+   box 2026-09-11:
 
-3. **A command is argv, never a shell.** `installed` and `apply` are split on single
-   spaces and executed directly: no shell, no pipe, no glob, no `&&`, no environment
-   expansion. An argument needing a space is refused at load time with the remedy *put
-   it in a script and name the script* — as is a field carrying two adjacent spaces or
-   a leading or trailing one, so the split never makes an empty argument. This makes
-   rule 13 provable.
-
-4. **The installed version is read by one fixed rule.** Run the entry's `installed`
-   argv and take the FIRST line of its stdout — stderr only when stdout is empty, so
-   no race decides it — then the first substring matching `\d+\.\d+(\.\d+)*`, a
-   leading `v` or a glued name being no part of it. A command that exits non-zero,
-   times out, or prints no such substring is UNKNOWN, with the remedy *wrap it in a
-   script that prints the version alone*. **argv[0] resolves against the PATH
-   nova-update was started with**, and that path is echoed as `path=` on the entry's
-   line; a name resolving nowhere on it is UNKNOWN, reason `not_found`, remedy naming
-   the directory the entry expects or a PATH to set, never the wrap-it remedy. The
-   child inherits the environment unchanged, so the nightly's PATH is the unit's to
-   state — `EnvironmentVariables` in the plist today, nova-daemon's later — since
-   under a launchd-default PATH, measured, none of `gh`, `go`, `ollama` and `node`
-   resolve. **The same read runs on the latest side**, on whatever field rule 6 names,
-   so a `tag_name` of `v2.101.0` and an installed `2.101.0` are one version. No
-   per-entry pattern field: six fields, one rule — and one exception the `kind` column
-   decides, below. The ten commands this estate uses, measured on the bench box
-   2026-09-11:
-
-   first line, then what rule 4 reads — `gh version 2.100.0 (2026-09-03)` 2.100.0,
-   with `https://github.com/cli/cli/releases/tag/v2.100.0` on the second line and a
-   dotless date beside it, neither read; `go version go1.27.1 darwin/arm64` 1.27.1,
-   the version glued to the name; `ollama version is 0.33.3` 0.33.3; `v1.3.2` 1.3.2
-   for `age`. Those four are why the rule is *first line, first dotted number*.
-   `opencode`, `codex`, `gemini`, `sops`, `git` and `node` print `1.18.30`, `codex-cli
-   0.153.4`, `0.46.0`, `sops 3.13.3`, `git version 2.55.0` and `v26.8.2`; all ten are
-   a fixture in `testdata/`, not a claim in prose.
+   first line, then what rule 4 reads — `gh version 2.100.0 (2026-09-03)` 2.100.0, with
+   `https://github.com/cli/cli/releases/tag/v2.100.0` on the second line and a dotless date
+   beside it, neither read; `go version go1.27.1 darwin/arm64` 1.27.1, the version glued to
+   the name; `ollama version is 0.33.3` 0.33.3; `v1.3.2` 1.3.2 for `age`. Those four are why
+   the rule is *first line, first dotted number*; `opencode`, `codex`, `gemini`, `sops`,
+   `git` and `node` print `1.18.30`, `codex-cli 0.153.4`, `0.46.0`, `sops 3.13.3`, `git
+   version 2.55.0` and `v26.8.2`. All ten are a fixture in `testdata/`, not prose.
 
 4a. **A model's version is its digest, because a model has no version.** Measured
     2026-09-11: neither `ollama show <model> --modelfile` nor the library's tags page
@@ -98,7 +96,6 @@ nothing reacts to its exit code automatically.
    rule 4a), `tool` (gh), `pin` (one of our tools' pinned version of another). One
    specimen each, the versions file names the rest; an unknown kind is a refusal
    naming the line, exit 2.
-
 6. **Five latest sources: four bounded GETs and one local argv, each echoed.**
    `latest` is `<scheme>:<locator>`:
 
@@ -110,55 +107,51 @@ nothing reacts to its exit code automatically.
    | `ollama:model:tag` | `GET https://registry.ollama.ai/v2/library/model/manifests/tag` | the body's SHA-256 (rule 4a) |
    | `local:<argv>` | runs that argv here | rule 4's read |
 
-   The field the table names goes through rule 4's read — a model's digest through
-   rule 4a's — so nothing downstream sees a leading `v`. One GET per entry, with one
-   documented exception, because a project can tag and never release: measured
-   2026-09-11, `GET /repos/antirez/ds4/releases/latest` is
-   404. A `github:` answered 404, and only then, asks `GET
-   .../repos/owner/repo/tags?per_page=1` once and reads `[0].name` — two bounded GETs
-   at most — and an empty `[]` is UNKNOWN, reason `no release and no tag`, as ds4
-   reads today until antirez tags. Otherwise no second request, no redirect beyond
-   three hops, no pagination; the body is capped at 256 KB, one reaching the cap being
-   UNKNOWN, not parsed from a prefix; `npm:` asks `/latest`, never the packument,
-   which is megabytes. Every line carries `source=` with the scheme and locator asked,
-   and the endpoint that answered when the tags read did. **No credentials**: every
-   source is a public unauthenticated GET, one needing a token is a new spec.
-
-7. **A source that does not answer is UNKNOWN, and UNKNOWN is not OK.** A timeout, a
-   5xx, a rate limit, a malformed body, a missing field, an empty tag — each is one
-   `UPDATE UNKNOWN` line naming the source and the reason, and the run exits 1. **The
-   status is read before the body**: any status but 200 is UNKNOWN naming it, rule 6's
-   `github:` 404 the one exception, so a registry 404 — measured, valid JSON with no
-   `schemaVersion` — is `not_found` for that tag, never `shape`, and a 403 quotes its
-   `x-ratelimit-reset` as the time to ask again. **Network failure is never silence
-   and never green.** A nightly that prints *all up to date* because GitHub was down
-   is worse than no nightly, and that is the rule this tool exists to hold. A dead
-   source is read once and is then UNKNOWN, never retried until the budget is gone,
-   and no answer is cached: a cache turns tonight's failure into a silent OK.
-
+   The field the table names goes through rule 4's read — a model's digest through rule
+   4a's — so nothing downstream sees a leading `v`. One GET per entry, with one documented
+   exception, because a project can tag and never release: measured 2026-09-11, `GET
+   /repos/antirez/ds4/releases/latest` is 404. A `github:` answered 404, and only then,
+   asks `GET .../repos/owner/repo/tags?per_page=1` once and reads `[0].name` **through
+   rule 4's read, like every field this table names**, so a tag `v0.11.0` against an
+   installed `0.11.0` is OK and never a false STALE — two bounded GETs at most — and an
+   empty `[]` is UNKNOWN, reason `no release and no tag`, as ds4 reads today until antirez
+   tags. Otherwise no second request, no redirect beyond three hops, no pagination; the
+   body is capped at 256 KB, one reaching the cap being UNKNOWN, not parsed from a prefix;
+   `npm:` asks `/latest`, never the packument, which is megabytes. Every line carries
+   `source=` with the scheme and locator asked, and the endpoint that answered when the
+   tags read did. **No credentials**: every source is a public unauthenticated GET, one
+   needing a token is a new spec.
+7. **A source that does not answer is UNKNOWN, and UNKNOWN is not OK.** A timeout, a 5xx,
+   a rate limit, a malformed body, a missing field, an empty tag — each is one `UPDATE
+   UNKNOWN` line naming the source and the reason, and the run exits 1. **The status is
+   read before the body**: any status but 200 is UNKNOWN naming it, rule 6's `github:` 404
+   the one exception, so a registry 404 — measured, valid JSON with no `schemaVersion` —
+   is `tag_not_found` for that tag, never `shape` and never rule 4's `not_found`, which is
+   argv[0] missing from the PATH: two misses, two remedies, this one *check the tag
+   against the model's library page*. A 403 quotes its `x-ratelimit-reset` as the time to
+   ask again. **Network failure is never silence and never green.** A nightly that prints
+   *all up to date* because GitHub was down is worse than no nightly, and that is the rule
+   this tool exists to hold. A dead source is read once and is then UNKNOWN, never retried
+   until the budget is gone, and no answer is cached: a cache turns tonight's failure into
+   a silent OK.
 8. **A bounded run, because a call must answer.** `--timeout <d>` bounds one source
    read, default `5s`; `--budget <d>` bounds the whole run, default `60s`; at most
    four reads are in flight at once. Entries not reached inside the budget are
    UNKNOWN, reason `budget`, and the run still prints its count line and exits 1. The
    two-minute rule is a design constraint here.
-
 9. **`check` never installs, never pulls, never writes.** No package manager, no pull,
    nothing written under `$HOME`, no cache file. `check` is a read of the world and a
    report.
-
 10. **`apply` needs a name, from a person.** `nova-update apply --file <path>` with no
     name is a refusal, exit 2, saying a name is required. There is no `--all`, no
     `--stale`, no glob, no `-y`. One run installs one thing.
-
 11. **`apply` refuses a model, by name, with the path.** `kind=model` is refused with
     the remedy naming nova-local: a weight arrives through nova-local's quarantine and
     its eval, never through this tool. The refusal names the model, so a transcript
     says which one.
-
 12. **`apply` refuses a name the file does not carry.** Not a near match, not a
     prefix, not a case-insensitive match — the exact name or a refusal, exit 2, naming
     the file it read and its entry count.
-
 13. **`apply` runs exactly the entry's `apply` argv, and the only thing interpolated
     is the version.** The token `{version}`, wherever it appears, becomes the version
     being installed — the latest the source just reported, or `--version <v>` when the
@@ -166,7 +159,6 @@ nothing reacts to its exit code automatically.
     substitute in. An entry whose `apply` is `none` is refused: *this one is installed
     by hand* — as is `--version <v>` against an argv with no `{version}`: *this
     entry's apply does not take a version*, the flag being a lie on the transcript.
-
 14. **`apply` prints before and after, and after must equal the target.** `APPLY
     BEFORE` before the install, `APPLY AFTER` after it, both read by the entry's
     `installed` command through rule 4, and the **target** is the version echoed on
@@ -177,7 +169,6 @@ nothing reacts to its exit code automatically.
     (open question 4); or a non-zero exit, named by code. A *changed* version is not
     the question; whether the box carries what the line asked is, and saying OK to
     anything else is the tool lying.
-
 15. **A stale pin between two of our own tools is a bug, reported the same day by the
     entry's owner.** `kind=pin` entries print first and the count line's `pins=<n>` is
     the number of **stale** pins, a subset of `stale=`, never the number of pin
@@ -186,29 +177,31 @@ nothing reacts to its exit code automatically.
     `local:` on both sides — the depender's declared pin against the dependee's
     `version` verb — so it costs no network. A stale pin means nova-wake is refusing
     the bus the estate is running: the fix is in nova-wake.
-
 16. **Bounded output, per SPEC.md.** `--max <n>`, default 20, `0` means all, a
     negative is refused. The cap is **per kind** — `stale` and `unknown` separately,
     so a night where six things moved does not hide the one source that stopped
     answering — and each capped kind gets one `UPDATE MORE` line naming the remedy.
     **The count line prints on failure as well as success**, and the counts are about
     the world, never about the output.
-
 17. **The tool stamps, and nothing read from a file or a server is a clock.** The
     opening `at=` is the tool's own. Versions are compared as text after rule 4's
     read, or 4a's: equal is OK, different is STALE. nova-update does not order
     versions, does not know 1.10 is after 1.9, and does not rule a difference a
     downgrade. A person looks.
-
 18. **Every refusal names its remedy.** No refusal here ends at the reason: the
     missing flag, the malformed line, the script to wrap the command in, the tool that
     owns the weights — the next thing to type is on the line.
+19. **`--kind <k>` restricts the run, not the output.** Repeatable, the only filter, and
+    absent every kind runs. A kind not named is **neither read nor printed** — no
+    `installed` argv starts for it and no GET is made — so the first line's `kinds=` and the
+    count line's `checked=` are the filtered run, never the whole file. An unknown `--kind`
+    is rule 5's refusal, exit 2.
 
 ## The versions file
 
 One header line, then one entry per line, tabs between fields; `#` in column one is a
-comment. The header exactly as shown, then five entries as they would be written
-today:
+comment, and rule 2 skips both. The header exactly as shown, then five entries as they
+would be written today:
 
 ```
 name	kind	installed	latest	apply	owner
@@ -231,10 +224,9 @@ nova-update help
 ```
 
 Those two usage lines are the string `nova-update help` prints, byte for byte: one
-string in the binary, so the spec and the help cannot drift apart. `--kind <k>`
-restricts a run to one kind, is repeatable, and is the only filter; absent, every kind
-runs. There is no `--only-stale` (the output is already only findings) and no
-`--quiet` (the count line is the point).
+string in the binary, so the spec and the help cannot drift apart. `--kind <k>` is rule 19.
+There is no `--only-stale` (the output is already only findings) and no `--quiet` (the
+count line is the point).
 
 ## Exit codes and the output grammar
 
@@ -286,11 +278,13 @@ APPLY OK name=fixture-tool from=1.0.0 to=1.1.0 took=0.1s
 Inside `go test` every source above is an `httptest` server the parser's table of
 hosts points at, and the apply a script under `testdata/` writing a version into a
 temp dir; the fixture's model digests are the measured `qwen3.6:35b-a3b` pair under
-another name. Pasted in a terminal, line 2 reaches GitHub, npm and the registry for
-real, once each, and installs nothing — which is why the last line applies a fixture
-and not `gh`: **`apply` of a real entry runs the real installer on the box it is
-pasted into**, and `check` of a real file reaches the real internet. Do both on
-purpose.
+another name. Pasted in a terminal, line 2 reaches GitHub twice — `gh` and `sops` are both
+`github:`, one GET per entry — and npm and the registry once each, and installs nothing:
+which is why the last line applies a fixture and not `gh`, since **`apply` of a real entry
+runs the real installer on the box it is pasted into** and `check` of a real file reaches
+the real internet. Do both on purpose. The `kind=pin` STALE line is the shape once
+nova-wake grows `version --pin` (open question 2); until it lands that argv exits non-zero
+and the entry reads UNKNOWN under rule 4, the run printing `stale=2 unknown=2 pins=0`.
 
 ## Tests this spec demands
 
@@ -303,9 +297,11 @@ it — `os.Getwd`, `os.UserHomeDir`, a hardcoded path, `exec.Command("sh"`, `"-c
 
 1. `TestTheFileComesFromAFlag`: no `--file` is exit 2 printing `refusing to guess` and
    naming `--file`; a `--file` that does not exist is exit 2 naming the path.
-2. `TestSixFieldsOrARefusal`: five fields, seven fields and an empty field are each
-   exit 2 naming the line number and the count; the refusal appears once, not once per
-   line; 500 good lines and one bad one refuse on the bad one and check nothing.
+2. `TestSixFieldsOrARefusal`: five fields, seven fields and an empty field are each exit 2
+   naming the line number and the count; a file whose first line is the header and which
+   carries a `#` comment loads, `entries=` counting neither and neither refusing as an
+   unknown kind; the refusal appears once, not once per line; 500 good lines and one bad one
+   refuse on the bad one and check nothing.
 3. `TestACommandIsArgvNeverAShell`: `sh -c echo 1.2.3` execs `sh` with four arguments,
    so `sh` runs `echo` with `1.2.3` as `$0` and prints an empty line: UNKNOWN, never
    `1.2.3`; `;`, `&&`, `|`, `$(`, backtick and `*` exec once with those bytes literal;
@@ -324,18 +320,19 @@ it — `os.Getwd`, `os.UserHomeDir`, a hardcoded path, `exec.Command("sh"`, `"-c
     twelve-hex digests are OK, different ones STALE with both on the line.
 5. `TestAnUnknownKindRefuses`: each of the five kinds loads; `kind=weights` is exit 2
    naming the line and listing the five.
-6. `TestOneBoundedGetPerEntry`: each scheme reads its documented field and a
-   `tag_name` of `v2.101.0` prints `latest=2.101.0`; one request per entry except a
-   `github:` answered 404, which makes exactly one more to `/tags?per_page=1`, reads
-   `[0].name`, names that endpoint in `source=`, and whose `[]` is UNKNOWN reason `no
-   release and no tag`; a 257 KB body and a four-hop redirect are UNKNOWN; `npm:`
-   requests a path ending `/latest`; `source=` equals `latest`.
+6. `TestOneBoundedGetPerEntry`: each scheme reads its documented field and a `tag_name` of
+   `v2.101.0` prints `latest=2.101.0`; one request per entry except a `github:` answered
+   404, which makes exactly one more to `/tags?per_page=1`, reads `[0].name` through rule
+   4's read so a `v0.11.0` there prints `latest=0.11.0` and reads OK against an installed
+   `0.11.0`, names that endpoint in `source=`, and whose `[]` is UNKNOWN reason `no
+   release and no tag`; a 257 KB body and a four-hop redirect are UNKNOWN; `npm:` requests
+   a path ending `/latest`; `source=` equals `latest`.
 7. `TestADeadSourceIsNeverOk`: a 500, a 403 rate-limit body naming its
-   `x-ratelimit-reset`, a registry 404 giving `not_found` for the tag and never
-   `shape`, a hang past the timeout, a `{}` and invalid JSON each give one `UPDATE
-   UNKNOWN` and exit 1; `up to date` never appears for them; every source dead exits 1
-   with `current=0`; a dead source is asked exactly once in a run and again in the
-   next — the no-retry and no-cache assertion.
+   `x-ratelimit-reset`, a registry 404 giving `tag_not_found` for the tag, never `shape`
+   and never rule 4's `not_found`, a hang past the timeout, a `{}` and invalid JSON each
+   give one `UPDATE UNKNOWN` and exit 1; `up to date` never appears for them; every source
+   dead exits 1 with `current=0`; a dead source is asked exactly once in a run and again
+   in the next — the no-retry and no-cache assertion.
 8. `TestTheRunIsBounded`: with an injected clock and 40 entries against a server
    answering after 3s, `--budget 10s` returns inside 10s, prints a count line, marks
    unreached entries UNKNOWN reason `budget` and exits 1; an httptest handler counting
@@ -374,6 +371,10 @@ it — `os.Getwd`, `os.UserHomeDir`, a hardcoded path, `exec.Command("sh"`, `"-c
 18. `TestEveryRefusalNamesItsRemedy`: every refusal in the package lives in one table,
     which the test walks: each ends in a parenthesised remedy naming a command or a
     file, and removing one turns the test red.
+19. `TestTheKindFilterRestrictsTheRun`: `--kind tool` over a file of all five kinds starts
+    only the tool entries' `installed` argvs and only their GETs — a counting handler sees
+    no others — prints no line of another kind, and its `kinds=` and `checked=` are the
+    filter's, not the file's; two `--kind` flags cover both; `--kind weights` is exit 2.
 
 Beside those: the first-run block runs against the fixture, compared by shape per
 ONBOARDING.md 5(c); `nova-update help` prints the verbs block on stdout, exit 0; a
