@@ -13,6 +13,9 @@
 package main
 
 import (
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
@@ -34,9 +37,10 @@ const usage = `nova-sandbox: one command, contained by the OS (see docs/SPEC-SAN
 
 usage:
   nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>]
-               [--tmp <dir>] [--name <container>] -- <command> <args...>
+               [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
   nova-sandbox probe --write <dir>... [--read <dir>...] --secret <path> [--net-deny]
   nova-sandbox policy --read <dir>... --write <dir>... [--net-deny] [--net-listen]
+               [-- <command> <args...>]
   nova-sandbox check [--max <n>]
   nova-sandbox version
   nova-sandbox help
@@ -60,6 +64,8 @@ usage:
                   listen cannot be listened to. Never with --net-deny.
   --name <c>      the windows container name. Accepted and ignored on darwin, so
                   one caller builds one argv for three platforms.
+  --acl <t|c>     who adds the windows ACEs. Accepted and ignored on darwin,
+                  with one NOTE line, for the same reason as --name.
   --secret <path> probe only: the file a probe proves it cannot read. A path is
                   not a secret; the file's contents are never read.
   --max <n>       how many lines a listing prints before one MORE line stands for
@@ -107,7 +113,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 	case "probe":
 		return probeVerb(args[1:], stdout, stderr, env)
 	case probeStepVerbName:
-		return probeStepVerb(args[1:], stderr)
+		return probeStepVerb(args[1:], stderr, env)
 	}
 	return execVerb(args, stdin, stdout, stderr, env)
 }
@@ -115,14 +121,14 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, env []string)
 // flags is the argv before --, parsed by hand because every list flag is repeatable and
 // because the split at -- must be exact: everything after it is the command, verbatim.
 type flags struct {
-	reads, writes          []string
-	cwd, tmp, name, secret string
-	netDeny, netListen     bool
-	max                    int
-	maxSet                 bool
-	argv                   []string
-	sawDashDash            bool
-	bad                    []sandbox.Refusal
+	reads, writes               []string
+	cwd, tmp, name, secret, acl string
+	netDeny, netListen          bool
+	max                         int
+	maxSet                      bool
+	argv                        []string
+	sawDashDash                 bool
+	bad                         []sandbox.Refusal
 }
 
 func parse(args []string) flags {
@@ -155,6 +161,20 @@ func parse(args []string) flags {
 			f.tmp, i = want(i, "--tmp")
 		case "--name":
 			f.name, i = want(i, "--name")
+		case "--acl":
+			// Rule 22's flag, and it is the WINDOWS body's. The spec's verb table has it
+			// on the bare form for all three platforms and says --name and --acl are
+			// "accepted and ignored" on darwin and linux, "so one caller has one script
+			// for three platforms" — a caller that builds one argv and gets
+			// SANDBOX REFUSED here has exactly the problem that sentence exists to
+			// prevent. The VALUE is still checked, because an ignored flag with a
+			// misspelt value would be a windows refusal nobody saw on a Mac.
+			v, i = want(i, "--acl")
+			if v != "" && v != "tool" && v != "caller" {
+				f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command",
+					Text: "--acl wants tool or caller and got " + oneline.Escape(v) + ": --acl <tool|caller>"})
+			}
+			f.acl = v
 		case "--secret":
 			f.secret, i = want(i, "--secret")
 		case "--net-deny":
@@ -215,6 +235,12 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 		f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command",
 			Text: "no --; the command comes after it: nova-sandbox --write <dir> -- <command> <args...>"})
 	}
+	// Rule 16: "a refusal names the flag and the form it wants", and a flag that belongs
+	// to another verb was accepted here and then ignored — the opposite. --secret is
+	// probe's and --max is probe's and check's; the spec's verb table has neither on the
+	// bare form.
+	f.bad = append(f.bad, notForThisVerb("the bare form", map[string]bool{"--secret": f.secret != "", "--max": f.maxSet},
+		map[string]string{"--secret": "probe", "--max": "probe and check"})...)
 	if len(f.bad) > 0 {
 		return refuseAll(stderr, f.bad)
 	}
@@ -229,6 +255,10 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 	okLine := func() {
 		// Every NOTE is printed BEFORE the command starts, and there is no note about a
 		// failure the command suffered inside the wall, on any platform.
+		if f.acl != "" {
+			fmt.Fprintf(stderr, "SANDBOX NOTE --acl %s is accepted and ignored on %s; the ACEs of rule 22 are the windows body's\n",
+				oneline.Field(f.acl), oneline.Field(runtime.GOOS))
+		}
 		if dropped := sandbox.DroppedEnv(env); len(dropped) > 0 {
 			fmt.Fprintf(stderr, "SANDBOX NOTE dropped from the child's environment: %s; an agent socket speaks for a key the wall denies\n",
 				oneline.Escape(strings.Join(dropped, " ")))
@@ -250,6 +280,20 @@ func execVerb(args []string, stdin io.Reader, stdout, stderr io.Writer, env []st
 		return sandbox.ExitRefused
 	}
 	return code
+}
+
+// notForThisVerb turns "this flag is another verb's" into one refusal per flag, named and
+// in a fixed order so that two problems print the same way twice.
+func notForThisVerb(verb string, given map[string]bool, owner map[string]string) []sandbox.Refusal {
+	var out []sandbox.Refusal
+	for _, flag := range []string{"--secret", "--max", "--acl", "--name", "--cwd", "--tmp"} {
+		if !given[flag] {
+			continue
+		}
+		out = append(out, sandbox.Refusal{Reason: "no_command",
+			Text: flag + " is not a flag of " + verb + "; it is " + owner[flag] + "'s: run nova-sandbox help"})
+	}
+	return out
 }
 
 func asRefusal(err error, out *sandbox.Refusal) bool {
@@ -342,6 +386,21 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		}
 	}
 
+	// Rule 10's child is this binary, and NOTHING ELSE may be: the verb opens, truncates
+	// and reads paths it is handed, so a caller who types it by hand truncates a file with
+	// no wall around it (measured at 1922f9d: `nova-sandbox probe-step write_outside
+	// <path>` emptied an ordinary file from an ordinary shell, exit 0). The parent mints
+	// one 128-bit value per probe, keeps it only in this function's memory, hands it to
+	// the child as its first argv element AND in the child's environment, and the child
+	// refuses unless the two match. Neither half alone is enough: a value in the argv is
+	// visible in ps, and a value only in the environment would be inherited by anything
+	// the child in turn started.
+	nonce, err := probeNonce()
+	if err != nil {
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: this machine has no random source for the probe's one-time value: %s\n", oneline.Err(err))
+		return sandbox.ExitCannotRun
+	}
+
 	type step struct{ name, path, expect string }
 	steps := []step{
 		{"write_outside_control", outside, "allow"},
@@ -366,7 +425,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 			_ = os.Remove(s.path)
 			got = "allow"
 		default:
-			got = walled(p, env, s.name, s.path)
+			got = walled(p, env, nonce, s.name, s.path)
 		}
 		fmt.Fprintf(stdout, "PROBE STEP name=%s expect=%s got=%s path=%s\n",
 			oneline.Field(s.name), oneline.Field(s.expect), oneline.Field(got), oneline.Escape(s.path))
@@ -392,10 +451,21 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 // which is rule 12's "never through a shell" applied to the tool's own child. The
 // previous form built a shell script by concatenation, and a --secret holding a quote and
 // a semicolon ran a command inside the wall and flipped read_secret to allow.
-func walled(p *sandbox.Policy, env []string, name, path string) string {
+func walled(p *sandbox.Policy, env []string, nonce, name, path string) string {
 	run := *p
-	run.Argv = []string{p.Command, probeStepVerbName, name, path}
-	code, err := sandbox.Run(&run, sandbox.ChildEnv(env, p.Tmp), nil, io.Discard, io.Discard, nil)
+	run.Argv = []string{p.Command, probeStepVerbName, nonce, name, path}
+	// An inherited NOVA_SANDBOX_PROBE_NONCE would be the value os.Getenv returns in the
+	// child (Go keeps the FIRST of a duplicated name), so it is dropped before ours is
+	// appended: the guard must answer to this probe and no earlier one.
+	childEnv := make([]string, 0, len(env)+4)
+	for _, kv := range sandbox.ChildEnv(env, p.Tmp) {
+		if name, _, _ := strings.Cut(kv, "="); name == probeNonceVar {
+			continue
+		}
+		childEnv = append(childEnv, kv)
+	}
+	childEnv = append(childEnv, probeNonceVar+"="+nonce)
+	code, err := sandbox.Run(&run, childEnv, nil, io.Discard, io.Discard, nil)
 	if err != nil || code != 0 {
 		return "deny"
 	}
@@ -408,15 +478,49 @@ func walled(p *sandbox.Policy, env []string, name, path string) string {
 // shape under which read_root reads the probe's own executable.
 const probeStepVerbName = "probe-step"
 
+// probeNonceVar carries the same one-time value the child gets as its first argv element.
+// It is set by the parent on the child's environment only, never on a wrapped command's.
+const probeNonceVar = "NOVA_SANDBOX_PROBE_NONCE"
+
+// probeNonce is 128 bits from the OS, per probe, held only in the parent's memory.
+func probeNonce() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
 // probeStepVerb is that child: one step, done in Go, exit 0 for allow and 1 for deny. Each
 // case is the smallest syscall that answers its question, and read_secret opens the file
 // and closes it without reading a byte (rule 6).
-func probeStepVerb(args []string, stderr io.Writer) int {
-	if len(args) != 2 {
-		fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s is internal and takes <name> <path>\n", probeStepVerbName)
+func probeStepVerb(args []string, stderr io.Writer, env []string) int {
+	if len(args) != 3 {
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_step_not_a_child: %s is internal and takes <nonce> <name> <path>; it is the child of a probe this binary started and nothing else runs it\n", probeStepVerbName)
 		return sandbox.ExitCannotRun
 	}
-	name, path := args[0], args[1]
+	nonce, name, path := args[0], args[1], args[2]
+	// The guard, BEFORE anything is opened: the parent's one-time value, in the argv and
+	// in the environment, or this is not the parent's child. A mismatch opens no file,
+	// truncates no file and creates no file — the line is the whole of the answer.
+	want := ""
+	for _, kv := range env {
+		if n, v, _ := strings.Cut(kv, "="); n == probeNonceVar {
+			want = v
+			break
+		}
+	}
+	if want == "" || subtle.ConstantTimeCompare([]byte(nonce), []byte(want)) != 1 {
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_step_not_a_child: %s runs only as the child of a probe this binary started, and this invocation is not one; nothing was opened. Run: nova-sandbox probe --write <dir> --secret <path>\n", probeStepVerbName)
+		return sandbox.ExitCannotRun
+	}
+	// Rule 5's shape for the one path this verb is handed: absolute, never relative. The
+	// parent builds every step path absolute from a resolved directory, so a relative one
+	// is not the parent's and would be resolved against a cwd the parent did not choose.
+	if !filepath.IsAbs(path) {
+		fmt.Fprintf(stderr, "PROBE REFUSED reason=probe_step_not_a_child: %s wants an absolute path and got %s\n", probeStepVerbName, oneline.Escape(path))
+		return sandbox.ExitCannotRun
+	}
 	switch name {
 	case "write_outside", "write_inside":
 		f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
@@ -466,16 +570,24 @@ func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 		}
 		return sandbox.ExitCannotRun
 	}
-	// The policy is about the two lists, so the command is only what rule 5 resolves a
-	// root from: /bin/sh is the floor every wrapped shell command already stands on.
-	shell, err := exec.LookPath("sh")
-	if err != nil {
-		fmt.Fprintf(stderr, "POLICY REFUSED reason=bad_read: sh is on no PATH entry: %s\n", oneline.Err(err))
-		return sandbox.ExitCannotRun
+	// Rule 15: "policy prints exactly what a wrapped run would apply". One root is
+	// computed from the COMMAND — "the directory of the resolved command" — so a policy
+	// built around /bin/sh could not show it for any real command, and the one root a
+	// reader most needs to see was the one root this verb could not print. The command is
+	// therefore optional and comes after -- exactly as it does on the bare form; with no
+	// --, /bin/sh is the floor every wrapped shell command already stands on.
+	argv := f.argv
+	if len(argv) == 0 {
+		shell, err := exec.LookPath("sh")
+		if err != nil {
+			fmt.Fprintf(stderr, "POLICY REFUSED reason=bad_read: sh is on no PATH entry: %s\n", oneline.Err(err))
+			return sandbox.ExitCannotRun
+		}
+		argv = []string{shell, "-c", "true"}
 	}
 	p, bad := sandbox.Build(sandbox.Input{
 		Reads: f.reads, Writes: f.writes, Cwd: f.cwd, Tmp: f.tmp, Name: f.name,
-		NetDeny: f.netDeny, NetListen: f.netListen, Argv: []string{shell, "-c", "true"}, Home: homeOf(env),
+		NetDeny: f.netDeny, NetListen: f.netListen, Argv: argv, Home: homeOf(env),
 	})
 	if len(bad) > 0 {
 		for _, r := range bad {

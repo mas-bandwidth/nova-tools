@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -148,6 +149,78 @@ func underAny(path string, prefixes []string) bool {
 		}
 	}
 	return false
+}
+
+// callerHomes is every directory that is a HOME of the person running the tool: the
+// passwd home and $HOME as THIS PROCESS inherited it. It is a var so that a test can
+// stand a temporary home in front of it without touching the machine's.
+var callerHomes = defaultCallerHomes
+
+func defaultCallerHomes() []string {
+	var out []string
+	add := func(path string) {
+		if strings.TrimSpace(path) == "" {
+			return
+		}
+		if got, err := filepath.EvalSymlinks(path); err == nil {
+			path = got
+		}
+		if got, err := filepath.Abs(path); err == nil {
+			path = got
+		}
+		for _, h := range out {
+			if h == path {
+				return
+			}
+		}
+		out = append(out, path)
+	}
+	if u, err := user.Current(); err == nil {
+		add(u.HomeDir)
+	}
+	add(os.Getenv("HOME"))
+	return out
+}
+
+// commandDirRefusal is the home guard on the roots table's "the directory of the resolved
+// command". That entry is in the spec for all three platforms and it stays, because a
+// command cannot be exec'd from a directory the wall denies — but it is a root the CALLER
+// never typed, and OptionalRoots granted it with no guard at all. A command placed at
+// ~/x.sh therefore handed the profile (allow file-read* (subpath "/Users/<user>")) — the
+// whole of .ssh, .config/gh and the login keychain — while the SANDBOX OK line said
+// read=0. Measured at 1922f9d with a key planted beside the command: the key printed.
+//
+// The roots section says "The home directory is never a root", so the guard is a refusal
+// rather than a silent drop: dropping it would leave a command that cannot be read and a
+// run that dies at exec with no reason given. Rule 3's "a caller that adds one back has
+// done so in its own argv" is the one exemption, so a directory the caller already named
+// in --read or --write is not refused: nothing new is granted there.
+func commandDirRefusal(command string, named []string) *Refusal {
+	dir := filepath.Dir(command)
+	if got, err := filepath.EvalSymlinks(dir); err == nil {
+		dir = got
+	}
+	if insideAny(dir, named) {
+		return nil
+	}
+	for _, home := range callerHomes() {
+		// A home the caller pointed INTO the job is not the home this guard is about:
+		// rule 9 makes the tool's own $HOME the job's data home, which is inside a
+		// --write by construction, so guarding it would refuse every command installed
+		// anywhere above the job directory — the tool's own binary included. Measured
+		// while writing this: `nova-sandbox probe --write <job>` refused itself.
+		if insideAny(home, named) {
+			continue
+		}
+		if dir != home && !Inside(home, dir) {
+			continue
+		}
+		r := refuse("bad_read",
+			"the directory of %s is %s, a home directory, and the home directory is never a root: the directory of the resolved command IS a read root, so wrapping a command that lives there would make the whole of %s readable inside the wall. Install the command in a directory of its own, or name the directory in the caller's own --read",
+			command, dir, home)
+		return &r
+	}
+	return nil
 }
 
 // Inside reports whether path is dir or lies beneath it. Both are expected resolved.
@@ -360,16 +433,13 @@ func Build(in Input) (*Policy, []Refusal) {
 		default:
 			p.Tmp = got
 		}
-	} else if len(bad) == 0 {
-		tmp := filepath.Join(first, tmpDirName)
-		if err := os.MkdirAll(tmp, 0o700); err != nil {
-			bad = append(bad, refuse("bad_write", "could not create %s, the one directory this tool makes: %v", tmp, err))
-		} else if got, err := filepath.EvalSymlinks(tmp); err == nil {
-			p.Tmp = got
-		} else {
-			p.Tmp = tmp
-		}
 	}
+	// The default temp directory is created at the BOTTOM of this function, after the
+	// command has been resolved, because this comment's own promise — "only when the rest
+	// of the input is sound" — was false for a run refused at not_found or not_executable:
+	// a refused `nova-sandbox --write <fresh> -- no-such-cmd` left .nova-sandbox-tmp in a
+	// directory it never ran in. A refusal makes nothing.
+	makeTmp := in.Tmp == ""
 
 	// rule 9: the caller points the child's HOME into the write set, and a HOME outside
 	// every --write is a refusal BEFORE the command runs — a wall that lets the job start
@@ -396,10 +466,25 @@ func Build(in Input) (*Policy, []Refusal) {
 		} else {
 			p.Command = cmd
 			p.Argv = append([]string{cmd}, in.Argv[1:]...)
+			if hr := commandDirRefusal(cmd, append(append([]string{}, p.Reads...), p.Writes...)); hr != nil {
+				bad = append(bad, *hr)
+			}
 		}
 	}
 	if len(bad) > 0 {
 		return nil, bad
+	}
+	// rule 8, and the one directory this tool creates: everything above passed.
+	if makeTmp {
+		tmp := filepath.Join(first, tmpDirName)
+		if err := os.MkdirAll(tmp, 0o700); err != nil {
+			return nil, []Refusal{refuse("bad_write", "could not create %s, the one directory this tool makes: %v", tmp, err)}
+		}
+		if got, err := filepath.EvalSymlinks(tmp); err == nil {
+			p.Tmp = got
+		} else {
+			p.Tmp = tmp
+		}
 	}
 	p.OptRoots = OptionalRoots(p.Command)
 	return p, nil
@@ -556,7 +641,17 @@ func ancestors(dir func(string) string, paths ...string) []string {
 		// the tree is `C:\` (and filepath.Dir(`C:\`) is `C:\`), so a loop that waited for
 		// "/" spun on the volume root forever — the 600s timeout of run 34663812025. Asking the
 		// parent function where IT stops is the one form that is right on every platform.
+		//
+		// A path with a trailing separator is its own first "ancestor": Dir("/a/b/") is
+		// "/a/b", so Ancestors("/a/b/") returned "/a /a/b" against this function's own
+		// word "every PROPER ancestor" — and "/a/b" then got a file-read-metadata literal
+		// it already holds by its own subpath rule. Skipping the cleaned path itself is
+		// the whole repair; the loop still walks from there upwards.
+		self := filepath.Clean(p)
 		for d := dir(p); d != "." && d != "" && dir(d) != d; d = dir(d) {
+			if d == self {
+				continue
+			}
 			seen[d] = true
 		}
 	}

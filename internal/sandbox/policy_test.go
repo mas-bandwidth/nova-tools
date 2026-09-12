@@ -289,6 +289,117 @@ func TestAncestors(t *testing.T) {
 	}
 }
 
+// Read 4's finding 1: OptionalRoots made the directory of the resolved command a
+// file-read root with no home guard, so a command at ~/x.sh handed the profile
+// (allow file-read* (subpath "/Users/<user>")) — .ssh, .config/gh, the login keychain —
+// while the SANDBOX OK line said read=0. Measured at 1922f9d with a key planted beside the
+// command: the key printed. The roots section says "The home directory is never a root".
+func TestACommandInTheCallersHomeIsRefused(t *testing.T) {
+	needUnixPaths(t)
+	write, read, home, _ := scratch(t)
+	base := t.TempDir()
+	if got, err := filepath.EvalSymlinks(base); err == nil {
+		base = got
+	}
+	// A home of this test's own: callerHomes reads $HOME, and t.Setenv stands a temporary
+	// one in front of the machine's for the length of this test. The passwd home is read
+	// as well and is not this one, so both halves of the guard are live here.
+	callerHome := filepath.Join(base, "home")
+	deeper := filepath.Join(callerHome, "tools")
+	if err := os.MkdirAll(deeper, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", callerHome)
+
+	plant := func(dir string) string {
+		t.Helper()
+		script := filepath.Join(dir, "x.sh")
+		if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return script
+	}
+	// Beside a key, which is the shape that matters: ~/x.sh with ~/.ssh next to it.
+	if err := os.MkdirAll(filepath.Join(callerHome, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(callerHome, ".ssh", "id_test"), []byte("not-a-real-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct{ name, command string }{
+		{"the home itself", plant(callerHome)},
+		{"an ancestor of the home", plant(base)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p, bad := Build(in(t, write, read, home, tc.command))
+			if p != nil || len(bad) == 0 {
+				t.Fatalf("a command at %s was built; its directory would be a read root", tc.command)
+			}
+			var found bool
+			for _, r := range bad {
+				if r.Reason == "bad_read" && strings.Contains(r.Text, "home directory") && r.Code() == ExitRefused {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatalf("the refusal does not name the home directory: %v", bad)
+			}
+		})
+	}
+	// One directory deeper is a directory of its own, and it IS a root: the roots table
+	// names "the directory of the resolved command" and that entry is kept, guarded.
+	command := plant(deeper)
+	p, bad := Build(in(t, write, read, home, command))
+	if len(bad) > 0 {
+		t.Fatalf("a command in a directory of its own was refused: %v", bad)
+	}
+	var isRoot bool
+	for _, r := range p.OptRoots {
+		if r == deeper {
+			isRoot = true
+		}
+	}
+	if !isRoot {
+		t.Fatalf("the directory of the resolved command is not a root: %v", p.OptRoots)
+	}
+	// Rule 3's one exemption: a caller that names the directory in its own argv has added
+	// it back itself, so nothing new is granted and there is nothing to refuse.
+	if _, bad := Build(Input{Reads: []string{callerHome}, Writes: []string{write}, Home: home, Argv: []string{plant(callerHome)}}); len(bad) > 0 {
+		t.Fatalf("a home the caller named in its own --read was refused: %v", bad)
+	}
+}
+
+// The edges of the ancestor walk, which TestAncestors above does not reach: a path with a
+// trailing separator was its OWN first ancestor (Ancestors("/a/b/") was "/a /a/b") against
+// this function's word "every proper ancestor", and nothing covered a relative or an empty
+// path at all.
+func TestAncestorsEdges(t *testing.T) {
+	needUnixPaths(t)
+	for _, tc := range []struct {
+		name, path string
+		want       string
+	}{
+		{"trailing separator", "/a/b/", "/a"},
+		{"trailing separators", "/a/b//", "/a"},
+		{"plain", "/a/b", "/a"},
+		{"relative", "a/b", "a"},
+		{"relative, one element", "b", ""},
+		{"empty", "", ""},
+		{"the top of the tree", "/", ""},
+		{"dot", ".", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := strings.Join(Ancestors(tc.path), " "); got != tc.want {
+				t.Fatalf("Ancestors(%q) = %q, want %q", tc.path, got, tc.want)
+			}
+		})
+	}
+	// And the same path spelt two ways is one answer, not two.
+	if got := strings.Join(Ancestors("/a/b", "/a/b/"), " "); got != "/a" {
+		t.Fatalf("Ancestors(/a/b, /a/b/) = %q, want %q", got, "/a")
+	}
+}
+
 // Rule 15 and this build's network fix: the generated profile fills every marker, names
 // the caller's paths only as parameters, and grants IP plus unix sockets under the write
 // set — never (allow network*), which reaches the SSH agent socket.

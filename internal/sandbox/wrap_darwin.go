@@ -5,7 +5,9 @@
 // file is written anywhere at any point and there is nothing to clean up. sandbox-exec
 // applies the profile and execs the command IN PLACE, so no second process sits between
 // the tool and the command — but the tool WAITS (rule 12), because it forwards SIGINT and
-// SIGTERM to the child's process group and returns the command's status.
+// SIGTERM to THE CHILD (cmd.Process.Signal, not the group: there is no Setpgid here, so
+// the child stays in the caller's process group and the caller owns the group and the
+// reaping) and returns the command's status.
 package sandbox
 
 import (
