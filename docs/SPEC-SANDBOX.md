@@ -1250,8 +1250,10 @@ header says what each marker is replaced by.
 #    whose stdout is a file outside every named path is denied (rule 12).
 #    Expect: PPID == the wrapped shell's pid, the first line of /etc/hosts, and
 #    no "Operation not permitted".
+#    HOME is set on BOTH lines: rule 9's check runs before the policy is built,
+#    so `policy` refuses an outside HOME even though it runs nothing.
 mkdir -p w/home && cd w
-nova-sandbox policy --read /opt/homebrew --write "$PWD"
+HOME="$PWD/home" nova-sandbox policy --read /opt/homebrew --write "$PWD"
 HOME="$PWD/home" nova-sandbox --read /opt/homebrew --write "$PWD" \
   -- /bin/sh -c 'echo $PPID; cat /etc/hosts; sleep 9 & kill $!'
 
