@@ -45,11 +45,14 @@ type Dir struct {
 // forward, while nova-swarm's quickstart makes its own pool. The asymmetry is deliberate
 // -- a swarm pool is a layout this family owns, a board directory is one directory in
 // somebody's repository -- but a refusal that does not say `mkdir -p` makes a reader
-// guess at a tool that refuses to.
+// guess at a tool that refuses to. The path is QUOTED in that remedy: a --dir with a space
+// printed raw is two operands to the shell, so the paste makes two wrong directories and
+// the next verb refuses again on the same path. A remedy that cannot be pasted is a second
+// mistake, not a way forward.
 func NewDir(path string) (*Dir, error) {
 	info, err := os.Stat(path)
 	if errors.Is(err, fs.ErrNotExist) {
-		return nil, fmt.Errorf("--dir wants a directory of .board card files and does not create one, because which directory holds a board is yours: %s does not exist; make it first: mkdir -p %s", path, path)
+		return nil, fmt.Errorf("--dir wants a directory of .board card files and does not create one, because which directory holds a board is yours: %s does not exist; make it first: mkdir -p %s", path, Quote(path))
 	}
 	if err != nil {
 		return nil, fmt.Errorf("--dir wants a directory of .board card files: %w", err)
@@ -59,6 +62,11 @@ func NewDir(path string) (*Dir, error) {
 	}
 	return &Dir{path: path}, nil
 }
+
+// Quote wraps a value for a shell line this tool prints to be pasted -- quickstart's pair
+// and the mkdir remedy above. One quoting rule for every printed line, so a reader who
+// pastes one has pasted them all.
+func Quote(s string) string { return "\"" + strings.ReplaceAll(s, "\"", "\\\"") + "\"" }
 
 // Source is what the listing's source= field carries, so a listing cannot be mistaken for
 // a different board's.

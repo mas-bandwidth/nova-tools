@@ -305,8 +305,8 @@ func TestTheReadmeFirstRunMatchesWhatTheToolPrints(t *testing.T) {
 // directories"), and a board directory is one directory in somebody's repository
 // whose tracking is the caller's, where a swarm pool is a layout this family
 // owns. What the old message lacked was the way forward: a refusal names what the
-// flag wants (SPEC-BOARD, rule 6), and here what it wants is a directory that
-// exists.
+// flag wants (SPEC-BOARD.md:808-814, BUILD item 6 -- an entry in the build list,
+// not a numbered rule), and here what it wants is a directory that exists.
 func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 	missing := filepath.Join(t.TempDir(), "board")
 	for _, verb := range []string{"quickstart", "list", "check"} {
@@ -320,7 +320,7 @@ func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 			t.Errorf("%s against a missing --dir exits %d, want 2: this tool does not make the directory a caller named", verb, exit)
 		}
 		got := errb.String()
-		if !strings.Contains(got, "mkdir -p "+missing) {
+		if !strings.Contains(got, "mkdir -p \""+missing+"\"") {
 			t.Errorf("%s refuses without naming the command that fixes it:\n%s", verb, got)
 		}
 		if !strings.Contains(got, "does not create one") {
@@ -346,5 +346,32 @@ func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "is a file") || strings.Contains(errb.String(), "mkdir -p") {
 		t.Errorf("a --dir that is a file is not a missing directory:\n%s", errb.String())
+	}
+}
+
+// TestTheMkdirRemedyIsOnePastableCommandWhenTheDirHasASpace is the other half of the
+// remedy: a command a reader cannot paste is not a way forward, it is a second mistake
+// for them to find. A --dir with a space printed raw makes `mkdir -p /a/my board` two
+// operands, so the paste creates `/a/my` and `board` and the next verb refuses again on
+// the same path. The tool already quotes the lines quickstart prints so they can be
+// pasted; the refusal's remedy is a line to be pasted too, and it is quoted the same way.
+//
+// Read by Fable and DeepSeek on nova-tools #109. The two of them also caught the citation
+// in the test above: SPEC-BOARD's item 6 is a BUILD list entry (SPEC-BOARD.md:808-814),
+// not a numbered rule.
+func TestTheMkdirRemedyIsOnePastableCommandWhenTheDirHasASpace(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "my board", "cards")
+	var out, errb bytes.Buffer
+	if exit := run([]string{"list", "--dir", missing, "--stale", "10m"}, &out, &errb, time.Now().UTC(), &seq{}); exit != 2 {
+		t.Fatalf("a missing --dir exits %d, want 2", exit)
+	}
+	got := errb.String()
+	_, rest, ok := strings.Cut(got, "make it first: ")
+	if !ok {
+		t.Fatalf("the refusal carries no remedy:\n%s", got)
+	}
+	remedy, _, _ := strings.Cut(rest, "; run: nova-board help")
+	if words := shellWords(t, remedy); len(words) != 3 || words[0] != "mkdir" || words[1] != "-p" || words[2] != missing {
+		t.Errorf("the remedy %q is not one pastable `mkdir -p <dir>`; a shell reads it as %q, and the directory a caller named was %q", remedy, words, missing)
 	}
 }

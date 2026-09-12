@@ -511,7 +511,7 @@ func quickstartPair(t *testing.T, stdout string) (check, add string) {
 }
 
 // shellWords splits one of the printed lines the way a shell would: double quotes group, and
-// a backslash inside them escapes the next byte. That is the whole of what quote() emits, so
+// a backslash inside them escapes the next byte. That is the whole of what board.Quote emits, so
 // anything else appearing here is a bug in this helper rather than in the tool.
 func shellWords(t *testing.T, line string) []string {
 	t.Helper()

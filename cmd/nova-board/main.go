@@ -657,11 +657,11 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer, now time.Time) int {
 	printBoard(stdout, b, kind, source, false, false, "", bounded.Default)
 	words, text := quickstartWords(b)
 	fmt.Fprintf(stdout, "QUICKSTART LINE n=1 what=check: %s\n", oneline.Quote(
-		"nova-board check "+backendFlag(kind, source, f.ghTimeout)+" --words "+quote(words)+
+		"nova-board check "+backendFlag(kind, source, f.ghTimeout)+" --words "+board.Quote(words)+
 			" || { [ $? -eq 1 ] && exit 0; exit 2; }"))
 	fmt.Fprintf(stdout, "QUICKSTART LINE n=2 what=add: %s\n", oneline.Quote(
-		"nova-board add "+backendFlag(kind, source, f.ghTimeout)+" --as <your-name> --text "+quote(text)+
-			" --by 4h --default "+quote("the filer files it as a known gap")))
+		"nova-board add "+backendFlag(kind, source, f.ghTimeout)+" --as <your-name> --text "+board.Quote(text)+
+			" --by 4h --default "+board.Quote("the filer files it as a known gap")))
 	fmt.Fprintf(stdout, "QUICKSTART NOTE check EXITS 1 WHEN IT MATCHES, so the guard reads \"if it is already there, stop\"; the exit-2 arm tells a NO from a board that could not be read\n")
 	fmt.Fprintf(stdout, "QUICKSTART NOTE --stale %s is this family's number and this run passed it in words: there is no default duration here, and --by and --default are required on every card\n",
 		oneline.Field(stale.String()))
@@ -965,9 +965,6 @@ func backendFlag(kind, source string, ghTimeout int) string {
 	}
 	return "--dir " + source
 }
-
-// quote wraps a value for the shell lines quickstart prints, which are meant to be pasted.
-func quote(s string) string { return "\"" + strings.ReplaceAll(s, "\"", "\\\"") + "\"" }
 
 // durable says when the card is durable, and it is the one asymmetry between the backends:
 // an add --issue is durable when the command returns, an add --dir when the caller lands it.
