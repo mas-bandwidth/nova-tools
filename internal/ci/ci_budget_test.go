@@ -1,7 +1,6 @@
 package ci
 
 import (
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -24,9 +23,9 @@ import (
 //   (a) every job in ci.yml declares timeout-minutes, and none exceeds 2 — the
 //       aggregate ci-ok may be 1 — so the CL tier cannot silently exceed the
 //       budget;
-//   (b) every job name that left ci.yml relative to origin/main is present in
-//       the certification workflow by the same name, so the split deleted
-//       nothing;
+//   (b) every job name that left ci.yml in the split is present in the
+//       certification workflow by the same name, and certification-ok needs
+//       every one of them, so the split deleted nothing;
 //   (c) every `uses:` in both files is owner/action@40-hex-sha, so an action
 //       cannot drift under a mutable tag.
 
@@ -75,21 +74,22 @@ func TestCLTierJobsStayWithinTheBudget(t *testing.T) {
 
 func TestJobsThatLeftCIAreStillInCertification(t *testing.T) {
 	root := repoRoot(t)
-	newCI := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
 	cert := readFile(t, filepath.Join(root, ".github", "workflows", "certification.yml"))
-	oldCI := originMainCI(t, root)
 
-	newNames := toSet(jobNames(newCI))
 	certNames := toSet(jobNames(cert))
 	if len(certNames) == 0 {
 		t.Fatal("no jobs parsed from certification.yml; the parser is looking in the wrong place")
 	}
-	for _, name := range jobNames(oldCI) {
-		if newNames[name] {
-			continue // still in ci.yml, so it did not leave
-		}
+	for _, name := range splitMovedJobs {
 		if !certNames[name] {
-			t.Errorf("job %q left ci.yml but is not present in certification.yml; the split must delete nothing", name)
+			t.Errorf("job %q left ci.yml in the split but is not present in certification.yml; the split must delete nothing", name)
+		}
+	}
+
+	needs := certificationOKNeeds(cert)
+	for _, name := range splitMovedJobs {
+		if !needs[name] {
+			t.Errorf("certification-ok does not list %q in its needs; every certification job must be aggregated", name)
 		}
 	}
 }
@@ -164,27 +164,48 @@ func toSet(names []string) map[string]bool {
 	return out
 }
 
-// originMainCI returns the ci.yml at origin/main, so the comparison in
-// TestJobsThatLeftCIAreStillInCertification has a baseline that is not this
-// branch. A shallow CI checkout may not carry origin/main, so it is fetched
-// first when the ref is missing. This is not a skip: a comparison with no
-// baseline must fail, not pass.
-func originMainCI(t *testing.T, root string) string {
-	t.Helper()
-	show := exec.Command("git", "show", "origin/main:.github/workflows/ci.yml")
-	show.Dir = root
-	if out, err := show.Output(); err == nil {
-		return string(out)
-	}
-	fetch := exec.Command("git", "fetch", "--depth=1", "origin", "main")
-	fetch.Dir = root
-	if fetch.Run() == nil {
-		show = exec.Command("git", "show", "origin/main:.github/workflows/ci.yml")
-		show.Dir = root
-		if out, err := show.Output(); err == nil {
-			return string(out)
+// splitMovedJobs is the inventory of the jobs the 2026-09-12 split moved out of
+// ci.yml into certification.yml, read off origin/main's ci.yml at the time of
+// the split: the whole-tree `-race` test, the Windows build/vet and per-package
+// tests, the three-OS smoke, the release dry-run, and the nightly perf wall
+// clock. It is checked in as a fixed list on purpose: an ordinary `go test`
+// from a source archive or an offline checkout has no origin/main ref to fetch,
+// so the comparison must not need one.
+var splitMovedJobs = []string{
+	"test",
+	"build-windows",
+	"windows-packages",
+	"test-windows",
+	"smoke",
+	"release-dry-run",
+	"perf",
+}
+
+// certificationOKNeeds returns the set of job names listed in certification-ok's
+// `needs:` line. A job the aggregate forgot to list is a job whose red no longer
+// blocks a release, so the needs list is asserted to cover every moved job.
+func certificationOKNeeds(src string) map[string]bool {
+	needs := make(map[string]bool)
+	inCertOK := false
+	for _, line := range strings.Split(src, "\n") {
+		if m := jobKeyRe.FindStringSubmatch(line); m != nil {
+			inCertOK = m[1] == "certification-ok"
+			continue
+		}
+		if !inCertOK {
+			continue
+		}
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "needs:") {
+			list := strings.TrimSpace(strings.TrimPrefix(trimmed, "needs:"))
+			list = strings.Trim(list, "[]")
+			for _, name := range strings.Split(list, ",") {
+				if name = strings.TrimSpace(name); name != "" {
+					needs[name] = true
+				}
+			}
+			return needs
 		}
 	}
-	t.Fatalf("cannot read origin/main:.github/workflows/ci.yml to compare against; run with the origin remote present")
-	return ""
+	return needs
 }
