@@ -153,12 +153,26 @@ func LoadWorker(path string) (Worker, []error) {
 	// d0c1841, M1). A `read_roots` entry holding the key is the same hole without the copy.
 	// Both are refused HERE, at the one moment a person can still move the file.
 	if key := resolvePath(w.KeyFile); key != "" {
+		// AND THE REFUSAL NAMES THE KEY AS THE DESCRIPTION SPELLED IT. Every check below
+		// MATCHES on the resolved spelling, because that is the file the wall opens (rule
+		// 5) -- but the resolved spelling is a string that appears in no description and in
+		// no editor, so a line that leads with it names a path the reader cannot grep for
+		// and cannot edit. On windows a directory typed
+		// `C:\Users\RUNNER~1\AppData\Local\Temp\x` resolves to the long name and shares
+		// no prefix with what was typed; on darwin `/var/...` resolves to `/private/var/...`
+		// and merely hid the same fault behind a substring (windows CI of #88 at d8a5824).
+		// So the line leads with the TYPED, cleaned path and appends the resolved one ONCE
+		// when it differs -- one problem line per case, either way.
+		typedKey, typedDir := filepath.Clean(w.KeyFile), filepath.Clean(w.WorkerDir)
 		if dir := resolvePath(w.WorkerDir); dir != "" && insideDir(key, dir) {
-			problems = append(problems, fmt.Errorf("%s: key_file %s is inside worker_dir %s, which is copied into the slot directory before every job and IS the job's --read: the job would read a copy of the key inside the wall. Keep the key file outside worker_dir, such as ~/.keys/<provider>", path, key, dir))
+			problems = append(problems, fmt.Errorf("%s: key_file %s is inside worker_dir %s%s, which is copied into the slot directory before every job and IS the job's --read: the job would read a copy of the key inside the wall. Keep the key file outside worker_dir, such as ~/.keys/<provider>",
+				path, typedKey, typedDir, resolvedTail(insideDir(typedKey, typedDir), key, dir)))
 		}
 		for i, root := range w.ReadRoots {
 			if r := resolvePath(root); r != "" && insideDir(key, r) {
-				problems = append(problems, fmt.Errorf("%s: key_file %s is inside read_roots[%d] %s, which every job of this worker may READ: the key reaches the job by environment (env_var) and its FILE is in neither list. Keep the key file outside every read root", path, key, i, r))
+				typedRoot := filepath.Clean(root)
+				problems = append(problems, fmt.Errorf("%s: key_file %s is inside read_roots[%d] %s%s, which every job of this worker may READ: the key reaches the job by environment (env_var) and its FILE is in neither list. Keep the key file outside every read root",
+					path, typedKey, i, typedRoot, resolvedTail(insideDir(typedKey, typedRoot), key, r)))
 			}
 		}
 		// AND THE SLOT DIRECTORIES, WHICH ARE SIBLINGS OF worker_dir, NOT UNDER IT. A job's
@@ -181,14 +195,19 @@ func LoadWorker(path string) (Worker, []error) {
 		// from; the resolved one stays as defence in depth. Deduped, so the ordinary case where
 		// the two coincide refuses once.
 		for _, dir := range spellings(w.WorkerDir) {
-			slot := ""
+			slot, hit := "", ""
 			for _, k := range spellings(w.KeyFile) {
 				if slot = slotDirHolding(k, dir); slot != "" {
+					hit = k
 					break
 				}
 			}
 			if slot != "" {
-				problems = append(problems, fmt.Errorf("%s: key_file %s is inside slot directory %s, which IS the job's --read: the job would read the key inside the wall under a probe that passed. Keep the key file outside worker_dir and outside every slot directory %s-<n>, such as ~/.keys/<provider>", path, key, slot, dir))
+				// `slot` and `dir` are the spelling this hit was found under, and the typed
+				// one is tried first, so the ordinary case and a symlinked `worker_dir` both
+				// name the directory the tool would actually build and hand to `--read`.
+				problems = append(problems, fmt.Errorf("%s: key_file %s is inside slot directory %s%s, which IS the job's --read: the job would read the key inside the wall under a probe that passed. Keep the key file outside worker_dir and outside every slot directory %s-<n>, such as ~/.keys/<provider>",
+					path, typedKey, slot, resolvedTail(hit == typedKey, hit, slot), dir))
 				break
 			}
 		}
@@ -228,6 +247,24 @@ func spellings(path string) []string {
 		return []string{typed}
 	}
 	return []string{typed, real}
+}
+
+// resolvedTail is the ONE tail a key refusal grows, and only where the resolution is the
+// thing that made the match: a `key_file` that is a symlink into the read set, or a
+// `worker_dir` that is one. Everything else in the line is the spelling the DESCRIPTION
+// used, because that is the string a person greps for and the one they will edit; the
+// resolved spelling appears in no file they have.
+//
+// Naming the resolved path unconditionally is what the windows CI of #88 at d8a5824 caught:
+// a temp directory typed `C:\Users\RUNNER~1\AppData\Local\Temp\x` resolves to the long
+// name and shares no prefix with what was typed, so the refusal named a path nobody had
+// written; on darwin the same fault hid behind a substring, because `/var/...` resolves to
+// `/private/var/...` and merely gains a prefix. One problem line per case, either way.
+func resolvedTail(typedShowsIt bool, key, dir string) string {
+	if typedShowsIt {
+		return ""
+	}
+	return fmt.Sprintf(" (through symlinks: %s is inside %s)", key, dir)
 }
 
 // insideDir says whether a path lies under a directory. The directory itself is not inside

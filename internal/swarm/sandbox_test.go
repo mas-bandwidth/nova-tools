@@ -13,24 +13,45 @@ import (
 // in cmd/nova-swarm's tests, on the platform whose body is built; what is here is the shape
 // of the two lists, which is the same shape on every platform.
 
+// absFixture builds a fixture path that is absolute ON EVERY PLATFORM. A path typed
+// `/w/home-1` is absolute on darwin and linux and is NOT on windows -- `filepath.IsAbs` is
+// false without a volume -- so `absPath`, which is the seam obeying rule 5 ("paths are
+// resolved, absolute and existing"), correctly turned the fixture into `D:\w\home-1` and
+// the test compared it against what it had typed (windows CI of #88 at d8a5824). The seam
+// was right and the FIXTURE was wrong: the promise is that every path the seam hands the
+// wall is absolute, and a test of that promise must start from a path that is absolute
+// where it runs. The volume is the one the machine's own temp directory is on; nothing is
+// created, so no directory of that volume is touched.
+func absFixture(parts ...string) string {
+	root := filepath.VolumeName(os.TempDir()) + string(filepath.Separator)
+	return filepath.Join(append([]string{root}, parts...)...)
+}
+
 // DEMANDED (SPEC-SANDBOX.md, the dispatcher caller). The write set is the job directory
 // FIRST and the per-job data home; the read set is the worker home and the toolchain roots
 // the description named; the cwd is the job directory; and --net-deny is nowhere, because
 // the provider's API is the work.
 func TestTheWrapArgvIsTheTwoListsAndNothingElse(t *testing.T) {
+	slotDir := absFixture("w", "home-1")
+	jobDir := filepath.Join(slotDir, "jobs", "j1")
+	dataHome := filepath.Join(jobDir, "data")
+	tools, gotools := absFixture("Users", "x", "toolchains"), absFixture("Users", "x", "go")
+	// The harness's own argv is typed POSIX-style ON EVERY PLATFORM on purpose: the seam
+	// passes everything after `--` verbatim (rule 12), so a path shape this tool would
+	// never build is the sharpest proof that it rewrote nothing.
 	job := SandboxJob{
 		Sandbox: "/usr/local/bin/nova-sandbox", PoolName: "pool-7",
-		SlotDir: "/w/home-1", JobDir: "/w/home-1/jobs/j1", DataHome: "/w/home-1/jobs/j1/data",
-		ReadRoots: []string{"/Users/x/toolchains", "/Users/x/go"},
+		SlotDir: slotDir, JobDir: jobDir, DataHome: dataHome,
+		ReadRoots: []string{tools, gotools},
 		Command:   "/opt/homebrew/bin/opencode", Args: []string{"run", "--model", "m", "--", "/w/home-1/jobs/j1/PROMPT.md"},
 	}
 	argv := strings.Join(job.SandboxArgv(), " ")
 	for _, want := range []string{
-		"--read /w/home-1",
-		"--read /Users/x/toolchains",
-		"--read /Users/x/go",
-		"--write /w/home-1/jobs/j1 --write /w/home-1/jobs/j1/data",
-		"--cwd /w/home-1/jobs/j1",
+		"--read " + slotDir,
+		"--read " + tools,
+		"--read " + gotools,
+		"--write " + jobDir + " --write " + dataHome,
+		"--cwd " + jobDir,
 		"--name pool-7",
 		"-- /opt/homebrew/bin/opencode run --model m -- /w/home-1/jobs/j1/PROMPT.md",
 	} {
@@ -65,7 +86,8 @@ func TestEveryPathTheSeamHandsTheWallIsAbsolute(t *testing.T) {
 	if got := SandboxProbeDir("pool"); !filepath.IsAbs(got) {
 		t.Errorf("a relative --pool makes a relative probe directory %q, and rule 5 refuses a relative path", got)
 	}
-	if got, want := SandboxProbeDir("/w/pool"), filepath.Join("/w/pool", "sandbox-probe"); got != want {
+	pool := absFixture("w", "pool")
+	if got, want := SandboxProbeDir(pool), filepath.Join(pool, "sandbox-probe"); got != want {
 		t.Errorf("an absolute pool is left alone: got %q, want %q", got, want)
 	}
 	job := SandboxJob{
