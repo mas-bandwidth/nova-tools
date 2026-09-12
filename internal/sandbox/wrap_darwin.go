@@ -88,8 +88,14 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	cmd.Stdin = stdin
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
-	// Its own process group, so that a forwarded signal reaches the whole wrapped tree.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	// NO Setpgid: the wrapped tree stays in the CALLER's process group, and the caller
+	// owns pgid and reaping. A group of the tool's own looked tidier and was wrong: a
+	// swarm supervisor puts each job in a group of its making and reaps that group at the
+	// deadline (SPEC-SWARM rule 11), and a command that forked a background child left
+	// that child in the tool's group, outside the one the supervisor kills -- measured by
+	// the seam read, survivors=0 reported while a process was still alive, which is the
+	// silent failure that rule exists to prevent. Signals are forwarded to the CHILD
+	// (below), not to a group, for the same reason: the group is not the tool's to signal.
 
 	// SANDBOX OK is printed and FLUSHED before the command starts, so a log that ends in
 	// a crash still says what the wall was.
@@ -108,7 +114,9 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 			select {
 			case s := <-sigs:
 				if sig, ok := s.(syscall.Signal); ok && cmd.Process != nil {
-					_ = syscall.Kill(-cmd.Process.Pid, sig) // the child's process GROUP
+					// The CHILD, not -pid: with no group of its own, -pid would name a
+					// process group this tool never created and does not own.
+					_ = cmd.Process.Signal(sig)
 				}
 			case <-done:
 				return
