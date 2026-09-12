@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -387,17 +389,47 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	t.Run("after-handshake", func(t *testing.T) {
 		b := newBench(t)
 		b.inject()
-		taskID := b.add("task after handshake\nFAKE-FINDINGS 0\nFAKE-SLEEP 1\n")
+		taskID := b.add("task after handshake\nFAKE-FINDINGS 0\nFAKE-AWAIT-NOTE 20\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-handshake"}
-		b.run() // runner killed after handshake
+		b.run() // runner killed after handshake; the supervisor lives on, holding for a note
 		b.extraEnv = nil
 
-		exit, stdout, _ := b.run()
+		// THE JOB CANNOT FINISH UNTIL THE TEST SAYS SO. The fake harness holds for a note
+		// (FAKE-AWAIT-NOTE 20, under the 30s deadline, so the fixture cap passes), and the
+		// note is delivered only once the second dispatcher has ADOPTED the live supervisor
+		// -- read off the run's own RUN ADOPT line as it is printed. FAKE-SLEEP 1 made this
+		// a race: on a loaded runner the job finished before the adoption and the pass said
+		// RUN RECLAIM instead of RUN ADOPT, and a reclaim was accepted as a pass.
+		var noteErr error
+		noted := false
+		runArgs := withSandbox([]string{"run", "--pool", b.pool, "--workers", "1", "--hours", "0.25", "--worker", b.worker})
+		exit, stdout, stderr := b.runWatching(runArgs, func(line string) {
+			if noted || !strings.Contains(line, "RUN ADOPT id="+taskID) {
+				return
+			}
+			noted = true
+			nExit, _, nErr, err := b.swarmTry("note", "--pool", b.pool, "--task", taskID, "--text", "the test says finish now")
+			switch {
+			case err != nil:
+				noteErr = err
+			case nExit != 0:
+				noteErr = fmt.Errorf("the note was refused (exit %d): %s", nExit, nErr)
+			}
+		})
 		if exit != 0 {
-			t.Fatalf("exit = %d, want 0", exit)
+			t.Fatalf("exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+		}
+		if !noted {
+			t.Fatalf("the second dispatcher never adopted %s (no RUN ADOPT), so this test proved nothing:\n%s", taskID, stdout)
+		}
+		if noteErr != nil {
+			t.Fatalf("the note that lets the adopted job finish: %v", noteErr)
 		}
 		mustContain(t, "stdout", stdout, "RUN ADOPT id="+taskID+" slot=1")
 		mustContain(t, "stdout", stdout, "RUN DONE id="+taskID)
+		if strings.Contains(stdout, "RUN RECLAIM slot=1 id="+taskID) {
+			t.Errorf("the job was reclaimed, not adopted; a reclaim is never a pass for this test:\n%s", stdout)
+		}
 	})
 
 	// (5) supervisor killed after release with harness alive -> dead leader with live survivor
@@ -684,6 +716,39 @@ func mustOpenPool(t *testing.T, dir string) *swarm.Pool {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// runWatching runs the dispatcher and hands each line of its stdout to watch as it is
+// printed, so a test can act on a RUN line (the adoption) before the run ends. It returns
+// the run's exit code and its full stdout and stderr. It is the unix half of the bench: the
+// recovery tests build only with `//go:build unix`, so the windows environment variables
+// swarmTry adds are not needed here.
+func (b *bench) runWatching(args []string, watch func(string)) (int, string, string) {
+	b.t.Helper()
+	cmd := exec.Command(b.binary, args...)
+	cmd.Dir = b.dir
+	cmd.Env = append([]string{"PATH=" + b.path, "Path=" + b.path, "HOME=" + b.dir}, b.extraEnv...)
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		b.t.Fatalf("opening the run's stdout: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		b.t.Fatalf("starting the run: %v", err)
+	}
+	var out bytes.Buffer
+	scanner := bufio.NewScanner(pipe)
+	for scanner.Scan() {
+		line := scanner.Text()
+		out.WriteString(line)
+		out.WriteString("\n")
+		if watch != nil {
+			watch(line)
+		}
+	}
+	_ = cmd.Wait()
+	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
 }
 
 func assertTripwire(t *testing.T) {
