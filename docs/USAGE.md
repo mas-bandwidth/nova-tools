@@ -116,11 +116,16 @@ worked transcripts are in the [command reference](CLI.md); the first-run
 transcripts there are executed by tests, so they show what the tool prints today
 rather than what someone remembered.
 
-Six tools have a `quickstart` verb that needs nothing you have to invent:
-`nova-wake`, `nova-board`, `nova-swarm`, `nova-merge`, `nova-memory` and
-`nova-check`. `nova-bus`, `nova-tokens`, `nova-sandbox`, `nova-self-talk` and
-`nova-fuse` do not, because every one of their verbs needs a path or a source
-you must name — a quickstart would write state nobody asked for.
+Six tools have a `quickstart` verb: `nova-wake`, `nova-board`, `nova-swarm`,
+`nova-merge`, `nova-memory` and `nova-check`. A `quickstart` is one line that
+needs nothing you have to *invent* — but it is not a line that needs nothing at
+all, and several still require you to name the directory, state file or
+repository they act on, refusing rather than choosing one for you. The tested
+transcripts linked below show each exact invocation.
+
+`nova-bus`, `nova-tokens`, `nova-sandbox`, `nova-self-talk` and `nova-fuse` have
+no `quickstart`, because every one of their verbs needs a path or a source you
+must name, and a verb added for symmetry would write state nobody asked for.
 
 ### nova-bus — a lasting conversation
 
@@ -157,11 +162,13 @@ anything changed, and mostly learns that nothing did.
 **What it does.** Waits, up to a deadline you set, for new messages, changed
 check results or worker results, then prints what moved.
 
-**You need** a state file path and a maximum duration. You choose what the
-deadline means when nothing happened.
+**You need** its own state file (`--state <file>`, one per watch, holding what
+each watched thing last looked like), at least one source to watch, and a
+maximum duration. You also choose what reaching the deadline means. Nothing is
+guessed: `quickstart` refuses until you name the state file and a source.
 
-**First trial.** `nova-wake quickstart` needs only a directory. The
-[first-run transcript](TESTS.md#nova-wake) is executed by a test, and
+**First trial.** The [first-run transcript](TESTS.md#nova-wake) is executed by a
+test and shows the exact working invocation, and
 [nova-wake in the command reference](CLI.md#nova-wake) explains the verdict line
 and the waiting behaviour.
 
@@ -183,10 +190,14 @@ and who holds it.
 
 **What it does.** Tracks tasks, owners, deadlines and completion evidence.
 
-**You need** a directory for the board and a name for each participant.
+**You need** a backend — `--dir <path>` for a directory of card files, or
+`--issue <owner/repo>#<n>` for issue comments — and `--stale <duration>` saying
+how long a card may go without an event before it lists as takeable again. There
+is no default duration and no default backend; `quickstart` refuses until both
+are named.
 
-**First trial.** `nova-board quickstart` needs only a directory. See the
-[first-run transcript](TESTS.md#nova-board) and
+**First trial.** The [first-run transcript](TESTS.md#nova-board) is executed by a
+test and shows the exact working invocation. See also
 [nova-board in the command reference](CLI.md#nova-board).
 
 **It worked if** `check` caught a task you were about to add twice, and you
@@ -213,8 +224,9 @@ a harness and provider setup that actually works. On macOS it also wants
 `nova-sandbox`; it refuses to start without a usable sandbox unless you
 explicitly pass `--no-sandbox`, **which provides no containment at all**.
 
-**First trial.** `nova-swarm quickstart` makes the pool structure and names the
-commands that follow, without running a worker. See the
+**First trial.** `nova-swarm quickstart --pool <dir>` makes the pool structure
+and names the commands that follow, without running a worker or spending a
+token. See the
 [first-run transcript](TESTS.md#nova-swarm) and
 [nova-swarm in the command reference](CLI.md#nova-swarm).
 
@@ -236,11 +248,13 @@ they were supposed to have.
 
 **What it does.** Checks reviews and tests before merging changes in order.
 
-**You need** a Git repository, and `gh` with access you already have for GitHub
-operations.
+**You need** the lane's own directory (`--lane`), the repository it lands into
+(`--repo <owner>/<name>`), the branch entries are merged onto (`--base`), `git`,
+and `gh` with access you already have. `quickstart` names each missing one rather
+than assuming it.
 
-**First trial.** `nova-merge quickstart` sets up a lane. See the
-[first-run transcript](TESTS.md#nova-merge) and
+**First trial.** The [first-run transcript](TESTS.md#nova-merge) is executed by a
+test and shows the exact working invocation. See also
 [nova-merge in the command reference](CLI.md#nova-merge).
 
 **It worked if** it refused to land something whose checks had not passed, and
@@ -294,12 +308,16 @@ your keys or write outside one directory.
 
 **You need** macOS, and an explicit list of readable and writable paths.
 
-**First trial.** `nova-sandbox probe` reports what the backend can actually
-enforce here. See the [first-run transcript](TESTS.md#nova-sandbox) and
+**First trial.** `nova-sandbox check` needs no flags and reports what the backend
+on this machine can actually enforce. `probe` then proves the wall, and it
+requires the paths it is proving — `--read`, `--write` and a `--secret` it must
+fail to read — refusing rather than guessing any of them. The
+[first-run transcript](TESTS.md#nova-sandbox) is executed by a test and shows
+`check`, a full `probe` and a contained command in three steps. See
 [nova-sandbox in the command reference](CLI.md#nova-sandbox).
 
-**It worked if** `probe` confirmed containment, and a command you expected to be
-refused a path was refused it.
+**It worked if** `check` named a usable backend, and `probe` reported every step
+`got=` what it `expect`ed — including the secret it was denied.
 
 **Limits and side effects.** **macOS only today; Linux and Windows backends are
 not built,** and on those platforms it refuses rather than pretending. Its exit
@@ -380,8 +398,11 @@ review.
 yourself.
 
 **Limits and side effects.** It is **advisory and it does not interpret a
-mind**: it matches patterns in text, and the writer decides what any of it
-means. It deliberately prefers missing a case to inventing one.
+mind**: it matches patterns in text, and the writer decides what any of it means.
+It catches known **shapes** only — register, irony and quoted-specimen context
+are invisible to grammar, so a quoted verdict is a true positive on the grammar
+and a false one on the meaning. As the tool says on every run, a green clears the
+known shapes, never the file.
 
 **It may not help if** you are not writing prose about yourself.
 
@@ -393,7 +414,8 @@ decision written down where a harness will act on it.
 **What it does.** Records which sources a cooperating AI harness should stop
 reading.
 
-**You need** the state directory and the source to name.
+**You need** its box file (`--box <file>`, which holds the decisions) and a name
+for the source.
 
 **First trial.** See the [first-run transcript](TESTS.md#nova-fuse) and
 [nova-fuse in the command reference](CLI.md#nova-fuse).
