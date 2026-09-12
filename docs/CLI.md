@@ -26,7 +26,7 @@ nova-check corpus --ledger <file> --root <dir> --min-anchors <n>   # the materia
 $ nova-check quickstart --dir ./self
 QUICKSTART OK dir=./self checks=2: links, then nocode
 LINKS OK files=4 links=3
-NOCODE OK files=5 clean deny-list=floor list
+NOCODE OK files=5 clean deny-list=floor\x20list
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
 
 $ nova-check kernel --file ./self/SEED-CORE.md --max-bytes 4000
