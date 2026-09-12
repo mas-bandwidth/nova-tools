@@ -486,8 +486,13 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `nonce` matches but whose attestation is absent or wrong is quarantined,
     never reclaimed.) The runner never allocates a slot whose
     file exists in any state, so the worker cap `--workers` counts reserved
-    slots as held; a `supervise` typed by hand is refused at exit 2 when no
-    live `run` holds `<pool>/run.lock`. (Stella, 2026-09-11: two files
+    slots as held. When no live `run` holds `<pool>/run.lock`, `supervise`
+    refuses at exit 2 unless its nonce matches a readable slot in `reserved`,
+    `orphaned` or `launched` state. This exception lets an already spawned
+    supervisor reach the rule 18 identification or abort boundary after its
+    runner dies. A matching slot admits that recovery path; it does not bypass
+    the remaining launch checks. `supervise` remains an internal runner verb.
+    (Stella, 2026-09-11: two files
     written by the parent are not one atomic step, and a replacement
     dispatcher cannot reap a process that is not its child. Stella, final
     read: one pool lock held for `run`'s life cannot also be the lock the
@@ -1656,8 +1661,11 @@ be seen red before it is trusted.
     a reserved slot counts as held and a
     third job is never started; the slot file's pid, pgid and start stamp
     were written by the process they name (the fake supervisor records its
-    own values and the test compares); `supervise` typed by hand with no live
-    `run` is exit 2; the tripwire on every path opened for writing finds
+    own values and the test compares); with no live `run`, `supervise` refuses
+    a missing or mismatched slot nonce at exit 2, while a matching nonce in
+    `reserved`, `orphaned` or `launched` state reaches the normal recovery
+    checks rather than failing merely because the runner has died; the tripwire
+    on every path opened for writing finds
     `slots/<n>.json` written by the runner once (reserved), by the
     supervisor once (launched) and by a recovering dispatcher at most once
     (orphaned), never by two writers for the same state.
