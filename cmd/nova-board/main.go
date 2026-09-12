@@ -195,6 +195,10 @@ type flags struct {
 	issue, dir string
 	ghTimeout  int
 	problems   []string
+
+	// makeDir is quickstart's alone: the first run makes the board directory it is
+	// pointed at, and created says whether this run is the one that made it.
+	makeDir, created bool
 }
 
 func newFlags(verb string) *flags {
@@ -255,6 +259,25 @@ func (f *flags) backend() (board.Backend, string, string) {
 	case f.issue != "" && f.dir != "":
 		f.want(twoBackends)
 	case f.dir != "":
+		// QUICKSTART MAKES THE DIRECTORY; every other verb refuses one that is not
+		// there and names the mkdir -p that fixes it (internal/board/dir.go).
+		if f.makeDir {
+			// A REFUSED RUN MAKES NOTHING. The caller judges every other flag
+			// BEFORE it asks for the backend, and this is the second lock on the
+			// same door: making the directory for a line that is about to be
+			// refused would answer a typo with an empty board, and a first run
+			// cannot tell that board from the one at the path they meant.
+			if len(f.problems) > 0 {
+				return nil, "", ""
+			}
+			b, created, err := board.MakeDir(f.dir)
+			if err != nil {
+				f.want(oneline.Err(err))
+				return nil, "", ""
+			}
+			f.created = created
+			return b, "dir", b.Source()
+		}
 		b, err := board.NewDir(f.dir)
 		if err != nil {
 			f.want(oneline.Err(err))
@@ -636,15 +659,27 @@ func cmdClose(args []string, stdout, stderr io.Writer, now time.Time, rnd io.Rea
 	return 0
 }
 
+// cmdQuickstart is the natural first run, and it is THE ONE VERB HERE THAT MAKES ITS
+// DIRECTORY. Glenn, on nova-tools #109 and Emma's report that it refused a --dir that was
+// not there: "It is best to do the right thing if a friend uses it a certain way, or to
+// correct docs to show only right way. Pick one." A first run has nowhere to write yet, and
+// `nova-swarm quickstart --pool ./pool` already makes its pool; created=true|false on the
+// OK line says which run made this one, so a reader can tell a new board from a wrong
+// path. A run that is REFUSED makes nothing: every flag is judged before f.backend().
 func cmdQuickstart(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("quickstart")
+	f.makeDir = true
 	var staleFlag string
 	f.fs.StringVar(&staleFlag, "stale", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
-	backend, kind, source := f.backend()
+	// EVERY FLAG IS JUDGED BEFORE THE BACKEND IS ASKED FOR, because this verb's backend
+	// MAKES the directory (flags.backend, makeDir) and that is a side effect on the
+	// filesystem. A first run that fat-fingers --stale is exactly the run with no board
+	// yet, and making it would answer the typo with an empty board.
 	stale := f.duration(staleFlag, staleHint)
+	backend, kind, source := f.backend()
 	if len(f.problems) > 0 {
 		return f.refused(stderr)
 	}
@@ -652,16 +687,16 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if !ok {
 		return 2
 	}
-	fmt.Fprintf(stdout, "QUICKSTART OK backend=%s source=%s stale=%s: the board, then the rule every filer runs in front of add\n",
-		oneline.Field(kind), oneline.Field(source), oneline.Field(stale.String()))
+	fmt.Fprintf(stdout, "QUICKSTART OK backend=%s source=%s stale=%s created=%s: the board, then the rule every filer runs in front of add\n",
+		oneline.Field(kind), oneline.Field(source), oneline.Field(stale.String()), oneline.Field(yesNo(f.created)))
 	printBoard(stdout, b, kind, source, false, false, "", bounded.Default)
 	words, text := quickstartWords(b)
 	fmt.Fprintf(stdout, "QUICKSTART LINE n=1 what=check: %s\n", oneline.Quote(
-		"nova-board check "+backendFlag(kind, source, f.ghTimeout)+" --words "+quote(words)+
+		"nova-board check "+backendFlag(kind, source, f.ghTimeout)+" --words "+board.Quote(words)+
 			" || { [ $? -eq 1 ] && exit 0; exit 2; }"))
 	fmt.Fprintf(stdout, "QUICKSTART LINE n=2 what=add: %s\n", oneline.Quote(
-		"nova-board add "+backendFlag(kind, source, f.ghTimeout)+" --as <your-name> --text "+quote(text)+
-			" --by 4h --default "+quote("the filer files it as a known gap")))
+		"nova-board add "+backendFlag(kind, source, f.ghTimeout)+" --as <your-name> --text "+board.Quote(text)+
+			" --by 4h --default "+board.Quote("the filer files it as a known gap")))
 	fmt.Fprintf(stdout, "QUICKSTART NOTE check EXITS 1 WHEN IT MATCHES, so the guard reads \"if it is already there, stop\"; the exit-2 arm tells a NO from a board that could not be read\n")
 	fmt.Fprintf(stdout, "QUICKSTART NOTE --stale %s is this family's number and this run passed it in words: there is no default duration here, and --by and --default are required on every card\n",
 		oneline.Field(stale.String()))
@@ -965,9 +1000,6 @@ func backendFlag(kind, source string, ghTimeout int) string {
 	}
 	return "--dir " + source
 }
-
-// quote wraps a value for the shell lines quickstart prints, which are meant to be pasted.
-func quote(s string) string { return "\"" + strings.ReplaceAll(s, "\"", "\\\"") + "\"" }
 
 // durable says when the card is durable, and it is the one asymmetry between the backends:
 // an add --issue is durable when the command returns, an add --dir when the caller lands it.

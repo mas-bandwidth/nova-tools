@@ -21,7 +21,9 @@ add --issue is durable when the command returns.
 package board
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,10 +34,27 @@ type Dir struct {
 	path string
 }
 
-// NewDir returns the backend for a directory of card files. The directory must exist: a
-// tool that made one would be guessing at where a caller meant to keep a board.
+// NewDir returns the backend for a directory of card files. The directory must exist for
+// every verb but quickstart, which makes it (MakeDir below). For the rest: a
+// tool that made one would be guessing at where a caller meant to keep a board -- the
+// board lives in somebody's repository, and which directory is tracked, and by which
+// clone, is the caller's decision and not this tool's. SPEC-BOARD grants this backend one
+// creation and names it: "One file per card, <dir>/<id>.board, created by add."
+//
+// So the refusal CARRIES THE REMEDY. Emma, dogfooding v0.12.0 (nova-tools #104): a
+// quickstart against a directory that did not exist exited 2 with a stat error and no way
+// forward, while nova-swarm's quickstart makes its own pool. The asymmetry is deliberate
+// -- a swarm pool is a layout this family owns, a board directory is one directory in
+// somebody's repository -- but a refusal that does not say `mkdir -p` makes a reader
+// guess at a tool that refuses to. The path is QUOTED in that remedy: a --dir with a space
+// printed raw is two operands to the shell, so the paste makes two wrong directories and
+// the next verb refuses again on the same path. A remedy that cannot be pasted is a second
+// mistake, not a way forward.
 func NewDir(path string) (*Dir, error) {
 	info, err := os.Stat(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, fmt.Errorf("--dir wants a directory of .board card files and does not create one, because which directory holds a board is yours: %s does not exist; make it first: mkdir -p %s", path, Quote(path))
+	}
 	if err != nil {
 		return nil, fmt.Errorf("--dir wants a directory of .board card files: %w", err)
 	}
@@ -44,6 +63,42 @@ func NewDir(path string) (*Dir, error) {
 	}
 	return &Dir{path: path}, nil
 }
+
+// MakeDir is NewDir for QUICKSTART, and it is the one entry here that creates the
+// directory. Glenn ruled it on nova-tools #109, on Emma's report that quickstart refused a
+// --dir that was not there: "It is best to do the right thing if a friend uses it a certain
+// way, or to correct docs to show only right way. Pick one." The right thing is the one a
+// friend already reached for -- `nova-swarm quickstart --pool ./pool` makes its pool, with
+// MkdirAll and 0755, and this makes the board directory the same way.
+//
+// IT IS QUICKSTART'S ALONE. Every other verb goes through NewDir and still refuses, because
+// quickstart is the verb whose whole job is a first run and a first run has nowhere to write
+// yet, while a `list` or a `take` against a directory that is not there is a caller who named
+// the wrong path -- making it for them would answer a typo with an empty board. The created
+// bool goes back to the caller because a verb that makes a directory silently leaves a reader
+// unable to tell a new board from the wrong one.
+//
+// A path that exists and is a FILE is untouched and keeps NewDir's refusal: MkdirAll would
+// not fix that one, and a board is not a file this tool replaces.
+func MakeDir(path string) (*Dir, bool, error) {
+	created := false
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			return nil, false, fmt.Errorf("--dir wants a directory of .board card files it can make, and %s could not be made: %w", path, err)
+		}
+		created = true
+	}
+	d, err := NewDir(path)
+	if err != nil {
+		return nil, false, err
+	}
+	return d, created, nil
+}
+
+// Quote wraps a value for a shell line this tool prints to be pasted -- quickstart's pair
+// and the mkdir remedy above. One quoting rule for every printed line, so a reader who
+// pastes one has pasted them all.
+func Quote(s string) string { return "\"" + strings.ReplaceAll(s, "\"", "\\\"") + "\"" }
 
 // Source is what the listing's source= field carries, so a listing cannot be mistaken for
 // a different board's.
