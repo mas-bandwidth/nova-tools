@@ -1,7 +1,7 @@
 # ONBOARDING — the standard every command in this repo meets
 
-**A newcomer's first stumble is the spec for this page.** Two new lines ran two
-of these tools for the first time today, and both stumbles were ours: a usage
+**A newcomer's first stumble is the spec for this page.** Two newcomers ran two
+of these tools for the first time on one day, and both stumbles were ours: a usage
 banner with no runnable line in it, and a refusal that named what was wrong
 without saying what it wanted. Every binary under `cmd/` meets all five points.
 
@@ -53,7 +53,8 @@ enough to read in a sitting and referenced by nothing outside it.
 
 ## How feedback arrives
 
-From Glenn, through Emma, on the day nova-bus went live: *"We get better tools this way."* When you try a tool, say
+From Glenn, through Emma, on the day nova-bus went live:
+*"We get better tools this way."* When you try a tool, say
 three things, in this order: what works, so the author knows what to protect; where it catches or surprises you,
 plainly, with the exact sentence it printed; and the fix you would make, a README line, a hint, a flag. Pure
 criticism reads as an audit; pure praise leaves rough edges rough. Every stumble named this way became a fix within
