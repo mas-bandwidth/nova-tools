@@ -75,7 +75,8 @@ Every rule is normative and has one line in **tests this spec demands**.
    tokens whatever the model supports (`standard/MODELS.md:100`, 2026-09-07) — so a long
    prompt comes back as a confident answer about a truncated input with no error. `serve`
    without it is exit 2 and `refusing to guess`; `status` asserts no default, printing
-   the `context_length` `/api/ps` reports for a loaded model and nothing otherwise.
+   as `num_ctx=` the `context_length` `/api/ps` reports for a loaded model (ds4's is its
+   `--ctx`) and nothing otherwise — one thing, one spelling, on every line.
 
 6. **`serve` makes the served thing and prints the name the harness must use.** ollama
    persists per-model options only through a Modelfile and a `/v1` caller sends no
@@ -139,7 +140,7 @@ Every rule is normative and has one line in **tests this spec demands**.
     names: it `stat`s it and refuses an empty one with the command that writes it.
 
 15. **The weights are one store on the box, and this tool reads it, reports it and
-    refuses a home** (Glenn, bus, 2026-09-12, no receipt in `memory/` yet: *"I would like
+    refuses a home when asked** (Glenn, bus, 2026-09-12, no receipt in `memory/` yet: *"I would like
     for local models to be accessible both here in this admin account, and in your rowan
     account. This is a requirement for this local setup and nova-local."* / *"I'd really
     not like to the local models to stay in rowans account, but move to a shared location
@@ -157,13 +158,19 @@ Every rule is normative and has one line in **tests this spec demands**.
     <n>'s)`, because another uid's argv is root's to read on darwin and this binary does
     not exec `ps` or `lsof` to get around it (rule 1).
 
-    **It refuses** a store under a home — `/Users/<x>/…`, `/home/<x>/…` — at `serve`
-    exit 1 naming it, remedy BOX-LOCAL.md: a home's mode is its owner's to change,
-    macOS's default for a new account is `700`, and the two accounts here read each
-    other's only because both homes happen to be `750 <user>:staff` (2026-09-12). A store
-    it could not read is **not** refused against, because a tool does not refuse against
-    a fact it does not have. `status` never refuses: it prints `store=` and
-    `shared=<yes|no|unknown>`.
+    **It reports, always**: `store=` and `shared=<yes|no|unknown>` on every `LOCAL
+    ENGINE` and `SERVE OK` line, read at the moment of the call and never judged — the
+    same kind of fact as `load1=` (rules 8 and 10) — and a store it could not read is
+    `unknown`, not a verdict, because a tool does not rule on a fact it does not have.
+    **It refuses only against a value the operator gave** (rule 8's shape): with
+    `--require-shared-store`, `serve` is exit 1 on a store under a home —
+    `/Users/<x>/…`, `/home/<x>/…` — naming it, remedy `nova-local status --engine <e>`
+    and [BOX-LOCAL.md](BOX-LOCAL.md); without the flag it serves and prints `shared=no`.
+    On a box more than one account uses, the requirement is enforced by the recipe's
+    step 4 — `status` from both accounts showing `shared=yes`, and
+    [BOX-LOCAL.md](BOX-LOCAL.md) carries the mode argument — and thereafter by `status`
+    never lying about it; whatever invokes `serve` there (the recipe, `nova-run`, an
+    alias, the operator) passes the flag. `status` never refuses.
 
 ## The engines
 
@@ -199,7 +206,7 @@ nova-local status [--engine <name>] [--base <url>] [--list] [--max <n>] [--timeo
 
 nova-local serve  --engine <name> --model <ref> --num-ctx <n> [--base <url>]
                   [--keep-alive <d>] [--seed <n>] [--expect-digest <sha256:…>]
-                  [--max-load <f>] [--min-free <size>]
+                  [--max-load <f>] [--min-free <size>] [--require-shared-store]
 nova-local serve  --stop --engine <name> --model <ref> [--base <url>]
 
 nova-local worker --engine <name> --model <ref> --out <file> --name <text>
@@ -220,8 +227,9 @@ an argument containing a comma is not expressible and is exit 2. There is **no
 what the input wants, and never prints the contents of a path it could not use. `OK`
 goes to stdout, `FAIL` and `REFUSED` to stderr, every value through
 `internal/oneline`. `REFUSED` is printed at both failing codes and what it names says
-which: something the caller can retry differently is exit 1, a flag the tool could not
-use at all is exit 2; `FAIL` stays reserved for a verb that ran and broke.
+which: something the caller can retry differently is exit 1, a flag or a named input
+the tool could not use at all is exit 2; `FAIL` stays reserved for a verb that ran and
+broke.
 
 ### `status`
 
@@ -232,7 +240,7 @@ nothing, writes nothing.
 
 ```
 LOCAL OK engines=<n> answering=<n> loaded=<n> models=<n> mem_used=<n> mem_free=<n> mem_total=<n> wired_cap=<n|unset> load1=<f>
-LOCAL ENGINE <name> state=<up|down|timeout> base=<url> [loaded=<n>] [advertised=<n>] [resident=<file|unknown (<why>)>] [ctx=<n>] store=<dir|unknown (<why>)> shared=<yes|no|unknown>
+LOCAL ENGINE <name> state=<up|down|timeout> [status=<code>] base=<url> [loaded=<n>] [advertised=<n>] [resident=<file|unknown (<why>)>] [num_ctx=<n>] store=<dir|unknown (<why>)> shared=<yes|no|unknown>
 LOCAL MODEL engine=<e> model=<ref> digest=<sha256:…|none (<e> reports none)> weights=<n> loaded=<yes|no> [num_ctx=<n>]
 LOCAL NOTE <text>
 LOCAL MORE kind=<kind> shown=<n> total=<n> remedy=<command>
@@ -243,8 +251,8 @@ LOCAL FAIL <what>: <reason>
 another program on port 8000 is `state=down status=404`. `advertised` is what the
 server answers to; `resident` is what was loaded, from the `-m` path **resolved
 through symlinks** (a `ds4flash.gguf` symlink here points at the Pro GGUF, so the
-unresolved name prints bytes that are not there). With nothing answering it prints the
-quickstart notes.
+unresolved name prints bytes that are not there). With nothing answering it prints one
+remedy line naming `ollama serve`, never the state (rule 13).
 
 **Refuses** nothing, except **no engine answering at all**: exit 1, one remedy line; a
 slow engine is `state=timeout` at exit 0. **Demanded test:** 11, 13, 17 — 400 models
@@ -258,7 +266,7 @@ compared parameters and the store, or the port and this user's own process (ds4)
 own wall clock across the warm-up.
 
 ```
-SERVE OK engine=<e> model=<ref> serve_as=<ref> digest=<sha256:…|none (<e> reports none)> num_ctx=<n> keep_alive=<d> temperature=<0|unset> seed=<n|unset> load=<t> mem_free=<n> load1=<f> engines=<n> [pid=<n>]
+SERVE OK engine=<e> model=<ref> serve_as=<ref> digest=<sha256:…|none (<e> reports none)> num_ctx=<n> keep_alive=<d> temperature=<0|unset> seed=<n|unset> load=<t> mem_free=<n> load1=<f> engines=<n> store=<dir|unknown (<why>)> shared=<yes|no|unknown> [pid=<n>]
 SERVE OK stopped engine=<e> model=<ref> [already stopped]
 SERVE REFUSED <ref>: <reason> — remedy: <command>
 ```
@@ -267,16 +275,19 @@ SERVE REFUSED <ref>: <reason> — remedy: <command>
 is `unset`. `--stop` unloads (ollama) or ends the process this tool started (ds4);
 already stopped is exit 0 and says so.
 
-**Refuses**, each exit 1 with its remedy: an `--expect-digest` that differs, naming
-both; an existing derived tag differing in parent, `num_ctx`, `temperature` or `seed`,
-naming both values and `ollama rm <tag>`; a ds4 already resident on a **different**
-model, naming it and the memory both would want; a load or free memory past a
-`--max-load` or `--min-free` **the caller gave**; a store under a home directory,
-naming it and BOX-LOCAL.md; and something already listening on the port an adapter
-would start a process on, naming **the port**, remedy `nova-local status` — no holder
-is named, because the socket's owner is not readable from a non-root process with the
-standard library. A missing `--num-ctx`, one with a remainder, `--seed` on ds4 and a
-non-loopback `--base` are exit 2. **Demanded test:** 5–9, 16, 17 — the tag idempotent,
+**Refuses**, each exit 1 and each carrying `— remedy: <command>`: an `--expect-digest`
+that differs, naming both, remedy `nova-local status --engine <e> --list`; an existing
+derived tag differing in parent, `num_ctx`, `temperature` or `seed`, naming both values,
+remedy `ollama rm <tag>`; a ds4 already resident on a **different** model, naming it and
+the memory both would want, remedy `nova-local serve --stop --engine ds4 --model
+<resident>`; a load or free memory past a `--max-load` or `--min-free` **the caller
+gave**, naming measured and asked, remedy `nova-local status --list`; a store under a
+home directory **only when `--require-shared-store` was given**, naming it, remedy
+`nova-local status --engine <e>` and BOX-LOCAL.md; and something already listening on
+the port an adapter would start a process on, naming **the port**, remedy `nova-local
+status` — no holder is named, because the socket's owner is not readable from a non-root
+process with the standard library. A missing `--num-ctx`, one with a remainder,
+`--seed` on ds4 and a non-loopback `--base` are exit 2. **Demanded test:** 5–9, 16, 17 — the tag idempotent,
 one warm-up timed by the injected clock, and the port refusal carrying the port and
 **no** `held_by`.
 
@@ -306,7 +317,11 @@ nothing, under a green `RUN OK` — `worker.go:110-120`); a `--worker-dir` relat
 absent (`RefreshSlot` walks it — `worker.go:157,166` — and fails the launch under a
 green `RUN OK`); a `--key-file` missing or **zero bytes**, with `printf 'local\n' >
 <path> && chmod 600 <path>` (`key.go:64`); a bad `--usage`; a `--deadline` that is not
-a Go duration; `--provider` where one is published. **Demanded test:** 10, 14, 15 —
+a Go duration; `--provider` where one is published. One refusal is exit **1**, because
+the caller can retry it: a `--model` the engine does not advertise — a description for a
+tag nobody served is the one-step-short case of DECIDED 2 — naming it, remedy
+`nova-local serve --engine <e> --model <parent> --num-ctx <n>`. **Demanded test:** 10,
+14, 15 —
 the written JSON decodes with **zero problems**, the key file is never opened or
 printed, and every refusal is reported at once.
 
@@ -319,7 +334,7 @@ over.
 $ ollama pull gemma4:12b
 $ nova-local status
 $ nova-local serve --engine ollama --model gemma4:12b --num-ctx 32768 --keep-alive 30m --seed 7
-$ mkdir -p $PWD/home && printf 'local\n' > $PWD/local.key && chmod 600 $PWD/local.key
+$ mkdir -p $PWD/home $PWD/workers && printf 'local\n' > $PWD/local.key && chmod 600 $PWD/local.key
 $ nova-local worker --engine ollama --model gemma4-32k --out $PWD/workers/gemma.json --name gemma --harness opencode --harness-args 'run,--model,ollama/{model},--,{prompt}' --worker-dir $PWD/home --key-file $PWD/local.key --env-var OLLAMA_API_KEY --usage opencode --deadline 20m
 $ nova-swarm quickstart --pool $PWD/pool
 $ nova-swarm run --pool $PWD/pool --workers 1 --hours 1 --worker $PWD/workers/gemma.json
@@ -327,12 +342,13 @@ $ nova-swarm run --pool $PWD/pool --workers 1 --hours 1 --worker $PWD/workers/ge
 
 **Every fact these lines assume, stated.**
 
-- **Before line 1**, two things they do not do. Both binaries are on PATH — `go install
+- **Before line 1**, one thing they do not do. Both binaries are on PATH — `go install
   ./cmd/nova-local ./cmd/nova-swarm` from a clone (Go 1.26, `go.mod`) puts them in
-  `$(go env GOPATH)/bin`, which a fresh Mac does **not** have on PATH — and the box
-  recipe has been applied once ([BOX-LOCAL.md](BOX-LOCAL.md)), without which line 3
-  refuses a store under a home (rule 15). On a fresh single-account Mac that recipe is
-  three commands; on this box it is a 528 GB move done once.
+  `$(go env GOPATH)/bin`, which a fresh Mac does **not** have on PATH. The box recipe
+  ([BOX-LOCAL.md](BOX-LOCAL.md)) is **not** a prerequisite of these six lines: line 3
+  serves from whatever store the engine reports and prints `shared=no` for one under a
+  home. It is the prerequisite of a box more than one account uses (rule 15), where it
+  is a 528 GB move done once.
 - **Line 1** is the stranger's own tool: it assumes the ollama daemon is running, that
   `gemma4:12b` is a tag in ollama's library, and ~8 GB of download. With the recipe
   applied it lands in the shared store, so it is done once for the box.
@@ -342,11 +358,12 @@ $ nova-swarm run --pool $PWD/pool --workers 1 --hours 1 --worker $PWD/workers/ge
   32,768 tokens. `--seed 7` is **arbitrary** — the seed this box's hand-made tags carry;
   omit it and the tag is made without one. No threshold flag is given, so nothing about
   the box is refused, and `load=` is the warm-up it just timed.
-- **Line 4** makes the worker directory and the placeholder key file. `$PWD/home` is
-  the home copy `nova-swarm` refreshes into each slot (`worker.go:157`); it may stay
-  empty but it must **exist**. The local engine wants no key; `nova-swarm` requires a
-  non-empty key file (`key.go:64`), so one line of any text is the whole of it. `$PWD`
-  must contain no spaces.
+- **Line 4** makes the worker directory, line 5's output directory and the placeholder
+  key file. `$PWD/home` is the home copy `nova-swarm` refreshes into each slot
+  (`worker.go:157`); it may stay empty but it must **exist**, and `--out`'s parent must
+  exist too, because `worker` makes no directory. The local engine wants no key;
+  `nova-swarm` requires a non-empty key file (`key.go:64`), so one line of any text is
+  the whole of it. `$PWD` must contain no spaces.
 - **Line 5** names `gemma4-32k` — the `serve_as=` line 3 printed — and **is the
   acceptance**: the twelve keys it emits are the decoder's twelve (`worker.go:26-39`)
   with no extra, every `want()` at `worker.go:93-100` non-empty, `usage` accepted,
@@ -364,7 +381,8 @@ $ nova-swarm run --pool $PWD/pool --workers 1 --hours 1 --worker $PWD/workers/ge
   hours greater than zero, `--worker` the path line 5 wrote. **OpenCode is this line's
   prerequisite and not the six lines'**: `run` refuses before any pool work when the
   harness is not on PATH (`main.go:451`, exit 2 naming it). Over an empty pool it is
-  `RUN OK started=0` (`run.go:308-309`). One more program is needed only once a task
+  `RUN OK started=0` (`run.go:308-310` breaks on the empty pool, `:321` prints it). One
+  more program is needed only once a task
   runs: `usage: opencode` reads OpenCode's database with `sqlite3` (`opencode.go:32,75`),
   which macOS ships and a linux box may not.
 
@@ -372,6 +390,9 @@ OpenCode needs no config of the stranger's: `nova-swarm` writes the provider blo
 the slot at every start (`run.go:462` → `worker.go:219-243`), and the three keys that
 matter are the served id under `provider.ollama.models`, an `options.apiKey` of
 `{env:<the description's env_var>}`, and an `options.baseURL` of the engine's `/v1`.
+Whether OpenCode accepts that block with no `npm` key is a fact about OpenCode and not
+about this repo — **the one fact in these seven lines no test here can see**, and the
+thing the new-user hour's transcript exists to prove.
 `README.md`'s `### First run` **will be** these lines with their output plus the
 sentence naming OpenCode as the seventh line's prerequisite, executed by test 1 (work
 list 7; `README.md` has no `nova-local` section today).
@@ -421,7 +442,8 @@ supplies a **fake box** through the one interface that reads them
    `127.0.0.1:9999` and `[::1]:9999` are used; the default is printed.
 5. `digest=` is as the fake reported on every model and `SERVE OK` line, `none (ds4
    reports none)` where none is reported; `--expect-digest` differing is exit 1 naming
-   both and serving nothing; the run's whole file output is the `--out` path.
+   both and serving nothing; every `SERVE REFUSED` line, here and in tests 9, 16 and 17,
+   carries `— remedy: <command>`; the run's whole file output is the `--out` path.
 6. `serve` without `--num-ctx` is exit 2 containing `refusing to guess`; `num_ctx=` is
    printed only for a model the fake `/api/ps` reports loaded.
 7. `--model m:7b --num-ctx 32768 --seed 7` creates `m-32k` with those three baked and
@@ -453,7 +475,8 @@ supplies a **fake box** through the one interface that reads them
     child argv begins with `sh`, `bash` or `zsh`.
 15. `worker`'s refusals, each exit 2 naming the field, all in one run: no `{model}`; an
     argument carrying a comma; a `--worker-dir` relative or absent; a missing
-    `--key-file`; a bad `--usage`; a bad `--deadline`; `--provider` on ollama.
+    `--key-file`; a bad `--usage`; a bad `--deadline`; `--provider` on ollama. Plus the
+    one at exit 1: a `--model` the fake does not advertise, remedy `nova-local serve`.
 16. A fake ds4 with two ids and one loaded gives `advertised=2 resident=<the -m file,
     symlinks resolved>` and `digest=none (ds4 reports none)`; no process gives
     `resident=unknown (<why>)`; `serve` over a different resident model is exit 1 naming
@@ -461,8 +484,9 @@ supplies a **fake box** through the one interface that reads them
 17. **Two accounts, one store.** Two runs under different `HOME`/`USER` pairs are
     **byte-identical**, `store=` and `shared=` included; `store=` is the `blobs` parent
     of the fake's `FROM` path, `unknown (no tag to show)` with no tag. A store under
-    either home is `serve` exit 1 naming it and BOX-LOCAL.md while `status` stays exit 0
-    with `shared=no`; a fake holder on the port gives exit 1 carrying the port and **no**
+    either home is `serve --require-shared-store` exit 1 naming it and BOX-LOCAL.md, and
+    plain `serve` exit 0 printing `shared=no`, while `status` stays exit 0 with
+    `shared=no`; a fake holder on the port gives exit 1 carrying the port and **no**
     `held_by`. No verb writes a plist, a unit, or anything under `/Library`.
 
 Plus the house standard: a usage banner ending in a runnable `example:` block, refusals
@@ -476,8 +500,8 @@ hardcoded paths, the exit grammar above, `internal/oneline` for every printed va
 `internal/bounded` for every listing.
 
 1. **`internal/local/engine.go`** — the adapter interface, the loopback pin, the
-   `--timeout` budget, the registry, rule 15's shared-store paths and home test. Tests
-   3, 4, 17.
+   `--timeout` budget, the registry, rule 15's shared-store paths, the home test and
+   `--require-shared-store`. Tests 3, 4, 17.
 2. **`internal/local/box.go`** — load average, memory, the live wired cap, read at the
    moment of the call, behind one interface a test can fake. Tests 9, 11.
 3. **`internal/local/ollama.go`** — `/api/tags`, `/api/ps`, `/api/show` (parameters
@@ -489,8 +513,8 @@ hardcoded paths, the exit grammar above, `internal/oneline` for every printed va
 5. **`internal/local/worker.go`** — the description in `nova-swarm`'s exact schema,
    every field from a flag or the adapter, the refusals, the key file `stat`ed and never
    opened. Tests 10, 14, 15.
-6. **`cmd/nova-local/main.go`** — three verbs, the banner, the quickstart notes folded
-   into `status`, refusals that name the next command. Tests 1, 12, 13.
+6. **`cmd/nova-local/main.go`** — three verbs, the banner, the nothing-answering remedy
+   line folded into `status`, refusals that name the next command. Tests 1, 12, 13.
 7. **`README.md`'s `### First run`** — the six lines with their output, the seventh, and
    the sentence naming OpenCode as its prerequisite. Test 1.
 
@@ -518,7 +542,7 @@ still a place to push back.
 13. The six lines end at `quickstart` and `run` is the seventh, because `run` refuses without the harness on PATH (2e858f8).
 14. The derived tag strips the reference's `:<tag>`, so a collision is caught by the parent rather than the name (2e858f8).
 15. Rule 15 is what an engine reports — `store=` from `/api/show`'s `FROM` path or this user's own process argv, and a port refusal with no `held_by` — because the two reads the previous revision demanded are not available to a non-root account through the standard library on the platform it named; the daemon, the owner and the move are BOX-LOCAL.md (this revision).
-16. A store under a home is a `serve` **refusal**, not a note, which makes the box recipe a prerequisite of line 1; the alternative is a `--require-shared-store` flag in rule 8's shape, which keeps a stranger's first run shorter and makes Glenn's requirement optional. This revision took the requirement at its word — the decision most worth pushing back on (this revision).
+16. A store under a home is **printed always and refused only under `--require-shared-store`** (2026-09-12, re-derived from rules 8 and 10 on read 5): one clause had three answers in three revisions — a `LOCAL NOTE` at exit 0, a wall, then this — and the oscillation ends because a refusal firing on every one-account laptop and on no box after the recipe enforces the two-account requirement exactly where it does not apply. It is enforced at BOX-LOCAL.md's step 4 instead (this revision).
 
 ## Sources
 
