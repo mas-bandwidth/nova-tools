@@ -228,14 +228,22 @@ func Run(in RunInput) int {
 			// which is neither done nor failed: the dash the grammar names for exactly that.
 			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=unlaunched dest=%s usage=- requeued=false\n", n, oneline.Field(d.File.Job), Dash)
 		default:
-			said = true
-			quarantined[n] = true
 			// A reservation whose launch is unproven is rewritten to `orphaned` with its
 			// nonce KEPT -- under slots.lock, after a recheck that it still reads reserved
 			// with that nonce, and adopting instead if an identify landed in between.
+			//
+			// THE ADOPTION IS NOT A QUARANTINE, and the exit code is written after the
+			// recheck rather than before it. SPEC-SWARM.md:541 gives exit 1 to "a run that
+			// ended with a quarantined slot or a LAUNCH-FAILED job", and an adopted slot
+			// is neither: it is a supervisor that identified while this dispatcher was
+			// reading, whose job this pass then finishes. Before this the pass printed
+			// RUN ADOPT, RUN DONE, `RUN OK done=1` and `RUN NOTE the pool drained` -- and
+			// exited 1 over them, because `said` had been set a few lines above and the
+			// adopting branch only took the slot back out of the quarantine map. Seen on
+			// ubuntu CI 2026-09-12 by the hangup test, which is the one test that reaches
+			// this branch with a supervisor that really is alive.
 			if d.File.State == SlotReserved {
 				if adopted, sf, err := p.Orphan(n, d.File.Nonce); err == nil && adopted {
-					delete(quarantined, n)
 					sc, _ := p.ReadSidecar(Running, sf.Job)
 					started := parseStamp(sf.LaunchedAt, now())
 					watching[n] = &running{sc: sc, slot: n, nonce: sf.Nonce, jobDir: sf.JobDir, started: started,
@@ -245,6 +253,8 @@ func Run(in RunInput) int {
 					continue
 				}
 			}
+			said = true
+			quarantined[n] = true
 			fmt.Fprintf(out, "RUN QUARANTINE slot=%d id=%s: %s\n", n, oneline.Field(dashOr(d.File.Job)), oneline.Escape(d.Reason))
 		}
 	}
