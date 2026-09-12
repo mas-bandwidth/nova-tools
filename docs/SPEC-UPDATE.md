@@ -326,7 +326,7 @@ install` or `npm install`.
    `0.11.0`, names that endpoint in `source=`, and whose `[]` is UNKNOWN reason `no
    release and no tag`; a 257 KB body and a four-hop redirect are UNKNOWN; `npm:` requests
    a path ending `/latest`; `source=` equals `latest`.
-7. `TestADeadSourceIsNeverOk`: a 500, then a 403 and a 429 each naming its
+7. `TestADeadSourceIsNeverOk`: a 500 naming it, then a 403 and a 429 each naming its
    `x-ratelimit-reset`, a registry 404 giving `tag_not_found`, remedy
    `https://ollama.com/library/<model>/tags`, never `shape` and never rule 4's `not_found`,
    a hang past the timeout, a `{}` and invalid JSON each give one `UPDATE UNKNOWN` and exit
@@ -369,8 +369,8 @@ install` or `npm install`.
     so is `1.10.0` against `1.9.0`; `newer`, `older`, `downgrade` and `ahead` appear
     nowhere in the output; `at=` is the injected clock, never a body.
 18. `TestEveryRefusalNamesItsRemedy`: every refusal in the package lives in one table, which
-    the test walks: each ends in a parenthesised remedy naming a command, a file, or the
-    values allowed, and removing one turns the test red.
+    the test walks: each ends in a parenthesised remedy naming a command, a file, a URL,
+    or the values allowed, and removing one turns the test red.
 19. `TestTheKindFilterRestrictsTheRun`: `--kind tool` over a file of all five kinds starts
     only the tool entries' `installed` argvs and only their GETs — a counting handler sees
     no others — prints no line of another kind, and its `kinds=` and `checked=` are the
