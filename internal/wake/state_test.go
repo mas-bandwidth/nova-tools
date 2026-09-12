@@ -463,3 +463,41 @@ func storedPrintedHalf(t *testing.T, path, key string) string {
 	t.Fatalf("no row for %q in:\n%s", key, raw)
 	return ""
 }
+
+// The lock is named by (bus, as), so the name that reaches the filesystem has
+// to be INJECTIVE: a mapping that strips every unsafe byte to the same one
+// makes two different lines refuse each other over a cursor neither of them is
+// moving, and the refusal names a holder the other line has never heard of.
+func TestTheAdvanceLockNameIsInjective(t *testing.T) {
+	bus := t.TempDir()
+	first, holder, err := LockAdvance(bus, "Rowan!")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == nil {
+		t.Fatalf("the first name could not take its own lock (held by %s)", holder)
+	}
+	defer first()
+	second, holder, err := LockAdvance(bus, "Rowan?")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second == nil {
+		t.Fatalf("Rowan? was refused the lock Rowan! holds (pid %s); one advancing watcher per bus and NAME", holder)
+	}
+	defer second()
+
+	// And the encoding is reversible by eye rather than lossy.
+	for _, tc := range []struct{ in, want string }{
+		{"Rowan", "Rowan"},
+		{"Rowan!", "Rowan%21"},
+		{"Rowan?", "Rowan%3F"},
+		{"a/b", "a%2Fb"},
+		{"%", "%25"},
+		{"", "%00"},
+	} {
+		if got := safeName(tc.in); got != tc.want {
+			t.Errorf("safeName(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
