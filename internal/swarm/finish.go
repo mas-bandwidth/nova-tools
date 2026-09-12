@@ -129,7 +129,14 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	// The slot is released in the SAME step that finalizes the job -- never on a timer and
 	// never by a scan of directories. A slot whose child survived the kill is RETIRED for
 	// the rest of the run: a data home that may still have a writer in it is not free.
-	if survivors > 0 {
+	// A SLOT FILE THIS PASS COULD NOT READ IS NOT A SLOT IT MAY HAND OUT AGAIN. At start-up
+	// rule 17 quarantines exactly this file; mid-run the job ended `unknown` and the slot
+	// was then FREED, so the same unreadable file was the next job's slot -- one ending
+	// treated two ways by the same run. It is retired for the rest of the pass instead, on
+	// the same grounds as a surviving child: what this dispatcher could not read, it cannot
+	// say is free. A file that is GONE is an answer, not a collision, and is freed as before.
+	unreadableSlot := slotErr != nil && !missing(slotErr)
+	if survivors > 0 || unreadableSlot {
 		// RULE 11 QUARANTINES THE RESULT (SPEC-SWARM.md:154), and rule 17's QUARANTINE is
 		// about a slot FILE. What this does to the slot is neither: it RETIRES it for the
 		// rest of the run, because a data home that may still have a writer in it is not

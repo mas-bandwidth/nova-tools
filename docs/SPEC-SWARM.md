@@ -330,7 +330,11 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     each brief slot-state transition — reserve, identify, orphan, release —
     is held for the read, the compare and the rename of one slot file and
     nothing longer, and is **never held while waiting** for a process, a
-    handshake or a timeout, so a supervisor identifies while its parent still
+    handshake or a timeout — the one wait it may cover is the filesystem's
+    own replace collision, **bounded at 2s**, which a rename under this lock
+    waits out on a platform whose rename is not atomic against a reader
+    (Windows), and which is a property of the filesystem rather than of any
+    job — so a supervisor identifies while its parent still
     owns `run.lock` and a recovering dispatcher owns `run.lock` while the
     supervisor it is deciding about takes `slots.lock`. On start, before it
     claims any pending task, a
@@ -426,14 +430,37 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     (4) **handshake** — the runner waits for `state: "launched"` to appear in
     the slot file, up to `--launch-timeout` seconds (default 10, a tool
     property like a timeout), **holding `run.lock` and no other lock while
-    it waits**; if it does not appear, the runner kills the
+    it waits**. The timeout is **one deadline for the whole handshake**,
+    taken once from the monotonic clock: every retrying read inside it —
+    including the 2s replace-collision wait of rule 17 — gets only what is
+    left of that deadline, so the handshake ends at `--launch-timeout`
+    however many reads collide, and `after=<d>` is the time that actually
+    passed. The wait has a **second end condition**, because a timeout is
+    the bound for a supervisor that is alive and merely slow and not a
+    diagnosis: if the supervisor **exits** without having written an
+    identity — it lost its compare-and-swap, it could not write the file, or
+    it was killed — the runner reads the slot once more, in case the
+    identify landed in the same instant, and then ends the handshake at once
+    rather than waiting out a clock for a process that is gone, printing
+    `RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: the supervisor exited
+    without writing an identity` with `<job>/aborted.json`'s reason appended
+    when that file carries this launch's `nonce`. On either end condition
+    the runner kills the
     supervisor's group, writes `launch=failed` into the sidecar, moves the
     task to `failed/`, frees the slot under `slots.lock`, and prints `RUN LAUNCH-FAILED id=<id>
-    slot=<n> after=<d>: no identity within <n>s`; only after the handshake is
+    slot=<n> after=<d>: no identity within <n>s` for the timeout; only after the handshake is
     `RUN START` printed, with the identified pid; (5) **release to work** —
     the supervisor spawns the harness as its child in the same group, with
     the key in the child's environment (rule 6), and holds the job's
-    deadline and budget (rules 7 and 13); (6) **finalization** — when the
+    deadline and budget (rules 7 and 13); a **failed read of the slot file
+    while a job is watched is not evidence that the job has ended** — the
+    dispatcher asks the observables instead (the record is GONE, or
+    `<job>/exit.json` carries this launch's `nonce`), with the job's own
+    deadline, measured from its start, as the outer bound — and a job that
+    ends with its slot file present and unreadable has that slot **retired
+    for the rest of the run**, never freed: what a dispatcher could not read
+    it cannot call free, which is the answer rule 17 gives the same file at
+    start-up; (6) **finalization** — when the
     harness exits, the supervisor writes `<job>/exit.json` with `{rc, signal,
     ended, survivors, nonce}` through `.tmp` and rename, **the durable completion
     evidence** — an `exit.json` whose `nonce` is not the slot file's is not
