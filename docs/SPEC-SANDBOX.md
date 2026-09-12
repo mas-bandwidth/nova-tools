@@ -328,9 +328,19 @@ near the end.
       signal forwarding, and the exit status is the command's by identity.
     - **darwin:** the tool spawns `sandbox-exec`, which applies the profile and
       `exec`s the command in place, and **waits**; `SIGINT` and `SIGTERM` are
-      forwarded to the child's process group. The tool waits so that it can
-      forward signals and return the command's status, not to clean anything
-      up: the profile is inline (`-p`).
+      forwarded **to the child**, not to a process group. **The tool creates no
+      process group of its own**: the wrapped tree stays in the caller's group,
+      and the caller owns pgid and reaping. A group of the tool's making looked
+      tidier and was measured wrong — a swarm supervisor puts each job in a
+      group of *its* making and reaps that group at the deadline (SPEC-SWARM
+      rule 11), and a wrapped command that forked a background child left that
+      child in the tool's group, outside the one the supervisor kills: the
+      reaper reported `survivors=0` while a process was still alive, which is
+      exactly the silent failure that rule exists to prevent. On a tty the
+      group-wide signal reaches the whole tree already, because the tree is in
+      the caller's group. The tool waits so that it can forward signals and
+      return the command's status, not to clean anything up: the profile is
+      inline (`-p`).
     - **windows:** the tool `CreateProcessW`es the command into the container
       and **waits**, forwarding console control events, so that it can remove
       the ACEs it added when the command ends.
@@ -1437,6 +1447,11 @@ One per rule:
     it, because it is the reason the rule names only two legal shapes. On
     every platform the wrapped command can signal its
     **own** child: `sh -c 'sleep 30 & kill $!'` exits 0 and the sleep is gone,
+    and a wrapped command's forked background child is **reaped with the
+    caller's process group** — the test starts the tool in a group of its own
+    making, wraps a command that forks a background `sleep` and exits, kills
+    that group and asserts the `sleep` is dead; a tool that gives its child a
+    group of its own turns this red, which is how it was found,
     which is red on darwin without `(target children)` in the signal clause.
     Descriptors: a wrapped listing of `/dev/fd` names **0, 1 and 2 and nothing
     the tool added**, compared against the same listing outside the wall so that
@@ -1694,6 +1709,17 @@ and in both the direction was chosen rather than split.
    outside every named path — the shape the rule itself calls *unreliable*.
    Checklist item 5 states it; the launcher writes `$fdir/logs/` and takes
    `FREDDY_LOG_DIR` only when it resolves inside the write set.
+
+3. **The tool creates no process group of its own.** Not from read 8 — from the
+   swarm seam read, and it belongs here because it makes rule 12's darwin bullet
+   false as it stood. The darwin body gave its child a group of its own, so a
+   wrapped command that forked a background child left that child outside the
+   group a swarm supervisor reaps at the deadline, and `survivors=0` was
+   reported while a process was still alive (SPEC-SWARM rule 11's silent
+   failure). The wrapped tree stays in the caller's group now; the caller owns
+   pgid and reaping; `SIGINT` and `SIGTERM` go to the child rather than to a
+   group the tool never created. Test 12 gains the reaper case, and it was red
+   first.
 
 And the rest, each a thing this document said that was no longer true:
 the launcher-caller section is current with the live `run-freddy.sh` (`HOME`
