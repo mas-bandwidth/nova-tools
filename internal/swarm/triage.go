@@ -346,21 +346,33 @@ func (p *Pool) Jobs() ([]Sidecar, error) {
 // ReportBytes reads a job's report from the RETAINED copy for a finalized job and from the
 // job directory only for a running one, so the first triage after a reclaim reads the same
 // bytes it would have read before it.
+//
+// BOTH READS ARE STEADY. Each of these paths is published by a rename -- the retained copy
+// by `writeAtomic`, the live RESULT.md by the harness -- so on Windows a read landing inside
+// that replace window fails for microseconds and says nothing about the job. Read as a fact
+// it made a published report a `no_result` on the page and threw the worker's findings away:
+// the class this branch closed for exit.json and for `finish`'s read of the same file. A
+// record that is GONE still answers at once, so the ErrNotExist fall-through below keeps its
+// meaning.
 func (p *Pool) ReportBytes(sc Sidecar) ([]byte, string, error) {
 	retained := filepath.Join(p.ReportsDir(sc.ID), CopiedResult)
-	if raw, err := os.ReadFile(retained); err == nil {
+	if raw, err := readFileSteady(retained); err == nil {
 		return raw, retained, nil
 	}
 	if sc.Job == "" {
 		return nil, "", os.ErrNotExist
 	}
 	live := ResultPath(sc.Job)
-	raw, err := os.ReadFile(live)
+	raw, err := readFileSteady(live)
 	return raw, live, err
 }
 
+// rehash is rule 16's proof that the buffer triage parsed is still what is on disk. It is
+// STEADY for a reason of its own: a bare read here made a replace COLLISION indistinguishable
+// from the one thing the rule exists to catch, a writer appending in place, and a report that
+// had not changed by one byte printed `TRIAGE SKIPPED … changed while read`.
 func (p *Pool) rehash(path string) (string, error) {
-	raw, err := os.ReadFile(path)
+	raw, err := readFileSteady(path)
 	if err != nil {
 		return "", err
 	}

@@ -198,7 +198,10 @@ func (p *Pool) WriteSidecar(state string, sc Sidecar) error {
 // ReadSidecar reads one task's sidecar from a named state.
 func (p *Pool) ReadSidecar(state, id string) (Sidecar, error) {
 	var sc Sidecar
-	raw, err := os.ReadFile(p.sidecarFile(state, id))
+	// Both files a task IS are written by writeAtomic, from this process and from `note`,
+	// `requeue` and `finalize` in others, while the dispatcher polls them. The read side
+	// waits out the same collision the write side already waits out (fileretry.go).
+	raw, err := readFileSteady(p.sidecarFile(state, id))
 	if err != nil {
 		return sc, err
 	}
@@ -209,7 +212,9 @@ func (p *Pool) ReadSidecar(state, id string) (Sidecar, error) {
 }
 
 // Text reads one task's text from a named state.
-func (p *Pool) Text(state, id string) ([]byte, error) { return os.ReadFile(p.taskFile(state, id)) }
+func (p *Pool) Text(state, id string) ([]byte, error) {
+	return readFileSteady(p.taskFile(state, id))
+}
 
 // List returns every task in a state, in id order -- which is time order, because the id
 // begins with its UTC stamp.
@@ -307,7 +312,10 @@ func writeAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	// The rename waits out a reader that has this path open (fileretry.go): on Windows
+	// that collision is an error, and a durable record dropped because somebody was
+	// reading it is how a supervisor aborted its own launch (#92).
+	return renameSteady(tmp, path)
 }
 
 // Stopped reports whether a person has asked this pool to stop.

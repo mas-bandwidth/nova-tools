@@ -107,9 +107,15 @@ func Nonce() (string, error) {
 func (p *Pool) slotPath(n int) string { return p.Path(Slots, strconv.Itoa(n)+".json") }
 
 // ReadSlot reads one slot file.
-func (p *Pool) ReadSlot(n int) (SlotFile, error) {
+func (p *Pool) ReadSlot(n int) (SlotFile, error) { return p.ReadSlotBy(n, time.Time{}) }
+
+// ReadSlotBy reads one slot file under a caller's deadline: a caller that polls this file
+// inside a bound of its own (the launch handshake) lends that bound to the collision wait,
+// so the retries live INSIDE the caller's clock instead of being added to it. The zero time
+// is "no bound of mine", and reads exactly like ReadSlot.
+func (p *Pool) ReadSlotBy(n int, budget time.Time) (SlotFile, error) {
 	var sf SlotFile
-	raw, err := os.ReadFile(p.slotPath(n))
+	raw, err := readFileSteadyBy(p.slotPath(n), budget)
 	if err != nil {
 		return sf, err
 	}
@@ -258,7 +264,7 @@ func (p *Pool) Free(n int) error {
 	defer release()
 	path := p.slotPath(n)
 	gone := path + ".freed"
-	if err := os.Rename(path, gone); err != nil {
+	if err := renameSteady(path, gone); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
 		}
@@ -287,7 +293,7 @@ func WriteJSON(path string, v any) error {
 
 // ReadJSON reads one of them back.
 func ReadJSON(path string, v any) error {
-	raw, err := os.ReadFile(path)
+	raw, err := readFileSteady(path)
 	if err != nil {
 		return err
 	}
