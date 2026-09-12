@@ -42,6 +42,12 @@ type Pass struct {
 	Pulled   int
 	LaneTip  string
 
+	// DefaultBranch is the repository's default branch as discovered THIS PASS, from the
+	// remote's own HEAD. Empty means it was not attempted or did not answer, and an empty
+	// one never weakens the policy: State.HostedRedBlocks falls back to the recorded fact
+	// and, with neither, to the stronger rule.
+	DefaultBranch string
+
 	// basePending is set by baseLine: the base has no evidence for its head, which is
 	// every base below main right after a merge. A pending base WAITS -- nothing merges
 	// onto it -- and RUN NOTE names the gate run that proves it.

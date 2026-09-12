@@ -96,7 +96,7 @@ func (p *Pass) classify(e *Entry, baseSHA string, res *Result) Classification {
 	// ONE STATEMENT of the decision, shared with dry-run and status (lesson 113: a
 	// matching rule has exactly one statement). What is here and not in standing() is
 	// the side effects: the detail sentences, the build, and the record.
-	state, admitted := standing(p.State.Base, checks, c.Reads, c.Gate, p.basePending)
+	state, admitted := standing(p.State.HostedRedBlocks(p.DefaultBranch), checks, c.Reads, c.Gate, p.basePending)
 	c.Admitted = admitted
 	c.State = state
 	switch state {

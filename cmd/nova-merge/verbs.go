@@ -59,6 +59,14 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 	// line could not rehearse, and git's own config was the only way in, which means the
 	// ENVIRONMENT could move where a lane pushes and no flag said so.
 	remote := f.fs.String("remote", "", "")
+	// --default-branch and --hosted-red are rule 15's two knobs, and they exist because
+	// the rule was the literal string "main": a repository whose default branch is master,
+	// trunk or release took the WEAKER arm in silence and merged over its hosted reds.
+	// Neither is required -- the default branch is discovered from the remote's own HEAD,
+	// and an unknown one takes the stronger arm -- and neither bakes in a naming
+	// convention: a team states its own topology here instead of adopting ours.
+	defaultBranch := f.fs.String("default-branch", "", "")
+	hostedRed := f.fs.String("hosted-red", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -67,7 +75,10 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 	f.require("base", *base, "the branch this lane's entries are merged onto")
 	// Lesson 48: these two are stored once and handed to git on every pass afterwards, so
 	// they are checked HERE, where a person can still see what they typed.
-	for _, c := range []struct{ name, value string }{{"base", *base}, {"lane-branch", *laneBranch}} {
+	if err := merge.ValidHostedRed(*hostedRed); err != nil {
+		f.problem(fmt.Sprintf("--hosted-red is %q or %q, got %q: %s", "blocks", "names", *hostedRed, oneline.Escape(err.Error())))
+	}
+	for _, c := range []struct{ name, value string }{{"base", *base}, {"lane-branch", *laneBranch}, {"default-branch", *defaultBranch}} {
 		if c.value == "" {
 			continue
 		}
@@ -103,7 +114,19 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 			oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)), oneline.Escape(undoInit(*f.lane, existed == nil)))
 		return 2
 	}
-	if err := merge.Init(*f.lane, *repo, *base, *laneBranch); err != nil {
+	// THE DEFAULT BRANCH IS DISCOVERED FROM THE REMOTE'S OWN HEAD, not from gh and not
+	// from a name we assume. A discovery that does not answer writes nothing, prints one
+	// INIT NOTE, and leaves the lane on the STRONGER hosted-red rule.
+	discovered := *defaultBranch
+	if discovered == "" && *hostedRed == "" {
+		discovered = merge.DefaultBranchOf(merge.NewGit(*f.lane, f.dur(), deps.Runner), url)
+		if discovered == "" {
+			fmt.Fprintf(stderr, "INIT NOTE the repository's default branch could not be read from %s, so this lane records none and takes the STRONGER hosted-red rule: a hosted red stops the entry (rule 15). nova-merge init --lane %s --default-branch <branch> records it, and --hosted-red names states the other arm outright\n",
+				oneline.Field(url), oneline.Field(*f.lane))
+		}
+	}
+	if err := merge.Init(*f.lane, merge.LaneConfig{Repo: *repo, Base: *base, LaneBranch: *laneBranch,
+		DefaultBranch: discovered, HostedRed: *hostedRed}); err != nil {
 		fmt.Fprintf(stderr, "INIT REFUSED: %s\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 1
 	}
@@ -117,7 +140,8 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 		fmt.Fprintf(stderr, "INIT REFUSED: the lane's own clone could not be made: %s\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 2
 	}
-	merge.Appendf(*f.lane, deps.Now(), "INIT lane=%s repo=%s base=%s lane_branch=%s joined=%t", *f.lane, *repo, *base, *laneBranch, joined)
+	merge.Appendf(*f.lane, deps.Now(), "INIT lane=%s repo=%s base=%s lane_branch=%s default_branch=%s hosted_red=%s joined=%t",
+		*f.lane, *repo, *base, *laneBranch, discovered, *hostedRed, joined)
 	fmt.Fprintf(stdout, "INIT OK lane=%s repo=%s base=%s lane_branch=%s joined=%t version=%d\n",
 		oneline.Field(*f.lane), oneline.Field(*repo), oneline.Field(*base), oneline.Field(*laneBranch), joined, merge.Version)
 	if !quickstart {

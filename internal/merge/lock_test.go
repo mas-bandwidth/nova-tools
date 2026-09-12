@@ -85,7 +85,7 @@ func TestHelperHoldsTheLock(t *testing.T) {
 
 func TestAKillMidWriteLeavesTheOldStateEntireAndTheTempNameIsSteppedOver(t *testing.T) {
 	lane := t.TempDir()
-	if err := Init(lane, "o/n", "main", "nova-merge/l"); err != nil {
+	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "main", LaneBranch: "nova-merge/l"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := Update(lane, LockWait, func(st *State) error {

@@ -66,7 +66,7 @@ func TestVersionIsCheckedBeforeAnyOtherField(t *testing.T) {
 
 func TestARoundTripPreservesOrder(t *testing.T) {
 	lane := t.TempDir()
-	if err := Init(lane, "o/n", "main", "nova-merge/l"); err != nil {
+	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "main", LaneBranch: "nova-merge/l"}); err != nil {
 		t.Fatal(err)
 	}
 	st, err := Load(lane)
@@ -98,14 +98,14 @@ func TestARoundTripPreservesOrder(t *testing.T) {
 
 func TestAnInitOfALaneThatExistsRefuses(t *testing.T) {
 	lane := t.TempDir()
-	if err := Init(lane, "o/n", "main", "nova-merge/l"); err != nil {
+	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "main", LaneBranch: "nova-merge/l"}); err != nil {
 		t.Fatal(err)
 	}
 	before, err := os.ReadFile(filepath.Join(lane, "state.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Init(lane, "o/n", "other", "nova-merge/l"); err == nil {
+	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "other", LaneBranch: "nova-merge/l"}); err == nil {
 		t.Fatal("init is creation-only: a lane whose state.json exists is refused")
 	}
 	after, _ := os.ReadFile(filepath.Join(lane, "state.json"))
@@ -126,7 +126,7 @@ func TestAnInitOfALaneThatExistsRefuses(t *testing.T) {
 // on every platform, which is the property the rename is there for.
 func TestThirtyConcurrentWritersAllLandAndTheFileAlwaysParses(t *testing.T) {
 	lane := t.TempDir()
-	if err := Init(lane, "o/n", "main", "nova-merge/l"); err != nil {
+	if err := Init(lane, LaneConfig{Repo: "o/n", Base: "main", LaneBranch: "nova-merge/l"}); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})

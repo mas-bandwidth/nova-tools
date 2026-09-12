@@ -64,13 +64,62 @@ const (
 // State is <lane>/state.json: the ordered entries, and the FOLD of the record files in
 // the lane's branch (rule 22). The lists are the fold and the files are the truth.
 type State struct {
-	Version    int      `json:"version"`
-	Repo       string   `json:"repo"`
-	Base       string   `json:"base"`
-	LaneBranch string   `json:"lane_branch"`
-	PRs        []*Entry `json:"prs"`
-	Branches   []*Entry `json:"branches"`
-	Gates      []Gate   `json:"gates"`
+	Version    int    `json:"version"`
+	Repo       string `json:"repo"`
+	Base       string `json:"base"`
+	LaneBranch string `json:"lane_branch"`
+	// DefaultBranch is the repository's default branch: a recorded FACT, discovered by
+	// init from the remote's own HEAD or given with --default-branch. It is what rule 15
+	// means by the IMPORTANT BASE, and the reason the rule is not the literal string
+	// "main" -- a repository whose default branch is master, trunk or release is not a
+	// repository whose hosted reds are optional. Empty means the fact is not recorded,
+	// and an unrecorded fact takes the STRONGER rule (HostedRedBlocks).
+	DefaultBranch string `json:"default_branch,omitempty"`
+	// HostedRed is the lane's POLICY, stated outright: "blocks" or "names" (rule 15's two
+	// arms). Empty means derive it from DefaultBranch, and anything else does not decode.
+	// A team whose branch topology is nothing like ours configures this rather than
+	// renaming their branches to suit us.
+	HostedRed string   `json:"hosted_red,omitempty"`
+	PRs       []*Entry `json:"prs"`
+	Branches  []*Entry `json:"branches"`
+	Gates     []Gate   `json:"gates"`
+}
+
+// The closed vocabulary of state.json's hosted_red, and of an entry's needs_read. Both are
+// closed for the same reason the verdicts are: a value this tool never wrote is a value
+// somebody typed, and guessing at it in the weaker direction is how a lane merges over a
+// red or merges unread.
+const (
+	HostedRedBlocksValue = "blocks" // a hosted red stops the entry whatever any gate says
+	HostedRedNamesValue  = "names"  // a hosted red is named on the merge line and never blocks
+)
+
+// HostedRedBlocks is rule 15's fork, as a function of the recorded policy, the recorded
+// default branch, and a default branch discovered this pass (empty when discovery was not
+// attempted or did not answer).
+//
+// THE DERIVATION IS MONOTONE TOWARD PROTECTION. An absent policy and an unknown default
+// branch take the stronger arm; a rename cannot downgrade a lane, because the base is
+// compared against the recorded AND the discovered name and either match is enough; and a
+// failed discovery answers exactly what it answered before the failure. The only way to
+// the weaker arm is a policy that says so, or a KNOWN default branch that the base is not.
+func (s *State) HostedRedBlocks(discovered string) bool {
+	switch s.HostedRed {
+	case HostedRedBlocksValue:
+		return true
+	case HostedRedNamesValue:
+		return false
+	}
+	if s.DefaultBranch == "" && discovered == "" {
+		return true
+	}
+	return s.Base == s.DefaultBranch || (discovered != "" && s.Base == discovered)
+}
+
+// HostedRedUnknown is the NOTE's condition: the policy is derived and there is no default
+// branch to derive it from, so the lane took the stronger rule without being told to.
+func (s *State) HostedRedUnknown(discovered string) bool {
+	return s.HostedRed == "" && s.DefaultBranch == "" && discovered == ""
 }
 
 // Entry is one pull request or one branch. The two lists are separate in the file on
@@ -137,6 +186,14 @@ func (e *Entry) Kind() string {
 
 // IsPR reports whether this entry is a pull request.
 func (e *Entry) IsPR() bool { return e.Branch == "" }
+
+// Selector is how a remedy names this entry on a command line: the flag a person retypes.
+func (e *Entry) Selector() string {
+	if e.Branch != "" {
+		return "--branch " + e.Branch
+	}
+	return "--pr " + strconv.Itoa(e.PR)
+}
 
 // ID names the entry a gate record belongs to, the same spelling Entry.ID uses.
 func (g Gate) ID() string {
@@ -212,11 +269,18 @@ func (s *State) validate() error {
 	if strings.TrimSpace(s.LaneBranch) == "" {
 		return errors.New("this lane's state.json has no lane_branch; a lane is created by nova-merge init --lane-branch <name>")
 	}
+	// AN UNKNOWN POLICY IS A REFUSAL AND NEVER AN ARM. Absent is the stronger arm
+	// (HostedRedBlocks); "block", "yes", "true" or "Names" would otherwise be read as the
+	// weaker one by falling off the switch, which is a lane that merges over a hosted red
+	// because somebody mistyped a word.
+	if err := ValidHostedRed(s.HostedRed); err != nil {
+		return err
+	}
 	for _, e := range s.PRs {
 		if e.PR <= 0 || e.Branch != "" {
 			return fmt.Errorf("a pull-request entry carries pr and never branch, got %+v", *e)
 		}
-		if err := validReads(e.Reads); err != nil {
+		if err := validEntry(e); err != nil {
 			return err
 		}
 	}
@@ -224,7 +288,7 @@ func (s *State) validate() error {
 		if e.Branch == "" || e.PR != 0 {
 			return fmt.Errorf("a branch entry carries branch and never pr, got %+v", *e)
 		}
-		if err := validReads(e.Reads); err != nil {
+		if err := validEntry(e); err != nil {
 			return err
 		}
 	}
@@ -234,6 +298,35 @@ func (s *State) validate() error {
 		}
 	}
 	return nil
+}
+
+// ValidHostedRed is state.json's hosted_red vocabulary: blocks, names, or absent.
+func ValidHostedRed(v string) error {
+	switch v {
+	case "", HostedRedBlocksValue, HostedRedNamesValue:
+		return nil
+	}
+	return fmt.Errorf("this lane's state.json has hosted_red=%q; it is %q (a hosted red stops the entry) or %q (a hosted red is named on the merge line and never blocks), and an absent one is %q",
+		v, HostedRedBlocksValue, HostedRedNamesValue, HostedRedBlocksValue)
+}
+
+// validEntry is the half of an entry's shape the decoder cannot state: the closed
+// needs_read vocabulary and the read records.
+//
+// NEEDS_READ IS CLOSED, AND THE EMPTY STRING IS NOT A MEMBER. Every comparison in this
+// package is against the exact word "yes" (read.go, packet.go, publish.go), so "true",
+// "Yes", "y", "1" and a MISSING KEY all mean "no read required" by falling off the
+// comparison -- the entry merges with nobody having read it, which is the one direction the
+// read condition exists to prevent. No version of this tool has ever written anything but
+// yes or no (add writes one of the two words; init writes no entries), so nothing this tool
+// wrote is refused here; a hand-made, scripted or migrated file gets a named refusal
+// instead of a silent no-review.
+func validEntry(e *Entry) error {
+	if e.NeedsRead != "yes" && e.NeedsRead != "no" {
+		return fmt.Errorf("entry %s has needs_read=%q; it is exactly \"yes\" or \"no\", the way a read's and a gate's verdict are closed vocabularies, and an unrecognised spelling must not be read as \"no read required\"; nova-merge add --lane <dir> %s --needs-read queues one that wants a read",
+			e.ID(), e.NeedsRead, e.Selector())
+	}
+	return validReads(e.Reads)
 }
 
 func validReads(reads []Read) error {
@@ -450,7 +543,7 @@ func Update(lane string, wait time.Duration, change func(*State) error) error {
 // exists is refused, and the refusal leaves the existing state byte-identical (rule 20).
 // The checkout of the lane branch and the clone are the caller's, because they run git
 // and this file does not.
-func Init(lane, repo, base, laneBranch string) error {
+func Init(lane string, c LaneConfig) error {
 	if err := os.MkdirAll(lane, 0o755); err != nil {
 		return err
 	}
@@ -460,15 +553,34 @@ func Init(lane, repo, base, laneBranch string) error {
 		return err
 	}
 	st := &State{
-		Version:    Version,
-		Repo:       repo,
-		Base:       base,
-		LaneBranch: laneBranch,
-		PRs:        []*Entry{},
-		Branches:   []*Entry{},
-		Gates:      []Gate{},
+		Version:       Version,
+		Repo:          c.Repo,
+		Base:          c.Base,
+		LaneBranch:    c.LaneBranch,
+		DefaultBranch: c.DefaultBranch,
+		HostedRed:     c.HostedRed,
+		PRs:           []*Entry{},
+		Branches:      []*Entry{},
+		Gates:         []Gate{},
+	}
+	if err := ValidHostedRed(st.HostedRed); err != nil {
+		return err
 	}
 	return st.SaveTo(lane)
+}
+
+// LaneConfig is what init writes once and no other verb takes: the repository, the base,
+// the lane's record branch, and the two facts rule 15 turns on.
+type LaneConfig struct {
+	Repo       string
+	Base       string
+	LaneBranch string
+	// DefaultBranch is the repository's default branch, discovered from the remote's own
+	// HEAD or given with --default-branch. Empty is honest: it means the fact could not
+	// be read, and an unrecorded fact takes the stronger hosted-red rule.
+	DefaultBranch string
+	// HostedRed states rule 15's arm outright: "blocks", "names", or empty to derive.
+	HostedRed string
 }
 
 // Appendf writes one line to the lane's log: the stamp first, the text after, append-only,
