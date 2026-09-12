@@ -1,6 +1,9 @@
 package records
 
-import "sort"
+import (
+	"errors"
+	"sort"
+)
 
 // The construction half of the boundary: how a caller outside this package builds a record
 // and gets the bytes to write, without reaching a private field and without hand-rolling
@@ -43,14 +46,36 @@ import "sort"
 //   - No adapters. What a claude_code transcript line or an Antigravity blob MEANS is a
 //     mapping's business and its owner's; this file only gives that owner a wire.
 
-// ObservationMembers are the twelve members of a nova.tokens.observation/2 body, in the
-// order the format's table writes them. The canonicaliser sorts, so the order here is for a
+// observationMembers are the twelve members of a nova.tokens.observation/2 body, in the
+// order the format's table writes them. The canonicaliser sorts, so the order is for a
 // person reading a diagnostic; the LIST is load-bearing, and the validator's exact-keys
 // check reads it from here so a member cannot be added to one side alone.
-var ObservationMembers = []string{
+//
+// It is UNEXPORTED, and that is the whole point. As an exported slice it was the validator's
+// closed set held in package-global mutable state: `ObservationMembers = append(...)` made
+// ValidateEnvelope accept a thirteen-member body for every Validator in the process, and
+// `[:3]` made it refuse bytes SealObservation had just returned (#146's adversarial read,
+// finding 1 -- and in the repro run the truncation poisoned every later test in the same
+// process, which is what package-global mutable state does). The gate and the bypass shared
+// one slice. Now there is no slice to reach: the reader reads this, and a caller gets a copy.
+var observationMembers = []string{
 	"schema", "source", "kind", "revision", "time", "origin", "model",
 	"repository", "raw_usage", "model_usage", "mapping_id", "receipt",
 }
+
+// ObservationMembers returns the twelve members of a nova.tokens.observation/2 body, in the
+// format's table order. It returns a COPY: writing through the result changes nothing, so a
+// caller can read the schema's shape without being able to widen or shrink what the validator
+// enforces.
+func ObservationMembers() []string {
+	return append([]string(nil), observationMembers...)
+}
+
+// ErrSealed is what the exported Set answers on an object that came from a validated
+// envelope. It is a plain error and not a Refusal on purpose: a Refusal names one of the
+// Rule* constants, every one of those owes testdata a fixture that fails only that rule, and
+// this is an API misuse rather than a defect in a record's bytes.
+var ErrSealed = errors.New("records: this object came from a validated envelope and is sealed; its digest is an identity somebody holds, so build a new body with NewObject")
 
 // NewObject returns an empty object to build a body in. It is the only exported way to make
 // one, and it exists so a caller can construct the Value that Canonicalize, ContentID and
@@ -64,19 +89,42 @@ func NewObject() *Object { return &Object{} }
 // and the two sides of one grammar would disagree about a record that already had an ID.
 // The first value stands; a refused Set changes nothing.
 //
-// A value with no wire form -- a Go map, a struct, an int -- is refused HERE, naming the
-// member. The canonicaliser would refuse it too, three levels down, by which point the
-// diagnostic says "the value has no canonical form" about a path and not about a field a
-// caller can find.
+// A value with no wire form -- a Go map, a struct, an int -- is refused HERE, at the member,
+// rather than three levels down in the canonicaliser as "the value has no canonical form"
+// about a path the caller cannot place.
+//
+// A refusal names the member's ORDINAL and never the name itself, the way exactKeys, rawUsage
+// and receipt all report indexPath(path, i). The name is the caller's string: it can hold a
+// prompt or a private path, a carriage return that renders one refusal as two lines, or a
+// forged "refused: ..." token, and a diagnostic is a shared file too (#146's adversarial
+// read, finding 3: this was the one place in the package where a caller's string reached a
+// rendered refusal).
+//
+// An object that came from a validated envelope is sealed and answers ErrSealed: its digest
+// is already an identity. An object from NewObject is the caller's own and stays writable.
 func (o *Object) Set(name string, v Value) error {
-	if _, dup := o.vals[name]; dup {
-		return refuse(RuleDuplicateKey, name, "the member is already set; a body carries one of each")
+	if o.sealed {
+		return ErrSealed
 	}
-	if err := checkWireForm(v, name); err != nil {
+	if _, dup := o.vals[name]; dup {
+		return refuse(RuleDuplicateKey, o.ordinal(name), "the member is already set; a body carries one of each")
+	}
+	if err := checkWireForm(v, indexPath("member", len(o.keys))); err != nil {
 		return err
 	}
 	o.set(name, v)
 	return nil
+}
+
+// ordinal is the member's position, which is what a refusal names. For a duplicate it is the
+// position of the member already there, because that is the one a caller has to go and find.
+func (o *Object) ordinal(name string) string {
+	for i, k := range o.keys {
+		if k == name {
+			return indexPath("member", i)
+		}
+	}
+	return indexPath("member", len(o.keys))
 }
 
 // Strings is the array member a caller wants most: event_key, supersedes and touched are all
@@ -111,9 +159,10 @@ func checkWireForm(v Value, field string) error {
 		if t == nil {
 			return refuse(RuleWrongType, field, "the object is nil; an empty object is NewObject()")
 		}
-		for _, k := range t.Keys() {
+		// By index, never by key: a nested member name is caller data too.
+		for i, k := range t.Keys() {
 			val, _ := t.Get(k)
-			if err := checkWireForm(val, field+"."+k); err != nil {
+			if err := checkWireForm(val, indexPath(field, i)); err != nil {
 				return err
 			}
 		}
@@ -293,7 +342,18 @@ func (v *Validator) SealObservation(o Observation) ([]byte, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	if _, err := v.ValidateEnvelope(raw); err != nil {
+	// STRICT, whatever this validator is. The read-back carries the same mapping allowlists
+	// and NO skip set, so `Without(rule).SealObservation(o)` cannot emit bytes the boundary
+	// refuses.
+	//
+	// Without exists for one caller -- the test that proves a refusal rule is load-bearing --
+	// and its own contract says it is never used by the publisher. That was structurally true
+	// while a Validator could only READ; giving it a writer turned a read-relaxing handle into
+	// a write-relaxing one, and the leniency was invisible in the bytes it returned (#146's
+	// adversarial read, finding 2: Without(RuleUnknownEnum) sealed a body carrying an unknown
+	// kind, which a strict validator then refused). The gate is unconditional by construction
+	// rather than by the caller's choice of handle.
+	if _, err := (&Validator{allow: v.allow}).ValidateEnvelope(raw); err != nil {
 		return nil, "", err
 	}
 	return raw, id, nil

@@ -99,8 +99,13 @@ func TestTheBuilderNamesTheMemberWithNoWireForm(t *testing.T) {
 	if err == nil {
 		t.Fatal("the builder took a Go map; a map has no canonical form and no key order to hash")
 	}
-	if !strings.Contains(err.Error(), "raw_usage") {
-		t.Errorf("the refusal does not name the member: %v", err)
+	// The refusal names the member's POSITION, never the name: the name is caller data, and a
+	// diagnostic is a shared file (#146's adversarial read, finding 3).
+	if !strings.Contains(err.Error(), "member[0]") {
+		t.Errorf("the refusal does not name the member's position: %v", err)
+	}
+	if strings.Contains(err.Error(), "raw_usage") {
+		t.Errorf("the refusal echoes the caller's member name: %v", err)
 	}
 }
 
@@ -223,11 +228,11 @@ func TestTheEncodedBodyCarriesExactlyTheSchemasMembers(t *testing.T) {
 		t.Fatalf("Body returned %T, want an object", body)
 	}
 	want := map[string]bool{}
-	for _, k := range ObservationMembers {
+	for _, k := range ObservationMembers() {
 		want[k] = true
 	}
 	if len(want) != 12 {
-		t.Fatalf("ObservationMembers has %d names; the schema's table has 12", len(want))
+		t.Fatalf("ObservationMembers() has %d names; the schema's table has 12", len(want))
 	}
 	got := map[string]bool{}
 	for _, k := range obj.Keys() {

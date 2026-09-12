@@ -3,6 +3,7 @@ package records
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // The rule names. Every refusal this package can produce names exactly one of them, and
@@ -74,15 +75,62 @@ type Refusal struct {
 	Note  string // a fixed phrase, never source data
 }
 
-func (r *Refusal) Error() string {
-	f := strings.ReplaceAll(r.Field, "\n", " ")
-	n := strings.ReplaceAll(r.Note, "\n", " ")
-	if n == "" {
-		return fmt.Sprintf("refused: %s at %s", r.Rule, f)
+// The widths a refusal renders within. A field is a dotted path and a note is a fixed
+// phrase, so both are short by design; the caps are here for the case where one of them is
+// not, because an unbounded diagnostic is a way to make a log unreadable and a bounded one
+// costs nothing. (An adversarial read of the construction API, #146: a 200x-repeated member
+// name rendered a 4682-byte refusal.)
+const (
+	refusalFieldMax = 160
+	refusalNoteMax  = 200
+)
+
+// clean is what may reach a rendered refusal: no C0 or C1 control, no DEL, no U+2028 or
+// U+2029, and not more than max bytes.
+//
+// The controls are the whole point. A refusal is ONE line, and a line that can carry a
+// newline, a carriage return or a Unicode line separator is a line that can render as two --
+// the second of which an attacker chooses, and which can be spelled to look exactly like a
+// refusal this package produced. Stripping rather than replacing keeps the line honest about
+// its own shape: what is dropped was never part of a path.
+func clean(s string, max int) string {
+	var b strings.Builder
+	truncated := false
+	for _, r := range s {
+		switch {
+		case r < 0x20, r == 0x7f, r >= 0x80 && r <= 0x9f, r == 0x2028, r == 0x2029:
+			continue
+		}
+		if b.Len()+utf8.RuneLen(r) > max {
+			truncated = true
+			break
+		}
+		b.WriteRune(r)
 	}
-	return fmt.Sprintf("refused: %s at %s (%s)", r.Rule, f, n)
+	if truncated {
+		return b.String() + "..."
+	}
+	return b.String()
 }
 
+// Error renders the one line. It cleans again rather than trusting the fields, because
+// Refusal is an exported struct: a caller can build one with a newline in it, and Error is
+// the render point that cannot be bypassed.
+func (r *Refusal) Error() string {
+	f := clean(r.Field, refusalFieldMax)
+	n := clean(r.Note, refusalNoteMax)
+	if n == "" {
+		return fmt.Sprintf("refused: %s at %s", clean(r.Rule, 64), f)
+	}
+	return fmt.Sprintf("refused: %s at %s (%s)", clean(r.Rule, 64), f, n)
+}
+
+// refuse cleans at construction as well, so a Refusal's Field is safe to read
+// programmatically and not only safe to print.
 func refuse(rule, field, note string) *Refusal {
-	return &Refusal{Rule: rule, Field: field, Note: note}
+	return &Refusal{
+		Rule:  rule,
+		Field: clean(field, refusalFieldMax),
+		Note:  clean(note, refusalNoteMax),
+	}
 }

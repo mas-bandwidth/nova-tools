@@ -215,10 +215,13 @@ func (v *Validator) validateObservation(body *Object) (*Observation, error) {
 			return nil, err
 		}
 	}
-	// The member list is ObservationMembers, which the encoder writes from, so the reader
+	// The member list is observationMembers, which the encoder writes from, so the reader
 	// and the writer cannot name different members: a twelfth member added to one side
 	// alone would be a body one half of this package produces and the other half refuses.
-	if err := v.exactKeys(body, "body", ObservationMembers...); err != nil {
+	// It is unexported, and ObservationMembers() hands a caller a copy: as an exported
+	// slice it was this gate's closed set in mutable package state, and an append opened
+	// the schema for every Validator in the process (#146's adversarial read, finding 1).
+	if err := v.exactKeys(body, "body", observationMembers...); err != nil {
 		return nil, err
 	}
 	obs := &Observation{Schema: schema}

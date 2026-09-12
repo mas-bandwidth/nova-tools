@@ -20,6 +20,14 @@ type (
 	Object struct {
 		keys []string
 		vals map[string]Value
+		// sealed marks an object that came off the wire through parseStrict, which is
+		// every object inside an Envelope this package accepted. Such an object's digest
+		// is already an identity somebody holds -- env.ID -- so the exported Set refuses
+		// it rather than letting the body move out from under its own ID (#146's
+		// adversarial read: two exported calls left env.ID disagreeing with
+		// ContentID(env.Body)). It is NOT general immutability: an object a caller built
+		// with NewObject is theirs and stays writable, or the encoder could not work.
+		sealed bool
 	}
 )
 
@@ -79,7 +87,9 @@ func parseFrom(dec *json.Decoder, tok json.Token, field string, skip map[string]
 	case json.Delim:
 		switch t {
 		case '{':
-			o := &Object{}
+			// Sealed at birth: this object is a reading of bytes that already have a
+			// digest, not a body under construction.
+			o := &Object{sealed: true}
 			for i := 0; ; i++ {
 				kt, err := dec.Token()
 				if err != nil {
