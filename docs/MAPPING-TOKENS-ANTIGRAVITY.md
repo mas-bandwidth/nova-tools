@@ -50,6 +50,7 @@ Inside `CortexStepGeneratorMetadata` (Field 1: `ChatModelMetadata`, Field 1.4: `
 - **Normalized Spend Marked Unsupported:** Until verified producer documentation or telemetry evidence establishes the exact counting relationship, normalized spend is marked **unsupported**:
   - `identity_rule.normalized_spend_supported: false`
   - `identity_rule.unsupported_reason: "cache_and_thinking_inclusion_semantics_unverified"`
+- **Provisional Spend Roles & Coverage Obligation:** Current `base_counter` and `subset_detail` labels assigned in §7 are provisional descriptors of wire structure and cannot establish arithmetic counting relationships or subset deductions while `normalized_spend_supported: false`. The unknown-semantics coverage obligation remains an explicit standing requirement after this proposal lands; unsupported normalization must not become a claim that the accounting endpoint is complete.
 - **Classification of Fixtures:** Observations retain all five raw counters faithfully as measured on the wire. Under normalized spend views, turns are classified as unsupported spend rather than rejected as arithmetic conflicts or artificially coerced. Observations are never edited to force assumed arithmetic to pass.
 - **Revision & Finality:** Identical repeated entries for the same spend key deduplicate. Changed numeric content for the same spend key requires explicit supersession; otherwise it is retained as a conflict and excluded from spend.
 
@@ -57,7 +58,7 @@ Inside `CortexStepGeneratorMetadata` (Field 1: `ChatModelMetadata`, Field 1.4: `
 
 - **Model Identifier:** `response_model` (Field 1.19) is preserved verbatim as `model.id` with `model.basis: "harness_reported"`.
 - **Model Usage:** Antigravity reports a single model per generation turn; `model_usage` is emitted as `[]` (empty array, signifying no secondary per-model split).
-- **Configurable Origin:** Origin friend and bench are supplied via execution-origin bindings (e.g. CLI flags or operator configuration) with `basis: "owner_binding"`. When no binding establishes historical origin, origin is retained as unattributed: `{friend: null, bench: null, basis: "unattributed", binding_id: null}`. The fixture values (`friend: "emma"`, `bench: "studio"`) are team test examples, not normative literals.
+- **Configurable Origin:** Origin friend and bench are supplied via execution-origin bindings (e.g. CLI flags or operator configuration) with `basis: "owner_binding"`. When no binding establishes historical origin, origin is retained as unknown: `{friend: null, bench: null, basis: "unknown", binding_id: null}` (using the canonical `originBases` allowlist `{source, owner_binding, unknown}`). The fixture values (`friend: "emma"`, `bench: "studio"`) are team test examples, not normative literals.
 - **Configurable Repository:** Repository identity is supplied via active workspace binding with `basis: "source_binding"` (e.g. `{id: "mas-bandwidth/emma", basis: "source_binding", policy_id: null, touched: []}`). When unbound or ambiguous, repository is retained as unattributed: `{id: null, basis: "unattributed", policy_id: null, touched: []}`.
 
 ## 6. Wire Literals Under Proposed Contract
@@ -75,7 +76,7 @@ Inside `CortexStepGeneratorMetadata` (Field 1: `ChatModelMetadata`, Field 1.4: `
 | `time.occurred_at` | Microsecond ISO 8601 UTC timestamp from `transcript.jsonl`; `null` when unpaired |
 | `time.basis` | `response_observation` when joined with transcript; `unknown` when unpaired |
 | `time.start`, `time.end` | `null` (turn observation carries no interval) |
-| `origin` | Parameterized binding `{friend, bench, basis: "owner_binding", binding_id: null}`, or unattributed `{friend: null, bench: null, basis: "unattributed", binding_id: null}` |
+| `origin` | Parameterized binding `{friend, bench, basis: "owner_binding", binding_id: null}`, or unknown `{friend: null, bench: null, basis: "unknown", binding_id: null}` |
 | `model.id` | Field 1.19 `response_model` string; `null` if omitted |
 | `model.basis` | `harness_reported`; `unknown` if `model.id` is absent |
 | `repository` | Parameterized workspace binding `{id, basis: "source_binding", policy_id: null, touched: []}`, or unattributed `{id: null, basis: "unattributed", policy_id: null, touched: []}` |
@@ -93,6 +94,8 @@ Inside `CortexStepGeneratorMetadata` (Field 1: `ChatModelMetadata`, Field 1.4: `
 | `cache_read_tokens` | `integer` | `tokens` | `measured` | `subset_detail` | same | same |
 | `thinking_output_tokens` | `integer` | `tokens` | `measured` | `subset_detail` | same | same |
 | `total_tokens` | `integer` | `tokens` | `measured` | `non_spend` | same | same |
+
+*Note: `base_counter` and `subset_detail` roles above are provisional descriptors of wire structure and do not establish counting relationships while `normalized_spend_supported: false`.*
 
 ## 8. Privacy & Synthetic Test Fixtures
 
