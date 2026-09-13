@@ -1,4 +1,4 @@
-# nova-work — specification (DRAFT 6, 2026-09-13)
+# nova-work — specification (DRAFT 7, 2026-09-13)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
@@ -7,8 +7,9 @@ mine; the rest is shared. Every requirement that is Glenn's cites its source so 
 nova-tools#177 comment by id, or one of the four bus notes in which Stella reports his live
 words of 2026-09-13 — stella-5adca9a1f09d (resident S, periodic clips, verbs for structure),
 stella-deed78e54cb4 (link versus absorb, the initial import that loses no data),
-stella-0ace603bdc22 (one coordinator, one live reader/writer) and stella-fe600103fa2e (*"the
-work set is the PRIMARY FORM"*, superseding 5653982211's hesitation). Where a later word
+stella-0ace603bdc22 (one coordinator, one live reader/writer), stella-fe600103fa2e (*"the
+work set is the PRIMARY FORM"*, superseding 5653982211's hesitation), and Stella's two reviews, stella-ff217e98685c (five
+points on draft 1) and stella-d205f6120ee7 (two findings on draft 5). Where a later word
 supersedes an earlier comment, the later word governs and the earlier is named. **Two things in this document are the authors' proposals and not Glenn's requirements,
 and they are marked where they stand: the lease model (Rowan's, from #177 comment 5654176537)
 and everything in the section *Additions of the authors'*.** Draft 5 integrates Stella's
@@ -61,8 +62,20 @@ disagree, one of them has a bug, and the tests decide which.
 15:53Z: *"there must be one coordinator at a time. One reader/writer on the work set S in
 memory via nova-work"; "Otherwise, we have races"*). Friends and workers submit results, evidence
 and requested changes to that coordinator; they never open a second live S; other readers read
-published, revision-labelled snapshots. Failover transfers the role and fences the old owner;
-the mechanism is Stella's proposal below, not a built fact.
+published, revision-labelled snapshots. **The mechanism that makes the rule hold across
+benches is in the pilot, on the substrate we already trust: the branch that holds S carries an
+ownership record** (`OWNER`: the coordinator's name, a generation, the stamp, the base sha),
+and `session start` **takes ownership by pushing a commit that bumps the generation with
+`--force-with-lease` against the tip it read** — git refuses the push if the tip moved, so two
+benches starting from one checkpoint cannot both succeed, and the one refused never activates
+(exit 1, naming the owner and generation it found). Every clip carries the session's
+generation and is pushed the same way; a fenced old owner's late clip is refused by the tip
+having moved, so it can neither publish nor dispatch under an obsolete generation. A stale
+heartbeat is an availability signal, never takeover authority: a takeover is a new `session
+start` that bumps the generation, and only its push succeeding makes it the owner. What this
+does not do, said plainly: it cannot stop two owners who are both **offline** from accepting
+events locally; it guarantees only that at most one of them can ever publish, and the other's
+accepted events are recovered by the export path below, never lost and never merged.
 
 A **session** is that coordinator's supervised, long-lived process, and it owns the one S: it loads the snapshot once,
 validates it whole, builds the indexes, replays nothing thereafter, and answers verbs against
@@ -99,7 +112,14 @@ it), and records the shared revision and which local events it contains. A faile
 accepted local work and the pending clip intact and reports *locally durable, not shared*; a
 divergence prints the upstream sha and the session's base and stops; nothing is force-pushed
 and nothing is reconciled. A session stop and a coordinator handoff request a clip under the
-same flags, so a stop is bounded by the same timeout and budget. `render` writes a working-tree
+same flags, so a stop is bounded by the same timeout and budget. **A session whose clip is
+refused by divergence is fenced**: it accepts no further mutations (exit 1, `fenced`), keeps
+its journal, and `session export --into <path>` writes its accepted events since its base as a
+request bundle — each event with its request id, expected revision and payload — which the
+active coordinator applies with `session replay --from <path>`, one request at a time,
+validated fresh against the live S, refusing the stale ones by `--expect` and reporting each
+verdict on its own line. Nothing is lost; nothing is merged without validation; the fenced
+session's unshared work is a file, not a claim. `render` writes a working-tree
 file that the next clip commits; it is not a second write path to the branch.
 
 ## The data *(Rowan)*
@@ -176,7 +196,8 @@ they are distinct kinds:
   containment forest until overridden.
 - `:lease` — the ownership-of-execution record, below. *(The authors' proposal, not Glenn's.)*
 - `:event` — the log. Every event carries `:kind`, `:node`, `:by`, `:stamp`, `:clock` (`:tool`
-  or `:given`), and the fields its kind needs:
+  or `:given`), `:request` (the request id), `:generation-owner` (the coordinator generation
+  that accepted it), and the fields its kind needs:
   - `:transition` — `:to <state>`, `:reason`, and for `:blocked` a `:blocked-by` reference; a
     `:to :done` names the evidence event ids it stands on.
   - `:evidence` — `:pointer`, `:criterion` (an `:acceptance` id on the node), `:against <sha>`
@@ -186,8 +207,11 @@ they are distinct kinds:
     pointer to a token record, #181), `:generation` (the task generation it answered).
   - `:correct` — a correction to a task: `:reason`; bumps the task's `:generation`
     (5653982211).
+  - `:review-attest` — a reviewer's attestation that a result satisfies an `:attested`
+    criterion: `:criterion`, `:result` (a pointer), `:against <sha>`, `:by` the reviewer.
   - `:responsible` — `:to <name>` on a work-set or feature, on a person's word, `:reason`.
-  - `:lease`, `:heartbeat`, `:release`, `:handoff` — the lease log, below.
+  - `:lease`, `:heartbeat`, `:release`, `:handoff` (carrying the new holder's `:deadline` and
+    `:default`, so a handed lease is a whole lease) — the lease log, below.
   - `:baseline`, `:discovery`, `:remove`, `:defer`, `:cancel` (carrying `:evidence` that the
     worker stopped), `:reopen`, `:split`, `:supersede`, `:scope` — the scope log: a baseline records the required set of its node **as the tool
     computed it at that moment**, member by member; a split names the new children; a
@@ -196,7 +220,9 @@ they are distinct kinds:
     (5653970526).
 
 **States and transitions, derived.** A task's current state is the `:to` of its newest
-`:transition` event, or `:unknown` when it has none; `:unknown` is explicit and is neither
+transition, where **a scope event of kind `:defer`, `:cancel`, `:reopen` or `:supersede` is
+also a transition for its node** (to `:deferred`, `:cancelled`, the reopened state, or
+`:superseded`), or `:unknown` when it has none; `:unknown` is explicit and is neither
 zero nor not-started (5653970526). Its generation is the count of its `:correct` events. The
 allowed transitions are a table the validator holds: from `:todo` to `:doing`, `:blocked`,
 `:cancel-requested`; from `:doing` to `:blocked`, `:review`, `:done`, `:cancel-requested`;
@@ -225,14 +251,17 @@ point 1), so an evidence event carries both, and an evidence event whose criteri
 store, so that no family's bus is named in the tool (5653970526). **A `note:` pointer is
 accepted on a heartbeat and on an attempt's `:usage`, never as evidence for `:done`**
 (5649089106: *status messages are not completion evidence*); rule 5 refuses it. **Resolution is a separate
-pass from validation, and resolving is not qualifying** (Stella, points 1 and 2, and her
-16:00Z finding 1): `verify` marks a pointer *verified* only when the thing it names
-**qualifies for its criterion** — a `run:` whose conclusion is success, a `pr:` merged at the
-named sha, a `test:` that passed at the named sha, a `commit:` that exists on the named
-branch, a `file:` whose sha matches — and *found-not-qualifying* otherwise, which counts as
-unverified; a pointer whose kind cannot qualify a criterion by itself (a `note:`, a file that
-merely exists) needs an attested review event, `:review-attest`, naming the reviewer, the
-criterion, the result pointer and the revision, or it stays unknown. `check` never fetches;
+pass from validation, and resolving is not qualifying** (Stella, stella-ff217e98685c points 1
+and 2, and stella-d205f6120ee7 finding 1): `verify` marks a pointer *verified* only when the
+thing it names **qualifies for the criterion's kind** — a `:test` criterion by a `test:` pointer
+that passed at the named revision; a `:job` criterion by a `run:` pointer whose named job
+succeeded at the named revision; a `:merged` criterion by a `pr:` pointer merged at the named
+sha; an `:attested` criterion only by a `:review-attest` event naming the reviewer, the
+criterion, the result pointer and the revision (a `note:` or a bare `commit:`/`file:` never
+qualifies anything by itself, and a green aggregate run never qualifies a whole feature:
+5649089106, *CI activity and status messages are not completion evidence*). Any other pairing
+is *found-not-qualifying* and counts as unverified; a pointer the fetch cannot reach is
+*unreachable* and counts the same. `check` never fetches;
 `verify` fetches, under
 `--max-fetch <n>` and `--fetch-timeout <seconds>` (both required, as SPEC-BOARD requires
 `--gh-timeout`), through a cache at `--cache <path>` (required; no guessed path) keyed by
@@ -315,7 +344,9 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
   baseline denominator kept beside it for expansion and contraction (5654160320). **Current
   required work excludes `:deferred`, `:cancelled` and `:superseded` leaves** and `remaining`
   prints them under `deferred=<n>` so the subtraction is visible; the baseline denominator
-  still counts them.
+  still counts them. **Active rows** of a roadmap are its baseline rows plus discovered rows,
+  less rows removed, deferred or superseded by a scope event; **applicable rows** for an axis
+  member are the active rows less those with an out-of-scope cell for that member.
 - **Units are labelled** on every line: `unit=features` or `unit=leaves`; a comparison never
   changes unit silently.
 - **Future cannot lower the active percentage; a deferred item cannot raise the completed
@@ -345,39 +376,47 @@ source=<sha> freshest=<stamp> unknown=<n> unverified=<n> emitted=<bytes>`.
 
 Session verbs run the process; every other verb is a client verb addressed to a session by
 `--session <path>` (required; no default), or, for `check` and `query` only, to a published
-snapshot by `--snapshot <path>` with the three bounds, read-only. Every mutation verb takes
-`[--request <id>]`, drawn by the tool and printed when absent. Every client verb that lists takes `--max
+snapshot by `--snapshot <path>` with the three bounds, read-only; under `--snapshot` the
+verification cache is still named by `--cache <path>`, so a snapshot reader sees the same
+verdicts the coordinator last fetched. **Every mutation verb takes `<write flags>` = `--as
+<name> [--request <id>] [--expect <revision>] [--now <stamp>]`**: the request id is drawn by
+the tool and printed when absent; `--expect` is the caller's expected local revision, and a
+request whose expectation is stale is refused at exit 1 naming the current revision
+(5653982211: *apply rejects stale preconditions*), so a friend's request always carries one. Every client verb that lists takes `--max
 <n>`, default 20, `0` means all, negative refused (SPEC.md, the cap-and-count law). Every
 duration comes from a flag: `--window` is required by `who` and `stale`, `--by` by `take`,
 `--every` by `session start`. `--now <stamp>` is optional on every verb and records `:clock
 :given`; absent, the session's clock is used and recorded as `:clock :tool`.
 
 ```
-nova-work session start  --session <path> --file <S.sexp> --journal <path> --repo <path> --remote <name> --branch <name>
-                         --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --git-timeout <seconds> [--now <stamp>]
+nova-work session start  --session <path> --as <name> --file <S.sexp> --journal <path> --repo <path> --remote <name> --branch <name>
+                         --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
+nova-work session export --session <path> --into <path>
+nova-work session replay --session <path> --from <path> --as <name> [--max <n>]
 nova-work session status --session <path>
 nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
 nova-work clip           --session <path> --as <name> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
-nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) [--max <n>]
+nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) --cache <path> [--max <n>]
 nova-work verify         --session <path> --max-fetch <n> --fetch-timeout <seconds> --cache <path> [--offline] [--node <id>] [--max <n>]
 nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) --ask <kind>
                          [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>]
-                         [--since <revision>] [--at <revision>] [--max <n>]   (who and stale: --window <duration>, required)
+                         [--since <revision>] [--at <revision>] --cache <path> [--max <n>]   (who and stale: --window <duration>, required)
 nova-work render         --session <path> --view <roadmap-id> --into <path> --start <marker> --end <marker> [--at <revision>] [--check]
-nova-work node add       --session <path> --as <name> [--request <id>] --id <id> --type <kind> --under <parent-id> [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id=pointer> ...] --reason <text>
-nova-work decompose      --session <path> --as <name> [--request <id>] --node <id> --into <id,...> --reason <text>
-nova-work dep            --session <path> --as <name> [--request <id>] --node <id> (--add <id> | --remove <id>) --reason <text>
-nova-work axis           --session <path> --as <name> [--request <id>] --roadmap <id> --axis <id> --add <member> --reason <text>
-nova-work cell           --session <path> --as <name> --roadmap <id> --coord <member,member> (--ref <id> | --out-of-scope) --reason <text>
-nova-work responsible    --session <path> --as <name> [--request <id>] --node <id> --to <name> --reason <text>
-nova-work take           --session <path> --as <name> [--request <id>] --node <id> --by <duration|stamp> --default <release|extend-once|escalate:<name>>
-nova-work heartbeat      --session <path> --as <name> [--request <id>] --node <id> --evidence <pointer>
-nova-work release        --session <path> --as <name> [--request <id>] --node <id> [--handed <name>]
-nova-work attempt        --session <path> --as <name> [--request <id>] --node <id> --model <name> --bench <name> --result <pointer> [--usage <pointer>]
-nova-work evidence       --session <path> --as <name> [--request <id>] --node <id> --pointer <pointer> --criterion <id> --against <sha> [--attempt <id>]
-nova-work state          --session <path> --as <name> [--request <id>] --node <id> --to <state> (--evidence <event-id> ... | --reason <text>) [--blocked-by <id>]
-nova-work correct        --session <path> --as <name> [--request <id>] --node <id> --reason <text>
-nova-work event          --session <path> --as <name> --kind <baseline|discovery|remove|defer|cancel|reopen|split|supersede|scope> --node <id> --reason <text> [--by-node <id>] [--children <id,...>] [--evidence <pointer>]
+nova-work node add       --session <path> <write flags> --id <id> --type <kind> --under <parent-id> [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id=pointer> ...] --reason <text>
+nova-work decompose      --session <path> <write flags> --node <id> --into <id,...> --reason <text>
+nova-work dep            --session <path> <write flags> --node <id> (--add <id> | --remove <id>) --reason <text>
+nova-work axis           --session <path> <write flags> --roadmap <id> --axis <id> --add <member> --reason <text>
+nova-work cell           --session <path> <write flags> --roadmap <id> --coord <member,member> (--ref <id> | --out-of-scope) --reason <text>
+nova-work responsible    --session <path> <write flags> --node <id> --to <name> --reason <text>
+nova-work take           --session <path> <write flags> --node <id> --by <duration|stamp> --default <release|extend-once|escalate:<name>>
+nova-work heartbeat      --session <path> <write flags> --node <id> --evidence <pointer>
+nova-work release        --session <path> <write flags> --node <id> [--handed <name> --by <duration|stamp> --default <release|extend-once|escalate:<name>>]
+nova-work attest         --session <path> <write flags> --node <id> --criterion <id> --result <pointer> --against <sha>
+nova-work attempt        --session <path> <write flags> --node <id> --model <name> --bench <name> --result <pointer> [--usage <pointer>]
+nova-work evidence       --session <path> <write flags> --node <id> --pointer <pointer> --criterion <id> --against <sha> [--attempt <id>]
+nova-work state          --session <path> <write flags> --node <id> --to <state> (--evidence <event-id> ... | --reason <text>) [--blocked-by <id>]
+nova-work correct        --session <path> <write flags> --node <id> --reason <text>
+nova-work event          --session <path> <write flags> --kind <baseline|discovery|remove|defer|cancel|reopen|split|supersede|scope> --node <id> --reason <text> [--by-node <id>] [--children <id,...>] (cancel: --evidence <pointer>, required)
 nova-work version
 nova-work help
 ```
@@ -398,8 +437,8 @@ says where. `plan`, `apply` and `reconcile` (5653982211, the Terraform half) are
 draft 5**: named here so a reader knows they are deferred, with their own section once the
 pilot has shown what a plan must name.
 
-**A lease is authoritative the moment the one coordinator accepts it**, because there is no
-second live S to race it; `shared=<true|false>` on its answer says only whether the clip
+**A lease is authoritative the moment the one coordinator accepts it**, because the ownership
+record above admits one live S; `pushed=<true|false>` on its answer says only whether the clip
 carrying it has been pushed, which is durability, not exclusivity. A request to take a node
 arrives at the coordinator from a friend as a mutation request with a stable request id and
 the friend's expected revision; the coordinator serializes it like any other (Stella, *One
@@ -546,6 +585,11 @@ are the reader's, exit 2, at load. The validator never fetches; what a pointer p
     (5653982211: *incompatible states, invalid scope transitions*).
 12. **scope change without event** — the required set of a roadmap or work set differs from its
     last `:baseline` plus its recorded scope events.
+18. **stale at the moment of claiming** — a `:to :done` whose cited evidence is already stale
+    (its `:against` is not the cell's `:source-revision`) or already found-not-qualifying when
+    the transition is written; refused in the candidate gate (5653982211: *stale evidence*).
+    After the claim, staleness that arrives with a later source revision is a count, not a
+    finding, so a source bump never freezes the set; the rollup already demotes it.
 13. *(reader, exit 2)* **reader payload** — `#.` or any other refused syntax.
 14. *(reader, exit 2)* **bounds exceeded** — bytes, depth or nodes past the flags.
 15. **conflicting revisions** — two baseline events for one node claiming different members
@@ -593,8 +637,12 @@ event's id and the session's local revision after it, and `shared=<rev|->` for t
 confirmed clip.
 
 ```
-SESSION OK session=<path> file=<path> base=<sha> journal=<path> events=<n> pending=<n> nodes=<n> edges=<n> parses=<n> replays=<n> emitted=<bytes>
-SESSION FAIL session=<path>: <reason>
+SESSION OK session=<path> owner=<name> generation=<n> file=<path> base=<sha> journal=<path> events=<n> pending=<n> nodes=<n> edges=<n> parses=<n> replays=<n> emitted=<bytes>
+SESSION FAIL session=<path> owner=<name> generation=<n>: <reason>
+EXPORT OK session=<path> into=<path> requests=<n> base=<sha> emitted=<bytes>
+REPLAY OK from=<path> requests=<n> applied=<n> refused=<n> shown=<n> emitted=<bytes>
+REPLAY ROW request=<id> verdict=<applied|refused> rev=<n>: <reason>
+ATTEST OK id=<event-id> request=<id> node=<id> criterion=<id> against=<sha> emitted=<bytes>
 CLIP OK session=<path> boundary=<request-id> events=<n> base=<sha> commit=<sha> pushed=<true|false> attempts=<n> emitted=<bytes>
 CLIP FAIL session=<path> boundary=<request-id> events=<n> base=<sha> upstream=<sha> pushed=false attempts=<n>: <reason>
 WORK OK nodes=<n> edges=<n> events=<n> leases=<n> expired=<n> stale=<n> scope=<rev> source=<sha> emitted=<bytes>
@@ -604,7 +652,7 @@ VERIFY OK pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=
 VERIFY ROW <event-id> pointer=<p> verdict=<verified|unverified|stale> at=<stamp>
 VERIFY FAIL pointers=<n> unverified=<n> shown=<n>
 QUERY OK ask=<kind> scope=<rev> membership=<rule> unit=<unit> source=<sha> freshest=<stamp> done=<n> done-unverified=<n> unknown=<n> deferred=<n> stale=<n> [green=<k> baseline-rows=<n0>] rows=<n> shown=<n> parses=<n> emitted=<bytes>
-QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> holder=<name|unowned> shared=<true|false|-> heartbeat=<age|none> deadline=<stamp|-> blocked-by=<id|->
+QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> holder=<name|unowned> pushed=<true|false|-> heartbeat=<age|none> deadline=<stamp|-> blocked-by=<id|->
 QUERY FAIL ask=<kind> rows=<n> shown=<n>: <reason>
 RENDER OK view=<id> cells=<n> bytes=<n> into=<path> emitted=<bytes>
 RENDER FAIL view=<id> cells=<n> drifted=<n> into=<path>
@@ -623,7 +671,8 @@ adding the fields its section names (`LEASE OK … holder= deadline= default= li
 against=`, `CORRECT OK … generation=`, `EVENT OK … kind= scope=`).
 
 Exit 0 the verb ran and passed; 1 it ran and said no (a finding, a refused take, a refused
-transition, drift, a conflict, an unverified pointer under `verify`); 2 it could not run (a
+transition, a stale expectation, drift, a divergence, a fenced session, and for `verify` its
+own verdict `unverified=<n>` above zero, which is a report and not a `check` finding); 2 it could not run (a
 missing flag, no such session, a refused snapshot, bounds exceeded, an unusable invocation,
 which costs one line ending `run: nova-work help`). One line per event, escaped through
 `internal/oneline`; every listing capped by `--max` with a `MORE` line naming the remedy; the
@@ -687,9 +736,9 @@ evidence and `verify` as a separate pass with a cache (Stella's points 1 and 2);
 `:repo` field on a top-level work set; the transition table's exact edges; `<repo>/shared`;
 `--at <revision>`; `emitted=<bytes>` on every `OK` line; the structure verbs' names and
 flags. Stella's: the local recovery journal, event ids and expected revisions, the named event
-boundary per clip, incremental reconcile, the offline-clip rule, the fencing-generation ownership record,
-fold/unfold/propagate as operators, the measurement list, the `link`/`absorb` archive order,
-the migration dispositions; and in her sections below,
+boundary per clip, incremental reconcile, the offline-clip rule, the fencing-generation ownership record as a proposal (the `OWNER`-on-the-branch form with
+`--force-with-lease` is Rowan's, and the export/replay path with it), fold/unfold/propagate as
+operators, the measurement list, the `link`/`absorb` archive order, the migration dispositions; and in her sections below,
 the pilot branch and sha, the prototype facts, the rate schedule and virtual cost, the
 `NEXT-TOOLS.md` hand-off, and the fixed-table capability boundary. Each is open to be cut by
 the pilot.
