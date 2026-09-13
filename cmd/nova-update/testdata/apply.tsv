@@ -1,2 +1,3 @@
 name	kind	installed	latest	apply	owner
+# Parser-only fixture: fictional executable paths; not a runnable installation example.
 fixture-tool	tool	./testdata/fixture-tool	github:example/fixture	./testdata/fake-install.sh {version}	rowan
