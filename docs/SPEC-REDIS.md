@@ -18,7 +18,9 @@ Glenn's current requirements, 2026-09-13: prioritize a spec now; assume a local
 Redis instance; leave a secured remote instance, possibly over Tailscale, for
 later. He further clarified: "scratch space, ephemeral work", "cache", and
 "it should not be storing the one true form of something, it should just be
-helping us think". The component boundaries and first implementation scope below are the
+helping us think". He also required: "i don't want redis to go down and we lose
+stuff." Therefore a durable backing source is required before caching meaningful
+content; this includes unfinished ideas and intermediate results. The component boundaries and first implementation scope below are the
 author's proposals. Earlier comments in #130 that presented local-spill-only as
 Glenn's ruling were explicitly corrected; they are research, not a restriction.
 
@@ -76,11 +78,19 @@ change; this spec alone does not change another tool's contract.
    Redis can cache a revision-labelled report; counters cannot replace the
    friend/model/bench/repo/session/attempt records or their cost provenance.
    A lost cache must not reset an allowance or erase an unresolved liability.
-4. Scratch may be the sole copy of explicitly disposable intermediate data.
-   Anything required to finish, recover or audit accepted work must have a
-   durable source before a caller relies on it. `spill` does not confer that
-   durability. An AI chooses what it shares; private self records and credentials
-   do not belong in the shared workbench.
+4. Redis never holds the only copy of meaningful content, including unfinished
+   ideas, drafts and intermediate results. Persist an artifact through its owning
+   tool before caching it; a source receipt identifies immutable content and its
+   digest. This protects against Redis failure; it does not claim that a local artifact
+   survives disk or machine loss. Work needing that protection must reach its
+   owning tool's replicated durability boundary before it is reported as such.
+   Source artifacts may be private local files or an existing durable
+   journal; they do not require a Git commit for every thought. Redis never
+   deletes or expires the backing source. Its TTL concerns the cache only.
+   Loss of Redis can discard acceleration structures and transient wake hints,
+   but all meaningful content remains retrievable from its backing source.
+   An AI chooses what it shares; private self records and credentials do not
+   belong in the shared workbench.
 5. Presence expiry means stale observation. It does not prove a worker stopped,
    free its slot, refund a budget, terminate its process or transfer a lease.
    Lock replacement requires a separate end-to-end fencing design. `SET NX`
@@ -146,16 +156,27 @@ reporting and exit codes. Commands return structured JSON with `--json`, or a
 compact one-line summary by default. Large payloads require an explicit output
 file or bounded JSON output; diagnostics never echo values or credentials.
 
+Before acknowledging a content-bearing write, the adapter must validate a
+bounded source receipt from the owning tool: artifact identity, immutable
+revision or digest, and its declared durability boundary. A pathname existing
+is not proof of durability or immutability. The owning adapter is responsible
+for durable artifact creation (including required file/directory sync and
+retention) before issuing the receipt. Redis cannot issue its own backing
+receipt. Unsaved stdin or an in-memory result without backing is refused with
+`source-required`; the caller saves it first. Derived indexes must instead name
+the retained source revision and a versioned reconstruction procedure. This is
+not a new artifact store hidden inside nova-redis.
+
 Each object has `schema`, `class`, `owner`, `session`, `created_at`, `expires_at`,
-`object_revision`, and optional `source` provenance. A projection's source is
+`object_revision`, and `source` provenance for content or derived data. A projection's source is
 mandatory: `{identity, generation, scope_revision, event_boundary, digest}`.
 `object_revision` is a concurrency token, not proof of source currency.
 
 | Verb | Required inputs beyond config | Result and concurrency rule |
 | --- | --- | --- |
-| `spill` | key, input file, expiry, `--expect absent` or revision | Store bounded opaque bytes and metadata atomically |
+| `spill` | key, input file, source receipt, expiry, `--expect absent` or revision | Cache backed bytes and metadata atomically |
 | `recall` | key, output bound | Value, metadata and revision, or an explicit miss |
-| `map put/get` | key, field; value/expected revision for put | Bounded field lookup or conditional mutation |
+| `map put/get` | key, field; value/source receipt/expected revision for put | Bounded field lookup or conditional mutation |
 | `set add/remove/contains` | key, member; expected revision for mutation | Membership, not task completion or durable deduplication |
 | `rank put/remove/range` | key; member and signed integer score for put; revision for mutation; bounded page for range | Candidate IDs in score order, stable member tie-break |
 | `drop` | exact owned key, expected revision | Remove one disposable object; no recursive or wildcard delete |
@@ -223,7 +244,9 @@ Cancellation interrupts waits. An outage does not activate a second writer,
 new file lock or alternate budget store. Only explicitly rebuildable reads may
 fall back to their source, and their result names that source and its revision.
 
-The reference local instance holds disposable data with persistence disabled.
+The reference local instance holds rebuildable cache data with persistence disabled.
+Redis persistence is optional acceleration for recovery, never the protection
+against losing thoughts or work: that protection is the durable backing source.
 An already provisioned server may have persistence, but restored values are
 still untrusted caches until freshness is reconciled. No persistence mode
 changes the API's disposable-storage contract. Redis persistence has differing
@@ -255,6 +278,11 @@ Before implementation is called ready, demonstrate:
   commit-before-signal crash: eventual source reconciliation without lost work.
 - Expired presence cannot release a live worker, refund spend or elect an owner.
   Dropping all Redis data leaves S, bus history and raw token accounting intact.
+- Refuse a content write without its backing receipt; crash before and after
+  cache acknowledgement, delete the entire test Redis dataset, and recover every
+  acknowledged draft and intermediate result byte-for-byte from retained
+  artifacts. Missing backing, changed digests or unavailable sources report
+  explicit failure. No Redis cleanup command removes a backing artifact.
 - Positive and negative live checks using only the caller's disposable namespace;
   probe cleanup names exact owned keys and cannot widen to other data.
 
