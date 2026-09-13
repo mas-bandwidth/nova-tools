@@ -2,6 +2,7 @@ package bus
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -43,16 +44,10 @@ var attributeLines = []string{
 // replaced: the file belongs to the bus and this tool owns two lines of it. A bus that
 // already carries both rules is left exactly as it is, so this is a no-op on every send but
 // the first.
-func EnsureMergeAttributes(root string) (bool, error) {
-	full := filepath.Join(root, AttributesName)
-	if err := insideRoot(root, full); err != nil {
-		return false, err
-	}
-	raw, err := os.ReadFile(full)
-	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return false, err
-	}
-	existing := string(raw)
+// ExpectedMergeAttributes calculates the expected content of .gitattributes after
+// ensuring the required merge attribute rules are present. It returns the expected
+// content and whether any changes were made.
+func ExpectedMergeAttributes(existing string) (string, bool) {
 	var missing []string
 	for _, line := range attributeLines {
 		if strings.HasPrefix(line, "#") {
@@ -63,7 +58,7 @@ func EnsureMergeAttributes(root string) (bool, error) {
 		}
 	}
 	if len(missing) == 0 {
-		return false, nil
+		return existing, false
 	}
 	var b strings.Builder
 	if existing != "" {
@@ -80,7 +75,66 @@ func EnsureMergeAttributes(root string) (bool, error) {
 			b.WriteString(line + "\n")
 		}
 	}
-	if err := os.WriteFile(full, []byte(b.String()), 0o644); err != nil {
+	return b.String(), true
+}
+
+func EnsureMergeAttributes(root string) (bool, error) {
+	full := filepath.Join(root, AttributesName)
+	if err := insideRoot(root, full); err != nil {
+		return false, err
+	}
+	raw, err := os.ReadFile(full)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	expected, changed := ExpectedMergeAttributes(string(raw))
+	if !changed {
+		return false, nil
+	}
+	if err := os.WriteFile(full, []byte(expected), 0o644); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// EnsureMergeAttributesFrom reconciles .gitattributes against a verified base: the bytes
+// the remote tracking ref currently holds. The expected content derives from that base,
+// never from whatever partial bytes a killed recovery left on disk, so a truncated comment
+// or rule is completed to the standard bytes rather than kept. The on-disk file is
+// completed only when it is an exact prefix of the expected bytes; any other content is
+// the caller's foreign-byte refusal (verifyPermittedDeltas already refuses it, and the
+// check is repeated here so this helper is safe on its own).
+//
+// It reports whether the base lacks the complete standard contribution -- which is whether
+// the caller must stage the attributes delta -- even when the working tree already held
+// the complete bytes. A remote that already carries both rules, whatever else it carries,
+// is a no-op.
+func EnsureMergeAttributesFrom(root, base string) (bool, error) {
+	expected, changed := ExpectedMergeAttributes(base)
+	full := filepath.Join(root, AttributesName)
+	if err := insideRoot(root, full); err != nil {
+		return false, err
+	}
+	raw, err := os.ReadFile(full)
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return false, err
+	}
+	disk := string(raw)
+	if disk == expected {
+		return changed, nil
+	}
+	if !changed {
+		// The base already carries the complete contribution, so there is no delta to
+		// stage. An on-disk file that is not already the complete bytes is either absent
+		// (fine: the remote holds it) or a foreign/partial leftover the caller refuses in
+		// verifyPermittedDeltas; either way this helper must not leave an unstaged
+		// .gitattributes behind in the working tree.
+		return false, nil
+	}
+	if !strings.HasPrefix(expected, disk) {
+		return false, fmt.Errorf("%s has unrelated content on disk; refusing to overwrite", AttributesName)
+	}
+	if err := os.WriteFile(full, []byte(expected), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil
