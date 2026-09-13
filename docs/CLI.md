@@ -1056,3 +1056,59 @@ What a first run gets wrong, and what each one wants:
 - **`--scratch` without `--opencode`, or the other way round.** The OpenCode database is copied into `--scratch` and read there with `sqlite3 -readonly`, which is this tool's one subprocess; a scratch directory with nothing to put in it is a flag that does nothing, and both mistakes are refused with the sentence saying so.
 
 There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` ends in five lines a stranger can paste instead, and `sources` is the one verb that only looks.
+
+## nova-update
+
+`nova-update` checks declared versions and applies one chosen update: bounded reads, explicit UNKNOWN results, no automatic installation. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
+
+### First run
+
+```sh
+nova-update report --file cmd/nova-update/testdata/example.tsv
+```
+
+Run this from the nova-tools checkout. The executable transcript is in [TESTS.md](TESTS.md#nova-update).
+The report reads only installed identities. UNKNOWN means a partial inventory; it
+never means zero or current. Use your own explicit six-column manifest for your
+bench. There is no quickstart: a manifest and any snapshot path belong to the caller.
+
+Use `nova-update help` for filters, optional draft/delivery and limits. A plain report
+needs no bus. Updates require an explicit `nova-update apply --file ... name`;
+models are listed for the owner to evaluate and pull themselves. No timer is installed.
+For recovery across process death, name `--snapshot`; retries retain the prepared
+note. Version statuses should go to your chosen integrator, with optional Cc;
+participation and updates remain voluntary.
+
+First-run refusals name what is needed: `--file` wants the six-column TSV header
+and explicit argv; paths or arguments containing spaces belong in a wrapper script.
+`--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
+`--remote` and `--branch`. A busy snapshot wants the current writer to finish
+or a larger `--budget`; never remove a lock file to break a live lock.
+
+## nova-version
+
+`nova-version` reports installed tool identities and shares the update reader: local stdout by default, optional prepared bus delivery. The contract is [docs/SPEC-UPDATE.md](SPEC-UPDATE.md).
+
+### First run
+
+```sh
+nova-version report --file cmd/nova-version/testdata/example.tsv
+```
+
+Run this from the nova-tools checkout. The executable transcript is in [TESTS.md](TESTS.md#nova-version).
+The report reads only installed identities. UNKNOWN means a partial inventory; it
+never means zero or current. Use your own explicit six-column manifest for your
+bench. There is no quickstart: a manifest and any snapshot path belong to the caller.
+
+Use `nova-version help` for filters, optional draft/delivery and limits. A plain report
+needs no bus. Updates require an explicit `nova-update apply --file ... name`;
+models are listed for the owner to evaluate and pull themselves. No timer is installed.
+For recovery across process death, name `--snapshot`; retries retain the prepared
+note. Version statuses should go to your chosen integrator, with optional Cc;
+participation and updates remain voluntary.
+
+First-run refusals name what is needed: `--file` wants the six-column TSV header
+and explicit argv; paths or arguments containing spaces belong in a wrapper script.
+`--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
+`--remote` and `--branch`. A busy snapshot wants the current writer to finish
+or a larger `--budget`; never remove a lock file to break a live lock.

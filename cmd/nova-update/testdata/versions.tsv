@@ -1,0 +1,6 @@
+name	kind	installed	latest	apply	owner
+gh	tool	gh --version	github:cli/cli	brew upgrade gh	rowan
+sops	tool	sops --version --disable-version-check	github:getsops/sops	brew upgrade sops	rowan
+opencode	harness	opencode --version	npm:opencode-ai	npm install -g opencode-ai@{version}	freddy
+qwen3-coder:30b	model	ollama list	ollama:qwen3-coder:30b	none	stella
+nova-wake-pin-nova-bus	pin	nova-wake version	local:nova-bus version	none	rowan

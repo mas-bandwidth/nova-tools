@@ -386,3 +386,33 @@ SUM MODEL model=gemini-2.5-pro input=123456 output=7890 cache_write=- cache_read
 SUM TOTAL input=124794 output=9483 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,2,1,3 nonutc=0 turns=3 pairs=3 models=2
 SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
 ```
+
+
+## nova-update
+
+### First run
+
+From the nova-tools checkout, using the declared Go-version fixture. This reads
+local stdout only and performs no update or bus action.
+
+```text
+$ nova-update report --file cmd/nova-update/testdata/example.tsv
+REPORT at=2026-09-12T17:29:33Z file=cmd/nova-update/testdata/example.tsv host=- as=- entries=1 kinds=engine,harness,model,pin,tool timeout=5s budget=1m0s max=20 snapshot=-
+REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
+REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-update/testdata/example.tsv
+```
+
+
+## nova-version
+
+### First run
+
+From the nova-tools checkout, using the declared Go-version fixture. This reads
+local stdout only and performs no update or bus action.
+
+```text
+$ nova-version report --file cmd/nova-version/testdata/example.tsv
+REPORT at=2026-09-12T17:29:33Z file=cmd/nova-version/testdata/example.tsv host=- as=- entries=1 kinds=engine,harness,model,pin,tool timeout=5s budget=1m0s max=20 snapshot=-
+REPORT TOOL name=go kind=tool version=1.27.1 raw=go\x20version\x20go1.27.1\x20darwin/arm64 path=/opt/homebrew/bin/go
+REPORT OK checked=1 known=1 unknown=0 changed=- sent=- took=8ms file=cmd/nova-version/testdata/example.tsv
+```

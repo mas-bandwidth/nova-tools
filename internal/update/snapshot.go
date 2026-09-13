@@ -1,0 +1,525 @@
+package update
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"time"
+)
+
+type observed struct {
+	Raw    string `json:"raw"`
+	Status string `json:"status"`
+	At     string `json:"at"`
+}
+type delivery struct {
+	Observed map[string]observed `json:"observed"`
+	ID       string              `json:"id"`
+	At       string              `json:"at"`
+}
+type pending struct {
+	Artifact json.RawMessage     `json:"artifact"`
+	Observed map[string]observed `json:"observed"`
+	ID       string              `json:"id"`
+}
+type snapshot struct {
+	Observed  map[string]observed `json:"observed"`
+	Delivered map[string]delivery `json:"delivered"`
+	Pending   map[string]pending  `json:"pending"`
+}
+
+// Go's decoder keeps the LAST of two identical keys and reports nothing, so a
+// prepared artifact or a snapshot can carry two different values for the same
+// field and still decode. Neither input is this tool's own: one is another
+// binary's stdout, the other a file on disk that a crash or an editor may have
+// touched. A second value for one field is ambiguity about an identity, and
+// ambiguity is refused before anything is mutated rather than resolved by a
+// rule nobody wrote down. The key's name is never quoted back: the name is
+// content this tool does not support, and a diagnostic never echoes content.
+//
+// "Identical" has to mean identical TO THE DECODER, not byte for byte. The
+// decoder matches a field name case-insensitively, so a first version of this
+// check, which compared bytes, still let two values through for one field:
+// {"id":"fixture-1","ID":"fixture-2"} decoded to the second one. Keys are
+// therefore folded the way the decoder folds them, and a key holding any byte
+// outside ASCII is refused outright rather than folded: the decoder's own fold
+// maps U+017F (the long s) onto "s" and U+212A (the Kelvin sign) onto "k", so
+// "ſha256" would otherwise name the digest field, and no bus writes a key
+// like that.
+func noDuplicateKeys(raw []byte) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	t, err := d.Token()
+	if err != nil {
+		return fmt.Errorf("malformed JSON")
+	}
+	return walkJSON(d, t, 0)
+}
+
+// foldKey renders a key the way the decoder will match it. ASCII letters fold by
+// case; anything outside ASCII is refused, because the decoder's fold reaches
+// beyond ASCII and a key this tool supports never needs to.
+func foldKey(name string) (string, error) {
+	var b strings.Builder
+	b.Grow(len(name))
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c >= 0x80 {
+			return "", fmt.Errorf("a key outside ASCII")
+		}
+		if c >= 'A' && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		b.WriteByte(c)
+	}
+	return b.String(), nil
+}
+
+// maxJSONDepth bounds the reader the same way every other reader here is
+// bounded. The shapes this tool decodes are three deep; anything far past that
+// is not a snapshot or an artifact, and is refused rather than descended.
+const maxJSONDepth = 32
+
+func walkJSON(d *json.Decoder, t json.Token, depth int) error {
+	delim, ok := t.(json.Delim)
+	if !ok {
+		return nil
+	}
+	if depth >= maxJSONDepth {
+		return fmt.Errorf("JSON nested deeper than %d", maxJSONDepth)
+	}
+	switch delim {
+	case '{':
+		seen := map[string]bool{}
+		for {
+			k, err := d.Token()
+			if err != nil {
+				return fmt.Errorf("malformed JSON")
+			}
+			if end, ok := k.(json.Delim); ok && end == '}' {
+				return nil
+			}
+			name, ok := k.(string)
+			if !ok {
+				return fmt.Errorf("malformed JSON")
+			}
+			folded, err := foldKey(name)
+			if err != nil {
+				return err
+			}
+			if seen[folded] {
+				return fmt.Errorf("two keys naming one field")
+			}
+			seen[folded] = true
+			v, err := d.Token()
+			if err != nil {
+				return fmt.Errorf("malformed JSON")
+			}
+			if err = walkJSON(d, v, depth+1); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for {
+			v, err := d.Token()
+			if err != nil {
+				return fmt.Errorf("malformed JSON")
+			}
+			if end, ok := v.(json.Delim); ok && end == ']' {
+				return nil
+			}
+			if err = walkJSON(d, v, depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// validateSnapshot walks the snapshot's known shape and refuses exactly the two
+// ambiguities a snapshot reader must refuse, without reaching into data it did
+// not choose. A typed object -- the snapshot itself, an observed value, a
+// delivered or pending value, and the prepared artifact a pending entry holds --
+// names its schema members, so a member must be spelled exactly and a member
+// holding a byte outside ASCII is refused (the decoder's fold would otherwise
+// let "ſha256" name the digest field), and two members that fold to one name are
+// two values for one field. A data map -- `observed`, `delivered` and `pending`
+// -- is keyed by a manifest name or a delivery scope, content this tool did not
+// choose: "Tool" and "tool" are distinct tools and "outil-é" is a legal name, so
+// there only an exact duplicate key is ambiguity and a lone upper-case or
+// Unicode name is preserved, not refused.
+func validateSnapshot(raw []byte) error {
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.UseNumber()
+	return walkSnapshot(d)
+}
+
+func walkSnapshot(d *json.Decoder) error {
+	return walkTyped(d, map[string]func(*json.Decoder) error{
+		"observed":  func(d *json.Decoder) error { return walkDataMap(d, walkObservedValue) },
+		"delivered": func(d *json.Decoder) error { return walkDataMap(d, walkDeliveryValue) },
+		"pending":   func(d *json.Decoder) error { return walkDataMap(d, walkPendingValue) },
+	})
+}
+
+func walkObservedValue(d *json.Decoder) error {
+	return walkTyped(d, map[string]func(*json.Decoder) error{
+		"raw":    skipValue,
+		"status": skipValue,
+		"at":     skipValue,
+	})
+}
+
+func walkDeliveryValue(d *json.Decoder) error {
+	return walkTyped(d, map[string]func(*json.Decoder) error{
+		"observed": func(d *json.Decoder) error { return walkDataMap(d, walkObservedValue) },
+		"id":       skipValue,
+		"at":       skipValue,
+	})
+}
+
+func walkPendingValue(d *json.Decoder) error {
+	return walkTyped(d, map[string]func(*json.Decoder) error{
+		"artifact": walkArtifact,
+		"observed": func(d *json.Decoder) error { return walkDataMap(d, walkObservedValue) },
+		"id":       skipValue,
+	})
+}
+
+func walkArtifact(d *json.Decoder) error {
+	return walkTyped(d, map[string]func(*json.Decoder) error{
+		"schema": skipValue,
+		"id":     skipValue,
+		"path":   skipValue,
+		"note":   skipValue,
+		"sha256": skipValue,
+	})
+}
+
+// walkTyped consumes one object whose members must be spelled exactly as the
+// names in dispatch. A member that is not one of those names is refused even
+// when it has no duplicate (a lone "Raw" or a Unicode alias is not a second
+// spelling of "raw"), and two members that fold to one name are refused.
+func walkTyped(d *json.Decoder, dispatch map[string]func(*json.Decoder) error) error {
+	open, err := d.Token()
+	if err != nil {
+		return fmt.Errorf("malformed JSON")
+	}
+	if delim, ok := open.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("a schema object is not an object")
+	}
+	seen := map[string]bool{}
+	for {
+		k, err := d.Token()
+		if err != nil {
+			return fmt.Errorf("malformed JSON")
+		}
+		if end, ok := k.(json.Delim); ok && end == '}' {
+			return nil
+		}
+		name, ok := k.(string)
+		if !ok {
+			return fmt.Errorf("malformed JSON")
+		}
+		folded, err := foldKey(name)
+		if err != nil {
+			return err
+		}
+		if seen[folded] {
+			return fmt.Errorf("two keys naming one field")
+		}
+		seen[folded] = true
+		walk, ok := dispatch[name]
+		if !ok {
+			return fmt.Errorf("a field is missing or spelled otherwise")
+		}
+		if err := walk(d); err != nil {
+			return err
+		}
+	}
+}
+
+// walkDataMap consumes one object whose keys are names this tool did not choose.
+// Case-distinct and non-ASCII keys are legal; only an exact duplicate key is
+// ambiguity about an identity.
+func walkDataMap(d *json.Decoder, walkValue func(*json.Decoder) error) error {
+	open, err := d.Token()
+	if err != nil {
+		return fmt.Errorf("malformed JSON")
+	}
+	if delim, ok := open.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("a data map is not an object")
+	}
+	seen := map[string]bool{}
+	for {
+		k, err := d.Token()
+		if err != nil {
+			return fmt.Errorf("malformed JSON")
+		}
+		if end, ok := k.(json.Delim); ok && end == '}' {
+			return nil
+		}
+		name, ok := k.(string)
+		if !ok {
+			return fmt.Errorf("malformed JSON")
+		}
+		if seen[name] {
+			return fmt.Errorf("two entries naming one name")
+		}
+		seen[name] = true
+		if err := walkValue(d); err != nil {
+			return err
+		}
+	}
+}
+
+// skipValue consumes one JSON value of any shape without judging its contents;
+// the decoder that follows walks it against the typed struct and its depth
+// bound is kept here so a maliciously deep value is refused before recursion.
+func skipValue(d *json.Decoder) error {
+	return skipValueAtDepth(d, 0)
+}
+
+func skipValueAtDepth(d *json.Decoder, depth int) error {
+	t, err := d.Token()
+	if err != nil {
+		return fmt.Errorf("malformed JSON")
+	}
+	return skipAfter(d, t, depth)
+}
+
+func skipAfter(d *json.Decoder, t json.Token, depth int) error {
+	if depth >= maxJSONDepth {
+		return fmt.Errorf("JSON nested deeper than %d", maxJSONDepth)
+	}
+	delim, ok := t.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delim {
+	case '[':
+		for {
+			v, err := d.Token()
+			if err != nil {
+				return fmt.Errorf("malformed JSON")
+			}
+			if end, ok := v.(json.Delim); ok && end == ']' {
+				return nil
+			}
+			if err := skipAfter(d, v, depth+1); err != nil {
+				return err
+			}
+		}
+	case '{':
+		for {
+			k, err := d.Token()
+			if err != nil {
+				return fmt.Errorf("malformed JSON")
+			}
+			if end, ok := k.(json.Delim); ok && end == '}' {
+				return nil
+			}
+			if _, ok := k.(string); !ok {
+				return fmt.Errorf("malformed JSON")
+			}
+			v, err := d.Token()
+			if err != nil {
+				return fmt.Errorf("malformed JSON")
+			}
+			if err := skipAfter(d, v, depth+1); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func emptySnapshot() *snapshot {
+	return &snapshot{map[string]observed{}, map[string]delivery{}, map[string]pending{}}
+}
+func readSnapshot(path string) (*snapshot, error) {
+	s := emptySnapshot()
+	b, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return s, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("cannot read snapshot (supply a readable --snapshot)")
+	}
+	if err = validateSnapshot(b); err != nil {
+		return nil, fmt.Errorf("invalid snapshot: %s (preserve it and select a valid --snapshot)", err)
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
+	d.DisallowUnknownFields()
+	if err = d.Decode(s); err != nil {
+		return nil, fmt.Errorf("invalid snapshot (preserve it and select a valid --snapshot)")
+	}
+	if d.Decode(new(any)) != io.EOF {
+		return nil, fmt.Errorf("trailing snapshot data (preserve it and select a valid --snapshot)")
+	}
+	if s.Observed == nil || s.Delivered == nil {
+		return nil, fmt.Errorf("incomplete snapshot (preserve it and select a valid --snapshot)")
+	}
+	if s.Pending == nil {
+		s.Pending = map[string]pending{}
+	}
+	return s, nil
+}
+func writeSnapshot(path string, s *snapshot) error {
+	b, err := json.Marshal(s)
+	if err != nil {
+		return err
+	}
+	b = append(b, '\n')
+	f, err := os.CreateTemp(filepath.Dir(path), snapshotTempPrefix+"*")
+	if err != nil {
+		return fmt.Errorf("cannot create snapshot temporary file (create its parent directory)")
+	}
+	temp := f.Name()
+	defer os.Remove(temp)
+	if err = f.Chmod(0600); err == nil {
+		_, err = f.Write(b)
+	}
+	if err == nil {
+		err = f.Sync()
+	}
+	closeErr := f.Close()
+	if err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return fmt.Errorf("cannot write snapshot (check space and permissions)")
+	}
+	if err = os.Rename(temp, path); err != nil {
+		return fmt.Errorf("cannot replace snapshot atomically (check destination permissions)")
+	}
+	return nil
+}
+
+// snapshotTempPrefix is this tool's own name for its half-written snapshots.
+const snapshotTempPrefix = ".nova-version-snapshot-"
+
+func sameObserved(a, b map[string]observed) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, x := range a {
+		y, ok := b[k]
+		if !ok || x.Raw != y.Raw || x.Status != y.Status {
+			return false
+		}
+	}
+	return true
+}
+func snapshotScope(o options) string {
+	to := strings.Split(o.to, ",")
+	for i := range to {
+		to[i] = strings.TrimSpace(to[i])
+	}
+	sort.Strings(to)
+	bus, _ := filepath.Abs(o.bus)
+	b, _ := json.Marshal([]string{o.as, strings.Join(to, ","), bus, o.remote, o.branch, o.host})
+	return string(b)
+}
+func lockSnapshot(ctx context.Context, path string) (func(), error) {
+	// A stable sibling inode is required because the JSON itself is replaced by
+	// rename. The empty lock file survives; only its kernel lock means ownership.
+	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, fmt.Errorf("cannot open snapshot lock (create the parent directory and check permissions)")
+	}
+	for {
+		ok, err := trySnapshotLock(f)
+		if err != nil {
+			f.Close()
+			return nil, fmt.Errorf("cannot lock snapshot (use a filesystem supporting file locks)")
+		}
+		if ok {
+			return func() { unlockSnapshot(f); f.Close() }, nil
+		}
+		t := time.NewTimer(10 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			t.Stop()
+			f.Close()
+			return nil, fmt.Errorf("snapshot is busy (wait for the current report or increase --budget)")
+		case <-t.C:
+		}
+	}
+}
+
+// validatePrepared checks the bus JSON without relying on stdout as a permission
+// grant. The bus must additionally validate the artifact before it can mutate.
+func validatePrepared(raw []byte) (string, error) {
+	var a struct{ Schema, ID, Path, Note, SHA256 string }
+	if err := noDuplicateKeys(raw); err != nil {
+		return "", fmt.Errorf("bus prepare returned an invalid artifact: %s", err)
+	}
+	// The artifact is a fixed five-field object and rule 25 calls for the EXACT
+	// prepared artifact, so its keys are required by their exact spelling rather
+	// than by whatever the decoder would match. That is what makes a lone "ID"
+	// a refusal and not a second spelling of the identity.
+	if err := exactKeys(raw, "schema", "id", "path", "note", "sha256"); err != nil {
+		return "", fmt.Errorf("bus prepare returned an invalid artifact: %s", err)
+	}
+	d := json.NewDecoder(bytes.NewReader(raw))
+	d.DisallowUnknownFields()
+	if d.Decode(&a) != nil || a.Schema != "nova.bus.prepared/1" || a.ID == "" || a.Path == "" || !strings.HasSuffix(a.Note, "\n") || len(a.SHA256) != 64 {
+		return "", fmt.Errorf("bus prepare returned an invalid artifact")
+	}
+	if d.Decode(new(any)) != io.EOF {
+		return "", fmt.Errorf("bus prepare returned trailing data")
+	}
+	if shaText(a.Note) != a.SHA256 {
+		return "", fmt.Errorf("bus prepare digest mismatch")
+	}
+	return a.ID, nil
+}
+
+// exactKeys requires a flat object to carry exactly these keys, spelled exactly.
+// DisallowUnknownFields refuses what it does not know; this refuses what the
+// decoder WOULD have accepted under a different spelling.
+func exactKeys(raw []byte, want ...string) error {
+	var got map[string]json.RawMessage
+	if json.Unmarshal(raw, &got) != nil {
+		return fmt.Errorf("not an object")
+	}
+	if len(got) != len(want) {
+		return fmt.Errorf("%d fields where %d are named", len(got), len(want))
+	}
+	for _, k := range want {
+		if _, ok := got[k]; !ok {
+			return fmt.Errorf("a field is missing or spelled otherwise")
+		}
+	}
+	return nil
+}
+func confirmed(line, id string) bool {
+	f := strings.Fields(line)
+	if len(f) < 3 || f[0] != "SEND" || f[1] != "OK" {
+		return false
+	}
+	haveID, pushed := false, false
+	for _, v := range f[2:] {
+		if v == "id="+id {
+			haveID = true
+		}
+		if v == "pushed=true" {
+			pushed = true
+		}
+	}
+	return haveID && pushed
+}
+func cloneObserved(m map[string]observed) map[string]observed {
+	n := map[string]observed{}
+	for k, v := range m {
+		n[k] = v
+	}
+	return n
+}

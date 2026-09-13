@@ -1,0 +1,14 @@
+name	kind	installed	latest	apply	owner
+nova-board	tool	nova-board version	github:mas-bandwidth/nova-tools	none	caller
+nova-bus	tool	nova-bus version	github:mas-bandwidth/nova-tools	none	caller
+nova-check	tool	nova-check version	github:mas-bandwidth/nova-tools	none	caller
+nova-fuse	tool	nova-fuse version	github:mas-bandwidth/nova-tools	none	caller
+nova-memory	tool	nova-memory version	github:mas-bandwidth/nova-tools	none	caller
+nova-merge	tool	nova-merge version	github:mas-bandwidth/nova-tools	none	caller
+nova-sandbox	tool	nova-sandbox version	github:mas-bandwidth/nova-tools	none	caller
+nova-self-talk	tool	nova-self-talk version	github:mas-bandwidth/nova-tools	none	caller
+nova-swarm	tool	nova-swarm version	github:mas-bandwidth/nova-tools	none	caller
+nova-tokens	tool	nova-tokens version	github:mas-bandwidth/nova-tools	none	caller
+nova-update	tool	nova-update version	github:mas-bandwidth/nova-tools	none	caller
+nova-version	tool	nova-version version	github:mas-bandwidth/nova-tools	none	caller
+nova-wake	tool	nova-wake version	github:mas-bandwidth/nova-tools	none	caller

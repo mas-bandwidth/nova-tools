@@ -232,6 +232,8 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     One `REPORT TOOL` line per entry that answered: `version=` is the key — rule 4's read,
     or rule 15's for `kind=pin` — and `raw=` is the observed first line, whole, one
     `internal/oneline` token; `+dirty`, `-rc1` and the pseudo-version stamp stay in both.
+    For a model, `raw` is the matched `ollama list` row from rule 4a, so a changed
+    digest changes the retained observation; the unchanged table header cannot hide it.
     Both are on the line because they differ in what they can say: an opaque commit or a
     `devel` build is an identity this bench honestly runs though no order is known for it
     (rule 17), so it is reported, never dropped for lacking a dotted number. A first line
@@ -278,6 +280,9 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     one atomically (a temp file beside it, then rename) and prints `changed=<yes|no>` on the
     count line with one `REPORT CHANGED name= was= now=` per entry that moved; the first
     run is the baseline, `changed=yes`, `was=-`; a tool turning UNKNOWN, or back, moved.
+    A caller-named snapshot uses a sibling `<snapshot>.lock` kernel lock to serialize
+    writers across atomic renames; process death releases ownership. The stable empty
+    lock file is not evidence of a running process and is not automatically deleted.
     The file is JSON with `observed`, `delivered` and `pending`. `observed` is keyed
     by `name`, each value
     `raw`, `status` (`known` or `unknown`) and `at` — the machine-readable snapshot #121
@@ -285,7 +290,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     only in their stamps are `changed=no` — a timestamp refresh is not a changed version
     (#121). **Observed state and delivered state are two records** (Stella, #127): every run
     with `--snapshot` writes `observed`; only a `SEND OK … pushed=true` writes `delivered`,
-    keyed by the send's scope — `as`, `to` sorted, `bus`, `remote`, `branch`, joined — and
+    keyed by the send's scope — `as`, `to` sorted, absolute `bus`, `remote`, `branch`, and explicit `host`, joined — and
     holding the `observed` map the body carried, nova-bus's `id` and the `at`. A local-only
     run, a `--draft`, a refused or a failed send write no `delivered`. With `--snapshot`,
     `--send` composes and sends when the scope has no `delivered` record, when that record's
@@ -383,44 +388,29 @@ REPORT REFUSED: <reason> (<remedy>)
 **last** line; the rest are informational second tokens, declared here as SPEC.md requires,
 on stdout, `REFUSED` and `FAIL` on stderr; every value is one `internal/oneline` token.
 
-## First run — the lines a stranger pastes
+## First run — meet your installed tools
 
-```
-$ go install ./cmd/nova-update
-$ nova-update check --file ./cmd/nova-update/testdata/versions.tsv --max 3
-UPDATE at=2026-09-12T01:00:00Z file=./cmd/nova-update/testdata/versions.tsv entries=5 kinds=harness,model,pin,tool timeout=5s budget=60s max=3
-UPDATE UNKNOWN name=nova-wake-pin-nova-bus kind=pin installed=- path=- source=local:nova-bus\x20version: not_found (nova-wake is nowhere on /Users/x/go/bin:/opt/homebrew/bin:/usr/bin:/bin — install it or add its dir to PATH)
-UPDATE STALE name=gh kind=tool installed=2.100.0 latest=2.101.0 path=/opt/homebrew/bin/gh source=github:cli/cli owner=rowan
-UPDATE DIFFERENT name=qwen3-coder:30b kind=model installed=07d35212591f latest=096fdbd02fe6 path=/opt/homebrew/bin/ollama source=ollama:qwen3-coder:30b owner=stella
-UPDATE UNKNOWN name=opencode kind=harness installed=1.18.30 path=/opt/homebrew/bin/opencode source=npm:opencode-ai: no answer in 5s (raise --timeout, or ask again when the registry answers)
-UPDATE FAIL checked=5 current=1 stale=1 newer=0 differ=1 unknown=2 pins=0 took=6.2s file=./cmd/nova-update/testdata/versions.tsv
-$ nova-update apply --file ./cmd/nova-update/testdata/versions.tsv qwen3-coder:30b
-APPLY REFUSED name=qwen3-coder:30b: a model is not installed by this tool (the owner pulls it after the evaluation the owner chose: ollama pull qwen3-coder:30b; nova-local status --list shows it)
-$ nova-update apply --file ./cmd/nova-update/testdata/apply.tsv fixture-tool
-APPLY BEFORE name=fixture-tool kind=tool installed=1.0.0 path=./testdata/fixture-tool latest=1.1.0 source=github:example/fixture
-APPLY RUN name=fixture-tool argv=2 version=1.1.0: ./testdata/fake-install.sh\x201.1.0
-APPLY AFTER name=fixture-tool installed=1.1.0 was=1.0.0
-APPLY OK name=fixture-tool from=1.0.0 to=1.1.0 took=0.1s
-$ nova-update report --file ./cmd/nova-update/testdata/nova.tsv --host studio
-REPORT at=2026-09-12T01:00:00Z file=./cmd/nova-update/testdata/nova.tsv host=studio as=- entries=3 kinds=tool timeout=5s budget=60s max=20 snapshot=-
-REPORT TOOL name=nova-bus kind=tool version=0.12.1-0.20260912135226-0459069+dirty raw=nova-bus\x20v0.12.1-0.20260912135226-0459069+dirty\x20darwin/arm64\x20go1.27.1 path=/Users/x/go/bin/nova-bus
-REPORT TOOL name=nova-merge kind=tool version=- raw=nova-merge\x200459069 path=/Users/x/go/bin/nova-merge
-REPORT UNKNOWN name=nova-wake kind=tool path=- raw=-: not_found (nova-wake is nowhere on /Users/x/go/bin:/opt/homebrew/bin:/usr/bin:/bin — install it or add its dir to PATH)
-REPORT FAIL checked=3 known=2 unknown=1 changed=- sent=- took=0.4s file=./cmd/nova-update/testdata/nova.tsv
+From the nova-tools checkout, with Go on PATH:
+
+```sh
+go run ./cmd/nova-update report --file cmd/nova-update/testdata/example.tsv
+go run ./cmd/nova-version report --file cmd/nova-version/testdata/example.tsv
 ```
 
-The report block is the fixture's shape, not a measured Studio run: nova-merge's line is
-its commit-only `version` print (#121 measured one), so `version=-` and the raw line is the
-report; no GET is made and nothing is sent — `--send` is absent, so nova-bus never starts.
+The shipped example reads `go version` and reports the actual identity on your bench.
+It performs no latest-version lookup, installation or bus delivery. Output timestamps,
+paths and versions come from your run; UNKNOWN means an incomplete inventory.
 
-Inside `go test` every GET source above is an `httptest` server the parser's table of hosts
-points at and every argv — `installed`, `local:`, `apply` — a script under `testdata/`; the
-fixture's model digests are the measured `qwen3.6:35b-a3b` pair under another name. Pasted
-in a terminal, line 2 reaches GitHub twice, npm and the registry once each, installing
-nothing; the last line applies a fixture, because **`apply` of a real entry runs the real
-installer on the box it is pasted into**. Do both on purpose. The `kind=pin` entry is
-UNKNOWN here because nova-wake is not on this box's PATH; from one tag with its bus it reads
-EQUAL; a DIFFERENT pair prints first, `pins=1`.
+Then create your own six-column manifest and choose which tools to check. The examples
+in `versions.tsv` demonstrate supported source types; replace their entries and owner
+labels with your team's choices before use. `apply.tsv` is a parser-only fixture with
+fictional executable paths, not a runnable installation example. An explicit `apply`
+runs the installer your own manifest names, so review that command before choosing it.
+
+[CLI.md](CLI.md#nova-update) covers optional reporting and delivery. The executable
+first-run transcripts in [TESTS.md](TESTS.md#nova-update) are checked by the command
+packages' `TestExecutableFirstRun`; tests use local fixtures for source lookups and
+installation behavior, rather than depending on live registry answers.
 
 ## Tests this spec demands
 
