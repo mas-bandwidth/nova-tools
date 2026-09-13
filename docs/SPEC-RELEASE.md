@@ -1,4 +1,4 @@
-# nova-release — specification (draft 3, 2026-09-13)
+# nova-release — specification (draft 4, 2026-09-13)
 
 `nova-release` is one binary at the **release layer**. It takes a repository
 whose default branch is landed by a `nova-merge` lane and turns **one frozen
@@ -20,10 +20,16 @@ change**. Where this tool needs something neither covers, it is below and it
 says so.
 
 Draft 2 folded three cold reads of draft 1 at `7abc968e` — Fable's, Opus's and
-Stella's. **Draft 3 folds the two cold reads of draft 2 at `1af78e31`**, Opus's
-and Fable's, both HOLD. Every repair below is one of theirs, named where it
-lands; where two readers wanted different shapes for one repair, the rule says
-which was taken and why; and a passage this draft repaired says `draft 3`.
+Stella's. Draft 3 folded the two cold reads of draft 2 at `1af78e31`, Opus's and
+Fable's, both HOLD. **Draft 4 folds the three reads of draft 3 at `d224cafd`**:
+Stella's scoped HOLD (four findings), Emma's independent first-eye review
+(APPROVE, no findings) and the ten polish lines of Opus's APPROVE. It also brings
+rule 4, rule 6, rule 8 and work list item 11 to a fact that landed after draft 3:
+nova-tools #252 replaces `release.yml`'s own test job with a `certified` job that
+refuses the release unless the **newest completed certification run on the tagged
+commit** is green. Every repair below is a reader's, named where it lands; where
+two readers wanted different shapes for one repair, the rule says which was taken
+and why; and a passage this draft repaired says `draft 4`.
 
 Three releases of this repository were cut in two nights by hand, and one is
 being prepared by hand today. Each shipped. Each also failed in a way the next
@@ -35,13 +41,14 @@ one repeated. This tool is those failures closed, one rule each.
 | the same nights: merges landed after the candidate was chosen, so the release shipped a tree nobody had read whole; a `--auto` merge landed before CI finished (Glenn, 2026-09-11: **never `--auto`**) | `delta` walks every landing between the last release and the candidate and **refuses while any landing lacks a read** keyed to its head (rule 3); this tool has no merge verb and no `--auto` to refuse — it cannot land anything |
 | 2026-09-13: v0.15.0 prepared by hand as PR #232 — two install lines in `docs/USAGE.md` bumped by an editor, the release body drafted inside the pull request's own body | version sites are a **manifest**, never a grep (rule 5); the notes are a **file a line wrote**, read by another line, keyed to the file's hash (rule 7) |
 | 2026-09-13: certification run 34771523657, dispatched on `main` at 9a95e33e, RED on `build-windows` and `test-windows (internal/swarm)` — `symlink_fifo_test.go:28:20: undefined: syscall.Mkfifo` — "a leg the fast tier never ran"; fix PR #235 blocks the tag | `certify` requires the certification aggregate **green at exactly the candidate sha**, read job by job from the wire, never from a badge or a run's status (rule 4); **a red is stop** |
+| 2026-09-13, nova-tools #250: v0.15.0's tag run (34775563018) ran `release.yml`'s **own** copy of the test set serially on Windows inside a fifteen-minute job, was cancelled with packages still to run, and the release job skipped — the tag exists with no release object, while certification 34775151906 had passed the same commit `8ba256bb` in six minutes | certification is read **once**, from the one run that certifies the commit (rule 4), and the release workflow asks that same question rather than running a second, slower, drifting copy of it: nova-tools #252 replaces the test job with a `certified` job requiring the **newest completed** certification run at the tagged commit to be green (rule 4, rule 6, work list item 11) |
 | #229, the same night: the release run for v0.14.0 "failed once on Windows: `internal/merge TestThirtyConcurrentWriters` … Attempt 2 on the unchanged tag succeeded at 23:27:37Z (56 assets)" | `verify` reads the tag, the release, the asset count and names and the version the shipped binary prints, and names the first field that disagrees (rule 8); a red release run is re-run on the **same tag**, never widened, never re-tagged |
 | #229: stacked PR #144 "when it was called merged, it had merged onto the stack, not main" | a landing is a **first-parent commit on the default branch**, walked in a clone that fetched the wire; nothing is a landing because a sentence said so (rule 3) |
 | Glenn, 2026-07-22: "when I ask you to create a release, I always mean, create the full github release. Tags + github release." — and 2026-07-30, the third time: "please always make a real github release with release notes, not just a tag" | `cut` creates the tag and the release **in one act**; there is no verb that makes a bare tag, and the release workflow's create path becomes a refusal (rule 6) |
 | Glenn, 2026-08-03: "A RELEASE TITLE STATES WHAT IS NOW TRUE, OR NOW POSSIBLE … does this name a capability, or a defect?"; 2026-09-06: "We never do releases with discovery details or archaeology. It's ALWAYS what the user gets." Measured today on the wire: the titles of v0.13.0 and v0.14.0 are the bare strings `v0.13.0` and `v0.14.0` | the notes file carries a title that is **not the tag**, a body that is **not generated**, and a recorded read by a line other than its author answering the one question (rule 7); `cut` refuses without all three |
 | a release "goes through a tool, never `git tag` by hand" (Glenn's standing rule); a local tag is a cache — 2026-08-31, `git log v2.0.0..main` against a retired local tag returned commits from another era and nearly put a false wire claim in a published note | every base sha is **read from the wire** (`git/ref/tags/<tag>`, peeled) and the clone fetches tags with a forcing refspec; no verb ever runs `git tag` (rule 9) |
 | release.yml #118: `-X main.version=` with an empty value stamped every binary `devel` while the release page said a tag; v0.11.0 was published by hand before its tag's run reached the upload step and "got none of its binaries" | `verify` downloads this host's binary from the release, checks its `SHA256SUMS` line and runs `version`; the field-two identity must be the tag (rule 8); the workflow's order — release exists, then assets attach — is now the **designed** order, not the accident |
-| 2026-08-25: a public correction quoted a tool string from the workshop copy, not the public build, and cited `v0.3.0` when the release was `v0.7.0` | what `verify` prints is what the **downloaded** binary printed; a version site is a manifest line, so a stale pin is a `SITES FAIL` naming the file |
+| 2026-08-25: a public correction quoted a tool string from the workshop copy, not the public build, and cited `v0.3.0` when the release was `v0.7.0` | what `verify` prints is what the **downloaded** binary printed; a version site is a manifest line, so a stale pin is a `SITES SITE` line naming the file under a `SITES FAIL` count |
 | Glenn, 2026-09-09: "It is our job to deliver a production ready tool, and then NOT CHANGE IT." | this is a **new binary**; `nova-merge` and `nova-version` are not edited (see **why a new binary**); after the release that makes `nova-release` production ready, it freezes, additive only |
 
 **Everything this tool reads from the host, the lane, a manifest or a notes
@@ -139,9 +146,10 @@ near the end. The date on a rule is the day it was learned.
    `tree` record is keyed to the candidate sha it was made for, so after a
    re-freeze `status` shows `delta=- certify=- tree=- notes=-` and `cut` refuses
    until all four are made again at the new sha — the notes read among them,
-   because the notes describe a range the re-freeze moved (rule 7). This is how "anything merged after the freeze is either
-   excluded from the release or forces a recorded delta read at the new
-   candidate" becomes a mechanism rather than a sentence: a landing after the
+   because the notes describe a range the re-freeze moved (rule 7). This is how
+   "anything merged after the freeze is either excluded from the release or
+   forces a recorded delta read at the new candidate" becomes a mechanism rather
+   than a sentence: a landing after the
    freeze is simply not in the tree the tag points at, and including it means
    a new candidate, a new walk and a read for it. (2026-09-12: the hand-kept
    ledger line "naming the head, the reviewer and the CI run" was this rule
@@ -160,6 +168,33 @@ near the end. The date on a rule is the day it was learned.
    the walk is empty or backwards and the tag goes on an older tree: `DELTA FAIL
    field=since`, re-checked at `cut`. (Fable, LOW; Stella 1: a release picked by
    publication date alone can be a maintenance branch's.)
+
+   **How the base was chosen is recorded, because `cut` re-checks the same
+   question and not a different one (draft 4).** There are two modes, and the
+   delta record carries which one it used, the ref the caller named and the sha
+   it resolved to: `since_mode` is `latest` or `named`, `since_ref` is the tag or
+   sha the caller typed — or the tag the host's `releases/latest` answered — and
+   `since` is the peeled commit.
+
+   - `latest`: the caller named no base, so the host chose it. `cut` re-derives
+     `releases/latest` on the wire now, ignoring a release for `tag` itself, and
+     **a base that moved voids the delta**: a release published between the walk
+     and the cut widened the range, and the walk must be redone. That is the
+     movement detection this mode exists for.
+   - `named`: the caller named a base with `--since`. This is also the **only**
+     mode a first release has, when the host holds no release at all. `cut`
+     re-resolves `since_ref`, requires it to peel to the record's `since`, and
+     requires `merge-base(since, S) = since`. A release published elsewhere on
+     the wire does **not** void it: the caller named this base deliberately, and
+     a first release and a maintenance line have no `latest` to move.
+
+   Draft 3 required `--since` when the wire held no release and then wrote a cut
+   condition whose P was "the previous release's sha read from the wire this
+   run" alone, so a first release could never reach `cut` at all, and an explicit
+   non-latest base was overruled at `cut` by the base the caller had rejected
+   (Stella 2). `status`, `cut` and the reconciliation of a lost create answer all
+   read the mode from the delta record, so the three cannot ask different
+   questions.
 
    It fetches the repository into its own clone with a forcing tag refspec and
    walks `<base>..<candidate>` **first-parent**: each commit on that walk is one
@@ -224,12 +259,12 @@ near the end. The date on a rule is the day it was learned.
    events a run may come from and the jobs whose `skipped` is allowed come from
    the release policy (rule 12), not from flags a caller picks per run, so what
    counts as certified is a reviewed fact of the tree at S rather than the
-   caller's choice (Stella 2). `certify` asks the host for **completed** runs of
-   that workflow whose `head_sha` equals the candidate — never the newest run on
-   the branch, because a `workflow_dispatch` on the default branch runs at that
-   branch's tip, and after a post-freeze landing the tip is not the candidate —
-   reading **every page** of runs and of jobs, because a cap is on what is
-   printed and never on what is read.
+   caller's choice (Stella 2). `certify` asks the host for **every** run of that
+   workflow whose `head_sha` equals the candidate, completed or not — never the
+   newest run on the branch, because a `workflow_dispatch` on the default branch
+   runs at that branch's tip, and after a post-freeze landing the tip is not the
+   candidate — reading **every page** of runs and of jobs, because a cap is on
+   what is printed and never on what is read.
 
    **Which run counts**: the **newest completed run at S by `created_at` whose
    event the policy trusts**, and that run's **latest attempt's** jobs.
@@ -240,7 +275,36 @@ near the end. The date on a rule is the day it was learned.
    green would refuse a sha that is certified (Fable MEDIUM 3, Opus MEDIUM 7).
    Every **earlier** completed run at S whose conclusion is not `success` prints
    a `CERTIFY RUN` line with its id and conclusion, so a red that was re-run is
-   on the record rather than erased.
+   on the record rather than erased. A superseded red stays history and is never
+   a refusal by itself (Stella 3).
+
+   **A run that has not finished supersedes the one that has, and is not
+   evidence (draft 4).** Draft 3 asked only for **completed** runs, so a trusted
+   run B started at S after a green run A — with one required job already
+   `failure` and another still running — was invisible: `certify` and `cut` chose
+   A and passed, against this rule's own "a red is stop" and against the queued-
+   run hurt below (Stella 3). Supersession is at the level of a **run and an
+   attempt**: the deciding evidence is the newest completed trusted run at S and
+   its latest attempt, and any trusted run at S newer than it, or any newer
+   attempt of it, supersedes it. So before the term is decided:
+
+   - a newer run or attempt at S that is **not completed** and already has a
+     required job concluded anything but `success` is `CERTIFY FAIL run=<id>
+     job=<name> conclusion=<word>`, exit 1 — a red leg is a red whether or not
+     its siblings have finished;
+   - a newer run or attempt at S that is **not completed** and has no concluded
+     required failure is **pending, not green**: `CERTIFY FAIL run=<id>
+     conclusion=in_progress`, exit 1, `status` prints `certify=pending`, and the
+     remedy is to wait for the aggregate and run the verb again. Pending is said
+     in that word and never folded into green or into red.
+
+   **A partial re-run is coverage across the attempts of one run, never across
+   runs.** A re-run of failed jobs makes a new attempt carrying only those jobs,
+   so a required job absent from the latest attempt but `success` in an **earlier
+   attempt of the same run** counts, and the record names the attempt each
+   conclusion was read from; a required job absent from **every** attempt of that
+   run is `conclusion=absent`. Absent and proven-in-an-earlier-attempt are
+   different answers and this rule keeps them different (Stella 3).
 
    In that run it reads the **aggregate job's conclusion by name**, then every
    job's, and requires `success` of all: `failure`, `cancelled`, `timed_out`,
@@ -252,18 +316,43 @@ near the end. The date on a rule is the day it was learned.
    status badge is never read as evidence (2026-09-07: "a QUEUED certification
    run hides a COMPLETED red leg, and five merges landed on a red main"). A
    green writes the certify record with the run id, the attempt, the event, the
-   job names, the count and the policy's hash at S.
+   job names **and the attempt each conclusion came from**, the count and the
+   policy's hash at S.
 
    **A record is not current proof.** `cut` re-reads that attempt and asks for
-   any newer completed run at S, because a green run can be re-run red after the
-   record was written (Stella 2): the term is decided on the wire's answer now,
-   not on the record's then. No run at the sha is `CERTIFY FAIL … no completed
-   run at <sha12>`; the remedy names the **re-freeze first** and the dispatch
-   second, because dispatching at a moved tip cannot produce a run at S (Opus).
+   any newer run at S, finished or not, because a green run can be re-run red
+   after the record was written and a newer run can be red before it finishes
+   (Stella 2, Stella 3): the term is decided on the wire's answer now, not on the
+   record's then. No run at the sha is `CERTIFY FAIL … no completed run at
+   <sha12>`; the remedy names the **re-freeze first** and the dispatch second,
+   because dispatching at a moved tip cannot produce a run at S (Opus).
    **A red is stop**: the verb exits 1 and nothing downstream can proceed; there
    is no `--allow-red`. (2026-09-13: run 34771523657, `build-windows` and
    `test-windows (internal/swarm)` red at 9a95e33e, "a leg the fast tier never
    ran".)
+
+   **The release workflow asks this same question, and that is deliberate (draft
+   4).** nova-tools #252 replaces `release.yml`'s own test job with a `certified`
+   job that, on the tag event, asks the host for certification runs at the tagged
+   commit, refuses while any is in flight, and requires the **newest completed**
+   one to be green, naming the dispatch and the re-run as its remedy. Three
+   things follow for this tool, and none of them is a new rule:
+
+   - the workflow's question and this rule's are **one question asked twice**,
+     phrased the same way on purpose; where they could differ is only in *when*
+     they are asked, and a difference in the answer is a run that arrived between
+     the `cut` and the tag event;
+   - the tagged commit the workflow asks about **is S**, because rule 6 tags S
+     and rule 6 reads the tag back peeled to prove it, so the two asks are about
+     the same tree;
+   - a certification re-run that goes red between `cut` and the tag event leaves
+     a release with no assets rather than assets nobody vouched for. That is the
+     right failure and `verify` names it, `field=assets` (rule 8).
+
+   (2026-09-13, #250: `release.yml`'s second, slower copy of the test set was
+   cancelled on Windows at its fifteen-minute cap and v0.15.0's tag got no
+   release object, while certification had passed the same commit in six minutes.
+   Two copies of one test set drift; one run read twice does not.)
 5. **Version sites are a manifest, and the frozen tree already carries the
    new tag.** The policy's `sites` line (rule 12) names a tab-separated file
    **in the repository**, read from the tree at S rather than from anybody's
@@ -278,24 +367,71 @@ near the end. The date on a rule is the day it was learned.
    have hidden (2026-08-25: a doc pinned `v0.3.0` while `v0.7.0` was current).
    `bump --policy <path> --dir <checkout> --from <tag> --tag <tag>` rewrites
    each site in a checkout the caller names, from the rendering with `--from`
-   to the rendering with `--tag`, refusing a site that does not hold exactly
-   `count` renderings of `--from`; it commits nothing and pushes nothing, and
+   to the rendering with `--tag`, refusing a site that holds neither exactly
+   `count` renderings of `--from` nor exactly `count` of `--tag` already; it
+   commits nothing and pushes nothing, and
    the change lands through the lane like any other, **before** the freeze.
    `bump` reads the policy, and the sites manifest the policy names, **from
    `--dir`**, the caller's own checkout, because before the freeze there is no S
    to read them at; it takes no `--sites` (draft 3: draft 2's rule 12 said the
    policy is read from the caller's checkout "only by `bump`" while `bump` took a
    sites file and no `--policy`, so one of the two was wrong — Fable MEDIUM 4,
-   Opus LOW). It is **all or nothing**: every site is
-   read and planned first, any refusal refuses the whole bump before a byte is
-   written, and each write is a temp file and a rename, so a failure at site
-   four never leaves sites one to three looking done (Stella 5). Every site path
-   is checked before it is opened — relative, no `..`, and a **regular file**
-   under `--dir`, never a symlink and never a FIFO (this repository's own rule,
-   security#30).
+   Opus LOW). Every site path is checked before it is opened — relative, no
+   `..`, and a **regular file** under `--dir`, never a symlink and never a FIFO
+   (this repository's own rule, security#30).
+
+   **What `bump` promises about a failure halfway, stated as a protocol and not
+   as a word (draft 4).** Draft 3 said `bump` is "all or nothing", and it is not:
+   planning every site before writing any prevents a **validation** failure from
+   writing part of a bump, but N separate renames cannot be one act, and a write
+   that fails at site four, or a kill between site three and site four, leaves
+   sites one to three changed on a disk this tool does not own (Stella 1). A tool
+   that cannot keep a promise must not make it. So:
+
+   1. **Plan.** Every site named by the manifest is read, its renderings of
+      `--from` counted against `count`, its new bytes computed, and its `sha256`
+      before and after recorded. A site that already holds `count` renderings of
+      `--tag` and none of `--from` is **not** a refusal: it is counted `done`,
+      which is what makes a re-run finish an interrupted bump (step 4). Any
+      other disagreement with `count` refuses the **whole** bump before a byte is
+      written: `BUMP FAIL <path> sites=<n> done=<n>: <reason>`, exit 1. This is
+      the promise draft 3 could keep, and it is kept.
+   2. **Apply, in manifest order, each site a temp file in the same directory
+      and a rename.** A rename either happened or did not, so no site is ever
+      half-written. Immediately before each rename the site is re-read and its
+      `sha256` compared to the one the plan recorded: a caller who edited the
+      file between the plan and the apply gets a refusal naming the path, never
+      an overwrite of their edit with bytes computed from what the file used to
+      be.
+   3. **Report what is on the disk.** A write or rename that fails after the
+      first successful rename stops the verb where it stands — later sites are
+      not attempted — and prints one `BUMP PARTIAL <path> before=<sha256:12>
+      after=<sha256:12>` line for **every site already renamed**, then `BUMP FAIL
+      <path> sites=<n> done=<n>: <reason>`, **exit 2**: the verb could not finish
+      its act, and the durable before-and-after hashes are how a caller knows
+      exactly which files moved and to what.
+   4. **Resume, or revert with what is printed.** Re-running the same `bump`
+      finishes it: a site already holding exactly `count` renderings of `--tag`
+      and none of `--from` is counted `done` and not rewritten, a site still
+      holding `--from` is applied, and **anything else is a refusal naming the
+      path** — a mixed or hand-edited site is a question for a person. This is
+      also what makes a kill mid-apply recoverable with no journal file: the disk
+      is the state, and the manifest is how to read it. `--dir` is a checkout the
+      caller owns and is under their version control, so the honest revert is
+      theirs (`git checkout -- <path>` over the paths the `BUMP PARTIAL` lines
+      name); this tool does not write a backup, because a backup outside `--dir`
+      would break rule 10 and a backup inside it would be a file the manifest
+      does not name.
+
+   Edits a caller made are preserved in the two senses a rewrite can preserve
+   them: `bump` rewrites the manifest's renderings and nothing else in the file,
+   and a site whose bytes moved between the plan and the apply is a refusal
+   rather than an overwrite (step 2).
+
    `status` and `cut` then check that every site **at the candidate tree**
    renders `--tag` exactly `count` times, `SITES OK sites=<n>`, and a site
-   that does not is `SITES FAIL <path>: <reason>`. The tag therefore goes on a
+   that does not prints `SITES SITE <path>: <reason>` with the count line
+   following it (draft 4, Opus polish 4). The tag therefore goes on a
    tree that already says its own version, and `cut` **never edits a tree**:
    the candidate is frozen, and a tool that bumped a file after the freeze
    would be tagging a commit nobody read. (2026-09-13: PR #232 is this rule
@@ -336,11 +472,15 @@ near the end. The date on a rule is the day it was learned.
    peeled tag equals S**; otherwise `CUT FAIL field=tag expected=<S12>
    found=<x12>`, **exit 1** — the verb ran and the wire said no — no record, and
    nothing is deleted or re-tagged: conflicting wire state halts (Stella 3).
-   **The exit is stated once, here**: this is the only `CUT FAIL` at 1, the
-   host-answer `CUT FAIL` of **the cut condition** is the only one at 2, and
-   `field=tag` is the token that tells them apart (draft 3: draft 2's exit table
-   put the token in its exit-2 row and made this paragraph and the table
-   disagree — Opus MEDIUM 4, Fable LOW). The line says what the wire now holds:
+   **The exit is decided here and nowhere else** (draft 4, Opus polish 6: draft
+   3 said "stated once" in a document that then lists the same two cases in the
+   exit table and the paragraph under it, which is a table doing its job and not
+   a second decision): this is the only `CUT FAIL` at 1, the host-answer `CUT
+   FAIL` of **the cut condition** is the only one at 2, `field=tag` is the token
+   that tells them apart, and the exit table repeats those two rows and adds
+   nothing to them (draft 3: draft 2's exit table put the token in its exit-2 row
+   and made this paragraph and the table disagree — Opus MEDIUM 4, Fable LOW).
+   The line says what the wire now holds:
    the release this call created **exists** at `<url>`, bound to a tag that
    points elsewhere, and removing it is a hand's act and not this tool's (draft
    3, Fable LOW). A create whose answer was lost is reconciled by re-running
@@ -349,6 +489,17 @@ near the end. The date on a rule is the day it was learned.
    created=already`, which is this operation finishing rather than a second one
    (draft 3, Fable LOW: draft 2's reconciliation accepted a draft that rule 8
    would then refuse).
+
+   **The lock is released before the record is delivered (draft 4).** `cut`
+   holds `<lane>/checkout.lock` from the re-read of the wire terms through the
+   create and the peeled read-back, and **releases it before writing the cut
+   record**, because delivering a record takes that same lock itself
+   (`internal/merge/records.go:152`, `Deliver` → `LockCheckout`) and a verb that
+   held it would wait `--timeout` on itself and fail an act that had already
+   succeeded on the wire (Fable, polish 2 on the draft-3 APPROVE). Nothing
+   between the read-back and the delivery can change what the record says: the
+   record states what the wire answered and what the tag peeled to at the moment
+   the lock was held, both already read.
 
    **`cut` publishes a release that has no assets yet, and says so.**
    `release.yml` is triggered by `push: tags: ['v*']` (release.yml:29-32), and
@@ -359,7 +510,14 @@ near the end. The date on a rule is the day it was learned.
    when there is no run is that workflow's own `workflow_dispatch` at the tag.
    `CUT OK` therefore carries `assets=pending`. Published, assets-pending and
    verified are three states, and no line of this tool says "ready to install"
-   until `verify` does. The release workflow's job is then
+   until `verify` does. **And that workflow can now say no (draft 4)**: since
+   nova-tools #252 its first job asks whether the newest completed certification
+   run at the tagged commit is green and refuses the release otherwise (rule 4),
+   so `assets=pending` covers three outcomes — the run has not started, the run
+   is building, or the run **refused** because certification at S went red or was
+   still in flight. `verify`'s `field=assets` names which, and the remedy for the
+   refusal is that workflow's own: certify the commit, then re-run the run.
+   The release workflow's job is then
    to **attach assets to a release that exists**: its `gh release create …
    --generate-notes` path becomes `refusing: no release for $TAG; nova-release
    cut creates the release, this workflow attaches to it` (work list item 11).
@@ -426,14 +584,32 @@ near the end. The date on a rule is the day it was learned.
    generated-notes markers (`## What's Changed`, `**Full Changelog**:`), because
    a body a tool wrote is a list of pull request titles, which is archaeology by
    construction; and the lane's `releases/<tag>/` holds a **notes read for
-   (hash, S)** — `notes --who <name> --notes <file> --verdict approve|hold
-   [--author <name>] [--note <text>]` writes one immutable record carrying both
+   (hash, S)** — `notes --who <name> --notes <file> --author <name> --verdict
+   approve|hold [--note <text>]` writes one immutable record carrying both
    the hash and the candidate sha it was made at, and a `hold` blocks exactly as
    a lane hold does. **`notes` makes the same three checks `cut` makes** and
    refuses to record a read on notes `cut` would refuse: an approve of a title
    named for the tag alone costs a line's attention and buys nothing (draft 3,
    Fable LOW: test 7 named the refusal and draft 2 gave the check to `cut`
    only).
+
+   **Which hash, when two drafts stand (draft 4).** `cut` takes no `--notes`, so
+   the term needs a rule for choosing among notes records at S: it is the
+   **newest notes record for S by `at`** that names the hash, and only the
+   verdicts for that hash decide. An older draft's standing approve neither ships
+   nor blocks; a `hold` recorded on the newest hash blocks, as any hold does. The
+   general "the newest by `at` wins" under **the records** is a rule about record
+   kinds; this is the one place the term needed it said about a hash (Opus,
+   polish 1 on the draft-3 APPROVE).
+
+   **The exits `notes` uses (draft 4, Opus polish 5).** They follow the split the
+   exit table already makes. A notes file that does not **parse** — a first line
+   that is not `# <title>` — is `NOTES FAIL <path>`, exit 2, in the row with the
+   policy and the manifests. A title or body the rule **judges** — empty, the
+   tag, ending with the tag, a generated marker — is the verb running and saying
+   no about content it read: `NOTES FAIL <path>`, **exit 1**, the same answer
+   `cut` gives for the same notes. A missing `--who` or `--author` is a missing
+   flag, exit 2.
 
    **A re-freeze voids the notes read**, as it voids the delta, the certify and
    the tree record, even when the file's bytes did not change: after a re-freeze
@@ -444,11 +620,29 @@ near the end. The date on a rule is the day it was learned.
 
    The reader answers one question, and the tool cannot: **does every sentence
    say what the reader of this release gets?** The tool prints the question on
-   `NOTES OK` so the reader saw it. The notes' **author is declared** in the
-   record — `--author <name>` when the writer is not the reader — and an approve
-   by the declared author does not count; with no declaration, the authors of
-   record are whoever recorded the candidate or the delta, which is why the
-   delta record carries `who` (Fable MEDIUM 4). This read is about the notes: it
+   `NOTES OK` so the reader saw it.
+
+   **The notes' author is declared, always, and is never inferred (draft 4).**
+   `--author <name>` is **required** on `notes`; the record carries it; an
+   approve whose `--who` equals its `--author` is refused at `notes` before a
+   record is written (`NOTES REFUSED: --who and --author name one line; a notes
+   read is another line's`, exit 2 — it is about the invocation, as the exit
+   table's split says), and the predicate's term is "a standing approve by a
+   line other than the record's declared author". Draft 3 made `--author`
+   optional and fell back to "whoever recorded the candidate or the delta", so a
+   line that wrote the notes and approved them without the flag inherited an
+   author it never was — A records the candidate, B writes and approves, and B's
+   self-review counted (Stella 4). **The inference is deleted, not reconciled**:
+   there is no second rule about undeclared authors, because there is no
+   undeclared author. What the record holds is a **declaration**, and this spec
+   claims no more than that: it is provenance a line typed, not proof of a
+   person, and two lines sharing one forge account are still two `who` names and
+   two `--author` names here (rule 3's `authors` map is about logins on the host
+   and has nothing to do with this term). `delta` still carries `who`, as every
+   record does, because a record names its actor; nothing reads it as an author
+   any more.
+
+   This read is about the notes: it
    neither satisfies rule 3 nor stands in for rule 13's read of the tree, and
    the three are separate terms (Stella 4). `delta` prints the exact range so
    the notes are written from the diff, not from the sitting
@@ -498,9 +692,18 @@ near the end. The date on a rule is the day it was learned.
 
    Each check is one `VERIFY` line; the first mismatch is `VERIFY FAIL
    field=<name> expected=<x> found=<y>`, exit 1, and the remaining checks still
-   print (the count line prints on failure). A release whose assets are not
+   print, and **`VERIFY FAIL` carries the same counts `VERIFY OK` does**, because
+   SPEC.md's count line prints on failure as well as success (draft 4, Opus
+   polish 4: draft 3 said so here and then gave the counts to the `OK` line
+   alone). A release whose assets are not
    there yet is a `VERIFY FAIL field=assets` naming the release workflow run's
-   status, or its absence and the dispatch that starts one; `verify` never waits
+   status, or its absence and the dispatch that starts one — **and since
+   nova-tools #252 one of those statuses is a refusal** (draft 4): a run that
+   stopped at its `certified` job because the newest completed certification run
+   at the tagged commit was not green, or because one was still in flight.
+   `field=assets` names that job's conclusion, so the remedy is the workflow's —
+   certify the commit, re-run the run — and never a re-tag (rule 4). `verify`
+   never waits
    (two-minute rule: a release build is a twenty-minute job, and a verb that
    polls it is a loop with no work). A red release run is re-run **on the same
    tag**; nothing here re-tags. (#118: `devel` under a tag; #229: "Attempt 2 on
@@ -519,7 +722,7 @@ near the end. The date on a rule is the day it was learned.
 10. **Bounded output, one remedy line, every loop ends.** SPEC.md's cap-and-count
     rule governs and is not restated; what is this tool's to say is where it
     applies. **Every verb that lists takes `--max <n>`, default 20, `0` for
-    all** — `delta` over landings, `certify` over jobs and over earlier runs at
+    all** — `delta` over landings, `certify` over jobs and over the other runs at
     S, `bump`, `status` and `cut` over sites, `verify` over assets — each with
     its own `MORE` line and remedy, because draft 1 promised a cap on `CERTIFY
     JOB` from a verb that took no `--max` and printed one `BUMP SITE` per site
@@ -579,6 +782,18 @@ near the end. The date on a rule is the day it was learned.
     climbs with `..`, or is not a regular file in the tree at S. The policy's
     own `sha256` at S goes into the certify and cut records, so a record names
     the policy it was judged under (Stella 2, 5).
+
+    **A workflow that reads the policy needs the policy's path, and a workflow
+    has no flags (draft 4, Opus polish 3).** `--policy` has no default *in the
+    tool*, because the path is a fact about one repository and the tool must not
+    guess it. A workflow is that repository's own file, so it may hold the path
+    as a literal exactly as both target loops hold `.github/platforms.tsv`
+    today: **the repository states its policy path in its workflows, and this
+    repository's is `.github/release-policy.tsv`** (work list item 11). The
+    asymmetry is the rule, not an exception to it: a tool run against any
+    repository is told the path; a repository's own workflow already knows it.
+    Test 12's proof extends to the `tools` line for that reason — the shipped set
+    has a counterpart to check only once the workflow can find the file.
 13. **The candidate tree is read whole, by a line, as a term.** Both cold reads
     answered draft 1's open question the same way — yes — so #229's "whole-repo
     read of the candidate" is a term. `tree --lane <dir> --tag <tag> --who
@@ -602,7 +817,7 @@ nova-release candidate --lane <dir> --tag <tag> --sha <40 hex> --who <name> [--n
 nova-release delta     --lane <dir> --tag <tag> --work <dir> --policy <path> --who <name> [--since <tag|sha>] [--max <n>]
 nova-release certify   --lane <dir> --tag <tag> --work <dir> --policy <path> --who <name> [--max <n>]
 nova-release bump      --policy <path> --dir <checkout> --from <tag> --tag <tag> [--max <n>]
-nova-release notes     --lane <dir> --tag <tag> --notes <file> --who <name> --verdict approve|hold [--author <name>] [--note <text>]
+nova-release notes     --lane <dir> --tag <tag> --notes <file> --who <name> --author <name> --verdict approve|hold [--note <text>]
 nova-release tree      --lane <dir> --tag <tag> --who <name> --verdict approve|hold [--note <text>]
 nova-release status    --lane <dir> --tag <tag> --work <dir> --policy <path> [--max <n>]
 nova-release cut       --lane <dir> --tag <tag> --work <dir> --policy <path> --who <name> [--max <n>]
@@ -631,7 +846,7 @@ SPEC.md gives.
 
 **`status` is the survey and `cut` is the act, and they read the same
 predicate.** `status` prints one line per term of the cut condition and the
-verdict, writes nothing and takes no lock, and **exits 0 whether `ready` is
+verdict, **writes no record** and takes no lock, and **exits 0 whether `ready` is
 true or false** — answering is its whole job, as `nova-fuse status` answers with
 a fuse blown and `check` is the gate; it exits 2 only when it could not run
 (Fable MEDIUM 6: draft 1 gave `status` no code at all). `cut` evaluates the same
@@ -649,7 +864,12 @@ moved the base and `status` still said `ready=true` for a `cut` that would then
 refuse on evidence rather than on a race, against the sentence above (Opus
 MEDIUM 6). So `status` prints `STATUS TERM term=since` and carries
 `since=<P12|->` on `STATUS OK`: the base this run read from the wire, named
-where every other term is named.
+where every other term is named. **That term's `detail` is the delta record's
+`since_mode`** (draft 4), `latest` or `named`, because the two modes are checked
+differently and a reader who cannot see which one is in force cannot read the
+verdict (rule 3, Stella 2). ("Writes no record" is the exact claim: `status`
+clones into `--work`, which rule 10 allows — draft 3 said "writes nothing" beside
+a verb that writes a clone; Opus polish 9.)
 
 **`bump` is the one verb that edits files, and they are the caller's.** It
 writes into `--dir`, a checkout the caller owns, and only the lines the
@@ -670,18 +890,23 @@ test refer to it:
 ```
 CUT(tag) :=
       C   = the NEWEST candidate record for tag; its sha is S
-  and P   = the previous release's sha read from the wire this run, ignoring a
-            release for tag itself, with merge-base(P,S) = P
-  and D   = a delta record for (tag, S) with unread=0 and since=P
+  and D   = a delta record for (tag, S) with unread=0
+  and P   = D's since, with merge-base(P,S) = P, re-checked this run in D's OWN
+            since_mode: in mode latest, the wire's releases/latest peeled now,
+            ignoring a release for tag itself, MUST equal P; in mode named, D's
+            since_ref MUST still peel to P, and a release published elsewhere
+            does not move it (a first release has no latest, and is mode named)
   and R   = a certify record for (tag, S) whose run, RE-READ on the wire now,
-            concludes success on the aggregate and on every job, with no newer
-            completed run at S that does not
+            concludes success on the aggregate and on every required job across
+            that run's attempts, with no newer run or attempt at S that
+            concluded otherwise AND none that has not finished
   and T   = a tree record for (tag, S): a standing approve by a line other than
             the one who recorded C
   and every site in the policy's sites file renders tag exactly count times in
       the tree at S
-  and N   = a STANDING approve of the notes for (hash, S) by a line other than
-            the notes' declared author, whose summary on the lane branch carries
+  and H   = the hash of the NEWEST notes record for (tag, S) by at
+  and N   = a STANDING approve of the notes for (H, S) by a line other than that
+            record's DECLARED author, whose summary on the lane branch carries
             a title that is not the tag and does not end with it and a body that
             is not generated
   and on the wire: no tag named tag; or the tag at exactly S with no release; or
@@ -707,18 +932,29 @@ and 2 in its own table (Fable MEDIUM 6, Opus HIGH 3, Stella 3).
 delta, certify, notes, tree — carries the candidate sha it was made at; a record
 for another sha is never consulted, `status` prints it as `-`, and there is no
 flag that accepts an older one. The notes read is keyed to **(hash, S)**, so a
-re-freeze voids it even when the bytes did not move (rule 7). **Standing is
-defined here and stated nowhere else** (draft 3): a verdict is standing when it
-is the newest for its `(who, hash, S)` under the fold, ties folding toward the
-refusing verdict, so a hold blocks and a hold its own line later lifted does not
-— draft 2's predicate still read "with no hold for (hash, S)" beside this fold
-and the two could be read against each other (Fable, not closed; draft 1's "no
-hold for that hash" was the same hurt one draft earlier). A `delta` record's `since` is re-derived from the wire at
-`cut` time and must equal the record's: a release published between the delta
-and the cut moves the base, and the walk must be redone. **The re-derivation
-ignores a release for `tag` itself**, or the reconciliation of a lost create
-answer could never finish: the release this act published would have become
-`latest` and moved its own baseline (Stella 3).
+re-freeze voids it even when the bytes did not move (rule 7).
+
+**Standing is defined here and stated nowhere else** (draft 3): a verdict is
+standing when it is the newest for its **`(who, key)`** under the fold, ties
+folding toward the refusing verdict, so a hold blocks and a hold its own line
+later lifted does not. **The `key` is the record kind's own** (draft 4, Opus
+polish 8): a landing read's key is the head it is a read of (rule 3), a notes
+read's is `(hash, S)` (rule 7), a tree read's is S (rule 13). Draft 3 wrote the
+notes key into the definition and left rule 3 restating the tie rule over a
+different one, so one sentence claimed to cover three folds and named only one.
+(Draft 2's predicate still read "with no hold for (hash, S)" beside this fold and
+the two could be read against each other — Fable, not closed; draft 1's "no hold
+for that hash" was the same hurt one draft earlier.)
+
+A `delta` record's base is re-checked at `cut` time **in the mode the record
+names** (rule 3, draft 4): in mode `latest`, a release published between the
+delta and the cut moves the base and the walk must be redone, and the
+re-derivation **ignores a release for `tag` itself**, or the reconciliation of a
+lost create answer could never finish — the release this act published would have
+become `latest` and moved its own baseline (Stella 3); in mode `named`, the base
+is the one the caller named and only its resolution and its ancestry are
+re-checked, which is what lets a first release and a maintenance line reach `cut`
+at all (Stella 2).
 
 ## Exit codes
 
@@ -730,8 +966,8 @@ Stella 3).
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: a record written, a walk with `unread=0`, a certification read green, a release created or reconciled, a release verified field for field — and every `status`, whatever `ready` says |
-| 1 | the verb ran and said **NO**: an unread landing or an untestable author exclusion, a red, missing or superseded certification, a site that does not render the tag, notes without a read or with a hold, no tree read at S, a `cut` whose predicate does not hold, a tag that exists at another sha, a tag that reads back at another sha after the create (`CUT FAIL … field=tag`, rule 6), a `verify` with a field that disagrees |
-| 2 | the verb **could not run**: a missing flag, `refusing to guess`, a `--lane` that is not a lane, a `--work` that is a dirty work tree, a policy, manifest or notes file that does not parse, `gh` or `git` absent, a call cut at `--timeout`, and **any host answer that is neither yes nor no** — a 502, a rate limit, a dropped connection — the `CUT FAIL … : <the host's first line>` of the cut condition among them, whose remedy is always `nova-release verify` |
+| 1 | the verb ran and said **NO**: an unread landing or an untestable author exclusion, a red, pending, missing or superseded certification, a site that does not render the tag, a `bump` refused in planning (nothing written), notes whose title or body the rule judges bad, notes without a read or with a hold, no tree read at S, a `cut` whose predicate does not hold, a tag that exists at another sha, a tag that reads back at another sha after the create (`CUT FAIL … field=tag`, rule 6), a `verify` with a field that disagrees |
+| 2 | the verb **could not run**: a missing flag, `refusing to guess`, a `--lane` that is not a lane, a `--work` that is a dirty work tree, a policy, manifest or notes file that does not parse, a `notes` whose `--who` and `--author` name one line, `gh` or `git` absent, a call cut at `--timeout`, a `bump` whose write or rename failed after the first rename (`BUMP PARTIAL` lines name every site already changed, rule 5), and **any host answer that is neither yes nor no** — a 502, a rate limit, a dropped connection — the `CUT FAIL … : <the host's first line>` of the cut condition among them, whose remedy is always `nova-release verify` |
 
 A host answer is placed in exactly one of those rows: **yes** decides the term;
 **no** — a 404 for a tag that must exist, a 422 the host explains — is exit 1
@@ -765,26 +1001,28 @@ CANDIDATE REFUSED: <reason>
 DELTA ENTRY commit=<sha12> landing=<merge|squash> pr=<n> head=<sha12> author=<login> line=<name|untestable> read=<who,who|->: <subject>
 DELTA MORE kind=landing shown=<n> total=<t> nova-release delta … --max 0
 DELTA NOTE range=<P12>..<S12> since=<tag>: write the notes from this diff, not from the sitting
-DELTA OK tag=<tag> who=<name> since=<P12> candidate=<S12> landings=<n> read=<n> unread=0 file=<path> pushed=true
-DELTA FAIL tag=<tag> since=<P12> candidate=<S12> landings=<n> read=<n> unread=<n>: <n> landings have no read; nova-merge read --lane <dir> --pr <n> --who <you> --head <sha> --verdict approve|hold
+DELTA OK tag=<tag> who=<name> since=<P12> mode=<latest|named> since_ref=<tag|sha12> candidate=<S12> landings=<n> read=<n> unread=0 file=<path> pushed=true
+DELTA FAIL tag=<tag> since=<P12> mode=<latest|named> candidate=<S12> landings=<n> read=<n> unread=<n>: <n> landings have no read; nova-merge read --lane <dir> --pr <n> --who <you> --head <sha> --verdict approve|hold
 DELTA FAIL field=<since|pr> commit=<sha12> expected=<x> found=<y>: <reason>
 DELTA REFUSED: <reason>
-CERTIFY RUN run=<id> created=<stamp> conclusion=<word>: an earlier completed run at this sha
-CERTIFY JOB run=<id> job=<name> conclusion=<word>
+CERTIFY RUN run=<id> created=<stamp> attempt=<n> status=<word> conclusion=<word|-> deciding=<true|false>: <an earlier completed run at this sha|a newer run at this sha>
+CERTIFY JOB run=<id> attempt=<n> job=<name> conclusion=<word|absent>
 CERTIFY MORE kind=<job|run> shown=<n> total=<t> nova-release certify … --max 0
 CERTIFY OK tag=<tag> sha=<S12> who=<name> workflow=<file> run=<id> attempt=<n> event=<word> jobs=<n> aggregate=<job> file=<path> pushed=true
-CERTIFY FAIL tag=<tag> sha=<S12> workflow=<file> run=<id|-> job=<name|-> conclusion=<word|absent|->: <reason>
+CERTIFY FAIL tag=<tag> sha=<S12> workflow=<file> run=<id|-> attempt=<n|-> job=<name|-> conclusion=<word|absent|in_progress|-> runs=<n> jobs=<n>: <reason>
 CERTIFY REFUSED: <reason>
 BUMP SITE <path>: <count> renderings of <from> became <tag>
 BUMP MORE kind=site shown=<n> total=<t> nova-release bump … --max 0
-BUMP OK sites=<n> from=<tag> tag=<tag> dir=<checkout>
-BUMP FAIL <path>: <reason>
+BUMP OK sites=<n> done=<n> from=<tag> tag=<tag> dir=<checkout>
+BUMP PARTIAL <path> before=<sha256:12> after=<sha256:12>
+BUMP FAIL <path> sites=<n> done=<n>: <reason>
 BUMP REFUSED: <reason>
 SITES OK sites=<n> tag=<tag> at=<S12>
 SITES MORE kind=site shown=<n> total=<t> nova-release status … --max 0
-SITES FAIL <path>: <reason>
+SITES SITE <path>: <reason>
+SITES FAIL sites=<n> ok=<n> bad=<n> tag=<tag> at=<S12>: <the first failing path>
 NOTES OK tag=<tag> sha=<S12> who=<name> author=<name> verdict=<approve|hold> hash=<sha256:12> title=<title> file=<path> pushed=true: does every sentence say what the reader of this release gets?
-NOTES FAIL <path>: <reason>
+NOTES FAIL <path> hash=<sha256:12|->: <reason>
 NOTES REFUSED: <reason>
 TREE OK tag=<tag> sha=<S12> who=<name> verdict=<approve|hold> file=<path> pushed=true
 TREE FAIL <sha12>: <reason>
@@ -792,7 +1030,7 @@ TREE REFUSED: <reason>
 POLICY OK file=<path> at=<S12> hash=<sha256:12> platforms=<n> tools=<n> probe=<n>
 POLICY FAIL <path>[:<line>]: <reason>
 STATUS TERM term=<candidate|since|delta|certify|tree|sites|notes|wire> ok=<true|false> detail=<one token or ->
-STATUS OK tag=<tag> candidate=<S12|-> since=<P12|-> delta=<unread|-> certify=<run|-> tree=<approve|hold|-> sites=<n|-> notes=<approve|hold|-> wire=<absent|tag-only|released> ready=<true|false>
+STATUS OK tag=<tag> candidate=<S12|-> since=<P12|-> delta=<unread|-> certify=<run|pending|-> tree=<approve|hold|-> sites=<n|-> notes=<approve|hold|-> wire=<absent|tag-only|released> ready=<true|false>
 CUT OK tag=<tag> sha=<S12> who=<name> created=<tag+release|release|already> assets=pending title=<title> url=<url>
 CUT REFUSED: <the failing term's line>
 CUT FAIL tag=<tag> sha=<S12> field=tag expected=<S12> found=<x12>: the release at <url> stands on a tag that points elsewhere; removing it is a hand's act
@@ -800,10 +1038,23 @@ CUT FAIL tag=<tag> sha=<S12>: <the host's first line>; nova-release verify befor
 VERIFY FIELD field=<tag|release|title|body|assets|asset|checksum|version> platform=<goos/goarch|-> expected=<x> found=<y> ok=<true|false>
 VERIFY MORE kind=<asset|probe> shown=<n> total=<t> nova-release verify … --max 0
 VERIFY OK tag=<tag> sha=<S12> assets=<n> probed=<n> version=<field two> run=<id|->
-VERIFY FAIL field=<name> expected=<x> found=<y>: <reason>
+VERIFY FAIL field=<name> expected=<x> found=<y> fields=<n> ok=<n> assets=<n> probed=<n>: <reason>
 VERIFY REFUSED: <reason>
 <VERB> REFUSED: <reason>
 ```
+
+**`STATUS TERM`'s `detail` is one token and says which question was asked
+(draft 4)**: `term=since` carries the delta record's `since_mode`, `latest` or
+`named` (rule 3), and `term=certify` carries `green`, `red`, `pending` or `-`,
+because a newer unfinished run at S is neither of the first two (rule 4).
+
+**Every `FAIL` line carries its verb's counts (draft 4, Opus polish 4)**, as
+SPEC.md requires the count line on failure as well as success: `CERTIFY FAIL`
+carries `runs=` and `jobs=`, `VERIFY FAIL` carries `fields=`, `ok=`, `assets=`
+and `probed=`, `BUMP FAIL` carries `sites=` and `done=`, and the per-site problem
+`status` and `cut` print is the informational `SITES SITE` line with one
+`SITES FAIL` count line closing it — draft 3 printed a bare `SITES FAIL <path>`
+per site and no count at all.
 
 `DELTA ENTRY` is capped at `--max` and `DELTA OK`/`FAIL` counts the walk, not
 the lines. `DELTA NOTE` prints the range and the base's tag on every completed
@@ -811,9 +1062,10 @@ walk, pass or fail, because the notes are owed either way and the diff is where
 they come from. `VERIFY FIELD` lines print for every field even after the first
 `false`, so a reader learns everything that is wrong in one run; `VERIFY FAIL`
 names the **first** one. `CERTIFY JOB` prints only jobs whose conclusion is not
-`success`, and `CERTIFY RUN` only earlier runs at S that are not `success`, both
-capped at `--max`; a green run with no earlier red prints neither, and
-`jobs=<n>` says how many were read.
+`success`, and `CERTIFY RUN` prints every earlier completed run at S that is not
+`success` **and every run at S newer than the deciding one, finished or not**
+(draft 4, `deciding=false` on each, Stella 3), both capped at `--max`; a green
+run alone at S prints neither, and `jobs=<n>` says how many were read.
 
 **`title=` is a field and is printed as one (draft 3).** A title has spaces, so
 SPEC.md's field law prints it with `\x20` for each of them and `\x3d` for an
@@ -832,13 +1084,14 @@ of this tool's own outbox. The names and the shapes:
 
 ```
 <lane>/releases/<tag>/candidate-<sha12>-<at>-<rand6>.json   {file, tag, sha, base, who, at, note, supersedes}
-<lane>/releases/<tag>/delta-<sha12>-<at>-<rand6>.json       {file, tag, sha, who, since, since_tag, policy_hash, landings, read, unread, entries:[{commit, landing, pr, head, author, line, read:[who]}], at}
-<lane>/releases/<tag>/certify-<sha12>-<at>-<rand6>.json     {file, tag, sha, who, workflow, run, attempt, event, aggregate, jobs, job_names, policy_hash, at}
+<lane>/releases/<tag>/delta-<sha12>-<at>-<rand6>.json       {file, tag, sha, who, since, since_tag, since_mode, since_ref, policy_hash, landings, read, unread, entries:[{commit, landing, pr, head, author, line, read:[who]}], at}
+<lane>/releases/<tag>/certify-<sha12>-<at>-<rand6>.json     {file, tag, sha, who, workflow, run, attempt, event, aggregate, jobs, job_names:[{name, attempt}], policy_hash, at}
 <lane>/releases/<tag>/notes-<hash12>-<at>-<rand6>.json      {file, tag, sha, hash, who, author, verdict, note, title, at}
 <lane>/releases/<tag>/notes-<hash12>-<at>-<rand6>.summary   the normalised notes, one immutable copy per read (rule 7), tracked beside the record
 <lane>/releases/<tag>/tree-<sha12>-<at>-<rand6>.json        {file, tag, sha, who, verdict, note, at}
 <lane>/releases/<tag>/cut-<sha12>-<at>-<rand6>.json         {file, tag, sha, who, url, title, created, notes_hash, sites_hash, policy_hash, at}
 <lane>/outbox-release/<at>-<rand6>.json                     a record not yet confirmed at the remote tip, untracked
+<lane>/outbox-release/<at>-<rand6>.summary                  a notes record's normalised bytes, carried to SummaryFile of its destination by the same loop (records.go:245-263), untracked
 <lane>/outbox-release/.gitignore                            `*`, written on first use, so a lane mid-verb still answers a clean porcelain (**why a new binary**)
 ```
 
@@ -847,8 +1100,14 @@ the compare-and-swap loop reads it to know where the bytes belong
 (`internal/merge/records.go:267`, `destinationOf`). Draft 1's five shapes
 omitted it, which would have made every record undeliverable by the very loop it
 was written for (Fable MEDIUM 4, Opus HIGH 1). `delta` carries `who` because
-rule 7 derives the notes' authors of record from the candidate's and the delta's
-recorders and draft 1's delta shape named nobody (Fable MEDIUM 4). The certify
+every record names the line that wrote it; draft 1's delta shape named nobody
+(Fable MEDIUM 4), and draft 3 additionally read that field as a notes author,
+which rule 7 no longer does (draft 4, Stella 4). `delta` also carries
+`since_mode` and `since_ref`, because `cut` must re-check the base in the mode
+the walk used (rule 3, draft 4). The certify record's `job_names` carry the
+**attempt** each conclusion was read from, so a job proven in an earlier attempt
+of that run and a job absent from every attempt are different entries (rule 4,
+draft 4, Stella 3). The certify
 and cut records carry the hashes of what they were judged under, so a record
 cannot be read as a claim about a manifest somebody edited afterwards (Opus
 MEDIUM 8, Stella 2).
@@ -856,15 +1115,17 @@ MEDIUM 8, Stella 2).
 **`who` is a field of every shape and a required flag of every verb that writes
 one (draft 3).** Draft 2 gave the candidate, delta and certify records a `who`
 and gave `candidate`, `delta` and `certify` no flag to fill it, while two terms
-of the predicate stand on it: rule 13's approve "by a line **other than** the one
-who recorded the candidate", and rule 7's authors of record, "whoever recorded
-the candidate or the delta, which is why the delta record carries `who`". The
-tool may not infer it — **No guessed anything**, and it reads no lane field but
+of the predicate stood on it: rule 13's approve "by a line **other than** the one
+who recorded the candidate", and rule 7's authors of record. Rule 7's half is
+gone in draft 4 — the notes' author is a required declaration and is never
+inferred from a recorder (Stella 4) — and rule 13's stands. The
+tool may not infer `who` — **No guessed anything**, and it reads no lane field but
 four, a host login being an account rather than a line (rule 3). So `--who
 <name>` is required on `candidate`, `delta`, `certify`, `notes`, `tree` and
 `cut`, `who=<name>` prints on each one's `OK` line, and the cut record carries it
 too, so the act names its actor as every other record does (Opus HIGH 1 and
-LOW).
+LOW). **`--author <name>` is required on `notes` beside `--who`** (draft 4,
+Stella 4), and the two may not name one line.
 
 The summary beside a notes record is the mechanism rule 22 already has: the
 compare-and-swap loop carries `<id>.summary` from the outbox to `SummaryFile` of
@@ -938,9 +1199,13 @@ MEDIUM 4, Stella 5).
    Fable MEDIUM 4 named cannot recur, whatever the release record's shape.
    **And the re-run after a kill between push and confirm** (draft 3): with an
    item under `<lane>/outbox-release/`, a `nova-merge read` on that lane finds
-   `git status --porcelain` empty, commits, pushes and prints `pushed=true`,
-   because the tool wrote `<lane>/outbox-release/.gitignore` holding `*` on first
-   use (Fable HIGH 2); and `candidate` without `--who` refuses at exit 2, while
+   `git status --porcelain` empty, **takes the `clean` branch and confirms** —
+   the branch the stray item used to force away from, so the commit that used to
+   fail with nothing staged is never attempted (records.go:317-330) — and prints
+   `pushed=true`, because the tool wrote `<lane>/outbox-release/.gitignore`
+   holding `*` on first use (Fable HIGH 2; draft 4 names the confirm, Opus
+   polish 2: draft 3's line said "commits, pushes", which is the other branch);
+   and `candidate` without `--who` refuses at exit 2, while
    `CANDIDATE OK` carries `who=` (Opus HIGH 1).
 2. A `delta`, a `certify`, a `notes` approve and a `tree` approve recorded for
    S, then a re-freeze at S′: `status` prints `delta=- certify=- tree=- notes=-`
@@ -962,7 +1227,14 @@ MEDIUM 4, Stella 5).
    hold by a third counts as unread** (draft 3), while a hold that line itself
    later lifted does not; and the fold `delta` reads takes no checkout lock, so a
    `delta` run while another line holds `<lane>/checkout.lock` still answers
-   (draft 3).
+   (draft 3). **And the two baseline modes reach `cut`** (draft 4, Stella 2): a
+   **first release** — no release on the wire, `--since` naming the root — walks,
+   records `since_mode=named`, and `cut` accepts it; an **explicit non-latest
+   ancestor** is not overruled at `cut` by the host's `releases/latest`; in mode
+   `latest` a release published between the `delta` and the `cut` makes `cut`
+   refuse naming `since`, while the same publication in mode `named` does not;
+   and the reconciliation of a lost create answer still finishes in mode `latest`
+   because the re-derivation ignores a release for `tag` itself.
 4. A run at the candidate whose aggregate is `success` but one matrix leg is
    `failure` is `CERTIFY FAIL` naming the leg; **a `cancelled` older run beside a
    newer green one at S is green, and the cancelled one prints a `CERTIFY RUN`
@@ -973,16 +1245,37 @@ MEDIUM 4, Stella 5).
    counted; a run of another workflow, or from an event the policy does not
    trust, is not evidence; a run `in_progress` is not evidence; a run at another
    sha is `no completed run at <sha12>`; a green run writes the record with its
-   id, attempt and job names.
+   id, attempt and job names. **And the two-run fixture** (draft 4, Stella 3):
+   trusted run A at S completed green, trusted run B at S started later and not
+   completed, one required job of B `failure` and another still running —
+   `certify` and `cut` are `CERTIFY FAIL` naming B's failed job, exit 1, not
+   green on A; with B's jobs all pending instead, both are `CERTIFY FAIL
+   conclusion=in_progress` and `status` prints `certify=pending`, neither green
+   nor red; a **re-run of the same run id** makes a second attempt, and a
+   required job absent from that attempt but `success` in the first attempt of
+   that run counts, while a required job absent from **every** attempt of it is
+   `conclusion=absent`; the record names the attempt each conclusion came from;
+   and an older superseded red is history on a `CERTIFY RUN` line and is not by
+   itself a refusal.
 5. `bump` takes `--policy` and no `--sites`, and reads the policy and the
-   manifest it names from `--dir` (draft 3). A manifest with a `{tag}` twice, or none, refuses at load; `bump` on a site
+   manifest it names from `--dir` (draft 3). A manifest with a `{tag}` twice, or
+   none, refuses at load; `bump` on a site
    holding two renderings of `--from` where `count` is 1 refuses naming the path
    **and writes nothing at all, including the sites it had already planned**; a
    site path that is a symlink, or climbs with `..`, refuses; a good bump
    rewrites exactly the manifest's lines and nothing else (a byte diff of the
-   checkout); `status` at a candidate whose site still reads the old tag is
-   `SITES FAIL <path>`; the sites file is read from the tree at S, so a local
-   edit to it changes no verdict.
+   checkout); `status` at a candidate whose site still reads the old tag prints
+   `SITES SITE <path>` and one `SITES FAIL` count line (draft 4); the sites file
+   is read from the tree at S, so a local edit to it changes no verdict.
+   **And the failure after the first rename** (draft 4, Stella 1): a fixture in
+   which site four's write fails leaves sites one to three **changed**, prints a
+   `BUMP PARTIAL` line for each with its before and after `sha256`, prints `BUMP
+   FAIL … done=3`, exits **2**, and never touches site five; a process killed
+   between site three and site four is resumed by re-running the same `bump`,
+   which counts the three `done`, applies the rest, and leaves a checkout byte
+   for byte equal to the one an uninterrupted run makes; and a site a caller
+   edited in between, so that its rendering count no longer matches, is a
+   refusal naming the path rather than an overwrite.
 6. `cut` with `--draft` or `--prerelease` refuses before any host call; with a
    tag existing at another sha refuses naming both shas; with the tag at S and
    no release creates the release alone and prints `created=release`; **a fake
@@ -992,16 +1285,30 @@ MEDIUM 4, Stella 5).
    and body is `CUT OK … created=already` on the re-run, **while the same release
    marked draft is not** (draft 3); a 502 from the create is `CUT FAIL` naming
    `verify`, **exit 2**, and the read-back mismatch above is `CUT FAIL
-   field=tag`, **exit 1** — one token apart and one code apart (draft 3); the fake host records exactly one create call carrying
+   field=tag`, **exit 1** — one token apart and one code apart (draft 3); the
+   fake host records exactly one create call carrying
    `target_commitish=S`, the title and the body; a source test finds no call
-   site that runs `git tag` or `git push … refs/tags`.
+   site that runs `git tag` or `git push … refs/tags`; and **the cut record is
+   delivered after `<lane>/checkout.lock` is released**, so a `cut` that
+   succeeded on the wire does not then wait `--timeout` on its own lock (draft 4,
+   Fable's polish on the draft-3 APPROVE).
 7. Notes titled with the tag alone, or ending with the tag, refuse **at
    `notes`, before a read is recorded, and at `cut`** (draft 3); a file whose
    first line is not `# <title>` refuses at exit 2 before anything is hashed
    (draft 3); a body containing `## What's Changed` refuses; notes with no read
-   refuse; a `hold` for (hash, S) blocks while an older `approve` exists; an
-   approve by the declared author, and by the candidate's recorder when none is
-   declared, does not count; **a `notes` approve writes the normalised bytes as
+   refuse; a `hold` for (hash, S) blocks while an older `approve` exists;
+   **`notes` without `--author` refuses at exit 2, an approve whose `--who`
+   equals its `--author` is `NOTES REFUSED` at exit 2 before a record is
+   written, and a line that
+   recorded the candidate or the delta is otherwise an ordinary reader — nothing
+   is inferred from a recorder** (draft 4, Stella 4: A records the candidate and
+   the delta, B writes the notes and approves them, and B is refused as its own
+   declared author rather than passing as an approve of A's); two lines sharing
+   one forge account are two `who` names and two `--author` names, and rule 3's
+   authors map does not enter this term; **with two drafts standing at S the hash
+   is the newest notes record's by `at`**, an older draft's approve neither ships
+   nor blocks, and a hold on the newest hash blocks (draft 4, Opus polish 1);
+   **a `notes` approve writes the normalised bytes as
    the record's `.summary` on the lane branch, the outbox holds JSON and a
    `.summary` and nothing else, no lane path is written twice, and `status`,
    `cut` and `verify` take the title and body from that summary with no `--notes`
@@ -1016,8 +1323,11 @@ MEDIUM 4, Stella 5).
    printing `devel` fails `field=version`; with a wrong `SHA256SUMS` line fails
    `field=checksum`; `probe all` runs every tool of the expected set for this
    host and names the one that is wrong; every `VERIFY FIELD` line prints even
-   after the first false; a release whose assets are absent names the workflow
-   run's status.
+   after the first false; `VERIFY FAIL` carries the same counts `VERIFY OK` does
+   (draft 4); a release whose assets are absent names the workflow run's status,
+   **including a run that stopped at its `certified` job because the newest
+   completed certification run at the tag was not green** (draft 4, nova-tools
+   #252).
 9. Every sha the tool acts on is traced by a test to a host call or to a fetch
    with `+refs/tags/*:refs/tags/*` in the same run; a local tag planted in
    `--work` at a wrong sha does not change any verb's answer.
@@ -1037,7 +1347,12 @@ MEDIUM 4, Stella 5).
     in this repository's CI** reads `.github/platforms.tsv` and proves that
     `release.yml` and `certification.yml` both read that file and hold no typed
     target list of their own — that test is about this repository's workflows,
-    so it lives here and not inside the tool (Opus MEDIUM 4).
+    so it lives here and not inside the tool (Opus MEDIUM 4). **The same test
+    reads `.github/release-policy.tsv`** and proves `release.yml`'s build loop
+    takes the shipped set from its `tools` line and holds no exclusion of its own
+    (draft 4, Opus polish 3: a workflow that reads the policy must be able to
+    name the file, and `--policy` has no default in the tool by design — rule
+    12).
 13. `cut` refuses with `tree=-` when no `tree` record for S exists; an approve by
     the line that recorded the candidate does not count; a `hold` blocks; the
     record lands under `releases/<tag>/` and a `nova-merge` fold of the same
@@ -1073,7 +1388,8 @@ the compare-and-swap push and the checkout lock.
    manifests it names. Tests 3, 5, 12.
 4. **`internal/release/wire.go`** — the host reads: peel a tag, read a release by
    tag, read `releases/latest`, list assets, list workflow runs by `head_sha`
-   with every page, read a run's attempts and jobs with every page, associate a
+   with every page **and with no status filter, so an unfinished run at S is
+   seen** (draft 4, rule 4), read a run's attempts and jobs with every page, associate a
    commit with its pull request, read a pull request's author and head; every
    answer's status read before its body (release.yml's `ask` pattern); the one
    host write, release-create with `target_commitish`, and the peeled read-back
@@ -1081,35 +1397,51 @@ the compare-and-swap push and the checkout lock.
 5. **`internal/release/delta.go`** — the clone in `--work`, the forcing tag
    fetch, the ancestry check, the first-parent walk, the head and author
    resolution for both landing shapes, the authors map and the read lookup in
-   the lane's `reads/` fold. Test 3.
-6. **`internal/release/sites.go`** — the manifest the policy names, `bump` as one
-   all-or-nothing plan reading the policy and the manifest from `--dir` (draft
-   3), the path checks, and the check at a tree. Test 5.
+   the lane's `reads/` fold, and **the two baseline modes, recorded and
+   re-checked** (draft 4, rule 3). Test 3.
+6. **`internal/release/sites.go`** — the manifest the policy names, `bump` as a
+   plan-then-apply reading the policy and the manifest from `--dir` (draft 3),
+   the path checks, the check at a tree, and **the partial-application report and
+   resume of rule 5** — before and after `sha256` per site, `BUMP PARTIAL` lines,
+   exit 2, and a re-run that counts a finished site `done` (draft 4). Test 5.
 7. **`internal/release/notes.go`** — the normalisation through trailing blank
    lines, the first-line refusal, the title and body checks `notes` and `cut`
-   both make, the hash, and the notes read record keyed to (hash, S) **carrying
+   both make, the hash, the **required declared author and the refusal of a
+   self-read** (draft 4), and the notes read record keyed to (hash, S) **carrying
    the normalised notes as its `.summary`**; no `notes.md`, and nothing but JSON
    in the outbox (rule 7, draft 3). Test 7.
 8. **`internal/release/cut.go`** — the predicate as one function `status` and
    `cut` both call, with `cut` acting on `ready=true` only, under the checkout
-   lock, re-reading the wire terms and reading the tag back. Tests 6, 13.
+   lock, re-reading the wire terms and reading the tag back, **and releasing the
+   lock before the cut record is delivered**, because `Deliver` takes that lock
+   itself (draft 4, `internal/merge/records.go:152`). Tests 6, 13.
 9. **`internal/release/verify.go`** — the field walk, the expected set from the
    policy, the downloads into `--work`, the checksum check, running `version`.
    Test 8.
 10. **`cmd/nova-release/main.go`** — the verbs, refusals naming every
     independent problem at once, the banner with its `example:` block, the
     `### First run` in `docs/CLI.md` and a row in `docs/USAGE.md`. Tests 10, 11.
-11. **`.github/platforms.tsv`, `.github/workflows/release.yml`,
-    `.github/workflows/certification.yml`** — the one platform file, both build
+11. **`.github/platforms.tsv`, `.github/release-policy.tsv`,
+    `.github/workflows/release.yml`, `.github/workflows/certification.yml`** —
+    the one platform file, both build
     loops reading it with `while read`, **release.yml's build loop reading the
     policy's `tools` line for the shipped set** instead of the in-workflow
     exclusion of release.yml:103-105 (draft 3, Opus MEDIUM 5), and release.yml's
     create path becoming a refusal; **the upload path unchanged**, which is the
     condition under which partial-upload safety is left to release.yml:231-232
     and :247 (draft 3, Fable's ruling); the comment that explains the v0.11.0
-    accident rewritten to say the order is now designed. These are the edits
-    outside `cmd/` and `internal/`, and they land in the same release as the
-    binary (rules 6, 8, 12).
+    accident rewritten to say the order is now designed. Three things this item
+    inherits from nova-tools #252, which landed between draft 3 and draft 4: the
+    file's first job is `certified`, which asks whether the newest completed
+    certification run at the tagged commit is green, so **this item adds no test
+    job back** and the policy's `workflow` and `aggregate` lines are the same two
+    names that job asks about; **the policy's path is a literal in the workflow**,
+    `.github/release-policy.tsv`, as `.github/platforms.tsv` already is (rule 12,
+    Opus polish 3); and `assert-version-stamp.sh`, which walks `cmd/*/` on its
+    own, reads the same `tools` line, or a `tools` file that excludes a directory
+    leaves it asserting an artifact the build loop never built. These are the
+    edits outside `cmd/` and `internal/`, and they land in the same release as the
+    binary (rules 4, 6, 8, 12).
 12. **`docs/SPEC.md`** — one paragraph under the companion-spec list naming
     `RELEASE`'s tokens: `CANDIDATE`, `DELTA`, `CERTIFY`, `BUMP`, `SITES`,
     `NOTES`, `TREE`, `POLICY`, `STATUS`, `CUT`, `VERIFY`, with `ENTRY`, `JOB`,
@@ -1145,4 +1477,7 @@ Draft 1 asked three and the reads answered all three, twice each.
 the API raises `release.yml`'s `push: tags` trigger for this credential. Draft 2
 does not assume it: `cut` says `assets=pending`, `verify` names the run or its
 absence, and the first `cut` under this tool is the measurement (rule 6,
-Stella 6).
+Stella 6). Draft 4 adds the second half of that measurement: since nova-tools
+#252 the run that trigger starts can itself refuse, when the newest completed
+certification run at the tagged commit is not green, so `assets=pending` has
+three outcomes and `verify` says which (rules 4, 6, 8).
