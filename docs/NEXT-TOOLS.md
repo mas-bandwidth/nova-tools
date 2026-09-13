@@ -1,4 +1,4 @@
-# The next nova tools — the set, and how it is decided (DRAFT 0, 2026-09-13)
+# The next nova tools — the set, and how it is decided (DRAFT 1, 2026-09-13 17:30Z)
 
 Glenn, 2026-09-13, verbatim: *"land the audit fixes, finish the fixed table work, and then
 once this is done, let's work out the next set of nova tools we should add, with particular
@@ -40,7 +40,25 @@ well as average token cost.
 | leases: take/renew/release plus compact availability | Stella, 15:30Z: "prevent scheduling asleep workers"; Rowan, #177 comment 5654176537 | in SPEC-WORK draft 9 as the lease events and `who`/`stale` |
 | evidence ingestion and projections | Stella, 15:30Z: "avoid status-label guesses and stale tables" | in SPEC-WORK draft 9 as `evidence`, `verify` and `render` |
 | retained token and cost accounting joined to execution attempts | Stella, 15:30Z: "count review and repair, not merely builder tokens"; Glenn, 16:34Z via Stella: reduce average cost per token and total tokens | the `:attempt` event's `:usage` pointer in SPEC-WORK; the join is nova-tokens' (#175, #181), its own spec |
-| *(the other friends' answers, 17:30Z; then Rowan's list for their feedback)* | | |
+| review packet and one-line verdict per PR | Rowan, bus 17:30Z: 25 duplicate findings, reads of the wrong head, a HOLD unread for 100 minutes | candidate; nova-review |
+| swarm finalize checks the result contract | Rowan, 17:30Z; nova-tools#133: 12 Mercury runs, 1 accepted (2026-09-13) | candidate; a nova-swarm change, not a tool |
+| release from a frozen candidate sha with delta reads | Rowan, 17:30Z; nova-tools#229: --auto merged before CI; v0.15.0 prep by hand (#232) | candidate; nova-release |
+| a `friction` verb: a stumble with its token and wall cost and the issue it becomes | Rowan, 17:30Z; nova-tools#185 | candidate |
+| adoption matrix per line per tool from receipts and version lines | Rowan, 17:30Z; nova-tools#182 | candidate |
+| wake on an addressed note, never a poll | Rowan, 17:30Z: 652M cache-read tokens for 1,204 turns on 2026-09-11 | candidate; a nova-wake change |
+| tokens joined to work nodes: an attempt carries its usage receipt, `cost --node X` | Rowan, 17:30Z; Stella, 15:30Z (same hurt, review and repair counted) | in SPEC-WORK as the `:attempt` usage field; the ledger join is open |
+
+## The review roster
+
+| line | ideas asked 15:26Z, deadline 17:30Z | feedback on the lists, deadline 2026-09-14 15:00Z |
+|---|---|---|
+| Stella | answered 15:30Z, four candidates (stella-4b9200ddc994) | pending |
+| Emma | pending at 17:30Z (not assent) | pending |
+| Alex | pending at 17:30Z (not assent; on the class read and serialize.cs) | pending |
+| Freddy | pending at 17:30Z (not assent) | pending |
+| Johnny | reserved line, not asked | not asked |
+
+Rowan's list went out 17:30Z (rowan note, subject "next nova tools"); Stella's and Rowan's overlap on the work set, leases, tokens and swarm finalize, and the difference is asked for by name.
 
 *(The coordination family #175 to #187 is the candidate pool; each entry here names which of
 them it draws on.)*
