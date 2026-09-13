@@ -1,7 +1,6 @@
 package tokens
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
@@ -520,26 +519,32 @@ func DecodeAntigravityFromJSON(
 	binding AntigravityBinding,
 	ws AntigravityWorkspace,
 ) ([]AntigravityRecord, error) {
-	var sqliteRows []AntigravitySQLiteRow
-	if err := json.Unmarshal(sqliteJSON, &sqliteRows); err != nil {
-		return nil, fmt.Errorf("failed to parse sqlite rows: %w", err)
+	var rawRows []json.RawMessage
+	trimmed := bytes.TrimSpace(sqliteJSON)
+	if len(trimmed) == 0 || trimmed[0] != '[' || json.Unmarshal(sqliteJSON, &rawRows) != nil {
+		return nil, errors.New("antigravity: sqlite rows must be one JSON array")
+	}
+	sqliteRows := make([]AntigravitySQLiteRow, 0, len(rawRows))
+	for _, raw := range rawRows {
+		var row AntigravitySQLiteRow
+		if err := antigravityJSONRow(raw, "idx", &row, "idx", "size", "data_hex"); err != nil {
+			return nil, err
+		}
+		sqliteRows = append(sqliteRows, row)
 	}
 
 	var transcriptLines []AntigravityTranscriptLine
-	scanner := bufio.NewScanner(bytes.NewReader(transcriptJSONL))
-	for scanner.Scan() {
-		lineBytes := bytes.TrimSpace(scanner.Bytes())
+	for line := range bytes.Lines(transcriptJSONL) {
+		lineBytes := bytes.TrimSpace(line)
 		if len(lineBytes) == 0 {
 			continue
 		}
 		var tl AntigravityTranscriptLine
-		if err := json.Unmarshal(lineBytes, &tl); err != nil {
-			return nil, fmt.Errorf("failed to parse transcript line: %w", err)
+		if err := antigravityJSONRow(lineBytes, "step_index", &tl,
+			"step_index", "source", "type", "created_at", "status"); err != nil {
+			return nil, err
 		}
 		transcriptLines = append(transcriptLines, tl)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading transcript lines: %w", err)
 	}
 
 	return DecodeAntigravitySession(sessionID, sqliteRows, transcriptLines, opts, binding, ws)
