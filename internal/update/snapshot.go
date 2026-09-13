@@ -371,6 +371,12 @@ func readSnapshot(path string) (*snapshot, error) {
 	}
 	return s, nil
 }
+
+// renameSnapshot is the atomic commit operation. Tests replace it only inside a
+// helper process to hold the real writer before committing; shipped commands
+// always use os.Rename and expose no runtime hook.
+var renameSnapshot = os.Rename
+
 func writeSnapshot(path string, s *snapshot) error {
 	b, err := json.Marshal(s)
 	if err != nil {
@@ -396,7 +402,7 @@ func writeSnapshot(path string, s *snapshot) error {
 	if err != nil {
 		return fmt.Errorf("cannot write snapshot (check space and permissions)")
 	}
-	if err = os.Rename(temp, path); err != nil {
+	if err = renameSnapshot(temp, path); err != nil {
 		return fmt.Errorf("cannot replace snapshot atomically (check destination permissions)")
 	}
 	return nil
