@@ -9,8 +9,10 @@ cares about has changed, and otherwise at a deadline the caller named — so the
 harness itself wakes the session, because that is what the return of a tool call
 is, and the window pays one turn per *change* rather than one turn per *tick*.
 
-It watches three sources — a bus inbox, the checks on a set of entries, and report
-files written by other lines — and it says what moved. It does not act on any of
+It watches a bus inbox, the checks on a set of entries, and report files written
+by other lines — and, since the **amendment of 2026-09-13**, the comments and
+reviews on named or owned pull requests, the check runs on a named head, a
+branch moving, and a lock file being released — and it says what moved. It does not act on any of
 them. **Everything it prints is data**: a note it relays is not an instruction, a
 failing check is not a verdict about whose fault it is, and a report file is prose
 somebody else wrote. A watcher that acted on what it saw would be a window with no
@@ -48,6 +50,41 @@ test named):
 | mail consumed by a probe and not relayed | `--advance-cursor` off by default, only for the window's own `--as`, and only behind an empty bus queue: the advance is a spooled transaction and consumed mail is bounded by this tool's own pending queue, never by anything `nova-bus` re-lists | 5, 12 |
 | a harness kill between observing and printing | closed in the safe direction by ordering (rule 11): a kill anywhere leaves the entry pending, a repeated wake and never a lost one; the advance's own kill point is recovered through `inbox --open` | 11 |
 
+## Amendment of 2026-09-13 — event sources and the availability probe
+
+**Status: an amendment to a ratified spec, drafted 2026-09-13 from nova-tools
+#178 and the record of the coordinating window; nothing above or below is
+withdrawn except where a sentence says `amended 2026-09-13` beside it.** The
+amendment adds four sources to `watch`, one flag on the bus source, one verdict,
+and one verb (`probe`); it changes no exit code that exists and takes the one
+that was reserved. Every rule it adds is in **The rules of 2026-09-12 and
+2026-09-13** and has a test in **Tests this spec demands**.
+
+The hurts, each dated and quoted from the record:
+
+| what happened | what it cost | the rule it bought |
+|---|---|---|
+| **2026-09-11**, measured in the coordinating window: 1,204 assistant turns, 1.19M tokens written, 652M cache-read tokens. Of the visible output, bash status checks were the largest single item, and the tell recorded was *"a status check I ran in the last minute, run again."* | *"the cost is turns times the context each carries, not the words written"* — every poll re-read half a million tokens to learn nothing. | **Every wait the window has is a source of this tool, so no wait is a poll.** A thing a window has to check twice in a minute is a source here or a defect here (rule 13). |
+| **2026-09-12, 20:32Z to 22:09Z**: two review HOLDs with concrete defects sat unread for **100 and 45 minutes**, because they were comments on pull requests the window owned and *"the bus wait is my only wake, and it does not know about PR comments."* The reviewer asked on the bus for an ownership receipt before they were read. | Two merges waited on findings already written; the reviewer paid a turn to say so; *"reads and holds arrive where the reader is."* | **A pull request the window owns is watched for comments and reviews on the same call as the bus** (`--pr`, `--owned-prs`; rule 14). |
+| **2026-09-10**: nineteen orphaned shells in one sweep — *"thirteen polling a log for an EXIT line from a child three and three-quarter hours gone, two waiting for `pgrep -f` … to come up empty, which it never can because the loop's own command line contains the string."* | Nineteen processes spending, invisibly, on a machine five lines share. | **A wait ends on the first change, at its deadline, or on the caller's stop, and never otherwise**; it never finds anything by `pgrep`; it never holds the lock it probes (rules 15 and 16). |
+| **2026-09-09**: READY was sent to a friend for a profiling window, and two heavy children were started three minutes later. Mercury's correction, verbatim: *"READY only when the system is quiet enough for the task."* | A friend's measurement was thrown away on the word of a plan. | **A readiness receipt is a measurement read at the instant of sending — load average and process count — and a promise about the next ten minutes** (`probe --here`; rule 18). |
+| **2026-09-12**, Glenn, the five-minute availability rule, relayed live: *"If we don't hear from a friend for 5 minutes, we should try to ping them to wake up. If that doesn't work, then they have probably gone to sleep (run out of credits, plan, etc). We should always consider this when scheduling tasks. If we assign to somebody who is not here, the work will never get done."* | A packet sat receipt-pending for over an hour because silence was never probed; a read receipt was taken as proof of an active task. | **`probe`: last sign from the bus lane; one ping if silent past `--silent-after`; unavailable if unanswered within `--answer-within`; never a second ping for one silence; never "out of credits" from silence** (rule 17). |
+| **2026-09-13**, Emma, on the bus (emma-0fd8c03d5f24), verbatim: *"Waiting for background soak runs, child workers, or upstream PR lands tempts token-heavy polling loops or arbitrary timers. Verb: `nova-wake wait --event <branch-pushed\|run-finished\|lock-released> --timeout <T>` — cleanly suspends and resumes the coordinator on exact OS/bus events without polling."* | The three events she names had no source, so each was a loop or a timer in a turn. | **`--branch`, `--run` and `--lock` are sources of `watch`**, and `watch` is the verb — see **Why `watch` and not a new `wait`** below. |
+
+**Why `watch` and not a new `wait`.** Emma's verb and this tool's `watch` are
+one shape: block, return on the first change or at a deadline, print what
+moved, decide nothing. Her `--event branch-pushed` is `--branch`, `run-finished`
+is `--run` with `--final-only`, `lock-released` is `--lock`, and `--timeout` is
+`--max`. A second verb would be the same loop under a second name, with a second
+state file, a second cap and a second grammar to keep equal — and the window
+would have to choose between them on every call. So the events are sources, and
+`watch` carries them, in the same call as the bus, so one turn waits on all of
+them at once (Emma's proposal asked for one event per call; a window waiting for
+a branch to move is also a window that must hear a note). The one verb this
+amendment does add, `probe`, is added because `watch` **cannot** carry it: a
+probe writes a note to the bus, which a watcher never does, and it gates on an
+answer, which a watcher never does (**Exit codes**).
+
 ## The verb
 
 ```
@@ -56,6 +93,13 @@ nova-wake watch --state <file> --max <duration> --on-deadline <word> --interval 
       [--line <name> ... [--offline-after <duration>]]
       [--entry <repo>#<n> ... --entry-interval <duration>] [--final-only] [--gh-timeout <seconds>]
       [--reports <dir> ...]
+      [--to-only]                                                          (amended 2026-09-13)
+      [--pr <owner/repo>#<n> ...] [--owned-prs <owner/repo> ...] [--branch <owner/repo>:<name> ...] --forge-interval <duration>
+      [--run <owner/repo>@<sha> ...]                                      (with --entry-interval)
+      [--lock <path> ...]
+nova-wake probe --bus <dir> --as <name> --line <name> --state <file> --silent-after <duration> --answer-within <duration>
+      [--refresh --remote <name> --branch <name> --interval <duration>] [--ping-draft <file>] [--gh-timeout <seconds>]
+nova-wake probe --here [--quiet-load <x>]
 nova-wake serve --bus <dir> --as <name> --on-note <command> --interval <duration> --state <file> --hours <h> [--receipt --remote <name> --branch <name>] [--on-note-idempotent] [--batch-max <n>] [--git-timeout <seconds>]
 nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> [--on-note-idempotent]
 nova-wake awake --bus <dir> [--window <seconds>] [--max <n>]   --window default 300, --max default 50
@@ -85,8 +129,9 @@ classified `awake` inside `--window`, `asleep` past it, and `unknown` where no
 cursor has ever been written (docs/SPEC-WORK.md, **Presence**, source
 `bus-cursor`).
 
-**At least one source, named.** A `watch` with no `--bus`, no `--entry` and no
-`--reports` is exit 2 and `refusing to guess`: a watcher with nothing to watch is
+**At least one source, named.** A `watch` with no `--bus`, no `--entry`, no
+`--reports`, no `--pr`, no `--owned-prs`, no `--run`, no `--branch` and no
+`--lock` (amended 2026-09-13) is exit 2 and `refusing to guess`: a watcher with nothing to watch is
 a `sleep` with a longer name, and it is the one invocation that would look like it
 was working.
 
@@ -118,7 +163,10 @@ your harness what its limit is and sit under it. `--interval` will not go below
 server.
 
 **The only programs it starts are `nova-bus`, `gh` and `git`**, all named here,
-all under a timeout, all one at a time. `git` is started only against the bus
+all under a timeout, all one at a time. (Amended 2026-09-13: the four new
+sources add `gh` calls, named per source in **What one tick costs**, and the
+lock source starts nothing at all; `probe` adds one `nova-bus send`, the only
+write this tool ever makes to a bus, and only with `--ping-draft`.) `git` is started only against the bus
 checkout, read-only: for `--line` (rule 2 below) and for the checkout's head,
 which is the freshness the `WAKE SOURCE bus` line shows (**How the checkout
 receives mail**). `nova-bus` is started once before the opening line as
@@ -136,20 +184,31 @@ see its bus needs to hear so now.
 
 | code | meaning |
 |------|---------|
-| 0 | the watch ran: **either** something changed **or** the deadline arrived |
+| 0 | the watch ran: **either** something changed **or** the deadline arrived **or** the caller stopped it (`WAKE STOPPED`, amended 2026-09-13); for `probe`, the line is here (`PRESENT` or `ANSWERED`) |
+| 1 | **`probe` only (amended 2026-09-13):** the line is not here for scheduling — `SILENT`, `PINGED` or `UNAVAILABLE`; the second token of the last line says which. `watch` and `serve` never exit 1 |
 | 2 | could not run: a missing or malformed flag, no source named, a `--max` over the ceiling, an unreadable or unparsable state file, a second watcher on the same state file, a `nova-bus` whose version is not this build's own (the pin, below), or a source whose failure streak reached three (rule 8; the streak is in the state file and spans calls) |
 
-**This is the one deviation from SPEC.md's Conventions table, and it is that there
-is no 1.** Nothing here asserts anything, so nothing here can say NO: a watcher is
-a report and never a gate. A deadline is not an error — it is the answer *nothing
+**This is the one deviation from SPEC.md's Conventions table, and it is that
+`watch` has no 1** (amended 2026-09-13: `probe` has one, below). Nothing a
+watcher prints asserts anything, so a watcher cannot say NO: it is a report and
+never a gate. A deadline is not an error — it is the answer *nothing
 yet*, exactly as `WAIT TIMEOUT` is — and a change is not a failure even when what
 changed is a red check, because *red* is news and news is this tool's whole output.
 A caller that needs to know which of the two happened reads the **second token of
 the last line**, `WAKE CHANGE` or `WAKE QUIET`, and never the exit code. A `WAKE
 BROKEN` last line is the third case, and it is exit 2, because a watch whose
 source went away did not run to its deadline (rule 8). Exit 1
-is not used and is reserved: if a later version ever gates on something, it will
-take 1 and this table will say what it gates on.
+was reserved here for the day a verb gated on something, and on 2026-09-13
+`probe` took it: a probe **is** a gate — Glenn's rule is *never assign to
+somebody who is not here* — so its 1 is Conventions' 1, *the check ran and
+said NO*, and it says NO to an assignment, not to the line. `watch` still
+never exits 1. **The exit code says whether the call ran or was refused; the
+second token of the last line says what happened.** The amendment was asked to
+make the exit code say which of change, deadline or stop occurred and declined,
+for the reason already given under **What it deliberately does not do**: a
+status is one bit of news in a grammar that cannot grow, and `WAKE STOPPED`
+(rule 15) is exactly the fourth verdict a two-value status could not have
+carried. A scanner reads the token; the token is a word a person reads too.
 
 **An unparsable state file is exit 2 and never a silent cold start.** The state
 file is the only thing standing between this tool and the false-quiet failure: a
@@ -162,8 +221,9 @@ cold start on purpose.
 ## Output grammar
 
 ```
-WAKE at=<stamp> as=<name|-> max=<d> interval=<d> on-deadline=<word> sources=<bus,entries,reports> state=<file> cold=<true|false> nova-bus=<version|-> pending=<n>
-WAKE CHANGE after=<d> polls=<n> bus=<n> entries=<n> reports=<n> lines=<n> pending=<n>
+WAKE at=<stamp> as=<name|-> max=<d> interval=<d> on-deadline=<word> sources=<bus,entries,reports,prs,runs,branches,locks> state=<file> cold=<true|false> nova-bus=<version|-> pending=<n>
+WAKE CHANGE after=<d> polls=<n> bus=<n> entries=<n> reports=<n> lines=<n> prs=<n> runs=<n> branches=<n> locks=<n> pending=<n>
+WAKE STOPPED after=<d> polls=<n> pending=<n>: stopped by the caller
 WAKE QUIET after=<d> polls=<n> default=<word> sources-failing=<n>: deadline, default taken
 WAKE BROKEN source=<bus|entries|reports> failures=<n> since=<stamp>: <reason>
 WAKE STOPPED after=<d> polls=<n> pending=<n>: stopped by the caller
@@ -173,16 +233,26 @@ WAKE BUS STANDING <the bus's own line, verbatim>
 WAKE ENTRY <repo>#<n> state=<state> fail=<n> pending=<n> pass=<n> final=<true|false> failing=<names|->
 WAKE ENTRY <repo>#<n> unreadable: <reason>
 WAKE REPORT path=<path> lines=<n> bytes=<n> <new|modified>
+WAKE PR <owner/repo>#<n> comments=<n> reviews=<n> threads=<n> self=<n> newest=<comment|review|thread>:<id> by=<login> review=<APPROVED|CHANGES_REQUESTED|COMMENTED|DISMISSED|-> at=<stamp> url=<url>
+WAKE PR <owner/repo>#<n> unreadable: <reason>
+WAKE RUN <owner/repo>@<sha> fail=<n> pending=<n> pass=<n> final=<true|false> failing=<names|->
+WAKE RUN <owner/repo>@<sha> unreadable: <reason>
+WAKE BRANCH <owner/repo>:<name> head=<sha|-> was=<sha|->
+WAKE BRANCH <owner/repo>:<name> unreadable: <reason>
+WAKE LOCK path=<path> state=<free|held|absent> was=<free|held|absent|->
+WAKE LOCK path=<path> unreadable: <reason>
 WAKE LINE name=<name> state=<OFFLINE|BACK> last=<stamp|-> silent=<d> commit=<sha|->
 WAKE PR <owner>/<repo>#<n> comments=<n> reviews=<n> threads=<n> self=<login|-> rescan=<n> push=<n> head=<sha|-> newest=<stamp|-> by=<name|-> review=<word|-> at=<stamp|-> url=<url>
 WAKE RUN <owner>/<repo>@<sha> fail=<n> pending=<n> pass=<n> final=<true|false> failing=<names|->
 WAKE BRANCH <owner>/<repo>:<name> head=<sha|-> was=<sha|->
 WAKE LOCK path=<path> state=<held|free|-> was=<state|->
 WAKE SOURCE <bus|entries|reports> read=<n> suppressed=<n> relayed=<n> standing=<n> head=<sha|-> head-at=<stamp|->
+WAKE SOURCE bus ... cc=<n>                                                       (with --to-only; the cc count is appended)
+WAKE SOURCE <prs|runs|branches|locks> read=<n> changed=<n> unreadable=<n> calls=<n> login=<login|->
 WAKE NOTE <something true about this run that is not a change>
 WAKE POLL <source>: <reason one poll failed, which was not fatal>
 WAKE PING id=<id> to=<name> commit=<sha|-> pushed=<true|false> attempt=<n>: one prepared note (--ping-draft) offered to the bus, printed per attempt until it lands
-WAKE MORE kind=<bus|entry|report> shown=<n> total=<t> n=<k> <remedy>
+WAKE MORE kind=<bus|entry|report|pr|run|branch|lock> shown=<n> total=<t> n=<k> <remedy>
 WAKE REFUSED: <reason>
 WAKE HERE at=<stamp> load=<load|-> cpus=<n> procs=<n|->
 WAKE PROBE name=<name> state=<state> contact=<name|-> last=<stamp|-> silent=<d> commit=<sha|-> pinged=<stamp|-> pinged-id=<id|-> rest=<d> reconciled=<true|false> correlation=<id|-> remaining=<n> gaps=<n> silent-after=<d> answer-within=<d> head-at=<stamp|->
@@ -204,8 +274,8 @@ things wrong about the world rather than the invocation (no `--bus`, a `--bus`
 that is not a git repository, a `--window` that is not positive, a negative
 `--max`).
 
-`WAKE CHANGE`, `WAKE QUIET` and `WAKE BROKEN` are the **last** line and the three
-possible verdicts, and `pending=<n>` on each of the first two is the length of
+`WAKE CHANGE`, `WAKE QUIET`, `WAKE BROKEN` and, since 2026-09-13, `WAKE STOPPED`
+are the **last** line and the four possible verdicts, and `pending=<n>` on each of the first two is the length of
 the delivery queue — every observation this run or an earlier one made and
 has **not** printed, which the next call prints first (**Delivery
 is the printed line**, rule 11); the opening `WAKE` line is the **first**, printed before anything is
@@ -222,8 +292,8 @@ field law requires. A relayed line is escaped and **never shortened below its
 own tail budget**; and no line is exempt from the cap, because a line the cap
 drops is pending and the next call prints it (rule 11).
 
-The verdict line counts **what changed**, per source, and those three numbers are
-about the WORLD and not about the output: the listing above them is capped and the
+The verdict line counts **what changed**, per source, and those numbers — three
+before the amendment, seven after — are about the WORLD and not about the output: the listing above them is capped and the
 counts never are. That is SPEC.md's law, stated there once and met here the same
 way, through `internal/bounded`.
 
@@ -395,6 +465,29 @@ Therefore:
 
 **The bus is the exception to the cold-start rule.** See **The cold-start rule**.
 
+
+#### `--to-only` — a `Cc:` is not a wake (amended 2026-09-13)
+
+`nova-bus` marks every listed note `addr=to` or `addr=cc`, and `serve` has
+always dispatched only on `to` (rule 10: *to means must act, cc means should
+know, and a broadcast to five is five turns*). `watch` woke on both, so a window
+on a busy bus was woken by every note it was copied on. `--to-only` brings the
+two verbs into line: with it, an `INBOX NOTE … addr=cc` is **not a change**. It
+is not printed, not queued and not marked `printed=` — a mark would claim the
+window was shown it — but it is **counted**, `cc=<n>` on the `WAKE SOURCE bus`
+line, so the window knows how much is waiting for its next natural `inbox`. The
+default is unchanged: without the flag both wake, because a flag that narrows
+what wakes a window is the window's to give.
+
+`--to-only` with `--advance-cursor` is exit 2, `refusing to guess`: an advance
+moves the cursor past every listed note, and a cursor is a claim about what the
+reader has been shown (**The bus inbox**), so the pair would consume mail this
+call chose not to print. With `--refresh` the pair is fine: nothing moves.
+`INBOX HEARD`, `INBOX RECEIPT` and every line that is not a `NOTE` are
+classified exactly as before; `--to-only` decides one thing and it is not the
+status line. (Grok Build sitting, 2026-09-12, on #178: *"the sitting wakes only
+on `INBOX NOTE addr=to`. `Cc` advances the cursor and is read at wrap or when
+`To:`'d. Empty minutes must not be a model turn."*)
 #### How the checkout receives mail, and the version this depends on
 
 `nova-bus inbox` reads the checkout and never the remote (SPEC.md, *what it
@@ -562,11 +655,189 @@ one second. A content digest would close it and costs a read of every watched fi
 on every poll; it is a v2 item behind a flag, and until it exists this paragraph
 is the answer to *why did it not wake*.
 
+### Comments and reviews on a pull request — `--pr`, `--owned-prs` (amended 2026-09-13)
+
+**The hurt, 2026-09-12:** *"Stella posted HOLDs with concrete defects on two PRs
+I owned as PR comments. I had a bus wait and CI watchers armed, and read neither
+PR again after its eye landed, so her holds waited 100 and 45 minutes until she
+asked on the bus for an ownership receipt."* An entry's checks were a source and
+its conversation was not, so a reviewer who writes where the code is was
+invisible to a window that watched everything else.
+
+`--pr <owner/repo>#<n>` names one pull request and may be given more than once.
+It is spelled like `--entry` for the reason `--entry` is: the repository is part
+of the name. `--owned-prs <owner/repo>` names a repository and watches every
+**open** pull request in it whose author is the caller, where **the caller is
+the login the host reports for the credential `gh` holds** — one `gh api user`
+call at the start of the run, never a flag, never `--as` (a bus name and a forge
+login are different facts and a tool that assumed they matched would watch the
+wrong person's work). The set is refreshed on every forge tick with one `gh pr
+list` call per repository; a pull request that merges or closes leaves the set
+and its key is kept, which is not a change (its merge is the `--entry` source's
+news, if the window asked for it); a pull request that opens joins the set with
+its conversation **recorded and not reported**, which is the cold-start rule
+applied to a thing that did not exist at the start of the run. At most **20**
+owned pull requests per repository are watched — the listing law — and past
+that the run says, once, `WAKE NOTE owned-prs <owner/repo> capped at 20 of <n>;
+name the rest with --pr`, and watches the twenty newest.
+
+**The state value** is, in order: the count of issue comments, the count of
+reviews, the count of review threads, and the kind, id and stamp of the newest
+item of the three kinds by the forge's own creation stamp:
+`comments=<n> reviews=<n> threads=<n> newest=<kind>:<id>@<stamp>`. A change in
+any field is a change. A count that **falls** is a change too — a deleted
+comment is news. Each is read with **one** `gh api graphql` call per pull
+request per tick asking for the three `totalCount`s and the last node of each
+(`comments(last:1)`, `reviews(last:1)`, `reviewThreads(last:1){comments(last:1)}`),
+which is one request under 2 KB each way, and the reason the value is counts
+and a newest rather than a list of ids: the read is the size of the answer and
+never of the conversation. Pull requests are polled in batches of at most **8**
+outstanding calls, like entries.
+
+**The window's own words never wake it.** An item whose author is the login
+read from the host is counted (`self=<n>` on the item line and the `WAKE
+SOURCE prs` line) and excluded from `newest=`, and a value whose only movement
+is a self-authored item is **not a change** — a window that comments on a pull
+request and then watches it would otherwise wake on itself on the next tick,
+which is a false wake, and *"a false wake is worse than a missed one, because
+the window learns to stop reading."* The login is on the `WAKE SOURCE prs`
+line so a transcript shows whose words were set aside. When `gh api user`
+cannot be read the source's login is `-`, nothing is set aside, and the run
+says so once: `WAKE NOTE prs: host login unreadable (<reason>); self-authored
+items will wake this run`.
+
+**The item line carries identity and a pointer, never a body.** `WAKE PR
+<owner/repo>#<n> comments= reviews= threads= self= newest=<kind>:<id> by=<login>
+review=<state|-> at=<stamp> url=<url>`: `review=` is the newest review's state
+when the newest item is a review and `-` otherwise, because `APPROVED` and
+`CHANGES_REQUESTED` are the two words that change what the window does next;
+`url=` is the forge's own link to the newest item. No text of a comment is
+relayed (rule 5): a review's finding is a paragraph somebody wrote, the window
+opens it, and a line that quoted its first sentence would be a line the cap
+could not honestly bound. A pull request that cannot be read is `unreadable:
+<reason>`, a change once and standing thereafter, exactly as an entry.
+
+### Check runs on a named head — `--run` (amended 2026-09-13)
+
+`--run <owner/repo>@<sha>` names a commit and watches the hosted checks on it.
+It exists beside `--entry` because a run is not always attached to a pull
+request — a push to a branch under a merge lane, a tag, a nightly, a commit
+another line is landing — and because the thing a window waits for is *this
+head is green* and not *this number is green*: an entry whose head moves is a
+different run with the same number. `<sha>` is a full sha or an abbreviation the
+forge resolves; the line prints what the caller named.
+
+**The state value is the entry value with no entry state**: `fail=<n>
+pending=<n> pass=<n>` and the sorted names of the failing checks, computed by
+the same bucket rule over the head's check runs and its status contexts, and
+FINAL has the entry definition with one clause fewer — `pending=0` with at
+least one check; there is no `MERGED` or `CLOSED` to be final by. `--final-only`
+applies, with the same meaning, and `unreadable:` wakes under it exactly as an
+entry's does. One tick is **two** `gh api` calls per head — `commits/<sha>/
+check-runs?per_page=100` and `commits/<sha>/status` — up to about 50 KB down at
+a hundred check runs and no pagination: a head with more than 100 check runs is
+`unreadable: more than 100 check runs on this head`, which is visible rather
+than a count that quietly stops at a page. Runs are polled on
+`--entry-interval`, because a run is what that interval is the length of (rule
+3), and in the same batches of 8.
+
+**A queued run is not a running one, and this source cannot tell them apart**
+(Glenn on #178, 2026-09-13: *"a queued CI run did not mean verification was
+executing"* — every runner was offline while every listener process existed).
+`pending=` counts both. What the window can do is set `--entry-interval` to the
+run's expected length and read `pending=` unchanged across two ticks as the
+tell; what this tool does not do is model a runner pool (**What it
+deliberately does not do**).
+
+### A branch moving — `--branch` (amended 2026-09-13)
+
+`--branch <owner/repo>:<name>` watches the head of one branch on the forge and
+may be given more than once. **The state value is the head sha**, or `absent`
+when the branch does not exist; any difference is a change — a push, a
+force-push, a deletion, a creation — and the line says both ends: `WAKE BRANCH
+<owner/repo>:<name> head=<sha|-> was=<sha|->`. One tick is **one** `gh api`
+call, `repos/<owner>/<repo>/git/ref/heads/<name>`, about 300 bytes down. The
+read is the forge's and not a `git ls-remote`, because this tool starts `git`
+against the bus checkout only and has no other clone to run it in (**The only
+programs it starts**); a branch on a forge `gh` cannot reach is not something
+this source can watch, and it says so as `unreadable:`. Branches are polled on
+`--forge-interval`, below.
+
+The colon is the separator because `#` names an entry and `@` names a head, and
+a reader of a transcript should be able to tell the three apart at a glance.
+
+### A lock file released — `--lock` (amended 2026-09-13)
+
+`--lock <path>` names a file some other process holds an advisory lock on —
+nova-merge's lane lock, nova-bus's checkout lock, a swarm's — and may be given
+more than once. **The state value is one of `held`, `free` or `absent`**, read
+by opening the file read-only (never creating it), attempting a non-blocking
+exclusive `flock`, and, if it was granted, **releasing it at once** and closing
+the file. `EWOULDBLOCK` is `held`; a grant is `free`; a missing file is
+`absent`. Any difference is a change, and `held` to `free` or `held` to `absent`
+is the one the caller was waiting for; the line carries both ends so a
+re-acquisition is visible too. One tick costs three system calls, no
+subprocess, no bytes, and it is polled on `--interval`, because it is local
+and cheap.
+
+**The probe never holds, never writes, never deletes, never creates.** The
+duration for which this tool owns the lock is the gap between two system
+calls, and it is the one moment at which another non-blocking contender could
+be told `held` when the holder had in fact let go; a contender that blocks is
+unaffected. That is the source's **known limit**, named here rather than
+discovered: a probe by `fcntl(F_GETLK)` would not take the lock at all, and it
+does not see a `flock` on every platform, so the tool uses the lock this repo's
+own tools take (`internal/bus`'s `LockFile`) and pays the gap. On a platform
+whose lock is the `O_EXCL` sentinel of `lock_other.go`, `held` is the
+sentinel's existence and `free` its absence, and no attempt is made to create
+it; where neither can be probed, the value is `unreadable: <reason>`, a change
+once. The file named is never removed by this tool under any flag: a lock file
+another process holds is that process's, and *"the vanished-means-stale
+arithmetic broke another writer's live lock"* (SPEC-MERGE, rule 2, 2026-09-11)
+is the hurt that forbids it.
+
+### What one tick costs, and which clock it runs on (amended 2026-09-13)
+
+Every source is a read the caller pays for — in API calls against a shared
+rate limit, in bytes over somebody's wire, in a subprocess on a shared bench —
+so every source runs on a tick the caller named, every tick has a floor, and
+what one tick costs is stated here so the caller can set the tick from the
+cost rather than discover it.
+
+| source | flag | tick flag (floor) | one tick costs | cap on the item lines |
+|---|---|---|---|---|
+| bus | `--bus --as` | `--interval` (5s) | one `nova-bus inbox`, no network; under `--refresh`, one `nova-bus wait` = one `git fetch`, a few hundred bytes each way when nothing landed | `--max-lines` kind `bus` |
+| lines | `--line` | `--interval` | one `git log` on the checkout, no network | one line per name per state change |
+| reports | `--reports` | `--interval` | one directory walk and one `stat` per `RESULT.md` | kind `report` |
+| locks | `--lock` | `--interval` | `open`, `flock(LOCK_NB)`, `close`; no subprocess | kind `lock` |
+| entries | `--entry` | `--entry-interval` (5s) | one `gh pr view --json state,statusCheckRollup` per entry, 1–40 KB down | kind `entry` |
+| runs | `--run` | `--entry-interval` | two `gh api` calls per head, up to about 50 KB down | kind `run` |
+| pull requests | `--pr`, `--owned-prs` | `--forge-interval` (**30s**) | one `gh api graphql` per pull request, under 2 KB each way; `--owned-prs` adds one `gh pr list` per repository per tick and one `gh api user` per run | kind `pr`; 20 owned per repository |
+| branches | `--branch` | `--forge-interval` | one `gh api` call per branch, about 300 bytes down | kind `branch` |
+
+`--forge-interval` is a third clock and it is required whenever `--pr`,
+`--owned-prs` or `--branch` is given, exit 2 when missing, with **no default
+and a 30-second floor** — the floor is higher than the other two because these
+sources have no run length to pace by, they are one API call per watched thing
+per tick against a limit of about 5,000 calls an hour, and people write
+comments and push branches at a rate a 30-second tick already over-serves: six
+pull requests and two branches at 30 seconds are 960 calls an hour, which is a
+fifth of the limit spent on one watcher. The three clocks are independent and
+the loop sleeps until the earliest due source, as rule 3 says. Every `WAKE
+SOURCE` line for a forge source carries `calls=<n>`, the `gh` invocations that
+source made this run, so the spend is on the record beside the news.
+
+**The interval floors are not defaults.** `--interval`, `--entry-interval` and
+`--forge-interval` still have none (rule 3): the floor is the least a caller may
+ask for, and asking is still required.
+
 ## State
 
 One file, named by `--state`, holding a flat map of key to value: one entry per
 watched thing, namespaced by source — `bus:line:<bytes>`, `bus:note:<id>`,
-`entry:<repo>#<n>`, `report:<path>`, `line:<name>` — plus one `fail:<source>`
+`entry:<repo>#<n>`, `report:<path>`, `line:<name>`, and since 2026-09-13
+`pr:<owner/repo>#<n>`, `run:<owner/repo>@<sha>`, `branch:<owner/repo>:<name>`,
+`lock:<path>` and `probe:<name>` — plus one `fail:<source>`
 per source, the **delivery queue** `queue:<n>` with its counter `queue:next`,
 the advance marker `bus:advance`, and for `serve` one `serve:<id>` per note
 holding exactly one of `queued|<stamp>`, `dispatching|<stamp>|attempt=<n>`,
@@ -665,11 +936,12 @@ is unrepeatable news about a bus that may be broken right now.
 ## Bounded output
 
 The cap is `--max-lines`, default **40**, counted over the item lines — `WAKE
-BUS`, `WAKE ENTRY`, `WAKE REPORT` — and never over the verdict, the opening line,
+BUS`, `WAKE ENTRY`, `WAKE REPORT` and, since 2026-09-13, `WAKE PR`, `WAKE RUN`,
+`WAKE BRANCH`, `WAKE LOCK` — and never over the verdict, the opening line,
 a `WAKE NOTE` or a refusal. Past it, one line per kind:
 
 ```
-WAKE MORE kind=<bus|entry|report> shown=<n> total=<t> n=<k> <remedy>
+WAKE MORE kind=<bus|entry|report|pr|run|branch|lock> shown=<n> total=<t> n=<k> <remedy>
 ```
 
 `<k>` is `total - shown`, the lines this poll did not print, and every one of
@@ -833,7 +1105,11 @@ spec forbids**.
    bound holds at the largest plausible state **with no exception for consumed
    mail**: 200 notes, 50 entries, 100 report files and 20 lines changing in one
    interval print at most `4 * --max-lines + 10` lines, with or without
-   `--advance-cursor`, on every poll of the call and not only the first. (Glenn, 2026-09-09: tool output costs tokens; test at the largest
+   `--advance-cursor`, on every poll of the call and not only the first;
+   amended 2026-09-13: with the four new kinds in play as well — 20 pull
+   requests, 20 heads, 20 branches and 20 locks changing in the same
+   interval — the bound is `8 * --max-lines + 10`, one cap per kind and the
+   same ten unbounded lines. (Glenn, 2026-09-09: tool output costs tokens; test at the largest
    plausible state.)
 
 6. **What woke you is named.** Every change line carries the identity of the thing
@@ -1036,6 +1312,178 @@ spec forbids**.
     standing checkout is visible. (Stella, 2026-09-11, second read: a perfectly functioning
     watcher can remain quiet while remote mail arrives.)
 
+
+## The rules of 2026-09-12 and 2026-09-13 (amended 2026-09-13)
+
+Six more, numbered on from the twelve above, each from a hurt named in the
+amendment's table and each written so a test can be built from it.
+
+13. **Every wait the window has is a source here, so no wait is a poll.** The
+    tell recorded on 2026-09-11 was *"a status check I ran in the last minute,
+    run again"*, and the measure was 1,204 turns against 652M cache-read
+    tokens. A thing a window checks twice in a minute is either a source of
+    this tool or a defect of this tool, and the answer to *I have nothing to
+    wake on* is a flag on `watch`, never a `sleep` in a turn. The four sources
+    added here are the four such checks the record names: a pull request's
+    conversation, a head's checks, a branch's tip, a lock's release. A
+    fifth is a spec change, as before; what is forbidden is the loop.
+
+14. **A pull request the window owns is watched on the same call as the bus.**
+    `--pr` and `--owned-prs` are sources of `watch`, polled on
+    `--forge-interval`, and a new comment, review or review thread by anyone
+    but the host's own login is a change that names the pull request, the kind,
+    the id, the author and the review state. The window's own words are counted
+    and never wake it. (2026-09-12: two HOLDs unread for 100 and 45 minutes on
+    pull requests the window owned, while its bus wait and CI watchers were
+    armed and quiet — *"the bus wait is my only wake, and it does not know
+    about PR comments."*)
+
+15. **A wait ends on the first change, at its deadline, or on the caller's
+    stop, and never otherwise.** `watch` returns on the first poll that
+    produces a change, at `--max`, or when the caller sends it `SIGINT` or
+    `SIGTERM`; on a stop it finishes the step of rule 11 it is in — an
+    observation already made is written, a line already printed is marked —
+    prints `WAKE STOPPED after=<d> polls=<n> pending=<n>: stopped by the
+    caller` as its last line, releases `<state>.lock`, and exits 0: the stop
+    was the caller's decision, the state is whole, and nothing observed was
+    lost. It never re-arms, never loops past `--max`, never forks, never
+    detaches, and the only files it has touched at exit are `--state`, its
+    fixed-name temp file and `<state>.lock`, which the kernel releases with the
+    process. A stop that arrives mid-poll of a forge source abandons that `gh`
+    call; a stop that arrives between `nova-bus inbox --advance` returning and
+    the write of its output is the same kill point rule 11 already recovers
+    through `bus:advance=inflight`. (2026-09-10: nineteen orphaned shells in
+    one sweep, *"thirteen polling a log for an EXIT line from a child three
+    and three-quarter hours gone."*)
+
+16. **The lock source probes and never holds.** A `--lock` tick takes the
+    lock non-blocking and releases it in the next system call or is told it is
+    held; it never waits for it, never creates the file, never writes to it,
+    never deletes it, and never reads a pid out of it to test with `kill` or
+    the process table — rule 4 stands for this source as for the tool. (The
+    same sweep: *"two waiting for `pgrep -f` … to come up empty, which it never
+    can because the loop's own command line contains the string."*)
+
+17. **A silent line is probed once, and silence is never a diagnosis.** `probe
+    --line <name>` reads the line's last sign from the bus checkout (rule 2's
+    definition: the newest commit on the branch authored by the name — a note,
+    a receipt, anything). Within `--silent-after` it is `PRESENT`. Past it,
+    with `--ping-draft`, the tool sends **one** note — the caller's draft, `To:`
+    the line, through `nova-bus send` as `--as` — and records the ping against
+    the sign it was made on in `probe:<name>`; a later probe that finds the
+    same sign and a recorded ping **does not ping again**, whatever the
+    interval. A new sign from the line is `ANSWERED` once and clears the
+    record. No sign within `--answer-within` of the ping is `UNAVAILABLE`, and
+    the reason is `unknown` — the tool never writes *out of credits*, *asleep*
+    or any cause, because it has measured a silence and nothing else. A line
+    that has said it is stopping is a line with a sign, and a probe that reads
+    that sign as fresh does not ping it. (Glenn, 2026-09-12: *"If we don't hear
+    from a friend for 5 minutes, we should try to ping them to wake up. If that
+    doesn't work, then they have probably gone to sleep … If we assign to
+    somebody who is not here, the work will never get done."* Grok, on #178:
+    *"A deliberate stop of the poller must not be restarted by a liveness
+    probe."*)
+
+18. **READY is a measurement, and the tool takes it.** `probe --here` reads
+    this bench's one-, five- and fifteen-minute load averages, its logical CPU
+    count and its process **count** from the operating system at that instant —
+    never by starting `ps` or `uptime`, never as a listing — and prints them on
+    one line, `WAKE HERE at=<stamp> load=<1m>,<5m>,<15m> cpus=<n> procs=<n>`,
+    so a readiness receipt can carry the numbers it was decided on. With
+    `--quiet-load <x>` the line appends `quiet=<true|false>`, the one-minute
+    load against the caller's number — a comparison the caller asked for, not a
+    verdict the tool reached. The word READY appears nowhere in this tool's
+    output: the receipt is the window's and it is a promise about the next ten
+    minutes, made on the numbers. (2026-09-09: READY sent, two heavy children
+    started three minutes later; Mercury: *"READY only when the system is quiet
+    enough for the task."*)
+
+## probe — is a named line here, and is this bench quiet (amended 2026-09-13)
+
+```
+nova-wake probe --bus <dir> --as <name> --line <name> --state <file> --silent-after <duration> --answer-within <duration>
+      [--refresh --remote <name> --branch <name> --interval <duration>] [--ping-draft <file>] [--gh-timeout <seconds>]
+nova-wake probe --here [--quiet-load <x>]
+```
+
+**Two faces, one question: can work be handed over right now?** `--line` asks
+it of another line; `--here` asks it of this bench. Neither decides; both
+measure and print, and the window decides on the numbers, which is the whole of
+what the two hurts asked for.
+
+**Contact, not progress, not capacity.** The last sign is contact: a receipt
+proves a harness ran a receipt and nothing about a task (#178: *"A read
+receipt, wake delivery, task acceptance and progress are not the same event"*).
+The probe reports `last=<stamp> silent=<d> commit=<sha>` and one state word,
+and the words mean exactly this:
+
+| state | meaning | exit |
+|---|---|---|
+| `PRESENT` | the last sign is within `--silent-after` | 0 |
+| `ANSWERED` | a sign newer than the recorded ping arrived — once, and the record clears | 0 |
+| `SILENT` | past `--silent-after`, no `--ping-draft` given, so nothing was sent; the number is the report | 1 |
+| `PINGED` | past `--silent-after`, one note sent this call or an earlier one, and `--answer-within` has not yet run out | 1 |
+| `UNAVAILABLE` | `--answer-within` ran out after the ping with no new sign; reason unknown | 1 |
+
+Exit 1 is Conventions' NO and it says *do not assign now*: `SILENT` and
+`PINGED` are 1 as well as `UNAVAILABLE` because Glenn's rule holds new
+assignments while the answer is awaited, and a scheduler that read 0 for
+*pinged, waiting* would assign into the gap. A `probe` that could not run —
+a missing flag, a bus that is not a checkout, a draft `nova-bus` refuses, a
+`--line` not on the roster — is 2.
+
+**The ping is the caller's note, sent once.** `--ping-draft <file>` is a bus
+draft in `nova-bus draft`'s shape, `To:` the line, written by the caller: this
+tool composes nothing, so what a ping says is a person's words and the roster
+decides whether the name resolves. It is sent as `nova-bus send --bus <dir>
+--as <name> --file <file> --remote <name> --branch <name>` — the one write this
+tool makes to a bus, only under this flag, only for a line past
+`--silent-after` with no ping recorded against its current sign — and the send's
+result is one `WAKE PING id=<id> to=<name> commit=<sha> pushed=<true|false>`
+line. `pushed=false` is printed and is not a ping: *"a bus send alone does not
+wake a stopped harness"*, and a send that did not land did not even reach the
+bus. The state records `probe:<name>` = `<sign sha>|pinged|<stamp>|<note id>`
+after `SEND OK` and never before, so a kill between the two leaves no record
+and the next probe sends again — the direction that can double a ping but never
+lose one, and a doubled ping is a note a person reads twice. **The bus is the
+channel because it is the one every line has consented to by being on the
+roster**; a line whose harness needs more than a note to wake (a `serve`, a
+webhook, a cron) has that adapter at its end, and this tool does not know or
+run it (#178: *"Configure participants and transport adapters"* — the adapters
+are theirs). Without `--ping-draft` the probe is a measurement only.
+
+**Blocking, or one-shot.** With `--refresh --remote --branch --interval`, a
+probe that has pinged blocks for the rest of `--answer-within`, fetching each
+`--interval` through `nova-bus wait --timeout <interval>` exactly as `watch
+--refresh` does (the checkout fast-forwards; nothing advances) and reading the
+sign again after each, and returns `ANSWERED` the poll a new sign appears or
+`UNAVAILABLE` at the window's end — one turn, one answer. Without `--refresh`
+the probe reads the checkout as it stands, says so with `head-at=` on its line
+and `WAKE NOTE probe reads the checkout as it stands; nothing fetches without
+--refresh`, returns at once with `PINGED`, and the **next** probe judges the
+window from the recorded stamp: the window is measured by the tool's clock
+(rule 9) across calls, never by how many times it was asked. `--answer-within`
+is bounded by the same 60-minute ceiling as `--max`, for the same reason.
+
+**What the probe will not infer.** It never writes a cause. It never pings a
+line whose sign is fresh, whatever the caller believes. It never pings twice
+for one silence. It never reads the process table of this or any bench to
+decide whether a line is running (*absence of a process is not absence of a
+session*, 2026-08-25). It never receipts, never replies, never reassigns:
+Glenn's rule continues *reconcile ownership before transferring*, and that is
+a person's act on the record, not a tool's on a timer.
+
+**`--here` reads three numbers and prints them.** Load averages from the OS
+(`sysinfo` on Linux, `vm.loadavg` by `sysctl` on Darwin, and on a platform
+with neither the line says `load=-`), the logical CPU count so the load can be
+read against it, and the number of processes — a count taken from the kernel's
+process table (`/proc` entries, `kern.proc.all`) and never from `ps`, never
+listed, never filtered by name, so rule 4 is untouched. It takes no state, no
+lock and no flags but `--quiet-load`, and exits 0 on a reading; a reading it
+cannot take is 2 and says which. The receipt a window sends with these numbers
+is *"a promise about the next ten minutes, not a report about the last one"*
+— so the tool's line carries `at=` and the window quotes it, and a READY formed
+from a plan has nothing to quote.
 ## Tests this spec demands
 
 One test per rule above, named for the rule, beside the tests the work list names.
@@ -1197,16 +1645,96 @@ Each is proven able to fail by a mutation before it is trusted.
     fake `nova-bus` answering `nova-bus v0.10.4` is `WAKE REFUSED` naming both
     versions, exit 2, before the opening line.
 
+13. `TestEveryWaitIsASource` (amended 2026-09-13): a `watch` naming only
+    `--lock`, only `--branch`, only `--run` or only `--pr` runs — one source is
+    enough — and a `watch` naming none of the eight is exit 2 naming all eight
+    flags in one line; `--pr` or `--branch` without `--forge-interval` is exit 2
+    naming it; `--forge-interval 10s` is refused naming the 30s floor; `--run`
+    without `--entry-interval` is exit 2.
+14. `TestAnOwnedPullRequestWakesOnAReviewAndNotOnItself`: with a fake `gh`
+    whose `api user` answers `login=me`, a pull request whose newest item is a
+    review `CHANGES_REQUESTED` by `stella` prints one `WAKE PR` line with
+    `newest=review:<id> by=stella review=CHANGES_REQUESTED` and a `url=`; the
+    same state on the next tick prints nothing; a new comment by `me` raises
+    `comments=` and `self=` and is **not** a change; a new comment by `emma`
+    after it is; a count that falls by one is a change; `--owned-prs` with 23
+    open pull requests watches 20, prints the `capped at 20 of 23` note once,
+    and a pull request that opens mid-run has its existing 4 comments recorded
+    and not reported; `gh api user` failing prints the `host login unreadable`
+    note once and a self-authored comment then wakes; the fake `gh` is asserted
+    to receive exactly one `api graphql` call per pull request per forge tick
+    and no call between ticks; no printed line contains a comment's body.
+15. `TestARunIsAnEntryWithoutAState`: a head with `pending=3 pass=2` moves to
+    `pending=0 pass=4 fail=1 failing=race`, printing one `WAKE RUN … final=true`
+    under `--final-only` and one per transition without it; a head with no
+    checks is not final; 101 check runs is `unreadable: more than 100 check
+    runs on this head`, a change once; the fake `gh` records two `api` calls
+    per head per `--entry-interval` tick.
+16. `TestABranchMovingIsItsTwoShas`: a branch at `a1` moving to `b2` prints
+    `WAKE BRANCH o/r:x head=b2 was=a1`; a deletion prints `head=- was=b2`; a
+    creation prints `was=-`; a force-push to a sha seen before is still a
+    change; one `gh api` call per branch per forge tick.
+17. `TestALockReleasedIsAChangeAndTheProbeNeverHolds`: a lock file held by the
+    test with `flock` reads `held`; released, the next poll prints `WAKE LOCK
+    path=<p> state=free was=held`; re-taken, `state=held was=free`; removed,
+    `absent`; the file's bytes and mtime are unchanged after fifty probes and
+    it is never created when missing; a second goroutine holding a blocking
+    `flock` request throughout is granted the lock within one probe gap and
+    never starved; the source tripwire finds no `os.Remove`, no `os.Create`
+    and no write on the lock path in `internal/wake/lockfile.go`.
+18. `TestAStopIsAVerdict`: a `watch` sent `SIGTERM` mid-`--max` prints `WAKE
+    STOPPED after=<d> polls=<n> pending=<n>` as its last line and exits 0;
+    sent with an observation written and unprinted, the next call prints it;
+    sent with a line printed and unmarked, the next call prints it again and
+    nothing else; `<state>.lock` is free after the exit; the only paths in the
+    temp directory afterward are `--state`, its fixed-name temp file and
+    `<state>.lock`; a `SIGTERM` during a fake `gh` call ends the call within
+    one second.
+19. `TestAProbePingsOnceAndNeverDiagnoses`: on a bare bus with two clones and
+    an injected clock, a line whose last sign is 4m old is `PRESENT` exit 0;
+    at 6m without `--ping-draft` it is `SILENT` exit 1 and the fake `nova-bus`
+    records no `send`; at 6m with `--ping-draft` it is `PINGED` exit 1, one
+    `WAKE PING` line, `nova-bus send` run exactly once as `--as <caller>`, and
+    `probe:<name>` holds the sign sha, the stamp and the note id; a second
+    probe at 7m sends nothing and is `PINGED`; a receipt by the line pushed
+    from the other clone under `--refresh` is `ANSWERED` exit 0 within one
+    `--interval` and the record clears; with no sign by 8m `UNAVAILABLE` exit 1
+    and the word `credits` appears nowhere on stdout or stderr; a `send` that
+    exits 1 prints `pushed=false`, writes no `probe:` record, and the next
+    probe sends again; a killed probe between `SEND OK` and the state write
+    sends again on the next call, so the doubled ping is measured and the lost
+    one is not possible; `--here` prints one `WAKE HERE` line whose `load=` has
+    three fields, whose `procs=` is at least 1, and the tripwire finds no
+    `exec.Command` in `internal/wake/here.go`; `--answer-within 90m` is
+    refused naming the 60m ceiling; a `--line` not on the roster is exit 2.
+
 ## Known limits
 
 - **It cannot make the window act.** It returns, the harness wakes the session,
   and what the session does next is the session's. The lost-note failure this tool
   closes was never that a note went missing; it was that nobody came back to look.
-- **It watches three sources and no others.** No filesystem watch of arbitrary
-  trees, no log tailing, no process liveness, no schedule. `--line` is not a
-  fourth source: it is a view over the bus checkout's commits (rule 2). A fourth source is a
-  spec change, and a flag that ran an arbitrary command each poll would make this
-  a `cron` with a blocking call, which is the thing it replaces.
+- **It watches seven sources and no others** (three until 2026-09-13; the
+  amendment of that date is the spec change the earlier sentence demanded).
+  No filesystem watch of arbitrary trees, no log tailing, no process
+  liveness, no schedule, no runner-pool health. `--line` is not a source: it
+  is a view over the bus checkout's commits (rule 2). An eighth source is a
+  spec change, and a flag that ran an arbitrary command each poll would make
+  this a `cron` with a blocking call, which is the thing it replaces.
+- **The lock probe owns the lock for one gap** (amended 2026-09-13): between
+  the `flock` that was granted and the `close` that releases it, a
+  non-blocking contender can be told `held`. A blocking contender is not
+  affected. Named under `--lock`, pinned by test 17.
+- **A comment's words are not relayed** (amended 2026-09-13): `WAKE PR`
+  carries counts, a kind, an id, an author, a review state and a URL. The
+  window opens the item. This is rule 5 and not a gap.
+- **A queued run and a running one read the same** (amended 2026-09-13):
+  `pending=` counts both, because that is what the forge reports. The
+  runner pool is not a source.
+- **`probe` measures contact, and only on the bus** (amended 2026-09-13): a
+  line that works without writing to the bus for six minutes reads as
+  `SILENT`, and a harness that needs more than a note to wake is not woken
+  by the ping alone. The receipt of the ping is the line's sign, and the
+  adapter beyond the bus is the line's.
 - **Its view of a forge is `gh`'s.** Rate limits, authentication and a forge's own
   eventual consistency are `gh`'s behaviour, reported verbatim and never retried
   around. A check that the forge has not created yet is invisible, which is why
@@ -1253,7 +1781,27 @@ Each is proven able to fail by a mutation before it is trusted.
 - **No writing anywhere but its own state file.** It sends nothing, receipts
   nothing, comments on nothing, and its only write outside `--state` is the one
   `nova-bus inbox --advance` makes when the caller asked for `--advance-cursor`
-  — the one write-side call, named as such, and the one fetch.
+  — the one write-side call, named as such, and the one fetch. (Amended
+  2026-09-13: `probe --ping-draft` is the second, and it is a person's draft
+  sent once under a flag that names it; `watch` still writes nothing to a
+  bus or a forge under any flag — it comments on no pull request, marks no
+  thread resolved, cancels no run, deletes no branch, removes no lock.)
+- **No daemon, no background process, no detach** (amended 2026-09-13).
+  `watch` and `probe` run inside the tool call that started them and end
+  with it; `serve` is the one process outside a session and it exists for
+  one job (rule 10). Nothing here re-arms itself, schedules a next call, or
+  survives the harness that ran it.
+- **No delivery of notes, and no decision** (amended 2026-09-13). A `WAKE PR`
+  is not a review verdict, a `WAKE RUN` is not a merge decision, a `WAKE
+  LOCK … free` is not a grant to take it, a `WAKE PROBE … UNAVAILABLE` is not
+  a reassignment, and `WAKE HERE` is not READY. The window reads the line and
+  decides; the tool has told it what moved and what the numbers were.
+- **No model of a runner pool, a harness, or a friend's transport**
+  (amended 2026-09-13). #178 asks that CI runners and toolchain pools be
+  read for health beside the friends, and that each friend's wake adapter be
+  configurable; the first is a source this amendment does not add (a queued
+  run is visible as `pending=` standing still), and the second lives at the
+  friend's end of the bus, where `serve` already is.
 - **No acting on a report.** `RESULT.md` is prose another line wrote, relayed as a
   path and a size. Nothing parses it, and nothing in it is an instruction.
 - **No exit code for *what* changed.** One bit of news in an exit status is a
@@ -1356,6 +1904,36 @@ shared packages used rather than re-spelled.
     `delivered rc=0` and `uncertain … rc=<n>` on a non-zero return, ids and nothing else on the command line, the
     receipt per id after `delivered rc=0` and never before, `max_wait`, the
     `stop` file and `--hours`. Tests: test 10, with the kill points injected.
+
+13. **`internal/wake/pr.go`** (amended 2026-09-13) — the one `gh api graphql`
+    call per pull request, the four-field value, `self=` by the host login
+    read once per run, `--owned-prs` set refresh with the 20 cap and the
+    cold-join rule, batching at 8, `unreadable:` as a value. Tests: test 14.
+14. **`internal/wake/run.go`** — the two `gh api` calls per head, the entry
+    bucket rule reused (not re-spelled) over check runs and statuses, FINAL
+    without an entry state, the 100-run limit as `unreadable:`. Tests: test 15.
+15. **`internal/wake/branch.go`** — one `gh api` call, `<sha>|absent` value,
+    both ends on the line. Tests: test 16.
+16. **`internal/wake/lockfile.go`** — the probe through `internal/bus`'s lock
+    primitives with a `TryLock` that releases at once; `held|free|absent`;
+    never create, write or remove. Tests: test 17, with the tripwire.
+17. **`cmd/nova-wake/main.go`** — `--forge-interval` as a third clock with its
+    30s floor, `--to-only` with the `--advance-cursor` refusal, the four new
+    kinds under `internal/bounded`, the `signal.NotifyContext` stop with the
+    rule-11 step boundary and `WAKE STOPPED`, the `sources=` list and the
+    verdict's four new counts. Tests: tests 13 and 18; test 5's `8 *
+    --max-lines + 10` half.
+18. **`internal/wake/probe.go` and `internal/wake/here.go`** — the sign read
+    reusing `line.go`, the `probe:<name>` record written after `SEND OK`,
+    the one `nova-bus send`, the blocking half through `nova-bus wait
+    --timeout <interval>` as `--refresh` already does, the five state words
+    and their exit codes; `here.go` reading load, CPUs and process count
+    through the OS with no subprocess, one build file per platform. Tests:
+    test 19.
+19. **Onboarding** — `nova-wake help` grows by the new flags and `probe`; a
+    `### First run` sentence in `docs/CLI.md` for `probe --here`, the natural
+    first probe because it needs no bus; SPEC.md's `## nova-wake` paragraph
+    names the seven sources and the new verb.
 
 ## What the prototype does that this spec forbids
 
@@ -1463,3 +2041,25 @@ be grateful to. These are the places it is **not** a model, each with the reason
 | ideas #273 | evidence arriving after the belief | already, rule 11 (observed before printed, nothing coalesces) and `head-at=` |
 | ideas #357 | relay a note, never execute it | already, the data paragraph at the top |
 | nova-tools #35 | the table races | already: `nova-bus`'s ids and push-retry are what `serve` and `--refresh` rely on; the version is pinned |
+
+## Ideas folded on 2026-09-13
+
+| source | the idea, in six words | disposition |
+|---|---|---|
+| Emma, emma-0fd8c03d5f24 | `wait --event` on OS/bus events, no polling | folded as sources of `watch`: `--branch`, `--run`, `--lock`; no new verb — **Why `watch` and not a new `wait`** |
+| Rowan, 2026-09-12 (the two HOLDs) | owned PR comments are the bus too | `--pr`, `--owned-prs`, rule 14 |
+| Rowan, 2026-09-11 (the measurement) | fewer turns; a check twice a minute is a tell | rule 13; the cost table under **What one tick costs** |
+| Glenn, 2026-09-12 (five-minute rule) | five silent, one ping, two unanswered, unavailable | `probe --line`, rule 17; the state words and exit 1 |
+| Glenn, #178 | delivery, contact, read, acceptance, progress are distinct | `probe` measures contact only and says so; `WAKE PING pushed=` is delivery to the bus, not a wake |
+| Glenn, #178 | one targeted probe; hold assignments; cause unknown | rule 17: one ping per silence, exit 1 while waiting, the word `credits` forbidden by test 19 |
+| Glenn, #178 | explicit rest is respected, not pinged away | rule 17: a stop note is a sign; no ping on a fresh sign |
+| Glenn, #178 | a mailbox write is not proof the harness woke | `WAKE PING` reports the push; `ANSWERED` needs the line's own sign |
+| Glenn, #178, 2026-09-13 comment | runners and pools in the health picture | not folded: `--run`'s `pending=` standing still is the visible tell; a runner-pool source is a later spec change (**Known limits**) |
+| Grok sitting, #178 | wake on `addr=to` only; empty minutes are not turns | `--to-only`, refused with `--advance-cursor` |
+| Grok sitting, #178 | a deliberate stop is not restarted by a liveness probe | rule 17: fresh sign, no ping; never a second ping per silence |
+| Grok sitting, #178 | a person is not a restartable pool slot | `probe` reports; reassignment is a person's act on the record |
+| Mercury, 2026-09-09 | READY only when quiet enough for the task | `probe --here`, rule 18: numbers, never the word |
+| Rowan, 2026-09-10 (the nineteen shells) | every wait ends on its own; never pgrep yourself | rule 15 (`WAKE STOPPED`), rule 16 (probe never holds), rule 4 unchanged |
+| Rowan, 2026-08-25 | absence of a process is not absence of a session | `probe` never reads a process table to judge a line; `--here` counts processes on this bench only, as a load number |
+| the amendment's brief | exit code says change, deadline or refusal | declined in part: refusal is 2, ran is 0, the token says which; `probe` takes the reserved 1 as a gate — **Exit codes** |
+
