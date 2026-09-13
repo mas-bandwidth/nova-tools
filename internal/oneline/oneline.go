@@ -185,10 +185,21 @@ func Cap(s string, n int) string {
 	// The mark's width depends on how much is dropped, and how much is dropped depends
 	// on the mark's width. The knot is cut with the widest the mark can possibly be,
 	// which costs at most a few bytes of the budget and never overruns it.
+	//
+	// widest is at most the width of "...+" plus a decimal count and "B", so it is
+	// small and nonnegative for every input this package meets. But n itself is the
+	// caller's, and a minimum-int n makes a naive n - widest overflow to a positive
+	// int, dropping the ceiling entirely. The comparison order below makes the
+	// overflow impossible: n is tested against widest+1 before any subtraction.
 	widest := len(mark(len(s)))
-	budget := n - widest
-	if budget < 1 {
-		budget = 1
+	budget := 1
+	if n >= widest+1 {
+		budget = n - widest
+	}
+	if budget >= len(s) {
+		// The whole input fits inside the ceiling once the mark is accounted for:
+		// nothing is dropped, so the input is returned unchanged with no mark.
+		return s
 	}
 	cut := budget
 	for cut > 0 && !utf8.RuneStart(s[cut]) {
@@ -200,6 +211,11 @@ func Cap(s string, n int) string {
 		// as a ceiling.
 		_, size := utf8.DecodeRuneInString(s)
 		cut = size
+	}
+	if cut >= len(s) {
+		// The first rune is the whole input: nothing is dropped, so the input is
+		// returned unchanged with no mark.
+		return s
 	}
 	return s[:cut] + mark(len(s)-cut)
 }
