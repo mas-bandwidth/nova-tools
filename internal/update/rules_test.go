@@ -6,18 +6,16 @@ package update
 // no install, no send nobody asked for), and rule 25's injected clock and a
 // reporter really killed while it writes its snapshot.
 //
-// Each test below asserts the property, not the name. The kill helpers are the
-// join's own (setGroup, killGroup, buildTreeBinaries); nothing here is a second
-// harness.
+// Each test below asserts the property, not the name. The interruption witness
+// uses the production report path and the join's built CLI for recovery.
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -212,20 +210,15 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 	}
 }
 
-// Rule 25, killed mid-write: the snapshot is the thing that carries an identity
-// across processes, so a reporter killed while it writes one must leave either
-// the old snapshot or the new one and never half of either. This kills a real
-// nova-update process, repeatedly, at the moment it is writing.
+// Rule 25: hold the production report writer after sync/close and before its
+// atomic rename. A real process kill must preserve the old snapshot and both the
+// interrupted writer's bytes and a different writer's temporary. The later
+// reporter is the built CLI, with the ordinary production rename operation.
 func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("this kills a process group with SIGKILL; the owed Windows termination validation is named in the pull request")
-	}
 	bin := filepath.Join(buildTreeBinaries(t), exeName("nova-update"))
 	dir := t.TempDir()
 	snapshot := filepath.Join(dir, "s.json")
-	t.Setenv("NOVA_UPDATE_HELPER", "1")
 	first := manifest(t, row("x", "tool", printer(t, "v1.0.0"), "npm:unused", "none"))
-	// One good run, so there is a previous snapshot a later kill could corrupt.
 	good := exec.Command(bin, "report", "--file", first, "--snapshot", snapshot)
 	if out, err := good.CombinedOutput(); err != nil {
 		t.Fatalf("%v\n%s", err, out)
@@ -234,74 +227,122 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	killed := 0
-	for attempt := 0; attempt < 12; attempt++ {
-		p := manifest(t, row("x", "tool", printer(t, fmt.Sprintf("v2.%d.0", attempt)), "npm:unused", "none"))
-		c := exec.Command(bin, "report", "--file", p, "--snapshot", snapshot)
-		setGroup(c)
-		if err := c.Start(); err != nil {
-			t.Fatal(err)
-		}
-		// Kill as soon as a replacement is in flight: writeSnapshot creates its
-		// temporary beside the snapshot and renames it, so the temporary's
-		// existence is the write happening.
-		done := make(chan struct{})
-		go func() { _ = c.Wait(); close(done) }()
-		deadline := time.Now().Add(5 * time.Second)
-		for time.Now().Before(deadline) {
-			temps, _ := filepath.Glob(filepath.Join(dir, ".nova-version-snapshot-*"))
-			if len(temps) > 0 {
-				if killGroup(c) == nil {
-					killed++
-				}
-				break
-			}
-			select {
-			case <-done:
-				deadline = time.Now()
-			default:
-			}
-			time.Sleep(time.Millisecond)
-		}
-		<-done
-		// Whatever the kill interrupted, what is on disk must still read.
-		state, err := readSnapshot(snapshot)
-		if err != nil {
-			raw, _ := os.ReadFile(snapshot)
-			t.Fatalf("attempt %d left an unreadable snapshot: %v\n%q", attempt, err, clip(string(raw), 400))
-		}
-		if len(state.Observed) != 1 {
-			t.Fatalf("attempt %d left %d observations", attempt, len(state.Observed))
-		}
-		var check map[string]json.RawMessage
-		raw, err := os.ReadFile(snapshot)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if json.Unmarshal(raw, &check) != nil {
-			t.Fatalf("attempt %d left JSON that does not parse", attempt)
-		}
-	}
-	if killed == 0 {
-		t.Skipf("no reporter was caught mid-write in 12 attempts; the snapshot stayed readable in all of them (settled bytes %d)", len(settled))
-	}
-	t.Logf("killed %d of 12 reporters while they wrote the snapshot; every snapshot read afterwards", killed)
-	if _, err := readSnapshot(snapshot); err != nil {
+	foreign := filepath.Join(dir, snapshotTempPrefix+"another-writer")
+	foreignBytes := []byte("another writer's unfinished work\n")
+	if err := os.WriteFile(foreign, foreignBytes, 0600); err != nil {
 		t.Fatal(err)
 	}
-	// And a fresh reporter still works against whatever survived.
-	final := exec.Command(bin, "report", "--file", first, "--snapshot", snapshot)
+
+	second := manifest(t, row("x", "tool", printer(t, "v2.0.0"), "npm:unused", "none"))
+	ready := filepath.Join(dir, "before-rename")
+	input, heldOpen, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = input.Close(); _ = heldOpen.Close() })
+	c := exec.Command(os.Args[0], "-test.run=^TestSnapshotRenameBarrierHelper$")
+	c.Env = append(os.Environ(), "NOVA_SNAPSHOT_BARRIER="+ready,
+		"NOVA_SNAPSHOT_PATH="+snapshot, "NOVA_SNAPSHOT_MANIFEST="+second)
+	c.Stdin = input // the parent never writes or closes this pipe before the kill
+	var output bytes.Buffer
+	c.Stdout, c.Stderr = &output, &output
+	if err := c.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan struct{})
+	var waitErr error
+	go func() { waitErr = c.Wait(); close(done) }()
+	t.Cleanup(func() { _ = c.Process.Kill(); <-done })
+
+	deadline := time.NewTimer(5 * time.Second)
+	defer deadline.Stop()
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	var interrupted string
+	for interrupted == "" {
+		select {
+		case <-done:
+			t.Fatalf("reporter exited before its rename barrier: %v\n%s", waitErr, output.String())
+		case <-deadline.C:
+			t.Fatal("reporter did not reach its rename barrier")
+		case <-tick.C:
+			if name, err := os.ReadFile(ready); err == nil {
+				candidate := string(name)
+				if filepath.Dir(candidate) == dir && strings.HasPrefix(filepath.Base(candidate), snapshotTempPrefix) {
+					if _, err := os.Stat(candidate); err == nil {
+						interrupted = candidate
+					}
+				}
+			}
+		}
+	}
+	inFlight, err := os.ReadFile(interrupted)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Equal(inFlight, settled) {
+		t.Fatal("replacement must differ from the previously committed snapshot")
+	}
+	if err := validateSnapshot(inFlight); err != nil {
+		t.Fatalf("writer reached rename with invalid replacement: %v", err)
+	}
+	if err := c.Process.Kill(); err != nil {
+		t.Fatalf("could not kill the held reporter: %v", err)
+	}
+	<-done
+	if _, ok := waitErr.(*exec.ExitError); !ok {
+		t.Fatalf("reporter was not terminated unsuccessfully: %v", waitErr)
+	}
+	assertBytes := func(path string, want []byte) {
+		t.Helper()
+		got, err := os.ReadFile(path)
+		if err != nil || !bytes.Equal(got, want) {
+			t.Fatalf("%s did not preserve its exact bytes: %v", filepath.Base(path), err)
+		}
+	}
+	assertBytes(snapshot, settled)
+	assertBytes(interrupted, inFlight)
+	assertBytes(foreign, foreignBytes)
+
+	final := exec.Command(bin, "report", "--file", second, "--snapshot", snapshot)
 	if out, err := final.CombinedOutput(); err != nil {
 		t.Fatalf("a later reporter could not use the surviving snapshot: %v\n%s", err, out)
 	}
-	// A SIGKILL runs no deferred cleanup, so every killed writer left its
-	// half-written temporary beside the snapshot. A later writer must not sweep
-	// another writer's temporary: a leftover file is preferable to deleting
-	// another writer's work, so the killed writers' temporaries remain,
-	// untouched, and the snapshot stays readable on top of them.
-	if temps, _ := filepath.Glob(filepath.Join(dir, snapshotTempPrefix+"*")); len(temps) == 0 {
-		t.Fatalf("a killed writer's temporary was swept away; a leftover is preferable to deleting another writer's work")
+	state, err := readSnapshot(snapshot)
+	if err != nil || len(state.Observed) != 1 {
+		t.Fatalf("later snapshot must contain one readable observation: %v", err)
 	}
+	for _, observation := range state.Observed {
+		if observation.Raw != "v2.0.0" || observation.Status != "known" {
+			t.Fatalf("later reporter did not commit the replacement observation: %+v", observation)
+		}
+	}
+	assertBytes(interrupted, inFlight)
+	assertBytes(foreign, foreignBytes)
+	t.Log("terminated one reporter at the held pre-rename boundary; old snapshot and both temporaries preserved; later reporter succeeded")
+}
+
+// The hook and its environment protocol exist only in this test executable.
+// Main runs the same report path as the CLI. On arrival at the rename operation,
+// the writer has synced and closed its actual temporary but cannot rename it
+// until stdin is released. The parent instead kills this process at that point.
+func TestSnapshotRenameBarrierHelper(t *testing.T) {
+	ready := os.Getenv("NOVA_SNAPSHOT_BARRIER")
+	if ready == "" {
+		return
+	}
+	renameSnapshot = func(oldPath, newPath string) error {
+		if err := os.WriteFile(ready, []byte(oldPath), 0600); err != nil {
+			return err
+		}
+		var release [1]byte
+		if _, err := io.ReadFull(os.Stdin, release[:]); err != nil {
+			return err
+		}
+		return os.Rename(oldPath, newPath)
+	}
+	os.Exit(Main("nova-update", []string{"report", "--file", os.Getenv("NOVA_SNAPSHOT_MANIFEST"),
+		"--snapshot", os.Getenv("NOVA_SNAPSHOT_PATH")}, "test", os.Stdout, os.Stderr))
 }
 
 // SPEC-UPDATE: "Those three usage lines are the string `nova-update help` prints,
