@@ -93,6 +93,9 @@ func (Exec) Run(ctx context.Context, dir, name string, args ...string) (string, 
 	if ctx.Err() != nil {
 		return captured, fmt.Errorf("%s took longer than this run's --timeout allows: %w", name, ctx.Err())
 	}
+	if out.Hit() {
+		return captured, fmt.Errorf("%s exceeded the %d-byte output capture cap", name, execOutputCap)
+	}
 	return captured, err
 }
 

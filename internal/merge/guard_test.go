@@ -149,3 +149,37 @@ func TestExecRunCapsRunawayOutputAndMarksIt(t *testing.T) {
 		t.Errorf("the captured result does not mark itself truncated: %q", out)
 	}
 }
+
+func TestExecRunLeavesBelowCapSuccess(t *testing.T) {
+	if os.Getenv("NOVA_MERGE_EXEC_SMALL_HELPER") == "1" {
+		_, _ = io.WriteString(os.Stdout, "small output\n")
+		os.Exit(0)
+	}
+	t.Setenv("NOVA_MERGE_EXEC_SMALL_HELPER", "1")
+	out, err := (Exec{}).Run(context.Background(), "", os.Args[0], "-test.run=TestExecRunLeavesBelowCapSuccess")
+	if err != nil || out != "small output\n" {
+		t.Fatalf("below-cap command returned out=%q err=%v", out, err)
+	}
+}
+
+// The child can finish in the same scheduling window in which Capture cancels
+// it. The cap is still a refusal: a nil child status must never turn a capped
+// prefix into an apparently complete command result.
+func TestExecRunReturnsErrorWhenChildEndsAtCaptureCap(t *testing.T) {
+	if os.Getenv("NOVA_MERGE_EXEC_CAP_EXACT_HELPER") == "1" {
+		_, _ = io.CopyN(os.Stdout, repeatByte{}, execOutputCap)
+		os.Exit(0)
+	}
+	t.Setenv("NOVA_MERGE_EXEC_CAP_EXACT_HELPER", "1")
+	for i := 0; i < 100; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		out, err := (Exec{}).Run(ctx, "", os.Args[0], "-test.run=TestExecRunReturnsErrorWhenChildEndsAtCaptureCap")
+		cancel()
+		if !strings.Contains(out, "truncated") {
+			t.Fatalf("iteration %d: capped child output was not marked truncated", i)
+		}
+		if err == nil || !strings.Contains(err.Error(), "output capture cap") {
+			t.Fatalf("iteration %d: capped child returned err=%v, len=%d", i, err, len(out))
+		}
+	}
+}
