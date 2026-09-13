@@ -47,7 +47,9 @@ Each shard reference includes its byte SHA-256, record count and sorted observat
 
 ## Batch and ledger layout
 
-A batch directory contains `batch.json` (exactly one coverage envelope, whose ID is the contribution ID), the new observation shards it references at their final relative paths, and any new mapping envelopes it references. It contains no other files, symlinks or executable content. References may resolve to byte-identical objects already in the explicitly named local ledger; the batch need not duplicate those. Core combines the adapters' coverage fragments into one contribution for the declared collection scope, retaining every source and gap; it does not choose the most complete-looking fragment.
+A batch directory contains `batch.json` (exactly one coverage envelope, whose ID is the contribution ID), the new observation shards it references at their final relative paths, any new mapping envelopes it references, and any referenced observation-ID inventory files. It contains no other files, symlinks or executable content. References may resolve to byte-identical objects already in the explicitly named local ledger; the batch need not duplicate those. Core combines the adapters' coverage fragments into one contribution for the declared collection scope, retaining every source and gap; it does not choose the most complete-looking fragment.
+
+Inventory files live at `inventories/<inventory-sha256-hex>.json`: a RFC8785 canonical JSON array of sorted-unique observation content-ID strings followed by exactly one LF, included in the byte digest. The [validator addendum](PROPOSAL-TOKENS-VALIDATORS.md) specifies the disjoint inline/file choice and verification of either branch against its shard. Inventories carry IDs only; they do not duplicate observations or change their partition.
 
 Shard placement is `records/<friend>/<bench>/<day>/<shard-sha256-hex>.jsonl`. Each shard has exactly one origin partition. Null friend or bench uses reserved `_`; a valid point timestamp with its stated day basis supplies the UTC day; interval-only or unknown allocation uses `unallocated`. Never put a multi-day interval under its starting day and imply day allocation. Batches may reference several partitions. A changed origin is a new observation/correction, never a file move.
 
@@ -63,7 +65,7 @@ Keep v1 untouched by adding one explicit namespace:
 nova-tokens records collect --sources <local-manifest> --ledger <dir> --out <new-batch-dir> --from <UTC-instant> --until <UTC-instant>
 nova-tokens records check --batch <dir> --ledger <dir>
 nova-tokens records view --ledger <dir> --selection <manifest> --group-by day,friend,bench,repo,model --format json
-nova-tokens records publish --batch <dir> --ledger <git-checkout> --remote <name> --branch <name>
+nova-tokens publish --batch <dir> --ledger <git-checkout> --remote <name> --branch <name> --repo <host>/<owner>/<name>
 ```
 
 `collect` reads only explicit authorized source paths, reads the local ledger to avoid emitting already retained observations, and writes only the new named batch directory and an explicitly configured local receipt index. It has no network, Git or bus action. New observations are placed in immutable JSONL shards capped at 4 MiB, sorted by ID; oversize individual records fail with a named coverage gap. Existing ledger objects are referenced, not recopied on every daily run. A repeated identical collection emits no duplicate observations. Changed coverage cutoff is useful evidence, not new spend.
