@@ -44,20 +44,21 @@ Envelope ID is the body's canonical SHA-256 (unchanged). The body is exactly the
 ReasonCodes. A present zero under `default_may_mask_absence` or `unknown` stays unmeasured (existing `Normalize`); `field_rules` names every numeric field, and `number_kind` is never inferred.
 
 **The five rule objects are closed, typed, per reviewed adapter.** The adapter discriminator is the existing
-`identity_rule.source_kind` ∈ `{codex_desktop, grok}` — the two SourceKinds with enumerated shapes — and there is
+`identity_rule.source_kind` ∈ `{codex_desktop, grok, antigravity}` — and there is
 no new top-level adapter member. A member value may be only `bool`, `str`, `null`, `[str]`, or a nested object
-whose keys are enumerated below. Policy strings are retained verbatim inside that shape; the validator checks type and, where stated, enum membership and list sort only. Any key outside the adapter's set, or any other value type, is `mapping_rule_shape` — an explicit refusal, never an open object and never a bypass.
+whose keys are enumerated below. Policy strings are retained verbatim inside that shape; the validator checks type and, where stated, enum membership and list sort only. Any key outside the adapter's set, or any other value type, is `mapping_rule_shape` — an explicit refusal, never an open object and never a bypass. Current implemented validation supports `codex_desktop` and `grok`; `antigravity` is the reviewed proposed extension specified here.
 
-- `identity_rule` (both): `source_kind` ∈ SourceKinds; `namespace` `ns`; `event_key` `[str]` non-empty,
+- `identity_rule`: `source_kind` ∈ SourceKinds; `namespace` `ns`; `event_key` `[str]` non-empty,
   positional (NOT sorted); `observation_kind` ∈ `{request,turn,snapshot,aggregate}`; `normalized_spend_supported`
   `bool`; `producer_version_from` `str`; `session_id` `str`; `receipt_fields` `[field_key]` sorted unique;
   `receipt_value_type` = `"string"`. codex adds `containing_or_forked_session_in_event_key` `bool`. grok adds
   `collection_timestamp_substitution` `bool`, `containing_session_substitution` `bool`, `unsupported_reason` `str`.
-- `revision_rule` (identical in both): `basis` ∈ `{source_order, operator_correction, none}`; `native` `str?`;
+  antigravity adds `unsupported_reason` `str` (non-empty `str`, required when `normalized_spend_supported` is false).
+- `revision_rule` (identical across adapters): `basis` ∈ `{source_order, operator_correction, none}`; `native` `str?`;
   `supersedes` `[cid]` sorted unique; `identical_copy` `str`; `changed_same_key` `str`;
   `inferred_order_from_export_update_time` `bool`; `newest_wins` `bool`.
-- `time_rule` (both): `basis` ∈ timeBases; `occurred_at` `str`; `offsets` `str`; `day_allocation` `str`; `start`
-  `str?`; `end` `str?`; `missing_timestamp` `{basis ∈ timeBases, occurred_at str?}` (null in both sealed
+- `time_rule`: `basis` ∈ timeBases; `occurred_at` `str`; `offsets` `str`; `day_allocation` `str`; `start`
+  `str?`; `end` `str?`; `missing_timestamp` `{basis ∈ timeBases, occurred_at str?}` (null in sealed
   manifests). grok adds `cross_midnight` `str`.
 - `model_rule` — every nested `{basis, id}` object is `{basis ∈ modelBases (str), id str?}`, `id` null-legal where
   a manifest names an absent/ambiguous model and non-null where it names one. codex: `basis` ∈ modelBases; `id`
@@ -66,6 +67,7 @@ whose keys are enumerated below. Policy strings are retained verbatim inside tha
   `{basis, id null}`; `multiple_model_ids` `{basis, id null}`; `split_normalized` `bool`;
   `aggregate_is_counting_candidate` `bool`; `detail_retained_not_counted_again` `bool`; `model_usage_fields`
   `[str]` positional (NOT sorted); `model_usage_sorted_by` `str`; `forbidden_wire_keys` `[str]` sorted unique.
+  antigravity: `basis` ∈ modelBases; `id` `str`; `forbidden_wire_keys` `[str]` sorted unique; `model_usage` `[]`.
 - `overlap_rule` codex: `counting_source` `str`; `arithmetic_mismatch` `str`; `missing_raw_total` `str`;
   `thread_token_usage` `str`; `turn_token_usage` `str`; `token_count_snapshots` `str`;
   `summed_or_mixed_with_preferred` `bool`; `report_must_name_unhandled_token_count_coverage` `bool`;
@@ -73,6 +75,7 @@ whose keys are enumerated below. Policy strings are retained verbatim inside tha
   `str`; `evidenced_overlapping_grain` `str`; `request_grain_mapping` `str`; `session_totals` `str`;
   `forbidden_unions` `[str]` positional (NOT sorted); `checksum_requires_evidenced_complete_matching_coverage`
   `bool`; `session_totals_fill_missing_turn_spend` `bool`; `owed_coverage_tasks` `[str]` positional (NOT sorted).
+  antigravity: `counting_grain` `str`; `arithmetic_violation` `str`; `owed_coverage_tasks` `[str]` positional (NOT sorted).
 
 `timeBases`, `modelBases`, `SourceKinds` and `ReasonCodes` are the existing shared definitions in
 `internal/records/allowlist.go`, not new per-mapping sets: `timeBases` `{response_observation, turn_completion,
