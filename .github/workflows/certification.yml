@@ -182,8 +182,14 @@ jobs:
           pkg="./${{ matrix.entry.package }}"
           group="${{ matrix.entry.group }}"
           groups="${{ matrix.entry.groups }}"
+          flags=(-race)
+          # #206: internal/update requires verbose output on Windows so named boundary,
+          # snapshot, reporter-death and two-phase receipts and PASS/SKIP status are preserved in CI logs.
+          if [ "$pkg" = "./internal/update" ]; then
+            flags+=(-v)
+          fi
           if [ "$groups" = "1" ]; then
-            go test -race "$pkg"
+            go test "${flags[@]}" "$pkg"
             exit 0
           fi
           # Test, Fuzz AND Example: `go test` runs examples with an output comment, and a
@@ -196,7 +202,7 @@ jobs:
           fi
           echo "$names"
           run="^($(printf '%s\n' "$names" | paste -sd'|' -))$"
-          go test -race -run "$run" "$pkg"
+          go test "${flags[@]}" -run "$run" "$pkg"
 
   smoke:
     needs: release-dry-run
