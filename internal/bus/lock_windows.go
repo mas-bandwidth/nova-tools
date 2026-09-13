@@ -20,10 +20,12 @@ import (
 //
 // TRANSIENT COLLISIONS ON WINDOWS:
 // When an existing lock holder releases the lock, unlockFile calls os.Remove(sentinel(f)).
-// Under Windows NTFS, deletion is asynchronous: DeleteFileW marks the file as
-// STATUS_DELETE_PENDING while handles or directory table entries resolve.
-// A concurrent waiter calling os.OpenFile(..., O_CREATE|O_EXCL) while deletion is pending
-// receives ERROR_ACCESS_DENIED (5) or ERROR_SHARING_VIOLATION (32).
+// Under Windows file systems, deletion and handle cleanup may be asynchronous: for example,
+// file deletion may place the target in a delete-pending state while handles or directory table
+// entries resolve. A concurrent waiter calling os.OpenFile(..., O_CREATE|O_EXCL) during
+// lock handover can receive transient collision errors such as ERROR_ACCESS_DENIED (5),
+// ERROR_SHARING_VIOLATION (32), or ERROR_LOCK_VIOLATION (33). While delete-pending is a
+// possible mechanism, these errnos do not uniquely identify it.
 //
 // These are transient collisions during lock handover, not permanent permission denials
 // or live lock holders. If wait > 0, tryLockFile marks them retryable so LockFile can wait
@@ -53,7 +55,7 @@ func tryLockFile(f *os.File) (bool, bool, error) {
 		return false, true, nil
 	}
 	if platformTransientLockCollision(openErr) {
-		// Transient collision during lock release (e.g. DELETE_PENDING or sharing violation).
+		// Transient collision during lock release/handover (e.g. possible delete-pending or sharing violation).
 		// Retryable if caller has a wait budget, but preserved as real error if persistent.
 		return false, true, openErr
 	}

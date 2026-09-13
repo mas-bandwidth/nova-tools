@@ -10,7 +10,7 @@ import (
 )
 
 // TestWindowsTransientLockCollisionClassification tests that the Windows-specific
-// error classifier accurately recognizes NTFS delete-pending and sharing violation errnos.
+// error classifier recognizes transient collision errnos (such as access denied and sharing violations).
 func TestWindowsTransientLockCollisionClassification(t *testing.T) {
 	cases := []struct {
 		name string

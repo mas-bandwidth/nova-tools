@@ -12,35 +12,34 @@ import (
 )
 
 // TestLockFileTransientCollisionRecoversWhenWaitBudgetAllows verifies that when tryLockFile
-// encounters a transient collision (such as Windows delete-pending ERROR_ACCESS_DENIED) during
-// lock release/handover, LockFile waits out the window and successfully acquires the lock.
+// encounters a transient collision during lock release/handover, lockFile waits out the window
+// and successfully acquires the lock.
 func TestLockFileTransientCollisionRecoversWhenWaitBudgetAllows(t *testing.T) {
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "test.lock")
 
 	var polls int32
-	forceTryLockFile = func(f *os.File) (bool, bool, error) {
+	try := func(f *os.File) (bool, bool, error) {
 		if atomic.AddInt32(&polls, 1) < 3 {
-			// Simulate transient Windows ERROR_ACCESS_DENIED during delete-pending
+			// Simulate transient collision (e.g. possible delete-pending or sharing contention)
 			return false, true, syscall.Errno(5)
 		}
-		// On 3rd attempt, delete-pending has cleared and lock is acquired
+		// On 3rd attempt, collision has cleared and lock is acquired
 		return true, false, nil
 	}
-	defer func() { forceTryLockFile = nil }()
 
 	start := time.Now()
-	release, err := LockFile(lockPath, 500*time.Millisecond)
+	release, err := lockFile(lockPath, 500*time.Millisecond, try)
 	if err != nil {
-		t.Fatalf("LockFile failed to recover from transient collision: %v", err)
+		t.Fatalf("lockFile failed to recover from transient collision: %v", err)
 	}
 	defer release()
 
 	if p := atomic.LoadInt32(&polls); p < 3 {
-		t.Fatalf("LockFile acquired lock after %d polls, want at least 3", p)
+		t.Fatalf("lockFile acquired lock after %d polls, want at least 3", p)
 	}
 	if elapsed := time.Since(start); elapsed < 30*time.Millisecond {
-		t.Fatalf("LockFile returned in %v, expected to wait for transient collision to clear", elapsed)
+		t.Fatalf("lockFile returned in %v, expected to wait for transient collision to clear", elapsed)
 	}
 
 	// Verify lock holder was stamped
@@ -52,7 +51,7 @@ func TestLockFileTransientCollisionRecoversWhenWaitBudgetAllows(t *testing.T) {
 
 // TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertLockHeld verifies
 // that when a collision error (such as permanent permission restriction on .held) persists,
-// LockFile retries until the wait budget expires, never enters the critical section, and returns
+// lockFile retries until the wait budget expires, never enters the critical section, and returns
 // the real underlying error without falsely asserting ErrLockHeld or claiming another process is running.
 func TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertLockHeld(t *testing.T) {
 	dir := t.TempDir()
@@ -60,25 +59,24 @@ func TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertL
 
 	const errAccessDenied = syscall.Errno(5)
 	var polls int32
-	forceTryLockFile = func(f *os.File) (bool, bool, error) {
+	try := func(f *os.File) (bool, bool, error) {
 		atomic.AddInt32(&polls, 1)
 		return false, true, errAccessDenied
 	}
-	defer func() { forceTryLockFile = nil }()
 
 	start := time.Now()
-	release, err := LockFile(lockPath, 60*time.Millisecond)
+	release, err := lockFile(lockPath, 60*time.Millisecond, try)
 	if err == nil {
 		release()
-		t.Fatal("LockFile succeeded despite permanent collision, want error")
+		t.Fatal("lockFile succeeded despite permanent collision, want error")
 	}
 
 	// Must have waited out the budget
 	if elapsed := time.Since(start); elapsed < 50*time.Millisecond {
-		t.Fatalf("LockFile aborted early after %v, want at least 50ms budget", elapsed)
+		t.Fatalf("lockFile aborted early after %v, want at least 50ms budget", elapsed)
 	}
 	if p := atomic.LoadInt32(&polls); p < 2 {
-		t.Fatalf("LockFile polled %d times, want multiple retries over budget", p)
+		t.Fatalf("lockFile polled %d times, want multiple retries over budget", p)
 	}
 
 	// Must preserve the actual underlying error, NOT ErrLockHeld
@@ -103,19 +101,23 @@ func TestLockFileImmediateNonblockingRejectsCollisionImmediately(t *testing.T) {
 	lockPath := filepath.Join(dir, "test.lock")
 
 	const errAccessDenied = syscall.Errno(5)
-	forceTryLockFile = func(f *os.File) (bool, bool, error) {
+	var attempts int32
+	try := func(f *os.File) (bool, bool, error) {
+		atomic.AddInt32(&attempts, 1)
 		return false, true, errAccessDenied
 	}
-	defer func() { forceTryLockFile = nil }()
 
 	start := time.Now()
-	_, err := LockFile(lockPath, 0)
+	_, err := lockFile(lockPath, 0, try)
 	if err == nil {
-		t.Fatal("LockFile with wait=0 succeeded on collision, want error")
+		t.Fatal("lockFile with wait=0 succeeded on collision, want error")
 	}
 
-	if elapsed := time.Since(start); elapsed > 40*time.Millisecond {
-		t.Fatalf("LockFile with wait=0 took %v, want near-immediate return", elapsed)
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("lockFile with wait=0 called try %d times, want exactly 1 attempt", got)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("lockFile with wait=0 took %v, want near-immediate return", elapsed)
 	}
 
 	// Real error preserved, not ErrLockHeld
@@ -128,25 +130,29 @@ func TestLockFileImmediateNonblockingRejectsCollisionImmediately(t *testing.T) {
 }
 
 // TestLockFileImmediateNonblockingCleanContentionReturnsLockHeld verifies that with wait=0,
-// when another run actually holds the lock (clean contention, no underlying error), LockFile
+// when another run actually holds the lock (clean contention, no underlying error), lockFile
 // returns ErrLockHeld immediately.
 func TestLockFileImmediateNonblockingCleanContentionReturnsLockHeld(t *testing.T) {
 	dir := t.TempDir()
 	lockPath := filepath.Join(dir, "test.lock")
 
-	forceTryLockFile = func(f *os.File) (bool, bool, error) {
+	var attempts int32
+	try := func(f *os.File) (bool, bool, error) {
+		atomic.AddInt32(&attempts, 1)
 		return false, true, nil // clean contention
 	}
-	defer func() { forceTryLockFile = nil }()
 
 	start := time.Now()
-	_, err := LockFile(lockPath, 0)
+	_, err := lockFile(lockPath, 0, try)
 	if err == nil {
-		t.Fatal("LockFile with wait=0 succeeded on clean contention, want ErrLockHeld")
+		t.Fatal("lockFile with wait=0 succeeded on clean contention, want ErrLockHeld")
 	}
 
-	if elapsed := time.Since(start); elapsed > 40*time.Millisecond {
-		t.Fatalf("LockFile with wait=0 took %v, want near-immediate return", elapsed)
+	if got := atomic.LoadInt32(&attempts); got != 1 {
+		t.Fatalf("lockFile with wait=0 called try %d times, want exactly 1 attempt", got)
+	}
+	if elapsed := time.Since(start); elapsed > 5*time.Second {
+		t.Fatalf("lockFile with wait=0 took %v, want near-immediate return", elapsed)
 	}
 
 	if !errors.Is(err, ErrLockHeld) {
@@ -154,30 +160,25 @@ func TestLockFileImmediateNonblockingCleanContentionReturnsLockHeld(t *testing.T
 	}
 }
 
-// TestLockFileNegativeControlUnwritablePathFailsAtOpen verifies that an unwritable lock path
-// fails immediately at the primary file opening (line 56), never reaching tryLockFile.
-func TestLockFileNegativeControlUnwritablePathFailsAtOpen(t *testing.T) {
+// TestLockFileNegativeControlMissingParentFailsAtOpen verifies that when the lock file
+// cannot be opened because its parent directory does not exist, lockFile fails immediately
+// at the primary OpenFile, never invoking the try operation.
+func TestLockFileNegativeControlMissingParentFailsAtOpen(t *testing.T) {
 	dir := t.TempDir()
-	unwritableDir := filepath.Join(dir, "no-write")
-	if err := os.Mkdir(unwritableDir, 0o555); err != nil {
-		t.Fatal(err)
-	}
-	defer func() { _ = os.Chmod(unwritableDir, 0o755) }()
+	lockPath := filepath.Join(dir, "missing-dir", "test.lock")
 
 	reachedTryLock := false
-	forceTryLockFile = func(f *os.File) (bool, bool, error) {
+	try := func(f *os.File) (bool, bool, error) {
 		reachedTryLock = true
 		return true, false, nil
 	}
-	defer func() { forceTryLockFile = nil }()
 
-	lockPath := filepath.Join(unwritableDir, "sub", "test.lock")
-	_, err := LockFile(lockPath, 50*time.Millisecond)
+	_, err := lockFile(lockPath, 50*time.Millisecond, try)
 	if err == nil {
-		t.Fatal("LockFile on missing directory succeeded, want error")
+		t.Fatal("lockFile on missing directory succeeded, want error")
 	}
 	if reachedTryLock {
-		t.Fatal("tryLockFile was reached despite unwritable primary path")
+		t.Fatal("tryLockFile was reached despite missing parent directory")
 	}
 	if !strings.Contains(err.Error(), "could not be opened") {
 		t.Fatalf("err %v did not fail at primary OpenFile", err)

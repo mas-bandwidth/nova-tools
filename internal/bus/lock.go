@@ -47,16 +47,16 @@ var ErrLockHeld = errors.New("lock held")
 // On Unix this is an flock (advisory lock) that dies with the process.
 // On Windows this is an O_EXCL sentinel file (.held).
 //
-// forceTryLockFile is the seam for testing lock collision and error recovery portably
-// without needing a live Windows runner.
-var forceTryLockFile func(f *os.File) (ok bool, retryable bool, err error)
-
 // When the lock is taken, LockFile stamps the current process PID into the file so
 // waiters and refusals can name the holder.
 // If wait is 0, LockFile attempts to acquire the lock once without waiting.
 // If wait > 0, LockFile polls every 25ms until the deadline.
 // If the lock cannot be acquired within wait, it returns an error wrapping ErrLockHeld.
 func LockFile(path string, wait time.Duration) (func(), error) {
+	return lockFile(path, wait, tryLockFile)
+}
+
+func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, retryable bool, err error)) (func(), error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("the lock at %s could not be opened: %w", path, err)
@@ -64,13 +64,7 @@ func LockFile(path string, wait time.Duration) (func(), error) {
 	deadline := time.Now().Add(wait)
 	var lastErr error
 	for {
-		var ok, retryable bool
-		var lockErr error
-		if forceTryLockFile != nil {
-			ok, retryable, lockErr = forceTryLockFile(f)
-		} else {
-			ok, retryable, lockErr = tryLockFile(f)
-		}
+		ok, retryable, lockErr := try(f)
 		if lockErr != nil {
 			if !retryable || wait == 0 {
 				f.Close()
