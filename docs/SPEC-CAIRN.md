@@ -105,17 +105,66 @@ learned.
    does not have, are each exit 2 at the first mutating verb, naming what is
    missing. **Empty is the correct steady state for the cairn files; the
    log is never empty and is never deleted.**
+   **Every path in the store is a regular file, and a symlink anywhere on one is
+   never followed.** Every file this tool opens — the log, the lock file, the
+   `.gitattributes` of *The conflicts, settled*, a cairn under the header's
+   in-place rewrite, and an INCOMING `--store` — is `Lstat`ed first and opened
+   with `O_NOFOLLOW` (Windows has no such flag, so there the `Lstat` and a
+   fstat of the opened handle carry the rule alone); a link at **any** component
+   of the path, the store directory itself included, is exit 2 naming the
+   component. **Every containment check in this spec is made on the resolved
+   path** — this rule's and rule 20's both — because a symlink inside the store
+   pointing out of it passes a lexical prefix test. A store arrives by `fetch`
+   and `rebase` from a bench this one cannot see, and two benches on one store
+   is the normal case, so a commit from the other side can leave a link where
+   any of those files belongs and the next write lands outside the store
+   entirely — silently, which is law 1's own failure mode. The precedent is
+   `nova-bus`'s, in its own words: *"a symlink anywhere on a lane path — the
+   lane directory itself included — is never followed: an append refuses it,
+   and a whole-file rewrite replaces it, because a rewrite lands by rename and
+   a rename replaces the link rather than writing through it"* (`docs/SPEC.md`,
+   with `internal/bus/nofollow_unix.go` behind it).
 
 2. **Every mutating verb fetches before it reads, and commits and pushes before
    it exits.** `open`, `append`, `seal`, `consume` and `incoming` each run this
    order, and the order is the rule:
-   (a) `git fetch <remote> <branch>`;
+   (a) `git fetch <remote> <branch>`. **A `--branch` the remote does not have
+   yet is an empty remote side and not a failure:** the fetch brings nothing,
+   (b) and (c) have nothing to do, and this verb's own push creates the branch
+   upstream. The first run on a store nobody has pushed is the ordinary first
+   day — ONBOARDING.md's standard is that the first run works — and a tool that
+   answered it with git's *couldn't find remote ref* would refuse the very run
+   `quickstart` exists to prepare.
    (b) push any commits of this store the remote lacks, through the
    fetch-rebase-retry path of rule 3 — the waiting commits go first, so a bench
-   that failed to push yesterday is not also stuck today;
+   that failed to push yesterday is not also stuck today.
+   **`git push` publishes the branch and not the commit just made, and a cairn
+   store lives inside a line's own repository (rule 20), so (b) must tell this
+   tool's commits from a person's.** Every commit this tool makes carries the
+   git trailer `Nova-Cairn: <verb> <cairn id|->`. A commit ahead of the remote
+   that carries it is this tool's own, left on the branch by a push that could
+   not land, and (b) **carries** it; a commit **without** it is the line's own
+   unfinished work, and the run is exit 1 — `<VERB> FAIL: branch is ahead of
+   <remote>/<branch> by <n> commits this tool did not make: <short shas>` —
+   before anything is staged, so the refusal costs one fetch and leaves the
+   checkout exactly as it was found. This is `nova-bus`'s push protocol step 2,
+   and its hurt is the wedge quoted there: a guard that could not tell its own
+   unpushed work from a person's *"refused the one recovery it exists to
+   perform"*, and the three lines that lost a race were stuck behind it. Without
+   the trailer the two readings of *"commits of this store"* are a
+   path-filtered push, which git does not have, and a push of everything on the
+   branch, which publishes somebody's unfinished work under `pushed=true` with
+   nothing in the output saying so.
    (c) fast-forward the checkout to the fetched branch;
    (d) read the store and answer the gates;
    (e) write, `git add` what was written, commit, and push it the same way.
+   **Before (a), and before anything is fetched, the store must be a git work
+   tree on the branch `--branch` names, holding no change but the one this run
+   is about to make.** A dirty store is exit 1 naming the paths. The rebases in
+   (b) and (e) run over that tree, and a rebase over a dirty tree either refuses
+   in git's own words rather than this tool's, or sweeps somebody's unrelated
+   work into a cairn's commit. (`nova-bus`'s push protocol step 1, for the same
+   two reasons.)
    The push fetches, rebases and retries on a non-fast-forward, as `nova-bus`
    does, up to `--push-attempts <n>` (**default 25**). **A store that "cannot
    fast-forward" means the rebase of step (b) did not land**, which is the one
@@ -146,6 +195,15 @@ learned.
    the run is `CONSUME FAIL` at exit 1, nothing is deleted, and the line says to
    run `consume` again. That is the 2026-08-25 hurt arriving by a second road,
    and law 3 answers it the same way.
+   **A `consume` whose second fetch finds the cairn already gone from the
+   fetched branch is `CONSUME FAIL cairn=<id>: already consumed` at exit 1**,
+   and any commit this run had already made is dropped (*The conflicts,
+   settled*). Two benches consuming one cairn over one base is not a git
+   conflict — a delete against a delete is settled silently — so without this
+   the second run's deletion is a no-op whose log line records a second
+   consumption of one cairn. Rule 22 counts by distinct cairn for the same
+   reason, so a race narrower than this check cannot wedge the store's identity
+   either; between them, one cairn is consumed once however many benches tried.
 
 3. **A commit that could not be pushed exits 1 and says so, and the retry is a
    verb of its own.** The line reads `<VERB> FAIL cairn=<id> commit=<sha12>
@@ -168,7 +226,11 @@ learned.
    (rule 11), and two callers who disagree about which it was would build two
    different binaries out of one sentence. **`push` writes no log event at
    all**: the log's events are the five of rule 21, and a push is not one of
-   them — it is the completion of an act the log already recorded.
+   them — it is the completion of an act the log already recorded. **`push`
+   settles a rebase conflict exactly as a mutating verb does**, the drop of a
+   stranded `consume` commit included (*The conflicts, settled*): `push` is the
+   verb every refusal in this spec sends an operator to, and a retry that can
+   wedge is the wedge one step later.
 
 4. **The file name is a GUID and asserts nothing.** A cairn is
    `<8 hex>.md` — eight lower-case hex characters from a cryptographically
@@ -183,6 +245,12 @@ learned.
    is not one anybody settled by typing a filename. (2026-07-29: `<session>.md`
    shipped and defended, reverted to `<stamp>-<bench>-<session>.md` and
    defended, ten minutes apart.)
+   **A file in the store whose name does not match `^[0-9a-f]{8}\.md$` is not a
+   cairn and is not read as one.** `list`, `show` and `check` walk past it, and
+   it is neither counted nor reported malformed. Without this sentence an
+   INCOMING store the caller chose to keep under `--cairns` — rule 20 allows
+   anywhere in the repository — is a cairn with no `open` event, which fails
+   `check` (rule 22) forever for a reason nobody can act on.
 
 5. **One greppable line carries the relation, and the tool owns exactly that
    line.** The second line of every cairn is `COVERS: …` with the fields in
@@ -310,19 +378,44 @@ learned.
     the same way. Every other verb finds the header and the sections by exactly
     those two shapes, and text written verbatim is text a caller controls.
     **The same refusal covers every caller string the tool writes *inside* its
-    own anchors, by name: `--where`, `--ledger-repo` and `--unstopped`.** A
-    body is not the only way in. `--where` lands in the entry marker,
-    `--ledger-repo` in the ledger-repo marker, and `--unstopped` in the
-    `PLACEHOLDER:` line, so a `--where` of `x --> <!-- nova-cairn:owed -->`
-    closes the tool's own comment and opens a forged owed section — which the
-    consume gate then reads as the cairn's owed work and `show --section owed`
-    prints. **Every field the tool writes into a marker renders through
+    own anchors, and there are five of them, named here rather than left to a
+    reader to enumerate: `--where`, `--ledger-repo`, `--ledger-since`,
+    `--ledger-author` and `--unstopped`.** A body is not the only way in.
+    `--where` lands in the entry marker; `--ledger-repo`, `--ledger-since` and
+    `--ledger-author` land in the `ledger-repo` marker as its `<dir>`, its
+    `range=` and its `author=`; `--unstopped` lands in the `PLACEHOLDER:` line.
+    A `--where` of `x --> <!-- nova-cairn:owed -->` closes the tool's own
+    comment and opens a forged owed section — which the consume gate then reads
+    as the cairn's owed work and `show --section owed` prints.
+    **Every field the tool writes into a marker renders through
     `internal/oneline`'s `Field` first**, exactly as every printed field does,
-    and the three flags above additionally refuse `<!-- nova-cairn:`, a leading
-    `COVERS: ` and `-->` at exit 2 naming the flag. Escaping and refusing are
-    both here because they close different halves: the escape is what makes a
-    tab or a newline one token, and the refusal is what keeps a comment from
-    being closed by a string that needed no escaping at all.
+    **and `Field` is not enough on its own**: it escapes whitespace, control
+    characters and `=`, and a marker's own delimiters are none of those, so a
+    `--ledger-author` of `x--><!--nova-cairn:owed-->` passes through it
+    untouched. So each of the five **additionally refuses, at exit 2 naming the
+    flag, any `<` or `>` character and a leading `COVERS: `**. The refusal is
+    written over the two characters and not over the strings `<!-- nova-cairn:`
+    and `-->`, because a rule stated as a list of substrings is a rule the next
+    substring walks through. Escaping and refusing are both here because they
+    close different halves: the escape is what makes a tab or a newline one
+    token, and the refusal is what keeps a comment from being closed by a
+    string that needed no escaping at all.
+    **The one cost is named rather than discovered:** a `--ledger-author` in the
+    `Name <email>` form is refused, and the pattern without the brackets selects
+    the same commits, because `git log --author` matches a substring of
+    `Name <email>`.
+    **A marker is recognized at line start and nowhere else**, exactly as
+    `COVERS:` is (rule 5) and `IN-FLIGHT:` is (*The cairn file*). Every marker
+    this tool writes is a whole line of its own, so a `<!-- nova-cairn:` that
+    turns up mid-line in a body the tool copied verbatim is text and not an
+    anchor, and `show`, `check` and the consume gate all find the same sections.
+    **Third-party text is escaped rather than refused, and the split has a
+    reason:** a caller can be told to fix a flag, and a commit in a repository
+    two lines ship into cannot. So the ledger derivation renders `%an` and `%s`
+    through `Escape` with `<` and `>` escaped as `\x3c` and `\x3e` (*The
+    seal*). Written verbatim, a commit subject carrying a marker string would
+    duplicate a marker, which `check` fails on every bench forever (rule 22),
+    with nothing in the store able to name the repository it came out of.
 
 12. **Nothing the tool writes into a cairn is a sentence of its own.** The
     header, the block delimiters, the section markers and the derived ledger are
@@ -395,8 +488,11 @@ learned.
 
 16. **`consume` names the fold and the pre-deletion commit.** `--fold <sha>`
     names a commit that already exists and already incorporated this cairn;
-    `consume` verifies it resolves (in the store's repository, or in
-    `--fold-repo <dir>`), deletes the cairn file, commits the deletion with
+    `consume` verifies it **resolves** (in the store's repository, or in
+    `--fold-repo <dir>`), and resolution is the whole of what is verified — that
+    the commit incorporated *this* cairn is the caller's claim, recorded and
+    never checked, so no cold reader may read `folded-by:` as a fact this tool
+    established. It then deletes the cairn file, commits the deletion with
     `folded-by: <sha>` and `pre-deletion: <sha>` — the store's last commit that
     touched this cairn — and pushes. **The pre-deletion sha is the whole point:**
     a cold read of a roll-up diff briefed only with the tree finds no evidence
@@ -429,6 +525,17 @@ learned.
     the deep-read gate stand behind it. Law 3 does not bend for a caller in a
     hurry, and a hand-taken close is a statement about how the session ended,
     not about work the record says is still moving.
+    **The gate reads the body, and the header field is a cache of that read.**
+    `consume` scans the cairn's body for `IN-FLIGHT:` lines at line start and
+    counts the unresolved ones at the moment it runs; `in-flight=<n>` on the
+    header is what the last `append` computed, and it is never the gate's
+    source. A person typing the line into their own body is the ordinary case —
+    rule 7 blesses a hand-edited body and *The cairn file* calls the line the
+    writer's own act of writing, which no `append` was involved in — so a gate
+    built on the header would consume exactly the cairn *"whose own body said,
+    in the present tense, that work was in flight"* (2026-08-25). A header whose
+    count disagrees with its own body is a malformed cairn (rule 22), which is
+    what keeps the cache honest.
     **A quoted `IN-FLIGHT:` line counts as one, on purpose.** A line that pastes
     somebody else's declaration into its own body earns an extra gate, and an
     extra gate can only ever refuse a deletion — the cheap side of law 3. The
@@ -471,6 +578,17 @@ learned.
     second behavior. Whether that is the right shape, and whether the middle
     state should carry the seed's own word instead, is open and is named under
     *Owed before this is ratified*.
+    **A seal that lowers the state must discharge it in the same act.**
+    `seal --deep-read no` over a cairn whose current state is `partial` or `yes`
+    is `SEAL FAIL cairn=<id>` at exit 1 unless `--deep-read-discharged <text>`
+    is given, and the text is recorded in the seal event. The code is 1 and not
+    2 for the reason `--owed-routed`'s is (*The verbs*): the refusal is law 3 in
+    an instance, and the verb learns the old state by reading the store.
+    Without this the cheapest path past the deep-read gate is to lower the state
+    at the seal and consume with neither a filed row nor a discharge — under a
+    rule whose headline is that the state may not be dropped. Raising it
+    (`no` to `partial` or `yes`) takes no flag: it adds a gate rather than
+    removing one.
 
 20. **`incoming` moves the owed reading out and leaves a pointer.** It appends
     one row to the store file the caller names (`--store <path>`), and the row
@@ -502,7 +620,15 @@ learned.
     sealed and unconsumed, the age of the oldest of each. **The counts close
     over the log's whole life:** the sum of `opened` minus the sum of `consumed`
     over every day equals `open` plus `unconsumed` at the moment of the check,
-    and a store where the two disagree is malformed by that fact alone.
+    and a store where the two disagree is malformed by that fact alone. **The sums are over distinct cairn ids and never over events.** A
+    cairn is counted opened once and consumed once however many events of that
+    kind the log holds for it, so the delete/delete race of rule 2 — two benches
+    consuming one cairn over one base, which git settles silently because a
+    deletion against a deletion is no conflict — cannot break the identity. It
+    must not be able to: rule 21 forbids editing the log, so an identity that
+    counted events would leave a store failing `check` on every bench forever
+    with no remedy anybody could run, and *"a check that fails on a clean store
+    is worse than no check"*.
     **The identity is computed over the log whole, always, and never over what
     was printed.** `--day`, `--line`, `--waking` and `--max` bound the listing
     and nothing else; under any of them the printed rows cannot close, and a
@@ -511,7 +637,9 @@ learned.
     next reader learns to ignore it. It exits
     1 on a cairn file with no parseable `COVERS:` line at line 2, on a cairn
     file carrying a second `^COVERS: ` line or a duplicated section marker, on a
-    cairn file with no `open` event in the log, on a log line that does not
+    cairn file whose header `in-flight=` disagrees with the count of unresolved
+    `IN-FLIGHT:` lines in its own body (rule 17), on a cairn file with no `open`
+    event in the log, on a log line that does not
     parse, and on any threshold the caller gave being exceeded
     (`--unsealed-max <dur>`, `--unconsumed-max <dur>`). With no thresholds it
     is still a check, because a malformed store still fails it. A check never
@@ -558,7 +686,8 @@ nova-cairn seal       --cairns <dir> --remote <name> --branch <name>
                       --cairn <id> --owed <file|-> --carry <file|->
                       [--ledger-repo <dir>]... [--ledger-since <rev>]...
                       [--ledger-author <pattern>] [--unstopped <text>]
-                      [--covers <text>] [--deep-read no|partial|yes] [--now <stamp>]
+                      [--covers <text>] [--deep-read no|partial|yes]
+                      [--deep-read-discharged <text>] [--now <stamp>]
 nova-cairn list       --cairns <dir> [--line <name>] [--waking <label>]
                       [--state open|sealed|all] [--max <n>]
 nova-cairn show       --cairns <dir> --cairn <id> [--section <name>] [--max <n>]
@@ -574,7 +703,7 @@ nova-cairn check      --cairns <dir> [--line <name>] [--waking <label>]
                       [--unconsumed-max <dur>] [--max <n>]
 nova-cairn push       --cairns <dir> --remote <name> --branch <name>
                       [--push-attempts <n>] [--timeout <seconds>]
-nova-cairn quickstart --cairns <dir> [--max <n>]
+nova-cairn quickstart --cairns <dir>
 nova-cairn version
 
 every mutating verb takes [--push-attempts <n>] (default 25) and
@@ -585,10 +714,14 @@ takes [--now <stamp>] also takes [--now-skew <seconds>] (default 120) and
 
 **`--remote` and `--branch` are on every verb that runs git and on no other.**
 `list`, `show`, `check`, `quickstart` and `version` read the checkout they were
-given and take neither. `--owed-routed` is written in brackets because argv
-cannot know whether it is required: it is required for every *sealed* cairn
-(rule 15), which the verb learns by reading the store, and its absence is
-therefore a gate at exit 1 and not a missing-flag refusal at exit 2.
+given and take neither. `--owed-routed` is written in brackets because it is
+required for every *sealed* cairn (rule 15) and for no cairn closed by hand,
+which the verb learns by reading the store. **Its absence is exit 1 because
+law 3 governs: every refusal to delete is `CONSUME FAIL` at 1, whatever the
+refusal was learned from.** The argv argument is not the reason and was
+withdrawn in draft 4 — an id that matches no cairn is learned by reading the
+store too, and it is exit 2 one row down in *Exit codes* — and a reason that
+does not survive the row beside it is not a reason.
 
 The binary is `nova-cairn`, and that is its only name.
 
@@ -605,7 +738,8 @@ second copy of an entry somebody meant once.
 every flag first; then, only on a line accepted whole, it creates the `--cairns`
 directory if it is missing (`MkdirAll`, `0755`) and reports `created=true|false`;
 then it reads the store, prints the counts `list` and `check` would print, and
-prints an `open …` / `append …` / `seal …` triple with this store's own
+reports whether the store is inside a git repository as `repo=<true|false>`,
+and prints an `open …` / `append …` / `seal …` triple with this store's own
 `--cairns` in it and **every value it cannot know marked as a placeholder** —
 `<your-line>`, `<your-harness>`, `<cairn-id from the open above>` — quoted to be
 pasted rather than scanned. It never writes a cairn and never pushes, so it
@@ -615,6 +749,16 @@ harness is a fact about the caller's bench that this verb has no way to learn.
 What the triple guarantees is that it **parses against the verb grammar above**
 with the placeholders filled, which is the checkable half. A first run that fat-fingers a flag is exactly the run with no
 store yet, and making one would answer the typo with an empty store.
+**`repo=` is there because it is the one thing rule 1 requires and the one
+thing this verb can check without a remote.** A `quickstart` that reported a
+healthy new store over a directory in no git repository would be answering the
+first run with a green line and leaving the first `open` to exit 2, on exactly
+the run this verb exists for; `repo=false` is followed by one `QUICKSTART NOTE`
+naming what is missing. It stays exit 0: the verb ran and answered, and `check`
+is the gate (see *A store full of open cairns is not a failure*).
+**It takes no `--max`**, because it prints counts and a fixed triple and no
+listing of any kind the `MORE` grammar names; a cap over nothing is a flag a
+caller has to wonder about.
 
 **No guessed anything, with three named exceptions.** There is no default store,
 **no default remote and no default branch**, no default harness, no default line
@@ -655,8 +799,8 @@ drawn from carries exactly such an addendum, ninety seconds after its seal.)
 | code | meaning |
 |------|---------|
 | 0 | the verb ran and passed: a cairn opened, an entry appended, a cairn sealed, a row filed, a cairn consumed, a check with nothing to say NO about |
-| 1 | the verb ran and said **NO**: a push that did not land, a store that cannot fast-forward, a `consume` stopped by a gate, a `seal` over a repository still shipping, a second `seal`, a `check` over a malformed store or past a threshold the caller named |
-| 2 | could not run: missing flag (`--cairns`, `--remote`, `--branch` included), unreadable store, a store that is not a git repository, a `--remote` the repository does not have, a harness whose transcript cannot be composed, an unparseable or too-skewed `--now`, a `--replay` with no `--now`, a `--now` before the cairn's `opened=`, an empty `--owed` or `--carry`, an entry or a marker field that forges a marker, a stamp-range ledger with no `--ledger-author`, an `--store` outside the store's repository, a `--fold` that does not resolve, an id that matches no cairn, `git` absent |
+| 1 | the verb ran and said **NO**: a push that did not land, a store that cannot fast-forward, a store with uncommitted changes, a branch ahead of the remote by commits this tool did not make (rule 2), a `consume` stopped by a gate, a `consume` of a cairn another bench already consumed, a `seal` over a repository still shipping, a `seal` lowering `deep-read` with no `--deep-read-discharged`, a second `seal`, a `check` over a malformed store or past a threshold the caller named |
+| 2 | could not run: missing flag (`--cairns`, `--remote`, `--branch` included), unreadable store, a store that is not a git repository, a `--remote` the repository does not have, a harness whose transcript cannot be composed, an unparseable or too-skewed `--now`, a `--replay` with no `--now`, a `--now` before the cairn's `opened=`, an empty `--owed` or `--carry`, an entry that forges a marker, a marker field carrying a `<` or a `>`, a stamp-range ledger with no `--ledger-author`, a symlink on any store path, a `--store` outside the store's repository, a `--fold` that does not resolve, an id that matches no cairn, `git` absent |
 
 **Every printed token maps to exactly one code, and the mapping is here rather
 than inferred from a table of examples.** `<VERB> OK` and the informational
@@ -702,7 +846,7 @@ APPEND FAIL cairn=<id> commit=<sha12> pushed=false: <reason>; run nova-cairn pus
 APPEND REFUSED: <reason>
 SEAL OK cairn=<id> closed=<stamp> owed_bytes=<n> carry_bytes=<n> ledger_repos=<n> ledger_commits=<n> ledger_author=<pattern|-> placeholder=<true|false> deep-read=<no|partial|yes> covers=<text|-> commit=<sha12> pushed=true attempts=<n>
 SEAL NOTE ledger repo <dir>: <n> commits over <range>
-SEAL FAIL cairn=<id>: <reason>  (a repository still shipping, or a second seal; exit 1)
+SEAL FAIL cairn=<id>: <reason>  (a repository still shipping, a second seal, or a deep-read lowered with no --deep-read-discharged; exit 1)
 SEAL FAIL cairn=<id> commit=<sha12> pushed=false: <reason>; run nova-cairn push --cairns <dir> --remote <name> --branch <name>
 SEAL REFUSED: <reason>
 LIST OK cairns=<n> open=<n> sealed=<n> shown=<n>
@@ -716,10 +860,12 @@ CONSUME OK cairn=<id> fold=<sha12> pre-deletion=<sha12> line=<name> lived=<dur> 
 CONSUME FAIL cairn=<id>: <reason>  (a gate said NO, and the cairn is still there; exit 1)
 CONSUME FAIL cairn=<id> commit=<sha12> pushed=false: <reason>; run nova-cairn push --cairns <dir> --remote <name> --branch <name>
 CONSUME REFUSED: <reason>
+<VERB> FAIL: branch is ahead of <remote>/<branch> by <n> commits this tool did not make: <short shas>
 PUSH OK commits=<n> pushed=true attempts=<n>
 PUSH FAIL commits=<n> pushed=false: <reason>
 PUSH REFUSED: <reason>
-QUICKSTART OK cairns=<dir> created=<true|false> open=<n> unconsumed=<n> log=<true|false>
+QUICKSTART OK cairns=<dir> created=<true|false> repo=<true|false> open=<n> unconsumed=<n> log=<true|false>
+QUICKSTART NOTE <what rule 1 still wants before the first mutating verb>
 QUICKSTART REFUSED: <reason>
 CAIRN OK lines=<n> open=<n> wakings=<n> unconsumed=<n> oldest_unsealed=<dur|-> oldest_unconsumed=<dur|-> shown=<n>
 CAIRN DAY line=<name> day=<YYYY-MM-DD> opened=<n> sealed=<n> consumed=<n>
@@ -794,6 +940,11 @@ a flag either.
 marker or a second `^COVERS: ` line fails `check` (rules 5, 22). A tool whose
 own structure can be written by the text it copies verbatim has no structure.
 
+**A marker is a whole line and is recognized at line start only** (rule 11),
+so `<!-- nova-cairn:` appearing inside a line of a body the tool copied verbatim
+is text. The three the tool owns are `owed`, `carry` and `ledger`; the other two
+shapes are the `body` marker and an `entry` marker per block.
+
 **The tool finds its own sections by the markers it wrote, never by heading
 text.** A line writes headings in their own words and in their own language; the
 tool's anchors are HTML comments it owns. `show --section <name>` names a
@@ -821,7 +972,7 @@ a tidy file.
 | `deep-read` | `no` \| `partial` \| `yes` — the tristate of rule 19 |
 | `state` | `open` \| `sealed` |
 | `waking` | `--waking`, joining the cairns of one waking period; `-` when not given |
-| `in-flight` | the count of unresolved `IN-FLIGHT:` lines, maintained by the tool |
+| `in-flight` | the count of unresolved `IN-FLIGHT:` lines as of the last `append`, maintained by the tool — **a cache, and never the consume gate's source**, which scans the body (rule 17); a count that disagrees with the body fails `check` |
 | `incoming` | the count of rows rule 20 has filed from this cairn |
 
 The title is not a header field: it is line 1, it is the line's own words, and
@@ -884,9 +1035,14 @@ this append), `resolves_in_flight` (the ordinal given, or `-`), `evidence`,
 `ledger_commits` (count), `ledger_author` (the pattern, or `-`), `ledger_ranges`
 (an array, one `<dir> <range>` string per repository, in the order the flags
 were given), `placeholder` (`true`\|`false`), `unstopped`, `covers`,
-`deep_read`.
+`deep_read`, `deep_read_discharged` (the text given when this seal lowered the
+state, `-` otherwise — rule 19).
 
-**`incoming`** adds: `store` (the path as given), `row` (the row id), `bench`,
+**`incoming`** adds: `store` (the path as given), `row` (the row id, drawn as
+rule 4 draws a cairn id and re-drawn against every `row` the log has ever
+recorded — two benches filing one cairn's row in one second over one base write
+two rows that differ in no other field, and a row nothing can name is a pointer
+nothing can be corrected against), `bench`,
 `owes_bytes`, `cairn_commit` (the store's last commit that touched this cairn,
 the same fact the row carries — rule 20).
 
@@ -976,14 +1132,22 @@ record says so and the person decides.
 run's closing stamp. The command is
 
 ```
-git log --no-merges --date=iso-strict --pretty=format:'- %h %cd %an %s' \
+git log --no-merges --date=iso-strict --pretty=format:'%h%x1f%cd%x1f%an%x1f%s' \
         [--author=<pattern>] <range>
 ```
 
-and its output is written under the ledger marker as it came back, each line
-already carrying the fixed `- ` prefix this format string put there, preceded by
-one `<!-- nova-cairn:ledger-repo <dir> range=<range> author=<pattern|-> -->`
-marker per repository. **The date printed is the committer date (`%cd`)**,
+and **the tool writes the ledger line, not git**: each record comes back as four
+unit-separated fields and is written as `- <sha> <date> <author> <subject>`,
+with `%an` and `%s` rendered through `internal/oneline`'s `Escape` and with `<`
+and `>` escaped as `\x3c` and `\x3e` (rule 11). The lines are written under one
+`<!-- nova-cairn:ledger-repo <dir> range=<range> author=<pattern|-> -->` marker
+per repository. **Writing git's own bytes verbatim was the hole, and draft 3
+had it:** an author name and a commit subject out of a repository two lines ship
+into are third-party text, and one carrying a `<!-- nova-cairn:owed -->` would
+duplicate a marker — which `check` then fails on every bench forever (rule 22),
+with nothing in the store able to name the repository it came out of. The fixed
+`- ` prefix is this tool's own structure and not a sentence of its own
+(rule 12). **The date printed is the committer date (`%cd`)**,
 which is the date the stamp range selects on: `%ad` would print, for a rebased
 commit, a date outside the range that chose it, and a ledger that contradicts
 its own range is the kind of small wrongness rule 13 exists to keep out of this
@@ -1038,10 +1202,11 @@ refusals below them never got that far.
 | the gate | the line | code |
 |---|---|---|
 | `state=open` | `CONSUME FAIL cairn=<id>: not sealed; a seal is the only positive end-of-life signal this tool takes. --closed-by and --evidence record a close taken by hand.` | 1 |
-| `in-flight>0` | `CONSUME FAIL cairn=<id>: declares <n> in flight: <first>; clear with append --resolves-in-flight` | 1 |
+| an unresolved `IN-FLIGHT:` line in the **body** (rule 17; the header's `in-flight=` is a cache and is never read here) | `CONSUME FAIL cairn=<id>: declares <n> in flight: <first>; clear with append --resolves-in-flight` | 1 |
 | `deep-read=yes\|partial`, `incoming=0`, no `--deep-read-discharged` | `CONSUME FAIL cairn=<id>: deep-read=<state> and nothing has been filed; file it with incoming, or say how it was discharged` | 1 |
 | a sealed cairn and no `--owed-routed` | `CONSUME FAIL cairn=<id>: names owed work; --owed-routed says where it went` | 1 |
 | the cairn's file changed between the gate's fetch and the deletion's | `CONSUME FAIL cairn=<id>: changed under the deletion since <sha12>; run consume again` | 1 |
+| the cairn is already gone from the fetched branch | `CONSUME FAIL cairn=<id>: already consumed; nothing was deleted and nothing was written` | 1 |
 | `--fold <sha>` does not resolve | `CONSUME REFUSED: fold <sha> does not resolve in <repo>` | 2 |
 | `--closed-by` without `--evidence` | `CONSUME REFUSED: --closed-by needs --evidence: the signal the close was taken on` | 2 |
 
@@ -1051,11 +1216,12 @@ at either.
 
 **The owed gate is unconditional for a sealed cairn**, because rule 15 makes an
 empty owed section impossible: every sealed cairn names owed work, so every
-`consume` of one carries `--owed-routed`. It is not written as a missing-flag
-refusal at exit 2 because whether it is required is a fact about the *store* —
-the verb has to read the cairn to learn the cairn is sealed — and "an owed
-section with content" cannot be narrowed to "with content worth routing"
-without reading the body for meaning, which rule 7 forbids. A cairn consumed
+`consume` of one carries `--owed-routed`. It is exit 1 and not exit 2 because
+**law 3 governs the code here**: every refusal to delete is `CONSUME FAIL` at 1,
+whatever the refusal was learned from. Reading the store is not the
+distinguishing fact — an id that matches no cairn is read from the store and is
+exit 2 — and "an owed section with content" cannot be narrowed to "with content
+worth routing" without reading the body for meaning, which rule 7 forbids. A cairn consumed
 unsealed by `--closed-by` has no owed section and does not meet this gate.
 
 **The fifth line is the race, not a gate on the caller.** `consume` fetches
@@ -1088,12 +1254,23 @@ The store file is `--store <path>` and has no default: it is the caller's own
 file, under the caller's own rules, and this tool appends to it and reads back
 only the rows it wrote. **It must resolve inside the store's own git
 repository** — not necessarily inside `--cairns`, anywhere in the repository
-that holds it — and a path outside is exit 2 naming both. Law 1 is the reason
+that holds it — and a path outside is exit 2 naming both. **The check is made
+on the resolved path**: the `--store` path and the repository root
+(`git rev-parse --show-toplevel`) are each resolved through every symlink and
+only then compared component by component, because a symlink inside the store
+pointing out of it passes a lexical prefix test (rule 1). A link on the path is
+its own exit 2 before the comparison is reached. Law 1 is the reason
 and it is not negotiable here: the row is the pointer the cairn dies in favor
 of, and a row written a bench away and never pushed is the 2026-08-14 failure
 one file over, with the same silence in front of it. Inside the repository the
 row is committed and pushed in the same act as the header's `incoming` bump, and
-`INCOMING OK pushed=true` means both. **The release condition, the classes, the expiry and the
+`INCOMING OK pushed=true` means both. **Because it is a file this tool writes,
+in a shape this tool chose, its conflicts are this tool's to settle and not a
+person's:** two benches filing a row to one `--store` over one base is an
+append at the same end, exactly the log's shape, and it is unioned — see *The
+conflicts, settled*, where it is the second row of the table. A tool that
+handed a person *"a conflict it could have settled, in a file it invented"*
+(`internal/bus/conflict.go`) would have moved its own cost onto them. **The release condition, the classes, the expiry and the
 reader of that file are the line's business and are not this tool's.** A store
 whose rules live in the file is a decision on the record; a store whose rules
 lived in a binary would be this repo legislating somebody's memory.
@@ -1148,10 +1325,11 @@ rather than silently taking the last writer's word. Two writers rewriting one
 state destroy it quietly; that is the property the append-only form is credited
 with and the reason this shape was chosen.
 
-**One shared file, one lock.** The log is the only file several sessions
-append to; the store's `.gitattributes` is written once, by the first mutating
-verb that finds it missing (*The conflicts, settled*), and is not appended to
-again.
+**One shared file, one lock.** The log and an INCOMING `--store` are the files
+several sessions append to; the repository's `.gitattributes` is appended to
+only when a line it needs is missing — once for the log, once per INCOMING
+store path — by the verb that needs it, in that verb's own commit (*The
+conflicts, settled*).
 Every append to it runs under an OS lock the kernel releases on death (`flock`
 on a lock file in the store, `LockFileEx` on Windows), held for exactly one
 append — **no stale rule and no age**, because there is nothing to break; a
@@ -1180,16 +1358,56 @@ which is exactly `RECEIPTS`'s shape.
 
 | surface | shape | settlement |
 |---|---|---|
-| `cairn-log.jsonl` | append-only; two benches at the same end over one base | **union**: ours in order, then the lines of theirs ours does not hold, identical lines once |
-| `.gitattributes` at the store root | append-only | **union**, the same |
+| `cairn-log.jsonl` | append-only; two benches at the same end over one base | **union**, and the union is spelled out below: the base, then every line either side added, ours first, **no line dropped for being identical to another** |
+| an INCOMING store file this log names | append-only rows, the same shape | **union**, the same |
+| `.gitattributes` at the repository root | append-only | **union**, the same |
 | a cairn file — two `append`s, or an `append` against a header bump | markdown the line owns, plus the one in-place line | **refused.** The rebase is aborted, the commit is left on the branch, the verb exits 1 naming the cairn and `git pull --rebase`, and a person decides |
-| a `consume`'s deletion against another bench's `append` | delete/modify | **refused, toward keeping the cairn.** The rebase is aborted, the deletion does not land on the remote, the verb exits 1, and the line says to run `consume` again |
+| a `consume`'s deletion against another bench's `append` | delete/modify | **refused, toward keeping the cairn — and this verb's own unpushed commit is dropped.** The rebase is aborted, the deletion does not land on the remote, the branch is reset to the commit the verb started from, the cairn is back on disk, and the verb exits 1 saying to run `consume` again |
+
+**The union, exactly, because "union" names two different functions.** Git's own
+`merge=union` driver keeps both sides' lines and deduplicates nothing;
+`internal/bus/UnionLines` keeps *"identical lines once"*, which is right for the
+`INDEX` and `RECEIPTS` it was written for — `conflict.go` calls those *"sets of
+lines whose order is history rather than structure"* — and wrong for a log. A
+log is a sequence of events, and two byte-identical lines are reachable: two
+benches appending to one cairn in one second off one base write the same
+`cairn`, `block`, `bytes`, `where`, `at` and `stamp`. Dropping one would lose an
+event, and — because the attribute half is git's driver and the tool half is the
+tool's — it would lose it **on one bench only**, so rule 22's identity, computed
+over the log whole, would fail on the bench holding `.gitattributes` and pass on
+the bench without it. So the settlement here is stated as a function of three
+inputs rather than two: these files are append-only, so both sides are the merge
+base plus additions, and the resolution is **the base, then ours' added lines in
+order, then theirs' added lines in order, nothing removed and nothing
+deduplicated**. `UnionLines` is the precedent for the shape and not the function
+to call.
+
+**The drop, exactly.** On the delete/modify abort the verb resets the branch to
+the commit it found when it started. That commit is this verb's own, unpushed,
+and carries the `Nova-Cairn:` trailer of rule 2 (b), so the reset can be made
+safely and is refused if the commit at `HEAD` is not one of ours. Nothing of
+rule 21's log is lost, because the log line was written *inside* the dropped
+commit and never landed anywhere. **Without the drop the remedy is false and the
+bench is wedged:** the commit stays on the branch, the next `consume` runs step
+(b) first, rebases that same commit over the same `append`, conflicts the same
+way, aborts and exits 1 — and so does every other mutating verb on that bench,
+forever. `nova-bus`'s rule 5 is titled *"No conflict may wedge a line"*, and its
+push protocol adds *"Every refusal that offers a recovery offers one that
+works"*, with a test that runs the refusal's own commands against the state the
+refusal names. Test 2 is that test here.
 
 **The settlement is made twice over, and both halves are needed.**
 
-- **`.gitattributes` at the store root.** The first mutating verb on a store
-  writes `cairn-log.jsonl merge=union` there if it is not already present and
-  commits it with its own commit. Union is git's own built-in driver and is
+- **`.gitattributes` at the repository root**, which is one file and not two:
+  a pattern with no slash matches at any depth, but an INCOMING `--store` may
+  sit anywhere in the repository (rule 20) and a `.gitattributes` under
+  `--cairns` cannot name a path above it. The verb that needs a line missing
+  from it appends that line — `<store>/cairn-log.jsonl merge=union`, and one
+  per INCOMING store path — **in its own commit, not a commit of its own**, as
+  `nova-bus` does with the note: a separate attribute commit would make the
+  first mutating verb on a fresh store leave two commits on the remote where
+  every other verb leaves one, and test 2 counts them. An existing
+  `.gitattributes` is appended to and never rewritten. Union is git's own built-in driver and is
   exactly right for an append-only line file. This half helps the person who is
   **not running this tool**: their own `git pull --rebase` gets the same answer.
 - **The tool's own resolution**, which runs whether or not the attribute has
@@ -1209,6 +1427,19 @@ looks fine until `check` fails it later, on some other bench, for a reason
 nobody can trace back. *The races, taken out* chose the append-only form for the
 loud failure it gives; unioning the cairn would trade that loud failure for a
 quiet one.
+**The quieter argument is the stronger one and it is the block ordinals.** Two
+benches appending to one cairn over one base both write
+`<!-- nova-cairn:entry n=<same> … -->`, so a unioned body holds two blocks under
+one number, and `append --resolves-in-flight <n>` (rule 17) indexes exactly
+those ordinals: the resolution would name two blocks and resolve neither
+checkably. A conflict a person settles renumbers nothing silently.
+**The consequence an operator meets is stated here rather than discovered:**
+after a refused cairn conflict, every mutating verb on that bench exits 1 at
+step (b) until a person resolves it with `git pull --rebase`. That is the
+design, not a defect — the alternative is a tool renumbering a line's own
+record — and it is why the delete/modify row above drops its commit instead:
+there the remedy the refusal prints is the tool's own verb, and a remedy the
+tool prints must be one the tool can honor.
 
 **The delete/modify goes to the cairn, every time.** Law 3 is not a preference
 that bends under a rebase: the run that deleted read a cairn that no longer
@@ -1266,7 +1497,11 @@ check).
    `--remote` the repository does not have exits 2 naming it; `list`, `show`,
    `check` and `quickstart` accept neither flag. No verb consults an environment
    variable, a configured upstream or the working directory for a store, a
-   remote or a branch (a source test).
+   remote or a branch (a source test). A symlink at the store directory, at
+   `cairn-log.jsonl`, at the lock file, at `.gitattributes`, at a cairn file and
+   at an INCOMING `--store` each exit 2 naming the component, and a source test
+   finds `O_NOFOLLOW` (or the Windows `Lstat`-and-fstat pair) on every open the
+   tool makes (rule 1).
 2. Against a fake remote: `open`, `append`, `seal`, `incoming` and `consume`
    each leave exactly one new commit on the remote; a remote that has moved
    makes the push fetch, rebase and land, within `--push-attempts`. A cairn
@@ -1278,13 +1513,31 @@ check).
    whose cairn is appended to from another bench between its two fetches exits 1
    with `changed under the deletion`, deletes nothing, and succeeds on a second
    run. A rebase that conflicts on `cairn-log.jsonl` is settled as union, with
-   both benches' lines present once each and in order, **with and without**
-   `.gitattributes` present in the checkout; a rebase that conflicts on a cairn
-   file, and a `consume`'s deletion rebased over another bench's `append`, are
-   each aborted with the commit left on the branch, exit 1, and the cairn
-   present on the remote; after any of them the checkout is not mid-rebase.
-   The first mutating verb on a store writes `cairn-log.jsonl merge=union` into
-   `.gitattributes` at the store root and commits it.
+   every line of both benches present and in order, **with and without**
+   `.gitattributes` present in the checkout, and **two byte-identical lines
+   written by two benches both survive** — the two checkouts hold the same file
+   byte for byte, and `check` passes on both. A conflict in an INCOMING
+   `--store` file this log names is settled the same way. A rebase that
+   conflicts on a cairn file is aborted with the commit left on the branch,
+   exit 1, and the cairn present on the remote; a `consume`'s deletion rebased
+   over another bench's `append` is aborted, exits 1, leaves the cairn on the
+   remote **and on disk**, and **drops its own commit** — asserted by running
+   the refusal's own remedy, a second `consume`, which reads the appended text,
+   answers the gates and lands; the same second `consume` is asserted after the
+   `changed under the deletion` refusal. `push` over the same stranded state
+   drops it identically. After any of them the checkout is not mid-rebase.
+   A second bench consuming a cairn this one already consumed exits 1 with
+   `already consumed`, writes no log line, and `check` passes on both benches.
+   The first mutating verb that needs it appends `<store>/cairn-log.jsonl
+   merge=union` to `.gitattributes` at the **repository root in its own commit**,
+   so the first `open` on a fresh store still leaves exactly one new commit on
+   the remote; the first `incoming` to a new `--store` appends that path's line
+   the same way. Every commit the tool makes carries a `Nova-Cairn:` trailer; a
+   branch carrying one commit without it makes every mutating verb exit 1 naming
+   the count and the short shas, before anything is staged, and carrying one
+   **with** it lands both commits. A store with an uncommitted change in it
+   exits 1 naming the paths and fetches nothing. Against a remote that has no
+   such branch yet, the first mutating verb creates it and exits 0.
 3. A remote that refuses every push: each of the five mutating verbs exits 1,
    prints a `FAIL` line carrying `commit=` and `pushed=false` and names
    `nova-cairn push` — `seal` and `consume` included, and the `consume` case
@@ -1356,12 +1609,16 @@ check).
     and in `APPEND OK`. An entry containing `<!-- nova-cairn:entry n=1 -->`, and
     one whose first line is `COVERS: cairn=x`, each exit 2 naming the line and
     write nothing; `--owed` and `--carry` refuse the same two shapes.
-    **The marker fields refuse too**: `--where 'x --> <!-- nova-cairn:owed -->'`
-    exits 2 naming the flag and writes nothing, and so do a `--ledger-repo` and
-    an `--unstopped` carrying `-->` or `<!-- nova-cairn:`; a `--where` with a
-    tab and a newline in it produces one marker line, escaped through `Field`,
-    and `show --section owed` over the resulting cairn prints the sealed owed
-    section and not the entry.
+    **The marker fields refuse too, all five**: a `<` or a `>` in any of
+    `--where`, `--ledger-repo`, `--ledger-since`, `--ledger-author` or
+    `--unstopped` exits 2 naming the flag and writes nothing — the cases include
+    `--where 'x --> <!-- nova-cairn:owed -->'` and a `--ledger-author` in the
+    `Name <email>` form — as does a leading `COVERS: ` in any of them; a
+    `--where` with a tab and a newline in it produces one marker line, escaped
+    through `Field`, and `show --section owed` over the resulting cairn prints
+    the sealed owed section and not the entry. A `<!-- nova-cairn:owed -->`
+    appearing mid-line inside a body block is not recognized as a marker and
+    does not fail `check`.
 12. A source test asserts the tool's writes into a cairn come only from: the
     header builder, the block builder, the three section markers, the
     `ledger-repo` marker, and the `git log` derivation. **Exactly one literal
@@ -1382,7 +1639,10 @@ check).
     `--ledger-since -` for the first of two repositories takes the stamp range
     for it and the revision for the second. The dates in the ledger are committer
     dates: a commit rebased so its author date falls outside the range still
-    prints the date that selected it. The `ledger-repo` marker in the cairn
+    prints the date that selected it. A commit whose author name or subject
+    contains `<!-- nova-cairn:owed -->`, a newline or a U+2028 produces exactly
+    one ledger line, with the `<` and `>` escaped, and the resulting cairn
+    passes `check` — no `git log` output reaches the file unescaped. The `ledger-repo` marker in the cairn
     carries the range and `author=<pattern|->`.
 14. A dirty ledger repository, a clean one with an unpushed commit, a clean one
     on a branch with no upstream, and a clean one on a detached HEAD each make
@@ -1400,7 +1660,11 @@ check).
     the file byte-for-byte; the deletion commit message carries `folded-by:` and
     `pre-deletion:`.
 17. `consume` of an open cairn exits 1 with the seal sentence; of a sealed cairn
-    with one unresolved `IN-FLIGHT:` exits 1 naming it; after
+    with one unresolved `IN-FLIGHT:` exits 1 naming it — **including a cairn
+    whose line was typed into the body by hand, with `in-flight=0` still on the
+    header**, which is the 2026-08-25 case and the one an implementer building
+    the gate off the header gets wrong; that cairn also fails `check` for the
+    disagreement (test 22); after
     `append --resolves-in-flight 1 --evidence <text>` it succeeds and the
     resolved line is still in the file; `--closed-by` with `--evidence` consumes
     an open cairn and writes both into the log; `--closed-by` over an open cairn
@@ -1417,14 +1681,24 @@ check).
 19. `consume` of `deep-read=yes` with `incoming=0` and no
     `--deep-read-discharged` exits 1; after one `incoming` row it succeeds;
     `--deep-read-discharged <text>` succeeds and the text is in the log; there
-    is no path on which a `yes` is consumed with neither.
+    is no path on which a `yes` is consumed with neither. `seal --deep-read no`
+    over a cairn opened `yes` or `partial` exits 1 without
+    `--deep-read-discharged <text>`; with it the seal lands and the text is in
+    the seal event; `seal --deep-read yes` over a cairn opened `no` takes no
+    flag and lands.
 20. `incoming` with a `--store` outside the store's git repository exits 2
-    naming both paths and writes nothing; inside it, `incoming` appends one row
+    naming both paths and writes nothing, **and so does a `--store` that is
+    lexically inside it but resolves outside through a symlink**, which is the
+    case a prefix test passes; a `--store` that is itself a symlink to a file
+    inside the repository exits 2 too (rule 1); inside it, `incoming` appends one row
     and leaves every prior byte of the store file identical, including a store
     file with no trailing newline; the row carries
     the cairn's sha at the moment it was filed, and that sha resolves.
 21. The log is append-only: a source test finds one writer, opening `O_APPEND`,
-    and no truncation or rewrite anywhere; after `consume` deletes a cairn, its
+    and **exactly one exemption, named in the test**: the conflict settlement's
+    write of the resolved union of two committed states, which is a whole-file
+    write by construction (`internal/bus/conflict.go`'s `writeResolved` is the
+    precedent) and is not a path any verb reaches outside a rebase; after `consume` deletes a cairn, its
     `open`, `seal` and `consume` events are all still readable. **The shape is
     pinned**: every line of every event kind carries exactly the fields *The
     log* names for it and no others, `v` first and `v=1`; an absent value is
@@ -1433,7 +1707,12 @@ check).
     the version. No line carries a commit sha or a `pushed` field, and `push`
     appends no line. A `consume` of a cairn with two `incoming` rows carries
     both store paths in `incoming_stores`, in the order filed.
-22. `check` over a store with a headerless cairn exits 1 naming it; over a store
+22. `check` over a store with a headerless cairn exits 1 naming it; over a
+    cairn whose header `in-flight=` disagrees with its body exits 1 naming it;
+    over a store holding a file whose name does not match `^[0-9a-f]{8}\.md$`
+    exits 0 and neither counts nor reports it (rule 4); over a log carrying two
+    `consume` events for one cairn exits 0, because the identity counts distinct
+    cairns (rule 22); over a store
     with a corrupt log line exits 1 naming the line number; over a store with a
     cairn file that has no `open` event in the log exits 1 naming the file;
     `--unsealed-max 1h` over a two-hour-old open cairn exits 1; with no
@@ -1462,8 +1741,10 @@ check).
 
 25. `quickstart` over a missing `--cairns` directory creates it and reports
     `created=true`; over an existing store reports `created=false` and the same
-    counts `list` and `check` print; with a bad `--max` it exits 2 and **creates
-    nothing**; it writes no cairn, appends no log event and pushes nothing; the
+    counts `list` and `check` print; over a directory in no git repository it
+    exits 0 with `repo=false` and a `QUICKSTART NOTE` naming what rule 1 wants,
+    and inside one with `repo=true`; it takes no `--max`, and with an unknown
+    flag it exits 2 and **creates nothing**; it writes no cairn, appends no log event and pushes nothing; the
     `open …` / `append …` / `seal …` triple it prints **parses against the verb
     grammar** with its placeholders filled — it is not asserted to run, because
     the verb pushes nothing and the ids and the harness in it are not facts this
@@ -1489,14 +1770,18 @@ every independent problem at once, a `### First run` in `docs/CLI.md`, a
 3. **`internal/cairn/log.go`** — the append-only log: the event structs of
    *The log*, `v` first and a closed field set per kind, one `O_APPEND` writer
    under `flock`, strict decode on read (an unknown key and an unknown `v` are
-   each malformed), and the per-line-per-day fold, which is unfiltered always.
+   each malformed), and the per-line-per-day fold, which is unfiltered always
+   and counts distinct cairn ids. Every open under `O_NOFOLLOW` (rule 1).
    Tests: demanded 21, 22.
 4. **`internal/cairn/gitops.go`** — the fetch, the push of waiting commits, the
    fast-forward, the second fetch `consume` runs before it deletes, commit,
    push with fetch-rebase-retry over `--remote`/`--branch`, the conflict
-   settlement of *The conflicts, settled* (union for the log, refuse-and-abort
-   for a cairn and for the delete/modify, the `.gitattributes` write, and the
-   checked abort) — `internal/bus/conflict.go` is the working precedent — the
+   settlement of *The conflicts, settled* (the base-plus-both-additions union
+   for the log and for an INCOMING store, refuse-and-abort for a cairn,
+   refuse-abort-and-drop for the delete/modify, the `.gitattributes` line
+   appended at the repository root in the verb's own commit, and the checked
+   abort), the `Nova-Cairn:` trailer on every commit with the ahead-of-remote
+   guard that reads it, the dirty-tree refusal — `internal/bus/conflict.go` is the working precedent — the
    `push` verb's push-only path, the `git status --porcelain` and ahead check
    for `seal` (including *no upstream* and *detached HEAD*), the `git log`
    derivation with its exact format string and its author narrowing, `--fold`
@@ -1569,10 +1854,14 @@ is worse than one that ships nothing.
    line's memory and so cannot make the routing commit — but the divergence is
    real, it is from the source this spec cites most, and it belongs on this list
    rather than inside the rule that made it.
-6. **Four cold reads are folded into this draft and none of them is an
-   approval.** Two held at draft 1 and two held at draft 2; every repair since
-   is textual, and the readers who found them have not seen this draft. The
-   draft-2 reads changed four things a first implementer would have got wrong —
-   the header's line number, the log's shape, the marker fields a caller can
-   write through, and what happens to a rebase that conflicts — which is the
-   argument for reading draft 3 rather than for calling it settled.
+6. **Six cold reads are folded into this draft and none of them is an
+   approval.** Two held at draft 1, two at draft 2 and two at draft 3; every
+   repair since is textual, and the readers who found them have not seen this
+   draft. The draft-3 reads changed five things a first implementer would have
+   got wrong — a refusal whose remedy wedged the bench that ran it, a push that
+   would have published a person's unfinished commits, a store with no symlink
+   discipline in a file that arrives by rebase, a gate reading a cached count
+   instead of the body it is about, and two readings of the word *union* that
+   disagreed on the one case that matters — which is the argument for reading
+   draft 4 rather than for calling it settled. **Nothing in this spec has been
+   implemented**; every rule here is owed a red test before it is trusted.
