@@ -80,6 +80,10 @@ func steadyTransient(err error) bool {
 // readFileSteady reads a whole file, waiting out a transient collision with a concurrent
 // atomic replace of the same path. A file that is NOT THERE is an answer, not a collision:
 // it returns immediately, so `os.IsNotExist` callers keep the meaning they had.
+//
+// It reads through readRegular (regular.go), so a path that is a SYMLINK or a FIFO is an
+// answer too -- refused at once, never followed and never waited on. That is every
+// dispatcher read of a worker-writable record: this function, and ReadJSON through it.
 func readFileSteady(path string) ([]byte, error) { return readFileSteadyBy(path, time.Time{}) }
 
 // readFileSteadyBy is readFileSteady under a caller's deadline: the collision wait gets the
@@ -87,7 +91,7 @@ func readFileSteady(path string) ([]byte, error) { return readFileSteadyBy(path,
 func readFileSteadyBy(path string, budget time.Time) ([]byte, error) {
 	deadline := steadyDeadline(budget)
 	for {
-		raw, err := os.ReadFile(path)
+		raw, err := readRegular(path)
 		if err == nil || !steadyTransient(err) || !time.Now().Before(deadline) {
 			return raw, err
 		}

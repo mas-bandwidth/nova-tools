@@ -576,7 +576,7 @@ var refusalMarks = []string{
 // the job directory by `reclaim`. A line whose key is wrong had no printed route to the
 // word `unauthorized` (the new-user audit, F5, 2026-09-11).
 func HarnessTail(jobDir string) string {
-	raw, err := os.ReadFile(filepath.Join(jobDir, "harness.log"))
+	raw, err := readRegular(filepath.Join(jobDir, "harness.log"))
 	if err != nil {
 		return ""
 	}

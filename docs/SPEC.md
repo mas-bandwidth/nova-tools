@@ -3122,6 +3122,12 @@ writing this bus's form exists to allow.
    | `OPEN` | a replace, beside the cursor | **re-derived from the winning cursor's side**, never merged: an open list belongs to a cursor, and unioning two would carry notes the winning read has closed |
    | one note path | an add/add, when two benches sent one note in one second | **refused.** Which of the two is the note is a person's decision |
 
+   **A lane's state files are regular files, and a lane path that is a symlink is
+   refused rather than written through** — a bus arrives by `pull`, so a commit
+   can leave a link where `INDEX`, `RECEIPTS`, `CURSOR`, `OPEN`, a conflict path
+   or the bus's `.gitattributes` belongs, and an append that followed one would
+   land outside the bus entirely.
+
    The settlement is made **twice over**, and both halves are needed:
 
    - **`.gitattributes` at the bus root.** The first `send` on a bus writes

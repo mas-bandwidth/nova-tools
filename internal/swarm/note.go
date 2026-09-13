@@ -24,7 +24,9 @@ import (
 // note back, and nothing in this package branches on what one says.
 func AppendNote(jobDir, text string, now time.Time) (int, error) {
 	path := NotePath(jobDir)
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
+	// The note file lives in a directory the worker owns and writes to, so it is opened
+	// the way every record in there is now: a regular file or nothing (regular.go).
+	f, err := openRegularWrite(path, os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0o644)
 	if err != nil {
 		return 0, fmt.Errorf("the note file %s could not be opened: %s", path, redactedReason(err))
 	}

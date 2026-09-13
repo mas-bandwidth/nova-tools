@@ -719,7 +719,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			}
 			if string(diskBytes) != art.Note {
 				if strings.HasPrefix(art.Note, string(diskBytes)) {
-					if err := os.WriteFile(fullNotePath, []byte(art.Note), 0o644); err != nil {
+					if err := writeLaneFile(fullNotePath, []byte(art.Note), 0o644); err != nil {
 						return PushResult{}, err
 					}
 				} else {
@@ -845,7 +845,7 @@ func appendIndexSuffix(path, have, want string) error {
 	if have == want {
 		return nil
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := openLaneFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
