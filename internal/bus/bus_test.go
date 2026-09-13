@@ -63,6 +63,30 @@ func TestReadBusReadsEveryLane(t *testing.T) {
 	}
 }
 
+// L5: an id whose slug names another lane must not enter the byID index. A note sitting
+// in from-bo that carries an ada- id would otherwise win the map and silence Ada's note.
+func TestReadBusDoesNotIndexAnIDFromAnotherLane(t *testing.T) {
+	t.Parallel()
+	const forgedPath = "from-bo/2026-09-07T0001Z-forged-ada-abcdef012345.md"
+	root := writeBus(t, map[string]string{
+		forgedPath: `From: Bo
+To: Ada
+Date: Mon Sep  7 00:01:00 UTC 2026
+Id: ada-abcdef012345
+Subject: A note in the wrong lane
+
+Its id carries a slug from-bo does not own.
+`,
+	})
+	tab := loadBus(t, root)
+	if n, ok := tab.NoteByID("ada-abcdef012345"); ok {
+		t.Fatalf("indexed %s under an id whose slug is not its lane", n.Path)
+	}
+	if _, ok := tab.NoteByPath(forgedPath); !ok {
+		t.Fatal("the note should still be addressable by path")
+	}
+}
+
 // The answered rule: an id on a Re line, a PATH on a Re line for a legacy note, and a
 // receipt. All three, in my own lane and nowhere else.
 func TestAnsweredRule(t *testing.T) {
