@@ -513,8 +513,8 @@ func (v *Validator) validateIdentityRule(o *Object) (MappingIdentityRule, error)
 	if !ok {
 		return id, v.refused(RuleMappingRuleShape, "body.identity_rule.source_kind", "source_kind is a string")
 	}
-	if sk != "codex_desktop" && sk != "grok" {
-		if err := v.refused(RuleMappingRuleShape, "body.identity_rule.source_kind", "mapping rule shape is defined for codex_desktop and grok"); err != nil {
+	if sk != "codex_desktop" && sk != "grok" && sk != "antigravity" {
+		if err := v.refused(RuleMappingRuleShape, "body.identity_rule.source_kind", "mapping rule shape is defined for codex_desktop, grok and antigravity"); err != nil {
 			return id, err
 		}
 	}
@@ -528,12 +528,19 @@ func (v *Validator) validateIdentityRule(o *Object) (MappingIdentityRule, error)
 			"receipt_fields", "receipt_value_type",
 			"containing_or_forked_session_in_event_key",
 		}
-	} else {
+	} else if sk == "grok" {
 		wantKeys = []string{
 			"source_kind", "namespace", "event_key", "observation_kind",
 			"normalized_spend_supported", "producer_version_from", "session_id",
 			"receipt_fields", "receipt_value_type",
 			"collection_timestamp_substitution", "containing_session_substitution",
+			"unsupported_reason",
+		}
+	} else if sk == "antigravity" {
+		wantKeys = []string{
+			"source_kind", "namespace", "event_key", "observation_kind",
+			"normalized_spend_supported", "producer_version_from", "session_id",
+			"receipt_fields", "receipt_value_type",
 			"unsupported_reason",
 		}
 	}
@@ -617,7 +624,7 @@ func (v *Validator) validateIdentityRule(o *Object) (MappingIdentityRule, error)
 		} else {
 			return id, v.refused(RuleMappingRuleShape, "body.identity_rule.containing_or_forked_session_in_event_key", "expected boolean")
 		}
-	} else {
+	} else if sk == "grok" {
 		tsVal, _ := o.Get("collection_timestamp_substitution")
 		if b, ok := tsVal.(bool); ok {
 			id.CollectionTimestampSubstitution = &b
@@ -630,6 +637,12 @@ func (v *Validator) validateIdentityRule(o *Object) (MappingIdentityRule, error)
 		} else {
 			return id, v.refused(RuleMappingRuleShape, "body.identity_rule.containing_session_substitution", "expected boolean")
 		}
+		urVal, err := v.mappingNonEmptyString(o, "body.identity_rule", "unsupported_reason")
+		if err != nil {
+			return id, err
+		}
+		id.UnsupportedReason = &urVal
+	} else if sk == "antigravity" {
 		urVal, err := v.mappingNonEmptyString(o, "body.identity_rule", "unsupported_reason")
 		if err != nil {
 			return id, err
@@ -816,6 +829,10 @@ func (v *Validator) validateModelRule(o *Object, sk string) (MappingModelRule, e
 			"basis", "id", "absent", "later_model_relabels_earlier_responses",
 			"forbidden_wire_keys", "model_usage",
 		}
+	} else if sk == "antigravity" {
+		wantKeys = []string{
+			"basis", "forbidden_wire_keys", "id", "model_usage",
+		}
 	} else {
 		wantKeys = []string{
 			"single_reported_id", "absent_id", "multiple_model_ids", "split_normalized",
@@ -871,6 +888,27 @@ func (v *Validator) validateModelRule(o *Object, sk string) (MappingModelRule, e
 		}
 		if len(muArr) != 0 {
 			return mr, v.refused(RuleMappingRuleShape, "body.model_rule.model_usage", "codex model_usage must be empty array []")
+		}
+		mr.ModelUsage = []string{}
+	} else if sk == "antigravity" {
+		b, err := v.enumField(o, "body.model_rule", "basis", modelBases)
+		if err != nil {
+			return mr, err
+		}
+		mr.Basis = &b
+
+		id, err := v.mappingNonEmptyString(o, "body.model_rule", "id")
+		if err != nil {
+			return mr, err
+		}
+		mr.ID = &id
+
+		muArr, err := v.array(o, "body.model_rule", "model_usage")
+		if err != nil {
+			return mr, v.refused(RuleMappingRuleShape, "body.model_rule.model_usage", "expected array")
+		}
+		if len(muArr) != 0 {
+			return mr, v.refused(RuleMappingRuleShape, "body.model_rule.model_usage", "antigravity model_usage must be empty array []")
 		}
 		mr.ModelUsage = []string{}
 	} else {
@@ -949,6 +987,10 @@ func (v *Validator) validateOverlapRule(o *Object, sk string) (MappingOverlapRul
 			"summed_or_mixed_with_preferred", "report_must_name_unhandled_token_count_coverage",
 			"owed_coverage_tasks",
 		}
+	} else if sk == "antigravity" {
+		wantKeys = []string{
+			"arithmetic_violation", "counting_grain", "owed_coverage_tasks",
+		}
 	} else {
 		wantKeys = []string{
 			"counting_grain", "arithmetic_violation", "evidenced_overlapping_grain",
@@ -1017,6 +1059,18 @@ func (v *Validator) validateOverlapRule(o *Object, sk string) (MappingOverlapRul
 		} else {
 			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.report_must_name_unhandled_token_count_coverage", "expected boolean")
 		}
+	} else if sk == "antigravity" {
+		cg, err := v.mappingNonEmptyString(o, "body.overlap_rule", "counting_grain")
+		if err != nil {
+			return or, err
+		}
+		or.CountingGrain = &cg
+
+		av, err := v.mappingNonEmptyString(o, "body.overlap_rule", "arithmetic_violation")
+		if err != nil {
+			return or, err
+		}
+		or.ArithmeticViolation = &av
 	} else {
 		cg, err := v.mappingNonEmptyString(o, "body.overlap_rule", "counting_grain")
 		if err != nil {
@@ -1122,6 +1176,10 @@ func (m Mapping) Body() (Value, error) {
 			if m.IdentityRule.UnsupportedReason != nil {
 				s.set("unsupported_reason", *m.IdentityRule.UnsupportedReason)
 			}
+		} else if m.IdentityRule.SourceKind == "antigravity" {
+			if m.IdentityRule.UnsupportedReason != nil {
+				s.set("unsupported_reason", *m.IdentityRule.UnsupportedReason)
+			}
 		}
 	})
 
@@ -1172,6 +1230,14 @@ func (m Mapping) Body() (Value, error) {
 			}
 			if m.ModelRule.LaterModelRelabelsEarlierResponses != nil {
 				s.set("later_model_relabels_earlier_responses", *m.ModelRule.LaterModelRelabelsEarlierResponses)
+			}
+			s.set("model_usage", Strings(m.ModelRule.ModelUsage))
+		} else if m.IdentityRule.SourceKind == "antigravity" {
+			if m.ModelRule.Basis != nil {
+				s.set("basis", *m.ModelRule.Basis)
+			}
+			if m.ModelRule.ID != nil {
+				s.set("id", *m.ModelRule.ID)
 			}
 			s.set("model_usage", Strings(m.ModelRule.ModelUsage))
 		} else if m.IdentityRule.SourceKind == "grok" {
@@ -1235,6 +1301,13 @@ func (m Mapping) Body() (Value, error) {
 			}
 			if m.OverlapRule.ReportMustNameUnhandledTokenCountCoverage != nil {
 				s.set("report_must_name_unhandled_token_count_coverage", *m.OverlapRule.ReportMustNameUnhandledTokenCountCoverage)
+			}
+		} else if m.IdentityRule.SourceKind == "antigravity" {
+			if m.OverlapRule.ArithmeticViolation != nil {
+				s.set("arithmetic_violation", *m.OverlapRule.ArithmeticViolation)
+			}
+			if m.OverlapRule.CountingGrain != nil {
+				s.set("counting_grain", *m.OverlapRule.CountingGrain)
 			}
 		} else if m.IdentityRule.SourceKind == "grok" {
 			if m.OverlapRule.CountingGrain != nil {
