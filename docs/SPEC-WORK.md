@@ -1,4 +1,4 @@
-# nova-work — specification (DRAFT 10, 2026-09-13)
+# nova-work — specification (DRAFT 11, 2026-09-13)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
@@ -89,8 +89,10 @@ its token, and I hold the journal's lock (Stella's finding 1, comment 5654659093
    still carries its generation and token, then pushes a fast-forward commit advancing
    `until` the same way. **The session's base is the sha of the last commit it pushed**, a
    reconfirm as much as a clip, so its own reconfirms never read as divergence; divergence is
-   a tip this session did not write. **An owner that cannot reconfirm before its `until` fences itself**: it stops
-   accepting mutations (exit 1, `fenced`, on every write) and keeps its journal. Offline or
+   a tip this session did not write. **An owner that cannot reconfirm before its `until` fences itself**: it refuses every
+   write AND every read (exit 1, `fenced`, naming its generation and the tip's if known),
+   because a fenced session's resident S may be behind a new owner's and an answer from it
+   would be a stale answer wearing a live one's clothes; it keeps its journal. Offline or
    partitioned, it fences at `until` without any network at all. So at no instant do two
    sessions accept mutations: the old owner is fenced by its clock at `until`, and a takeover
    is refused until `until` plus `--skew` has passed on the taker's clock. The bound this
@@ -256,7 +258,10 @@ they are distinct kinds:
   - `:correct` — a correction to a task: `:reason`; bumps the task's `:generation`
     (5653982211).
   - `:review-attest` — a reviewer's attestation that a result satisfies an `:attested`
-    criterion: `:criterion`, `:result` (a pointer), `:against <sha>`, `:by` the reviewer.
+    criterion: `:criterion`, `:result` (a pointer), `:against <sha>`, `:generation` (the
+    node's, at the time of writing), `:by` the reviewer. **It is an evidence event**: it
+    carries `:pointer` = its `:result` and is what a `:to :done` names for an `:attested`
+    criterion, under the same generation rule as every other evidence event.
   - `:responsible` — `:to <name>` on a work-set or feature, on a person's word, `:reason`.
   - `:lease`, `:heartbeat`, `:release`, `:handoff` (carrying the new holder's `:deadline` and
     `:default`, so a handed lease is a whole lease) — the lease log, below.
@@ -446,7 +451,7 @@ duration comes from a flag: `--window` is required by `who` and `stale`, `--by` 
 :given`; absent, the session's clock is used and recorded as `:clock :tool`.
 
 ```
-nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --repo <path> --remote <name> --branch <name>
+nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --cache <path> --repo <path> --remote <name> --branch <name>
                          --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --skew <duration> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
 nova-work session export --session <path> --into <path>
 nova-work session replay --session <path> --from <path> --as <name> [--max <n>]
@@ -643,8 +648,11 @@ are the reader's, exit 2, at load. The validator never fetches; what a pointer p
 12. **scope change without event** — the required set of a roadmap or work set differs from its
     last `:baseline` plus its recorded scope events.
 18. **stale at the moment of claiming** — a `:to :done` whose cited evidence is already stale
-    (its `:against` is not the cell's `:source-revision`) or already found-not-qualifying when
-    the transition is written; refused in the candidate gate (5653982211: *stale evidence*).
+    (its `:against` is not the cell's `:source-revision`, a local comparison) or already
+    recorded found-not-qualifying **in the session's verification cache** (named at `session
+    start` by `--cache`, so the candidate gate reads a verdict `verify` already wrote and
+    never fetches); refused in the candidate gate (5653982211: *stale evidence*). An evidence
+    pointer the cache has never seen is unverified, which is a count, not a finding.
     After the claim, staleness that arrives with a later source revision is a count, not a
     finding, so a source bump never freezes the set; the rollup already demotes it.
 13. *(reader, exit 2)* **reader payload** — `#.` or any other refused syntax.
@@ -669,8 +677,8 @@ measured, never asserted (Stella, *Required measurements and replays*). Deriving
 current state from the journal is one pass at load, O(E_log), and incremental thereafter.
 A full validation or fold visits every node and every edge once: O(V+E), with a visited set
 for shared subgraphs, and detects cycles in the same walk. Counts roll up bottom-up over the
-containment forest in O(V), cached per node keyed by its scope revision and the journal
-position. **No transitive descendant set is materialised anywhere**; an ad hoc set query
+containment forest in O(V), cached per node keyed by its scope revision, the journal position
+and the verification cache's revision, since a `verify` pass changes which done counts as done. **No transitive descendant set is materialised anywhere**; an ad hoc set query
 walks the reached subgraph once, O(V_reached + E_reached), when it is asked. Propagation over
 the dependency DAG is one affected topological pass, never a whole-S fixed point (Stella,
 *Reusable recursion*). **These bounds are the resident graph's only**: fetching evidence is
