@@ -262,10 +262,137 @@ publishes an issue. Known work is not authorized, active, scheduled or public by
 
 ## Roadmap as a view; the Schema pilot *(Stella)*
 
-*Stella's section: the feature inventory contract (her data contract of 2026-09-13 14:52Z, the
-23 rows and the historical aliases as references), what the renderer proves, the acceptance
-mapping from schema#898, and the measurement that decides whether S saved tokens against
-hand-kept tables.*
+**Practice first, then retrospective, then production.** Glenn reaffirmed this sequence on
+2026-09-13: dogfood the hierarchy on Fixed Tables, inspect what worked and what did not,
+bring those findings into the tool specs while fresh, then implement. This draft records
+hypotheses alongside settled requirements. Its existence does not start production work or
+replace the remaining Fixed Tables acceptance gates.
+
+### Durable primary state and GitHub intake
+
+Glenn's chosen direction is that **S is the primary form**, with a persistent versioned
+repository home. `mas-bandwidth/work` is his proposed location; creating or populating it is
+separate from this draft. Local in-memory structures and indexes are rebuildable working
+copies. Task identities, source links, events, decisions and evidence records must survive
+process loss, bench changes and coordinator handoff through the durable history.
+
+People may continue to file GitHub issues. Import is intake into S, keyed by the immutable
+forge repository/issue identity so retries do not duplicate tasks. Keep the original link,
+source revision or update marker, and import receipt. Decomposition, ownership and planning
+then live in S. Later issue edits are observed changes to reconcile, never an unconditional
+overwrite of the work tree. Issue text remains data and cannot assign authority, execute code
+or grant permissions. Publishing a summary back to GitHub is a separate, explicit adapter
+operation with a receipt; importing does not close, delete or rewrite the source issue.
+
+Concurrent coordinators must detect revision conflicts rather than overwrite each other's
+work. A checkpoint records the parent revision and change; after a conflict, read the new
+head and reconcile against the same stable IDs. Network failure leaves a pending local
+checkpoint whose sync status is visible. Reads should remain useful offline; stale or
+unavailable remote evidence is reported as such without erasing the last verified record.
+The persistence protocol and recovery tests are production spec work informed by the pilot,
+not guarantees supplied merely by putting a file in Git.
+
+### Inventory before implementation
+
+A new feature starts with its full deliverable inventory: capabilities, applicable axes,
+required sub-work, shared prerequisites and acceptance evidence. Include capabilities already
+completed when importing existing work. A defect backlog alone is not that inventory.
+For Schema, ordinary scalar and container support must be visible beside version evolution,
+refusal behavior and interoperability. Maps, unbounded arrays and pointer blobs are not
+fixed-table capabilities merely because a backend supports them on another wire.
+
+Pin the baseline membership, source revision and completion unit before starting the stream.
+Append discoveries visibly; retain their discovery event and the original baseline. Splitting
+an existing task into smaller tasks records decomposition, not newly completed work. Splitting
+can change the number of leaves, so a comparison must either retain the baseline unit or show
+that change explicitly. Reordering the execution queue does not rewrite discovery order.
+Do not inflate progress by adding trivial rows or hide unfinished work by merging it into a
+larger green row. A scope decision has an author, reason and reviewable diff.
+
+### A cell is a reference, not another state store
+
+A roadmap declares ordered named axes and maps each coordinate to an existing work node.
+The axes are arbitrary; languages are the Schema example. A feature/language cell may focus
+into sub-features, tasks and smaller streams recursively. Its owners, dependencies and
+receipts are the same objects seen by repo and category queries.
+
+For each cell, show completed required leaves, total required leaves and unknown leaves.
+Green requires the full acceptance contract, including prerequisite gates. Per-language
+feature completion counts whole green feature cells divided by required feature rows. It is
+not the average of cell percentages. With unresolved evidence, show a verified lower bound
+and an explicit unknown count; do not present that bound as estimated implementation progress.
+A named unsupported surface is not a passed test. Excluding it from the denominator requires
+a recorded scope decision, not a renderer convenience.
+
+Shared compiler, lock, platform and final integration work has one canonical owner. A roadmap
+can show it in an adjacent gate view and reference it from affected cells. It does not create
+nine copies of the work or its token cost. If the language matrix counts runtime capabilities
+only, label that scope and show the shared release gates alongside it; a green runtime matrix
+alone must never print that the whole goal is done.
+
+Useful focused views include remaining features in one repo, ideas for that repo, open bugs,
+work in a category, one language's unfinished cells, and a cell's nested tasks. A listing is
+compact and capped; it carries stable IDs and a way to focus further. Category taxonomy is
+TBD. The query machinery filters; the reader should not have to scan S manually.
+
+### Evidence and the imported starting point
+
+The Schema pilot is on `codex/fixed-tables-roadmap-20260913`; the surveyed implementation is
+`8ea5ed8e4656875088250f564e88a965a7135e7c` on `fixed-table-form`, not a completed merge to main.
+`docs/roadmap.sexp` is its state input and the marked region in `ROADMAP.md` is its projection.
+Original audit IDs, historical reports and superseding aliases remain retrievable. They are
+provenance, not current completion assertions.
+
+The initial 23 audit-family rows omitted ordinary delivered capabilities. Glenn identified
+that gap; the next survey adds the missing capability inventory and preserves the versioning
+contract's individual rows for nested work. This is an incomplete imported baseline being
+repaired, not evidence that the implementation just expanded by the same amount. The source
+records both the inventory correction and implementation work discovered during execution.
+
+A receipt must identify what was checked, against which revision, with what result and which
+acceptance criterion it supports. A resolvable PR, a test name or a green aggregate CI run
+alone does not prove a whole feature. Check whether the named assertion ran, whether it can
+fail the gate, and whether it covers the claimed behavior. Generation, valid-data round trips,
+hostile-input certification and performance are different proofs. Preserve disagreement and
+unknowns rather than turning an attractive summary into green cells.
+
+### What the current prototype proves, and does not
+
+Emma's renderer validates a bounded restricted-data graph, rejects duplicate IDs, dangling
+references and cycles, checks complete matrix coordinates, and derives progress from required
+leaves. It writes only between the roadmap markers. Its replay tests cover Unicode byte
+preservation, deterministic repeated rendering, drift detection, empty evidence, partial
+rollups and reachable target selection. Stella's follow-up closed a literal-EOF sentinel
+collision and whitespace-only evidence acceptance. A missing requested roadmap now refuses
+instead of falling back to a different one.
+
+These are prototype facts, not production conformance claims. The pilot still uses shared
+containment references and memoized descendant sets, which can cost quadratic space/time;
+it does not yet implement this draft's counted forest, indexed repo/category queries, leases,
+network evidence validation or incremental updates. Its AST-depth check occurs after the Lisp
+reader, so it is not the production reader's pre-parse depth guarantee. The existing parser
+and gate tests passing does not certify those missing properties.
+
+### Retrospective required before production implementation
+
+Use the method to carry the Fixed Tables work forward, including at least an inventory
+correction, a completed cell, newly discovered work, a dependency or handoff, and a changed
+focus. Record failures and repairs as they occur. At the retrospective, compare the same
+questions and acceptance scope against the previous manual workflow, then change the spec.
+
+Measure total tokens by friend/model/bench/repo and attempt where available, including source
+survey, coordination, review and correction; distinguish unavailable measurement from zero.
+Keep raw observations so alternative reports remain possible. Price with a versioned rate
+schedule, separating billed cost from virtual model-weighted cost. Record useful work per
+accepted result, wall time, retries, stale answers and questions that needed human rescue.
+Quality and total required tokens come first, average token cost next; reduce wall time when
+it does not materially worsen those objectives. A cheaper first draft that costs more to
+repair has not demonstrated an efficiency gain.
+
+Each proposed tool capability should cite the observed friction, the smallest operation that
+would remove it, its safety boundary, a measurable benefit and an acceptance replay. Keep the
+capabilities that earned their place; revise or defer the rest. The post-Fixed-Tables review
+feeds `NEXT-TOOLS.md` and the production specs before implementation begins.
 
 ## The measurement that decides *(shared)*
 
