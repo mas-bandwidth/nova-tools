@@ -60,6 +60,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.sha }}
+          REF: ${{ github.ref_name }}
         shell: bash
         run: |
           set -euo pipefail
@@ -84,7 +85,7 @@ jobs:
           printf '%s' "$body" | jq -r '.workflow_runs[] | "  run \(.id) \(.conclusion) \(.html_url)"'
           if [ "$green" -lt 1 ]; then
             echo "refusing: no green certification run on $SHA, so nothing vouches for this tree"
-            echo "certify it first: gh workflow run certification.yml --ref ${{ github.ref_name }}, wait for certification-ok, then re-run this workflow"
+            echo "certify it first: gh workflow run certification.yml --ref $REF, wait for certification-ok, then re-run this workflow"
             exit 1
           fi
 
