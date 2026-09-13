@@ -725,6 +725,11 @@ Each is proven able to fail by a mutation before it is trusted.
 - **`--as` is a label, not an identity.** The board says who claims to have acted.
   Who actually wrote is the forge's record or the file's git history, and this tool
   neither checks nor pretends to.
+- **The board's guarantee is exactly the issue's comment permission.** On the
+  issue backend a comment is folded without its author, so anybody who may
+  comment on the issue may move this board — take a card, close a card — under
+  any `--as` name they like, and the only thing that narrows that is narrowing
+  who may comment on the issue to the participants.
 - **A stale take is a guess about a clock, never about a line.** A line working
   hard for twenty minutes without touching the board looks exactly like a line
   that died. The remedy is a second `take`, which is one command and is why takes
