@@ -75,6 +75,24 @@ func statRegular(path string) error {
 	return nil
 }
 
+// readBounded reads from r up to maxBytes. It refuses if the stream passes
+// maxBytes without allocating past maxBytes + 1, and returns no partial result.
+// maxBytes must be positive; all worker record reads require a bound.
+func readBounded(r io.Reader, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("readBounded: maxBytes must be positive, got %d", maxBytes)
+	}
+	lr := io.LimitReader(r, maxBytes+1)
+	raw, err := io.ReadAll(lr)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > maxBytes {
+		return nil, fmt.Errorf("record size passes ceiling %d; a job's records have a bounded size: %w", maxBytes, errRecordTooLarge)
+	}
+	return raw, nil
+}
+
 // readRegular is os.ReadFile for a worker-writable path: the whole file when it is a
 // regular file within MaxRegularRecord, and a refusal when it is anything else or oversized.
 func readRegular(path string) ([]byte, error) {
@@ -85,6 +103,9 @@ func readRegular(path string) ([]byte, error) {
 // If the file is not a regular file, or if its size passes maxBytes (either at stat time
 // or during read), it is refused without unbounded allocation.
 func readRegularBounded(path string, maxBytes int64) ([]byte, error) {
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("readRegularBounded: maxBytes must be positive, got %d", maxBytes)
+	}
 	if err := statRegular(path); err != nil {
 		return nil, err
 	}
@@ -100,19 +121,16 @@ func readRegularBounded(path string, maxBytes int64) ([]byte, error) {
 	if !fi.Mode().IsRegular() {
 		return nil, notRegular(path, fi.Mode())
 	}
-	if maxBytes > 0 && fi.Size() > maxBytes {
+	if fi.Size() > maxBytes {
 		return nil, recordTooLarge(path, fi.Size(), maxBytes)
 	}
-	var r io.Reader = f
-	if maxBytes > 0 {
-		r = io.LimitReader(f, maxBytes+1)
-	}
-	raw, err := io.ReadAll(r)
+	raw, err := readBounded(f, maxBytes)
 	if err != nil {
-		return nil, err
-	}
-	if maxBytes > 0 && int64(len(raw)) > maxBytes {
-		return nil, recordTooLarge(path, int64(len(raw)), maxBytes)
+		return nil, &fs.PathError{
+			Op:   "read",
+			Path: path,
+			Err:  err,
+		}
 	}
 	return raw, nil
 }

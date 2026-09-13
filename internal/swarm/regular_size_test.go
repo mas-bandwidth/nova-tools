@@ -3,6 +3,7 @@ package swarm
 import (
 	"bytes"
 	"errors"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -142,56 +143,81 @@ func TestReadRegularMaxRecordBoundary(t *testing.T) {
 	}
 }
 
-func TestReadRegularBoundedGrowthAfterStatRefused(t *testing.T) {
-	dir := t.TempDir()
-	p := filepath.Join(dir, "growing.log")
-	if err := os.WriteFile(p, []byte("start"), 0o644); err != nil {
-		t.Fatal(err)
+type countingReader struct {
+	r     io.Reader
+	count int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.count += int64(n)
+	return n, err
+}
+
+type infiniteByteReader struct {
+	b byte
+}
+
+func (r infiniteByteReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = r.b
 	}
+	return len(p), nil
+}
 
-	stop := make(chan struct{})
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		f, err := os.OpenFile(p, os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			return
-		}
-		defer f.Close()
-		chunk := bytes.Repeat([]byte("x"), 128)
-		for {
-			select {
-			case <-stop:
-				return
-			default:
-				if _, err := f.Write(chunk); err != nil {
-					return
-				}
-				time.Sleep(10 * time.Microsecond)
-			}
-		}
-	}()
+// Deterministic streamed-bound control: proves that readBounded consumes at most
+// limit+1 bytes from a stream and returns nil bytes on error, without allocating a huge buffer.
+func TestReadBoundedDeterministicStreamLimit(t *testing.T) {
+	const limit = int64(64)
+	cr := &countingReader{r: infiniteByteReader{b: 'z'}}
 
-	// Read with a small bound of 16 bytes while file is growing
-	var got []byte
-	var err error
-	for i := 0; i < 50; i++ {
-		got, err = readRegularBounded(p, 16)
-		if err != nil {
-			break
-		}
-		time.Sleep(time.Millisecond)
-	}
-	close(stop)
-	<-done
-
+	got, err := readBounded(cr, limit)
 	if err == nil {
-		t.Fatalf("expected refusal when file grew past 16 bytes, but got %d bytes without error", len(got))
+		t.Fatalf("readBounded on infinite stream succeeded with %d bytes", len(got))
 	}
 	if got != nil {
-		t.Fatalf("expected nil slice on growth refusal, got %d bytes", len(got))
+		t.Fatalf("expected nil bytes on error, got %d bytes", len(got))
 	}
 	if !errors.Is(err, fs.ErrInvalid) {
-		t.Fatalf("expected fs.ErrInvalid, got %v", err)
+		t.Fatalf("expected fs.ErrInvalid wrapper, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "passes ceiling") {
+		t.Fatalf("expected error mentioning passes ceiling, got %v", err)
+	}
+	// Proves deterministically that at most limit+1 bytes were consumed.
+	if cr.count != limit+1 {
+		t.Fatalf("expected exactly %d bytes consumed from stream, got %d", limit+1, cr.count)
+	}
+}
+
+// Proves that readBounded accepts a stream that matches the limit exactly and consumes exact bytes.
+func TestReadBoundedDeterministicExactStreamAccepted(t *testing.T) {
+	const limit = int64(64)
+	data := bytes.Repeat([]byte("y"), int(limit))
+	cr := &countingReader{r: bytes.NewReader(data)}
+
+	got, err := readBounded(cr, limit)
+	if err != nil {
+		t.Fatalf("readBounded failed on exact stream: %v", err)
+	}
+	if !bytes.Equal(got, data) {
+		t.Fatalf("got %d bytes, want %d", len(got), len(data))
+	}
+	if cr.count != limit {
+		t.Fatalf("expected exactly %d bytes consumed, got %d", limit, cr.count)
+	}
+}
+
+// Proves that readBounded and readRegularBounded reject non-positive limits.
+func TestReadBoundedRejectsNonPositiveLimit(t *testing.T) {
+	cr := &countingReader{r: bytes.NewReader([]byte("test"))}
+	if _, err := readBounded(cr, 0); err == nil {
+		t.Fatal("readBounded accepted limit=0")
+	}
+	if _, err := readBounded(cr, -1); err == nil {
+		t.Fatal("readBounded accepted limit=-1")
+	}
+	if _, err := readRegularBounded("nonexistent", 0); err == nil {
+		t.Fatal("readRegularBounded accepted maxBytes=0")
 	}
 }
