@@ -199,15 +199,15 @@ func TestRule26NoClockOfItsOwnNoInstallNoSendNobodyAsked(t *testing.T) {
 			t.Fatalf("%s was stamped %q, not by the injected clock", name, o.At)
 		}
 	}
-	// Ends inside its budget: the children hang, and the run still returns. The
-	// bound is the budget plus one killGrace, which is the time a killed child's
-	// pipe may stay open, and it is why that grace is two seconds and not more.
+	// Ends inside its budget: the children hang, and the run still returns
+	// within the budget plus a small fixed slack. A held pipe must not extend the
+	// run by a fixed grace begun at cancellation.
 	hanging := manifest(t, row("h", "tool", command(t, "hang"), "npm:unused", "none"))
 	started := time.Now()
 	if c, _, _ = run(t, env, "check", "--file", hanging, "--budget", "300ms", "--timeout", "200ms"); c != 1 {
 		t.Fatalf("a hanging read was not a finding: %d", c)
 	}
-	if took := time.Since(started); took > 300*time.Millisecond+killGrace+2*time.Second {
+	if took := time.Since(started); took > time.Second {
 		t.Fatalf("a 300ms budget took %s", took)
 	}
 }

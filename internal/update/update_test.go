@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -81,6 +82,26 @@ func TestHelperProcess(t *testing.T) {
 			os.Exit(6)
 		}
 		time.Sleep(d)
+	case "escaped":
+		// Leave a grandchild holding stdout open in its OWN process group, then
+		// hang, so the grandchild survives this process's group kill: the
+		// escaped-pipe case a deadline must still close.
+		if err := spawnEscapedHolder(a[1]); err != nil {
+			os.Exit(5)
+		}
+		time.Sleep(30 * time.Second)
+	case "flood":
+		// Print a version, then a bounded but substantial stream, and exit at
+		// once. This is the healthy child a deadline must still drain in full.
+		n, err := strconv.Atoi(a[1])
+		if err != nil {
+			os.Exit(6)
+		}
+		fmt.Println("x 1.2.3")
+		chunk := strings.Repeat("y", 1024)
+		for i := 0; i < n; i++ {
+			fmt.Print(chunk)
+		}
 	default:
 		os.Exit(20)
 	}

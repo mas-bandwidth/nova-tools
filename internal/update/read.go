@@ -2,7 +2,6 @@ package update
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"io"
 	"math/big"
@@ -10,6 +9,7 @@ import (
 	"os/exec"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
@@ -17,14 +17,17 @@ import (
 
 const ChildCap = 64 * 1024
 
-// killGrace is how long Run waits for a child's pipes AFTER the child itself is
-// gone or killed. It is not a second timeout on the version command: a bounded
-// capture reads the pipe until it CLOSES, and a grandchild the version command
-// left behind inherits that pipe and holds it open. The grace has to be a real
-// one. Ten milliseconds was not: a healthy child that printed its version was
-// reported UNKNOWN whenever the copy of its output lost that race under load,
-// which is every other repo in this tree's reason for the same two seconds.
+// killGrace is the drain allowance a healthy child gets after it exits: its
+// output copy may still be finishing, and under load a ten millisecond grace
+// lost that race and reported a healthy tool as UNKNOWN. It is a cap, not a
+// promise: the actual allowance is what is left of the budget, so a child whose
+// pipe an escaped grandchild keeps open cannot extend the run past its deadline.
 const killGrace = 2 * time.Second
+
+// drainFloor is the smallest a drain may shrink to. It is reached only when the
+// budget is already spent at the moment the child is gone, so a held pipe is
+// still closed without ever growing into a second timeout.
+const drainFloor = 50 * time.Millisecond
 
 // leakRemedy names the one thing a person can do about a held pipe: the version
 // command, not this tool, decides whether its children keep stdout open.
@@ -117,11 +120,75 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	out, errs := bounded.NewCapture(cap, cancel), bounded.NewCapture(cap, cancel)
 	cmd := exec.CommandContext(child, path, args[1:]...)
 	cmd.Stdin = input
-	cmd.Stdout = out
-	cmd.Stderr = errs
-	cmd.WaitDelay = killGrace
+	// The pipes are created here rather than handed to os/exec as plain writers,
+	// so this process can close the read ends itself when the deadline passes and
+	// an escaped grandchild is still holding the write ends open.
+	stdoutRead, stdoutWrite, err := os.Pipe()
+	if err != nil {
+		r.Reason = "execution failed: " + clip(err.Error(), 160)
+		return r
+	}
+	defer stdoutRead.Close()
+	stderrRead, stderrWrite, err := os.Pipe()
+	if err != nil {
+		stdoutWrite.Close()
+		r.Reason = "execution failed: " + clip(err.Error(), 160)
+		return r
+	}
+	defer stderrRead.Close()
+	cmd.Stdout = stdoutWrite
+	cmd.Stderr = stderrWrite
 	configureProcess(cmd)
-	err = cmd.Run()
+
+	var copyWG sync.WaitGroup
+	copyWG.Add(2)
+	go func() { defer copyWG.Done(); _, _ = io.Copy(out, stdoutRead) }()
+	go func() { defer copyWG.Done(); _, _ = io.Copy(errs, stderrRead) }()
+
+	if err := cmd.Start(); err != nil {
+		stdoutWrite.Close()
+		stderrWrite.Close()
+		stdoutRead.Close()
+		stderrRead.Close()
+		copyWG.Wait()
+		r.Reason = "execution failed: " + clip(err.Error(), 160)
+		return r
+	}
+	// The parent's write ends must close so a read sees EOF once the child and
+	// its descendants have all closed theirs.
+	stdoutWrite.Close()
+	stderrWrite.Close()
+
+	waitCh := make(chan error, 1)
+	go func() { waitCh <- cmd.Wait() }()
+
+	// Reap the child as soon as it exits or the deadline kills it, whichever
+	// comes first, then drain its output within what the budget leaves.
+	var waitErr error
+	select {
+	case waitErr = <-waitCh:
+	case <-child.Done():
+		waitErr = <-waitCh
+	}
+
+	done := make(chan struct{})
+	go func() { copyWG.Wait(); close(done) }()
+	held := false
+	if drain := drainAllowance(ctx); drain > 0 {
+		t := time.NewTimer(drain)
+		select {
+		case <-done:
+			t.Stop()
+		case <-t.C:
+			held = true
+			stdoutRead.Close()
+			stderrRead.Close()
+			<-done
+		}
+	} else {
+		<-done
+	}
+
 	r.Stdout = string(out.Bytes())
 	r.Stderr = string(errs.Bytes())
 	switch {
@@ -129,23 +196,38 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 		r.Reason = "output"
 	case ctx.Err() != nil:
 		r.Reason = "timeout"
-	case err != nil:
-		if e, ok := err.(*exec.ExitError); ok {
+	case waitErr != nil:
+		if e, ok := waitErr.(*exec.ExitError); ok {
 			r.Reason = fmt.Sprintf("exit %d", e.ExitCode())
-		} else if errors.Is(err, exec.ErrWaitDelay) {
-			// The process itself is gone and its status is unknown to us, so the
-			// output we did capture is not proof of a version. Name the leaked
-			// pipe rather than blaming the version command, which ran.
-			r.Reason = "output_not_closed"
 		} else {
-			// The cause of a start or wait failure is the tool's own argv and the
-			// operating system's answer, never the child's output, so naming it
-			// here cannot echo unsupported content. It is bounded to one short
-			// clause for the same reason every other field on this line is.
-			r.Reason = "execution failed: " + clip(err.Error(), 160)
+			r.Reason = "execution failed: " + clip(waitErr.Error(), 160)
 		}
+	case held:
+		// The process itself is gone and its status was a clean exit, but the
+		// output we did capture is not proof of a version because a grandchild
+		// kept the pipe open past the drain. Name the leaked pipe rather than
+		// blaming the version command, which ran.
+		r.Reason = "output_not_closed"
 	}
 	return r
+}
+
+// drainAllowance is how long process lets a child's output copy finish after the
+// child is gone or the deadline kills it. A healthy child that printed and
+// exited gets the full grace; a child gone at the deadline gets only what the
+// budget leaves, floored, so a held pipe is closed promptly rather than kept
+// open by a fixed grace begun at cancellation.
+func drainAllowance(ctx context.Context) time.Duration {
+	drain := killGrace
+	if deadline, ok := ctx.Deadline(); ok {
+		if remaining := time.Until(deadline); remaining < drain {
+			drain = remaining
+		}
+	}
+	if drain < drainFloor {
+		drain = drainFloor
+	}
+	return drain
 }
 
 // clip bounds a diagnostic clause. A reason a person cannot read is not a
