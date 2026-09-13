@@ -235,12 +235,17 @@ is the day it was learned.
     missing between the first and last day present. A missing day is `CHECK MISSING date=<d>`, named, never
     filled. `check` exits 1 on any finding and prints the count line either
     way. Never gate on `sum` or `sources`; `check` is the gate.
-    **Amendment, 2026-09-13 (rule 34).** `check` also walks `<out>/receipts/`,
-    the one subdirectory this spec names under `--out`: every receipts file
-    parses with its seventeen columns, one session has one receipt id, a
-    receipt's cells never exceed its day file's, and a receipts file for a day
-    with no day file is named. Each is exit 1; `CHECK OK` and `CHECK FAIL`
-    carry `receipts= dup= exceeds= orphan=`.
+    **Amendment, 2026-09-13 (rule 34), draft 2.** `check` also walks
+    `<out>/receipts/`, the one subdirectory this spec names under `--out`:
+    every receipts file parses with its seventeen columns, one session has one
+    receipt id, the rows of one receipt id carry one `node`, one `stage`, one
+    `who` and one `session`, a receipt's cells never exceed its day file's,
+    and a receipts file for a day the fold has already passed and did not
+    write is named. Each is exit 1. A receipts file for a day **newer than the
+    newest day file** is the ordinary order, not a finding — a receipt is
+    written when a session ends and the fold runs that night — and is one
+    `CHECK NOTE`, exit 0 (draft 2). `CHECK OK` and `CHECK FAIL`
+    carry `receipts= dup= split= exceeds= orphan=`.
 14. **The swarm's usage files are a source.** SPEC-SWARM rule 12 writes one
     usage file per job, `<pool>/usage/<job>.tsv`, outside the directory
     `reclaim` removes, before the job's files move. `--swarm <label>=<pool>`
@@ -433,11 +438,11 @@ nova-tokens receipt   --out <dir> --repos <file> --node <id> --stage <preparatio
                       [--timeout <seconds>] [--max <n>]
 nova-tokens cost      --out <dir> --node <id>... [--month <YYYY-MM>] [--rates <file>] [--max <n>]
 nova-tokens hot       (--claude <label>=<dir> --session <id> | --opencode <label>=<file> --scratch <dir> --session <id> | --swarm <label>=<pool> --job <id>)
-                      --repos <file> [--top <n>] [--timeout <seconds>]
-nova-tokens diff      (--out <dir> --day <d1> --day <d2> | <one source flag> --repos <file> (--session <a> --session <b> | --job <a> --job <b>)) [--max <n>]
+                      [--top <n>] [--timeout <seconds>]
+nova-tokens diff      (--out <dir> --day <d1> --day <d2> | <one source flag> (--session <a> --session <b> | --job <a> --job <b>)) [--max <n>]
 nova-tokens friction  add --frictions <file> --as <name> --gap <label> --tool <name|-> --attempted <text>
-                      (--receipt <id> --out <dir> | --tokens ~<n> --wall <duration>) [--wall <duration>] [--issue <host>/<owner>/<repo>#<n>]
-nova-tokens frictions --frictions <file> [--rates <file>] [--since <YYYY-MM-DD>] [--max <n>]
+                      (--receipt <id> --out <dir> [--wall <duration>] | --tokens ~<n> --wall <duration>) [--issue <host>/<owner>/<repo>#<n>]
+nova-tokens frictions --frictions <file> [--rates <file> --out <dir>] [--since <YYYY-MM-DD>] [--max <n>]
 nova-tokens help
 nova-tokens version
 ```
@@ -530,8 +535,8 @@ Could not run (exit 2) on a missing or bad flag, a missing `--repo`, an
 effective fetch or push URL that does not match it, unrelated dirty work in
 the clone, an empty `user.name` or `user.email`, a held publish lock, two
 given paths that resolve to one directory, a staged path that exists, a fold
-in flight, a malformed batch directory, or a batch whose schema has no
-validator here. Deliberately does not check: whether the numbers are right
+or a receipt in flight (either holds `fold.lock`, draft 2), a malformed batch
+directory, or a batch whose schema has no validator here. Deliberately does not check: whether the numbers are right
 (`check` and `sum` read them), whether other days or other benches are
 present in the ledger, whether coverage of the whole ledger is complete, or
 whether the note for that day reached the bus (rule 28). `publish` is a
@@ -539,19 +544,30 @@ whether the note for that day reached the bus (rule 28). `publish` is a
 into a git clone, and it is in **Publishing to the git ledger**, rules 22 to
 31.
 
-**Amendment, 2026-09-13 (rules 32–38).** Six verbs and one flag join. Not one
-of them adds a default path or reads an environment variable; `--top` on `hot`
-defaults to 5 and is the one new default, allowed for the reason `--max` has
-20: it is a listing's ceiling, not a fact about anybody's data. `--rates` is
-optional on `sum`, `cost` and `frictions` and its absence prints `usd=-`, never
-a price. `--frictions` on `publish` is a third typed contribution kind and is
-refused with `--batch`, `--v1-day`, `--day` or `--public`.
+**Amendment, 2026-09-13 (rules 32–38), draft 2.** Six verbs and one flag join.
+Not one of them adds a default path or reads an environment variable; `--top`
+on `hot` defaults to 5 and is the one new default, allowed for the reason
+`--max` has 20: it is a listing's ceiling, not a fact about anybody's data —
+and **`--top 0` means all**, as `--max 0` does everywhere in this family,
+because a ceiling a caller cannot lift is a tool deciding what its user may
+see (SPEC.md Conventions; draft 2). `--rates` is optional on `sum`, `cost` and
+`frictions` and its absence prints `usd=-`, never a price; on `frictions` it
+**requires `--out <dir>`** and is refused without it, because a friction row
+carries a token sum and no model and its dollars are its receipt's (rule 37,
+draft 2), exactly as `--scratch` is required with `--opencode` and refused
+otherwise. Neither `hot` nor `diff --session` takes `--repos`: a session
+listing names no repo, and a flag that decides nothing is a flag that does
+nothing (draft 2). `--frictions` on `publish` is a third typed contribution
+kind, refused with `--batch`, `--v1-day`, `--day` or `--public`; it is a
+**second door** through a destination's bytes and its own **append**
+transition is written into rules 22, 23, 24 and 26 rather than claimed to
+leave them unchanged (draft 2).
 
 ### `receipt`
 
 Asserts: one session, read whole from one declared source, folded by the same
 reader `fold` uses, joined to one node and one stage, written as one receipt
-under one drawn id. Says NO (exit 1, `RECEIPT FAIL reason=<nosession|receipted|unreadable>`)
+under one drawn id. Says NO (exit 1, `USAGE FAIL reason=<nosession|receipted|unreadable>`)
 and writes **nothing** when the session is not in the source, is already
 receipted, or has a file the tool cannot read — a receipt over half a session
 is a wrong number about one task, where a fold over half a day is a day with
@@ -588,8 +604,10 @@ Exits 0 whenever both sides could be read; a missing side is exit 2 naming it.
 `friction add` appends one measured or one rough row to the caller's frictions
 file, whole-file write through `.tmp` and rename under `<file>.lock`; a file
 whose existing rows do not parse is exit 2 and untouched. `frictions` sums the
-file per gap, tokens descending, and is a **report**, exit 0. The `publish
---frictions` kind is rule 37's and `publish`'s section governs it.
+file per gap, tokens descending, and is a **report**, exit 0; with `--rates`
+it also requires `--out <dir>`, because the dollars it prints are the named
+receipts' and nothing on the row itself carries a model (draft 2). The
+`publish --frictions` kind is rule 37's and `publish`'s section governs it.
 
 ## Exit codes
 
@@ -622,23 +640,29 @@ directory, a staged path or a temporary directory that already exists,
 does not match `--repo` or whose shape the parser does not know, more than one
 effective push URL where they do not all match, an empty `user.name` or
 `user.email` in the clone, unrelated dirty or staged work in the clone, a
-second publisher holding the lock, a `git` absent from `PATH`, a fold in
-flight under `--v1-day`, a batch that is not exactly its own named files, and
+second publisher holding the lock, a `git` absent from `PATH`, a fold or a
+receipt in flight under `--v1-day` (either holds `fold.lock`, draft 2), a
+batch that is not exactly its own named files, and
 a batch naming a schema this build has no validator for.
 
-**Amendment, 2026-09-13 (rules 32–38).** The three meanings hold and the
-enumerations gain these cases. **Exit 0**: a receipt written; a `cost`,
+**Amendment, 2026-09-13 (rules 32–38), draft 2.** The three meanings hold and
+the enumerations gain these cases. **Exit 0**: a receipt written; a `cost`,
 `hot`, `diff` or `frictions` that ran; a `friction add` that landed; a
 `publish --frictions` whose file is on the branch, including the append
-transition; a `check` with no receipts finding. **Exit 1**: `RECEIPT FAIL`
+transition; a `check` with no receipts finding, and a `check` whose only
+receipts observation is the `CHECK NOTE` for days the fold has not reached
+yet (rule 34, draft 2). **Exit 1**: `USAGE FAIL`
 (`reason=nosession`, `receipted`, `unreadable`, nothing written); `HOT FAIL`
 (`reason=nosession`, `reclaimed`, `unreadable`); a `check` finding under
-`receipts/` (`DUPLICATE`, `EXCEEDS`, `ORPHAN`, a malformed row, a stray); a
+`receipts/` (`DUPLICATE`, `SPLIT`, `EXCEEDS`, `ORPHAN`, a malformed row, a
+stray); a
 `publish --frictions` whose destination is not a prefix of the file and
 `--supersede` was not given (`reason=differs`). **Exit 2**: `--stage` outside
-the six names; `--node` empty; `--top 0`; `--tokens` without the `~`;
+the six names; `--node` empty; a **negative** `--top` (`--top 0` is all,
+draft 2); `--tokens` without the `~`;
 `--tokens ~<n>` without `--wall`; a `--gap` that is not `[a-z0-9-]{1,32}`; a
 malformed or duplicate line in `--rates` or an existing frictions file;
+`--rates` on `frictions` without `--out` (draft 2);
 `--rates`, `--receipt` or `--out` where the verb does not take it; a `diff`
 whose one side is missing; two `--session` values that are equal; `--frictions`
 with `--batch`, `--v1-day`, `--day` or `--public`.
@@ -699,9 +723,10 @@ CHECK FAIL <path>: <reason>
 CHECK FAIL <path>:<line>: <reason>
 CHECK MISSING date=<d>
 CHECK STRAY <path>
-CHECK MORE kind=<file|row|missing|stray|duplicate|exceeds|orphan> shown=<n> total=<t> nova-tokens check --out <dir> --max 0
-CHECK OK at=<stamp> build=<id> files=<n> rows=<n> first=<d> last=<d> missing=0 stray=0 receipts=<n> dup=0 exceeds=0 orphan=0
-CHECK FAIL files=<n> rows=<n> first=<d> last=<d> bad=<n> missing=<n> stray=<n> receipts=<n> dup=<n> exceeds=<n> orphan=<n>
+CHECK MORE kind=<file|row|missing|stray|duplicate|split|exceeds|orphan> shown=<n> total=<t> nova-tokens check --out <dir> --max 0
+CHECK NOTE <the one remedy line>
+CHECK OK at=<stamp> build=<id> files=<n> rows=<n> first=<d> last=<d> missing=0 stray=0 receipts=<n> dup=0 split=0 exceeds=0 orphan=0
+CHECK FAIL files=<n> rows=<n> first=<d> last=<d> bad=<n> missing=<n> stray=<n> receipts=<n> dup=<n> split=<n> exceeds=<n> orphan=<n>
 CHECK REFUSED: <reason>
 SOURCES SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|mixed|<zone>> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
 SOURCES UNREADABLE label=<label> path=<path>: <why>
@@ -718,9 +743,9 @@ PUBLISH OK contribution=<hex> commit=<sha> pushed=<true|false> state=<published|
 PUBLISH FAIL contribution=<hex> reason=<differs|conflict|incomplete|malformed|changed|subset|unconfirmed> pushed=<true|false|->
 PUBLISH NOTE <the one remedy line>
 PUBLISH REFUSED: <reason>
-RECEIPT OK receipt=<id> pointer=usage:<id> node=<id> stage=<stage> session=<label>:<id> days=<n> rows=<n> input=<n|-> output=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> started=<stamp> ended=<stamp> at=<stamp> build=<id>
-RECEIPT FAIL session=<label>:<id> reason=<nosession|receipted|unreadable> [by=<id>]
-RECEIPT REFUSED: <reason>
+USAGE OK receipt=<id> pointer=note:usage:<id> node=<id> stage=<stage> session=<label>:<id> days=<n> rows=<n> input=<n|-> output=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> started=<stamp> ended=<stamp> at=<stamp> build=<id>
+USAGE FAIL session=<label>:<id> reason=<nosession|receipted|unreadable> [by=<id>]
+USAGE REFUSED: <reason>
 COST STAGE stage=<stage> receipts=<n> tokens=<n> dashes=<n> usd=<n|-> per_mtok=<n|->
 COST MODEL model=<model> receipts=<n> tokens=<n> dashes=<n> usd=<n|-> per_mtok=<n|->
 COST RECEIPT receipt=<id> node=<id> stage=<stage> session=<label>:<id> started=<stamp> ended=<stamp> wall=<d> tokens=<n> usd=<n|->
@@ -730,7 +755,7 @@ COST OK nodes=<n> receipts=<n> stages=<list> tokens=<n> dashes=<n> usd=<n|-> per
 COST REFUSED: <reason>
 HOT REPEAT kind=<read|command> tool=<name> count=<n> bytes=<n|->: <path or command>
 HOT LARGEST step=<n> tool=<name> bytes=<n>: <path or command>
-HOT MORE kind=<repeat|largest> shown=<n> total=<t> nova-tokens hot … --top 0 is refused; --top <t>
+HOT MORE kind=<repeat|largest> shown=<n> total=<t> nova-tokens hot … --top 0
 HOT OK session=<label>:<id> messages=<n> steps=<n> reads=<n> repeated=<n> repeated_steps=<n> repeated_bytes=<n> result_bytes=<n> unranked=<n> largest_bytes=<n> input=<n|-> output=<n|-> cache_read=<n|-> started=<stamp> ended=<stamp> at=<stamp> build=<id>
 HOT NOTE <one paragraph: the repeats, the largest step, and what this verb cannot see>
 HOT FAIL session=<label>:<id> reason=<nosession|reclaimed|unreadable> steps=<n>
@@ -744,10 +769,11 @@ FRICTION OK at=<stamp> who=<name> gap=<label> tool=<name|-> tokens=<n> rough=<0|
 FRICTION REFUSED: <reason>
 FRICTIONS GAP gap=<label> tool=<name|-> count=<n> tokens=<n> rough=<n> wall=<d> usd=<n|-> issues=<n> latest=<stamp>
 FRICTIONS MORE kind=gap shown=<n> total=<t> nova-tokens frictions … --max 0
-FRICTIONS OK gaps=<n> rows=<n> tokens=<n> rough=<n> wall=<d> usd=<n|-> issues=<n> since=<date|-> rates=<file|-> verified=<date|-> at=<stamp> build=<id>
+FRICTIONS OK gaps=<n> rows=<n> tokens=<n> rough=<n> wall=<d> usd=<n|-> issues=<n> since=<date|-> rates=<file|-> verified=<date|-> unpriced_rows=<n> at=<stamp> build=<id>
 FRICTIONS REFUSED: <reason>
 CHECK DUPLICATE session=<label>:<id> receipts=<id,id>
-CHECK EXCEEDS date=<d> model=<model> repo=<repo> type=<type> receipts=<n> day=<n>
+CHECK SPLIT receipt=<id> field=<node|stage|who|session> values=<a,b>
+CHECK EXCEEDS date=<d> model=<model> repo=<repo> type=<type> receipts=<n> day=<n>: nova-tokens fold --out <dir> --day <d>
 CHECK ORPHAN date=<d>
 SOURCES REFUSED: <reason>
 ```
@@ -797,14 +823,21 @@ nothing to either side of that share. `dashes=` is how many of the day's
 type cells are `-` and `nonutc=` how many of its rows carry a `day_basis`
 other than `utc`. `sources=` is the union of labels across the day's rows.
 
-**Amendment, 2026-09-13 (rules 32–38).** The new lines keep the rule: `OK`,
-`STAGE`, `MODEL`, `RECEIPT`, `REPEAT`, `LARGEST`, `ROW`, `GAP`, `NOTE` and
-`MORE` go to stdout; `FAIL`, `REFUSED`, `DUPLICATE`, `EXCEEDS` and `ORPHAN` go
-to stderr. `TOKENS DAY` gains `receipts=<n>`; `SUM PAIR`, `SUM MODEL` and
+**Amendment, 2026-09-13 (rules 32–38), draft 2.** The new lines keep the rule:
+`OK`, `STAGE`, `MODEL`, `RECEIPT`, `REPEAT`, `LARGEST`, `ROW`, `GAP`, `NOTE`
+and `MORE` go to stdout; `FAIL`, `REFUSED`, `DUPLICATE`, `SPLIT`, `EXCEEDS`
+and `ORPHAN` go to stderr. **The `receipt` verb's event token is `USAGE`, not
+`RECEIPT`** (draft 2): `RECEIPT` is nova-bus's own verb token and its
+informational token both (SPEC.md, the bus grammar,
+`RECEIPT OK recorded=<n> …`), and two binaries sharing a first token means one
+pasted line is evidence about two of them and one anchored scan matches the
+wrong tool — the adoption matrix's collision, and a reader's. A verb's token
+is not required to be its name here: `fold` prints `TOKENS`.
+`TOKENS DAY` gains `receipts=<n>`; `SUM PAIR`, `SUM MODEL` and
 `SUM TOTAL` gain `usd=<n|-> per_mtok=<n|-> priced_tokens=<n>
 unpriced_tokens=<n>`, and `SUM MONTH` gains `rates=<file|-> verified=<date|->`,
 all `-` without `--rates`; `CHECK OK` and `CHECK FAIL` gain `receipts=<n>
-dup=<n> exceeds=<n> orphan=<n>`. A `HOT NOTE` is the one line in this grammar
+dup=<n> split=<n> exceeds=<n> orphan=<n>`. A `HOT NOTE` is the one line in this grammar
 that is a paragraph, and it is still one line, capped at `oneline.TailBytes`
 before the escape, because Emma asked for a paragraph and the Conventions ask
 for a line, and a line long enough to be read as prose is both.
@@ -888,6 +921,28 @@ that file, and the file continues. `model` is `message.model`; a model of
 carries no such count (`reports=input,output,cache_write,cache_read`).
 `paths` are every string under every `tool_use` content block's `input`. The
 day is `timestamp[:10]`, UTC.
+
+**Amendment, 2026-09-13 (rule 35), draft 2: `hot` and `diff --session` need
+one more line kind from this reader, and that is a demanded change, not a
+parenthesis.** The reader above keeps a line only when it parses as JSON with
+a `message` object holding a `usage` object and an `id`, and it takes `paths`
+from `tool_use` inputs; a user turn carrying a `tool_result` block has
+neither, so the ratified reader discards exactly the lines `hot` must pair
+with a `tool_use` to know a step's result bytes. The reader therefore **also**
+surfaces, for `hot` and `diff --session` alone, each user turn's `tool_result`
+blocks with their `tool_use_id` and the byte length of the content the record
+holds. **This changes no count** (rules 4 and 15): a `tool_result` line
+carries no `usage` object, so it is not a message, it is not deduplicated by
+`id`, it feeds no `(day, model, repo)` row and no `messages=` count, and
+`fold`, `sum`, `report` and `receipt` see exactly what they saw before. It was
+stated in the first draft only inside a work-list item; a change to a ratified
+reader belongs in the reader's own section, with its test.
+**Demanded test.** A fixture transcript folded before and after the reader
+change yields byte-identical day files and identical `TOKENS SOURCE` counts
+(`files=`, `messages=`, `dup=`, `noid=`, `nousage=`, `unparsed=`, `rows=`);
+`hot` over the same fixture pairs every `tool_use` with its `tool_result` by
+`tool_use_id`; a `tool_result` the record carries by reference is `bytes=-`,
+ranks nowhere, and is counted in `HOT OK`'s `unranked=`.
 
 A file the tool cannot open is one `TOKENS UNREADABLE` line with the OS
 reason (rule 3). Today that is nine files under `/Users/rowan/.claude/…`,
@@ -1124,10 +1179,10 @@ sources. Ninety days under `--all`.
 | `publish` (2026-09-12, rules 22–31) | 1 PLAN + 20 FILE + 1 MORE + 1 SUBSET + 20 EXCLUDED + 1 MORE + 1 OK + 1 NOTE = 46 at a batch of 20 files; a refusal is at most 20 DIRTY + 1 MORE + 20 FILE + 1 MORE + 1 FAIL + 1 NOTE + one `REFUSED` per independent problem, that list being finite and enumerated by the exit-code table's amendment (eighteen), so 20 + 1 + 20 + 1 + 1 + 1 + 18 = 62 | under 12 KB |
 | `receipt` (2026-09-13, rule 32) | 1 OK or 1 FAIL + up to 20 UNREADABLE + 1 MORE = 22 | under 4 KB |
 | `cost` (2026-09-13, rule 33) | 6 STAGE + 20 MODEL + 1 MORE + 20 RECEIPT + 1 MORE + 1 OK + 1 NOTE = 50, at a node with 200 receipts on 25 models | under 12 KB |
-| `hot` (2026-09-13, rule 35) | 5 REPEAT + 1 MORE + 5 LARGEST + 1 MORE + 1 OK + 1 NOTE = 14 at `--top 5`, over a session of 5,000 steps and 200 MB of results | under 4 KB; the NOTE under `oneline.TailBytes` |
+| `hot` (2026-09-13, rule 35) | 5 REPEAT + 1 MORE + 5 LARGEST + 1 MORE + 1 OK + 1 NOTE = 14 at `--top 5`, over a session of 5,000 steps and 200 MB of results; at `--top 0` the listing is the caller's, as `--max 0` is everywhere (draft 2) | under 4 KB; the NOTE under `oneline.TailBytes` |
 | `diff` (2026-09-13, rule 36) | 20 ROW + 1 MORE + 1 OK = 22, over two day files of 200 rows | under 4 KB |
 | `frictions` (2026-09-13, rule 37) | 20 GAP + 1 MORE + 1 OK = 22, over a file of 10,000 rows on 500 gaps | under 4 KB |
-| `check` with receipts (2026-09-13, rule 34) | the `check` row above + 20 DUPLICATE + 1 MORE + 20 EXCEEDS + 1 MORE + 20 ORPHAN + 1 MORE = 127 | under 16 KB |
+| `check` with receipts (2026-09-13, rule 34, draft 2) | the `check` row above + 20 DUPLICATE + 1 MORE + 20 SPLIT + 1 MORE + 20 EXCEEDS + 1 MORE + 20 ORPHAN + 1 MORE + 1 NOTE = 149 | under 20 KB |
 
 These are ceilings that do not grow with the state. A test builds that state
 in `t.TempDir()`, runs every verb, and asserts the line and byte counts
@@ -1163,15 +1218,20 @@ clone of a git ledger the caller names. It is the only verb that runs `git`,
 the only verb that writes into a git clone, and it runs on an explicit
 invocation, never on a timer.
 
-**A contribution is one of two typed kinds, and they never mix.** The
+**A contribution is one of three typed kinds, and they never mix.** The
 retained batch is the endpoint; the aggregate exists so a bench with day files
 today is not blocked, and neither it nor the public subset may delay the
-endpoint (Stella, 2026-09-12).
+endpoint (Stella, 2026-09-12). **The third kind, the frictions file, joined on
+2026-09-13 with rule 37, and its row below is draft 2**: it is the one kind
+with an **append** transition, and it is a second door through which a
+destination's bytes change — named here, and in rules 22, 23, 24 and 26,
+rather than added under a rule that says there is only one door.
 
 | kind | flag | what it is | where it lands | destination is |
 |---|---|---|---|---|
 | **retained batch** — the endpoint | `--batch <dir>` | one `nova.tokens.coverage/2` envelope, the `observation/2` shards it references and any new `mapping/2` envelopes | `records/…`, `mappings/…`, `coverage/…`, the retained-format packet's paths (rule 29) | **content-addressed and immutable**: a path's name is its bytes' digest, so a path is written once and never replaced |
-| **v1 day file** — aggregate transport, explicitly typed | `--v1-day <dir> --day <d> --seat <label>` | one `<dir>/<day>.tsv` this bench folded | `v1-days/<seat>/<YYYY-MM>/<day>.tsv`, a subtree no records path uses | **mutable and named by the day**, so it has the one replace transition this spec allows, under `--supersede` (rule 26) |
+| **v1 day file** — aggregate transport, explicitly typed | `--v1-day <dir> --day <d> --seat <label>` | one `<dir>/<day>.tsv` this bench folded | `v1-days/<seat>/<YYYY-MM>/<day>.tsv`, a subtree no records path uses | **mutable and named by the day**, so it has the one **replace** transition this spec allows, under `--supersede` (rule 26); the frictions row below adds an **append** transition, which replaces nothing and needs no key (draft 2) |
+| **frictions file** — a bench's friction rows (rule 37, draft 2) | `--frictions <file> --seat <label>` | one `nova-tokens frictions v1` file this bench appends to | `frictions/<seat>.tsv`, a subtree neither `records/` nor `v1-days/` uses | **mutable and named by the seat**, with the **append** transition of rule 26's draft-2 clause: a destination whose rows are a prefix of this file's publishes with no key; anything else is `reason=differs` until `--supersede` |
 
 **What a user gets.**
 
@@ -1217,10 +1277,17 @@ remedy line. The rules are numbered on from rule 21.
 
 22. **`publish` is the one verb that runs `git`, it publishes one typed
     contribution per invocation, and it runs on an explicit invocation, never
-    on a timer.** `--batch` and `--v1-day` are mutually exclusive and one is
-    required; `--day` and `--seat` belong to `--v1-day` alone and are refused
+    on a timer.** **Amendment, 2026-09-13 (rule 37), draft 2: `--frictions`
+    is the third kind and `--seat` is shared.** `--batch`, `--v1-day` and
+    `--frictions` are mutually exclusive and one is
+    required; `--day` belongs to `--v1-day` alone and is refused
     with `--batch`, because a retained record carries its own day and its own
-    origin (rule 29). There is no `--all` and no "today": a clock never
+    origin (rule 29), and with `--frictions`, because a frictions file carries
+    many days and names none. **`--seat <label>` belongs to `--v1-day` and to
+    `--frictions`, is required with each, and is refused with `--batch`**:
+    both land in a subtree named by the seat, and the seat is what keeps one
+    bench's mutable file out of another's, while a retained record's origin is
+    inside the record. There is no `--all` and no "today": a clock never
     chooses what is uploaded, for the reason rule 12 gives. The verb reads the
     contribution's files and writes nothing under `--out`, `--v1-day` or
     `--batch`. It schedules nothing and wakes nothing; a LaunchAgent that runs
@@ -1337,7 +1404,13 @@ remedy line. The rules are numbered on from rule 21.
     path, `<path> sha256=<hex>`, then `inventory_sha256=<hex>` (rule 26's
     always-written digest over exactly those lines), then for a v1 day its `day=`,
     `seat=`, `rows_sha256=` and the file's own `at=` and `build=`, and
-    `supersedes=<rows_sha256>` on a `--supersede` run (rule 26). Nothing else.
+    `supersedes=<rows_sha256>` on a `--supersede` run (rule 26). **Amendment,
+    2026-09-13 (rule 37), draft 2:** for a **frictions file** the body carries
+    `kind=frictions`, `seat=`, `rows_sha256=`, the file's own `at=` and
+    `build=`, and exactly one of `appends=<hex|->` — the destination's
+    `rows_sha256` before this publish, `-` when the path was absent — or
+    `supersedes=<rows_sha256>` on a `--supersede` run, so the message says
+    which door was used and what it was appended to. Nothing else.
     No force, no amend, no rebase, no tag: a correction is a new commit.
     **Demanded test.** Every file on the remote branch byte-identical to the
     contribution's, a v1 day's version line and trailing newline included; the
@@ -1416,8 +1489,19 @@ remedy line. The rules are numbered on from rule 21.
          `PUBLISH FAIL reason=differs`, exit 1, until `--supersede`, which
          replaces that one path in a new commit and prints
          `state=superseded`. This is the only door in this machine through
-         which a destination's bytes are replaced, and `--supersede` is the
-         only key (rule 26).
+         which a destination's bytes are **replaced**, and `--supersede` is
+         the only key (rule 26). **Amendment, 2026-09-13 (rule 37), draft 2:
+         a frictions file is the second door, and going through it replaces
+         nothing.** For a `--frictions` contribution the comparison is rule
+         26's draft-2 clause: a destination whose rows below its version line
+         are a **prefix** of this file's rows is `state=appended`, exit 0, one
+         commit, no `--supersede` and not one byte of the destination
+         discarded; equal rows are `state=identical` and
+         `state=already-published`; rows that are neither — one dropped,
+         reordered or edited — are `PUBLISH FAIL reason=differs`, exit 1,
+         until `--supersede`, which replaces the path and prints
+         `state=superseded`. Appending is not replacing, which is why it needs
+         no key; what it must never do without one is lose a row.
       3. **Conflicting bytes at an immutable path** — a `records/`,
          `mappings/` or `coverage/` path present with bytes other than the
          digest that names it demands — is `PUBLISH FAIL reason=conflict`,
@@ -1558,7 +1642,8 @@ remedy line. The rules are numbered on from rule 21.
     no commit — the red being that without the check the private row lands.
     There is no `--stage` flag to test: rule 31 stages inside `--public`.
 
-26. **Identity, and the one replace transition.** A contribution's **id** is
+26. **Identity, the one replace transition, and — draft 2 — the one append
+    transition.** A contribution's **id** is
     defined per kind, and nothing else is required to equal it:
     - **a batch**: the coverage envelope's own content id, which
       [PROPOSAL-TOKENS-FORMAT.md](PROPOSAL-TOKENS-FORMAT.md) defines as the
@@ -1603,6 +1688,36 @@ remedy line. The rules are numbered on from rule 21.
     Identity is never a commit id, because a commit carries a clock.
     `already-published` is
     [SPEC-BUS-DELIVERY](SPEC-BUS-DELIVERY.md)'s word, deliberately.
+
+    **The frictions append transition (amendment, 2026-09-13, rule 37, draft
+    2).** A `frictions/<seat>.tsv` path is mutable and named by the seat, and
+    its identity is `rows_sha256`, the digest of every line below the version
+    line, exactly as a v1 day's. Its **four** transitions are: **absent** →
+    publish, `state=new`; **present with the same `rows_sha256`** →
+    `state=identical`, `PUBLISH OK … pushed=false state=already-published
+    attempts=0`, exit 0, no commit and no push; **present with rows that are a
+    proper prefix of this file's rows** → `state=appended`, exit 0, one commit
+    whose message carries `appends=<the destination's rows_sha256>` (rule 23),
+    **without `--supersede`**, the destination's rows preserved byte for byte
+    beneath the new ones; **present with rows that are neither** →
+    `PUBLISH FAIL reason=differs`, exit 1, until `--supersede`, which replaces
+    that one path and prints `state=superseded`. The prefix test is a byte
+    comparison of the destination's rows against this file's leading rows, so
+    an append can only add at the end: a friction row is never edited (rule
+    9), and a file that dropped or changed one is exactly what
+    `reason=differs` is for. On **absent**, **identical** and **appended**,
+    `--supersede` changes nothing at all, as it does for a v1 day — it is
+    permission to replace, never an instruction to write — and it remains
+    refused with `--batch`.
+    **Demanded test.** Publish a frictions file; `friction add` one row;
+    publish again: `state=appended`, exit 0, no `--supersede`, the commit
+    message carrying `appends=` equal to the first upload's `rows_sha256`, and
+    the ledger's leading rows byte-identical to the first upload's. Publish
+    unchanged: `state=already-published`, no commit, no push. Publish a file
+    with its second row deleted: `reason=differs`, exit 1, nothing written,
+    and `--supersede` lands one commit carrying `supersedes=`. **Red first**
+    against a rule that called every changed frictions file `differs`, and
+    against one that let a non-prefix through as an append.
     **Demanded test.** Publish, then publish again unchanged: the second is
     `state=already-published pushed=false attempts=0`, exit 0, with no
     `hash-object`, no `commit-tree` and no `push`, and one commit touching
@@ -1850,15 +1965,23 @@ efficiency from cheap models is an explicit goal, and the metric is *as good
 and cheaper, checking included*: "Are we spending more tokens checking the
 work, than if Opus just did the work, is the metric." Glenn, 2026-09-12:
 quality first, then tokens and cost, then wall clock. Glenn via Stella,
-2026-09-13 16:34Z: reduce the average cost per token AND the total tokens.
-Stella, 2026-09-13 15:30Z: "count review and repair, not merely builder
-tokens." Emma, 2026-09-13 (bus note emma-0fd8c03d5f24), verbatim: "Locating
+2026-09-13 16:34Z (note stella-ba384f9132f5, Glenn's own words as she carried
+them, draft 2): "Remember the training about reducing average cost per-token,
+and reducing total tokens used as goals" — and hers in the same note, on what
+the two objectives cover: "worker tokens PLUS planning/context, coordinator
+review, retries, corrections and rework." Stella, 2026-09-13 15:30Z (note
+stella-4b9200ddc994, draft 2), on what the next tools must measure:
+"retained token/cost accounting joined to execution attempts (count review and
+repair, not merely builder tokens)." Emma, 2026-09-13 (bus note emma-0fd8c03d5f24), verbatim: "Locating
 what caused token burns or repeat reads during long multi-step passes required
 heavy transcript digging. Verb: `nova-tokens hot --session <id> --top 5` —
 highlights the top repeated reads and largest step outputs in one
 human-readable paragraph." Rowan, 2026-09-11: 20 children and 2.2M tokens went
 mostly on fixing the same four tool gaps by hand — a friction with a cost and
-no record. Glenn, 2026-09-12: "a tool is only good if everybody adopts it";
+no record. (The record carries two counts of that day: 20 children and 2.2M
+tokens in the crystallize note, 21 and 2.4M in the window-tokens note. Neither
+is load-bearing here; this spec cites the first and says the second exists,
+draft 2.) Glenn, 2026-09-12: "a tool is only good if everybody adopts it";
 adoption per line is the tool's done, and each unadopted line answers the four
 questions (nova-tools #111 to #117).
 
@@ -1876,8 +1999,8 @@ contract. The rules are numbered on from rule 31.
 | the failure, from the record | the rule that closes it |
 |---|---|
 | a builder's tokens were on the day file and the reader's and the repair round's were on somebody else's row, and no line said the three were one task (Stella, **2026-09-13** 15:30Z) | a usage receipt names the **node** and the **stage** — one of the six names PROPOSAL-SCHEDULING-COST already uses — and `cost --node` sums every stage, printing each (rules 32, 33) |
-| nova-work's `:attempt` carries `:usage`, "a pointer to a token record (#181)", and nothing defined what the pointer names (SPEC-WORK draft 12, **2026-09-13**) | the pointer is `usage:<receipt-id>`; the receipt is a row this tool wrote, keyed `(day, model, repo, receipt)`, and the id is a draw, so the receipt exists before the attempt event that names it (rule 32) |
-| "how can we reduce our average cost per-token" and "how can we do more work with fewer tokens" were two questions with no line that answered both (Glenn, **2026-09-12** 20:45Z, 21:16Z) | `COST OK` and `SUM TOTAL --rates` print `tokens=`, `usd=` and `per_mtok=` beside each other, with the denominator and `unpriced=` (rules 33, 38) |
+| nova-work's `:attempt` carries `:usage`, "a pointer to a token record (#181)", and nothing defined what the pointer names (SPEC-WORK draft 12, **2026-09-13**) | the pointer is `note:usage:<receipt-id>` — the one scheme SPEC-WORK accepts on an attempt's `:usage` today (draft 2) — the receipt is a row this tool wrote, keyed `(day, model, repo, receipt)`, and the id is a draw, so the receipt exists before the attempt event that names it (rule 32) |
+| "how can we reduce our average cost per-token" and "how can we do more work with fewer tokens" were two questions with no line that answered both (Glenn, **2026-09-12** 20:45Z, both in the one minute; draft 2) | `COST OK` and `SUM TOTAL --rates` print `tokens=`, `usd=` and `per_mtok=` beside each other, with the denominator and `unpriced=` (rules 33, 38) |
 | the spec said "it does not price anything" while the maintainer keeps a rate table and asked that "nova-tokens grows a rates input" (nova-tools #175, **2026-09-12** 21:25Z) | pricing is `--rates <file>`, the caller's dated table, list rate only, nothing compiled in; a model or type with no rate is `unpriced`, never zero (rule 38) |
 | finding a repeat read in a long pass was "heavy transcript digging" (Emma, **2026-09-13**) | `hot`: the top N repeated reads and largest step outputs of one session, a bounded listing and one `HOT NOTE` paragraph, and what it cannot see said on the same line (rule 35) |
 | two day files, and no way to say what moved but reading both | `diff`: rows added, removed and changed by type, largest movement first, capped, a dash on either side a dash (rule 36) |
@@ -1889,8 +2012,15 @@ contract. The rules are numbered on from rule 31.
 32. **A usage receipt is one session's spend, folded by the same readers,
     joined to one work node and one stage, and never typed.**
     `receipt` reads exactly one session from one declared source — a Claude
-    Code transcript by its session id (`--claude <label>=<dir> --session <id>`,
-    the file whose name or whose lines' `sessionId` is that id), an OpenCode
+    Code transcript by its session id (`--claude <label>=<dir> --session
+    <id>`; **the session is every message line under `<dir>` whose `sessionId`
+    field is that id, in sorted path order, whatever file holds it** — draft
+    2, one reading where the first draft had two: a file named for the id
+    whose lines carry another `sessionId` is not the session, and an Agent
+    child transcript is inside this receipt exactly when its lines carry the
+    parent's id and is its own receiptable session when they do not; the
+    record decides, never the file name, which is the same rule that folds an
+    OpenCode child into its parent below), an OpenCode
     session by its `session.id` (`--opencode <label>=<file> --scratch <dir>
     --session <id>`, the session and its child sessions, as the fold already
     inherits them), or a swarm job by its id (`--swarm <label>=<pool> --job
@@ -1918,11 +2048,27 @@ contract. The rules are numbered on from rule 31.
     `<label>:<id>`; `started` and `ended`, the first and last message stamps
     the session's own records carry, UTC, so a receipt's wall clock is the
     source's and not a person's; and the receipt id. **The join is one
-    pointer each way, each written once.** `RECEIPT OK` prints
-    `pointer=usage:<receipt-id>`, and that is the string the caller hands to
+    pointer each way, each written once.** `USAGE OK` prints
+    `pointer=note:usage:<receipt-id>`, and that is the string the caller hands
+    to
     `nova-work attempt --node <id> --model <m> --bench <b> --result <p>
-    --usage usage:<receipt-id>`; the `:attempt` event thereby names the
-    receipt, and the receipt names the node. The attempt's own event id is
+    --usage note:usage:<receipt-id>`; the `:attempt` event thereby names the
+    receipt, and the receipt names the node. **The scheme is
+    `note:<scheme>:<id>`, which SPEC-WORK accepts today** (draft 2, replacing
+    a bare `usage:` that nothing accepts). SPEC-WORK's draft ships a **closed
+    six** — `commit:<sha>`, `run:<owner/repo>#<id>`,
+    `pr:<owner/repo>#<n>@<sha>`, `file:<path>@<sha>`,
+    `test:<package>/<name>@<sha>` and `note:<scheme>:<id>`, the last "for any
+    team's message store, so that no family's bus is named in the tool" — and
+    it says a `note:` pointer "is accepted on a heartbeat and on an attempt's
+    `:usage`, never as evidence for `:done`". That is exactly where a spend
+    record belongs and exactly where it must not be: a receipt is a
+    measurement, never completion evidence, and nova-work's check 5 refuses a
+    `:to :done` that stands on a `note:` pointer. A pointer spelled
+    `usage:<id>` is on none of the six and is refused by nova-work as it
+    stands, so this spec does not spell it that way; listing `usage:` among
+    the schemes would be a separate amendment to SPEC-WORK, and **nothing
+    here waits on it**. The attempt's own event id is
     nova-work's, assigned after the receipt exists, and is written **nowhere
     in this tool's files**: a receipt that had to be rewritten to carry it
     would be a read-modify-write of a record rule 9 says is never edited, and
@@ -1932,10 +2078,10 @@ contract. The rules are numbered on from rule 31.
     `:review-attest`) events, one `node` and three `stage` values —
     `implementation`, `review`, `correction` — and nothing joins them but the
     node id they each carry. A `--stage` outside the six, a `--node` that is
-    empty, a session the source does not hold (`RECEIPT FAIL
+    empty, a session the source does not hold (`USAGE FAIL
     reason=nosession`), or a session already receipted (`reason=receipted`,
     naming the earlier id) writes nothing. A source file the receipt needs
-    that cannot be read is `TOKENS UNREADABLE` and `RECEIPT FAIL
+    that cannot be read is `TOKENS UNREADABLE` and `USAGE FAIL
     reason=unreadable`, **nothing written**: `fold` writes what it could and
     exits 1 because a day is a sum of many files; a receipt over half a
     session is a wrong number about one task. `--who <name>` is carried as
@@ -1944,9 +2090,10 @@ contract. The rules are numbered on from rule 31.
     `:attempt` event; #181.)
     **Demanded test.** A fixture transcript directory holding three sessions:
     `receipt --session A --node n1 --stage implementation` writes rows whose
-    `(model, repo, type)` counts equal `fold --claude` over that one file
-    alone, `RECEIPT OK` prints `pointer=usage:<32 hex>` and `rows=`, a second
-    `receipt` over A is `RECEIPT FAIL reason=receipted` naming the first id
+    `(model, repo, type)` counts equal `fold --claude` over exactly the lines
+    whose `sessionId` is A (draft 2), `USAGE OK` prints
+    `pointer=note:usage:<32 hex>` and `rows=`, a second
+    `receipt` over A is `USAGE FAIL reason=receipted` naming the first id
     with the receipts file byte-identical; sessions B (`--stage review`) and C
     (`--stage correction`) on `n1` land three receipts; a session spanning
     midnight lands rows in two receipts files under one id; `--stage builder`
@@ -1956,14 +2103,27 @@ contract. The rules are numbered on from rule 31.
     on `fold.lock` and both land; an OpenCode fixture with a child session
     folds the child into the parent's receipt; a swarm fixture `--job J`
     writes one receipt from the usage file with `started`/`ended` from its
-    `started`/`ended` columns; the pointer string parses under nova-work's
-    pointer grammar `<scheme>:<id>` (a test in this repository holds the
-    regexp SPEC-WORK prints, and fails when the two disagree).
+    `started`/`ended` columns; a Claude fixture whose Agent child transcript
+    carries the **parent's** `sessionId` folds that child's messages into the
+    receipt, while a second child carrying its **own** id is excluded from it
+    and is receiptable on its own (draft 2); and **the pointer is one of
+    SPEC-WORK's six schemes** (draft 2): a table test holds the six SPEC-WORK
+    enumerates — `commit:`, `run:`, `pr:`, `file:`, `test:` and
+    `note:<scheme>:<id>` — asserts that `note:usage:<32 hex>` is a
+    `note:<scheme>:<id>` and is accepted on an attempt's `:usage` and refused
+    as `:done` evidence, and asserts that a bare `usage:<32 hex>` matches
+    **none** of the six, so the test goes red the day this spec spells the
+    pointer a way nova-work refuses. It is a table of the six, not a generic
+    regexp: SPEC-WORK prints an enumeration and a test against an invented
+    `<scheme>:<id>` regexp would pass vacuously.
 
 33. **`cost --node <id>` sums every receipt of a node across every stage,
     and prints total tokens, list-rate dollars and the average per million
     beside each other, with the denominator.** It walks
-    `<out>/receipts/*.tsv` (or `--month <m>` alone), selects rows whose
+    `<out>/receipts/*.tsv`, or only that month's receipts files when
+    `--month <m>` is given — `--node` is required either way, and `--month`
+    narrows the files read, never replaces the selection (draft 2) — selects
+    rows whose
     `node` equals a `--node` given (repeatable; exact match, never a prefix,
     because containment is nova-work's `:children` and not a string's shape,
     and a prefix would be a guess), and prints: `COST STAGE` per stage
@@ -1974,7 +2134,9 @@ contract. The rules are numbered on from rule 31.
     `started=`, `ended=`, `wall=` (`ended` minus `started`); then `COST OK
     nodes=<n> receipts=<n> stages=<list> tokens=<n> dashes=<n> usd=<n|->
     per_mtok=<n|-> priced_tokens=<n> unpriced_tokens=<n> wall=<d>
-    rates=<file|-> verified=<oldest date|->`. **Review and repair are in
+    rates=<file|-> verified=<date|->`, where `verified=` is the oldest
+    `verified` date **among the rate rows this run actually priced with**
+    (rule 38, draft 2). **Review and repair are in
     the sum by construction**: there is no flag that selects a stage, only
     `COST STAGE` lines that show each, because a cost that could be asked
     "builder only" would be the number Stella's sentence forbids. `usd=` is
@@ -1989,8 +2151,11 @@ contract. The rules are numbered on from rule 31.
     says `wall=` is a sum. A node with no receipt is `COST OK nodes=1
     receipts=0 tokens=0 …`, exit 0, and `COST NOTE` says no receipt names it
     — unmeasured, never zero. `cost` is a **report**; never gate on it.
-    (Glenn, 2026-09-12 20:45Z and 21:16Z; Stella, 2026-09-13 15:30Z; Glenn
-    via Stella, 2026-09-13 16:34Z.)
+    (Glenn, 2026-09-12 20:45Z, where both questions are asked in the one
+    minute — 21:16Z is the *Assume API rate* sentence rule 38 quotes, and the
+    first draft cited it here for a question it does not carry, draft 2;
+    Stella, 2026-09-13 15:30Z, stella-4b9200ddc994; Glenn via Stella,
+    2026-09-13 16:34Z, stella-ba384f9132f5.)
     **Demanded test.** Three receipts on `n1` (implementation 100/10,
     review 20/5, correction 30/8 input/output) and one on `n2`: `cost --node
     n1` prints three `COST STAGE` lines in the fixed order, `tokens=173`,
@@ -2014,16 +2179,32 @@ contract. The rules are numbered on from rule 31.
     by rule 17, `sources` the one label the receipt was read from. Rows are
     sorted by `(receipt, model, repo)` and unique by that key. `check`
     (rule 13, amended) also walks `<out>/receipts/`, applies the same row
-    rules, and verifies **three joins**: every receipt's `session` appears
+    rules, and verifies **four joins** (draft 2): every receipt's `session`
+    appears
     under exactly one receipt id across the whole directory (`CHECK
-    DUPLICATE session=<s> receipts=<id,id>`); for every `(day, model, repo)`
+    DUPLICATE session=<s> receipts=<id,id>`); **every row sharing a receipt id
+    carries one `node`, one `stage`, one `who` and one `session`** (`CHECK
+    SPLIT receipt=<id> field=<node|stage|who|session> values=<a,b>`, draft 2),
+    because a receipt is one session joined to one node at one stage — rule
+    15's key makes the rows unique by `(receipt, model, repo)` and nothing
+    else stopped one receipt from carrying two nodes, which `cost --node`
+    would then count under both; for every `(day, model, repo)`
     that has receipts and a day file row, each type's receipt sum is not
     greater than the day file's cell where both are numbers (`CHECK EXCEEDS
     date= model= repo= type= receipts=<n> day=<n>`: a receipt is a subset
-    of a fold over the same source, so more is a wrong receipt or a shrunken
-    day); and a receipts file whose day has no day file is `CHECK ORPHAN
-    date=<d>`, named, because a receipt for a day nobody folded is a number
-    with nothing to check it against. Each is exit 1. `check` never fills, and
+    of a fold over the same source, so more is a wrong receipt, a shrunken
+    day, or — the common case, and the reason the line carries its remedy
+    first (draft 2) — a day folded before the session ended:
+    `nova-tokens fold --out <dir> --day <d>`); and a receipts file whose day
+    has no day file is `CHECK ORPHAN date=<d>`, named, because a receipt for a
+    day nobody folded is a number with nothing to check it against.
+    **The ordinary order is a receipt when the session ends and a fold that
+    night** (draft 2), so a receipts file for a day **newer than the newest
+    day file present** is not an orphan and not a finding: it is one
+    `CHECK NOTE`, naming the days and `fold --day`, exit 0. `CHECK ORPHAN` is
+    a day at or before the newest day file whose own day file is absent — the
+    fold went past it and did not write it, which is also `CHECK MISSING` for
+    the day files themselves. Each finding is exit 1. `check` never fills, and
     `receipts/` is not a stray: it is the one subdirectory this spec names
     under `--out`, and anything else under it is `CHECK STRAY`. `sum` does
     not read receipts (a day file already holds the day; receipts are its
@@ -2034,19 +2215,34 @@ contract. The rules are numbered on from rule 31.
     **Demanded test.** A receipts file with sixteen columns is `CHECK FAIL`
     naming the line; two receipt ids for one `session` is `CHECK DUPLICATE`;
     a receipt whose `input` exceeds the day file's cell is `CHECK EXCEEDS`
-    while an equal one is clean and a `-` on either side is not compared; a
-    receipts file for a day with no day file is `CHECK ORPHAN`; a file
+    carrying `fold --day` as its remedy, while an equal one is clean and a `-`
+    on either side is not compared; two rows of one receipt id carrying two
+    `node` values are `CHECK SPLIT`, and two carrying two `stage` values are
+    another, while a receipt spanning two models and two repos under one node
+    and stage is clean (draft 2); a
+    receipts file for a day **at or before** the newest day file and with no
+    day file of its own is `CHECK ORPHAN`, exit 1, while a receipts file for a
+    day **newer** than every day file is one `CHECK NOTE` and exit 0 (draft
+    2); a file
     `receipts/notes.txt` is `CHECK STRAY`; a clean set is `CHECK OK … dup=0
-    exceeds=0 orphan=0`; `TOKENS DAY receipts=` equals the rows in that
+    split=0 exceeds=0 orphan=0`; `TOKENS DAY receipts=` equals the rows in that
     day's receipts file; `sum` opens nothing under `receipts/` (a tripwire on
     opened paths).
 
 35. **`hot` reports the repeated reads and the largest step outputs of one
     session, bounded, in the grammar and in one paragraph, and says what it
     cannot see.** The session is named as `receipt` names it (rule 32's
-    three forms); `--top <n>` defaults to 5 (Emma's number; `0` refused,
-    because a listing of nothing is not a report) and bounds each of the two
-    listings separately, per kind. A **step** is one tool call and its
+    three forms); `--top <n>` defaults to 5 (Emma's number) and bounds each of
+    the two
+    listings separately, per kind. **`--top 0` means all** and a negative
+    `--top` is exit 2 (draft 2, correcting a first draft that refused `0`):
+    SPEC.md's Conventions fix `0` as *all* for every ceiling in this family
+    and say that "a ceiling a caller cannot lift is a tool deciding what its
+    user may see"; `hot` has no `--max`, so `--top` is its only ceiling, and
+    a third reading of `0` in one family is a flag two readers would spell
+    differently. The `HOT MORE` remedy is therefore `--top 0`, a flag that
+    works — a cap with no remedy is censorship, and a cap whose remedy is
+    refused is worse. A **step** is one tool call and its
     result: for a Claude Code transcript, a `tool_use` block in an assistant
     message and the `tool_result` block in the following user message whose
     `tool_use_id` matches; for OpenCode, a `part` row of type `tool` and its
@@ -2066,16 +2262,24 @@ contract. The rules are numbered on from rule 31.
     result, largest first: `step=` (its ordinal in the session), `tool=`,
     `bytes=`, and the path or command. `HOT OK session=<label>:<id>
     messages=<n> steps=<n> reads=<n> repeated=<n> repeated_steps=<n>
-    repeated_bytes=<n> result_bytes=<n> largest_bytes=<n> input=<n|->
-    output=<n|-> cache_read=<n|-> started=<stamp> ended=<stamp>` puts the
+    repeated_bytes=<n> result_bytes=<n> unranked=<n> largest_bytes=<n>
+    input=<n|->
+    output=<n|-> cache_read=<n|-> started=<stamp> ended=<stamp> at=<stamp>
+    build=<id>` — the same fields the output grammar prints, `unranked=`,
+    `at=` and `build=` included, which the first draft's copy of this line
+    dropped (draft 2); `unranked=` is the steps whose result the record does
+    not carry, which rank nowhere and are counted in `steps=` — puts the
     session's own token counts (from the same messages, by rule 4) beside
     the step bytes, so a reader sees how much of a session's output tokens
     are tool results it read back. Then exactly one `HOT NOTE`, Emma's
     paragraph, one line under `oneline.TailBytes`: how many of the steps were
     repeats and what share of the result bytes they were, the one read
     repeated most and the one step that was largest, and **what this verb
-    cannot see**, always said: it counts the bytes of a result as the record
-    holds them, not the tokens they became (a byte is not a token, and the
+    cannot see**, always said, opening with the phrase this spec **fixes** so
+    a test can assert it rather than assert that a phrase exists (draft 2) —
+    `cannot see: bytes are not tokens` — and then: it counts the bytes of a
+    result as the record
+    holds them, not the tokens they became (the
     provider's count is on the message, not the step); a result the harness
     truncated before recording is counted at its recorded length; a step
     whose result the record does not carry is `bytes=-` and not ranked
@@ -2101,7 +2305,11 @@ contract. The rules are numbered on from rule 31.
     with `state.output` NULL prints `bytes=-` for that step; a swarm job
     under `done/` with its data home reclaimed is `HOT FAIL
     reason=reclaimed`, exit 1, and the opened-paths tripwire finds only that
-    job's directory; `--top 0` is exit 2.
+    job's directory; `HOT NOTE` begins with the fixed phrase
+    `cannot see: bytes are not tokens`; `HOT OK` carries `unranked=` equal to
+    the steps whose result the record does not hold; `--top 0` prints every
+    repeat and every ranked step with **no** `HOT MORE` of either kind, and
+    `--top -1` is exit 2 (draft 2).
 
 36. **`diff` says what moved between two day files or two sessions, largest
     movement first, bounded, and a dash on either side is a dash.** Over
@@ -2109,8 +2317,11 @@ contract. The rules are numbered on from rule 31.
     `(model, repo)` rows, one `DIFF ROW model= repo= type= from=<n|-|absent>
     to=<n|-|absent> delta=<n|->` per type whose two sides differ, sorted by
     absolute delta descending, then by name, capped; `delta=-` when either
-    side is `-` or the row is absent on one side (absent is not zero: a row
-    that appeared is `from=absent`, counted `added=`, never `delta=+all`);
+    side is `-`. **A row present on one side only is ONE row line, not five**
+    (draft 2): `type=-`, `from=absent` or `to=absent`, `delta=-`, counted in
+    `added=` or `removed=` — five lines each saying *absent* about one row say
+    nothing the one line does not, and they are four lines of a bounded
+    listing spent on it (absent is not zero, and never `delta=+all`);
     then `DIFF OK kind=day from=<d1> to=<d2> rows_from=<n> rows_to=<n>
     added=<n> removed=<n> changed=<n> tokens_from=<n> tokens_to=<n>
     delta=<n> dashes=<n> turns_from=<n|-> turns_to=<n|->`. Over sessions,
@@ -2158,14 +2369,23 @@ contract. The rules are numbered on from rule 31.
     writes old rows plus the new one through `<file>.tmp` and one rename
     under an `flock` on `<file>.lock`, and a file whose existing rows do not
     parse is exit 2 naming the line, nothing written. `frictions --frictions
-    <file> [--rates <file>] [--since <date>] [--max <n>]` prints one
+    <file> [--rates <file> --out <dir>] [--since <date>] [--max <n>]` prints
+    one
     `FRICTIONS GAP gap=<label> tool=<name|-> count=<n> tokens=<n> rough=<n>
     wall=<d> usd=<n|-> issues=<n> latest=<stamp>` per gap, **tokens
     descending**, capped, then `FRICTIONS OK gaps=<n> rows=<n> tokens=<n>
-    rough=<n> wall=<d> usd=<n|-> issues=<n> since=<date|->`; `usd=` by rule
-    38 from the receipts' models where a receipt is named and `-` for a
-    rough row, so a gap's dollars are a lower bound and the line's `rough=`
-    says how many rows carry none. It is a **report**, exit 0. **Why this
+    rough=<n> wall=<d> usd=<n|-> issues=<n> since=<date|-> rates=<file|->
+    verified=<date|-> unpriced_rows=<n>`. **A friction row carries one token
+    sum and no model, so it cannot be priced from itself** (draft 2, where the
+    first draft demanded a price it had no counts for): `usd=` is computed by
+    **joining the row's `receipt` id to `<out>/receipts/*.tsv`** and pricing
+    that receipt's own per-model, per-type cells by rule 38 — the same
+    function `cost` uses, over the same rows, so the two agree by
+    construction. `--rates` therefore **requires `--out <dir>`** and is exit 2
+    without it, the way `--scratch` follows `--opencode`; and a rough row, or
+    a row whose receipt id is not under `--out`, prices to nothing and is
+    counted in `unpriced_rows=`. A gap's dollars are a lower bound, and the
+    line says in how many rows. It is a **report**, exit 0. **Why this
     verb is on `nova-tokens` and not `nova-board`.** A friction is a
     measurement before it is an obligation: its tokens and wall clock come
     from the receipts and readers this tool owns, its listing is a cost
@@ -2182,12 +2402,18 @@ contract. The rules are numbered on from rule 31.
     at the issue. **The frictions file is publishable** as a third typed
     contribution, `publish --frictions <file> --seat <label>`, landing at
     `frictions/<seat>.tsv` — a subtree neither `records/` nor `v1-days/`
-    uses — mutable, with one transition of its own: **append**, where the
-    destination's bytes below its version line are a prefix of the file's,
+    uses — mutable, with one transition of its own: **append**, where a
+    destination whose rows below its version line are a prefix of this file's
     publishes without `--supersede`; a destination that is not a prefix is
     `reason=differs` until `--supersede`; identity is the digest of the rows
-    below the version line, as rule 26 defines a v1 day's. Everything else
-    about `publish` (rules 22 to 31) holds unchanged, and `--frictions` is
+    below the version line, as rule 26 defines a v1 day's. **It does not hold
+    under rules 22 to 31 as they stood; it opens its own dated door in them**
+    (draft 2, where the first draft said they held unchanged and rules 22, 24
+    and 26 said otherwise): rule 22 gives `--seat` to this kind as well as to
+    `--v1-day` and refuses `--day` with it; rule 23 gives the commit message
+    its `kind=frictions`, `seat=`, `rows_sha256=` and `appends=<hex|->`
+    fields; rule 24's present case names the second door; and rule 26 carries
+    the four transitions and the demanded test. `--frictions` is
     refused with `--batch`, `--v1-day`, `--day` or `--public`. (Rowan,
     2026-09-11: 2.2M tokens on four gaps by hand; Glenn, 2026-09-11,
     crystallize; Glenn, 2026-09-11, ideas are issues.)
@@ -2201,9 +2427,14 @@ contract. The rules are numbered on from rule 31.
     and both rows land; `frictions` over five rows on three gaps prints
     three `GAP` lines in tokens-descending order, `issues=` counting rows
     with an issue, `--since` excluding older rows from every count,
-    `--rates` pricing only the receipt-backed rows; `publish --frictions`
+    `--rates --out <dir>` pricing exactly the rows whose `receipt` id is under
+    `--out` — its `usd=` equal to `cost`'s over those same receipts to the
+    printed precision — with `unpriced_rows=` counting the rough rows and the
+    receipt-less ones, and `--rates` **without** `--out` exit 2 (draft 2);
+    `publish --frictions`
     lands `frictions/<seat>.tsv`, a second publish after one more `add` is
-    `state=published` with no `--supersede` (the append transition), a
+    `state=appended`, exit 0, with no `--supersede` and a commit message
+    carrying `appends=`, a
     publish whose file dropped a row is `reason=differs`, and `--frictions`
     with `--batch`, `--v1-day` or `--public` is exit 2 each.
 
@@ -2214,13 +2445,31 @@ contract. The rules are numbered on from rule 31.
     skipped, a `-` cell meaning the provider publishes no such rate (so that
     type on that model is **unpriced**), `verified` a `YYYY-MM-DD` the caller
     checked the row, `source` a URL or a word. A malformed line is exit 2
-    naming it; a model named twice is exit 2. Pricing is `sum(count × rate /
+    naming it; a model named twice is exit 2 — which is why a table
+    maintained elsewhere in another shape (a `who` or a `notes` column, no
+    `reasoning`, or two rows for one model's peak and off-peak) is **the
+    caller's to convert** into these eight columns before it is handed to
+    `--rates`: this tool reads one shape, prices from it and reports
+    `verified=` out of it, and a converter that guessed which of two rows to
+    take would be the guess rule 1 forbids (draft 2). Pricing is `sum(count × rate /
     1,000,000)` over the cells that have both a number and a rate, per type,
-    per model; every other cell's tokens go to `unpriced_tokens=`. Every
-    line that prints `usd=` prints `rates=<file>` and `verified=<the oldest
-    verified date in the file>` beside it, so a stale table is visible on the
-    number it produced, and prints `unpriced_tokens=` so a mean can never
-    fall by leaving something out. The rate is the **list rate** (Glenn,
+    per model; every other cell's tokens go to `unpriced_tokens=`. **Every
+    run that prints `usd=` prints `rates=<file>` and `verified=<date>` once,
+    on its own count line** — `SUM MONTH`, `COST OK`, `FRICTIONS OK` — and
+    every listing line beneath it prints `usd=` and `unpriced_tokens=` without
+    them (draft 2, correcting a sentence this rule made that its own grammar
+    never kept: `SUM PAIR`, `SUM MODEL` and `SUM TOTAL` print `usd=` and only
+    `SUM MONTH` carries `rates=`). One file name repeated on two hundred
+    `SUM PAIR` lines is two hundred copies of one fact; one run, one
+    provenance line, and no `usd=` is ever printed by a run that did not print
+    it. `verified=` is the oldest `verified` date **among the rate rows this
+    run actually priced with**, not the oldest in the file, so one stale row
+    nothing used cannot taint every number (draft 2), and it is `-` when no
+    row was used. **A model or type with no rate is never priced at zero and
+    never printed as `usd=0`** (draft 2): its tokens are `unpriced_tokens=`,
+    and any line whose `priced_tokens=0` prints `usd=-` and `per_mtok=-` —
+    a `usd=0` there would be the harm this rule forbids, inverted, and a
+    `usd=0` is only ever a rate of zero the caller typed. The rate is the **list rate** (Glenn,
     2026-09-12 21:16Z: "Assume API rate, and factor this in"), whatever the
     account pays; this tool knows nothing of subscriptions, credits or
     invoices, and `usd=` is never called a bill. A local model is a row with
@@ -2245,8 +2494,16 @@ contract. The rules are numbered on from rule 31.
     `priced_tokens`; a month whose every priced count is zero prints
     `per_mtok=-`; a model row with all zeros prices to `usd=0` and
     `unpriced_tokens=0`; a malformed rate line and a duplicate model are exit
-    2 naming the line; `verified=` is the oldest date in the file; a source
-    test finds no numeric rate and no model name in the binary.
+    2 naming the line; `verified=` is the oldest date **among the rows the
+    run priced with**, and a stale row no line used does not appear in it
+    (draft 2); a `SUM PAIR` on a model the table does not name prints `usd=-`
+    and never `usd=0` at `priced_tokens=0`, while `SUM MONTH` alone carries
+    `rates=` and `verified=`; and a source test over
+    `internal/tokens/rates.go` finds **no floating-point literal other than 0
+    and 1 and no string literal that is a model name** — the mechanical form
+    of *nothing is compiled in*, where *no model name in the binary* was not
+    falsifiable, `<synthetic>` being a model name the Claude reader must know
+    (draft 2).
 
 ### The receipts file
 
@@ -2261,7 +2518,9 @@ Seventeen columns, every one written on every row; the five types by rule 15;
 `day_basis` by rule 17; `sources` the one label the receipt was read from;
 `session` the label and the source's own session or job id. Rows are sorted
 and unique by `(receipt, model, repo)`. The first line is the version and stamp
-line (rule 12). A receipt spanning two UTC days is rows in two files under one
+line of rule 12's shape **without `turns=`** (draft 2): a receipt is one
+session's spend, and the turn count rule 12 puts on a day file is a fact about
+a day. A receipt spanning two UTC days is rows in two files under one
 id, and `cost` joins them by the id.
 
 ### Adoption: the matrix lives on `nova-update` (amendment note)
@@ -2292,16 +2551,29 @@ nova-update adoption --bus <dir> --tools <file> --since <YYYY-MM-DD> [--tokens-o
 `<dir>/participants.json` the **lines** (never a compiled-in list); `--tools
 <file>` is the caller's table, `name<TAB>first-tokens<TAB>questions`, one tool
 per line, `first-tokens` the comma-joined first tokens of that tool's output
-grammar (`TOKENS,REPORT,SUM,CHECK,SOURCES,PUBLISH,RECEIPT,COST,HOT,DIFF,
-FRICTION,FRICTIONS` for this tool; `SEND,INBOX,RECEIPT,BUS` for nova-bus), and
+grammar (`TOKENS,REPORT,SUM,CHECK,SOURCES,PUBLISH,USAGE,COST,HOT,DIFF,
+FRICTION,FRICTIONS` for this tool, `USAGE` being the `receipt` verb's token
+since draft 2; `SEND,INBOX,RECEIPT,BUS` for nova-bus), and
 `questions` the URL of the issue holding the four questions for that tool (our
 #111 to #117 are an instance); `--since` bounds the evidence window, required,
-no default. The **evidence**, each kind read from files, none of them a
-person's word alone:
+no default. **A first token that appears against two tools in the file is
+exit 2, naming both** (draft 2): one pasted line would otherwise mark two
+tools adopted at once, which is exactly what `RECEIPT` did for nova-tokens and
+nova-bus in the first draft's own example, before the rename.
+
+The **evidence is an enumerated set**, each kind read from files, none of them
+a person's word alone, and every kind decidable from the `--tools` file
+itself — there is no such thing here as *a count-line token*, which named no
+set and which two builds would enumerate differently (draft 2). A body line is
+evidence only in one of two shapes: a **version line**, four tokens, the first
+exactly the tool's `name` and the rest the shape SPEC.md fixes for
+`<tool> version` (a build identity, `<goos>/<goarch>`, a `go` version); or a
+**verdict line**, whose first token is one of that tool's `first-tokens` and
+whose second is exactly `OK` or `FAIL`, nothing else.
 
 | cell | evidence, from the record | never |
 |---|---|---|
-| `adopted` | a note in that line's lane, dated in the window, whose body carries a line whose first token is one of the tool's and whose second token is `OK`, `FAIL` or a count-line token — the tool's own output, pasted, which a line cannot write without running it; or, with `--tokens-out`, a day file row whose `sources` carries `bus:<line>` (the line ran `report`) or a receipt whose `who` is the line; or a `REPORT SENT` line naming the line as `--as` | a sentence saying "I use it" |
+| `adopted` | a note in that line's lane, dated in the window, whose body carries **the tool's version line** (first token exactly the tool's `name`, then a build identity, `<goos>/<goarch>` and a `go` version — what `<tool> version` prints, SPEC.md) or one of the tool's enumerated **verdict lines** (`<T> OK` or `<T> FAIL` for a `<T>` among that tool's `first-tokens`); or, with `--tokens-out`, a day file row whose `sources` carries `bus:<line>` (the line ran `report`) or a receipt whose `who` is the line; or a `REPORT SENT` line naming the line as `--as` | a sentence saying "I use it"; a body line whose second token is neither `OK` nor `FAIL`; a first token two tools in the file claim |
 | `trying` | with `--reports`, a `REPORT TOOL name=<tool>` line from a `nova-update report` that line sent (its `as=`), dated in the window, and no `adopted` evidence | an install on another host counted for this line |
 | `declined` | a note in the line's lane whose subject is exactly `adoption <tool> declined` — the one self-report the matrix accepts, because declining is the line's to say; the note id is printed | a silence |
 | `unknown` | none of the above | a guess either way |
@@ -2321,7 +2593,13 @@ since=<date> at=<stamp> build=<id>`: `OK` and exit 0 only when every cell is
 is the tool saying NO about itself, SPEC-UPDATE's own exit-1 meaning. Every
 listing is capped at `--max` per kind (`CELL`, `ASK`), with a MORE line. The
 verb reads the bus as files, runs no `git` and sends nothing; a matrix that
-fetched would be a matrix whose cells depend on a network call. **What it
+fetched would be a matrix whose cells depend on a network call. **The evidence
+is cheap to check, not proof** (draft 2): every shape above is text a person
+could type, and this verb claims only that the line is there, dated, in that
+lane, in a shape the tool prints — the version line at least names a build
+that exists, and nothing here is an attestation. The first draft said a line
+"cannot write it without running it", which is false of pasted text and was
+the wrong claim to rest a verdict on. **What it
 cannot see, said**: a line that runs a tool and never pastes a line of its
 output is `unknown`, and `ADOPTION NOTE` says so on every run; the remedy is
 the tool's own `--send`/`--note` path or one pasted line, and the note names
@@ -2330,8 +2608,12 @@ adoption check, is `trying` evidence.)
 
 **Demanded test (for SPEC-UPDATE's list).** A fixture bus with three lanes
 and a tools file naming two tools: a lane holding a note with a `TOKENS OK`
-line is `adopted` for that tool with the note's id; a lane whose note says
-only "I use nova-tokens daily" is `unknown` and gets an `ASK`; a lane with a
+line is `adopted` for that tool with the note's id, and so is a lane holding
+only the four-token `nova-tokens <identity> <goos>/<goarch> <go version>`
+line (draft 2); a lane whose note says
+only "I use nova-tokens daily" is `unknown` and gets an `ASK`; a body line
+whose second token is neither `OK` nor `FAIL` is no evidence, and a tools file
+giving one first token to two tools is exit 2 naming both (draft 2); a lane with a
 `REPORT TOOL name=nova-bus` line it sent and no use is `trying`; a subject
 `adoption nova-bus declined` is `declined` with no `ASK`; a note dated before
 `--since` counts for nothing; `--tokens-out` naming a directory whose day
@@ -2361,8 +2643,9 @@ missing is exit 2.
   matches the id exactly and infers no containment (2026-09-13, rule 33).
 - **It does not decide adoption from a person's word.** The adoption matrix
   lives on `nova-update` (the amendment note, 2026-09-13), and its `adopted`
-  cell is a pasted output line, a day-file source or a receipt, never a
-  sentence.
+  cell is the tool's own version line or one of its enumerated verdict lines,
+  a day-file source or a receipt — never a sentence, and never *a count-line
+  token*, which named no set (draft 2).
 - **It does not claim coverage.** Every total is the sum of what the declared
   sources reported; `dashes=`, `missing=`, `unknown=` and `unreadable=` say
   what it does not cover, and no line calls a sum complete.
@@ -2790,46 +3073,58 @@ adoption** (2026-09-13), each demanded test written beside its rule; these
 seven lines are the index.
 
 32. Three fixture sessions receipted on one node at three stages, rows equal
-    to `fold` over the one file, `pointer=usage:<32 hex>`, a second receipt of
+    to `fold` over the lines whose `sessionId` is the id,
+    `pointer=note:usage:<32 hex>`, a second receipt of
     one session refused naming the first, a midnight-spanning session in two
     files under one id, `--stage builder` exit 2, `nosession` and `unreadable`
     writing nothing, two parallel receipts serialized on `fold.lock`, an
-    OpenCode child folded into its parent, a swarm job's span from its usage
-    file, and the pointer parsing under SPEC-WORK's pointer regexp.
+    OpenCode child folded into its parent, an Agent child folded in by its
+    parent's `sessionId` and a self-id'd one excluded, a swarm job's span from
+    its usage file, and `note:usage:<id>` matching one of SPEC-WORK's six
+    schemes while a bare `usage:<id>` matches none.
 33. `cost --node` over three stages prints them in the fixed order and sums
     them, two `--node`s add, a prefix matches nothing, `--rates` prices only
     the named model with `priced_tokens + unpriced_tokens = tokens` and
     `per_mtok` recomputed, no `--rates` prints dashes, an all-dash receipt is
     `tokens=0 dashes=5`, and no flag on `cost` filters by stage.
-34. A sixteen-column receipts file, two ids for one session, a receipt above
-    its day cell, a receipts file for an unfolded day and a stray under
+34. A sixteen-column receipts file, two ids for one session, two `node` or
+    two `stage` values under one receipt id, a receipt above its day cell, a
+    receipts file for a day the fold passed, and a stray under
     `receipts/` each print their line and exit 1; an equal or dashed cell is
-    clean; `TOKENS DAY receipts=` equals the file's rows; `sum` opens nothing
-    under `receipts/`.
+    clean; a receipts file for a day newer than every day file is one
+    `CHECK NOTE` and exit 0; `TOKENS DAY receipts=` equals the file's rows;
+    `sum` opens nothing under `receipts/`.
 35. Twelve fixture steps rank two repeats and one 40 KB step in the stated
     order, `--top 1` prints one of each with a MORE per kind, `HOT OK` token
     counts equal `fold`'s, `HOT NOTE` is one line under `oneline.TailBytes`
-    with the fixed cannot-see phrase, a reference result is unranked, a NULL
+    beginning with the fixed phrase `cannot see: bytes are not tokens`, a
+    reference result is unranked and counted in `unranked=`, a NULL
     `state.output` is `bytes=-`, a reclaimed swarm job is `reason=reclaimed`
-    with only its directory opened, `--top 0` exit 2.
+    with only its directory opened, `--top 0` prints all with no MORE and
+    `--top -1` is exit 2; and the Claude reader's `tool_result` change leaves
+    every fold count byte-identical.
 36. Two day files with one changed cell, one added row and one dash-to-number
-    print three ROWs in delta order with `from=absent` and `delta=-` where
-    stated, identical files print none, `--max 1` prints one and a MORE, a
+    print three ROWs in delta order — the added row being **one** ROW with
+    `type=-`, `from=absent` and `delta=-`, not five (draft 2) — identical files print none, `--max 1` prints one and a MORE, a
     missing side is exit 2, two sessions differing in `repeated=` print that
     field, and nothing beyond the two named files is opened.
 37. `friction add` from a receipt equals the receipt's sum and span with
     `rough=0`, `--tokens ~5000 --wall 40m` is `rough=1`, a bare `--tokens` and
     a missing `--wall` are exit 2, a bad `--gap` is exit 2, a corrupt file is
     exit 2 and untouched, two concurrent adds both land, `frictions` orders
-    gaps by tokens and honours `--since` and `--rates`, `publish --frictions`
-    lands and appends without `--supersede` and refuses a dropped row, and
+    gaps by tokens and honours `--since`, prices only through `--rates --out`
+    with `--rates` alone exit 2, and `publish --frictions`
+    lands, appends as `state=appended` without `--supersede` with `appends=`
+    in the message, and refuses a dropped row; and
     `--frictions` with the other kinds is exit 2.
 38. `sum --rates` prices every cell with both a number and a rate, `usd=`
     equals the hand sum, `unpriced_tokens=` is the third model plus the dashed
-    type, `per_mtok=` is `usd` over `priced_tokens` and `-` at zero, an
+    type, `per_mtok=` is `usd` over `priced_tokens` and `-` at zero — as `usd=` is
+    at `priced_tokens=0`, never `0` — an
     all-zero row prices to zero, malformed and duplicate lines are exit 2,
-    `verified=` is the oldest date, and the binary holds no rate and no model
-    name.
+    `verified=` is the oldest date among the rows priced with, `rates=` and
+    `verified=` print once per run, and `internal/tokens/rates.go` holds no
+    float literal but 0 and 1 and no model-name string.
 
 ## The work list
 
@@ -2951,19 +3246,25 @@ pin all three by executing them.
     reader (a transcript by session id, an OpenCode session with its children,
     a swarm job by id), the receipts file with its seventeen columns and
     version line, the whole-file write under `fold.lock`, the `receipted`
-    check by `session`, and `check`'s three joins. Tests: demanded tests 32
+    check by `session`, and `check`'s four joins — including the constancy of
+    `node`, `stage`, `who` and `session` under one receipt id, and the
+    newest-day-file rule that makes an unfolded day a `CHECK NOTE` rather than
+    an orphan (draft 2). Tests: demanded tests 32
     and 34.
 17. **`internal/tokens/rates.go`** (2026-09-13, rule 38): the rates file
     parser, the per-cell price with `unpriced` accounting, `per_mtok` with
     no division by zero, `verified=` oldest; used by `sum`, `cost` and
-    `frictions` through one function. Tests: demanded test 38; a source test
-    finds no numeric literal that is a rate and no model name.
+    `frictions` through one function, with `rates=`/`verified=` printed once
+    per run on the count line and `verified=` computed over the rows used
+    (draft 2). Tests: demanded test 38; a source test finds no float literal
+    but 0 and 1 and no model-name string in this file (draft 2).
 18. **`internal/tokens/cost.go`** (2026-09-13, rule 33): the receipts walk,
     exact node match, the six-stage order, per-model and per-receipt caps,
     `wall=` as a sum. Tests: demanded test 33.
 19. **`internal/tokens/hot.go`** (2026-09-13, rule 35): steps from
-    `tool_use`/`tool_result` pairs (the transcript reader gains the user
-    turn's `tool_result` blocks and their `tool_use_id`), from OpenCode
+    `tool_use`/`tool_result` pairs — the transcript reader's demanded change
+    is in **`### --claude`**, with its own fold-unchanged test (draft 2), not
+    in this list — from OpenCode
     `part` rows with `state.output`, and from a swarm job's data home while
     it exists; the two rankings; the one-line NOTE with the fixed cannot-see
     phrase. Tests: demanded test 35.
@@ -2972,8 +3273,9 @@ pin all three by executing them.
     `hot`'s counts. Tests: demanded test 36.
 21. **`internal/tokens/friction.go`** and the `publish --frictions` kind
     (2026-09-13, rule 37): the frictions file, the `~` rule, `<file>.lock`,
-    the per-gap sum, and in `publish.go` the third kind with its append
-    transition and its refusals. Tests: demanded test 37; the append
+    the per-gap sum with its `--rates --out` join through the receipts
+    (draft 2), and in `publish.go` the third kind with its append
+    transition, its `appends=` message field and its refusals. Tests: demanded test 37; the append
     transition red first against a rule that called every changed frictions
     file `differs`.
 22. **`cmd/nova-tokens/main.go`** gains the six verbs, `--rates` on `sum`,
@@ -3010,7 +3312,7 @@ pin all three by executing them.
 |---|---|---|
 | Emma, emma-0fd8c03d5f24 | `hot --session --top 5`, one paragraph | rule 35: two ranked listings in the grammar and one `HOT NOTE` line that is the paragraph, with what it cannot see |
 | Stella, 15:30Z | count review and repair too | rules 32, 33: `stage` from the six names, `cost --node` sums every stage and has no stage filter |
-| SPEC-WORK draft 12, `:attempt :usage` (#181) | the attempt points at a token record | rule 32: `usage:<receipt-id>`, receipt drawn first, the attempt names it, the receipt names the node; a one-line ask to SPEC-WORK to list `usage:` among its pointer schemes |
+| SPEC-WORK draft 12, `:attempt :usage` (#181) | the attempt points at a token record | rule 32: `note:usage:<receipt-id>` — SPEC-WORK's sixth scheme, accepted on an attempt's `:usage` today and barred from `:done` evidence, which is where a spend record belongs — receipt drawn first, the attempt names it, the receipt names the node; a bare `usage:` scheme would be a separate SPEC-WORK amendment and nothing here waits on it (draft 2) |
 | Glenn via Stella, 16:34Z | lower the mean AND the total | rules 33, 38: `tokens=`, `usd=`, `per_mtok=`, `priced_tokens=`, `unpriced_tokens=` on one line |
 | Glenn, 2026-09-12, nova-tools #175 | maintain the per-model rate table | rule 38: `--rates <file>`, the caller's, dated, list rate, nothing compiled in |
 | Glenn, 2026-09-11, crystallize | see the pattern, then the tool | rule 37: `friction add`, `frictions` per gap, tokens descending |

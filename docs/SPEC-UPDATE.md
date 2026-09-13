@@ -600,21 +600,12 @@ mode is implemented and its real-Git recovery witnesses pass, the reporter's sen
 path is not ready for adoption. Local inventory, draft and update-choice implementation
 can proceed independently. No timer or reporter-owned Git is added.
 
-## Amendment note, 2026-09-13: `adoption` is this tool's verb
+## Amendment note, 2026-09-13 (draft 2): `adoption` is this tool's verb
 
-Glenn, 2026-09-12: "A tool is only good if everybody adopts it." The adoption
-matrix — one cell per line per tool, `adopted`, `trying`, `declined` or
-`unknown`, each with the date and the note id or path of its evidence, and an
-`ASK` line linking the four questions (nova-tools #111 to #117) for every cell
-that is not adopted — is a verb of **this** binary, `nova-update adoption`,
-because the versions file already holds one row per tool with an owner, `check`
-already says what is installed and `report` what a host runs; *used* is the
-column this verb adds. Its contract, its output grammar and its demanded test
-are drafted in [SPEC-TOKENS.md](SPEC-TOKENS.md), section **Adoption: the
-matrix lives on `nova-update`** (2026-09-13), beside the spend rules it was
-decided against, and move here whole, as a numbered rule and a work item,
-when that amendment is ratified. Until then this note is the pointer, so the
-two documents cannot drift: the evidence for `adopted` is a pasted output line
-of the tool, a day-file source or a receipt, never a sentence; `declined` is
-the one self-report accepted; the verb reads a bus checkout as files, runs no
-`git`, sends nothing, and exits 1 while any cell is `unknown` or `trying`.
+`nova-update adoption` is a verb of **this** binary, and its whole contract —
+grammar, evidence, exits and demanded test — is drafted in
+[SPEC-TOKENS.md](SPEC-TOKENS.md), section **Adoption: the matrix lives on
+`nova-update`** (2026-09-13), and moves here whole, as a numbered rule and a
+work item, when that amendment is ratified. (Draft 2 cuts this note to the
+pointer and the date: restating the contract here was a second copy of it in
+the one place whose job is to stop the two drifting.)
