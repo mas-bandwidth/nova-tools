@@ -117,9 +117,12 @@ journal, and I hold the journal's lock (Stella's finding 1, comment 5654659093, 
    another generation stays fenced and exports. **Admission is checked per request, not per
    reconfirm**: every read and every write compares the session's clock to `until` at the
    moment it is admitted, and a request that arrives after `until` is refused `fenced` even if
-   the reconfirm that would have advanced `until` is in flight; a reconfirm's result is applied
-   only if the reconfirm began before `until` and its pushed commit is the tip, so a delayed
-   callback that completes after expiry cannot re-admit writes (Stella, 5654780545).
+   the reconfirm that would have advanced `until` is in flight; **a reconfirm's completion
+   deadline is `until` itself**: its result is applied only if it began before `until`, its
+   pushed commit is the tip, AND it completed before `until` on the session's clock; a
+   reconfirm that completes after `until`, however early it began, is discarded and the
+   session stays fenced until a later reconfirm succeeds whole (Stella, 5654780545, and the
+   tightening in stella-6438e5513f41: the prohibition is on completion after expiry).
 3. **Publishing.** Every clip carries the generation and is pushed the same CAS way; a late
    clip from a fenced owner is refused by the moved tip. A friend's request that reaches a
    fenced session is refused, not queued.
