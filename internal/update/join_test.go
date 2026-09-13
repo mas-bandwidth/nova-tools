@@ -20,6 +20,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -608,18 +609,17 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 		return false
 	}
 	leftover := r.leftInTheLane(t)
-	// A SIGKILL inside git's own index update leaves .git/index.lock behind. The
-	// tool has no business removing it: it cannot prove the lock is unowned, so
-	// it names it and stops, and the repair is an operator's. This test is that
+	// A SIGKILL inside git's own transaction can leave lock files behind. The
+	// tool has no business removing them: it cannot prove they are unowned, so
+	// it names them and stops, and the repair is an operator's. This test is that
 	// operator, and it does what an operator must do FIRST -- establish that no
-	// process is left to own the lock -- before removing anything, out loud.
-	if _, err := os.Stat(filepath.Join(r.bus.checkout, ".git", "index.lock")); err == nil {
+	// process is left to own the locks -- before removing anything, out loud.
+	if locks := staleGitTransactionLocks(filepath.Join(r.bus.checkout, ".git")); len(locks) > 0 {
 		if !strings.Contains(staged, "group-gone=true") {
-			t.Fatalf("a process may still own the index lock, so the named repair is not available: %s", staged)
+			t.Fatalf("a process may still own Git transaction locks, so the named repair is not available: %s", staged)
 		}
-		if r.removeStaleIndexLock(t) {
-			t.Logf("%s (attempt %d): the killed git left .git/index.lock; with the whole process group verified gone, the test performed the operator's named repair before retrying", boundary, attempt)
-		}
+		removed := removeStaleGitTransactionLocks(t, filepath.Join(r.bus.checkout, ".git"))
+		t.Logf("%s (attempt %d): the killed git left stale transaction locks %v; with the whole process group verified gone, the test performed the operator's named repair before retrying", boundary, attempt, removed)
 	}
 	if r.removeStaleBusLock(t) {
 		t.Logf("%s (attempt %d): the killed bus left .git/nova-bus.lock.held; with the whole process group verified gone, the test performed the operator's named repair before retrying", boundary, attempt)
@@ -723,6 +723,65 @@ func (r reporter) leftInTheLane(t *testing.T) string {
 		}
 	}
 	return "nothing pending"
+}
+
+// staleGitTransactionLocks names only the Git transaction locks this test can
+// leave behind. In particular, next-index-* is Git's temporary replacement
+// index; this list is intentionally narrower than a wildcard lock cleanup.
+func staleGitTransactionLocks(gitDir string) []string {
+	var found []string
+	for _, pattern := range []string{"index.lock", "HEAD.lock", "next-index-*.lock"} {
+		matches, _ := filepath.Glob(filepath.Join(gitDir, pattern))
+		found = append(found, matches...)
+	}
+	sort.Strings(found)
+	return found
+}
+
+// removeStaleGitTransactionLocks performs the named operator repair for the
+// disposable checkout used by these tests. Callers must establish that the
+// killed process group is gone before invoking it.
+func removeStaleGitTransactionLocks(t *testing.T, gitDir string) []string {
+	t.Helper()
+	var removed []string
+	for _, lock := range staleGitTransactionLocks(gitDir) {
+		if err := os.Remove(lock); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			t.Fatal(err)
+		}
+		removed = append(removed, lock)
+	}
+	return removed
+}
+
+func TestRemoveStaleGitTransactionLocksNamesOnly(t *testing.T) {
+	gitDir := filepath.Join(t.TempDir(), ".git")
+	if err := os.Mkdir(gitDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"HEAD.lock", "index.lock", "next-index-11397.lock", "config.lock", "next-index.lock"} {
+		if err := os.WriteFile(filepath.Join(gitDir, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	removed := removeStaleGitTransactionLocks(t, gitDir)
+	var names []string
+	for _, path := range removed {
+		names = append(names, filepath.Base(path))
+	}
+	sort.Strings(names)
+	want := []string{"HEAD.lock", "index.lock", "next-index-11397.lock"}
+	if strings.Join(names, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("removed %v, want %v", names, want)
+	}
+	for _, name := range []string{"config.lock", "next-index.lock"} {
+		if _, err := os.Stat(filepath.Join(gitDir, name)); err != nil {
+			t.Fatalf("cleanup removed unrelated lock %s: %v", name, err)
+		}
+	}
 }
 
 // locks names any lock file a killed process could have left behind, because a
