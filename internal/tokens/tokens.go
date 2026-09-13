@@ -18,6 +18,7 @@ package tokens
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sort"
 	"strconv"
@@ -541,8 +542,34 @@ func openSource(path string) (*os.File, error) {
 	return os.Open(path)
 }
 
+// maxSourceBytes bounds the ONE whole-file read. A ledger or a bus note is a record, not
+// an archive, and os.ReadFile of a runaway file took the process's memory before any
+// parser could name it. A file over this cap is refused by name rather than truncated:
+// neither caller tolerates a partial parse, so a half-read ledger would fold as a whole
+// one. 64 MiB is far past the largest real export and far short of a memory blowup.
+const maxSourceBytes = 64 << 20
+
 // readSource is openSource for a whole file.
 func readSource(path string) ([]byte, error) {
 	opens.Add(1)
-	return os.ReadFile(path)
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if fi.Size() > maxSourceBytes {
+		return nil, fmt.Errorf("source %s is %d bytes, over the %d-byte cap", path, fi.Size(), maxSourceBytes)
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, maxSourceBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > maxSourceBytes {
+		return nil, fmt.Errorf("source %s grew over the %d-byte cap while being read", path, maxSourceBytes)
+	}
+	return raw, nil
 }

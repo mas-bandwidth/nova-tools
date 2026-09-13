@@ -1,6 +1,7 @@
 package tokens
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -212,5 +213,64 @@ func TestASourceLineFieldIsADashWhereItIsNotAMeasurement(t *testing.T) {
 	b := &Source{Kind: KindBus}
 	if b.StatField("dup") != Dash || b.StatField("comments") != "0" {
 		t.Error("a bus lane has no duplicate ids and does have comments")
+	}
+}
+
+// L10a: readSource is the one whole-file read, and it had no ceiling, so one oversized
+// ledger or bus file took the process's memory. A file over the cap must be refused by
+// name rather than read.
+func TestReadSourceRefusesAnOversizedFile(t *testing.T) {
+	const capInTest = 64 << 20
+	path := filepath.Join(t.TempDir(), "huge.csv")
+	f, err := os.Create(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Truncate(capInTest + 1); err != nil {
+		f.Close()
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+	_, err = readSource(path)
+	if err == nil {
+		t.Fatalf("readSource read %d bytes with no cap", capInTest+1)
+	}
+	if !strings.Contains(err.Error(), path) {
+		t.Errorf("the refusal must name the path: %v", err)
+	}
+	if !strings.Contains(err.Error(), fmt.Sprint(capInTest)) {
+		t.Errorf("the refusal must name the cap %d: %v", capInTest, err)
+	}
+}
+
+// L10b: onCycle marked a node seen, walked its predecessors, then deleted it on the way
+// out, so a diamond was re-walked once per path. A node already proven acyclic must stay
+// memoized, which the walk's own seen map must show; the answer is unchanged.
+func TestOnCycleDoesNotRewalkAProvenAcyclicDiamond(t *testing.T) {
+	bottom := &note{id: "d"}
+	left := &note{id: "b", subject: parsedSubject{supersedes: []string{"d"}}}
+	right := &note{id: "c", subject: parsedSubject{supersedes: []string{"d"}}}
+	top := &note{id: "a", subject: parsedSubject{supersedes: []string{"b", "c"}}}
+	all := map[string]*note{"a": top, "b": left, "c": right, "d": bottom}
+	seen := map[string]bool{}
+	if onCycle(top, all, seen) {
+		t.Fatal("onCycle reported a cycle in an acyclic diamond")
+	}
+	if len(seen) != len(all) {
+		t.Errorf("onCycle left %d of %d nodes proven: it re-walked an acyclic node", len(seen), len(all))
+	}
+}
+
+// L10b: the memo must not hide a cycle. A diamond with a back edge still reports true.
+func TestOnCycleStillSeesARealCycle(t *testing.T) {
+	bottom := &note{id: "d"}
+	left := &note{id: "b", subject: parsedSubject{supersedes: []string{"d"}}}
+	right := &note{id: "c", subject: parsedSubject{supersedes: []string{"d", "a"}}}
+	top := &note{id: "a", subject: parsedSubject{supersedes: []string{"b", "c"}}}
+	all := map[string]*note{"a": top, "b": left, "c": right, "d": bottom}
+	if !onCycle(top, all, map[string]bool{}) {
+		t.Fatal("onCycle missed a cycle through a supersedes back edge")
 	}
 }

@@ -584,10 +584,14 @@ func badPredecessors(n *note, all map[string]*note) string {
 	return ""
 }
 
-// onCycle walks the supersedes graph from n and reports whether it comes back.
+// onCycle walks the supersedes graph from n and reports whether it comes back. seen is a
+// two-state colour map: true means the node is on the current path, false means it was
+// finished with no cycle reachable from it. A node proven acyclic is never re-walked, so a
+// diamond is linear rather than exponential in the number of notes; a true on-path hit is
+// still the cycle.
 func onCycle(n *note, all map[string]*note, seen map[string]bool) bool {
-	if seen[n.id] {
-		return true
+	if state, done := seen[n.id]; done {
+		return state
 	}
 	seen[n.id] = true
 	for _, id := range n.subject.supersedes {
@@ -599,7 +603,7 @@ func onCycle(n *note, all map[string]*note, seen map[string]bool) bool {
 			return true
 		}
 	}
-	delete(seen, n.id)
+	seen[n.id] = false
 	return false
 }
 
