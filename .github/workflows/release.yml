@@ -41,33 +41,55 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
-    # Deliberately the same shape as ci.yml's test job, on the tagged tree. Three operating
-    # systems for the reason stated there: the platforms genuinely differ, and the tests
-    # that cannot run on Windows skip there with that reason named.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+  certified:
+    # THE RELEASE NEEDS A GREEN CERTIFICATION RUN ON THIS EXACT COMMIT, AND ASKS FOR ONE
+    # rather than running the tests again here. Until v0.15.0 this file ran its own
+    # `go test -race ./...` on three operating systems, serially, inside a 15-minute job;
+    # certification.yml runs the same tests fanned out per package, and the Windows leg
+    # here outgrew its cap (run 34775563018: cancelled with packages still to run, the
+    # release job skipped, no release object, while certification had passed the same
+    # commit in six minutes). Two copies of one test set drift, and the copy that ran here
+    # was the slower and the older one. So this job is one question to the API: did
+    # certification.yml complete with success on the commit this run is building? A commit
+    # no certification run vouches for gets no release, and the refusal names the remedy.
+    # It is the tag-only-a-certified-commit practice made into something that can say no.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-
-      - name: build
-        run: go build ./...
-
-      - name: vet
-        run: go vet ./...
-
-      - name: test
-        run: go test -race ./...
+      - name: certification.yml passed on this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # ONE ASKER, AND IT READS THE STATUS RATHER THAN THE EXIT CODE, for the reason the
+          # release job's `ask` below states: `gh api` exits 1 on an empty answer and on no
+          # answer alike. `-i` puts the status line first and the body after the blank line.
+          set +e
+          out=$(gh api -i "repos/${GITHUB_REPOSITORY}/actions/workflows/certification.yml/runs?head_sha=${SHA}&status=completed&per_page=100" 2>&1); rc=$?
+          set -e
+          case "$(printf '%s\n' "$out" | head -n 1)" in
+            HTTP/*" 200 "*) ;;
+            *)
+              echo "asking GitHub for certification runs on $SHA did not answer 200 (gh exit $rc):"
+              printf '%s\n' "$out"
+              exit 1
+              ;;
+          esac
+          body=$(printf '%s\n' "$out" | sed -e '1,/^[[:space:]]*$/d')
+          total=$(printf '%s' "$body" | jq -r '.total_count')
+          green=$(printf '%s' "$body" | jq -r '[.workflow_runs[] | select(.conclusion == "success")] | length')
+          echo "certification runs on $SHA: $total completed, $green green"
+          printf '%s' "$body" | jq -r '.workflow_runs[] | "  run \(.id) \(.conclusion) \(.html_url)"'
+          if [ "$green" -lt 1 ]; then
+            echo "refusing: no green certification run on $SHA, so nothing vouches for this tree"
+            echo "certify it first: gh workflow run certification.yml --ref ${{ github.ref_name }}, wait for certification-ok, then re-run this workflow"
+            exit 1
+          fi
 
   release:
-    needs: test
+    needs: certified
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
