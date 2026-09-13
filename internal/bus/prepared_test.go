@@ -121,6 +121,31 @@ func TestMakeAndValidatePreparedArtifact(t *testing.T) {
 	}
 }
 
+// L1: a path that keeps the lane prefix but walks back into another lane. The prefix
+// test alone passes "from-ada/../from-bo/<file>", but Join lands it in from-bo.
+func TestPreparedRefusesLaneTraversalThatKeepsThePrefix(t *testing.T) {
+	t.Parallel()
+	root := writeBus(t, nil)
+	tab := loadBus(t, root)
+	now := at("2026-09-12T12:00:00Z")
+
+	draft := "From: Ada\nTo: Bo\nSubject: Lane traversal\n\nA note.\n"
+	p, err := PrepareDraft(tab, draft, now, "prepared-traversal", "Ada")
+	if err != nil {
+		t.Fatalf("PrepareDraft: %v", err)
+	}
+	art, err := MakePreparedArtifact(p)
+	if err != nil {
+		t.Fatalf("MakePreparedArtifact: %v", err)
+	}
+	traversal := art
+	traversal.Path = "from-ada/../from-bo/" + filepath.Base(art.Path)
+	raw, _ := json.Marshal(traversal)
+	if _, _, err := ValidatePreparedArtifact(raw, root, tab.Config, "Ada"); err == nil {
+		t.Fatalf("ValidatePreparedArtifact accepted lane traversal %q", traversal.Path)
+	}
+}
+
 func MakeSHA256(s string) string {
 	var art PreparedArtifact
 	art.Note = s

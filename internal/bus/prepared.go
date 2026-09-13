@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -155,10 +156,15 @@ func ValidatePreparedArtifact(raw []byte, busDir string, c *Config, as string) (
 		return art, Prepared{}, fmt.Errorf("%q has no lane on this bus, so has nowhere to send from", me.Name)
 	}
 
-	// The prepared path must be inside the sender's own lane
-	if !strings.HasPrefix(art.Path, me.Lane+"/") {
+	// The prepared path must be inside the sender's own lane. Cleaning the slash path
+	// first is what makes the prefix mean the lane the write reaches: a ".." after a
+	// valid prefix cleans out of the lane, so the cleaned path fails the test and the
+	// lane the prefix asserts is the lane the write reaches.
+	cleanPath := path.Clean(art.Path)
+	if !strings.HasPrefix(cleanPath, me.Lane+"/") {
 		return art, Prepared{}, fmt.Errorf("prepared path %q is outside lane %q", art.Path, me.Lane)
 	}
+	art.Path = cleanPath
 	fullPath := filepath.Join(busDir, filepath.FromSlash(art.Path))
 	if err := insideRoot(busDir, fullPath); err != nil {
 		return art, Prepared{}, err

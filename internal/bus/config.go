@@ -77,6 +77,12 @@ func LoadConfig(busDir string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", ConfigName, err)
 	}
+	// Duplicate keys inside one object are last-win in encoding/json. Refuse them the
+	// same way the prepared path does, with the same check.
+	dup := json.NewDecoder(strings.NewReader(string(raw)))
+	if err := checkJSONNoDuplicates(dup); err != nil {
+		return nil, fmt.Errorf("%s: %w", ConfigName, err)
+	}
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
 	var c Config
@@ -115,6 +121,9 @@ func (c *Config) validate() error {
 			n = strings.TrimSpace(n)
 			if n == "" {
 				return fmt.Errorf("participant %q: empty alias", p.Name)
+			}
+			if strings.ContainsAny(n, "\n\r") {
+				return fmt.Errorf("participant %q: name or alias %q is not one line", p.Name, n)
 			}
 			key := fold(n)
 			if prev, dup := c.byName[key]; dup {

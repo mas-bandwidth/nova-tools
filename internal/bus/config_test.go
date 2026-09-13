@@ -54,6 +54,9 @@ func TestLoadConfigRefuses(t *testing.T) {
 		{"an empty group", `{"participants":[{"name":"R","lane":"from-r","git_name":"R","git_email":"r@x"}],
 			"groups":[{"name":"All","members":[]}]}`, "no members"},
 		{"two JSON values", `{"participants":[{"name":"R","lane":"from-r","git_name":"R","git_email":"r@x"}]} {"participants":[]}`, "more than one JSON value"},
+		{"a duplicate key", `{"participants":[{"name":"Ada","name":"Eve","lane":"from-ada","git_name":"R","git_email":"r@x"}]}`, "duplicate key"},
+		{"a name with a newline", `{"participants":[{"name":"Ada\nBo","lane":"from-a","git_name":"R","git_email":"r@x"}]}`, "one line"},
+		{"an alias with a newline", `{"participants":[{"name":"Ada","lane":"from-a","aliases":["E\nvil"],"git_name":"R","git_email":"r@x"}]}`, "one line"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

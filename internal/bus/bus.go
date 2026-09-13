@@ -126,8 +126,14 @@ func ReadBus(root string, c *Config) (*Bus, error) {
 		n := &t.Notes[i]
 		t.byPath[n.Path] = n
 		if id := n.Header.ID; id != "" {
-			if _, dup := t.byID[id]; !dup {
-				t.byID[id] = n
+			// An id carries the slug of the lane that minted it. A note in another
+			// lane that claims that id must not enter the index, or it can win the
+			// map and silence the note the id really names. Same check as since.go,
+			// applied where the index is built.
+			if slug := SlugOfID(id); "from-"+slug == n.Lane {
+				if _, dup := t.byID[id]; !dup {
+					t.byID[id] = n
+				}
 			}
 		}
 	}
