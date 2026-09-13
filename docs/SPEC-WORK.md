@@ -1,4 +1,4 @@
-# nova-work — specification (DRAFT 12, 2026-09-13)
+# nova-work — specification (DRAFT 16, 2026-09-13)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
@@ -100,12 +100,28 @@ journal, and I hold the journal's lock (Stella's finding 1, comment 5654659093, 
    the tip moved; **no history is ever rewritten** — the flag is the CAS, not a force). A
    refused push, or an `OWNER` whose lease is live and names another, is exit 1 naming the
    owner, generation and `until`, and the session never activates. A restart without the token waits like anyone else.
-2. **Holding.** Every `--every`, the owner fetches the tip and **reconfirms** that `OWNER`
-   still carries its generation and token, then pushes a fast-forward commit advancing
+2. **Holding.** Every `--every`, the owner fetches the tip and **reconfirms**, in this order:
+   first that the fetched tip **is the session's base**, then that `OWNER` on it still
+   carries its generation and token; only then does it push a fast-forward commit advancing
    `until` the same way. **The session's base is the sha of the last commit it pushed**, a
-   reconfirm as much as a clip, so its own reconfirms never read as divergence; divergence is
-   a tip this session did not write. **An owner that cannot reconfirm before its `until` fences itself**: it refuses every
-   write AND every read (exit 1, `fenced`, naming its generation and the tip's if known),
+   reconfirm as much as a clip, so its own reconfirms never read as divergence. **Divergence
+   is a tip this session did not write, and the check is one predicate, `tip == base`, made
+   before the CAS of every push the session makes** — a reconfirm, a clip, a handoff — stated
+   here once and applied the same way everywhere (the CAS push guards the remote against a
+   race with the push itself; the base check guards the session against a tip it did not
+   write, which the CAS alone would accept and the next clip would then overwrite). A tip that
+   is not the base is **raced**: the push is not made, the line is `<TOKEN> RACED …
+   expected=<base sha> found=<tip sha>` (the shape of SPEC-MERGE rule 21, `SESSION` for a
+   reconfirm, `CLIP` for a clip, `HANDOFF` for a handoff), and the session fences. A hand edit
+   on the branch under a live session is therefore raced by the next reconfirm, never adopted
+   as a base and never overwritten by a later clip. The raced session's accepted-but-unclipped
+   events go where every fenced session's go: `session export --into <path>` writes its
+   request bundle, and the next owner — a `session start` that loads the edited snapshot whole
+   and validates it, after `until` plus `--skew` or by handoff — applies it with `session
+   replay --from <path>`, each request validated fresh against the live S. **An owner that
+   cannot reconfirm before its `until` fences itself**: it refuses every write AND every read
+   except `session status` and `session export`, which are how a fenced session is inspected
+   and recovered (exit 1, `fenced`, naming its generation and the tip's if known),
    because a fenced session's resident S may be behind a new owner's and an answer from it
    would be a stale answer wearing a live one's clothes; it keeps its journal. Offline or
    partitioned, it fences at `until` without any network at all. So at no instant do two
@@ -160,9 +176,10 @@ request id the journal already holds is answered with the original `OK` line and
 nothing, which is how a crash between durability and acknowledgement yields one event
 (Stella, *Accept locally, then clip into Git*).
 
-**The repository branch that holds S has one writer too: the active coordinator.** A **clip**
-and the ownership commits of rules 1 and 2 above are the only writes to it, and a clip: it names a local event boundary, fetches the upstream revision, and
-**refuses if upstream is not the session's base** — a moved upstream means a hand edit or a new
+**The repository branch that holds S has one writer too: the active coordinator.** A **clip**,
+the ownership commits of rules 1 and 2 above and the handoff commit below are the only writes to it, and a clip: it names a local event boundary, fetches the upstream revision, and
+**refuses, `CLIP RACED`, by the one base predicate of rule 2 (`tip == base`, the check the
+reconfirm makes, not a second one)** — a moved upstream means a hand edit or a new
 owner's take, and either is a handoff or a reload, never a merge — then validates
 the resident S whole, writes one deterministic snapshot carrying the structure and the
 retained event history, commits and pushes under `--git-timeout <seconds>` with `--attempts
@@ -181,6 +198,34 @@ validated fresh against the live S, refusing the stale ones by `--expect` and re
 verdict on its own line. Nothing is lost; nothing is merged without validation; the fenced
 session's unshared work is a file, not a claim. `render` writes a working-tree
 file that the next clip commits; it is not a second write path to the branch.
+
+**The periodic clip is the same clip, run by the session on two triggers named at start.**
+`session start` takes `--clip-every <duration>` and `--clip-after <n>`, both required, both
+distinct from the reconfirm's `--every`: the session clips when its pending accepted events
+reach `--clip-after`, or when `--clip-every` has elapsed since the last clip with at least one
+event pending, whichever comes first; a clip with nothing pending is not run. The periodic
+clip uses the same guard (`tip == base`), the same `--git-timeout` and `--attempts` given at
+start, and prints the same `CLIP OK` / `CLIP RACED` / `CLIP FAIL` line; a write admitted while
+a clip is running is accepted, journaled and pending for the next one. Both values print on
+`SESSION OK` at start (`clip-every=<duration> clip-after=<n>`) and on `session status`, so the
+cadence is readable, never assumed. Glenn's *periodically clips to Git* (stella-5adca9a1f09d)
+is this paragraph, and Stella's *Clip cadence is configurable* names these two flags.
+
+**Handoff is a verb, and it is the one way an owner ends without a successor's wait.**
+`session handoff --session <path> --to <name> --git-timeout <seconds> [--attempts <n>]`: from
+the moment it is admitted the session refuses every further write (`fenced`); it clips under
+the same guard, so a hand edit under it races the handoff too; it then pushes one CAS commit
+that writes `OWNER` with the same generation, `until` set to the handoff's stamp (released
+now) and `successor=<name>`; prints `HANDOFF OK … generation=<n> to=<name> commit=<sha>`; and
+exits fenced, its journal kept, nothing pending. The successor's `session start --as <name>`
+reads an `OWNER` that names it as successor and takes the next generation at once — no `until`
+plus `--skew` wait, because the old owner fenced itself before it wrote the record — with a
+fresh token and its own journal, loading the handoff's clip. A start by anyone else sees a
+released record and waits `--skew`, as after a stop. **`session stop` is the same sequence
+without a successor**: clip (unless `--no-clip`), then `OWNER` released with `until` at the
+stop's stamp, so a taker after a planned stop waits `--skew`, not `until` plus `--skew`. A
+handoff whose clip is raced changes no `OWNER` and exits fenced like any raced session; its
+bundle goes by export and replay.
 
 ## The data *(Rowan)*
 
@@ -464,25 +509,36 @@ Session verbs run the process; every other verb is a client verb addressed to a 
 snapshot by `--snapshot <path>` with the three bounds, read-only; under `--snapshot` the
 verification cache is still named by `--cache <path>`, so a snapshot reader sees the same
 verdicts the coordinator last fetched. **Every mutation verb takes `<write flags>` = `--as
-<name> [--request <id>] [--expect <revision>] [--now <stamp>]`**: the request id is drawn by
-the tool and printed when absent; `--expect` is the caller's expected local revision, optional
-on the coordinator's own verbs and **required on every request in a `session replay` bundle**;
-a request whose expectation is stale is refused at exit 1 naming the current revision
-(5653982211: *apply rejects stale preconditions*). How a friend on another bench submits a
+<name> [--request <id>] [--expect <rev>] [--now <stamp>]`**: the request id is drawn by
+the tool and printed when absent. **`--expect` names a revision the requester can read, and
+there are exactly two, in one number space.** The session's **local revision** is the count of
+accepted events, the snapshot's plus its journal's, printed `rev=<n>` on every mutation's `OK`
+line; the **clipped revision** is the local revision at the last clip's boundary, carried
+inside the snapshot the clip wrote and printed `pushed=<rev|->` on every answer, so a friend
+reading a published snapshot, a fenced session reading its own base and the coordinator all
+read the same number for the same clip. Which one `--expect` names is decided by the path,
+never by the value: on the coordinator's own verbs (the CLI, `--session`) it is the local
+revision, optional; on every request in a `session replay` bundle it is the clipped revision,
+**required**, and `session export` writes it from the fenced session's base. A request whose
+expectation is not the current value of its kind is refused at exit 1, `<MUTATION> FAIL
+node=<id> expect=<rev> current=<rev>: stale`, printing the current value so the requester can
+re-read and resubmit (5653982211: *apply rejects stale preconditions*). How a friend on another bench submits a
 request is the bus: a request bundle is a file a note carries, and `session replay --from` is
 its intake, so no second transport is invented here. Every client verb that lists takes `--max
 <n>`, default 20, `0` means all, negative refused (SPEC.md, the cap-and-count law). Every
 duration comes from a flag: `--window` is required by `who` and `stale`, `--by` by `take`,
-`--every` by `session start`. `--now <stamp>` is optional on every verb and records `:clock
+`--every` and `--clip-every` by `session start`. `--now <stamp>` is optional on every verb and records `:clock
 :given`; absent, the session's clock is used and recorded as `:clock :tool`.
 
 ```
 nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --cache <path> --repo <path> --remote <name> --branch <name>
-                         --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --skew <duration> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
+                         --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --skew <duration> --clip-every <duration> --clip-after <n>
+                         --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
 nova-work session export --session <path> --into <path>
 nova-work session replay --session <path> --from <path> --as <name> [--max <n>]
 nova-work session status --session <path>
 nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
+nova-work session handoff --session <path> --to <name> --git-timeout <seconds> [--attempts <n>]
 nova-work clip           --session <path> --as <name> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
 nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) --cache <path> [--max <n>]
 nova-work verify         --session <path> --max-fetch <n> --fetch-timeout <seconds> --cache <path> [--offline] [--node <id>] [--max <n>]
@@ -718,25 +774,31 @@ chain, high fan-out, and on one multi-command session.
 
 ## Output grammar
 
-Every line's first token is the verb's (`SESSION`, `CLIP`, `WORK`, `VERIFY`, `QUERY`,
-`RENDER`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`, `RESPONSIBLE`, `LEASE`, `HEARTBEAT`,
-`RELEASE`, `ATTEMPT`, `EVIDENCE`, `STATE`, `CORRECT`, `EVENT`), the second is `OK` or `FAIL`,
-or one of the informational tokens `ROW`, `NOTE` and `MORE`. `OK`, `ROW`, `NOTE` and `MORE`
-go to stdout; `FAIL` and refusals go to stderr. Every count line prints on failure as on
+Every line's first token is the verb's (`SESSION`, `EXPORT`, `REPLAY`, `HANDOFF`, `CLIP`,
+`WORK`, `VERIFY`, `QUERY`, `RENDER`, `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`,
+`RESPONSIBLE`, `LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`, `ATTESTED`, `STATE`,
+`CORRECT`, `EVENT`), the second is `OK` or `FAIL`, `RACED` for a push the base predicate
+refused (SPEC-MERGE rule 21's shape, exit 1, nothing pushed), or one of the informational
+tokens `ROW`, `NOTE` and `MORE`. `OK`, `ROW`, `NOTE` and `MORE` go to stdout; `FAIL`, `RACED`
+and refusals go to stderr. Every count line prints on failure as on
 success. Every `OK` line ends `emitted=<bytes>`. Every mutation's `OK` line carries the
-event's id, its request id, the session's local revision after it, and `pushed=<rev|->`, the
-revision of the last clip that reached the branch.
+event's id, its request id, the session's local revision after it (`rev=<n>`), and
+`pushed=<rev|->`, the clipped revision, the same number as the last `CLIP OK`'s `pushed=`;
+`SESSION OK` is one shape, printed by `session start` and `session status` alike.
 
 ```
-SESSION OK session=<path> owner=<name> generation=<n> file=<path> base=<sha> journal=<path> events=<n> pending=<n> nodes=<n> edges=<n> parses=<n> replays=<n> emitted=<bytes>
+SESSION OK session=<path> owner=<name> generation=<n> until=<stamp> file=<path> base=<sha> journal=<path> events=<n> pending=<n> pushed=<rev|-> nodes=<n> edges=<n> parses=<n> replays=<n> clip-every=<duration> clip-after=<n> build=<identity> emitted=<bytes>
 SESSION FAIL session=<path> owner=<name> generation=<n>: <reason>
-EXPORT OK session=<path> into=<path> requests=<n> base=<sha> emitted=<bytes>
+SESSION RACED session=<path> generation=<n> expected=<sha12> found=<sha12>
+EXPORT OK session=<path> into=<path> requests=<n> base=<sha> pushed=<rev|-> emitted=<bytes>
 REPLAY OK from=<path> requests=<n> applied=<n> refused=<n> shown=<n> emitted=<bytes>   (exit 1 when refused > 0)
-SESSION OK ... build=<identity> lease-until=<stamp> generation=<n> ...
 REPLAY ROW request=<id> verdict=<applied|refused> rev=<n>: <reason>
+HANDOFF OK session=<path> generation=<n> to=<name> commit=<sha> pushed=<rev> emitted=<bytes>
+HANDOFF RACED session=<path> generation=<n> to=<name> expected=<sha12> found=<sha12>
 ATTESTED OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> criterion=<id> against=<sha> emitted=<bytes>
-CLIP OK session=<path> boundary=<request-id> events=<n> base=<sha> commit=<sha> pushed=<true|false> attempts=<n> emitted=<bytes>
-CLIP FAIL session=<path> boundary=<request-id> events=<n> base=<sha> upstream=<sha> pushed=false attempts=<n>: <reason>
+CLIP OK session=<path> boundary=<request-id> events=<n> base=<sha> commit=<sha> pushed=<rev> attempts=<n> emitted=<bytes>
+CLIP RACED session=<path> boundary=<request-id> generation=<n> expected=<sha12> found=<sha12>
+CLIP FAIL session=<path> boundary=<request-id> events=<n> base=<sha> pushed=<rev|-> attempts=<n>: <reason>
 WORK OK nodes=<n> edges=<n> events=<n> leases=<n> expired=<n> stale=<n> scope=<rev> source=<sha> emitted=<bytes>
 WORK FAIL <id>: rule <n>: <reason>
 WORK FAIL nodes=<n> findings=<n> shown=<n> expired=<n> stale=<n>
@@ -750,6 +812,7 @@ RENDER OK view=<id> cells=<n> bytes=<n> into=<path> emitted=<bytes>
 RENDER FAIL view=<id> cells=<n> drifted=<n> into=<path>
 <MUTATION> OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> ... emitted=<bytes>
 <MUTATION> FAIL node=<id>: rule <n>: <reason>
+<MUTATION> FAIL node=<id> expect=<rev> current=<rev>: stale
 LEASE FAIL node=<id> holder=<name> since=<stamp> deadline=<stamp> live=<n>: held
 <TOKEN> NOTE <caveat>
 <TOKEN> MORE kind=<rule|row> shown=<n> total=<t> <remedy>
@@ -797,7 +860,13 @@ indexed queries, counts asserted); incremental results equal a clean reconstruct
 same accepted revision; a crash after journal durability and before acknowledgement, then the
 same request retried, yields one accepted event; a crash or disconnect during a clip retains
 every accepted event and reports the last confirmed shared checkpoint honestly; a second
-coordinator refused while one is active; a controlled handoff with the old owner fenced; an
+coordinator refused while one is active; a controlled handoff by `session handoff` (the old
+owner refuses writes from the handoff's admission, the successor starts with no wait, the
+generation moves by one); a hand edit on the branch under a live session (the next reconfirm
+is `SESSION RACED`, the session fences, the edit is on the branch untouched, the fenced
+session's bundle replays into the next owner); a periodic clip on `--clip-after` and one on
+`--clip-every`, and none with nothing pending; a replayed request carrying a stale clipped
+revision refused with the current one printed; an
 old owner returning with a delayed request, refused by generation; two sessions on different
 socket paths naming one journal, the second refused `journal held`; an owner that is stopped
 (`SIGSTOP`) and answers nothing on its socket keeps its journal lock and its lease until
@@ -839,8 +908,9 @@ evidence and `verify` as a separate pass with a cache (Stella's points 1 and 2);
 flags. Stella's: the local recovery journal, event ids and expected revisions, the named event
 boundary per clip, the offline-clip rule, the fencing-generation ownership record as a proposal (the `OWNER`-on-the-branch form with
 CAS push, the lease `until`, the self-fence at `until`, `--skew`, the journal lock keyed by
-the journal's canonical path and bench identity, per-request admission, and the export/replay
-path are Rowan's), fold/unfold/propagate as
+the journal's canonical path and bench identity, per-request admission, the base predicate
+before every CAS push, the two clip triggers, the handoff verb, the two `--expect` revisions,
+and the export/replay path are Rowan's), fold/unfold/propagate as
 operators, the measurement list, the `link`/`absorb` archive order, the migration dispositions; and in her sections below,
 the pilot branch and sha, the prototype facts, the rate schedule and virtual cost, the
 `NEXT-TOOLS.md` hand-off, and the fixed-table capability boundary. Each is open to be cut by
