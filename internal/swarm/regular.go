@@ -34,8 +34,32 @@ import (
 // the same question. On a platform with neither flag the Lstat and the fstat stand alone.
 var errNotRegular = fs.ErrInvalid
 
+// MaxRegularRecord is the maximum size of a worker-written record read whole into memory
+// by the supervisor. Normal records (RESULT.md, harness.log, sidecars, task files, retry state)
+// range from tens of bytes to a few MiB for verbose test runs; 16 MiB provides generous
+// margin while bounding supervisor memory consumption against unbounded reads or rogue
+// worker files (security#30, finding 4 residue, issue #234).
+const MaxRegularRecord = 16 * 1024 * 1024
+
+var errRecordTooLarge = fs.ErrInvalid
+
 func notRegular(path string, mode os.FileMode) error {
 	return &fs.PathError{Op: "read", Path: path, Err: fmt.Errorf("not a regular file (%s); a job's records are regular files and this tool follows no link and opens no pipe: %w", mode.Type(), errNotRegular)}
+}
+
+func recordTooLarge(path string, size, limit int64) error {
+	if size > 0 {
+		return &fs.PathError{
+			Op:   "read",
+			Path: path,
+			Err:  fmt.Errorf("record size %d passes ceiling %d; a job's records have a bounded size: %w", size, limit, errRecordTooLarge),
+		}
+	}
+	return &fs.PathError{
+		Op:   "read",
+		Path: path,
+		Err:  fmt.Errorf("record size passes ceiling %d; a job's records have a bounded size: %w", limit, errRecordTooLarge),
+	}
 }
 
 // statRegular refuses a path that is not a regular file. A path that is NOT THERE passes
@@ -52,8 +76,15 @@ func statRegular(path string) error {
 }
 
 // readRegular is os.ReadFile for a worker-writable path: the whole file when it is a
-// regular file, and a refusal when it is anything else.
+// regular file within MaxRegularRecord, and a refusal when it is anything else or oversized.
 func readRegular(path string) ([]byte, error) {
+	return readRegularBounded(path, MaxRegularRecord)
+}
+
+// readRegularBounded reads a worker-writable regular file up to maxBytes.
+// If the file is not a regular file, or if its size passes maxBytes (either at stat time
+// or during read), it is refused without unbounded allocation.
+func readRegularBounded(path string, maxBytes int64) ([]byte, error) {
 	if err := statRegular(path); err != nil {
 		return nil, err
 	}
@@ -69,7 +100,21 @@ func readRegular(path string) ([]byte, error) {
 	if !fi.Mode().IsRegular() {
 		return nil, notRegular(path, fi.Mode())
 	}
-	return io.ReadAll(f)
+	if maxBytes > 0 && fi.Size() > maxBytes {
+		return nil, recordTooLarge(path, fi.Size(), maxBytes)
+	}
+	var r io.Reader = f
+	if maxBytes > 0 {
+		r = io.LimitReader(f, maxBytes+1)
+	}
+	raw, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+	if maxBytes > 0 && int64(len(raw)) > maxBytes {
+		return nil, recordTooLarge(path, int64(len(raw)), maxBytes)
+	}
+	return raw, nil
 }
 
 // openRegularRead opens a worker-writable path for STREAMING, on readRegular's terms: the
