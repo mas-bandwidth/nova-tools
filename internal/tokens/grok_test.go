@@ -701,6 +701,87 @@ func TestGrokDecoderIsDeterministicAndSourceShapesAreNamed(t *testing.T) {
 	}
 }
 
+// Stella's two source-shape witnesses, kept verbatim. A retained identity must not depend on
+// a model ID inferred from the split, JSON last-key-wins, or case aliasing.
+func TestStellaGrokMissingPrimaryDoesNotInventModel(t *testing.T) {
+	raw := []byte(`{"sessionId":"synthetic","turns":[{"turnNumber":1,"modelUsage":{"split-only":{}}}]}`)
+	recs, err := DecodeGrokTurns(raw, GrokOptions{MappingID: "sha256:" + strings.Repeat("0", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := recs[0].Observation.Model
+	if m.ID != nil || m.Basis != "unknown" {
+		t.Fatalf("missing primary must remain unknown, got %+v", m)
+	}
+}
+
+func TestStellaGrokRejectsAmbiguousExport(t *testing.T) {
+	for name, raw := range map[string]string{
+		"trailing":   `{"sessionId":"a","turns":[]} {"sessionId":"b","turns":[]}`,
+		"duplicate":  `{"sessionId":"a","sessionId":"b","turns":[]}`,
+		"case_alias": `{"SESSIONID":"a","TURNS":[]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := DecodeGrokTurns([]byte(raw), GrokOptions{MappingID: "sha256:" + strings.Repeat("0", 64)})
+			if err == nil {
+				t.Fatal("accepted ambiguous or unmapped source shape")
+			}
+		})
+	}
+}
+
+func TestGrokSourceBoundaryAllowsTrailingWhitespaceAndExcludesUnknownFields(t *testing.T) {
+	raw := []byte("{\"sessionId\":\"a\",\"turns\":[{\"turnNumber\":1,\"extraField\":123}],\"extraTop\":true} \n\t")
+	recs, err := DecodeGrokTurns(raw, GrokOptions{MappingID: "sha256:" + strings.Repeat("0", 64)})
+	if err != nil {
+		t.Fatalf("trailing whitespace and unknown extra fields are allowed: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("one turn decoded, got %d", len(recs))
+	}
+	for _, s := range []string{"extraField", "extraTop"} {
+		if bytes.Contains(recs[0].Envelope, []byte(s)) {
+			t.Errorf("unknown extra field %s reached retained output", s)
+		}
+	}
+}
+
+// A non-empty primary incompatible with the single split stays mixed: the split is retained,
+// and no winner is picked.
+func TestGrokPrimaryIncompatibleWithSingleSplitStaysMixed(t *testing.T) {
+	raw := []byte(`{"sessionId":"a","turns":[{"turnNumber":1,"primaryModelId":"primary-model","modelUsage":{"split-model":{}}}]}`)
+	recs, err := DecodeGrokTurns(raw, GrokOptions{MappingID: "sha256:" + strings.Repeat("0", 64)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := recs[0].Observation.Model
+	if m.ID != nil || m.Basis != "mixed" {
+		t.Fatalf("incompatible primary and single split must stay mixed, got %+v", m)
+	}
+	if len(recs[0].Observation.ModelUsage) != 1 || recs[0].Observation.ModelUsage[0].ModelID != "split-model" {
+		t.Fatalf("the split entry is retained in model_usage: %+v", recs[0].Observation.ModelUsage)
+	}
+}
+
+// A duplicate decoded member name inside a modelUsage object (a nested object), and two
+// spellings that escape to the same name, are both refusals: no retained identity may depend
+// on JSON last-key-wins or escape aliasing.
+func TestGrokSourceBoundaryRefusesNestedAndEscapedDuplicateMembers(t *testing.T) {
+	for name, raw := range map[string]string{
+		"nested_usage_duplicate_key": `{"sessionId":"a","turns":[{"turnNumber":1,"modelUsage":{"m":{"inputTokens":1},"m":{"inputTokens":2}}}]}`,
+		"nested_field_duplicate_key": `{"sessionId":"a","turns":[{"turnNumber":1,"modelUsage":{"m":{"inputTokens":1,"inputTokens":2}}}]}`,
+		"escaped_equivalent_key":     `{"sessionId":"a","session\u0049d":"b","turns":[]}`,
+		"escaped_equivalent_in_turn": `{"sessionId":"a","turns":[{"turnNumber":1,"turn\u004eumber":2}]}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := DecodeGrokTurns([]byte(raw), GrokOptions{MappingID: "sha256:" + strings.Repeat("0", 64)})
+			if err == nil {
+				t.Fatal("accepted a duplicate decoded member name")
+			}
+		})
+	}
+}
+
 // The hand-written lexeme grammars, which replaced three compiled patterns because
 // internal/tokens keeps its only two to repo.go and bus.go. Two halves: the spellings
 // directly, including the ones no JSON document can carry, and then a synthetic turn per
