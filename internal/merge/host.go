@@ -163,6 +163,14 @@ func (h *GH) PR(n int) (PR, error) {
 	if err != nil {
 		return PR{}, err
 	}
+	return decodePR(out, n, h.Repo)
+}
+
+// decodePR is the ARRIVAL POINT of everything the forge says about one pull request: it
+// is where the host's JSON stops being bytes and becomes fields this tool hands to git.
+// It is a function of its own so that the decode is a thing a test can drive without a
+// network, a gh, or a subprocess.
+func decodePR(out string, n int, repo string) (PR, error) {
 	var raw struct {
 		Number              int                    `json:"number"`
 		Author              struct{ Login string } `json:"author"`
@@ -178,7 +186,15 @@ func (h *GH) PR(n int) (PR, error) {
 	if err := json.Unmarshal([]byte(out), &raw); err != nil {
 		return PR{}, fmt.Errorf("gh pr view %d did not answer JSON this tool can read: %w", n, err)
 	}
-	owner, _, _ := strings.Cut(h.Repo, "/")
+	// Lesson 48, and security#30 finding 5: A VALUE THAT BECOMES A COMMAND-LINE ARGUMENT
+	// IS CHECKED WHERE IT ARRIVES. The head branch is handed to `git fetch` on the next
+	// pass, so a head branch named `--upload-pack=<cmd>` is an ARGUMENT to git, which
+	// runs it as the remote helper over a local or ssh remote. It is checked by the same
+	// rule a typed branch is, and it is checked HERE, before this decode hands it on.
+	if err := ValidRefName(raw.HeadRefName); err != nil {
+		return PR{}, fmt.Errorf("pull request %d's head branch is not a name this tool hands to git: %w", n, err)
+	}
+	owner, _, _ := strings.Cut(repo, "/")
 	return PR{
 		Number: raw.Number, Author: raw.Author.Login, Base: raw.BaseRefName,
 		HeadRef: raw.HeadRefName, HeadOID: raw.HeadRefOid, Mergeable: raw.Mergeable,

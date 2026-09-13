@@ -237,6 +237,14 @@ func cmdAdd(args []string, stdout, stderr io.Writer, deps Deps, isBranch bool) i
 	f.check()
 	if isBranch {
 		f.require("branch", *branch, "the branch this lane is to land, as it is named at the host")
+		// Lesson 48, as init's --base and --lane-branch already pay it: this branch is
+		// stored once and handed to git on every pass afterwards, so it is checked HERE,
+		// where a person can still see what they typed (security#30 finding 5).
+		if strings.TrimSpace(*branch) != "" {
+			if err := merge.ValidRefName(*branch); err != nil {
+				f.problem(fmt.Sprintf("--branch: %s", oneline.Escape(err.Error())))
+			}
+		}
 	} else if !given(f.fs, "pr") {
 		f.problem("--pr is required and is the pull request's number; refusing to guess")
 	} else if *pr < 1 {
