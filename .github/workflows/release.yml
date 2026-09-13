@@ -56,9 +56,9 @@ jobs:
     # release job skipped, no release object, while certification had passed the same
     # commit in six minutes). Two copies of one test set drift, and the copy that ran here
     # was the slower and the older one. So this job is one question to the API, answered from
-    # one snapshot: of every certification.yml run on the commit this run is building, is any
-    # still unfinished (then wait), and did the most recently updated one succeed (then
-    # release)? A commit no certification run vouches for, or whose latest evidence is red,
+    # one snapshot, and asked again at the start of the release job: of every certification.yml
+    # run on the commit this run is building, is any still unfinished (then wait), and did the
+    # most recently updated one succeed (then release)? A commit no certification run vouches for, or whose latest evidence is red,
     # gets no release, and the refusal names the remedy.
     # It is the tag-only-a-certified-commit practice made into something that can say no.
     runs-on: ubuntu-latest
@@ -66,63 +66,22 @@ jobs:
     permissions:
       # Listing workflow runs is an Actions read; the file-level grant is contents only, and a
       # job that asks the API with a token that cannot read Actions would refuse every
-      # release with a 403 that looks like "no certification run". Scoped to this job.
+      # release with a 403 that looks like "no certification run". Scoped to this job; contents
+      # read as well, because a job that names any permission gets none it does not name, and
+      # the checkout of the ask script needs it.
       actions: read
+      contents: read
     steps:
-      - name: certification.yml passed on this commit
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: certification.yml vouches for this commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.sha }}
           REF: ${{ github.ref_name }}
         shell: bash
-        run: |
-          set -euo pipefail
-          # ONE ASKER, AND IT READS THE STATUS RATHER THAN THE EXIT CODE, for the reason the
-          # release job's `ask` below states: `gh api` exits 1 on an empty answer and on no
-          # answer alike. `-i` puts the status line first and the body after the blank line.
-          # ONE SNAPSHOT, NO STATUS FILTER. Two asks (completed, then in flight) are two
-          # snapshots, and a run that finishes red between them is in neither answer. So every
-          # run on this commit is fetched once, and the decision is made from that one list:
-          # anything not yet completed (queued, waiting, in progress) refuses with a wait line;
-          # otherwise the run with the LATEST UPDATE decides, not the newest by creation or by
-          # array position, because a rerun of an older run id is newer evidence than a later
-          # run that was never rerun. The perf wall clock lives in certification, so a commit
-          # green once and red on a rerun is a commit the newest evidence says not to release.
-          set +e
-          out=$(gh api -i "repos/${GITHUB_REPOSITORY}/actions/workflows/certification.yml/runs?head_sha=${SHA}&per_page=100" 2>&1); rc=$?
-          set -e
-          case "$(printf '%s\n' "$out" | head -n 1)" in
-            HTTP/*" 200 "*) ;;
-            *)
-              echo "asking GitHub for certification runs on $SHA did not answer 200 (gh exit $rc):"
-              printf '%s\n' "$out"
-              exit 1
-              ;;
-          esac
-          body=$(printf '%s\n' "$out" | sed -e '1,/^[[:space:]]*$/d')
-          total=$(printf '%s' "$body" | jq -r '.total_count')
-          listed=$(printf '%s' "$body" | jq -r '.workflow_runs | length')
-          if [ "$total" != "$listed" ]; then
-            echo "refusing: $total certification runs on $SHA but only $listed listed; the selection would be ambiguous"
-            exit 1
-          fi
-          printf '%s' "$body" | jq -r '.workflow_runs[] | "  run \(.id) attempt \(.run_attempt) \(.status) \(.conclusion // "-") updated \(.updated_at) \(.html_url)"'
-          inflight=$(printf '%s' "$body" | jq -r '[.workflow_runs[] | select(.status != "completed")] | length')
-          if [ "$inflight" != 0 ]; then
-            echo "refusing: $inflight certification run(s) on $SHA not yet completed; wait for certification-ok, then re-run this workflow: gh run rerun $GITHUB_RUN_ID -R $GITHUB_REPOSITORY"
-            exit 1
-          fi
-          newest=$(printf '%s' "$body" | jq -r '(.workflow_runs | sort_by(.updated_at) | last) // {} | "\(.id // "none") \(.run_attempt // 0) \(.conclusion // "none") \(.updated_at // "-")"')
-          set -- $newest
-          echo "certification runs on $SHA: $total completed; latest update is run $1 attempt $2, concluded $3 at $4"
-          if [ "$3" != success ]; then
-            echo "refusing: the latest certification evidence on $SHA is $3, so nothing vouches for this tree"
-            echo "certify it first (a run still in progress does not count; wait for certification-ok):"
-            echo "  gh workflow run certification.yml -R $GITHUB_REPOSITORY --ref $REF"
-            echo "then re-run this workflow: gh run rerun $GITHUB_RUN_ID -R $GITHUB_REPOSITORY"
-            exit 1
-          fi
-
+        # The whole ask lives in the script, so certification.yml's release dry-run can drive
+        # it with a fake `gh` (nova-tools#253) and so the release job below can ask it again.
+        run: .github/scripts/release-certified.sh
   release:
     needs: certified
     runs-on: ubuntu-latest
@@ -130,8 +89,10 @@ jobs:
     permissions:
       # The only job in this repository that writes anything. It is scoped to this job
       # rather than the file, so the certified job above, which asks the API and runs none
-      # of the tagged tree's code, has read only.
+      # of the tagged tree's code beyond the ask script, has read only. Actions read is
+      # here too because this job asks the same question again before it builds.
       contents: write
+      actions: read
     env:
       # Read once, from the ref that triggered the run, and passed to every step as an
       # environment variable rather than interpolated into a shell line: a `${{ }}` inside
@@ -143,6 +104,17 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+
+      - name: certification.yml still vouches for this commit
+        # ASKED AGAIN HERE, after the certified job and the queue wait between the two jobs:
+        # one snapshot cannot see a run created after it was taken, and a red that starts after
+        # the first ask and finishes before the binaries are built must still stop the release.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref_name }}
+        shell: bash
+        run: .github/scripts/release-certified.sh
 
       - name: the tag has the shape the version stamp assumes
         shell: bash
