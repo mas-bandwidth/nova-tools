@@ -358,6 +358,7 @@ func TestEveryRuleThatSurvivesATypedRoundTripIsRefusedOnReseal(t *testing.T) {
 		RuleMissingField:       "Body() writes all twelve members, so a short body cannot be re-encoded short",
 		RuleUnknownField:       "and cannot be re-encoded long",
 		RuleEnvelopeIDMismatch: "the ID is derived from the body on the way out, never carried over",
+		RuleMappingRuleShape:   "an unknown nested member in mapping rules is not carried by the typed struct",
 	}
 	// Defects that stop the read before an Observation exists, so there is nothing to re-seal.
 	noObservation := map[string]bool{
@@ -385,7 +386,15 @@ func TestEveryRuleThatSurvivesATypedRoundTripIsRefusedOnReseal(t *testing.T) {
 			if noObservation[want.Rule] {
 				t.Errorf("%s is listed as stopping the read, and the fixture read fine under Without", want.Rule)
 			}
-			_, _, err = NewValidator(v.allow).SealObservation(*env.Observation)
+			if env.Observation != nil {
+				_, _, err = NewValidator(v.allow).SealObservation(*env.Observation)
+			} else if env.Mapping != nil {
+				_, _, err = SealMapping(*env.Mapping)
+			} else if env.Coverage != nil {
+				_, _, err = SealCoverage(*env.Coverage)
+			} else {
+				t.Fatalf("envelope carries neither observation, mapping, nor coverage")
+			}
 			if why, lost := lostInTheRoundTrip[want.Rule]; lost {
 				if err != nil {
 					t.Errorf("%s is listed as lost in the round trip (%s), and the re-seal refused it: %v", want.Rule, why, err)
@@ -405,8 +414,8 @@ func TestEveryRuleThatSurvivesATypedRoundTripIsRefusedOnReseal(t *testing.T) {
 	}
 
 	// The partition, pinned.
-	if len(AllRules) != 38 {
-		t.Errorf("AllRules has %d rules; testdata/refused holds 38 fixtures, one per rule", len(AllRules))
+	if len(AllRules) != 42 {
+		t.Errorf("AllRules has %d rules; testdata/refused holds 42 fixtures, one per rule", len(AllRules))
 	}
 	if got, want := len(resealed), len(AllRules)-len(lostInTheRoundTrip)-len(noObservation); got != want {
 		t.Errorf("%d rules were refused on re-seal, want %d (%d rules, %d lost in the round trip, %d stopping the read)",

@@ -14,6 +14,8 @@ type (
 		ID          string
 		Body        *Object
 		Observation *Observation
+		Mapping     *Mapping
+		Coverage    *Coverage
 	}
 
 	// Source is source: the declared shape and the identity within it.
@@ -190,11 +192,44 @@ func (v *Validator) ValidateEnvelope(raw []byte) (*Envelope, error) {
 			return nil, err
 		}
 	}
-	obs, err := v.validateObservation(body)
-	if err != nil {
-		return nil, err
+	schemav, ok := body.Get("schema")
+	if !ok {
+		return nil, refuse(RuleMissingField, "body.schema", "a body names its schema")
 	}
-	return &Envelope{ID: id, Body: body, Observation: obs}, nil
+	schema, ok := schemav.(string)
+	if !ok {
+		return nil, refuse(RuleWrongType, "body.schema", "the schema is a string")
+	}
+
+	switch schema {
+	case SchemaObservation:
+		obs, err := v.validateObservation(body)
+		if err != nil {
+			return nil, err
+		}
+		return &Envelope{ID: id, Body: body, Observation: obs}, nil
+	case SchemaMapping:
+		mapping, err := v.validateMapping(body)
+		if err != nil {
+			return nil, err
+		}
+		return &Envelope{ID: id, Body: body, Mapping: mapping}, nil
+	case SchemaCoverage:
+		cov, err := v.validateCoverage(body)
+		if err != nil {
+			return nil, err
+		}
+		return &Envelope{ID: id, Body: body, Coverage: cov}, nil
+	default:
+		if err := v.refused(RuleUnknownSchema, "body.schema", "the only supported body schemas are "+SchemaObservation+", "+SchemaMapping+", "+SchemaCoverage); err != nil {
+			return nil, err
+		}
+		obs, err := v.validateObservation(body)
+		if err != nil {
+			return nil, err
+		}
+		return &Envelope{ID: id, Body: body, Observation: obs}, nil
+	}
 }
 
 // Seal returns the envelope bytes for a body: the ID derived from the body's canonical
