@@ -1,4 +1,4 @@
-# nova-work — specification (DRAFT 7, 2026-09-13)
+# nova-work — specification (DRAFT 8, 2026-09-13)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
@@ -62,30 +62,50 @@ disagree, one of them has a bug, and the tests decide which.
 15:53Z: *"there must be one coordinator at a time. One reader/writer on the work set S in
 memory via nova-work"; "Otherwise, we have races"*). Friends and workers submit results, evidence
 and requested changes to that coordinator; they never open a second live S; other readers read
-published, revision-labelled snapshots. **The mechanism that makes the rule hold across
-benches is in the pilot, on the substrate we already trust: the branch that holds S carries an
-ownership record** (`OWNER`: the coordinator's name, a generation, the stamp, the base sha),
-and `session start` **takes ownership by pushing a commit that bumps the generation with
-`--force-with-lease` against the tip it read** — git refuses the push if the tip moved, so two
-benches starting from one checkpoint cannot both succeed, and the one refused never activates
-(exit 1, naming the owner and generation it found). Every clip carries the session's
-generation and is pushed the same way; a fenced old owner's late clip is refused by the tip
-having moved, so it can neither publish nor dispatch under an obsolete generation. A stale
-heartbeat is an availability signal, never takeover authority: a takeover is a new `session
-start` that bumps the generation, and only its push succeeding makes it the owner. What this
-does not do, said plainly: it cannot stop two owners who are both **offline** from accepting
-events locally; it guarantees only that at most one of them can ever publish, and the other's
-accepted events are recovered by the export path below, never lost and never merged.
+published, revision-labelled snapshots. **The mechanism that makes the rule hold across benches is proposed for the pilot, on the
+substrate we already trust, and it fences MUTATION, not only publication.** The branch that
+holds S carries an ownership record (`OWNER`: the coordinator's name, a **generation**, the
+stamp it was taken, and **`until`**, the stamp the ownership lease expires). Three rules:
 
-A **session** is that coordinator's supervised, long-lived process, and it owns the one S: it loads the snapshot once,
-validates it whole, builds the indexes, replays nothing thereafter, and answers verbs against
-its resident objects. **The CLI is a thin client**: `nova-work <verb> --session <path>` sends the verb to the
+1. **Taking.** `session start` fetches the tip, reads `OWNER`, and takes ownership only if the
+   record names nobody, names itself, or its `until` is in the past; it then pushes one
+   fast-forward commit that bumps the generation and sets `until = now + 2 × --every`, using
+   a compare-and-swap push (`--force-with-lease=<branch>:<tip read>`: git refuses the push if
+   the tip moved; **no history is ever rewritten** — the flag is the CAS, not a force). A
+   refused push, or an `OWNER` whose lease is live and names another, is exit 1 naming the
+   owner, generation and `until`, and the session never activates. The same owner restarting
+   inside its live lease resumes its generation without a bump.
+2. **Holding.** Every `--every`, the owner fetches the tip and **reconfirms** that `OWNER`
+   still carries its generation, then pushes a fast-forward commit advancing `until` the same
+   way. **An owner that cannot reconfirm before its `until` fences itself**: it stops
+   accepting mutations (exit 1, `fenced`, on every write) and keeps its journal. Offline or
+   partitioned, it fences at `until` without any network at all. So at no instant do two
+   sessions accept mutations: the old owner is fenced by the clock before the new one may take,
+   and a takeover is refused until `until` has passed. The bound this rests on is stated: the
+   benches' clocks agree to within a skew the team names (`--skew <duration>`, added to
+   `until` before a takeover is allowed), and the reconfirm cadence is `--every`.
+3. **Publishing.** Every clip carries the generation and is pushed the same CAS way; a late
+   clip from a fenced owner is refused by the moved tip. A friend's request that reaches a
+   fenced session is refused, not queued.
+
+What this does not do, said plainly: it cannot make a fenced session's accepted-but-unclipped
+events shared; they are recovered by the export path below, never lost and never merged. What
+it does do is what Glenn's rule requires: one live reader/writer at a time, by the clock and
+the branch together, on no backend but git.
+
+A **session** is that coordinator's supervised, long-lived process, and it owns the one S: it loads the snapshot at the
+fetched tip once (`--file` is the snapshot's path inside `--repo`, read at that tip, never a
+free file), replays its own journal beyond that snapshot once (recovery, and the only replay),
+validates the set whole, builds the indexes, and answers verbs against its resident objects
+thereafter; `--at` answers from the retained history in memory. **The CLI is a thin client**: `nova-work <verb> --session <path>` sends the verb to the
 session listening at that path (a Unix socket the session creates at start; no default path)
 and prints its one-line answer; a fresh CLI process is never a fresh parse. A reader who is
 not the coordinator reads a published snapshot with `--snapshot <path>` in place of
 `--session`, read-only, and its answers carry the snapshot's revision. The client is Go under
 this repository's conventions; the session's own language is the pilot's decision (Stella:
-*trusted implementation code may be Lisp*), and the version line is the client's. A session's identity, bounds, journal path, base revision and clip cadence are
+*trusted implementation code may be Lisp*), and the version line is the client's; a session in another language answers `session
+status` with its own `SESSION OK … build=<identity>` field, so every running binary says
+which build it is. A session's identity, bounds, journal path, base revision and clip cadence are
 explicit at start and readable at any time (`session status`), and it is stopped explicitly;
 no always-on daemon is required, and a supervised session that a coordinator starts for a
 sitting and stops at its end is enough (Stella, *Keep the work set alive*).
@@ -102,16 +122,17 @@ nothing, which is how a crash between durability and acknowledgement yields one 
 (Stella, *Accept locally, then clip into Git*).
 
 **The repository branch that holds S has one writer too: the active coordinator.** A **clip**
-is the only write to it: it names a local event boundary, fetches the upstream revision, and
-**refuses if upstream is not the session's base** — a moved upstream means a fenced old owner's
-late push or a hand edit, and either is a handoff or a reload, never a merge — then validates
+and the ownership commits of rules 1 and 2 above are the only writes to it, and a clip: it names a local event boundary, fetches the upstream revision, and
+**refuses if upstream is not the session's base** — a moved upstream means a hand edit or a new
+owner's take, and either is a handoff or a reload, never a merge — then validates
 the resident S whole, writes one deterministic snapshot carrying the structure and the
 retained event history, commits and pushes under `--git-timeout <seconds>` with `--attempts
-<n>` (default 25, as the bus's, a budget measured against the bus rather than a fact about
-it), and records the shared revision and which local events it contains. A failed push leaves
+<n>` (default 25 as the bus's; what an attempt retries here is the CAS push after a fetch
+shows the tip unchanged but the push raced the same owner's own reconfirm commit, the one
+moving-remote case this design allows), and records the shared revision and which local events it contains. A failed push leaves
 accepted local work and the pending clip intact and reports *locally durable, not shared*; a
-divergence prints the upstream sha and the session's base and stops; nothing is force-pushed
-and nothing is reconciled. A session stop and a coordinator handoff request a clip under the
+divergence prints the upstream sha and the session's base and stops; no history is ever
+rewritten (the CAS push above only fast-forwards) and nothing is reconciled. A session stop and a coordinator handoff request a clip under the
 same flags, so a stop is bounded by the same timeout and budget. **A session whose clip is
 refused by divergence is fenced**: it accepts no further mutations (exit 1, `fenced`), keeps
 its journal, and `session export --into <path>` writes its accepted events since its base as a
@@ -181,17 +202,23 @@ they are distinct kinds:
   feature cells / applicable rows".
 - `:roadmap` — a typed view over its cells: `:axes` (ordered, named members), `:cells` mapping
   a coordinate to a `:ref`, `:scope-revision`, `:source-revision` (the tree the evidence was
-  read against), `:completion-policy` (`:all-required-features` is the only policy in draft
-  3). A cell references a node; it never contains state of its own. An unknown axis member, a
+  read against), `:completion-policy` (`:all-required-features` is the only policy in this
+  draft). A cell references a node; it never contains state of its own. An unknown axis member, a
   duplicate coordinate and a missing required cell are refusals; an omitted cell is never
   complete (5653990830). A cell may be marked `:out-of-scope` by a recorded scope event, which
   is distinct from unstarted and from unknown, and **an out-of-scope cell leaves that axis
   member's applicable rows** (5654160320: *fully green features / applicable features*).
   Adding an axis member or a feature is a scope revision; removing one is not completion.
-- `:task` — work with `:acceptance`; a task with no `:children` is a **leaf subtask**, the
-  unit `unit=leaves` counts; a task with children is counted by its leaves, never itself; (pointers to the criteria that close it, each with a
-  short id), `:required` (default true), and a current state, generation, evidence set and
-  blocked reason **all derived from its events**. A task has no stored worker; who is working
+- `:task` — work with `:acceptance`, a list of the criteria that close it, each with a short
+  id and a **kind** (`:test` for a named test at a revision, `:job` for a CI job at a revision,
+  `:merged` for a PR merged at a revision, `:attested` for a criterion only a reviewer's
+  attestation can close), `:required` (default true), and a current state, generation,
+  evidence set and blocked reason **all derived from its events**. A task with no `:children`
+  is a **leaf subtask**, the unit `unit=leaves` counts; a task with children is counted by its
+  leaves, never itself; so the four units of 5654012267 are `:feature`, `:task`, the leaf
+  `:task`, and the `:attempt` event. A node may carry `:private true`; `render` never writes
+  a private node or its descendants into an output file, and a public view that reaches one
+  through a parent prints `private=<n>` and nothing of it (5653982211). A task has no stored worker; who is working
   on it is answered from leases only; who is responsible is `:responsible`, inherited down the
   containment forest until overridden.
 - `:lease` — the ownership-of-execution record, below. *(The authors' proposal, not Glenn's.)*
@@ -245,7 +272,7 @@ refused.
 **Evidence is a pointer the validator can fetch, bound to a criterion.** Resolving a pointer
 proves that the thing exists; **the criterion it names is what it proves** (Stella, 15:38Z,
 point 1), so an evidence event carries both, and an evidence event whose criterion is not an
-`:acceptance` entry of its node is refused. Draft 3 ships five schemes — `commit:<sha>`,
+`:acceptance` entry of its node is refused. This draft ships five schemes — `commit:<sha>`,
 `run:<owner/repo>#<id>`, `pr:<owner/repo>#<n>@<sha>`, `file:<path>@<sha>`,
 `test:<package>/<name>@<sha>` — and a sixth, `note:<scheme>:<id>`, for any team's message
 store, so that no family's bus is named in the tool (5653970526). **A `note:` pointer is
@@ -358,8 +385,10 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
 ## Queries — the contract *(Rowan; Glenn's list from 5654012267)*
 
 Every answer is computed whole before anything is printed, then printed as one `QUERY OK`
-scope line and one `QUERY ROW` line per fact, capped and counted. The scope line always carries: `scope=<revision> membership=<rule> unit=<unit>
-source=<sha> freshest=<stamp> unknown=<n> unverified=<n> emitted=<bytes>`.
+scope line and one `QUERY ROW` line per fact, capped and counted. The scope line is the `QUERY OK` line of the grammar below: scope revision, membership rule,
+unit, source sha, freshest evidence stamp, `done=`, `done-unverified=`, `unknown=`, `deferred=`,
+`stale=`, `rows=`, `shown=`, `parses=` and `emitted=`; `percent` adds `green=` and
+`baseline-rows=`.
 
 | ask | answers |
 |---|---|
@@ -380,17 +409,20 @@ snapshot by `--snapshot <path>` with the three bounds, read-only; under `--snaps
 verification cache is still named by `--cache <path>`, so a snapshot reader sees the same
 verdicts the coordinator last fetched. **Every mutation verb takes `<write flags>` = `--as
 <name> [--request <id>] [--expect <revision>] [--now <stamp>]`**: the request id is drawn by
-the tool and printed when absent; `--expect` is the caller's expected local revision, and a
-request whose expectation is stale is refused at exit 1 naming the current revision
-(5653982211: *apply rejects stale preconditions*), so a friend's request always carries one. Every client verb that lists takes `--max
+the tool and printed when absent; `--expect` is the caller's expected local revision, optional
+on the coordinator's own verbs and **required on every request in a `session replay` bundle**;
+a request whose expectation is stale is refused at exit 1 naming the current revision
+(5653982211: *apply rejects stale preconditions*). How a friend on another bench submits a
+request is the bus: a request bundle is a file a note carries, and `session replay --from` is
+its intake, so no second transport is invented here. Every client verb that lists takes `--max
 <n>`, default 20, `0` means all, negative refused (SPEC.md, the cap-and-count law). Every
 duration comes from a flag: `--window` is required by `who` and `stale`, `--by` by `take`,
 `--every` by `session start`. `--now <stamp>` is optional on every verb and records `:clock
 :given`; absent, the session's clock is used and recorded as `:clock :tool`.
 
 ```
-nova-work session start  --session <path> --as <name> --file <S.sexp> --journal <path> --repo <path> --remote <name> --branch <name>
-                         --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
+nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --repo <path> --remote <name> --branch <name>
+                         --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --skew <duration> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
 nova-work session export --session <path> --into <path>
 nova-work session replay --session <path> --from <path> --as <name> [--max <n>]
 nova-work session status --session <path>
@@ -434,7 +466,7 @@ the session evaluates the structural rules over the affected nodes and either jo
 applies the event unchanged or refuses at exit 1 with the finding's line and changes nothing.
 A red S elsewhere still refuses, because a red set is stopped, not written around; `check`
 says where. `plan`, `apply` and `reconcile` (5653982211, the Terraform half) are **not in
-draft 5**: named here so a reader knows they are deferred, with their own section once the
+this draft**: named here so a reader knows they are deferred, with their own section once the
 pilot has shown what a plan must name.
 
 **A lease is authoritative the moment the one coordinator accepts it**, because the ownership
@@ -560,7 +592,7 @@ The validator is one set of rules run two ways: **whole**, at session load and a
 walking S once and printing one `WORK FAIL` line per finding, capped **per rule**, with one
 count line always, exit 1 on any finding; and **on the candidate**, at every mutation, over the
 resident S as it would be with the event applied, touching only the nodes the event reaches
-(rule 12 for the node the event addresses, rules 1 to 11 and 15 to 16 for the nodes it names),
+(rule 12 for the node the event addresses; rules 1 to 11, 15, 16 and 18 for the nodes it names),
 refusing the event at exit 1 with the finding's line and changing nothing. Rules 13, 14 and 17
 are the reader's, exit 2, at load. The validator never fetches; what a pointer proves is
 `verify`'s, and an unverified pointer is a count, never a finding.
@@ -633,16 +665,17 @@ Every line's first token is the verb's (`SESSION`, `CLIP`, `WORK`, `VERIFY`, `QU
 or one of the informational tokens `ROW`, `NOTE` and `MORE`. `OK`, `ROW`, `NOTE` and `MORE`
 go to stdout; `FAIL` and refusals go to stderr. Every count line prints on failure as on
 success. Every `OK` line ends `emitted=<bytes>`. Every mutation's `OK` line carries the
-event's id and the session's local revision after it, and `shared=<rev|->` for the last
-confirmed clip.
+event's id, its request id, the session's local revision after it, and `pushed=<rev|->`, the
+revision of the last clip that reached the branch.
 
 ```
 SESSION OK session=<path> owner=<name> generation=<n> file=<path> base=<sha> journal=<path> events=<n> pending=<n> nodes=<n> edges=<n> parses=<n> replays=<n> emitted=<bytes>
 SESSION FAIL session=<path> owner=<name> generation=<n>: <reason>
 EXPORT OK session=<path> into=<path> requests=<n> base=<sha> emitted=<bytes>
-REPLAY OK from=<path> requests=<n> applied=<n> refused=<n> shown=<n> emitted=<bytes>
+REPLAY OK from=<path> requests=<n> applied=<n> refused=<n> shown=<n> emitted=<bytes>   (exit 1 when refused > 0)
+SESSION OK ... build=<identity> lease-until=<stamp> generation=<n> ...
 REPLAY ROW request=<id> verdict=<applied|refused> rev=<n>: <reason>
-ATTEST OK id=<event-id> request=<id> node=<id> criterion=<id> against=<sha> emitted=<bytes>
+ATTESTED OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> criterion=<id> against=<sha> emitted=<bytes>
 CLIP OK session=<path> boundary=<request-id> events=<n> base=<sha> commit=<sha> pushed=<true|false> attempts=<n> emitted=<bytes>
 CLIP FAIL session=<path> boundary=<request-id> events=<n> base=<sha> upstream=<sha> pushed=false attempts=<n>: <reason>
 WORK OK nodes=<n> edges=<n> events=<n> leases=<n> expired=<n> stale=<n> scope=<rev> source=<sha> emitted=<bytes>
@@ -656,7 +689,7 @@ QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> h
 QUERY FAIL ask=<kind> rows=<n> shown=<n>: <reason>
 RENDER OK view=<id> cells=<n> bytes=<n> into=<path> emitted=<bytes>
 RENDER FAIL view=<id> cells=<n> drifted=<n> into=<path>
-<MUTATION> OK id=<event-id> request=<id> node=<id> rev=<n> shared=<rev|-> ... emitted=<bytes>
+<MUTATION> OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> ... emitted=<bytes>
 <MUTATION> FAIL node=<id>: rule <n>: <reason>
 LEASE FAIL node=<id> holder=<name> since=<stamp> deadline=<stamp> live=<n>: held
 <TOKEN> NOTE <caveat>
@@ -665,7 +698,7 @@ nova-work <build identity> <goos>/<goarch> <go version>
 ```
 
 where `<MUTATION>` is one of `NODE`, `DECOMPOSE`, `DEP`, `AXIS`, `CELL`, `RESPONSIBLE`,
-`LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`, `STATE`, `CORRECT`, `EVENT`, each
+`LEASE`, `HEARTBEAT`, `RELEASE`, `ATTEMPT`, `EVIDENCE`, `ATTESTED`, `STATE`, `CORRECT`, `EVENT`, each
 adding the fields its section names (`LEASE OK … holder= deadline= default= live=`, `STATE OK
 … from= to= evidence=`, `ATTEMPT OK … by= result= generation=`, `EVIDENCE OK … criterion=
 against=`, `CORRECT OK … generation=`, `EVENT OK … kind= scope=`).
@@ -694,7 +727,7 @@ to an earlier revision; malformed and cyclic data refused at load; a `#.` payloa
 the reader; a `:deps` cycle refused; a cancel request withdrawn and a cancel confirmed; a deep
 chain with no quadratic work (visit counts asserted); a lease past its deadline reads as
 unowned, its responsibility unchanged, and its release is not blocked; `:extend-once` once; a
-lease reads `shared=false` until its clip is pushed; an invalid transition refused;
+lease reads `pushed=false` until its clip reaches the branch; an invalid transition refused;
 a refused mutation leaving S, the journal and the indexes unchanged; `render --check` fails
 on one changed cell; **start once, run many** (zero parses and zero replays on unchanged
 indexed queries, counts asserted); incremental results equal a clean reconstruction of the
@@ -737,7 +770,8 @@ evidence and `verify` as a separate pass with a cache (Stella's points 1 and 2);
 `--at <revision>`; `emitted=<bytes>` on every `OK` line; the structure verbs' names and
 flags. Stella's: the local recovery journal, event ids and expected revisions, the named event
 boundary per clip, the offline-clip rule, the fencing-generation ownership record as a proposal (the `OWNER`-on-the-branch form with
-`--force-with-lease` is Rowan's, and the export/replay path with it), fold/unfold/propagate as
+CAS push, the lease `until`, the self-fence at `until`, `--skew`, and the export/replay path
+are Rowan's), fold/unfold/propagate as
 operators, the measurement list, the `link`/`absorb` archive order, the migration dispositions; and in her sections below,
 the pilot branch and sha, the prototype facts, the rate schedule and virtual cost, the
 `NEXT-TOOLS.md` hand-off, and the fixed-table capability boundary. Each is open to be cut by
