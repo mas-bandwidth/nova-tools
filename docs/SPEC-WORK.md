@@ -1,4 +1,4 @@
-# nova-work — specification (DRAFT 11, 2026-09-13)
+# nova-work — specification (DRAFT 12, 2026-09-13)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
@@ -395,10 +395,12 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
   checklist as done, or count one shared leaf repeatedly within a cell* (5653970526).
 - **Completion of a focus** = completed required work / current required work, with the
   baseline denominator kept beside it for expansion and contraction (5654160320). **Current
-  required work excludes `:deferred`, `:cancelled` and `:superseded` leaves** and `remaining`
-  prints them under `deferred=<n>`, `cancelled=<n>` and `superseded=<n>`, kept apart, so the
-  subtraction is visible; the baseline denominator
-  still counts them. **Active rows** of a roadmap are its baseline rows plus discovered rows,
+  required work keeps `:deferred` leaves (deferred is not done) and excludes only
+  `:cancelled` and `:superseded` leaves**, each removed by a scope event with an author and a
+  reason; `remaining` prints `deferred=<n>`, `cancelled=<n>` and `superseded=<n>` kept apart,
+  so what is in and what left the denominator is visible; the baseline denominator still
+  counts all three (Johnny Grok, johnny-afcd1cdafa74: a deferral must not raise
+  completed / current required, at leaf grain as at row grain). **Active rows** of a roadmap are its baseline rows plus discovered rows,
   less rows removed or superseded by a scope event; **a deferred row stays active and stays
   in the denominator, because it is not done** (Johnny Grok's HOLD on draft 9, bus note
   johnny-e51960925453: deferring an applicable row must not raise green/rows); **applicable
@@ -753,8 +755,9 @@ as unknown in every rollup; stale evidence counted as unknown; a `note:` pointer
 evidence for done; a `run:` pointer to a failed run resolving and counting as unverified; a
 structure-plus-scope envelope crashed between its two events replaying all-or-none; a task split by `decompose` (both units printed, revision moved); scope
 expansion by `node add` (added since baseline visible, new rows at the bottom, `baseline-rows`
-printed); deferral (cannot raise the done count, and cannot raise the percentage: a deferred row
-stays in `rows=`); reopening; two processes opening one journal, the second refused; a
+printed); deferral (cannot raise the done count, cannot raise the roadmap percentage, and cannot
+raise a focus's completion ratio: a deferred row stays in `rows=` and a deferred leaf stays in
+current required work); reopening; two processes opening one journal, the second refused; a
 passing test of another name failing to qualify a criterion; a `correct` event voiding an
 earlier qualification for the done claim; a correction bumping the
 generation and an older attempt's result refused at `state --to done`; future work cannot
