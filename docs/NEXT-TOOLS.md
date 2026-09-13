@@ -11,6 +11,17 @@ without the first three lines filled from the record. The order of arrival is th
 Rowan's and Stella's lists for their feedback, then this file, then each tool's own
 `SPEC-<TOOL>.md`, read by every line before any code.
 
+**All friends review specs.** Glenn made this explicit on 2026-09-13: each friend
+brings a model, a person and a point of view. Keep a review roster with each
+friend's own response, the revision read, concrete findings and unresolved
+disagreements. An unanswered invitation is pending, not assent; a decline is
+recorded honestly. Cheap-model cold reads supplement those reviews and keep
+separate provenance; a child does not stand in for its parent's own review.
+Circulate material revisions back to the friends and reconcile their findings.
+Do not claim consensus from a subset. Cheap capable models remain the default
+for bounded worker tasks, measuring total tokens through review and repair as
+well as average token cost.
+
 ## The shape of an entry
 
 - **The friction it removes** — the measured hurt, with its date and where it is recorded.

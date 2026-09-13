@@ -831,8 +831,11 @@ published by becoming part of S.
 
 Order the operation: capture source at a named remote revision; validate the
 archive and mapping; commit and confirm the shared Git checkpoint; recheck for
-source changes; then delete only the selected source issue under the configured
-authority. If the source changed, reconcile and checkpoint the added content first.
+source changes; then delete only the selected source issue under the applicable
+authorization for that repository and selected batch. Configuration identifies
+permitted actors and adapters; it does not itself grant authority. Record the
+grant's scope and source reference as provenance, never as executable permission
+from imported content. If the source changed, reconcile and checkpoint the added content first.
 Keep the original external identity and an absorbed tombstone plus deletion
 receipt so later intake cannot recreate the work. A network failure or uncertain
 delete result preserves the archive and a pending reconciliation state. Do not
@@ -914,7 +917,8 @@ replace the remaining Fixed Tables acceptance gates.
 
 Glenn's chosen direction is that **S is the primary form**, with a persistent versioned
 repository home. `mas-bandwidth/work` is his proposed location; creating or populating it is
-separate from this draft. Local in-memory structures and indexes are rebuildable working
+separate from this draft and belongs to an operator with the relevant repository or
+organization authorization. The tool grants no such authority. Local in-memory structures and indexes are rebuildable working
 copies. Task identities, source links, events, decisions and evidence records must survive
 process loss, bench changes and coordinator handoff through the durable history.
 
@@ -986,8 +990,11 @@ Original audit IDs, historical reports and superseding aliases remain retrievabl
 provenance, not current completion assertions.
 
 The initial 23 audit-family rows omitted ordinary delivered capabilities. Glenn identified
-that gap; the next survey adds the missing capability inventory and preserves the versioning
-contract's individual rows for nested work. This is an incomplete imported baseline being
+that gap; the survey appended 34 ordinary capability rows and preserved the versioning
+contract's individual rows for nested work. Schema PR #1006 at `c77d81fc` now separates
+source support (built, partial, missing) from qualified ordinary acceptance, with source
+references, invoked assertions and remaining work per cell. Its original audit-family
+reconciliation remains incomplete. This is an incomplete imported baseline being
 repaired, not evidence that the implementation just expanded by the same amount. The source
 records both the inventory correction and implementation work discovered during execution.
 
@@ -1010,7 +1017,8 @@ instead of falling back to a different one.
 
 These are prototype facts, not production conformance claims. The pilot still uses shared
 containment references and memoized descendant sets, which can cost quadratic space/time;
-it does not yet implement this draft's counted forest, indexed repo/category queries, leases,
+the production design's counted containment forest and reference graph address that
+specific duplication cost. The pilot does not yet implement them, indexed repo/category queries, leases,
 network evidence validation or incremental updates. Its AST-depth check occurs after the Lisp
 reader, so it is not the production reader's pre-parse depth guarantee. The existing parser
 and gate tests passing does not certify those missing properties.
@@ -1022,8 +1030,9 @@ correction, a completed cell, newly discovered work, a dependency or handoff, an
 focus. Record failures and repairs as they occur. At the retrospective, compare the same
 questions and acceptance scope against the previous manual workflow, then change the spec.
 
-Measure total tokens by friend/model/bench/repo and attempt where available, including source
-survey, coordination, review and correction; distinguish unavailable measurement from zero.
+Measure total tokens by friend/model/bench/repo and attempt through the attempt event's
+`:usage` pointer where available, including source survey, coordination, review and
+correction. A missing or unresolved usage pointer is unmeasured, never zero.
 Keep raw observations so alternative reports remain possible. Price with a versioned rate
 schedule, separating billed cost from virtual model-weighted cost. Record useful work per
 accepted result, wall time, retries, stale answers and questions that needed human rescue.
