@@ -418,7 +418,7 @@ capped by `--max` with a `MORE` line naming the remedy; the version line is
 
 Fixtures, each tiny, each a test: nested completion; a failed gate; a shared dependency
 counted once; unknown evidence; unverified evidence changing no state; stale evidence
-counted as not green only under `--strict`; a task split (both units printed); scope expansion
+counted as unknown in every rollup; a task split (both units printed); scope expansion
 (added since baseline visible, revision moved, new rows at the bottom, `baseline-rows`
 printed); deferral (cannot raise the done count); reopening; a correction bumping the
 generation and an older attempt's result refused at `state --to done`; future work cannot
