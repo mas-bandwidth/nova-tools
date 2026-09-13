@@ -164,6 +164,29 @@ func TestHomeOutsideTheWriteSetIsRefused(t *testing.T) {
 	}
 }
 
+// Rule 9 and the SBPL refusal: HOME is a path the generated profile names, so it pays
+// the same metacharacter refusal every --read/--write path pays. Without this the write
+// path is checked and the HOME inside it is not, so an ordinary --write and a HOME
+// holding a paren reach the profile and the sandbox fails to start.
+func TestHomeWithSbplMetacharacterIsRefused(t *testing.T) {
+	needSbpl(t)
+	write, read, _, _ := scratch(t)
+	oddHome := filepath.Join(write, "a (paren) home")
+	if err := os.MkdirAll(oddHome, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_, bad := Build(in(t, write, read, oddHome, anExecutable(t)))
+	var found bool
+	for _, r := range bad {
+		if r.Reason == "home_outside" && strings.Contains(r.Text, "the generated policy cannot carry") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a HOME holding a paren was accepted into the generated policy: %v", bad)
+	}
+}
+
 // Rules 13 and 8: the cwd and the temp directory default to the first --write, and an
 // explicit one outside the write set is refused.
 func TestCwdAndTmpAreInsideTheWall(t *testing.T) {

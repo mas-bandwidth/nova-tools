@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -809,6 +811,25 @@ func TestServeRefusesWhitespaceOnlyOnNote(t *testing.T) {
 	}
 	if !strings.Contains(r.stderr, onNoteHint) {
 		t.Fatalf("stderr does not include onNoteHint:\n%s", r.stderr)
+	}
+}
+
+// A note id beginning with "-" would reach --on-note's argv as a flag: spawn appends the
+// ids to the command's own arguments, so a leading dash is the command's to misread. The
+// seam refuses it before it is ever an argument, and names the id.
+func TestSpawnRefusesALeadingDashID(t *testing.T) {
+	note, noteDir := fakeNote(t)
+	var errb strings.Builder
+	s := &server{onNote: note, stdout: io.Discard, stderr: &errb}
+	rc := s.spawn(context.Background(), []string{"-evil"})
+	if rc == 0 {
+		t.Fatalf("spawn accepted a leading-dash id; it reached the command's argv")
+	}
+	if !strings.Contains(errb.String(), "-evil") {
+		t.Fatalf("the refusal does not name the id:\n%s", errb.String())
+	}
+	if got := calls(t, noteDir); len(got) != 0 {
+		t.Fatalf("the leading-dash id reached the receiver's argv: %v", got)
 	}
 }
 
