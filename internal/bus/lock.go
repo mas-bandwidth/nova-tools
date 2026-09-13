@@ -47,6 +47,10 @@ var ErrLockHeld = errors.New("lock held")
 // On Unix this is an flock (advisory lock) that dies with the process.
 // On Windows this is an O_EXCL sentinel file (.held).
 //
+// forceTryLockFile is the seam for testing lock collision and error recovery portably
+// without needing a live Windows runner.
+var forceTryLockFile func(f *os.File) (ok bool, retryable bool, err error)
+
 // When the lock is taken, LockFile stamps the current process PID into the file so
 // waiters and refusals can name the holder.
 // If wait is 0, LockFile attempts to acquire the lock once without waiting.
@@ -58,11 +62,23 @@ func LockFile(path string, wait time.Duration) (func(), error) {
 		return nil, fmt.Errorf("the lock at %s could not be opened: %w", path, err)
 	}
 	deadline := time.Now().Add(wait)
+	var lastErr error
 	for {
-		ok, lockErr := tryLockFile(f)
+		var ok, retryable bool
+		var lockErr error
+		if forceTryLockFile != nil {
+			ok, retryable, lockErr = forceTryLockFile(f)
+		} else {
+			ok, retryable, lockErr = tryLockFile(f)
+		}
 		if lockErr != nil {
-			f.Close()
-			return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lockErr)
+			if !retryable || wait == 0 {
+				f.Close()
+				return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lockErr)
+			}
+			lastErr = lockErr
+		} else {
+			lastErr = nil
 		}
 		if ok {
 			stampLockHolder(f)
@@ -77,8 +93,11 @@ func LockFile(path string, wait time.Duration) (func(), error) {
 			}, nil
 		}
 		if wait == 0 || !time.Now().Before(deadline) {
-			holder := ReadLockHolder(path)
 			f.Close()
+			if lastErr != nil {
+				return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lastErr)
+			}
+			holder := ReadLockHolder(path)
 			return nil, fmt.Errorf("the lock at %s is held by process %s; waited %s: %w", path, holder, wait, ErrLockHeld)
 		}
 		time.Sleep(jitter(lockPoll))
