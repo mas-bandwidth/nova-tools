@@ -324,13 +324,14 @@ func verifyPermittedDeltas(busDir, ref string, p Prepared, art PreparedArtifact)
 		case art.Path:
 			full := filepath.Join(busDir, filepath.FromSlash(art.Path))
 			if b, err := os.ReadFile(full); err == nil {
-				if string(b) != art.Note {
+				s := string(b)
+				if s != art.Note && !strings.HasPrefix(art.Note, s) {
 					return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", art.Path)
 				}
 			}
 			if status[0] != ' ' && status[0] != '?' {
 				staged, err := git(busDir, "show", ":"+art.Path)
-				if err == nil && staged != art.Note {
+				if err == nil && staged != art.Note && !strings.HasPrefix(art.Note, staged) {
 					return fmt.Errorf("unrelated staged changes in %s; refusing to publish", art.Path)
 				}
 			}
@@ -342,13 +343,13 @@ func verifyPermittedDeltas(busDir, ref string, p Prepared, art PreparedArtifact)
 					return fmt.Errorf("unrelated deletion of %s; refusing to publish", refIndexPath)
 				}
 				s := string(b)
-				if s != refIndex && s != expectedAppendedIndex {
+				if s != refIndex && s != expectedAppendedIndex && !(strings.HasPrefix(s, refIndex) && strings.HasPrefix(expectedAppendedIndex, s)) {
 					return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", refIndexPath)
 				}
 			} else {
 				if readErr == nil {
 					s := string(b)
-					if s != "" && s != wantIndexLine && s != wantIndexLine+"\n" {
+					if s != "" && s != wantIndexLine && s != wantIndexLine+"\n" && !strings.HasPrefix(wantIndexLine+"\n", s) {
 						return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", refIndexPath)
 					}
 				}
@@ -356,11 +357,11 @@ func verifyPermittedDeltas(busDir, ref string, p Prepared, art PreparedArtifact)
 			if status[0] != ' ' && status[0] != '?' {
 				staged, err := git(busDir, "show", ":"+refIndexPath)
 				if refIndex != "" {
-					if err != nil || (staged != refIndex && staged != expectedAppendedIndex) {
+					if err != nil || (staged != refIndex && staged != expectedAppendedIndex && !(strings.HasPrefix(staged, refIndex) && strings.HasPrefix(expectedAppendedIndex, staged))) {
 						return fmt.Errorf("unrelated staged changes in %s; refusing to publish", refIndexPath)
 					}
 				} else {
-					if err == nil && staged != "" && staged != wantIndexLine && staged != wantIndexLine+"\n" {
+					if err == nil && staged != "" && staged != wantIndexLine && staged != wantIndexLine+"\n" && !strings.HasPrefix(wantIndexLine+"\n", staged) {
 						return fmt.Errorf("unrelated staged changes in %s; refusing to publish", refIndexPath)
 					}
 				}
@@ -369,22 +370,29 @@ func verifyPermittedDeltas(busDir, ref string, p Prepared, art PreparedArtifact)
 			full := filepath.Join(busDir, AttributesName)
 			b, readErr := os.ReadFile(full)
 			if refAttrs != "" {
-				if readErr != nil || (string(b) != refAttrs && string(b) != expectedAttrs) {
+				if readErr != nil {
+					return fmt.Errorf("unrelated deletion of %s; refusing to publish", AttributesName)
+				}
+				s := string(b)
+				if s != refAttrs && s != expectedAttrs && !(strings.HasPrefix(s, refAttrs) && strings.HasPrefix(expectedAttrs, s)) {
 					return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", AttributesName)
 				}
 			} else {
-				if readErr == nil && string(b) != expectedAttrs {
-					return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", AttributesName)
+				if readErr == nil {
+					s := string(b)
+					if s != expectedAttrs && !strings.HasPrefix(expectedAttrs, s) {
+						return fmt.Errorf("unrelated dirty changes in %s; refusing to publish", AttributesName)
+					}
 				}
 			}
 			if status[0] != ' ' && status[0] != '?' {
 				staged, err := git(busDir, "show", ":"+AttributesName)
 				if refAttrs != "" {
-					if err != nil || (staged != refAttrs && staged != expectedAttrs) {
+					if err != nil || (staged != refAttrs && staged != expectedAttrs && !(strings.HasPrefix(staged, refAttrs) && strings.HasPrefix(expectedAttrs, staged))) {
 						return fmt.Errorf("unrelated staged changes in %s; refusing to publish", AttributesName)
 					}
 				} else {
-					if err == nil && staged != expectedAttrs {
+					if err == nil && staged != expectedAttrs && !strings.HasPrefix(expectedAttrs, staged) {
 						return fmt.Errorf("unrelated staged changes in %s; refusing to publish", AttributesName)
 					}
 				}
@@ -447,20 +455,25 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 	var reusedCommit string
 	wantTrailer := TrailerSend + " " + art.ID
 
+	refIndexPath := IndexPath(p.Sender.Lane)
+	refIndex, err := git(busDir, "show", ref+":"+refIndexPath)
+	if err != nil {
+		refIndex = ""
+	}
+	wantIndexLine := IndexLine(p.Index)
+	expectedAppendedIndex := refIndex
+	if expectedAppendedIndex != "" && !strings.HasSuffix(expectedAppendedIndex, "\n") {
+		expectedAppendedIndex += "\n"
+	}
+	expectedAppendedIndex += wantIndexLine + "\n"
+
+	refAttrs, err := git(busDir, "show", ref+":"+AttributesName)
+	if err != nil {
+		refAttrs = ""
+	}
+	expectedAttrs, _ := ExpectedMergeAttributes(refAttrs)
+
 	if ahead > 0 {
-		refIndexPath := IndexPath(p.Sender.Lane)
-		refIndex, err := git(busDir, "show", ref+":"+refIndexPath)
-		if err != nil {
-			refIndex = ""
-		}
-		wantIndexLine := IndexLine(p.Index)
-
-		refAttrs, err := git(busDir, "show", ref+":"+AttributesName)
-		if err != nil {
-			refAttrs = ""
-		}
-		expectedAttrs, _ := ExpectedMergeAttributes(refAttrs)
-
 		var refNonArtLines []string
 		for _, l := range strings.Split(refIndex, "\n") {
 			l = strings.TrimSpace(l)
@@ -630,18 +643,24 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			fullIndexPath := filepath.Join(busDir, filepath.FromSlash(refIndexPath))
 			needAppend := true
 			if diskIndex, err := os.ReadFile(fullIndexPath); err == nil {
-				for _, l := range strings.Split(string(diskIndex), "\n") {
-					l = strings.TrimSpace(l)
-					if l == "" {
-						continue
-					}
-					f := strings.Split(l, "\t")
-					if len(f) > 0 && f[0] == art.ID {
-						if l == wantIndexLine {
-							needAppend = false
-							break
+				s := string(diskIndex)
+				if refIndex != "" {
+					if s == expectedAppendedIndex {
+						needAppend = false
+					} else if strings.HasPrefix(expectedAppendedIndex, s) {
+						if err := os.WriteFile(fullIndexPath, []byte(expectedAppendedIndex), 0o644); err != nil {
+							return PushResult{}, err
 						}
-						return PushResult{}, fmt.Errorf("local index in %s has conflicting record for %s", refIndexPath, art.ID)
+						needAppend = false
+					}
+				} else {
+					if s == wantIndexLine+"\n" {
+						needAppend = false
+					} else if strings.HasPrefix(wantIndexLine+"\n", s) {
+						if err := os.WriteFile(fullIndexPath, []byte(wantIndexLine+"\n"), 0o644); err != nil {
+							return PushResult{}, err
+						}
+						needAppend = false
 					}
 				}
 			}
@@ -699,7 +718,13 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 				return PushResult{}, err
 			}
 			if string(diskBytes) != art.Note {
-				return PushResult{}, fmt.Errorf("local file %s has conflicting content", art.Path)
+				if strings.HasPrefix(art.Note, string(diskBytes)) {
+					if err := os.WriteFile(fullNotePath, []byte(art.Note), 0o644); err != nil {
+						return PushResult{}, err
+					}
+				} else {
+					return PushResult{}, fmt.Errorf("local file %s has conflicting content", art.Path)
+				}
 			}
 		} else {
 			if err := p.Save(busDir); err != nil {
@@ -708,21 +733,27 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 		}
 
 		// Reconcile index on disk
-		fullIndexPath := filepath.Join(busDir, filepath.FromSlash(IndexPath(p.Sender.Lane)))
-		wantIndexLine := IndexLine(p.Index)
+		fullIndexPath := filepath.Join(busDir, filepath.FromSlash(refIndexPath))
 		needAppend := true
 		if diskIndex, err := os.ReadFile(fullIndexPath); err == nil {
-			for _, l := range strings.Split(string(diskIndex), "\n") {
-				if strings.TrimSpace(l) == "" {
-					continue
-				}
-				f := strings.Split(l, "\t")
-				if len(f) > 0 && f[0] == art.ID {
-					if l == wantIndexLine {
-						needAppend = false
-						break
+			s := string(diskIndex)
+			if refIndex != "" {
+				if s == expectedAppendedIndex {
+					needAppend = false
+				} else if strings.HasPrefix(expectedAppendedIndex, s) {
+					if err := os.WriteFile(fullIndexPath, []byte(expectedAppendedIndex), 0o644); err != nil {
+						return PushResult{}, err
 					}
-					return PushResult{}, fmt.Errorf("local index in %s has conflicting record for %s", IndexPath(p.Sender.Lane), art.ID)
+					needAppend = false
+				}
+			} else {
+				if s == wantIndexLine+"\n" {
+					needAppend = false
+				} else if strings.HasPrefix(wantIndexLine+"\n", s) {
+					if err := os.WriteFile(fullIndexPath, []byte(wantIndexLine+"\n"), 0o644); err != nil {
+						return PushResult{}, err
+					}
+					needAppend = false
 				}
 			}
 		}

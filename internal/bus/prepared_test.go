@@ -757,3 +757,118 @@ func TestRowanProbeStaleIndexLock(t *testing.T) {
 		t.Fatalf("expected bounded index lock refusal with prepared ID %q, got: %v", a.ID, err)
 	}
 }
+
+func TestPreparedDeliveryRecoversEmptyOrPartialGitattributes(t *testing.T) {
+	bare, clone, p, a := stellaIndependentPrepared(t)
+	// Write empty .gitattributes (simulating crash right after open/create before EnsureMergeAttributes wrote content)
+	attrsPath := filepath.Join(clone, AttributesName)
+	if err := os.WriteFile(attrsPath, []byte(""), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+	if err != nil {
+		t.Fatalf("SendPreparedArtifact failed on empty .gitattributes: %v", err)
+	}
+	if !res.Pushed {
+		t.Fatal("expected note to be pushed")
+	}
+
+	// Verify remote received note, index, and complete .gitattributes with union rules
+	noteRemote, err := git(bare, "show", "main:"+p.Path)
+	if err != nil || noteRemote != a.Note {
+		t.Fatalf("remote note mismatch: %v", err)
+	}
+	attrsRemote, err := git(bare, "show", "main:"+AttributesName)
+	if err != nil || !strings.Contains(attrsRemote, "from-*/INDEX merge=union") {
+		t.Fatalf("remote .gitattributes missing union rule: %v\n%s", err, attrsRemote)
+	}
+}
+
+func TestPreparedDeliveryRecoversPartialNoteOnDisk(t *testing.T) {
+	bare, clone, p, a := stellaIndependentPrepared(t)
+	fullNote := filepath.Join(clone, filepath.FromSlash(p.Path))
+	if err := os.MkdirAll(filepath.Dir(fullNote), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Write partial prefix of note (first 20 bytes)
+	prefix := a.Note[:20]
+	if err := os.WriteFile(fullNote, []byte(prefix), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+	if err != nil {
+		t.Fatalf("SendPreparedArtifact failed on partial note write: %v", err)
+	}
+	if !res.Pushed {
+		t.Fatal("expected note to be pushed")
+	}
+
+	noteRemote, err := git(bare, "show", "main:"+p.Path)
+	if err != nil || noteRemote != a.Note {
+		t.Fatalf("remote note mismatch: %v", err)
+	}
+}
+
+func TestPreparedDeliveryRecoversPartialIndexOnDisk(t *testing.T) {
+	bare, clone, p, a := stellaIndependentPrepared(t)
+	fullIndex := filepath.Join(clone, filepath.FromSlash(IndexPath(p.Sender.Lane)))
+	if err := os.MkdirAll(filepath.Dir(fullIndex), 0755); err != nil {
+		t.Fatal(err)
+	}
+	// Write partial prefix of index line
+	line := IndexLine(p.Index)
+	prefix := line[:15]
+	if err := os.WriteFile(fullIndex, []byte(prefix), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+	if err != nil {
+		t.Fatalf("SendPreparedArtifact failed on partial index write: %v", err)
+	}
+	if !res.Pushed {
+		t.Fatal("expected note to be pushed")
+	}
+
+	idxRemote, err := git(bare, "show", "main:"+IndexPath(p.Sender.Lane))
+	if err != nil || !strings.Contains(idxRemote, line) {
+		t.Fatalf("remote index missing completed line: %v\n%s", err, idxRemote)
+	}
+}
+
+func TestPreparedDeliveryRefusesUnrelatedForeignGitattributes(t *testing.T) {
+	_, clone, p, a := stellaIndependentPrepared(t)
+	attrsPath := filepath.Join(clone, AttributesName)
+	if err := os.WriteFile(attrsPath, []byte("*.iso filter=lfs\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+	if err == nil {
+		t.Fatal("expected error on foreign .gitattributes content")
+	}
+	if !strings.Contains(err.Error(), "unrelated dirty changes in .gitattributes") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
+
+func TestPreparedDeliveryRefusesConflictingNoteOnDisk(t *testing.T) {
+	_, clone, p, a := stellaIndependentPrepared(t)
+	fullNote := filepath.Join(clone, filepath.FromSlash(p.Path))
+	if err := os.MkdirAll(filepath.Dir(fullNote), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fullNote, []byte("completely conflicting note\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+	if err == nil {
+		t.Fatal("expected error on conflicting note content")
+	}
+	if !strings.Contains(err.Error(), "conflicting") && !strings.Contains(err.Error(), "unrelated dirty changes") {
+		t.Fatalf("unexpected error message: %v", err)
+	}
+}
