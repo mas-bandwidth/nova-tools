@@ -3,6 +3,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"go/ast"
 	"go/token"
 	"io/fs"
@@ -317,6 +318,9 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 	// may go there. It is built with the real git, before the fake goes on PATH.
 	bare := filepath.Join(dir, "remote.git")
 	gitRun(t, realGit, dir, "init", "--bare", "-q", bare)
+	gitRun(t, realGit, bare, "config", "receive.autogc", "false")
+	gitRun(t, realGit, bare, "config", "gc.auto", "0")
+	gitRun(t, realGit, bare, "config", "maintenance.auto", "false")
 	gitRun(t, realGit, bus, "init", "-q")
 	gitRun(t, realGit, bus, "add", "-A")
 	gitRun(t, realGit, bus, "commit", "-q", "-m", "the lane")
@@ -324,8 +328,8 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 	gitRun(t, realGit, bus, "push", "-q", "origin", "HEAD:refs/heads/main")
 
 	gitLog := fakeGit(t)
-	before := treeDigest(t, bare)
-	beforeGit := treeDigest(t, filepath.Join(bus, ".git"))
+	beforeBare := readTree(t, bare)
+	beforeGit := readTree(t, filepath.Join(bus, ".git"))
 
 	// Every verb, including the two that only look and the one that only says which build.
 	runs := [][]string{
@@ -347,11 +351,11 @@ func TestNoVerbTouchesACheckoutOrItsRemote(t *testing.T) {
 	if _, err := os.Stat(gitLog); err == nil {
 		t.Errorf("git was invoked: %s", read(t, gitLog))
 	}
-	if after := treeDigest(t, bare); after != before {
-		t.Error("the remote changed; this tool does not push, fetch or talk to a network (rule 16)")
+	if after := readTree(t, bare); after.digest != beforeBare.digest {
+		t.Errorf("the remote changed; this tool does not push, fetch or talk to a network (rule 16): diff: %s", diffTrees(beforeBare, after))
 	}
-	if after := treeDigest(t, filepath.Join(bus, ".git")); after != beforeGit {
-		t.Error("the checkout's .git changed; the bus is read as files and nothing else (rule 16)")
+	if after := readTree(t, filepath.Join(bus, ".git")); after.digest != beforeGit.digest {
+		t.Errorf("the checkout's .git changed; the bus is read as files and nothing else (rule 16): diff: %s", diffTrees(beforeGit, after))
 	}
 }
 
@@ -359,20 +363,27 @@ func gitRun(t *testing.T, git, dir string, args ...string) {
 	t.Helper()
 	full := append([]string{
 		"-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
-		"-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main", "-C", dir,
+		"-c", "commit.gpgsign=false", "-c", "init.defaultBranch=main",
+		"-c", "receive.autogc=false", "-c", "gc.auto=0", "-c", "gc.autoDetach=false",
+		"-c", "maintenance.auto=false", "-c", "maintenance.autoDetach=false",
+		"-C", dir,
 	}, args...)
 	cmd := exec.Command(git, full...)
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+	cmd.Env = append(os.Environ(),
+		"GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_SYSTEM=/dev/null",
+		"GIT_CONFIG_NOSYSTEM=1",
 		"GIT_AUTHOR_DATE=2026-09-11T20:00:00Z", "GIT_COMMITTER_DATE=2026-09-11T20:00:00Z")
 	if outb, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("git %v: %v: %s", args, err, outb)
 	}
 }
 
-// treeDigest is one hash over every file under root: its relative path, its size and its
-// bytes. A changed, added or removed file all move it, so one comparison says whether
-// anything under a directory was touched.
-func treeDigest(t *testing.T, root string) string {
+type treeSnapshot struct {
+	digest string
+	files  map[string]string
+}
+
+func readTree(t *testing.T, root string) treeSnapshot {
 	t.Helper()
 	sum := sha256.New()
 	var names []string
@@ -394,12 +405,15 @@ func treeDigest(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	sort.Strings(names)
+	files := make(map[string]string, len(names))
 	for _, rel := range names {
 		raw, err := os.ReadFile(filepath.Join(root, rel))
 		if err != nil {
 			// A file git holds open or replaces under us is named, not skipped.
 			t.Fatalf("%s: %v", rel, err)
 		}
+		h := sha256.Sum256(raw)
+		files[rel] = hex.EncodeToString(h[:])
 		sum.Write([]byte(rel))
 		sum.Write([]byte{0})
 		sum.Write(raw)
@@ -408,7 +422,63 @@ func treeDigest(t *testing.T, root string) string {
 	if len(names) == 0 {
 		t.Fatalf("nothing under %s; this comparison would hold whatever happened", root)
 	}
-	return hex.EncodeToString(sum.Sum(nil))
+	return treeSnapshot{
+		digest: hex.EncodeToString(sum.Sum(nil)),
+		files:  files,
+	}
+}
+
+func diffTrees(before, after treeSnapshot) string {
+	var diffs []string
+	for rel, hBefore := range before.files {
+		if hAfter, ok := after.files[rel]; !ok {
+			diffs = append(diffs, fmt.Sprintf("removed %s", rel))
+		} else if hBefore != hAfter {
+			diffs = append(diffs, fmt.Sprintf("modified %s (was %s..now %s)", rel, hBefore[:8], hAfter[:8]))
+		}
+	}
+	for rel := range after.files {
+		if _, ok := before.files[rel]; !ok {
+			diffs = append(diffs, fmt.Sprintf("added %s", rel))
+		}
+	}
+	sort.Strings(diffs)
+	if len(diffs) == 0 {
+		return "digest mismatch with identical file contents"
+	}
+	return strings.Join(diffs, ", ")
+}
+
+// treeDigest is one hash over every file under root: its relative path, its size and its
+// bytes. A changed, added or removed file all move it, so one comparison says whether
+// anything under a directory was touched.
+func treeDigest(t *testing.T, root string) string {
+	t.Helper()
+	return readTree(t, root).digest
+}
+
+func TestDiffTreesReportsDifferences(t *testing.T) {
+	a := treeSnapshot{
+		digest: "1",
+		files: map[string]string{
+			"same": "aaa",
+			"mod":  "1111111111",
+			"del":  "333",
+		},
+	}
+	b := treeSnapshot{
+		digest: "2",
+		files: map[string]string{
+			"same":  "aaa",
+			"mod":   "2222222222",
+			"added": "444",
+		},
+	}
+	diff := diffTrees(a, b)
+	want := "added added, modified mod (was 11111111..now 22222222), removed del"
+	if diff != want {
+		t.Errorf("diffTrees = %q; want %q", diff, want)
+	}
 }
 
 // The records namespace is not a verb, and that is the current answer rather than an
