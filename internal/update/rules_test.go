@@ -295,9 +295,12 @@ func TestRule25SnapshotSurvivesAReporterKilledWhileWriting(t *testing.T) {
 		t.Fatalf("a later reporter could not use the surviving snapshot: %v\n%s", err, out)
 	}
 	// A SIGKILL runs no deferred cleanup, so every killed writer left its
-	// half-written temporary beside the snapshot. The next writer sweeps them.
-	if temps, _ := filepath.Glob(filepath.Join(dir, snapshotTempPrefix+"*")); len(temps) != 0 {
-		t.Fatalf("%d killed writers left %d temporaries behind: %v", killed, len(temps), temps)
+	// half-written temporary beside the snapshot. A later writer must not sweep
+	// another writer's temporary: a leftover file is preferable to deleting
+	// another writer's work, so the killed writers' temporaries remain,
+	// untouched, and the snapshot stays readable on top of them.
+	if temps, _ := filepath.Glob(filepath.Join(dir, snapshotTempPrefix+"*")); len(temps) == 0 {
+		t.Fatalf("a killed writer's temporary was swept away; a leftover is preferable to deleting another writer's work")
 	}
 }
 
