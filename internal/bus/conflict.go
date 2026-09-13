@@ -416,7 +416,7 @@ func writeResolved(dir, p, content string) error {
 		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 			return err
 		}
-		if err := writeLaneFile(full, []byte(content), 0o644); err != nil {
+		if err := writeLaneFile(dir, full, []byte(content), 0o644); err != nil {
 			return err
 		}
 	}

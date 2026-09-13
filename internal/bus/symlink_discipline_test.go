@@ -130,7 +130,7 @@ func TestAppendIndexSuffixRefusesASymlinkedIndex(t *testing.T) {
 	v := victim(t, dir)
 	link := filepath.Join(root, "from-x", IndexName)
 	plant(t, v, link)
-	if err := appendIndexSuffix(link, "original victim content\n", "original victim content\nappended\n"); err == nil {
+	if err := appendIndexSuffix(root, link, "original victim content\n", "original victim content\nappended\n"); err == nil {
 		t.Fatal("appendIndexSuffix appended through a symlinked INDEX and raised nothing")
 	}
 	unchanged(t, v)
@@ -169,5 +169,51 @@ func TestAStrandedUniqueTempIsStillALaneStateTemp(t *testing.T) {
 	}
 	if !strings.HasSuffix(IndexName+".ab12"+TempSuffix, TempSuffix) {
 		t.Fatal("a unique temp no longer ends in the reserved suffix")
+	}
+}
+
+// A LANE IS A DIRECTORY IN THE BUS, NOT A DOOR OUT OF IT (Fable's cold read of #226, F1).
+//
+// The first pass checked the final component only, so a commit that makes the LANE a
+// symlink -- `from-x` pointing at a directory outside the checkout -- wrote every one of a
+// lane's state files outside the bus with nothing raised. Every component from the bus root
+// down is a component of the path.
+func TestAppendIndexLineRefusesASymlinkedLaneDirectory(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "bus")
+	outside := filepath.Join(dir, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plant(t, outside, filepath.Join(root, "from-x"))
+	err := AppendIndexLine(root, IndexEntry{Lane: "from-x", ID: "deadbeef", Path: "from-x/2026-note.md", Date: "2026-09-13T00:00:00Z", To: []string{"bo"}})
+	if err == nil {
+		t.Fatal("AppendIndexLine wrote through a symlinked LANE DIRECTORY and raised nothing")
+	}
+	if _, statErr := os.Lstat(filepath.Join(outside, IndexName)); statErr == nil {
+		raw, _ := os.ReadFile(filepath.Join(outside, IndexName))
+		t.Fatalf("the line landed outside the bus: %q", string(raw))
+	}
+}
+
+func TestWriteLaneFileRefusesASymlinkedLaneDirectory(t *testing.T) {
+	dir := t.TempDir()
+	root := filepath.Join(dir, "bus")
+	outside := filepath.Join(dir, "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plant(t, outside, filepath.Join(root, "from-x"))
+	if err := replaceLaneFile(root, "from-x/"+CursorName, "a cursor\n"); err == nil {
+		t.Fatal("replaceLaneFile rewrote a lane file through a symlinked lane directory")
+	}
+	if _, statErr := os.Lstat(filepath.Join(outside, CursorName)); statErr == nil {
+		t.Fatal("the rewrite landed outside the bus")
 	}
 }

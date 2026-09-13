@@ -818,7 +818,7 @@ func AppendIndexLine(root string, e IndexEntry) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
-	f, err := openLaneFile(full, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	f, err := openLaneFile(root, full, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
@@ -891,7 +891,7 @@ func replaceLaneFile(root, path, content string) error {
 	if err != nil {
 		return err
 	}
-	f, err := openLaneFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	f, err := openLaneFile(root, tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
 	}

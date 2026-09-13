@@ -91,7 +91,7 @@ func EnsureMergeAttributes(root string) (bool, error) {
 	if !changed {
 		return false, nil
 	}
-	if err := writeLaneFile(full, []byte(expected), 0o644); err != nil {
+	if err := writeLaneFile(root, full, []byte(expected), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -134,7 +134,7 @@ func EnsureMergeAttributesFrom(root, base string) (bool, error) {
 	if !strings.HasPrefix(expected, disk) {
 		return false, fmt.Errorf("%s has unrelated content on disk; refusing to overwrite", AttributesName)
 	}
-	if err := writeLaneFile(full, []byte(expected), 0o644); err != nil {
+	if err := writeLaneFile(root, full, []byte(expected), 0o644); err != nil {
 		return false, err
 	}
 	return true, nil

@@ -586,7 +586,10 @@ func HarnessTail(jobDir string) string {
 // CountRefusals reads a harness log and counts its own refusal lines. It reads the file in
 // one pass and never holds more than a line.
 func CountRefusals(path string) int {
-	f, err := os.Open(path)
+	// The log is the worker's own file, so it is opened the way every read of one is
+	// (regular.go): a FIFO here parked the dispatcher at the one read that was still bare,
+	// after the guarded ones beside it had just refused (Fable's cold read of #226).
+	f, err := openRegularRead(path)
 	if err != nil {
 		return 0
 	}

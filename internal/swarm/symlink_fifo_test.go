@@ -166,3 +166,43 @@ func TestReadJSONDoesNotBlockOnAFIFO(t *testing.T) {
 		t.Fatal("STILL BLOCKED after 5s reading a FIFO at exit.json: the recovery pass is wedged")
 	}
 }
+
+// CountRefusals IS A READ OF A WORKER-WRITABLE PATH TOO (Fable's cold read of #226, F2).
+//
+// It is a bare os.Open on <job>/harness.log, called unconditionally after the guarded
+// reads, so a FIFO there parked the dispatcher at the same place the guarded reads had just
+// been taught to refuse.
+func TestCountRefusalsDoesNotBlockOnAFIFO(t *testing.T) {
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	if err := os.MkdirAll(job, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	plantFIFO(t, filepath.Join(job, "harness.log"))
+	done := make(chan int, 1)
+	go func() { done <- CountRefusals(filepath.Join(job, "harness.log")) }()
+	select {
+	case n := <-done:
+		if n != 0 {
+			t.Fatalf("a FIFO counted %d refusals", n)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("STILL BLOCKED after 5s counting refusals in a FIFO at harness.log: the dispatcher is wedged")
+	}
+}
+
+func TestCountRefusalsRefusesASymlink(t *testing.T) {
+	dir := t.TempDir()
+	job := filepath.Join(dir, "job")
+	if err := os.MkdirAll(job, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	v := filepath.Join(dir, "outside-the-wall")
+	if err := os.WriteFile(v, []byte("permission denied\nunauthorized\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plantLink(t, v, filepath.Join(job, "harness.log"))
+	if n := CountRefusals(filepath.Join(job, "harness.log")); n != 0 {
+		t.Fatalf("refusals were counted out of a file from outside the wall: %d", n)
+	}
+}

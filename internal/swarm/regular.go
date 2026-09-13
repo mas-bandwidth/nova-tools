@@ -72,6 +72,29 @@ func readRegular(path string) ([]byte, error) {
 	return io.ReadAll(f)
 }
 
+// openRegularRead opens a worker-writable path for STREAMING, on readRegular's terms: the
+// file is read a line at a time by the caller and never held whole, and a path that is not
+// a regular file is refused before a byte of it is asked for.
+func openRegularRead(path string) (*os.File, error) {
+	if err := statRegular(path); err != nil {
+		return nil, err
+	}
+	f, err := os.OpenFile(path, os.O_RDONLY|oNoFollow|oNonBlock, 0)
+	if err != nil {
+		return nil, err
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		f.Close()
+		return nil, notRegular(path, fi.Mode())
+	}
+	return f, nil
+}
+
 // openRegularWrite is os.OpenFile for a record this tool writes into a worker-writable
 // directory, refused on the same terms.
 func openRegularWrite(path string, flag int, perm os.FileMode) (*os.File, error) {
