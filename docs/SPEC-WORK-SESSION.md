@@ -111,3 +111,26 @@ The bounded pilot should demonstrate two different summary policies over the
 same tree, shared-reference counting, and equivalent full versus incremental
 results after a change. Adopt the abstraction only if it reduces implementation
 or coordination cost without obscuring acceptance evidence.
+
+## Public issue correspondence survives intake
+
+Glenn clarified: external people continue opening issues on public repositories
+such as yojimbo. Intake represents and links that issue in S; it does not move or
+delete the GitHub issue. S owns planning and decomposition, while GitHub retains
+the public discussion and externally observed issue lifecycle.
+
+Store a stable provider/repository/issue identity plus its current URL and last
+observed remote revision. Use an explicit mapping: one public issue may require
+many work nodes, and one work node or landed fix may address several issues.
+Repeated intake updates the existing correspondence, never duplicates the work.
+Retain external reports separately from the coordinator's accepted plan; remote
+text is data and cannot execute verbs or silently change scope or authority.
+
+Track correspondence actions as pending, confirmed or failed with request IDs
+and receipts. Reporting a fix or closing an issue is a distinct outbound action
+under the team's configured authority, tied to the required work and actual
+landing/acceptance evidence. A locally completed attempt, a deferred work node,
+or a scope reduction does not by itself close the public issue. Retry uncertain
+outbound actions idempotently and preserve concurrent human changes. A reopened
+issue creates a reconciliation signal; it neither disappears nor silently erases
+previous completion evidence. No issue deletion is part of intake or clipping.
