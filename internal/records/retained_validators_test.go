@@ -2,6 +2,8 @@ package records
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -322,5 +324,62 @@ func TestReviewerMappingNonemptyContract(t *testing.T) {
 				t.Fatal("invalid mapping sealed successfully")
 			}
 		})
+	}
+}
+
+func TestReviewerAllMappingStringSlotsAreNonempty(t *testing.T) {
+	for _, adapter := range []string{"codex", "grok"} {
+		raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", adapter, "mapping.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var envelope map[string]interface{}
+		if err := json.Unmarshal(raw, &envelope); err != nil {
+			t.Fatal(err)
+		}
+		body := envelope["body"].(map[string]interface{})
+		var walk func(interface{}, string)
+		check := func(path string) {
+			b, err := json.Marshal(body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			v, err := parseStrict(b, nil, "body")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sealed, _, err := Seal(v)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := NewValidator(Allowlists{}).ValidateEnvelope(sealed); err == nil {
+				t.Errorf("%s accepts empty str at %s", adapter, path)
+			}
+		}
+		walk = func(v interface{}, path string) {
+			switch x := v.(type) {
+			case map[string]interface{}:
+				for k, old := range x {
+					if _, ok := old.(string); ok {
+						x[k] = ""
+						check(path + "." + k)
+						x[k] = old
+					} else {
+						walk(old, path+"."+k)
+					}
+				}
+			case []interface{}:
+				for i, old := range x {
+					if _, ok := old.(string); ok {
+						x[i] = ""
+						check(fmt.Sprintf("%s[%d]", path, i))
+						x[i] = old
+					} else {
+						walk(old, path)
+					}
+				}
+			}
+		}
+		walk(body, "body")
 	}
 }
