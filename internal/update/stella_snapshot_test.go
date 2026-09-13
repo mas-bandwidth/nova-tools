@@ -103,7 +103,9 @@ func TestStellaTwoSnapshotsOneDirectoryPreservesKilledWritersTemp(t *testing.T) 
 		if err := c.Start(); err != nil {
 			t.Fatal(err)
 		}
-		assignGroup(c)
+		if err := assignGroup(c); err != nil {
+			t.Fatal(err)
+		}
 		done := make(chan struct{})
 		go func() { _ = c.Wait(); close(done) }()
 		deadline := time.Now().Add(5 * time.Second)

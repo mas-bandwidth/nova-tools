@@ -439,7 +439,10 @@ func joinWrapper() {
 		fmt.Fprintln(os.Stderr, "JOIN WRAP could not start the bus")
 		os.Exit(2)
 	}
-	assignGroup(c)
+	if err := assignGroup(c); err != nil {
+		fmt.Fprintf(os.Stderr, "JOIN WRAP could not assign group: %v\n", err)
+		os.Exit(2)
+	}
 	done := make(chan struct{})
 	go func() { _ = c.Wait(); close(done) }()
 	reached := func() bool {
@@ -818,7 +821,9 @@ func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached f
 	if err := c.Start(); err != nil {
 		t.Fatal(err)
 	}
-	assignGroup(c)
+	if err := assignGroup(c); err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan struct{})
 	go func() { _ = c.Wait(); close(done) }()
 	deadline := time.Now().Add(60 * time.Second)
@@ -956,8 +961,8 @@ func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 3. Phase 1: Interrupt during prepared send (at killAfterIndex)
-	wrap1, record1 := r.wrapperOnPath(t, killAfterIndex)
+	// 3. Phase 1: Interrupt during real prepared send (at killAfterNote)
+	wrap1, record1 := r.wrapperOnPath(t, killAfterNote)
 	code, out, errs = r.send(t, wrap1)
 	if code != 1 || !strings.Contains(errs+out, "sent=uncertain") {
 		t.Fatalf("phase 1 interruption was not reported as uncertain: %d\n%s\n%s", code, out, errs)
@@ -973,10 +978,21 @@ func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
 	if r.removeStaleBusLock(t) {
 		t.Log("phase 1 killed child left .git/nova-bus.lock.held; cleaned up before phase 2")
 	}
+	// Verify phase 1 invariant: remote still has only the 1 prior note, and local INDEX has only 1 row
+	if midNotes, midRows := r.bus.published(t); len(midNotes) != 1 || len(midRows) != 1 {
+		t.Fatalf("phase 1 prematurely published to remote: notes=%v index=%v", midNotes, midRows)
+	}
 
-	// 4. Phase 2: Interrupt recovery before confirmation (killReporterWhen note is on remote)
-	clearWrapper(t)
-	r.killReporterWhen(t, r.bin, "recovery note reaching remote", func() bool { return r.remoteHasANote(t) })
+	// 4. Phase 2: Interrupt production recovery append before confirmation (at killAfterIndex)
+	wrap2, record2 := r.wrapperOnPath(t, killAfterIndex)
+	code, out, errs = r.send(t, wrap2)
+	if code != 1 || !strings.Contains(errs+out, "sent=uncertain") {
+		t.Fatalf("phase 2 interruption was not reported as uncertain: %d\n%s\n%s", code, out, errs)
+	}
+	b2, err := os.ReadFile(record2)
+	if err != nil || !strings.Contains(string(b2), "observed=true") {
+		t.Fatalf("phase 2 boundary was not observed: %v %s", err, string(b2))
+	}
 	if r.removeStaleIndexLock(t) {
 		t.Log("phase 2 killed recovery left .git/index.lock; cleaned up before final retry")
 	}
@@ -985,6 +1001,7 @@ func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
 	}
 
 	// 5. Phase 3: Final retry runs to completion
+	clearWrapper(t)
 	code, out, errs = r.send(t, r.bin)
 	if code != 0 {
 		t.Fatalf("phase 3 final recovery failed: %d\n%s\n%s", code, out, errs)
