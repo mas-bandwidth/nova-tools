@@ -205,6 +205,11 @@ func (v *Validator) validateMapping(body *Object) (*Mapping, error) {
 		if !ok {
 			return nil, refuse(RuleWrongType, indexPath("body.source_shapes", i), "source shape is a string")
 		}
+		if s == "" {
+			if err := v.refused(RuleEmptyString, indexPath("body.source_shapes", i), "source shape is non-empty"); err != nil {
+				return nil, err
+			}
+		}
 		if !namespaceLexeme.MatchString(s) {
 			if err := v.refused(RuleNamespaceSyntax, indexPath("body.source_shapes", i), "source shape matches ns grammar"); err != nil {
 				return nil, err
@@ -223,6 +228,11 @@ func (v *Validator) validateMapping(body *Object) (*Mapping, error) {
 	}
 	m.FieldRules = make(map[string]MappingFieldRule, len(frObj.Keys()))
 	for _, k := range frObj.Keys() {
+		if k == "" {
+			if err := v.refused(RuleEmptyString, "body.field_rules", "field rule key is non-empty"); err != nil {
+				return nil, err
+			}
+		}
 		ruleVal, _ := frObj.Get(k)
 		rObj, ok := ruleVal.(*Object)
 		if !ok {
@@ -292,6 +302,11 @@ func (v *Validator) validateMapping(body *Object) (*Mapping, error) {
 	}
 	m.FixtureDigests = make(map[string]string, len(fdObj.Keys()))
 	for _, k := range fdObj.Keys() {
+		if k == "" {
+			if err := v.refused(RuleEmptyString, "body.fixture_digests", "fixture filename is non-empty"); err != nil {
+				return nil, err
+			}
+		}
 		cid, err := v.contentIDField(fdObj, "body.fixture_digests", k)
 		if err != nil {
 			return nil, err
@@ -305,6 +320,11 @@ func (v *Validator) validateMapping(body *Object) (*Mapping, error) {
 		return nil, err
 	}
 	if impl != nil {
+		if *impl == "" {
+			if err := v.refused(RuleEmptyString, "body.implementation_id", "implementation_id is non-empty"); err != nil {
+				return nil, err
+			}
+		}
 		if !implIDLexeme.MatchString(*impl) {
 			if err := v.refused(RuleWrongType, "body.implementation_id", "an implementation ID is <adapter>@<version> build=<build-id>"); err != nil {
 				return nil, err
@@ -356,6 +376,11 @@ func (v *Validator) validateFieldRule(o *Object, path string) (MappingFieldRule,
 	if err != nil {
 		return fr, err
 	}
+	if unit == "" {
+		if err := v.refused(RuleEmptyString, path+".unit", "unit is non-empty"); err != nil {
+			return fr, err
+		}
+	}
 	if !unitLexeme.MatchString(unit) {
 		if err := v.refused(RuleUnitSyntax, path+".unit", "a unit is [a-z0-9][a-z0-9_-]{0,31}"); err != nil {
 			return fr, err
@@ -394,6 +419,64 @@ func (v *Validator) validateFieldRule(o *Object, path string) (MappingFieldRule,
 	fr.InvalidReason = ir
 
 	return fr, nil
+}
+
+func (v *Validator) mappingNonEmptyString(o *Object, path, name string) (string, error) {
+	val, err := v.member(o, path, name)
+	if err != nil {
+		return "", err
+	}
+	s, ok := val.(string)
+	if !ok {
+		return "", v.refused(RuleMappingRuleShape, path+"."+name, "expected string")
+	}
+	if s == "" {
+		if err := v.refused(RuleEmptyString, path+"."+name, name+" is non-empty"); err != nil {
+			return "", err
+		}
+	}
+	return s, nil
+}
+
+func (v *Validator) mappingNullableNonEmptyString(o *Object, path, name string) (*string, error) {
+	val, err := v.member(o, path, name)
+	if err != nil {
+		return nil, err
+	}
+	if val == nil {
+		return nil, nil
+	}
+	s, ok := val.(string)
+	if !ok {
+		return nil, v.refused(RuleMappingRuleShape, path+"."+name, "expected string or null")
+	}
+	if s == "" {
+		if err := v.refused(RuleEmptyString, path+"."+name, name+" is non-empty"); err != nil {
+			return nil, err
+		}
+	}
+	return &s, nil
+}
+
+func (v *Validator) mappingStringArray(o *Object, path, name string) ([]string, error) {
+	arr, err := v.array(o, path, name)
+	if err != nil {
+		return nil, v.refused(RuleMappingRuleShape, path+"."+name, "expected array")
+	}
+	res := make([]string, len(arr))
+	for i, elem := range arr {
+		s, ok := elem.(string)
+		if !ok {
+			return nil, v.refused(RuleMappingRuleShape, indexPath(path+"."+name, i), "expected string")
+		}
+		if s == "" {
+			if err := v.refused(RuleEmptyString, indexPath(path+"."+name, i), "array element is non-empty"); err != nil {
+				return nil, err
+			}
+		}
+		res[i] = s
+	}
+	return res, nil
 }
 
 func (v *Validator) exactRuleKeys(o *Object, path string, want ...string) error {
@@ -458,9 +541,9 @@ func (v *Validator) validateIdentityRule(o *Object) (MappingIdentityRule, error)
 		return id, err
 	}
 
-	ns, err := v.stringField(o, "body.identity_rule", "namespace")
+	ns, err := v.mappingNonEmptyString(o, "body.identity_rule", "namespace")
 	if err != nil {
-		return id, v.refused(RuleMappingRuleShape, "body.identity_rule.namespace", "namespace is a string")
+		return id, err
 	}
 	if !namespaceLexeme.MatchString(ns) {
 		if err := v.refused(RuleNamespaceSyntax, "body.identity_rule.namespace", "namespace matches ns grammar"); err != nil {
@@ -469,28 +552,16 @@ func (v *Validator) validateIdentityRule(o *Object) (MappingIdentityRule, error)
 	}
 	id.Namespace = ns
 
-	ekArr, err := v.array(o, "body.identity_rule", "event_key")
+	ekArr, err := v.mappingStringArray(o, "body.identity_rule", "event_key")
 	if err != nil {
-		return id, v.refused(RuleMappingRuleShape, "body.identity_rule.event_key", "event_key is an array")
+		return id, err
 	}
 	if len(ekArr) == 0 {
 		if err := v.refused(RuleEmptyArray, "body.identity_rule.event_key", "event_key is non-empty"); err != nil {
 			return id, err
 		}
 	}
-	id.EventKey = make([]string, len(ekArr))
-	for i, elem := range ekArr {
-		s, ok := elem.(string)
-		if !ok {
-			return id, v.refused(RuleMappingRuleShape, indexPath("body.identity_rule.event_key", i), "event_key element is string")
-		}
-		if s == "" {
-			if err := v.refused(RuleEmptyString, indexPath("body.identity_rule.event_key", i), "event_key element is non-empty"); err != nil {
-				return id, err
-			}
-		}
-		id.EventKey[i] = s
-	}
+	id.EventKey = ekArr
 
 	okind, err := v.enumField(o, "body.identity_rule", "observation_kind", observationKinds)
 	if err != nil {
@@ -505,40 +576,35 @@ func (v *Validator) validateIdentityRule(o *Object) (MappingIdentityRule, error)
 		return id, v.refused(RuleMappingRuleShape, "body.identity_rule.normalized_spend_supported", "expected boolean")
 	}
 
-	pvf, err := v.stringField(o, "body.identity_rule", "producer_version_from")
+	pvf, err := v.mappingNonEmptyString(o, "body.identity_rule", "producer_version_from")
 	if err != nil {
-		return id, v.refused(RuleMappingRuleShape, "body.identity_rule.producer_version_from", "expected string")
+		return id, err
 	}
 	id.ProducerVersionFrom = pvf
 
-	sessID, err := v.stringField(o, "body.identity_rule", "session_id")
+	sessID, err := v.mappingNonEmptyString(o, "body.identity_rule", "session_id")
 	if err != nil {
-		return id, v.refused(RuleMappingRuleShape, "body.identity_rule.session_id", "expected string")
+		return id, err
 	}
 	id.SessionID = sessID
 
-	rfArr, err := v.array(o, "body.identity_rule", "receipt_fields")
+	rfArr, err := v.mappingStringArray(o, "body.identity_rule", "receipt_fields")
 	if err != nil {
-		return id, v.refused(RuleMappingRuleShape, "body.identity_rule.receipt_fields", "expected array")
+		return id, err
 	}
-	id.ReceiptFields = make([]string, len(rfArr))
-	for i, elem := range rfArr {
-		s, ok := elem.(string)
-		if !ok {
-			return id, v.refused(RuleMappingRuleShape, indexPath("body.identity_rule.receipt_fields", i), "expected string")
-		}
+	for i, s := range rfArr {
 		if !fieldKeyLexeme.MatchString(s) {
 			if err := v.refused(RuleLabelSyntax, indexPath("body.identity_rule.receipt_fields", i), "expected field_key"); err != nil {
 				return id, err
 			}
 		}
-		id.ReceiptFields[i] = s
 	}
-	if err := v.sortedUnique(id.ReceiptFields, "body.identity_rule.receipt_fields"); err != nil {
+	if err := v.sortedUnique(rfArr, "body.identity_rule.receipt_fields"); err != nil {
 		return id, err
 	}
+	id.ReceiptFields = rfArr
 
-	rvt, err := v.stringField(o, "body.identity_rule", "receipt_value_type")
+	rvt, err := v.mappingNonEmptyString(o, "body.identity_rule", "receipt_value_type")
 	if err != nil || rvt != "string" {
 		return id, v.refused(RuleMappingRuleShape, "body.identity_rule.receipt_value_type", "receipt_value_type must be string")
 	}
@@ -564,9 +630,9 @@ func (v *Validator) validateIdentityRule(o *Object) (MappingIdentityRule, error)
 		} else {
 			return id, v.refused(RuleMappingRuleShape, "body.identity_rule.containing_session_substitution", "expected boolean")
 		}
-		urVal, err := v.stringField(o, "body.identity_rule", "unsupported_reason")
+		urVal, err := v.mappingNonEmptyString(o, "body.identity_rule", "unsupported_reason")
 		if err != nil {
-			return id, v.refused(RuleMappingRuleShape, "body.identity_rule.unsupported_reason", "expected string")
+			return id, err
 		}
 		id.UnsupportedReason = &urVal
 	}
@@ -591,44 +657,37 @@ func (v *Validator) validateRevisionRule(o *Object) (MappingRevisionRule, error)
 	}
 	rev.Basis = basis
 
-	nat, err := v.nullableString(o, "body.revision_rule", "native")
+	nat, err := v.mappingNullableNonEmptyString(o, "body.revision_rule", "native")
 	if err != nil {
-		return rev, v.refused(RuleMappingRuleShape, "body.revision_rule.native", "native is string or null")
-	}
-	if nat != nil && *nat == "" {
-		if err := v.refused(RuleEmptyString, "body.revision_rule.native", "native is non-empty"); err != nil {
-			return rev, err
-		}
+		return rev, err
 	}
 	rev.Native = nat
 
-	supArr, err := v.array(o, "body.revision_rule", "supersedes")
+	supArr, err := v.mappingStringArray(o, "body.revision_rule", "supersedes")
 	if err != nil {
-		return rev, v.refused(RuleMappingRuleShape, "body.revision_rule.supersedes", "supersedes is an array")
+		return rev, err
 	}
-	rev.Supersedes = make([]string, len(supArr))
-	for i, elem := range supArr {
-		s, ok := elem.(string)
-		if !ok || !contentIDLexeme.MatchString(s) {
+	for i, s := range supArr {
+		if !contentIDLexeme.MatchString(s) {
 			if err := v.refused(RuleContentIDSyntax, indexPath("body.revision_rule.supersedes", i), "content ID syntax"); err != nil {
 				return rev, err
 			}
 		}
-		rev.Supersedes[i] = s
 	}
-	if err := v.sortedUnique(rev.Supersedes, "body.revision_rule.supersedes"); err != nil {
+	if err := v.sortedUnique(supArr, "body.revision_rule.supersedes"); err != nil {
 		return rev, err
 	}
+	rev.Supersedes = supArr
 
-	ic, err := v.stringField(o, "body.revision_rule", "identical_copy")
+	ic, err := v.mappingNonEmptyString(o, "body.revision_rule", "identical_copy")
 	if err != nil {
-		return rev, v.refused(RuleMappingRuleShape, "body.revision_rule.identical_copy", "expected string")
+		return rev, err
 	}
 	rev.IdenticalCopy = ic
 
-	csk, err := v.stringField(o, "body.revision_rule", "changed_same_key")
+	csk, err := v.mappingNonEmptyString(o, "body.revision_rule", "changed_same_key")
 	if err != nil {
-		return rev, v.refused(RuleMappingRuleShape, "body.revision_rule.changed_same_key", "expected string")
+		return rev, err
 	}
 	rev.ChangedSameKey = csk
 
@@ -666,33 +725,33 @@ func (v *Validator) validateTimeRule(o *Object, sk string) (MappingTimeRule, err
 	}
 	tr.Basis = basis
 
-	occ, err := v.stringField(o, "body.time_rule", "occurred_at")
+	occ, err := v.mappingNonEmptyString(o, "body.time_rule", "occurred_at")
 	if err != nil {
-		return tr, v.refused(RuleMappingRuleShape, "body.time_rule.occurred_at", "expected string")
+		return tr, err
 	}
 	tr.OccurredAt = occ
 
-	off, err := v.stringField(o, "body.time_rule", "offsets")
+	off, err := v.mappingNonEmptyString(o, "body.time_rule", "offsets")
 	if err != nil {
-		return tr, v.refused(RuleMappingRuleShape, "body.time_rule.offsets", "expected string")
+		return tr, err
 	}
 	tr.Offsets = off
 
-	da, err := v.stringField(o, "body.time_rule", "day_allocation")
+	da, err := v.mappingNonEmptyString(o, "body.time_rule", "day_allocation")
 	if err != nil {
-		return tr, v.refused(RuleMappingRuleShape, "body.time_rule.day_allocation", "expected string")
+		return tr, err
 	}
 	tr.DayAllocation = da
 
-	st, err := v.nullableString(o, "body.time_rule", "start")
+	st, err := v.mappingNullableNonEmptyString(o, "body.time_rule", "start")
 	if err != nil {
-		return tr, v.refused(RuleMappingRuleShape, "body.time_rule.start", "expected string or null")
+		return tr, err
 	}
 	tr.Start = st
 
-	end, err := v.nullableString(o, "body.time_rule", "end")
+	end, err := v.mappingNullableNonEmptyString(o, "body.time_rule", "end")
 	if err != nil {
-		return tr, v.refused(RuleMappingRuleShape, "body.time_rule.end", "expected string or null")
+		return tr, err
 	}
 	tr.End = end
 
@@ -709,17 +768,17 @@ func (v *Validator) validateTimeRule(o *Object, sk string) (MappingTimeRule, err
 		if err != nil {
 			return tr, err
 		}
-		mtocc, err := v.nullableString(mtObj, "body.time_rule.missing_timestamp", "occurred_at")
+		mtocc, err := v.mappingNullableNonEmptyString(mtObj, "body.time_rule.missing_timestamp", "occurred_at")
 		if err != nil {
-			return tr, v.refused(RuleMappingRuleShape, "body.time_rule.missing_timestamp.occurred_at", "expected string or null")
+			return tr, err
 		}
 		tr.MissingTimestamp = &MappingMissingTimestamp{Basis: mtb, OccurredAt: mtocc}
 	}
 
 	if sk == "grok" {
-		cm, err := v.stringField(o, "body.time_rule", "cross_midnight")
+		cm, err := v.mappingNonEmptyString(o, "body.time_rule", "cross_midnight")
 		if err != nil {
-			return tr, v.refused(RuleMappingRuleShape, "body.time_rule.cross_midnight", "expected string")
+			return tr, err
 		}
 		tr.CrossMidnight = &cm
 	}
@@ -735,9 +794,9 @@ func (v *Validator) validateModelBasisID(o *Object, path string, idRequired bool
 	if err != nil {
 		return nil, err
 	}
-	id, err := v.nullableString(o, path, "id")
+	id, err := v.mappingNullableNonEmptyString(o, path, "id")
 	if err != nil {
-		return nil, v.refused(RuleMappingRuleShape, path+".id", "expected string or null")
+		return nil, err
 	}
 	if idRequired && id == nil {
 		return nil, v.refused(RuleMappingRuleShape, path+".id", "id is required")
@@ -768,21 +827,14 @@ func (v *Validator) validateModelRule(o *Object, sk string) (MappingModelRule, e
 		return mr, err
 	}
 
-	fwkArr, err := v.array(o, "body.model_rule", "forbidden_wire_keys")
+	fwkArr, err := v.mappingStringArray(o, "body.model_rule", "forbidden_wire_keys")
 	if err != nil {
-		return mr, v.refused(RuleMappingRuleShape, "body.model_rule.forbidden_wire_keys", "expected array")
-	}
-	mr.ForbiddenWireKeys = make([]string, len(fwkArr))
-	for i, elem := range fwkArr {
-		s, ok := elem.(string)
-		if !ok {
-			return mr, v.refused(RuleMappingRuleShape, indexPath("body.model_rule.forbidden_wire_keys", i), "expected string")
-		}
-		mr.ForbiddenWireKeys[i] = s
-	}
-	if err := v.sortedUnique(mr.ForbiddenWireKeys, "body.model_rule.forbidden_wire_keys"); err != nil {
 		return mr, err
 	}
+	if err := v.sortedUnique(fwkArr, "body.model_rule.forbidden_wire_keys"); err != nil {
+		return mr, err
+	}
+	mr.ForbiddenWireKeys = fwkArr
 
 	if sk == "codex_desktop" {
 		b, err := v.enumField(o, "body.model_rule", "basis", modelBases)
@@ -791,9 +843,9 @@ func (v *Validator) validateModelRule(o *Object, sk string) (MappingModelRule, e
 		}
 		mr.Basis = &b
 
-		id, err := v.stringField(o, "body.model_rule", "id")
+		id, err := v.mappingNonEmptyString(o, "body.model_rule", "id")
 		if err != nil {
-			return mr, v.refused(RuleMappingRuleShape, "body.model_rule.id", "expected string")
+			return mr, err
 		}
 		mr.ID = &id
 
@@ -817,14 +869,10 @@ func (v *Validator) validateModelRule(o *Object, sk string) (MappingModelRule, e
 		if err != nil {
 			return mr, v.refused(RuleMappingRuleShape, "body.model_rule.model_usage", "expected array")
 		}
-		mr.ModelUsage = make([]string, len(muArr))
-		for i, elem := range muArr {
-			s, ok := elem.(string)
-			if !ok {
-				return mr, v.refused(RuleMappingRuleShape, indexPath("body.model_rule.model_usage", i), "expected string")
-			}
-			mr.ModelUsage[i] = s
+		if len(muArr) != 0 {
+			return mr, v.refused(RuleMappingRuleShape, "body.model_rule.model_usage", "codex model_usage must be empty array []")
 		}
+		mr.ModelUsage = []string{}
 	} else {
 		sObj, err := v.object(o, "body.model_rule", "single_reported_id")
 		if err != nil {
@@ -874,22 +922,15 @@ func (v *Validator) validateModelRule(o *Object, sk string) (MappingModelRule, e
 			return mr, v.refused(RuleMappingRuleShape, "body.model_rule.detail_retained_not_counted_again", "expected boolean")
 		}
 
-		mufArr, err := v.array(o, "body.model_rule", "model_usage_fields")
+		mufArr, err := v.mappingStringArray(o, "body.model_rule", "model_usage_fields")
 		if err != nil {
-			return mr, v.refused(RuleMappingRuleShape, "body.model_rule.model_usage_fields", "expected array")
+			return mr, err
 		}
-		mr.ModelUsageFields = make([]string, len(mufArr))
-		for i, elem := range mufArr {
-			s, ok := elem.(string)
-			if !ok {
-				return mr, v.refused(RuleMappingRuleShape, indexPath("body.model_rule.model_usage_fields", i), "expected string")
-			}
-			mr.ModelUsageFields[i] = s
-		}
+		mr.ModelUsageFields = mufArr
 
-		mus, err := v.stringField(o, "body.model_rule", "model_usage_sorted_by")
+		mus, err := v.mappingNonEmptyString(o, "body.model_rule", "model_usage_sorted_by")
 		if err != nil {
-			return mr, v.refused(RuleMappingRuleShape, "body.model_rule.model_usage_sorted_by", "expected string")
+			return mr, err
 		}
 		mr.ModelUsageSortedBy = &mus
 	}
@@ -920,53 +961,46 @@ func (v *Validator) validateOverlapRule(o *Object, sk string) (MappingOverlapRul
 		return or, err
 	}
 
-	octArr, err := v.array(o, "body.overlap_rule", "owed_coverage_tasks")
+	octArr, err := v.mappingStringArray(o, "body.overlap_rule", "owed_coverage_tasks")
 	if err != nil {
-		return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.owed_coverage_tasks", "expected array")
+		return or, err
 	}
-	or.OwedCoverageTasks = make([]string, len(octArr))
-	for i, elem := range octArr {
-		s, ok := elem.(string)
-		if !ok {
-			return or, v.refused(RuleMappingRuleShape, indexPath("body.overlap_rule.owed_coverage_tasks", i), "expected string")
-		}
-		or.OwedCoverageTasks[i] = s
-	}
+	or.OwedCoverageTasks = octArr
 
 	if sk == "codex_desktop" {
-		cs, err := v.stringField(o, "body.overlap_rule", "counting_source")
+		cs, err := v.mappingNonEmptyString(o, "body.overlap_rule", "counting_source")
 		if err != nil {
-			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.counting_source", "expected string")
+			return or, err
 		}
 		or.CountingSource = &cs
 
-		am, err := v.stringField(o, "body.overlap_rule", "arithmetic_mismatch")
+		am, err := v.mappingNonEmptyString(o, "body.overlap_rule", "arithmetic_mismatch")
 		if err != nil {
-			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.arithmetic_mismatch", "expected string")
+			return or, err
 		}
 		or.ArithmeticMismatch = &am
 
-		mrt, err := v.stringField(o, "body.overlap_rule", "missing_raw_total")
+		mrt, err := v.mappingNonEmptyString(o, "body.overlap_rule", "missing_raw_total")
 		if err != nil {
-			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.missing_raw_total", "expected string")
+			return or, err
 		}
 		or.MissingRawTotal = &mrt
 
-		ttu, err := v.stringField(o, "body.overlap_rule", "thread_token_usage")
+		ttu, err := v.mappingNonEmptyString(o, "body.overlap_rule", "thread_token_usage")
 		if err != nil {
-			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.thread_token_usage", "expected string")
+			return or, err
 		}
 		or.ThreadTokenUsage = &ttu
 
-		turnTU, err := v.stringField(o, "body.overlap_rule", "turn_token_usage")
+		turnTU, err := v.mappingNonEmptyString(o, "body.overlap_rule", "turn_token_usage")
 		if err != nil {
-			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.turn_token_usage", "expected string")
+			return or, err
 		}
 		or.TurnTokenUsage = &turnTU
 
-		tcs, err := v.stringField(o, "body.overlap_rule", "token_count_snapshots")
+		tcs, err := v.mappingNonEmptyString(o, "body.overlap_rule", "token_count_snapshots")
 		if err != nil {
-			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.token_count_snapshots", "expected string")
+			return or, err
 		}
 		or.TokenCountSnapshots = &tcs
 
@@ -984,48 +1018,41 @@ func (v *Validator) validateOverlapRule(o *Object, sk string) (MappingOverlapRul
 			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.report_must_name_unhandled_token_count_coverage", "expected boolean")
 		}
 	} else {
-		cg, err := v.stringField(o, "body.overlap_rule", "counting_grain")
+		cg, err := v.mappingNonEmptyString(o, "body.overlap_rule", "counting_grain")
 		if err != nil {
-			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.counting_grain", "expected string")
+			return or, err
 		}
 		or.CountingGrain = &cg
 
-		av, err := v.stringField(o, "body.overlap_rule", "arithmetic_violation")
+		av, err := v.mappingNonEmptyString(o, "body.overlap_rule", "arithmetic_violation")
 		if err != nil {
-			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.arithmetic_violation", "expected string")
+			return or, err
 		}
 		or.ArithmeticViolation = &av
 
-		eog, err := v.stringField(o, "body.overlap_rule", "evidenced_overlapping_grain")
+		eog, err := v.mappingNonEmptyString(o, "body.overlap_rule", "evidenced_overlapping_grain")
 		if err != nil {
-			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.evidenced_overlapping_grain", "expected string")
+			return or, err
 		}
 		or.EvidencedOverlappingGrain = &eog
 
-		rgm, err := v.stringField(o, "body.overlap_rule", "request_grain_mapping")
+		rgm, err := v.mappingNonEmptyString(o, "body.overlap_rule", "request_grain_mapping")
 		if err != nil {
-			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.request_grain_mapping", "expected string")
+			return or, err
 		}
 		or.RequestGrainMapping = &rgm
 
-		st, err := v.stringField(o, "body.overlap_rule", "session_totals")
+		st, err := v.mappingNonEmptyString(o, "body.overlap_rule", "session_totals")
 		if err != nil {
-			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.session_totals", "expected string")
+			return or, err
 		}
 		or.SessionTotals = &st
 
-		fuArr, err := v.array(o, "body.overlap_rule", "forbidden_unions")
+		fuArr, err := v.mappingStringArray(o, "body.overlap_rule", "forbidden_unions")
 		if err != nil {
-			return or, v.refused(RuleMappingRuleShape, "body.overlap_rule.forbidden_unions", "expected array")
+			return or, err
 		}
-		or.ForbiddenUnions = make([]string, len(fuArr))
-		for i, elem := range fuArr {
-			s, ok := elem.(string)
-			if !ok {
-				return or, v.refused(RuleMappingRuleShape, indexPath("body.overlap_rule.forbidden_unions", i), "expected string")
-			}
-			or.ForbiddenUnions[i] = s
-		}
+		or.ForbiddenUnions = fuArr
 
 		cVal, _ := o.Get("checksum_requires_evidenced_complete_matching_coverage")
 		if b, ok := cVal.(bool); ok {

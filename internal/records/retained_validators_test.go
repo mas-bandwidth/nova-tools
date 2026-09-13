@@ -286,3 +286,41 @@ func TestCoverageAdversarialCases(t *testing.T) {
 		}
 	})
 }
+
+func TestReviewerMappingNonemptyContract(t *testing.T) {
+	for name, change := range map[string]func(*Mapping){
+		"producer-policy": func(m *Mapping) { m.IdentityRule.ProducerVersionFrom = "" },
+		"revision-policy": func(m *Mapping) { m.RevisionRule.IdenticalCopy = "" },
+		"empty-field-name": func(m *Mapping) {
+			for _, r := range m.FieldRules {
+				m.FieldRules[""] = r
+				break
+			}
+		},
+		"empty-fixture-name": func(m *Mapping) {
+			for _, d := range m.FixtureDigests {
+				m.FixtureDigests[""] = d
+				break
+			}
+		},
+		"empty-array-element": func(m *Mapping) { m.ModelRule.ForbiddenWireKeys = []string{""} },
+		"codex-model-usage-must-be-empty": func(m *Mapping) {
+			m.ModelRule.ModelUsage = []string{"not-an-enumerated-shape"}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "codex", "mapping.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			env, err := NewValidator(Allowlists{}).ValidateEnvelope(raw)
+			if err != nil {
+				t.Fatal(err)
+			}
+			change(env.Mapping)
+			if _, _, err := SealMapping(*env.Mapping); err == nil {
+				t.Fatal("invalid mapping sealed successfully")
+			}
+		})
+	}
+}
