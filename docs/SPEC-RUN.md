@@ -1,20 +1,24 @@
 # nova-run — specification
 
-**Draft 3, 2026-09-13.** No reader has approved this document. It is normative in
+**Draft 4, 2026-09-13.** No reader has approved this document. It is normative in
 intent: if the code and this document disagree, one of them has a bug and the tests
 decide which. It stands beside [SPEC.md](SPEC.md), whose **Conventions** — exit codes,
 no guessed paths, the one-line output grammar, the field law, the cap-and-count rule,
 `internal/oneline`, `internal/bounded` — apply unchanged and are not restated.
 
-> Draft 3 folds the two cold reads of draft 2 (`b2b0ca97`). What changed, in one list:
-> **the child's environment is built and never inherited** (rule 15), and the probe runs in
-> that same environment (rule 17); `git` is a declared tool and how it authenticates is
-> stated (rule 6); a keyless line has a route, because `nova-secrets exec` has no spelling
-> for an empty `--only` (rule 15); rule 12 reads `process.log` as a **file** and keys a
-> refusal on the wrapper's own line and never on the number `125`; `account.dirs` are
-> created `0700`; the state lock's window and the pid's identity are stated (rule 18); and
-> the two refusals rule 19 made that other rules already owned are **deleted**, rather than
-> reconciled by a third rule.
+> Draft 4 folds the two cold reads of draft 3 (`a3889249`). What changed, in one list:
+> **every child's environment is built, including the ones outside the nesting** — `git`
+> and the composed tools get the account's own real home, `version_argv` and `ready.argv`
+> get the harness's (rule 15); `process.log` is created, never truncated, and rule 12 reads
+> only past the offset this run recorded (rules 2, 12, 21); a keyless line **does not run
+> step 4** and declares no store, so the case ideas#766 asks to prove first costs no seal
+> (the declaration, step 4); the probe's second refusal, `probe_outside_inside`, is a
+> refusal here (rule 2); **rule 11's canary reads the wrapper's line before it reads the
+> number**, as rule 12 already did, and `expect_exit: 125` is refused; rule 18's shared data
+> home is exit **1**, a fact of the state file; the pid's start time is named per platform;
+> **the wall has a body on darwin alone today, so `up` refuses at step 5 on linux**, said
+> plainly (rule 17); and `role=` is printed on the lines a reader reads it from, with the
+> `account` scope's own OK line and its own exit row.
 
 `nova-run` is one binary at the **line layer**. It brings **one declared line to a
 running state on one box, from one declaration, with one command, over and over.**
@@ -191,6 +195,8 @@ present, every field is required.
 | `home`, `harness`, `engine`, `process`, `ready`, `capture`, `tools.check` | `scope` is `home` |
 | `engine.name`, `engine.model`, `engine.base`, `tools.local` | `engine.kind` is `local` |
 | `harness.config` | with `harness`; the empty list `[]` declares a harness that loads no configuration outside its home |
+| `secrets.key`, `secrets.age_keygen` | with `secrets`, always — the line's own age key is step 3's, and step 5 hands it to the probe as the `--secret` it must fail to read |
+| `secrets.store`, `secrets.as`, `secrets.sops` | with `secrets`, **except where a `harness` block is present and its `credential` is `none`**, in which case they are absent: a keyless line receives nothing from the store, takes no `nova-secrets exec` (rule 15), and **does not run step 4** (below), so a store path declared for it would be a path nothing opens. At `--scope account` there is no `harness` block, so they are present and step 4 runs (rule 4) |
 | `secrets.only`, `secrets.require` | with `secrets`; **both** empty exactly when `harness.credential` is `none`; and every `require` name is also an `only` name, because a `--require` that `--only` excludes is `exec`'s own 125 at step 11 and a contradiction inside one declaration is exit 2 before step 1 |
 
 A field present when its condition is false is a refusal naming the field and the
@@ -210,10 +216,23 @@ wrapped in `nova-secrets exec` at all**, because that verb cannot be asked for n
 what an empty `only` declares — *"Wide must be typed"*
 ([SPEC-SECRETS.md](SPEC-SECRETS.md)). So `harness.credential` chooses between exactly two
 nestings and there is no third (rule 15), and the line that needs no key starts without
-touching the store's plaintext path at all. **The `secrets` block stays present for a
-keyless line**, because the line's age key is its identity in the store and is also the
-probe's `--secret` (rules 4 and 17), and steps 3 and 4 measure it as they do for any other
-line: what `none` removes is the wrapper around the line's own process, and nothing else.
+touching the store at all.
+
+**A keyless line does not run step 4, and the condition that skips it is declared.** The
+`secrets` block stays present, because `secrets.key` is the line's own age key — step 3
+makes it, and step 5 hands it to the probe as the `--secret` it must fail to read (rules 4
+and 17) — and `nova-secrets keygen` needs no store: `--store <dir>` is optional on that
+verb ([SPEC-SECRETS.md](SPEC-SECRETS.md), the verbs block). What is absent is
+`secrets.store`, `secrets.as` and `secrets.sops`, and with them step 4. Draft 3 ran step 4
+for a keyless line, and step 4 runs `nova-secrets check --as <name>`, whose flag law is
+*"A `--as` whose file is absent is a refusal listing the names that are in the store"*
+([SPEC-SECRETS.md](SPEC-SECRETS.md)) — so a line that receives nothing could not pass step
+4 until somebody merged a rule and sealed an empty file to it, two people's hands, for a
+worker with no secret. That is the case *"ideas#766 asks to prove"* first paying the most
+ceremony, and it is repaired by not running the step: the condition is
+`harness.credential == "none"`, a field somebody wrote in a file somebody read, exactly as
+`--scope account` is the declared condition that does not run steps 6 to 11. What `none`
+removes is therefore the store, the wrapper and step 4 — and nothing else.
 
 **There are no harness adapters and this binary knows no harness by name.** Every
 harness-shaped fact is in the declaration above: how to read the version, what the
@@ -245,7 +264,9 @@ fields, before anything starts.
 Every rule is normative and has one line in **tests this spec demands**.
 
 1. **One declaration, one line, from a flag, in git.** No default path, no search of the
-   cwd, no `$HOME`, no environment variable consulted for anything, and **no binary found
+   cwd, no `$HOME`, no environment variable consulted for anything — *consulted* meaning
+   **read by this binary to decide something**; what it hands a child is built by rule 15
+   and inherited from nothing — and **no binary found
    by `PATH`**: every program this tool executes is an absolute path from `tools` or from
    `harness.bin`. **`git` is one of them.** `tools.git` is always present, because step 6
    clones and fast-forwards with it and `down` pushes with it, and a `git` resolved from
@@ -282,6 +303,22 @@ Every rule is normative and has one line in **tests this spec demands**.
    ([SPEC-SANDBOX.md](SPEC-SANDBOX.md), *the probe*) — **`sandbox.write`'s first entry is a
    directory under `account.root` and is never `account.root` itself**, so its parent is a
    directory this line owns. A first write path that is not is exit 2 naming both fields.
+   **That condition is necessary and it is not sufficient, and the second half is stated
+   here rather than met at step 5 as a reason no sentence carries**: the probe also refuses
+   when its outside path is *inside* the wall it is testing — *"If the named path resolves
+   inside any `--read` or `--write` (a first `--write` whose parent is itself in a list),
+   the verb is exit 2 `reason=probe_outside_inside`"* ([SPEC-SANDBOX.md](SPEC-SANDBOX.md),
+   *the probe*). So **the parent of `sandbox.write`'s first entry must resolve inside no
+   `sandbox.read` entry and no `sandbox.write` entry**, and a declaration where it does —
+   a line that reads `account.root` for its own committed tools, or names `account.root` a
+   second time in the write set — is exit 2 naming both fields, before any step runs. A
+   declaration is a thing a person edits; a probe refusal at step 5 on a fresh box at
+   3 a.m. is not.
+   **`process.log` is the one file `up` creates**, and rule 21 says why it cannot be
+   a refusal: the line's descriptors are opened onto it before the exec, and it does not
+   exist on a fresh box. `up` creates it when absent, at mode `0600`, under the first
+   `sandbox.write` path where rule 17 already requires it to resolve — and **never
+   truncates it**, on any run (rule 21).
 
 3. **It never runs a privileged command, it never creates an account, and it never
    changes user.** No `sudo`, no `doas`, no setuid path, no `su`, no write outside
@@ -338,15 +375,22 @@ Every rule is normative and has one line in **tests this spec demands**.
    about it. **`secrets.store` is a second working copy, and this tool does not advance it
    either**: `nova-secrets check` invariant 8 refuses a store behind its remote, and step
    4 passes that refusal through with `git -C <store> pull --ff-only` as the remedy — *"the
-   pull is the launcher's, never the tool's"* ([SPEC-SECRETS.md](SPEC-SECRETS.md)), and a
-   launcher is a person's line, not this one.
+   pull is the launcher's, never the tool's"* ([SPEC-SECRETS.md](SPEC-SECRETS.md)): the
+   store's **pull** is a person's line and never this one's. (That is not the same word as
+   rule 15's *"this launcher is the launcher"*, which is about the **data home** under the
+   wall: setting `HOME` for the wrapped child is this tool's duty, and advancing somebody's
+   working copy is not.)
    **`git` authenticates as the account and never from the store.** This is the one program
    this tool runs **outside** rule 15's nesting — no wall around it and no
    `nova-secrets exec` above it — so `home.remote` is reached with exactly what
    `account.user`'s own `git` finds for itself on this box: that account's git
    configuration and that account's keys in its real home, which is the file-shaped
    credential a seat generates and never moves ([SPEC-SECRETS.md](SPEC-SECRETS.md), *the
-   model*). **No value from the store ever reaches `git`**, because rule 14 says this binary
+   model*). **Rule 15 states the environment that makes that true** — `HOME` is
+   `account.user`'s real home, read from the account database and never from a variable —
+   because an empty environment is a `git` with no `~/.gitconfig`, no `~/.ssh/config` and
+   no credential helper, which would make this rule's exit 1 fire on the first clone of
+   every real box. **No value from the store ever reaches `git`**, because rule 14 says this binary
    has no route to a value but the wrapper and the wrapper is not in this path. So **a fetch
    or a push that fails to authenticate is exit 1 naming the remote and this fact** — never a
    retry, never a prompt, never a credential read — and the remedy is a `home.remote` that
@@ -412,7 +456,21 @@ Every rule is normative and has one line in **tests this spec demands**.
     rule 15's nesting with `canary.argv` in the innermost slot in place of `start_argv` —
     the same `nova-secrets exec`, the same `nova-sandbox` lists, the same
     `sandbox.home_env`, the same `sandbox.cwd`, the same `process.env` — inside
-    `canary.deadline`, and its exit must equal `expect_exit`. **Outside that nesting the
+    `canary.deadline`. **Its exit is read last, and the wrapper's own line is read first**,
+    exactly as rule 12 does at step 11, and for the same reason: the canary runs through the
+    same two wrappers, so a `SECRETS EXEC FAIL` or a `SANDBOX REFUSED reason=home_outside`
+    is as available here at step 9 as it is at step 11, and a rule that compared the number
+    alone would report a refused wall as *"the canary died"* beside `nova-update apply` —
+    the wrong remedy, in the step before the one draft 3 repaired for that reason. So: the
+    canary's bounded stdout and stderr (rule 21) are searched for the fixed refusal grammar
+    of the two composed binaries; a canary carrying one is exit 1 reason `refused` carrying
+    that line and that wrapper's own remedy, and **only when there is no such line** is the
+    exit compared to `expect_exit`. *"read the line, not the number"*
+    ([SPEC-SECRETS.md](SPEC-SECRETS.md)). **And `canary.expect_exit: 125` is exit 2 naming
+    the field**: `125` is the status both wrappers reserve for their own refusals
+    ([SPEC-SANDBOX.md](SPEC-SANDBOX.md) exit table), so a declaration that expects it is a
+    declaration that turns a refused wall into a passed step — a contradiction inside one
+    file, refused before step 1 (rule 22). **Outside that nesting the
     canary is a different program**: it would run with this tool's own `HOME` and read the
     caller's global configuration rather than the line's, so a harness that fails only when
     its real config loads would pass, which is exactly the 2026-09-13 failure. A canary
@@ -444,6 +502,15 @@ Every rule is normative and has one line in **tests this spec demands**.
     carrying the wrapper refusal line it finds there — `SANDBOX REFUSED
     reason=home_outside` is the truth, and a readiness timeout would have been a lie — or
     `FAIL` reason `died` carrying the child's exit status when there is no such line.
+    **It reads only what this run wrote.** `process.log` is never truncated (rules 2 and
+    21), so it holds every earlier run as well; `up` records the file's size immediately
+    before the exec, in the state file under the same lock (`--state`), and this read begins
+    at that offset. Without it, yesterday's `SANDBOX REFUSED reason=home_outside` is the
+    reason today's death reports, with yesterday's remedy — which is the wrong-remedy
+    failure this rule exists to close, wearing a fresh date. Truncating at each start is the
+    other answer to the same question and it is rejected here, because it costs `logs` every
+    earlier run of a line and a harness's log is the one record of what the line was doing
+    when it died.
     **The status `125` is not the key and must not be**: *"a caller must never read its exit
     status as a check result … read the line, not the number"*
     ([SPEC-SECRETS.md](SPEC-SECRETS.md)), and a command that itself exits 125 is
@@ -467,12 +534,22 @@ Every rule is normative and has one line in **tests this spec demands**.
     caller's group, and the caller owns pgid and reaping"*,
     [SPEC-SANDBOX.md](SPEC-SANDBOX.md) rule 12) and this tool is the caller: a signal to the
     pid alone kills the waiting wrapper and orphans the harness, which is the same day's
-    failure with a better name. (2026-09-10: nineteen orphaned shells from wait loops with no
-    end condition of their own.)
+    failure with a better name. **Windows has no process group and the rule is kept by its
+    own mechanism**: the line is assigned to a Job Object created for it, whose handle's
+    identity is recorded in the `pgid` field, and `down` terminates the job rather than the
+    pid — the same guarantee, that nothing this tool started outlives the stop. A build that
+    cannot make one refuses at step 11 naming the platform, because a line nothing can stop
+    as a whole is the orphan this rule was written for; this document does not stub it as a
+    pid signal and call that a group. (2026-09-10: nineteen orphaned shells from wait loops
+    with no end condition of their own.)
 
 14. **This tool never opens a key file, and secrets arrive by exactly one route.** The
-    route is `<tools.secrets> exec --store … --as … --key … --sops … --only … --require … --`
-    built from `secrets`, and this binary has no other — and a line declaring
+    route is `<tools.secrets> exec --store … --as … --key … --sops … --only <NAME,...>
+    [--require <NAME>]... --` built from `secrets` — **`--require` is repeatable, one flag
+    per name, and is omitted entirely when `secrets.require` is empty**
+    (*"`--require <NAME>` is repeatable and has no default"*,
+    [SPEC-SECRETS.md](SPEC-SECRETS.md)), because a single `--require A,B` is one name
+    nobody declared and earns that verb's own 125 — and this binary has no other route — and a line declaring
     `harness.credential: "none"` takes that route **zero** times, because it receives
     nothing and that verb cannot be asked for nothing (rule 15). It does not `source`, `eval` or
     `.` anything; it does not read, copy, move or `stat` a credential for its contents;
@@ -530,6 +607,41 @@ Every rule is normative and has one line in **tests this spec demands**.
     its launcher checklist makes the data home the launcher's duty, and **this launcher is
     the launcher**.
 
+    **Every other child this tool runs also gets a built environment, and there are exactly
+    three classes.** Nothing this tool executes inherits the environment it was started
+    with, so *"nothing at all"* above is the whole binary's law and not one nesting's.
+    Draft 3 stated it for the nesting and for the probe alone, which left `git` — the one
+    program run outside the nesting (rule 6) — with no environment at all, and an empty
+    environment is a `git` that finds no configuration and no key.
+
+    1. **The nesting** (rule 15's own paragraph) and **`nova-sandbox probe`** (rule 17):
+       `HOME=<sandbox.home_env>`, `PATH` from `process.path_env`, and `process.env`. The
+       harness's data home is inside the wall, which is the point.
+    2. **The harness's own two declared invocations outside the nesting — `version_argv`
+       (step 9) and `ready.argv` (rule 12)**: the same built environment as 1. They belong
+       to the harness, they are run by this tool on the harness's behalf, and a `--version`
+       or a probe that wrote under the caller's real home would be draft 1's canary defect
+       moved to another step. A readiness probe is also a declared argv this tool runs every
+       `ready.interval`: inherited, it would carry whatever a seat exported, which is the
+       second credential route rule 14 says does not exist.
+    3. **`git` and every composed tool run outside the nesting** — `tools.git` at step 6 and
+       in `down`, `nova-secrets keygen`/`check`/`names` at steps 3 and 4, `nova-check
+       attest` at step 7, `nova-local status` at step 10: `HOME=` **the real home of
+       `account.user`**, read from the account database that step 1 already looked the
+       account up in, plus `PATH` from `process.path_env` where the `process` block is
+       present and **empty at `--scope account`**, where every program these steps run is
+       already an absolute path with its own dependencies named by flag. Nothing else.
+       That real home is what rule 6 means by *"that account's keys in its real home"*, and
+       it is not `sandbox.home_env`, which is a data home inside a wall these children are
+       not behind.
+
+    **This is not a hole in rule 1.** *"No environment variable consulted"* means **read by
+    this binary to decide anything** — no path, no program, no flag and no fact of this run
+    comes from a variable — and the account's home is read from the account database and
+    never from `$HOME`, which is why `os.UserHomeDir` stays a tripwire beside `os.Environ`.
+    A value this tool computes and hands to a child it names is the opposite of a value it
+    inherited without noticing.
+
 16. **A line whose harness takes its credential from a file is refused by name.** The
     declaration says which: `harness.credential: "file"` is exit 2 naming the line, the
     fact and the two remedies a person chooses between — a key in a file the seat reads as
@@ -564,7 +676,19 @@ Every rule is normative and has one line in **tests this spec demands**.
     enforce must be the step-5 refusal it exists to be rather than a death at step 9 or 11. There is no `--no-sandbox` on this tool and no
     variable that reaches one: rules 1 and 11 of [SPEC-SANDBOX.md](SPEC-SANDBOX.md) say
     a missing backend is a refusal and never a quieter run, and a tool whose whole job is
-    bringing a line up safely does not ship the switch that turns the safety off. `up`
+    bringing a line up safely does not ship the switch that turns the safety off.
+    **Which boxes have a backend today is a fact this document states rather than lets a
+    reader discover at step 5.** `nova-sandbox` has a darwin body and no other: the Linux
+    (Landlock) section of [SPEC-SANDBOX.md](SPEC-SANDBOX.md) carries *"Unimplemented
+    proposal (2026-09-12) … so no Landlock wall is applied on linux"*, and every non-darwin
+    build refuses with `reason=no_sandbox`. So **`up` on linux refuses at step 5, today, on
+    every declaration**, and that is this rule working rather than failing. It has a price
+    and the price is named: the box this tool was commissioned for — *"an instance of Emma
+    on 'ssh space' (linux)"* — cannot come up until that body is built, and the first
+    acceptance run is therefore either on darwin or behind
+    [SPEC-SANDBOX.md](SPEC-SANDBOX.md)'s owed linux work. A tool that shipped a quieter run
+    on the box that needed it most would be the silent sandbox both specs exist to refuse.
+    `up`
     also enforces that spec's launcher checklist as **refusals rather than advice**:
     `sandbox.home_env` must resolve inside a `--write` path (rule 9,
     `reason=home_outside`); `process.log` must resolve inside a `--write` path (rule 12,
@@ -575,8 +699,18 @@ Every rule is normative and has one line in **tests this spec demands**.
     is exit 2 naming both fields**, because a `--secret` inside a list is that spec's own
     exit 2 `reason=secret_inside_allow`, *"a misconfiguration, not a failed probe"*
     (rule 6 there), and rule 15's whole argument is that those three paths are in neither
-    list; and `sandbox.listen`
-    with `net: "denied"` is a refusal, because that pair is `reason=bad_net` at 125. **The
+    list — `secrets.store` and `secrets.sops` are checked **where they are present**, a
+    keyless line declaring neither (the declaration section); and `sandbox.listen`
+    with `net: "denied"` is a refusal, because that pair is `reason=bad_net` at 125.
+    **And `harness.bin` does not live in the account's home directory.** That wall computes
+    one root rather than naming it — the directory of the resolved command — and therefore
+    *"refuses when the directory of the resolved command is the caller's home directory …
+    or an ancestor of it"*, `reason=bad_read`, because a command in a home would hand the
+    wall that whole home ([SPEC-SANDBOX.md](SPEC-SANDBOX.md), measured, #73). A
+    `harness.bin` whose directory is `account.user`'s passwd home or an ancestor of it is
+    exit **1** at step 5, naming the field, the home, and *"install the command in a
+    directory of its own"* — exit 1 and not 2 because the passwd home is a fact of the box
+    and the field alone cannot be read against it (rule 22). **The
     one refusal this rule does not try to make is a semantic one**: a `start_argv` whose
     element is `tools.sandbox` itself, or whose basename is the platform wrapper the wall
     is built on, is refused here because it is *detectable*; a harness's own private
@@ -613,8 +747,19 @@ Every rule is normative and has one line in **tests this spec demands**.
     `sandbox.home_env` is the line's own directory and appears in no other **live** entry
     this tool has state for — which is why the state file records each line's `home_env`
     (below) and not only its pid; a line that is down claims no data home, and `down` leaves
-    its `home_env` recorded as a report rather than as a claim. (2026-09-10: six concurrent
-    workers sharing one harness data home locked each other out of one sqlite database.)
+    its `home_env` recorded as a report rather than as a claim. **That refusal is exit 1**,
+    beside the held lock and for the same reason: the clash is read from the **state file**,
+    at step 11, long after *"before any step"*, and one declaration alone cannot hold it —
+    the other live line's `home_env` is a fact of this box. Rule 22's law decides it and
+    this rule does not re-decide it. (2026-09-10: six concurrent workers sharing one harness
+    data home locked each other out of one sqlite database.)
+    **The start time has a source, named per platform, because the fallback is the mutation
+    this rule forbids.** There is no Go standard-library route to it: it is
+    `/proc/<pid>/stat` field 22 on linux, the `KERN_PROC_PID` sysctl's
+    `kp_proc.p_starttime` on darwin, and `GetProcessTimes`'s creation time on windows. A
+    box where this tool cannot read it is a refusal naming the platform and the pid —
+    **never a quiet fall back to liveness alone**, which is exactly the pid-reuse blindness
+    the pair exists to close, and which no test can see once it is silent.
 
 19. **One keeper — and this rule's job is to name which tool holds each half, because this
     one holds no half alone.** Glenn, ideas#766: *"if there was a linux rowan keeper, it
@@ -661,7 +806,13 @@ Every rule is normative and has one line in **tests this spec demands**.
     `output`, never a truncated pass. **The line's own process is not one of them**: its
     stdout and stderr are descriptors onto `process.log`, opened before the exec, and this
     tool never reads that **stream** at all — a cap on the line's own output would kill the
-    line this tool exists to start. It reads the **file**, bounded, in exactly two places:
+    line this tool exists to start. **That file is created when absent at mode `0600`, is
+    opened for append, and is never truncated** (rule 2): a run that truncated it would
+    throw away the record of why the last one died, which `logs` is the verb for. **The
+    line's stdin is `/dev/null`** (`NUL` on windows) and never this tool's own: a harness
+    that reads a terminal would otherwise inherit the caller's, and a line that is waiting
+    on a keystroke nobody will type is the silence rule 12 was written for. It reads the
+    **file**, bounded, in exactly two places:
     `logs`, afterwards, as any reader would, and rule 12's early-exit report, which opens it
     once after the process is already gone. A file a reader opens is not a stream a writer
     waits on, and only the second of those is a cap the line could ever feel.
@@ -677,8 +828,13 @@ Every rule is normative and has one line in **tests this spec demands**.
     declaration could not be turned into a run, and that is exit 2 — decided before any
     step, all of them reported together, sorted. An account that is absent, a store behind
     its remote, a home on another branch, a version that moved, a canary that died, a probe
-    that failed, a probe that never answered, **a state lock another run holds**: a step ran
-    and said NO, or the box was busy, and that is exit 1.
+    that failed, a probe that never answered, **a state lock another run holds**, **a
+    `sandbox.home_env` another line is live on** (rule 18), a `harness.bin` in the account's
+    passwd home (rule 17), a start time this box cannot read (rule 18): a step ran
+    and said NO, or the box was busy, and that is exit 1. The test of which side a refusal
+    falls on is not how early it can be noticed but **what it had to read to notice**: a
+    fact this box holds — the state file included, because it is this box's record of this
+    box — is exit 1 even when the step that reads it is late.
     The box's facts are ordered after the declaration's because each depends on the last.
     **There is no `--force` anywhere in this tool**: every refusal's remedy is a different
     command.
@@ -723,11 +879,15 @@ both.
 
 `--state <path>` is this tool's one piece of local state: a JSON file naming, per line,
 the pid it started, **the process group id it made** (rule 13 and `down`), **the start time
-the operating system reports for that pid**, the declaration's sha256, the box label, the
-harness identity it proved, **`sandbox.home_env`**, **`process.log`**, and the stamp. The
+the operating system reports for that pid** (rule 18 names its source on each platform),
+the declaration's sha256, the box label, the
+harness identity it proved, **`sandbox.home_env`**, **`process.log`**, **the size
+`process.log` had immediately before the exec**, and the stamp. The
 start time is what makes the pid an identity rather than a number that gets reused
 (rule 18); `home_env` and `process.log` are what let rule 18 refuse a second **live** line
-onto one data home and let `logs` answer for a line whose declaration moved. It is the
+onto one data home and let `logs` answer for a line whose declaration moved; the recorded
+size is where rule 12's early-exit read begins, so that a refusal from a run last week is
+never reported as the reason this one died. It is the
 caller's path, never `$HOME`, never a temp directory, and a
 run with no `--state` is `refusing to guess`. It is written atomically under a sibling
 `<state>.lock` kernel lock the operating system releases on death — no stale rule and no
@@ -759,21 +919,28 @@ a declaration they did not write.
 ### `up`, the eleven steps
 
 Each step prints one `RUN STEP` line. `--scope account` runs 1 to 5 and stops; `--scope
-home` runs all eleven. The order is fixed, and it is the order a hand does it in today.
+home` runs all eleven, **less step 4 where `harness.credential` is `none`** (the
+declaration). The order is fixed, and it is the order a hand does it in today.
+
+**`<total>` on a `RUN STEP` line is how many steps this declaration runs** — eleven, ten
+for a keyless `home` line, five for an `account` one — and the step's **name** is on the
+same line, so a reader and a test key on `secrets` or `harness` and never on a number. A
+step a declared condition does not run prints nothing at all; that is what a condition
+means here, and it is how steps 6 to 11 already behave at `--scope account`.
 
 | # | step | measures | acts, only where the measurement says it must |
 |---|---|---|---|
 | 1 | `account` | the declared unix user exists and **this process already runs as it** | never — rule 3 prints the line for a person's hand |
 | 2 | `root` | `account.root` and every `account.dirs` path exists; `sandbox.write`'s first entry is under `account.root` | creates exactly those directories, each at mode `0700` (rule 2) |
 | 3 | `keys` | the line's age key exists at `secrets.key`, mode `0600` in a `0700` directory | runs `nova-secrets keygen` when absent, prints its `SECRETS RULE` block — never under `--dry-run` or `doctor` |
-| 4 | `secrets` | `nova-secrets check` green for this seat — invariant 8 included, so a store behind its remote is a refusal naming `git -C <store> pull --ff-only` — then `nova-secrets names --max 0`, **which needs no key and starts no sops**, carries every name in `secrets.only` and `secrets.require` | never — a seal is a pull request two people approve, and the store's pull is a person's line |
+| 4 | `secrets` | **not run at all where `harness.credential` is `none`**; otherwise `nova-secrets check` green for this seat — invariant 8 included, so a store behind its remote is a refusal naming `git -C <store> pull --ff-only` — then `nova-secrets names --max 0`, **which needs no key and starts no sops**, carries every name in `secrets.only` and `secrets.require` | never — a seal is a pull request two people approve, and the store's pull is a person's line |
 | 5 | `wall` | `nova-sandbox probe` green under exactly the declared lists, in the built environment (`HOME=<sandbox.home_env>`), with `--net-deny` exactly when `net` is `denied`, and `secrets.key` as the secret it must fail to read | never — the probe is the named exemption to `--dry-run`'s "no process" |
 | 6 | `home` | present, on `home.branch`, clean, not behind, remote equal to `home.remote` | clones with `tools.git` when absent; fast-forwards when behind and only then (rule 6) |
 | 7 | `attest` | `<tools.check> attest --home <home.path> --manifest <home.manifest>` | never |
 | 8 | `files` | `always_loading.source` and every `config[].source` exist and are non-empty; each `at` is that file or a symlink to it | makes exactly one symlink per pair that differs (rule 9) |
 | 9 | `harness` | `bin` executable; its read identity equals `harness.version`; the canary, **built through rule 15's nesting**, exits as declared | never — installing is `nova-update apply` on a person's word |
 | 10 | `engine` | where `engine.kind` is `local`: `<tools.local> status` answers and advertises `engine.model` | never — starting an engine is the box's, BOX-LOCAL.md |
-| 11 | `start` + `ready` | the state file's pid, if any, is alive **and its start time is the one recorded** (rule 18) | builds the same nesting with `start_argv` innermost, in the built environment (rule 15), starts it **in a process group of its own**, writes the state under the lock, then measures readiness (rule 12) |
+| 11 | `start` + `ready` | the state file's pid, if any, is alive **and its start time is the one recorded** (rule 18) | builds the same nesting with `start_argv` innermost, in the built environment (rule 15), opens `process.log` for append at `0600` and records its size, points the line's stdin at `/dev/null` (rule 21), starts it **in a process group of its own**, writes the state under the lock, then measures readiness (rule 12) |
 
 **Why 4 and 5 come before 6.** A box that cannot open the line's secrets or cannot build
 the wall will not run the line, and cloning a self onto it first leaves a self on a box
@@ -797,6 +964,16 @@ under the same lock, leaving that line's `home_env` and `process.log` recorded a
 and not as a claim (rule 18). A line already down is exit 0 and says
 `already stopped`. It **never** commits, never removes the home, never removes a link,
 and never removes a directory it created.
+
+**An account with no push credential makes `down` exit 1, on purpose, and an operator
+should read it as what it is.** Rule 4 says an `account` box holds no forge credential, and
+rule 6 says `git` authenticates as the account and never from the store; so until a person
+hands that account a credential that can push, `down` on a `home` line there stops the
+process, then exits 1 naming the remote (rule 20). The process **is** stopped and the line
+**is** down — what failed is the promise that the self reached origin, and rule 20 will not
+report a self as saved when it is not. The remedy is the credential, and it is a person's
+hand. (An `account`-scope line has no `home` block at all, so there is nothing there to
+push and `pushed=false remote=-` is the honest line.)
 
 ### `status`
 
@@ -850,7 +1027,8 @@ the box is 1.**
 
 | verb | 0 | 1 | 2 |
 |---|---|---|---|
-| `up` | READY, measured | a step said NO, named, with its remedy | could not run: a flag, or the declaration |
+| `up --scope home` | READY, measured | a step said NO, named, with its remedy | could not run: a flag, or the declaration |
+| `up --scope account` | steps 1 to 5 all green — **there is no process and no readiness at this scope**, and the OK line carries neither | a step said NO, named, with its remedy — which on a first run is step 4's pull-request pause (rule 4) | could not run: a flag, or the declaration |
 | `down` | stopped, or already stopped | the process would not die, or the push failed | could not run |
 | `status` | it read the box (**including a line that is down**) | — never | could not run |
 | `logs` | it read the log (**including an empty one**) | — never | could not run, or the log does not exist |
@@ -874,14 +1052,15 @@ the free-text tail after `: ` is never scanned for fields, and nothing a declara
 holds, a harness printed or a caller typed can author a second line (rule 23).
 
 ```
-RUN UP     at=<stamp> line=<name> box=<label> scope=<account|home> file=<path> sha256=<12 hex> budget=<d> timeout=<d>
+RUN UP     at=<stamp> line=<name> box=<label> scope=<account|home> role=<label> file=<path> sha256=<12 hex> budget=<d> timeout=<d>
 RUN STEP   <n>/<total> <step> <OK|SKIP|FAIL|WOULD> took=<d>[ <field>=<value>...]
 RUN STEP   <n>/<total> <step> FAIL: <reason> — remedy: <command>
-RUN UP     OK   line=<name> scope=<...> home=<12 hex> branch=<name> harness=<label>/<identity> pid=<n> pgid=<n> holder=<label|none> ready=<d> polls=<n> steps=<n> skipped=<n> took=<d>
+RUN UP     OK   line=<name> scope=home home=<12 hex> branch=<name> harness=<label>/<identity> pid=<n> pgid=<n> holder=<label|none> ready=<d> polls=<n> steps=<n> skipped=<n> took=<d>
+RUN UP     OK   line=<name> scope=account steps=<n> skipped=<n> took=<d>
 RUN UP     FAIL line=<name> step=<step> reason=<budget|refused|died|output|...> steps=<n> skipped=<n> done=<n> took=<d>
-RUN DOWN   OK   line=<name> stopped=<yes|no|already> pid=<n|-> pgid=<n|-> pushed=<true|false> remote=<url> dirty=<n> took=<d>
+RUN DOWN   OK   line=<name> stopped=<yes|no|already> pid=<n|-> pgid=<n|-> pushed=<true|false> remote=<url|-> dirty=<n> took=<d>
 RUN DOWN   FAIL line=<name>: <reason> — remedy: <command>
-RUN STATUS OK   line=<name> box=<label> up=<yes|no> pid=<n|-> home=<12 hex> branch=<name> clean=<yes|no> ahead=<n> behind=<n> harness=<identity|unknown (<why>)> hotfile=<ok|missing|foreign> configs=<ok>/<n> engine=<served id|none|unknown (<why>)>
+RUN STATUS OK   line=<name> box=<label> role=<label> up=<yes|no> pid=<n|-> home=<12 hex> branch=<name> clean=<yes|no> ahead=<n> behind=<n> harness=<identity|unknown (<why>)> hotfile=<ok|missing|foreign> configs=<ok>/<n> engine=<served id|none|unknown (<why>)>
 RUN LOGS   OK   line=<name> log=<path> lines=<n> shown=<n> bytes=<n> dropped=<n>
 RUN LOG         <one line of the harness's own output, escaped>
 RUN DOCTOR OK   line=<name> checks=<n> missing=0 classes=<n> undeclared=<n>
@@ -896,6 +1075,17 @@ RUN REFUSED <line|->: <reason> — remedy: <command>
 `sha256=` on the opening line is the declaration's own hash, twelve hex, so two boxes
 compare by eye and a transcript says which file it was. `<line|->` is the line's name, or
 `-` where the refusal happened before a name could be read at all.
+
+**There are two `RUN UP OK` shapes and the scope picks one.** A `home` run carries the
+home, the harness and the process; an `account` run has no `home` block, no harness and no
+process to carry, so its OK line carries the counts and the time and nothing it did not
+measure — a field printed as `-` for a thing that does not exist at this scope would be a
+gap where there is none.
+
+**`role=` is printed on `RUN UP`'s opening line and on `RUN STATUS OK`** — rule 19 says
+`role` is *"a label this tool prints and never interprets"*, and a label nothing prints is
+a label nobody can read. It appears nowhere else, changes nothing, and is compared by
+nothing.
 
 **No credential value, no fragment of one, and no value's length ever appears on any
 line, in any refusal, or in any error passed through from a child** (rule 14). A child's
@@ -932,7 +1122,12 @@ And the whole tooling phase's acceptance, which is Glenn's and not this document
 from Rowan.** Proven first with a worker on a box with no self — *"a throwaway instance
 of a friend would be a test of a someone, which is a floor"* — and only then a friend, on
 that friend's word. Rule 4 records where that acceptance meets a person's hand: the first
-run of a new account ends at a pull request, every time.
+run of a keyed new account ends at a pull request, every time — and a **keyless** worker's
+does not, which is why that is the shape to prove first (the declaration, step 4). Rule 17
+records where it meets a missing body: the wall has a darwin body today and no other, so
+the first acceptance run is on darwin, or behind
+[SPEC-SANDBOX.md](SPEC-SANDBOX.md)'s owed linux work — this tool will not be the thing that
+comes up on a box with no wall.
 
 ---
 
@@ -992,12 +1187,18 @@ literal naming a forge, a branch, a harness or a friend outside `testdata/` and 
    absolute form it would have taken; an absent path that is not in `account.dirs` is a
    refusal naming the command that makes it; a `sandbox.home_env` under no `account.dirs`
    path is exit 2 naming both fields; a first `sandbox.write` entry equal to `account.root`
-   or outside it is exit 2 naming both fields; **every created directory's mode is `0700`**,
-   asserted by `stat` and not by whatever umask happened to be set; after a run, the only
-   directories created are exactly `account.dirs` plus the two the composed tools make by
-   name (`.nova-sandbox-tmp` inside the first write path, and the probe's
+   or outside it is exit 2 naming both fields; **a first `sandbox.write` entry whose parent
+   resolves inside any `sandbox.read` or `sandbox.write` entry is exit 2 naming both
+   fields** — two fixtures, one naming `account.root` in `read` and one naming it twice in
+   `write` — asserted to refuse **before** step 5, so the probe's own
+   `probe_outside_inside` is never reached; **every created directory's mode is `0700`**,
+   asserted by `stat` and not by whatever umask happened to be set; **`process.log` is
+   created when absent at mode `0600` and its bytes are unchanged by a second `up`**, the
+   mutation being an `O_TRUNC` that turns test 12's history case red; after a run, the only
+   paths created are exactly `account.dirs`, `process.log`, plus the two the composed tools
+   make by name (`.nova-sandbox-tmp` inside the first write path, and the probe's
    `.nova-sandbox-probe-<pid>` outside it, which must be gone again), asserted by hashing
-   the tree before and after with those two exempted. Mutations: a
+   the tree before and after with those exempted. Mutations: a
    default for any one field turns it red, and creating the directories at `0755` turns the
    mode half red at step 3's own measurement.
 3. `TestItNeverRunsAPrivilegedCommand` — the source tripwire, plus a behavioral half: a
@@ -1010,7 +1211,11 @@ literal naming a forge, a branch, a harness or a friend outside `testdata/` and 
    `process`, `ready` or `capture` block is exit 2 naming the field and the condition; a
    `home` declaration missing any of them is exit 2; `--scope account` runs steps 1–5 and
    no more and clones nothing; `--scope home` runs eleven; a missing `--scope` is exit 2
-   naming both values; an `account` run's last line names the pull-request remedy (rule 4).
+   naming both values; an `account` run's last line names the pull-request remedy (rule 4);
+   **and a green `account` run's last line is the `scope=account` OK shape at exit 0,
+   carrying `steps=`, `skipped=` and `took=` and carrying no `home=`, `branch=`,
+   `harness=`, `pid=`, `pgid=`, `holder=`, `ready=` or `polls=`** — the assertion that this
+   tool prints no field for a thing this scope never measured.
 5. `TestASecondRunRepairsAndSkips` — over a healthy line, every step that measures green
    prints `SKIP`, no file on disk changes (tree hash before and after), no process is
    started, and `ready` is measured again. Over a line with one step undone, exactly that
@@ -1028,7 +1233,12 @@ literal naming a forge, a branch, a harness or a friend outside `testdata/` and 
    **Every `git` this tool runs, in every verb, is `tools.git` by absolute path**, asserted
    at the exec site; a fetch or a push that fails to authenticate is exit 1 naming the
    remote, with no credential read, no prompt and no retry, and the fixture's store value
-   appears in no byte of that child's environment. Mutation: a `reset --hard` on the
+   appears in no byte of that child's environment. **And `git`'s environment is asserted on
+   the fake `git` itself: `HOME` is the fixture account's real home, `PATH` is
+   `process.path_env`, and there is no third variable** — the mutation that matters is an
+   empty environment, which a real `git` answers with no `~/.gitconfig` and no key, and the
+   second mutation is `HOME=<sandbox.home_env>`, which points it at a data home that holds
+   neither (rule 15, class 3). Mutation: a `reset --hard` on the
    divergent case, which must turn every one of the six
    red; and a `git pull` of the store, which must turn the store case red.
 7. `TestItWritesNothingInsideAHome` — the home's tree hash, excluding `.git`, is unchanged
@@ -1064,7 +1274,14 @@ literal naming a forge, a branch, a harness or a friend outside `testdata/` and 
     `tools.sandbox` is refused by rule 17 before it runs; a canary that hangs is `FAIL`
     reason `timeout` at its own deadline, not the budget; a canary that passes is followed
     by exactly one start; and a `credential: "none"` fixture's canary argv is the **two-deep**
-    nesting, the same shape its start takes (rule 15).
+    nesting, the same shape its start takes (rule 15). **The wrapper's line is read before
+    the number:** a fake wrapper that exits `125` printing `SANDBOX REFUSED
+    reason=home_outside` is `FAIL` reason `refused` carrying that line and that wrapper's
+    remedy — never *"the canary died"* and never `nova-update apply` — while a fake harness
+    that exits `125` printing **no** wrapper line is the canary's own failure against
+    `expect_exit`; the mutation that matters is comparing the exit first, which turns a
+    refused wall into a version remedy in the step before rule 12's. And
+    `canary.expect_exit: 125` is exit 2 naming the field, before step 1.
 12. `TestReadyIsAMeasurement` — a fake line whose process is alive and whose probe never
     answers is `FAIL` at `ready.deadline` with `polls=` counted, never `OK` — the mutation
     that matters is treating a live pid as ready; a probe answering on poll 3 gives
@@ -1076,12 +1293,18 @@ literal naming a forge, a branch, a harness or a friend outside `testdata/` and 
     read from `process.log` **as a file**, with the fake child writing `SECRETS EXEC OK …`
     first and its refusal after, so an implementation that took the log's first line is red;
     a child that exits `125` carrying **no** wrapper line is `died` and not `refused` — the
-    mutation that matters is keying on the number instead of the line; a declaration with no
-    `ready` block is exit 2.
+    mutation that matters is keying on the number instead of the line; **a `process.log`
+    that already holds a previous run's `SANDBOX REFUSED reason=home_outside` before this
+    run's recorded offset, whose child then dies with nothing of its own, is `died` and not
+    `refused`**, the mutation being a read from byte zero, which is yesterday's remedy
+    reported with today's date; the same fixture with the refusal written **after** the
+    offset is `refused`; a declaration with no `ready` block is exit 2.
 13. `TestEveryWaitHasADeadline` — with an injected clock and children that hang, `up` ends
     inside `--budget`, prints its last line and exits 1 with reason `budget`; after any
     exit, including a signal, **no child of this tool is alive** but the line's own process,
-    asserted by the process group `up` itself created and recorded; `--budget 0` and a
+    asserted by the process group `up` itself created and recorded — and on windows by the
+    Job Object it created in its place, with a build that can make neither asserted to refuse
+    at step 11 naming the platform rather than to signal a bare pid; `--budget 0` and a
     negative are refused.
 14. `TestNoKeyFileIsEverOpened` — a distinctive 40-byte fixture value in the throwaway
     store: it appears in **no byte** of stdout or stderr in every verb and every refusal;
@@ -1103,8 +1326,15 @@ literal naming a forge, a branch, a harness or a friend outside `testdata/` and 
     is asserted to **fail** and is unreachable from any flag. **The outermost child's
     environment is exactly `HOME=<sandbox.home_env>`, `PATH` from `process.path_env` and
     `process.env`, and nothing else**: the test plants a distinctive variable in its own
-    process's environment and asserts it reaches no child, which is the mutation that
-    matters, because `os.Environ()` plus additions is what a Go program writes by accident. The assertions run against
+    process's environment and asserts it reaches **no child of any class**, which is the
+    mutation that matters, because `os.Environ()` plus additions is what a Go program writes
+    by accident. **All three classes are asserted on the fakes' own environments, because
+    draft 3 stated one of them and left `git` with none**: the nesting and the probe carry
+    `HOME=<sandbox.home_env>`; `version_argv` and `ready.argv` carry the same and are
+    asserted **not** to carry the account's real home; every composed tool and `git` carry
+    `HOME=` the fixture account's real home and are asserted **not** to carry `home_env`; and
+    an `account`-scope run's children carry an empty `PATH`, there being no `process` block
+    to build one from. The assertions run against
     fakes on every platform; the **additional** pass against the real `nova-secrets` and
     `nova-sandbox` binaries skips with a stated reason when they are absent, naming which,
     never vacuously.
@@ -1113,14 +1343,28 @@ literal naming a forge, a branch, a harness or a friend outside `testdata/` and 
     `credential: "none"` with an empty `secrets.only` and an empty `secrets.require` runs to
     `READY` **through the two-deep nesting, with `nova-secrets exec` never executed** — the
     keyless line, which draft 1 refused and draft 2 could not start, asserted on the argv
-    and not only on the exit code; `credential: "env"` with an empty `only`, and
+    and not only on the exit code; **and that fixture's store directory does not exist at
+    all**: it declares no `secrets.store`, no `secrets.as` and no `secrets.sops`, **step 4
+    prints no line and runs no child**, `nova-secrets` is executed exactly once in the whole
+    run and that once is `keygen`, and the run reaches `READY` with nothing sealed to this
+    line by anybody — the assertion that the case ideas#766 asks to prove first costs no
+    pull request (draft 3 needed a sealed empty file for it). A `credential: "none"`
+    declaration carrying `secrets.store`, `secrets.as` or `secrets.sops` is exit 2 naming
+    the field and the condition; `credential: "env"` with an empty `only`, and
     `credential: "none"` with a non-empty `only` or a non-empty `require`, are each exit 2
     naming the condition;
     `keygen` on a fresh fixture writes exactly one file outside the store, never overwrites,
-    prints the `SECRETS RULE` block, and the run still refuses at step 4 at exit 1, which is
-    the box's fact and not the declaration's (rule 22).
+    prints the `SECRETS RULE` block, and a **keyed** line's run still refuses at step 4 at
+    exit 1, which is the box's fact and not the declaration's (rule 22).
 17. `TestTheWallIsNotOptional` — a failing probe, and a box with no backend, each refuse
-    the whole run with no process started; **the probe's own argv and environment are
+    the whole run with no process started, **the no-backend case naming the platform, which
+    on every non-darwin build today is every run** (rule 17); **the parent of the first
+    `sandbox.write` inside a list is refused at exit 2 before step 5 rather than met as
+    `probe_outside_inside` at it**, one case; **a `harness.bin` whose directory is the
+    fixture account's passwd home, and one whose directory is an ancestor of it, are each
+    exit 1 at step 5 naming the field, the home and *"install the command in a directory of
+    its own"***, the case being SPEC-SANDBOX's `bad_read` guard this checklist did not carry;
+    **the probe's own argv and environment are
     asserted: the declared lists exactly, `secrets.key` as `--secret`,
     `HOME=<sandbox.home_env>` and nothing inherited, and `--net-deny` present exactly when
     `net` is `denied`** — the mutation that matters is running the probe with this tool's
@@ -1139,10 +1383,13 @@ literal naming a forge, a branch, a harness or a friend outside `testdata/` and 
     starts nothing and every step that measures green prints `SKIP`, `ready` being measured
     again (the assertion that rules 5, 12 and 18 agree); a dead pid is reaped and the line
     starts; **a live pid whose start time differs from the recorded one is treated as dead
-    and reaped**, the pid-reuse case, whose mutation is testing liveness alone; two
-    declarations sharing one `sandbox.home_env` are exit 2 naming both, read
-    from the state file's recorded **live** `home_env` and not from a second declaration,
-    while the same pair with the first line **down** is not a refusal; an interrupt during
+    and reaped**, the pid-reuse case, whose mutation is testing liveness alone; **a box
+    where the start time cannot be read refuses naming the platform and the pid**, asserted
+    with an injected reader that fails, the mutation being a fall back to `kill(pid, 0)`;
+    two declarations sharing one `sandbox.home_env` are exit **1** naming both, read
+    from the state file's recorded **live** `home_env` and not from a second declaration —
+    a fact of this box, which test 22 walks the same table for — while the same pair with
+    the first line **down** is not a refusal; an interrupt during
     the readiness wait still leaves the pid, pgid and start time recorded, because the lock
     is released before the first poll; concurrent
     `up` runs over one state file leave it parseable and one of them **exits 1** naming the
@@ -1151,10 +1398,14 @@ literal naming a forge, a branch, a harness or a friend outside `testdata/` and 
 19. `TestOneKeeper` — `role: "keeper"` changes **nothing** this tool does, which is the
     assertion draft 3 replaced two contradicting refusals with: a live process for a keeper
     is rule 18's repair at exit 0, byte-identical in its output to the same fixture at any
-    other role but the printed `role=`; a keeper whose home is behind its remote takes
+    other role but the printed `role=` **on `RUN UP`'s opening line and on `RUN STATUS
+    OK`, which the grammar carries and which this test reads the label from** (draft 3
+    asserted on a field no line printed); a keeper whose home is behind its remote takes
     rule 6's step-6 fast-forward and comes up, and one whose advance is not a fast-forward
     is rule 6's exit 1, the same line every other role gets; three role labels, including
-    one this repository has never used, are printed verbatim and change no branch; there is
+    one this repository has never used, are printed verbatim on both lines and change no
+    branch; `role` reaches no comparison, no branch choice and no exec site, asserted by
+    walking the source for its one read; there is
     no `move`, `handover` or `promote` verb, asserted on the verb table.
 20. `TestDownPushesAndSaysWhatItCannotHold` — `down` pushes before it reports, on a clean
     stop and on a forced kill alike, signalling **the group** and leaving no survivor; a
@@ -1172,12 +1423,18 @@ literal naming a forge, a branch, a harness or a friend outside `testdata/` and 
     `READY` normally and this tool never reads that stream — the mutation that matters,
     because draft 1's cap would have killed the line it started; and the same 1 GB log read
     **as a file** by `logs` and by rule 12's early-exit report is bounded in both, so a
-    read-after-death is not a second way to blow the budget.
+    read-after-death is not a second way to blow the budget. **The line's stdin is
+    `/dev/null`**, asserted by a fake harness that reads its stdin to EOF and reports what it
+    got, the mutation being an inherited descriptor, which on a terminal is a line waiting on
+    a keystroke nobody will type.
 22. `TestEveryRefusalNamesItsRemedyAndItsExit` — every refusal in the package lives in one
     table the test walks: each names what the input wants, ends in a command, a file or the
     values allowed, **and carries its exit code, which the table asserts is 2 for every
-    declaration fact and 1 for every box fact** — the held state lock among the box facts,
-    at 1; removing one, or flipping one's code, turns it red. One run with six independent problems names all six, sorted, in one
+    declaration fact and 1 for every box fact** — the held state lock, **a `sandbox.home_env`
+    another live line holds**, a `harness.bin` in the account's passwd home and an
+    unreadable process start time among the box facts, each at 1, and
+    `canary.expect_exit: 125` among the declaration's, at 2;
+    removing one, or flipping one's code, turns it red. One run with six independent problems names all six, sorted, in one
     refusal block; a flag typo or a bare invocation costs **one line**, never the banner;
     `nova-run help` prints the verbs block on stdout at exit 0.
 23. `TestNoDeclarationOrChildOutputCanForgeALine` — a line name, a path, a harness's log
@@ -1238,12 +1495,15 @@ Every quotation above is verbatim from the record named beside it.
 scopes, the one keeper, the rename), [#768](https://github.com/mas-bandwidth/ideas/issues/768)
 and [#769](https://github.com/mas-bandwidth/ideas/issues/769) (the boundaries above);
 [SPEC.md](SPEC.md) Conventions and `nova-check attest`; [SPEC-SECRETS.md](SPEC-SECRETS.md)
-(the model, the launcher order, `keygen`, `names` without a key, invariant 8's pull, the
+(the model, the launcher order, `keygen` and its optional `--store`, `names` without a key,
+the repeatable `--require`, the `--as` whose file is absent, invariant 8's pull, the
 125 refusal, and *"read the line, not the number"*);
 [SPEC-SANDBOX.md](SPEC-SANDBOX.md) (rules 1, 6, 7, 8, 9, 10, 11, 12, 13, the
 launcher checklist items 1, 3 and 5, the probe section whole — its `HOME`, its
-`--net-deny`, `probe_outside_unwritable` and the two paths it writes outside the wall —
-the exit table's `bad_net`, `home_outside` and `secret_inside_allow`, and
+`--net-deny`, `probe_outside_unwritable`, `probe_outside_inside` and the two paths it
+writes outside the wall — the home-by-way-of-the-command `bad_read` guard, the Linux
+section's unimplemented banner (2026-09-12),
+the exit table's `bad_net`, `home_outside`, `no_sandbox` and `secret_inside_allow`, and
 rule 12's *"the caller owns pgid and reaping"*); [SPEC-UPDATE.md](SPEC-UPDATE.md) rules 3,
 4 and 10; [SPEC-LOCAL.md](SPEC-LOCAL.md) rules 8 and 15 and [BOX-LOCAL.md](BOX-LOCAL.md);
 [SPEC-MERGE.md](SPEC-MERGE.md) rules 1 and 2 for the lock; [ONBOARDING.md](ONBOARDING.md)
