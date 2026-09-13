@@ -117,10 +117,10 @@ func TestEveryFlagInTheSynopsisIsDefinedByItsVerb(t *testing.T) {
 	}
 	// The guard on the parser itself. A regexp or a block boundary that quietly stopped
 	// matching would leave this test green over nothing, which is the one way a tripwire
-	// fails that nobody notices. Seven verbs and the flag count as the banner stands; a
+	// fails that nobody notices. Eight verbs and the flag count as the banner stands; a
 	// deliberate change to either moves these numbers in the same commit.
-	if got := len(block); got != 7 {
-		t.Errorf("the synopsis parsed to %d verbs, want 7: %+v", got, block)
+	if got := len(block); got != 8 {
+		t.Errorf("the synopsis parsed to %d verbs, want 8: %+v", got, block)
 	}
 	if checked < 30 {
 		t.Errorf("only %d flags were checked; the banner offers more than that, so the parser is reading less than the banner says", checked)

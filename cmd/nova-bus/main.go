@@ -56,7 +56,8 @@ const usage = `nova-bus: the bus, with the races taken out (see docs/SPEC.md)
 
 usage:
   nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>]
-  nova-bus send --bus <dir> --file <path>|--stdin [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
+  nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
+  nova-bus send --bus <dir> (--file <path>|--stdin | --prepared <path>|--prepared-stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push]
   nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open [--open-max <n>]] [--open-warn <n>]
         [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
@@ -171,6 +172,13 @@ loses its asterisks. It still refuses what it cannot read without guessing -- a
 recipient the roster does not know, no To line at all, a key nobody knows, a Re
 naming nothing -- and it reports EVERY problem in the draft in one run.
 
+prepare computes a note's deterministic id and assigns its Date before any bus
+mutation, outputting a self-contained JSON artifact to stdout. Do not prepare
+again while pending; retry the saved artifact. Two preparations at different
+instants can assign different Date values and IDs even when the original draft
+is identical. send --prepared confirms or publishes that exact saved artifact
+with bounded recovery.
+
 example:
   nova-bus names --bus ./bus
   nova-bus check --bus ./bus --full
@@ -212,6 +220,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return 0
 	case "draft":
 		return cmdDraft(rest, stdout, stderr)
+	case "prepare":
+		return cmdPrepare(rest, stdin, stdout, stderr, now)
 	case "send":
 		return cmdSend(rest, stdin, stdout, stderr, now)
 	case "inbox":
@@ -534,11 +544,72 @@ func cmdDraft(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func cmdPrepare(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
+	f := newFlags("prepare")
+	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
+	as := f.fs.String("as", "", "which participant you are (required)")
+	file := f.fs.String("file", "", "the draft to prepare")
+	useStdin := f.fs.Bool("stdin", false, "read the draft from standard input instead of --file")
+	slug := f.fs.String("slug", "", "the human half of the filename (default: from the subject)")
+	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
+		return 2
+	}
+	if (*file == "") == !*useStdin {
+		fmt.Fprint(stderr, "nova-bus prepare: give exactly one of --file and --stdin; refusing to guess\n")
+		return 2
+	}
+	source := "(stdin)"
+	var text string
+	if *useStdin {
+		raw, err := io.ReadAll(stdin)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-bus prepare: %s\n", oneline.Err(err))
+			return 2
+		}
+		text = string(raw)
+	} else {
+		source = *file
+		raw, err := os.ReadFile(*file)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-bus prepare: %s\n", oneline.Err(err))
+			return 2
+		}
+		text = string(raw)
+	}
+	if err := bus.IsRepoRoot(*busDir); err != nil {
+		fmt.Fprintf(stderr, "nova-bus prepare: %s\n", oneline.Err(err))
+		return 2
+	}
+	t, ok := openBus("prepare", *busDir, stderr)
+	if !ok {
+		return 2
+	}
+	prepared, err := bus.PrepareDraft(t, text, now, *slug, *as)
+	if err != nil {
+		for _, reason := range bus.Reasons(err) {
+			fmt.Fprintf(stderr, "PREPARE FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
+		}
+		return 1
+	}
+	for _, notice := range prepared.Notices {
+		fmt.Fprintf(stderr, "PREPARE NOTE %s\n", oneline.Escape(notice))
+	}
+	artifactJSON, err := bus.RenderPreparedArtifact(prepared)
+	if err != nil {
+		fmt.Fprintf(stderr, "PREPARE FAIL %s: %s\n", oneline.Escape(source), oneline.Err(err))
+		return 1
+	}
+	fmt.Fprint(stdout, artifactJSON)
+	return 0
+}
+
 func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time) int {
 	f := newFlags("send")
 	busDir := f.fs.String("bus", "", "the bus's repository root (required)")
 	file := f.fs.String("file", "", "the draft to send")
 	useStdin := f.fs.Bool("stdin", false, "read the draft from standard input instead of --file")
+	preparedFile := f.fs.String("prepared", "", "the prepared artifact to send or confirm")
+	usePreparedStdin := f.fs.Bool("prepared-stdin", false, "read the prepared artifact from standard input instead of --prepared")
 	remote := f.fs.String("remote", "", "the git remote to push to (required)")
 	branch := f.fs.String("branch", "", "the branch the bus lives on (required)")
 	as := f.fs.String("as", "", "which participant you are; supplies the From line when the draft has none, and is refused if the draft's From line names anybody else")
@@ -558,10 +629,83 @@ func cmdSend(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.
 	if !f.gitArgs(*remote, *branch, stderr) {
 		return 2
 	}
-	if (*file == "") == !*useStdin {
-		fmt.Fprint(stderr, "nova-bus send: give exactly one of --file and --stdin; refusing to guess\n")
+	hasDraft := *file != "" || *useStdin
+	hasPrepared := *preparedFile != "" || *usePreparedStdin
+	if hasDraft && hasPrepared {
+		fmt.Fprint(stderr, "nova-bus send: --prepared is mutually exclusive with --file and --stdin\n")
 		return 2
 	}
+	if hasPrepared {
+		if (*preparedFile == "") == !*usePreparedStdin {
+			fmt.Fprint(stderr, "nova-bus send: give exactly one of --prepared and --prepared-stdin; refusing to guess\n")
+			return 2
+		}
+	} else {
+		if (*file == "") == !*useStdin {
+			fmt.Fprint(stderr, "nova-bus send: give exactly one of --file and --stdin; refusing to guess\n")
+			return 2
+		}
+	}
+	if *preparedFile != "" || *usePreparedStdin {
+		if *noPush {
+			fmt.Fprint(stderr, "nova-bus send: --no-push cannot be used with --prepared\n")
+			return 2
+		}
+		if *slug != "" {
+			fmt.Fprint(stderr, "nova-bus send: --slug cannot be used with --prepared\n")
+			return 2
+		}
+		if *as == "" {
+			fmt.Fprint(stderr, "nova-bus send: --as is required with --prepared\n")
+			return 2
+		}
+		source := "(prepared-stdin)"
+		var raw []byte
+		var err error
+		if *usePreparedStdin {
+			raw, err = io.ReadAll(stdin)
+		} else {
+			source = *preparedFile
+			raw, err = os.ReadFile(*preparedFile)
+		}
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.Err(err))
+			return 2
+		}
+		if err := bus.IsRepoRoot(*busDir); err != nil {
+			fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.Err(err))
+			return 2
+		}
+		c, err := bus.LoadConfig(*busDir)
+		if err != nil {
+			fmt.Fprintf(stderr, "nova-bus send: %s\n", oneline.Err(err))
+			return 2
+		}
+		art, p, err := bus.ValidatePreparedArtifact(raw, *busDir, c, *as)
+		if err != nil {
+			for _, reason := range bus.Reasons(err) {
+				fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(source), oneline.Err(reason))
+			}
+			return 1
+		}
+		release, err := bus.LockCheckout(*busDir, checkoutLockWait)
+		if err != nil {
+			fmt.Fprintf(stderr, "SEND REFUSED: %s\n", oneline.Err(err))
+			return 1
+		}
+		defer release()
+
+		res, err := bus.SendPreparedArtifact(*busDir, *remote, *branch, p, art, *attempts)
+		if err != nil {
+			fmt.Fprintf(stderr, "SEND FAIL %s: %s\n", oneline.Escape(art.Path), oneline.Err(err))
+			printTranscript(stderr, err)
+			return 1
+		}
+		fmt.Fprintf(stdout, "SEND OK id=%s path=%s commit=%s pushed=%t attempts=%d state=%s\n",
+			oneline.Field(art.ID), oneline.Field(art.Path), oneline.Field(res.Commit), res.Pushed, res.Attempts, oneline.Field(res.State))
+		return 0
+	}
+
 	source := "(stdin)"
 	var text string
 	if *useStdin {

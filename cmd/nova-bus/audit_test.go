@@ -51,6 +51,9 @@ var messageBusAudit = audit.Config{
 			"spelling, To, Cc and every Re resolved against the roster and the bus, and --subject passed bus.OneLine, which refuses a " +
 			"line break or a control character. Nothing unresolved reaches here: an unresolved anything is a DRAFT REFUSED on stderr and " +
 			"this line never runs. TestDraftPrintsASkeletonTheParserReadsBack is the behavioural test for this site.",
+		"main.go|cmdPrepare|artifactJSON": "the prepared artifact itself, printed to stdout VERBATIM because it is a machine-readable JSON " +
+			"object and not an event line: a self-contained artifact that a caller saves, and an escape would fold it or escape its quotes. " +
+			"Every value in it has been checked before this line runs. TestPrepareDecidingTests is the behavioural test for this site.",
 		"main.go|printTranscript|tr": "git's own transcript, printed to stderr VERBATIM and deliberately not through the escape. " +
 			"It is not an event line: the escaped, one-line SEND/RECEIPT/INBOX FAIL above it is, and this is the text a person " +
 			"opened the terminal to read. Escaping it is what this change removes -- a forty-line rebase transcript rendered as " +
