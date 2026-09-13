@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"time"
@@ -467,38 +468,44 @@ func grokSplit(turn map[string]interface{}) ([]records.ModelUsage, error) {
 	return out, nil
 }
 
-// grokModel is the model cell. One reported model ID is that ID with harness_reported; more
-// than one reported ID is {null, mixed} and the split is retained without being counted
-// again; none is {null, unknown}. primaryModelId is a REPORTED harness identifier and never a
-// raw usage counter, and it must not replace the entries of a mixed-model turn.
-//
-// The set is the split's IDs together with primaryModelId, so a primary that does not match a
-// single-model split is more than one reported ID rather than a silent winner. The mapping
-// marks the mixed case unverified; mixed asserts no ID, which is the shape that claims least.
+// grokModel is the model cell. The top-level model.id is primaryModelId ONLY: the manifest's
+// `single_reported_id.id` is the literal `primaryModelId`, not a single ID inferred from the
+// modelUsage split, so a split is never unioned into evidence for a top-level model. A
+// non-empty primary compatible with the split (none, or a single entry that is the primary)
+// is that ID with harness_reported; no primary is {null, unknown} whatever the split holds;
+// more than one split entry, or a non-empty primary that does not match a single split entry,
+// is {null, mixed} and the split is retained in model_usage without being counted again.
+// primaryModelId is a REPORTED harness identifier and never a raw usage counter, and it must
+// not replace the entries of a mixed-model turn. Mixed asserts no ID, which is the shape that
+// claims least.
 func grokModel(turn map[string]interface{}, split []records.ModelUsage) (records.Model, error) {
-	reported := map[string]bool{}
-	for _, e := range split {
-		reported[e.ModelID] = true
-	}
+	var primary string
+	hasPrimary := false
 	if v, ok := turn["primaryModelId"]; ok && v != nil {
 		s, ok := v.(string)
 		if !ok {
 			return records.Model{}, errors.New("primaryModelId is a reported harness identifier string")
 		}
-		if s != "" {
-			reported[s] = true
-		}
+		primary = s
+		hasPrimary = true
 	}
-	switch len(reported) {
-	case 0:
-		return records.Model{Basis: "unknown"}, nil
-	case 1:
-		for id := range reported {
-			only := id
-			return records.Model{ID: &only, Basis: "harness_reported"}, nil
-		}
+	// More than one split entry is mixed whatever the primary reports: the split is the
+	// retained detail, never a source of a single top-level ID.
+	if len(split) > 1 {
+		return records.Model{Basis: "mixed"}, nil
 	}
-	return records.Model{Basis: "mixed"}, nil
+	// A non-empty primary is the single reported ID, unless a single split entry is a
+	// DIFFERENT ID -- an incompatibility that stays mixed rather than picking a winner.
+	if hasPrimary && primary != "" {
+		if len(split) == 1 && split[0].ModelID != primary {
+			return records.Model{Basis: "mixed"}, nil
+		}
+		id := primary
+		return records.Model{ID: &id, Basis: "harness_reported"}, nil
+	}
+	// No primary: the top-level model stays {null, unknown} even when the split has exactly
+	// one entry; that entry is retained in model_usage and is not evidence for a model.id.
+	return records.Model{Basis: "unknown"}, nil
 }
 
 // grokOrigin is the owner binding or nothing. Friend/bench binding describes ORIGINAL
@@ -526,27 +533,124 @@ func grokOrigin(sessionID, turnNumber string, opts GrokOptions) (records.Origin,
 // unknown extra fields are excluded rather than admitted into an allowlist derived from the
 // input.
 //
+// The source boundary is the exact JSON: EXACTLY ONE object, its keys matched by their exact
+// declared spellings (no case aliasing), no duplicate decoded member name at any nesting
+// level, and no trailing document after the object -- trailing whitespace is fine, any second
+// value is not. Numbers are kept as json.Number so a counter's exact lexeme survives.
+//
 // A parse failure is reported as this fixed phrase and never by wrapping the decoder's own
 // error: a source document is untrusted text, and a diagnostic is a shared file.
 func grokParse(raw []byte) (string, []map[string]interface{}, error) {
-	var export struct {
-		SessionID string                    `json:"sessionId"`
-		Turns     *[]map[string]interface{} `json:"turns"`
+	root, err := grokParseExport(raw)
+	if err != nil {
+		return "", nil, err
 	}
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	// UseNumber is load-bearing: a counter is kept as its ORIGINAL lexeme, and float64 would
-	// round an integer above 2^53 and rewrite a decimal's spelling on the way to the wire.
-	dec.UseNumber()
-	if err := dec.Decode(&export); err != nil {
-		return "", nil, errors.New("grok: the export is not a JSON object with a sessionId string and a turns array")
-	}
-	if export.SessionID == "" {
+	sessionID, _ := root["sessionId"].(string)
+	if sessionID == "" {
 		return "", nil, errors.New("grok: the export carries its original native sessionId; a containing session ID is never substituted")
 	}
-	if export.Turns == nil {
+	turnsRaw, ok := root["turns"]
+	if !ok || turnsRaw == nil {
 		return "", nil, errors.New("grok: the export carries a turns array")
 	}
-	return export.SessionID, *export.Turns, nil
+	arr, ok := turnsRaw.([]interface{})
+	if !ok {
+		return "", nil, errors.New("grok: the export carries a turns array")
+	}
+	turns := make([]map[string]interface{}, 0, len(arr))
+	for _, e := range arr {
+		obj, ok := e.(map[string]interface{})
+		if !ok {
+			return "", nil, errors.New("grok: every turn is a JSON object")
+		}
+		turns = append(turns, obj)
+	}
+	return sessionID, turns, nil
+}
+
+// grokParseExport parses raw as exactly one JSON object. It refuses a non-object document, a
+// malformed document, a duplicate decoded member name at any depth, and any trailing content
+// after the object. Every refusal is a fixed phrase that never echoes source bytes.
+func grokParseExport(raw []byte) (map[string]interface{}, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	root, err := grokParseValue(dec)
+	if err != nil {
+		return nil, err
+	}
+	obj, ok := root.(map[string]interface{})
+	if !ok {
+		return nil, errors.New("grok: the export is not a JSON object with a sessionId string and a turns array")
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, errors.New("grok: the export is exactly one JSON document; a second document or trailing content is refused")
+	}
+	return obj, nil
+}
+
+// grokParseValue reads one JSON value from the stream and decodes it. UseNumber is already on
+// the decoder, so a number is kept as its exact json.Number lexeme and a float never rounds
+// it. The decoded member-name strings are compared for duplicates as DECODED strings, so two
+// spellings that escape to one name (for example "sessionId" and "session\u0049d") are the
+// same duplicate and are refused, while two different spellings of a name stay distinct.
+func grokParseValue(dec *json.Decoder) (interface{}, error) {
+	tok, err := dec.Token()
+	if err != nil {
+		return nil, errors.New("grok: the export is not a JSON object with a sessionId string and a turns array")
+	}
+	return grokParseJSON(dec, tok)
+}
+
+func grokParseJSON(dec *json.Decoder, tok json.Token) (interface{}, error) {
+	switch t := tok.(type) {
+	case json.Delim:
+		switch t {
+		case '{':
+			obj := map[string]interface{}{}
+			for {
+				kt, err := dec.Token()
+				if err != nil {
+					return nil, errors.New("grok: the export is not a JSON object with a sessionId string and a turns array")
+				}
+				if d, ok := kt.(json.Delim); ok && d == '}' {
+					return obj, nil
+				}
+				key, ok := kt.(string)
+				if !ok {
+					return nil, errors.New("grok: the export is not a JSON object with a sessionId string and a turns array")
+				}
+				if _, dup := obj[key]; dup {
+					return nil, errors.New("grok: the export carries no duplicate member names")
+				}
+				val, err := grokParseValue(dec)
+				if err != nil {
+					return nil, err
+				}
+				obj[key] = val
+			}
+		case '[':
+			arr := []interface{}{}
+			for {
+				et, err := dec.Token()
+				if err != nil {
+					return nil, errors.New("grok: the export is not a JSON object with a sessionId string and a turns array")
+				}
+				if d, ok := et.(json.Delim); ok && d == ']' {
+					return arr, nil
+				}
+				val, err := grokParseJSON(dec, et)
+				if err != nil {
+					return nil, err
+				}
+				arr = append(arr, val)
+			}
+		}
+		return nil, errors.New("grok: the export is not a JSON object with a sessionId string and a turns array")
+	case json.Number:
+		return t, nil
+	default:
+		return tok, nil
+	}
 }
 
 // grokCheckProducerVersion keeps producer_version an EXACT BOUNDED string: a version a caller
