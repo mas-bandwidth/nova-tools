@@ -123,6 +123,8 @@ func TestMakeAndValidatePreparedArtifact(t *testing.T) {
 
 // L1: a path that keeps the lane prefix but walks back into another lane. The prefix
 // test alone passes "from-ada/../from-bo/<file>", but Join lands it in from-bo.
+// Mixed-separator variants ("from-ada/..\from-bo\<file>") and pure backslash paths
+// are portably refused so Windows native path resolution cannot cross lanes.
 func TestPreparedRefusesLaneTraversalThatKeepsThePrefix(t *testing.T) {
 	t.Parallel()
 	root := writeBus(t, nil)
@@ -138,11 +140,41 @@ func TestPreparedRefusesLaneTraversalThatKeepsThePrefix(t *testing.T) {
 	if err != nil {
 		t.Fatalf("MakePreparedArtifact: %v", err)
 	}
-	traversal := art
-	traversal.Path = "from-ada/../from-bo/" + filepath.Base(art.Path)
-	raw, _ := json.Marshal(traversal)
-	if _, _, err := ValidatePreparedArtifact(raw, root, tab.Config, "Ada"); err == nil {
-		t.Fatalf("ValidatePreparedArtifact accepted lane traversal %q", traversal.Path)
+
+	// Normal valid artifact succeeds
+	rawValid, _ := json.Marshal(art)
+	if _, _, err := ValidatePreparedArtifact(rawValid, root, tab.Config, "Ada"); err != nil {
+		t.Fatalf("ValidatePreparedArtifact rejected valid artifact %q: %v", art.Path, err)
+	}
+
+	base := filepath.Base(art.Path)
+	for _, tc := range []struct {
+		name string
+		path string
+	}{
+		{
+			name: "slash traversal across lanes",
+			path: "from-ada/../from-bo/" + base,
+		},
+		{
+			name: "mixed separator traversal across lanes",
+			path: "from-ada/..\\from-bo\\" + base,
+		},
+		{
+			name: "pure backslash traversal across lanes",
+			path: "from-ada\\..\\from-bo\\" + base,
+		},
+		{
+			name: "backslash in filename",
+			path: "from-ada/sub\\file.md",
+		},
+	} {
+		traversal := art
+		traversal.Path = tc.path
+		raw, _ := json.Marshal(traversal)
+		if _, _, err := ValidatePreparedArtifact(raw, root, tab.Config, "Ada"); err == nil {
+			t.Fatalf("ValidatePreparedArtifact accepted %s %q", tc.name, traversal.Path)
+		}
 	}
 }
 

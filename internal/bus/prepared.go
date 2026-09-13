@@ -160,12 +160,23 @@ func ValidatePreparedArtifact(raw []byte, busDir string, c *Config, as string) (
 	// first is what makes the prefix mean the lane the write reaches: a ".." after a
 	// valid prefix cleans out of the lane, so the cleaned path fails the test and the
 	// lane the prefix asserts is the lane the write reaches.
+	//
+	// Prepared paths use slash as their separator portably; backslashes are refused so
+	// Windows separators cannot slip past path.Clean to traverse across lanes when
+	// resolved with filepath.FromSlash.
+	if strings.Contains(art.Path, "\\") {
+		return art, Prepared{}, fmt.Errorf("prepared path %q contains backslash", art.Path)
+	}
 	cleanPath := path.Clean(art.Path)
 	if !strings.HasPrefix(cleanPath, me.Lane+"/") {
 		return art, Prepared{}, fmt.Errorf("prepared path %q is outside lane %q", art.Path, me.Lane)
 	}
 	art.Path = cleanPath
 	fullPath := filepath.Join(busDir, filepath.FromSlash(art.Path))
+	laneDir := filepath.Join(busDir, filepath.FromSlash(me.Lane))
+	if err := insideRoot(laneDir, fullPath); err != nil {
+		return art, Prepared{}, fmt.Errorf("prepared path %q is outside lane %q: %w", art.Path, me.Lane, err)
+	}
 	if err := insideRoot(busDir, fullPath); err != nil {
 		return art, Prepared{}, err
 	}
