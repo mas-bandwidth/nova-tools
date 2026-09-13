@@ -10,8 +10,8 @@
 # drive it with a fake `gh` (nova-tools#253): old-green/new-red, in-flight, single green.
 set -euo pipefail
 : "${GITHUB_REPOSITORY:?}" "${SHA:?}" "${REF:?}" "${GITHUB_RUN_ID:?}"
-# ONE ASKER, AND IT READS THE STATUS RATHER THAN THE EXIT CODE, for the reason the
-# release job's `ask` below states: `gh api` exits 1 on an empty answer and on no
+# ONE ASKER, AND IT READS THE STATUS RATHER THAN THE EXIT CODE, for the reason release.yml's
+# own `ask` states: `gh api` exits 1 on an empty answer and on no
 # answer alike. `-i` puts the status line first and the body after the blank line.
 # ONE SNAPSHOT, NO STATUS FILTER. Two asks (completed, then in flight) are two
 # snapshots, and a run that finishes red between them is in neither answer. So every
@@ -45,11 +45,20 @@ if [ "$inflight" != 0 ]; then
   echo "refusing: $inflight certification run(s) on $SHA not yet completed; wait for certification-ok, then re-run this workflow: gh run rerun $GITHUB_RUN_ID -R $GITHUB_REPOSITORY"
   exit 1
 fi
-newest=$(printf '%s' "$body" | jq -r '(.workflow_runs | sort_by(.updated_at, .run_attempt, .id) | last) // {} | "\(.id // "none") \(.run_attempt // 0) \(.conclusion // "none") \(.updated_at // "-")"')
+# THE LATEST-STAMP GROUP DECIDES, AND IT MUST BE UNIFORMLY GREEN. Two runs can share the
+# maximal updated_at to the second with opposite conclusions; the stamp supplies no order
+# between them and a run id must not invent one (an older id rerun later is the newer
+# evidence, so id order is wrong in both directions). So: take every run whose updated_at is
+# the maximum; if any member of that group is not success, refuse naming it; else the group
+# vouches and one member is printed as the receipt.
+maxu=$(printf '%s' "$body" | jq -r '[.workflow_runs[].updated_at] | max // "-"')
+group=$(printf '%s' "$body" | jq -r --arg u "$maxu" '[.workflow_runs[] | select(.updated_at == $u)]')
+red=$(printf '%s' "$group" | jq -r '[.[] | select(.conclusion != "success")] | length')
+newest=$(printf '%s' "$group" | jq -r '(.[0] // {}) | "\(.id // "none") \(.run_attempt // 0) \(.conclusion // "none") \(.updated_at // "-")"')
 set -- $newest
-echo "certification runs on $SHA: $total completed; latest update is run $1 attempt $2, concluded $3 at $4"
-if [ "$3" != success ]; then
-  echo "refusing: the latest certification evidence on $SHA is $3, so nothing vouches for this tree"
+echo "certification runs on $SHA: $total completed; latest update $maxu shared by $(printf '%s' "$group" | jq -r length) run(s), $red not green; receipt run $1 attempt $2, concluded $3"
+if [ "$total" = 0 ] || [ "$red" != 0 ]; then
+  echo "refusing: the latest certification evidence on $SHA is not uniformly green ($red of the latest-stamp group not success), so nothing vouches for this tree"
   echo "certify it first (a run still in progress does not count; wait for certification-ok):"
   echo "  gh workflow run certification.yml -R $GITHUB_REPOSITORY --ref $REF"
   echo "then re-run this workflow: gh run rerun $GITHUB_RUN_ID -R $GITHUB_REPOSITORY"
