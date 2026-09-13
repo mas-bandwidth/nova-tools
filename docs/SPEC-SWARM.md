@@ -673,7 +673,7 @@ RESULT REFUSED: <reason>
 VERDICT OK id=<id> who=<name> accurate=<n> wrong=<n>
 VERDICT REFUSED: <reason>
 COST TASK id=<id> attempt=<n> end=<word> in=<n|-> out=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> usd=<n.nnnn|-> model=<model> repo=<repo|->
-COST OK tasks=<n> in=<n> out=<n> cache_write=<n> cache_read=<n> reasoning=<n> dashes=<in>,<out>,<cw>,<cr>,<r> usd=<n.nnnn> window=<stamp>..<stamp>
+COST OK tasks=<n> in=<n> out=<n> cache_write=<n> cache_read=<n> reasoning=<n> dashes=<in>,<out>,<cw>,<cr>,<r> usd=<n.nnnn|-> window=<stamp>..<stamp> known_usd=<n.nnnn> usd_missing=<n>
 REQUEUE OK id=<id> from=<old-id> changed=<true>
 NOTE OK id=<id> notes=<n>
 NOTE REFUSED: <reason>
@@ -1157,8 +1157,10 @@ dollars**, with the model, the attempt and the way the job ended named. The
 numbers come from the harness's own accounting, recorded into the job's usage
 file `<pool>/usage/<job>.tsv` by `finalize` when the job ends (rule 12); a
 task whose harness reported nothing prints `in=- out=- usd=-` rather than a
-zero, because a zero is a measurement and a dash is an absence, and `COST OK`
-carries `dashes=` so a total with an absence in it is never read as complete.
+zero, because a zero is a measurement and a dash is an absence. `COST OK`
+carries token `dashes=` plus `known_usd=` and `usd_missing=`: a mixed USD
+subtotal remains visible, while an all-unknown USD total is `usd=-` and is
+never read as measured zero.
 `cost` reads `<pool>/usage/` and nothing under `done/`, `failed/` or
 `running/`, which is why it answers after `reclaim`.
 
