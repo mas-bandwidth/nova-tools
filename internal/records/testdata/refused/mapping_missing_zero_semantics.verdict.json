@@ -1,0 +1,5 @@
+{
+  "field": "body.field_rules.cache_write_input_tokens.zero_semantics",
+  "rule": "mapping_missing_zero_semantics",
+  "verdict": "refused"
+}

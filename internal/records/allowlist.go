@@ -2,11 +2,12 @@ package records
 
 import "sort"
 
-// SchemaObservation is the one body schema this package validates. An unsupported version
-// is reported and excluded, never guessed: the format says each body's schema string
-// separates object types AND versions, so /1 and /3 are not this shape with a different
-// number on it.
-const SchemaObservation = "nova.tokens.observation/2"
+// Schema constants for the three retained record bodies.
+const (
+	SchemaObservation = "nova.tokens.observation/2"
+	SchemaMapping     = "nova.tokens.mapping/2"
+	SchemaCoverage    = "nova.tokens.coverage/2"
+)
 
 // SourceKinds is the allowlist of source.kind values, and it is exactly the harness shapes
 // the two proposal documents name at 71ea08b -- claude_code and opencode and nova_swarm

@@ -459,7 +459,9 @@ func TestTheWireCarriesTheGrokSourceContract(t *testing.T) {
 // What is missing is the validator that would refuse a mapping missing zero_semantics for a
 // numeric field -- the format packet's own requirement. This test pins both halves of that
 // sentence so neither can be forgotten: the seal works, and the schema is unknown here.
-func TestAMappingBodyCanBeSealedButNotYetValidated(t *testing.T) {
+// Now that the package validates nova.tokens.mapping/2, an incomplete mapping body is refused
+// by exact-keys validation, and a complete mapping envelope validates.
+func TestAMappingBodyCanBeSealedAndValidated(t *testing.T) {
 	body := NewObject()
 	for name, v := range map[string]Value{
 		"schema":   "nova.tokens.mapping/2",
@@ -491,20 +493,18 @@ func TestAMappingBodyCanBeSealedButNotYetValidated(t *testing.T) {
 	if !strings.HasPrefix(id, "sha256:") || len(id) != len("sha256:")+64 {
 		t.Errorf("the mapping's content ID is %q", id)
 	}
-	// The digest is over the canonical bytes, so the same mapping written with its members in
-	// any order is the same mapping.
 	if !strings.Contains(string(raw), `"field_rules":{"cache_write_input_tokens"`) {
 		t.Errorf("the sealed mapping is not in canonical order:\n%s", raw)
 	}
 
-	// And the half that is missing: this package validates the observation schema only.
+	// An incomplete mapping (missing 8 required members) is refused with missing_field
 	v := testValidator(t)
 	if _, err := v.ValidateEnvelope(raw); err == nil {
-		t.Fatal("a mapping envelope validated; if this package learned the mapping schema, this test is the place that says so")
+		t.Fatal("an incomplete mapping envelope validated unexpectedly")
 	} else {
 		var ref *Refusal
-		if !asRefusal(err, &ref) || ref.Rule != RuleUnknownSchema {
-			t.Errorf("the refusal is %v, want %s naming the schema this package does not know", err, RuleUnknownSchema)
+		if !asRefusal(err, &ref) || ref.Rule != RuleMissingField {
+			t.Errorf("the refusal is %v, want %s for incomplete mapping", err, RuleMissingField)
 		}
 	}
 }

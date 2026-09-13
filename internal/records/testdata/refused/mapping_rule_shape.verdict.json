@@ -1,0 +1,5 @@
+{
+  "field": "body.model_rule.unknown_rule_key",
+  "rule": "mapping_rule_shape",
+  "verdict": "refused"
+}
