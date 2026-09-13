@@ -6,11 +6,17 @@
 # rather than to build. Until now there was nothing to hand them: the only artifact of a
 # release was a tag, and a tag is a claim about source.
 #
-# THE TEST JOB RUNS FIRST AND THE RELEASE JOB NEEDS IT. A tag can be pushed to any commit,
-# including one no CI run ever saw and one that never passed on Windows -- and ci.yml's own
-# opening argument is that a claim of tested is what stops anyone checking. So the same
-# three-platform test job runs here on the tagged tree, and a red one means no release
-# exists at all rather than a release nobody vouched for.
+# A GREEN CERTIFICATION RUN ON THE TAGGED COMMIT COMES FIRST AND THE RELEASE JOB NEEDS IT. A
+# tag can be pushed to any commit, including one no CI run ever saw and one that never passed
+# on Windows -- and ci.yml's own opening argument is that a claim of tested is what stops
+# anyone checking. So the first job asks whether certification.yml (the whole-tree race run,
+# the per-package Windows tests, the three-OS smoke, the release dry-run) has completed on this
+# exact commit and whether its NEWEST completed run is green, and refuses the release
+# otherwise: no release at all rather than a release nobody vouched for, and no release on a
+# red either. Nothing certifies a commit on its own (certification.yml runs daily and on
+# dispatch), so cutting a release means dispatching certification on the tag's ref first; the
+# refusal says exactly that. Until v0.15.0 this file ran its own copy of those tests, serially,
+# and the Windows leg outgrew its cap; the certified job below says why it stopped.
 #
 # ONE RUNNER BUILDS EVERYTHING, rather than a matrix of five. Go cross-compiles from any
 # host with no toolchain to install, so the only thing a matrix would buy is parallelism,
@@ -20,9 +26,9 @@
 # and a merge step, each of which is a place for the checksum file and the binaries to
 # disagree about what shipped.
 #
-# The dry run of this same cross-build is a job in ci.yml, on every pull request, so a
-# target that stops compiling is a red PR rather than a red tag -- a tag being the one
-# thing here that cannot be quietly amended and pushed again.
+# The dry run of this same cross-build is a job in certification.yml (it left the two-minute
+# CL tier), so a target that stops compiling is a red certification rather than a red tag -- a
+# tag being the one thing here that cannot be quietly amended and pushed again.
 
 name: release
 
@@ -41,40 +47,52 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  test:
-    # Deliberately the same shape as ci.yml's test job, on the tagged tree. Three operating
-    # systems for the reason stated there: the platforms genuinely differ, and the tests
-    # that cannot run on Windows skip there with that reason named.
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
+  certified:
+    # THE RELEASE NEEDS A GREEN CERTIFICATION RUN ON THIS EXACT COMMIT, AND ASKS FOR ONE
+    # rather than running the tests again here. Until v0.15.0 this file ran its own
+    # `go test -race ./...` on three operating systems, serially, inside a 15-minute job;
+    # certification.yml runs the same tests fanned out per package, and the Windows leg
+    # here outgrew its cap (run 34775563018: cancelled with packages still to run, the
+    # release job skipped, no release object, while certification had passed the same
+    # commit in six minutes). Two copies of one test set drift, and the copy that ran here
+    # was the slower and the older one. So this job is one question to the API, answered from
+    # one snapshot, and asked again at the start of the release job: of every certification.yml
+    # run on the commit this run is building, is any still unfinished (then wait), and did the
+    # most recently updated one succeed (then release)? A commit no certification run vouches for, or whose latest evidence is red,
+    # gets no release, and the refusal names the remedy.
+    # It is the tag-only-a-certified-commit practice made into something that can say no.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      # Listing workflow runs is an Actions read; the file-level grant is contents only, and a
+      # job that asks the API with a token that cannot read Actions would refuse every
+      # release with a 403 that looks like "no certification run". Scoped to this job; contents
+      # read as well, because a job that names any permission gets none it does not name, and
+      # the checkout of the ask script needs it.
+      actions: read
+      contents: read
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
-        with:
-          go-version-file: go.mod
-
-      - name: build
-        run: go build ./...
-
-      - name: vet
-        run: go vet ./...
-
-      - name: test
-        run: go test -race ./...
-
+      - name: certification.yml vouches for this commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref_name }}
+        shell: bash
+        # The whole ask lives in the script, so certification.yml's release dry-run can drive
+        # it with a fake `gh` (nova-tools#253) and so the release job below can ask it again.
+        run: .github/scripts/release-certified.sh
   release:
-    needs: test
+    needs: certified
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
       # The only job in this repository that writes anything. It is scoped to this job
-      # rather than the file, so the test job above -- which runs the tagged tree's own
-      # code -- has read only.
+      # rather than the file, so the certified job above, which asks the API and runs none
+      # of the tagged tree's code beyond the ask script, has read only. Actions read is
+      # here too because this job asks the same question again before it builds.
       contents: write
+      actions: read
     env:
       # Read once, from the ref that triggered the run, and passed to every step as an
       # environment variable rather than interpolated into a shell line: a `${{ }}` inside
@@ -86,6 +104,17 @@ jobs:
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
+
+      - name: certification.yml still vouches for this commit
+        # ASKED AGAIN HERE, after the certified job and the queue wait between the two jobs:
+        # one snapshot cannot see a run created after it was taken, and a red that starts after
+        # the first ask and finishes before the binaries are built must still stop the release.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ github.sha }}
+          REF: ${{ github.ref_name }}
+        shell: bash
+        run: .github/scripts/release-certified.sh
 
       - name: the tag has the shape the version stamp assumes
         shell: bash
