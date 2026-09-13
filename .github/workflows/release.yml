@@ -90,6 +90,27 @@ jobs:
               ;;
           esac
           body=$(printf '%s\n' "$out" | sed -e '1,/^[[:space:]]*$/d')
+          # A RUN STILL IN FLIGHT ON THIS COMMIT IS ASKED ABOUT TOO, and refuses: the completed
+          # list cannot see it, and a certification whose required job has already gone red is
+          # in that list until it finishes. Refuse and say wait, rather than release on the older
+          # answer while a newer one is being written.
+          set +e
+          live=$(gh api -i "repos/${GITHUB_REPOSITORY}/actions/workflows/certification.yml/runs?head_sha=${SHA}&status=in_progress&per_page=100" 2>&1); lrc=$?
+          set -e
+          case "$(printf '%s\n' "$live" | head -n 1)" in
+            HTTP/*" 200 "*) ;;
+            *)
+              echo "asking GitHub for in-flight certification runs on $SHA did not answer 200 (gh exit $lrc):"
+              printf '%s\n' "$live"
+              exit 1
+              ;;
+          esac
+          inflight=$(printf '%s\n' "$live" | sed -e '1,/^[[:space:]]*$/d' | jq -r '.total_count')
+          if [ "$inflight" != 0 ]; then
+            echo "refusing: $inflight certification run(s) on $SHA still in progress; wait for certification-ok, then re-run this workflow: gh run rerun $GITHUB_RUN_ID -R $GITHUB_REPOSITORY"
+            exit 1
+          fi
+| sed -e '1,/^[[:space:]]*$/d')
           total=$(printf '%s' "$body" | jq -r '.total_count')
           # THE NEWEST COMPLETED RUN DECIDES, not any green among them: the list is newest first,
           # and a commit certified green once and red on a later rerun (the perf wall clock is
