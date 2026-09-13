@@ -63,7 +63,7 @@ Keep v1 untouched by adding one explicit namespace:
 nova-tokens records collect --sources <local-manifest> --ledger <dir> --out <new-batch-dir> --from <UTC-instant> --until <UTC-instant>
 nova-tokens records check --batch <dir> --ledger <dir>
 nova-tokens records view --ledger <dir> --selection <manifest> --group-by day,friend,bench,repo,model --format json
-nova-tokens records publish --batch <dir> --ledger <git-checkout> --remote <name> --branch <name>
+nova-tokens publish --batch <dir> --ledger <git-checkout> --remote <name> --branch <name> --repo <host>/<owner>/<name>
 ```
 
 `collect` reads only explicit authorized source paths, reads the local ledger to avoid emitting already retained observations, and writes only the new named batch directory and an explicitly configured local receipt index. It has no network, Git or bus action. New observations are placed in immutable JSONL shards capped at 4 MiB, sorted by ID; oversize individual records fail with a named coverage gap. Existing ledger objects are referenced, not recopied on every daily run. A repeated identical collection emits no duplicate observations. Changed coverage cutoff is useful evidence, not new spend.
