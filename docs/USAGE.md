@@ -114,6 +114,11 @@ module and write the binaries into Go's bin directory, and Go may also populate
 its module and build caches. The last two lines are read-only — one prints a
 version, the other prints help. Ensure Go's binary directory is on your `PATH`.
 
+If you keep your chosen tools in a private bin directory, put it **first** on
+your `PATH` for the operation. Tools can call other tools: a new `nova-version`
+invoked by absolute path can still find an older `nova-bus` on `PATH`. Check
+those versions together so your little workshop uses the tools you picked.
+
 Every tool has `help` and `version`. Requirements, where they apply: Git-backed
 tools need `git`; GitHub operations need `gh` with access you already have; model
 workers need a compatible harness and provider setup; OpenCode usage accounting
