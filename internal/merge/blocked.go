@@ -75,8 +75,12 @@ func HandCommand(cloneToken, base, headRef string, files []string) string {
 	if dir == "" || dir == "." || dir == "/" {
 		dir = "entry"
 	}
+	// EVERY value this line prints is shell-quoted, not only the clone token: this is a
+	// command line a person PASTES, and headRef, base and the derived dir were raw, so a
+	// value carrying a shell metacharacter would have run on paste. shellQuote is the
+	// file's own quoter; there is no second one.
 	return fmt.Sprintf("git clone --branch %s %s %s && cd %s && git fetch origin %s && git merge origin/%s  # resolve %s && git push origin HEAD:%s",
-		headRef, cloneToken, dir, dir, base, base, strings.Join(files, " "), headRef)
+		shellQuote(headRef), cloneToken, shellQuote(dir), shellQuote(dir), shellQuote(base), shellQuote(base), strings.Join(files, " "), shellQuote(headRef))
 }
 
 // shellQuote quotes a value for a POSIX shell: single quotes around it, with the one

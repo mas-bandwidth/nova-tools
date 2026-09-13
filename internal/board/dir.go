@@ -98,7 +98,14 @@ func MakeDir(path string) (*Dir, bool, error) {
 // Quote wraps a value for a shell line this tool prints to be pasted -- quickstart's pair
 // and the mkdir remedy above. One quoting rule for every printed line, so a reader who
 // pastes one has pasted them all.
-func Quote(s string) string { return "\"" + strings.ReplaceAll(s, "\"", "\\\"") + "\"" }
+//
+// It is a real POSIX single-quote quoter, not a double-quoted string. Inside double
+// quotes the shell still runs $(...) and backticks, so a value this tool printed could
+// execute when a reader pasted the line; inside single quotes nothing is special, and
+// the one character that cannot live inside them is written the shell's own way. The
+// SHAPE is internal/merge/blocked.go's shellQuote; the two packages are separate, so it
+// is mirrored here rather than imported.
+func Quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 // Source is what the listing's source= field carries, so a listing cannot be mistaken for
 // a different board's.

@@ -506,6 +506,8 @@ func Build(in Input) (*Policy, []Refusal) {
 			bad = append(bad, refuse("home_outside", "HOME %s does not resolve: %v; rule 9 wants HOME set to an existing directory inside a --write", home, err))
 		} else if got, _ = filepath.Abs(got); !insideAny(got, p.Writes) {
 			bad = append(bad, refuse("home_outside", "HOME %s is outside every --write; set HOME to a per-job data home inside one (a --read is not enough: the first config write dies there)", got))
+		} else if m := badPathText(got); m != "" {
+			bad = append(bad, refuse("home_outside", "HOME %s %s; set HOME to a data home inside a --write whose path the generated profile can carry", got, m))
 		} else {
 			p.Home = got
 		}

@@ -137,3 +137,24 @@ func TestTheDirectoryBackendWritesOneFilePerCardAndNothingElse(t *testing.T) {
 		t.Error("a directory that does not exist was accepted; a tool that made one would be guessing")
 	}
 }
+
+// security#30 L9, Alex's anchor: "nova-board quickstart double-quote-only quoting lets
+// $(...)/backticks execute on paste." Quote was `"..."` with `"` escaped; inside double
+// quotes the shell still runs $(...) and backticks, so a printed QUICKSTART line ran the
+// value when a reader pasted it. Quote is now the real POSIX single-quote quoter, the
+// same SHAPE internal/merge/blocked.go's shellQuote uses.
+func TestQuoteIsPosixSingleQuotesSoPasteCannotExecute(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"plain", "'plain'"},
+		{"a b", "'a b'"},
+		{"$(id)", "'$(id)'"},
+		{"`id`", "'`id`'"},
+		{`a"b`, `'a"b'`},
+		{"it's", `'it'\''s'`},
+	}
+	for _, tc := range cases {
+		if got := Quote(tc.in); got != tc.want {
+			t.Errorf("Quote(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

@@ -444,3 +444,41 @@ func anyHasPrefix(hay []string, prefix string) bool {
 	}
 	return false
 }
+
+// security#30 L8a, Alex's anchor: "nova-merge: repo names only slash-checked." The init
+// flag check was only strings.Contains(*repo, "/"), so "a/b/c", "-x/y", "../y" and a
+// name with a space all passed and were handed to git and gh. A repo is exactly one
+// slash, both halves non-empty, GitHub's own character set, and no leading dash on
+// either half -- the value lands on a git and a gh command line.
+func TestInitRepoIsAnOwnerAndAName(t *testing.T) {
+	bad := []string{
+		"a/b/c",      // two slashes
+		"x/",         // empty name
+		"/y",         // empty owner
+		"-x/y",       // a leading dash is an option to git and gh
+		"x/-y",       // the same on the name half
+		"o/n x",      // a space splits the command line
+		"../y",       // path traversal, and a dot owner GitHub does not have
+		"o/n;rm -rf", // a shell metacharacter
+		"$(id)/repo", // command substitution
+		"o/`id`",     // the backtick form of the same
+	}
+	for _, repo := range bad {
+		repo := repo
+		t.Run(repo, func(t *testing.T) {
+			// A lane of its own per case: a repo the check lets through would otherwise
+			// make the next case fail on "already a lane" rather than on the repo.
+			l := newLab(t)
+			exit, stdout, stderr := l.run("init", "--lane", l.lane, "--repo", repo, "--base", "main", "--lane-branch", "l")
+			if exit != 2 {
+				t.Fatalf("init --repo %q: exit = %d, want a refusal at 2:\n%s", repo, exit, stderr)
+			}
+			if !strings.Contains(stderr, "--repo") {
+				t.Errorf("init --repo %q: the refusal does not name --repo:\n%s", repo, stderr)
+			}
+			if stdout != "" {
+				t.Errorf("init --repo %q: a refusal must print nothing on stdout, got %q", repo, stdout)
+			}
+		})
+	}
+}
