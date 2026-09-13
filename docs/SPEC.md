@@ -132,7 +132,7 @@ BUS FAIL <path, path:line, or lane>: <reason>
 <TOKEN> MORE kind=<kind> shown=<n> total=<t> <remedy>
 ```
 
-`OK` lines go to stdout; `FAIL` lines and refusals go to stderr.
+`OK` lines go to stdout; `FAIL` lines and refusals go to stderr (except `nova-self-talk`'s `SELFTALK FAIL files=…` summary count line, which goes to stdout alongside the advisory note).
 
 **An event is exactly one line, and nothing a caller supplies or a file holds
 can add a second.** This is one guarantee, stated once here and met by every
@@ -1490,11 +1490,12 @@ formerly-special name as *unbannered* unless the caller says otherwise.
 **Says NO when** any scanned file contains a standing claim or an installation
 — one `SELFTALK FAIL <file>: STANDING: <claim>` or
 `SELFTALK FAIL <file>:<line>: INSTALLATION <SHAPE>: <sentence>` line per
-finding on stderr, exit 1.
+finding on stderr, and the final `SELFTALK FAIL files=…` summary count line on
+stdout, exit 1.
 
 **Refuses (exit 2) when** no files are named, a `--skip` or `--rule-doc` value
 is empty or contains a path separator, a flag is unknown, or a named file
-cannot be read (the run stops at the first unreadable file — a partial scan
+cannot be read (every unreadable file is reported — a partial scan
 must not masquerade as a verdict).
 
 **The all-skipped green.** A run whose every named file was skipped is not a
@@ -1646,9 +1647,9 @@ LIFT FAIL quarantine=<surface>: <reason>
 **this tool is the only thing that writes to either** — the flag parser is given
 no stream and prints neither its errors nor its usage, because its error text
 quotes the argument it could not parse. An unparseable flag AFTER a verb, `-h`
-included, is this tool's own refusal at exit 2 followed by the full usage on
-stderr, so such a refusal is many lines where it used to be a few; `check` never
-answers 0 for one. `nova-fuse help`, `-h` and `--help` as the FIRST argument are
+included, is this tool's own refusal at exit 2 printed as a bounded one-line
+error followed by the standard help door (`run: nova-fuse help`) on stderr;
+`check` never answers 0 for one. `nova-fuse help`, `-h` and `--help` as the FIRST argument are
 unchanged: exit 0, usage on stdout, and that text carries no grammar token.
 `path` prints the bare path — a value, not an event. Output is deterministic:
 same box, same bytes (quarantines sort; the clock is injected).
