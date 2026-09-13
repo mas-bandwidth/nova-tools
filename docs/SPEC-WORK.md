@@ -966,10 +966,11 @@ to merging simultaneous coordinator edits are superseded by this section.
 
 ## Roadmap as a view; the Schema pilot *(Stella)*
 
-**The current roadmap view is completion-only** (Glenn, via Stella's 5654780545): a green
-tick for a verified-complete cell, empty otherwise. Partial, missing and unknown stay in S and
-in `check`'s counts; the view is a projection choice, not lost information and not a change
-to any denominator. Schema pilot 7f02f871 renders this form.
+**The current roadmap view is completion-only** (Glenn, via Stella's 5654780545, corrected
+the same day per Glenn's explicit word, stella-03c1a4222b1c): a tick for a fully verified
+cell, a cross for any other state. Partial, missing and unknown stay in S and in `check`'s
+counts; the view is a projection choice, not lost information and not a change to any
+denominator. Schema PR #1006 at 60904b91 renders this form.
 
 **Practice first, then retrospective, then production.** Glenn reaffirmed this sequence on
 2026-09-13: dogfood the hierarchy on Fixed Tables, inspect what worked and what did not,
