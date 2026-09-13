@@ -161,3 +161,35 @@ receipt so later intake cannot recreate the work. A network failure or uncertain
 delete result preserves the archive and a pending reconciliation state. Do not
 claim atomicity between Git and GitHub or restore an issue by inventing an author.
 These semantics are a specification, not a request to absorb existing issues now.
+
+## Initial migration: preserve first, reconcile, then choose absorption
+
+Glenn's initial rollout is importing the team's existing work sets first, while
+identifying external issues that remain on GitHub. No data may be lost. Migration
+is not a bulk delete of the source issue lists.
+
+Begin with an explicit inventory of authorized source work sets and issues. Each
+entry records its source identity, destination node/mapping, capture revision,
+content manifest and disposition: keep linked, eligible for absorption, or
+unresolved. Outside-contributor issues stay linked; unknown ownership, mixed
+provenance or unclear disposition remains unresolved without source deletion.
+This is a migration classification, not a claim that an author's identity grants
+new access or that all team issues have already been selected for deletion.
+
+Import in resumable batches without deleting originals. Preserve original records
+alongside the normalized representation, reconcile counts and content manifests,
+deduplicate stable identities, and account explicitly for every inventory entry.
+Record missing attachments or inaccessible discussion as incomplete. Verify the
+shared checkpoint can be loaded and replayed, and that original records can be
+retrieved from it, before declaring an import complete. Feature decomposition,
+links, ownership, dependencies, open questions and completion evidence must not
+be collapsed into a flat title/status list.
+
+Absorption is a subsequent selected operation after this reconciliation, never
+an import side effect. If the provider cannot support a safe revision boundary
+against concurrent source changes, leave removal pending rather than claim a
+lossless deletion. A backup receipt alone does not prove that newer comments were
+captured. Report imported, linked, eligible, absorbed and unresolved separately;
+retain batch checkpoints and provenance so interruption or retry does not lose
+records or duplicate work. The prototype must exercise interruption and a source
+edit during migration before it is trusted with removal.
