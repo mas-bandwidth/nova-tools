@@ -291,12 +291,20 @@ near the end.
     path. The re-exec is the probe's alone — the exec verb never re-execs
     (rule 12) — and the child is the same binary with an internal verb, never
     a shell.
-11. **`--no-sandbox` is the one loud workaround.** It runs the command with no
-    policy at all. It prints exactly one line to **stderr**,
-    `SANDBOX UNSANDBOXED cmd=<name> read=<n> write=<n>: no OS containment; every
-    read and write this command makes is yours`, before the command starts. It
-    is never a default, never implied by a missing backend, never read from a
-    config file or an environment variable, and never silent.
+11. **This tool has no way to run a command unwalled.** There is no
+    `--no-sandbox`, no environment variable and no config file: a
+    `nova-sandbox --no-sandbox` is `SANDBOX REFUSED reason=no_command:
+    --no-sandbox is not a flag this tool has` at exit 125, like any other flag
+    the tool does not have. A wall this tool cannot build is a refusal (rule 1),
+    and it stays a refusal — a tool whose whole reason is containment does not
+    ship the switch that turns containment off. **The one loud workaround in
+    this repository belongs to the CALLER**, `nova-swarm run --no-sandbox`, and
+    it is announced by `RUN UNSANDBOXED id=<id> slot=<n>` once per job — see
+    [docs/SPEC-SWARM.md](SPEC-SWARM.md), which is the one place an unsandboxed
+    run is announced. (2026-09-13: this rule used to document a `--no-sandbox`
+    on *this* tool, printing a `SANDBOX UNSANDBOXED` line, and the binary has
+    had neither since it was written. By this document's own law the spec was
+    the bug and the spec is what changed; the tool was fail-closed throughout.)
 12. **The exec verb is transparent, and what happens to the tool's own process
     is stated per platform.** Everything after `--` is executed verbatim —
     **never** through a shell, so no argument is re-parsed and no quote is
@@ -374,7 +382,7 @@ near the end.
 ## The verbs
 
 ```
-nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] [--no-sandbox] -- <command> <args...>
+nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
 nova-sandbox probe   --write <dir>... [--read <dir>...] --secret <path> [--net-deny] [--max <n>]
 nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--cwd <dir>] [-- <command> <args...>]
 nova-sandbox fence   --out <file> [--webfetch allow|deny]
@@ -502,7 +510,6 @@ which is the thing asked for and goes to stdout.
 
 ```
 SANDBOX OK backend=<sandbox-exec|landlock|appcontainer> abi=<n|-> read=<n> write=<n> net=<denied|nopromise> cwd=<dir> cmd=<name>
-SANDBOX UNSANDBOXED cmd=<name> read=<n> write=<n>: no OS containment; every read and write this command makes is yours
 SANDBOX NOTE <the one remedy or gap line>   (always before the command starts)
 SANDBOX REFUSED reason=<no_sandbox|sandbox_failed|net_unenforceable|landlock_abi_unknown|bad_read|bad_write|bad_cwd|bad_net|home_outside|acl_missing|no_name|no_command|not_found|not_executable>: <text>
 PROBE STEP name=<write_outside_control|write_outside|read_secret|write_inside|read_root> expect=<deny|allow> got=<deny|allow> path=<path>
@@ -785,8 +792,9 @@ first, or `landlock_restrict_self` fails with `EPERM`.
    **a discovered ABI greater than the highest row is
    `SANDBOX REFUSED reason=landlock_abi_unknown` at exit 125, naming the
    discovered number and the highest the tool knows, and the command does not
-   run.** The loud workaround is `--no-sandbox` (rule 11); the fix is one row
-   in the table and a release, which is a day, not a design.
+   run.** This tool has no workaround for it (rule 11); the caller's is
+   `nova-swarm run --no-sandbox`, and the fix here is one row in the table and
+   a release, which is a day, not a design.
 
    **Why refusing is the safer of the two, said plainly.** The alternative —
    handle the newest rights the tool knows and print a `SANDBOX NOTE` about
@@ -1265,9 +1273,9 @@ instead of it.
   (rule 15).
 - **It does not clone anything.** The dispatcher owns the checkout; the tool
   only names directories.
-- **It does not have a config file.** There is no file from which
-  `--no-sandbox` or either list can arrive; all three are argv, where `ps`
-  shows them.
+- **It does not have a config file.** There is no file from which either list
+  can arrive; both are argv, where `ps` shows them. There is no switch that
+  turns the wall off, in a file or anywhere else (rule 11).
 
 ## Measured on the machine, 2026-09-11 (macOS 26.6.2, arm64)
 
@@ -1551,10 +1559,14 @@ One per rule:
     injected file asserted absent afterwards. `--secret` is resolved by rule 5
     like every other caller path, so one that names no file is a refusal rather
     than a probe that "could not read" a file that was never there.
-11. `--no-sandbox` runs the command with no policy, prints exactly one
-    `SANDBOX UNSANDBOXED` line to stderr, and passes the exit status through;
-    no environment variable and no file can switch it on — the test sets every
-    plausible name and the tool still sandboxes.
+11. `--no-sandbox` is **not a flag this tool has**: the test runs
+    `nova-sandbox --no-sandbox -- <command>` and asserts the existing refusal,
+    `SANDBOX REFUSED reason=no_command: --no-sandbox is not a flag this tool
+    has; run: nova-sandbox help`, at exit 125, with the command not run. No
+    environment variable and no file can turn the wall off either — the test
+    sets every plausible name and the tool still sandboxes. The unsandboxed run
+    a caller may take is `nova-swarm run --no-sandbox`, and SPEC-SWARM's own
+    test pins its `RUN UNSANDBOXED` line.
 12. A wrapped command exiting 3 gives exit 3; one killed by `SIGKILL` gives
     137; an argument containing a space, a quote, a `$` and a `;` arrives in
     the child's argv byte-for-byte; stdout and stderr are not interleaved by
@@ -1790,9 +1802,9 @@ them.
    `125`/`126`/`127` refusals. Tests: 12, 19.
 6. **`cmd/nova-sandbox/main.go`** — the verbs, the `--` split, the output
    grammar, `probe` (test 10), `fence` (test 14), `check` (test 18),
-   `grant`/`release` (test 22), the executability pre-flight (test 19),
-   `--no-sandbox` with its one loud line (test 11), and the `--read` remedy
-   sentence in the usage banner (test 21).
+   `grant`/`release` (test 22), the executability pre-flight (test 19), the
+   refusal of any flag the tool does not have, `--no-sandbox` among them
+   (test 11), and the `--read` remedy sentence in the usage banner (test 21).
 7. **The CI matrix** — linux, mac and windows jobs, each running its own
    platform's wrap tests for real and skipping the others by name (**test on
    multiple platforms**, 2026-09-09: fix the cause, not the assertion).

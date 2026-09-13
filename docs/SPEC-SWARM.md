@@ -908,7 +908,9 @@ unwalled under a green `RUN OK` is the failure the wall exists to close. The
 probe costs one process per pass and answers a question about the machine, never
 about a job.
 
-**`--no-sandbox` is the one loud workaround** (SPEC-SANDBOX rule 11). It runs
+**`--no-sandbox` is the one loud workaround, and it is THIS tool's** —
+`nova-sandbox` has no such flag (SPEC-SANDBOX rule 11), so the line below is the
+one place in this repository an unsandboxed run is announced. It runs
 every job with no OS containment and prints one line per job, on stderr, before
 the job starts:
 
