@@ -82,7 +82,7 @@ mixed, unknown}` are the unexported `set(...)` values in that file's `var` block
 
 `receipt_fields` uses the `field_key` grammar, which admits the underscore names both sealed manifests carry
 (`response_id`, `turn_id` for codex; `turn_number` for grok); the label grammar would refuse them, so receipt
-fields are field keys, never labels. Both manifests validate byte-identically under this grammar, and
+fields are field keys, never labels. Both unchanged manifests are intended to validate under this grammar once implemented, and
 `go test ./internal/records/...` passes with the fixtures unchanged.
 
 **`implementation_id`.** Null is legal for a proposal. The final non-null form is
@@ -126,7 +126,7 @@ private path. A non-null `reasons.source` MUST be a member of `source_ids` (`cov
 the reason is scope-wide, not tied to one source. `reasons` is an array of exactly-two-member objects
 `{code, source}`: `code` ∈ the closed set `{source_unavailable, unsupported_rows, unknown_fields,
 partial_interval, conflict}`; `source` `ns?` (null when scope-wide). The array is sorted by `(code, source)` and
-duplicates are refused (`not_sorted` / `duplicate_element`); fixed codes with bounded metadata, never a free-form note.
+duplicates are refused (`not_sorted` / `duplicate_element`). Compare strings by UTF-8 bytes; for equal codes, null source sorts before every string source. Fixed codes with bounded metadata, never a free-form note.
 
 **`shards`**: each shard-ref is a closed object carrying exactly `shard_id`, `record_count`, and a disjoint tagged
 inventory — exactly one of two branches, never both and never neither (`shard_reference`):
@@ -134,13 +134,19 @@ inventory — exactly one of two branches, never both and never neither (`shard_
 - `shard_id` `cid` — the shard file's byte SHA-256, which is also its ledger path name;
 - `record_count` `int` (string lexeme) ≥ 1 — the exact number of observation envelopes;
 - `inline_ids` `[cid]` sorted unique — the exact envelope IDs, in order (the `inline_ids` branch), or
-- `inventory_file` `cid` — the digest of a referenced inventory file whose bytes are the same sorted-unique
+- `inventory_file` `cid` — the byte digest of a referenced inventory file containing the same sorted-unique
   observation-ID list (the `inventory_file` branch).
+
+An inventory file is the RFC8785 canonical JSON array of `cid` strings followed by exactly one LF, at
+`inventories/<inventory-sha256-hex>.json`. Its byte digest includes that LF. It contains at least one ID, sorted
+unique by UTF-8 bytes, and contains no envelope or record bodies. This is the same list carried by `inline_ids`.
+`shards` is sorted unique by `shard_id`; duplicate references are refused (`duplicate_element`) rather than counted twice.
 
 Structural equation (in-memory, `shard_reference`): on the `inline_ids` branch, `record_count ==
 len(inline_ids)`; on the `inventory_file` branch the count and ID set live in the referenced file, so the records
 validator checks the shape and digest grammar only, and the publisher resolves the file — opens it, verifies its
-byte SHA-256 == `inventory_file`, the JSONL record count, and that the sorted ID set equals the inventory — outside
+byte SHA-256 == `inventory_file`, resolves and hashes the referenced JSONL shard on either branch, checks its record count,
+and checks that its sorted ID set equals the inline or file inventory — outside
 the no-I/O records package. This is an inventory CONTRACT (shape + equation), not an inventory service; nothing here opens a shard or an inventory file.
 
 **`counts`**: five flat counts, kept for now, as exact nonnegative `int` STRING lexemes. Each is a count the
@@ -199,7 +205,7 @@ coverage/2 adversarial:
 | `coverage_status_unknown` | status `"complete"` | `unknown_enum` |
 | `coverage_source_ids_unsorted` / `_duplicate` / `_path` | out of order / repeated / a private path | `not_sorted` / `duplicate_element` / `namespace_syntax` |
 | `coverage_reason_source_not_in_scope` | `reasons.source` names an id not in `source_ids` | `coverage_reason_source` |
-| `coverage_reason_source_label` | `reasons.source` a friend label, not an `ns` id | `namespace_syntax` |
+| `coverage_reason_source_label` | a syntactically valid friend label absent from `source_ids` (labels also fit `ns`) | `coverage_reason_source` |
 | `coverage_reasons_unsorted` / `_duplicate` | not sorted by (code, source) / a repeated `{code, source}` | `not_sorted` / `duplicate_element` |
 | `coverage_reason_code_unknown` | `code` outside the five | `unknown_enum` |
 | `coverage_friend_underscore` | `collector_friend` `"_"` | `label_syntax` (null is the only unknown) |
@@ -209,6 +215,8 @@ coverage/2 adversarial:
 | `coverage_shard_both` / `_neither` | both `inline_ids` and `inventory_file` / neither | `shard_reference` |
 | `coverage_shard_inline_unsorted` | `inline_ids` out of order | `not_sorted` |
 | `coverage_shard_inventory_syntax` | `inventory_file` not a `cid` | `content_id_syntax` |
+| `coverage_shards_unsorted` / `_duplicate` | shard refs out of digest order / repeated digest | `not_sorted` / `duplicate_element` |
+| `coverage_inventory_file_encoding` | noncanonical JSON array, missing or extra LF, or unsorted/duplicate IDs | publisher referential, `reason=incomplete` |
 | `coverage_shard_corrupt` | shard bytes differ from `shard_id` | publisher referential, `reason=incomplete` |
 
 ## E. Decided
