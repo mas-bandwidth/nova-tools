@@ -648,7 +648,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 					if s == expectedAppendedIndex {
 						needAppend = false
 					} else if strings.HasPrefix(expectedAppendedIndex, s) {
-						if err := os.WriteFile(fullIndexPath, []byte(expectedAppendedIndex), 0o644); err != nil {
+						if err := appendIndexSuffix(fullIndexPath, s, expectedAppendedIndex); err != nil {
 							return PushResult{}, err
 						}
 						needAppend = false
@@ -657,7 +657,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 					if s == wantIndexLine+"\n" {
 						needAppend = false
 					} else if strings.HasPrefix(wantIndexLine+"\n", s) {
-						if err := os.WriteFile(fullIndexPath, []byte(wantIndexLine+"\n"), 0o644); err != nil {
+						if err := appendIndexSuffix(fullIndexPath, s, wantIndexLine+"\n"); err != nil {
 							return PushResult{}, err
 						}
 						needAppend = false
