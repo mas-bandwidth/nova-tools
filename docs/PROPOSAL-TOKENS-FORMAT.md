@@ -59,7 +59,8 @@ Publisher validation is structural and referential: known envelope schemas, cano
 
 ## Commands and publication boundary
 
-Keep v1 untouched by adding one explicit namespace:
+Keep the v1 read-only verbs untouched. Add `records` for local operations and a
+separate top-level `publish` verb for Git/network writes:
 
 ```text
 nova-tokens records collect --sources <local-manifest> --ledger <dir> --out <new-batch-dir> --from <UTC-instant> --until <UTC-instant>

@@ -76,7 +76,7 @@ Observations and coverage contributions use the immutable shard-digest and cover
 
 A bounded publisher stages an immutable batch and pushes one atomic commit; on a race it fetches and retries while preserving both writers. Identical identities/content are already-published; conflicting content is refused. Dirty unrelated work is preserved, there is no force push, reset, clean, removal or broad staging. Ambiguous push results are resolved by querying exact contribution identity before retrying. No blind replay with a fresh identity.
 
-The accounting reader remains read-only. The format packet selects the separate `nova-tokens records publish` verb, which preserves that boundary and exposes its exact writes. No hidden network access in collect/report/check.
+The accounting reader remains read-only. The format packet selects the separate `nova-tokens publish` verb, which preserves that boundary and exposes its exact writes. No hidden network access in collect/report/check.
 
 The ledger and total reports remain private. Any future public report requires an explicit reviewed allowlist of open-source repositories, removes friend/bench/source identifiers unless deliberately included, excludes unattributed/private work and is published only by a separate deliberate step. A repository label alone is not a publication grant. No autonomous public export is part of daily collection.
 
