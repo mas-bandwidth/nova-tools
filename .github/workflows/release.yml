@@ -55,9 +55,10 @@ jobs:
     # here outgrew its cap (run 34775563018: cancelled with packages still to run, the
     # release job skipped, no release object, while certification had passed the same
     # commit in six minutes). Two copies of one test set drift, and the copy that ran here
-    # was the slower and the older one. So this job is one question to the API: did
-    # certification.yml complete with success on the commit this run is building? A commit
-    # no certification run vouches for gets no release, and the refusal names the remedy.
+    # was the slower and the older one. So this job is two questions to the API: is a
+    # certification.yml run still in flight on the commit this run is building (then wait),
+    # and did the NEWEST completed one succeed (then release)? A commit no certification run
+    # vouches for, or whose newest run is red, gets no release, and the refusal names the remedy.
     # It is the tag-only-a-certified-commit practice made into something that can say no.
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -110,7 +111,6 @@ jobs:
             echo "refusing: $inflight certification run(s) on $SHA still in progress; wait for certification-ok, then re-run this workflow: gh run rerun $GITHUB_RUN_ID -R $GITHUB_REPOSITORY"
             exit 1
           fi
-| sed -e '1,/^[[:space:]]*$/d')
           total=$(printf '%s' "$body" | jq -r '.total_count')
           # THE NEWEST COMPLETED RUN DECIDES, not any green among them: the list is newest first,
           # and a commit certified green once and red on a later rerun (the perf wall clock is
@@ -125,14 +125,6 @@ jobs:
             echo "  gh workflow run certification.yml -R $GITHUB_REPOSITORY --ref $REF"
             echo "then re-run this workflow: gh run rerun $GITHUB_RUN_ID -R $GITHUB_REPOSITORY"
             exit 1
-          fi| jq -r '.total_count')
-          green=$(printf '%s' "$body" | jq -r '[.workflow_runs[] | select(.conclusion == "success")] | length')
-          echo "certification runs on $SHA: $total completed, $green green"
-          printf '%s' "$body" | jq -r '.workflow_runs[] | "  run \(.id) \(.conclusion) \(.html_url)"'
-          if [ "$green" -lt 1 ]; then
-            echo "refusing: no green certification run on $SHA, so nothing vouches for this tree"
-            echo "certify it first: gh workflow run certification.yml --ref $REF, wait for certification-ok, then re-run this workflow"
-            exit 1
           fi
 
   release:
@@ -141,8 +133,8 @@ jobs:
     timeout-minutes: 20
     permissions:
       # The only job in this repository that writes anything. It is scoped to this job
-      # rather than the file, so the test job above -- which runs the tagged tree's own
-      # code -- has read only.
+      # rather than the file, so the certified job above, which asks the API and runs none
+      # of the tagged tree's code, has read only.
       contents: write
     env:
       # Read once, from the ref that triggered the run, and passed to every step as an

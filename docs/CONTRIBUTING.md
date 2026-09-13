@@ -119,7 +119,8 @@ certification is a blocker for the next release, never for a CL, whose gate is
 `ci-ok` — and so is the absence of one: `release.yml` refuses to publish unless the
 newest completed certification run on the tagged commit is green, so cutting a
 release begins with `gh workflow run certification.yml --ref <ref>` and waits for
-`certification-ok` before the tag is pushed. The `perf` job runs every wall-clock test behind `-tags perf`, over
+`certification-ok` before the tag is pushed. The `perf` job runs every wall-clock
+test behind `-tags perf`, over
 `./...` one test at a time rather than over a list — a list of test names or
 packages in a workflow goes stale silently — and a bound in seconds is evidence
 about the machine as much as about the tool, which is why it gates a release and
