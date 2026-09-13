@@ -3,7 +3,6 @@ package swarm
 import (
 	"os"
 	"path/filepath"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -20,13 +19,6 @@ func plantLink(t *testing.T, target, link string) {
 	t.Helper()
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("this filesystem will not make a symlink: %v", err)
-	}
-}
-
-func plantFIFO(t *testing.T, path string) {
-	t.Helper()
-	if err := syscall.Mkfifo(path, 0o644); err != nil {
-		t.Skipf("this platform will not make a FIFO: %v", err)
 	}
 }
 
