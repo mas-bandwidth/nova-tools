@@ -794,3 +794,73 @@ func TestServeDoesNotLoseANoteWhoseCommandFailed(t *testing.T) {
 		t.Errorf("the redelivery is not marked:\n%s", r.stdout)
 	}
 }
+
+// A whitespace-only --on-note is refused as missing rather than accepted and
+// panicking on spawn's fields[0] indexing.
+func TestServeRefusesWhitespaceOnlyOnNote(t *testing.T) {
+	t.Parallel()
+	r := wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", "   ",
+		"--interval", "30s", "--state", filepath.Join(t.TempDir(), "serve.state"), "--hours", "0.02")
+	if r.exit != 2 {
+		t.Fatalf("exit = %d, want 2", r.exit)
+	}
+	if !strings.Contains(r.stderr, "--on-note is required; refusing to guess") {
+		t.Fatalf("stderr does not name missing --on-note:\n%s", r.stderr)
+	}
+	if !strings.Contains(r.stderr, onNoteHint) {
+		t.Fatalf("stderr does not include onNoteHint:\n%s", r.stderr)
+	}
+}
+
+// When note 1's command exits non-zero, note 1 is marked uncertain and blocks
+// subsequent queued dispatches: note 2 remains queued behind note 1 until
+// a person's --redeliver resolves note 1.
+func TestServeBlocksQueuedNotesBehindFailedDispatchUntilRedeliver(t *testing.T) {
+	busDir, _ := fakes(t)
+	write(t, filepath.Join(busDir, "out"), strings.Join([]string{
+		"INBOX NOTE id=note1 from=Stella addr=to at=2026-09-11T11:00:00Z path=from-stella/a.md: note 1",
+		"INBOX NOTE id=note2 from=Johnny addr=to at=2026-09-11T11:01:00Z path=from-johnny/b.md: note 2",
+		"INBOX OK as=Rowan carrying=2 open=2 notes=2 receipts=0",
+	}, "\n")+"\n")
+	note, noteDir := fakeNote(t)
+	write(t, filepath.Join(noteDir, "rc"), "7")
+	state := filepath.Join(t.TempDir(), "serve.state")
+	args := []string{"serve", "--bus", t.TempDir(), "--as", "Rowan", "--on-note", note,
+		"--batch-max", "1",
+		"--interval", "30s", "--state", state, "--hours", "0.02",
+		"--remote", "origin", "--branch", "main", "--receipt-max-words", "40"}
+
+	// Run serve: note 1 is dispatched, exits 7, becomes uncertain, and note 2
+	// is blocked behind it.
+	r := wakeRun(t, args...)
+	if !strings.Contains(r.stdout, "WAKE UNCERTAIN id=note1 attempt=1 rc=7") {
+		t.Fatalf("note 1 was not marked uncertain:\n%s", r.stdout)
+	}
+	got := calls(t, noteDir)
+	if len(got) != 1 || got[0] != "note1" {
+		t.Fatalf("expected only note 1 dispatched, got %v", got)
+	}
+	if !strings.Contains(r.stdout, "WAKE BLOCKED as=Rowan uncertain=note1 queued=1") {
+		t.Errorf("expected queue block report for note 2:\n%s", r.stdout)
+	}
+
+	// Fix the receiver and redeliver note 1.
+	if err := os.Remove(filepath.Join(noteDir, "rc")); err != nil {
+		t.Fatal(err)
+	}
+	r = wakeRun(t, "serve", "--bus", t.TempDir(), "--as", "Rowan", "--state", state,
+		"--redeliver", "note1", "--on-note", note)
+	if r.exit != 0 {
+		t.Fatalf("redeliver failed: exit %d\n%s", r.exit, r.all())
+	}
+
+	// Run serve again: note 1 is now delivered, so note 2 drains and executes.
+	r = wakeRun(t, args...)
+	if r.exit != 0 {
+		t.Fatalf("second serve run failed: exit %d\n%s", r.exit, r.all())
+	}
+	allCalls := calls(t, noteDir)
+	if !strings.Contains(strings.Join(allCalls, " "), "note2") {
+		t.Errorf("note 2 never ran after note 1 was redelivered; calls: %v", allCalls)
+	}
+}

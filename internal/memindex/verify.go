@@ -327,8 +327,6 @@ func Wikilinks(fsys fs.FS, c *Corpus) ([]Finding, error) {
 				refs := unresolved[stem]
 				if len(refs) < 3 { // cap the listing; the count stays honest via the corpus
 					unresolved[stem] = append(refs, f)
-				} else {
-					unresolved[stem] = refs
 				}
 			}
 		}

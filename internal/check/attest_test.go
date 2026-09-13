@@ -340,7 +340,7 @@ func TestAttestRefusals(t *testing.T) {
 var dispatchRE = regexp.MustCompile(`(?m)^\s*case "([a-z-]+)":\s*\n\s*return cmd`)
 
 func TestRecordLayerCheckCountMatchesSPEC(t *testing.T) {
-	const specPath = "../../SPEC.md"
+	const specPath = "../../docs/SPEC.md"
 	spec, err := os.ReadFile(specPath)
 	if err != nil {
 		t.Fatalf("cannot read %s: %v", specPath, err)

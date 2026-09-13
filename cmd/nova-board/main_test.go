@@ -1153,10 +1153,10 @@ func TestCheckSaysThatEveryWordMustAppear(t *testing.T) {
 	if !strings.Contains(usage, "EVERY WORD APPEARS") {
 		t.Error("the banner does not say that a card matches only when EVERY word appears")
 	}
-	readme := readFile(t, filepath.Join("..", "..", "README.md"))
-	nova := readme[strings.Index(readme, "## nova-board"):]
+	cli := readFile(t, filepath.Join("..", "..", "docs", "CLI.md"))
+	nova := cli[strings.Index(cli, "## nova-board"):]
 	if !strings.Contains(nova, "every word") && !strings.Contains(nova, "EVERY word") {
-		t.Error("the README's nova-board section does not say that every word must appear")
+		t.Error("docs/CLI.md's nova-board section does not say that every word must appear")
 	}
 	b := newBench(t)
 	b.add(plain("bo", "the windows runner skips three steps")...)

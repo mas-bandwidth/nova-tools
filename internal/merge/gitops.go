@@ -249,3 +249,37 @@ func oneLineOf(out string) string {
 func contextWithTimeout(d time.Duration) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), d)
 }
+
+// DefaultBranchOf discovers the repository's default branch from THE REMOTE'S OWN HEAD:
+// `git ls-remote --symref <remote> HEAD`, whose first line is `ref: refs/heads/<name>\tHEAD`.
+//
+// It is the remote's answer and not a guess, and it is the only discovery source in this
+// tool, chosen for three reasons: it needs no gh and no provider API, so it works against
+// github.com, a self-hosted forge, an enterprise host and a MIRROR alike; it works against
+// the local bare repository the banner's rehearsal prescribes, so a first run can be
+// rehearsed without any of this being a special case; and it bakes in no naming convention
+// at all -- a team whose default branch is `trunk`, `release` or `default` gets the same
+// answer we do.
+//
+// IT ANSWERS OR IT DOES NOT, AND IT NEVER GUESSES. Every failure -- no HEAD at all (a bare
+// repository with no commits, which is exactly the rehearsal), a network refusal, a
+// timeout, a remote that is not there -- returns the empty string, and an empty answer takes
+// the STRONGER hosted-red rule through State.HostedRedBlocks rather than the weaker one.
+func DefaultBranchOf(g *Git, remote string) string {
+	out, err := g.Run("ls-remote", "--symref", "--", remote, "HEAD")
+	if err != nil {
+		return ""
+	}
+	for _, line := range strings.Split(out, "\n") {
+		rest, ok := strings.CutPrefix(strings.TrimSpace(line), "ref:")
+		if !ok {
+			continue
+		}
+		ref, _, _ := strings.Cut(strings.TrimSpace(rest), "\t")
+		ref = strings.TrimSpace(ref)
+		if name, ok := strings.CutPrefix(ref, "refs/heads/"); ok && name != "" {
+			return name
+		}
+	}
+	return ""
+}

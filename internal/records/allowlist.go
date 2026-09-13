@@ -20,7 +20,7 @@ var SourceKinds = []string{
 }
 
 // ReasonCodes is the bounded set an absent or unavailable field may give. Bounded is the
-// requirement the format states; these are the six distinctions the documents draw
+// requirement the format states; these are the seven distinctions the documents draw
 // between a field a source never had, one it had and would not give, and one this
 // collection could not read.
 var ReasonCodes = []string{

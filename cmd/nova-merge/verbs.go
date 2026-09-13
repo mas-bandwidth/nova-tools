@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -59,6 +60,14 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 	// line could not rehearse, and git's own config was the only way in, which means the
 	// ENVIRONMENT could move where a lane pushes and no flag said so.
 	remote := f.fs.String("remote", "", "")
+	// --default-branch and --hosted-red are rule 15's two knobs, and they exist because
+	// the rule was the literal string "main": a repository whose default branch is master,
+	// trunk or release took the WEAKER arm in silence and merged over its hosted reds.
+	// Neither is required -- the default branch is discovered from the remote's own HEAD,
+	// and an unknown one takes the stronger arm -- and neither bakes in a naming
+	// convention: a team states its own topology here instead of adopting ours.
+	defaultBranch := f.fs.String("default-branch", "", "")
+	hostedRed := f.fs.String("hosted-red", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -67,7 +76,10 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 	f.require("base", *base, "the branch this lane's entries are merged onto")
 	// Lesson 48: these two are stored once and handed to git on every pass afterwards, so
 	// they are checked HERE, where a person can still see what they typed.
-	for _, c := range []struct{ name, value string }{{"base", *base}, {"lane-branch", *laneBranch}} {
+	if err := merge.ValidHostedRed(*hostedRed); err != nil {
+		f.problem(fmt.Sprintf("--hosted-red is %q or %q, got %q: %s", "blocks", "names", *hostedRed, oneline.Escape(err.Error())))
+	}
+	for _, c := range []struct{ name, value string }{{"base", *base}, {"lane-branch", *laneBranch}, {"default-branch", *defaultBranch}} {
 		if c.value == "" {
 			continue
 		}
@@ -103,7 +115,19 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 			oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)), oneline.Escape(undoInit(*f.lane, existed == nil)))
 		return 2
 	}
-	if err := merge.Init(*f.lane, *repo, *base, *laneBranch); err != nil {
+	// THE DEFAULT BRANCH IS DISCOVERED FROM THE REMOTE'S OWN HEAD, not from gh and not
+	// from a name we assume. A discovery that does not answer writes nothing, prints one
+	// INIT NOTE, and leaves the lane on the STRONGER hosted-red rule.
+	discovered := *defaultBranch
+	if discovered == "" && *hostedRed == "" {
+		discovered = merge.DefaultBranchOf(merge.NewGit(*f.lane, f.dur(), deps.Runner), url)
+		if discovered == "" {
+			fmt.Fprintf(stderr, "INIT NOTE the repository's default branch could not be read from %s, so this lane records none and takes the STRONGER hosted-red rule: a hosted red stops the entry (rule 15). nova-merge init --lane %s --default-branch <branch> records it, and --hosted-red names states the other arm outright\n",
+				oneline.Field(stripUserinfo(url)), oneline.Field(*f.lane))
+		}
+	}
+	if err := merge.Init(*f.lane, merge.LaneConfig{Repo: *repo, Base: *base, LaneBranch: *laneBranch,
+		DefaultBranch: discovered, HostedRed: *hostedRed}); err != nil {
 		fmt.Fprintf(stderr, "INIT REFUSED: %s\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 1
 	}
@@ -117,13 +141,26 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 		fmt.Fprintf(stderr, "INIT REFUSED: the lane's own clone could not be made: %s\n", oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
 		return 2
 	}
-	merge.Appendf(*f.lane, deps.Now(), "INIT lane=%s repo=%s base=%s lane_branch=%s joined=%t", *f.lane, *repo, *base, *laneBranch, joined)
+	merge.Appendf(*f.lane, deps.Now(), "INIT lane=%s repo=%s base=%s lane_branch=%s default_branch=%s hosted_red=%s joined=%t",
+		*f.lane, *repo, *base, *laneBranch, discovered, *hostedRed, joined)
 	fmt.Fprintf(stdout, "INIT OK lane=%s repo=%s base=%s lane_branch=%s joined=%t version=%d\n",
 		oneline.Field(*f.lane), oneline.Field(*repo), oneline.Field(*base), oneline.Field(*laneBranch), joined, merge.Version)
 	if !quickstart {
 		return 0
 	}
 	return cmdStatus([]string{"--lane", *f.lane, "--timeout", strconv.Itoa(*f.timeout), "--max", strconv.Itoa(*f.max)}, stdout, stderr, deps)
+}
+
+// stripUserinfo removes the credential a URL carries so a diagnostic never prints a token
+// or password: `https://user:token@host/repo.git` becomes `https://host/repo.git`. A value
+// that does not parse as a URL, or that carries no userinfo, is returned unchanged.
+func stripUserinfo(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil || u.User == nil {
+		return raw
+	}
+	u.User = nil
+	return u.String()
 }
 
 // undoInit is what a refused init says about what it made. A directory init created is
@@ -176,6 +213,11 @@ func checkout(lane, url, branch string, timeout time.Duration, deps Deps) (joine
 	}
 	return false, nil
 }
+
+// reloadLane is merge.Load, named here so a test can make add's re-read fail and pin that
+// the failure is refused -- ADD REFUSED, exit 2 -- and never a nil dereference. It is the
+// one seam in this verb, for the same reason records.go names its Sleep.
+var reloadLane = merge.Load
 
 // cmdAdd queues an entry into a lane that EXISTS. It creates nothing: the lane was made
 // by init, with its repository and its base, and a queueing verb that also created would
@@ -238,7 +280,15 @@ func cmdAdd(args []string, stdout, stderr io.Writer, deps Deps, isBranch bool) i
 		fmt.Fprintf(stderr, "ADD REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	st, _ = merge.Load(*f.lane)
+	// The re-read feeds ADD OK's counts. Its error was assigned to `_`, so a re-read that
+	// failed left st nil and the counts dereferenced it -- a panic -- for a state that was
+	// just written. The entry IS queued; the refusal is about the counts that could not be
+	// read, and exit 2 says so rather than printing ADD OK with no counts.
+	st, err = reloadLane(*f.lane)
+	if err != nil {
+		fmt.Fprintf(stderr, "ADD REFUSED: %s\n", oneline.Err(err))
+		return 2
+	}
 	if yn == "no" {
 		// THE DEFAULT IS THE DIRECTION THAT MERGES WITH ZERO READS, and it was a field on
 		// a line rather than a sentence anybody read.

@@ -111,6 +111,18 @@ func Triage(in TriageInput) int {
 	// … no_result=1` (SPEC-SWARM.md:1253).
 	skipped, malformedN, reportsN := 0, 0, 0
 	for _, sc := range jobs {
+		// A JOB THE MODEL COULD NOT TAKE SAYS SO HERE, FROM ITS SIDECAR (#103). Two Freddy
+		// reads of whole specs died on OpenCode's input limit on 2026-09-12 and triage said
+		// nothing at all about them: a job with no report is counted `no_result`, and the
+		// one fact that explains it was in a log that `reclaim` then deleted. The sidecar
+		// carries the provider's own sentence, so this line costs no file and no log, and
+		// the report below is still folded -- a worker that appended findings before it was
+		// cut off keeps them (rule 3).
+		if sc.End == EndInputLimit {
+			reports.Line(fmt.Sprintf("TRIAGE INPUT-LIMIT id=%s job=%s: %s",
+				oneline.Field(sc.ID), oneline.Field(dashOr(sc.Label)),
+				oneline.Escape(oneline.Cap(dashOr(sc.Limit), oneline.TailBytes))))
+		}
 		raw, from, err := p.ReportBytes(sc)
 		if err != nil {
 			counts[ClassNoResult]++

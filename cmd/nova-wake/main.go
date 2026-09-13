@@ -21,6 +21,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -464,7 +465,7 @@ func cmdWatch(args []string, stdout, stderr io.Writer, clock wake.Clock, quickst
 
 	w := &watcher{
 		stdout: stdout, stderr: stderr, clock: clock, st: st, statePath: *state,
-		maxLines: *maxLines, finalOnly: *finalOnly, baseline: *baseline,
+		maxLines: *maxLines, finalOnly: *finalOnly,
 		cold: st.Cold() && !*baseline, sources: sources, bus: busSrc, lines: lineView,
 		busDir: *busDir, timeout: timeout, every: every, lineDue: now,
 	}
@@ -561,21 +562,21 @@ var watchKillPoint string
 
 // watcher is the loop.
 type watcher struct {
-	stdout, stderr io.Writer
-	clock          wake.Clock
-	st             *wake.State
-	statePath      string
-	maxLines       int
-	finalOnly      bool
-	baseline       bool
-	cold           bool
-	sources        []*polled
-	bus            *wake.Bus
-	lines          *wake.Lines
-	busDir         string
-	every          time.Duration
-	lineDue        time.Time
-	timeout        time.Duration
+	stdout, stderr  io.Writer
+	clock           wake.Clock
+	st              *wake.State
+	statePath       string
+	maxLines        int
+	finalOnly       bool
+	cold            bool
+	sources         []*polled
+	bus             *wake.Bus
+	lines           *wake.Lines
+	busDir          string
+	every           time.Duration
+	lineDue         time.Time
+	timeout         time.Duration
+	relayedBusLines map[string]bool
 	// advancer is item 3a's transaction, and its presence IS the flag: there is
 	// no second field saying the same thing, because two spellings of one fact
 	// are one chance for them to disagree.
@@ -672,8 +673,7 @@ func (w *watcher) loop(ctx context.Context, start time.Time, max time.Duration, 
 		if watchKillPoint == "after-observed" {
 			return 0
 		}
-		printed, news := w.printQueue(now)
-		_ = printed
+		_, news := w.printQueue(now)
 		if w.killed || watchKillPoint == "after-marks" {
 			return 0
 		}
@@ -947,15 +947,26 @@ func (w *watcher) printQueue(now time.Time) (int, int) {
 		if l != nil {
 			before = l.Shown()
 		}
-		g.Line(kind, wake.Render(w.kindOf(r.Key), r.Key, r.Value, now))
+		rendered := wake.Render(w.kindOf(r.Key), r.Key, r.Value, now)
+		g.Line(kind, rendered)
 		if g.List(kind).Shown() > before {
 			printed = append(printed, r)
+			if w.kindOf(r.Key) == wake.KindBusLine {
+				if w.relayedBusLines == nil {
+					w.relayedBusLines = make(map[string]bool)
+				}
+				w.relayedBusLines[rendered] = true
+			}
 		}
 	}
 	// The standing lines print on every poll they stand and are counted against
 	// the bus cap on each of them, so a run of many polls over a refusing bus
 	// still prints at most --max-lines bus lines per poll.
 	for _, line := range w.standing {
+		relayed := "WAKE BUS LINE " + strings.TrimPrefix(line, "WAKE BUS STANDING ")
+		if w.relayedBusLines != nil && w.relayedBusLines[relayed] {
+			continue
+		}
 		g.Line("bus", line)
 	}
 	w.standing = nil
@@ -1009,12 +1020,29 @@ func (w *watcher) recoverAdvance(ctx context.Context, now time.Time) {
 	}
 }
 
+// heldByRecovery is the one sentence a call prints when an advance is held by a
+// recovery that has not finished. It is a WAKE NOTE -- something true about this
+// run that is not a change -- and it is printed once per call, by w.note.
+const heldByRecovery = "bus advance deferred: a recovery is unresolved; nothing fetches until the carried list is reached"
+
 // advanceOrDefer is steps 2 and 3. Mail consumed is mail spooled; mail spooled
 // is mail printed, under the cap like everything else; and a cap that elides a
 // note DEFERS THE FETCH rather than losing the note. It answers whether the
 // injected kill of test 11 landed.
 func (w *watcher) advanceOrDefer(ctx context.Context, now time.Time) bool {
 	if w.advancer == nil {
+		return false
+	}
+	// AND ONLY WITH NO RECOVERY OUTSTANDING. Step 4's short path is "the marker
+	// stays, nothing advances", and this gate is what the second clause means:
+	// an empty bus queue was the only condition here, so a call whose recovery
+	// ended incomplete polled the bus again, found nothing queued, advanced, and
+	// wrote a fresh marker over the unresolved one -- leaving the notes the
+	// recovery could not reach behind the cursor with nothing naming them
+	// (#164, F1, 2026-09-12). The recovery runs at the start of every call, so
+	// the held advance resumes the moment the carried list is reached.
+	if wake.Interrupted(w.st) {
+		w.note(heldByRecovery)
 		return false
 	}
 	if n := wake.BusQueued(w.st); n > 0 {
@@ -1024,6 +1052,13 @@ func (w *watcher) advanceOrDefer(ctx context.Context, now time.Time) bool {
 	res, killed, err := w.advancer.Advance(ctx, w.st, w.head, w.save)
 	if killed {
 		return true
+	}
+	if errors.Is(err, wake.ErrRecoveryPending) {
+		// The invariant inside Advance, reached by a path that got past the gate
+		// above. It is the tool doing what step 4 says and not a source that
+		// failed, so it says so and never counts toward the streak.
+		w.note(heldByRecovery)
+		return false
 	}
 	w.observe("bus", res, now, err != nil)
 	w.save()

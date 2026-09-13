@@ -63,11 +63,26 @@ func BlockedDetail(base string, files []string) string {
 // -- the clone, the fetch, the merge, the conflicting files and the push. A BLOCKED entry
 // that names a file and no next step cost a child an afternoon, four times, on
 // 2026-09-11.
-func HandCommand(repo, base, headRef string, files []string) string {
+//
+// cloneToken is the ALREADY-SHELL-QUOTED thing the clone clones from: the lane's
+// configured remote, quoted, or the command substitution the caller substitutes when the
+// remote carries a credential or could not be read. HandCommand never invents a host --
+// the old form hardcoded https://github.com/%s.git, which printed a host the lane was not
+// configured to use and, on a remote that carried a token, would have printed the token
+// into a log.
+func HandCommand(cloneToken, base, headRef string, files []string) string {
 	dir := path.Base(headRef)
 	if dir == "" || dir == "." || dir == "/" {
 		dir = "entry"
 	}
-	return fmt.Sprintf("git clone --branch %s https://github.com/%s.git %s && cd %s && git fetch origin %s && git merge origin/%s  # resolve %s && git push origin HEAD:%s",
-		headRef, repo, dir, dir, base, base, strings.Join(files, " "), headRef)
+	return fmt.Sprintf("git clone --branch %s %s %s && cd %s && git fetch origin %s && git merge origin/%s  # resolve %s && git push origin HEAD:%s",
+		headRef, cloneToken, dir, dir, base, base, strings.Join(files, " "), headRef)
+}
+
+// shellQuote quotes a value for a POSIX shell: single quotes around it, with the one
+// character that cannot live inside single quotes written the shell's own way. A remote
+// URL or a lane's clone directory may hold a space, a dollar sign or a semicolon; unquoted,
+// any of them would split the hand command or run a command the tool did not write.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

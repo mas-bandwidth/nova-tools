@@ -172,13 +172,26 @@ func synthBus(t *testing.T) (rowan, stella string) {
 // in the same hour apart.
 func push(t *testing.T, stella, id, subject string) {
 	t.Helper()
+	pushKind(t, stella, id, subject, "")
+}
+
+// pushKind is push with the note's optional Kind line, which is how a fixture
+// puts a BARE RECEIPT on the reader's open list: `Kind: receipt` is the one
+// thing in a note's header that is not a guess (internal/bus/note.go,
+// IsReceipt), so a receipt entry is a fixture and not a heuristic here.
+func pushKind(t *testing.T, stella, id, subject, kind string) {
+	t.Helper()
 	gitAt(t, stella, "pull", "-q", "--ff-only")
 	now := time.Now().UTC().Truncate(time.Second)
 	path := filepath.Join("from-stella", now.Format("2006-01-02T15")+id[len(id)-2:]+"Z-"+id+".md")
-	write(t, filepath.Join(stella, path), strings.Join([]string{
+	header := []string{
 		"From: Stella", "To: Rowan", "Date: " + now.Format(time.UnixDate),
-		"Id: " + id, "Subject: " + subject, "", subject + ".",
-	}, "\n")+"\n")
+		"Id: " + id, "Subject: " + subject,
+	}
+	if kind != "" {
+		header = append(header, "Kind: "+kind)
+	}
+	write(t, filepath.Join(stella, path), strings.Join(append(header, "", subject+"."), "\n")+"\n")
 	index := filepath.Join(stella, "from-stella", "INDEX")
 	line := id + "\t" + filepath.ToSlash(path) + "\t" + now.Format(time.RFC3339) + "\tRowan\t-\n"
 	f, err := os.OpenFile(index, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)

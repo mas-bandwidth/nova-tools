@@ -7,7 +7,7 @@ day files into a month. It reads sources. It never estimates, never fills a
 gap, and never removes a file.
 
 This spec is normative. If the code and this document disagree, one of them
-has a bug, and the tests decide which. It stands beside [SPEC.md](../SPEC.md),
+has a bug, and the tests decide which. It stands beside [SPEC.md](SPEC.md),
 whose **Conventions** section (exit codes, no guessed paths, the one-line
 output grammar, the cap-and-count rule, `internal/oneline` and
 `internal/bounded`) applies here unchanged and is not restated. Where this tool
@@ -592,7 +592,7 @@ TOKENS FAIL days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> 
 TOKENS NOTE <the one remedy line>
 TOKENS REFUSED: <reason>
 REPORT OK who=<name> day=<d> rows=<n> at=<stamp> build=<id> subject=<subject>
-REPORT FAIL who=<name> day=<d> rows=0 unreadable=<n>
+REPORT FAIL who=<name> day=<d> rows=<n> unreadable=<n>
 REPORT REFUSED: <reason>
 SUM MONTH month=<m> at=<stamp> build=<id> days=<n> first=<d> last=<d> missing=<n> rows=<n> turns=<n|->
 SUM PAIR model=<model> repo=<repo> input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> days=<n>
@@ -759,8 +759,8 @@ mode 600.
 ### `--opencode <label>=<file>`: OpenCode's SQLite database
 
 The file, and `<file>-wal` and `<file>-shm` when present, are copied into
-`--scratch`, and three queries run there with `sqlite3 -readonly -tabs` under
-`--timeout` (rule 16): sessions (`id`, `parent_id`, `directory`), assistant
+`--scratch`, and three queries run there with `sqlite3 -readonly -json` under
+`--timeout` (rule 16; `-json` is used rather than `-tabs` because tool command inputs containing tabs/newlines corrupted TSV column splitting): sessions (`id`, `parent_id`, `directory`), assistant
 messages (`id`, `session_id`, `time_created`, `providerID`, `modelID`, the
 five `tokens.*` counts, `path.cwd`), and tool parts (`message_id`,
 `session_id`, the `command`, `filePath`, `path` and `pattern` inputs).
@@ -1500,7 +1500,8 @@ remedy line. The rules are numbered on from rule 21.
     this binary finds `exec.Command` in exactly two files —
     `internal/tokens/opencode.go` and the publish file — the other spawners
     `os.StartProcess` and `syscall.ForkExec`/`Exec`/`StartProcess` nowhere,
-    a syntax-tree pass that flags a string literal naming the git program,
+    a syntax-tree pass that flags a string literal naming the git program
+    outside the explicit publisher,
     and no `net` import anywhere; `publish --claude
     x=<dir>` is exit 2; `--ledger` on any read verb is exit 2 as an unknown
     flag.
@@ -1881,7 +1882,8 @@ seen red before it is trusted.
    runs `git`. The whole-binary count is demanded test 27's — `exec.Command`
    in exactly two files, the other spawners `os.StartProcess` and
    `syscall.ForkExec`/`Exec`/`StartProcess` nowhere, a syntax-tree pass that
-   flags a string literal naming the git program — and the two are read
+   flags a string literal naming the git program outside the explicit
+   publisher — and the two are read
    together, this one over the readers and that one over the binary.
 7. A body line `… input ~100000` folds as 100000, the row has `rough=1`, a
    second rough line on the same row makes `rough=2`, `TOKENS DAY rough=2`,
@@ -2086,7 +2088,8 @@ paragraphs are the normative text and these ten lines are the index.
     `git`, with a ledger clone beside the sources; the source walk finds
     `exec.Command` in exactly two files, the other spawners `os.StartProcess`
     and `syscall.ForkExec`/`Exec`/`StartProcess` nowhere, and a syntax-tree
-    pass flags a string literal naming the git program; a
+    pass flags a string literal naming the git program outside the explicit
+    publisher; a
     source flag on `publish`, and `--ledger` on any read verb, are each exit 2.
 28. `publish` leaves a bus checkout beside the ledger byte-identical and
     writes no note; `report --ledger` is exit 2; one day reported and
@@ -2129,7 +2132,7 @@ standard library only, no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard: a usage banner ending in a
 runnable `example:` block, refusals that say what the flag wants and report
-every independent problem at once, a `### First run` in `README.md`, a
+every independent problem at once, a `### First run` in `docs/CLI.md`, a
 `quickstart` verb or the sentence saying why there is none, and tests that
 pin all three by executing them.
 
@@ -2204,7 +2207,7 @@ pin all three by executing them.
     all of them inside `t.TempDir()`; nothing reaches outside it, no test
     touches a real remote, a credential or the private ledger, and no test
     opens a network socket.
-13. **`README.md`'s `### First run`**: fold one fixture transcript and one
+13. **`docs/CLI.md`'s `### First run`**: fold one fixture transcript and one
     fixture bus note into a temp directory, `check` it, `sum` it, every path
     a flag, the transcript produced by running the tool. The fixture bus
     lane uses `example.com`.

@@ -33,7 +33,9 @@ import (
 //	4. a call that finds the marker runs `inbox` plainly, reads carrying=<n>,
 //	   and lists the whole carried list with `inbox --open --open-max <n>` --
 //	   n, never a fixed number, because nova-bus caps the listed OPEN at
-//	   --open-max and a fixed number would recover a fixed number.
+//	   --open-max and a fixed number would recover a fixed number. While that
+//	   recovery is unresolved NOTHING ADVANCES, in this call or any later one:
+//	   the marker outranks an empty queue.
 //
 // nova-bus moves a cursor to HEAD and nowhere else, so this is the only way to
 // keep the cursor behind the print.
@@ -189,7 +191,6 @@ func (a *Advancer) Recover(ctx context.Context, st *State) (Result, string, erro
 
 // open runs `inbox --open --open-max <n>` once and classifies what it listed.
 func (a *Advancer) open(ctx context.Context, n int, res *Result) (int, Result, error) {
-	before := len(res.Items)
 	out, code, err := a.Bus.run(ctx, append(a.Bus.inboxArgs(), "--open", "--open-max", strconv.Itoa(n))...)
 	// Classified first, for the reason above: nothing this tool reads from the
 	// bus is dropped because of an exit code.
@@ -200,21 +201,42 @@ func (a *Advancer) open(ctx context.Context, n int, res *Result) (int, Result, e
 	if code != 0 {
 		return 0, *res, fmt.Errorf("nova-bus exit=%d", code)
 	}
-	listed := len(res.Items) - before
-	// A note this tool has already printed is suppressed by the classifier and
-	// is still a note the bus listed: the count that matters to the re-read is
-	// what the OPEN list held.
-	if n := countNotes(out); n > listed {
-		listed = n
-	}
+	// WHAT THE OPEN LIST HELD, counted off the transcript, because that is what
+	// `carrying=` counts: every entry on the list, the notes and the bare
+	// receipts and the heard and the unreadable. It was the greater of two
+	// partial counts -- the items the classifier relayed, and the INBOX NOTE
+	// ids -- and neither sees the whole list: the first drops a note this tool
+	// has already printed and a line it has seen standing, the second drops
+	// every receipt, heard and unreadable entry. So a carried list holding one
+	// printed note AND one receipt was short of `carrying=` under both, on
+	// every read, and the recovery could never end (#164, F2, 2026-09-12).
+	// Nothing about the spooling changed: the items above are what reaches the
+	// queue, and this is only the count the completeness test is made of.
+	listed := BusCarriedEntries(out)
 	return listed, *res, nil
 }
 
-func countNotes(out string) int { return len(BusNoteIDs(out)) }
+// ErrRecoveryPending is what Advance answers when the state still holds an
+// unresolved recovery. It is not a failed poll and must never reach the streak:
+// the tool is doing exactly what step 4 says, and the caller says so in a note.
+var ErrRecoveryPending = errors.New("a bus recovery is unresolved; nothing advances until the carried list is reached")
 
-// Advance is step 3, and it is called ONLY behind an empty bus queue. The
-// marker is written before the advance and cleared after its output is durable.
+// Advance is step 3, and it is called ONLY behind an empty bus queue and ONLY
+// with no recovery outstanding. The marker is written before the advance and
+// cleared after its output is durable.
 func (a *Advancer) Advance(ctx context.Context, st *State, head string, save func()) (res Result, killed bool, err error) {
+	// AN UNRESOLVED RECOVERY IS NOT A THING TO WRITE OVER. Step 4's short path
+	// ends "the marker stays, NOTHING ADVANCES": the marker is the only thing
+	// naming a carried list this tool has not reached, and the first line of
+	// this function would replace it with a marker for a different advance --
+	// after which the notes the recovery could not reach are behind the cursor
+	// with nothing naming them, which is the residual the marker exists to
+	// close, re-opened (#164, F1, 2026-09-12). The loop gates on the same
+	// question before it gets here and says so in one note; this is the
+	// invariant, in the one function that can break it.
+	if Interrupted(st) {
+		return res, false, ErrRecoveryPending
+	}
 	st.Set(AdvanceMarker, Compose("inflight", Stamp(a.Clock.Now()), head))
 	save()
 	args := append(a.Bus.inboxArgs(), "--advance", "--remote", a.Bus.Remote, "--branch", a.Bus.Branch)

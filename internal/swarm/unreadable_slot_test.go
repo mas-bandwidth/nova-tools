@@ -44,7 +44,7 @@ func TestAnUnreadableSlotFileIsNotEvidenceAJobIsOver(t *testing.T) {
 	}
 	in := RunInput{Pool: p}
 	now := time.Now()
-	r := &running{slot: 1, nonce: "abc123", jobDir: jobDir, started: now, deadline: 30 * time.Second}
+	r := &running{slot: 1, nonce: "abc123", exitAttest: ExitAttestHash(fixtureAttest), jobDir: jobDir, started: now, deadline: 30 * time.Second}
 
 	alive, _ := in.state(r, now)
 	if !alive {
@@ -53,7 +53,7 @@ func TestAnUnreadableSlotFileIsNotEvidenceAJobIsOver(t *testing.T) {
 
 	// The observable that ends the wait: the supervisor's own completion evidence, under
 	// this launch's nonce. It is read from the JOB's directory, which needs no slot file.
-	if err := WriteJSON(ExitPath(jobDir), ExitRecord{RC: 0, End: EndDone, Nonce: r.nonce}); err != nil {
+	if err := WriteJSON(ExitPath(jobDir), ExitRecord{RC: 0, End: EndDone, Nonce: r.nonce, Attest: fixtureAttest}); err != nil {
 		t.Fatal(err)
 	}
 	if alive, _ := in.state(r, now); alive {
