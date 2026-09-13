@@ -55,6 +55,11 @@ jobs:
     # It is the tag-only-a-certified-commit practice made into something that can say no.
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      # Listing workflow runs is an Actions read; the file-level grant is contents only, and a
+      # job that asks the API with a token that cannot read Actions would refuse every
+      # release with a 403 that looks like "no certification run". Scoped to this job.
+      actions: read
     steps:
       - name: certification.yml passed on this commit
         env:
