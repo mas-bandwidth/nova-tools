@@ -90,6 +90,46 @@ func TestSealedGrokMappingValidates(t *testing.T) {
 	}
 }
 
+func TestSealedAntigravityMappingValidates(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("..", "..", "testdata", "tokens", "antigravity", "mapping.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	v := NewValidator(Allowlists{})
+	env, err := v.ValidateEnvelope(raw)
+	if err != nil {
+		t.Fatalf("sealed antigravity mapping refused: %v", err)
+	}
+	if env.Mapping == nil {
+		t.Fatal("expected env.Mapping to be set")
+	}
+	if env.Mapping.Name != "antigravity-step-generator" {
+		t.Errorf("got name %q, want antigravity-step-generator", env.Mapping.Name)
+	}
+	if env.Mapping.IdentityRule.SourceKind != "antigravity" {
+		t.Errorf("got source_kind %q, want antigravity", env.Mapping.IdentityRule.SourceKind)
+	}
+	if len(env.Mapping.FieldRules) != 5 {
+		t.Errorf("got %d field rules, want 5", len(env.Mapping.FieldRules))
+	}
+	if env.ID != "sha256:173b9ff62dcda4fdd2187298d1fdbc66d1b01fe14bd9b7899bf9fc11444386b1" {
+		t.Errorf("got ID %s, want sha256:173b9ff62dcda4fdd2187298d1fdbc66d1b01fe14bd9b7899bf9fc11444386b1", env.ID)
+	}
+
+	// Reseal byte-identity test
+	resealedRaw, resealedID, err := SealMapping(*env.Mapping)
+	if err != nil {
+		t.Fatalf("SealMapping failed: %v", err)
+	}
+	if resealedID != env.ID {
+		t.Errorf("resealed ID %s != env.ID %s", resealedID, env.ID)
+	}
+	trimmedRaw := bytes.TrimSpace(raw)
+	if !bytes.Equal(resealedRaw, trimmedRaw) {
+		t.Errorf("resealed bytes differ from sealed fixture:\ngot:  %s\nwant: %s", resealedRaw, trimmedRaw)
+	}
+}
+
 func TestPositiveCoverageRecordValidates(t *testing.T) {
 	c := Coverage{
 		Schema:         SchemaCoverage,

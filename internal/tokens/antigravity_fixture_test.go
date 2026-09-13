@@ -2,6 +2,7 @@ package tokens
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -9,168 +10,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/records"
 )
-
-// AntigravityProtoUsage represents decoded ModelUsageStats from Proto3 wire bytes.
-type AntigravityProtoUsage struct {
-	Model                string
-	InputTokens          *uint64
-	CacheReadTokens      *uint64
-	OutputTokens         *uint64
-	TotalTokens          *uint64 // Uninterpreted producer total (preserved provisionally outside spend)
-	ThinkingOutputTokens *uint64
-}
-
-// decodeVarint reads a varint from wire bytes starting at offset.
-// Protects against 64-bit overflow and truncation.
-func decodeVarint(data []byte, offset int) (uint64, int, error) {
-	var val uint64
-	var shift uint
-	for i := offset; i < len(data); i++ {
-		b := data[i]
-		if shift == 63 {
-			// 10th byte: in proto3 uint64 varint, 63 bits are already set.
-			// The 10th byte cannot have continuation bit and cannot exceed 1.
-			if b > 1 {
-				return 0, 0, fmt.Errorf("varint 64-bit overflow")
-			}
-			val |= uint64(b) << shift
-			return val, i + 1, nil
-		}
-		val |= uint64(b&0x7F) << shift
-		if (b & 0x80) == 0 {
-			return val, i + 1, nil
-		}
-		shift += 7
-	}
-	return 0, 0, fmt.Errorf("truncated varint")
-}
-
-// DecodeAntigravityProto walks CortexStepGeneratorMetadata -> ChatModelMetadata -> ModelUsageStats.
-func DecodeAntigravityProto(blob []byte) (*AntigravityProtoUsage, error) {
-	usage := &AntigravityProtoUsage{}
-	offset := 0
-
-	for offset < len(blob) {
-		tagKey, nextOffset, err := decodeVarint(blob, offset)
-		if err != nil {
-			return nil, err
-		}
-		offset = nextOffset
-		fieldNum := int(tagKey >> 3)
-		wireType := int(tagKey & 0x07)
-
-		if wireType == 2 { // Length-delimited
-			length, nextOffset, err := decodeVarint(blob, offset)
-			if err != nil {
-				return nil, err
-			}
-			offset = nextOffset
-			if length > uint64(len(blob)-offset) {
-				return nil, fmt.Errorf("length exceeds payload bounds")
-			}
-			subBytes := blob[offset : offset+int(length)]
-			offset += int(length)
-
-			if fieldNum == 1 { // ChatModelMetadata
-				if err := decodeChatModelMetadata(subBytes, usage); err != nil {
-					return nil, err
-				}
-			}
-		} else if wireType == 0 { // Varint
-			_, nextOffset, err := decodeVarint(blob, offset)
-			if err != nil {
-				return nil, err
-			}
-			offset = nextOffset
-		} else {
-			return nil, fmt.Errorf("unsupported wire type: %d", wireType)
-		}
-	}
-
-	return usage, nil
-}
-
-func decodeChatModelMetadata(blob []byte, usage *AntigravityProtoUsage) error {
-	offset := 0
-	for offset < len(blob) {
-		tagKey, nextOffset, err := decodeVarint(blob, offset)
-		if err != nil {
-			return err
-		}
-		offset = nextOffset
-		fieldNum := int(tagKey >> 3)
-		wireType := int(tagKey & 0x07)
-
-		if wireType == 2 {
-			length, nextOffset, err := decodeVarint(blob, offset)
-			if err != nil {
-				return err
-			}
-			offset = nextOffset
-			if length > uint64(len(blob)-offset) {
-				return fmt.Errorf("sub-length exceeds payload bounds")
-			}
-			subBytes := blob[offset : offset+int(length)]
-			offset += int(length)
-
-			if fieldNum == 4 { // ModelUsageStats
-				if err := decodeModelUsageStats(subBytes, usage); err != nil {
-					return err
-				}
-			} else if fieldNum == 19 { // response_model
-				usage.Model = string(subBytes)
-			}
-		} else if wireType == 0 {
-			_, nextOffset, err := decodeVarint(blob, offset)
-			if err != nil {
-				return err
-			}
-			offset = nextOffset
-		} else {
-			return fmt.Errorf("unsupported sub-wire type: %d", wireType)
-		}
-	}
-	return nil
-}
-
-func decodeModelUsageStats(blob []byte, usage *AntigravityProtoUsage) error {
-	offset := 0
-	for offset < len(blob) {
-		tagKey, nextOffset, err := decodeVarint(blob, offset)
-		if err != nil {
-			return err
-		}
-		offset = nextOffset
-		fieldNum := int(tagKey >> 3)
-		wireType := int(tagKey & 0x07)
-
-		if wireType == 0 {
-			val, nextOffset, err := decodeVarint(blob, offset)
-			if err != nil {
-				return err
-			}
-			offset = nextOffset
-
-			v := val
-			switch fieldNum {
-			case 1:
-				usage.InputTokens = &v
-			case 2:
-				usage.CacheReadTokens = &v
-			case 3:
-				usage.OutputTokens = &v
-			case 5:
-				usage.TotalTokens = &v
-			case 6:
-				usage.ThinkingOutputTokens = &v
-			}
-		} else {
-			return fmt.Errorf("unexpected wire type in ModelUsageStats: %d", wireType)
-		}
-	}
-	return nil
-}
 
 type SQLiteRowFixture struct {
 	Idx     int    `json:"idx"`
@@ -440,5 +282,202 @@ func TestMalformedProtobufBlobsAreRefused(t *testing.T) {
 				t.Fatalf("expected error containing %q, got nil", b.ExpectedError)
 			}
 		})
+	}
+}
+
+// TestDecodeAntigravityMatchesExpectedRecords tests that DecodeAntigravityFromJSON
+// reproduces the expected records with identical content IDs and observations.
+func TestDecodeAntigravityMatchesExpectedRecords(t *testing.T) {
+	fixtureDir := filepath.Join("..", "..", "testdata", "tokens", "antigravity")
+
+	sqliteJSON, err := os.ReadFile(filepath.Join(fixtureDir, "sqlite_rows.json"))
+	if err != nil {
+		t.Fatalf("failed to read sqlite_rows.json: %v", err)
+	}
+	transcriptJSONL, err := os.ReadFile(filepath.Join(fixtureDir, "transcript.jsonl"))
+	if err != nil {
+		t.Fatalf("failed to read transcript.jsonl: %v", err)
+	}
+	expectedLinesRaw, err := os.ReadFile(filepath.Join(fixtureDir, "expected_records.jsonl"))
+	if err != nil {
+		t.Fatalf("failed to read expected_records.jsonl: %v", err)
+	}
+
+	expectedLines := bytes.Split(bytes.TrimSpace(expectedLinesRaw), []byte("\n"))
+	if len(expectedLines) != 4 {
+		t.Fatalf("expected 4 lines in expected_records.jsonl, got %d", len(expectedLines))
+	}
+
+	version := "2.12.2"
+	opts := AntigravityOptions{
+		MappingID:       "sha256:1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b",
+		ProducerVersion: &version,
+	}
+	binding := AntigravityBinding{
+		Friend: "emma",
+		Bench:  "studio",
+	}
+	ws := AntigravityWorkspace{
+		ID: "mas-bandwidth/emma",
+	}
+
+	recs, err := DecodeAntigravityFromJSON(
+		"conv-synth-001",
+		sqliteJSON,
+		transcriptJSONL,
+		opts,
+		binding,
+		ws,
+	)
+	if err != nil {
+		t.Fatalf("DecodeAntigravityFromJSON failed: %v", err)
+	}
+
+	if len(recs) != len(expectedLines) {
+		t.Fatalf("got %d records, want %d", len(recs), len(expectedLines))
+	}
+
+	v := records.NewValidator(AntigravityAllowlists())
+
+	for i, rec := range recs {
+		expectedLine := bytes.TrimSpace(expectedLines[i])
+
+		// 1. Verify content ID equality: exact 64-hex SHA-256 match
+		var expEnv struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(expectedLine, &expEnv); err != nil {
+			t.Fatalf("record %d invalid expected json: %v", i+1, err)
+		}
+		if rec.ID != expEnv.ID {
+			t.Errorf("record %d ID mismatch: got %s, want %s", i+1, rec.ID, expEnv.ID)
+		}
+
+		// 2. Verify ValidateEnvelope accepts sealed bytes and matches expected envelope
+		valEnv, err := v.ValidateEnvelope(rec.Envelope)
+		if err != nil {
+			t.Fatalf("record %d ValidateEnvelope failed: %v", i+1, err)
+		}
+		if valEnv.ID != rec.ID {
+			t.Errorf("record %d validated ID %s != rec.ID %s", i+1, valEnv.ID, rec.ID)
+		}
+
+		// 3. Verify ValidateEnvelope accepts the expected fixture line and matches rec.ID
+		expParsed, err := v.ValidateEnvelope(expectedLine)
+		if err != nil {
+			t.Fatalf("record %d ValidateEnvelope(expectedLine) failed: %v", i+1, err)
+		}
+		if expParsed.ID != rec.ID {
+			t.Errorf("record %d expParsed.ID %s != rec.ID %s", i+1, expParsed.ID, rec.ID)
+		}
+
+		// 4. Verify observation equality
+		if valEnv.Observation.Kind != expParsed.Observation.Kind {
+			t.Errorf("record %d kind mismatch", i+1)
+		}
+		if valEnv.Observation.Source.SessionID != expParsed.Observation.Source.SessionID {
+			t.Errorf("record %d session_id mismatch", i+1)
+		}
+	}
+}
+
+// TestDecodeAntigravityWithSealedMapping validates decoding under the sealed mapping manifest.
+func TestDecodeAntigravityWithSealedMapping(t *testing.T) {
+	fixtureDir := filepath.Join("..", "..", "testdata", "tokens", "antigravity")
+
+	sqliteJSON, err := os.ReadFile(filepath.Join(fixtureDir, "sqlite_rows.json"))
+	if err != nil {
+		t.Fatalf("failed to read sqlite_rows.json: %v", err)
+	}
+	transcriptJSONL, err := os.ReadFile(filepath.Join(fixtureDir, "transcript.jsonl"))
+	if err != nil {
+		t.Fatalf("failed to read transcript.jsonl: %v", err)
+	}
+
+	sealedMappingID := "sha256:173b9ff62dcda4fdd2187298d1fdbc66d1b01fe14bd9b7899bf9fc11444386b1"
+	version := "2.12.2"
+	opts := AntigravityOptions{
+		MappingID:       sealedMappingID,
+		ProducerVersion: &version,
+	}
+	binding := AntigravityBinding{
+		Friend: "emma",
+		Bench:  "studio",
+	}
+	ws := AntigravityWorkspace{
+		ID: "mas-bandwidth/emma",
+	}
+
+	recs, err := DecodeAntigravityFromJSON("conv-synth-001", sqliteJSON, transcriptJSONL, opts, binding, ws)
+	if err != nil {
+		t.Fatalf("DecodeAntigravityFromJSON with sealed mapping failed: %v", err)
+	}
+	if len(recs) != 4 {
+		t.Fatalf("expected 4 records, got %d", len(recs))
+	}
+
+	v := records.NewValidator(AntigravityAllowlists())
+	for i, rec := range recs {
+		if rec.Observation.MappingID != sealedMappingID {
+			t.Errorf("record %d mapping_id mismatch: got %s, want %s", i+1, rec.Observation.MappingID, sealedMappingID)
+		}
+		valEnv, err := v.ValidateEnvelope(rec.Envelope)
+		if err != nil {
+			t.Fatalf("record %d ValidateEnvelope failed: %v", i+1, err)
+		}
+		if valEnv.ID != rec.ID {
+			t.Errorf("record %d validated ID %s != rec.ID %s", i+1, valEnv.ID, rec.ID)
+		}
+	}
+}
+
+// TestDecodeAntigravityRefusals tests defensive refusal conditions.
+func TestDecodeAntigravityRefusals(t *testing.T) {
+	opts := AntigravityOptions{
+		MappingID: "sha256:1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b1b",
+	}
+	binding := AntigravityBinding{}
+	ws := AntigravityWorkspace{}
+
+	// Empty session ID
+	_, err := DecodeAntigravitySession("", nil, nil, opts, binding, ws)
+	if err == nil {
+		t.Fatal("expected error for empty session ID, got nil")
+	}
+
+	// Malformed mapping ID
+	badOpts := AntigravityOptions{MappingID: "not-a-sha256"}
+	_, err = DecodeAntigravitySession("sess-1", nil, nil, badOpts, binding, ws)
+	if err == nil {
+		t.Fatal("expected error for malformed mapping ID, got nil")
+	}
+
+	// Duplicate SQLite idx
+	dupRows := []AntigravitySQLiteRow{
+		{Idx: 1, Data: []byte{}},
+		{Idx: 1, Data: []byte{}},
+	}
+	_, err = DecodeAntigravitySession("sess-1", dupRows, nil, opts, binding, ws)
+	if err == nil {
+		t.Fatal("expected error for duplicate sqlite idx, got nil")
+	}
+
+	// Duplicate transcript step_index
+	dupTrans := []AntigravityTranscriptLine{
+		{StepIndex: 1},
+		{StepIndex: 1},
+	}
+	_, err = DecodeAntigravitySession("sess-1", nil, dupTrans, opts, binding, ws)
+	if err == nil {
+		t.Fatal("expected error for duplicate transcript step_index, got nil")
+	}
+
+	// Malformed proto blob
+	badProtoRows := []AntigravitySQLiteRow{
+		{Idx: 1, Data: []byte{0x80}}, // truncated varint
+	}
+	_, err = DecodeAntigravitySession("sess-1", badProtoRows, nil, opts, binding, ws)
+	if err == nil {
+		t.Fatal("expected error for malformed proto blob, got nil")
 	}
 }
