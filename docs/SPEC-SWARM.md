@@ -21,7 +21,7 @@ ten before that. The form works, and every way it failed is in the table.
 | a worker asked to loop ran until somebody noticed | the deadline is held by the **machinery**, outside the worker, and the worker is told its own deadline in its prompt |
 | a worker read a file outside its job directory, the harness refused the read, and the worker treated the refusal as fatal: **two runs ended on a refused read, today** | the sandbox rule is stated in the prompt: a refused read is **not** the end of the run |
 | a task was given as one sentence and came back as a plan | task **templates** with the learned conditions baked in, and `RESULT.md` with only a plan is a **failed** task |
-| 25 of 67 findings in batch 1 were duplicates of the owed list in the pull request body nobody read first | the `read-pr` template's first condition: **read the owed list first and mark duplicates** |
+| 25 of 67 findings in batch 1 were duplicates of the owed list in the pull request body nobody read first | the `read-pr` template's owed-list condition: **read the owed list first and mark duplicates** (its first from 2026-09-11; second from draft 2, 2026-09-13, under the result-line condition) |
 | 5 of 67 were wrong because a rule was paraphrased from memory | **quote every rule verbatim with `file:line`** |
 | a worker that died at the deadline had found things and written none of them | **append each finding the moment it exists**, never at the end |
 | one worker read 40 files and finished nothing | a **file budget** in the task, and batch 3 went from 0 to 2 of 3 complete |
@@ -88,7 +88,15 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
    carries the rule it rests on, quoted word for word, with `file:line`, on the
    same line or the next. A finding with no quote is counted `unquoted` and is
    not counted `accurate` by anybody. (Batch 1: 5 of 67 were wrong, each a
-   paraphrase.)
+   paraphrase.) **Draft 2 (2026-09-13):** under rule 22 a finding with no
+   quote is `UNGROUNDED` and the whole report is REJECTED before anything is
+   folded, so `unquoted` is never the count of an accepted report's unquoted
+   findings. It counts the findings the contract did not reach, and those
+   only: a report rules 8 and 15 classified `plan-only` before the contract
+   ran, whose finding lines `triage` counts anyway (test 8), and every report
+   of a pool whose `RUN POOL` says `proof=shape`. A pool that ran
+   `proof=work` prints `unquoted=0`, and the column stays because the two
+   pools' batch lines have to be readable side by side.
 3. **Append as found, never at the end.** The prompt says: append each finding
    to the report file the moment it exists. A run killed at its deadline keeps
    its partial report, and `triage` counts every finding line in it. (Batch 2:
@@ -113,7 +121,14 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
    worker and records what is on disk. The swarm never waits forever. A worker
    silent past its deadline is reaped and its job is re-queued once, with
    `requeued=1` in the new task's sidecar; a job reaped a second time goes to
-   `failed/` with `reaped=2` and is not re-queued again.
+   `failed/` with `reaped=2` and is not re-queued again. **Draft 2
+   (2026-09-13):** the counter is the sidecar's `attempt` (rule 12), never
+   the cause — the machinery launches one task text at most **twice**,
+   whatever ended the first attempt, so a job whose sidecar already carries
+   `from=` is re-queued by neither a reap nor a reject (rule 23), and the
+   second ending of either kind is final. `reaped=2` is what that looks like
+   when the second ending is a reap; `rejected=2` when it is a reject. The
+   at-most-twice rule is stated here, once, and rules 22 and 23 point at it.
 8. **Results are counted per batch, on one line, and completion is evidence
    separate from the finding count.** `triage` classifies every report as
    `ok`, `clean`, `plan-only` or `no-result`, and prints one `TRIAGE BATCH`
@@ -127,7 +142,14 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
    template calls a complete task; `plan-only` is a `RESULT.md` with **no
    head**, whatever else it holds; `no-result` is no `RESULT.md` at all. A
    `clean` report lands in `done/`, counts as complete on `RUN OK`, and is
-   never a failure: the tool must not pay a worker for finding something, and
+   never a failure **for finding nothing** — **draft 2 (2026-09-13):** a
+   report this rule classified `ok` or `clean` and rule 22's contract then
+   REJECTED lands in `failed/` with `rejected=<CLASS>` and is counted in
+   `TRIAGE BATCH rejected=`, in no other column, because a report is counted
+   in exactly one; and since rule 21 moved the plan to `<job>/PLAN.md`, a run
+   killed while planning leaves no `RESULT.md` at all and is `no-result`
+   where it used to be `plan-only`, which makes rule 5's diagnosis *a
+   `no-result` or a `plan-only` beside `refusals=1`*. The rule itself stands: the tool must not pay a worker for finding something, and
    a classifier that equated no findings with no work did exactly that. The
    count of finding lines is a separate number and never decides the class.
    `accurate` and `wrong` are a reader's verdicts recorded by `nova-swarm
@@ -159,8 +181,11 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     VIOLATION id=<id> background=<n>`, the survivors are killed, and the result
     is quarantined: it moves to `failed/` with `violation=background` in the
     sidecar, and `triage` does not count it. A job reports exactly once: one
-    `RESULT.md`, one `RUN DONE` or one `RUN VIOLATION`, and never a second
-    notification. (2026-09-11: children stopped mid-task to wait on their own
+    `RESULT.md`, and one `RUN DONE`, `RUN VIOLATION` or `RUN REJECTED`, and
+    never a second notification. **Draft 2 (2026-09-13):** `RUN REJECTED`
+    (rule 22) **replaces** `RUN DONE` for a rejected job exactly as `RUN
+    VIOLATION` does, so `rejected` is not a value of `RUN DONE`'s `result=`
+    and no job prints two lines. (2026-09-11: children stopped mid-task to wait on their own
     background tasks, then reported twice.)
 12. **Usage is written to a file outside the reclaimable subtree, by
     `finalize`, before anything else happens to the job.** The **usage file**
@@ -173,7 +198,9 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     `ended` are UTC stamps the tool wrote, `end` is one of `done`, `killed`,
     `budget`, `budget-unverifiable` (rule 13), `violation`, `failed`, `unknown`
     (no completion evidence, rule
-    17), `launch-failed` (rule 18), and `rc` is the worker's exit code, `-`
+    17), `launch-failed` (rule 18), `input-limit` (**Cost per task, and rate
+    limits**) and — **draft 2, 2026-09-13** — `rejected` (rule 22), and `rc`
+    is the worker's exit code, `-`
     for `unknown` and `launch-failed`. A
     field the provider did not report is the literal `-`, never `0`; `0` is
     written only when the provider reported zero. For OpenCode the source is
@@ -197,7 +224,13 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     job's `RUN` line. `triage` and `result --id` read `<pool>/reports/<job>/`
     for a finalized job and `<job>/RESULT.md` only for a running one, so the
     first triage after a reclaim reads the same bytes it would have read
-    before it. The usage file is written once and
+    before it. **Draft 2 (2026-09-13): the contract check of rule 22 runs inside
+    `finalize`, before the usage row is written.** The order is one order:
+    classify (rules 8 and 15), run the kind's checks, write the usage row —
+    carrying `end=rejected` when a check failed — then the report copy and,
+    for a reject, its `REJECTED` marker, then the move to `done/` or
+    `failed/`, then the job's one `RUN` line. A check that ran after the row
+    would have nowhere to put its word, because the usage file is written once and
     never rewritten; a job's second attempt is a new job id with its own
     file, so `cost` sums each attempt once and a retry never double-counts.
     A job whose runner died before `finalize` (rule 17) is finalized by the
@@ -557,7 +590,19 @@ spec demands**.*
     result file, because that sentence and a line-1 check cannot both be
     obeyed. (2026-09-13, nova-tools#133: the launcher's plan-at-the-top prompt
     fought the gate's line 1, and a gated read failed at random until the task
-    text overrode the launcher.)
+    text overrode the launcher.) **Draft 2 (2026-09-13):** the kind's
+    definition says which of its fields may be `-` **at a clean exit** and
+    which may not, and `INCOMPLETE` reads that rather than the dash. A
+    `FIX`'s `pr=` may: a card told to push a branch and open no pull request
+    ends `pr=-` honestly, and the check never rejects it. Every other field
+    is the field the work was for — a `READ`'s `verdict=` and `findings=`, a
+    `PROBE`'s `claim=`, a `FIX`'s `gate=`, and every `--field` the card named
+    — and a `-` in one after a clean exit is `INCOMPLETE`; a kill is never
+    `INCOMPLETE` (test 21). And the plan sentence is this tool's in **three**
+    places, all three amended in this same change: the prompt
+    (`internal/swarm/worker.go`), the `read-pr`, `probe-row` and `fix-card`
+    templates (`internal/swarm/templates.go`), and this rule. A rule that
+    fights the tool's own templates is the hurt rule 20 exists to close.
 22. **`finalize` accepts or rejects by machinery, and a rejected job is never
     read.** After the classification of rules 8 and 15 — `no-result`,
     `plan-only` and `malformed` stand unchanged and come first — a report
@@ -567,13 +612,33 @@ spec demands**.*
     `UNGROUNDED`, `UNREAD`, `UNRUN`, `FETCHED`, `SIZE`. Each is one line,
     `FINALIZE REJECTED id=<id> class=<CLASS> line=<n|->: <the offending
     line's first sixty characters, or the reason>; <the fix in one clause>`,
-    written into the sidecar as `rejected=<CLASS>`, into the usage row as
-    `end=rejected`, and printed once as `RUN REJECTED`. The job's files go to
+    written into the sidecar as `rejected=<CLASS>` beside `attempt=<1|2>`
+    (**draft 2**: the class in `rejected=`, the count in `attempt=`, so one
+    key never carries two kinds of value), into the usage row as
+    `end=rejected` — written by `finalize` in the one order rule 12 now
+    states — and printed once as `RUN REJECTED`, which **replaces** this
+    job's `RUN DONE` exactly as `RUN VIOLATION` does (rule 11), so a rejected
+    job still reports exactly once. The job's files go to
     `failed/`. The checks that ask the tree ask the job's own clone at the
     sha line 1 names; the checks that ask what the worker did ask the
-    harness's own records of the tools it ran — the tool-call lines of
-    `<job>/harness.log`, never its prose, because a worker can write prose
-    into its transcript and cannot write a tool call it did not make. A
+    harness's own records of the tools it ran — the tool-call lines, never
+    the prose, because a worker can write prose into its transcript and
+    cannot write a tool call it did not make. **Draft 2 (2026-09-13): and it
+    reads them from a log OUTSIDE the worker's write set**,
+    `<pool>/logs/<job>.log`, opened by the **supervisor** before it spawns
+    the harness and handed to the harness as its stdout. The job directory is
+    the only place the worker writes (rule 19), so a log inside it is a file
+    the worker can append a tool call to with one shell redirect, or fill by
+    pasting a transcript into its own answer — and a proof read out of the
+    thing being proved is no proof. `<job>/harness.log` stays where it is for
+    rule 5's refusal count and the input-limit class, which are **diagnoses
+    and not gates**; `UNREAD`, `UNRUN` and `FETCHED` read
+    `<pool>/logs/<job>.log` and nothing else. **An absent or unreadable pool
+    log is `proof=shape` for that job**: the shape checks run, the three
+    proof checks are declared not run — `advice` in the card, `proof=shape`
+    on the job's `RUN DONE` — and not one honest card is rejected for a log
+    this tool failed to keep. `reclaim` never removes `<pool>/logs/`, which
+    is outside the reclaimable subtree for the reason `usage/` is. A
     rejected report is folded into no page, counted in `TRIAGE BATCH
     rejected=<n>`, and shown by `result --id` only with `--anyway`. **The
     limit, stated:** the contract proves that a quoted line exists and a
@@ -581,10 +646,11 @@ spec demands**.*
     schema#989 passed the prototype gate with a HIGH that inverted its own
     evidence, and the mind's read remains the judge of reasoning. (Glenn,
     2026-09-12: *"Can you design something mechanical to quickly reject
-    failed jobs on swarms, vs. spending tokens on it."* Rowan's rule from it,
-    2026-09-12: *a swarm result is accepted or rejected by machinery (shape,
-    consistency, grounded quotes, proof of work); a rejected job is never
-    read; requeue once with the reject line.*)
+    failed jobs on swarms, vs. spending tokens on it."* The rule Rowan wrote from it the
+    same day, 2026-09-12, in substance and not as a quotation: a swarm result
+    is accepted or rejected by machinery — shape, consistency, grounded
+    quotes, proof of work; a rejected job is never read; requeue once with
+    the reject line.)
 23. **A rejected job is requeued once with the reject line, and the second
     rejection is final and costed.** On the first reject the machinery queues
     the same task text with one line prepended — `Your previous run <id> was
@@ -613,30 +679,79 @@ spec demands**.*
     toolchain the description does not map is `ADD REFUSED: toolchain <name>
     is not in the worker description; the leg is unreachable from inside the
     wall` — declared `BLOCKED` at queue time, before any token is spent,
-    rather than discovered by a worker that then improvises. `finalize`'s
-    `FETCHED` check reads the harness's spawned-command records for the
-    installers and archive fetches in the shipped `fetch_phrases` table
-    (additive in the worker description, like `input_limit_phrases`) and
-    rejects a job that ran one; it is a tripwire, named as such, and the
-    wall is the sandbox. (2026-09-13: a repair worker fetched a Temurin JDK
+    rather than discovered by a worker that then improvises. **Draft 2 (2026-09-13): `finalize`'s `FETCHED` check matches the
+    spawned command's own PROGRAM, never a substring of its line.** It reads
+    the spawned-command records of `<pool>/logs/<job>.log` (rule 22), takes
+    each command's `argv[0]` with its directory and any `.exe` stripped, and
+    asks whether that word is an entry of the shipped **`fetchers`** list —
+    `curl`, `wget`, `brew`, `apt`, `apt-get`, `yum`, `dnf`, `apk`, `pip`,
+    `pip3`, `npm`, `pnpm`, `yarn`, `gem`, `rustup`, `sdk`, `nvm`, `asdf`,
+    `docker`, `podman`, and `cargo`, `go` or `git` only on the sub-commands
+    `cargo install`, `go mod download`, `go install`, `git clone` and `git
+    fetch` — additive in the worker description like `input_limit_phrases`,
+    and **printed by `contract`**, so a caller reads its false rejects before
+    a token is spent. The prototype's phrase table, matching anywhere on the
+    line, would have rejected `go install ./cmd/nova-swarm`, which touches no
+    network, and `git fetch origin pull/241/head:pr241`, which is the one
+    fetch this rule permits: exactly the noise rule 5 and the input-limit
+    table already forbid (*a diagnosis that fires on the word for the thing,
+    wherever it appears, is noise*). **Two exemptions, both named in the
+    card:** the repository's **own dependency step**, given at queue time as
+    `--needs-deps <command>` and rendered into the block as a `checked`
+    sentence naming it, so a `FIX` whose gate is `npm ci`, `go mod download`
+    or `pip install -r requirements.txt` declares it before it runs instead
+    of being rejected after; and the fetch of the job's own repository, which
+    the dispatcher does. **And `FETCHED` rejects one task text at most
+    once.** A command the card allowed is never a reject and rides the job's
+    own line as `fetched=<program>` on `RUN DONE`, the fact recorded rather
+    than the work thrown away; and a task text already rejected once for
+    `FETCHED` is checked on its one requeue (rule 23) for every other class
+    and for this one only as `fetched=`, because a second identical rejection
+    spends a job twice to learn the same thing (rule 7's at-most-twice,
+    counted by `attempt`). It is a tripwire, named as such, and the wall is
+    the sandbox — which does not deny the network, because `--net-deny` is
+    never passed. (2026-09-13: a repair worker fetched a Temurin JDK
     over the network into its scratch to run a Java gate; the card had not
     forbidden it. The same day a Dart probe returned `BLOCKED` because its
     toolchain lived in `dist/` outside the job directory — the wall worked;
     the card should have said so up front.)
 25. **A canary before a dispatch, and the harness is a pinned path.** When
     more than one task is pending, `run` launches the harness once, before
-    the first worker, with the shipped canary prompt — answer with the single
-    word `PONG` — under the worker description's provider and model, bounded
-    at 60 seconds, and starts no worker unless the answer arrives: a crash, a
-    refusal or a wrong answer is `RUN REFUSED reason=canary: <the harness's
-    own first error line>`, exit 2, every task still pending. One task
+    the first worker, with the shipped canary prompt under the worker
+    description's provider and model, bounded at 60 seconds, and starts no
+    worker unless the answer arrives. **Draft 2 (2026-09-13): the expected
+    answer is a per-run NONCE, not a word printed in the prompt.** The prompt
+    says *answer with exactly this and nothing else: `PONG-<12 hex>`*, the
+    twelve hex drawn once per run from the OS random source (rule 18's
+    source), and the answer is the **last line of the harness's stdout that is
+    not a tool call**, read with the harness's own `tool_call_marks` (rule
+    22) — because a bare `PONG` is satisfied by a harness that echoes its
+    prompt or a model that repeats its instruction, and a live provider is the
+    whole thing the canary is for. The nonce is a printed value like any other
+    and is no secret. A crash, a refusal, a silence or any other answer is
+    `RUN REFUSED reason=canary: <the harness's own first error line, capped at
+    `oneline.TailBytes`>`, exit 2, every task still pending. One task
     pending needs no canary — the task is its own — and `--no-canary` skips
-    it loudly, on the `RUN POOL` line. The harness binary is the worker
+    it loudly, on the `RUN CANARY` line as `answer=skipped` (**draft 2**). The harness binary is the worker
     description's `harness` or `run --harness <path>`, which overrides it;
     a path given either way is used as given, never searched for on `PATH`,
-    and `RUN POOL` carries `harness=<path>` and the one line the binary
-    prints for `--version`, so a pool that ran on the wrong build says so in
-    its first line. (2026-09-13: eight cards died in one second because the
+    and `RUN POOL` carries `harness=<path>`, so a pool that ran on the wrong
+    build says so in its first line. **Draft 2 (2026-09-13): `RUN POOL` stays
+    the FIRST line of every run and carries only what is known before anything
+    runs.** A harness's version and a canary's outcome are known only after
+    the harness has run once, so they ride the **`RUN CANARY`** line that
+    follows it: `RUN CANARY harness=<path> harness_version=<one token|->
+    after=<d> answer=<PONG-<hex>|skipped|->`. That line is printed on every
+    run, including one that skipped the canary and one with a single pending
+    task, because which binary ran is a fact about every run.
+    `harness_version` is what the harness prints for the worker description's
+    `version_args` (default `--version`, additive like `input_limit_phrases`,
+    because `--version` is one harness's spelling), through `oneline.Field` as
+    **one token**, `-` when the binary answered with none. `proof=<work|shape>`
+    stays on `RUN POOL`, where it says what this harness's records can prove
+    at all, and the job's own `RUN DONE` carries the same field for the job,
+    because a pool log this tool could not keep for one job is that job's
+    answer (rule 22). (2026-09-13: eight cards died in one second because the
     harness binary, OpenCode 1.18.30_1, crashed at init for any keyed
     provider; a controlled ping is the canary, and the pools now run a
     pinned 1.18.20.)
@@ -645,13 +760,13 @@ spec demands**.*
 ## The verbs
 
 ```
-nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered --kind <READ|PROBE|FIX|REPORT> [--field <name>]... [--needs <toolchain>]... [--result-max <bytes>] [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
-nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered --kind <READ|PROBE|FIX|REPORT> [--field <name>]... [--needs <toolchain>]... [--result-max <bytes>] [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
+nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered --kind <READ|PROBE|FIX|REPORT> [--field <name>]... [--needs <toolchain>]... [--needs-deps <command>] [--result-max <bytes>] [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
+nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered --kind <READ|PROBE|FIX|REPORT> [--field <name>]... [--needs <toolchain>]... [--needs-deps <command>] [--result-max <bytes>] [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--harness <path>] [--no-canary] [--max <n>] [--launch-timeout <s>] [--usage-interval <s>] [--sandbox <path>] [--no-sandbox]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
 nova-swarm stop     --pool <dir>
-nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered --kind <READ|PROBE|FIX|REPORT> [--field <name>]... [--needs <toolchain>]... [--result-max <bytes>] [--label <text>] [--max-input <bytes>]
+nova-swarm requeue  --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered --kind <READ|PROBE|FIX|REPORT> [--field <name>]... [--needs <toolchain>]... [--needs-deps <command>] [--result-max <bytes>] [--label <text>] [--max-input <bytes>]
 nova-swarm verdict  --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
 nova-swarm triage   --pool <dir> (--batch <id> | [--dir <dir>]...) [--since <stamp>] [--all] [--no-state] [--max <n>]
 nova-swarm result   --pool <dir> --id <job> [--anyway]
@@ -664,7 +779,7 @@ nova-swarm version
 nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
 ```
 
-`--kind` (rule 20) has no default, on `add`, `batch` and `requeue` alike: a contract this tool guessed would be a check the card never stated. `--template read-pr` implies `READ`, `probe-row` implies `PROBE`, `fix-card` implies `FIX`, and a `--kind` that disagrees with the template is `ADD REFUSED` naming both. `--field <name>` adds one `key=value` token the card asks for on line 1 and `finalize` requires there (rule 21); `--needs <toolchain>` names a toolchain the worker description must map (rule 24); `--result-max <bytes>` lowers the kind's size cap, never raises it. `contract` prints the exact block `add` renders into the prompt for those arguments, `CONTRACT OK kind=<K> checks=<n> fields=<n>` on stdout after it, and is how a person reads what a card will demand before queuing it. `result --id` on a rejected job is `RESULT REFUSED` naming the class and `--anyway` (rule 22); with `--anyway` it prints the `RESULT OK` line with `class=rejected reject=<CLASS>` and the file verbatim.
+**`--kind` (rule 20) is derived from `--template` where one is given and is required otherwise, and this is the one place that is said (draft 2, 2026-09-13).** `--template read-pr` supplies `READ`, `probe-row` supplies `PROBE` and `fix-card` supplies `FIX`: with a template, `--kind` may be omitted and the template's kind is the job's. With **no** template `--kind` is required, and its absence is exit 2 naming the flag, on `add`, `batch` and `requeue` alike — a contract this tool guessed would be a check the card never stated. A `--kind` beside a template that implies another kind is `ADD REFUSED` naming both; beside a template that implies the same kind it is accepted and redundant. `--field <name>` adds one `key=value` token the card asks for on line 1 and `finalize` requires there (rule 21); `--needs <toolchain>` names a toolchain the worker description must map (rule 24); `--needs-deps <command>` (**draft 2, 2026-09-13**) names this repository's own dependency step — `npm ci`, `go mod download`, `pip install -r requirements.txt` — which the card then states and `FETCHED` then allows, and which is refused at queue time if the kind's block cannot render it (rule 24); `--result-max <bytes>` lowers the kind's size cap, never raises it. `contract` prints the exact block `add` renders into the prompt for those arguments, `CONTRACT OK kind=<K> checks=<n> fields=<n>` on stdout after it, and is how a person reads what a card will demand before queuing it. `result --id` on a rejected job is `RESULT REFUSED` naming the class and `--anyway` (rule 22); with `--anyway` it prints the `RESULT OK` line with `class=rejected reject=<CLASS>` and the file verbatim.
 
 `--tokens <n>` is the token budget (rule 13). It has no default and `0` is
 refused, on `add` and on `batch` alike, for the reason `--files` has none.
@@ -764,7 +879,7 @@ refusal, and the refusal never prints the path's contents. The prototype does
 exactly this and it is worth pinning as a contract: the refusal says what the
 input wants.
 
-**Amendment 2026-09-13.** A rejected job is a failed task, not a failed `run`: `RUN OK` carries `rejected=<n>` and exits 0. `add`, `batch` or `requeue` without `--kind` is exit 2 naming the flag; `--kind` against a template that implies another kind, or `--needs` naming a toolchain the description does not map, is exit 1 (`ADD REFUSED`, `BATCH REFUSED`, `REQUEUE REFUSED`). A `run` whose canary fails is exit 2 before any worker starts, the point at which the caller can still change the binary (rule 25). `result --id` of a rejected job without `--anyway` is exit 1. `contract` reports and exits 0; an unknown kind is exit 2.
+**Amendment 2026-09-13.** A rejected job is a failed task, not a failed `run`: `RUN OK` carries `rejected=<n>` and exits 0. `add`, `batch` or `requeue` without `--kind` **and without a `--template` that supplies one** (draft 2) is exit 2 naming the flag; `--kind` against a template that implies another kind, or `--needs` naming a toolchain the description does not map, is exit 1 (`ADD REFUSED`, `BATCH REFUSED`, `REQUEUE REFUSED`). A `run` whose canary fails is exit 2 before any worker starts, the point at which the caller can still change the binary (rule 25). `result --id` of a rejected job without `--anyway` is exit 1. `contract` reports and exits 0; an unknown kind is exit 2.
 
 ## Output grammar
 
@@ -773,19 +888,19 @@ ADD OK id=<id> label=<label> template=<name|-> deadline=<d> files=<n> tokens=<n|
 ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
-RUN POOL workers=<n> hours=<h> worker=<name> model=<model> pool=<dir> harness=<path> harness_version=<one line|-> canary=<ok|skipped|-> proof=<work|shape>
-RUN CANARY harness=<path> after=<d> answer=<PONG|->
+RUN POOL workers=<n> hours=<h> worker=<name> model=<model> pool=<dir> harness=<path> proof=<work|shape>
+RUN CANARY harness=<path> harness_version=<one token|-> after=<d> answer=<PONG-<12 hex>|skipped|->
 RUN REFUSED reason=canary: <the harness's own first error line>
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path>
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
-RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false>
+RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|rejected|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false>
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
 RUN MALFORMED id=<id> slot=<n> line=<n> dest=failed
 RUN INPUT-LIMIT id=<id> slot=<n> after=<d> input=<n|-> max=<n|-> dest=failed: <the provider's own words>
-RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only|malformed|rejected> findings=<n> refusals=<n> notes=<sent>/<read|-> unpublished=<true|false> budget=<spent|n+|->/<n> dest=<done|failed> [log=<one bounded line of what the harness said>] [refused=<the last refused path, one bounded line>]
+RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only|malformed> findings=<n> refusals=<n> notes=<sent>/<read|-> unpublished=<true|false> budget=<spent|n+|->/<n> dest=<done|failed> proof=<work|shape> [fetched=<program>] [log=<one bounded line of what the harness said>] [refused=<the last refused path, one bounded line>]
 RUN REJECTED id=<id> slot=<n> class=<SHAPE|REV|INCOMPLETE|INCONSISTENT|PLACEHOLDER|UNGROUNDED|UNREAD|UNRUN|FETCHED|SIZE> line=<n|-> attempt=<1|2> requeued=<true|false> dest=failed: <sixty characters>; <the fix in one clause>
 RUN VIOLATION id=<id> slot=<n> background=<n> dest=failed: <reason>
 RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> unpublished=<true|false> budget=<spent|n+|->/<n> survived=<true|false> requeued=<true|false> reaped=<1|2>
@@ -828,13 +943,25 @@ STOP OK pool=<dir> running=<n>
 ```
 
 `RUN POOL` is the first line of every dispatcher run and it says what will run
-before anything runs: the provider, the model and the pool. **It never prints
+before anything runs: the provider, the model and the pool. **Draft 2
+(2026-09-13): it carries only what is known before anything runs**, so the
+harness's own version and the canary's answer are not on it — they are on the
+`RUN CANARY` line that follows it, printed on every run (`answer=skipped` for
+`--no-canary`, `-` for a single pending task, rule 25). `result=rejected` is
+likewise gone from `RUN DONE`: a rejected job prints `RUN REJECTED` instead,
+as a violating job prints `RUN VIOLATION` (rules 11 and 22), and `RUN DONE`
+carries `proof=<work|shape>` to say whether this job's proof checks ran at
+all. **It never prints
 the key, the key file's contents, or the env var's value** — only the variable's
 name, where a name is needed at all.
 
 **Every listing is a cap and a count**, per SPEC.md. `run`, `status`, `triage`
 and `cost` take `--max <n>`, default 20, `0` for all, one MORE line naming the
-remedy. The counts are the truth about the **pool**, never about the output.
+remedy. **Draft 2 (2026-09-13):** `TRIAGE REJECTED` and `TRIAGE QUARANTINED`
+are report lines and are capped with `TRIAGE REPORT` under `kind=report`, so a
+batch that rejected forty jobs costs a reader twenty lines and one `TRIAGE
+MORE kind=report shown=20 total=40 at=<path>`, never forty; the counts on
+`TRIAGE BATCH` are the truth about the batch, as always. The counts are the truth about the **pool**, never about the output.
 A `status` over a 67-task pool printed 67 lines in the prototype; the finding a
 reader wanted was one of them.
 
@@ -992,7 +1119,7 @@ nova-sandbox --read <slot dir> [--read <read_roots entry>...]
 
 | the list | what is in it, and why |
 |---|---|
-| write | the **job directory first** — the first `--write` is what the cwd and the temp directory default to — and the job's own data home beside it. Nothing else. |
+| write | the **job directory first** — the first `--write` is what the cwd and the temp directory default to — and the job's own data home beside it. Nothing else. (**Draft 2, 2026-09-13**: `<pool>/logs/<job>.log` is deliberately NOT here. The supervisor opens it before the wrap and hands the harness the open file as its **stdout**, so the job's transcript is written through an inherited descriptor while the path itself is openable by nobody inside the wall — which is what makes that log a proof and `<job>/harness.log`, inside the write set, a diagnosis: rule 22.) |
 | read | the **slot directory**, which is the worker home for this job: it holds the `opencode.json` this tool writes and the worker's own `AGENTS.md`, and without it the harness cannot read its own config. **The jobs of this slot live under it** (`<slot dir>/jobs/<id>`), so a job may also read the EARLIER JOBS OF ITS OWN SLOT — their `PROMPT.md`, `harness.log`, `RESULT.md` and data home. That is one worker reading its own past work under one key, and it is what naming the slot directory buys; a job of ANOTHER slot, another worker or another pool is in neither list. Then every `read_roots` entry of the worker description: a toolchain under a user directory is under no system root. |
 | neither | the key file, `~/.ssh`, the `gh` configuration, the keychain, the shell history, every other line's home, every OTHER slot's directory, and this tool's own pool outside the job. |
 
@@ -1096,7 +1223,12 @@ prompt says *read or write*, and the tool does its half: after every run it
 reads the harness log for the harness's own refusal lines and prints
 `refusals=<n>` on `RUN DONE`. A `plan-only` beside `refusals=1` is a diagnosis
 a coordinator can act on; a `plan-only` alone is the silence this spec's first
-draft could not explain.
+draft could not explain. **Draft 2 (2026-09-13): and it is now a `no-result`
+or a `plan-only` beside `refusals=1`.** Since rule 21 moved the plan to
+`<job>/PLAN.md`, the run that used to die with a plan at the top of
+`RESULT.md` now dies with no `RESULT.md` at all, which is `no-result`; the
+diagnosis is the pair, and the class it fires on is whichever of the two the
+kill left behind (rule 8).
 
 The prompt also says, in one line each: **there is no bus** — do not try to send
 anything to anybody; **do not loop, poll or wait for replies**; write what you
@@ -1121,30 +1253,39 @@ below. Each condition names the failure it closes.
 ### `read-pr` — read one pull request against the rules
 
 ```
-1. READ THE PR BODY'S OWED LIST FIRST, before reading any code, and for every
+1. LINE 1 OF RESULT.md IS THE RESULT LINE (rule 21, draft 2 2026-09-13):
+   `RESULT: READ <label> at <sha> verdict=<APPROVE|HOLD> findings=<n>`.
+   WRITE YOUR PLAN TO <job>/PLAN.md BEFORE YOU START — never at the top of
+   RESULT.md, which is the result and nothing else.
+   [2026-09-13: the plan-at-the-top sentence and the line-1 check cannot both
+   be obeyed, and a gated read failed at random until one of them went]
+2. READ THE PR BODY'S OWED LIST FIRST, before reading any code, and for every
    finding you report, say whether it is already on that list. A finding that
    is already owed is marked `dup:` and is not a new finding.
    [batch 1: 25 of 67 findings were duplicates of the owed list]
-2. QUOTE EVERY RULE VERBATIM, with `file:line`. Never paraphrase a rule from
+3. QUOTE EVERY RULE VERBATIM, with `file:line`. Never paraphrase a rule from
    memory, and never assert a rule you did not open.
    [batch 1: 5 of 67 findings were wrong, each a paraphrase]
-3. APPEND EACH FINDING TO RESULT.md THE MOMENT IT EXISTS. Not at the end.
+4. APPEND EACH FINDING TO RESULT.md THE MOMENT IT EXISTS. Not at the end.
    You may be killed at your deadline; what is on disk is what you found.
-4. A FILE BUDGET: read at most <n> files (the task's --files). When the budget
+5. A FILE BUDGET: read at most <n> files (the task's --files). When the budget
    is spent, write what you have and stop. Say in RESULT.md which files you
    did not open.
    [batch 3: with a budget, 2 of 3 tasks complete; without, 0 of 3]
-5. A RESULT.md CONTAINING ONLY A PLAN IS A FAILED TASK. The plan belongs at
-   the top, before the work; the findings are the work. A finished read that
-   found nothing is NOT a failed task: write the `## Head` with `findings: 0`.
+6. A RESULT.md WITH NO RESULT IS A FAILED TASK; the findings are the work,
+   and the plan is in PLAN.md (condition 1). A finished read that found
+   nothing is NOT a failed task: write the `## Head` with `findings: 0`.
    Never report a finding to have something to report.
-6. Check the board before reporting: a card that already names this is a `dup:`.
+7. Check the board before reporting: a card that already names this is a `dup:`.
 ```
 
 ### `probe-row` — make one claim true or false
 
 ```
-1. Name the claim in one sentence at the top of RESULT.md before probing it.
+1. LINE 1 OF RESULT.md IS THE RESULT LINE (rule 21, draft 2 2026-09-13):
+   `RESULT: PROBE <label> at <sha> claim=<true|false|not-done>`. Name the
+   claim in one sentence under `## Probe`, and write your plan to
+   <job>/PLAN.md before you start — never at the top of RESULT.md.
 2. The probe is a command, a file:line, or a measurement — never an opinion.
    Paste the command and its tail into RESULT.md.
 3. Append the result the moment you have it.
@@ -1156,17 +1297,31 @@ below. Each condition names the failure it closes.
 ### `fix-card` — take one card and land the fix
 
 ```
-1. Read the card, and the board, before touching anything: a card already taken
+1. LINE 1 OF RESULT.md IS THE RESULT LINE (rule 21, draft 2 2026-09-13):
+   `RESULT: FIX <label> at <sha> pr=<#n|-> gate=<pass|fail|not-run>`; `pr=-`
+   is honest for a card that opens no pull request. Write your plan to
+   <job>/PLAN.md before you start — never at the top of RESULT.md.
+2. Read the card, and the board, before touching anything: a card already taken
    is a `dup:` and you stop.
-2. Work only inside the job directory. The clone is yours; nothing outside it
+3. Work only inside the job directory. The clone is yours; nothing outside it
    is yours.
-3. Quote the rule the fix serves, verbatim, with file:line.
-4. Write the gate you ran and its result into RESULT.md's Gates table. A fix
-   with no gate is `not done`.
-5. A file budget, as above.
-6. Leave what you did not do under `Left owed`, named so the next worker can
+4. Quote the rule the fix serves, verbatim, with file:line.
+5. Write the gate you ran and its result into RESULT.md's Gates table. A fix
+   with no gate is `not done`. Commit before every gate run.
+6. A file budget, as above.
+7. Leave what you did not do under `Left owed`, named so the next worker can
    pick it up with no other context.
 ```
+
+**Draft 2 (2026-09-13): the three templates above are amended in this change,
+and so is the tool.** Until this draft, `read-pr`'s condition 5 said *the plan
+belongs at the top* and `probe-row`'s condition 1 said *at the top of
+RESULT.md*, while rule 21 made line 1 the result — the tool's own text
+fighting the tool's own check, which is the hurt rule 20 exists to close
+arriving from inside. The same sentence lives in
+`internal/swarm/worker.go`'s prompt (*write what you are about to do at the
+top of RESULT.md before doing it*) and it goes with them; the three files are
+named in **the work list**, and demanded test 21 reads all three.
 
 **A template is text and nothing else.** It is not code, it does not execute,
 and `nova-swarm` does not read a worker's `RESULT.md` and act on it. The
@@ -1207,7 +1362,7 @@ important fact.>
 <one sentence a coordinator can paste into the board.>
 ```
 
-**Line 1 is the `RESULT:` line (rule 21, 2026-09-13), and it supersedes the `# <task>` title the first draft of this template began with.** A title a worker writes anyway is line 2 and is text. For a `READ` the fields are `verdict=<APPROVE|HOLD> findings=<n>`; for a `PROBE`, `claim=<true|false|not-done>`; for a `FIX`, `pr=<#n|-> gate=<pass|fail|not-run>`; for a `REPORT`, `findings=<n>`; then every field the card named. `<sha>` is `git rev-parse HEAD` of the job's clone, twelve to forty hex characters, and it must resolve in that clone to that head. `findings=<n>` on line 1 and `findings: <n>` in the head are one number written twice, and `finalize` rejects a report where they differ (`INCONSISTENT`) rather than choosing one. A `READ`'s findings are the lines `- <HIGH|MEDIUM|LOW|MINOR|NIT> <file>:<line> — "<quote>" — <what to do>` under `## Findings`, which the kind requires even when empty; the `## Per item` table remains the template's for the items the task handed the worker.
+**Line 1 is the `RESULT:` line (rule 21, 2026-09-13), and it supersedes the `# <task>` title the first draft of this template began with.** **Draft 2 (2026-09-13): `<label>` is ONE TOKEN.** It is the card's `--label` through `oneline.Field`, whitespace and `=` escaped, so a scanner counts the fields the tool asked for; the `873-SUCCESSOR` specimen's `873-SUCCESSOR cpp` is two tokens and would be `SHAPE` under this contract, which is what a whitespace-splitting grammar has to mean. `add --label` with whitespace in it is queued with the escaped form, and the card prints the escaped form, so what the worker copies is what the check reads. A title a worker writes anyway is line 2 and is text. For a `READ` the fields are `verdict=<APPROVE|HOLD> findings=<n>`; for a `PROBE`, `claim=<true|false|not-done>`; for a `FIX`, `pr=<#n|-> gate=<pass|fail|not-run>`; for a `REPORT`, `findings=<n>`; then every field the card named. `<sha>` is `git rev-parse HEAD` of the job's clone, twelve to forty hex characters, and it must resolve in that clone to that head. `findings=<n>` on line 1 and `findings: <n>` in the head are one number written twice, and `finalize` rejects a report where they differ (`INCONSISTENT`) rather than choosing one. A `READ`'s findings are the lines `- <HIGH|MEDIUM|LOW|MINOR|NIT> <file>:<line> — "<quote>" — <what to do>` under `## Findings`, which the kind requires even when empty; the `## Per item` table remains the template's for the items the task handed the worker.
 
 **The head's first line is `findings: <n>`, and it is the completion
 evidence (rule 8).** It is written when the work is done; a report without it is
@@ -1392,13 +1547,13 @@ the card rules.
 | the failure, from the record | the rule that closes it |
 |---|---|
 | six spec-read cards returned four grounded HOLDs; the launcher marked them FAILED only because the card asked for a `READ` line 1 while the acceptance check demanded `RESULT:` on line 1; gated by hand, the gate rejected them on a proof-of-work rule — a file name per finding — the card never asked for; the HIGHs were real and were read by a person anyway (**2026-09-13**) | **rule 20**: the card's `## Result contract` block and `finalize`'s checks are rendered from **one definition**, and a source test finds no check the block does not state |
-| the launcher's prompt asked for the plan at the top of `RESULT.md` and the gate read line 1 as the verdict, so a gated read failed at random until the task text overrode the launcher (**2026-09-13**, nova-tools#133) | **rule 21**: line 1 is `RESULT: <KIND> …`; the plan goes to `<job>/PLAN.md` |
+| the launcher's prompt asked for the plan at the top of `RESULT.md` and the gate read line 1 as the verdict, so a gated read failed at random until the task text overrode the launcher (**2026-09-12**, nova-tools#133) | **rule 21**: line 1 is `RESULT: <KIND> …`; the plan goes to `<job>/PLAN.md` |
 | a placeholder (`Working: clone, checkout PR131...`) under a `HOLD / findings: 1` header was posted to a pull request as a verdict; a `HOLD` with `findings: 0` was read to learn it said nothing (**2026-09-12**, nova-tools#133) | **rule 22**: `PLACEHOLDER` and `INCONSISTENT`, checked by machinery before any mouth reads the file |
-| the prototype's placeholder guard rejected the word `pending` anywhere, so an honest quote of `swarm.Pending` threw a report away (**2026-09-13**, nova-tools#133) | the placeholder check reads **line-leading** words only, and the one sanctioned "not yet" is the dash on line 1 |
+| the prototype's placeholder guard rejected the word `pending` anywhere, so an honest quote of `swarm.Pending` threw a report away (**2026-09-12**, nova-tools#133) | the placeholder check reads **line-leading** words only, and the one sanctioned "not yet" is the dash on line 1 |
 | a forty-character grounding failed by one character on a real quote; a quote that wrapped two source lines could not be grounded by a single-line grep — two rejections of one honest read on #148 (**2026-09-13**, nova-tools#133) | `UNGROUNDED` grounds the **whole quote after one normalization**, across line breaks, with `...` elisions grounded piece by piece |
 | a quote was grounded in the neighbouring file, and an accepted read was rejected for it (**2026-09-13**, nova-tools#133) | a quote belongs to the file its citation names, and is searched there only |
 | twelve Mercury runs of spec-read cards: one accepted, the rest plans or ungrounded findings (**2026-09-13**) | **rule 23**: requeue once with the reject line prepended; the second rejection is final and costed |
-| a repair worker fetched a Temurin JDK over the network into its scratch to run a Java gate; the card had not forbidden a network fetch of toolchains (**2026-09-13**) | **rule 24**: the card forbids it in one line; `FETCHED` trips on the installers in the shipped table |
+| a repair worker fetched a Temurin JDK over the network into its scratch to run a Java gate; the card had not forbidden a network fetch of toolchains (**2026-09-13**) | **rule 24**: the card forbids it in one line; `FETCHED` trips on the fetching command's own program, from the shipped `fetchers` list (draft 2), never on a substring of a command line |
 | a Dart probe card returned `BLOCKED` because its toolchain lived in `dist/` outside the job directory (**2026-09-13**) | **rule 24**: the worker description maps toolchains to paths under `read_roots`, the card names them, and `--needs` refuses at queue time what the wall would refuse at run time |
 | eight cards died in one second because the harness binary (OpenCode 1.18.30_1) crashed at init for any keyed provider (**2026-09-13**) | **rule 25**: a canary ping before a dispatch of more than one card, and the harness as a pinned path printed on `RUN POOL` |
 | five cards died in under 90 seconds on reads outside the job directory: Go's `os/exec` source under a user directory and `/opt/homebrew` (three tries at one repair), `~/.ssh` (to understand a host alias), and `../serialize` resolved against the harness's own cwd; zero wall kills on cards whose task stayed inside (**2026-09-12/13**) | the prompt's wall paragraph **names the temptations**; a card that touches a library's semantics carries the semantics; `RUN DONE` carries `refused=<the last refused path>` so the first thing a person reads is the kill |
@@ -1420,6 +1575,17 @@ asks for something the contract does not check may say so in its own text;
 `finalize` does not read the card's text for rules and never will, because a
 rule parsed out of a prompt is a rule a prompt can change.
 
+**Draft 2 (2026-09-13): every constant in the block is rendered from the
+definition's own field, never typed into the sentence.** The placeholder word
+list, the size cap, the sha's twelve-to-forty and the eight-character quote
+floor are printed by `Card()` out of the same fields `Check()` compares
+against, so a change to one moves both; and test 20 holds a **golden of the
+rendered block per kind**, byte for byte, beside the one-to-one walk — the
+walk proves the sentences and the checks correspond, and only the golden
+proves a sentence still says the number the check uses. A sentence whose
+number a person edited by hand turns the golden red, which is the whole point
+of pinning it.
+
 The block for a `READ`, as `contract --kind READ --label pr-1018` prints it
 (the wording is the definition's; this is what a worker sees):
 
@@ -1432,11 +1598,22 @@ The block for a `READ`, as `contract --kind READ --label pr-1018` prints it
 4. checked  ## Findings: one line per finding, `- <HIGH|MEDIUM|LOW|MINOR|NIT> <file>:<line> — "<quote>" — <what to do>`.
             The quote is text copied from that file at that line in your clone, never retyped; `...` may elide the middle.
             HOLD needs at least one finding. findings=<n> equals the number of finding lines. A finding with no quote is rejected.
-5. checked  Cite only files you opened. The harness records what you opened; a citation of a file you did not open is rejected.
+5. checked  Cite only files you opened. The run log the machinery keeps OUTSIDE your directory records what you opened; a citation of a file you did not open is rejected.
 6. checked  Never begin a line with Working, TODO, PENDING, PARTIAL or DONE; a status word is not a result.
-7. checked  At most 65536 bytes.
-8. advice   Write your plan to <job>/PLAN.md before you start, and append each finding to RESULT.md the moment it exists.
+7. checked  Fetch nothing over the network: no toolchain, package, SDK or archive. What you need is in the job directory or at a `toolchain <name> at <path>` line above.
+8. checked  At most 65536 bytes.
+9. advice   Write your plan to <job>/PLAN.md before you start, and append each finding to RESULT.md the moment it exists.
 ```
+
+**Draft 2 (2026-09-13):** sentence 7 is the `FETCHED` check's sentence and it
+is in every kind's block, because the check runs for every kind; a card given
+`--needs-deps <command>` renders it with one clause more — *`<command>` is
+this repository's own dependency step and is allowed* — so the one exemption
+is in the card a worker reads and in the check, from the one definition
+(rule 24). Sentences 5, 7 and, for `PROBE` and `FIX`, the `UNRUN` sentence
+are the three the block renders as `advice` when this harness's records
+cannot be read at all or the pool log for the job is absent (`proof=shape`,
+rule 22).
 
 The `PROBE` block replaces sentences 2 to 5 with its own: line 1
 `RESULT: PROBE <label> at <sha> claim=<true|false|not-done>`; a `## Probe`
@@ -1465,30 +1642,55 @@ fault.
 |---|---|---|
 | `SHAPE` | line 1 matches the kind's grammar; every required section heading is present; every `--field` the card named is on line 1 as `key=value` | `FINALIZE REJECTED id=<id> class=SHAPE line=1: <60>; line 1 is RESULT: <KIND> <label> at <sha> <fields>` or `… line=-: section ## <name> missing; add it, empty if it must be` |
 | `REV` | the `at <sha>` is 12 to 40 hex and `git rev-parse --verify <sha>^{commit}` in the job's clone resolves to the clone's `HEAD`; the head's `rev:` equals it | `FINALIZE REJECTED id=<id> class=REV line=1: <60>; write git rev-parse HEAD of the clone at <job>/repo` |
-| `INCOMPLETE` | no field on line 1 is `-` | `FINALIZE REJECTED id=<id> class=INCOMPLETE line=1: <60>; the run ended before <field> was known; finish, then publish` |
+| `INCOMPLETE` | no field on line 1 that the kind requires at a clean exit is `-` — **draft 2**: the kind's definition names which may be, and a `FIX`'s `pr=` is one (rule 21); a killed run is never checked at all | `FINALIZE REJECTED id=<id> class=INCOMPLETE line=1: <60>; the run ended before <field> was known; finish, then publish` |
 | `INCONSISTENT` | `HOLD` has at least one finding; line 1's `findings=` equals the head's `findings:` equals the count of finding lines; a `FIX`'s `gate=` agrees with its `Gates` rows; a `PROBE`'s `claim=not-done` has its reason | `FINALIZE REJECTED id=<id> class=INCONSISTENT line=<n>: <60>; <the two numbers or words that disagree, named>` |
 | `PLACEHOLDER` | no line begins with `Working`, `TODO`, `PENDING`, `PARTIAL` or `DONE` (case-insensitive, optional `:`), and no required section is empty when the kind says it may not be | `FINALIZE REJECTED id=<id> class=PLACEHOLDER line=<n>: <60>; a status word is not a result` |
 | `UNGROUNDED` | every finding line has a quote of at least eight characters after normalization, and the whole quote — whitespace runs folded to one space, surrounding quote marks or backticks removed, each piece between `...` grounded in order — occurs in the named file at the named sha, and the named line or range lies within two lines of the match | `FINALIZE REJECTED id=<id> class=UNGROUNDED line=<n>: <60>; copy the line from <file> at <sha>, do not retype it` or `… ; <file> is not in the tree at <sha>` |
-| `UNREAD` | (`READ`, `REPORT`) every file a finding cites appears in the harness's own record of files it opened for the worker, or as an argument of a spawned command | `FINALIZE REJECTED id=<id> class=UNREAD line=<n>: <60>; open <file> before you cite it` |
-| `UNRUN` | (`PROBE`, `FIX`) every command a `Gates` row or the `## Probe` section names appears, after the same whitespace normalization, among the harness's spawned commands | `FINALIZE REJECTED id=<id> class=UNRUN line=<n>: <60>; run the gate you report, or mark it not run` |
-| `FETCHED` | no spawned command matches an entry of the `fetch_phrases` table | `FINALIZE REJECTED id=<id> class=FETCHED line=-: <the command's first sixty characters>; nothing is fetched; the card names the toolchain path` |
+| `UNREAD` | (`READ`, `REPORT`) every file a finding cites appears in `<pool>/logs/<job>.log`'s record of files the harness opened for the worker, or as an argument of a spawned command there — **draft 2**: that log is the supervisor's, outside the worker's write set, and an absent or unreadable one is `proof=shape`, not a reject | `FINALIZE REJECTED id=<id> class=UNREAD line=<n>: <60>; open <file> before you cite it` |
+| `UNRUN` | (`PROBE`, `FIX`) every command a `Gates` row or the `## Probe` section names appears, after the same whitespace normalization, among `<pool>/logs/<job>.log`'s spawned commands (**draft 2**, as `UNREAD`) | `FINALIZE REJECTED id=<id> class=UNRUN line=<n>: <60>; run the gate you report, or mark it not run` |
+| `FETCHED` | **draft 2**: no spawned command's `argv[0]` — path and `.exe` stripped, sub-command read for `cargo`, `go` and `git` — is an entry of the `fetchers` list, except the command the card declared with `--needs-deps`; never a substring of a command line; and a task text is rejected for this class at most once (rule 24) | `FINALIZE REJECTED id=<id> class=FETCHED line=-: <the command's first sixty characters>; nothing is fetched; the card names the toolchain path` |
 | `SIZE` | the published `RESULT.md` is at most the kind's cap (65536 bytes) or the card's `--result-max`, whichever is smaller, and at most 400 lines | `FINALIZE REJECTED id=<id> class=SIZE line=-: bytes=<n> max=<n>; cut to the findings; a page is not a transcript` |
 
-**What the harness's records are, and are not.** `UNREAD`, `UNRUN` and
-`FETCHED` read the tool-call records the harness writes into
-`<job>/harness.log` — the lines the harness itself emits when it runs a tool
-for the worker, recognized by the harness's own marks, exactly as rule 5 reads
-its refusal lines and the input-limit class reads its error lines. A sentence
-the worker wrote into its transcript is prose, and prose grounds nothing: a
-worker that types `I ran make test` has not run it. (2026-09-13, nova-tools#133:
+**What the harness's records are, and are not (draft 2, 2026-09-13).**
+`UNREAD`, `UNRUN` and `FETCHED` read the tool-call records of
+**`<pool>/logs/<job>.log`** — the log the supervisor opens before it spawns
+the harness and hands to the harness as its stdout, **outside the job
+directory and so outside the worker's write set** (rule 22). They do not read
+`<job>/harness.log`: that file is inside the one directory the worker writes,
+and a worker can put a tool-call line into it with one redirect or by pasting
+a transcript into its own answer. `<job>/harness.log` keeps its two readers,
+rule 5's refusal count and the input-limit class, because those are diagnoses
+and a diagnosis a worker can forge is a diagnosis, not a gate. The lines are
+recognized by the harness's own marks exactly as before. A sentence the worker
+wrote into its transcript is prose, and prose grounds nothing: a worker that
+types `I ran make test` has not run it. **What the move buys, exactly:** the
+worker cannot OPEN that path — it is in no `--write` and in no `--read` — so
+it cannot append a forged tool-call line to it, edit it, or truncate it; what
+still reaches it is whatever the harness itself writes to its own stdout,
+which is why the lines read are the ones carrying the harness's own marks and
+never a line of the model's prose. A harness that echoed a worker's text as
+its own tool-call record would be a harness whose marks this tool should not
+trust, and that is a property of the harness, named in its description, not a
+property this log can fix. **An absent or unreadable pool log is
+`proof=shape`** — the three checks are rendered `advice` in that job's card,
+skipped in `Check()`, and the job's `RUN DONE` says `proof=shape` — because a
+log the tool failed to keep must cost the tool its proof and never cost a
+worker its honest card. (2026-09-13, nova-tools#133:
 *a log the worker wrote into cannot ground the worker's own gate rows, so UNRUN
 reads spawned-command lines only.*) Which lines are tool calls is a property
 of the harness and is named in the worker description as the harness's
 `tool_call_marks`, shipped for OpenCode, additive like `input_limit_phrases`.
-A harness whose records this tool cannot recognize has `UNREAD`, `UNRUN` and
-`FETCHED` marked `advice` in the block and skipped in the check, and `RUN POOL`
+**Draft 2 (2026-09-13): they are two marks, not one** — `read` for the record
+of a file opened and `spawn` for the record of a command run — because
+`UNREAD` needs the first and `UNRUN` and `FETCHED` need the second, and the
+sampled OpenCode log marks a spawned command (`$ <cmd>`) plainly while the
+mark for a read must be read off the shipped build rather than assumed. A
+harness that names a `spawn` mark and no `read` mark has `UNREAD` alone
+rendered `advice`; a harness whose records this tool cannot recognize at all
+has all three `advice` in the block and skipped in the check. `RUN POOL` then
 says `proof=shape` rather than `proof=work`, so nobody believes a proof that
-was not made.
+was not made. A harness's marks are the first thing to verify when a pool is
+stood up: `contract` prints which of the three the description can prove.
 
 **What is not checked, stated plainly.** Reasoning. A HIGH whose quote exists
 and whose logic is inverted passes; a `findings: 0` on a question that needs an
@@ -1498,6 +1700,16 @@ line can answer and returns green and empty on the one that needs a grep). A
 sub-question that needs case-work is its own one-question job. The contract
 buys the coordinator the right to open only accepted results; it does not buy
 the right to believe them.
+
+**And proof of UNDERSTANDING is deliberately not here (draft 2, 2026-09-13).**
+nova-tools#133 carried an `## Asked` section — the worker restating what it
+was asked before answering — under Glenn's *prove work, understanding etc.*
+Work is provable by machinery: a file was opened, a command ran, a line exists
+at a sha. Understanding is not: a restatement is prose, and a check over prose
+is a check a worker satisfies by copying the card back, which is the
+placeholder hurt with more words. So the section is dropped from the contract
+rather than added silently, and what it was for stays with the mind's read —
+which is the same line this section draws around reasoning.
 
 ### The requeue, once
 
@@ -1513,7 +1725,12 @@ reject is final: `rejected=2`, `requeued=false`, `failed/`, two usage rows,
 `TRIAGE BATCH rejected=` counts the job once, and `RUN NOTE` names `requeue`
 with changed text. One task text is launched by the machinery at most twice,
 across rule 7's reap and this rule's reject together; the first automatic
-requeue of either cause is the last.
+requeue of either cause is the last. **Draft 2 (2026-09-13): the rule is
+stated once, in rule 7, and counted by one number, the sidecar's `attempt`
+(rule 12).** A job whose sidecar carries `from=` has had its one automatic
+requeue and gets no second, whichever cause spends it; `reaped=2` and
+`rejected=2` are two names for the same final ending, and `RUN NOTE` names
+`requeue` with changed text for both.
 
 **A rejected job never enters a window.** `triage` prints one `TRIAGE
 REJECTED` line naming the class and never a line of the file; the page holds
@@ -1560,36 +1777,61 @@ logs, each the same way).
 Before the first worker of a run with more than one pending task, the runner
 spawns the harness once, in a slot of its own that is freed afterwards, with
 the shipped canary prompt and the worker description's provider and model, and
-waits at most 60 seconds (the two-minute rule's half). `RUN CANARY
-harness=<path> after=<d> answer=PONG` and the dispatch proceeds; anything else
-— an exit before an answer, a refusal, an answer that is not the word — is `RUN
-REFUSED reason=canary: <the harness's own first error line>`, exit 2, no
+waits at most 60 seconds (the two-minute rule's half). `RUN CANARY harness=<path>
+harness_version=<one token|-> after=<d> answer=PONG-<the run's nonce>` and the
+dispatch proceeds; anything else — an exit before an answer, a refusal, an
+answer that is not this run's nonce — is `RUN REFUSED reason=canary: <the
+harness's own first error line, capped at `oneline.TailBytes`>`, exit 2, no
 worker started, every task still pending. The canary's usage is one row in
 `<pool>/usage/` under the id `canary-<UTC>`, so its cost is counted and never
-hidden. `--no-canary` skips it and `RUN POOL` says `canary=skipped`; a single
-pending task says `canary=-`.
+hidden. **Draft 2 (2026-09-13):** `--no-canary` skips the ping and the line
+says `answer=skipped`; a single pending task says `answer=-`; the line is
+printed either way, after `RUN POOL` and before the first `RUN START`,
+because the harness's version is a fact about every run and `RUN POOL` carries
+only what is known before anything has run.
 
 The harness is a **path**: the worker description's `harness` or `run
 --harness <path>`. A path is used as given, and this tool never searches
 `PATH` for a harness it was handed (the prototype's `LookPath` stands only for
 a bare name in a description written before this date, and `RUN POOL` prints
 the path it resolved to, so a pool that ran on whatever `PATH` found says so).
-`RUN POOL` carries `harness=<path> harness_version=<the one line the binary
-prints for --version, or ->`. (2026-09-13: eight cards died in one second on a
+`RUN POOL` carries `harness=<path>` and `RUN CANARY` carries
+`harness_version=`, taken from the description's `version_args` (default
+`--version`, additive like `input_limit_phrases`, since `--version` is one
+harness's spelling) and printed through `oneline.Field` as **one token**, `-`
+when the binary answers with none (**draft 2, 2026-09-13**: a `key=value`
+holding another binary's output is a field, and SPEC.md's Conventions say a
+field is one token). (2026-09-13: eight cards died in one second on a
 harness upgrade nobody had asked for; the pools now run a pinned 1.18.20, and
 the line that says which binary ran is the line a person reads first when a
 whole batch dies at once.)
 
 ### The specimens
 
-Three finished cards from 2026-09-13, read as data, are the fixtures the tests
-below run green: `SCOPE-SOURCES` (a `REPORT` with two card fields, 47 lines,
+Three finished cards from 2026-09-13, read as data, are the evidence behind
+these checks: `SCOPE-SOURCES` (a `REPORT` with two card fields, 47 lines,
 every citation a quote with `...` elisions), `1018-REPAIR` (a `FIX`, 109 lines,
 three findings closed, red and green pasted, a forty-hex sha) and
-`873-SUCCESSOR` (a `FIX`, 95 lines, an eight-hex sha — the one that goes red on
-`REV`, and the reason the contract says how long a sha is). Their task texts
-each said *line 1 must start with "RESULT: "* by hand, twice in two sentences;
-under this amendment that sentence is the tool's.
+`873-SUCCESSOR` (a `FIX`, 95 lines, an eight-hex sha — the reason the contract
+says how long a sha is). Their task texts each said *line 1 must start with
+"RESULT: "* by hand, twice in two sentences; under this amendment that
+sentence is the tool's.
+
+**Draft 2 (2026-09-13): they are the evidence, and the test's fixtures are
+written fresh from them — which is the answer to "which".** The specimens
+predate the contract and none of them satisfies it: their line 1s are
+`RESULT: SCOPE-SOURCES at 4f0dde8a… a-sources=11 b-sources=14`,
+`RESULT: 1018-REPAIR at 8c7de3c0… pr=#1018 findings-closed=3/3` and
+`RESULT: 873-SUCCESSOR cpp at 99dd5b64 …` — no `REPORT` or `FIX` kind word, no
+`findings=` or `gate=`, a label with a space in one, and no `## Head` with
+`findings:` in any, so under rules 8 and 15 all three are `plan-only` and the
+contract never runs on them. Under `testdata/` the fixtures are therefore each
+specimen's **body** under a line 1 and a `## Head` regenerated to the
+contract, and the test says in one comment that the bodies are a finished
+card's and the heads are the tool's. `873-SUCCESSOR` keeps its eight-hex sha,
+because it is the one fixture that must go red on `REV`. Rewriting the
+specimens themselves would be editing the record: they are what was produced
+before there was a contract, and that is the fact they carry.
 
 
 ## The numbers from today
@@ -1870,10 +2112,18 @@ harness binary on `PATH`, inside `t.TempDir()`, with no network, and each must
 be seen red before it is trusted.
 
 1. The `read-pr` prompt contains the owed-list sentence before any other
-   condition; a report with a finding that matches an owed item and is not
+   condition about the READING (**draft 2, 2026-09-13**: the result-line and
+   `PLAN.md` condition of rule 21 is condition 1 and the owed list is
+   condition 2, and the test reads the two by name and in that order); a report with a finding that matches an owed item and is not
    marked `dup:` is counted `dup=1 new=0`.
 2. A finding line with a verbatim quote and `file:line` counts as a finding;
    one without is counted `unquoted=1`, and the count prints on `TRIAGE BATCH`.
+   **Draft 2 (2026-09-13):** the unquoted fixture is one of the two shapes the
+   contract does not reach — a report with no head, whose finding lines
+   `triage` counts anyway, or a pool whose `RUN POOL` says `proof=shape` —
+   because under `proof=work` a finding with no quote is `UNGROUNDED` and its
+   report never reaches a count (rule 2); and a third case pins that: an
+   accepted report's batch line says `unquoted=0`.
 3. The prompt contains the append-as-found sentence; a fake worker that writes
    three findings a second apart and is killed after the second leaves a report
    with two finding lines, and `RUN KILLED findings=2` and `triage` both say 2.
@@ -1890,7 +2140,10 @@ be seen red before it is trusted.
 7. Each job's clone path is under its own job directory and no two jobs share
    one; a worker that sleeps past its deadline is killed, `requeued=true
    reaped=1`, runs again, is killed again, `requeued=false reaped=2`, and lands
-   in `failed/`; the dispatcher exits at `--hours` with the injected clock.
+   in `failed/`; **draft 2 (2026-09-13):** the sidecar's `attempt` is `1` then
+   `2` and no third launch happens whatever the second ending is — a job
+   requeued for a reap and then REJECTED is final at once, which test 23 pins
+   from the other side, and both read the one sentence in rule 7; the dispatcher exits at `--hours` with the injected clock.
 8. `TestCompletionIsEvidenceNotCount`: eight jobs — three with findings, one
    completed review with `findings: 0` and no finding lines, one completed
    `probe-row` with `findings: 0` and one item `not done` with its reason,
@@ -2120,21 +2373,41 @@ be seen red before it is trusted.
     one with the classes `Check()` can emit for that kind, both walked from
     the one definition; a mutation that adds a check to `Check()` without a
     sentence, or a `checked` sentence without a check, turns the test red;
+    **draft 2 (2026-09-13): and a GOLDEN of the rendered block per kind, byte
+    for byte, under `testdata/`**, because the walk is satisfied by
+    construction and cannot see what a sentence SAYS: the golden is what goes
+    red when the placeholder word list, the 65536-byte cap, the twelve-to-forty
+    hex range or the eight-character quote floor is changed on one side only,
+    and every one of those is rendered into the sentence from the field
+    `Check()` compares against, never typed twice; a `--needs-deps "npm ci"`
+    card renders sentence 7 with its one extra clause and has its own golden;
+    and each `checked` sentence has one fixture pair, a report that passes it
+    and a report that fails only it;
     `add --kind READ` puts the printed block in `<job>/PROMPT.md` byte for
     byte; `add` without `--kind` is exit 2 naming the flag; `--template
     read-pr --kind FIX` is `ADD REFUSED` naming both; a source test finds no
     regular expression over `RESULT.md` outside `internal/swarm/contract.go`.
 21. `TestLineOneIsTheResult`: the prompt names `<job>/PLAN.md` for the plan
-    and does not say *top of RESULT.md*; `template --name result` prints a
+    and does not say *top of RESULT.md* — **draft 2 (2026-09-13): in all
+    three places the tool writes it**, `internal/swarm/worker.go`'s prompt and
+    the `read-pr`, `probe-row` and `fix-card` templates of
+    `internal/swarm/templates.go`, each asserted by name, and a source test
+    over the package finds the words *top of RESULT.md* nowhere; a `FIX`
+    whose line 1 ends `pr=-` after a clean exit is **not** `INCOMPLETE` while
+    the same line with `gate=-` is; `template --name result` prints a
     line 1 beginning `RESULT: `; a report whose line 1 is `# <task>` is
     `SHAPE line=1`; a `READ` whose line 1 carries `verdict=-` after a clean
     exit is `INCOMPLETE`; a `READ` killed at its deadline with `verdict=-` is
     `RUN KILLED` with its findings counted and is never `REJECTED` (a kill is
     a kill); `findings=3` on line 1 with `findings: 2` in the head is
     `INCONSISTENT` naming both numbers.
-22. `TestFinalizeRejectsByMachinery`, one fixture red per class and the three
-    2026-09-13 specimens green (`SCOPE-SOURCES`, `1018-REPAIR`) or red on the
-    named class (`873-SUCCESSOR`, `REV`): a `HOLD` with zero findings is
+22. `TestFinalizeRejectsByMachinery`, one fixture red per class. **Draft 2
+    (2026-09-13): the fixtures are written fresh** — each of the three
+    2026-09-13 specimens' body under a line 1 and a `## Head` regenerated to
+    the contract, since none of the specimens as they stand carries a kind
+    word, a `findings=` or a head, and all three are `plan-only` before any
+    check runs (**The specimens**). So `SCOPE-SOURCES` and `1018-REPAIR` are
+    green and `873-SUCCESSOR`, keeping its eight-hex sha, is red on `REV`: a `HOLD` with zero findings is
     `INCONSISTENT`; `Working: clone…` as a line is `PLACEHOLDER` and a finding
     quoting `swarm.Pending` is not; a quote of `SPEC.md:213-214` that wraps
     two lines is grounded, a quote retyped with one character changed is
@@ -2143,18 +2416,34 @@ be seen red before it is trusted.
     piece, a quote of seven characters is `UNGROUNDED` as too short; a
     citation of a file the fake harness's tool-call records never opened is
     `UNREAD`, and the same path written in the worker's prose does not ground
-    it; a `Gates` row `pass` for a command absent from the spawned-command
+    it; **draft 2 (2026-09-13): the records the checks read are
+    `<pool>/logs/<job>.log`'s**, and a job whose `<job>/harness.log` is
+    planted with a perfect set of tool-call lines for a file it never opened
+    is still `UNREAD` (the mutation that reads the job's own log turns this
+    red); a job whose pool log is absent, and one whose pool log is
+    unreadable, are **not** rejected at all — `RUN DONE … proof=shape`, the
+    shape checks having run and the three proof checks declared not run; a `Gates` row `pass` for a command absent from the spawned-command
     records is `UNRUN`, and the same command typed in prose does not ground
-    it; a spawned `curl` of an archive in the `fetch_phrases` table is
-    `FETCHED`; a 65537-byte report is `SIZE`; the checks fire in the stated
+    it; **draft 2 (2026-09-13):** a spawned `curl` of an archive is `FETCHED` by
+    its `argv[0]`, while `go install ./cmd/nova-swarm`, `git fetch origin
+    pull/241/head:pr241` and a finding line quoting the words *brew install*
+    are not; a card given `--needs-deps "npm ci"` whose job ran `npm ci` is
+    `RUN DONE … fetched=npm`, not a reject, and the same job without the flag
+    is `FETCHED`; a task text rejected once for `FETCHED` and rejected a
+    second time only for `FETCHED` ends `RUN DONE … fetched=<program>`; a 65537-byte report is `SIZE`; the checks fire in the stated
     order (a fixture failing two checks names the earlier); every reject is
-    exactly one line, in the sidecar as `rejected=<CLASS>`, in the usage row
-    as `end=rejected`, with `REJECTED` beside the report copy, the job in
-    `failed/`, `RUN DONE result=rejected`, and `TRIAGE BATCH rejected=1` with
+    exactly one line, in the sidecar as `rejected=<CLASS>` beside
+    `attempt=<n>`, in the usage row as `end=rejected` (**draft 2**: written
+    by `finalize` before the report copy and before the move, and the row is
+    written once), with `REJECTED` beside the report copy, the job in
+    `failed/`, **exactly one `RUN` line for the job and it is `RUN REJECTED`**
+    — no `RUN DONE` (draft 2, rule 11) — and `TRIAGE BATCH rejected=1` with
     no line of the file in the page; `result --id` is `RESULT REFUSED`
     naming the class and `--anyway`, and with `--anyway` prints the bytes
     exactly; a harness with no `tool_call_marks` renders `UNREAD`, `UNRUN` and
-    `FETCHED` as `advice`, skips them, and `RUN POOL` says `proof=shape`.
+    `FETCHED` as `advice`, skips them, and `RUN POOL` says `proof=shape`; a
+    harness with a `spawn` mark and no `read` mark renders `UNREAD` alone as
+    `advice` and still runs `UNRUN` and `FETCHED` (draft 2).
 23. `TestRejectedIsRequeuedOnceThenFinal`: a fake worker whose first result
     is a placeholder and whose second is the contract's: the first is `RUN
     REJECTED attempt=1 requeued=true`, the new task's first line is `Your
@@ -2165,10 +2454,19 @@ be seen red before it is trusted.
     tasks=2`; a job requeued once for a reap (rule 7) and then rejected is
     final at once (`requeued=false`), and the reverse order likewise: no task
     text is ever launched a third time by the machinery, pinned by the fake
-    harness's launch count; `RUN NOTE` names `requeue`.
+    harness's launch count **for that task's job ids** — **draft 2
+    (2026-09-13): the canary's launch (rule 25) is counted separately and is
+    not a launch of any task text**, which the test asserts by running the
+    same schedule with and without `--no-canary` and getting the same
+    per-task count; the sidecar's `attempt` is the one counter, `1` then `2`,
+    whichever cause spends it; `RUN NOTE` names `requeue`.
 24. `TestNothingIsFetched`: the prompt contains the wall paragraph with every
     named temptation, the no-fetch sentence, and one `toolchain <name> at
-    <path>` line per mapped toolchain or the no-toolchains line; `add --needs
+    <path>` line per mapped toolchain or the no-toolchains line; **draft 2
+    (2026-09-13):** `--needs-deps "npm ci"` renders its clause into the
+    block's fetch sentence and into the check, and `contract` prints the
+    `fetchers` list, so a caller can read what would be rejected before
+    queuing; `add --needs
     dart` against a description with no `dart` entry is `ADD REFUSED` naming
     the toolchain and the wall, exit 1, and nothing is queued; a mapped
     toolchain whose path is under no `read_roots` entry is refused at load;
@@ -2178,14 +2476,24 @@ be seen red before it is trusted.
 25. `TestCanaryAndPinnedHarness`: two pending tasks and a fake harness that
     exits 1 at start: `RUN REFUSED reason=canary:` with the harness's first
     error line, exit 2, both tasks pending, no slot file left; a fake harness
-    that answers `PONG`: `RUN CANARY … answer=PONG`, then the dispatch, and
-    one usage row `canary-<UTC>`; a fake harness that answers anything else
-    is refused; one pending task runs with no canary and `RUN POOL
-    canary=-`; `--no-canary` prints `canary=skipped`; `run --harness <path>`
-    with a path that does not exist is exit 2 naming it and never falls back
-    to `PATH`; `RUN POOL` carries `harness=<the path given>` and
-    `harness_version=<the fake's --version line>`; the canary's 60-second
-    bound ends a harness that never answers, with the injected clock.
+    that answers the run's own nonce: `RUN CANARY … answer=PONG-<the nonce>`,
+    then the dispatch, and one usage row `canary-<UTC>`; a fake harness that
+    answers anything else is refused. **Draft 2 (2026-09-13):** a fake
+    harness that ECHOES ITS PROMPT is REFUSED — the test that fails without
+    the nonce, since the prompt holds the expected answer under any
+    fixed-word canary — and one that prints a tool-call line after its answer
+    still passes, the answer being the last stdout line that is not a tool
+    call; `RUN POOL` is the FIRST line of the run and carries
+    `harness=<the path given>` and `proof=`, with `harness_version=<what the
+    fake prints for `version_args`>` and the canary's answer on the `RUN
+    CANARY` line after it; a description naming `version_args` other than
+    `--version` is honoured, and a harness that prints a paragraph for it
+    yields one token through `oneline.Field`; one pending task runs with no
+    canary and `RUN CANARY … answer=-`; `--no-canary` prints
+    `answer=skipped`; `run --harness <path>` with a path that does not exist
+    is exit 2 naming it and never falls back to `PATH`; the canary's
+    60-second bound ends a harness that never answers, with the injected
+    clock.
 
 
 ## The work list
@@ -2200,11 +2508,15 @@ verb, and tests that pin all three by executing them.
 
 1. **`internal/swarm/pool.go`** — the pool directory: `pending/`, `running/`,
    `done/`, `failed/`, `reports/` (pages `<UTC>.md` and one `<job>/`
-   directory per finalized job), `scratch/`, `slots/`, `usage/`, the task id
+   directory per finalized job), `scratch/`, `slots/`, `usage/`,
+   `logs/` (**draft 2, 2026-09-13**: one `<job>.log` per job, written by the
+   supervisor, outside the worker's write set and outside the reclaimable
+   subtree — rule 22), the task id
    scheme (UTC stamp, label, random half, so two adds in one second cannot
    collide — `nova-bus`'s id lesson), the sidecar file with `files`,
-   `requeued`, `reaped`, `from`, `batch`, `tokens`, `launch`, `malformed`
-   and the verdict, the atomic claim by rename, the kernel lock on
+   `requeued`, `reaped`, `from`, `batch`, `tokens`, `launch`, `malformed`,
+   `attempt` (**draft 2**: the one counter for the at-most-twice rule, rule 7,
+   whatever ended the previous attempt) and the verdict, the atomic claim by rename, the kernel lock on
    `run.lock` (dispatcher exclusion only; slot transitions take
    `slots.lock`, item 3), the one automatic re-queue of a reaped job, and `finalize`:
    the usage file, then the report copy or its marker under
@@ -2237,7 +2549,11 @@ verb, and tests that pin all three by executing them.
    its own nonce under `slots.lock` (never `run.lock`), abort on any other
    content with no harness spawned and `<job>/aborted.json` written, fsynced
    and renamed **before** exit 2, `survivors` counted rather than assumed,
-   spawn the harness in its group, hold the
+   spawn the harness in its group **with
+   `<pool>/logs/<job>.log` as its stdout — opened by the supervisor, outside
+   the job directory, the proof-of-work log of rule 22 (draft 2, 2026-09-13;
+   `supervise.go:88` opens `<job>/harness.log` today and keeps doing so for
+   rule 5's refusal count, which is a diagnosis and not a gate)** — hold the
    deadline
    and the budget sampling (rule 13), write `<job>/exit.json` as the
    completion evidence, refuse a hand-typed invocation. Tests: the identity
@@ -2249,7 +2565,14 @@ verb, and tests that pin all three by executing them.
 4. **`internal/swarm/worker.go`** — the worker description (strict decode: an
    unknown field is a refusal), the slot refresh (one way, copy), the harness
    config written with the variable's **name**, the prompt assembly, the
-   harness log read for refusal lines after the run. Tests: the generated
+   harness log read for refusal lines after the run. **Draft 2
+   (2026-09-13): the prompt's plan sentence changes here.**
+   `worker.go:533` writes *Write what you are about to do at the top of
+   RESULT.md BEFORE doing it, append as you go, and stop.*, which fights rule
+   21's line 1; it becomes *write your plan to `<job>/PLAN.md` before you
+   start, append each finding to RESULT.md the moment it exists, and stop*,
+   and a test asserts the words *top of RESULT.md* appear nowhere in the
+   package (test 21). Tests: the generated
    config contains the variable name and not the value; the prompt contains
    the deadline, the job directory, the file budget, the read-or-write sandbox
    sentence, the append-as-found sentence and the no-bus sentence; demanded
@@ -2260,7 +2583,13 @@ verb, and tests that pin all three by executing them.
    line.
 6. **`internal/swarm/templates.go`** — the three task templates and the
    `RESULT.md` template, as embedded text, each with its conditions and the
-   number that produced it. Tests: `template --name` prints each; `add
+   number that produced it. **Draft 2 (2026-09-13): all three task templates
+   are amended here in this same change** — `templates.go:39` (`read-pr`
+   condition 5, *the plan belongs at the top*) and `templates.go:46`
+   (`probe-row` condition 1, *at the top of RESULT.md*) fight rule 21, and
+   each template gains the result-line condition and the `PLAN.md` sentence
+   as **The task templates** now prints them; `fix-card` gains *commit before
+   every gate run*. Tests: `template --name` prints each; `add
    --template` wraps a task and the result contains every condition.
 7. **`internal/swarm/result.go`** — the `RESULT.md` parser: the three states,
    the Per item and Gates tables, `Left owed`, `One line`, the finding lines
@@ -2307,15 +2636,29 @@ verb, and tests that pin all three by executing them.
 13. **`internal/swarm/contract.go`** (2026-09-13) — the four kind definitions
     as one Go value each; `Card()` and `Check()` rendered from them; the line-1
     grammar; the whole-quote grounding after normalization with `...` pieces;
-    the harness tool-call reader shared with rule 5's refusal reader and the
-    input-limit reader (`tool_call_marks`); the ten classes in order; the one
+    the tool-call reader (`tool_call_marks`, **draft 2**: a `read` mark and a
+    `spawn` mark, reading **`<pool>/logs/<job>.log`** — the shape of the
+    reader is shared with rule 5's refusal reader and the input-limit reader,
+    which keep reading `<job>/harness.log`, and an absent or unreadable pool
+    log renders the three proof checks `advice` and prints `proof=shape`);
+    the ten classes in order, with `INCOMPLETE` reading the kind's
+    may-be-dash fields and `FETCHED` matching `argv[0]` against the
+    `fetchers` list with the `--needs-deps` exemption; the one
     reject line; the `REJECTED` marker; the requeue with the line prepended
-    and the at-most-twice rule across rule 7 and rule 23. Tests: demanded
-    tests 20 to 23; the three specimens as fixtures under `testdata/`.
+    and the at-most-twice rule counted by the sidecar's `attempt` (rule 7).
+    Tests: demanded
+    tests 20 to 23; the per-kind goldens of the rendered block and the
+    fixtures written fresh from the three specimens' bodies, under
+    `testdata/`.
 14. **`internal/swarm/canary.go`** (2026-09-13) — the one ping before a
     dispatch, its 60-second bound, its usage row, `--no-canary`; the harness
-    as a path with no `PATH` search when given; `harness_version` on `RUN
-    POOL`; the `toolchains` map and `--needs` refusal at `add`; the wall
+    as a path with no `PATH` search when given; **draft 2 (2026-09-13): the
+    per-run nonce the answer must carry, the answer taken as the last stdout
+    line that is not a tool call, and the `RUN CANARY` line — printed on
+    every run — carrying `harness_version` (from the description's
+    `version_args`, through `oneline.Field`) and the answer, so `RUN POOL`
+    stays the first line and carries only what is known before anything
+    runs**; the `toolchains` map and `--needs` refusal at `add`; the wall
     paragraph and the `refused=` tail on `RUN DONE`. Tests: demanded tests 24
     and 25.
 
