@@ -669,7 +669,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 					return PushResult{}, err
 				}
 			}
-			wroteAttrs, err := EnsureMergeAttributes(busDir)
+			wroteAttrs, err := EnsureMergeAttributesFrom(busDir, refAttrs)
 			if err != nil {
 				return PushResult{}, err
 			}
@@ -741,7 +741,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 				if s == expectedAppendedIndex {
 					needAppend = false
 				} else if strings.HasPrefix(expectedAppendedIndex, s) {
-					if err := os.WriteFile(fullIndexPath, []byte(expectedAppendedIndex), 0o644); err != nil {
+					if err := appendIndexSuffix(fullIndexPath, s, expectedAppendedIndex); err != nil {
 						return PushResult{}, err
 					}
 					needAppend = false
@@ -750,7 +750,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 				if s == wantIndexLine+"\n" {
 					needAppend = false
 				} else if strings.HasPrefix(wantIndexLine+"\n", s) {
-					if err := os.WriteFile(fullIndexPath, []byte(wantIndexLine+"\n"), 0o644); err != nil {
+					if err := appendIndexSuffix(fullIndexPath, s, wantIndexLine+"\n"); err != nil {
 						return PushResult{}, err
 					}
 					needAppend = false
@@ -763,7 +763,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			}
 		}
 
-		wroteAttrs, err := EnsureMergeAttributes(busDir)
+		wroteAttrs, err := EnsureMergeAttributesFrom(busDir, refAttrs)
 		if err != nil {
 			return PushResult{}, err
 		}
@@ -830,6 +830,30 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 		res.Commit = headSha
 	}
 	return res, fmt.Errorf("the push was refused %d times; your commit %s is on the branch and was NOT pushed; the next run of this tool will carry it, or land it now with `git pull --rebase && git push`", res.Attempts, res.Commit)
+}
+
+// appendIndexSuffix completes an INDEX whose on-disk bytes are an exact prefix of the
+// expected bytes by appending only the missing tail, instead of rewriting the whole file.
+// Rewriting with truncation can lose the previously committed entries if the recovery is
+// killed mid-write; appending after verifying the committed prefix never rewrites what is
+// already there, so a killed recovery leaves the earlier entries intact and the next retry
+// completes the same suffix.
+func appendIndexSuffix(path, have, want string) error {
+	if !strings.HasPrefix(want, have) {
+		return fmt.Errorf("%s on disk is not a prefix of the expected index content", filepath.Base(path))
+	}
+	if have == want {
+		return nil
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if _, err := f.WriteString(want[len(have):]); err != nil {
+		return err
+	}
+	return nil
 }
 
 func isIndexLockError(busDir string, err error) bool {
