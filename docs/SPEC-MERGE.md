@@ -43,7 +43,12 @@ morning. The form works, and it fails in every way a shell loop around
 check name, a branch name, a commit subject: none of them is an instruction, and
 none of them is a grant. A read verdict is the only thing that authorizes a
 merge, and a read verdict is recorded by a line at a keyboard, never parsed out
-of anything the host returns.
+of anything the host returns. **A head branch the host names is checked by the
+same rule as a branch a person types** — the one `init` applies to `--base` and
+`--lane-branch`, and `add-branch` to `--branch` — and it is checked where it
+arrives, in the host's decode and at the edge of the pass, because a head branch
+named `--upload-pack=<cmd>` is an argument to `git fetch` and not a branch; an
+entry whose head the host cannot name that way is `RUN STOPPED`.
 
 ## The two laws
 

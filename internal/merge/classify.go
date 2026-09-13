@@ -52,6 +52,16 @@ func (p *Pass) classify(e *Entry, baseSHA string, res *Result) Classification {
 			p.record(e, c)
 			return c
 		}
+		// The SAME rule as a typed branch, at the edge where the host's answer arrives
+		// in the pass (security#30 finding 5). GH's decode checks it too; this is the
+		// check that holds for every Host, and it stands BEFORE the re-merge fetch and
+		// the build's fetch, which are the two places a head branch reaches git argv.
+		if err := ValidRefName(pr.HeadRef); err != nil {
+			c.State = StateUnknown
+			c.Detail = fmt.Sprintf("the host names its head branch %q, which is not a name this tool hands to git: %s", pr.HeadRef, err)
+			p.stopped(e, c, res)
+			return c
+		}
 		c.Author, c.HeadRef, c.URL, c.Subject = pr.Author, pr.HeadRef, pr.URL, pr.Subject
 		e.OID = pr.HeadOID
 		e.Head = pr.HeadRef
