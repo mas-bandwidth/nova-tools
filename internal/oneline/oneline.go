@@ -179,6 +179,14 @@ const TailBytes = 500
 // and one rune is raised to hold them, because this package does not shorten a record
 // out of existence.
 func Cap(s string, n int) string {
+	// A non-positive ceiling is the one case the arithmetic below cannot honour without
+	// indexing past the tail: it drops the budget to one, and one past a one-byte tail is
+	// out of range. Raise it to the smallest ceiling that can hold the mark and one rune,
+	// exactly as the too-small case already does, so an exported call with n <= 0 is
+	// defined and bounded rather than a panic. Every n >= 1 is untouched.
+	if n < 1 {
+		n = 1
+	}
 	if len(s) <= n {
 		return s
 	}

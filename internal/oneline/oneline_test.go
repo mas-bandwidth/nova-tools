@@ -309,3 +309,19 @@ func TestCapOnInvalidUTF8(t *testing.T) {
 		t.Errorf("Escape over a capped invalid tail is not one line")
 	}
 }
+
+// L13: Cap is exported, and a non-positive ceiling on a one-byte tail indexed s[1] past
+// the end and panicked. It must come back with a defined, bounded result instead.
+func TestCapNonPositiveIsBoundedNotAPanic(t *testing.T) {
+	for _, s := range []string{"x", ""} {
+		for _, n := range []int{0, -1, -100} {
+			got := Cap(s, n)
+			if n <= 0 && s == "x" && got != "x" {
+				t.Errorf("Cap(%q, %d) = %q, want the shortest bounded result %q", s, n, got, "x")
+			}
+			if s == "" && got != "" {
+				t.Errorf("Cap(%q, %d) = %q, want the empty string it already handled", s, n, got)
+			}
+		}
+	}
+}

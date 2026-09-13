@@ -433,13 +433,11 @@ func TestLinksDanglingSymlinkMdIsNamedFailure(t *testing.T) {
 	wantFailures(t, asFailures, []string{"dangling.md", "unreadable"})
 }
 
-// SPEC (links): existence is checked with os.Stat, which FOLLOWS symlinks —
-// "a target that is a symlink counts as resolving exactly when the symlink
-// does. Links asserts navigability, not provenance — that stricter posture
-// belongs to attest" (which refuses symlinks outright). Pin the deliberate
-// contrast: a relative link that resolves THROUGH a .md symlink is LINKS OK,
-// and a change that Lstat's the target here is a change of posture, not a fix.
-func TestLinksTargetResolvingThroughSymlinkIsOK(t *testing.T) {
+// L11: one tool, one policy. os.Stat followed a symlink here while attest resolves with
+// EvalSymlinks and refuses ANY symlinked component, even one that resolves inside the
+// tree. links now takes attest's stricter posture: a link that resolves only through a
+// symlink is a finding, not a pass.
+func TestLinksRefusesATargetThroughASymlink(t *testing.T) {
 	dir := t.TempDir()
 	writeTree(t, dir, map[string]string{"a.md": "[via](alias.md)", "real.md": "x"})
 	if err := os.Symlink(filepath.Join(dir, "real.md"), filepath.Join(dir, "alias.md")); err != nil {
@@ -449,14 +447,16 @@ func TestLinksTargetResolvingThroughSymlinkIsOK(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(broken) != 0 {
-		t.Errorf("a target that is a symlink resolves exactly when the symlink does; got %v", broken)
+	var asFailures []Failure
+	for _, b := range broken {
+		asFailures = append(asFailures, Failure{b.File + ":" + b.Target, b.Reason})
 	}
+	wantFailures(t, asFailures, []string{"a.md", "alias.md", "symlinked"})
 	if checked != 1 {
-		t.Errorf("checked = %d, want 1", checked)
+		t.Errorf("checked = %d, want 1: the link is still checked, then refused", checked)
 	}
 	if mdFiles != 3 {
-		t.Errorf("mdFiles = %d, want 3: the symlinked .md is walked and read through the link", mdFiles)
+		t.Errorf("mdFiles = %d, want 3: the symlinked .md is still walked as a file", mdFiles)
 	}
 }
 

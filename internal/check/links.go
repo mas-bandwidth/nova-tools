@@ -130,8 +130,16 @@ func checkFileLinks(root, mdPath string) (checked int, broken []BrokenLink) {
 			}
 			checked++
 			if reason == "" {
-				if _, statErr := os.Stat(resolved); statErr != nil {
+				// One tool, one policy: attest resolves the real path and refuses ANY
+				// symlinked component, even one that resolves inside the tree. A
+				// symlink that resolves is still a symlink, so a real path that is not
+				// the path as written is a finding, not a pass.
+				real, evalErr := filepath.EvalSymlinks(resolved)
+				switch {
+				case evalErr != nil:
 					reason = "does not exist"
+				case real != resolved:
+					reason = "symlinked path component; symlinks are never followed"
 				}
 			}
 			if reason != "" {
