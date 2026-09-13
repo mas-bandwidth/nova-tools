@@ -790,7 +790,7 @@ DIFF OK kind=<day|session> from=<d or id> to=<d or id> rows_from=<n> rows_to=<n>
 DIFF REFUSED: <reason>
 FRICTION OK at=<stamp> who=<name> gap=<label> tool=<name|-> tokens=<n> rough=<0|1> wall=<d> receipt=<id|-> issue=<host/owner/repo#n|-> rows=<n> file=<path>
 FRICTION REFUSED: <reason>
-FRICTIONS GAP gap=<label> tool=<name|-> count=<n> tokens=<n> rough=<n> wall=<d> usd=<n|-> issues=<n> latest=<stamp>
+FRICTIONS GAP gap=<label> tool=<name|-> count=<n> tokens=<n> rough=<n> wall=<d> usd=<n|-> unpriced_rows=<n> issues=<n> latest=<stamp>
 FRICTIONS MORE kind=gap shown=<n> total=<t> nova-tokens frictions … --max 0
 FRICTIONS OK gaps=<n> rows=<n> tokens=<n> rough=<n> wall=<d> usd=<n|-> issues=<n> since=<date|-> rates=<file|-> verified=<date|-> unpriced_rows=<n> at=<stamp> build=<id>
 FRICTIONS REFUSED: <reason>
@@ -1312,8 +1312,9 @@ remedy line. The rules are numbered on from rule 21.
     bench's mutable file out of another's, while a retained record's origin is
     inside the record. There is no `--all` and no "today": a clock never
     chooses what is uploaded, for the reason rule 12 gives. The verb reads the
-    contribution's files and writes nothing under `--out`, `--v1-day` or
-    `--batch`. It schedules nothing and wakes nothing; a LaunchAgent that runs
+    contribution's files and writes nothing under `--out`, `--v1-day`,
+    `--batch` or `--frictions` (draft 3: the fourth was missing from a list
+    rule 37 added a kind to). It schedules nothing and wakes nothing; a LaunchAgent that runs
     it is the bench's. `--ledger <dir>` is an existing clone the caller made
     and is authorized for; `publish` never clones, never creates a remote or a
     branch, never changes configuration or access, and acquires no credential,
@@ -1491,7 +1492,9 @@ remedy line. The rules are numbered on from rule 21.
       ([PROPOSAL-TOKENS-FORMAT.md](PROPOSAL-TOKENS-FORMAT.md): references may
       resolve to byte-identical objects already in the ledger). Then, by the
       **contribution id's own path** — the coverage envelope's path for a
-      batch, the day file's path for a v1 day:
+      batch, the day file's path for a v1 day, `frictions/<seat>.tsv` for a
+      frictions file (draft 3, which the first draft of this list left out of
+      the entry it added a case to):
       1. **Absent.** Nothing of this contribution is published yet. Write, in
          one commit, exactly the referenced files the fetched tree does not
          already hold, plus the coverage envelope (or the day file). An
@@ -1511,9 +1514,11 @@ remedy line. The rules are numbered on from rule 21.
          line says**; a different `rows_sha256` is
          `PUBLISH FAIL reason=differs`, exit 1, until `--supersede`, which
          replaces that one path in a new commit and prints
-         `state=superseded`. This is the only door in this machine through
-         which a destination's bytes are **replaced**, and `--supersede` is
-         the only key (rule 26). **Amendment, 2026-09-13 (rule 37), draft 2:
+         `state=superseded`. This is the only door through which a **v1 day's**
+         bytes are replaced (draft 3, narrowing a sentence that said *the only
+         door in this machine* and was made false four paragraphs later by the
+         frictions path's own `--supersede` replace), and `--supersede` is the
+         only key to either mutable path (rule 26). **Amendment, 2026-09-13 (rule 37), draft 2:
          a frictions file is the second door, and going through it replaces
          nothing.** For a `--frictions` contribution the comparison is rule
          26's draft-2 clause: a destination whose rows below its version line
@@ -1567,8 +1572,10 @@ remedy line. The rules are numbered on from rule 21.
       2; envelopes that do not validate are exit 1 `reason=malformed`; a
       schema this build has no validator for is exit 2 `refusing to guess`
       naming the validator (rule 29).
-    - **A fold that may be in flight is exit 2.** `<dir>/<day>.tsv.tmp`
-      present under `--v1-day`, or that directory's `fold.lock` held, is named
+    - **A fold or a receipt that may be in flight is exit 2** (draft 3, the
+      wording the exit table has carried since draft 2). `<dir>/<day>.tsv.tmp`
+      present under `--v1-day`, or that directory's `fold.lock` held by either
+      verb, is named
       and `publish` stops: half a day is not a day. The lock is probed by
       opening `fold.lock` **without** `O_CREATE` and asking for it without
       waiting, so an absent lock file is not a held lock and the probe creates
@@ -1635,7 +1642,8 @@ remedy line. The rules are numbered on from rule 21.
     staged path **in that same directory** and one rename, and **pushes
     nothing**. It is offered for a v1
     day and refused with `--batch`, whose public shape is a records-layer
-    decision nobody has made. `--public-repos <file>` is required with it: a
+    decision nobody has made, and with `--frictions` (draft 3, the refusal the
+    exit table and rule 37 already carry and this sentence did not). `--public-repos <file>` is required with it: a
     person's file, one exact repo name per line, no patterns, because a
     pattern can admit a repository nobody vetted; `#` and blank lines are
     skipped; `unknown`, `other` and `unattributed` may never appear in it, and
@@ -1682,6 +1690,11 @@ remedy line. The rules are numbered on from rule 21.
     - **a v1 day**: `rows_sha256`, the digest of every line **below** the
       version line — the rows, their tabs and the final newline, and nothing
       of the stamp.
+    - **a frictions file** (draft 3): `rows_sha256`, computed exactly as a v1
+      day's, over every line below its own version line. It is written here,
+      in the bullets that define an identity per kind, and not only in the
+      prose of the append transition below, because a list of two kinds under
+      a rule that governs three is a list a reader will trust.
     `inventory_sha256` is a separate digest over the sorted
     `<path> sha256=<hex>` lines of the paths a commit adds. It is **always
     written** in a commit's message and is **never an identity**: it is
@@ -2239,13 +2252,28 @@ contract. The rules are numbered on from rule 31.
     of a fold over the same source, so more is a wrong receipt, a shrunken
     day, or — the common case, and the reason the line carries its remedy
     first (draft 2) — a day folded before the session ended:
-    `nova-tokens fold --out <dir> --day <d>`); and a receipts file whose day
+    `nova-tokens fold --out <dir> --day <d>`). **A day folded before the
+    session ended is that common case and is not a finding** (draft 3): the
+    comparison is `EXCEEDS`, exit 1, only where the day file was written
+    **after** the session ended — its own version-line `at=` (rule 12) later
+    than the row's `ended` — and where the day file is the older of the two,
+    or has no row for that `(day, model, repo)` at all, it is the same one
+    `CHECK NOTE`, exit 0. Draft 2 repaired only the newer-day half of this
+    hurt: a bench that folds `--all` during the day has today's file already,
+    and every evening receipt then exceeded a stale cell and took the gate red
+    on the ordinary order. Both stamps are on disk, so the test is mechanical
+    and needs nothing the fold does not already write. And a receipts file
+    whose day
     has no day file is `CHECK ORPHAN date=<d>`, named, because a receipt for a
     day nobody folded is a number with nothing to check it against.
     **The ordinary order is a receipt when the session ends and a fold that
     night** (draft 2), so a receipts file for a day **newer than the newest
     day file present** is not an orphan and not a finding: it is one
-    `CHECK NOTE`, naming the days and `fold --day`, exit 0. `CHECK ORPHAN` is
+    `CHECK NOTE`, carrying `days=<n>` and the remedy `fold --day <d>`,
+    exit 0 — the **count** and the remedy, not a list of days, because a month
+    of receipts ahead of the fold would otherwise be a list cut by
+    `oneline.TailBytes` with no number beside it (draft 3, and every other
+    listing here carries its count). `CHECK ORPHAN` is
     a day at or before the newest day file whose own day file is absent — the
     fold went past it and did not write it, which is also `CHECK MISSING` for
     the day files themselves. **With no day file present at all there is no
@@ -2264,9 +2292,15 @@ contract. The rules are numbered on from rule 31.
     new.)
     **Demanded test.** A receipts file with sixteen columns is `CHECK FAIL`
     naming the line; two receipt ids for one `session` is `CHECK DUPLICATE`;
-    a receipt whose `input` exceeds the day file's cell is `CHECK EXCEEDS`
+    a receipt whose `input` exceeds the day file's cell **of a day file
+    stamped after the session ended** is `CHECK EXCEEDS`
     carrying `fold --day` as its remedy, while an equal one is clean and a `-`
-    on either side is not compared; two rows of one receipt id carrying two
+    on either side is not compared; the same receipt against a day file whose
+    version-line `at=` is **earlier** than the row's `ended` is one
+    `CHECK NOTE` carrying `days=1`, exit 0, and so is a receipt row whose
+    `(day, model, repo)` has no day-file row at all — the red being draft 2's
+    rule, under which a bench that folds `--all` during the day takes the gate
+    red every evening (draft 3); two rows of one receipt id carrying two
     `node` values are `CHECK SPLIT`, and two carrying two `stage` values are
     another, while a receipt spanning two models and two repos under one node
     and stage is clean (draft 2); a
@@ -2398,8 +2432,9 @@ contract. The rules are numbered on from rule 31.
 37. **A friction is a stumble with a cost and a record, and `frictions`
     sums per gap so the next tool is chosen by measured cost.** `friction
     add --frictions <file> --as <name> --gap <label> --tool <name|->
-    --attempted <text> (--receipt <id> --out <dir> | --tokens ~<n>) [--wall
-    <duration>] [--issue <host>/<owner>/<repo>#<n>]` appends one row to the
+    --attempted <text> (--receipt <id> --out <dir> [--wall <duration>] |
+    --tokens ~<n> --wall <duration>)
+    [--issue <host>/<owner>/<repo>#<n>]` appends one row to the
     caller's **frictions file**: `at who gap tool attempted tokens rough
     wall receipt issue`, tab separated, first line
     `nova-tokens frictions v1 at=<stamp> build=<id>`. `gap` is `[a-z0-9-]+`,
@@ -2428,8 +2463,8 @@ contract. The rules are numbered on from rule 31.
     <file> [--rates <file> --out <dir>] [--since <date>] [--max <n>]` prints
     one
     `FRICTIONS GAP gap=<label> tool=<name|-> count=<n> tokens=<n> rough=<n>
-    wall=<d> usd=<n|-> issues=<n> latest=<stamp>` per gap, **tokens
-    descending**, capped, then `FRICTIONS OK gaps=<n> rows=<n> tokens=<n>
+    wall=<d> usd=<n|-> unpriced_rows=<n> issues=<n> latest=<stamp>` per gap,
+    **tokens descending**, capped, then `FRICTIONS OK gaps=<n> rows=<n> tokens=<n>
     rough=<n> wall=<d> usd=<n|-> issues=<n> since=<date|-> rates=<file|->
     verified=<date|-> unpriced_rows=<n>`. **A friction row carries one token
     sum and no model, so it cannot be priced from itself** (draft 2, where the
@@ -2440,8 +2475,12 @@ contract. The rules are numbered on from rule 31.
     construction. `--rates` therefore **requires `--out <dir>`** and is exit 2
     without it, the way `--scratch` follows `--opencode`; and a rough row, or
     a row whose receipt id is not under `--out`, prices to nothing and is
-    counted in `unpriced_rows=`. A gap's dollars are a lower bound, and the
-    line says in how many rows. It is a **report**, exit 0. **Why this
+    counted in `unpriced_rows=`. **`unpriced_rows=` is on `FRICTIONS GAP` as
+    well as on `FRICTIONS OK`** (draft 3): "a gap's dollars are a lower bound,
+    and the line says in how many rows" named a field only the count line
+    carried, so the per-gap line made the claim and could not support it. A gap
+    that priced no row prints `usd=-`, never `usd=0`, by rule 38's test for a
+    line that carries no `priced_tokens=`. It is a **report**, exit 0. **Why this
     verb is on `nova-tokens` and not `nova-board`.** A friction is a
     measurement before it is an obligation: its tokens and wall clock come
     from the receipts and readers this tool owns, its listing is a cost
@@ -2486,7 +2525,9 @@ contract. The rules are numbered on from rule 31.
     `--rates --out <dir>` pricing exactly the rows whose `receipt` id is under
     `--out` — its `usd=` equal to `cost`'s over those same receipts to the
     printed precision — with `unpriced_rows=` counting the rough rows and the
-    receipt-less ones, and `--rates` **without** `--out` exit 2 (draft 2);
+    receipt-less ones **on each `FRICTIONS GAP` as well as on `FRICTIONS OK`**,
+    and a gap of rough rows alone printing `usd=-` and never `usd=0`
+    (draft 3), and `--rates` **without** `--out` exit 2 (draft 2);
     `publish --frictions`
     lands `frictions/<seat>.tsv`, a second publish after one more `add` is
     `state=appended`, exit 0, with no `--supersede` and a commit message
@@ -2746,7 +2787,10 @@ nova-update adoption --bus <dir> --tools <file> --since <YYYY-MM-DD> [--tokens-o
 per line, `first-tokens` the comma-joined first tokens of that tool's output
 grammar (`TOKENS,REPORT,SUM,CHECK,SOURCES,PUBLISH,USAGE,COST,HOT,DIFF,
 FRICTION,FRICTIONS` for this tool, `USAGE` being the `receipt` verb's token
-since draft 2; `SEND,INBOX,RECEIPT,BUS` for nova-bus), and
+since draft 2, and `REPORT`, `CHECK` and `COST` among them being inert by the
+rule below rather than cut from it; `SEND,INBOX,RECEIPT,NAMES,BUS` for
+nova-bus, `NAMES` being SPEC.md's fifth verb token and missing from draft 2's
+example), and
 `questions` the URL of the issue holding the four questions for that tool (our
 #111 to #117 are an instance); `--since` bounds the evidence window, required,
 no default. **A first token claimed by two tools in the file is inert, not a
@@ -3324,7 +3368,9 @@ beside its rule; these ten lines are the index.
     `per_mtok` recomputed, no `--rates` prints dashes, an all-dash receipt is
     `tokens=0 dashes=5`, and no flag on `cost` filters by stage.
 34. A sixteen-column receipts file, two ids for one session, two `node` or
-    two `stage` values under one receipt id, a receipt above its day cell, a
+    two `stage` values under one receipt id, a receipt above the cell of a day
+    file stamped after its session ended (while an earlier-stamped day file, or
+    a missing day-file row, is one `CHECK NOTE` with `days=`, draft 3), a
     receipts file for a day the fold passed, and a stray under
     `receipts/` each print their line and exit 1; an equal or dashed cell is
     clean; a receipts file for a day newer than every day file, and any
