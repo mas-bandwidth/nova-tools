@@ -472,7 +472,7 @@ func grokSplit(turn map[string]interface{}) ([]records.ModelUsage, error) {
 // `single_reported_id.id` is the literal `primaryModelId`, not a single ID inferred from the
 // modelUsage split, so a split is never unioned into evidence for a top-level model. A
 // non-empty primary compatible with the split (none, or a single entry that is the primary)
-// is that ID with harness_reported; no primary is {null, unknown} whatever the split holds;
+// is that ID with harness_reported; no primary with at most one split entry is {null, unknown};
 // more than one split entry, or a non-empty primary that does not match a single split entry,
 // is {null, mixed} and the split is retained in model_usage without being counted again.
 // primaryModelId is a REPORTED harness identifier and never a raw usage counter, and it must
