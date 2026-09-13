@@ -605,7 +605,7 @@ to an earlier revision; malformed and cyclic data refused at load; a `#.` payloa
 the reader; a `:deps` cycle refused; a cancel request withdrawn and a cancel confirmed; a deep
 chain with no quadratic work (visit counts asserted); a lease past its deadline reads as
 unowned, its responsibility unchanged, and its release is not blocked; `:extend-once` once; a
-tentative lease reads `shared=false` until its clip is pushed; an invalid transition refused;
+lease reads `shared=false` until its clip is pushed; an invalid transition refused;
 a refused mutation leaving S, the journal and the indexes unchanged; `render --check` fails
 on one changed cell; **start once, run many** (zero parses and zero replays on unchanged
 indexed queries, counts asserted); incremental results equal a clean reconstruction of the
