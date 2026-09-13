@@ -770,6 +770,8 @@ func (r reporter) removeStaleIndexLock(t *testing.T) bool {
 
 // removeStaleBusLock performs the operator's repair on Windows where a killed
 // bus process cannot have its sentinel lock file dropped by the kernel.
+// This is an operator repair only; removing stale Windows sentinels in a test
+// does not demonstrate autonomous production recovery.
 func (r reporter) removeStaleBusLock(t *testing.T) bool {
 	t.Helper()
 	lock := filepath.Join(r.bus.checkout, ".git", "nova-bus.lock.held")
@@ -780,6 +782,40 @@ func (r reporter) removeStaleBusLock(t *testing.T) bool {
 		t.Fatal(err)
 	}
 	return true
+}
+
+type stageReceipt struct {
+	boundary    string
+	observed    bool
+	killedAlive bool
+	groupGone   bool
+	busSaid     string
+}
+
+func parseStageRecord(content string) stageReceipt {
+	var r stageReceipt
+	lines := strings.Split(content, "\n")
+	if len(lines) > 0 {
+		for _, f := range strings.Fields(lines[0]) {
+			parts := strings.SplitN(f, "=", 2)
+			if len(parts) == 2 {
+				switch parts[0] {
+				case "boundary":
+					r.boundary = parts[1]
+				case "observed":
+					r.observed = parts[1] == "true"
+				case "killed-alive":
+					r.killedAlive = parts[1] == "true"
+				case "group-gone":
+					r.groupGone = parts[1] == "true"
+				}
+			}
+		}
+	}
+	if len(lines) > 1 && strings.HasPrefix(lines[1], "bus said: ") {
+		r.busSaid = strings.TrimPrefix(lines[1], "bus said: ")
+	}
+	return r
 }
 
 // indexShape describes the lane INDEX the killed attempt left: a torn append of
@@ -847,6 +883,17 @@ func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached f
 		t.Fatalf("could not kill the reporter: %v", err)
 	}
 	<-done
+	gone := false
+	for until := time.Now().Add(2 * time.Second); time.Now().Before(until); {
+		if groupGone(c) {
+			gone = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !gone {
+		t.Fatalf("the reporter process group was not confirmed empty after kill")
+	}
 }
 func (r reporter) snapshotHasPending() bool {
 	b, err := os.ReadFile(r.snapshot)
@@ -942,7 +989,16 @@ func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.
 // It establishes an existing INDEX prefix, interrupts a real prepared send, interrupts
 // its production recovery append before confirmation, then retries to prove byte-identical
 // prior entries and exactly one new contribution.
-func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
+// twoPhaseAttempt executes one staged two-phase interruption:
+// Phase 1 kills the send at killAfterNote.
+// Phase 2 verifies the pending ID is absent from local INDEX before starting,
+// then kills the recovery append at killAfterIndex.
+// Both phases require verified live kills (killed-alive=true) and whole-group quiescence
+// (group-gone=true) before operator lock cleanup.
+// Phase 3 retries with the real binary and verifies byte-identical prior INDEX prefix
+// and exactly two published contributions.
+func twoPhaseAttempt(t *testing.T, attempt int) bool {
+	t.Helper()
 	r := newReporter(t, "v1.0.0")
 
 	// 1. Establish existing contribution and prior INDEX prefix
@@ -961,46 +1017,104 @@ func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 3. Phase 1: Interrupt during real prepared send (at killAfterNote)
-	wrap1, record1 := r.wrapperOnPath(t, killAfterNote)
+	// 3. Phase 1: Interrupt during real prepared send (at killBeforeNote)
+	wrap1, record1 := r.wrapperOnPath(t, killBeforeNote)
 	code, out, errs = r.send(t, wrap1)
 	if code != 1 || !strings.Contains(errs+out, "sent=uncertain") {
 		t.Fatalf("phase 1 interruption was not reported as uncertain: %d\n%s\n%s", code, out, errs)
 	}
 	b1, err := os.ReadFile(record1)
-	if err != nil || !strings.Contains(string(b1), "observed=true") {
-		t.Fatalf("phase 1 boundary was not observed: %v %s", err, string(b1))
+	if err != nil {
+		t.Fatalf("phase 1 wrapper left no record: %v", err)
 	}
+	r1 := parseStageRecord(string(b1))
+	if !r1.observed {
+		t.Fatalf("phase 1 boundary was never observed: %s", string(b1))
+	}
+	if !r1.killedAlive {
+		t.Logf("phase 1 kill missed live child on attempt %d: %s", attempt, string(b1))
+		return false
+	}
+	if !r1.groupGone {
+		t.Fatalf("phase 1 process tree failed to quiesce: %s", string(b1))
+	}
+
 	id := r.pendingID(t)
+
+	// Verify local INDEX invariant before phase 2: pending ID MUST be absent
+	localIndex1, err := os.ReadFile(filepath.Join(r.bus.checkout, r.bus.lane, "INDEX"))
+	if err != nil {
+		t.Fatalf("could not read local INDEX: %v", err)
+	}
+	if bytes.Contains(localIndex1, []byte(id)) {
+		t.Logf("phase 1 raced past note creation to INDEX append before death; retrying: %s", string(localIndex1))
+		return false
+	}
+	if len(strings.Split(strings.TrimSpace(string(localIndex1)), "\n")) != 1 {
+		t.Logf("phase 1 local INDEX has unexpected line count; retrying: %s", string(localIndex1))
+		return false
+	}
+
+	// Operator lock cleanup: only performed after confirmed group quiescence (groupGone=true above)
 	if r.removeStaleIndexLock(t) {
-		t.Log("phase 1 killed child left .git/index.lock; cleaned up before phase 2")
+		t.Log("phase 1 operator repair: removed stale .git/index.lock left by killed child")
 	}
 	if r.removeStaleBusLock(t) {
-		t.Log("phase 1 killed child left .git/nova-bus.lock.held; cleaned up before phase 2")
+		t.Log("phase 1 operator repair: removed stale .git/nova-bus.lock.held left by killed child")
 	}
-	// Verify phase 1 invariant: remote still has only the 1 prior note, and local INDEX has only 1 row
+
+	// Verify remote still has only the 1 prior note and 1 index row
 	if midNotes, midRows := r.bus.published(t); len(midNotes) != 1 || len(midRows) != 1 {
 		t.Fatalf("phase 1 prematurely published to remote: notes=%v index=%v", midNotes, midRows)
 	}
 
 	// 4. Phase 2: Interrupt production recovery append before confirmation (at killAfterIndex)
+	// Pending ID is proven absent from local INDEX at phase 2 entry, so killAfterIndex
+	// will observe the matching ID's newly appended line and kill before remote push.
 	wrap2, record2 := r.wrapperOnPath(t, killAfterIndex)
 	code, out, errs = r.send(t, wrap2)
 	if code != 1 || !strings.Contains(errs+out, "sent=uncertain") {
 		t.Fatalf("phase 2 interruption was not reported as uncertain: %d\n%s\n%s", code, out, errs)
 	}
 	b2, err := os.ReadFile(record2)
-	if err != nil || !strings.Contains(string(b2), "observed=true") {
-		t.Fatalf("phase 2 boundary was not observed: %v %s", err, string(b2))
+	if err != nil {
+		t.Fatalf("phase 2 wrapper left no record: %v", err)
 	}
-	if r.removeStaleIndexLock(t) {
-		t.Log("phase 2 killed recovery left .git/index.lock; cleaned up before final retry")
+	r2 := parseStageRecord(string(b2))
+	if !r2.observed {
+		t.Fatalf("phase 2 boundary was never observed: %s", string(b2))
 	}
-	if r.removeStaleBusLock(t) {
-		t.Log("phase 2 killed recovery left .git/nova-bus.lock.held; cleaned up before final retry")
+	if !r2.killedAlive {
+		t.Logf("phase 2 kill missed live child on attempt %d: %s", attempt, string(b2))
+		return false
+	}
+	if !r2.groupGone {
+		t.Fatalf("phase 2 process tree failed to quiesce: %s", string(b2))
 	}
 
-	// 5. Phase 3: Final retry runs to completion
+	// Verify local INDEX now contains the newly appended id
+	localIndex2, err := os.ReadFile(filepath.Join(r.bus.checkout, r.bus.lane, "INDEX"))
+	if err != nil {
+		t.Fatalf("could not read local INDEX after phase 2: %v", err)
+	}
+	if !bytes.Contains(localIndex2, []byte(id)) {
+		t.Fatalf("phase 2 was expected to append id %q to local INDEX before kill, but INDEX does not contain it:\n%s", id, string(localIndex2))
+	}
+
+	// Operator lock cleanup: only after confirmed group quiescence (groupGone=true above)
+	if r.removeStaleIndexLock(t) {
+		t.Log("phase 2 operator repair: removed stale .git/index.lock left by killed recovery")
+	}
+	if r.removeStaleBusLock(t) {
+		t.Log("phase 2 operator repair: removed stale .git/nova-bus.lock.held left by killed recovery")
+	}
+
+	// Remote still has only 1 note and 1 index row (kill landed before push to remote)
+	if mid2Notes, mid2Rows := r.bus.published(t); len(mid2Notes) != 1 || len(mid2Rows) != 1 {
+		t.Fatalf("phase 2 prematurely published to remote: notes=%v index=%v", mid2Notes, mid2Rows)
+	}
+
+	// 5. Phase 3: Final retry runs to completion with real binary
 	clearWrapper(t)
 	code, out, errs = r.send(t, r.bin)
 	if code != 0 {
@@ -1021,6 +1135,45 @@ func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
 	}
 	if !strings.Contains(finalIndexRows[1], id) {
 		t.Fatalf("second INDEX row does not name id %q: %s", id, finalIndexRows[1])
+	}
+	return true
+}
+
+// TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers closes Item 2 of #206:
+// It establishes an existing INDEX prefix, interrupts a real prepared send, interrupts
+// its production recovery append before confirmation, then retries to prove byte-identical
+// prior entries and exactly one new contribution.
+func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
+	for attempt := 1; attempt <= stagingAttempts; attempt++ {
+		if twoPhaseAttempt(t, attempt) {
+			return
+		}
+		t.Logf("two-phase interruption missed live window on attempt %d of %d; retrying", attempt, stagingAttempts)
+	}
+	t.Fatalf("two-phase interruption failed to observe both live kill boundaries in %d attempts", stagingAttempts)
+}
+
+// TestJoinInterruptionNegativeControlWithoutKillFails proves that the witness
+// strictly refuses an uninterrupted child completion: an observed boundary
+// without an actual live kill (killed-alive=false) fails the witness, proving
+// that an uninterrupted run cannot be reported as an interrupted recovery.
+func TestJoinInterruptionNegativeControlWithoutKillFails(t *testing.T) {
+	r := newReporter(t, "v1.2.3")
+	wrap, record := r.wrapperOnPath(t, killLostResult)
+	code, out, errs := r.send(t, wrap)
+	if code != 1 || !strings.Contains(errs+out, "sent=uncertain") {
+		t.Fatalf("negative control wrapper was not reported as failure: %d\n%s\n%s", code, out, errs)
+	}
+	b, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatalf("wrapper left no record: %v", err)
+	}
+	receipt := parseStageRecord(string(b))
+	if !receipt.observed {
+		t.Fatalf("expected boundary observed=true, got %s", string(b))
+	}
+	if receipt.killedAlive {
+		t.Fatalf("negative control must not report killed-alive=true: %s", string(b))
 	}
 }
 
