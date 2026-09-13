@@ -4216,6 +4216,19 @@ Its governing text is **[docs/SPEC-SWARM.md](SPEC-SWARM.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
+## nova-secrets — credentials for seats, pools and services
+
+One binary at the **credential layer**. It manages credentials sealed in a git
+store via age and sops — linking no direct cryptography, opening no sockets,
+storing no state of its own, and replacing its process under `RLIMIT_CORE = 0`
+to pass selected secrets into the child environment.
+
+Verbs: `exec`, `names`, `check`, `keygen`, `help`.
+
+Its governing text is **[docs/SPEC-SECRETS.md](SPEC-SECRETS.md)**, which is
+normative; the Conventions above apply to it unchanged and are not restated
+there, and nothing it says is restated here.
+
 
 ## What this harness is not
 

@@ -1,0 +1,151 @@
+package main
+
+import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+type keyPair struct {
+	privPath string
+	pubKey   string
+}
+
+func findSops(t *testing.T) string {
+	t.Helper()
+	if p, err := exec.LookPath("sops"); err == nil {
+		return p
+	}
+	if _, err := os.Stat("/opt/homebrew/bin/sops"); err == nil {
+		return "/opt/homebrew/bin/sops"
+	}
+	t.Skip("sops binary not found")
+	return ""
+}
+
+func findAgeKeygen(t *testing.T) string {
+	t.Helper()
+	if p, err := exec.LookPath("age-keygen"); err == nil {
+		return p
+	}
+	if _, err := os.Stat("/opt/homebrew/bin/age-keygen"); err == nil {
+		return "/opt/homebrew/bin/age-keygen"
+	}
+	t.Skip("age-keygen binary not found")
+	return ""
+}
+
+func genKey(t *testing.T, dir, name string) keyPair {
+	t.Helper()
+	ageKeygen := findAgeKeygen(t)
+	keyDir := filepath.Join(dir, "keys")
+	if err := os.MkdirAll(keyDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	privPath := filepath.Join(keyDir, name+".key")
+	cmd := exec.Command(ageKeygen, "-o", privPath)
+	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("age-keygen failed: %v, out: %s", err, out)
+	}
+	if err := os.Chmod(privPath, 0600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(privPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(line, "# public key: ") {
+			return keyPair{
+				privPath: privPath,
+				pubKey:   strings.TrimSpace(strings.TrimPrefix(line, "# public key: ")),
+			}
+		}
+	}
+	t.Fatalf("public key comment missing in %s", privPath)
+	return keyPair{}
+}
+
+func initGitStore(t *testing.T, storeDir string) {
+	t.Helper()
+	remoteDir := t.TempDir()
+	runCmd(t, "", "git", "init", "--bare", "-b", "main", remoteDir)
+	runCmd(t, storeDir, "git", "init", "-b", "main")
+	runCmd(t, storeDir, "git", "config", "user.name", "Test")
+	runCmd(t, storeDir, "git", "config", "user.email", "test@example.com")
+	runCmd(t, storeDir, "git", "remote", "add", "origin", remoteDir)
+}
+
+func commitAndPush(t *testing.T, storeDir string) {
+	t.Helper()
+	runCmd(t, storeDir, "git", "add", "-A")
+	st := runCmd(t, storeDir, "git", "status", "--porcelain")
+	if strings.TrimSpace(st) == "" {
+		return
+	}
+	runCmd(t, storeDir, "git", "commit", "-m", "sync")
+	runCmd(t, storeDir, "git", "push", "-u", "origin", "main")
+}
+
+func runCmd(t *testing.T, dir string, name string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(name, args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("command %s %v failed in %s: %v, out: %s", name, args, dir, err, out)
+	}
+	return string(out)
+}
+
+func sealFileWithSops(t *testing.T, sopsPath string, filePath string, ageKeys []string, content string) {
+	t.Helper()
+	if err := os.WriteFile(filePath, []byte(content), 0600); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"-e", "--age", strings.Join(ageKeys, ","), filePath}
+	cmd := exec.Command(sopsPath, args...)
+	cmd.Env = []string{"PATH=/usr/bin:/bin"}
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("sops encrypt failed: %v", err)
+	}
+	if err := os.WriteFile(filePath, out, 0600); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func buildNovaSecrets(t *testing.T) string {
+	t.Helper()
+	binPath := filepath.Join(t.TempDir(), "nova-secrets")
+	cmd := exec.Command("go", "build", "-o", binPath, ".")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("failed to build nova-secrets: %v, out: %s", err, string(out))
+	}
+	return binPath
+}
+
+func runNovaSecrets(bin string, args ...string) (stdout string, stderr string, exitCode int) {
+	var outBuf, errBuf bytes.Buffer
+	cmd := exec.Command(bin, args...)
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err := cmd.Run()
+	code := 0
+	if err != nil {
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			code = exitErr.ExitCode()
+		} else {
+			code = 1
+		}
+	}
+	return outBuf.String(), errBuf.String(), code
+}
