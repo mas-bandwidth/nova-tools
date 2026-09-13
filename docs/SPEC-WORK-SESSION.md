@@ -39,8 +39,10 @@ changes neither accepted S nor its journal. The same event cannot apply twice.
 This is a crash-recovery proposal, distinct from Glenn's required periodic clips.
 
 A clip captures a named local event boundary, fetches the upstream revision,
-reconciles changes since the session's base, validates the combined candidate,
-and writes a deterministic snapshot with the retained event history. Commit and
+checks it against the coordinator's expected shared base, validates the candidate,
+and writes a deterministic snapshot with the retained event history. An unexpected
+upstream work-state edit is an ownership/protocol conflict, not an invitation to
+merge concurrent coordinators. Intake requests are applied by the sole owner. Commit and
 push the resulting checkpoint. On success, record the new shared revision and
 which local events it contains. Later accepted events remain pending for the
 next clip. Do not discard recovery records before successful checkpointing.
@@ -54,12 +56,11 @@ reload/rebuild is a recovery or maintenance operation, not the normal verb path.
 Clip cadence is configurable; shutdown and coordinator handoff request a clip.
 A Git checkpoint is not required for every small mutation.
 
-Two local sessions cannot guarantee globally exclusive task claims while they
-are disconnected. The spec must distinguish an unshared tentative claim from a
-confirmed dispatch claim and define its synchronization protocol before claiming
-exclusive scheduling. A shared lease file plus periodic Git pushes alone does
-not solve this. Local recovery also does not guarantee another bench can recover
-unclipped events after total loss of the original bench.
+Only one coordinator may access the live work set, as specified below. A lease
+file plus periodic Git pushes cannot establish that exclusivity across benches.
+Local recovery also does not guarantee another bench can recover unclipped events
+after total loss of the original bench. The ownership and recovery mechanism must
+be decided and tested before automatic takeover is enabled.
 
 ## Required measurements and replays
 
@@ -72,8 +73,9 @@ unclipped events after total loss of the original bench.
   request: one accepted event, no lost or duplicated mutation.
 - Crash or disconnect during clip: recovery retains all accepted events and
   reports the last confirmed shared checkpoint honestly.
-- Two coordinators edit independent nodes and then the same dependency or lease:
-  reconcile the former; detect and preserve conflicts in the latter.
+- A second coordinator attempts to open the live S: refuse access. Transfer
+  ownership, then resume the former coordinator: reject its reads/writes and
+  side-effect requests under the old ownership generation.
 - Structural verbs update the tree and its evidence/scope history without manual
   source editing; the resulting ROADMAP remains reproducible.
 
@@ -193,3 +195,34 @@ captured. Report imported, linked, eligible, absorbed and unresolved separately;
 retain batch checkpoints and provenance so interruption or retry does not lose
 records or duplicate work. The prototype must exercise interruption and a source
 edit during migration before it is trusted with removal.
+
+## One coordinator, one live reader/writer
+
+Glenn's explicit rule, superseding the earlier concurrent-coordinator proposal:
+there is exactly one active coordinator and one reader/writer of resident S via
+nova-work. Workers and friends submit results, evidence and requested changes to
+that coordinator. They do not open another live S or mutate it directly. Other
+readers use published, revision-labelled snapshots; these are not active planning
+replicas. The owner serializes accepted operations, including incoming messages,
+with stable request IDs and local expected revisions.
+
+Failover transfers the role rather than adding another coordinator. A standby
+may prepare from a published checkpoint but cannot activate its work set until
+ownership is transferred and the former owner is fenced out. Old processes and
+old delayed requests must not resume mutation, task dispatch or Git publication
+under an obsolete ownership generation. A stale heartbeat or unanswered ping is
+an availability signal, not proof of exclusive takeover authority.
+
+Proposed mechanism: an authoritative ownership record with atomic acquisition
+and monotonically increasing fencing generations, enforced at the live session
+and consequential dispatch/publication boundaries. The exact cross-bench backend
+is still a design decision. A local PID/file lock alone only protects one host;
+a Git lease file alone does not prevent two offline owners. If exclusive ownership
+cannot be established, do not activate a competing coordinator. Define ownership
+loss behavior and recovery of unshared accepted events explicitly, then test
+partition, crash, delayed delivery, controlled handoff and old-owner return.
+
+The singleton rule is Glenn's requirement; the fencing implementation is our
+proposal. It preserves automatic resilience as a goal without claiming that a
+safe cross-bench failover protocol has already been built. All older references
+to merging simultaneous coordinator edits are superseded by this section.
