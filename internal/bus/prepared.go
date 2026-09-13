@@ -648,7 +648,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 					if s == expectedAppendedIndex {
 						needAppend = false
 					} else if strings.HasPrefix(expectedAppendedIndex, s) {
-						if err := appendIndexSuffix(fullIndexPath, s, expectedAppendedIndex); err != nil {
+						if err := appendIndexSuffix(busDir, fullIndexPath, s, expectedAppendedIndex); err != nil {
 							return PushResult{}, err
 						}
 						needAppend = false
@@ -657,7 +657,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 					if s == wantIndexLine+"\n" {
 						needAppend = false
 					} else if strings.HasPrefix(wantIndexLine+"\n", s) {
-						if err := appendIndexSuffix(fullIndexPath, s, wantIndexLine+"\n"); err != nil {
+						if err := appendIndexSuffix(busDir, fullIndexPath, s, wantIndexLine+"\n"); err != nil {
 							return PushResult{}, err
 						}
 						needAppend = false
@@ -719,7 +719,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 			}
 			if string(diskBytes) != art.Note {
 				if strings.HasPrefix(art.Note, string(diskBytes)) {
-					if err := os.WriteFile(fullNotePath, []byte(art.Note), 0o644); err != nil {
+					if err := writeLaneFile(busDir, fullNotePath, []byte(art.Note), 0o644); err != nil {
 						return PushResult{}, err
 					}
 				} else {
@@ -741,7 +741,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 				if s == expectedAppendedIndex {
 					needAppend = false
 				} else if strings.HasPrefix(expectedAppendedIndex, s) {
-					if err := appendIndexSuffix(fullIndexPath, s, expectedAppendedIndex); err != nil {
+					if err := appendIndexSuffix(busDir, fullIndexPath, s, expectedAppendedIndex); err != nil {
 						return PushResult{}, err
 					}
 					needAppend = false
@@ -750,7 +750,7 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 				if s == wantIndexLine+"\n" {
 					needAppend = false
 				} else if strings.HasPrefix(wantIndexLine+"\n", s) {
-					if err := appendIndexSuffix(fullIndexPath, s, wantIndexLine+"\n"); err != nil {
+					if err := appendIndexSuffix(busDir, fullIndexPath, s, wantIndexLine+"\n"); err != nil {
 						return PushResult{}, err
 					}
 					needAppend = false
@@ -838,14 +838,14 @@ func SendPreparedArtifact(busDir, remote, branch string, p Prepared, art Prepare
 // killed mid-write; appending after verifying the committed prefix never rewrites what is
 // already there, so a killed recovery leaves the earlier entries intact and the next retry
 // completes the same suffix.
-func appendIndexSuffix(path, have, want string) error {
+func appendIndexSuffix(root, path, have, want string) error {
 	if !strings.HasPrefix(want, have) {
 		return fmt.Errorf("%s on disk is not a prefix of the expected index content", filepath.Base(path))
 	}
 	if have == want {
 		return nil
 	}
-	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := openLaneFile(root, path, os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}

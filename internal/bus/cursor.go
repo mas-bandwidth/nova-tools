@@ -104,9 +104,34 @@ func isLaneStateFile(name string) bool {
 // isLaneStateTemp reports whether a name is a lane state file's stranded temporary. Only
 // those four names: a `notes.tmp` somebody left in a lane is a stray like any other, and
 // this is not a general licence to leave files in a lane.
+//
+// The temporary carries a unique middle now (laneTempPath: a fixed name is a path a
+// hostile commit can plant a link at), so `INDEX.ab12cd34ef56.tmp` is the same stranded
+// temporary `INDEX.tmp` was and the lane walk steps over it exactly as before. The middle
+// is hex from the OS random source and nothing else, so a `notes.x.tmp` is still a stray.
 func isLaneStateTemp(name string) bool {
 	base, cut := strings.CutSuffix(name, TempSuffix)
-	return cut && isLaneStateFile(base)
+	if !cut {
+		return false
+	}
+	if isLaneStateFile(base) {
+		return true
+	}
+	stem, mid, found := strings.Cut(base, ".")
+	return found && isLaneStateFile(stem) && isHex(mid)
+}
+
+// isHex reports whether s is a non-empty run of lower-case hex digits.
+func isHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // Cursor is one reader's place to stand.
@@ -793,7 +818,7 @@ func AppendIndexLine(root string, e IndexEntry) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
+	f, err := openLaneFile(root, full, os.O_WRONLY|os.O_CREATE|os.O_APPEND, 0o644)
 	if err != nil {
 		return err
 	}
@@ -862,8 +887,21 @@ func replaceLaneFile(root, path, content string) error {
 	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
 		return err
 	}
-	tmp := full + TempSuffix
-	if err := os.WriteFile(tmp, []byte(content), 0o644); err != nil {
+	tmp, err := laneTempPath(full)
+	if err != nil {
+		return err
+	}
+	f, err := openLaneFile(root, tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString(content); err != nil {
+		f.Close()
+		os.Remove(tmp)
+		return err
+	}
+	if err := f.Close(); err != nil {
+		os.Remove(tmp)
 		return err
 	}
 	if err := os.Rename(tmp, full); err != nil {

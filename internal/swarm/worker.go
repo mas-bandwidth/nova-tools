@@ -576,7 +576,7 @@ var refusalMarks = []string{
 // the job directory by `reclaim`. A line whose key is wrong had no printed route to the
 // word `unauthorized` (the new-user audit, F5, 2026-09-11).
 func HarnessTail(jobDir string) string {
-	raw, err := os.ReadFile(filepath.Join(jobDir, "harness.log"))
+	raw, err := readRegular(filepath.Join(jobDir, "harness.log"))
 	if err != nil {
 		return ""
 	}
@@ -586,7 +586,10 @@ func HarnessTail(jobDir string) string {
 // CountRefusals reads a harness log and counts its own refusal lines. It reads the file in
 // one pass and never holds more than a line.
 func CountRefusals(path string) int {
-	f, err := os.Open(path)
+	// The log is the worker's own file, so it is opened the way every read of one is
+	// (regular.go): a FIFO here parked the dispatcher at the one read that was still bare,
+	// after the guarded ones beside it had just refused (Fable's cold read of #226).
+	f, err := openRegularRead(path)
 	if err != nil {
 		return 0
 	}

@@ -43,6 +43,11 @@ finding in it is a claim to be checked against the repository. This rule is
 stated here and is **nowhere in the code**, deliberately: a tool cannot enforce
 it, and a tool that pretended to would be the most dangerous thing in the pool.
 
+**A job's records are regular files: a `RESULT.md`, `harness.log`, `exit.json`
+or `note` that is a symlink or a FIFO is no record at all — read as `no-result`
+and never followed or waited on — and every record this tool writes into a job
+directory goes through a temporary whose name the worker cannot predict.**
+
 ## Freddy's swarm is frozen production, and this tool does not touch it
 
 `freddy-swarm.sh` and `run-freddy.sh` are **production and must not change**

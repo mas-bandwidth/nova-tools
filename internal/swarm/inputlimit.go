@@ -356,7 +356,7 @@ func InputLimitEnd(jobDir, end string, rc int, recorded string, extra []string) 
 	if !inputLimitedOutcome(end, rc) {
 		return end, ""
 	}
-	if raw, err := os.ReadFile(filepath.Join(jobDir, "harness.log")); err == nil {
+	if raw, err := readRegular(filepath.Join(jobDir, "harness.log")); err == nil {
 		if said, tooBig := InputLimited(raw, extra); tooBig {
 			return EndInputLimit, said
 		}

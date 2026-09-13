@@ -74,7 +74,7 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	limit := ""
 	end, limit = InputLimitEnd(r.jobDir, end, rec.RC, rec.Reason, in.Worker.InputLimitPhrases)
 	limited := false
-	if harnessLog, readLogErr := os.ReadFile(r.jobDir + "/harness.log"); readLogErr == nil && end != EndInputLimit {
+	if harnessLog, readLogErr := readRegular(r.jobDir + "/harness.log"); readLogErr == nil && end != EndInputLimit {
 		limited = RetriableRateLimit(harnessLog, in.Worker.InputLimitPhrases)
 	}
 	limited = rateLimitedOutcome(limited, end, rec.RC)
@@ -349,7 +349,7 @@ func (in RunInput) requeue(sc Sidecar, now time.Time) bool {
 // machinery never waits forever.
 func (in RunInput) waitBackoff(jobDir string) {
 	delay := Backoff(1, in.Backoff)
-	if raw, err := os.ReadFile(jobDir + "/harness.log"); err == nil {
+	if raw, err := readRegular(jobDir + "/harness.log"); err == nil {
 		if named, ok := ProviderRetryAfter(raw); ok {
 			delay = named
 		}
