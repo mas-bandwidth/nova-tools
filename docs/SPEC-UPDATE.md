@@ -608,4 +608,7 @@ grammar, evidence, exits and demanded test — is drafted in
 `nova-update`** (2026-09-13), and moves here whole, as a numbered rule and a
 work item, when that amendment is ratified. (Draft 2 cuts this note to the
 pointer and the date: restating the contract here was a second copy of it in
-the one place whose job is to stop the two drifting.)
+the one place whose job is to stop the two drifting.) **Draft 4**: that
+contract's `--tokens-out` flag is deleted, so this verb opens no file written
+by `nova-tokens` and reads the bus and `--reports` alone — SPEC-TOKENS's rule
+2, one reader per format, applies across tools as well as within one.
