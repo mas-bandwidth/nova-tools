@@ -1,7 +1,8 @@
 # Keep Codex snapshots without inventing a bill
 
 Status: source-owner proposal for [#154](https://github.com/mas-bandwidth/nova-tools/issues/154),
-awaiting friends' review. This packet supplies proposed sealed mapping manifests and
+with representation feedback from the friends incorporated. This packet supplies
+proposed sealed mapping manifests and
 synthetic acceptance data. It does not ship a decoder, resolve a real fork, or establish
 September coverage. The supported [response mapping](MAPPING-TOKENS-CODEX.md) keeps working
 independently. Its observations remain the preferred spend source.
@@ -98,6 +99,10 @@ A native ordinal is an integer in the unsigned64-bit domain. Never substitute a 
 line number, timestamp, counter value, collection run or path.
 
 Equal copies preserve observation identity and add only local collection receipts.
+Those collection receipts are sidecars outside the sealed observation envelope. They
+must not enter its body, canonical bytes or ID, including its native `receipt.ordinal`.
+Collecting identical source content on another bench therefore leaves the sealed
+observation byte-identical; collection provenance records where it was encountered.
 Equal values at different native ordinals remain different raw observations.
 Changed supported content under the same namespace/key retains a visible conflict;
 there is no newest-wins rule. A conflict in the total group need not fabricate a
@@ -121,7 +126,8 @@ spend coverage are separate: mapping these snapshots cannot make a bill complete
 ## Review and implementation acceptance
 
 The [fixture packet](../testdata/tokens/codex-snapshots/acceptance-cases.json) contains
-23 independently stated outcomes. Sources A/B/C exercise equal snapshots, exact copied
+23 independently stated outcomes, not an exhaustive source audit. Sources A/B/C
+exercise equal snapshots, exact copied
 source bytes and two physical ancestry boundaries. Their metadata records deliberately
 contain only extraction-relevant fields; they are synthetic decoder inputs, not a claim
 that a full Rust `SessionMeta` deserializer accepts the projection. The builder must also
@@ -141,6 +147,36 @@ executes every listed case with independent assertions and privacy sentinels. Mi
 compression/ancestry support must remain a named gap, not a complete supported case.
 Check both manifests and all expected envelopes with the actual core validator; this
 only proves the wire can carry them. It is not decoder or source-resolution proof.
+
+## Implementation seams and required checks
+
+The preferred-response decoder's `codexMeasure` in `internal/tokens/codex.go` applies
+response arithmetic and subset checks and can produce `ArithmeticMismatch`,
+`SubsetImpossible` and `DerivedTotal`. A builder must not route raw snapshots through
+those response-specific rules unchanged. Gate their use on the supported mapping's
+semantics; a `Spendable` check at the end is insufficient because misleading flags or
+derived values may already have been produced. Do not change the valid response
+mapping's arithmetic or impossible-subset checks while adding snapshot support.
+
+In addition to executing the packet's cases, implementation and integration owe:
+
+- Context-fill snapshots retain the provided total and last counters without a response
+  arithmetic mismatch or invented total. Missing snapshot totals stay missing. Check
+  response arithmetic and subset negative controls alongside these snapshot cases.
+- Collect one original and an equal copy on two benches. Sealed bytes and observation
+  IDs stay equal, two sidecar collection receipts remain distinguishable, and the copy
+  creates no new observation. Do not place collection metadata inside the envelope.
+- Join preferred responses and both snapshot namespaces in the views. Neither snapshot
+  counters nor repeated `model_context_window` values may increase normalized token or
+  cost totals. Use the mapping's normalized-spend support, field roles and overlap rules:
+  `non_spend` is excluded, and `subset_detail` is not an additional disjoint base total.
+  The existing field roles include `base_counter` and `subset_detail`; do not invent a
+  `spend` enum value. Confirm that a report containing only snapshots says normalized
+  spend is unsupported/unknown, not measured zero or complete spend coverage.
+
+These are future implementation checks. The wire-validation test in this proposal
+cannot establish decoder, sidecar publication or report behavior. The snapshot mapping
+manifests and hand-specified observation envelopes remain unchanged by this clarification.
 
 Finally join collection, publication and views under [#181](https://github.com/mas-bandwidth/nova-tools/issues/181):
 copied sessions, late events, corrections, missing periods and two benches must preserve
