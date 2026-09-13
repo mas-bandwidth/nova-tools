@@ -545,7 +545,7 @@ func TestSendPreparedProcessDeathHelper(t *testing.T) {
 	time.Sleep(10 * time.Minute)
 }
 
-func TestPreparedIndexDeathHelper(t *testing.T) {
+func TestPreparedIndexStagedPartialHelper(t *testing.T) {
 	if os.Getenv("GO_WANT_PREPARED_INDEX_DEATH_HELPER") != "1" {
 		return
 	}
@@ -568,9 +568,12 @@ func TestPreparedIndexDeathHelper(t *testing.T) {
 		os.Exit(2)
 	}
 
-	// Simulate a recovery killed mid-index-write: the note landed, but the INDEX rewrite
-	// (the entries already committed plus the new line) was cut short, leaving a strict
-	// prefix of the expected bytes on disk.
+	// Stage a partial INDEX from a killed child: save the note, then manually truncate the
+	// on-disk INDEX to a strict prefix of the bytes that would result from appending this
+	// entry, and signal readiness. The parent SIGKILLs this child before it does anything
+	// further. This does not interrupt production recovery mid-write: an actual
+	// production-interruption gate (a kill inside SendPreparedArtifact's own INDEX append)
+	// remains owed and is named in the PR.
 	if err := p.Save(busDir); err != nil {
 		os.Exit(3)
 	}
@@ -704,7 +707,12 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 	}
 }
 
-func TestPreparedIndexRecoveryRetainsEarlierEntries(t *testing.T) {
+// TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries stages a partial INDEX
+// from a killed child and verifies recovery from that state: earlier entries are retained and
+// the recovered entry is appended. It does not interrupt production recovery mid-write; an
+// actual production-interruption gate (a kill inside SendPreparedArtifact's own INDEX append)
+// remains owed and is named in the PR.
+func TestPreparedIndexRecoveryFromStagedPartialIndexRetainsEarlierEntries(t *testing.T) {
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -745,7 +753,7 @@ func TestPreparedIndexRecoveryRetainsEarlierEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cmd := exec.Command(os.Args[0], "-test.run=TestPreparedIndexDeathHelper")
+	cmd := exec.Command(os.Args[0], "-test.run=TestPreparedIndexStagedPartialHelper")
 	cmd.Env = append(os.Environ(),
 		"GO_WANT_PREPARED_INDEX_DEATH_HELPER=1",
 		"PREPARED_HELPER_BUS="+clone,
