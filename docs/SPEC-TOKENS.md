@@ -1133,11 +1133,11 @@ remedy line. The rules are numbered on from rule 21.
     housekeeping collects.
 
     **What is guaranteed about refs, exactly.** `HEAD`, every local branch,
-    the index and the working tree are unchanged. `fetch` does update the
-    chosen remote-tracking ref — `refs/remotes/<remote>/<branch>` — and
-    writes `FETCH_HEAD`, in an ordinary clone with a configured refspec
-    (measured, 2026-09-12, Stella), and those two are the **only** refs this
-    verb may move; no other remote-tracking ref, no tag, no note, no
+    the index and the working tree are unchanged. `fetch` runs with the empty
+    `--refmap=` (invocation 5), so it ignores the clone's configured fetch
+    ref mapping: publication never moves a named local ref or a named
+    remote-tracking ref, whatever `remote.<name>.fetch` is. The one ref it
+    writes is `FETCH_HEAD`; no remote-tracking ref, no tag, no note, no
     `refs/stash`. The demanded test asserts that promise and not the
     impossible one.
 
@@ -1150,7 +1150,7 @@ remedy line. The rules are numbered on from rule 21.
     | 2 | `-C <ledger> remote get-url --all <remote>` and `remote get-url --push --all <remote>` | the **effective** fetch and push destinations, rewriting applied, read only (rule 30) |
     | 3 | `-C <ledger> config --get user.name` and `config --get user.email` | whose name the ledger records, read from configuration and never auto-detected |
     | 4 | `-C <ledger> status --porcelain --untracked-files=all` | rule 24's dirty check |
-    | 5 | `-C <ledger> fetch --no-tags <remote> refs/heads/<branch>` | the head to build on |
+    | 5 | `-C <ledger> fetch --no-tags --refmap= <remote> refs/heads/<branch>` | the head to build on |
     | 6 | `-C <ledger> rev-parse FETCH_HEAD` | that head's object id |
     | 7 | `-C <ledger> ls-tree -r <sha> -- <path>…` and `cat-file blob <sha>` | what this contribution's paths already hold |
     | 8 | `-C <ledger> hash-object -w --no-filters --stdin` | one blob per new file, raw |
@@ -1205,9 +1205,19 @@ remedy line. The rules are numbered on from rule 21.
     blob whose bytes are the file's, and the same run without `--no-filters`
     fails the test. **The ref guarantee**: after a successful publish, a
     rejected one and a kill, `HEAD`, every local branch, the index and
-    `git status --porcelain` are unchanged, `refs/remotes/<remote>/<branch>`
-    is at the fetched head or where it was, and no other ref in the clone
-    moved. A clone with `user.email` unset is exit 2 naming it, with no object
+    `git status --porcelain` are unchanged, every named remote-tracking ref
+    is where it was, `FETCH_HEAD` alone may have changed, and no other ref in
+    the clone moved. (**Amendment, 2026-09-12 (rule 23).** The empty
+    `--refmap=` removes the verb's dependence on the clone's configured fetch
+    mapping rather than narrowing which authorized clones work, so the
+    demanded test adds a custom-refmap fixture: a clone whose
+    `remote.origin.fetch` is a custom mapping such as
+    `+refs/heads/*:refs/heads/*` must **publish successfully** with the
+    explicit `--refmap=` form, and every named local ref must be unchanged
+    afterwards — that clone is **not** refused because of its configuration.
+    The negative control is the same clone with `--refmap=` omitted, where the
+    custom mapping updates a local branch and the ref-preservation assertion
+    **fails**. Synthetic local clones only, no ledger.) A clone with `user.email` unset is exit 2 naming it, with no object
     written, **and the same on a bench whose hostname would give `git var` a
     plausible identity** — the red being an identity read through `git var`; a
     batch naming a file it does not reference, a symlink, or a mode other than
