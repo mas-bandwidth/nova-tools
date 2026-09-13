@@ -225,7 +225,15 @@ point 1), so an evidence event carries both, and an evidence event whose criteri
 store, so that no family's bus is named in the tool (5653970526). **A `note:` pointer is
 accepted on a heartbeat and on an attempt's `:usage`, never as evidence for `:done`**
 (5649089106: *status messages are not completion evidence*); rule 5 refuses it. **Resolution is a separate
-pass from validation** (Stella, point 2): `check` never fetches; `verify` fetches, under
+pass from validation, and resolving is not qualifying** (Stella, points 1 and 2, and her
+16:00Z finding 1): `verify` marks a pointer *verified* only when the thing it names
+**qualifies for its criterion** — a `run:` whose conclusion is success, a `pr:` merged at the
+named sha, a `test:` that passed at the named sha, a `commit:` that exists on the named
+branch, a `file:` whose sha matches — and *found-not-qualifying* otherwise, which counts as
+unverified; a pointer whose kind cannot qualify a criterion by itself (a `note:`, a file that
+merely exists) needs an attested review event, `:review-attest`, naming the reviewer, the
+criterion, the result pointer and the revision, or it stays unknown. `check` never fetches;
+`verify` fetches, under
 `--max-fetch <n>` and `--fetch-timeout <seconds>` (both required, as SPEC-BOARD requires
 `--gh-timeout`), through a cache at `--cache <path>` (required; no guessed path) keyed by
 pointer and carrying its verified-at stamp; `verify --offline` reports cached verdicts and
@@ -376,8 +384,11 @@ nova-work help
 
 **What a mutation does, stated exactly.** `node add`, `decompose`, `dep`, `axis`, `cell` and
 `responsible` are structure verbs: each appends one structure event and, where it changes a
-required set, one scope event in the same acknowledgement, so the scope revision moves with
-the structure. `decompose` is a `split` (decomposition, never discovery or completion). `take`,
+required set, one scope event, **as one request envelope**: one journal record holding both,
+written all-or-none, replayed all-or-none, answered with one `OK` line, and answered again
+with the same line on a retry of the same request id, so a crash between the two can never
+leave the tree changed with the denominator and revision unchanged (Stella, 16:00Z, finding
+2). `decompose` is a `split` (decomposition, never discovery or completion). `take`,
 `heartbeat`, `release`, `attempt`, `evidence`, `state`, `correct` and `event` append one event
 each. **The gate is one validation, of the resident S as it would be with the event applied**:
 the session evaluates the structural rules over the affected nodes and either journals and
@@ -623,7 +634,8 @@ version line is `internal/buildinfo`'s.
 Fixtures, each tiny, each a test: nested completion; a failed gate; a shared dependency
 counted once; unknown evidence; unverified evidence changing no recorded state and counting
 as unknown in every rollup; stale evidence counted as unknown; a `note:` pointer refused as
-evidence for done; a task split by `decompose` (both units printed, revision moved); scope
+evidence for done; a `run:` pointer to a failed run resolving and counting as unverified; a
+structure-plus-scope envelope crashed between its two events replaying all-or-none; a task split by `decompose` (both units printed, revision moved); scope
 expansion by `node add` (added since baseline visible, new rows at the bottom, `baseline-rows`
 printed); deferral (cannot raise the done count); reopening; a correction bumping the
 generation and an older attempt's result refused at `state --to done`; future work cannot
