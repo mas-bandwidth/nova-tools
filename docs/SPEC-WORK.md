@@ -1,11 +1,12 @@
-# nova-work — specification (DRAFT 22, 2026-09-13)
+# nova-work — specification (DRAFT 23, 2026-09-13)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
 what this document keeps. Sections marked *(Stella)* are hers; sections marked *(Rowan)* are
 mine; the rest is shared. Every requirement that is Glenn's cites its source so a reader can check the words: a
-nova-tools#177 comment by id, or one of the four bus notes in which Stella reports his live
-words of 2026-09-13 — stella-5adca9a1f09d (resident S, periodic clips, verbs for structure),
+nova-tools#177 comment by id, or one of the five bus notes in which Stella reports his live
+words of 2026-09-13 — stella-5adca9a1f09d (resident O, periodic clips, verbs for structure),
+stella-461d99ec092d (the root is COW: closed, open, working; C is history, W is a view in O),
 stella-deed78e54cb4 (link versus absorb, the initial import that loses no data),
 stella-0ace603bdc22 (one coordinator, one live reader/writer), stella-fe600103fa2e (*"the
 work set is the PRIMARY FORM"*, superseding 5653982211's hesitation), and Stella's two reviews, stella-ff217e98685c (five
@@ -22,16 +23,21 @@ record, and no count of them is kept in this sentence**: every whole read is a c
 #231 with its repairs beneath it, and each draft's own comment names by id the read it folds,
 so a number here can never go stale (drafts 1 to 4 were shaped by the HOLDs of 15:34Z, 15:47Z
 and 15:49Z; drafts 20 and 21 folded 5655371246, 5655806486, 5655806825, 5655903904 and
-5655905248, and this draft folds the two whole reads at efc26a2e, 5655987384 and 5655988102).
+5655905248; draft 22 folded the two whole reads at efc26a2e, 5655987384 and 5655988102; and this
+draft folds Glenn's root refinement of 23:36Z, stella-461d99ec092d, and his live word on the
+words and the letters that followed it).
 
-**One recursive work set, S.** Restricted Lisp data holds what is **desired** (the work:
+**One recursive work set, and its root is COW: closed, open, working.** The root is `(root C
+O)` — **C** the closed work, **O** the open work — and **W**, the working view, is a predicate
+within O and never a third branch, so `|W| ≤ |O|` always; *The root is COW* below is the whole
+of it. Restricted Lisp data holds what is **desired** (the work:
 repositories, streams, features, tasks, down to whatever depth is useful) and what is
 **observed** (events: structure changes, transitions, evidence, attempts, leases, heartbeats,
 scope changes). Everything **derived** — a task's current state, counts, percentages, views,
 plans — is computed and cached in memory and never written as authority; a roadmap table, an
-owner queue, a stream report and a percentage are each a **projection** of S at a named scope
+owner queue, a stream report and a percentage are each a **projection** of O at a named scope
 revision, and none of them is a second store. `ROADMAP.md` is regenerated, never edited; a
-hand-typed percentage is a bug (5653970526). **S is the primary form, in a persistent versioned repository** (Glenn, 2026-09-13, via
+hand-typed percentage is a bug (5653970526). **O is the primary form, in a persistent versioned repository** (Glenn, 2026-09-13, via
 stella-fe600103fa2e: *"the work set is the PRIMARY FORM"*, which supersedes #177 comment
 5653982211's *evaluate … only after … demonstrated*). What 5653982211 listed — lossless
 import/export, stable identity mapping, provenance retention, restart/replay and
@@ -48,27 +54,27 @@ disagree, one of them has a bug, and the tests decide which.
 
 | the failure, from the record | what closes it |
 |---|---|
-| a task disappears after a context loss, a priority change or a handoff (#177) | S is resident, journaled locally on every accepted mutation, and clipped to the repository; a node's `:id` is stable through every rename; every change is an event with an author and a stamp |
-| the work set reparsed on every command, so studying S cost a parse per question (Glenn, via Stella 15:49Z) | one load per session; verbs act on resident objects; an unchanged indexed query costs zero parses and zero replays |
-| two workers on one task, neither aware of the other (nova-board's 2026-09-10 morning) | one live **lease** per node; a second `take` is refused and names the holder; there is one coordinator and one live S, so the refusal is authoritative (Glenn, via Stella 15:53Z) |
+| a task disappears after a context loss, a priority change or a handoff (#177) | O is resident, journaled locally on every accepted mutation, and clipped to the repository; a node's `:id` is stable through every rename; every change is an event with an author and a stamp |
+| the work set reparsed on every command, so studying O cost a parse per question (Glenn, via Stella 15:49Z) | one load per session; verbs act on resident objects; an unchanged indexed query costs zero parses and zero replays |
+| two workers on one task, neither aware of the other (nova-board's 2026-09-10 morning) | one live **lease** per node; a second `take` is refused and names the holder; there is one coordinator and one live O, so the refusal is authoritative (Glenn, via Stella 15:53Z) |
 | a stored owner read as "working on it" while nothing moves | *responsible* and *working* are two facts: `:responsible` is durable accountability set by a person's word; *working-now* is a heartbeat inside a window (5654012267) |
 | a percentage no evidence supports; an average of fractions rounded to green (5653970526) | done needs evidence bound to the task's acceptance criteria and verified; language completion is green cells / applicable rows; cell progress shows its numerator and denominator |
 | the denominator moved and nobody saw it | every event that changes a required set increments the scope revision; a baseline is an event; additions append at the bottom; removals carry a reason; `percent` prints the baseline row count beside the current one (5654160320, 5653990830, 5649089106) |
 | an old attempt's result quietly satisfying a corrected task (5653982211) | a task carries a `:generation`; a `correct` event bumps it; evidence of an older generation cannot close the task |
-| studying S became pairwise work (5653973972, 5654049969) | counted containment is a forest, references are a graph; a fold visits each node and edge once over indexes built at load and updated incrementally; no transitive descendant sets are materialised; evidence fetching is a separate, bounded pass |
+| studying O became pairwise work (5653973972, 5654049969) | counted containment is a forest, references are a graph; a fold visits each node and edge once over indexes built at load and updated incrementally; no transitive descendant sets are materialised; evidence fetching is a separate, bounded pass |
 | a deferral or a cancellation counted as progress | `:deferred`, `:cancelled` and `:superseded` are scope events; they never enter the done count and the baseline denominator stays printed |
-| the roadmap table edited by hand and the data left behind | `render --check` fails on drift; the table lives between two markers and S owns it |
+| the roadmap table edited by hand and the data left behind | `render --check` fails on drift; the table lives between two markers and O owns it |
 | a hand-written change to structure with no record of who made it or why | structure is changed only by verbs, each an event with an author, a stamp and a reason |
 
 ## The execution model *(Rowan, on Stella's amendment; her sections below govern where they say more)*
 
-**There is exactly one active coordinator and one live reader/writer of S** (Glenn, via Stella
+**There is exactly one active coordinator and one live reader/writer of O** (Glenn, via Stella
 15:53Z: *"there must be one coordinator at a time. One reader/writer on the work set S in
 memory via nova-work"; "Otherwise, we have races"*). Friends and workers submit results, evidence
-and requested changes to that coordinator; they never open a second live S; other readers read
+and requested changes to that coordinator; they never open a second live O; other readers read
 published, revision-labelled snapshots. **The mechanism that makes the rule hold across benches is proposed for the pilot, on the
 substrate we already trust, and it fences MUTATION, not only publication.** The branch that
-holds S carries an ownership record (`OWNER`: the coordinator's name, a **generation**, a
+holds O carries an ownership record (`OWNER`: the coordinator's name, a **generation**, a
 **token** drawn at random when the generation was taken, the stamp it was taken, and
 **`until`**, the stamp the ownership lease expires). The token is written in two places and
 nowhere else: the `OWNER` record on the branch and the taking session's own journal, so
@@ -146,13 +152,13 @@ journal, and I hold the journal's lock (Stella's finding 1, comment 5654659093, 
    events go where every fenced session's go: `session export --into <path>` writes its
    request bundle, and the next owner — a `session start` that loads the edited snapshot whole
    and validates it, after `until` plus `--skew` or by handoff — applies it with `session
-   replay --from <path>`, each request validated fresh against the live S. **An owner that
+   replay --from <path>`, each request validated fresh against the live O. **An owner that
    cannot reconfirm before its `until` fences itself**: it refuses every write AND every read
    except `session status` and `session export`, which are how a fenced session is inspected
    and recovered and which **themselves exit 0 on a fenced session**, answering about the
    fence rather than suffering it (every other verb: exit 1, `fenced`, naming its generation
    and the tip's if known),
-   because a fenced session's resident S may be behind a new owner's and an answer from it
+   because a fenced session's resident O may be behind a new owner's and an answer from it
    would be a stale answer wearing a live one's clothes; it keeps its journal. Offline or
    partitioned, it fences at `until` without any network at all. So at no instant do two
    sessions accept mutations: the old owner is fenced by its clock at `until`, and a takeover
@@ -178,7 +184,7 @@ events shared; they are recovered by the export path below, never lost and never
 it does do is what Glenn's rule requires: one live reader/writer at a time, by the clock and
 the branch together, on no backend but git.
 
-A **session** is that coordinator's supervised, long-lived process, and it owns the one S.
+A **session** is that coordinator's supervised, long-lived process, and it owns the one O.
 **`session start` is the launcher and not that process**: it starts the session process, waits
 for its `SESSION OK` line, prints it, and exits with that line's exit — 0 when `findings=0`, 1
 for a red load — while the process it started stays up and serves reads, which is how a red
@@ -213,10 +219,10 @@ sitting and stops at its end is enough (Stella, *Keep the work set alive*).
 Every mutation is one typed event and carries a **request id**: `--request <id>` on every
 mutation verb, drawn by the caller (a friend's request arrives with one), or drawn by the tool
 and printed on the `OK` line when absent. The session validates the event against the current
-local revision over the resident S as it would be with the event applied, appends it with its
+local revision over the resident O as it would be with the event applied, appends it with its
 request id to the **local recovery journal**, acknowledges only after the journal is durable,
 then applies it to the resident objects, updates the affected indexes and invalidates the
-affected derived values. A failed validation changes neither S nor the journal. **A retry with a
+affected derived values. A failed validation changes neither O nor the journal. **A retry with a
 request id the journal already holds is answered by the same two-part test the dedup index
 below makes, never by the id alone**: where the retry's payload digest equals the digest the
 journal recorded for that id, it is answered with the original `OK` line and applies nothing,
@@ -251,12 +257,12 @@ replayed answer**: a retry whose id the index holds is refused `already applied`
 revision it was applied at, so the requester re-reads rather than acting twice, and no session
 — a successor after a handoff among them — ever applies one request id twice.
 
-**The repository branch that holds S has one writer too: the active coordinator.** A **clip**,
+**The repository branch that holds O has one writer too: the active coordinator.** A **clip**,
 the ownership commits of rules 1 and 2 above, the handoff commit below and `session stop`'s release commit are the only writes to it, and a clip: it names a local event boundary, fetches the upstream revision, and
 **refuses, `CLIP RACED`, by the one base predicate of rule 2 (`tip == base`, the check the
 reconfirm makes, not a second one)** — a moved upstream means a hand edit or a new
 owner's take, and either is a handoff or a reload, never a merge — then validates
-the resident S whole, writes one deterministic snapshot carrying the structure and the
+the resident O whole, writes one deterministic snapshot carrying the structure and the
 retained event history, commits and pushes under `--git-timeout <seconds>` with `--attempts
 <n>` (default 25 as the bus's; what an attempt retries here is the CAS push after a fetch
 shows the tip unchanged but the push raced the same owner's own reconfirm commit, the one
@@ -290,7 +296,7 @@ names — keeps
 its journal, and `session export --session <path> --into <path>` writes its accepted events since its base as a
 request bundle — each event with its request id, expected revision and payload — which the
 active coordinator applies with `session replay --from <path>`, one request at a time,
-validated fresh against the live S, refusing the stale ones by `--expect` and reporting each
+validated fresh against the live O, refusing the stale ones by `--expect` and reporting each
 verdict on its own line. Nothing is lost; nothing is merged without validation; the fenced
 session's unshared work is a file, not a claim. **A fenced session that dies before it exports
 leaves no journal a verb cannot read**, which is what *nothing is lost* would otherwise not
@@ -326,8 +332,10 @@ no flags; `--clip-every` and `--clip-after` are Rowan's spelling of her requirem
 claim here is only that they satisfy it.
 
 **Retention is explicit, and a snapshot has two parts: one bounded by `--retain`, and one that
-grows with the set's whole history.** The structure and the retained events are the first; the
-dedup index below is the second, and this document claims nothing wider — an earlier draft's
+grows with the set's whole history.** The structure and the retained events are the first; **the
+dedup index below and the closed index of C are the second** — two indexes that may not forget,
+one of request ids and one of settled items, named together here so a bench is sized by both —
+and this document claims nothing wider — an earlier draft's
 heading called the whole snapshot *bounded by construction* while its own index bullet said the
 index grows with history, and a reader who believed the heading would size a bench by `--retain`
 alone (Fable at 7472e545, 2026-09-13). `session start --retain
@@ -384,6 +392,15 @@ forward from:**
   the handoff makes (Stella 5655371246 item 2, Fable and Opus at d1b20f42, 2026-09-13: a
   successor starts with *its own journal*, so before this bullet the once-only promise ended at
   the handoff and a friend's retry applied a second time);
+- **one closed-index row per settled item of C** — the row the root section below enumerates:
+  its `:id`, `:under`, repository, kind, category, disposition, the state and generation it
+  settled at, its scope and source revisions, its required-leaf count at settle, the settle
+  event's revision, stamp, author and request id, and its evidence events' five fields. It is
+  the second part of this list that grows with the set's whole history rather than with
+  `--retain`, for the same reason the dedup index does: C is append-only and what it holds is
+  read from this row, never from a body, so an ask over C costs no archive read and a rollup
+  over a container whose members have long since finished costs no more than one whose members
+  have not;
 - **the lease log from each node's newest lease with no release and no handoff onward** —
   *live* would drop a lease past its deadline, and an expired unreleased lease is exactly what
   `stale` and `expired=` must still see — which is what `handoffs` answers from.
@@ -396,13 +413,15 @@ window and not by the set's age, `--at` reaches the boundary and no further, and
 whose archive file is absent answers every ask and runs every rule**, which is the test that
 keeps this paragraph honest. **A clip whose snapshot would exceed the session's own
 `--max-bytes` refuses**, and **the refusal prints all three numbers and names the remedy that can
-actually work**: `CLIP FAIL … : snapshot=<bytes> retained=<bytes> index=<bytes> past
+actually work**: `CLIP FAIL … : snapshot=<bytes> retained=<bytes> index=<bytes> closed-index=<bytes> past
 --max-bytes=<n>, <remedy>`, where `snapshot=` is the whole file the clip would write — the word
 means the whole file everywhere else in this document and is not narrowed here — `retained=` is
-the structure and the retained events, and `index=` is the dedup index (Fable and Opus at
-efc26a2e, 2026-09-13: two numbers were printed and the first was the whole file's name over a
-part's value). **The remedy branches on whether `--retain` can bring the total under the bound
-and never on which part is larger**: where the index alone is already past `--max-bytes` the
+the structure and the retained events, `index=` is the dedup index and `closed-index=` is C's
+(Fable and Opus at efc26a2e, 2026-09-13: two numbers were printed and the first was the whole
+file's name over a part's value; and a fourth number is printed here because a second index that
+may not forget arrived with the root's C branch and a remedy must name the part that overflowed).
+**The remedy branches on whether `--retain` can bring the total under the bound and never on
+which part is larger**: where the two indexes together are already past `--max-bytes` the
 remedy is `raise --max-bytes` alone, since no flag lowers an index that may not forget and no
 `--retain` can help; otherwise it is `lower --retain or raise --max-bytes`, since a shorter
 retention window makes the retained part smaller and a longer one never does. The one file a
@@ -411,9 +430,11 @@ names is worse than no remedy at all (Fable at 7472e545, 2026-09-13: the refusal
 `--retain` for an overflow `--retain` cannot shrink; Opus at efc26a2e, 2026-09-13: branching on
 the larger part told an operator with `index=55 retained=50` under a bound of 100 to find a
 bigger bench, when lowering `--retain` on his own keyboard would have done). **A removed subtree leaves the live snapshot the same way**:
-the snapshot's structure is the live tree, and a node removed by `node remove`, its subtree
+the snapshot's structure is O's tree, and a node removed by `node remove`, its subtree
 and their events are written into the archive by the first clip after their `:remove` event
-passes the retention boundary and into the snapshot's structure never again — so `--retain`
+passes the retention boundary and into the snapshot's structure never again — **their
+closed-index rows staying in the snapshot**, which is how a removal is still answerable, by id
+and by repository, after the archive is gone — so `--retain`
 bounds the live structure whatever has been removed from it, and the refusal above names a flag
 that moves the part that overflowed.
 
@@ -452,7 +473,7 @@ which bound and which file, never truncated. Unknown keys on a node
 are preserved and ignored, so a team may carry its own fields; an unknown `:type` is a
 refusal, because a type names the rules a node is checked by (5653990830).
 
-**One resident set, one journal, one snapshot.** S lives in memory in a supervised session (the
+**One resident set, one journal, one snapshot.** O lives in memory in a supervised session (the
 execution model, below): its **structure** — nodes, `:id`, `:type`, `:children`, `:deps`,
 `:acceptance`, `:responsible`, axes and cells — and its **log** — every event below — are both
 held there, both changed only through typed verbs, and both written to the repository only by a
@@ -530,7 +551,10 @@ they are distinct kinds:
   a private node or its descendants into an output file, and a public view that reaches one
   through a parent prints `private=<n>` and nothing of it (5653982211). A task has no stored worker; who is working
   on it is answered from leases only; who is responsible is `:responsible`, inherited down the
-  containment forest until overridden.
+  containment forest until overridden. A task may carry `:version "<text>"`, the name of the
+  release it ships — display data that names no rule, read by the `released=` field of the
+  disposition row below, so *what release contains this fix* is answered from the release task
+  that tracks it and never from a second store.
 - `:lease` — the ownership-of-execution record, below. *(The authors' proposal, not Glenn's.)*
 - `:event` — the log. **`:by` is the event's author on every kind and never anything else**;
   where an event names another node — a supersede's replacement — the field is
@@ -573,7 +597,7 @@ they are distinct kinds:
     `:default`, so a handed lease is a whole lease) — the lease log, below.
   - `:baseline`, `:discovery`, `:remove`, `:require`, `:defer`, `:cancel` (carrying
     `:evidence` that the worker stopped), `:reopen`, `:split`, `:supersede`, `:scope`, `:axis`,
-    `:source` — the scope log: a baseline records the required set of its node **as the tool
+    `:source`, `:settle`, `:revive` — the scope log: a baseline records the required set of its node **as the tool
     computed it at that moment**, member by member; a split names the new children; a
     supersede names `:superseded-by`; every one of them increments the node's scope revision,
     because the revision is the count of scope events, and each changes the required set by
@@ -584,7 +608,13 @@ they are distinct kinds:
     `:require` — `:to`, `:reason`; `:defer` — `:reason`; `:cancel` — `:evidence`, `:reason`;
     `:reopen` — `:reason`; `:split` — `:children`, `:reason`; `:supersede` — `:superseded-by`,
     `:reason`; `:scope` — `:coord`, `:in-scope` (`true` or `false`), `:reason`; `:axis` —
-    `:axis`, `:member`, `:reason`; `:source` — `:to`, `:reason`.
+    `:axis`, `:member`, `:reason`; `:source` — `:to`, `:reason`; `:settle` — `:disposition`
+    (`done`, `cancelled`, `superseded` or `removed`), `:reason`; `:revive` — `:reason`.
+    **`:settle` and `:revive` are the session's own half of another verb's envelope and are
+    outside the payload digest**, with `:stamp`, `:clock`, `:request` and `:generation-owner`:
+    the requester never sent one, the session derives it from the transition it accompanies, and
+    a digest that covered it would make two builds disagree about a field neither was given (the
+    root section below).
 
 **A revision moves on every scope event; a denominator moves only where the delta says.**
 This table is the per-kind required-set delta rule 11 checks, and the verb that may write
@@ -615,6 +645,8 @@ no cell while its cancel is still the roadmap's event (Fable and Opus at 7472e54
 | `:scope` | **none** — it takes a cell's coordinate out of (`--out-of-scope`) or back into (`--in-scope`) the named axis member's applicable rows, which is `percent`'s denominator and not a required set | none — the roadmap's revision moves, its set does not | `cell` only |
 | `:axis` | **none** — a member of an axis that is not the first is a column, and its applicable rows begin at its cells | none — the roadmap's revision moves, its set does not | `axis` only |
 | `:source` | **none** — it moves the node's source revision, which stales evidence, not membership | none | `source` only |
+| `:settle` | **none** — it moves the item from O to C, and a member that has finished is still a member: what takes one out of a set is the `:remove`, `:cancel` or `:supersede` in the same envelope, by its own row above | none — the node's revision moves, no set does | `state --to done`, `event --kind cancel`, `event --kind supersede` and `node remove`, each inside its envelope, and never `event --kind settle`, which is exit 2 |
+| `:revive` | **none** — it moves the item from C back to O, at `:todo` by the transition table | none — the node's revision moves, no set does | `event --kind reopen` inside its envelope, and never `event --kind revive`, which is exit 2 |
 
 **A roadmap's required set is the members of its first axis whose feature is live** — live
 meaning not removed, not cancelled and not superseded — **and the axis list is not the set**.
@@ -654,8 +686,10 @@ So a `:defer` that moved a denominator would be a deferral counted as progress, 
 is why it cannot be; and rule 11 has the per-kind arithmetic it needs rather than the claim
 that every scope event changes a required set. **`event --kind` carries only the kinds whose
 delta needs no structure change** — `baseline`, `discovery`, `defer`, `cancel`, `reopen`,
-`supersede` — and refuses `split`, `remove`, `require`, `scope`, `axis` and `source` at exit 2 naming the verb
-that writes each, because structure changes only by verbs: a scope-only `remove` would leave
+`supersede` — and refuses `split`, `remove`, `require`, `scope`, `axis`, `source`, `settle` and `revive` at
+exit 2 naming the verb that writes each — `settle` and `revive` naming the four verbs whose
+envelopes carry them, because a branch move with no work behind it would be a ledger entry
+nobody earned — because structure changes only by verbs: a scope-only `remove` would leave
 the node in its parent's `:children`, and rule 11 would go red on the next walk.
 
 **States and transitions, derived.** A task's current state is the `:to` of its newest
@@ -844,13 +878,146 @@ name reaching in. A lease with no
 `:deadline` or no `:default` is refused at write time: a deadline with no default is a wait
 with no end.
 
-**The root.** Every top-level child of S is a repository work set, `(:type :work-set :repo
+**The root is COW: closed, open, working.** The root is `(root C O)`, and its two branches are
+**C**, the closed work — everything that has settled, kept for good and never thrown away —
+and **O**, the open work — everything still to be done. **W**, the working view, is
+`(working O)`: a predicate over O, never a third branch, so `|W| ≤ |O|` always and nothing is
+in W that is not in O (Glenn, 2026-09-13 23:36Z, via stella-461d99ec092d, which supersedes the
+three-independent-state-branches shape of the note before it, and his live word the same night
+that fixes the letters and the words: the set this document called S is **O**, *open*, never
+*active*, because active is what W means; the done history is **C**, *closed*; W stays W).
+**Where the record quoted in this document says S it means O**; the quotations keep the word
+the record used, and *active rows* in *Counting* below is the roadmap denominator's own term
+and names no branch of the root. **This is a partition and not a second ledger**: C and O hold
+the same nodes, the same events, the same evidence and the same ids this document already
+defines, told apart by one derived fact, and no verb, count, rule or file below is duplicated
+for C (Glenn, 23:36Z: *reconcile this with the existing lease/state/event semantics, not a
+duplicate ledger*).
+
+**Every top-level child of O is a repository work set**, `(:type :work-set :repo
 "<owner>/<name>")`, including repositories that hold research, planning or a friend's own
 work; a cross-repository goal is a view over canonical owned nodes, never a copy
 (5654164074, Glenn's preferred simplification, *to be prototyped before it is an invariant*).
-S is the team's authorized known work, never a scan of every reachable repository. A GitHub
+O is the team's authorized known work, never a scan of every reachable repository. A GitHub
 issue or PR is a `:links` entry on a node, not the node's type; intake from issues is in
 Stella's section.
+
+**The move from O to C is an event, and the item's id, its history and its evidence move with
+it unchanged.** An item settles when its work has ended: a `:to :done` transition, a `:cancel`,
+a `:supersede` or the `:remove` of a `node remove`. The verb that writes that event writes one
+more in the same envelope — a **`:settle`** event carrying `:disposition` (`done`, `cancelled`,
+`superseded` or `removed`) and `:reason` — one journal record, all-or-none, one `OK` line, one
+request id, exactly as a structure verb's envelope already is. The `:settle` is the session's
+own half and **is not in the request's payload digest**, with `:stamp`, `:clock`, `:request`
+and `:generation-owner`, because the requester never sent it and two builds must digest one
+request to one value. The reverse is the same shape: a `:reopen` of an item in C writes a
+**`:revive`** event in its envelope and the item is in O again, at `:todo`, by the transition
+table (a `:reopen` of a `:deferred` item writes none: a deferred item never left O). `:cancelled`,
+`:superseded` and `:removed` are terminal and no `:reopen` reaches them, as the transition table
+already says. **Settling changes no `:id`, no `:children`, no `:acceptance`, no evidence event
+and no count**: the containment forest spans both branches, a settled item keeps its place under
+its parent, and `node remove` is still the only thing that detaches one. **Settling moves no
+required set**: `:settle` and `:revive` are scope events whose delta is none, in the table above,
+so a member that is done is still a member and `rows=` does not move when it finishes. What moves
+a set is the delta table's own kinds, and a `:remove`, a `:cancel` and a `:supersede` move theirs
+by that table exactly as before — in the same envelope as the settle they carry (replays
+`settle-keeps-id-and-evidence`, `settle-moves-no-required-set`, `reopen-revives`).
+
+**A container settles with its members, in the same envelope, and revives with them.** A
+`:work-set`, a `:feature` and a `:roadmap` have no work of their own: their completion is their
+required members' completion, by the kinds above. So the settle that closes the last open member
+of a container carries the container's own `:settle` too — `:by` the author of that settle,
+`:reason` naming the member that finished it — and so on up the containment path while each
+parent's required set is wholly settled, all in the one envelope, all-or-none, one `OK` line.
+The cascade is bounded by the path from the node to the root and never by the size of the set,
+and it stops at the first container that still holds an open member. **An empty required set is
+never done** by the kinds above, so an empty container never settles by cascade and `<repo>/shared`
+does not close a repository behind the team's back. A `:revive` cascades the same way in
+reverse: reopening one item returns its settled ancestors to O in the same envelope, because a
+container over open work is open (replay `containers-settle-with-their-members`).
+
+**Settling is the record that the work ended and never a claim that it was verified.** A `:to
+:done` standing on unverified or stale evidence settles its item and still counts `unknown` with
+`done-unverified=` beside it, exactly as it does today: C holds the disposition, the transition
+and the evidence events, and every verdict stays derived at read time from the criterion, the
+generation and the verification cache, so a `correct`, an `accept` or a source bump changes what
+a settled item counts as with no fetch and no second record — which is what *not a duplicate
+ledger* has to mean in the one place it is tempting to forget.
+
+**Settling ends the claim, because the work has ended.** The settle envelope carries a
+`:release` for a live lease on the node, written by the settling author and naming the holder it
+ended; it is not refused by the holder rule of `release`, which guards a third name reaching in
+and not the end of the work itself. So **no item of C holds a live lease**, W and C are
+disjoint by construction, and a settled item reads `holder=unowned` in every answer while its
+lease log stays whole for `handoffs` (replay `settle-releases-the-lease`).
+
+**W is a view, and no verb writes it.** `(working O)` is the items of O that hold a live lease —
+a lease whose deadline is ahead of the read's clock with no release and no handoff — which is
+the lease section's own fact and not a new one. `take` and `release` are the only things that
+change W, exactly as they do today; nothing is settled by being in W and nothing is in W by
+being `:doing`, because *responsible*, *doing* and *working* are three facts and this document
+has kept them apart since its first draft. `--window` splits W the way `who` and `stale` already
+print it: worked-now (a heartbeat inside the window) and `held-not-worked=`. `|W| ≤ |O|` is
+rule 18's business below (replay `working-is-a-view`).
+
+**C is append-only, and it is read through its index and never by loading it.** Every clip
+writes one **closed-index** row per settled item into the snapshot, beside the dedup index of
+the retention boundary above and growing with the set's whole history for the same reason: an
+index that forgets is not one. The row carries what the normal path reads about a settled item —
+its `:id`, its `:under`, its repository, its kind and category, its disposition, the state and
+generation it settled at, its scope and source revisions, its required-leaf count at settle, the
+settle event's revision, stamp, author and request id, and, **for every event of its evidence
+set, that event's five fields** (`:pointer`, `:criterion`, `:against`, `:stamp`, `:generation`) —
+so **evidence survives the move** and no ask and no rule loads a body to answer about a settled
+item. **C is not a second file**: a settled item's node and its events live exactly where every
+item's do, in the snapshot's retained part while they are newer than the retention boundary and
+in the retention archive after it, written by the same clip. **C and the retention archive are
+two different axes and this document says so once**: C is a branch by *disposition*, the archive
+is a file bounded by *age*, an item may be in C and its oldest events in the archive, and neither
+one implies the other. **So a session whose archive file is absent still answers every ask over
+C and runs every rule over it**, which is the same test the retention paragraph already stands
+on; an ask that would need a body the archive holds — a `--at` replay or a `handoffs --since`
+before the boundary — is refused by the rules that already refuse it, and a listing whose rows
+the index answers but whose bodies are gone prints **`gap=<n>`** and one `QUERY NOTE
+coverage-gap file=<name> range=<rev>-<rev>` and never an empty closed set: a missing archive is
+an honest coverage gap, not a completed set of nothing (Glenn, 23:34Z) (replays
+`closed-row-with-archive-absent`, `closed-paged-without-full-load`).
+
+**Root-wide queries name their branch and their window, and count each id once.** `query --ask`
+takes **`--branch <open|closed|root>`, required**, refused at exit 2 naming the flag when absent,
+because a count whose branch a reader has to infer is the silent denominator of 5654160320 in
+another coat; the flag takes the words and the data carries the letters. `--branch closed` and
+`--branch root` **require `--from <stamp>` and `--to <stamp>`**, the time window over settle
+stamps, and `--branch open` refuses them at exit 2 — O is read in the present and `--at
+<revision>` is how it is read in the past. `who`, `stale` and `handoffs` refuse `--branch closed`
+and `--branch root` at exit 2 naming the flag, because a live lease is a fact of O alone.
+**`--branch` selects the rows a listing prints and never what the counts fold**: the counts on a
+`QUERY OK` line are the scope's and have always folded both branches — a done leaf is counted by
+its container today and is counted the same way from C — so no percentage, no `rows=`, no
+`required=` and no rollup changes its value because an item settled. **Each id is counted once
+and printed once**: `open=<n>` and `closed=<n>` partition the scope's counted ids, their sum is
+the scope's counted total, `closed-in=<n>` is the part of `closed=` whose settle stamp falls
+inside the window, and an id in both branches is a finding by rule 18 and not an arithmetic to
+be tidied at read time (replay `cow-root-partition`). **A closed listing never loads all of
+history**: its rows come from the closed index in settle-revision order, the window bounds the
+range, `--max` caps the page under the cap-and-count law, and the `MORE` line's remedy names
+**`--after <cursor>`**, the cursor being the last printed row's `<settle-rev>:<id>` (an open
+listing's is its `<id>`), so the next page is a read of the next rows and never of the whole.
+
+**The three questions Glenn asked are three asks over the same identities** (23:34Z: *answer
+"what remains?", "what is in flight?", and "what did we complete during this interval?" from the
+same identities and evidence*): `remaining --branch open` is what remains, `who --window` over
+`(working O)` is what is in flight — its answer prints `membership=working` — and `done --branch
+closed --from <stamp> --to <stamp>` is what was completed in the interval. None of them reads a
+message bus and none of them reconstructs a closed pull request by hand: the identities, the
+evidence and the settle events are already in the root.
+
+**Which branch a sentence of this document is about, said once.** Every sentence about loading,
+validating, journaling, clipping, ownership, fencing, the one coordinator and the one live
+reader/writer is about **O** and the closed index the same session holds: the session loads O
+whole and C's index, never C's history. Every sentence about membership, required sets, counting,
+states, transitions and leases is about **O** unless it names C. Stella's sections below keep her
+spelling, and where they say S they mean O.
 
 **Scope, baseline, focus** (5654160320). A roadmap or work set carries a scope revision,
 derived: the count of its scope events. The first `:baseline` event records the initial
@@ -929,7 +1096,8 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
 - **Units are labelled** on every line: `unit=features` or `unit=leaves`; a comparison never
   changes unit silently. **`unit=` names the grain of the line's state counts, and the fields
   whose grain is fixed are named here so no reader infers them from it**: `done=`,
-  `done-unverified=`, `unknown=`, `deferred=`, `cancelled=`, `superseded=` and `stale=` are in
+  `done-unverified=`, `unknown=`, `deferred=`, `cancelled=`, `superseded=`, `stale=`, `open=`,
+  `closed=` and `closed-in=` are in
   the line's `unit=`; `since-baseline=` is **always members**, the direct required members a
   `:discovery` added, because the delta table moves a set member by member and a discovery of
   one feature holding twelve leaves is one discovery under either unit; `required=` is **always
@@ -940,6 +1108,17 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
   `percent` line that printed feature counts and a leaf count together; Fable and Opus at
   efc26a2e, 2026-09-13: `since-baseline=` was promised in `unit=` and defined in members, so a
   `unit=leaves` line printed one number and meant the other).
+- **The branch counts are the root's own and partition the scope**: `open=<n>` is the scope's
+  counted items still in O, `closed=<n>` those in C, and **their sum is the scope's counted
+  total with no id in both**, which rule 18 makes a finding rather than an arithmetic tidied at
+  read time. `closed-in=<n>`, printed only where a window is given, is the part of `closed=`
+  whose settle stamp falls inside it — *what did we complete during this interval*. `gap=<n>` is
+  the rows whose body the retention archive holds and the read could not reach, printed so a
+  missing archive reads as a coverage gap and never as a completed set of nothing. **A settled
+  item is counted exactly where it was counted before it settled**: `done=`, `required=`,
+  `rows=`, `applicable=` and every percentage fold both branches, because a member that has
+  finished is still a member and a denominator that dropped it would be the silent denominator
+  of 5654160320 arriving by a new road.
 - **Future cannot lower the active percentage; a deferred item cannot raise the completed
   count** (5653970526). Both are tests.
 - **Unknown is a count of its own**, printed on every answer; `done-unverified=<n>` is the
@@ -951,16 +1130,27 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
 Every answer is computed whole before anything is printed, then printed as one `QUERY OK`
 scope line and one `QUERY ROW` line per fact, capped and counted. The scope line is the
 `QUERY OK` line of the grammar below, and the grammar is the one enumeration, in two parts.
-**On every `--ask`**: scope revision, membership rule, unit, source sha, freshest evidence
+**On every `--ask`**: scope revision, membership rule, **branch**, unit, source sha, freshest evidence
 stamp (`-` where no evidence event falls under the scope, as `source=` prints `-`), `done=`, `done-unverified=`, `unknown=`, `deferred=`, `cancelled=`, `superseded=`,
 `stale=`, `required=` (the total required leaves under the scope), `since-baseline=`,
 `private=` (nodes a view reached through a parent and printed nothing of, 5653982211),
-`rows=`, `shown=`, `parses=`, `replays=` and `emitted=`. **Per ask, named in brackets in the
+`rows=`, `open=`, `closed=`, `gap=`, `shown=`, `parses=`, `replays=` and `emitted=`; and
+`from=`, `to=` and `closed-in=` wherever a window was given, which is every `--branch closed`
+and every `--branch root`. **Per ask, named in brackets in the
 grammar and by the table here, so the table can never promise a field the grammar lacks**:
 `percent` adds `green=`, `applicable=` and `baseline-rows=`; `who` and `stale` add `held-not-worked=`,
 `unowned=` and `responsible=`; `done`, `remaining`, `size`, `stream` and `under` add
 `responsible=`; `stream` adds `leases=`, the live lease count its row in the table promises.
-**Two asks have their own row shape, and it is in the grammar with the others**: `who` and
+**A listing that may print a settled item prints the disposition row**, which is `done`,
+`remaining` and `under` under `--branch closed` or `--branch root`: it carries `branch=`,
+`disposition=` (`pending`, `working` or `deferred` in O; `done`, `cancelled`, `superseded` or
+`removed` in C), the repository, `landed=<sha|->` — the `:against` sha of the qualifying
+evidence event whose criterion is `:merged`, which is the revision the fix landed at, and `-`
+where none — `released=<version|->` — the `:version` of the **settled** release task that names
+this item in its `:deps`, found through the reverse-dependency index, and `-` while that task is
+still in O, because **a merged fix is not a distributed one** (Glenn, 23:36Z: *a merged fix can
+be C while the separately tracked release task remains O; do not call distributed just because
+merged*) — `settled=<stamp|->`, and the evidence counts. **Two asks have their own row shape, and it is in the grammar with the others**: `who` and
 `stale` print the lease row, which carries the `default=` the table promises beside the
 holder, the heartbeat age and the deadline; `handoffs` prints the transition row, one line per
 `:lease`, `:heartbeat`, `:release` or `:handoff` event since the named revision, because a
@@ -968,14 +1158,58 @@ transition log is not a counting row. Every other ask prints the counting row. A
 
 | ask | answers |
 |---|---|
-| `done --node X` / `remaining --node X` | completed and outstanding required work under X, by kind, capped and counted |
-| `who --node X --window <dur>` | live leases on X and beneath it: holder, heartbeat age, deadline, default; then `held-not-worked` and `unowned` counts; and `responsible=` for X |
+| `done --node X` / `remaining --node X` | completed and outstanding required work under X, by kind, capped and counted; `remaining --branch open` is *what remains*, and `done --branch closed --from <stamp> --to <stamp>` is *what did we complete during this interval*, its rows the disposition row, paged by `--after` |
+| `who --node X --window <dur>` | live leases on X and beneath it: holder, heartbeat age, deadline, default; then `held-not-worked` and `unowned` counts; and `responsible=` for X. This is *what is in flight*: its membership rule is `(working O)` and it prints `membership=working` |
 | `percent --node R --axis <member>` | the roadmap rollup for one axis member, with `green=<k> applicable=<n> rows=<n> baseline-rows=<n0> done-unverified=<n>` — the percentage is `green` over `applicable` — and every partial cell's `k/n` and `unknown=<u>` |
 | `size` / `size --node X` | total required leaves, done, unknown, unverified, deferred, cancelled, superseded, since-baseline |
 | `stream --repo <owner/name>` / `--owner <name>` | the same, for one repository or one friend's own selected work, plus `responsible=` and live lease count (5654012267: *ownership for a named stream*) |
-| `under --repo <owner/name> --category <label>` | compact listing of nodes by category with state (5654164074; taxonomy TBD) |
+| `under --repo <owner/name> --category <label>` | compact listing of nodes by category with state (5654164074; taxonomy TBD); under `--branch root` it spans C and O in one answer, one row per id, which is the worked acceptance below |
 | `stale --window <dur>` | leases past deadline or past the heartbeat window, grouped by holder |
 | `handoffs --since <revision>` | the lease transition log |
+
+### The worked acceptance: findings per repository across C and O *(Glenn's own query, 23:36Z)*
+
+This is the query that produced the root refinement, written out whole, and it is the replay
+**`findings-across-c-and-o`**: *list all Alex findings per repo, pending/working/done
+disposition, landed revisions and the release versions containing the fixes*. Nothing in it is
+security-specific — a finding is a `:task` under its repository work set with a category, its fix
+lands as evidence, and its release is another task — which is why it is here and not in a section
+of its own (Glenn, 23:34Z: *this is a general work-set/history requirement, not a
+security-specific data model*).
+
+Four findings of one audit under `mas-bandwidth/nova-tools`, category `security-finding`:
+`alex-1`, fixed, merged and shipped in `v0.4.2`; `alex-2`, fixed and merged, whose release task
+`nova-tools/release/v0.4.3` is still open; `alex-3`, held under a live lease by Freddy; `alex-4`,
+read and judged not a defect, closed by a `cancel` carrying the evidence of that reading, which
+is a disposition of its own and never a completion.
+
+```
+nova-work query --session /run/work.sock --ask under --repo mas-bandwidth/nova-tools \
+                --category security-finding --branch root \
+                --from 2026-09-01T00:00:00Z --to 2026-09-14T00:00:00Z --max 20
+
+QUERY OK ask=under scope=412 membership=category branch=root unit=features source=9f2c1a7e freshest=2026-09-13T18:22:41Z done=2 done-unverified=0 unknown=1 deferred=0 cancelled=1 superseded=0 stale=0 required=9 since-baseline=2 private=0 open=1 closed=3 gap=0 from=2026-09-01T00:00:00Z to=2026-09-14T00:00:00Z closed-in=3 responsible=rowan pushed=410 rows=4 shown=4 parses=0 replays=0 emitted=612
+QUERY ROW nova-tools/sec/alex-1 branch=closed disposition=done repo=mas-bandwidth/nova-tools kind=task state=done landed=9f2c1a7e released=v0.4.2 settled=2026-09-12T18:22:41Z evidence=2 verified=2 responsible=emma
+QUERY ROW nova-tools/sec/alex-2 branch=closed disposition=done repo=mas-bandwidth/nova-tools kind=task state=done landed=4b81c0d5 released=- settled=2026-09-13T09:14:02Z evidence=2 verified=2 responsible=emma
+QUERY ROW nova-tools/sec/alex-3 branch=open disposition=working repo=mas-bandwidth/nova-tools kind=task state=doing landed=- released=- settled=- evidence=0 verified=0 responsible=freddy
+QUERY ROW nova-tools/sec/alex-4 branch=closed disposition=cancelled repo=mas-bandwidth/nova-tools kind=task state=cancelled landed=- released=- settled=2026-09-11T22:03:55Z evidence=1 verified=0 responsible=rowan
+```
+
+**What the shape is asserted to say**, each of these a line of the replay: four ids, four rows,
+`open=1` and `closed=3` summing to the four this scope counts, and no id on two rows; `alex-2`
+in C with `landed=4b81c0d5` and `released=-`, because **merged is not distributed** and its
+release task is open — the same node answering `nova-work query --ask remaining --branch open
+--repo mas-bandwidth/nova-tools --category release`, which lists
+`nova-tools/release/v0.4.3` as `disposition=pending`, so the two facts are one set of
+identities read twice and never two ledgers; `alex-3` in O, `disposition=working` because it
+holds a live lease, and W is exactly that view; `alex-4` closed as `cancelled`, distinct from
+`done` and counted in neither `done=` nor a percentage; `parses=0 replays=0`, because the
+closed rows came from the closed index and the open one from the resident tree; and **the same
+ask with the retention archive file absent printing the same four rows** — the bodies are the
+archive's and the rows are the index's — while an ask that reaches for a body prints `gap=<n>`
+and its `QUERY NOTE coverage-gap` and never a shorter list. Running it again with `--max 2`
+prints two rows and a `MORE` naming `--after`, and the `--after` page prints the other two, with
+no read of anything outside the window (replay `closed-paged-without-full-load`).
 
 ## The verbs *(Rowan; a draft shape, to be cut by the pilot)*
 
@@ -1046,9 +1280,12 @@ nova-work session handoff --session <path> --to <name> --git-timeout <seconds> [
 nova-work clip           --session <path> --as <name> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
 nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) [--max <n>]
 nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]
-nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind>
+nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind> --branch <open|closed|root>
                          [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>]
-                         [--since <revision>] [--at <revision>] [--max <n>]   (who and stale: --window <duration>, required; percent: --axis <member>, required)
+                         [--since <revision>] [--at <revision>] [--from <stamp>] [--to <stamp>] [--after <cursor>] [--max <n>]
+                         (who and stale: --window <duration>, required; percent: --axis <member>, required;
+                          --branch closed and --branch root: --from and --to, required, and refused under --branch open;
+                          who, stale and handoffs: --branch open only, the other two exit 2)
 nova-work render         --session <path> --view <roadmap-id> --into <path> --start <marker> --end <marker> [--at <revision>] [--check]
 nova-work node add       --session <path> <write flags> --id <id> --type <kind> --under <parent-id> [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id:kind:subject:predicate> ...] --reason <text>
 nova-work node remove    --session <path> <write flags> --node <id> --reason <text>
@@ -1091,8 +1328,10 @@ derived `:done` is refused by rule 5 at the candidate gate**, because its standi
 would no longer cover the node's `:acceptance`; the way through is `correct` — which bumps the
 generation and takes the node off its done claim — then `accept --add`, then fresh evidence,
 so a criterion is never slipped under a green cell without a record. **`node remove` detaches a
-node from its parent's `:children` in one envelope with its `:remove` scope event**: the
-node, its subtree and every event of theirs stay in S as provenance and are counted nowhere —
+node from its parent's `:children` in one envelope with its `:remove` scope event**: the node
+and its subtree settle into C with disposition `removed` — one `:settle` for the node and one
+for each item beneath it, in that same envelope — and every event of theirs is kept as
+provenance and counted nowhere —
 a removal is never a delete, and by the retention paragraph above they pass into the clip's
 archive with the boundary, so provenance never grows the live snapshot — and a node holding a
 live lease, or referenced by a cell's `:ref` or another node's `:deps`, is refused, naming the
@@ -1113,10 +1352,10 @@ the predicate, and everything between is the subject, so a subject may hold `:` 
 `decompose --acceptance` takes the same form with the child's id before it and one further
 `:`. `take`,
 `heartbeat`, `release`, `attempt`, `evidence`, `state`, `correct` and `event` append one event
-each. **The gate is one validation, of the resident S as it would be with the event applied**:
+each. **The gate is one validation, of the resident O as it would be with the event applied**:
 the session evaluates the structural rules over the affected nodes and either journals and
 applies the event unchanged or refuses at exit 1 with the finding's line and changes nothing.
-A red S elsewhere still refuses, because a red set is stopped, not written around; `check`
+A red O elsewhere still refuses, because a red set is stopped, not written around; `check`
 says where. **A set that is red at load has one defined way out, and it is a verb rather than
 a hand edit**: `session start --repair` loads and validates the same way, prints `SESSION OK
 … findings=<n>`, and admits mutations under a different gate — the whole validation, O(V+E)
@@ -1136,7 +1375,7 @@ this draft**: named here so a reader knows they are deferred, with their own sec
 pilot has shown what a plan must name.
 
 **A lease is authoritative the moment the one coordinator accepts it**, because the ownership
-record above admits one live S; `pushed=<rev|->` on its answer says only which clip carried it to the branch, which is
+record above admits one live O; `pushed=<rev|->` on its answer says only which clip carried it to the branch, which is
 durability, not exclusivity. A request to take a node
 arrives at the coordinator from a friend as a mutation request with a stable request id and
 the friend's expected revision; the coordinator serializes it like any other (Stella, *One
@@ -1255,17 +1494,21 @@ or coordination cost without obscuring acceptance evidence.
 ## The validator *(Rowan; every rule is a hurt already paid)*
 
 The validator is one set of rules run two ways: **whole**, at session load and at every clip,
-walking S once and printing one `WORK FAIL` line per finding, capped **per rule**, with one
+walking O once and printing one `WORK FAIL` line per finding, capped **per rule**, with one
 count line always, exit 1 on any finding; and **on the candidate**, at every mutation, over the
-resident S as it would be with the event applied, touching only the nodes the event reaches
-(rule 11 for the node the event addresses; rules 1 to 10, 14, 15 and 17 for the nodes
+resident O as it would be with the event applied, touching only the nodes the event reaches
+(rule 11 for the node the event addresses; rules 1 to 10, 14, 15, 17 and 18 for the nodes
 it names), refusing the event at exit 1 with the finding's line and changing nothing. Rules 12,
 13 and 16 are the reader's, exit 2, at load. The validator never fetches; what a pointer proves is
 `verify`'s, and an unverified pointer is a count, never a finding.
 
 1. **duplicate id** — two nodes, or two events, with one `:id`.
 2. **dangling reference** — a `:children`, `:deps`, cell `:ref`, event `:node`, `:lease`,
-   `:blocked-by`, `:superseded-by` or `:criterion` that names nothing; and, **for a first-axis
+   `:blocked-by`, `:superseded-by` or `:criterion` that names nothing. **A name resolves against
+   O's nodes or C's closed index, whichever branch holds that id**, so a reference to an item
+   that has settled is not dangling — a finished task is still the task its parent contains and
+   its cell points at — and the rule stays green with the retention archive absent, because the
+   closed index is in the snapshot and the body is what the archive holds; and, **for a first-axis
    member that is in its roadmap's required set**, a member naming nothing, or naming a node
    that is not a `:feature`, is the same finding, because such a member is counted by `rows=`
    and a mistyped or wrongly typed row was a phantom in the denominator that no rule refused
@@ -1339,6 +1582,13 @@ it names), refusing the event at exit 1 with the finding's line and changing not
     After the claim, staleness that arrives with a later source revision is a count, not a
     finding, so a source bump never freezes the set; the rollup already demotes it.
 
+18. **in two branches** — one `:id` in both C and O, or an item of C holding a live lease.
+    The root is a partition: `open=` and `closed=` sum to the scope's counted total and no id is
+    counted twice, so the arithmetic is guarded by a finding rather than repaired at read time,
+    and W is a view inside O rather than a third membership (the root section above). A
+    `:settle` whose item is already in C, and a `:revive` whose item is already in O, are the
+    two ways to write one, and each is refused at the candidate gate before anything is written.
+
 **There is no rule about an empty required set, and its deletion is part of this draft**
 (Stella 5655371246 item 4, Fable and Opus at d1b20f42, 2026-09-13). Draft 19's rule 7 reddened
 every `:work-set`, `:feature` or cell with an empty required set at load and at every clip. But
@@ -1373,7 +1623,14 @@ intake that creates it.
 At load the session builds six indexes — id to node, containment adjacency, reverse dependency,
 repository, category (5654164074), and **reverse roadmap reference: from a node id to every
 roadmap that has it as a first-axis member, and to every cell whose `:ref` names it** — and every
-walk goes through them. **The sixth is on the write path and not the read path**: a `:cancel`, a
+walk goes through them. **A seventh is loaded rather than built: C's closed index**, which the
+snapshot carries whole and which no walk over O has to rebuild — keyed by `:id`, ordered by
+settle revision, and grouped by repository, so a rollup reads a settled member's row in one
+lookup, a closed listing reads one page of a revision range, and `--after` continues it. **A
+settled item therefore costs a row and never a body**: the O(V+E) of a full validation is O's
+edges plus one lookup per settled member, and neither the fold nor the load grows with how much
+work the team has finished, which is the whole reason C is a branch with an index rather than
+more of O. **The sixth is on the write path and not the read path**: a `:cancel`, a
 `:supersede` and a `node remove` must each move *every roadmap that has it as a row* by the delta
 table above, and `node remove` must find its cell referrers in order to refuse; with no such
 index each of those is a scan of every roadmap on every cancel, on the write path, which at nine
@@ -1436,9 +1693,11 @@ WORK FAIL nodes=<n> findings=<n> shown=<n> expired=<n> escalated=<n> stale=<n>
 VERIFY OK pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> pushed=<rev|-> emitted=<bytes>
 VERIFY ROW <event-id> pointer=<p> verdict=<verified|unverified|stale> at=<stamp>
 VERIFY FAIL pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> pushed=<rev|-> shown=<n>
-QUERY OK ask=<kind> scope=<rev> membership=<rule> unit=<unit> source=<sha|-> freshest=<stamp|-> done=<n> done-unverified=<n> unknown=<n> deferred=<n> cancelled=<n> superseded=<n> stale=<n> required=<n> since-baseline=<n> private=<n> [green=<k> applicable=<n> baseline-rows=<n0>] [held-not-worked=<n> unowned=<n>] [leases=<n>] [responsible=<name|->] pushed=<rev|-> rows=<n> shown=<n> parses=<n> replays=<n> emitted=<bytes>
+QUERY OK ask=<kind> scope=<rev> membership=<rule> branch=<open|closed|root> unit=<unit> source=<sha|-> freshest=<stamp|-> done=<n> done-unverified=<n> unknown=<n> deferred=<n> cancelled=<n> superseded=<n> stale=<n> required=<n> since-baseline=<n> private=<n> open=<n> closed=<n> gap=<n> [from=<stamp> to=<stamp> closed-in=<n>] [green=<k> applicable=<n> baseline-rows=<n0>] [held-not-worked=<n> unowned=<n>] [leases=<n>] [responsible=<name|->] pushed=<rev|-> rows=<n> shown=<n> parses=<n> replays=<n> emitted=<bytes>
 QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> escalated-to=<name|-> blocked-by=<id|->
 QUERY ROW <id> lease=<lease-id> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|-> escalated-to=<name|-> responsible=<name|->   (who, stale)
+QUERY ROW <id> branch=<open|closed> disposition=<pending|working|deferred|done|cancelled|superseded|removed> repo=<o/n|-> kind=<k> state=<s> landed=<sha|-> released=<version|-> settled=<stamp|-> evidence=<n> verified=<n> responsible=<name|->   (done, remaining and under, under --branch closed or --branch root)
+QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>   (rows the closed index answered whose bodies the retention archive holds and this read could not reach)
 QUERY ROW <lease-id> node=<id> kind=<lease|heartbeat|release|handoff> rev=<n> at=<stamp> from=<name|-> to=<name|-> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|->   (handoffs)
 QUERY FAIL ask=<kind> rows=<n> shown=<n>: <reason>
 RENDER OK view=<id> cells=<n> private=<n> bytes=<n> into=<path> pushed=<rev|-> emitted=<bytes>
@@ -1512,7 +1771,7 @@ the reader; a `:deps` cycle refused; a cancel request withdrawn and a cancel con
 chain with no quadratic work (visit counts asserted); a lease past its deadline reads as
 unowned, its responsibility unchanged, and its release is not blocked; `:extend-once` once; a
 lease reads `pushed=-` until its clip reaches the branch; an invalid transition refused;
-a refused mutation leaving S, the journal and the indexes unchanged; `render --check` fails
+a refused mutation leaving O, the journal and the indexes unchanged; `render --check` fails
 on one changed cell; **start once, run many** (zero parses and zero replays on unchanged
 indexed queries, counts asserted); incremental results equal a clean reconstruction of the
 same accepted revision; a crash after journal durability and before acknowledgement, then the
@@ -1532,7 +1791,7 @@ socket paths naming one journal, the second refused `journal held`; an owner tha
 starts as a taker with a fresh generation and never as a resume; a reconfirm callback
 delayed past `until` admits no write; a `:defer` moving the scope revision and no denominator, and a `:reopen` the same; `event
 --kind split` and `--kind remove` refused at exit 2 naming `decompose` and `node remove`; a
-`node remove` leaving its subtree in S as provenance and out of every count, and one refused
+`node remove` leaving its subtree in O as provenance and out of every count, and one refused
 for a live lease; a re-baseline restating the derived set accepted and one differing from it
 refused by rule 14; **an empty work-set — a `<repo>/shared` in a repository with no shared work,
 and a container whose last member was cancelled — accepted, clipped, reloaded and clipped again
@@ -1624,11 +1883,63 @@ refused at exit 2; a resolver whose pointer holds shell metacharacters executed 
 and the characters reaching it whole; an exit-1 resolver fact cached and answered by
 `--offline`; a `size` over a multi-repository scope printing `source=-`; an `accept --add` on
 a done node refused by rule 5 and accepted after `correct`; a `session replay` with a refused
-request printing `REPLAY FAIL` at exit 1; a red S at load
+request printing `REPLAY FAIL` at exit 1; a red O at load
 refusing every mutation without `--repair`, and under `--repair` accepting only events that
 lower the finding count; a second start on one socket path refused `socket held` while its
 journal is free; structure
-verbs produce a reproducible `ROADMAP.md` with no hand edit. The stall replays of 5649089106
+verbs produce a reproducible `ROADMAP.md` with no hand edit.
+
+**The root's replays carry names, one for every rule the COW refinement adds, so a reader can
+say which test holds which sentence** (the list above is prose because it grew that way; these
+are named because they were asked for by name):
+
+- **`cow-root-partition`** — one id is in C or in O and never in both; `open=` plus `closed=`
+  equals the scope's counted total on every ask; an event hand-written to put one id in both is
+  a rule 18 finding at load and refused at the candidate gate.
+- **`settle-keeps-id-and-evidence`** — a `state --to done` settles its task: the `:id`, the
+  `:children`, the `:acceptance`, every evidence event and its five fields read the same before
+  and after, from the closed index, and `verify` over that item prints the same `VERIFY ROW`
+  verdicts it printed while the item was open.
+- **`settle-moves-no-required-set`** — a task finishing leaves its parent's required set, its
+  `rows=`, its `baseline-rows=` and its percentage exactly where they were, with rule 11 green
+  on the walk after it; the same run with a `:cancel` moves the set by the delta table's row and
+  by that row alone.
+- **`settle-releases-the-lease`** — an item settled while a lease is live reads `holder=unowned`
+  at once, its `:release` in the lease log with the settling author and the holder it ended,
+  `handoffs --since` printing the whole transition log, and no item of C in any `who` answer.
+- **`containers-settle-with-their-members`** — a feature of three tasks: settling the last task
+  settles the feature and its parent work set in the same envelope and no other container, with
+  one `OK` line and one request id, and a crash between the two replaying all-or-none; reopening
+  that task returns all three to O together; an empty container in the path settling never.
+- **`reopen-revives`** — a `:reopen` of a done item returns it to O at `:todo` with its id, its
+  evidence and its generation intact, `open=` up by one and `closed=` down by one; a `:reopen`
+  of a deferred item writes no `:revive`, because it never left O.
+- **`working-is-a-view`** — `|W| ≤ |O|` over a set where every item is leased, then released;
+  a `:doing` item with no live lease is `disposition=pending`; no verb writes W.
+- **`settle-outside-the-digest`** — one `state --to done` digested by two independent
+  serializers to one value, with two `:stamp`s and two settle event ids, and the retry answered
+  by the original `OK` line.
+- **`closed-paged-without-full-load`** — a closed listing over a thousand settled items with
+  `--max 20` reads twenty rows, prints `MORE` naming `--after`, and the next page reads the next
+  twenty; `parses=0 replays=0` on every page and the whole history never loaded.
+- **`closed-row-with-archive-absent`** — the worked acceptance's ask answering the same four
+  rows with the retention archive file absent, and an ask that reaches for an archived body
+  printing `gap=<n>` and one `QUERY NOTE coverage-gap` rather than a shorter list.
+- **`merged-is-not-distributed`** — a fix in C with `landed=<sha>` and `released=-` while its
+  release task is open, and `released=<version>` on the same row once that task settles.
+- **`branch-and-window-required`** — a `query --ask` with no `--branch` refused at exit 2 naming
+  the flag; `--branch closed` with no `--from`/`--to` refused the same way; `--from` under
+  `--branch open` refused; `who`, `stale` and `handoffs` refused under `--branch closed` and
+  `--branch root`.
+- **`findings-across-c-and-o`** — the worked acceptance above, asserted line by line: four ids,
+  four rows, `open=1 closed=3 closed-in=3`, no id twice, the dispositions distinct, and the
+  release task listed as `pending` by the second ask.
+- **`clip-names-the-index-that-overflowed`** — a clip refused with `snapshot=`, `retained=`,
+  `index=` and `closed-index=` all printed, naming `raise --max-bytes` alone where the two
+  indexes together already pass the bound and `lower --retain or raise --max-bytes` otherwise,
+  with the lower `--retain` then passing.
+
+The stall replays of 5649089106
 belong to stall detection, deferred below, and are listed there so they are not lost.
 
 ## What this draft does not do
@@ -1640,7 +1951,7 @@ staged migration as code (their contracts are Stella's sections), the GitHub iss
 section below; the adapter is its own spec), token and cost joins beyond the attempt's
 `:usage` pointer (#175, #181), and the categories taxonomy (5654164074) are later revisions,
 each with its issue. Nothing here deletes, migrates or publishes an issue. Known work is not
-authorized, active, scheduled or public by being in S.
+authorized, working, scheduled or public by being in O.
 
 ## Additions of the authors', not in the source
 
@@ -1657,6 +1968,13 @@ its canonical serialization, the `:structure` event kind and the per-verb and pe
 orders that serialization rests on; the clip's boundary record in the journal, the read that
 starts at it and the rotation it allows; the offline `session export --journal`; `node require`
 and the `:require` scope event; `applicable=` on `percent` and the gross definition of `since-baseline=`; `--foreground`;
+the spelling of the root's COW refinement, whose shape is Glenn's (stella-461d99ec092d and his
+live word on the words and letters) and whose mechanism is Rowan's — the `:settle` and `:revive`
+scope kinds and the envelopes that carry them, their place outside the payload digest, the
+closed index and the fields of its row, rule 18, `--branch` with its three values and its
+refusals, `--from`/`--to` over settle stamps, `--after` and its cursor, the disposition row with
+`landed=` and `released=`, `:version` on a `:task`, `open=`, `closed=`, `closed-in=` and `gap=`,
+and `closed-index=` on `CLIP FAIL`;
 `cell --in-scope`; the exact list of refused reader syntax beyond `#.` (every dispatch macro,
 `#'`, quote, backquote, package-prefixed symbols, ratios, floats, characters); `;` comments
 discarded by the reader; the three bound flags and their no-default rule; unknown keys
@@ -1950,7 +2268,7 @@ feeds `NEXT-TOOLS.md` and the production specs before implementation begins.
 ## The measurement that decides *(shared)*
 
 Before this leaves draft, on the Fixed Tables roadmap: tokens and wall time to update one
-fact in S (an `evidence` event and a `state --to done`) and regenerate the table, against editing
+fact in O (an `evidence` event and a `state --to done`) and regenerate the table, against editing
 the table by hand; whether "who is on the C leg" is answerable from leases alone without
 reading the bus; whether a reader of the generated table found a number the source did not
 support. The benefit is observed or the tool is not built (5653982211).
