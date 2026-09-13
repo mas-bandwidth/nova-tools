@@ -1,6 +1,6 @@
 # nova-tools — specification
 
-Ten binaries. `nova-check`: six checks, all at the **record layer** — they verify
+Eleven binaries. `nova-check`: six checks, all at the **record layer** — they verify
 what is on disk, not what a mind did with it. `nova-fuse`: an emergency power at the
 **ingestion layer** — its own exit table (in its section below) governs its verbs
 where it differs from the Conventions table. `nova-self-talk`: one advisory
@@ -108,7 +108,7 @@ LINKS FAIL files=<n> links=<n> broken=<n> shown=<n>
 KERNEL OK bytes=<n> budget=<n>
 KERNEL OK tokens=<n> budget=<n> bytes=<n> divisor=<r>
 KERNEL FAIL <file>: <reason>
-NOCODE OK files=<n> clean
+NOCODE OK files=<n> clean deny-list=<source>
 NOCODE FAIL <path>: <reason>
 NOCODE FAIL files=<n> findings=<n> shown=<n> deny-list=<source>
 FLOORS OK floors=<n>
@@ -290,7 +290,7 @@ tokens `NOTE`, `RECEIPT`, `ALREADY`, `NAME` and `GROUP`, all on stdout, all list
 in its section. `nova-memory` adds its own informational second
 tokens the same way — `CAL`, `CAND`, `DEMO`, `HIT`, `MISS`, `INFO`, `MORE`, `NOTE` — all on
 stdout, all listed in its section.
-The five binaries specified under `docs/` keep the same shape and take the same
+The tools specified in the companion `docs/SPEC-*.md` files keep the same shape and take the same
 first token from their own verb — `WATCH` is spelled `WAKE`, and `nova-board`'s
 `check` is `BOARD`, `nova-tokens`'s `fold` is `TOKENS` — with `NOTE` and `MORE`
 as informational second tokens throughout; each `docs/SPEC-*.md` carries that
@@ -314,7 +314,15 @@ named no build.
 `<reason>` on the lines above, and every path an error's text carries into a
 refusal or a note, renders through `internal/oneline`; `ledger=` on
 `CORPUS OK` is a field and prints as one token; `deny-list=` names one of
-three constants from the deny-list machinery and is not caller text. The flag
+three constants from the deny-list machinery, so it is not caller text — **and
+it is a field, which is the half that was missed**: two of the three labels
+carry a space, so `deny-list=floor list` read as `deny-list=floor` to a
+whitespace-splitting scanner and `list` read as a further field. The escape is
+not only for text a caller wrote; a field is one token whoever wrote it, so
+these three go through `oneline.Field` like every other field and print as
+`floor\x20list`, `--deny-ext` and `floor\x20list\x20+\x20--deny-ext-add`.
+The label is rendered rather than renamed: a reader who has seen `floor list`
+in a finding reads the same words on the summary line. The flag
 parser is given no stream, so an unknown flag after a verb is this tool's own
 one-line refusal — `nova-check <verb>: <what was wrong>; run: nova-check help`,
 and nothing else — at exit 2, `-h` included. Pinned by
@@ -483,7 +491,17 @@ tool supplied would make the whole answer a guess while still looking like an
 instrument — the no-guessing law, applied to a number rather than a path.
 The derivation is `tokens = ceil(bytes / r)`: a size check must never report
 fewer tokens than its own estimate, and rounding down would let a kernel one
-token over budget read as exactly at it.
+token over budget read as exactly at it. **Nor may it report a number the
+conversion invented.** A divisor small enough to derive more tokens than an
+`int64` can hold is a scientific-notation typo away from a usable one, and the
+float-to-integer conversion is where the language leaves the answer to the
+hardware: `1e-20` saturated to `MaxInt64` and failed on arm64, wrapped to
+`MinInt64` and passed — `KERNEL OK tokens=-9223372036854775808 budget=400`,
+exit 0 — on the three amd64 targets of the five that ship. So the range is
+checked BEFORE the conversion and an uncountable estimate is over budget:
+`KERNEL FAIL <file>: over budget: the divisor derives more tokens than can be
+counted (measured <bytes> bytes at <r> bytes/token, budget <n>)`, the same
+verdict on every GOARCH.
 
 **The line teaches the unit it printed.** Token mode prints the derived
 tokens, the budget, the measured bytes, and the divisor, so any reader can
@@ -572,7 +590,7 @@ included-fragment spellings of make, and they genuinely are extensions rather
 than exact names.)*
 
 **The floor NAME list is a second list answering a different question**, and it
-is data on the same terms — [`internal/check/codenames.txt`](internal/check/codenames.txt),
+is data on the same terms — [`internal/check/codenames.txt`](../internal/check/codenames.txt),
 embedded, one entry per line, each carrying its reason. It is **not exhaustive
 and does not try to be** — it is extended deliberately, entry by entry with its
 reason, on the same policy as the extension list. An extension denotes a
@@ -643,7 +661,7 @@ extension list: a typo'd `nmae:Makefile` that parsed as nothing would leave a
 list matching less than it says while still reporting a clean tree.
 
 **The deny-list is a floor that ships with the tool**, as data —
-[`internal/check/codeexts.txt`](internal/check/codeexts.txt), embedded, one
+[`internal/check/codeexts.txt`](../internal/check/codeexts.txt), embedded, one
 extension per line, comments allowed. It is a list a reader can open and diff
 rather than string literals inside a walk.
 
@@ -666,7 +684,11 @@ wholesale** — for the line that legitimately keeps a language inside its own
 self — **`--deny-ext-add` extends it**, and the two are mutually exclusive.
 Every finding **names the list that produced it** (`floor list`, `--deny-ext`,
 or `floor list + --deny-ext-add`), and the `NOCODE OK` line names it too, so
-neither a red nor a green hides the basis it was reached on.
+neither a red nor a green hides the basis it was reached on. In a finding's
+reason the label is prose and keeps its spaces; on the `deny-list=` field of
+the OK and FAIL summary lines, and on `--print-deny-list`'s two `source=`
+fields, it is a field and prints as one token (`floor\x20list`) — the same
+words, rendered so a scanner counts the fields the tool wrote.
 `--print-deny-list` prints what is actually in force and exits 0 — **both
 lists**, the extensions under `NOCODE DENY-LIST` and the name floor under
 `NOCODE NAME-LIST`, each entry spelled as `name:` or `path:` so the output can
@@ -1477,7 +1499,7 @@ must not masquerade as a verdict).
 
 **The all-skipped green.** A run whose every named file was skipped is not a
 refusal: it completes and exits 0 with `SELFTALK OK files=0 claims=0
-standing=0 installations=0` — every skip was the caller's own, stated this run.
+standing=0 installations=0 dated=0` — every skip was the caller's own, stated this run.
 A caller gating on the exit code alone must therefore also require `files>0`
 from the OK line, or its green can mean nothing was scanned at all.
 
@@ -1990,7 +2012,7 @@ The law is untouched: the exit code is still 2 and the message still says
 `refusing to guess`. What changes is who does the guessing — a refusal that
 names only what was wrong hands the guess to the reader, which is the thing
 this tool exists not to do. The usage banner ends in the `quickstart` line and
-one runnable example per retrieval verb, and README's `### First run` opens on
+one runnable example per retrieval verb, and [`docs/CLI.md`](CLI.md)'s `### First run` opens on
 a real `quickstart` transcript and then shows both verbs by hand; the
 sentences, the examples and both transcripts' shapes are pinned by test.
 
@@ -2368,7 +2390,8 @@ nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--full] [--open 
       [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
       [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
-      [--interval <duration>] [--open] [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
+      [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
+      [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
 nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
 nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
 nova-bus names --bus <dir>
@@ -2846,6 +2869,7 @@ the writer meant rather than about what they cannot have meant:
 |---|---|
 | a recipient the roster does not know | a name from `nova-bus names`; the refusal lists every known name |
 | no `To:` line at all | a `To:` line; there is nobody to guess |
+| the note has no body | a body; an empty note says nothing |
 | a key nobody knows, once any asterisks are off — `Branch:` | one of the eight keys, which the refusal lists |
 | a `Re:` naming nothing on this bus | an id, a path that exists, or the exact subject of a note on your open list; a slug is not a thread |
 | an `Id:` line | no `Id:` line; the tool assigns it |
@@ -3813,7 +3837,8 @@ catalogue is what would make the other choice available later.
 
 ```
 nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
-      [--interval <duration>] [--open] [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
+      [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
+      [--legacy-before <date-or-instant>|--carry-history] [--advance [--attempts <n>] [--no-push]]
 ```
 
 **The failure it closes is not a failure of the bus.** A line reading this bus
@@ -3949,8 +3974,9 @@ receipt line parses and names something that exists; every `from-*` lane on disk
 has an owner in the roster; every `CURSOR`, `OPEN` and `INDEX` on the bus
 parses, because a malformed one is a reader who will refuse on their next run
 with nothing on the bus saying why; and a lane holds notes, its `RECEIPTS`,
-`CURSOR`, `OPEN` and `INDEX`, a `README.md`, and nothing else. It reports
-**every** finding in one run, not the first.
+`CURSOR`, `OPEN` and `INDEX`, a `README.md` (dotfiles such as `.DS_Store` are
+tolerated and ignored), and nothing else. It reports **every** finding in one
+run, not the first.
 
 **A lane's `README.md` is not a note**, and until this was written it was read
 as one: it ends in `.md`, it sits in a lane, so the walk parsed it, failed, told
@@ -4119,7 +4145,7 @@ Everything it prints is data: a note it relays is not an instruction.
 
 Verbs: `watch`, `serve`, `quickstart`, `version`, `help`.
 
-Its governing text is **[docs/SPEC-WAKE.md](docs/SPEC-WAKE.md)**, which is
+Its governing text is **[docs/SPEC-WAKE.md](SPEC-WAKE.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
@@ -4133,7 +4159,7 @@ merely waiting on its checks is not a failure.
 Verbs: `init`, `add`, `add-branch`, `read`, `gate`, `run`, `status`, `dry-run`,
 `packet`, `quickstart`, `stop`, `version`.
 
-Its governing text is **[docs/SPEC-MERGE.md](docs/SPEC-MERGE.md)**, which is
+Its governing text is **[docs/SPEC-MERGE.md](SPEC-MERGE.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
@@ -4147,7 +4173,7 @@ is the NO a board owes a filer: this is already here, do not file it again.
 
 Verbs: `list`, `add`, `take`, `close`, `check`, plus `quickstart` and `version`.
 
-Its governing text is **[docs/SPEC-BOARD.md](docs/SPEC-BOARD.md)**, which is
+Its governing text is **[docs/SPEC-BOARD.md](SPEC-BOARD.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
@@ -4162,7 +4188,7 @@ exit 1 — and the day files still land.
 
 Verbs: `fold`, `report`, `sum`, `check`, `sources`, `version`.
 
-Its governing text is **[docs/SPEC-TOKENS.md](docs/SPEC-TOKENS.md)**, which is
+Its governing text is **[docs/SPEC-TOKENS.md](SPEC-TOKENS.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 
@@ -4177,7 +4203,7 @@ Verbs: `add`, `batch`, `run`, `supervise`, `status`, `stop`, `requeue`,
 `verdict`, `triage`, `result`, `template`, `cost`, `note`, `finalize`,
 `reclaim`, `quickstart`, `version`.
 
-Its governing text is **[docs/SPEC-SWARM.md](docs/SPEC-SWARM.md)**, which is
+Its governing text is **[docs/SPEC-SWARM.md](SPEC-SWARM.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
 there, and nothing it says is restated here.
 

@@ -20,17 +20,55 @@ type (
 	Object struct {
 		keys []string
 		vals map[string]Value
+		// sealed marks an object that came off the wire through parseStrict, which is
+		// every object inside an Envelope this package accepted. Such an object's digest
+		// is already an identity somebody holds -- env.ID -- so the exported Set refuses
+		// it rather than letting the body move out from under its own ID (#146's
+		// adversarial read: two exported calls left env.ID disagreeing with
+		// ContentID(env.Body)). It is NOT general immutability: an object a caller built
+		// with NewObject is theirs and stays writable, or the encoder could not work.
+		sealed bool
 	}
 )
 
-// Keys returns the member names in source order.
-func (o *Object) Keys() []string { return o.keys }
+// Keys returns the member names in source order, as a COPY.
+//
+// It used to return o.keys itself, and that made the seal below a half-seal: a whole-PR read
+// of #146 measured `env.Body.Keys()[0] = sentinel` moving ContentID(env.Body) away from
+// env.ID with no error, which is the live-handle shape one method over from the exported
+// member list. A reader of a validated body gets the names, not the array they live in.
+func (o *Object) Keys() []string { return append([]string(nil), o.keys...) }
 
 // Get returns a member and whether it was present. Present-with-null and absent are
 // different answers, which is the whole point of the presence rules further down.
+//
+// On a SEALED object -- one the strict parser built, so one whose digest is an identity
+// somebody holds -- an array member is returned as a copy, for the same reason: the read
+// measured on this API was `src.Get("event_key").([]Value)[0] = sentinel`. A nested *Object
+// needs no copy because it is sealed too and defends itself. An object a caller built with
+// NewObject is theirs, and Get hands back exactly what they put in.
 func (o *Object) Get(k string) (Value, bool) {
 	v, ok := o.vals[k]
-	return v, ok
+	if !ok || !o.sealed {
+		return v, ok
+	}
+	return frozenValue(v), true
+}
+
+// frozenValue copies what a caller could otherwise write through. Strings, bools and nil are
+// immutable; an *Object is sealed and refuses its own mutation; a []Value is an array whose
+// backing store would be shared, so it is copied, and copied all the way down because an
+// array can hold an array.
+func frozenValue(v Value) Value {
+	arr, ok := v.([]Value)
+	if !ok {
+		return v
+	}
+	out := make([]Value, len(arr))
+	for i, e := range arr {
+		out[i] = frozenValue(e)
+	}
+	return out
 }
 
 func (o *Object) set(k string, v Value) {
@@ -79,7 +117,9 @@ func parseFrom(dec *json.Decoder, tok json.Token, field string, skip map[string]
 	case json.Delim:
 		switch t {
 		case '{':
-			o := &Object{}
+			// Sealed at birth: this object is a reading of bytes that already have a
+			// digest, not a body under construction.
+			o := &Object{sealed: true}
 			for i := 0; ; i++ {
 				kt, err := dec.Token()
 				if err != nil {

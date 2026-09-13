@@ -7,7 +7,7 @@ day files into a month. It reads sources. It never estimates, never fills a
 gap, and never removes a file.
 
 This spec is normative. If the code and this document disagree, one of them
-has a bug, and the tests decide which. It stands beside [SPEC.md](../SPEC.md),
+has a bug, and the tests decide which. It stands beside [SPEC.md](SPEC.md),
 whose **Conventions** section (exit codes, no guessed paths, the one-line
 output grammar, the cap-and-count rule, `internal/oneline` and
 `internal/bounded`) applies here unchanged and is not restated. Where this tool
@@ -60,6 +60,23 @@ is the day it was learned.
    guessing; lessons 34, 35). (2026-09-11: the prototype's five defaults were
    the keeper's home, the bus checkout, the output directory, the fold tables
    and `$TMPDIR`; a run on any other bench would have folded the wrong bench.)
+   **Amendment, 2026-09-12 (rules 22, 30, 31).** `publish` adds no default
+   path and consults no environment either: `--ledger`, `--batch`,
+   `--v1-day`, `--public` and `--public-repos` are flags, and a
+   missing one is exit 2 and `refusing to guess`. **The ledger repository is
+   a required flag too**: `--repo <host>/<owner>/<name>`, host-bound, with no
+   default and nothing compiled in (rule 30). It adds three named defaults,
+   none of them a repository and none of them read from an environment:
+   `--git-timeout` 120 seconds per subprocess, `--attempts` 3, and
+   `--deadline` 60 seconds over the whole sequence. The publish lock is not a
+   flag at all: it is derived from the git directory the clone itself reports
+   (rule 30). The one piece of configuration read is the named
+   remote's own URL, read to be checked against `--repo` and never to choose
+   one; a destination is never inferred from a directory's name, from an
+   environment variable, or from the fact that only one remote exists. Every
+   path a run was given is resolved and checked against every other before a
+   byte is written (rule 31), because a flag's name cannot prove two flags
+   are not one directory.
 2. **Sources are declared by flag, and every row names its sources.** A source
    is one of `--claude <label>=<dir>`, `--opencode <label>=<file>`,
    `--swarm <label>=<dir>` or `--bus <dir>`, each repeatable. The `sources`
@@ -144,6 +161,26 @@ is the day it was learned.
    file, with the reason, and failing when a carve-out has gone stale.
    A file under `--out` that is not a day file and not the temp name is
    named by `check` and left alone.
+   **Amendment, 2026-09-12 (rules 22–31).** `publish` removes nothing it did
+   not make, and the files it makes are its own (rule 31), named here and
+   nowhere else, each added to the carve-out list above by shape with its
+   reason, the list still failing when a carve-out has gone stale: this run's
+   private temporary directory `<git-dir>/nova-tokens-publish.<random>/` and
+   the plumbing index inside it; with `--public`, the staged
+   `<public>/<day>.tsv.<same random>.tmp` that lands by one rename in that
+   same directory; and the
+   publish lock `<git-dir>/nova-tokens-publish.lock` with, on a platform
+   with no flock, its sentinel — the same two carve-outs rule 8's `fold.lock`
+   already has, for the same reason. `<git-dir>` is what the clone itself
+   reports, never an assumed `.git`. The run releases its own temporary
+   directory and staged file on ordinary exit; a crash leaves them, named by a
+   suffix no other run uses, and no run removes another's. It writes **nothing** into the ledger clone's working tree: the
+   day's bytes become git objects under the clone's own `.git` through
+   plumbing (rule 23), so there is no temp file and no rename there to carve
+   out. No verb of this tool deletes, truncates or trims a file it was given,
+   `publish` runs no `git` subcommand that removes, resets or cleans anything
+   (rule 23's allowlist, rule 24), and a source is still never written at all
+   (rule 16).
 10. **A day that would shrink is refused.** Before writing a day file that
     already exists, the fold compares the new per-type day totals with the
     file's. If any type is lower, or was a number in the file and is a dash
@@ -227,6 +264,14 @@ is the day it was learned.
     siblings and queried there with `sqlite3 -readonly` under `--timeout`;
     the live file is never opened for writing. The bus checkout is read as
     files; the tool never runs `git`. A transcript is opened for reading.
+    **Amendment, 2026-09-12 (rules 22, 27).** Every word above is unchanged:
+    no verb writes into a source, and "the tool never runs `git`" is true of
+    every verb that reads one. A ledger clone is not a source. It is a
+    destination, named by `--ledger`, given to `publish` alone, and `publish`
+    reads no source at all — no transcript, no database, no swarm pool, no
+    export, no bus checkout. Two of a run's paths that resolve to one
+    directory are exit 2, checked over resolved paths and not over flag names
+    (rules 27 and 31).
 17. **A day is a UTC day, from the message's own stamp, and a row that is
     not says so.** A transcript line's `timestamp`, a database row's
     `time_created`, a swarm usage file's `ended` stamp, a bus line's `date`: each names
@@ -263,6 +308,23 @@ is the day it was learned.
     `git` at all and rule 16 holds without exception. The default is allowed
     for the reason SPEC.md gives `nova-bus --git-timeout`: it is how long the
     tool waits before saying so, not a fact about anybody's data.
+    **Amendment, 2026-09-12 (rules 22, 27).** Glenn, live: "nova-tokens can
+    and should provide an easy way to upload token daily work to git." And,
+    the same day: "not sure why this got outlawed. we need to collate across
+    multiple machines. git makes sense." The rule above was written for a
+    tool that measured one bench locally, before a ledger repository existed
+    to collate several — `mas-bandwidth/tokens` was created on 2026-09-12, at
+    his instruction, after this rule and rule 16 were written — so the
+    prohibition predates the need it was read as answering. "The tool runs no `git` at
+    all" is narrowed to the five verbs it was written about: `fold`, `sum`,
+    `check`, `sources` and `report` run none, and demanded test 16's
+    fake-`git` tripwire still holds over them. There are now two subprocess
+    programs and both run under a timeout: `sqlite3` under `--timeout` for
+    the sources, and `git` under `--git-timeout` (default 120, the same
+    reason) for `publish` and for no other verb. Nothing else here moves: the
+    order of competing bus notes is still `supersedes=` and never a
+    checkout's history, and this tool still imports no `net` package — the
+    network on the publish path is `git`'s, under `--git-timeout`.
 
 20. **A friend on another machine runs `report`, and never types a number.**
     The first user of this tool is not this bench: it is Emma, Johnny or
@@ -346,6 +408,11 @@ nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
                     [--provider <label>=<file>]...
                     [--scratch <dir>] [--timeout <seconds>] [--max <n>]
+nova-tokens publish (--batch <dir> | --v1-day <dir> --day <YYYY-MM-DD> --seat <label>)
+                    --ledger <dir> --remote <name> --branch <name> --repo <host>/<owner>/<name>
+                    [--supersede]
+                    [--public <dir> --public-repos <file>] [--public-sources]
+                    [--deadline <seconds>] [--git-timeout <seconds>] [--attempts <n>] [--max <n>]
 nova-tokens help
 nova-tokens version
 ```
@@ -359,6 +426,26 @@ required when `--opencode` is given and refused otherwise, because a scratch
 directory with nothing to put in it is a flag that does nothing. A label in a
 source flag is `[a-z0-9-]+`, at most 32 characters, and unique across the
 run; two sources with one label would make the `sources` column a lie.
+
+**Amendment, 2026-09-12 (rules 22, 30, 31).** `publish` brings the exception
+count to four, and not one of them names a place or a repository:
+`--git-timeout` 120 seconds per subprocess, `--attempts` 3 and `--deadline`
+60 seconds over the whole fetch, build, push and retry sequence — the
+retained-format packet's own "3 race retries within 60s", adopted — each
+allowed for the reason rule 19 gives `--timeout`. There is **no `--lock`
+flag**: the publish lock is one canonical path derived from the clone's own
+git directory, because two publishers free to name different locks would not
+be serialized (rule 30). **The ledger repository has no default**:
+`--repo <host>/<owner>/<name>` is required and host-bound, because
+`<owner>/<name>` alone does not identify a destination and a compiled-in
+repository would be exactly the guess rule 1 forbids (Stella, 2026-09-12).
+`--ledger`, `--remote`, `--branch`, `--repo` and one of `--batch` or
+`--v1-day` are required with no defaults; `--day` and `--seat` are required
+with `--v1-day` and refused with `--batch`; `--public-repos` is required when
+`--public` is given and refused otherwise, and `--public-sources` is refused
+without `--public`, for the reason `--scratch` is. There is no staging flag:
+the subset is staged inside `--public` itself, under this run's own name, so
+the rename that lands it can never cross a filesystem (rule 31).
 
 ### `fold`
 
@@ -405,6 +492,28 @@ printed and counted here too. Exits 0 whenever it ran. `sources` is a
 **report**; it exists so a person can see what a fold would count before it
 writes.
 
+### `publish`
+
+Asserts: the contribution exists and validates — a v1 day file under rule 13's
+row rules, a batch under its envelopes' own validators — and that, when the
+verb returns 0, every one of its files is on the ledger's named branch of the
+named remote at its own path, byte-identical for a batch's content-addressed
+paths and **identical under rule 26** for a v1 day, whose identity is
+`rows_sha256` and not the whole file. Says NO (exit 1) on `reason=differs`,
+`conflict`, `incomplete`, `malformed`, `changed`, `subset` or `unconfirmed`.
+Could not run (exit 2) on a missing or bad flag, a missing `--repo`, an
+effective fetch or push URL that does not match it, unrelated dirty work in
+the clone, an empty `user.name` or `user.email`, a held publish lock, two
+given paths that resolve to one directory, a staged path that exists, a fold
+in flight, a malformed batch directory, or a batch whose schema has no
+validator here. Deliberately does not check: whether the numbers are right
+(`check` and `sum` read them), whether other days or other benches are
+present in the ledger, whether coverage of the whole ledger is complete, or
+whether the note for that day reached the bus (rule 28). `publish` is a
+**wall**, and it is the only verb that runs `git`, the only verb that writes
+into a git clone, and it is in **Publishing to the git ledger**, rules 22 to
+31.
+
 ## Exit codes
 
 | code | meaning |
@@ -412,6 +521,33 @@ writes.
 | 0 | the verb ran and passed: every source read, every line parsed, every day written; a sum or a listing printed; a check with nothing to name |
 | 1 | the verb ran and said **NO**: a declared source with an unreadable file, an unparsed bus line or note, a row of two day bases, a lane-day with competing reports (`TOKENS CONFLICT`), a day that would shrink, a check finding, a `report` with nothing to show |
 | 2 | could not run: missing flag, bad flag value, `--out` not a directory, `--repos` unreadable or malformed, a duplicate label, `sqlite3` absent when `--opencode` is given, a second fold holding the lock |
+
+**Amendment, 2026-09-12 (rules 22–31).** The three meanings hold for
+`publish` and the enumerations above gain its cases, which are the only ones
+this amendment adds. **Exit 0**: the contribution is on the ledger's named
+branch at its own paths, either pushed by this run (`state=published`,
+`state=superseded`) or already there — byte-identical for a batch's immutable
+paths, identical under rule 26's `rows_sha256` for a v1 day
+(`state=already-published`). **Exit 1**, the verb ran and said NO:
+`reason=differs` (a v1 day's path holds different rows and `--supersede` was
+not given), `reason=conflict` (a content-addressed path holds bytes other
+than its own digest's), `reason=incomplete` (a published coverage envelope
+whose referenced closure is missing a member or holds different bytes),
+`reason=malformed` (a v1 day file `check` would name, or a batch whose
+envelopes do not validate), `reason=changed` (an input's digest moved under
+the publication), `reason=subset` (a public subset would carry a row not on
+its allowlist), `reason=unconfirmed` (the push could not be confirmed inside
+`--attempts` and `--deadline`). **Exit 2**, could not run: a missing or bad
+flag, `--repo` missing, both contribution kinds or neither, `--supersede` with
+`--batch`, a source flag on `publish`, two given paths that resolve to one
+directory, a staged path or a temporary directory that already exists,
+`--ledger` that is not a git checkout, an effective fetch or push URL that
+does not match `--repo` or whose shape the parser does not know, more than one
+effective push URL where they do not all match, an empty `user.name` or
+`user.email` in the clone, unrelated dirty or staged work in the clone, a
+second publisher holding the lock, a `git` absent from `PATH`, a fold in
+flight under `--v1-day`, a batch that is not exactly its own named files, and
+a batch naming a schema this build has no validator for.
 
 **Exit 1 still writes.** A fold with one unreadable file writes every day it
 could compute and exits 1. The exit code is about the claim (rule 3), not
@@ -425,7 +561,14 @@ not cover them.
 One machine-scannable line per event; first token names the verb's event
 class, second is `OK`, `FAIL` or one of the informational tokens listed here.
 `OK` and informational lines go to stdout; `FAIL`, `UNREADABLE`, `UNPARSED`,
-`MIXED`, `SHRANK`, `MISSING` and refusals go to stderr. `report` is the one
+`MIXED`, `SHRANK`, `MISSING` and refusals go to stderr.
+**Amendment, 2026-09-12 (rules 22, 24).** The rule above is unchanged and
+`publish`'s lines obey it as written: `PUBLISH PLAN`, `FILE`, `SUBSET`,
+`EXCLUDED`, `OK` and `NOTE` are informational or `OK` and go to stdout,
+`PUBLISH DIRTY`, `FAIL` and `REFUSED` go to stderr, and a `PUBLISH MORE`
+goes to the stream of the kind it caps — the MORE for `EXCLUDED` to stdout,
+the MORE for `DIRTY` to stderr — so neither stream ever shows a list without
+its MORE or a MORE without its list. `report` is the one
 exception, stated in rule 20: its stdout is exactly rule 6's body lines, and
 `REPORT OK`, `REPORT FAIL` and its `TOKENS UNREADABLE` lines go to stderr. Every path, label, model name,
 repo name, note id and reason renders through `internal/oneline`; every
@@ -449,7 +592,7 @@ TOKENS FAIL days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> 
 TOKENS NOTE <the one remedy line>
 TOKENS REFUSED: <reason>
 REPORT OK who=<name> day=<d> rows=<n> at=<stamp> build=<id> subject=<subject>
-REPORT FAIL who=<name> day=<d> rows=0 unreadable=<n>
+REPORT FAIL who=<name> day=<d> rows=<n> unreadable=<n>
 REPORT REFUSED: <reason>
 SUM MONTH month=<m> at=<stamp> build=<id> days=<n> first=<d> last=<d> missing=<n> rows=<n> turns=<n|->
 SUM PAIR model=<model> repo=<repo> input=<n> output=<n> cache_write=<n> cache_read=<n> reasoning=<n> rough=<n> dashes=<in>,<out>,<cw>,<cr>,<r> nonutc=<n> days=<n>
@@ -471,6 +614,16 @@ SOURCES UNREADABLE label=<label> path=<path>: <why>
 SOURCES UNPARSED label=<kind>:<name> note=<id> line=<n>: <text>
 SOURCES MORE kind=<source|unreadable|unparsed> shown=<n> total=<t> nova-tokens sources … --max 0
 SOURCES OK sources=<n> files=<n> messages=<n> unreadable=<n> unparsed=<n> rows=<n>
+PUBLISH PLAN at=<stamp> build=<id> kind=<batch|v1-day> ledger=<dir> repo=<host>/<owner>/<name> remote=<name> branch=<name> seat=<label|-> day=<d|-> contribution=<hex> files=<n> bytes=<n> deadline=<seconds> public=<dir|->
+PUBLISH DIRTY path=<path>: <modified|staged|untracked>
+PUBLISH FILE path=<path> sha256=<hex> rows_sha256=<hex|-> state=<new|present|identical|superseded|conflict|missing> supersedes=<hex|->
+PUBLISH SUBSET path=<path> rows=<n> excluded=<n> repos=<list> sha256=<hex>
+PUBLISH EXCLUDED day=<d> model=<model> repo=<repo>: not on --public-repos
+PUBLISH MORE kind=<dirty|file|excluded> shown=<n> total=<t> <remedy>
+PUBLISH OK contribution=<hex> commit=<sha> pushed=<true|false> state=<published|already-published|superseded> attempts=<n> files=<n> at=<stamp> build=<id>
+PUBLISH FAIL contribution=<hex> reason=<differs|conflict|incomplete|malformed|changed|subset|unconfirmed> pushed=<true|false|->
+PUBLISH NOTE <the one remedy line>
+PUBLISH REFUSED: <reason>
 SOURCES REFUSED: <reason>
 ```
 
@@ -606,8 +759,8 @@ mode 600.
 ### `--opencode <label>=<file>`: OpenCode's SQLite database
 
 The file, and `<file>-wal` and `<file>-shm` when present, are copied into
-`--scratch`, and three queries run there with `sqlite3 -readonly -tabs` under
-`--timeout` (rule 16): sessions (`id`, `parent_id`, `directory`), assistant
+`--scratch`, and three queries run there with `sqlite3 -readonly -json` under
+`--timeout` (rule 16; `-json` is used rather than `-tabs` because tool command inputs containing tabs/newlines corrupted TSV column splitting): sessions (`id`, `parent_id`, `directory`), assistant
 messages (`id`, `session_id`, `time_created`, `providerID`, `modelID`, the
 five `tokens.*` counts, `path.cwd`), and tool parts (`message_id`,
 `session_id`, the `command`, `filePath`, `path` and `pattern` inputs).
@@ -619,6 +772,13 @@ are the message's own tool parts' inputs. The day is `time_created`, UTC.
 `sqlite3` is a subprocess and it is the only one. Standard library Go cannot
 read SQLite, and a driver would be the first dependency in this repo. The
 work list names this as a decision for the table.
+
+**Amendment, 2026-09-12 (rules 22, 27).** `sqlite3` is the only subprocess on
+any path that reads a source, and that is what this sentence is about. There
+is a second program, `git`, and it runs for `publish` alone, under
+`--git-timeout`, against the ledger clone and nothing else (rule 19's
+amendment). No source reader may start it, and demanded test 27 is what holds
+that.
 
 ### `--swarm <label>=<pool>`: nova-swarm usage files
 
@@ -758,6 +918,12 @@ numbers depend on a network call, and the `TOKENS SOURCE` line for the bus
 prints the newest note's mtime so a reader can see how fresh the checkout
 was.
 
+**Amendment, 2026-09-12 (rules 22, 27, 28).** Every word of this paragraph
+still holds, of the bus and of every verb that reads it. `publish` is the one
+verb that runs `git`; it runs it only against the ledger clone named by
+`--ledger`, it never opens a bus checkout, and it sends no note. A fold's
+numbers still depend on no network call.
+
 ## Repo attribution
 
 One rule, one function, one statement (lesson 113). `--repos <file>` is
@@ -818,6 +984,7 @@ sources. Ninety days under `--all`.
 | `sum --month` | 1 MONTH + 20 PAIR + 1 MORE + 20 MODEL + 1 MORE + 1 TOTAL + 1 OK = 45 | under 10 KB |
 | `check` | 20 FAIL + 1 MORE + 20 MISSING + 1 MORE + 20 STRAY + 1 MORE + 1 count line = 64 | under 8 KB |
 | `sources --all` | 10 SOURCE + 20 UNREADABLE + 1 MORE + 20 UNPARSED + 1 MORE + 1 OK = 53 | under 8 KB |
+| `publish` (2026-09-12, rules 22–31) | 1 PLAN + 20 FILE + 1 MORE + 1 SUBSET + 20 EXCLUDED + 1 MORE + 1 OK + 1 NOTE = 46 at a batch of 20 files; a refusal is at most 20 DIRTY + 1 MORE + 20 FILE + 1 MORE + 1 FAIL + 1 NOTE + one `REFUSED` per independent problem, that list being finite and enumerated by the exit-code table's amendment (eighteen), so 20 + 1 + 20 + 1 + 1 + 1 + 18 = 62 | under 12 KB |
 
 These are ceilings that do not grow with the state. A test builds that state
 in `t.TempDir()`, runs every verb, and asserts the line and byte counts
@@ -826,12 +993,710 @@ it (lesson 169).
 
 **The fold's cost is one pass over each source file.** Each declared file is
 opened once per run, and a test counts opens; no subprocess but `sqlite3`
-runs, and the same test asserts it. There is no index and no
+runs, and the same test asserts it. (**Amendment, 2026-09-12 (rule 27).**
+This paragraph is the fold's cost and its scope is the read side; `publish`
+starts `git`, is not on any read path, and its own bound is the `publish` row
+above.) There is no index and no
 incremental mode: a day file is recomputed whole from the sources every
 time, and the day's own transcripts are the only thing that must be read to
 compute it. The prototype read 2,497 files in about ten seconds; the
 two-minute rule holds with room, and it is a count that is pinned, not a
 time (lesson 167).
+
+## Publishing to the git ledger
+
+Glenn, live, 2026-09-12: "nova-tokens can and should provide an easy way to
+upload token daily work to git." And, the same day: "not sure why this got
+outlawed. we need to collate across multiple machines. git makes sense."
+
+The history, honestly, in one sentence: v1 of this spec was written as a
+local, read-only measurer of one bench, before the ledger repository existed
+— `mas-bandwidth/tokens` was created on 2026-09-12, at Glenn's instruction,
+after rules 16 and 19 — so the prohibition predates the need, and this
+amendment is the collation across machines he names.
+
+**What it is.** One more verb, `publish`. It uploads one **contribution** to a
+clone of a git ledger the caller names. It is the only verb that runs `git`,
+the only verb that writes into a git clone, and it runs on an explicit
+invocation, never on a timer.
+
+**A contribution is one of two typed kinds, and they never mix.** The
+retained batch is the endpoint; the aggregate exists so a bench with day files
+today is not blocked, and neither it nor the public subset may delay the
+endpoint (Stella, 2026-09-12).
+
+| kind | flag | what it is | where it lands | destination is |
+|---|---|---|---|---|
+| **retained batch** — the endpoint | `--batch <dir>` | one `nova.tokens.coverage/2` envelope, the `observation/2` shards it references and any new `mapping/2` envelopes | `records/…`, `mappings/…`, `coverage/…`, the retained-format packet's paths (rule 29) | **content-addressed and immutable**: a path's name is its bytes' digest, so a path is written once and never replaced |
+| **v1 day file** — aggregate transport, explicitly typed | `--v1-day <dir> --day <d> --seat <label>` | one `<dir>/<day>.tsv` this bench folded | `v1-days/<seat>/<YYYY-MM>/<day>.tsv`, a subtree no records path uses | **mutable and named by the day**, so it has the one replace transition this spec allows, under `--supersede` (rule 26) |
+
+**What a user gets.**
+
+```
+nova-tokens publish --v1-day out --day 2026-09-12 --seat studio \
+                    --ledger ~/tokens --remote origin --branch main \
+                    --repo github.com/mas-bandwidth/tokens
+PUBLISH PLAN at=<stamp> build=<id> kind=v1-day ledger=/Users/x/tokens repo=github.com/mas-bandwidth/tokens remote=origin branch=main seat=studio day=2026-09-12 contribution=<hex> files=1 bytes=4210 deadline=60 public=-
+PUBLISH FILE path=v1-days/studio/2026-09/2026-09-12.tsv sha256=<hex> rows_sha256=<hex> state=new supersedes=-
+PUBLISH OK contribution=<hex> commit=<sha> pushed=true state=published attempts=1 files=1 at=<stamp> build=<id>
+```
+
+**What does not change.** Nothing on the read side. `fold`, `sum`, `check`,
+`sources` and `report` run no `git`, open no network, and read a bus checkout
+as files, exactly as rules 16 and 19 say; the amendment clause under rule 19,
+dated 2026-09-12, narrows "no `git` at all" to those five verbs and quotes
+Glenn's sentence as its reason. A friend's daily note still reaches the bus
+the way rule 20 and [SPEC-BUS-DELIVERY](SPEC-BUS-DELIVERY.md) say, and that
+is a different act from this one (rule 28).
+
+**Two documents reconciled here.**
+[PROPOSAL-TOKENS-FORMAT.md](PROPOSAL-TOKENS-FORMAT.md) spells this verb
+`nova-tokens records publish`; the spelling in this spec is
+`nova-tokens publish --batch`, because `publish` is one verb over both typed
+kinds and `records` is not a verb namespace of this binary (Stella's
+packaging decision, 2026-09-12). That packet's "at most 3 race retries within
+60s" is adopted whole and is **the** bound: `--deadline <seconds>`, default
+60, bounds the entire fetch, build, push and retry sequence, and
+`--attempts`, default 3, bounds the retries inside it. `--git-timeout`
+(default 120) bounds **one subprocess** and is not that budget; where the two
+disagree the deadline governs, and its exhaustion is `reason=unconfirmed`.
+
+The verb's synopsis is in **the verbs**, its lines are in **the output
+grammar**, its bound is the `publish` row of **the largest plausible state**,
+and its exit codes are the clause under **exit codes**. The streams are this
+spec's own: `PUBLISH PLAN`, `FILE`, `SUBSET`, `EXCLUDED`, `OK` and `NOTE` go
+to stdout, `PUBLISH DIRTY`, `FAIL` and `REFUSED` to stderr, and a
+`PUBLISH MORE` to the stream of the kind it caps. **`REFUSED` is exit 2 and
+`FAIL` is exit 1**, here as everywhere: a refusal is the verb declining to
+run, a `FAIL` is the verb running and saying NO. `DIRTY`, `FILE` and
+`EXCLUDED` are each capped at `--max`, per kind; `PUBLISH NOTE` is exactly one
+remedy line. The rules are numbered on from rule 21.
+
+22. **`publish` is the one verb that runs `git`, it publishes one typed
+    contribution per invocation, and it runs on an explicit invocation, never
+    on a timer.** `--batch` and `--v1-day` are mutually exclusive and one is
+    required; `--day` and `--seat` belong to `--v1-day` alone and are refused
+    with `--batch`, because a retained record carries its own day and its own
+    origin (rule 29). There is no `--all` and no "today": a clock never
+    chooses what is uploaded, for the reason rule 12 gives. The verb reads the
+    contribution's files and writes nothing under `--out`, `--v1-day` or
+    `--batch`. It schedules nothing and wakes nothing; a LaunchAgent that runs
+    it is the bench's. `--ledger <dir>` is an existing clone the caller made
+    and is authorized for; `publish` never clones, never creates a remote or a
+    branch, never changes configuration or access, and acquires no credential,
+    because a tool that provisioned access would be a tool that could acquire
+    it (Stella: the caller selects an existing authorized clone; configuration
+    and access changes are not part of this verb). **No local branch, no
+    `HEAD`, no index and no working tree in the clone is changed**: the commit
+    is built with plumbing on the fetched head and pushed by object id
+    (rule 23), so a rejected push or a death mid-run strands nothing (rule 24).
+    **No other verb publishes anything**, ever, as a side effect of its own
+    job, and no verb installs or updates anything on the way.
+    **Demanded test.** A bare repository and a real clone of it, both under
+    `t.TempDir()`, a fake `git` on `PATH` for argv and real `git` for
+    behaviour: one `publish --v1-day` lands one commit carrying one path;
+    `--batch` with `--v1-day`, `--batch` with `--day` or with `--seat`, and
+    neither kind given, are each exit 2 naming the flags; `--all` is exit 2;
+    nothing under `--out`, `--v1-day` or `--batch` changed by bytes or mtime;
+    no invocation names a path outside `--ledger` and the contribution; a
+    `--ledger` that is not a git checkout is exit 2.
+
+23. **`publish` uploads the contribution's bytes exactly, and builds its
+    commit with plumbing.** Every file goes into the ledger byte-for-byte:
+    nothing is reformatted, re-sorted, re-stamped or re-hashed, and a v1 day's
+    `at=` in the ledger is the fold's.
+
+    **The bytes are raw.** The blob is written
+    `hash-object -w --no-filters --stdin`, and `--no-filters` is the whole
+    point: a ledger with `*.tsv text eol=lf` in its `.gitattributes`, or a
+    clone with `core.autocrlf`, would otherwise rewrite a byte the digest
+    already counted — measured, 2026-09-12, Stella: input
+    `636f6c3109636f6c320d0a` stored as `636f6c3109636f6c320a` through
+    `--path`. No `--path` is passed, because with filters off it decides
+    nothing and would only suggest they were on.
+
+    **The commit.** The blobs go into a tree built from the fetched head's
+    tree (`read-tree` into this run's own private index, rule 31 — the run
+    creates the empty **directory** exclusively and lets `read-tree` create
+    the index file inside it, because a zero-length file at `GIT_INDEX_FILE`
+    is not an empty index and `read-tree` refuses one — then
+    `update-index --add --cacheinfo 100644,<blob>,<path>`, then `write-tree`);
+    the tree becomes a commit whose parent is that fetched head
+    (`commit-tree`); and that commit is pushed by object id,
+    `push <remote> <sha>:refs/heads/<branch>`, no leading `+`, no force of any
+    spelling. The commit carries **exactly the contribution's new paths and
+    nothing else** — for a batch the shards, mappings and coverage envelope it
+    adds, at rule 29's paths, every mode `100644`, no symlink; a shard the
+    fetched tree already holds with identical bytes is **referenced, not
+    rewritten**, and is not in the commit (rule 24). A rejected push or a
+    death before it leaves only unreachable objects, which git's own
+    housekeeping collects.
+
+    **What is guaranteed about refs, exactly.** `HEAD`, every local branch,
+    the index and the working tree are unchanged. `fetch` runs with the empty
+    `--refmap=` (invocation 5), so it ignores the clone's configured fetch
+    ref mapping: publication never moves a named local ref or a named
+    remote-tracking ref, whatever `remote.<name>.fetch` is. The one ref it
+    writes is `FETCH_HEAD`; no remote-tracking ref, no tag, no note, no
+    `refs/stash`. The demanded test asserts that promise and not the
+    impossible one.
+
+    **The argv is an allowlist, and the test is an equality check against
+    it.** In this order, with these flags and no others:
+
+    | # | argv after `git` | why |
+    |---|---|---|
+    | 1 | `-C <ledger> rev-parse --git-dir` | is this a checkout |
+    | 2 | `-C <ledger> remote get-url --all <remote>` and `remote get-url --push --all <remote>` | the **effective** fetch and push destinations, rewriting applied, read only (rule 30) |
+    | 3 | `-C <ledger> config --get user.name` and `config --get user.email` | whose name the ledger records, read from configuration and never auto-detected |
+    | 4 | `-C <ledger> status --porcelain --untracked-files=all` | rule 24's dirty check |
+    | 5 | `-C <ledger> fetch --no-tags --refmap= <remote> refs/heads/<branch>` | the head to build on |
+    | 6 | `-C <ledger> rev-parse FETCH_HEAD` | that head's object id |
+    | 7 | `-C <ledger> ls-tree -r <sha> -- <path>…` and `cat-file blob <sha>` | what this contribution's paths already hold |
+    | 8 | `-C <ledger> hash-object -w --no-filters --stdin` | one blob per new file, raw |
+    | 9 | `-C <ledger> read-tree <sha>`, `update-index --add --cacheinfo …`, `write-tree` | the tree, in this run's private index |
+    | 10 | `-C <ledger> commit-tree <tree> -p <sha> -F -` | the commit, message on stdin |
+    | 11 | `-C <ledger> push <remote> <sha>:refs/heads/<branch>` | the one write |
+
+    Invocations 1 to 4 run once per run; 5 to 11 run once per attempt, up to
+    `--attempts` and inside `--deadline`; and 8 to 10 are skipped on an attempt
+    whose step 1 finds the contribution already published (rule 24). That is
+    the shape the equality check expects, so a second attempt has a defined
+    argv rather than an exception.
+
+    No other subcommand may appear, and in particular none of `add`, `commit`,
+    `merge`, `rebase`, `reset`, `clean`, `rm`, `checkout`, `switch`, `stash`,
+    `branch`, `tag`, `clone`, `remote set-url`, `remote add`, `update-ref`,
+    `gc`, `prune`, `filter-branch`, `config --add`, or `config <key> <value>`;
+    and no `push` carrying `--force`, `--force-with-lease`, `--delete`,
+    `--mirror`, `--tags`, `--all`, a refspec with a leading `+`, or a refspec
+    whose left side is not the object id this run built. `publish` passes no
+    `-c <key>=<value>` and no `--config-env`: an inline setting is a
+    configuration write with a shorter life. Every invocation runs with
+    stdin from `/dev/null` except the two fed on purpose (8 and 10), with no
+    controlling terminal, with `GIT_TERMINAL_PROMPT=0`, and with `GIT_ASKPASS`
+    set to this tool's own binary in a mode whose only behaviour is to exit 1
+    — named, not guessed (rule 1). Those cover two different prompts: over
+    HTTPS it is `GIT_ASKPASS` and `GIT_TERMINAL_PROMPT` that turn a credential
+    prompt into a refusal, and over SSH it is the `/dev/null` stdin and the
+    absent terminal, because `GIT_ASKPASS` never reaches `ssh` — an SSH
+    passphrase prompt has nowhere to read from and fails instead of waiting. It sets `GIT_INDEX_FILE` for invocation 9 and no
+    `GIT_AUTHOR_*` or `GIT_COMMITTER_*` at all. **The author and committer are
+    the clone's own configured identity**, read at invocation 3 by
+    `config --get` and never by `git var`, which auto-detects a
+    `<user>@<host>` identity when the configuration is empty and cannot say
+    which it returned: an empty `user.name` or `user.email` is exit 2 naming
+    which one, so the refusal cannot pass or fail by hostname. The commit author is **not** provenance: a record's
+    friend and bench are the record's own (rule 29).
+
+    **The message is derived from the bytes.** Subject
+    `tokens: <kind> <contribution id> files=<n>`; body one sorted line per new
+    path, `<path> sha256=<hex>`, then `inventory_sha256=<hex>` (rule 26's
+    always-written digest over exactly those lines), then for a v1 day its `day=`,
+    `seat=`, `rows_sha256=` and the file's own `at=` and `build=`, and
+    `supersedes=<rows_sha256>` on a `--supersede` run (rule 26). Nothing else.
+    No force, no amend, no rebase, no tag: a correction is a new commit.
+    **Demanded test.** Every file on the remote branch byte-identical to the
+    contribution's, a v1 day's version line and trailing newline included; the
+    commit's tree differing from its fetched parent's in exactly the new
+    paths, mode `100644`; the message recomputed from the bytes and compared.
+    **The byte guarantee, red first**: a ledger with `*.tsv text eol=lf`
+    committed in `.gitattributes` and a day file containing CRLF publishes a
+    blob whose bytes are the file's, and the same run without `--no-filters`
+    fails the test. **The ref guarantee**: after a successful publish, a
+    rejected one and a kill, `HEAD`, every local branch, the index and
+    `git status --porcelain` are unchanged, every named remote-tracking ref
+    is where it was, `FETCH_HEAD` alone may have changed, and no other ref in
+    the clone moved. (**Amendment, 2026-09-12 (rule 23).** The empty
+    `--refmap=` removes the verb's dependence on the clone's configured fetch
+    mapping rather than narrowing which authorized clones work, so the
+    demanded test adds a custom-refmap fixture: a clone whose
+    `remote.origin.fetch` is a custom mapping such as
+    `+refs/heads/*:refs/heads/*` must **publish successfully** with the
+    explicit `--refmap=` form, and every named local ref must be unchanged
+    afterwards — that clone is **not** refused because of its configuration.
+    The negative control is the same clone with `--refmap=` omitted, where the
+    custom mapping updates a local branch and the ref-preservation assertion
+    **fails**. Synthetic local clones only, no ledger.) A clone with `user.email` unset is exit 2 naming it, with no object
+    written, **and the same on a bench whose hostname would give `git var` a
+    plausible identity** — the red being an identity read through `git var`; a
+    batch naming a file it does not reference, a symlink, or a mode other than
+    `100644` is refused before any object is written; and the fake `git`'s
+    argv is compared **for equality** against the table — position,
+    subcommand and flag set, an unlisted flag failing as loudly as an unlisted
+    subcommand, and the push refspec asserted to be exactly
+    `<the built sha>:refs/heads/<branch>`.
+
+24. **What `publish` refuses, and how an interrupted or incremental
+    contribution resolves.** Every independent problem prints at once, one
+    line each. After each refusal the remote is byte-identical, the clone's
+    local refs are unchanged by object id, and the caller's files, index and
+    commits are untouched; that sentence is stated once and holds for every
+    case below.
+    - **Unrelated dirty work is exit 2.** Any modified, staged or untracked
+      path under `--ledger` is one `PUBLISH DIRTY` line (capped, MORE on the
+      same stream). The word is **unrelated**, SPEC-BUS-DELIVERY's own:
+      everything in that working tree is unrelated to this verb, because
+      rule 23 writes nothing into one. Another tool's pending contribution is
+      not this tool's to publish, and its valid trailer is not permission
+      (SPEC-BUS-DELIVERY, point 4).
+    - **A local commit the remote lacks is not a refusal**, and a
+      **clean-but-behind** clone publishes normally: rule 23 builds on the
+      fetched head, so being behind is not a state to repair and `publish`
+      repairs none of it.
+    - **The resolution, one state machine**, run under the lock (rule 30)
+      after `fetch`. Every reference of the contribution is first resolved and
+      validated against **the fetched tree together with the batch**, because
+      a batch referencing immutable objects the ledger already holds is the
+      ordinary second daily contribution and not a failure
+      ([PROPOSAL-TOKENS-FORMAT.md](PROPOSAL-TOKENS-FORMAT.md): references may
+      resolve to byte-identical objects already in the ledger). Then, by the
+      **contribution id's own path** — the coverage envelope's path for a
+      batch, the day file's path for a v1 day:
+      1. **Absent.** Nothing of this contribution is published yet. Write, in
+         one commit, exactly the referenced files the fetched tree does not
+         already hold, plus the coverage envelope (or the day file). An
+         already-present immutable path with identical bytes is preserved and
+         referenced, never rewritten; a v1 day's present-and-equal case is
+         rule 26's no-op.
+      2. **Present.** For a **batch**, require the **complete referenced
+         closure** — every shard and mapping the envelope names, at its own
+         path, with identical bytes — before reporting
+         `state=already-published`, exit 0, no commit, no push; a closure
+         member missing or holding different bytes is a broken prior
+         publication: `PUBLISH FAIL reason=incomplete`, exit 1, naming each
+         path and which it is, nothing written, nothing overwritten. For a
+         **v1 day**, the comparison is rule 26's and not a byte comparison:
+         the same `rows_sha256` is `state=identical` and
+         `state=already-published`, exit 0, **whatever that file's version
+         line says**; a different `rows_sha256` is
+         `PUBLISH FAIL reason=differs`, exit 1, until `--supersede`, which
+         replaces that one path in a new commit and prints
+         `state=superseded`. This is the only door in this machine through
+         which a destination's bytes are replaced, and `--supersede` is the
+         only key (rule 26).
+      3. **Conflicting bytes at an immutable path** — a `records/`,
+         `mappings/` or `coverage/` path present with bytes other than the
+         digest that names it demands — is `PUBLISH FAIL reason=conflict`,
+         exit 1, naming the path: a content-addressed path is written once,
+         and this tool never replaces one. Only the v1 day's mutable path has
+         a replace transition, and only under `--supersede` (rule 26).
+      4. **Identity is bound to the destination path.** Matching bytes at some
+         other path are never a find, so a shard that exists elsewhere does
+         not make this contribution published.
+      5. **Reuse, never duplicate.** An object this run would write that the
+         clone's object database already holds with the exact bytes — blob,
+         tree or commit — is reused, which is SPEC-BUS-DELIVERY's "reuse an
+         existing pending commit when possible" in this verb's shape. Reuse is
+         by content digest, so it cannot pick up another bench's work.
+      6. **Rejected, not fast-forward** — two benches pushing one branch, the
+         ordinary case of collation. Fetch again, re-run this machine against
+         the **new** head, and either report `already-published` or rebuild and
+         push, inside `--attempts` and `--deadline`. The other bench's commit
+         is preserved untouched and no append of theirs is dropped; a
+         rejection is never answered with a force.
+      7. **The answer was lost**, including a death between `commit-tree` and
+         `push`: the same machine decides it, so nothing is ever pushed twice
+         under two identities.
+      Exhaustion of `--attempts` or `--deadline` is exit 1
+      `reason=unconfirmed`, with the contribution id printed and every input
+      still on disk for an explicit retry. `pushed=` says which kind of
+      exhaustion it was, because this spec writes an unknown as `-` and a
+      rejection is not unknown: **`pushed=false`** when the last attempt ended
+      in a rejection the remote reported, **`pushed=-`** when the last attempt
+      ended with no answer at all. Only the remote's own answer establishes
+      success.
+    - **A contribution that is not there, or does not validate.** A v1 day
+      file missing under `--v1-day` is exit 2; one `check`'s row rules would
+      name is exit 1 `reason=malformed` naming the line. A `--batch` directory
+      missing, or holding anything but its own named immutable files, is exit
+      2; envelopes that do not validate are exit 1 `reason=malformed`; a
+      schema this build has no validator for is exit 2 `refusing to guess`
+      naming the validator (rule 29).
+    - **A fold that may be in flight is exit 2.** `<dir>/<day>.tsv.tmp`
+      present under `--v1-day`, or that directory's `fold.lock` held, is named
+      and `publish` stops: half a day is not a day. The lock is probed by
+      opening `fold.lock` **without** `O_CREATE` and asking for it without
+      waiting, so an absent lock file is not a held lock and the probe creates
+      nothing.
+    - **Input that moves under the publication is exit 1** `reason=changed`
+      naming the file (rule 31's snapshot).
+    - **A public subset that would carry a row not on its allowlist** is
+      exit 1 `reason=subset` (rule 25).
+    - **Never**: a credential prompt, a credential written or printed
+      anywhere, a configuration or access change, a stash, a reset, a clean, a
+      checkout over somebody's work, or the removal of any file this run did
+      not make (rule 9's amendment, rule 23's allowlist).
+    **Demanded test.** Each refusal red on its own, with the invariant
+    sentence above asserted after every one. Unrelated dirty work (modified,
+    staged, untracked) is exit 2 naming the path; a clone with an unrelated
+    local commit, and one a dozen commits behind, each publish, exit 0, that
+    commit still unpushed and unmoved. A v1 day file with ten columns is exit 1
+    `reason=malformed`; a `<day>.tsv.tmp` beside it is exit 2; a held
+    `fold.lock` is exit 2 while an absent one publishes and leaves none
+    behind. Then, against real bare remotes:
+    - **The incremental batch, the case that must not refuse.** Day one lands
+      shards A and B and coverage C1. Day two's batch references A (already
+      there, byte-identical) and adds shard D and coverage C2: it publishes,
+      exit 0, one commit carrying **D and C2 only**, A untouched and not
+      rewritten, and `PUBLISH FILE` says `state=present` for A and
+      `state=new` for the rest — the red being a rule that called this
+      `incomplete`.
+    - **The genuinely broken prior publication.** Coverage C1 present but
+      shard B absent, and C1 present with shard B holding different bytes, are
+      each exit 1 `reason=incomplete` naming every path and its state.
+    - **Conflict at an immutable path.** A shard path present with bytes that
+      are not its digest's is exit 1 `reason=conflict`, and `--supersede` does
+      not change that.
+    - **Rejected, not fast-forward.** A second writer pushes an unrelated path
+      in the seam between this run's `fetch` and `push`: the push is rejected
+      and, inside `--attempts`, the contribution lands on top of the other
+      writer's commit with its bytes untouched; the refspec never carries `+`;
+      with `--attempts 1` the run is exit 1
+      `reason=unconfirmed pushed=false` — a rejection is an answer — the
+      remote holds the other writer's commit alone, and the next plain
+      `publish` succeeds with no `--supersede` and no manual cleanup; a run
+      whose last attempt got no answer at all prints `pushed=-` instead, and a
+      test asserts the two apart. With `--deadline 0` refused and a deadline
+      that expires mid-retry, the same
+      `unconfirmed`.
+    - **Killed between commit and push.** SIGKILL after `commit-tree` returns
+      and before `push` (the fake `git` blocks in `push` for the test): the
+      remote has nothing, the clone has no moved local ref and nothing staged,
+      and **the next plain `publish` succeeds**, reusing the objects by digest
+      and landing one commit — no manual cleanup, no exit 2 from a leftover
+      (rule 31). Killed after the push landed but before its answer was read:
+      the next invocation prints `state=already-published pushed=false
+      attempts=0`.
+    - **Two concurrent publishers**, rule 30's witness.
+
+25. **The public subset is open-source repositories only, by an explicit
+    allowlist, it stays local, and it never gates the ledger.** Glenn,
+    2026-09-12: the ledger and the total reports are private, and a public
+    report is an open-source subset only. Stella, the same day: keep it local
+    and explicit, publication a separate act, and let it wait rather than
+    delay the retained endpoint — so this rule is **optional to build, after
+    rules 22 to 24 and 29 to 31**, and nothing in it gates them. `--public
+    <dir>` writes one file, `<public>/<day>.tsv`, through rule 31's owned
+    staged path **in that same directory** and one rename, and **pushes
+    nothing**. It is offered for a v1
+    day and refused with `--batch`, whose public shape is a records-layer
+    decision nobody has made. `--public-repos <file>` is required with it: a
+    person's file, one exact repo name per line, no patterns, because a
+    pattern can admit a repository nobody vetted; `#` and blank lines are
+    skipped; `unknown`, `other` and `unattributed` may never appear in it, and
+    a file naming one is exit 2 naming the line, since a row nobody attributed
+    cannot be shown to be open source. The subset's rows are exactly the rows
+    whose `repo` cell is literally in that file; every other row is excluded,
+    counted `excluded=<n>` on `PUBLISH SUBSET`, named by a capped
+    `PUBLISH EXCLUDED`, and the subset's first line is
+    `nova-tokens v1 subset day=<d> at=<stamp> build=<id> rows=<n> excluded=<n>`,
+    so it can never be read as a total. The `sources` column is the fixed word
+    `withheld`, because a source label is a person's bench and not a fact
+    about an open-source repository; by the same reasoning the **seat is not
+    on that first line** either. `--public-sources` writes the labels through
+    and adds `seat=<label>`: one flag, one decision, typed deliberately. The
+    subset is not a day file and `check` is not pointed at it. Before any byte
+    is written, the rows about to be written are checked against the
+    allowlist; one that is not on it is `PUBLISH FAIL reason=subset`, exit 1,
+    nothing written anywhere.
+    **Demanded test.** A day with rows for an allowlisted `schema`, for
+    `unknown` and for a private `bench-secrets`: the subset carries `schema`
+    only, `excluded=2` with both named on stdout, the same case at `--max 1`
+    printing one `EXCLUDED` and its MORE line on stdout too (two lines under
+    the default `--max` print no MORE, per rule 11), `sources` reading
+    `withheld`, the first line carrying `rows=` and
+    `excluded=` and no `seat=`, and `seat=` present with `--public-sources`;
+    an allowlist naming `unknown`, `other` or `unattributed` is exit 2 naming
+    the line; `--public` without `--public-repos`, `--public-sources` without
+    `--public`, and `--public` with `--batch` are each exit 2; and the
+    pre-write check handed a row the selector should have dropped is exit 1
+    `reason=subset` with no file under `--public`, no staged file beside it and
+    no commit — the red being that without the check the private row lands.
+    There is no `--stage` flag to test: rule 31 stages inside `--public`.
+
+26. **Identity, and the one replace transition.** A contribution's **id** is
+    defined per kind, and nothing else is required to equal it:
+    - **a batch**: the coverage envelope's own content id, which
+      [PROPOSAL-TOKENS-FORMAT.md](PROPOSAL-TOKENS-FORMAT.md) defines as the
+      SHA-256 of its canonical body with filenames excluded, and which that
+      packet already calls the contribution id. This spec adds no second
+      definition of it (Stella, 2026-09-12: the two inputs are different, and
+      a listing that included the coverage path would make that path's name
+      depend on a digest computed over it).
+    - **a v1 day**: `rows_sha256`, the digest of every line **below** the
+      version line — the rows, their tabs and the final newline, and nothing
+      of the stamp.
+    `inventory_sha256` is a separate digest over the sorted
+    `<path> sha256=<hex>` lines of the paths a commit adds. It is **always
+    written** in a commit's message and is **never an identity**: it is
+    checked only against its own definition, it is never required to equal a
+    contribution id, nothing is looked up by it, and no filename depends on
+    it. A v1 day also prints `sha256=`, the whole
+    file.
+
+    **The v1 row-equivalence exception, stated once and used everywhere.** The
+    `v1-days/` path is mutable and named by the day, so a destination whose
+    bytes differ from the file at hand is not automatically a conflict; its
+    three transitions are: **absent** → publish; **present with the same
+    `rows_sha256`** → `state=identical`, `PUBLISH OK … pushed=false
+    state=already-published attempts=0`, exit 0, no commit and no push, the
+    bytes already in the ledger left exactly as they are, and nothing claimed
+    to be recorded anywhere, because nothing was written; **present with a
+    different `rows_sha256`** → `PUBLISH FAIL reason=differs`, exit 1, until
+    `--supersede`, which replaces that one path in a new commit whose message
+    carries `supersedes=<the rows_sha256 it replaces>`, the old bytes staying
+    in history. On the other two transitions `--supersede` changes nothing at
+    all: an **absent** path publishes exactly as it would without the flag,
+    and an **identical** one is the same no-op, exit 0
+    `state=already-published`, with no commit and no supersession recorded —
+    the flag is permission to replace, never an instruction to write.
+    `--supersede` exists for this transition only: it is refused
+    with `--batch`, because a content-addressed path is never replaced and a
+    retained correction is a new observation or a new coverage envelope
+    (rule 24's conflict case). So a bench that folds and publishes on a
+    schedule prints `already-published` for a day whose rows have not changed,
+    even though its `at=` moved, and never needs `--supersede` to do it.
+    Identity is never a commit id, because a commit carries a clock.
+    `already-published` is
+    [SPEC-BUS-DELIVERY](SPEC-BUS-DELIVERY.md)'s word, deliberately.
+    **Demanded test.** Publish, then publish again unchanged: the second is
+    `state=already-published pushed=false attempts=0`, exit 0, with no
+    `hash-object`, no `commit-tree` and no `push`, and one commit touching
+    that path. **Re-fold the same sources to the same rows** so only `at=` and
+    `build=` differ: still `state=identical`, exit 0, no commit, no
+    `--supersede`, and the ledger's bytes are the first upload's — the red
+    being an identity over the whole file, which would make this
+    `reason=differs` and turn every scheduled publish into a supersede chain
+    of identical rows. A day whose rows changed by one cell is
+    `reason=differs`, and `--supersede` lands one commit whose message carries
+    the replaced `rows_sha256`; `--supersede` over an absent path publishes
+    the same commit a plain run would, and over an identical one is
+    `state=already-published` with no commit; `--supersede` with `--batch` is exit 2. A
+    batch's printed `contribution=` equals the coverage envelope's content id
+    recomputed by the test from the canonical body, and an
+    `inventory_sha256` that disagrees with the commit's own path list fails
+    while a contribution id that differs from it does **not**.
+
+27. **The read side runs no `git`, and one test holds that line.** `fold`,
+    `sum`, `check`, `sources` and `report` invoke no `git`, open no network
+    and read a bus checkout as files; rule 16 is unchanged for sources and
+    rule 19's sentence is narrowed to exactly those five verbs by its
+    amendment clause. `publish` is the only verb with a `git` subprocess, the
+    only verb that takes `--ledger`, `--remote`, `--branch`, `--repo`,
+    `--batch`, `--v1-day`, `--seat`, `--supersede`, `--public`,
+    `--public-repos`, `--public-sources`, `--deadline`, `--git-timeout` or
+    `--attempts`, and it reads no source: a source flag on `publish` is exit 2.
+    Rule 31 owns the stronger check a flag list cannot make — that no two
+    paths the verb was **given** resolve to one directory — and it is honest
+    about its limit: `publish` is given no source flags, so it cannot discover
+    that its ledger or output directory is also somebody's transcript
+    directory somewhere else, and this spec says so rather than implying a
+    guarantee. This tool imports no `net` package; the network is `git`'s.
+    **Demanded test.** With a fake `git` on `PATH`, a fixture bus holding
+    competing notes and a ledger clone beside the sources: `fold`, `report`,
+    `sum`, `check` and `sources` each leave the fake `git`'s record empty
+    (demanded test 16's half, now scoped); a source walk over every package of
+    this binary finds `exec.Command` in exactly two files —
+    `internal/tokens/opencode.go` and the publish file — the other spawners
+    `os.StartProcess` and `syscall.ForkExec`/`Exec`/`StartProcess` nowhere,
+    a syntax-tree pass that flags a string literal naming the git program
+    outside the explicit publisher,
+    and no `net` import anywhere; `publish --claude
+    x=<dir>` is exit 2; `--ledger` on any read verb is exit 2 as an unknown
+    flag.
+
+28. **The note to the bus and the upload to the ledger are two acts, and
+    neither stands in for the other.** Rule 20 is unchanged: `report` prints
+    the body, `--note` writes exactly those bytes on `REPORT OK`, and the note
+    reaches the bus by a person's hand or by nova-bus's prepared delivery
+    ([SPEC-BUS-DELIVERY](SPEC-BUS-DELIVERY.md)) — a different repository, a
+    different artifact, a different destination. `publish` sends no note,
+    writes nothing into a bus checkout and names no participant; `report`
+    pushes nothing and takes no ledger flag.
+    **Demanded test.** `publish` over a fixture holding a bus checkout beside
+    the ledger leaves that checkout byte-identical and invokes no bus command;
+    `report --ledger <dir>` is exit 2; one fixture day both reported and
+    published lands two artifacts whose bytes differ, each verb invoking only
+    its own subprocess.
+
+29. **The retained records are the endpoint, their provenance is each
+    record's own, and the missing validators are named dependencies.** Stella, 2026-09-12, deciding the packaging inside Glenn's
+    ruling: `nova-tokens` owns an explicit `publish` verb that uploads into
+    the caller-selected private git ledger, not a version-report message
+    routed through `nova-update`, and the read verbs stay local and
+    read-only. The **retained batch is the publication contract**: a
+    `--batch <dir>` holding exactly one `batch.json` — one
+    `nova.tokens.coverage/2` envelope whose content id is the contribution id
+    — the `nova.tokens.observation/2` shards it references at their final
+    relative paths, and any new `nova.tokens.mapping/2` envelopes it
+    references, and no other file, symlink or executable content. Its
+    destinations are the retained-format packet's own, not this verb's
+    invention: `records/<friend>/<bench>/<day>/<shard-sha256-hex>.jsonl`,
+    `mappings/<mapping-sha256-hex>.json`,
+    `coverage/<collector-friend>/<collection-bench>/<UTC-collection-day>/<coverage-sha256-hex>.json`,
+    with the reserved `_` for a null friend or bench and `unallocated` for an
+    interval-only allocation; that packet's own line, "the ledger README must
+    be reconciled to these exact paths before the first publication", is a
+    condition on the first publication and not on this spec.
+    **Provenance is the record's, never the uploader's**: a shard's
+    `friend`/`bench` come from the observation's own origin, the coverage
+    envelope's collector fields are the collector's, the commit author is
+    whoever holds the clone (rule 23), and an origin is never rewritten,
+    relabelled or moved by an upload — a changed origin is a new observation
+    or a correction, never a file move. `publish` normalizes nothing, re-seals
+    nothing and drops nothing: raw observations, mapping provenance and
+    coverage gaps go up as retained, and an envelope naming an unavailable
+    source still names it afterwards. **A v1 day file is aggregate transport,
+    typed as such**: it lands under `v1-days/<seat>/…`, a subtree no records
+    path uses and no records reader reads; the two kinds never appear in one
+    invocation or one commit; and no verb reads a `v1-days/` file back as a
+    retained record, because the aggregate has no friend, no event identity
+    and no coverage, and calling it one would be the reinterpretation
+    [PROPOSAL-TOKENS-RECORDS.md](PROPOSAL-TOKENS-RECORDS.md) forbids.
+    **The two missing validators are dependencies with owners.**
+    `nova.tokens.coverage/2` and `nova.tokens.mapping/2` have no validator in
+    this repository today; until they exist, a `--batch` whose envelopes name
+    them is exit 2 `refusing to guess`, saying which validator is missing,
+    with the batch and its shards left exactly where they are and nothing
+    about the retained work discarded, weakened or re-typed to fit the path
+    that does work. The work list carries them as the batch path's blocking
+    dependency, owned by the records lane (#146's construction API being the
+    writer's half, and not a collector, not a publisher, and not evidence that
+    collection or publication is delivered).
+    **Demanded test.** Fixture batches only, synthetic, no private transcript
+    and no real ledger. A validating batch lands every path of that layout,
+    the shard paths taken from each record's own friend, bench and day: a run
+    whose clone identity and configured author differ from the records' origin
+    still writes the records' paths, and an implementation that used the
+    uploader's identity fails the test. `_` and `unallocated` are exercised. A
+    batch holding an unreferenced file, a symlink or a second `batch.json` is
+    exit 2; one naming `nova.tokens.coverage/2` with no validator compiled in
+    is exit 2 naming the missing validator, the batch directory byte-identical
+    afterwards and nothing pushed; `--batch` with `--day`, `--seat`,
+    `--supersede`, `--public` or `--v1-day` is exit 2 (each its own case, and
+    none of them a success case); and no `records/` path appears in a v1 day's
+    commit, nor a `v1-days/` path in a batch's.
+
+30. **The destination is verified by host, owner, name and branch, for every
+    effective URL, and one clone publishes one at a time.**
+    `--repo <host>/<owner>/<name>` is **required and has no default**:
+    `<owner>/<name>` alone is not a destination, because another host can
+    serve the same pair, and a compiled-in repository would be the guess
+    rule 1 forbids (Stella, 2026-09-12; this reverses rev 1's default, and the
+    ledger's name now lives in the caller's command, this spec's examples and
+    the bench's own wrapper). **Both directions are checked, and the push side
+    is the one that writes**: `remote get-url --all` and
+    `remote get-url --push --all` (rule 23, invocation 2) give the effective
+    URLs with `insteadOf` and `pushInsteadOf` rewriting already applied, so a
+    `pushurl` that points somewhere else cannot slip past a check of the fetch
+    URL alone. Every URL returned, fetch and push, must parse and match:
+    SSH `git@<host>:<owner>/<name>[.git]`, `ssh://…`, HTTPS
+    `https://<host>/<owner>/<name>[.git]`, host compared
+    case-insensitively and the rest exactly. Anything else is exit 2 before
+    any write — a mismatch, a shape the parser does not know, or **more than
+    one effective push URL that do not all match** (ambiguity is refused, not
+    resolved). A URL's userinfo is **never printed**: a diagnostic prints
+    host, owner, name and the literal `<redacted>` where credentials were, and
+    no `PUBLISH` line ever carries a URL's password. A **local path** remote
+    is a first-class case and never dressed up as a forge: it matches only
+    `--repo local:<absolute path>`, resolved, which is what a test's bare
+    fixture remote uses, so no test asserts a forge identity it does not have.
+    **A URL's spelling authorizes nothing**: the check catches the wrong
+    destination; access remains the clone's and the caller's. **One clone
+    publishes one at a time**: the lock is
+    `<git-dir>/nova-tokens-publish.lock`, where `<git-dir>` is what invocation
+    1's `rev-parse --git-dir` answered — so a worktree, or a clone whose
+    `.git` is a gitdir file, is handled and no path is assumed — canonical and
+    **not settable by a flag**, because two publishers free to name different
+    lock paths would not be serialized at all. It is taken with the kernel
+    lock rule 8 uses, released on death, and a second publisher waits a
+    bounded jittered time and then exits 2 naming the holder's pid. It
+    serializes this clone only; another bench's race is rule 24's.
+    **Demanded test.** A clone whose `origin` is
+    `git@example.com:mas-bandwidth/tokens.git` against
+    `--repo github.com/mas-bandwidth/tokens` is exit 2 printing both, and the
+    same owner and name on the expected host publishes; a clone whose fetch
+    URL matches while its **`pushurl` names another host** is exit 2 before
+    any object is written — the red being a check of the fetch URL alone; two
+    push URLs, one matching and one not, are exit 2 for ambiguity; a
+    `url.<base>.insteadOf` rewrite that makes a matching URL out of a
+    non-matching one is honoured, because `get-url` reports the effective
+    destination; `--repo` missing is exit 2; `https://` and `ssh://`
+    spellings of one destination both match; an unknown URL shape is exit 2
+    naming it; a URL carrying `user:password@` is refused with `<redacted>` in
+    the message and the password absent from stdout, stderr and every log; a
+    bare fixture remote at a filesystem path matches `local:<path>` and is
+    refused by any `<host>/<owner>/<name>` spelling. **The race witness**: two
+    `publish` processes on one clone, the second exit 2 naming the lock
+    holder and writing nothing, with no flag able to choose a different lock;
+    then two publishers on **two** clones of one remote, concurrent, each
+    contributing a different day — both contributions on the branch
+    afterwards, neither commit lost, neither file overwritten, each process
+    exit 0 or exit 1 `reason=unconfirmed` with no half-state to clean.
+
+31. **This run's temporary artifacts are its own and exclusive, they never
+    block the next run, and the bytes under publication are one snapshot.**
+    Every path `publish` creates, it creates exclusively and it is the only
+    thing that touches: one **private temporary directory per run**,
+    `<git-dir>/nova-tokens-publish.<random>/` — `<git-dir>` from invocation
+    1's `rev-parse --git-dir`, never an assumed `.git` — created by `mkdir`,
+    which fails rather than reuses, holding this run's plumbing index, whose
+    file `read-tree` creates inside it (rule 23); and, with
+    `--public`, the staged file
+    `<public>/<day>.tsv.<same random>.tmp`, created with `O_CREATE|O_EXCL` —
+    the one place that refusal belongs — and landing by one rename **in its
+    own directory**, because a rename is atomic on one filesystem and fails
+    with `EXDEV` across two, and nothing could have required a separate
+    staging directory to share the subset's (which is why there is no
+    `--stage` flag). The suffix is **per run, not per contribution**: a
+    contribution's identity is its content (rule 26) and must be stable, but a
+    temporary name must not be, or a run killed after `read-tree` would leave
+    a path the retry cannot create and cannot remove, and rule 24's plain
+    retry would become an exit 2 — which is exactly the bug this sentence
+    exists to prevent (both reads of 2026-09-12 found it). On ordinary exit, success or
+    refusal, the run removes **its own** temporary directory and any staged
+    file it created and did not rename, which is rule 9's carve-out for files
+    THIS RUN makes and nothing more. A crash leaves that directory behind; it
+    is named by a suffix no other run uses, so it blocks nothing, and no run
+    removes another's — a person may, and `check` names nothing under a git
+    directory. **A pre-existing path is never overwritten and never removed**: an
+    existing staged path, or an existing temporary directory this run did not
+    create, is exit 2 naming it; the rename onto `<public>/<day>.tsv` refuses
+    a destination whose bytes differ, exit 2 naming it, for a person to
+    resolve. **The alias check is over resolved paths, among the paths the
+    verb accepts**: before any write, `--ledger`, `--batch`, `--v1-day`,
+    and `--public` are resolved through symlinks, and any two that name one
+    directory — or a containment that would make one run's output the next
+    run's input, `--public` inside `--ledger`, `--public` equal to `--v1-day`
+    — is exit 2 naming both flags. `publish` takes no
+    source flag, so it cannot discover that one of these is also a transcript
+    directory declared to some other run; that limit is stated here rather
+    than implied away (rule 27). **One snapshot**: the contribution's bytes are
+    read once, under the lock, and digested; every later step uses those
+    bytes; and immediately before the push each input's digest is verified
+    again, so a fold that landed a new day file after the lock check cannot
+    change what is published — a changed digest is exit 1 `reason=changed`
+    naming the file, nothing pushed.
+    **Demanded test.** Two runs of **one** contribution get different
+    temporary suffixes, and the second is not refused by the first's leftovers
+    — the red being a digest-derived name, which makes a killed run's index
+    un-creatable and un-removable and turns rule 24's plain retry into an exit
+    2. A run killed after `read-tree` leaves its directory behind and **the
+    next plain `publish` succeeds**, that leftover untouched. On ordinary exit
+    no temporary directory of this run's remains, and an unrelated
+    pre-existing directory under the git directory is untouched. A pre-existing staged
+    path is exit 2 with the file byte-identical afterwards; a `--public`
+    destination that exists with different bytes is exit 2 and untouched;
+    and the staged file and its destination are in one directory, so the
+    rename cannot fail with `EXDEV` — the red being a staged path in a
+    directory a caller could put on another filesystem. Then the aliases, each
+    exit 2 naming both flags and each also reached **through a symlink**
+    rather than spelled directly: `--public` inside `--ledger`, `--public`
+    equal to `--v1-day`, `--batch` equal to `--ledger`. Finally the snapshot: a fold rewrites
+    `<day>.tsv` between the lock and the push and the run is exit 1
+    `reason=changed` naming the file, the remote byte-identical, nothing
+    staged left behind.
 
 ## What it deliberately does not do
 
@@ -844,6 +1709,10 @@ time (lesson 167).
 - **It does not pull the bus, fetch, push, run `git`, or talk to a network.**
   It reads a checkout as files; competing notes are ordered by what they say
   (`supersedes=`), never by the checkout's history.
+  - **Amendment, 2026-09-12 (rules 22, 27, 28).** Still true of the bus and
+    of every read verb. `publish` fetches and pushes one contribution to the
+    ledger clone it is given, on an explicit invocation, and orders nothing
+    for the fold: see **Publishing to the git ledger**.
 - **It does not fill a missing day.** A day nobody folded is named by
   `check` and stays missing until somebody folds it.
 - **It does not remove, trim or rotate any file.** Not a month file, not a
@@ -1007,6 +1876,15 @@ seen red before it is trusted.
    UNPARSED` for the whole successor with the reason and the remedy, the
    earlier valid note stays the day's report, exit 1; a lone note folds;
    the source tripwire finds no `os/exec` call but `sqlite3`.
+   **Amendment, 2026-09-12 (demanded test 27).** This tripwire is the bus
+   reader's and is scoped to the read side: `internal/tokens`'s source
+   readers start `sqlite3` and nothing else, and no reader of a bus checkout
+   runs `git`. The whole-binary count is demanded test 27's — `exec.Command`
+   in exactly two files, the other spawners `os.StartProcess` and
+   `syscall.ForkExec`/`Exec`/`StartProcess` nowhere, a syntax-tree pass that
+   flags a string literal naming the git program outside the explicit
+   publisher — and the two are read
+   together, this one over the readers and that one over the binary.
 7. A body line `… input ~100000` folds as 100000, the row has `rough=1`, a
    second rough line on the same row makes `rough=2`, `TOKENS DAY rough=2`,
    and `sum` carries `rough=2` on the pair, the model and the total.
@@ -1016,6 +1894,14 @@ seen red before it is trusted.
    stray; a second concurrent fold on one `--out` waits and exits 2 naming
    the holder's pid; a source test finds no `os.Remove` and no `os.RemoveAll` anywhere in
    the package.
+   **Amendment, 2026-09-12 (rules 9, 31).** This tripwire is rule 9's, and
+   rule 9's carve-out list is what it reads: it fails on any call it cannot
+   match to a carved-out file, and there are exactly two removals in the list
+   — the lock sentinel a release removes on a platform with no flock (rule 8,
+   already in rule 9 at v1), and `publish`'s own per-run temporary directory
+   and unrenamed staged file, which rule 31 requires it to release on ordinary
+   exit. A removal of anything else, including any file the tool was given, is
+   still the failure this test exists for.
 9. A fold over sources that name three days writes three files and no
    other; a pre-existing `daily-2026-09.tsv` and a `notes.txt` under
    `--out` are untouched after `fold`, `sum` and `check`; `check` names both
@@ -1083,6 +1969,11 @@ seen red before it is trusted.
     original database's bytes and mtime are unchanged after the fold; a
     fake `git` on `PATH` records that it was never invoked, over a fixture
     bus holding competing notes; a source test finds no `net` import.
+    **Amendment, 2026-09-12 (demanded test 27).** The fake-`git` half runs
+    for `fold`, `report`, `sum`, `check` and `sources`, which invoke none of
+    it, with a ledger clone sitting beside the fixture sources; `publish`'s
+    `git` invocations are demanded test 27's, and the `net` half is unchanged
+    for every verb, `publish` included.
 17. A transcript line stamped `2026-09-11T23:59:59Z` and one stamped
     `2026-09-12T00:00:01Z` land in two files; a bus note with subject
     `tokens 2026-09-11` and a line dated `2026-09-10` folds into the
@@ -1148,6 +2039,92 @@ seen red before it is trusted.
     line and nothing else is a valid note with zero rows, yields
     `TOKENS TOUCHED … repos=schema,serialize`, and changes no count.
 
+**Rules 22 to 31** are in **Publishing to the git ledger** (2026-09-12), and
+each one's demanded test is written out beside its rule there; those
+paragraphs are the normative text and these ten lines are the index.
+
+22. A bare fixture remote with a real clone beside it, both in `t.TempDir()`:
+    one `publish --v1-day` lands one commit carrying one path and moves no
+    local ref; the two contribution kinds are mutually exclusive and one is
+    required; a clock never chooses the day; there is no `--all`.
+23. Every file in the remote is byte-identical to the contribution's; the
+    commit's tree differs from its fetched parent's in exactly the new paths
+    at mode `100644`; the message is derivable from the bytes. The byte
+    guarantee red first: a committed `*.tsv text eol=lf` and a CRLF-bearing
+    day file publish the file's own bytes, and the same run without
+    `--no-filters` fails. The ref guarantee: `HEAD`, every local branch, the
+    index and `git status` unchanged, only `refs/remotes/<remote>/<branch>`
+    and `FETCH_HEAD` permitted to move. An empty `user.email` is exit 2 even
+    on a bench whose hostname would satisfy `git var`. The argv compared for
+    equality against rule 23's table, with 1–4 once and 5–11 once per attempt.
+24. Each refusal red on its own, with the invariant sentence asserted after
+    each. The incremental batch that must **not** refuse: a second daily batch
+    referencing an already-present shard publishes, one commit, only the new
+    paths, the present one `state=present` and not rewritten. The genuinely
+    broken prior publication is `reason=incomplete`; a content-addressed path
+    holding other bytes is `reason=conflict`, which `--supersede` does not
+    change; a v1 day whose rows changed is `reason=differs` and
+    `state=superseded` with `--supersede`. Then a non-fast-forward rejection
+    that rebuilds on the new head, a deadline that expires mid-retry, and a
+    SIGKILL between `commit-tree` and `push` after which **the next plain
+    `publish` succeeds** with no manual cleanup.
+25. A public subset over a day holding an allowlisted repo, `unknown` and a
+    private repo: the allowlisted rows only, both others named and counted,
+    the MORE line exercised at `--max 1`, the header saying it is a subset and
+    carrying no `seat=` without `--public-sources`; an allowlist naming a
+    bucket word is exit 2; `--public` with `--batch` is exit 2; the pre-write
+    check handed a row the selector should have dropped is exit 1
+    `reason=subset` and writes nothing anywhere.
+26. A second `publish` of the same contribution is
+    `state=already-published pushed=false attempts=0`, exit 0, with no
+    `hash-object`, no `commit-tree` and no `push`; a re-fold to the same rows
+    with a later stamp is still `state=identical`; only rows that changed are
+    `reason=differs`; `--supersede` with `--batch` is exit 2; a batch's
+    printed `contribution=` equals the coverage envelope's own content id
+    recomputed from its canonical body, and an `inventory_sha256` that
+    disagrees with the commit's path list fails while a contribution id that
+    differs from it does not.
+27. `fold`, `report`, `sum`, `check` and `sources` never invoke the fake
+    `git`, with a ledger clone beside the sources; the source walk finds
+    `exec.Command` in exactly two files, the other spawners `os.StartProcess`
+    and `syscall.ForkExec`/`Exec`/`StartProcess` nowhere, and a syntax-tree
+    pass flags a string literal naming the git program outside the explicit
+    publisher; a
+    source flag on `publish`, and `--ledger` on any read verb, are each exit 2.
+28. `publish` leaves a bus checkout beside the ledger byte-identical and
+    writes no note; `report --ledger` is exit 2; one day reported and
+    published lands two artifacts whose bytes differ, neither verb running
+    the other's subprocess.
+29. A fixture batch lands every path of the retained layout, the shard paths
+    taken from each record's own friend, bench and day and never from the
+    uploader's identity; `_` and `unallocated` are exercised; a batch holding
+    an unreferenced file, a symlink or a second `batch.json` is exit 2; a
+    batch naming a schema with no validator compiled in is exit 2 naming the
+    missing validator, the batch untouched and nothing pushed; `--batch` with
+    `--day`, `--seat`, `--supersede`, `--public` or `--v1-day` is exit 2, each
+    its own case and none a success; no `records/` path appears in a v1 day's
+    commit, nor a `v1-days/` path in a batch's.
+30. A remote on the wrong host with the right owner and name is exit 2
+    printing both; a matching fetch URL whose `pushurl` names another host is
+    exit 2 before any object is written; two push URLs that do not all match
+    are exit 2 for ambiguity; an `insteadOf` rewrite is honoured because
+    `get-url` reports the effective destination; a URL carrying
+    `user:password@` is refused with `<redacted>` and the password absent from
+    every stream; `--repo` missing is exit 2; an unknown URL shape is exit 2;
+    a bare fixture remote matches only `local:<path>`. The race witness: two
+    publishers on one clone, the second exit 2 naming the lock holder with no
+    flag able to choose a different lock; then two publishers on two clones of
+    one remote, concurrent, both contributions surviving.
+31. Two runs of one contribution get different temporary suffixes and the
+    second is not refused by the first's leftovers; a run killed after
+    `read-tree` leaves its directory and the next plain `publish` succeeds; on
+    ordinary exit nothing of this run's remains and an unrelated directory
+    under the git directory is untouched; a pre-existing staged path is exit 2
+    with the file byte-identical; every alias case is exit 2 naming both
+    flags, including each reached through a **symlink**; and a fold that
+    rewrites the day file between the lock and the push is exit 1
+    `reason=changed`.
+
 ## The work list
 
 To build it in Go under `cmd/nova-tokens`, the way `cmd/nova-bus` is built:
@@ -1155,7 +2132,7 @@ standard library only, no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard: a usage banner ending in a
 runnable `example:` block, refusals that say what the flag wants and report
-every independent problem at once, a `### First run` in `README.md`, a
+every independent problem at once, a `### First run` in `docs/CLI.md`, a
 `quickstart` verb or the sentence saying why there is none, and tests that
 pin all three by executing them.
 
@@ -1225,7 +2202,12 @@ pin all three by executing them.
     largest plausible state measured (demanded test 11), the audit over
     every printed argument (`internal/oneline/audit`), and no test reaching
     outside `t.TempDir()` or the fake `sqlite3`.
-13. **`README.md`'s `### First run`**: fold one fixture transcript and one
+    **Amendment, 2026-09-12 (item 15, rules 22–31).** `publish`'s tests add a
+    real `git` on `PATH` and a fake one, and a bare repository and its clone,
+    all of them inside `t.TempDir()`; nothing reaches outside it, no test
+    touches a real remote, a credential or the private ledger, and no test
+    opens a network socket.
+13. **`docs/CLI.md`'s `### First run`**: fold one fixture transcript and one
     fixture bus note into a temp directory, `check` it, `sum` it, every path
     a flag, the transcript produced by running the tool. The fixture bus
     lane uses `example.com`.
@@ -1236,6 +2218,27 @@ pin all three by executing them.
     that this spec forbids**, and only then the LaunchAgent repointed.
     `token-collate.sh` and its two folds stay where they are until that
     day.
+15. **`internal/tokens/publish.go` and the `publish` verb** (2026-09-12,
+    rules 22–31): the contribution read once and digested under the lock, the
+    two typed kinds and their destinations, the effective fetch and push
+    destination check, the clone's cleanliness check, the raw-blob plumbing
+    commit on the fetched head and the push by object id, the recovery state
+    machine (absent, present, conflict, incomplete, rejected, lost) bound to
+    the destination paths, the per-run temporary directory released on exit,
+    the owned staged name and the resolved-path alias check, the public subset
+    selector with its pre-write check, and the `git` subprocess under
+    `--git-timeout` inside `--deadline` — the only place in this repository
+    that names `git`. Tests: demanded tests 22–31,
+    argv asserted for equality against a fake `git` on `PATH` and behaviour
+    against real bare repositories in `t.TempDir()`; no network, no real
+    remote, no credential, no private ledger touched by any test.
+    **Its blocking dependency, named rather than worked around** (rule 29):
+    the `nova.tokens.coverage/2` and `nova.tokens.mapping/2` validators and
+    their encoders, owned by the records lane in `internal/records` beside
+    #146's construction API. The batch path cannot be called done without
+    them and must not be re-typed to avoid them; the `--v1-day` path has no
+    such dependency and can land first, in its own subtree, so no retained
+    work is discarded while they are built.
 
 ## Ideas folded on 2026-09-11
 

@@ -119,17 +119,17 @@ func TestEveryRefusalSaysWhatTheInputWantsAndOneRunNamesEveryProblem(t *testing.
 	}
 }
 
-// There is no quickstart verb, and ONBOARDING.md point 4 wants that said rather than
+// There is no quickstart verb, and docs/ONBOARDING.md point 4 wants that said rather than
 // guessed at. Every verb here needs a path this tool must not invent: an output
 // directory, a rules file, a source. A quickstart would have to write state nobody asked
 // for, in a directory nobody named.
-func TestThereIsNoQuickstartVerbAndTheReadmeSaysWhy(t *testing.T) {
+func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
 	r := invoke(t, "quickstart")
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "unknown subcommand")
-	readme := readRepoFile(t, "README.md")
-	if !strings.Contains(readme, "no `quickstart`") {
-		t.Error("README.md does not say why there is no quickstart verb (ONBOARDING.md point 4)")
+	cli := readRepoFile(t, filepath.Join("docs", "CLI.md"))
+	if !strings.Contains(cli, "no `quickstart`") {
+		t.Error("docs/CLI.md does not say why there is no quickstart verb (docs/ONBOARDING.md point 4)")
 	}
 }
 
@@ -137,7 +137,7 @@ func TestThereIsNoQuickstartVerbAndTheReadmeSaysWhy(t *testing.T) {
 // names in order -- and deliberately not by value, so the transcript stays a document
 // instead of becoming a fixture.
 func TestTheTranscriptIsWhatTheToolPrints(t *testing.T) {
-	doc := readRepoFile(t, "TESTS.md")
+	doc := readRepoFile(t, filepath.Join("docs", "TESTS.md"))
 	lines, err := onboarding.FirstRun(doc, "nova-tokens")
 	if err != nil {
 		t.Fatal(err)

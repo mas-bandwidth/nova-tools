@@ -33,7 +33,7 @@ links no cryptography, opens no network socket, starts no shell, writes no state
 and reads no Keychain — about two hundred lines of Go over two binaries it did not write, and
 the day a better generic store exists it should be two hundred lines of Go over that one.
 
-This spec is normative, and a sibling of [SPEC.md](../SPEC.md), whose **Conventions** govern
+This spec is normative, and a sibling of [SPEC.md](SPEC.md), whose **Conventions** govern
 unchanged except for **two deviations, both `exec`'s**: its exit table, argued in **Exit
 codes**, and its single OK line on stderr, argued in **Output grammar**.
 
@@ -816,8 +816,8 @@ is the wait, said as a red, and it clears when the second pull request lands.
 The full work list is in this pull request's body, and new ideas are issues. Owed before this
 spec is true: revision 1's library deleted (`internal/secrets/*`, nova-tools **PR #72**,
 carrying forward only `internal/secrets/secret.go`); the tool registered in
-[SPEC.md](../SPEC.md); `cmd/nova-secrets` and the twenty-one tests, each red before green; the
-README and the six-line first run, then **a cold hour by a line that did not write this**; the
+[SPEC.md](SPEC.md); `cmd/nova-secrets` and the twenty-one tests, each red before green; the
+command reference and the six-line first run, then **a cold hour by a line that did not write this**; the
 Keychain migration, one surface at a time; and `GOOS=windows go test -c` before the first push.
 
 **The store's own repair, Rowan's hand, as a pull request under the ruleset**: remove the

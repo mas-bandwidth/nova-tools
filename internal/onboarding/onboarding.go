@@ -1,9 +1,10 @@
-// Package onboarding reads the two things ONBOARDING.md makes every command in
-// this repo carry — the `example:` block at the foot of its usage banner, and
-// its `### First run` section in README.md — and reduces an output line to the
-// part the README promises. It is the shared half of the tests that pin the
-// standard, so that "the examples run" and "the transcript is what the tool
-// prints" mean the same thing in every binary rather than five similar things.
+// Package onboarding reads the two things docs/ONBOARDING.md makes every
+// command in this repo carry — the `example:` block at the foot of its usage
+// banner, and its `### First run` section in docs/TESTS.md — and reduces an
+// output line to the part that document promises. It is the shared half of the
+// tests that pin the standard, so that "the examples run" and "the transcript
+// is what the tool prints" mean the same thing in every binary rather than five
+// similar things.
 //
 // It holds no assertions of its own: it parses, and the caller's test decides.
 // Nothing here reads a file, so the caller says where the bytes came from.
@@ -19,8 +20,9 @@ import (
 // command for this tool, is a command a first run can type.
 const ExampleHeading = "\nexample:\n"
 
-// FirstRunHeading is the README subsection a stranger reads before anything
-// else about a tool.
+// FirstRunHeading is the subsection a stranger reads before anything else
+// about a tool. It names a section in whichever document the caller supplies:
+// docs/TESTS.md for the transcripts these tests execute.
 const FirstRunHeading = "### First run"
 
 // ExampleLines returns the command lines under a usage banner's `example:`
@@ -69,11 +71,11 @@ func Section(md, name string) (string, bool) {
 func FirstRun(md, tool string) ([]string, error) {
 	section, ok := Section(md, tool)
 	if !ok {
-		return nil, fmt.Errorf("README.md has no `## %s` section", tool)
+		return nil, fmt.Errorf("the document has no `## %s` section", tool)
 	}
 	_, tail, found := strings.Cut(section, FirstRunHeading+"\n")
 	if !found {
-		return nil, fmt.Errorf("README.md `## %s` has no `%s` subsection; it is what a stranger reads before anything else here", tool, FirstRunHeading)
+		return nil, fmt.Errorf("the document's `## %s` has no `%s` subsection; it is what a stranger reads before anything else here", tool, FirstRunHeading)
 	}
 	var lines []string
 	fenced := false
@@ -95,7 +97,7 @@ func FirstRun(md, tool string) ([]string, error) {
 	return lines, nil
 }
 
-// Shape reduces an output line to the part a README transcript promises: the
+// Shape reduces an output line to the part a transcript promises: the
 // two-token event prefix, then the field names in order. Everything after the
 // ": " that closes the fields is a run's own business — scores, counts, paths,
 // snippets — and is deliberately not compared, so that a transcript stays a

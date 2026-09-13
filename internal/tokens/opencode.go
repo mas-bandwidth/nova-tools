@@ -248,7 +248,7 @@ func cellText(v any) string {
 // HaveSQLite reports whether the one required program is on PATH.
 func HaveSQLite() error {
 	if _, err := exec.LookPath(SQLiteBinary); err != nil {
-		return errors.New(SQLiteBinary + " is not on PATH, and --opencode needs it: this family's one subprocess reads the copied database with " + SQLiteBinary + " -readonly")
+		return errors.New(SQLiteBinary + " is not on PATH, and --opencode needs it: this tool's one subprocess reads the copied database with " + SQLiteBinary + " -readonly")
 	}
 	return nil
 }

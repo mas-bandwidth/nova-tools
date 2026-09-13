@@ -102,7 +102,12 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		"cmd/nova-tokens/main.go": {"os.WriteFile("},
 	}
 	used := map[string]bool{}
-	for _, pkg := range []string{"internal/tokens", "cmd/nova-tokens"} {
+	// Every package of the binary, walked from its imports and from the directories this
+	// tool owns, rather than the two names this list used to carry. pkgText stops at a
+	// package's top level -- it skips directory entries -- so a publisher in
+	// internal/tokens/publish could have called os.RemoveAll with this tripwire green.
+	// binaryPackages is in boundary_test.go and names its own floor.
+	for _, pkg := range binaryPackages(t) {
 		for name, text := range pkgText(t, pkg) {
 			path := pkg + "/" + name
 			for _, forbidden := range rule9Emptiers {
@@ -224,7 +229,11 @@ func TestRule9EmptierListMatchesTheSpec(t *testing.T) {
 	}
 }
 
-// Rule 16 and demanded tests 6 and 16: no network, and exactly one subprocess.
+// Rule 16 and demanded tests 6 and 16: no network, and exactly one subprocess, in
+// internal/tokens. The same three checks over EVERY package of the binary -- including
+// cmd/nova-tokens itself and any subpackage a publisher might land in -- are
+// TestNoPackageOfThisBinaryTalksToANetworkOrRunsGit in boundary_test.go; this one stays as
+// the demanded test's own line, named after the rule it came from.
 func TestTheOnlySubprocessIsSqlite3AndThereIsNoNetwork(t *testing.T) {
 	files := pkgFiles(t, "internal/tokens")
 	for name, f := range files {

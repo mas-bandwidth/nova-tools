@@ -24,7 +24,7 @@ live, and never from a card. As on the bus, **this rule is stated here and is
 nowhere in the code**, deliberately: a tool cannot enforce it, and a tool that
 pretended to would be the most dangerous thing on the board.
 
-This spec is normative. It is a sibling of [SPEC.md](../SPEC.md), whose
+This spec is normative. It is a sibling of [SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line guarantee,
 the field escape, the cap-and-count law — governs here unchanged. If the code and
 this document disagree, one of them has a bug, and the tests decide which.
@@ -86,7 +86,7 @@ something it cannot check.
 every listing in this repo does. `--stale` had a 10m default in an earlier draft
 and lost it on 2026-09-11 (rule 8 in **The rules of the last two days**): every
 duration comes from a flag. The family's number is still 10m, `quickstart` passes
-it and says in words that it chose it, and the README's first run shows it, so
+it and says in words that it chose it, and the command reference's first run shows it, so
 every line can still agree about it without the tool guessing.
 
 `list` and `check` **read**; `add`, `take` and `close` **append**. No verb reads
@@ -358,7 +358,7 @@ as *already filed* would turn a broken board into a quiet one. The `add` carries
 run is not an example: this pair is executed by a test against a fresh board and
 files one card. The inverted reading — 0 for "found it" — would make the natural
 `&&` chain file **exactly** the duplicates, so the mnemonic is written into the
-banner, the README's first run, and a test named for it. `--all` makes `check` report over closed cards as well,
+banner, the command reference's first run, and a test named for it. `--all` makes `check` report over closed cards as well,
 still exit 1 on a match, because *somebody already fixed this* is as good a reason
 not to file as *somebody already filed it*.
 
@@ -832,7 +832,7 @@ shared packages used rather than re-spelled.
    scanned.
 9. **Onboarding, which `internal/ci/onboarding_test.go` will require the moment the
    directory exists** — a usage banner ending in an `example:` block whose lines
-   run, a `### First run` in `README.md`, `nova-board help` on stdout at exit 0, a
+   run, a `### First run` in `docs/CLI.md`, `nova-board help` on stdout at exit 0, a
    one-line refusal for a bad invocation rather than the banner.
 10. **A migration of today's board** — `mas-bandwidth/schema#876`'s comments are in
     the prototype's shape, with backend-derived six-digit ids. Migration is an
@@ -842,9 +842,9 @@ shared packages used rather than re-spelled.
     before it in comment order — the
     tool's own rules applied to its own arrival. It is a script that runs once and
     is reviewed as code, not a verb.
-11. **`SPEC.md` and `README.md` wiring** — the binary count in SPEC.md's opening
-    paragraph, a `## nova-board` section or a pointer to this file, and the README
-    `### First run`.
+11. **`docs/SPEC.md` and `docs/CLI.md` wiring** — the binary count in
+    docs/SPEC.md's opening paragraph, a `## nova-board` section or a pointer to
+    this file, and the `### First run` in [`docs/CLI.md`](CLI.md).
 12. **The rules of the last two days, in `main.go` and `derive.go`** — the counts
     view as the default and `--list` for cards, `--by` and `--default` required,
     `overdue`, the row fields and `probed`, `BOARD LEG` and `owed=`, `--evidence`

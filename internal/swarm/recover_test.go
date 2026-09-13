@@ -22,7 +22,7 @@ func TestARecoveredJobMovesOutOfRunning(t *testing.T) {
 		name, end, dest string
 		exit            *ExitRecord
 	}{
-		{"a job whose supervisor recorded its exit", EndDone, Done, &ExitRecord{RC: 0, End: EndDone}},
+		{"a job whose supervisor recorded its exit", EndDone, Done, &ExitRecord{RC: 0, End: EndDone, Attest: fixtureAttest}},
 		{"a job whose supervisor left no evidence", EndUnknown, Failed, nil},
 	} {
 		t.Run(c.name, func(t *testing.T) {
@@ -54,7 +54,8 @@ func TestARecoveredJobMovesOutOfRunning(t *testing.T) {
 			// alive to nobody, which is what a dead leader looks like from here.
 			if err := writeSlot(p.slotPath(1), SlotFile{
 				Job: id, JobDir: jobDir, State: SlotLaunched, Pid: 0, Pgid: 0, JobPgid: 0,
-				PidStarted: "-", RunnerPid: 0, Nonce: nonce, LaunchedAt: Stamp(time.Now().UTC()),
+				PidStarted: "-", RunnerPid: 0, Nonce: nonce, ExitAttest: ExitAttestHash(fixtureAttest),
+				LaunchedAt: Stamp(time.Now().UTC()),
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -153,12 +154,13 @@ func TestARecoveredKilledJobRunsOnceMore(t *testing.T) {
 				t.Fatal(err)
 			}
 			nonce := "0123456789abcdef"
-			if err := WriteJSON(ExitPath(jobDir), ExitRecord{RC: -1, End: EndKilled, Nonce: nonce}); err != nil {
+			if err := WriteJSON(ExitPath(jobDir), ExitRecord{RC: -1, End: EndKilled, Nonce: nonce, Attest: fixtureAttest}); err != nil {
 				t.Fatal(err)
 			}
 			if err := writeSlot(p.slotPath(1), SlotFile{
 				Job: id, JobDir: jobDir, State: SlotLaunched, Pid: 0, Pgid: 0, JobPgid: 0,
-				PidStarted: "-", RunnerPid: 0, Nonce: nonce, LaunchedAt: Stamp(time.Now().UTC()),
+				PidStarted: "-", RunnerPid: 0, Nonce: nonce, ExitAttest: ExitAttestHash(fixtureAttest),
+				LaunchedAt: Stamp(time.Now().UTC()),
 			}); err != nil {
 				t.Fatal(err)
 			}

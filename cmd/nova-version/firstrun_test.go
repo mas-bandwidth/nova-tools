@@ -24,7 +24,7 @@ func TestExecutableFirstRun(t *testing.T) {
 			t.Fatalf("%s refused: %s", line, errs.String())
 		}
 	}
-	doc, err := os.ReadFile("TESTS.md")
+	doc, err := os.ReadFile("docs/TESTS.md")
 	if err != nil {
 		t.Fatal(err)
 	}

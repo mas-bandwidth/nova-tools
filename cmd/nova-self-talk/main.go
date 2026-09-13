@@ -23,7 +23,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
 )
 
-const usage = `nova-self-talk: the self-talk register, classified (see SPEC.md)
+const usage = `nova-self-talk: the self-talk register, classified (see docs/SPEC.md)
 
 usage:
   nova-self-talk version    print this build identity (--version also accepted)

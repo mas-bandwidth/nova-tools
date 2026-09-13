@@ -635,3 +635,19 @@ func TestTheLegacyLineReadsTheDayAtTheFrontOfAFilename(t *testing.T) {
 		t.Fatalf("When() now reads a day it did not read before (%v); ordering, INDEX Date and at= would change with it", n.When())
 	}
 }
+
+// A lane's dotfiles (such as .DS_Store or .gitkeep) are tolerated and ignored:
+// they are not notes and not strays.
+func TestLaneDotfilesAreToleratedAndIgnored(t *testing.T) {
+	t.Parallel()
+	m := fixture()
+	m["from-bo/.DS_Store"] = "binary junk"
+	m["from-bo/.gitkeep"] = ""
+	tab := loadBus(t, writeBus(t, m))
+	if len(tab.Notes) != 4 {
+		t.Fatalf("read %d notes, want 4", len(tab.Notes))
+	}
+	if ps := tab.Check(); len(ps) != 0 {
+		t.Fatalf("dotfiles in lane produced check findings: %+v", ps)
+	}
+}
