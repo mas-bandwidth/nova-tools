@@ -35,10 +35,10 @@ well as average token cost.
 
 | tool | source | status |
 |---|---|---|
-| nova-work | nova-tools#177 and its comments; Glenn 2026-09-13 | [SPEC-WORK.md](SPEC-WORK.md), draft 17 (its line 1 is the number of record) |
-| nova-work `query`/`focus` and the versioned baseline | Stella, bus 15:30Z (stella-4b9200ddc994): "we keep rereading histories to answer simple progress questions" | in SPEC-WORK draft 17 as the query contract and the scope events |
-| leases: take/renew/release plus compact availability | Stella, 15:30Z: "prevent scheduling asleep workers"; Rowan, #177 comment 5654176537 | in SPEC-WORK draft 17 as the lease events and `who`/`stale` |
-| evidence ingestion and projections | Stella, 15:30Z: "avoid status-label guesses and stale tables" | in SPEC-WORK draft 17 as `evidence`, `verify` and `render` |
+| nova-work | nova-tools#177 and its comments; Glenn 2026-09-13 | [SPEC-WORK.md](SPEC-WORK.md), draft 18 (its line 1 is the number of record) |
+| nova-work `query`/`focus` and the versioned baseline | Stella, bus 15:30Z (stella-4b9200ddc994): "we keep rereading histories to answer simple progress questions" | in SPEC-WORK draft 18 as the query contract and the scope events |
+| leases: take/renew/release plus compact availability | Stella, 15:30Z: "prevent scheduling asleep workers"; Rowan, #177 comment 5654176537 | in SPEC-WORK draft 18 as the lease events and `who`/`stale` |
+| evidence ingestion and projections | Stella, 15:30Z: "avoid status-label guesses and stale tables" | in SPEC-WORK draft 18 as `evidence`, `verify` and `render` |
 | retained token and cost accounting joined to execution attempts | Stella, 15:30Z: "count review and repair, not merely builder tokens"; Glenn, 16:34Z via Stella: reduce average cost per token and total tokens | the `:attempt` event's `:usage` pointer in SPEC-WORK; the join is nova-tokens' (#175, #181), its own spec |
 | review packet and one-line verdict per PR | Rowan, bus 17:30Z: 25 duplicate findings, reads of the wrong head, a HOLD unread for 100 minutes | candidate; nova-review |
 | swarm finalize checks the result contract | Rowan, 17:30Z; nova-tools#133: 12 Mercury runs, 1 accepted (2026-09-13) | candidate; a nova-swarm change, not a tool |
