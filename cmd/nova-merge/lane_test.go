@@ -91,7 +91,7 @@ func TestOnlyAConflictingEntryIsReMerged(t *testing.T) {
 	contains(t, stderr, "RUN BLOCKED entry=2")
 	contains(t, stderr, "README.md")
 	contains(t, stderr, "git clone")
-	contains(t, stderr, "git push origin HEAD:feature-conflicting")
+	contains(t, stderr, "git push origin HEAD:'feature-conflicting'")
 	// ONE blocked entry in a lane of one is blocked=1. The count is of the lane, not of
 	// the number of places in the code that noticed.
 	contains(t, stdout, "RUN OK lane=1 merged=0 dropped=0 blocked=1 waiting=0")

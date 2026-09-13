@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 )
 
 // Work list 6: every git this tool runs, and THE MUTATION GUARD.
@@ -59,16 +61,42 @@ type Runner interface {
 // deadline.
 type Exec struct{}
 
+// execOutputCap is the ceiling on one subprocess's captured output, in bytes. It is the
+// same 64 KiB this repo already holds a child to (internal/update.ChildCap), reused rather
+// than invented: a hostile or runaway gh/git must not be able to fill memory. A result
+// that reached the ceiling is marked truncated below.
+const execOutputCap = 64 * 1024
+
 // Run runs the command and returns its output, stdout and stderr together, because the
 // line a person opened the terminal to read is git's own and git writes it to stderr.
+//
+// The capture is bounded. CombinedOutput buffered everything before it returned, so a
+// gh/git that wrote without end was a way to exhaust this process's memory; bounded.Capture
+// keeps at most execOutputCap bytes and cancels the command the moment the ceiling is
+// reached. A result that was cut says so, because a prefix read as the whole answer is
+// worse than a marked prefix.
 func (Exec) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, name, args...)
+	runCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	out := bounded.NewCapture(execOutputCap, cancel)
+	cmd := exec.CommandContext(runCtx, name, args...)
 	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		return string(out), fmt.Errorf("%s took longer than this run's --timeout allows: %w", name, ctx.Err())
+	cmd.Stdout = out
+	cmd.Stderr = out
+	err := cmd.Run()
+	captured := string(out.Bytes())
+	if out.Hit() {
+		captured += "\n[output truncated: the command produced more than the capture cap]\n"
 	}
-	return string(out), err
+	// The parent's deadline, not the capture's cancel, is the timeout: a cut capture also
+	// cancels runCtx, and that is not a tool that ran too long.
+	if ctx.Err() != nil {
+		return captured, fmt.Errorf("%s took longer than this run's --timeout allows: %w", name, ctx.Err())
+	}
+	if out.Hit() {
+		return captured, fmt.Errorf("%s exceeded the %d-byte output capture cap", name, execOutputCap)
+	}
+	return captured, err
 }
 
 // Git runs git in one directory under one timeout, through the guard.

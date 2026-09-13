@@ -328,7 +328,7 @@ func TestADirThatDoesNotExistIsRefusedWithTheMkdirThatFixesIt(t *testing.T) {
 			t.Errorf("%s against a missing --dir exits %d, want 2: this tool does not make the directory a caller named", verb, exit)
 		}
 		got := errb.String()
-		if !strings.Contains(got, "mkdir -p \""+missing+"\"") {
+		if !strings.Contains(got, "mkdir -p '"+missing+"'") {
 			t.Errorf("%s refuses without naming the command that fixes it:\n%s", verb, got)
 		}
 		if !strings.Contains(got, "does not create one") {
