@@ -545,6 +545,52 @@ func TestSendPreparedProcessDeathHelper(t *testing.T) {
 	time.Sleep(10 * time.Minute)
 }
 
+func TestPreparedIndexDeathHelper(t *testing.T) {
+	if os.Getenv("GO_WANT_PREPARED_INDEX_DEATH_HELPER") != "1" {
+		return
+	}
+	busDir := os.Getenv("PREPARED_HELPER_BUS")
+	barrierFile := os.Getenv("PREPARED_HELPER_BARRIER")
+	artFile := os.Getenv("PREPARED_HELPER_ART")
+	as := os.Getenv("PREPARED_HELPER_AS")
+
+	raw, err := os.ReadFile(artFile)
+	if err != nil {
+		os.Exit(2)
+	}
+	var art PreparedArtifact
+	if err := json.Unmarshal(raw, &art); err != nil {
+		os.Exit(2)
+	}
+	tab := loadBus(t, busDir)
+	_, p, err := ValidatePreparedArtifact(raw, busDir, tab.Config, as)
+	if err != nil {
+		os.Exit(2)
+	}
+
+	// Simulate a recovery killed mid-index-write: the note landed, but the INDEX rewrite
+	// (the entries already committed plus the new line) was cut short, leaving a strict
+	// prefix of the expected bytes on disk.
+	if err := p.Save(busDir); err != nil {
+		os.Exit(3)
+	}
+	idxPath := filepath.Join(busDir, filepath.FromSlash(IndexPath(p.Sender.Lane)))
+	existing, err := os.ReadFile(idxPath)
+	if err != nil {
+		os.Exit(3)
+	}
+	want := string(existing) + IndexLine(p.Index) + "\n"
+	partial := want[:len(existing)+12]
+	if err := os.WriteFile(idxPath, []byte(partial), 0o644); err != nil {
+		os.Exit(3)
+	}
+
+	if err := os.WriteFile(barrierFile, []byte("ready\n"), 0644); err != nil {
+		os.Exit(5)
+	}
+	time.Sleep(10 * time.Minute)
+}
+
 func TestSendPreparedRecoveryHelper(t *testing.T) {
 	if os.Getenv("GO_WANT_PREPARED_RECOVERY_HELPER") != "1" {
 		return
@@ -655,6 +701,100 @@ func TestSendPreparedProcessDeathRecovery(t *testing.T) {
 				t.Fatalf("bare remote has %d occurrences of index line, want exactly 1:\n%s", matchCount, remoteIndex)
 			}
 		})
+	}
+}
+
+func TestPreparedIndexRecoveryRetainsEarlierEntries(t *testing.T) {
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+	tab := loadBus(t, clone)
+
+	send := func(subject, slug, stamp string) (Prepared, PreparedArtifact) {
+		t.Helper()
+		p, err := PrepareDraft(tab, "From: Ada\nTo: Bo\nSubject: "+subject+"\n\nSynthetic note.\n", at(stamp), slug, "Ada")
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := MakePreparedArtifact(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1); err != nil {
+			t.Fatal(err)
+		}
+		return p, a
+	}
+
+	p1, _ := send("Earlier entry one", "earlier-one", "2026-09-12T17:00:00Z")
+	p2, _ := send("Earlier entry two", "earlier-two", "2026-09-12T17:01:00Z")
+
+	p3, err := PrepareDraft(tab, "From: Ada\nTo: Bo\nSubject: Recovered entry\n\nSynthetic note.\n", at("2026-09-12T17:02:00Z"), "recovered", "Ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := MakePreparedArtifact(p3); err != nil {
+		t.Fatal(err)
+	}
+
+	scratch := t.TempDir()
+	barrierFile := filepath.Join(scratch, "barrier.ready")
+	artFile := filepath.Join(scratch, "prepared.json")
+	artJSON, _ := RenderPreparedArtifact(p3)
+	if err := os.WriteFile(artFile, []byte(artJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(os.Args[0], "-test.run=TestPreparedIndexDeathHelper")
+	cmd.Env = append(os.Environ(),
+		"GO_WANT_PREPARED_INDEX_DEATH_HELPER=1",
+		"PREPARED_HELPER_BUS="+clone,
+		"PREPARED_HELPER_AS="+p3.Sender.Name,
+		"PREPARED_HELPER_BARRIER="+barrierFile,
+		"PREPARED_HELPER_ART="+artFile,
+	)
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("failed to start helper process: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(barrierFile); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = cmd.Process.Kill()
+			t.Fatal("timed out waiting for helper process barrier")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := cmd.Process.Kill(); err != nil {
+		t.Fatalf("failed to kill helper process: %v", err)
+	}
+	_ = cmd.Wait()
+
+	recCmd := exec.Command(os.Args[0], "-test.run=TestSendPreparedRecoveryHelper")
+	recCmd.Env = append(os.Environ(),
+		"GO_WANT_PREPARED_RECOVERY_HELPER=1",
+		"PREPARED_RECOVERY_BUS="+clone,
+		"PREPARED_RECOVERY_ART="+artFile,
+		"PREPARED_RECOVERY_AS="+p3.Sender.Name,
+	)
+	out, err := recCmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("fresh recovery child failed: %v\noutput:\n%s", err, string(out))
+	}
+
+	remoteIndex, err := git(bare, "show", "main:"+IndexPath(p3.Sender.Lane))
+	if err != nil {
+		t.Fatalf("bare remote missing index: %v", err)
+	}
+	for _, earlier := range []Prepared{p1, p2} {
+		if !strings.Contains(remoteIndex, IndexLine(earlier.Index)) {
+			t.Fatalf("earlier INDEX entry was lost:\n%s", remoteIndex)
+		}
+	}
+	if !strings.Contains(remoteIndex, IndexLine(p3.Index)) {
+		t.Fatalf("recovered INDEX entry is missing:\n%s", remoteIndex)
 	}
 }
 

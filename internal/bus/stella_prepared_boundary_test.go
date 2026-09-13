@@ -24,6 +24,45 @@ func stellaIndependentPrepared(t *testing.T) (string, string, Prepared, Prepared
 	}
 	return bare, clone, p, a
 }
+func TestStellaPreparedAttributePrefixesPublishExactBytes(t *testing.T) {
+	full, _ := ExpectedMergeAttributes("")
+	cases := []struct {
+		name   string
+		prefix int
+	}{
+		{"empty", 0},
+		{"prefix-12", 12},
+		{"prefix-209-four-short", len(full) - 4},
+		{"prefix-213-complete", len(full)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			bare, clone, p, a := stellaIndependentPrepared(t)
+			if tc.prefix > len(full) {
+				t.Fatalf("prefix %d exceeds expected %d", tc.prefix, len(full))
+			}
+			attrsPath := filepath.Join(clone, AttributesName)
+			if err := os.WriteFile(attrsPath, []byte(full[:tc.prefix]), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			res, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
+			if err != nil {
+				t.Fatalf("SendPreparedArtifact: %v", err)
+			}
+			if !res.Pushed {
+				t.Fatal("expected the note to be pushed")
+			}
+			remote, err := git(bare, "show", "main:"+AttributesName)
+			if err != nil {
+				t.Fatalf("remote .gitattributes missing: %v", err)
+			}
+			if remote != full {
+				t.Fatalf("remote .gitattributes bytes wrong:\n got %q\nwant %q", remote, full)
+			}
+		})
+	}
+}
+
 func TestStellaIndependentPreparedRequiresCompleteRemoteIndex(t *testing.T) {
 	_, clone, p, a := stellaIndependentPrepared(t)
 	if _, e := SendPreparedArtifact(clone, "origin", "main", p, a, 1); e != nil {
