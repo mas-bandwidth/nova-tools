@@ -6,11 +6,17 @@
 # rather than to build. Until now there was nothing to hand them: the only artifact of a
 # release was a tag, and a tag is a claim about source.
 #
-# THE TEST JOB RUNS FIRST AND THE RELEASE JOB NEEDS IT. A tag can be pushed to any commit,
-# including one no CI run ever saw and one that never passed on Windows -- and ci.yml's own
-# opening argument is that a claim of tested is what stops anyone checking. So the same
-# three-platform test job runs here on the tagged tree, and a red one means no release
-# exists at all rather than a release nobody vouched for.
+# A GREEN CERTIFICATION RUN ON THE TAGGED COMMIT COMES FIRST AND THE RELEASE JOB NEEDS IT. A
+# tag can be pushed to any commit, including one no CI run ever saw and one that never passed
+# on Windows -- and ci.yml's own opening argument is that a claim of tested is what stops
+# anyone checking. So the first job asks whether certification.yml (the whole-tree race run,
+# the per-package Windows tests, the three-OS smoke, the release dry-run) has completed on this
+# exact commit and whether its NEWEST completed run is green, and refuses the release
+# otherwise: no release at all rather than a release nobody vouched for, and no release on a
+# red either. Nothing certifies a commit on its own (certification.yml runs daily and on
+# dispatch), so cutting a release means dispatching certification on the tag's ref first; the
+# refusal says exactly that. Until v0.15.0 this file ran its own copy of those tests, serially,
+# and the Windows leg outgrew its cap; the certified job below says why it stopped.
 #
 # ONE RUNNER BUILDS EVERYTHING, rather than a matrix of five. Go cross-compiles from any
 # host with no toolchain to install, so the only thing a matrix would buy is parallelism,
@@ -20,9 +26,9 @@
 # and a merge step, each of which is a place for the checksum file and the binaries to
 # disagree about what shipped.
 #
-# The dry run of this same cross-build is a job in ci.yml, on every pull request, so a
-# target that stops compiling is a red PR rather than a red tag -- a tag being the one
-# thing here that cannot be quietly amended and pushed again.
+# The dry run of this same cross-build is a job in certification.yml (it left the two-minute
+# CL tier), so a target that stops compiling is a red certification rather than a red tag -- a
+# tag being the one thing here that cannot be quietly amended and pushed again.
 
 name: release
 
@@ -85,6 +91,20 @@ jobs:
           esac
           body=$(printf '%s\n' "$out" | sed -e '1,/^[[:space:]]*$/d')
           total=$(printf '%s' "$body" | jq -r '.total_count')
+          # THE NEWEST COMPLETED RUN DECIDES, not any green among them: the list is newest first,
+          # and a commit certified green once and red on a later rerun (the perf wall clock is
+          # in that workflow) is a commit the newest evidence says not to release. A run still in
+          # progress is not in this list; the refusal says to wait for it.
+          newest=$(printf '%s' "$body" | jq -r '.workflow_runs[0].conclusion // "none"')
+          echo "certification runs on $SHA: $total completed; newest concluded: $newest"
+          printf '%s' "$body" | jq -r '.workflow_runs[] | "  run \(.id) \(.conclusion) \(.html_url)"'
+          if [ "$newest" != success ]; then
+            echo "refusing: the newest completed certification run on $SHA is $newest, so nothing vouches for this tree"
+            echo "certify it first (a run still in progress does not count; wait for certification-ok):"
+            echo "  gh workflow run certification.yml -R $GITHUB_REPOSITORY --ref $REF"
+            echo "then re-run this workflow: gh run rerun $GITHUB_RUN_ID -R $GITHUB_REPOSITORY"
+            exit 1
+          fi| jq -r '.total_count')
           green=$(printf '%s' "$body" | jq -r '[.workflow_runs[] | select(.conclusion == "success")] | length')
           echo "certification runs on $SHA: $total completed, $green green"
           printf '%s' "$body" | jq -r '.workflow_runs[] | "  run \(.id) \(.conclusion) \(.html_url)"'
