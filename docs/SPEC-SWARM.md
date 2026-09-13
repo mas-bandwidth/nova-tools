@@ -1973,19 +1973,25 @@ That asymmetry decides which checks may read a textual stream:
 - `UNREAD` and `UNRUN` are **satisfied** by an addition — a forged read mark
   grounds a citation of a file nobody opened, a forged spawn mark grounds a
   gate row for a command nobody ran — so they may never read one.
-- `FETCHED` is **convicted** by an addition: a forged `$ curl …` rejects only
-  the worker that wrote it, and what a worker would actually want, hiding a
-  real fetch, is the removal the move already prevents. So `FETCHED` runs on
-  the textual stream, and its sentence stays `checked` under `proof=shape`.
+- `FETCHED` was **convicted** by an addition — a forged `$ curl …` rejects only
+  the worker that wrote it — which is why draft 3 left it on the textual
+  stream. **Draft 4 (2026-09-13): that is deleted anyway**, because no field
+  of the worker description ever named the textual mark, so the check had no
+  reader that was not a guess. It reads the records, with the other two.
 
-**The proof checks read a STRUCTURED channel the worker's output cannot
-enter.** The worker description declares it per harness as `records:` — the
-transport, the record type and field that carry a **spawned command**, and
-the record type and field that carry a **file read** — and the reader parses
-RECORDS, not lines. That is the whole mechanism: inside a structured record a
-worker's text is the VALUE of somebody else's field, escaped by the emitter,
-and a value can never open a sibling record. Grep a stream and prose competes
-with marks; parse a stream and it cannot.
+**The proof checks read a channel the worker's PROCESS TREE cannot write
+to.** The worker description declares it per harness as `records:` — the
+transport; the record type and fields that carry a **spawned command** and its
+id; the record type and fields that carry that command's **completion**, the
+id it answers and its exit status; and the record type and field that carry a
+**completed file read** — and the reader parses RECORDS, not lines. Parsing is
+half the mechanism: inside a structured record a worker's text is the VALUE of
+somebody else's field, escaped by the emitter, and a value can never open a
+sibling record. **Draft 4: the other half is the descriptor**, because a
+format alone is satisfied by anything that can write to the stream, and a
+child of the harness that inherited file descriptor 1 can. Grep a stream and
+prose competes with marks; parse a stream a worker's children can write to and
+their marks are records.
 
 **Draft 4 (2026-09-13): ONE transport is admitted, and it is defined by its
 writer set.** Draft 3 admitted two, and the first of them was *the harness
