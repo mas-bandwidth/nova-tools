@@ -1,4 +1,4 @@
-# nova-work — specification (DRAFT 3, 2026-09-13)
+# nova-work — specification (DRAFT 4, 2026-09-13)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
@@ -7,11 +7,12 @@ mine; the rest is shared. Every requirement that is Glenn's cites the nova-tools
 it comes from, by id, so a reader can check the words. **Two things in this document are the
 authors' proposals and not Glenn's requirements, and they are marked where they stand: the
 lease model (Rowan's, from #177 comment 5654176537) and everything in the section *Additions
-of the authors'*.** Draft 3 follows two Fable cold reads (draft 1 HOLD at 15:34Z, draft 2 HOLD
-at 15:47Z; both recorded on PR #231) and Stella's five review points of 15:38Z; the second
-read found that two of draft 2's own repairs deadlocked each other, so draft 3 re-derives the
-write model rather than patching it: **the tool only ever appends events, and a node's current
-state is derived from its events.**
+of the authors'*.** Draft 4 follows three Fable cold reads (draft 1 HOLD at 15:34Z, draft 2 HOLD
+at 15:47Z, draft 3 HOLD at 15:49Z; all recorded on PR #231) and Stella's five review points of 15:38Z; the second
+read found that two of draft 2's own repairs deadlocked each other, so draft 3 re-derived the
+write model and draft 4 closes the last write-path hole the third read found: **the tool only ever
+appends events, a node's current state is derived from its events, and a write is gated by one
+check of the file as it would be with the event appended.**
 
 **One recursive work set, S.** A file of restricted Lisp data holds what is **desired** (the
 work: repositories, streams, features, tasks, down to whatever depth is useful) and what is
@@ -20,8 +21,13 @@ Everything **derived** — a task's current state, counts, percentages, views, p
 computed on read and never written into the file; a roadmap table, an owner queue, a stream
 report and a percentage are each a **projection** of S at a named scope revision, and none of
 them is a second store. `ROADMAP.md` is regenerated, never edited; a hand-typed percentage is a
-bug (5653970526). **S is the primary form, in a persistent versioned repository** (Glenn,
-2026-09-13, recorded in Stella's section below).
+bug (5653970526). **Where S lives is two statements that do not yet agree, and both are kept:** #177 comment
+5653982211 says to *evaluate making this the primary internal state only after lossless
+import/export, stable identity mapping, provenance retention, conflict handling, restart/replay
+and reconstruction have been demonstrated*; Stella reports Glenn's later live word of 2026-09-13
+that S is the primary form with a persistent versioned repository home (her section below). Until
+his later word is on #177 in his own words, the demonstration conditions bind, and nothing in
+this draft migrates or imports anything.
 
 This spec is normative once it leaves draft. It is a sibling of [SPEC.md](SPEC.md), whose
 **Conventions** — exit codes, no guessed paths, the one-line guarantee, the field escape, the
@@ -61,7 +67,10 @@ written by hand, in the file, under review, and `check` is its gate. The **log**
 below — is written by the verbs, **append-only**: no verb ever edits or deletes a form that is
 already in the file, so a comment, an unknown key and a hand-written node are never touched
 by a write, and every transition is kept rather than overwritten (#177: *preserve transitions
-and corrections rather than overwriting the history*).
+and corrections rather than overwriting the history*). **A hand-written change to structure
+that changes a required set is reconciled by the scope event that records it**: the edit and
+the `event` verb are one act, and until the event is appended `check` reports rule 12 on that
+node, which is the gate working, not a lock (the write rule below says how the event gets in).
 
 **A node.**
 
@@ -133,16 +142,21 @@ they are distinct kinds:
 `:transition` event, or `:unknown` when it has none; `:unknown` is explicit and is neither
 zero nor not-started (5653970526). Its generation is the count of its `:correct` events. The
 allowed transitions are a table the validator holds: from `:todo` to `:doing`, `:blocked`,
-`:deferred`, `:cancelled`, `:superseded`; from `:doing` to `:blocked`, `:review`, `:done`,
-`:deferred`, `:cancelled`, `:superseded`; from `:blocked` to `:doing`, `:deferred`,
-`:cancelled`, `:superseded`; from `:review` to `:doing`, `:done`; from `:done` to `:doing`
-only by a `:reopen` event (which is itself the transition); from `:deferred` to `:todo` only
-by a `:reopen` event; from `:unknown` to any state by a transition that carries evidence or
-a reason; `:superseded` and `:cancelled` are terminal, and `:deferred`, `:cancelled` and
-`:superseded` are entered only by their scope events, so the revision moves with them. A
+`:cancel-requested`; from `:doing` to `:blocked`, `:review`, `:done`, `:cancel-requested`;
+from `:blocked` to `:doing`, `:cancel-requested`; from `:review` to `:doing`, `:done`;
+from `:cancel-requested` to `:doing` (withdrawn) or, by a `:cancel` scope event carrying
+evidence that the worker stopped, to `:cancelled` (5653982211: *cancellation requests are
+distinct from a confirmed stopped worker*); from `:unknown` to any non-terminal state by a
+transition that carries evidence or a reason. **`:deferred`, `:cancelled` and `:superseded`
+are never targets of `state`**: they are entered only by their scope events (`defer`,
+`cancel`, `supersede`), which record the transition and move the revision; `:done` and
+`:deferred` are left only by a `:reopen` scope event, which is itself the transition;
+`:cancelled` and `:superseded` are terminal. A
 `:to :done` transition must name evidence events whose criteria cover every `:acceptance`
-entry of the task and whose attempts (where named) are of the task's current generation;
-otherwise the transition is refused. A transition to `:blocked` without `:blocked-by` is
+entry of the task, and every evidence event carries the task's `:generation` at the time it
+was written; a `:to :done` naming evidence of an older generation is refused, whether or not
+an attempt is named (5653982211). A required task with no `:acceptance` entry can never be
+done, and rule 16 names it. A transition to `:blocked` without `:blocked-by` is
 refused.
 
 **Evidence is a pointer the validator can fetch, bound to a criterion.** Resolving a pointer
@@ -151,17 +165,23 @@ point 1), so an evidence event carries both, and an evidence event whose criteri
 `:acceptance` entry of its node is refused. Draft 3 ships five schemes — `commit:<sha>`,
 `run:<owner/repo>#<id>`, `pr:<owner/repo>#<n>@<sha>`, `file:<path>@<sha>`,
 `test:<package>/<name>@<sha>` — and a sixth, `note:<scheme>:<id>`, for any team's message
-store, so that no family's bus is named in the tool (5653970526). **Resolution is a separate
+store, so that no family's bus is named in the tool (5653970526). **A `note:` pointer is
+accepted on a heartbeat and on an attempt's `:usage`, never as evidence for `:done`**
+(5649089106: *status messages are not completion evidence*); rule 5 refuses it. **Resolution is a separate
 pass from validation** (Stella, point 2): `check` never fetches; `verify` fetches, under
 `--max-fetch <n>` and `--fetch-timeout <seconds>` (both required, as SPEC-BOARD requires
-`--gh-timeout`), through a local cache keyed by pointer and carrying its verified-at stamp;
-`verify --offline` reports cached verdicts as stale rather than refetching. **A pointer that
-does not resolve marks that evidence event `unverified` in every answer and changes no task's
-state**; the task's derived state stands, and every count line prints `unverified=<n>`. A
-cell whose `:source-revision` is newer than an evidence event's `:against` is printed as
-`stale-evidence`, and `percent --strict` counts a cell with stale evidence as not green
-(5653970526: *source changes can invalidate old proof*; the default is to print, `--strict`
-is to refuse).
+`--gh-timeout`), through a cache at `--cache <path>` (required; no guessed path) keyed by
+pointer and carrying its verified-at stamp; `verify --offline` reports cached verdicts and
+fetches nothing. **A pointer that
+does not resolve marks that evidence event `unverified` and changes no task's recorded
+state** — the log is never rewritten by a fetch — **but no count is ever green on unverified
+evidence**: in every rollup a `:done` whose evidence is not all verified (by `verify`, through
+the cache named on the read) counts as `unknown`, never as done, and the answer prints
+`done-unverified=<n>` beside `done=<n>` (5653970526: *report unknown or a clearly labelled
+verified lower bound*; 5654176537 rule 4). The same holds for **stale** evidence, which is
+local and needs no fetch: an evidence event whose `:against` is not the cell's
+`:source-revision` is stale, `check` counts it (`stale=<n>`), and a `:done` standing on it
+counts as `unknown` in every rollup (5653970526: *source changes can invalidate old proof*).
 
 **The lease** *(Rowan's proposal, #177 comment 5654176537, changed here from that comment in
 three ways: expiry is derived and never stored, so `:expired` is not a state; an expired lease
@@ -169,12 +189,12 @@ is a count and never a finding; `:extend-once` is defined)*. A lease is an event
 state is derived from its heartbeat, release and handoff events.
 
 ```lisp
-(:kind :lease :id "schema/fixed-tables/versioning/cpp#lease-3"
+(:kind :lease :id "l-3f9a1c0e7b2d"            ; the tool's own id, random hex, never a count
  :node "schema/fixed-tables/versioning/cpp"
  :by "emma" :stamp "2026-09-13T14:41:11Z" :clock :tool
  :deadline "2026-09-13T21:00:00Z"
  :default :release)                  ; :release | :extend-once | (:escalate "<name>")
-(:kind :heartbeat :lease "schema/fixed-tables/versioning/cpp#lease-3"
+(:kind :heartbeat :lease "l-3f9a1c0e7b2d"
  :by "emma" :stamp "2026-09-13T15:02:00Z" :clock :tool
  :evidence "note:bus:emma-841138a3b056")
 ```
@@ -236,15 +256,15 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
 
 ## Queries — the contract *(Rowan; Glenn's list from 5654012267)*
 
-Every answer is one `QUERY OK` scope line, then one `QUERY ROW` line per fact, capped and
-counted. The scope line always carries: `scope=<revision> membership=<rule> unit=<unit>
+Every answer is computed whole before anything is printed, then printed as one `QUERY OK`
+scope line and one `QUERY ROW` line per fact, capped and counted. The scope line always carries: `scope=<revision> membership=<rule> unit=<unit>
 source=<sha> freshest=<stamp> unknown=<n> unverified=<n> emitted=<bytes>`.
 
 | ask | answers |
 |---|---|
 | `done --node X` / `remaining --node X` | completed and outstanding required work under X, by kind, capped and counted |
 | `who --node X --window <dur>` | live leases on X and beneath it: holder, heartbeat age, deadline, default; then `held-not-worked` and `unowned` counts; and `responsible=` for X |
-| `percent --node R --axis <member> [--strict]` | the roadmap rollup for one axis member, with `green=<k> rows=<n> baseline-rows=<n0>` and every partial cell's `k/n` |
+| `percent --node R --axis <member>` | the roadmap rollup for one axis member, with `green=<k> rows=<n> baseline-rows=<n0> done-unverified=<n>` and every partial cell's `k/n` and `unknown=<u>` |
 | `size` / `size --node X` | total required leaves, done, unknown, unverified, deferred, since-baseline |
 | `stream --repo <owner/name>` / `--owner <name>` | the same, for one repository or one friend's own selected work, plus `responsible=` and live lease count (5654012267: *ownership for a named stream*) |
 | `under --repo <owner/name> --category <label>` | compact listing of nodes by category with state (5654164074; taxonomy TBD) |
@@ -262,9 +282,9 @@ cap-and-count law). Every duration comes from a flag: `--window` is required by 
 
 ```
 nova-work check     <file flags> [--max <n>]
-nova-work verify    <file flags> --max-fetch <n> --fetch-timeout <seconds> [--offline] [--node <id>] [--max <n>]
+nova-work verify    <file flags> --max-fetch <n> --fetch-timeout <seconds> --cache <path> [--offline] [--node <id>] [--max <n>]
 nova-work query     <file flags> --ask <kind> [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>]
-                    [--axis <member>] [--window <duration>] [--since <revision>] [--at <revision>] [--strict] [--max <n>]
+                    [--axis <member>] [--window <duration>] [--since <revision>] [--at <revision>] --cache <path> [--max <n>]
 nova-work render    <file flags> --view <roadmap-id> --into <path> --start <marker> --end <marker> [--at <revision>] [--check]
 nova-work take      <file flags> <write flags> --node <id> --by <duration|stamp> --default <release|extend-once|escalate:<name>>
 nova-work heartbeat <file flags> <write flags> --node <id> --evidence <pointer>
@@ -274,17 +294,22 @@ nova-work evidence  <file flags> <write flags> --node <id> --pointer <pointer> -
 nova-work state     <file flags> <write flags> --node <id> --to <state> (--evidence <event-id> ... | --reason <text>) [--blocked-by <id>]
 nova-work correct   <file flags> <write flags> --node <id> --reason <text>
 nova-work responsible <file flags> <write flags> --node <id> --to <name> --reason <text>
-nova-work event     <file flags> <write flags> --kind <baseline|discovery|remove|defer|reopen|split|supersede|scope> --node <id> --reason <text> [--by-node <id>] [--children <id,...>]
+nova-work event     <file flags> <write flags> --kind <baseline|discovery|remove|defer|cancel|reopen|split|supersede|scope> --node <id> --reason <text> [--by-node <id>] [--children <id,...>]
 nova-work version
 nova-work help
 ```
 
 **What writes do, stated exactly.** Every writing verb appends exactly one event form to the
-end of the file and touches nothing else. Before appending it runs `check` (the structural
-rules below, never a fetch); a finding refuses the write at exit 1 with the finding's line.
-After appending it runs `check` again and, if the new event made a finding, removes the
-appended form and refuses the same way, so the file never holds a write that failed its own
-gate. `plan`, `apply` and `reconcile` (5653982211, the Terraform half) are **not in draft
+end of the file and touches nothing else. **The gate is one check, of the file as it would be
+with the event appended**: the verb reads the file, evaluates the structural rules below (never
+a fetch) over the file plus the candidate event, and either appends the event unchanged or
+refuses at exit 1 with the finding's line and writes nothing. So a hand-written discovery is
+recorded in the only order it can be: edit the structure, then `event --kind discovery`, whose
+candidate satisfies rule 12 for that node while the file alone did not; and a finding elsewhere
+in the file that the candidate does not cause still refuses the write, because a red file is
+stopped, not written around. Concurrency between writers is the persistence protocol's
+(Stella's section: a checkpoint records its parent revision), which draft 4 leaves to the
+repository and names as production work. `plan`, `apply` and `reconcile` (5653982211, the Terraform half) are **not in draft
 3**: named here so a reader knows they are deferred, with their own section once the pilot
 has shown what a plan must name.
 
@@ -298,11 +323,12 @@ pointer proves is `verify`'s, and an unverified pointer is a count, never a find
 1. **duplicate id** — two nodes, or two events, with one `:id`.
 2. **dangling reference** — a `:children`, `:deps`, cell `:ref`, event `:node`, `:lease`,
    `:blocked-by`, `:by-node` or `:criterion` that names nothing.
-3. **containment cycle** — `:children` edges are not a forest.
+3. **cycle** — `:children` edges are not a forest, or `:deps` edges contain a cycle (a
+   dependency cycle is a deadlock nobody can finish).
 4. **two parents** — a node under two `:children` lists.
 5. **done without evidence** — a `:to :done` transition naming no evidence events, or naming
-   ones whose criteria do not cover the node's `:acceptance`, or whose attempts are of an
-   older generation than the node's.
+   ones whose criteria do not cover the node's `:acceptance`, or of an older generation than
+   the node's, or whose pointer is a `note:` scheme.
 6. **green parent, unfinished child** — a parent derived `:done` while a required child is not.
 7. **empty required set** — a `:work-set`, a `:feature` or a cell with no required work
    derived done.
@@ -317,14 +343,20 @@ pointer proves is `verify`'s, and an unverified pointer is a count, never a find
 13. *(reader, exit 2)* **reader payload** — `#.` or any other refused syntax.
 14. *(reader, exit 2)* **bounds exceeded** — bytes, depth or nodes past the flags.
 15. **conflicting revisions** — two baseline events for one node claiming different members
-    at one revision, or a cell's `:source-revision` that no `:against` in its evidence can
-    have been read from (a sha the repository does not contain, where `verify` has run)
-    (5653970526: *reject … conflicting revisions*).
+    at one revision (5653970526: *reject … conflicting revisions*); staleness of evidence is
+    a count, not a finding, above.
+16. **no acceptance** — a required `:task` with no `:acceptance` entry, which could never be
+    done.
+17. **unknown type** is the reader's, exit 2, like rules 13 and 14, and a bound of zero or
+    less is refused the same way (SPEC.md: *a budget of zero or less is likewise refused*).
 
 ## Cost *(shared; 5653973972 and 5654049969)*
 
-The tool builds three indexes on every read — id to node, containment adjacency, and
-reverse dependency — and every walk goes through them. Deriving every node's current state
+The tool builds five indexes on every read — id to node, containment adjacency, reverse
+dependency, repository and category (5654164074: *indexed repository/category selection*) —
+and every walk goes through them; subtree aggregates (required, done, unknown, blocked,
+freshest) are cached in memory keyed by the node's scope revision and the log length, and
+rebuilt, never persisted (5653973972). Deriving every node's current state
 from the log is one pass over the events, O(E_log). A full `check` or fold visits every node
 and every edge once: O(V+E), with a visited set for shared subgraphs, and detects cycles in
 the same walk. Counts roll up bottom-up over the containment forest in O(V). **No transitive
@@ -348,19 +380,19 @@ the second is `OK` or `FAIL`, or one of the informational tokens `ROW`, `NOTE` a
 line prints on failure as on success. Every `OK` line ends `emitted=<bytes>`.
 
 ```
-WORK OK nodes=<n> edges=<n> events=<n> leases=<n> expired=<n> scope=<rev> source=<sha> emitted=<bytes>
+WORK OK nodes=<n> edges=<n> events=<n> leases=<n> expired=<n> stale=<n> scope=<rev> source=<sha> emitted=<bytes>
 WORK FAIL <id>: rule <n>: <reason>
-WORK FAIL nodes=<n> findings=<n> shown=<n> expired=<n>
+WORK FAIL nodes=<n> findings=<n> shown=<n> expired=<n> stale=<n>
 VERIFY OK pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> emitted=<bytes>
 VERIFY ROW <event-id> pointer=<p> verdict=<verified|unverified|stale> at=<stamp>
 VERIFY FAIL pointers=<n> unverified=<n> shown=<n>
-QUERY OK ask=<kind> scope=<rev> membership=<rule> unit=<unit> source=<sha> freshest=<stamp> unknown=<n> unverified=<n> rows=<n> shown=<n> emitted=<bytes>
-QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> responsible=<name|-> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> blocked-by=<id|->
+QUERY OK ask=<kind> scope=<rev> membership=<rule> unit=<unit> source=<sha> freshest=<stamp> done=<n> done-unverified=<n> unknown=<n> stale=<n> rows=<n> shown=<n> emitted=<bytes>
+QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> blocked-by=<id|->
 QUERY FAIL ask=<kind>: <reason>
 RENDER OK view=<id> cells=<n> bytes=<n> into=<path> emitted=<bytes>
 RENDER FAIL view=<id> cells=<n> drifted=<n> into=<path>
 LEASE OK id=<id> node=<id> holder=<name> deadline=<stamp> default=<d> live=<n> emitted=<bytes>
-LEASE FAIL node=<id>: held by <name> since <stamp> (deadline <stamp>) live=<n>
+LEASE FAIL node=<id> holder=<name> since=<stamp> deadline=<stamp> live=<n>: held
 HEARTBEAT OK id=<id> lease=<id> evidence=<pointer> emitted=<bytes>
 RELEASE OK id=<id> lease=<id> handed=<name|-> live=<n> emitted=<bytes>
 ATTEMPT OK id=<id> node=<id> by=<name> result=<pointer> generation=<n> attempts=<n> emitted=<bytes>
@@ -395,7 +427,9 @@ nested task updates every affected view; `--at` replaying to an earlier revision
 and cyclic data refused; a `#.` payload refused at the reader; a deep chain with no quadratic
 work (visit counts asserted); a lease past its deadline reads as unowned, its responsibility
 unchanged, and its release is not blocked; `:extend-once` once; an invalid transition
-refused; a failed post-write check leaving the file byte-identical; `render --check` fails on
+refused; a refused write leaving the file byte-identical; a hand-written discovery recorded by its
+event in the only order that passes; a `:deps` cycle refused; a cancel request withdrawn and
+a cancel confirmed; `render --check` fails on
 one changed cell; full reconstruction and incremental replay produce identical output. The
 stall replays of 5649089106 (a long live job, an unread PR hold, a silent worker, a repeated
 review error, sustained divergence, landing mode) belong to stall detection, deferred below,
@@ -413,7 +447,10 @@ active, scheduled or public by being in S.
 ## Additions of the authors', not in the source
 
 So a reader never mistakes them for Glenn's requirements: the lease model whole (Rowan's,
-5654176537, and its three changes above); the exact list of refused reader syntax beyond
+5654176537, and its three changes above) and its tool-owned random ids; the `:superseded`
+state, the `:supersede` event and the `:cancel-requested` state; the one-check-of-the-candidate
+write gate; rule 16 and the `note:`-never-for-done rule; counting an unverified or stale done
+as unknown; the five indexes and the in-memory aggregate cache; `--cache <path>`; the exact list of refused reader syntax beyond
 `#.` (every dispatch macro, `#'`, quote, backquote, package-prefixed symbols, ratios, floats,
 characters); `;` comments discarded by the reader; the three bound flags and their no-default
 rule; unknown keys preserved; the append-only write model and the post-write check that
@@ -424,7 +461,9 @@ removes its own event; deriving state, generation and scope revision from events
 points 1 and 2); `:clock :tool` with `--now` optional (Stella's point 3); the two-marker
 region in `ROADMAP.md`; the `:repo` field on a top-level work set; the transition table's
 exact edges; `<repo>/shared` as the owning set for shared work; `--at <revision>`;
-`--strict`; `emitted=<bytes>` on every `OK` line. Each is open to be cut by the pilot.
+`emitted=<bytes>` on every `OK` line. Stella's section carries its own authors' additions
+(the pilot branch and sha, the prototype facts, the rate schedule and virtual cost, the
+`NEXT-TOOLS.md` hand-off, and the fixed-table capability boundary) as hers. Each is open to be cut by the pilot.
 
 ## Roadmap as a view; the Schema pilot *(Stella)*
 
