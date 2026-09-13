@@ -36,6 +36,7 @@ const (
 	EndFailed       = "failed"
 	EndUnknown      = "unknown"
 	EndLaunchFailed = "launch-failed"
+	EndInputLimit   = "input-limit"
 )
 
 // Dash is the absence this file writes, and never a zero.

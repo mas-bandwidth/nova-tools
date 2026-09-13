@@ -52,7 +52,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-bus: the bus, with the races taken out (see SPEC.md)
+const usage = `nova-bus: the bus, with the races taken out (see docs/SPEC.md)
 
 usage:
   nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>]
@@ -63,7 +63,7 @@ usage:
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
         [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
-        [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
+        [--legacy-before <date-or-instant>|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
   nova-bus receipt --bus <dir> --as <name> --note <id-or-path> [--note ...] --remote <name> --branch <name> [--attempts <n>] [--no-push]
   nova-bus check --bus <dir> (--full | --as <name> | --since <commit>) [--legacy-before <date-or-instant>] [--rebuild-index]
@@ -178,6 +178,19 @@ again while pending; retry the saved artifact. Two preparations at different
 instants can assign different Date values and IDs even when the original draft
 is identical. send --prepared confirms or publishes that exact saved artifact
 with bounded recovery.
+
+example:
+  nova-bus names --bus ./bus
+  nova-bus check --bus ./bus --full
+  nova-bus inbox --bus ./bus --as Ada --receipt-max-words 40 --full --open
+  nova-bus draft --bus ./bus --as Ada --to Bo --subject gate
+
+./bus there is a bus of your own: a repository whose ROOT is a directory of
+lanes, not a subdirectory of a larger one. cmd/nova-bus/testdata/example-bus in
+this repo is one the size of a first run -- three participants, four notes, a
+thread, a receipt and a cursor -- and its README says how to copy it out and give
+it a repository of its own. Every line above is run against it by the tests, and
+docs/TESTS.md carries the whole first sitting: read, receipt, advance, send.
 `
 
 // refuse is what an unusable invocation costs: ONE line naming what was wrong, and the

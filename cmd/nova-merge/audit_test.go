@@ -42,6 +42,7 @@ var mergeAudit = audit.Config{
 		"verbs.go|cmdAdd|kind":                                          "the literals \"pr\" and \"branch\", assigned from isBranch above the site",
 		"verbs.go|cmdAdd|yn":                                            "the literals \"yes\" and \"no\", assigned from --needs-read above the site",
 		"verbs.go|cmdRead|current":                                      "the literals \"true\", \"false\" and \"-\", returned by standingOf in this file",
+		"pass.go|discoverDefault|verb":                                  "the verb's own name, the literals \"RUN\" and \"STATUS\" at its three call sites in pass.go",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -57,6 +58,10 @@ var mergeAudit = audit.Config{
 		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"crypto/sha256"`, `"encoding/hex"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`,
 		`"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"time"`,
+		// net/url holds no writer of its own: Parse and String are pure string transforms,
+		// and the one use here strips a URL's userinfo so a token is never printed; the
+		// result is rendered through oneline.Field at its print site.
+		`"net/url"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/merge"`,
 	},

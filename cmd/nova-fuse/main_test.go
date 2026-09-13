@@ -1495,7 +1495,6 @@ func TestTheQuarantinedNowListingCannotForgeALine(t *testing.T) {
 	}
 }
 
-// goSource is one non-test file of this package, parsed.
 // TestLiftRemovesEveryFoldEquivalentSpelling pins what the fold actually does to lift,
 // which is wider than an earlier comment in this file claimed. Surface is applied to BOTH
 // sides of every match and LiftQuarantine removes every match, so coarsening the
@@ -1704,5 +1703,48 @@ func TestQuarantineOKNamesTheEntryItVerified(t *testing.T) {
 	want := "QUARANTINE OK discord since=" + stamp(now) + ": new ("
 	if !strings.HasPrefix(out, want) {
 		t.Errorf("stdout = %q, want it to open with %q -- the entry that was written and read back, not its sibling", out, want)
+	}
+}
+
+func TestLeadingDashSurfaceWithDelimiter(t *testing.T) {
+	box := boxIn(t)
+	now := nowish()
+
+	// Quarantine with leading-dash surface name after -- delimiter.
+	code, out, errOut := capture(t, []string{"quarantine", "--box", box, "--", "-weird-surface", "malicious topic"}, now)
+	if code != 0 {
+		t.Fatalf("quarantine with -- delimiter failed: exit %d\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if !strings.Contains(out, "QUARANTINE OK -weird-surface") {
+		t.Errorf("stdout = %q, want QUARANTINE OK -weird-surface", out)
+	}
+
+	// Check with leading-dash surface name after -- delimiter.
+	code, out, errOut = capture(t, []string{"check", "--box", box, "--", "-weird-surface"}, now)
+	if code != 1 {
+		t.Fatalf("check of quarantined surface: exit = %d, want 1\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if !strings.Contains(errOut, "FUSE FAIL quarantine=-weird-surface") {
+		t.Errorf("stderr = %q, want FUSE FAIL quarantine=-weird-surface", errOut)
+	}
+
+	// Lift with leading-dash surface name after -- delimiter.
+	code, out, errOut = capture(t, []string{"lift", "quarantine", "--box", box, "--", "-weird-surface"}, now)
+	if code != 0 {
+		t.Fatalf("lift with -- delimiter failed: exit %d\nstdout: %q\nstderr: %q", code, out, errOut)
+	}
+	if !strings.Contains(out, "LIFT OK quarantine=-weird-surface") {
+		t.Errorf("stdout = %q, want LIFT OK quarantine=-weird-surface", out)
+	}
+}
+
+func TestLateFlagRefusalNamesDoor(t *testing.T) {
+	box := boxIn(t)
+	code, _, errOut := capture(t, []string{"quarantine", "--box", box, "my-surface", "reason", "--extra-flag"}, nowish())
+	if code != 2 {
+		t.Fatalf("late flag: exit = %d, want 2", code)
+	}
+	if !strings.Contains(errOut, `flags come before positional arguments, got "--extra-flag" late; run: nova-fuse help`) {
+		t.Errorf("late flag refusal = %q, want standard refusal naming help door", errOut)
 	}
 }

@@ -16,7 +16,7 @@ failing check is not a verdict about whose fault it is, and a report file is pro
 somebody else wrote. A watcher that acted on what it saw would be a window with no
 person in it.
 
-This spec is normative. It is a sibling of [SPEC.md](../SPEC.md), whose
+This spec is normative. It is a sibling of [SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line guarantee,
 the field escape, the cap-and-count law — governs here unchanged except where this
 document says otherwise, and it says so by name in one place only (**Exit codes**).
@@ -151,7 +151,7 @@ cold start on purpose.
 ```
 WAKE at=<stamp> as=<name|-> max=<d> interval=<d> on-deadline=<word> sources=<bus,entries,reports> state=<file> cold=<true|false> nova-bus=<version|-> pending=<n>
 WAKE CHANGE after=<d> polls=<n> bus=<n> entries=<n> reports=<n> lines=<n> pending=<n>
-WAKE QUIET after=<d> polls=<n> default=<word>: deadline, default taken
+WAKE QUIET after=<d> polls=<n> default=<word> sources-failing=<n>: deadline, default taken
 WAKE BROKEN source=<bus|entries|reports> failures=<n> since=<stamp>: <reason>
 WAKE BUS id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> commit=<sha|-> path=<path>: <subject>
 WAKE BUS LINE <the bus's own line, verbatim>
@@ -169,10 +169,10 @@ WAKE FIRED ids=<n> first=<id> rc=<n> redelivered=<0|1>
 WAKE UNCERTAIN id=<id> attempt=<n>: dispatch interrupted; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> runs it again
 WAKE UNCERTAIN id=<id> attempt=<n> rc=<n>: retry not terminal; nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command> runs it again
 WAKE BLOCKED as=<name> uncertain=<id> queued=<n>: a dispatch may still own this receiver; end it, then nova-wake serve --bus <dir> --as <name> --state <file> --redeliver <id> --on-note <command>
-WAKE SERVE fired=<n> notes=<n> redelivered=<n> uncertain=<n> queued=<n> cc=<n> max_wait=<d> idle=<duration>
+WAKE SERVE fired=<n> notes=<n> redelivered=<n> uncertain=<n> queued=<n> cc=<n> failed=<n> max_wait=<d> idle=<duration>
 ```
 
-The last three are `serve`'s (rule 10); everything above them is `watch`'s.
+The last five are `serve`'s (rule 10); everything above them is `watch`'s.
 
 `WAKE CHANGE`, `WAKE QUIET` and `WAKE BROKEN` are the **last** line and the three
 possible verdicts, and `pending=<n>` on each of the first two is the length of
@@ -308,6 +308,35 @@ Therefore:
      recovery is complete and not paginated: `--open-max` takes any positive
      number, measured to 100000, and `n` is the whole carried list.
 
+     **Added 2026-09-12, after the audit of packet 1 (#164, findings F1 and F2);
+     nothing above is withdrawn.** Two clauses, because the code was measured
+     against both and was wrong on both:
+
+     - **`<k>` is counted over the listing's own entries, and `carrying=` counts
+       all of them.** `carrying=` is the size of the whole open list — "every
+       entry on it, the heard and the unreadable included" (SPEC.md, **inbox**) —
+       so the count compared against it is every entry the `--open` listing HELD:
+       `INBOX NOTE`, `INBOX HEARD`, `INBOX RECEIPT` and the `INBOX UNREADABLE`
+       lines of the entries carried as unreadable. It is never a count of what
+       this tool relayed, and never a count of the `NOTE` lines alone: a note
+       this tool has already printed is suppressed and is still an entry the bus
+       listed, and a receipt is an entry with no `NOTE` line at all. A reader who
+       has been shown notes it has not answered **and** has receipted anything
+       carries both at once, and each partial count is short of `carrying=` for
+       that ordinary list, which made the recovery unendable.
+     - **While a recovery is unresolved nothing advances — in this call and in
+       every later one — and the marker outranks an empty bus queue.** A poll
+       whose queue holds no bus record still does not advance while
+       `bus:advance=inflight` stands: the marker is the only thing naming a
+       carried list this tool has not reached, and a fresh advance would write
+       its own marker over it and move the cursor, putting those notes behind the
+       cursor with nothing naming them. Such a poll prints, once per call, `WAKE
+       NOTE bus advance deferred: a recovery is unresolved; nothing fetches until
+       the carried list is reached`, and it is **not** a failed source: it counts
+       toward no streak and cannot say `BROKEN`. The recovery runs at the start of
+       every call, so the advance resumes on the first call that reaches the
+       carried list.
+
   `nova-bus` moves a cursor to `HEAD` and nowhere else, so this is the only way
   to keep the cursor behind the print. Mail consumed is mail spooled; mail
   spooled is mail printed, **under the cap** like everything else (**Bounded
@@ -329,12 +358,9 @@ Therefore:
   <carrying>` once per run on the first poll, so a cold watcher lists what it
   is owed before what is new. `--refresh` and `--advance-cursor` together are
   exit 2: one fetch per poll, never two.
-- **`--advance-cursor` is specified here and is not in the first build.** Work
-  list item 3a ships it after item 3 is read and test 11 is green against the
-  pinned binary; until then the flag is `WAKE REFUSED: --advance-cursor is not
-  in this build; use --refresh`, exit 2. Advancement is an acknowledgement
-  optimisation and not a prerequisite for delivery (Stella and Johnny,
-  2026-09-11), and a v1 that cannot move a cursor cannot lose a note.
+- **`--advance-cursor` is specified here and was shipped under work list item 3a.**
+  Advancement is an acknowledgement optimisation and not a prerequisite for delivery
+  (Stella and Johnny, 2026-09-11), and a v1 that cannot move a cursor cannot lose a note.
 
 **The bus is the exception to the cold-start rule.** See **The cold-start rule**.
 
@@ -862,10 +888,15 @@ spec forbids**.
     file, each written through the same temp-file-and-rename as everything
     else: `queued|<stamp>` when the note is first seen; `dispatching|<stamp>|
     attempt=<n>` written **before** the spawn, for every id in the batch;
-    `delivered|<stamp>|rc=<n>|redelivered=<0|1>` written **after** the
-    command exits, with its exit code, for every id in the batch. Exit 0 is
+    `delivered|<stamp>|rc=0|redelivered=<0|1>` written **after** the
+    command exits 0, for every id in the batch. Exit 0 is
     the one acceptance boundary an arbitrary command offers, so `delivered
-    rc=0` is *accepted* and there is no separate *completed*. **A restart
+    rc=0` is *accepted* and there is no separate *completed*. A command that
+    does not exit 0 has not accepted the note: the batch becomes
+    `uncertain|<stamp>|attempt=<n>|rc=<rc>`, is counted `failed=`, prints
+    `WAKE UNCERTAIN id=<id> attempt=<n> rc=<rc>: dispatch did not accept; …`,
+    and blocks subsequent dispatches until resolved with `--redeliver` (never a
+    silent loss, and never an automatic retry of an arbitrary command). **A restart
     first establishes that the receiver is idle, and only then runs what it
     finds `queued`.** Killing `serve` does not prove that the command it
     started died: the child may be alive and mid-turn, and the harness is
@@ -1164,8 +1195,8 @@ Each is proven able to fail by a mutation before it is trusted.
   pinned `nova-bus`.** New mail arrives through the push inside `inbox
   --advance` and is listed by the following `inbox`; a poll advances only
   behind an empty bus queue, so a window that has been shown more than it has
-  read is not fetched for until it reads; a `nova-bus` other than `v0.10.3`
-  is refused until this document is re-measured against it.
+  read is not fetched for until it reads; a `nova-bus` other than this build's
+  derived pin (`AcceptBus`) is refused.
 - **A `serve` dispatch can be uncertain, and a person clears it.** After a
   kill between the `dispatching` write and the `delivered` write the note is
   `uncertain` and waits for `--redeliver`; only under `--on-note-idempotent`
@@ -1266,16 +1297,17 @@ shared packages used rather than re-spelled.
    `nova-check quickstart` already use.
 8. **Onboarding, which `internal/ci/onboarding_test.go` will require the moment
    the directory exists** — a usage banner ending in an `example:` block whose
-   lines run, a `### First run` in `README.md`, `nova-wake help` on stdout at exit
+   lines run, a `### First run` in `docs/CLI.md`, `nova-wake help` on stdout at exit
    0, and a one-line refusal for a bad invocation rather than the banner.
 9. **Tests for the two lessons, named as such** — `TestNoFalseWakeOnReload` and
    `TestBlocksRatherThanTicks` (a watch whose sources never change returns once, at
    its deadline, having printed one verdict line). A spec whose lessons are not
    pinned by a test is a spec that will buy them again.
-10. **`SPEC.md` and `README.md` wiring** — the binary count in SPEC.md's opening
-    paragraph, a `## nova-wake` section or a pointer to this file, and the README
-    `### First run`. CONTRIBUTING says a wording change to a rule here is a rule
-    change; this file is that rule.
+10. **`docs/SPEC.md` and `docs/CLI.md` wiring** — the binary count in
+    docs/SPEC.md's opening paragraph, a `## nova-wake` section or a pointer to
+    this file, and the `### First run` in [`docs/CLI.md`](CLI.md). CONTRIBUTING
+    says a wording change to a rule here is a rule change; this file is that
+    rule.
 11. **`internal/wake/line.go`** — the `--line` view: `git log` on the bus checkout
     under the timeout, the last sign per name, the `<sha>|<state>|<stamp>`
     state value, OFFLINE once and BACK once. Plus, in `main.go`:

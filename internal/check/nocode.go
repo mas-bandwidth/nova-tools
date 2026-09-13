@@ -33,6 +33,16 @@ var codeNamesData string
 
 // Deny-list provenance, reported with every finding so that neither a red nor
 // a green hides the basis it was reached on.
+//
+// These labels are read in two places and the two want different things. In a
+// finding's REASON they are free text -- `code extension .py (floor list)` --
+// and keep their spaces, because the tail of a line is prose. On the
+// `deny-list=` and `source=` FIELDS of nova-check's summary lines they are a
+// field, and SPEC.md's rule is that a field is ONE token, so the caller there
+// renders them through oneline.Field and `floor list` prints as
+// `floor\x20list`. The spelling is not shortened to fit the field: a label a
+// reader has seen in a finding should read the same on the summary line, and
+// the escape is how one token is reached without changing what it says.
 const (
 	DenyFloor    = "floor list"
 	DenyReplaced = "--deny-ext"

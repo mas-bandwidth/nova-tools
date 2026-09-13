@@ -115,7 +115,19 @@ type Validator struct {
 }
 
 // NewValidator returns a validator over one mapping's allowlists.
-func NewValidator(a Allowlists) *Validator { return &Validator{allow: a} }
+//
+// The two slices are COPIED. Finding 1 of #146's adversarial read was the schema's closed set
+// held in mutable state a caller could reach; a validator that kept the caller's own backing
+// arrays is the same shape one level down -- what the boundary enforces would change under it
+// whenever the caller appended to the slice it had handed over, including between a
+// SealObservation's seal and its strict read-back. The allowlist is the caller's DECLARATION,
+// made once when the validator is built; it is not a live handle.
+func NewValidator(a Allowlists) *Validator {
+	return &Validator{allow: Allowlists{
+		RawUsageFields: append([]string(nil), a.RawUsageFields...),
+		ReceiptFields:  append([]string(nil), a.ReceiptFields...),
+	}}
+}
 
 // Without returns a copy of the validator with the named rules not enforced. It exists for
 // exactly one caller: the test that proves each refusal rule is load-bearing by showing
@@ -215,9 +227,13 @@ func (v *Validator) validateObservation(body *Object) (*Observation, error) {
 			return nil, err
 		}
 	}
-	if err := v.exactKeys(body, "body",
-		"schema", "source", "kind", "revision", "time", "origin", "model",
-		"repository", "raw_usage", "model_usage", "mapping_id", "receipt"); err != nil {
+	// The member list is observationMembers, which the encoder writes from, so the reader
+	// and the writer cannot name different members: a twelfth member added to one side
+	// alone would be a body one half of this package produces and the other half refuses.
+	// It is unexported, and ObservationMembers() hands a caller a copy: as an exported
+	// slice it was this gate's closed set in mutable package state, and an append opened
+	// the schema for every Validator in the process (#146's adversarial read, finding 1).
+	if err := v.exactKeys(body, "body", observationMembers...); err != nil {
 		return nil, err
 	}
 	obs := &Observation{Schema: schema}

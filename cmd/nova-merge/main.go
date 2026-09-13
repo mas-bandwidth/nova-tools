@@ -41,7 +41,7 @@ const usage = `nova-merge: an ordered lane onto one base, with the races taken o
 
 usage:
   nova-merge version    print this build identity (--version also accepted)
-  nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name>
+  nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
   nova-merge add        --lane <dir> --pr <n> [--needs-read]
   nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
   nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>]
@@ -50,7 +50,7 @@ usage:
   nova-merge status     --lane <dir> [--max <n>] [--reads <entry>]
   nova-merge dry-run    --lane <dir> [--max <n>]
   nova-merge packet     --lane <dir> --who <name> ((--pr <n>|--branch <name>) | --all) [--max <n>]
-  nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name>
+  nova-merge quickstart --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
   nova-merge stop       --lane <dir>
 
 every verb that runs git or gh also takes [--timeout <seconds>], default 120.
@@ -72,6 +72,32 @@ timeout is how long this tool waits before saying so rather than a fact about a
 lane that only its owner can supply. --loop gets no default interval and --hours
 no default deadline for the opposite reason: a loop with no deadline is a lane
 that is stuck rather than working, and nobody outside can tell the two apart.
+
+INIT AND QUICKSTART PUSH. init creates the lane's record branch -- the name given
+to --lane-branch -- and, when the repository does not have it already, pushes it to
+origin of the repository --repo names: one commit holding .gitignore, author and
+committer nova-merge <nova-merge@localhost>, which is this tool's PLACEHOLDER
+identity and not a person or an account anywhere. That branch is the transport for
+every read and gate, so a lane is not usable without it; joined=false on INIT OK
+says this lane created and pushed it, joined=true says it was already there and
+nothing was pushed.
+
+REHEARSE FIRST, against a bare repository of your own:
+
+  git init -q --bare ./rehearsal.git
+  nova-merge quickstart --lane ./rehearsal-lane --repo rehearsal-team/rehearsal --base main \
+             --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
+
+--remote only controls where git clones from and pushes to: the clone and the push
+writes go to the local bare remote you name with --remote, but hosted status and
+check reads can still occur against the repository named by --repo. --remote wants
+an ABSOLUTE path or a URL: git runs inside the lane directory, so a relative one
+resolves against the lane and the run is refused. Give the rehearsal a lane of its own --
+init creates a lane once, so rehearsing into the live lane's directory is INIT
+REFUSED on the line after. A bare repository with no --base branch in it prints one
+STATUS NOTE and base_state=UNKNOWN at exit 0, which is a rehearsal with no base to
+read rather than a failure. The two transcripts are in docs/TESTS.md, and both are run
+by this binary's tests.
 
 The repository, the base and the lane branch are properties of the LANE, written
 once by init. No other verb takes --repo, --base or --lane-branch, and the flag
@@ -96,15 +122,16 @@ conflicting file named and the exact hand command on the line; no code path here
 writes a resolved file.
 
 example:
-  nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
-  nova-merge add --lane ./lane --pr 949 --needs-read
-  nova-merge status --lane ./lane
-  nova-merge packet --lane ./lane --who emma --all
-  nova-merge dry-run --lane ./lane
+  nova-merge quickstart --lane ./rehearsal-lane --repo rehearsal-team/rehearsal --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
+  nova-merge add --lane ./rehearsal-lane --pr 949 --needs-read
+  nova-merge status --lane ./rehearsal-lane
+  nova-merge packet --lane ./rehearsal-lane --who emma --all
+  nova-merge dry-run --lane ./rehearsal-lane
 
-Those five are one sitting, in order: make the lane, queue an entry, look at it,
-ask what a reader would be handed, and see what a pass would do without doing it.
-./lane is a path of yours and nothing is guessed from it.
+Those five are one sitting against a bare repository of your own, in order: make the
+lane, queue an entry, look at it, ask what a
+reader would be handed, and see what a pass would do without doing it. ./rehearsal-lane
+is a path of yours and nothing is guessed from it.
 `
 
 // refuse is what an unusable invocation costs: ONE line naming what was wrong and the

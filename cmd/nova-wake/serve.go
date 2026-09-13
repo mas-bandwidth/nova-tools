@@ -92,7 +92,7 @@ func cmdServe(args []string, stdout, stderr io.Writer, clock wake.Clock) int {
 	if *state == "" {
 		p.missing("state")
 	}
-	if *onNote == "" {
+	if len(strings.Fields(*onNote)) == 0 {
 		// --redeliver names its handler because the state stores no command.
 		p.missing("on-note")
 		if *redeliver != "" {
@@ -205,10 +205,10 @@ type server struct {
 	words          int
 	timeout        time.Duration
 
-	fired, notes, redelivered, uncertain, cc int
-	failed                                   int
-	maxWait                                  time.Duration
-	saidBlocked                              bool
+	fired, notes, redelivered, cc int
+	failed                        int
+	maxWait                       time.Duration
+	saidBlocked                   bool
 
 	// busSrc is the WATCH verb's classifier, reused rather than re-spelled:
 	// rule 7 is about the bus source and serve reads the same bus with the
@@ -287,7 +287,6 @@ func (s *server) recover(ctx context.Context) {
 		}
 		_ = stamp
 		s.st.Set(serveKey(id), wake.Compose("uncertain", wake.Stamp(s.clock.Now()), "attempt="+strconv.Itoa(attempt)))
-		s.uncertain++
 		fmt.Fprintf(s.stdout, "WAKE UNCERTAIN id=%s attempt=%d: dispatch interrupted; %s\n",
 			oneline.Field(id), attempt, oneline.Escape(s.remedy(id)))
 		if s.idempotent && attempt == 1 {
@@ -533,7 +532,6 @@ func (s *server) runBatch(ctx context.Context, ids []string, attempt int, redeli
 			// is uncertain and a person's; "never a silent duplicate, and never
 			// a silent loss".
 			s.st.Set(serveKey(id), wake.Compose("uncertain", done, "attempt="+strconv.Itoa(attempt), "rc="+strconv.Itoa(rc)))
-			s.uncertain++
 			s.failed++
 			why := "dispatch did not accept"
 			if redelivered {

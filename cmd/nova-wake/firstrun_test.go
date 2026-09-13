@@ -178,7 +178,7 @@ func TestIndependentProblemsAreReportedInOneRun(t *testing.T) {
 // deliberately not compared: pinning those would make the transcript a fixture
 // instead of a document.
 func TestTheFirstRunTranscriptMatchesWhatTheToolPrints(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}

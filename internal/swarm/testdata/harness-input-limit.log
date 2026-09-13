@@ -1,0 +1,6 @@
+> build · mercury-2.5
+
+$ grep -n "elsewhere" docs/SPEC-LOCAL.md
+183:    component is not `Shared` -- and `shared=no (elsewhere)` for anything else.
+[0m
+[91m[1mError: [0mRate limit reached: input token limit exceeded

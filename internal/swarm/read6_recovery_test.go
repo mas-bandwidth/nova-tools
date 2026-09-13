@@ -40,12 +40,13 @@ func TestARecoveredBackgroundViolationIsQuarantined(t *testing.T) {
 	nonce := "0123456789abcdef"
 	// What the supervisor's own group check leaves behind (supervise.go endWith): the
 	// harness exited 0, and a process of the job's group was still alive after it.
-	if err := WriteJSON(ExitPath(jobDir), ExitRecord{RC: 0, End: EndDone, Survivors: 1, Nonce: nonce}); err != nil {
+	if err := WriteJSON(ExitPath(jobDir), ExitRecord{RC: 0, End: EndDone, Survivors: 1, Nonce: nonce, Attest: fixtureAttest}); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeSlot(p.slotPath(1), SlotFile{
 		Job: id, JobDir: jobDir, State: SlotLaunched, Pid: 0, Pgid: 0, JobPgid: 0,
-		PidStarted: "-", RunnerPid: 0, Nonce: nonce, LaunchedAt: Stamp(time.Now().UTC()),
+		PidStarted: "-", RunnerPid: 0, Nonce: nonce, ExitAttest: ExitAttestHash(fixtureAttest),
+		LaunchedAt: Stamp(time.Now().UTC()),
 	}); err != nil {
 		t.Fatal(err)
 	}

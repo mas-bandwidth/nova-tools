@@ -54,7 +54,7 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 		}
 		// Everything else this pass reads is THERE, so the only unread record is the one
 		// under test: the supervisor's completion evidence, the harness log, the note file.
-		if err := WriteJSON(ExitPath(jobDir), ExitRecord{RC: 0, End: EndDone, Nonce: "abc123"}); err != nil {
+		if err := WriteJSON(ExitPath(jobDir), ExitRecord{RC: 0, End: EndDone, Nonce: "abc123", Attest: fixtureAttest}); err != nil {
 			t.Fatal(err)
 		}
 		if err := os.WriteFile(filepath.Join(jobDir, "harness.log"), []byte("the harness said nothing of note\n"), 0o644); err != nil {
@@ -70,7 +70,7 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 
 		hits := collideUntilRead(t, ResultPath(jobDir), body)
 		in := RunInput{Pool: p, Stdout: io.Discard, Stderr: io.Discard, Now: func() time.Time { return now }}
-		r := &running{sc: sc, slot: 1, nonce: "abc123", jobDir: jobDir, started: now, deadline: 30 * time.Second}
+		r := &running{sc: sc, slot: 1, nonce: "abc123", exitAttest: ExitAttestHash(fixtureAttest), jobDir: jobDir, started: now, deadline: 30 * time.Second}
 		line, end, dest := in.finish(r, map[int]bool{}, now)
 
 		if strings.Contains(line, "result="+ClassNoResult) {
@@ -144,12 +144,19 @@ func TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent(t *testing.T) {
 //
 // What a directory read fails WITH is the platform's business (EISDIR here, something else
 // on Windows) and the rule under test is not, so while the stand-in is in place EVERY failed
-// read is a collision -- the shape `TestTheLaunchHandshakeEndsAtItsOwnTimeoutWhenEveryReadCollides`
-// already uses on that runner. Two things keep that from arming on somebody else's read: a
-// record that is GONE answers ErrNotExist and is an ANSWER, never a collision (the package's
-// own `missing` rule, and true on every platform), and each fixture leaves every OTHER record
-// of its job present and readable. Once the record is back the platform's rule decides again,
-// so nothing here loops twice.
+// read is ANSWERED as a collision -- the shape
+// `TestTheLaunchHandshakeEndsAtItsOwnTimeoutWhenEveryReadCollides` already uses on that
+// runner. Two things keep that from arming on somebody else's read: a record that is GONE
+// answers ErrNotExist and is an ANSWER, never a collision (the package's own `missing` rule,
+// and true on every platform), and each fixture leaves every OTHER record of its job present
+// and readable. Once the record is back the platform's rule decides again, so nothing here
+// loops twice.
+//
+// The COUNT this returns is narrower than that answer: only a failed read AT `path` is
+// counted, and only such a read lifts the collision, so the `hits.Load() == 0` guard every
+// caller ends with names the read it means rather than any failure that happened to land
+// while the seam was armed (#132). The narrowing stops at the count: what is transient stays
+// the seam's unnarrowed answer, for the bd6f3d7 reason above.
 func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
 	t.Helper()
 	// A path that is already a record is REPLACED by the stand-in, so a collision can be
@@ -163,6 +170,19 @@ func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
 	forceTransientIO = func(err error) bool {
 		if err == nil || restored.Load() || errors.Is(err, fs.ErrNotExist) {
 			return transientIO(err)
+		}
+		// THE COUNT IS NARROWED TO THIS PATH, THE ANSWER IS NOT (#132). `hits` is what every
+		// caller asserts on last -- a zero means no read ever went through the collision
+		// wait -- so it must count reads of THIS record and not any failed read that happens
+		// while the seam is armed. The match is on the count (and on the lift, which belongs
+		// to the read that paid for it) and never on the transient ANSWER above: a
+		// PathError.Path match in that position is what broke on the Windows runner at
+		// bd6f3d7, where a pending replace does not always hand its error back at the path
+		// the reader named. A failure at somebody else's path is still waited out, and is
+		// nobody's collision here.
+		var pe *fs.PathError
+		if !errors.As(err, &pe) || filepath.Clean(pe.Path) != filepath.Clean(path) {
+			return true
 		}
 		// A few polls of collision -- enough that a reader which does not wait one out is
 		// caught, and orders of magnitude less than SteadyWindow -- and then the record is
@@ -178,6 +198,67 @@ func collideUntilRead(t *testing.T, path string, body string) *atomic.Int64 {
 	}
 	t.Cleanup(func() { forceTransientIO = nil })
 	return &hits
+}
+
+// THE FIXTURE'S OWN GUARD IS ONLY AS GOOD AS WHAT IT COUNTS (#132, a LOW of the #126 read).
+//
+// `hits` is what every test above asserts on LAST -- `hits.Load() == 0` means no read ever
+// went through the collision wait, which is the bug itself rather than a pass. So what the
+// counter counts is load-bearing: an armed seam that counted ANY failed read would let a
+// guard be satisfied by somebody else's failure at somebody else's path, and the test would
+// report a collision it never produced.
+//
+// The narrowing is of the COUNT ONLY. Whether a failure is transient must stay the seam's
+// unnarrowed answer: a `PathError.Path` match in that position is what broke on the Windows
+// runner at bd6f3d7, where the error a pending replace hands back is not always carried at
+// the path the reader named. This test holds both halves at once -- a wrong-path read is
+// still waited out, and is not counted.
+func TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed(t *testing.T) {
+	const body = "# a published report\n\n## Head\nfindings: 1\n"
+	dir := t.TempDir()
+	armed := filepath.Join(dir, CopiedResult)
+	// Somebody else's record, unreadable for a reason that is NOT ErrNotExist: a directory,
+	// the same portable stand-in the seam itself uses for a pending replace.
+	other := filepath.Join(dir, "somebody-elses-record")
+	if err := os.MkdirAll(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	hits := collideUntilRead(t, armed, body)
+
+	// Half one: the transient ANSWER is not narrowed. A failed read of another path through
+	// the armed seam is still waited out, to its caller's own bound and not this package's,
+	// so the test costs a tenth of a second rather than SteadyWindow.
+	started := time.Now()
+	if _, err := readFileSteadyBy(other, time.Now().Add(20*steadyPoll)); err == nil {
+		t.Fatal("reading a directory answered no error at all; this fixture has nothing to arm on")
+	}
+	if waited := time.Since(started); waited < steadyPoll {
+		t.Errorf("an armed seam called a wrong-path failure final after %s: the transient answer must not be narrowed by path (bd6f3d7)", waited)
+	}
+
+	// Half two: the COUNT is narrowed. Nothing above was a read of the armed path.
+	if n := hits.Load(); n != 0 {
+		t.Errorf("hits counted %d read(s) of a path this seam never armed: the vacuity guard of every test here would be satisfied by somebody else's failure", n)
+	}
+	// And the collision is still standing: it is lifted by the read that PAID for it, never
+	// by somebody else's failures.
+	if _, err := os.ReadFile(armed); err == nil {
+		t.Error("the stand-in over the armed path was lifted by reads of another path")
+	}
+
+	// And the seam still does its own job: a read of the armed path is counted, waited out,
+	// and answered with the record.
+	raw, err := readFileSteady(armed)
+	if err != nil {
+		t.Fatalf("the armed path never came back: %v", err)
+	}
+	if string(raw) != body {
+		t.Errorf("the record the retry found is not the one the seam restored:\n%s", raw)
+	}
+	if hits.Load() == 0 {
+		t.Error("no read of the armed path went through the collision wait")
+	}
 }
 
 // A COLLISION IS NOT A REVISION, AND AN UNREADABLE REPORT IS NOT AN UNPUBLISHED ONE.

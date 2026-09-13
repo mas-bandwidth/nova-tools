@@ -106,6 +106,9 @@ func onePass(n int, lane string, st *merge.State, f *laneFlags, stdout, stderr i
 		Build: build, Now: deps.Now(), Stdout: stdout, Stderr: stderr,
 		Problems: problems, Pulled: pulled,
 	}
+	if code := discoverDefault("RUN", p, stderr); code != 0 {
+		return code
+	}
 	if plannedRed != "" {
 		merge.Appendf(lane, deps.Now(), "RUN PASS planned_red=%s", plannedRed)
 	}
@@ -162,6 +165,9 @@ func cmdStatus(args []string, stdout, stderr io.Writer, deps Deps) int {
 		Records: recs, Remote: "origin", Max: *f.max, Now: deps.Now(),
 		Stdout: stdout, Stderr: stderr, Problems: problems,
 	}
+	if code := discoverDefault("STATUS", p, stderr); code != 0 {
+		return code
+	}
 	return p.Status(*reads)
 }
 
@@ -203,6 +209,9 @@ func cmdDryRun(args []string, stdout, stderr io.Writer, deps Deps) int {
 		Records: recs, Remote: "origin", Max: *f.max, Now: deps.Now(),
 		Stdout: stdout, Stderr: stderr, Problems: folded.Problems,
 		Survey: true, Pulled: folded.Files, LaneTip: tip,
+	}
+	if code := discoverDefault("RUN", p, stderr); code != 0 {
+		return code
 	}
 	res := p.Run(0)
 	return res.Exit()
@@ -249,6 +258,18 @@ func cmdPacket(args []string, stdout, stderr io.Writer, deps Deps) int {
 		Stdout: stdout, Stderr: stderr, Problems: folded.Problems,
 	}
 	return p.Packet(*who, id, *all)
+}
+
+// discoverDefault runs the one discovery of the repository's default branch that run,
+// dry-run and status share, through the pass's own clone and timeout, and refuses a
+// malformed answer before the pass decides anything. verb is the leading token of the
+// refusal, the verb that ran.
+func discoverDefault(verb string, p *merge.Pass, stderr io.Writer) int {
+	if err := p.DiscoverDefaultBranch(); err != nil {
+		fmt.Fprintf(stderr, "%s REFUSED: %s\n", verb, oneline.Escape(oneline.Cap(err.Error(), oneline.TailBytes)))
+		return 2
+	}
+	return 0
 }
 
 // cmdStop writes the stop file: start nothing new and exit.

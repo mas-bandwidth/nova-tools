@@ -135,7 +135,7 @@ func TestEveryUnreadableFileIsNamedInOneRun(t *testing.T) {
 // and field names in order. The sentences quoted in it are the fixture's own
 // and are not compared — the tail after ": " is a run's business.
 func TestREADMEFirstRunMatchesWhatTheToolPrints(t *testing.T) {
-	raw, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
