@@ -736,7 +736,7 @@ evidence and `verify` as a separate pass with a cache (Stella's points 1 and 2);
 `:repo` field on a top-level work set; the transition table's exact edges; `<repo>/shared`;
 `--at <revision>`; `emitted=<bytes>` on every `OK` line; the structure verbs' names and
 flags. Stella's: the local recovery journal, event ids and expected revisions, the named event
-boundary per clip, incremental reconcile, the offline-clip rule, the fencing-generation ownership record as a proposal (the `OWNER`-on-the-branch form with
+boundary per clip, the offline-clip rule, the fencing-generation ownership record as a proposal (the `OWNER`-on-the-branch form with
 `--force-with-lease` is Rowan's, and the export/replay path with it), fold/unfold/propagate as
 operators, the measurement list, the `link`/`absorb` archive order, the migration dispositions; and in her sections below,
 the pilot branch and sha, the prototype facts, the rate schedule and virtual cost, the
