@@ -1498,8 +1498,10 @@ remedy line. The rules are numbered on from rule 21.
     `sum`, `check` and `sources` each leave the fake `git`'s record empty
     (demanded test 16's half, now scoped); a source walk over every package of
     this binary finds `exec.Command` in exactly two files —
-    `internal/tokens/opencode.go` and the publish file — the word `git` in
-    exactly one of them, and no `net` import anywhere; `publish --claude
+    `internal/tokens/opencode.go` and the publish file — the other spawners
+    `os.StartProcess` and `syscall.ForkExec`/`Exec`/`StartProcess` nowhere,
+    a syntax-tree pass that flags a string literal naming the git program,
+    and no `net` import anywhere; `publish --claude
     x=<dir>` is exit 2; `--ledger` on any read verb is exit 2 as an unknown
     flag.
 
@@ -1877,7 +1879,9 @@ seen red before it is trusted.
    reader's and is scoped to the read side: `internal/tokens`'s source
    readers start `sqlite3` and nothing else, and no reader of a bus checkout
    runs `git`. The whole-binary count is demanded test 27's — `exec.Command`
-   in exactly two files, the word `git` in exactly one — and the two are read
+   in exactly two files, the other spawners `os.StartProcess` and
+   `syscall.ForkExec`/`Exec`/`StartProcess` nowhere, a syntax-tree pass that
+   flags a string literal naming the git program — and the two are read
    together, this one over the readers and that one over the binary.
 7. A body line `… input ~100000` folds as 100000, the row has `rough=1`, a
    second rough line on the same row makes `rough=2`, `TOKENS DAY rough=2`,
@@ -2080,7 +2084,9 @@ paragraphs are the normative text and these ten lines are the index.
     differs from it does not.
 27. `fold`, `report`, `sum`, `check` and `sources` never invoke the fake
     `git`, with a ledger clone beside the sources; the source walk finds
-    `exec.Command` in exactly two files and the word `git` in exactly one; a
+    `exec.Command` in exactly two files, the other spawners `os.StartProcess`
+    and `syscall.ForkExec`/`Exec`/`StartProcess` nowhere, and a syntax-tree
+    pass flags a string literal naming the git program; a
     source flag on `publish`, and `--ledger` on any read verb, are each exit 2.
 28. `publish` leaves a bus checkout beside the ledger byte-identical and
     writes no note; `report --ledger` is exit 2; one day reported and
