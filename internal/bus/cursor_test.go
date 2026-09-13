@@ -142,11 +142,51 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 		OpenHeader + "\n-\tnote\t-\tBo\tto\t-\t\t-\n",
 		OpenHeader + "\n-\twibble\t-\tBo\tto\t-\tfrom-bo/a.md\t-\n",
 		OpenHeader + "\n-\tnote\tyes\tBo\tto\t-\tfrom-bo/a.md\t-\n",
-		OpenHeader + "\nbo-nothex\tnote\t-\tBo\tto\t-\tfrom-bo/a.md\t-\n",
+		OpenHeader + "\nbo not slug\tnote\t-\tBo\tto\t-\tfrom-bo/a.md\t-\n",
 	} {
 		write(t, root, OpenPath("from-ada"), bad)
 		if _, err := ReadOpen(root, "from-ada"); err == nil {
 			t.Fatalf("an open list of %q was accepted", bad)
+		}
+	}
+	// Historical notes carrying legacy IDs (which are valid slugs) are accepted in OPEN.
+	for _, goodLegacy := range []string{
+		OpenHeader + "\nbo-legacy-001\tnote\t-\tBo\tto\t-\tfrom-bo/a.md\t-\n",
+		OpenHeader + "\nfreddy-pr827-001\treceipt\t-\tFreddy\tcc\t2026-09-09T22:03:00Z\tfrom-freddy/ack.md\tRe: PR\n",
+	} {
+		write(t, root, OpenPath("from-ada"), goodLegacy)
+		entries, err := ReadOpen(root, "from-ada")
+		if err != nil {
+			t.Fatalf("an open list with legacy id was refused: %v", err)
+		}
+		if len(entries) != 1 {
+			t.Fatalf("len(entries) = %d, want 1", len(entries))
+		}
+	}
+}
+
+func TestValidOpenID(t *testing.T) {
+	t.Parallel()
+	for _, good := range []string{
+		"bo-abcdef012345",
+		"freddy-pr827-001",
+		"bo-legacy-001",
+		"freddy-pong9",
+		"freddy-card-15-nine-md",
+	} {
+		if err := ValidOpenID(good); err != nil {
+			t.Errorf("ValidOpenID(%q) = %v, want nil", good, err)
+		}
+	}
+	for _, bad := range []string{
+		"",
+		"bo not slug",
+		"bo/bad/slash",
+		"Bo-Uppercase",
+		strings.Repeat("a", SlugMax+1),
+	} {
+		if err := ValidOpenID(bad); err == nil {
+			t.Errorf("ValidOpenID(%q) = nil, want error", bad)
 		}
 	}
 }
