@@ -132,14 +132,11 @@ type CodexMapping struct {
 // historical origin." A zero CodexBinding means no binding was supplied, and every
 // observation is then {null, null, unknown, null}.
 //
-// WHERE IT APPLIES, and the one place this decoder had to choose: the mapping document
-// states the two origin outcomes but not which records a binding covers. This decoder
-// applies the binding to a response whose turn context resolved, and to no other, because
-// the binding binds an EXECUTION context and a response with no matching turn_context has
-// none -- the same absence that leaves its model null. It is recorded as an open item on
-// the PR rather than settled here: if the owner decides a binding covers every record of a
-// bound source, this is a one-line change and the fixture's resp-c3 envelope changes with
-// it.
+// WHERE IT APPLIES: the binding names a source, and it applies to every record in the
+// source scope it declares, independently of whether a configured model/turn context was
+// found. A missing model stays {null, unknown} and cannot erase separately evidenced
+// friend/bench provenance. A caller must not supply a whole-source binding for a
+// mixed/unknown-origin source it cannot justify.
 type CodexBinding struct {
 	ID     string
 	Friend string
@@ -575,9 +572,10 @@ func (d *CodexDecoding) readCodexLine(m *CodexMapping, b CodexBinding, v *record
 	} else {
 		obs.Model = records.Model{Basis: m.ModelBasisAbsent}
 	}
-	// ORIGIN. The owner's binding, and only where the turn context this response ran in
-	// resolved. See CodexBinding for why, and for the open item it is.
-	if b.Supplied() && rec.TurnContextModel != nil && *rec.TurnContextModel != "" {
+	// ORIGIN. The owner's binding, applied to every record of the bound source. A missing
+	// turn context leaves the model {null, unknown} but does not erase separately evidenced
+	// friend/bench provenance.
+	if b.Supplied() {
 		friend, bench, id := b.Friend, b.Bench, b.ID
 		obs.Origin = records.Origin{Friend: &friend, Bench: &bench, Basis: codexOriginBound, BindingID: &id}
 	} else {

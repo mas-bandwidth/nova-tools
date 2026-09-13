@@ -365,13 +365,19 @@ func TestCodexDecoderPreservesLexemesPresenceAndModelBasis(t *testing.T) {
 	}
 
 	// resp-c3: no timestamp and no turn context. No instant is invented, no model is
-	// claimed, no day is allocated, and the total the source never wrote stays absent.
+	// claimed, no day is allocated, and the total the source never wrote stays absent. The
+	// binding still applies: a missing model cannot erase the source's own provenance.
 	c3 := obs["resp-c3"]
 	if c3.Time.OccurredAt != nil || c3.Time.Basis != m.TimeBasisMissing {
 		t.Errorf("resp-c3 time is %+v; a missing timestamp is null/%s", c3.Time, m.TimeBasisMissing)
 	}
 	if c3.Model.ID != nil || c3.Model.Basis != m.ModelBasisAbsent {
 		t.Errorf("resp-c3 model is %+v; with no turn context it is null/%s", c3.Model, m.ModelBasisAbsent)
+	}
+	if c3.Origin.Basis != "owner_binding" || c3.Origin.BindingID == nil || *c3.Origin.BindingID != codexFixtureBinding.ID ||
+		c3.Origin.Friend == nil || *c3.Origin.Friend != codexFixtureBinding.Friend ||
+		c3.Origin.Bench == nil || *c3.Origin.Bench != codexFixtureBinding.Bench {
+		t.Errorf("resp-c3 origin is %+v; the supplied binding covers every record of the bound source", c3.Origin)
 	}
 	if total := c3.RawUsage["total_tokens"]; total.Presence != m.Fields["total_tokens"].AbsentPresence || total.Value != nil {
 		t.Errorf("resp-c3 total_tokens is %+v; a total the source never wrote stays absent", total)
@@ -568,6 +574,89 @@ func TestCodexDecoderSelectsTopLevelRecordsOnly(t *testing.T) {
 	}
 	if bytes.Contains(d.Observations[0].Envelope, []byte("unknown_producer_metric")) {
 		t.Errorf("an unsupported producer metric was promoted into the wire")
+	}
+}
+
+// TestCodexDecoderSubsetImpossibleAndSourceShapes is the small source-shape table the cold
+// read asked for: the impossible-subset witness (a detail counter larger than the base it
+// is a subset of) and the equal-to-base boundary beside it, then an explicitly empty usage
+// object and a missing/unreadable turn_id. It decodes inline source lines and touches
+// neither the fixture files nor the mapping.
+func TestCodexDecoderSubsetImpossibleAndSourceShapes(t *testing.T) {
+	m := codexMapping(t)
+	lines := strings.Join([]string{
+		`{"type":"token_usage_record","response_id":"resp-s1","session_id":"t1","turn_id":"1","timestamp":"2026-09-12T00:00:00Z","usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150,"cached_input_tokens":200}}`,
+		`{"type":"token_usage_record","response_id":"resp-s2","session_id":"t1","turn_id":"2","timestamp":"2026-09-12T00:00:00Z","usage":{"input_tokens":100,"output_tokens":50,"total_tokens":150,"cached_input_tokens":100}}`,
+		`{"type":"token_usage_record","response_id":"resp-e1","session_id":"t1","turn_id":"3","timestamp":"2026-09-12T00:00:00Z","usage":{}}`,
+		`{"type":"token_usage_record","response_id":"resp-t1","session_id":"t1","timestamp":"2026-09-12T00:00:00Z","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`,
+		`{"type":"token_usage_record","response_id":"resp-t2","session_id":"t1","turn_id":{"x":1},"timestamp":"2026-09-12T00:00:00Z","usage":{"input_tokens":1,"output_tokens":1,"total_tokens":2}}`,
+	}, "\n")
+	d, err := DecodeCodexReaders(m, codexFixtureBinding, []io.Reader{strings.NewReader(lines)})
+	if err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if len(d.Observations) != 5 {
+		t.Fatalf("%d observations, want 5", len(d.Observations))
+	}
+	v := records.NewValidator(m.Allowlists())
+
+	// The impossible-subset witness: a detail larger than its base is retained with its
+	// original lexeme byte for byte, and it is excluded from normalized spend.
+	s1 := codexOne(t, d, "resp-s1")
+	if !s1.SubsetImpossible || s1.Spendable {
+		t.Errorf("resp-s1: a detail larger than its base is an impossible subset, excluded from spend: %+v", s1)
+	}
+	env1, err := v.ValidateEnvelope(s1.Envelope)
+	if err != nil {
+		t.Fatalf("resp-s1: %v", err)
+	}
+	if f := env1.Observation.RawUsage["cached_input_tokens"]; !f.Present() || f.Value == nil || *f.Value != "200" {
+		t.Errorf("resp-s1 cached_input_tokens retains its original lexeme: %+v", f)
+	}
+
+	// The equal-to-base boundary: a detail equal to its base is not an impossible subset,
+	// and the record stays spendable.
+	s2 := codexOne(t, d, "resp-s2")
+	if s2.SubsetImpossible || !s2.Spendable {
+		t.Errorf("resp-s2: a detail equal to its base is not an impossible subset and stays spendable: %+v", s2)
+	}
+
+	// An explicitly empty usage object is a usage object that measured nothing: all six
+	// supported fields are absent/not_supplied, never a zero.
+	e1 := codexOne(t, d, "resp-e1")
+	envE, err := v.ValidateEnvelope(e1.Envelope)
+	if err != nil {
+		t.Fatalf("resp-e1: %v", err)
+	}
+	for _, name := range m.FieldNames() {
+		f := envE.Observation.RawUsage[name]
+		if f.Presence != m.Fields[name].AbsentPresence || f.Value != nil ||
+			f.Reason == nil || *f.Reason != m.Fields[name].AbsentReason {
+			t.Errorf("resp-e1.%s is %+v; an empty usage object leaves every supported field absent", name, f)
+		}
+	}
+
+	// A missing turn_id is omitted from the receipt, never approximated.
+	t1 := codexOne(t, d, "resp-t1")
+	envT1, err := v.ValidateEnvelope(t1.Envelope)
+	if err != nil {
+		t.Fatalf("resp-t1: %v", err)
+	}
+	if _, ok := envT1.Observation.Receipt["turn_id"]; ok {
+		t.Errorf("resp-t1: a record with no turn_id writes no turn_id: %+v", envT1.Observation.Receipt)
+	}
+
+	// An unreadable turn_id is counted as the fixed shape and omitted, never approximated.
+	t2 := codexOne(t, d, "resp-t2")
+	envT2, err := v.ValidateEnvelope(t2.Envelope)
+	if err != nil {
+		t.Fatalf("resp-t2: %v", err)
+	}
+	if _, ok := envT2.Observation.Receipt["turn_id"]; ok {
+		t.Errorf("resp-t2: an unreadable turn_id writes no turn_id: %+v", envT2.Observation.Receipt)
+	}
+	if n := d.Unsupported[codexShapeNoTurnIDLexeme]; n != 1 {
+		t.Errorf("an unreadable turn_id is counted as %s once, found %d", codexShapeNoTurnIDLexeme, n)
 	}
 }
 
