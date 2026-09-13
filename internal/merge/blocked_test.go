@@ -36,7 +36,7 @@ func TestTheConflictRemedyReadsTheConfiguredRemote(t *testing.T) {
 			name:      "a plain URL is printed shell-quoted",
 			url:       "https://github.com/o/n.git",
 			wantToken: shellQuote("https://github.com/o/n.git"),
-			wantCmd:   "git clone --branch feature-x " + shellQuote("https://github.com/o/n.git") + " ",
+			wantCmd:   "git clone --branch " + shellQuote("feature-x") + " " + shellQuote("https://github.com/o/n.git") + " ",
 		},
 		{
 			name:       "a URL carrying a credential prints no token",
@@ -84,5 +84,28 @@ func TestTheConflictRemedyFallsBackWhenTheRemoteCannotBeRead(t *testing.T) {
 	cmd := HandCommand(token, "main", "feature-x", []string{"a.txt"})
 	if !strings.Contains(cmd, "$(git -C") {
 		t.Errorf("the hand command must still run, via the substitution: %q", cmd)
+	}
+}
+
+// security#30 L8b, Alex's anchor: "HandCommand leaves headRef unquoted (paste-time)."
+// HandCommand prints a line a person PASTES. cloneToken was shell-quoted; headRef, base
+// and the derived dir were interpolated raw, so a value carrying a shell metacharacter
+// ran on paste. Every value the line prints goes through the file's own shellQuote.
+func TestTheHandCommandQuotesEveryValueItPrints(t *testing.T) {
+	head, base := "feat;rm -rf x", "main&&id"
+	token := shellQuote("https://host/o/n.git")
+	cmd := HandCommand(token, base, head, []string{"a.txt"})
+	dir := shellQuote("feat;rm -rf x")
+	for _, want := range []string{
+		"git clone --branch " + dir,
+		" " + token + " " + dir,
+		" && cd " + dir,
+		"git fetch origin " + shellQuote(base),
+		"git merge origin/" + shellQuote(base),
+		"git push origin HEAD:" + dir,
+	} {
+		if !strings.Contains(cmd, want) {
+			t.Errorf("the hand command does not quote %s; missing %q in:\n%s", want, want, cmd)
+		}
 	}
 }

@@ -2,10 +2,12 @@ package merge
 
 import (
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Demanded test 4: the four spellings, in any argument, refused BEFORE the command is
@@ -116,4 +118,34 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// repeatByte is an endless reader, used by the child below to make a runaway writer.
+type repeatByte struct{}
+
+func (repeatByte) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 'x'
+	}
+	return len(p), nil
+}
+
+// security#30 L8c, Alex's anchor: "gh/git output buffered unbounded." Exec.Run used
+// cmd.CombinedOutput() with no cap, so a hostile or runaway gh/git filled memory. The
+// capture is bounded and the result says it was cut.
+func TestExecRunCapsRunawayOutputAndMarksIt(t *testing.T) {
+	if os.Getenv("NOVA_MERGE_EXEC_CAP_HELPER") == "1" {
+		_, _ = io.Copy(os.Stdout, io.LimitReader(repeatByte{}, 1<<20))
+		os.Exit(0)
+	}
+	t.Setenv("NOVA_MERGE_EXEC_CAP_HELPER", "1")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	out, _ := (Exec{}).Run(ctx, "", os.Args[0], "-test.run=TestExecRunCapsRunawayOutputAndMarksIt")
+	if len(out) >= 1<<19 {
+		t.Fatalf("a runaway child produced %d bytes of captured output: the cap did not hold at its named line", len(out))
+	}
+	if !strings.Contains(out, "truncated") {
+		t.Errorf("the captured result does not mark itself truncated: %q", out)
+	}
 }

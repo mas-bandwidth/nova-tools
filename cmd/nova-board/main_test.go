@@ -510,38 +510,73 @@ func quickstartPair(t *testing.T, stdout string) (check, add string) {
 	return check, add
 }
 
-// shellWords splits one of the printed lines the way a shell would: double quotes group,
-// and INSIDE THEM A BACKSLASH IS ORDINARY unless the byte after it is one of $ ` " \ or a
+// shellWords splits one of the printed lines the way a shell would: single quotes are
+// literal (their one special byte is the closing quote), outside quotes a backslash
+// escapes the next byte -- which is how a single quote is carried at all -- double quotes
+// group, and INSIDE
+// DOUBLE QUOTES A BACKSLASH IS ORDINARY unless the byte after it is one of $ ` " \ or a
 // newline -- that is the POSIX double-quote rule, and `sh -c 'printf "%s" "a\b"'` prints
-// `a\b`. The helper used to swallow every backslash inside quotes, which read a Windows
-// --dir (`C:\...\my board\cards`) back as `C:...my boardcards` and failed
-// TestTheMkdirRemedyIsOnePastableCommandWhenTheDirHasASpace on the windows runner while
-// the tool's own output was right. THE HELPER WAS THE BUG, NOT THE TOOL: board.Quote
-// escapes the one byte a double-quoted shell word cannot carry raw, and this reads it back
-// the way a shell does. Anything else appearing here is still a bug in this helper.
+// `a\b`. board.Quote is now the single-quote quoter the printed lines use (security#30
+// L9), so this reads those words back too. The helper used to swallow every backslash
+// inside double quotes, which read a Windows --dir (`C:\...\my board\cards`) back as
+// `C:...my boardcards` and failed TestTheMkdirRemedyIsOnePastableCommandWhenTheDirHasASpace
+// on the windows runner while the tool's own output was right. THE HELPER WAS THE BUG, NOT
+// THE TOOL. Anything else appearing here is still a bug in this helper.
 func shellWords(t *testing.T, line string) []string {
 	t.Helper()
+	const (
+		unquoted = iota
+		double
+		single
+	)
 	var out []string
 	var cur strings.Builder
-	inWord, quoted := false, false
+	inWord := false
+	mode := unquoted
 	for i := 0; i < len(line); i++ {
 		c := line[i]
-		switch {
-		case quoted && c == '\\' && i+1 < len(line) && strings.IndexByte("$`\"\\\n", line[i+1]) >= 0:
-			i++
-			cur.WriteByte(line[i])
-		case c == '"':
-			quoted = !quoted
-			inWord = true
-		case !quoted && c == ' ':
-			if inWord {
-				out = append(out, cur.String())
-				cur.Reset()
-				inWord = false
+		switch mode {
+		case single:
+			if c == '\'' {
+				mode = unquoted
+			} else {
+				cur.WriteByte(c)
+				inWord = true
+			}
+		case double:
+			switch {
+			case c == '\\' && i+1 < len(line) && strings.IndexByte("$`\"\\\n", line[i+1]) >= 0:
+				i++
+				cur.WriteByte(line[i])
+				inWord = true
+			case c == '"':
+				mode = unquoted
+			default:
+				cur.WriteByte(c)
+				inWord = true
 			}
 		default:
-			cur.WriteByte(c)
-			inWord = true
+			switch {
+			case c == '\\' && i+1 < len(line):
+				i++
+				cur.WriteByte(line[i])
+				inWord = true
+			case c == '\'':
+				mode = single
+				inWord = true
+			case c == '"':
+				mode = double
+				inWord = true
+			case c == ' ':
+				if inWord {
+					out = append(out, cur.String())
+					cur.Reset()
+					inWord = false
+				}
+			default:
+				cur.WriteByte(c)
+				inWord = true
+			}
 		}
 	}
 	if inWord {
@@ -1516,11 +1551,12 @@ func TestTheCapWidensAndEachKindIsCappedSeparately(t *testing.T) {
 	}
 }
 
-// TestShellWordsReadsADoubleQuotedWordTheWayAShellDoes pins the helper above, because a
-// broken reader of the tool's output fails a good line and sends somebody to fix the tool
-// instead. The windows case is here so it is caught on every platform rather than only on
-// the runner: a path full of backslashes inside double quotes comes back whole. Every
-// `want` below is what `sh -c 'printf "%s|\n" <the word>'` prints.
+// TestShellWordsReadsADoubleQuotedWordTheWayAShellDoes pins the double-quote half of the
+// helper above, because a broken reader of the tool's output fails a good line and sends
+// somebody to fix the tool instead. The windows case is here so it is caught on every
+// platform rather than only on the runner: a path full of backslashes inside double quotes
+// comes back whole. Every `want` below is what `sh -c 'printf "%s|\n" <the word>'` prints.
+// The single-quote half -- the rule board.Quote now prints -- is pinned next.
 func TestShellWordsReadsADoubleQuotedWordTheWayAShellDoes(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -1531,10 +1567,44 @@ func TestShellWordsReadsADoubleQuotedWordTheWayAShellDoes(t *testing.T) {
 			[]string{"mkdir", "-p", `C:\Users\RUNNER~1\Temp\my board\cards`}},
 		{"a posix path with a space", `mkdir -p "/a/my board/cards"`,
 			[]string{"mkdir", "-p", "/a/my board/cards"}},
-		{"the one byte board.Quote escapes", `mkdir -p "a\"b"`,
+		{"the one byte a double-quoted word escapes", `mkdir -p "a\"b"`,
 			[]string{"mkdir", "-p", `a"b`}},
 		{"an escaped backslash", `mkdir -p "a\\b"`, []string{"mkdir", "-p", `a\b`}},
 		{"a dollar is escapable too", `mkdir -p "a\$b"`, []string{"mkdir", "-p", "a$b"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := shellWords(t, tc.line)
+			if len(got) != len(tc.want) {
+				t.Fatalf("shellWords(%q) = %q (%d words), want %q (%d)", tc.line, got, len(got), tc.want, len(tc.want))
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("word %d of %q is %q, want %q, which is what a shell prints", i, tc.line, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// The single-quote half of shellWords, which is the rule board.Quote now prints: single
+// quotes are literal, so a word holding $(...) or a backtick comes back whole and, pasted,
+// runs nothing. Every `want` is what `sh -c 'printf "%s|\n" <the word>'` prints.
+func TestShellWordsReadsASingleQuotedWordTheWayAShellDoes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		line string
+		want []string
+	}{
+		{"a posix path with a space", `mkdir -p '/a/my board/cards'`,
+			[]string{"mkdir", "-p", "/a/my board/cards"}},
+		{"a command substitution stays literal", `nova-board add --text '$(id)'`,
+			[]string{"nova-board", "add", "--text", "$(id)"}},
+		{"a backtick stays literal", "nova-board add --text '`id`'",
+			[]string{"nova-board", "add", "--text", "`id`"}},
+		{"the shell's own way to carry a quote", `mkdir -p 'it'\''s'`,
+			[]string{"mkdir", "-p", "it's"}},
+		{"a dollar inside single quotes is literal", `mkdir -p 'a$b'`,
+			[]string{"mkdir", "-p", "a$b"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := shellWords(t, tc.line)

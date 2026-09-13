@@ -43,6 +43,45 @@ func openLane(verb, lane string, stderr io.Writer) (*merge.State, int) {
 	return st, 0
 }
 
+// validRepoSlug is the shape of <owner>/<name>, the value init hands to git and gh.
+// Exactly one slash, both halves non-empty, each half in GitHub's own character set, and
+// no leading dash on either half: "-x/y" is not a repo, it is an option to git.
+func validRepoSlug(s string) error {
+	owner, name, ok := strings.Cut(s, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return errors.New("exactly one slash between a non-empty owner and a non-empty name")
+	}
+	if strings.HasPrefix(owner, "-") || strings.HasPrefix(name, "-") {
+		return errors.New("neither half may begin with a dash, which git and gh would read as an option")
+	}
+	if !githubOwner(owner) || !githubRepoName(name) {
+		return errors.New("the owner holds letters, digits and '-', and the name may also hold '_' and '.', and nothing else")
+	}
+	return nil
+}
+
+// githubOwner is GitHub's username and organization charset: letters, digits and '-'.
+func githubOwner(s string) bool {
+	for _, r := range s {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-') {
+			return false
+		}
+	}
+	return true
+}
+
+// githubRepoName is GitHub's repository-name charset: letters, digits, '-', '_' and '.'.
+func githubRepoName(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '-', r == '_', r == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
 // cmdInit is the ONE creation verb (rule 20). quickstart is the same creation followed by
 // a status, which is the natural first run: a stranger's first line makes a lane and then
 // looks at it.
@@ -88,8 +127,14 @@ func cmdInit(args []string, stdout, stderr io.Writer, deps Deps, quickstart bool
 		}
 	}
 	f.require("lane-branch", *laneBranch, "the branch of that repository this lane's read and gate records live in")
-	if strings.TrimSpace(*repo) != "" && !strings.Contains(*repo, "/") {
-		f.problem(fmt.Sprintf("--repo is <owner>/<name>, got %q", *repo))
+	// A repo name is handed to git and gh, so it is not enough that it holds a slash:
+	// "a/b/c", "-x/y", "../y" and a name with a space all reached both. It is exactly one
+	// slash, both halves non-empty, each half in GitHub's own character set, and neither
+	// half beginning with a dash -- which git and gh would read as an option.
+	if *repo != "" {
+		if err := validRepoSlug(*repo); err != nil {
+			f.problem(fmt.Sprintf("--repo is <owner>/<name>, got %q: %s", *repo, oneline.Escape(err.Error())))
+		}
 	}
 	if !f.done(stderr) {
 		return 2
