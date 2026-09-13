@@ -562,6 +562,15 @@ func (s *server) runBatch(ctx context.Context, ids []string, attempt int, redeli
 
 // spawn runs the command with the ids and NOTHING else on its command line.
 func (s *server) spawn(ctx context.Context, ids []string) int {
+	// The ids are appended to the command's own arguments, so an id beginning with "-"
+	// is parsed as a FLAG by whatever --on-note names. --on-note is arbitrary, so no
+	// end-of-options separator can be assumed to be accepted: refuse the id here,
+	// before it is ever an argument, and name it.
+	for _, id := range ids {
+		if strings.HasPrefix(id, "-") {
+			return refused(s.stderr, "on-note note id "+id+": an id beginning with '-' would be read as a flag by --on-note, so it is refused before it reaches argv")
+		}
+	}
 	fields := strings.Fields(s.onNote)
 	cmd := exec.CommandContext(ctx, fields[0], append(append([]string{}, fields[1:]...), ids...)...)
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
