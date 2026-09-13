@@ -439,6 +439,7 @@ func joinWrapper() {
 		fmt.Fprintln(os.Stderr, "JOIN WRAP could not start the bus")
 		os.Exit(2)
 	}
+	assignGroup(c)
 	done := make(chan struct{})
 	go func() { _ = c.Wait(); close(done) }()
 	reached := func() bool {
@@ -556,9 +557,6 @@ func clearWrapper(t *testing.T) {
 // to hold one complete contribution -- one note and one INDEX row -- no matter
 // which boundary the death landed on.
 func TestJoinChildDeathAtWriteBoundariesRecoversOneContribution(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("SIGKILL on a process group is what stages these deaths, so this case claims NO Windows coverage: the owed validation is a Windows termination (TerminateProcess on a job object) staged at these same boundaries, named in the pull request and asserted nowhere yet")
-	}
 	for _, boundary := range []string{killBeforeNote, killAfterNote, killAfterIndex, killAfterAttrs, killAfterCmt} {
 		t.Run(boundary, func(t *testing.T) {
 			missed := 0
@@ -803,6 +801,7 @@ func (r reporter) killReporterWhen(t *testing.T, pathDir, what string, reached f
 	if err := c.Start(); err != nil {
 		t.Fatal(err)
 	}
+	assignGroup(c)
 	done := make(chan struct{})
 	go func() { _ = c.Wait(); close(done) }()
 	deadline := time.Now().Add(60 * time.Second)
@@ -863,9 +862,6 @@ func (r reporter) remoteHasANote(t *testing.T) bool {
 // Killed once the prepared artifact is on disk and nothing is confirmed: the
 // next reporter must finish THAT report rather than prepare a new one.
 func TestJoinReporterDeathWithPendingSavedFinishesTheSameReport(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the staged deaths use SIGKILL on a process group; the Windows join is a separate gate")
-	}
 	r := newReporter(t, "v1.2.3")
 	r.killReporterWhen(t, r.bin, "a pending artifact saved to the snapshot", r.snapshotHasPending)
 	id := r.pendingID(t)
@@ -887,9 +883,6 @@ func TestJoinReporterDeathWithPendingSavedFinishesTheSameReport(t *testing.T) {
 // Killed after the note is ON the remote but before the confirmation is
 // recorded: the retry must find that same note and must not publish a second.
 func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("the staged deaths use SIGKILL on a process group; the Windows join is a separate gate")
-	}
 	r := newReporter(t, "v1.2.3")
 	r.killReporterWhen(t, r.bin, "the note reaching the remote", func() bool { return r.remoteHasANote(t) })
 	notes, _ := r.bus.published(t)
@@ -914,6 +907,74 @@ func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.
 	}
 	if !strings.Contains(out, "already-published") {
 		t.Fatalf("recovery did not recognise the note it had already published: %s", out)
+	}
+}
+
+// TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers closes Item 2 of #206:
+// It establishes an existing INDEX prefix, interrupts a real prepared send, interrupts
+// its production recovery append before confirmation, then retries to prove byte-identical
+// prior entries and exactly one new contribution.
+func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
+	r := newReporter(t, "v1.0.0")
+
+	// 1. Establish existing contribution and prior INDEX prefix
+	code, out, errs := r.send(t, r.bin)
+	if code != 0 {
+		t.Fatalf("initial report failed: %d\n%s\n%s", code, out, errs)
+	}
+	priorNotes, priorIndexRows := r.bus.published(t)
+	if len(priorNotes) != 1 || len(priorIndexRows) != 1 {
+		t.Fatalf("want 1 prior note and 1 INDEX row, got notes=%v index=%v", priorNotes, priorIndexRows)
+	}
+	priorIndexContent := r.bus.noteBytes(t, r.bus.lane+"/INDEX")
+
+	// 2. Prepare next report for version v1.1.0
+	if err := os.WriteFile(r.manifest, []byte(Header+"\n"+row("x", "tool", printer(t, "v1.1.0"), "npm:unused", "none")+"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	// 3. Phase 1: Interrupt during prepared send (at killAfterIndex)
+	wrap1, record1 := r.wrapperOnPath(t, killAfterIndex)
+	code, out, errs = r.send(t, wrap1)
+	if code != 1 || !strings.Contains(errs+out, "sent=uncertain") {
+		t.Fatalf("phase 1 interruption was not reported as uncertain: %d\n%s\n%s", code, out, errs)
+	}
+	b1, err := os.ReadFile(record1)
+	if err != nil || !strings.Contains(string(b1), "observed=true") {
+		t.Fatalf("phase 1 boundary was not observed: %v %s", err, string(b1))
+	}
+	id := r.pendingID(t)
+	if r.removeStaleIndexLock(t) {
+		t.Log("phase 1 killed child left .git/index.lock; cleaned up before phase 2")
+	}
+
+	// 4. Phase 2: Interrupt recovery before confirmation (killReporterWhen note is on remote)
+	clearWrapper(t)
+	r.killReporterWhen(t, r.bin, "recovery note reaching remote", func() bool { return r.remoteHasANote(t) })
+	if r.removeStaleIndexLock(t) {
+		t.Log("phase 2 killed recovery left .git/index.lock; cleaned up before final retry")
+	}
+
+	// 5. Phase 3: Final retry runs to completion
+	code, out, errs = r.send(t, r.bin)
+	if code != 0 {
+		t.Fatalf("phase 3 final recovery failed: %d\n%s\n%s", code, out, errs)
+	}
+	if got := r.deliveredID(t); got != id {
+		t.Fatalf("phase 3 delivered ID %q, want retained %q", got, id)
+	}
+
+	// 6. Verification: prior INDEX prefix is byte-identical, exactly 2 contributions exist
+	finalNotes, finalIndexRows := r.bus.published(t)
+	if len(finalNotes) != 2 || len(finalIndexRows) != 2 {
+		t.Fatalf("want exactly 2 notes and 2 INDEX rows, got notes=%v index=%v", finalNotes, finalIndexRows)
+	}
+	finalIndexContent := r.bus.noteBytes(t, r.bus.lane+"/INDEX")
+	if !strings.HasPrefix(finalIndexContent, priorIndexContent) {
+		t.Fatalf("prior INDEX prefix was corrupted!\nPrior:\n%q\nFinal:\n%q", priorIndexContent, finalIndexContent)
+	}
+	if !strings.Contains(finalIndexRows[1], id) {
+		t.Fatalf("second INDEX row does not name id %q: %s", id, finalIndexRows[1])
 	}
 }
 
