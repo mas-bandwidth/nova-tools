@@ -1,4 +1,4 @@
-# nova-work — specification (DRAFT 21, 2026-09-13)
+# nova-work — specification (DRAFT 22, 2026-09-13)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
@@ -21,8 +21,8 @@ contracts of drafts 1 to 4, which the recorded Fable cold reads shaped. **The re
 record, and no count of them is kept in this sentence**: every whole read is a comment on PR
 #231 with its repairs beneath it, and each draft's own comment names by id the read it folds,
 so a number here can never go stale (drafts 1 to 4 were shaped by the HOLDs of 15:34Z, 15:47Z
-and 15:49Z; draft 20 folded 5655371246, 5655806486 and 5655806825, and this draft folds the two whole
-reads at 7472e545, 5655903904 and 5655905248).
+and 15:49Z; drafts 20 and 21 folded 5655371246, 5655806486, 5655806825, 5655903904 and
+5655905248, and this draft folds the two whole reads at efc26a2e, 5655987384 and 5655988102).
 
 **One recursive work set, S.** Restricted Lisp data holds what is **desired** (the work:
 repositories, streams, features, tasks, down to whatever depth is useful) and what is
@@ -192,7 +192,8 @@ its exit is the session's (Fable at d1b20f42, 2026-09-13: a launcher that exits 
 child is what an init system refuses to supervise). What a supervisor holds is the session
 process either way. That process loads the snapshot at the
 fetched tip once (`--file` is the snapshot's path inside `--repo`, read at that tip, never a
-free file), replays its own journal beyond that snapshot once (recovery, and the only replay),
+free file), replays its own journal from that journal's newest boundary record beyond that snapshot once
+(recovery, and the only replay),
 validates the set whole, builds the indexes, and answers verbs against its resident objects
 thereafter; `--at` answers from the retained history in memory, by a replay counted in `replays=`. **The CLI is a thin client**: `nova-work <verb> --session <path>` sends the verb to the
 session listening at that path (a Unix socket the session creates at start; no default path)
@@ -228,10 +229,23 @@ boundary and dropped inside the journal, where the newest — and so the most re
 live). **The digest is named here, because a successor after a handoff may be another build or
 another language** and two serializations of one request would read as a reuse on a legitimate
 retry: it is SHA-256, printed as lowercase hex, over the **canonical serialization of the
-request's payload** — the fields the `:event` kinds below list for that kind, in the order
-listed there, each printed by the same deterministic printer a clip writes its snapshot with,
-one space between elements, no comments and no other whitespace — so two implementations digest
-one request to one value (Fable at 7472e545, 2026-09-13). **Beyond the journal the promise is kept by the
+request's payload**, and that serialization is stated whole here rather than left to a reader.
+Each event is written as one parenthesized list: `:kind` and its value, then `:node` and its
+value, then `:by` and its value, then the kind's own fields in the order the `:event` kinds
+below list them for that kind — **every field written whether or not the caller gave one**, a
+field the caller did not give written as `()`, so the body has a constant shape and two builds
+cannot disagree about a default — each element printed by the same deterministic printer a clip
+writes its snapshot with, one space between elements, no comments and no other whitespace.
+**The digest covers what the requester sent and nothing the session assigns**: `:kind`, `:node`,
+`:by` and the kind's own fields are in it; `:stamp`, `:clock`, `:request` and `:generation-owner`
+are not, because a `:stamp` the session reads from its own clock under `:clock :tool` differs on
+every retry and would refuse every one of them as a reuse. **A request whose envelope holds two
+events digests both, the structure event first and the scope event second**, one space between
+the two lists, as one serialization. So two implementations digest one request to one value
+(Fable at 7472e545 and at efc26a2e, 2026-09-13: the definition named an ordered field list that
+the `:event` kinds gave for no structure verb and for no scope kind, so one `node add` had two
+serializations, and a legitimate retry against a successor of another build was refused
+`reused with a different payload` — the exact hurt this paragraph exists to close). **Beyond the journal the promise is kept by the
 dedup index of the retention boundary above, and it is kept as a refusal rather than as a
 replayed answer**: a retry whose id the index holds is refused `already applied`, naming the
 revision it was applied at, so the requester re-reads rather than acting twice, and no session
@@ -247,11 +261,23 @@ retained event history, commits and pushes under `--git-timeout <seconds>` with 
 <n>` (default 25 as the bus's; what an attempt retries here is the CAS push after a fetch
 shows the tip unchanged but the push raced the same owner's own reconfirm commit, the one
 moving-remote case this design allows), and records the shared revision and which local events it contains. **A clip also appends one
-boundary record to the journal and truncates nothing**: the record carries the clip's commit
-sha, the base sha, the clipped revision and the local event boundary the clip named, so the
-journal alone says which of its events a clip has carried and at what clipped revision. That
-record is what lets the offline export below write a bundle with no repository read, and it is
-where the *within the journal* boundary of the dedup rule above is read (Fable at 7472e545,
+boundary record to the journal**: the record carries the clip's commit sha, the base sha, the
+clipped revision and the local event boundary the clip named, so the journal alone says which of
+its events a clip has carried and at what clipped revision. That record is what lets the offline
+export below write a bundle with no repository read, and it is where the *within the journal*
+boundary of the dedup rule above is read. **That record is also where a read of the journal
+starts, so the journal is not read from its beginning and need not grow forever**: a session
+start, a `session export --journal` and every other read of a journal begin at its newest
+boundary record and read forward, and **a clip may rotate the journal** — closing the file it
+has just written that record into and opening a fresh one whose first record is a copy of it —
+so a long-lived set's journal is bounded by the events since its last clip and not by the set's
+age. The request ids before that record are the dedup index's, which is already the rule
+*beyond the journal* below. A journal is read under the three bounds its reader named like every
+other file, and one past `--max-bytes` is refused at exit 2 naming the bound and the file
+(Fable at efc26a2e, 2026-09-13: nothing rotated and every start read the whole of it, so the
+coordinator of a long-lived set reached a start refused at exit 2 for its own journal, with no
+remedy but raising the bound every file is read under, while the retention paragraph promised
+load bounded by the retention window) (Fable at 7472e545,
 2026-09-13: the offline form *reads no repository*, and nothing said the journal held the base,
 the clipped revision or the clip boundaries every bundle request requires). A failed push leaves
 accepted local work and the pending clip intact and reports *locally durable, not shared*; a
@@ -272,8 +298,12 @@ cover: `session export --journal <path> --into <path> --max-bytes <n> --max-dept
 --max-nodes <n>` is the offline form. It reads that journal under the caller's own three bounds
 while holding the journal's own lock and writes the same bundle — **each request's required
 `--expect` taken from the newest clip boundary record in that journal, and the bundle's `base=`
-from that record's base sha**, which is how the offline bundle is whole without reading a
-repository — and **starts no session, takes no ownership, reads no repository and validates
+from that record's commit sha**, the commit that clip pushed, which is how the offline bundle is
+whole without reading a repository. **It is the record's commit sha and never its base sha**,
+because a live `session export` writes `base=` from the session's base, *the sha of the last
+commit it pushed* (rule 2 above), which after a clip is that clip's own commit; taking the
+record's base sha would make the offline bundle of a journal one commit behind the live bundle
+of the same journal (Fable at efc26a2e, 2026-09-13) — and **starts no session, takes no ownership, reads no repository and validates
 nothing** — a bundle is requests, and `session
 replay` is where they are validated. A journal whose lock is held is refused, exit 1, `journal
 held`, naming the holder, because a live owner's journal is not a file to be read out from under
@@ -365,14 +395,22 @@ snapshot alone — the retention boundary, then the retained events — so load 
 window and not by the set's age, `--at` reaches the boundary and no further, and **a session
 whose archive file is absent answers every ask and runs every rule**, which is the test that
 keeps this paragraph honest. **A clip whose snapshot would exceed the session's own
-`--max-bytes` refuses**, and **the refusal prints both parts and names the flag that can lower
-the one that overflowed**: `CLIP FAIL … : snapshot=<bytes> index=<bytes> past --max-bytes=<n>,
-raise --max-bytes` where the index is the larger part, since no flag lowers an index that may
-not forget, and `CLIP FAIL … : snapshot=<bytes> index=<bytes> past --max-bytes=<n>, lower
---retain or raise --max-bytes` where the retained part is, since a longer retention window makes
-that part larger and never smaller. The one file a tool must never write is one it cannot read
-back, and a remedy that cannot move the number it names is worse than no remedy at all (Fable at
-7472e545, 2026-09-13: the refusal named `--retain` for an overflow `--retain` cannot shrink). **A removed subtree leaves the live snapshot the same way**:
+`--max-bytes` refuses**, and **the refusal prints all three numbers and names the remedy that can
+actually work**: `CLIP FAIL … : snapshot=<bytes> retained=<bytes> index=<bytes> past
+--max-bytes=<n>, <remedy>`, where `snapshot=` is the whole file the clip would write — the word
+means the whole file everywhere else in this document and is not narrowed here — `retained=` is
+the structure and the retained events, and `index=` is the dedup index (Fable and Opus at
+efc26a2e, 2026-09-13: two numbers were printed and the first was the whole file's name over a
+part's value). **The remedy branches on whether `--retain` can bring the total under the bound
+and never on which part is larger**: where the index alone is already past `--max-bytes` the
+remedy is `raise --max-bytes` alone, since no flag lowers an index that may not forget and no
+`--retain` can help; otherwise it is `lower --retain or raise --max-bytes`, since a shorter
+retention window makes the retained part smaller and a longer one never does. The one file a
+tool must never write is one it cannot read back, and a remedy that cannot move the number it
+names is worse than no remedy at all (Fable at 7472e545, 2026-09-13: the refusal named
+`--retain` for an overflow `--retain` cannot shrink; Opus at efc26a2e, 2026-09-13: branching on
+the larger part told an operator with `index=55 retained=50` under a bound of 100 to find a
+bigger bench, when lowering `--retain` on his own keyboard would have done). **A removed subtree leaves the live snapshot the same way**:
 the snapshot's structure is the live tree, and a node removed by `node remove`, its subtree
 and their events are written into the archive by the first clip after their `:remove` event
 passes the retention boundary and into the snapshot's structure never again — so `--retain`
@@ -447,8 +485,8 @@ that parent, wherever else it is referenced. `:deps`, a roadmap cell's `:ref`, a
 membership and any other pointer are references: they form a graph, they carry no count and no
 cost, and they are validated for existence and for dependency state. Shared compiler and lock
 work in Schema is owned once, under an explicit owning work set that every repository carries
-(`<repo>/shared`, visible in every listing, 5654164074, and carried `:required false` until it
-holds work, by the validator's rule-7 paragraph below), and referenced from nine cells; it is
+(`<repo>/shared`, visible in every listing, 5654164074, and created `:required false` by the
+validator's rule-7 paragraph below, which also names the verb that makes it count), and referenced from nine cells; it is
 one task with one cost. Stella's *A cell is a reference, not another state store* below says
 the same rule from the roadmap's side and is not restated here.
 
@@ -500,6 +538,22 @@ they are distinct kinds:
   `:kind`, `:node`, `:by`, `:stamp`, `:clock` (`:tool`
   or `:given`), `:request` (the request id), `:generation-owner` (the coordinator generation
   that accepted it), and the fields its kind needs:
+  - `:structure` — the structural half of a structure verb's envelope. Its first field is
+    `:verb`, the verb that wrote it, and the rest are the fields that verb changed, **in this
+    order per verb, which is also the order the payload digest above serializes them in**:
+    `node add` — `:verb`, `:node-type`, `:title`, `:under`, `:category`, `:required`,
+    `:acceptance` (the criteria in the order given), `:reason`;
+    `node remove` — `:verb`, `:under` (the parent it detaches from), `:reason`;
+    `node require` — `:verb`, `:to` (`true` or `false`), `:reason`;
+    `decompose` — `:verb`, `:children` (in the order `--into` gave them), `:acceptance` (per
+    child, in that child order), `:reason`;
+    `accept` — `:verb`, `:add`, `:remove`, `:reason` (the one of `:add` and `:remove` the call
+    did not give is written `()`, as every absent field is);
+    `dep` — `:verb`, `:add`, `:remove`, `:reason`;
+    `axis` — `:verb`, `:roadmap`, `:axis`, `:add`, `:reason`;
+    `cell` — `:verb`, `:roadmap`, `:coord`, `:ref`, `:out-of-scope`, `:in-scope`, `:reason`.
+    `responsible` and `source` write no `:structure` event: their own kinds below are their
+    whole record.
   - `:transition` — `:to <state>`, `:reason`, and for `:blocked` a `:blocked-by` reference; a
     `:to :done` names the evidence event ids it stands on.
   - `:evidence` — `:pointer`, `:criterion` (an `:acceptance` id on the node), `:against <sha>`
@@ -517,13 +571,20 @@ they are distinct kinds:
   - `:responsible` — `:to <name>` on a work-set or feature, on a person's word, `:reason`.
   - `:lease`, `:heartbeat`, `:release`, `:handoff` (carrying the new holder's `:deadline` and
     `:default`, so a handed lease is a whole lease) — the lease log, below.
-  - `:baseline`, `:discovery`, `:remove`, `:defer`, `:cancel` (carrying `:evidence` that the
-    worker stopped), `:reopen`, `:split`, `:supersede`, `:scope`, `:axis`, `:source` — the scope log: a baseline records the required set of its node **as the tool
+  - `:baseline`, `:discovery`, `:remove`, `:require`, `:defer`, `:cancel` (carrying
+    `:evidence` that the worker stopped), `:reopen`, `:split`, `:supersede`, `:scope`, `:axis`,
+    `:source` — the scope log: a baseline records the required set of its node **as the tool
     computed it at that moment**, member by member; a split names the new children; a
     supersede names `:superseded-by`; every one of them increments the node's scope revision,
     because the revision is the count of scope events, and each changes the required set by
     **its own stated delta, in the table below, which is what rule 11 compares against**.
-    Splitting is decomposition, not discovery or completion (5653970526).
+    Splitting is decomposition, not discovery or completion (5653970526). **Each scope kind's
+    own fields, in the order the payload digest above serializes them**: `:baseline` —
+    `:members`, `:reason`; `:discovery` — `:members`, `:reason`; `:remove` — `:reason`;
+    `:require` — `:to`, `:reason`; `:defer` — `:reason`; `:cancel` — `:evidence`, `:reason`;
+    `:reopen` — `:reason`; `:split` — `:children`, `:reason`; `:supersede` — `:superseded-by`,
+    `:reason`; `:scope` — `:coord`, `:in-scope` (`true` or `false`), `:reason`; `:axis` —
+    `:axis`, `:member`, `:reason`; `:source` — `:to`, `:reason`.
 
 **A revision moves on every scope event; a denominator moves only where the delta says.**
 This table is the per-kind required-set delta rule 11 checks, and the verb that may write
@@ -545,29 +606,42 @@ no cell while its cancel is still the roadmap's event (Fable and Opus at 7472e54
 | kind | required-set delta | the set it moves | written by |
 |---|---|---|---|
 | `:baseline` | sets the set to the members it records | the event's node's own | `event` |
-| `:discovery` | adds the named member at the bottom of the listing | the event's node's own | `event`, **refused at exit 2 naming `axis --add` where `--node` is a `:roadmap`**, because a roadmap's set is its first axis's members and a discovery through `event` would seat a member on no axis; `node add` inside its envelope; **`axis` inside its envelope, where `--add` names the roadmap's first axis** — the member is the row it adds, the node is the roadmap |
+| `:discovery` | adds the named member at the bottom of the listing | the event's node's own | `event`, **refused at exit 2 naming `axis --add` where `--node` is a `:roadmap`**, because a roadmap's set is its first axis's live members and a discovery through `event` would seat a member on no axis; `node add` inside its envelope, **refused at exit 2 naming `axis --add` where `--under` is a `:roadmap`**, for that same reason and by that same sentence (Opus at efc26a2e, 2026-09-13: the hole was closed in `event` and left open in its sibling verb, which seats a member in the set and on no axis); `node require --to true` inside its envelope; **`axis` inside its envelope, where `--add` names the roadmap's first axis** — the member is the row it adds, the node is the roadmap |
 | `:defer`, `:reopen` | **none** — the node stays required and stays in every denominator | none | `event` |
 | `:cancel`, `:supersede` | removes the event's node from the set | its containment parent's, and every roadmap that has it as a row | `event` |
 | `:split` | **sets the split node's own required set to the children it names**; its parent's set is unchanged, because the split node is still one required member of it | the event's node's own | `decompose` only |
 | `:remove` | removes the event's node from the set, and detaches it from its parent's `:children` | its containment parent's, and every roadmap that has it as a row | `node remove` only |
+| `:require` | with `:to false` removes the event's node from the set; with `:to true` adds it at the bottom of the listing, as a `:discovery` does. **It detaches nothing**: the node stays in its parent's `:children` either way, which is the whole difference from `:remove` | its containment parent's own | `node require` only |
 | `:scope` | **none** — it takes a cell's coordinate out of (`--out-of-scope`) or back into (`--in-scope`) the named axis member's applicable rows, which is `percent`'s denominator and not a required set | none — the roadmap's revision moves, its set does not | `cell` only |
 | `:axis` | **none** — a member of an axis that is not the first is a column, and its applicable rows begin at its cells | none — the roadmap's revision moves, its set does not | `axis` only |
 | `:source` | **none** — it moves the node's source revision, which stales evidence, not membership | none | `source` only |
 
-**A roadmap's required set is its rows, by id, and a row is a member of its first axis**: each
-row is the `:feature` whose completion that row counts, so the cardinality of this set is the
-`rows=` every count prints and the two can never disagree. A row enters the set with the
-`:discovery` an `axis --add` on the first axis writes, and leaves it when that feature is
-removed, cancelled or superseded. **`rows=` is that cardinality on every line and is never the
-language-completion denominator**: the denominator of `percent --axis <member>` is the
+**A roadmap's required set is the members of its first axis whose feature is live** — live
+meaning not removed, not cancelled and not superseded — **and the axis list is not the set**.
+Each row is the `:feature` whose completion that row counts; a row enters the set with the
+`:discovery` an `axis --add` on the first axis writes; and it leaves the set, **while staying on
+the axis**, with the `:remove`, `:cancel` or `:supersede` of its feature, by the delta table
+above. **The two differ by exactly the rows that have left, and that is the design**: `axis`
+has only `--add`, nothing takes a member off an axis, and `node remove` keeps the member on the
+first axis (the removal paragraph below says so). **And the set is derivable with the retention
+archive absent**, which is what makes rule 2's treatment of a departed member safe: the
+retention boundary carries each container's required set as the tool computed it at the
+boundary, and the retained scope events move it forward, so a row that left before the boundary
+is simply not in the recorded set and no event and no node has to be read for it. A definition
+that made the set the axis members outright would have rule 11 derive ten from the axis and nine from the baseline plus its
+deltas after the first `event --kind cancel`, and go red on every walk thereafter — the
+silent-denominator hurt of 5654160320 inverted, a red on an honest cancel (Fable and Opus at
+efc26a2e, 2026-09-13: the definition and the delta table were both live and said two different
+things). **`rows=` is the cardinality of the set and never of the axis**, on every line, and is
+never the language-completion denominator: the denominator of `percent --axis <member>` is the
 **applicable rows for that member** — the active rows less those with a recorded out-of-scope
 cell for it — and it prints under its own name, `applicable=<n>`, beside `rows=`, so both
 numbers are on the line and neither stands for the other (Opus at 7472e545, 2026-09-13: `rows=`
 carried two meanings, and on a roadmap with one out-of-scope cell the printed pair gave a
 percentage the counting rule did not name, while the number that rule divides by was on no
 line). **`rows=` and `baseline-rows=` are the roadmap's own and are not per axis member**;
-`applicable=` is the only per-member count on the line; and `since-baseline=` is the node's, by
-its own bullet in *Counting* below. **A cell is a reference and moves no required set**: mapping,
+`applicable=` is the only per-member count on the line; and `since-baseline=` is the scope's own
+count in members, by its own bullet in *Counting* below. **A cell is a reference and moves no required set**: mapping,
 re-pointing or clearing a coordinate changes the roadmap's projection and not its denominator,
 which is why `cell` writes no scope event but the `:scope` of `--out-of-scope` and `--in-scope`;
 an `:out-of-scope` cell moves that axis member's applicable rows and never this set; a member of
@@ -580,7 +654,7 @@ So a `:defer` that moved a denominator would be a deferral counted as progress, 
 is why it cannot be; and rule 11 has the per-kind arithmetic it needs rather than the claim
 that every scope event changes a required set. **`event --kind` carries only the kinds whose
 delta needs no structure change** — `baseline`, `discovery`, `defer`, `cancel`, `reopen`,
-`supersede` — and refuses `split`, `remove`, `scope`, `axis` and `source` at exit 2 naming the verb
+`supersede` — and refuses `split`, `remove`, `require`, `scope`, `axis` and `source` at exit 2 naming the verb
 that writes each, because structure changes only by verbs: a scope-only `remove` would leave
 the node in its parent's `:children`, and rule 11 would go red on the next walk.
 
@@ -811,7 +885,12 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
   member; `rows=` and `baseline-rows=` are the roadmap's and are the same under every `--axis`**,
   so nine beside ten reads as one row out of scope for one member and never as a row removed.
   **`percent` over zero applicable rows prints `green=0 applicable=0` and no percentage**,
-  because a percentage of nothing is not zero, and exits 0.
+  because a percentage of nothing is not zero, and exits 0. **`--axis <member>` is required by
+  `percent`**, and a `percent` without it is refused at exit 2 naming the flag: `applicable=`,
+  `green=` and the percentage are each defined for one axis member and for nothing wider, and a
+  roadmap-wide percentage over the cells of every member would be the average of fractions
+  5653970526 forbids (Opus at efc26a2e, 2026-09-13: the flag was optional in the grammar while
+  every field of the answer was defined per member).
 - **Cell progress** = completed required leaves / required leaves, printed as `k/n`, never as
   a lone percentage. A parent is green only when every required child and every dependency
   gate is satisfied. *Do not average nested percentages, round 99.9 to green, treat an empty
@@ -834,20 +913,33 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
   later `:cancel`, `:supersede` or `:remove` took one of them out again — because Glenn's word is
   *added since baseline* (5654160320), and what a baseline failed to foresee is not unlearned by
   a cancel. **The net movement is already readable** as `rows=` against `baseline-rows=` at row
-  grain and as `required=` against the baseline denominator at leaf grain, so fixing this one
-  gross loses nothing. It is the node's own count and never an axis member's (Opus at 7472e545,
-  2026-09-13: every mention of it was a use and none a definition, and its two defensible
-  readings printed two numbers for one set).
+  grain, as `rows=` against `baseline-rows=`. **At leaf grain no baseline denominator is on any
+  line**, so the net movement there is not readable and this choice does lose that; the honest
+  statement is that the gross number is Glenn's word and the net is readable at row grain, not
+  that nothing is lost (Opus at efc26a2e, 2026-09-13: the compensation named `required=` against
+  a baseline denominator that appears in no line of the grammar). **It is counted in members —
+  the direct required members a `:discovery` added — and never in leaves and never in the line's
+  `unit=`**, by the units bullet below. It is one node's count where the scope is one node, and
+  **over a scope that covers many containers it is the sum of their counts**, because such a
+  scope has a required set in each container and no one of them stands for the rest (Fable at
+  efc26a2e, 2026-09-13: `size`, `stream --repo` and `under --category` are scopes of many nodes,
+  and `source=` has a rule for that case while this field had none). It is never an axis
+  member's (Opus at 7472e545, 2026-09-13: every mention of it was a use and none a definition,
+  and its two defensible readings printed two numbers for one set).
 - **Units are labelled** on every line: `unit=features` or `unit=leaves`; a comparison never
   changes unit silently. **`unit=` names the grain of the line's state counts, and the fields
   whose grain is fixed are named here so no reader infers them from it**: `done=`,
-  `done-unverified=`, `unknown=`, `deferred=`, `cancelled=`, `superseded=`, `stale=` and
-  `since-baseline=` are in the line's `unit=`; `required=` is **always leaves**, the total
-  required leaves under the scope, because it is the denominator of cell progress and cell
-  progress has one grain; `green=`, `applicable=`, `rows=` and `baseline-rows=` are **always
-  features**, because a row is a `:feature` by the kinds above. So one line carries three named
-  grains and guesses at none (Opus at 7472e545, 2026-09-13: one `unit=` labelled a `percent` line
-  that printed feature counts and a leaf count together).
+  `done-unverified=`, `unknown=`, `deferred=`, `cancelled=`, `superseded=` and `stale=` are in
+  the line's `unit=`; `since-baseline=` is **always members**, the direct required members a
+  `:discovery` added, because the delta table moves a set member by member and a discovery of
+  one feature holding twelve leaves is one discovery under either unit; `required=` is **always
+  leaves**, the total required leaves under the scope, because it is the denominator of cell
+  progress and cell progress has one grain; `green=`, `applicable=`, `rows=` and `baseline-rows=`
+  are **always features**, because a row is a `:feature` by the kinds above. So one line carries
+  four named grains and guesses at none (Opus at 7472e545, 2026-09-13: one `unit=` labelled a
+  `percent` line that printed feature counts and a leaf count together; Fable and Opus at
+  efc26a2e, 2026-09-13: `since-baseline=` was promised in `unit=` and defined in members, so a
+  `unit=leaves` line printed one number and meant the other).
 - **Future cannot lower the active percentage; a deferred item cannot raise the completed
   count** (5653970526). Both are tests.
 - **Unknown is a count of its own**, printed on every answer; `done-unverified=<n>` is the
@@ -909,17 +1001,25 @@ node=<id> expect=<rev> current=<rev>: stale`, printing the current value so the 
 re-read and resubmit (5653982211: *apply rejects stale preconditions*). **On the replay path
 the expectation is checked per node as well as per set**: a replayed request is refused the
 same way, `<MUTATION> FAIL node=<id> expect=<rev> current=<rev>: stale`, when the node it
-addresses has accepted **an event of its own** after the revision its `--expect` names — its own
-accepted events, never the sets a `decompose` or an `event --kind cancel` elsewhere moved for it
-as a parent or as a roadmap, so a disjoint change does not refuse an unrelated replay (Fable at
-7472e545, 2026-09-13) — even where the
+addresses has accepted **an event of its own that is not an earlier request of this same bundle
+applied by this replay** after the revision its `--expect` names — its own accepted events,
+never the sets a `decompose` or an `event --kind cancel` elsewhere moved for it as a parent or
+as a roadmap, so a disjoint change does not refuse an unrelated replay (Fable at 7472e545,
+2026-09-13), and never the bundle's own earlier requests, because **a bundle is one ordered
+sequence from one session and its later requests are exactly what its earlier ones saw**: every
+request in a bundle carries the same clipped revision, so without this clause the second request
+a fenced session made against one node would be refused `stale` by the first one's replay, and a
+session that set a task `:doing` and then wrote its evidence would lose the evidence on every
+replay — no bundle touching one node twice could ever replay whole, which is what the replays
+below demand (Fable at efc26a2e, 2026-09-13) — even where the
 clipped revision has not moved, because the clipped revision moves only at a clip and the
 coordinator's own accepted events between two clips would otherwise pass an expectation that
 never saw them (Stella 5655371246 item 3, Fable and Opus at d1b20f42, 2026-09-13: a `state --to
 doing` replayed over a node the coordinator had since set `:blocked` is a legal edge and a lost
 intent, and structural validation cannot see the difference). **A replayed request whose node
-has accepted nothing since that revision is admitted**, so disjoint work still replays and the
-refusal is the overwritten intent alone. How a friend on another bench submits a
+has accepted nothing since that revision but this bundle's own earlier requests is admitted**, so
+disjoint work still replays, a bundle replays whole, and the refusal is the overwritten intent
+alone. How a friend on another bench submits a
 request is the bus: a request bundle is a file a note carries, and `session replay --from` is
 its intake, so no second transport is invented here. Every client verb that lists takes `--max
 <n>`, default 20, `0` means all, negative refused (SPEC.md, the cap-and-count law). Every
@@ -948,10 +1048,11 @@ nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> -
 nova-work verify         --session <path> (--offline | --max-fetch <n> --fetch-timeout <seconds>) [--node <id>] [--max <n>]
 nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n> --cache <path>) --ask <kind>
                          [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>]
-                         [--since <revision>] [--at <revision>] [--max <n>]   (who and stale: --window <duration>, required)
+                         [--since <revision>] [--at <revision>] [--max <n>]   (who and stale: --window <duration>, required; percent: --axis <member>, required)
 nova-work render         --session <path> --view <roadmap-id> --into <path> --start <marker> --end <marker> [--at <revision>] [--check]
 nova-work node add       --session <path> <write flags> --id <id> --type <kind> --under <parent-id> [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id:kind:subject:predicate> ...] --reason <text>
 nova-work node remove    --session <path> <write flags> --node <id> --reason <text>
+nova-work node require   --session <path> <write flags> --node <id> --to <true|false> --reason <text>
 nova-work decompose      --session <path> <write flags> --node <id> --into <id,...> --acceptance <child-id:id:kind:subject:predicate> ... --reason <text>
 nova-work accept         --session <path> <write flags> --node <id> (--add <id:kind:subject:predicate> | --remove <id>) --reason <text>
 nova-work source         --session <path> <write flags> --node <id> --to <sha> --reason <text>
@@ -972,8 +1073,8 @@ nova-work version
 nova-work help
 ```
 
-**What a mutation does, stated exactly.** `node add`, `node remove`, `decompose`, `accept`,
-`dep`, `axis`, `cell`, `responsible` and `source` are structure verbs: each appends one structure event and, where it changes a
+**What a mutation does, stated exactly.** `node add`, `node remove`, `node require`,
+`decompose`, `accept`, `dep`, `axis`, `cell`, `responsible` and `source` are structure verbs: each appends one structure event and, where it changes a
 required set, one scope event, **as one request envelope**: one journal record holding both,
 written all-or-none, replayed all-or-none, answered with one `OK` line, and answered again
 with the same line on a retry of the same request id, so a crash between the two can never
@@ -993,14 +1094,18 @@ so a criterion is never slipped under a green cell without a record. **`node rem
 node from its parent's `:children` in one envelope with its `:remove` scope event**: the
 node, its subtree and every event of theirs stay in S as provenance and are counted nowhere —
 a removal is never a delete, and by the retention paragraph above they pass into the clip's
-archive with the boundary, so provenance never grows the live snapshot — and a node holding a live lease, or referenced by a cell's
-`:ref` or another node's `:deps`, is refused, naming the holder or the referrer — a
-cell-referenced node is removed by re-pointing or clearing its cell first (`cell --ref -`),
-which is a structure change and moves no required set, a cell being a reference. **A roadmap row
-is not in that refusal list and is not to be added to it**: a row's removal is a legal move of
-the roadmap's required set by the delta table above, the roadmap keeps the member on its first
-axis, and the node stays in S as provenance, so the member still names a `:feature` and rule 2
-stays green (Opus at 7472e545, 2026-09-13). **An
+archive with the boundary, so provenance never grows the live snapshot — and a node holding a
+live lease, or referenced by a cell's `:ref` or another node's `:deps`, is refused, naming the
+holder or the referrer. **A reference to any node of its subtree refuses it the same way, naming
+that node**, because a cell whose `:ref` named a removed node's child would go into the archive
+with the rest of the subtree and leave the cell pointing at a node the live set does not hold
+(Fable at efc26a2e, 2026-09-13). A cell-referenced node is removed by re-pointing or clearing
+that cell first (`cell --ref -`), which is a structure change and moves no required set, a cell
+being a reference. **A roadmap row is not in that refusal list and is not to be added to it**: a
+row's removal is a legal move of the roadmap's required set by the delta table above, and the
+roadmap keeps the member on its first axis while the member leaves the set — **and because the
+member has left the set, rule 2 does not check it**, which is how the clip that later carries
+the node into the archive stays green (Opus at 7472e545 and at efc26a2e, 2026-09-13). **An
 `<id:kind:subject:predicate>` argument is split by position, not by a quoting rule**: before
 the first `:` is the id, between the first and the second is the kind, after the last `:` is
 the predicate, and everything between is the subject, so a subject may hold `:` and `@`
@@ -1160,12 +1265,22 @@ it names), refusing the event at exit 1 with the finding's line and changing not
 
 1. **duplicate id** — two nodes, or two events, with one `:id`.
 2. **dangling reference** — a `:children`, `:deps`, cell `:ref`, event `:node`, `:lease`,
-   `:blocked-by`, `:superseded-by`, `:criterion` **or roadmap first-axis member** that names
-   nothing; and, because a row is a `:feature` by the kinds above, **a first-axis member naming
-   a node that is not a `:feature`** is the same finding. A member of any other axis is a column
-   label, names no node, and is not checked here (Opus at 7472e545, 2026-09-13: a first-axis
-   member enters the roadmap's required set and `rows=` counts it, and a mistyped or wrongly
-   typed row was a phantom in the denominator that no rule refused).
+   `:blocked-by`, `:superseded-by` or `:criterion` that names nothing; and, **for a first-axis
+   member that is in its roadmap's required set**, a member naming nothing, or naming a node
+   that is not a `:feature`, is the same finding, because such a member is counted by `rows=`
+   and a mistyped or wrongly typed row was a phantom in the denominator that no rule refused
+   (Opus at 7472e545, 2026-09-13). **What this rule checks for a first-axis member is the
+   roadmap's required set and never the axis list**, so **a member whose feature has been
+   removed, cancelled or superseded is not checked at all**: it has left the set by the delta
+   table above, and the rule must not demand a live node for it. The hurt is the one the deleted
+   rule 7 paid: a removed node, its subtree and its events pass into the retention archive at
+   the first clip after the `:remove` crosses the retention boundary, **a session whose archive
+   file is absent must answer every ask and run every rule**, and a rule that wanted the node
+   behind a departed member would find nothing from that clip on — every later clip red, the
+   session accepting work it could never share, and a restart refusing to load (Opus at
+   efc26a2e, 2026-09-13; the wedge is invisible inside a `--retain` window, which is why the
+   replays below run a clip past the boundary). A member of any other axis is a column label,
+   names no node, and is not checked here.
 3. **cycle** — `:children` edges are not a forest, or `:deps` edges contain a cycle (a
    dependency cycle is a deadlock nobody can finish).
 4. **two parents** — a node under two `:children` lists.
@@ -1243,8 +1358,15 @@ one sentence more, or the hole only moves**: `<repo>/shared` is created `:requir
 a repository holding no shared work must not count `unknown` forever on the strength of a
 container the tool itself insists on, and rule 6 would keep its parent short of done for as long
 as it stood required and empty; a repository that does have shared work makes it count with
-`node add --required true`, a recorded act with an author and a reason (Fable at 7472e545,
-2026-09-13).
+`nova-work node require --node <id> --to true --reason <text>`, a recorded act with an author
+and a reason, writing a `:require` scope event on its containment parent's set by the delta
+table above; `--to false` takes it back out, detaching nothing. **The verb is named here because
+before it there was none**: `node add` creates, a second `node add` of one id is rule 1, and
+`accept` moves criteria only, so *makes it count* named a command nobody could run, and *carried
+`:required false` until it holds work* read as an automatic flip no event recorded (Fable at
+efc26a2e, 2026-09-13). `:required` still defaults to true on `node add`; nothing keys a default
+on a node's name, and `<repo>/shared` is created with `--required false` by the hand or the
+intake that creates it.
 
 ## Cost *(shared; 5653973972, 5654049969 and Stella's amendment)*
 
@@ -1439,13 +1561,24 @@ that of every roadmap that has it as a row, with rule 11 green on the walk after
 same for a `node remove` — **the roadmap's row removed from its required set, `rows=` lower by
 one, its cells cleared first and rule 11 green on the next whole walk**; **a first-axis member
 naming no node, and one naming a `:task`, each a rule 2 finding, and a column label on a second
-axis none**; **an `event --kind discovery --node <roadmap>` refused at exit 2 naming `axis
---add`**; **a `percent --axis <member>` over a roadmap of ten rows with one out-of-scope cell for
+axis none**; **a `node remove` of a roadmap row carried past the retention boundary — the
+`:remove` clipped, `--retain` elapsed, the node and its subtree written into the archive by the
+clip that crosses it — leaving rule 2 and rule 11 green on that clip and on every clip after it,
+and on a fresh `session start` from that snapshot with the archive file absent**, the member
+still on the first axis and out of the required set and out of `rows=` (the replay runs clips
+past the boundary, because inside a `--retain` window the wedge is invisible); **a `node remove`
+refused for a cell `:ref` naming a node of the removed node's subtree, naming that node**; **an `event --kind discovery --node <roadmap>` refused at exit 2 naming `axis
+--add`, and a `node add --under <roadmap>` refused at exit 2 the same way**; **a `percent` with
+no `--axis` refused at exit 2 naming the flag**; **a `node require --to true` on a
+`<repo>/shared` moving its parent's required set by one and detaching nothing, `--to false`
+moving it back, and each a `:require` event with an author and a reason**; **a `percent --axis <member>` over a roadmap of ten rows with one out-of-scope cell for
 that member printing `applicable=9 rows=10 baseline-rows=10` and its percentage taken over
 `applicable`, the same ask under another member printing `applicable=10 rows=10`, and a `percent`
 over zero applicable rows printing `green=0 applicable=0` with no percentage at exit 0**;
 **`since-baseline=` after a discovery and a later cancel of the discovered member reading 1 and
-not 0, with `rows=` back at `baseline-rows=`**; **an `axis --add` on a roadmap's first axis moving its required set
+not 0, with `rows=` back at `baseline-rows=`**; **`since-baseline=` reading the same number on a
+`unit=features` line and on a `unit=leaves` line over one discovered feature holding twelve
+leaves, and a `stream --repo` over three containers reading the sum of their three counts**; **an `axis --add` on a roadmap's first axis moving its required set
 and its `rows=` by one, and an `axis --add` on a second axis moving its revision and neither**;
 **a `cell --ref`, a `cell --ref -` and a re-point moving no required set and no `rows=`, with
 rule 11 green on the walk after each**, and `percent` over a roadmap of one row and nine columns
@@ -1464,11 +1597,21 @@ retention boundary and still in the snapshot's retained events retried against a
 a handoff, refused `already applied` and applying nothing** (the window the index alone did not
 cover); **a retry inside the owner's own journal with the same payload answered with the original
 `OK` line, and one with a different payload refused `reused with a different payload`**; **one
-request digested to one value by two independent serializers**; **a clip whose dedup index is the
-larger part refused naming `raise --max-bytes` alone, and one whose retained events are the
-larger part naming `lower --retain or raise --max-bytes`**; **a `session export --journal` writing
+request digested to one value by two independent serializers, over a `node add` envelope holding
+a structure event and a scope event, with two `:stamp`s and two `:request` ids and the same
+digest, and with an absent optional field written `()` by both**; **a clip whose dedup index alone is
+already past `--max-bytes` refused naming `raise --max-bytes` alone, and one whose index is under
+the bound refused naming `lower --retain or raise --max-bytes` with a lower `--retain` then
+passing — the second case run with the index the larger of the two parts, so the branch is
+tested on the remedy that works and not on the sizes**; **a `session export --journal` writing
 every request's `--expect` and the bundle's `base=` from the journal's newest clip boundary
-record, with no repository present, and the bundle replaying whole**; **a replayed request over a node the
+record, with no repository present, and the bundle replaying whole**, its `base=` equal to the
+live `session export --session`'s for the same journal; **a bundle holding two requests against
+one node — `state --to doing` then `evidence` — replaying whole, both applied at one clipped
+revision, and the same two refused `stale` where the coordinator itself moved that node between
+the clip and the replay**; **a journal rotated at a clip, its fresh file opening with a copy of
+that clip's boundary record, read by a `session start` and by `session export --journal` to the
+same bundle as the unrotated one**; **a replayed request over a node the
 coordinator changed since the clip refused `stale`, and a replayed request over a node it did
 not touch applied, both at the same clipped revision**; **a fenced session killed before it
 exported, its journal read by `session export --journal` into a bundle that replays whole, and
@@ -1510,8 +1653,10 @@ an unverified or stale done as unknown; the six indexes, the sixth of them the r
 `--cache <path>` and its key of pointer, subject and resolver identity, the identity spelled as
 the `--resolver` command string; the retention boundary's dedup index of request ids, the dedup
 predicate of that index together with the retained events, and the request payload digest with
-its canonical serialization; the clip's boundary record in the journal; the offline `session
-export --journal`; `applicable=` on `percent` and the gross definition of `since-baseline=`; `--foreground`;
+its canonical serialization, the `:structure` event kind and the per-verb and per-kind field
+orders that serialization rests on; the clip's boundary record in the journal, the read that
+starts at it and the rotation it allows; the offline `session export --journal`; `node require`
+and the `:require` scope event; `applicable=` on `percent` and the gross definition of `since-baseline=`; `--foreground`;
 `cell --in-scope`; the exact list of refused reader syntax beyond `#.` (every dispatch macro,
 `#'`, quote, backquote, package-prefixed symbols, ratios, floats, characters); `;` comments
 discarded by the reader; the three bound flags and their no-default rule; unknown keys
