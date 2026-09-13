@@ -242,9 +242,10 @@ is the day it was learned.
     `who` and one `session`, a receipt's cells never exceed its day file's,
     and a receipts file for a day the fold has already passed and did not
     write is named. Each is exit 1. A receipts file for a day **newer than the
-    newest day file** is the ordinary order, not a finding — a receipt is
-    written when a session ends and the fold runs that night — and is one
-    `CHECK NOTE`, exit 0 (draft 2). `CHECK OK` and `CHECK FAIL`
+    newest day file, or any receipts file at all when there is no day file**
+    (draft 3), is the ordinary order, not a finding — a receipt is written when
+    a session ends and the fold runs that night — and is one `CHECK NOTE`,
+    exit 0 (draft 2). `CHECK OK` and `CHECK FAIL`
     carry `receipts= dup= split= exceeds= orphan=`.
 14. **The swarm's usage files are a source.** SPEC-SWARM rule 12 writes one
     usage file per job, `<pool>/usage/<job>.tsv`, outside the directory
@@ -435,7 +436,7 @@ nova-tokens publish (--batch <dir> | --v1-day <dir> --day <YYYY-MM-DD> --seat <l
                     [--deadline <seconds>] [--git-timeout <seconds>] [--attempts <n>] [--max <n>]
 nova-tokens receipt   --out <dir> --repos <file> --node <id> --stage <preparation|implementation|review|correction|coordination|validation> --who <name>
                       (--claude <label>=<dir> --session <id> | --opencode <label>=<file> --scratch <dir> --session <id> | --swarm <label>=<pool> --job <id>)
-                      [--timeout <seconds>] [--max <n>]
+                      [--resume] [--timeout <seconds>] [--max <n>]
 nova-tokens cost      --out <dir> --node <id>... [--month <YYYY-MM>] [--rates <file>] [--max <n>]
 nova-tokens hot       (--claude <label>=<dir> --session <id> | --opencode <label>=<file> --scratch <dir> --session <id> | --swarm <label>=<pool> --job <id>)
                       [--top <n>] [--timeout <seconds>]
@@ -565,13 +566,20 @@ leave them unchanged (draft 2).
 
 ### `receipt`
 
-Asserts: one session, read whole from one declared source, folded by the same
+Asserts: one **span** of one session, read whole from one declared source,
+folded by the same
 reader `fold` uses, joined to one node and one stage, written as one receipt
-under one drawn id. Says NO (exit 1, `USAGE FAIL reason=<nosession|receipted|unreadable>`)
+under one drawn id. Says NO (exit 1,
+`USAGE FAIL reason=<nosession|receipted|unreadable|differs|nonew>`)
 and writes **nothing** when the session is not in the source, is already
-receipted, or has a file the tool cannot read — a receipt over half a session
+receipted whole, has a file the tool cannot read, holds a stored row this run
+cannot reproduce, or has nothing after the resume cursor — a receipt over half
+a session
 is a wrong number about one task, where a fold over half a day is a day with
-its gaps named. Deliberately does not check: that the node exists in any work
+its gaps named. **A session is not sealed by its first receipt** (draft 3):
+`--resume` receipts the turns after the last one (rule 39), and a plain run
+over a receipt whose multi-day write was interrupted completes it under the
+stored id (rule 41). Deliberately does not check: that the node exists in any work
 set (the id is data here), or that the session's tokens are on the day file
 yet (`check` does, rule 34). `receipt` is a **wall**.
 
@@ -621,9 +629,14 @@ receipts' and nothing on the row itself carries a model (draft 2). The
 `publish` and the enumerations above gain its cases, which are the only ones
 this amendment adds. **Exit 0**: the contribution is on the ledger's named
 branch at its own paths, either pushed by this run (`state=published`,
-`state=superseded`) or already there — byte-identical for a batch's immutable
-paths, identical under rule 26's `rows_sha256` for a v1 day
-(`state=already-published`). **Exit 1**, the verb ran and said NO:
+`state=appended`, `state=superseded`) or already there — byte-identical for a
+batch's immutable paths, identical under rule 26's `rows_sha256` for a v1 day
+or a frictions file (`state=already-published`). **`state=appended` is in that
+list and in `PUBLISH OK`'s grammar** (draft 3): rule 26's draft-2 clause,
+rule 24's second door and rule 37's demanded test all print it and exit 0, and
+the two enumerations here and at `PUBLISH OK` still named three states, so the
+state the append transition produces could not be printed by a tool that obeyed
+its own grammar. **Exit 1**, the verb ran and said NO:
 `reason=differs` (a v1 day's path holds different rows and `--supersede` was
 not given), `reason=conflict` (a content-addressed path holds bytes other
 than its own digest's), `reason=incomplete` (a published coverage envelope
@@ -633,7 +646,9 @@ envelopes do not validate), `reason=changed` (an input's digest moved under
 the publication), `reason=subset` (a public subset would carry a row not on
 its allowlist), `reason=unconfirmed` (the push could not be confirmed inside
 `--attempts` and `--deadline`). **Exit 2**, could not run: a missing or bad
-flag, `--repo` missing, both contribution kinds or neither, `--supersede` with
+flag, `--repo` missing, **more than one contribution kind, or none**
+(draft 3: there have been three kinds since rule 37, and *both … or neither*
+could not say that `--batch` with `--frictions` is refused), `--supersede` with
 `--batch`, a source flag on `publish`, two given paths that resolve to one
 directory, a staged path or a temporary directory that already exists,
 `--ledger` that is not a git checkout, an effective fetch or push URL that
@@ -646,13 +661,18 @@ batch that is not exactly its own named files, and
 a batch naming a schema this build has no validator for.
 
 **Amendment, 2026-09-13 (rules 32–38), draft 2.** The three meanings hold and
-the enumerations gain these cases. **Exit 0**: a receipt written; a `cost`,
+the enumerations gain these cases. **Exit 0**: a receipt written, **resumed
+or completed** (`state=written|resumed|completed`, rules 39 and 41, draft 3);
+a `cost`,
 `hot`, `diff` or `frictions` that ran; a `friction add` that landed; a
 `publish --frictions` whose file is on the branch, including the append
 transition; a `check` with no receipts finding, and a `check` whose only
 receipts observation is the `CHECK NOTE` for days the fold has not reached
-yet (rule 34, draft 2). **Exit 1**: `USAGE FAIL`
-(`reason=nosession`, `receipted`, `unreadable`, nothing written); `HOT FAIL`
+yet, or for every receipts file where there is no day file at all (rule 34,
+drafts 2 and 3). **Exit 1**: `USAGE FAIL`
+(`reason=nosession`, `receipted`, `unreadable`, and — draft 3 — `differs` for
+a stored receipt row this run cannot reproduce and `nonew` for a `--resume`
+with nothing after the cursor: nothing written in any of them); `HOT FAIL`
 (`reason=nosession`, `reclaimed`, `unreadable`); a `check` finding under
 `receipts/` (`DUPLICATE`, `SPLIT`, `EXCEEDS`, `ORPHAN`, a malformed row, a
 stray); a
@@ -662,8 +682,10 @@ the six names; `--node` empty; a **negative** `--top` (`--top 0` is all,
 draft 2); `--tokens` without the `~`;
 `--tokens ~<n>` without `--wall`; a `--gap` that is not `[a-z0-9-]{1,32}`; a
 malformed or duplicate line in `--rates` or an existing frictions file;
-`--rates` on `frictions` without `--out` (draft 2);
-`--rates`, `--receipt` or `--out` where the verb does not take it; a `diff`
+`--rates` on `frictions` without `--out` (draft 2); `--resume` over a session
+with no receipt to resume from (draft 3);
+`--rates`, `--receipt`, `--resume` or `--out` where the verb does not take it;
+a `diff`
 whose one side is missing; two `--session` values that are equal; `--frictions`
 with `--batch`, `--v1-day`, `--day` or `--public`.
 
@@ -739,12 +761,13 @@ PUBLISH FILE path=<path> sha256=<hex> rows_sha256=<hex|-> state=<new|present|ide
 PUBLISH SUBSET path=<path> rows=<n> excluded=<n> repos=<list> sha256=<hex>
 PUBLISH EXCLUDED day=<d> model=<model> repo=<repo>: not on --public-repos
 PUBLISH MORE kind=<dirty|file|excluded> shown=<n> total=<t> <remedy>
-PUBLISH OK contribution=<hex> commit=<sha> pushed=<true|false> state=<published|already-published|superseded> attempts=<n> files=<n> at=<stamp> build=<id>
+PUBLISH OK contribution=<hex> commit=<sha> pushed=<true|false> state=<published|already-published|appended|superseded> attempts=<n> files=<n> at=<stamp> build=<id>
 PUBLISH FAIL contribution=<hex> reason=<differs|conflict|incomplete|malformed|changed|subset|unconfirmed> pushed=<true|false|->
 PUBLISH NOTE <the one remedy line>
 PUBLISH REFUSED: <reason>
-USAGE OK receipt=<id> pointer=note:usage:<id> node=<id> stage=<stage> session=<label>:<id> days=<n> rows=<n> input=<n|-> output=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> started=<stamp> ended=<stamp> at=<stamp> build=<id>
-USAGE FAIL session=<label>:<id> reason=<nosession|receipted|unreadable> [by=<id>]
+USAGE OK receipt=<id> pointer=note:usage:<id> node=<id> stage=<stage> session=<label>:<id> state=<written|resumed|completed> days=<n> rows=<n> input=<n|-> output=<n|-> cache_write=<n|-> cache_read=<n|-> reasoning=<n|-> started=<stamp> ended=<stamp> at=<stamp> build=<id>
+USAGE FAIL session=<label>:<id> reason=<nosession|receipted|unreadable|differs|nonew> [by=<id>] [day=<d>]
+USAGE NOTE <the one remedy line>
 USAGE REFUSED: <reason>
 COST STAGE stage=<stage> receipts=<n> tokens=<n> dashes=<n> usd=<n|-> per_mtok=<n|->
 COST MODEL model=<model> receipts=<n> tokens=<n> dashes=<n> usd=<n|-> per_mtok=<n|->
@@ -765,7 +788,7 @@ DIFF ROW field=<name> from=<n|-> to=<n|-> delta=<n|->
 DIFF MORE kind=row shown=<n> total=<t> nova-tokens diff … --max 0
 DIFF OK kind=<day|session> from=<d or id> to=<d or id> rows_from=<n> rows_to=<n> added=<n> removed=<n> changed=<n> tokens_from=<n> tokens_to=<n> delta=<n> dashes=<n> turns_from=<n|-> turns_to=<n|->
 DIFF REFUSED: <reason>
-FRICTION OK at=<stamp> who=<name> gap=<label> tool=<name|-> tokens=<n> rough=<0|1> wall=<d> receipt=<id|-> issue=<repo#n|-> rows=<n> file=<path>
+FRICTION OK at=<stamp> who=<name> gap=<label> tool=<name|-> tokens=<n> rough=<0|1> wall=<d> receipt=<id|-> issue=<host/owner/repo#n|-> rows=<n> file=<path>
 FRICTION REFUSED: <reason>
 FRICTIONS GAP gap=<label> tool=<name|-> count=<n> tokens=<n> rough=<n> wall=<d> usd=<n|-> issues=<n> latest=<stamp>
 FRICTIONS MORE kind=gap shown=<n> total=<t> nova-tokens frictions … --max 0
@@ -1177,7 +1200,7 @@ sources. Ninety days under `--all`.
 | `check` | 20 FAIL + 1 MORE + 20 MISSING + 1 MORE + 20 STRAY + 1 MORE + 1 count line = 64 | under 8 KB |
 | `sources --all` | 10 SOURCE + 20 UNREADABLE + 1 MORE + 20 UNPARSED + 1 MORE + 1 OK = 53 | under 8 KB |
 | `publish` (2026-09-12, rules 22–31) | 1 PLAN + 20 FILE + 1 MORE + 1 SUBSET + 20 EXCLUDED + 1 MORE + 1 OK + 1 NOTE = 46 at a batch of 20 files; a refusal is at most 20 DIRTY + 1 MORE + 20 FILE + 1 MORE + 1 FAIL + 1 NOTE + one `REFUSED` per independent problem, that list being finite and enumerated by the exit-code table's amendment (eighteen), so 20 + 1 + 20 + 1 + 1 + 1 + 18 = 62 | under 12 KB |
-| `receipt` (2026-09-13, rule 32) | 1 OK or 1 FAIL + up to 20 UNREADABLE + 1 MORE = 22 | under 4 KB |
+| `receipt` (2026-09-13, rules 32, 39–41, draft 3) | 1 OK or 1 FAIL + up to 20 UNREADABLE + 1 MORE + 1 NOTE = 23 | under 4 KB |
 | `cost` (2026-09-13, rule 33) | 6 STAGE + 20 MODEL + 1 MORE + 20 RECEIPT + 1 MORE + 1 OK + 1 NOTE = 50, at a node with 200 receipts on 25 models | under 12 KB |
 | `hot` (2026-09-13, rule 35) | 5 REPEAT + 1 MORE + 5 LARGEST + 1 MORE + 1 OK + 1 NOTE = 14 at `--top 5`, over a session of 5,000 steps and 200 MB of results; at `--top 0` the listing is the caller's, as `--max 0` is everywhere (draft 2) | under 4 KB; the NOTE under `oneline.TailBytes` |
 | `diff` (2026-09-13, rule 36) | 20 ROW + 1 MORE + 1 OK = 22, over two day files of 200 rows | under 4 KB |
@@ -1506,8 +1529,12 @@ remedy line. The rules are numbered on from rule 21.
          `mappings/` or `coverage/` path present with bytes other than the
          digest that names it demands — is `PUBLISH FAIL reason=conflict`,
          exit 1, naming the path: a content-addressed path is written once,
-         and this tool never replaces one. Only the v1 day's mutable path has
-         a replace transition, and only under `--supersede` (rule 26).
+         and this tool never replaces one. Only the **two** mutable paths — a
+         v1 day's and a frictions file's — have a replace transition, and only
+         under `--supersede` (rule 26; draft 3, where this sentence still said
+         *only the v1 day's* after rule 24.2 and rule 26 had given
+         `frictions/<seat>.tsv` the same replace transition under the same
+         flag).
       4. **Identity is bound to the destination path.** Matching bytes at some
          other path are never a find, so a shard that exists elsewhere does
          not make this contribution published.
@@ -1971,8 +1998,11 @@ and reducing total tokens used as goals" — and hers in the same note, on what
 the two objectives cover: "worker tokens PLUS planning/context, coordinator
 review, retries, corrections and rework." Stella, 2026-09-13 15:30Z (note
 stella-4b9200ddc994, draft 2), on what the next tools must measure:
-"retained token/cost accounting joined to execution attempts (count review and
-repair, not merely builder tokens)." Emma, 2026-09-13 (bus note emma-0fd8c03d5f24), verbatim: "Locating
+"retained token/cost accounting joined to executionattempts (count review and
+repair, not merely builder tokens)" — spelled as the stored note has it
+(draft 3). The missing space is a **storage artifact** of that note, seen
+throughout it, and not Stella's word; draft 2 quoted it repaired, which is a
+quotation of something nothing holds. Emma, 2026-09-13 (bus note emma-0fd8c03d5f24), verbatim: "Locating
 what caused token burns or repeat reads during long multi-step passes required
 heavy transcript digging. Verb: `nova-tokens hot --session <id> --top 5` —
 highlights the top repeated reads and largest step outputs in one
@@ -2006,8 +2036,11 @@ contract. The rules are numbered on from rule 31.
 | two day files, and no way to say what moved but reading both | `diff`: rows added, removed and changed by type, largest movement first, capped, a dash on either side a dash (rule 36) |
 | 2.2M tokens on the same four gaps and no record with a cost per gap (Rowan, **2026-09-11**) | `friction add` records the stumble with its tokens (from a receipt, or `~` by hand), its wall clock, its gap and the issue it became; `frictions` sums per gap so the next tool is chosen by measured cost (rule 37) |
 | a tool nobody else ran counted as shipped; adoption was read from assumption (Glenn, **2026-09-12** 13:30Z) | an adoption matrix per line per tool from evidence the machinery already holds, never self-report alone; it lives on `nova-update` (the amendment note below) |
+| one receipt per session for ever: a session resumed the next morning could not record its later turns at all (Stella, **2026-09-13**, draft 1; open at draft 2) | `--resume` receipts the messages after the last receipt's `ended`, the cursor being a stamp already on the stored rows (rule 39, **draft 3**) |
+| a session was made to be one task, one node and one stage, and a coordinator's session is none of those (Stella, **2026-09-13**, draft 1; open at draft 2) | the unit is the **span**, its spans are disjoint so `cost` cannot double count, and what cannot be split is receipted whole and said to be the caller's (rule 40, **draft 3**) |
+| a multi-day receipt written by two renames could crash after day one, and the session-level `receipted` check then blocked every repair (Stella, **2026-09-13**, draft 1; open at draft 2) | a plain re-run re-derives the stored span under the stored id and writes only the absent days, `state=completed`; a stored row it cannot reproduce is `reason=differs`, never a rewrite (rule 41, **draft 3**) |
 
-### Rules 32 to 38
+### Rules 32 to 41 (rules 39 to 41 are draft 3)
 
 32. **A usage receipt is one session's spend, folded by the same readers,
     joined to one work node and one stage, and never typed.**
@@ -2080,7 +2113,12 @@ contract. The rules are numbered on from rule 31.
     node id they each carry. A `--stage` outside the six, a `--node` that is
     empty, a session the source does not hold (`USAGE FAIL
     reason=nosession`), or a session already receipted (`reason=receipted`,
-    naming the earlier id) writes nothing. A source file the receipt needs
+    naming the earlier id) writes nothing. **What *already receipted* means is
+    narrowed by rules 39 and 41** (draft 3): a session may carry several
+    receipts over disjoint spans, and a plain run over a receipt whose
+    multi-day write was interrupted completes it rather than refusing it, so
+    `reason=receipted` is *this span is already recorded whole* and not *this
+    id has been seen*. A source file the receipt needs
     that cannot be read is `TOKENS UNREADABLE` and `USAGE FAIL
     reason=unreadable`, **nothing written**: `fold` writes what it could and
     exits 1 because a day is a sum of many files; a receipt over half a
@@ -2150,7 +2188,11 @@ contract. The rules are numbered on from rule 31.
     their union: three parallel children are three wall clocks, and the line
     says `wall=` is a sum. A node with no receipt is `COST OK nodes=1
     receipts=0 tokens=0 …`, exit 0, and `COST NOTE` says no receipt names it
-    — unmeasured, never zero. `cost` is a **report**; never gate on it.
+    — unmeasured, never zero. **`COST NOTE` prints on every run** (draft 3,
+    rule 40): it names a node with no receipt when there is one, and otherwise
+    says that a receipt's node and stage are the caller's and were never
+    measured — one line either way, the shape SPEC.md fixes for a NOTE.
+    `cost` is a **report**; never gate on it.
     (Glenn, 2026-09-12 20:45Z, where both questions are asked in the one
     minute — 21:16Z is the *Assume API rate* sentence rule 38 quotes, and the
     first draft cited it here for a question it does not carry, draft 2;
@@ -2180,9 +2222,11 @@ contract. The rules are numbered on from rule 31.
     sorted by `(receipt, model, repo)` and unique by that key. `check`
     (rule 13, amended) also walks `<out>/receipts/`, applies the same row
     rules, and verifies **four joins** (draft 2): every receipt's `session`
-    appears
-    under exactly one receipt id across the whole directory (`CHECK
-    DUPLICATE session=<s> receipts=<id,id>`); **every row sharing a receipt id
+    appears under exactly one receipt id across the whole directory, **or under
+    several whose `[started, ended]` spans do not overlap** (draft 3, rule 39's
+    resumed session) — two receipts of one session that share any stamp are
+    `CHECK DUPLICATE session=<s> receipts=<id,id>`, because an overlap is the
+    double count this join exists to catch and adjacency is not; **every row sharing a receipt id
     carries one `node`, one `stage`, one `who` and one `session`** (`CHECK
     SPLIT receipt=<id> field=<node|stage|who|session> values=<a,b>`, draft 2),
     because a receipt is one session joined to one node at one stage — rule
@@ -2204,7 +2248,13 @@ contract. The rules are numbered on from rule 31.
     `CHECK NOTE`, naming the days and `fold --day`, exit 0. `CHECK ORPHAN` is
     a day at or before the newest day file whose own day file is absent — the
     fold went past it and did not write it, which is also `CHECK MISSING` for
-    the day files themselves. Each finding is exit 1. `check` never fills, and
+    the day files themselves. **With no day file present at all there is no
+    newest day file, and every receipts file is that same `CHECK NOTE`,
+    exit 0** (draft 3, where *newer than the newest day file present* was
+    undefined over an empty comparison and the fallback was the finding): a
+    bench that receipted a session before it ever folded is the ordinary order
+    at its beginning, and `CHECK MISSING` already says there are no day
+    files. Each finding is exit 1. `check` never fills, and
     `receipts/` is not a stray: it is the one subdirectory this spec names
     under `--out`, and anything else under it is `CHECK STRAY`. `sum` does
     not read receipts (a day file already holds the day; receipts are its
@@ -2223,7 +2273,9 @@ contract. The rules are numbered on from rule 31.
     receipts file for a day **at or before** the newest day file and with no
     day file of its own is `CHECK ORPHAN`, exit 1, while a receipts file for a
     day **newer** than every day file is one `CHECK NOTE` and exit 0 (draft
-    2); a file
+    2); a receipts directory holding two receipts files and **no day file at
+    all** is that same one `CHECK NOTE`, exit 0, and never `CHECK ORPHAN`
+    (draft 3); a file
     `receipts/notes.txt` is `CHECK STRAY`; a clean set is `CHECK OK … dup=0
     split=0 exceeds=0 orphan=0`; `TOKENS DAY receipts=` equals the rows in that
     day's receipts file; `sum` opens nothing under `receipts/` (a tripwire on
@@ -2364,7 +2416,11 @@ contract. The rules are numbered on from rule 31.
     stamps, a person estimates, and the file says which. `--issue` is the
     issue the friction became on the forge, host-bound as rule 30 spells a
     repository (an idea is an issue, never a list in a file); `-` until it
-    exists, and a later `friction add` for the same gap may carry it. The
+    exists, and a later `friction add` for the same gap may carry it.
+    `FRICTION OK` **prints it in that same host-bound shape**,
+    `issue=<host/owner/repo#n|->`, not the bare `repo#n` draft 2's grammar line
+    carried (draft 3): one fact, one spelling, and a scanner written against
+    the synopsis would not have matched the output. The
     file is **append-only**: `add` reads it, checks the existing bytes parse,
     writes old rows plus the new one through `<file>.tmp` and one rename
     under an `flock` on `<file>.lock`, and a file whose existing rows do not
@@ -2456,19 +2512,31 @@ contract. The rules are numbered on from rule 31.
     per model; every other cell's tokens go to `unpriced_tokens=`. **Every
     run that prints `usd=` prints `rates=<file>` and `verified=<date>` once,
     on its own count line** — `SUM MONTH`, `COST OK`, `FRICTIONS OK` — and
-    every listing line beneath it prints `usd=` and `unpriced_tokens=` without
-    them (draft 2, correcting a sentence this rule made that its own grammar
-    never kept: `SUM PAIR`, `SUM MODEL` and `SUM TOTAL` print `usd=` and only
-    `SUM MONTH` carries `rates=`). One file name repeated on two hundred
+    **every listing line that prints `usd=` prints it without `rates=` and
+    `verified=`** (draft 3). `unpriced_tokens=` is on the lines whose grammar
+    carries it — `SUM PAIR`, `SUM MODEL` and `SUM TOTAL` — and on no others:
+    draft 2 said *every listing line beneath it prints `usd=` and
+    `unpriced_tokens=`*, which is false of the four listing lines this
+    amendment's own grammar gives `usd=` and no `unpriced_tokens=`
+    (`COST STAGE`, `COST MODEL`, `COST RECEIPT`, `FRICTIONS GAP`), and a rule
+    that describes fields its grammar does not print is a rule nothing can be
+    tested against. One file name repeated on two hundred
     `SUM PAIR` lines is two hundred copies of one fact; one run, one
     provenance line, and no `usd=` is ever printed by a run that did not print
     it. `verified=` is the oldest `verified` date **among the rate rows this
     run actually priced with**, not the oldest in the file, so one stale row
     nothing used cannot taint every number (draft 2), and it is `-` when no
     row was used. **A model or type with no rate is never priced at zero and
-    never printed as `usd=0`** (draft 2): its tokens are `unpriced_tokens=`,
-    and any line whose `priced_tokens=0` prints `usd=-` and `per_mtok=-` —
-    a `usd=0` there would be the harm this rule forbids, inverted, and a
+    never printed as `usd=0`** (draft 2): its tokens are `unpriced_tokens=`
+    on the lines that carry that field, and **a line that priced no token
+    prints `usd=-`, and `per_mtok=-` wherever it carries that too** (draft 3).
+    On the four lines that carry `priced_tokens=` — `SUM PAIR`, `SUM MODEL`,
+    `SUM TOTAL` and `COST OK` — *priced no token* is spelled
+    `priced_tokens=0`, which is what draft 2 said; on the four that do not —
+    `COST STAGE`, `COST MODEL`, `COST RECEIPT` and `FRICTIONS GAP` — it is the
+    same test over the same cells, no cell beneath that line having had both a
+    number and a rate, and draft 2's sentence was undefined for exactly those
+    four. A `usd=0` there would be the harm this rule forbids, inverted, and a
     `usd=0` is only ever a rate of zero the caller typed. The rate is the **list rate** (Glenn,
     2026-09-12 21:16Z: "Assume API rate, and factor this in"), whatever the
     account pays; this tool knows nothing of subscriptions, credits or
@@ -2498,12 +2566,137 @@ contract. The rules are numbered on from rule 31.
     run priced with**, and a stale row no line used does not appear in it
     (draft 2); a `SUM PAIR` on a model the table does not name prints `usd=-`
     and never `usd=0` at `priced_tokens=0`, while `SUM MONTH` alone carries
-    `rates=` and `verified=`; and a source test over
+    `rates=` and `verified=`; a `COST STAGE`, a `COST MODEL`, a
+    `COST RECEIPT` and a `FRICTIONS GAP` over rows this table prices nothing on
+    each print `usd=-` and never `usd=0`, and none of those four carries
+    `rates=`, `verified=` or `unpriced_tokens=` (draft 3); and a source test
+    over
     `internal/tokens/rates.go` finds **no floating-point literal other than 0
     and 1 and no string literal that is a model name** — the mechanical form
     of *nothing is compiled in*, where *no model name in the binary* was not
     falsifiable, `<synthetic>` being a model name the Claude reader must know
     (draft 2).
+
+39. **A session that continues is receipted again from where the last receipt
+    ended, and a receipt is a span of a session, not the session** (draft 3).
+    Draft 2 sealed a session with its first receipt: `receipt` over a session
+    that already had one was `USAGE FAIL reason=receipted` whatever had
+    happened since, so the later turns of a session resumed the next morning
+    could not be recorded at all (Stella, 2026-09-13, on draft 1: "One
+    permanent session receipt at first collection also prevents recording
+    later turns of an active/resumed session"). `--resume` is the second door.
+    `receipt … --session <id> --resume` counts exactly the session's messages
+    whose own stamp is **strictly after** the greatest `ended` among that
+    session's existing receipts — that stamp is the **cursor**, it is on the
+    stored rows already and needs no column and no state file — draws its own
+    receipt id, and writes those rows as a receipt of its own, `USAGE OK …
+    state=resumed`. A message at exactly the cursor is already counted and is
+    excluded, because `ended` is the stamp of the last message counted and not
+    a boundary between two of them. `--node`, `--stage` and `--who` are the
+    resumed receipt's own and need not equal the earlier receipt's: a session
+    that came back on a different task is exactly what rule 40 is about.
+    `--resume` over a session with no receipt is exit 2 — there is nothing to
+    resume from and `receipt` is the verb — and a `--resume` that finds no
+    message after the cursor is exit 1 `USAGE FAIL reason=nonew`, nothing
+    written, because a receipt of no messages would be a row of dashes
+    claiming a span. Rule 34's `DUPLICATE` join is narrowed to match: one
+    session may carry several receipt ids whose spans are disjoint, and any
+    overlap is still `CHECK DUPLICATE`.
+    **Demanded test.** A fixture session of ten messages, the source holding
+    the first six: `receipt` writes those, then the last four are appended to
+    the transcript and `receipt --resume` writes a second receipt whose rows
+    are the four, `state=resumed`; the two receipts' per-type sums equal
+    `fold`'s over the whole session exactly — no message counted twice and none
+    dropped — and a message whose stamp **equals** the first receipt's `ended`
+    is in the first receipt and not the second, the red being a `>=` cursor
+    that double-counts it. `--resume` with no earlier receipt is exit 2;
+    `--resume` with nothing after the cursor is exit 1 `reason=nonew` with the
+    receipts files byte-identical; `check` over the two receipts is clean, and
+    over two receipts of one session whose spans overlap by one stamp is
+    `CHECK DUPLICATE`.
+
+40. **A session is not a task; `cost` sums spans, and what it cannot split it
+    says it cannot split** (draft 3). Stella, 2026-09-13, on draft 1: "A
+    session is not necessarily one task, node, stage, model or repo. This very
+    coordinator session spans implementation, review, correction and multiple
+    repositories." Draft 2 answered half of that and left half. The half it
+    answered: a receipt is already **many rows**, one per `(day, model, repo)`
+    (rule 32), and rule 34's `SPLIT` join is over `node`, `stage`, `who` and
+    `session` and **not** over model or repo, so two models and two
+    repositories in one session were never a problem. The half it left: one
+    session could hold only one node and one stage, for ever. With rule 39 the
+    unit is the **span**: a session that built before lunch and reviewed after
+    it is receipted twice — `--stage implementation`, then `--resume --stage
+    review` on another `--node` if the work moved — two ids, two spans, one
+    session, and `cost --node` prints each as its own `COST RECEIPT` line. The
+    three properties that make that safe are stated rather than assumed: the
+    spans of one session are **disjoint** (rule 39's cursor), so no token is in
+    two receipts and no `cost` double counts whatever mix of nodes the session
+    touched; `tokens=` is therefore a sum over disjoint sets; and `wall=`
+    remains the **sum of spans and not their union** (rule 33), which across
+    one session's disjoint spans is less than that session's own wall clock by
+    exactly the time between them — a fact the field says by being a sum.
+    **What this tool still cannot do, said rather than implied**: it cannot
+    split one span between two nodes. A stretch of work that changed task with
+    no stamp a caller can point at is receipted whole under one node, and
+    `COST NOTE` says that a receipt's node attribution is the caller's and was
+    never measured. Unknown attribution stays unknown (Stella): there is no
+    fractional allocation here, none is invented, and a caller is never asked
+    to split a friend's session to fit the schema — the caller chooses where to
+    resume, or receipts it whole and accepts one node.
+    **Demanded test.** One fixture session receipted as `implementation` on
+    `n1` and resumed as `review` on `n2`: `cost --node n1` and `cost --node n2`
+    each print one `COST RECEIPT`, neither counts the other's messages, their
+    `tokens=` add to `fold`'s over the whole session, and `cost --node n1
+    --node n2` prints `wall=` equal to the two spans summed and **strictly
+    less** than `ended` minus `started` across the session; `COST NOTE` carries
+    the attribution sentence on every run that printed a receipt; and the
+    source test finds no code path that divides a receipt's counts by anything.
+
+41. **A receipt that spans days is completed after a partial write, never
+    blocked by one** (draft 3). A receipt spanning midnight is rows in two
+    receipts files (rule 32), landed by two renames; a crash between them left
+    day one written and day two absent, and draft 2's `receipted` check — which
+    asked only whether the session appeared anywhere — then refused every
+    repair (Stella, 2026-09-13: "Writing a multi-day receipt by independent
+    renames can crash after day1 and then the session-level receipted check
+    blocks repair of day2"). A receipt is a **pure function** of its span, its
+    `--node`, `--stage`, `--who` and its id, so the repair is to recompute it
+    rather than to record a transaction: a plain `receipt` over a session that
+    already has one re-derives the rows of **that receipt's own span**
+    (`started` to `ended` inclusive, read off the stored rows) under the
+    **stored** id, and then
+    - every day's rows present and byte-identical → `USAGE FAIL
+      reason=receipted by=<id>`, nothing written, which is draft 2's case
+      unchanged;
+    - one or more days' rows absent → those files, and only those, are written
+      under the stored id, `USAGE OK … state=completed`, the count on the line
+      being the days this run added;
+    - a present day's rows differing from the re-derived ones → `USAGE FAIL
+      reason=differs day=<d>`, nothing written, because a receipt this tool
+      cannot reproduce from its source is not one it may quietly rewrite
+      (rule 9: a row is never edited, and rule 10's refusal to overwrite a
+      number the record disagrees with is the same instinct).
+    A session that **grew** after a complete receipt is not this case and never
+    `differs`: the re-derivation is over the stored span alone, so later
+    messages fall outside it and the answer is `reason=receipted` with one
+    `USAGE NOTE` naming `--resume` (rule 39) as the remedy. `USAGE NOTE` is
+    this verb's one remedy line, on stdout, per SPEC.md's cap-and-count rule,
+    and it is why the `receipt` row of **the largest plausible state** is 23
+    lines and not 22. The completing write takes `fold.lock` exactly as the
+    first one did and adds no file to rule 9's carve-out list: it writes the
+    same `<out>/receipts/<day>.tsv.tmp` and renames it, which rule 9's
+    2026-09-13 amendment already names.
+    **Demanded test.** A session spanning midnight whose second day's rename is
+    killed with SIGKILL: the receipts directory holds day one under id X and no
+    day two, and `check` names neither a `DUPLICATE` nor a `SPLIT`; the next
+    plain `receipt` over that session writes day two **under X**,
+    `state=completed`, leaving day one byte-identical; a third run is
+    `reason=receipted` with nothing written. A day-two cell hand-edited makes
+    that third run `reason=differs day=<d>` with both files byte-identical
+    afterwards — the red being a rule that rewrote the stored row. A session
+    that gained messages after a complete receipt is `reason=receipted` with
+    the `USAGE NOTE` naming `--resume`, and never `differs`.
 
 ### The receipts file
 
@@ -2556,24 +2749,55 @@ FRICTION,FRICTIONS` for this tool, `USAGE` being the `receipt` verb's token
 since draft 2; `SEND,INBOX,RECEIPT,BUS` for nova-bus), and
 `questions` the URL of the issue holding the four questions for that tool (our
 #111 to #117 are an instance); `--since` bounds the evidence window, required,
-no default. **A first token that appears against two tools in the file is
-exit 2, naming both** (draft 2): one pasted line would otherwise mark two
-tools adopted at once, which is exactly what `RECEIPT` did for nova-tokens and
-nova-bus in the first draft's own example, before the rename.
+no default. **A first token claimed by two tools in the file is inert, not a
+refusal** (draft 3, correcting draft 2's exit 2, which this family's own specs
+make unrunnable): a body line whose first token two tools claim is evidence for
+**neither**, because one pasted line cannot say which tool was run, and the
+collision is named once per run, not once per line —
+`ADOPTION INERT token=<T> tools=<name,name>`, capped at `--max` with its own
+MORE. On `origin/main` at 2026-09-13 a `--tools` file naming `nova-tokens`
+beside its neighbours already collides three ways out of its twelve tokens:
+`COST` is nova-swarm's (`COST TASK`, `COST OK`, SPEC-SWARM.md), `REPORT` is
+nova-update's (`REPORT <OK|FAIL>`, SPEC-UPDATE.md), and `CHECK OK` is
+nova-board's, nova-chat's and nova-sandbox's — so draft 2's rule refused the
+only tools file anybody here would write, and the `RECEIPT` rename closed one
+collision of four rather than the class. **Exit 2 is for the case that leaves a
+tool with nothing to be seen by**: a tool **every one** of whose `first-tokens`
+another tool in the file also claims has no verdict line of its own, and is
+exit 2 naming the tool and its tokens, because a matrix that could only ever
+say `unknown` about it is a matrix asked the wrong question; its repair is the
+one `RECEIPT` had, a rename in that tool's own spec. `USAGE` itself is clean —
+no spec on `origin/main` prints it as a first token — and `TOKENS`, `SUM`,
+`SOURCES`, `PUBLISH`, `USAGE`, `HOT`, `DIFF`, `FRICTION` and `FRICTIONS` leave
+nova-tokens nine unique tokens after the three collisions, so no tool in this
+family is exit 2 today. A tool's **version line** is never inert: its first
+token is the tool's own name (or, for `nova-sandbox`, its own event token), and
+no two tools in one file may share a `name`.
 
 The **evidence is an enumerated set**, each kind read from files, none of them
 a person's word alone, and every kind decidable from the `--tools` file
 itself — there is no such thing here as *a count-line token*, which named no
 set and which two builds would enumerate differently (draft 2). A body line is
-evidence only in one of two shapes: a **version line**, four tokens, the first
-exactly the tool's `name` and the rest the shape SPEC.md fixes for
-`<tool> version` (a build identity, `<goos>/<goarch>`, a `go` version); or a
-**verdict line**, whose first token is one of that tool's `first-tokens` and
+evidence only in one of two shapes. A **version line**, in the shapes SPEC.md's
+Conventions and each tool's own spec fix, **enumerated here rather than assumed
+to be one** (draft 3): **four tokens** whose first is exactly the tool's `name`
+and whose rest is a build identity, `<goos>/<goarch>` and a `go` version, for
+eleven of the thirteen binaries; **five**, the fifth `build=<12 hex>`, for
+`nova-merge` (SPEC-MERGE.md: "`version` is the Conventions' line, plus this
+binary's own `build=`"); and `SANDBOX VERSION …` for `nova-sandbox`, whose
+version line carries the backend and the platform a sandbox is judged by and
+whose first token is that binary's **event token and not its name** (SPEC.md,
+Conventions). The third shape stays decidable from the `--tools` file alone: it
+is a line whose first token is one of that tool's `first-tokens` and whose
+second is exactly the word `VERSION`. Draft 2's four-token rule read a pasted
+`nova-merge version` as `unknown` and could not have seen `nova-sandbox` at
+all. Or a **verdict
+line**, whose first token is one of that tool's `first-tokens` and
 whose second is exactly `OK` or `FAIL`, nothing else.
 
 | cell | evidence, from the record | never |
 |---|---|---|
-| `adopted` | a note in that line's lane, dated in the window, whose body carries **the tool's version line** (first token exactly the tool's `name`, then a build identity, `<goos>/<goarch>` and a `go` version — what `<tool> version` prints, SPEC.md) or one of the tool's enumerated **verdict lines** (`<T> OK` or `<T> FAIL` for a `<T>` among that tool's `first-tokens`); or, with `--tokens-out`, a day file row whose `sources` carries `bus:<line>` (the line ran `report`) or a receipt whose `who` is the line; or a `REPORT SENT` line naming the line as `--as` | a sentence saying "I use it"; a body line whose second token is neither `OK` nor `FAIL`; a first token two tools in the file claim |
+| `adopted` | a note in that line's lane, dated in the window, whose body carries **the tool's version line** in one of the three shapes above — four tokens, `nova-merge`'s five, or `nova-sandbox`'s `SANDBOX VERSION` (draft 3) — or one of the tool's enumerated **verdict lines** (`<T> OK` or `<T> FAIL` for a `<T>` among that tool's `first-tokens`); or, with `--tokens-out`, a day file row whose `sources` carries `bus:<line>` (the line ran `report`) or a receipt whose `who` is the line; or a `REPORT SENT` line naming the line as `--as` | a sentence saying "I use it"; a body line whose second token is none of `OK`, `FAIL` and (on a version line) `VERSION`; a first token two tools in the file claim, which is inert for both (draft 3) |
 | `trying` | with `--reports`, a `REPORT TOOL name=<tool>` line from a `nova-update report` that line sent (its `as=`), dated in the window, and no `adopted` evidence | an install on another host counted for this line |
 | `declined` | a note in the line's lane whose subject is exactly `adoption <tool> declined` — the one self-report the matrix accepts, because declining is the line's to say; the note id is printed | a silence |
 | `unknown` | none of the above | a guess either way |
@@ -2586,12 +2810,18 @@ four questions of #117, linked, per line per tool, which is Glenn's "review
 spec, review tool and give constructive feedback that would make adoption a
 no brainer" (2026-09-12) as a line a reader can act on. Then `ADOPTION TOOL
 tool=<name> adopted=<n> trying=<n> declined=<n> unknown=<n>` per tool and
-`ADOPTION LINE line=<name> …` per line, and `ADOPTION OK|FAIL lines=<n>
+`ADOPTION LINE line=<name> …` per line — **each one line per unit of state and
+therefore capped like the others** (draft 3): they are bounded by the
+`--tools` file and by the roster, which are two caller-supplied inputs and not
+ceilings, and SPEC.md's rule is that every verb printing one line per unit of
+state takes `--max` — and `ADOPTION OK|FAIL lines=<n>
 tools=<n> cells=<n> adopted=<n> trying=<n> declined=<n> unknown=<n>
 since=<date> at=<stamp> build=<id>`: `OK` and exit 0 only when every cell is
 `adopted` or `declined`; otherwise `FAIL`, exit 1, because an unadopted tool
 is the tool saying NO about itself, SPEC-UPDATE's own exit-1 meaning. Every
-listing is capped at `--max` per kind (`CELL`, `ASK`), with a MORE line. The
+listing is capped at `--max` per kind — `CELL`, `ASK`, `TOOL`, `LINE` and
+`INERT` (draft 3) — with a MORE line per kind, so the loud kind cannot eat the
+quiet one. The
 verb reads the bus as files, runs no `git` and sends nothing; a matrix that
 fetched would be a matrix whose cells depend on a network call. **The evidence
 is cheap to check, not proof** (draft 2): every shape above is text a person
@@ -2613,7 +2843,13 @@ only the four-token `nova-tokens <identity> <goos>/<goarch> <go version>`
 line (draft 2); a lane whose note says
 only "I use nova-tokens daily" is `unknown` and gets an `ASK`; a body line
 whose second token is neither `OK` nor `FAIL` is no evidence, and a tools file
-giving one first token to two tools is exit 2 naming both (draft 2); a lane with a
+giving one first token to two tools prints one `ADOPTION INERT` naming both,
+the run continuing, and a lane whose only evidence is that token is `unknown`
+for both tools; a tools file in which **every** first token of one tool is
+claimed by another is exit 2 naming that tool and its tokens; a lane holding
+`nova-merge <identity> <goos>/<goarch> <go version> build=<12 hex>` is
+`adopted` for nova-merge and one holding a `SANDBOX VERSION …` line is
+`adopted` for nova-sandbox (draft 3); a lane with a
 `REPORT TOOL name=nova-bus` line it sent and no use is `trying`; a subject
 `adoption nova-bus declined` is `declined` with no `ASK`; a note dated before
 `--since` counts for nothing; `--tokens-out` naming a directory whose day
@@ -3068,9 +3304,9 @@ paragraphs are the normative text and these ten lines are the index.
     rewrites the day file between the lock and the push is exit 1
     `reason=changed`.
 
-**Rules 32 to 38** are in **Attempts joined to work, hot spots, frictions,
-adoption** (2026-09-13), each demanded test written beside its rule; these
-seven lines are the index.
+**Rules 32 to 41** are in **Attempts joined to work, hot spots, frictions,
+adoption** (2026-09-13; rules 39 to 41 draft 3), each demanded test written
+beside its rule; these ten lines are the index.
 
 32. Three fixture sessions receipted on one node at three stages, rows equal
     to `fold` over the lines whose `sessionId` is the id,
@@ -3091,7 +3327,8 @@ seven lines are the index.
     two `stage` values under one receipt id, a receipt above its day cell, a
     receipts file for a day the fold passed, and a stray under
     `receipts/` each print their line and exit 1; an equal or dashed cell is
-    clean; a receipts file for a day newer than every day file is one
+    clean; a receipts file for a day newer than every day file, and any
+    receipts file at all where there is no day file (draft 3), is one
     `CHECK NOTE` and exit 0; `TOKENS DAY receipts=` equals the file's rows;
     `sum` opens nothing under `receipts/`.
 35. Twelve fixture steps rank two repeats and one 40 KB step in the stated
@@ -3123,8 +3360,30 @@ seven lines are the index.
     at `priced_tokens=0`, never `0` — an
     all-zero row prices to zero, malformed and duplicate lines are exit 2,
     `verified=` is the oldest date among the rows priced with, `rates=` and
-    `verified=` print once per run, and `internal/tokens/rates.go` holds no
+    `verified=` print once per run, a `COST STAGE`, `COST MODEL`,
+    `COST RECEIPT` and `FRICTIONS GAP` that priced nothing each print `usd=-`
+    and carry no `rates=`, `verified=` or `unpriced_tokens=` (draft 3), and
+    `internal/tokens/rates.go` holds no
     float literal but 0 and 1 and no model-name string.
+39. A six-message receipt then a `--resume` over the four appended messages:
+    two receipts, `state=resumed`, sums equal to `fold` over the whole session,
+    the message at the cursor in the first receipt and not the second,
+    `--resume` with no earlier receipt exit 2, `--resume` with nothing after
+    the cursor exit 1 `reason=nonew`, `check` clean over disjoint spans and
+    `CHECK DUPLICATE` over overlapping ones (draft 3).
+40. One session receipted as `implementation` on `n1` and resumed as `review`
+    on `n2`: neither `cost --node` counts the other's messages, the two
+    `tokens=` add to `fold`'s, `wall=` over both nodes is the two spans summed
+    and strictly less than the session's own span, `COST NOTE` carries the
+    caller's-attribution sentence, and no code path divides a receipt's counts
+    (draft 3).
+41. A midnight-spanning receipt killed between its two renames: `check` names
+    no `DUPLICATE` and no `SPLIT`, the next plain `receipt` writes the missing
+    day under the **stored** id with `state=completed`, a third run is
+    `reason=receipted`, a hand-edited stored cell makes it
+    `reason=differs day=<d>` with nothing written, and a session that grew
+    after a complete receipt is `reason=receipted` with the `USAGE NOTE`
+    naming `--resume` (draft 3).
 
 ## The work list
 
@@ -3249,8 +3508,14 @@ pin all three by executing them.
     check by `session`, and `check`'s four joins — including the constancy of
     `node`, `stage`, `who` and `session` under one receipt id, and the
     newest-day-file rule that makes an unfolded day a `CHECK NOTE` rather than
-    an orphan (draft 2). Tests: demanded tests 32
-    and 34.
+    an orphan (draft 2), which now covers a receipts directory with no day file
+    at all (draft 3). **Draft 3 adds the three the span rules need**: the
+    resume cursor (the greatest `ended` of that session's receipts, strictly
+    after, drawn as a new id), the completion of a receipt whose multi-day
+    write was interrupted (re-derive the stored span under the stored id, write
+    only the absent days, `differs` on a stored row this run cannot reproduce),
+    and the narrowed `DUPLICATE` join over overlapping spans. Tests: demanded
+    tests 32, 34, 39, 40 and 41.
 17. **`internal/tokens/rates.go`** (2026-09-13, rule 38): the rates file
     parser, the per-cell price with `unpriced` accounting, `per_mtok` with
     no division by zero, `verified=` oldest; used by `sum`, `cost` and
@@ -3279,7 +3544,8 @@ pin all three by executing them.
     transition red first against a rule that called every changed frictions
     file `differs`.
 22. **`cmd/nova-tokens/main.go`** gains the six verbs, `--rates` on `sum`,
-    `--top`, and the `--frictions` kind on `publish`; `docs/CLI.md`'s
+    `--top`, `--resume` on `receipt` (draft 3), and the `--frictions` kind on
+    `publish`; `docs/CLI.md`'s
     `### First run` gains one receipt over the fixture transcript and one
     `cost --node` over it, every path a flag.
 23. **`nova-update adoption`** (2026-09-13, the amendment note) is
@@ -3320,4 +3586,7 @@ pin all three by executing them.
 | Glenn, 2026-09-12, adoption | a tool is good if everybody adopts it | the amendment note: `nova-update adoption`, evidence from the record, `ASK` lines linking the four questions |
 | nova-tools #182 | a new parent ran an old child | `trying` evidence for the matrix; the version lines are `nova-update report`'s |
 | PROPOSAL-SCHEDULING-COST | stages; report the denominator; no division by zero | taken whole: the six stage names, `priced_tokens=` beside `per_mtok=`, `-` at zero |
+| Stella, draft 1 read (5655262698) | resumable event-level retention within a session | rule 39 (draft 3): `--resume`, the cursor the stored `ended`, a new id per span, `CHECK DUPLICATE` narrowed to overlapping spans |
+| Stella, draft 1 read (5655262698) | a session is not one task or stage | rule 40 (draft 3): the span is the unit, spans are disjoint, `wall=` stays a sum, and an unsplittable span is the caller's attribution and says so |
+| Stella, draft 1 read (5655262698) | restart recovery after a partial write | rule 41 (draft 3): re-derive the stored span under the stored id, write the absent days, `state=completed`; `differs` rather than a rewrite |
 | Rowan, window tokens are turns | tool output read back is the cost | rule 35: `HOT OK` prints `result_bytes=` beside `output=` |
