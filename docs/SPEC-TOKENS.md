@@ -1192,7 +1192,7 @@ remedy line. The rules are numbered on from rule 21.
     **The message is derived from the bytes.** Subject
     `tokens: <kind> <contribution id> files=<n>`; body one sorted line per new
     path, `<path> sha256=<hex>`, then `inventory_sha256=<hex>` (rule 26's
-    optional digest over exactly those lines), then for a v1 day its `day=`,
+    always-written digest over exactly those lines), then for a v1 day its `day=`,
     `seat=`, `rows_sha256=` and the file's own `at=` and `build=`, and
     `supersedes=<rows_sha256>` on a `--supersede` run (rule 26). Nothing else.
     No force, no amend, no rebase, no tag: a correction is a new commit.
