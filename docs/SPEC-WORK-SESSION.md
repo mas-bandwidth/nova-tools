@@ -133,4 +133,31 @@ landing/acceptance evidence. A locally completed attempt, a deferred work node,
 or a scope reduction does not by itself close the public issue. Retry uncertain
 outbound actions idempotently and preserve concurrent human changes. A reopened
 issue creates a reconciliation signal; it neither disappears nor silently erases
-previous completion evidence. No issue deletion is part of intake or clipping.
+previous completion evidence. Ordinary linked intake and clipping never delete an issue. The separately chosen
+absorb operation below is the explicit exception.
+
+## Link versus absorb
+
+Glenn authorizes a second intake mode for issues created by him or participating
+AI friends, on public or private repositories: `absorb` moves their lasting work
+record into S and may remove the original GitHub issue. This is distinct from
+`link`, the default for outside contributors. Author identity alone does not make
+an issue selected for absorption; scope and intake mode must be explicit, with
+team configuration identifying participating authors and applicable repositories.
+
+Before deletion, retain the original issue identity, authorship, body, discussion,
+labels, state, relevant relationships and available attachments in an archive
+associated with S. Preserve provenance separately from planning. Unavailable or
+unpreserved content is reported and leaves deletion pending, not silently skipped.
+The destination must preserve the source's access scope; a private issue is not
+published by becoming part of S.
+
+Order the operation: capture source at a named remote revision; validate the
+archive and mapping; commit and confirm the shared Git checkpoint; recheck for
+source changes; then delete only the selected source issue under the configured
+authority. If the source changed, reconcile and checkpoint the added content first.
+Keep the original external identity and an absorbed tombstone plus deletion
+receipt so later intake cannot recreate the work. A network failure or uncertain
+delete result preserves the archive and a pending reconciliation state. Do not
+claim atomicity between Git and GitHub or restore an issue by inventing an author.
+These semantics are a specification, not a request to absorb existing issues now.
