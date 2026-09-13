@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,6 +18,10 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
+
+// testAttest is the secret the fixtures plant as the supervisor's own, so the exit.json they
+// write carries an attestation whose hash matches the slot file they plant beside it.
+const testAttest = "test-supervisor-secret"
 
 // ---------------------------------------------------------------------------------------
 // Demanded test 17 (SPEC-SWARM line 1363):
@@ -65,13 +71,14 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 	write(t, filepath.Join(b.pool, "running", task2ID+".task"), "exited task\n")
 	sf2 := swarm.SlotFile{
 		Job: task2ID, JobDir: task2Dir, State: swarm.SlotLaunched,
-		Pid: 999990, Pgid: 999990, Nonce: "nonce-2", RunnerPid: 999998,
+		Pid: 999990, Pgid: 999990, Nonce: "nonce-2", ExitAttest: swarm.ExitAttestHash(testAttest),
+		RunnerPid: 999998,
 	}
 	if err := swarm.WriteJSON(filepath.Join(b.pool, "slots", "2.json"), sf2); err != nil {
 		t.Fatal(err)
 	}
 	if err := swarm.WriteJSON(filepath.Join(task2Dir, "exit.json"), swarm.ExitRecord{
-		RC: 0, End: swarm.EndDone, Nonce: "nonce-2", Ended: swarm.Stamp(time.Now()),
+		RC: 0, End: swarm.EndDone, Nonce: "nonce-2", Attest: testAttest, Ended: swarm.Stamp(time.Now()),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -182,7 +189,7 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 		Pid: liveCmd.Process.Pid, Pgid: livePgid, JobPgid: livePgid,
 		PidStarted: swarm.StartStamp(liveCmd.Process.Pid),
 		LaunchedAt: swarm.Stamp(time.Now().Add(-1 * time.Second)),
-		Nonce:      "nonce-1", RunnerPid: 999998,
+		Nonce:      "nonce-1", ExitAttest: swarm.ExitAttestHash(testAttest), RunnerPid: 999998,
 	}
 	if err := swarm.WriteJSON(filepath.Join(b.pool, "slots", "1.json"), sf1); err != nil {
 		t.Fatal(err)
@@ -190,7 +197,7 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 	if err := swarm.WriteJSON(filepath.Join(task1Dir, "pid"), swarm.PidRecord{
 		Job: task1ID, Slot: 1, State: swarm.SlotLaunched,
 		Pid: liveCmd.Process.Pid, Pgid: livePgid, JobPgid: livePgid,
-		PidStarted: sf1.PidStarted, Nonce: "nonce-1", Started: sf1.LaunchedAt,
+		PidStarted: sf1.PidStarted, Started: sf1.LaunchedAt,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -232,7 +239,7 @@ func TestADeadDispatcherIsRecoveredOrQuarantined(t *testing.T) {
 			completion <- fmt.Errorf("slot 1's adoption was not decided within 5s (%s never landed in done/), so this pass raced the dispatcher instead of waiting for it", task2ID+".task")
 		}
 		if err := swarm.WriteJSON(filepath.Join(task1Dir, "exit.json"), swarm.ExitRecord{
-			RC: 0, End: swarm.EndDone, Nonce: "nonce-1", Ended: swarm.Stamp(time.Now()),
+			RC: 0, End: swarm.EndDone, Nonce: "nonce-1", Attest: testAttest, Ended: swarm.Stamp(time.Now()),
 		}); err != nil {
 			completion <- fmt.Errorf("writing the adopted job's exit.json: %w", err)
 		}
@@ -306,6 +313,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (1) after reserve: slot orphaned, task pending again only after aborted.json or removal
 	t.Run("after-reserve", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task after reserve\nFAKE-FINDINGS 0\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-reserve"}
 		b.run() // runner killed right after reserve
@@ -345,6 +353,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (2) after spawn: supervisor identifies itself anyway and next run adopts it
 	t.Run("after-spawn", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task after spawn\nFAKE-FINDINGS 0\nFAKE-SLEEP 1\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-spawn"}
 		b.run() // runner killed after spawn
@@ -362,6 +371,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (3) after identify: runner dies after identify, next run adopts live supervisor
 	t.Run("after-identify", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task after identify\nFAKE-FINDINGS 0\nFAKE-SLEEP 1\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-identify"}
 		b.run() // runner killed right after identify
@@ -378,22 +388,54 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (4) after handshake: runner dies after handshake, next run adopts live supervisor
 	t.Run("after-handshake", func(t *testing.T) {
 		b := newBench(t)
-		taskID := b.add("task after handshake\nFAKE-FINDINGS 0\nFAKE-SLEEP 1\n")
+		b.inject()
+		taskID := b.add("task after handshake\nFAKE-FINDINGS 0\nFAKE-AWAIT-NOTE 20\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=after-handshake"}
-		b.run() // runner killed after handshake
+		b.run() // runner killed after handshake; the supervisor lives on, holding for a note
 		b.extraEnv = nil
 
-		exit, stdout, _ := b.run()
+		// THE JOB CANNOT FINISH UNTIL THE TEST SAYS SO. The fake harness holds for a note
+		// (FAKE-AWAIT-NOTE 20, under the 30s deadline, so the fixture cap passes), and the
+		// note is delivered only once the second dispatcher has ADOPTED the live supervisor
+		// -- read off the run's own RUN ADOPT line as it is printed. FAKE-SLEEP 1 made this
+		// a race: on a loaded runner the job finished before the adoption and the pass said
+		// RUN RECLAIM instead of RUN ADOPT, and a reclaim was accepted as a pass.
+		var noteErr error
+		noted := false
+		runArgs := withSandbox([]string{"run", "--pool", b.pool, "--workers", "1", "--hours", "0.25", "--worker", b.worker})
+		exit, stdout, stderr := b.runWatching(runArgs, func(line string) {
+			if noted || !strings.Contains(line, "RUN ADOPT id="+taskID) {
+				return
+			}
+			noted = true
+			nExit, _, nErr, err := b.swarmTry("note", "--pool", b.pool, "--task", taskID, "--text", "the test says finish now")
+			switch {
+			case err != nil:
+				noteErr = err
+			case nExit != 0:
+				noteErr = fmt.Errorf("the note was refused (exit %d): %s", nExit, nErr)
+			}
+		})
 		if exit != 0 {
-			t.Fatalf("exit = %d, want 0", exit)
+			t.Fatalf("exit = %d, want 0;\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
+		}
+		if !noted {
+			t.Fatalf("the second dispatcher never adopted %s (no RUN ADOPT), so this test proved nothing:\n%s", taskID, stdout)
+		}
+		if noteErr != nil {
+			t.Fatalf("the note that lets the adopted job finish: %v", noteErr)
 		}
 		mustContain(t, "stdout", stdout, "RUN ADOPT id="+taskID+" slot=1")
 		mustContain(t, "stdout", stdout, "RUN DONE id="+taskID)
+		if strings.Contains(stdout, "RUN RECLAIM slot=1 id="+taskID) {
+			t.Errorf("the job was reclaimed, not adopted; a reclaim is never a pass for this test:\n%s", stdout)
+		}
 	})
 
 	// (5) supervisor killed after release with harness alive -> dead leader with live survivor
 	t.Run("after-release", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task after release\nFAKE-SLEEP 15\nFAKE-FINDINGS 0\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=supervisor-after-release"}
 		b.run() // supervisor killed right after release
@@ -416,6 +458,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (6) between exit and exit.json: supervisor killed before exit.json written -> end=unknown into failed/
 	t.Run("between-exit-and-exit-json", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task between exit and exit.json\nFAKE-FINDINGS 0\n")
 		b.extraEnv = []string{"NOVA_SWARM_KILLPOINT=between-exit-and-exit-json"}
 		b.run()
@@ -432,6 +475,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (7) fake supervisor that never writes identity is killed at --launch-timeout
 	t.Run("fake-supervisor-never-identifies", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task timeout\n")
 		b.extraEnv = []string{"NOVA_SWARM_PAUSEPOINT=before-identify"}
 		exit, stdout, _ := b.swarm(withSandbox([]string{"run", "--pool", b.pool, "--workers", "1", "--hours", "0.1",
@@ -474,6 +518,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (9) the reverse schedule (Stella, 2026-09-11)
 	t.Run("reverse-schedule", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task reverse schedule\nFAKE-FINDINGS 0\n")
 		jobDir := filepath.Join(b.dir, "worker-home-1", "jobs", taskID)
 
@@ -581,6 +626,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// finishes rule 18's losing path on its own.
 	t.Run("a-hangup-never-costs-the-acknowledgement", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task hangup\nFAKE-FINDINGS 0\n")
 		jobDir := filepath.Join(b.dir, "worker-home-1", "jobs", taskID)
 		mark := filepath.Join(b.dir, "supervisor-stopped")
@@ -625,6 +671,7 @@ func TestTheLaunchIsATransaction(t *testing.T) {
 	// (10) between aborted.json and exit
 	t.Run("between-aborted-and-exit", func(t *testing.T) {
 		b := newBench(t)
+		b.inject()
 		taskID := b.add("task abort kill\nFAKE-FINDINGS 0\n")
 		jobDir := filepath.Join(b.dir, "worker-home-1", "jobs", taskID)
 
@@ -669,6 +716,39 @@ func mustOpenPool(t *testing.T, dir string) *swarm.Pool {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// runWatching runs the dispatcher and hands each line of its stdout to watch as it is
+// printed, so a test can act on a RUN line (the adoption) before the run ends. It returns
+// the run's exit code and its full stdout and stderr. It is the unix half of the bench: the
+// recovery tests build only with `//go:build unix`, so the windows environment variables
+// swarmTry adds are not needed here.
+func (b *bench) runWatching(args []string, watch func(string)) (int, string, string) {
+	b.t.Helper()
+	cmd := exec.Command(b.binary, args...)
+	cmd.Dir = b.dir
+	cmd.Env = append([]string{"PATH=" + b.path, "Path=" + b.path, "HOME=" + b.dir}, b.extraEnv...)
+	var errb bytes.Buffer
+	cmd.Stderr = &errb
+	pipe, err := cmd.StdoutPipe()
+	if err != nil {
+		b.t.Fatalf("opening the run's stdout: %v", err)
+	}
+	if err := cmd.Start(); err != nil {
+		b.t.Fatalf("starting the run: %v", err)
+	}
+	var out bytes.Buffer
+	scanner := bufio.NewScanner(pipe)
+	for scanner.Scan() {
+		line := scanner.Text()
+		out.WriteString(line)
+		out.WriteString("\n")
+		if watch != nil {
+			watch(line)
+		}
+	}
+	_ = cmd.Wait()
+	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
 }
 
 func assertTripwire(t *testing.T) {

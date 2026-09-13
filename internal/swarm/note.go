@@ -60,10 +60,34 @@ func FinalizeByHand(p *Pool, id string, now time.Time) (int, string) {
 	}
 	rec := ExitRecord{RC: -1}
 	end := EndUnknown
-	if err := ReadJSON(ExitPath(sc.Job), &rec); err == nil {
-		end = rec.End
-		if end == "" {
-			end = EndDone
+	// THE COMPLETION EVIDENCE IS THE SUPERVISOR'S OWN WORD, and a supervisor's word carries
+	// the per-launch attestation whose hash the slot file holds. When a slot file exists for
+	// this job, the exit.json is accepted only if it carries both this launch's nonce AND the
+	// attestation the slot file names.
+	//
+	// A SLOT FILE THIS PASS COULD NOT READ IS A REFUSAL, NEVER AUTHENTICATION: the worker
+	// owns every byte of its job directory, so a worker-written exit.json read after a slot
+	// read failure is accepted on nothing. An ABSENT slot file is accepted only when the
+	// usage file -- the record `finalize` itself writes, outside the worker's write set --
+	// proves this job was already finalized; otherwise the absence is itself the refusal, and
+	// the worker-written exit.json is never read as-is.
+	sf, slotErr := p.ReadSlot(sc.Slot)
+	switch {
+	case slotErr == nil:
+		var got ExitRecord
+		if err := ReadJSON(ExitPath(sc.Job), &got); err == nil && got.Nonce == sf.Nonce && ExitAttestOK(got.Attest, sf.ExitAttest) {
+			rec, end = got, got.End
+			if end == "" {
+				end = EndDone
+			}
+		}
+	case !missing(slotErr):
+		return 1, fmt.Sprintf("FINALIZE REFUSED id=%s: the slot file %s could not be read (%s), so the worker-written exit.json is not accepted",
+			oneline.Field(id), oneline.Field(p.slotPath(sc.Slot)), oneline.Escape(redactedReason(slotErr)))
+	default:
+		if _, statErr := os.Stat(p.UsagePath(id)); statErr != nil {
+			return 1, fmt.Sprintf("FINALIZE REFUSED id=%s: the slot file is gone and no usage record proves a prior finalization, so the worker-written exit.json is not accepted",
+				oneline.Field(id))
 		}
 	}
 	// A finalize by hand has no worker description to name a source, and the job's own

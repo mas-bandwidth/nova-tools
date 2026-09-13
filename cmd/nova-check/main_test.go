@@ -556,7 +556,9 @@ func TestNoCodeCLI(t *testing.T) {
 			t.Fatalf("exit = %d, want 0 (stderr: %s)", got, stderr.String())
 		}
 		out := stdout.String()
-		for _, want := range []string{"source=floor list", ".go", ".py", ".zsh"} {
+		// source= is a field, so the floor's label reads as one token: see
+		// TestTheDenyListFieldIsOneToken for the rule and the other three sites.
+		for _, want := range []string{"source=floor\\x20list", ".go", ".py", ".zsh"} {
 			if !strings.Contains(out, want) {
 				t.Errorf("output missing %q\n%s", want, out)
 			}
@@ -583,7 +585,7 @@ func TestNoCodeCLI(t *testing.T) {
 		if got := run([]string{"nocode", "--dir", dir}, &stdout, &stderr); got != 0 {
 			t.Fatalf("exit = %d, want 0 (stderr: %s)", got, stderr.String())
 		}
-		if !strings.Contains(stdout.String(), "deny-list=floor list") {
+		if !strings.Contains(stdout.String(), "deny-list=floor\\x20list") {
 			t.Errorf("OK line does not name the list: %s", stdout.String())
 		}
 	})
@@ -847,6 +849,140 @@ func TestNoCallerPathCanForgeALine(t *testing.T) {
 		oneEvent(t, forged, stdout.String(), stderr.String())
 		if !strings.Contains(stderr.String(), `nova-check links: flag provided but not defined: -bogus\x0aLINKS OK files`) {
 			t.Errorf("stderr = %q, want this tool's own refusal with the flag escaped", stderr.String())
+		}
+	})
+}
+
+// TestAnUnusableInvocationCarriesTheDoor is SPEC.md's Conventions law at the one place
+// this binary drifted from it: "An unusable invocation costs ONE line. A flag typo, an
+// unknown verb or a bare invocation prints `<tool>[ <verb>]: <what was wrong>; run:
+// <tool> help`". The unknown verb and the flag typo carried the door because they go
+// through refuse(); the stray positional argument printed its own Fprintf and dropped it,
+// so `nova-check links --dir . extra` told a reader what was wrong and nothing about
+// where to look. The door is what makes the one line enough.
+func TestAnUnusableInvocationCarriesTheDoor(t *testing.T) {
+	dir := t.TempDir()
+	mustWrite(t, dir, "README.md", "prose\n")
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"no verb", nil},
+		{"unknown verb", []string{"bogus"}},
+		{"flag typo after a verb", []string{"links", "--dirr", dir}},
+		{"stray positional after links", []string{"links", "--dir", dir, "extra"}},
+		{"stray positional after nocode", []string{"nocode", "--dir", dir, "extra"}},
+		{"stray positional after quickstart", []string{"quickstart", "--dir", dir, "extra"}},
+		{"stray positional after corpus", []string{"corpus", "--root", dir, "--ledger", "l.md", "--min-anchors", "1", "extra"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout, stderr bytes.Buffer
+			if rc := run(tc.args, &stdout, &stderr); rc != 2 {
+				t.Fatalf("exit = %d, want 2; stderr: %s", rc, stderr.String())
+			}
+			got := stderr.String()
+			if !strings.Contains(got, "; run: nova-check help") {
+				t.Errorf("refusal drops the door: %q", got)
+			}
+			if lines := strings.Count(strings.TrimRight(got, "\n"), "\n") + 1; lines != 1 {
+				t.Errorf("an unusable invocation cost %d lines, not one: %q", lines, got)
+			}
+		})
+	}
+}
+
+// TestTheDenyListFieldIsOneToken is SPEC.md's "A field is one token" at the one field
+// that was not: `deny-list=` and `source=` hold one of three provenance labels, two of
+// which carry spaces, so `deny-list=floor list` read as `deny-list=floor` to a
+// whitespace-splitting scanner and `list` read as a further field. The labels are the
+// tool's own literals, not caller text -- which is why the escape was not applied and why
+// the field-counting half of the rule was missed. The spelling is preserved and rendered:
+// `floor list` prints as `floor\x20list`, one token that still says what it said.
+func TestTheDenyListFieldIsOneToken(t *testing.T) {
+	// The rendered spellings of the three provenance labels, as oneline.Field writes them.
+	floor := "floor\\x20list"
+
+	lineWith := func(t *testing.T, stream, token string) string {
+		t.Helper()
+		for _, line := range strings.Split(strings.TrimRight(stream, "\n"), "\n") {
+			if strings.HasPrefix(line, token) {
+				return line
+			}
+		}
+		t.Fatalf("no %q line in:\n%s", token, stream)
+		return ""
+	}
+	// noFieldHoldsASpace is the property the rule exists for: every token of the line
+	// either holds no "=" at all or is a whole key=value field, so the field count a
+	// scanner reads is the field count the tool wrote.
+	fieldCount := func(line string) int {
+		n := 0
+		for _, f := range strings.Fields(line) {
+			if strings.Contains(f, "=") {
+				n++
+			}
+		}
+		return n
+	}
+
+	t.Run("the OK line names the floor as one token", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWrite(t, dir, "README.md", "prose\n")
+		var stdout, stderr bytes.Buffer
+		if rc := run([]string{"nocode", "--dir", dir}, &stdout, &stderr); rc != 0 {
+			t.Fatalf("exit = %d, want 0; stderr: %s", rc, stderr.String())
+		}
+		want := "NOCODE OK files=1 clean deny-list=" + floor
+		if got := lineWith(t, stdout.String(), "NOCODE OK"); got != want {
+			t.Errorf("OK line = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("the FAIL summary names the floor as one token", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWrite(t, dir, "tool.py", "print()\n")
+		var stdout, stderr bytes.Buffer
+		if rc := run([]string{"nocode", "--dir", dir}, &stdout, &stderr); rc != 1 {
+			t.Fatalf("exit = %d, want 1; stderr: %s", rc, stderr.String())
+		}
+		want := "NOCODE FAIL files=1 findings=1 shown=1 deny-list=" + floor
+		got := lineWith(t, stderr.String(), "NOCODE FAIL files=")
+		if got != want {
+			t.Errorf("FAIL summary = %q, want %q", got, want)
+		}
+		if n := fieldCount(got); n != 4 {
+			t.Errorf("a scanner reads %d fields on %q, want 4", n, got)
+		}
+	})
+
+	t.Run("the extended list is one token too", func(t *testing.T) {
+		dir := t.TempDir()
+		mustWrite(t, dir, "README.md", "prose\n")
+		var stdout, stderr bytes.Buffer
+		if rc := run([]string{"nocode", "--dir", dir, "--deny-ext-add", ".xyz"}, &stdout, &stderr); rc != 0 {
+			t.Fatalf("exit = %d, want 0; stderr: %s", rc, stderr.String())
+		}
+		want := "NOCODE OK files=1 clean deny-list=floor\\x20list\\x20+\\x20--deny-ext-add"
+		if got := lineWith(t, stdout.String(), "NOCODE OK"); got != want {
+			t.Errorf("OK line = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("--print-deny-list names its source as one token on both lines", func(t *testing.T) {
+		var stdout, stderr bytes.Buffer
+		if rc := run([]string{"nocode", "--print-deny-list"}, &stdout, &stderr); rc != 0 {
+			t.Fatalf("exit = %d, want 0; stderr: %s", rc, stderr.String())
+		}
+		out := stdout.String()
+		for _, token := range []string{"NOCODE DENY-LIST", "NOCODE NAME-LIST"} {
+			line := lineWith(t, out, token)
+			if !strings.Contains(line, "source="+floor+" ") {
+				t.Errorf("%s line does not name its source as one token: %q", token, line)
+			}
+			if n := fieldCount(line); n != 2 && n != 3 {
+				t.Errorf("a scanner reads %d fields on %q, want the ones the tool wrote", n, line)
+			}
 		}
 	})
 }

@@ -396,6 +396,12 @@ computed from the command ("the directory of the resolved command"), so a
 most needs to see. With no `--`, `sh` is the floor every wrapped shell command
 already stands on.
 
+> **Unimplemented proposal (2026-09-12).** The `fence`, `grant` and `release`
+> verbs described in the paragraphs below are not implemented: the `nova-sandbox`
+> binary built today has no `fence`, no `grant` and no `release` verb. Their
+> requirements are preserved below, word for word, as the owed work for when they
+> are built; nothing below is a promise the current binary keeps.
+
 `fence` writes the `opencode.json` `permission` block of rule 14 to a file, so
 that the block is generated from one place rather than copied by hand.
 
@@ -737,6 +743,13 @@ waits rather than `exec`s in order to forward signals and return the command's
 status, not to clean anything up.
 
 ## Linux — Landlock, no root
+
+> **Unimplemented proposal (2026-09-12).** The Linux (Landlock) backend
+> described in this section is not implemented: the linux body of `nova-sandbox`
+> is not built today (`cmd/nova-sandbox/parent_linux.go` carries only the
+> probe's parent-executable guard), so no Landlock wall is applied on linux. Its
+> requirements are preserved below, word for word, as the owed work for when the
+> body is built; nothing below is a promise the current binary keeps.
 
 Landlock is an LSM available from kernel **5.13**, usable by an unprivileged
 process, and inherited across `execve(2)` so that the child cannot lift it. The
@@ -1204,7 +1217,13 @@ until its own checklist is green.
 Rule 9's scrub set is stated so that a launcher's own markers survive: a line
 that exports `AI_AGENT` or `CLAUDE_AGENT_SDK_VERSION` keeps them.
 
-## The harness fence that ships beside it
+## The proposed harness fence
+
+> **Unimplemented proposal (2026-09-12).** The current binary has no `fence`
+> verb, and nova-swarm does not generate this permission block in its worker
+> configuration. The following is the intended design, not a description of
+> protection supplied by the current release. The implemented OS wall is
+> separate from this proposed harness configuration.
 
 `nova-sandbox fence --out <dir>/opencode.json` writes the block below into each
 wrapped line's home or each worker home. OpenCode 1.18.20's `permission` block

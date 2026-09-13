@@ -82,15 +82,17 @@ every read and gate, so a lane is not usable without it; joined=false on INIT OK
 says this lane created and pushed it, joined=true says it was already there and
 nothing was pushed.
 
-REHEARSE FIRST, against a bare repository of your own, and nothing reaches a forge:
+REHEARSE FIRST, against a bare repository of your own:
 
   git init -q --bare ./rehearsal.git
-  nova-merge quickstart --lane ./rehearsal-lane --repo <owner>/<name> --base main \
+  nova-merge quickstart --lane ./rehearsal-lane --repo rehearsal-team/rehearsal --base main \
              --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
 
---remote is the URL the lane clones from and pushes to, and it wants an ABSOLUTE
-path or a URL: git runs inside the lane directory, so a relative one resolves
-against the lane and the run is refused. Give the rehearsal a lane of its own --
+--remote only controls where git clones from and pushes to: the clone and the push
+writes go to the local bare remote you name with --remote, but hosted status and
+check reads can still occur against the repository named by --repo. --remote wants
+an ABSOLUTE path or a URL: git runs inside the lane directory, so a relative one
+resolves against the lane and the run is refused. Give the rehearsal a lane of its own --
 init creates a lane once, so rehearsing into the live lane's directory is INIT
 REFUSED on the line after. A bare repository with no --base branch in it prints one
 STATUS NOTE and base_state=UNKNOWN at exit 0, which is a rehearsal with no base to
@@ -120,15 +122,16 @@ conflicting file named and the exact hand command on the line; no code path here
 writes a resolved file.
 
 example:
-  nova-merge quickstart --lane ./lane --repo mas-bandwidth/nova-tools --base main --lane-branch nova-merge/main
-  nova-merge add --lane ./lane --pr 949 --needs-read
-  nova-merge status --lane ./lane
-  nova-merge packet --lane ./lane --who emma --all
-  nova-merge dry-run --lane ./lane
+  nova-merge quickstart --lane ./rehearsal-lane --repo rehearsal-team/rehearsal --base main --lane-branch nova-merge/main --remote "$PWD/rehearsal.git"
+  nova-merge add --lane ./rehearsal-lane --pr 949 --needs-read
+  nova-merge status --lane ./rehearsal-lane
+  nova-merge packet --lane ./rehearsal-lane --who emma --all
+  nova-merge dry-run --lane ./rehearsal-lane
 
-Those five are one sitting, in order: make the lane, queue an entry, look at it,
-ask what a reader would be handed, and see what a pass would do without doing it.
-./lane is a path of yours and nothing is guessed from it.
+Those five are one sitting against a bare repository of your own, in order: make the
+lane, queue an entry, look at it, ask what a
+reader would be handed, and see what a pass would do without doing it. ./rehearsal-lane
+is a path of yours and nothing is guessed from it.
 `
 
 // refuse is what an unusable invocation costs: ONE line naming what was wrong and the

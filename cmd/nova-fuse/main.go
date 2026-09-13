@@ -168,6 +168,20 @@ func parseBox(name string, args []string, stderr io.Writer) (box string, positio
 // second flag never means a second parser -- and therefore never a second place where
 // package flag could be handed a stream to print an argument through.
 func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag.FlagSet)) (box string, positional []string, boxOK, parsed bool) {
+	var flagArgs, postArgs []string
+	hasDashDash := false
+	for i, a := range args {
+		if a == "--" {
+			flagArgs = args[:i]
+			postArgs = args[i+1:]
+			hasDashDash = true
+			break
+		}
+	}
+	if !hasDashDash {
+		flagArgs = args
+	}
+
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	// PACKAGE FLAG IS NOT ALLOWED TO PRINT. Its error text quotes the argument it could not
 	// parse, and its usage dump follows -- so with a stream to write to, an argument
@@ -183,7 +197,7 @@ func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag
 	if extra != nil {
 		extra(fs)
 	}
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flagArgs); err != nil {
 		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
 		// invocation: exit 2, never 0. `check` answers PERMISSION with 0, and a surface
 		// named "-h" must not be able to reach that answer.
@@ -192,15 +206,16 @@ func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag
 	}
 	for _, arg := range fs.Args() {
 		if strings.HasPrefix(arg, "-") {
-			fmt.Fprintf(stderr, "nova-fuse %s: flags come before positional arguments, got %q late\n", name, arg)
+			refuse(stderr, " "+name, fmt.Sprintf("flags come before positional arguments, got %q late", arg))
 			return "", nil, false, false
 		}
 	}
+	positional = append(fs.Args(), postArgs...)
 	if *boxFlag == "" {
 		fmt.Fprintf(stderr, "nova-fuse %s: --box is required; refusing to guess\n%s", name, hintFor("box"))
-		return "", fs.Args(), false, true
+		return "", positional, false, true
 	}
-	return *boxFlag, fs.Args(), true, true
+	return *boxFlag, positional, true, true
 }
 
 // ---------------------------------------------------------------------------- the verbs

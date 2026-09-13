@@ -68,6 +68,17 @@ func Kernel(file string, maxBytes int64) (measured int64, failures []Failure, er
 // The derivation rounds UP (ceiling). A size check must never report fewer
 // tokens than its own estimate, and rounding down would let a kernel sit one
 // token over budget and read as exactly at it.
+//
+// AND IT MUST NOT REPORT A NUMBER THE CONVERSION INVENTED. The estimate is a
+// float64 and the count is an int64, and Go leaves an out-of-range conversion
+// between them to the hardware: arm64 saturates to MaxInt64, amd64 yields the
+// integer-indefinite value MinInt64 -- which is less than every budget, so a
+// divisor of 1e-20 printed `KERNEL OK tokens=-9223372036854775808 budget=400`
+// and exited 0 on three of the five shipped targets while the other two failed
+// on the same file. The divisor is a hand-typed measurement and `1e-20` is a
+// scientific-notation typo away from `1e20`, so the range is checked BEFORE the
+// conversion and an estimate that cannot be counted is over budget, said in
+// those words. The gate now gives the same verdict on every GOARCH.
 func KernelTokens(file string, maxTokens int64, bytesPerToken float64) (measured, tokens int64, failures []Failure, err error) {
 	if maxTokens <= 0 {
 		return 0, 0, nil, fmt.Errorf("max-tokens must be positive, got %d", maxTokens)
@@ -79,7 +90,16 @@ func KernelTokens(file string, maxTokens int64, bytesPerToken float64) (measured
 	if err != nil || measured == 0 {
 		return measured, 0, failures, err
 	}
-	tokens = int64(math.Ceil(float64(measured) / bytesPerToken))
+	// float64(math.MaxInt64) rounds UP to 2^63, one past the largest int64, so the
+	// boundary is >= rather than >: an estimate of exactly 2^63 is already out of range.
+	// +Inf (a denormal divisor) and every larger finite estimate take the same branch.
+	estimate := math.Ceil(float64(measured) / bytesPerToken)
+	if estimate >= float64(math.MaxInt64) {
+		return measured, 0, append(failures, Failure{file, fmt.Sprintf(
+			"over budget: the divisor derives more tokens than can be counted (measured %d bytes at %g bytes/token, budget %d)",
+			measured, bytesPerToken, maxTokens)}), nil
+	}
+	tokens = int64(estimate)
 	if tokens > maxTokens {
 		failures = append(failures, Failure{file, fmt.Sprintf(
 			"over budget: %d tokens, budget %d, over by %d (measured %d bytes at %g bytes/token)",

@@ -527,12 +527,13 @@ func TestARecoveredJobThatDiedOnTheInputLimitIsNamed(t *testing.T) {
 		t.Fatal(err)
 	}
 	nonce := "0123456789ab"
-	if err := WriteJSON(ExitPath(jobDir), &ExitRecord{RC: 1, End: EndFailed, Nonce: nonce}); err != nil {
+	if err := WriteJSON(ExitPath(jobDir), &ExitRecord{RC: 1, End: EndFailed, Nonce: nonce, Attest: fixtureAttest}); err != nil {
 		t.Fatal(err)
 	}
 	if err := writeSlot(p.slotPath(1), SlotFile{
 		Job: id, JobDir: jobDir, State: SlotLaunched, Pid: 0, Pgid: 0, JobPgid: 0,
-		PidStarted: "-", RunnerPid: 0, Nonce: nonce, LaunchedAt: Stamp(time.Now().UTC()),
+		PidStarted: "-", RunnerPid: 0, Nonce: nonce, ExitAttest: ExitAttestHash(fixtureAttest),
+		LaunchedAt: Stamp(time.Now().UTC()),
 	}); err != nil {
 		t.Fatal(err)
 	}

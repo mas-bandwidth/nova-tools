@@ -38,9 +38,14 @@ import (
 // rather than a permanent exemption. Each entry earns its skip only while the
 // docs/TESTS.md section is genuinely still missing: the moment that branch
 // merges, the condition below stops firing and the entry can be deleted.
-var notYetOnTheStandard = map[string]string{
-	"nova-bus": "nova-bus-first-send (a draft verb, a tolerant send with notices, all refusals at once, and a `### First run`)",
-}
+// It is EMPTY, and an empty list is the point: nova-bus was the last entry, and it
+// sat here after the branch it named had merged -- the draft verb, the tolerant send
+// and the refusals all landed, the `### First run` did not, and the one tool the
+// README sends a stranger to first was the one tool excused from the standard. The
+// transcript is now in docs/TESTS.md and cmd/nova-bus/firstrun_test.go executes it.
+// An entry added here has to name a branch that is genuinely open, and it stops
+// firing the moment that branch's section lands.
+var notYetOnTheStandard = map[string]string{}
 
 func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 	root := repoRoot(t)
