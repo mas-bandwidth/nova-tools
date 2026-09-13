@@ -1,5 +1,7 @@
 # nova-tokens, specification
 
+[Unified execution coverage](PROPOSAL-USAGE-COVERAGE.md) specifies the proposed shared token and cost accounting for AI friends, swarms, one-shots and local inference. It preserves existing formats and distinguishes local zero API cost from missing usage.
+
 `nova-tokens` is one binary at the **accounting layer**. It folds token spend
 from declared sources into **one file per day**, keyed exactly by
 `(day, model, repo)`, with the five token types kept apart, and it sums those
