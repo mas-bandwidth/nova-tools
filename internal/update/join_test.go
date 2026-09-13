@@ -641,6 +641,7 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 	if after := git(t, r.bus.bare, "rev-parse", "main"); after != before {
 		t.Fatal("a settled report moved the remote again")
 	}
+	t.Logf("%s (attempt %d): live kill and recovery proven: %s", boundary, attempt, staged)
 	return true
 }
 
@@ -950,6 +951,7 @@ func TestJoinReporterDeathWithPendingSavedFinishesTheSameReport(t *testing.T) {
 		t.Fatalf("a new identity was prepared: %q, not the saved %q", got, id)
 	}
 	r.bus.exactlyOneContribution(t, id)
+	t.Logf("reporter death with pending saved verified: finished report for %s", id)
 }
 
 // Killed after the note is ON the remote but before the confirmation is
@@ -983,6 +985,7 @@ func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.
 	if !strings.Contains(out, "already-published") {
 		t.Fatalf("recovery did not recognise the note it had already published: %s", out)
 	}
+	t.Logf("reporter death after remote confirmation verified: recovered single note %s without republishing", id)
 }
 
 // TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers closes Item 2 of #206:
@@ -990,7 +993,7 @@ func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.
 // its production recovery append before confirmation, then retries to prove byte-identical
 // prior entries and exactly one new contribution.
 // twoPhaseAttempt executes one staged two-phase interruption:
-// Phase 1 kills the send at killAfterNote.
+// Phase 1 kills the send at killBeforeNote during prepared send.
 // Phase 2 verifies the pending ID is absent from local INDEX before starting,
 // then kills the recovery append at killAfterIndex.
 // Both phases require verified live kills (killed-alive=true) and whole-group quiescence
@@ -1038,6 +1041,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 	if !r1.groupGone {
 		t.Fatalf("phase 1 process tree failed to quiesce: %s", string(b1))
 	}
+	t.Logf("phase 1 staged live death verified (attempt %d): %s", attempt, strings.TrimSpace(string(b1)))
 
 	id := r.pendingID(t)
 
@@ -1091,6 +1095,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 	if !r2.groupGone {
 		t.Fatalf("phase 2 process tree failed to quiesce: %s", string(b2))
 	}
+	t.Logf("phase 2 staged live death verified (attempt %d): %s", attempt, strings.TrimSpace(string(b2)))
 
 	// Verify local INDEX now contains the newly appended id
 	localIndex2, err := os.ReadFile(filepath.Join(r.bus.checkout, r.bus.lane, "INDEX"))
@@ -1136,6 +1141,7 @@ func twoPhaseAttempt(t *testing.T, attempt int) bool {
 	if !strings.Contains(finalIndexRows[1], id) {
 		t.Fatalf("second INDEX row does not name id %q: %s", id, finalIndexRows[1])
 	}
+	t.Logf("two-phase recovery verified: prior prefix byte-identical, exactly 2 contributions published (id=%s)", id)
 	return true
 }
 
