@@ -149,9 +149,10 @@ func TestOpenListRoundTripsItsDisplayLineAndKeepsItsOrder(t *testing.T) {
 			t.Fatalf("an open list of %q was accepted", bad)
 		}
 	}
-	// Historical notes carrying legacy IDs (which are valid slugs) are accepted in OPEN.
+	// Historical notes carrying legacy IDs (which are valid legacy open IDs) are accepted in OPEN.
 	for _, goodLegacy := range []string{
 		OpenHeader + "\nbo-legacy-001\tnote\t-\tBo\tto\t-\tfrom-bo/a.md\t-\n",
+		OpenHeader + "\nBo-Legacy-001\tnote\t-\tBo\tto\t-\tfrom-bo/a.md\t-\n",
 		OpenHeader + "\nfreddy-pr827-001\treceipt\t-\tFreddy\tcc\t2026-09-09T22:03:00Z\tfrom-freddy/ack.md\tRe: PR\n",
 	} {
 		write(t, root, OpenPath("from-ada"), goodLegacy)
@@ -171,8 +172,12 @@ func TestValidOpenID(t *testing.T) {
 		"bo-abcdef012345",
 		"freddy-pr827-001",
 		"bo-legacy-001",
+		"Bo-Legacy-001",
+		"Bo-Uppercase",
 		"freddy-pong9",
 		"freddy-card-15-nine-md",
+		"freddy_pr827_001",
+		"freddy.001",
 	} {
 		if err := ValidOpenID(good); err != nil {
 			t.Errorf("ValidOpenID(%q) = %v, want nil", good, err)
@@ -180,9 +185,15 @@ func TestValidOpenID(t *testing.T) {
 	}
 	for _, bad := range []string{
 		"",
+		"-",
 		"bo not slug",
 		"bo/bad/slash",
-		"Bo-Uppercase",
+		"-leading-hyphen",
+		"trailing-hyphen-",
+		".leading-dot",
+		"trailing-dot.",
+		"_leading-underscore",
+		"trailing-underscore_",
 		strings.Repeat("a", SlugMax+1),
 	} {
 		if err := ValidOpenID(bad); err == nil {

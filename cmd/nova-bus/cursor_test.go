@@ -1358,12 +1358,17 @@ func TestAFirstAdvanceCarriesTheHistoryWhenAsked(t *testing.T) {
 }
 
 // Issue #209: carry-history writes legacy IDs that the next inbox refuses.
-// A historical note with an ID outside <sender>-<12 hex> (e.g. bo-legacy-001) is accepted
-// by the full inbox walk and copied verbatim by OpenFromFull. ReadOpen must not subsequently
-// reject that same ID. The two-command round trip must succeed, retaining:
-// - an addressed historical note with legacy ID (bo-legacy-001)
-// - a normal modern note (bo-abcdef012345)
-// - an unreadable historical note
+// Historical notes with IDs outside modern <sender>-<12 hex> (e.g. bo-legacy-001, Bo-Legacy-001)
+// or unsupported legacy shapes (e.g. spaces/prose) are handled consistently between writer
+// and reader:
+//   - Supported legacy IDs (lowercase or uppercase slugs/identifiers) are accepted by ValidOpenID
+//     and preserved in OPEN.
+//   - Unsupported legacy ID shapes safely fall back to the deliberate legacy representation
+//     ("-" on wire in OPEN, addressed by path), preserving the carried obligation and source path.
+//   - Normal modern notes (bo-abcdef012345) retain strict ValidID validation.
+//   - Unreadable notes continue to be carried by path.
+//
+// The two-command round trip must succeed without any incremental read refusals.
 func TestCarryHistoryTwoCommandRoundTripRetainsLegacyAndUnreadable(t *testing.T) {
 	t.Parallel()
 	hermetic(t)
@@ -1371,11 +1376,17 @@ func TestCarryHistoryTwoCommandRoundTripRetainsLegacyAndUnreadable(t *testing.T)
 
 	// Fixture already includes modern note:
 	//   from-bo/2026-09-07T0001Z-a-question-abcdef012345.md (Id: bo-abcdef012345)
-	// Add an addressed historical note with a legacy slug ID:
-	writeFile(t, checkout, "from-bo/2026-09-07T0003Z-legacy-001.md",
-		"From: Bo\nTo: Ada\nDate: Mon Sep  7 00:03:00 UTC 2026\nId: bo-legacy-001\nSubject: Legacy note\n\nA note with a historical slug ID.\n")
+	// Add an addressed historical note with a lowercase legacy slug ID:
+	writeFile(t, checkout, "from-bo/2026-09-07T0003Z-legacy-lower.md",
+		"From: Bo\nTo: Ada\nDate: Mon Sep  7 00:03:00 UTC 2026\nId: bo-legacy-001\nSubject: Legacy lowercase\n\nA note with a historical lowercase slug ID.\n")
+	// Add an addressed historical note with an uppercase legacy slug ID:
+	writeFile(t, checkout, "from-bo/2026-09-07T0004Z-legacy-upper.md",
+		"From: Bo\nTo: Ada\nDate: Mon Sep  7 00:04:00 UTC 2026\nId: Bo-Legacy-001\nSubject: Legacy uppercase\n\nA note with a historical uppercase slug ID.\n")
+	// Add an addressed historical note with an unsupported legacy ID shape (contains space):
+	writeFile(t, checkout, "from-bo/2026-09-07T0005Z-unsupported-id.md",
+		"From: Bo\nTo: Ada\nDate: Mon Sep  7 00:05:00 UTC 2026\nId: bo not slug\nSubject: Unsupported legacy id\n\nA note with an unsupported legacy ID shape that falls back to path addressing.\n")
 	// Add an unreadable historical note (no headers, plain prose):
-	writeFile(t, checkout, "from-bo/2026-09-07T0004Z-unreadable.md",
+	writeFile(t, checkout, "from-bo/2026-09-07T0006Z-unreadable.md",
 		"This is an unreadable historical note with no headers at all.\n")
 
 	gitIn(t, checkout, "add", "-A")
@@ -1383,40 +1394,56 @@ func TestCarryHistoryTwoCommandRoundTripRetainsLegacyAndUnreadable(t *testing.T)
 	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
 
 	// Command 1: carry-history advance over all notes.
-	// Must succeed and write OPEN carrying the legacy note, the modern note, and the unreadable file.
+	// Must succeed and write OPEN carrying all notes without refusing.
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--carry-history",
 		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX OK as=Ada carrying=4")
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=6")
 
 	open := read(t, checkout, "from-ada/OPEN")
 	if !strings.Contains(open, "bo-legacy-001") {
 		t.Fatalf("OPEN does not contain legacy ID bo-legacy-001:\n%s", open)
 	}
+	if !strings.Contains(open, "Bo-Legacy-001") {
+		t.Fatalf("OPEN does not contain uppercase legacy ID Bo-Legacy-001:\n%s", open)
+	}
 	if !strings.Contains(open, "bo-abcdef012345") {
 		t.Fatalf("OPEN does not contain modern ID bo-abcdef012345:\n%s", open)
 	}
-	if !strings.Contains(open, "from-bo/2026-09-07T0004Z-unreadable.md") {
+	if !strings.Contains(open, "from-bo/2026-09-07T0005Z-unsupported-id.md") {
+		t.Fatalf("OPEN does not contain unsupported ID note path:\n%s", open)
+	}
+	// The unsupported legacy ID must use the deliberate safe representation ("-" in ID column):
+	if strings.Contains(open, "bo not slug") {
+		t.Fatalf("OPEN published unreadable/malformed ID string %q:\n%s", "bo not slug", open)
+	}
+	if !strings.Contains(open, "from-bo/2026-09-07T0006Z-unreadable.md") {
 		t.Fatalf("OPEN does not contain unreadable path:\n%s", open)
 	}
 
 	// Command 2: subsequent incremental inbox without --full or --carry-history.
-	// Must read OPEN cleanly without refusing bo-legacy-001.
+	// Must read OPEN cleanly without refusing any legacy ID or safe representation.
 	res := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").
 		mustCode(t, 0)
-	res.mustContain(t, "stdout", "INBOX OK as=Ada carrying=4")
+	res.mustContain(t, "stdout", "INBOX OK as=Ada carrying=6")
 
-	// When asked for --open, it prints all carried entries.
+	// When asked for --open, it prints all carried entries cleanly.
 	openRes := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--open").
 		mustCode(t, 0)
 	if !strings.Contains(openRes.stdout, "bo-legacy-001") {
 		t.Fatalf("incremental inbox --open did not print legacy note bo-legacy-001:\n%s", openRes.stdout)
 	}
+	if !strings.Contains(openRes.stdout, "Bo-Legacy-001") {
+		t.Fatalf("incremental inbox --open did not print uppercase legacy note Bo-Legacy-001:\n%s", openRes.stdout)
+	}
 	if !strings.Contains(openRes.stdout, "bo-abcdef012345") {
 		t.Fatalf("incremental inbox --open did not print modern note bo-abcdef012345:\n%s", openRes.stdout)
 	}
-	if !strings.Contains(openRes.stdout, "from-bo/2026-09-07T0004Z-unreadable.md") {
+	if !strings.Contains(openRes.stdout, "from-bo/2026-09-07T0005Z-unsupported-id.md") {
+		t.Fatalf("incremental inbox --open did not print unsupported-id note by path:\n%s", openRes.stdout)
+	}
+	if !strings.Contains(openRes.stdout, "from-bo/2026-09-07T0006Z-unreadable.md") {
 		t.Fatalf("incremental inbox --open did not print unreadable note:\n%s", openRes.stdout)
 	}
 
@@ -1424,7 +1451,7 @@ func TestCarryHistoryTwoCommandRoundTripRetainsLegacyAndUnreadable(t *testing.T)
 	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
 		"--advance", "--remote", "origin", "--branch", "main", "--attempts", "3").
 		mustCode(t, 0).
-		mustContain(t, "stdout", "INBOX OK as=Ada carrying=4")
+		mustContain(t, "stdout", "INBOX OK as=Ada carrying=6")
 }
 
 // The guard is about a HISTORY, so a bus that has none does not meet it. A line joining a

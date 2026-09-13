@@ -468,8 +468,12 @@ func OpenFromFull(items []InboxItem, unreadable []*Note) []OpenEntry {
 		if when := it.Note.When(); !when.IsZero() {
 			date = when.Format(ReceiptStampLayout)
 		}
+		id := it.Note.Header.ID
+		if id != "" && ValidOpenID(id) != nil {
+			id = ""
+		}
 		out = append(out, OpenEntry{
-			ID:      it.Note.Header.ID,
+			ID:      id,
 			Kind:    kind,
 			Heard:   it.Heard,
 			From:    it.From,
@@ -506,8 +510,12 @@ func openEntryFor(c *Config, n *Note, me Participant, heard bool, maxWords int) 
 	if when := n.When(); !when.IsZero() {
 		date = when.Format(ReceiptStampLayout)
 	}
+	id := n.Header.ID
+	if id != "" && ValidOpenID(id) != nil {
+		id = ""
+	}
 	return OpenEntry{
-		ID:      n.Header.ID,
+		ID:      id,
 		Kind:    kind,
 		Heard:   heard,
 		From:    from,
