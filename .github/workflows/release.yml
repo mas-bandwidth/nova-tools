@@ -92,8 +92,9 @@ jobs:
           esac
           body=$(printf '%s\n' "$out" | sed -e '1,/^[[:space:]]*$/d')
           # A RUN STILL IN FLIGHT ON THIS COMMIT IS ASKED ABOUT TOO, and refuses: the completed
-          # list cannot see it (queued, waiting and in progress alike, so no status filter here), and a certification whose required job has already gone red is
-          # in that list until it finishes. Refuse and say wait, rather than release on the older
+          # list cannot see it (queued, waiting and in progress alike, so no status filter on this
+          # ask), and a certification whose required job has already gone red is in that list
+          # until it finishes. Refuse and say wait, rather than release on the older
           # answer while a newer one is being written.
           set +e
           live=$(gh api -i "repos/${GITHUB_REPOSITORY}/actions/workflows/certification.yml/runs?head_sha=${SHA}&per_page=100" 2>&1); lrc=$?
