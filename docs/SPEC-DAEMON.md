@@ -27,12 +27,12 @@ failures closed, one rule each.
 | the failure, from the record | the rule that closes it |
 |---|---|
 | a rebuild moved a binary's content hash; macOS SIGKILLed three scheduled jobs at exec for a code-signing mismatch, writing no stamp, no log and no exit — the fold, the mail and a contraction pass simply did not happen (2026-08-21) | `repin` runs **from the build, unconditionally**, not from a unit — a direct execution is subject to no unit's pinned requirement (rules 17, 18) |
-| the detector for that kill existed, worked, and ran **once a day**; it found all three a day late (2026-08-21) | the heartbeat is a **declared unit** whose period must be strictly shorter than the shortest declared schedule in the file, and `check` fails when there is none, when it is too slow, and when its own stamp says it has stopped beating (rule 19) |
+| the detector for that kill existed, worked, and ran **once a day**; it found all three a day late (2026-08-21) | the heartbeat is **one declared unit** whose period must be strictly shorter than the shortest interval of any **other** unit in the file, and `check` fails when there is none, when it is too slow, and when its own stamp says it has stopped beating (rule 19) |
 | `repin` skipped a running job for a correct reason and then forgot; the job sat forty-three ticks un-repinned while every instrument read it healthy (2026-08-21) | a skip is **recorded as owed** in the state directory, and the heartbeat retries it; a skip with no record is refused (rule 20) |
 | an install was refused over a live run, so one role kept a superseded schedule while every other role moved; it fired, stamped fresh, reported clean and exited 0 — **at the wrong time, forever** (2026-08-23) | `check` compares **declared against loaded against fired**, and `WRONG-WHEN` is a failure of its own (rule 13) |
 | a deferred install re-instated the schedule it was meant to replace | a recorded owed act **re-derives its content at repair time** and never stores it (rule 20) |
 | a green report said "all 9 stamped roles RAN-CLEAN" for twenty mornings while the weekly role had run twice in its life, because the list it counted deliberately excluded it (2026-08-30) | every unit in the declaration is counted in every count line; there is **no exemption list**, and a unit that cannot be judged is `UNKNOWN`, never absent (rule 14) |
-| an unattended run called a gated tool, which did not fail — it **parked on a permission modal** for 3h14m and reported work it had not done (2026-07-22) | stdin is `/dev/null`, no unit may declare an unbounded deadline, and a deadline reached kills the **process group**. For a `role` and a `consumer` that stamps `TIMEOUT`, a state of its own. For a `daemon` it stamps `RECYCLED` — and because that park was a **window**, not a read of stdin, and `/dev/null` does not close a window, two consecutive recycles that produced no output are `IDLE`, a failure of their own (rules 9, 10) |
+| an unattended run called a gated tool, which did not fail — it **parked on a permission modal** for 3h14m and reported work it had not done (2026-07-22) | stdin is `/dev/null`, no unit may declare an unbounded deadline, and a deadline reached kills the **process group**. For a `role` and a `consumer` that stamps `TIMEOUT`, a state of its own. For a `daemon` it stamps `RECYCLED` — and because that park was a **window**, not a read of stdin, and `/dev/null` does not close a window, two consecutive recycles whose logs came out the same size — nothing new said in two full cadences — are `IDLE`, a failure of their own (rules 9, 10) |
 | a launchd job was installed via `go run`; the plist named a build artifact the toolchain deletes on exit. The agent registered, reported healthy, and could never start again (2026-08-13) | `install` resolves the program through symlinks and **refuses a temporary-build path**, an absent file and a non-executable one (rule 6) |
 | launchd handed a job a POSIX `PATH`; the first unattended night's commit came back `go: command not found` and the whole run blocked, silently, from the second night onward (2026-08-12) | the unit's environment is **declared, resolved at install time from the installer's own environment, and refused when a named tool is not found** (rule 8) |
 | a spawned role had no HTTPS credential and hung a four-hour deadline on a clone prompt (2026-08-13) | rule 9 again: the deadline is the wall, and `RUN TIMEOUT` is distinguishable from `RUN FAIL` in the stamp and in `check` |
@@ -68,7 +68,7 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
    read — and it is the **only** place a unit's shape is written. There is no second
    table, in this tool or in a caller, from which a unit may be generated.
 
-2. **Nine fields per unit, and nothing implied.** One unit is one tab-separated line:
+2. **Ten fields per unit, and nothing implied.** One unit is one tab-separated line:
 
    | field | holds |
    |---|---|
@@ -79,6 +79,7 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
    | `deadline` | how long one run may take, a Go duration, **never empty and never zero** (rule 9) |
    | `dir` | the working directory the command runs in, absolute |
    | `write` | comma-separated absolute paths the command may write, or `none` |
+   | `wall` | `sandbox` or `none`: whether this unit's command runs behind the wall `--sandbox` names (rule 12). It is a field of the file and not a flag of the invocation because one estate holds walled units **and** a heartbeat that cannot be walled today (rule 11) |
    | `env` | comma-separated **names** of environment variables from the secret store, or `none` (rule 7) |
    | `command` | the argv, split on single spaces (rule 3) |
 
@@ -154,7 +155,19 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
      (both the *"powered down"* clause and the *"only ... with `OnCalendar=`"* clause),
      `systemctl --user enable <path>` creating symlinks into `~/.config/systemd/user`, the
      `Result=` / `ExecMainStatus` pair, `loginctl`'s linger field, and the three loading
-     facts just above. They rest on one read's report of a linux box and no artifact.
+     facts just above. So are seven more that a hurried reader takes as settled because
+     they are written in the flat voice of the rest of this document, and a blanket
+     sentence is the thing a hurried reader skips (read of draft 3, 2026-09-13):
+     `StandardOutput=append:` and `StandardError=append:` (rule 23 — the syntax is
+     systemd 240 and later, and a version floor is a refusal this spec does not have);
+     `%` written `%%` (rule 5's escaping); `Type=oneshot`, `Restart=always` and
+     `RestartSec=10` (the table of kinds); `OnUnitActiveSec=` with `OnBootSec=` restarting
+     from the next activation rather than catching up (rule 5's claim for a `consumer`);
+     `ActiveState` as the running-detection rules 20 and 50 read; `NeedDaemonReload` from
+     `systemctl show` as the file-versus-loader fact `WRONG-WHEN reason=stale` needs on
+     this platform (rule 13), which is the one the spec relies on without naming; and
+     `TimeoutStopSec=` as the linux half of rule 9's stop grace. They rest on one read's
+     report of a linux box and no artifact.
      **Walking this leg end to end on a linux box, and quoting `systemd.timer(5)`,
      `systemd.unit(5)` and `systemctl(1)` here the way the darwin quotes are quoted, is a
      gate on ratification** — the shape of the gap above is what an unwalked leg looks
@@ -268,6 +281,18 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
      the **group**, not the pid — a parked child outlives a killed parent otherwise;
    - a deadline reached is `TERM` to the group, then `KILL` after a grace of 10 seconds.
 
+   **A `TERM` to the supervisor is a `TERM` to the group, and draft 3 left it unhandled.**
+   Logout, reboot and a hand's `launchctl bootout` signal the supervisor, not the command:
+   rule 9 put the command in a group of its own, so the loader's own reaper — the
+   `AbandonProcessGroup` behavior rule 10 quotes — no longer reaches it. Without this
+   clause the command outlives its supervisor and the record is a start with no end, which
+   rule 22 reads as a crash (read of draft 3, 2026-09-13). On `TERM` or `INT`, `run`
+   forwards `TERM` to the command's process group, waits the same 10-second grace, `KILL`s
+   what is left, writes the end stamp with `signal` set, and exits 128+N. Each rendered
+   unit gives the loader longer than that grace before it kills the supervisor itself —
+   darwin's `ExitTimeOut` and linux's `TimeoutStopSec=`, both rendered at the grace plus
+   five seconds (the linux key is UNVERIFIED, rule 5).
+
    **What the expiry means is the kind's, and for a `daemon` it is not a failure.** For a
    `role` and a `consumer` the run is stamped **`TIMEOUT`**, a third state beside success
    and failure, reported as such by `check` and `status`. A `daemon` is meant to be up:
@@ -287,14 +312,25 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
    at its cadence, stamped `RECYCLED` at exit 0, restarted by the loader, and parks again:
    with `TIMEOUT` turned off for this kind and nothing put in its place, the one detector
    this spec had for a parked long-runner was switched off for the one kind whose whole job
-   is to stay up, and `check` counted it `OK` forever. **The measure, stated:** the end
-   stamp carries `log_bytes`, the size of this run's own log file when the run ended. A
-   `daemon` whose two most recent runs both ended `RECYCLED` **and** whose `log_bytes` was
-   zero in both is verdict **`IDLE`**, a failure, exit 1, naming the two run times — two
-   full cadences in which a process that is meant to be doing work said nothing at all.
-   There is no flag: two is the smallest number that is not one stamp, and a tunable floor
-   is a floor somebody turns off. A daemon that legitimately says nothing for two cadences
-   makes itself visible by writing one line — which is what a log is for.
+   is to stay up, and `check` counted it `OK` forever.
+
+   **The contract first, because the measure rests on it.** A `daemon`'s command **owes one line per recycle cadence saying what it did**, and
+   that line must carry something that changes — a count, a total, a name. It is an
+   obligation of the declaration, stated here and in the declaration section, and it is the
+   only thing that makes a parked long-runner visible from outside it. **The measure:** the
+   end stamp carries `log_bytes`, the size of this run's own log file when the run ended. A
+   `daemon` whose two most recent runs both ended `RECYCLED` **and** whose `log_bytes` is
+   **the same in both** — zero twice, or the same number twice — is verdict **`IDLE`**, a
+   failure, exit 1, naming the two run times and both byte counts: two full cadences in
+   which a process that is meant to be doing work said nothing new. Draft 3 required zero
+   in both, and rule 23 gives every run its own log file, so a daemon that prints one
+   `listening on ...` banner at startup and then parks on a modal wrote a non-zero log at
+   every recycle and was `OK` forever — the 2026-07-22 hurt with a green verdict on it,
+   found by both cold reads of draft 3 (2026-09-13), and a daemon that starts silently is
+   the rare one. There is no flag: two is the smallest number that is not one stamp, and a
+   tunable floor is a floor somebody turns off. A daemon whose honest output is the same
+   number of bytes every cadence is reported `IDLE`; the remedy is one line, and it is the
+   contract above.
 
 10. **A run that exits 0 with its process group still populated is a fourth state, and
     the supervisor clears it.** `RUN OK` requires an exit status of zero **and** an empty
@@ -331,12 +367,16 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
     spec's predicate whole left half the test unanswerable.
 
     **One exemption, and it is a named unit rather than a list.** The heartbeat of rule 19
-    is itself a declared unit, and repairing the state and unit directories is its whole
-    job — so the unit whose command is this supervisor's `heartbeat` verb may carry the
-    state directory and the unit output directory in its `write` set, and no other unit
-    may. The exemption is safe for the one reason that matters: **it is judged from
-    outside itself.** Its stamps are written by its own supervisor, before and after,
-    outside its wall, and `check` reads them as it reads every other unit's — so a
+    is itself a declared unit, and repairing the state and unit directories **and pruning
+    the logs** is its whole job — so the unit whose command is this supervisor's
+    `heartbeat` verb may carry the state directory, the unit output directory **and the
+    log directory** in its `write` set, and no other unit may. The log directory was
+    missing from draft 3's exemption while step 3 of `heartbeat` was *prune logs past
+    `--log-days`*, which deletes under `--logs`: behind any wall the beat was denied on
+    every tick and, by rule 24, wrote one loud line every thirty seconds for the life of
+    the box (read of draft 3, 2026-09-13). The exemption is safe for the one reason that
+    matters: **it is judged from outside itself**, by its stamps and never by its logs.
+    Its stamps are written by its own supervisor, before and after, outside its wall, and `check` reads them as it reads every other unit's — so a
     heartbeat that has stopped repairing is visible exactly where a unit inside its own
     write set would not be (rule 19, `BEAT reason=stalled`).
 
@@ -347,17 +387,35 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
     system` under its narrowed `mach-lookup` set; **bootout and bootstrap under that wall
     are UNVERIFIED**. Until one measurement says otherwise this spec does not claim a
     heartbeat repairs anything from inside a narrowed wall, and a caller who needs it to
-    repair today installs with `--sandbox none` — which prints `wall=none` on every line
-    every unit writes and is therefore counted rather than assumed (rule 12). Making the
+    repair today **declares the beat's `wall` field `none`** — one word in a file somebody
+    diffs, which prints `wall=none` on every line **that unit** writes and is therefore
+    counted rather than assumed (rule 12). Draft 3 said `--sandbox none` here while
+    `--sandbox` was one flag of the whole invocation, so the only way to unwall the beat
+    was to unwall the estate, and `check` then reported `WRONG-ARGV` on the beat forever
+    whichever value it was given: *"the verdict added to catch a silently unwalled unit
+    fires on the configuration this spec prescribes"* (read of draft 3, 2026-09-13). That
+    is the hurt the tenth field of rule 2 closes, and it is why the wall is per unit and
+    not per invocation. Making the
     measurement is a test this spec demands (test 19b) and a gate on ratification, not a
     detail.
 
 12. **The command runs behind a wall, or the declaration says so in the open.** `run`
     starts the command through the sandbox tool named by `--sandbox`, with `dir` as the
-    working directory and `write` as the write set. A unit whose `write` is `none` runs
-    with a write set of its `dir` alone. `--sandbox none` is accepted and is **recorded
-    in every stamp and printed in every `RUN` line as `wall=none`**, because an
-    unwalled unit is a fact a reader must be able to count, not a silence. **`dir` must
+    working directory and `write` as the write set, **when the unit's `wall` field is
+    `sandbox`**; a unit whose `wall` is `none` runs with no wall at all and says so on
+    every line it ever writes. A unit whose `write` is `none` runs with a write set of its
+    `dir` alone.
+
+    **Which units are walled is the file's; which program is the wall is the invocation's.**
+    The first is a fact about the work, reviewed in a diff, so it is the `wall` field of
+    rule 2. The second is a path on this box, so it is `--sandbox <path|none>`. A unit
+    declaring `wall sandbox` under `--sandbox none` is refused, exit 2, `reason=no_tool`,
+    naming the unit: the file asked for a wall and nobody named one.
+
+    **An unwalled unit is counted, never silent.** `wall none` in the file, and
+    `--sandbox none` on the invocation, are both **recorded in every stamp and printed in
+    every `RUN` line as `wall=none`**, because an unwalled unit is a fact a reader must be
+    able to count, not a silence. **`dir` must
     itself be inside the `write` set** when `write` is not `none`, refused at load time
     naming both, because [SPEC-SANDBOX.md](SPEC-SANDBOX.md) refuses a `--cwd` outside the
     write set at 125 — and a unit that refuses on every run is a unit that never runs.
@@ -366,22 +424,37 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
     `run` is invoked by a unit file and a unit file's argv is written by `render`. So
     `--sandbox`, `--secrets-exec` and `--secrets-arg` are flags of `render`, `install` and
     `check`; what they are given is rendered into the unit's argv verbatim by the first two
-    and **compared against the installed argv** by the third. Draft 1 put them on `run`
+    and **compared, field by named field, against the installed argv** by the third. Draft 1 put them on `run`
     alone: every installed unit would have run unwalled, with no secrets, stamping a
     `wall=none` no caller had chosen, and no test could have caught it because the tests
     drove `run` directly. `--sandbox` is therefore **required** on `render`, `install` and
-    `check`, refused at exit 2 with `reason=no_tool` when absent: the word for "no wall" is
-    `--sandbox none`, typed by somebody, and it prints on every line that unit ever writes.
+    `check`, refused at exit 2 with `reason=no_tool` when absent: the word for "no wall on
+    this box" is `--sandbox none`, typed by somebody, and the word for "no wall on this
+    unit" is that unit's `wall` field, written in the file. Either way `wall=none` prints
+    on every line that unit ever writes.
 
     **`check` is the reader of that fact, and draft 2 gave it nothing to read with.** Draft
     2 said the argv was "read back by `check`" while `check`'s grammar carried no
     `--sandbox` and no `--secrets-exec`, so a unit whose argv had lost its wall had no
-    verdict anywhere. `check` takes the same three flags, renders the argv the declaration
-    and those flags imply, and compares it to the argv the **loaded** unit carries:
-    a difference is **`WRONG-ARGV`**, a failure, exit 1, with the loaded `wall=` on the
-    line. It is `WRONG-WHEN`'s shape one field over — declared against loaded, both numbers
-    printed — and it is the only thing that catches a unit that is walled in the
-    declaration a person reads and unwalled in the file the loader runs.
+    verdict anywhere. `check` takes the same three flags and `--self`, and compares
+    **four named fields of the loaded argv and nothing else**: `argv[0]`, against `--self`
+    or, with no flag, its own executable; the value of `--sandbox`, which for each unit is
+    the `--sandbox` path when that unit's `wall` is `sandbox` and the word `none` when it
+    is `none`; the value of `--secrets-exec`; and every `--secrets-arg`, in order. A
+    difference in any of the four is **`WRONG-ARGV`**, a failure, exit 1, with the loaded
+    `wall=` on the line. It is `WRONG-WHEN`'s shape one field over — declared against
+    loaded, both values printed — and it is the only thing that catches a unit that is
+    walled in the declaration a person reads and unwalled in the file the loader runs.
+
+    **The comparison is of named fields because draft 3 said "the argv" and that cannot be
+    computed.** A unit's argv also carries `--file`, `--unit`, `--state`, `--logs`,
+    `--keep-runs` and `--log-bytes`, and `check` is given neither `--logs` nor either
+    bound — so a whole-argv comparison had nothing to render three of them from, and an
+    implementer filling them with this spec's defaults reported `WRONG-ARGV`, exit 1, on
+    every unit installed with `--keep-runs 500`, forever, on a healthy estate (read of
+    draft 3, 2026-09-13). The cost of the narrower comparison is named rather than hidden:
+    a hand-edited `--logs`, `--state` or bound is not caught here, and a hand-edited
+    `--file` surfaces one field over as rule 22's `file_sha256` note.
 
     **`heartbeat` takes none of these flags** (rule 20). It does not choose a wall for
     anybody: the flags of a refused install are recorded with the owed act, and the retry
@@ -421,8 +494,11 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
       because rule 5 is what produced it and the loader was right;
     - **`CAUGHT-UP` carries a reason, and `booted_at` is what decides it.** A run whose
       slot fell **before** the `booted_at` its own stamp records is
-      `CAUGHT-UP reason=powered_down`: the box was not running at the slot, and the catch-up
-      is proved. A run whose slot fell at or after `booted_at` is
+      `CAUGHT-UP reason=powered_down`, and the word means exactly this much: **a boot fell
+      between the slot and the start**. It does not prove the box was down *at* the slot —
+      a unit that was up at its slot, killed at exec, and caught up after a reboot reads
+      `powered_down` too, and the loader's kill reason went with the reboot (read of draft
+      3, 2026-09-13). A run whose slot fell at or after `booted_at` is
       `CAUGHT-UP reason=unproved`, counted separately in `unproved=`, still exit 0. The
       only thing that produces that honestly is sleep, and **neither platform stamps a
       sleep anywhere this tool can read it portably** — so a permanently late unit and a
@@ -443,13 +519,28 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
       `stalled` measures the beat's own gap against now for exactly this reason; every
       other consumer is measured the same way.
 
+      **A consumer with no stamp at all is measured from the unit file this tool wrote.**
+      Its gap runs from the modification time of its file in `--units`, which is the moment
+      it could first have fired, and twice its interval past that with no stamp is
+      `MISSED`, exit 1 — not `fired=never` with no verdict at all, which is what draft 3
+      printed for a consumer killed at exec at its **first** firing: rule 17's kill on a
+      freshly installed unit leaves no stamp, and a consumer has no slot, so nothing judged
+      it (read of draft 3, 2026-09-13). The cost is named: a reinstall rewrites that file
+      and restarts the clock, which is one interval of forgiveness after an act somebody
+      performed on purpose.
+
     **One verdict prints per unit, and this is the order.** `NOT-INSTALLED`, `WRONG-ARGV`,
     `LEFTWORK` and `CAUGHT-UP` can all hold of one unit at once, and a reader must be able
     to predict which is on the line. Highest first: `UNKNOWN`, `NOT-INSTALLED`,
     `NOT-PERSISTENT`, `WRONG-BIN`, `WRONG-ARGV`, `WRONG-WHEN`, `KILLED`, `MISSED`,
-    `FAILED`, `TIMEOUT`, `IDLE`, `LEFTWORK`, `OWED`, `RECYCLED`, `CAUGHT-UP`, `OK` — the
-    thing that explains the others before the thing it explains, and every failure before
-    every non-failure. The **counts do not follow the verdict**: `ontime=`, `caughtup=`,
+    `FAILED`, `TIMEOUT`, `IDLE`, `LEFTWORK`, `OWED`, `RECYCLED`, `CAUGHT-UP`, `COALESCED`,
+    `OK` — the thing that explains the others before the thing it explains, and every
+    failure before every non-failure. `COALESCED` was in the enum and in no order in draft
+    3 (read of draft 3, 2026-09-13); it sits below `CAUGHT-UP` because it is the fact
+    `CAUGHT-UP` explains. It is also a **slot's** fact under a grammar that prints one
+    verdict per unit, so: the unit's verdict is its run's, the folded slots are counted in
+    `coalesced=` whatever that verdict is, and `COALESCED` reaches the `verdict=` field
+    only for a unit whose slots were all folded and whose run nothing above it explains. The **counts do not follow the verdict**: `ontime=`, `caughtup=`,
     `unproved=` and `owed=` are computed from the stamp and the record whatever verdict
     printed, because a count that changed with the printing order would not be a count.
 
@@ -518,6 +609,16 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
       no row of its own that falls **between the previous row's `fired_for` and the
       `fired_for` of a run verdict `CAUGHT-UP`** is **`COALESCED`**, counted in
       `coalesced=`, exit 0, and never `MISSED`.
+
+      **The `COALESCED` line carries the reason of the run that explains it**, and draft 3
+      let it swallow one. Any `CAUGHT-UP` folds every unrowed slot behind it, including
+      `CAUGHT-UP reason=unproved` from a role that started three minutes late under load —
+      so a Saturday killed at exec was explained away by Sunday's run, green, with the
+      loader's kill reason gone with the reboot (read of draft 3, 2026-09-13). A slot
+      folded into a `CAUGHT-UP reason=unproved` run is `COALESCED reason=unproved` and is
+      counted in `unproved=` as well: a coalesce is exactly as proved as the catch-up that
+      explains it. A slot with no row behind a run of any other verdict is `MISSED`, as
+      before.
     - **ran and failed** — a stamp with `started_at`, `ended_at` and a non-zero exit.
       `FAILED`.
     - **killed at exec** — no stamp at all for a slot the loader says it launched, and
@@ -584,14 +685,25 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
     rule 21 and its write set is refused under rule 11, and a `--beat` duration a caller
     types asserts a period that no unit on the box need actually have.
 
+    **Exactly one heartbeat unit, and a second is refused at load time**, exit 2, naming
+    both lines. Draft 3 wrote *"the shortest `every <d>` among the declared heartbeat
+    units"*, and two beats at `every 30s` are each the other's *other* unit, so
+    `30s < 30s` is false and the defect `too_slow` had just been repaired for came back
+    through the plural (read of draft 3, 2026-09-13). **The beat is identified by its
+    command and by nothing else**: `argv[0]` of its `command` field resolves — with
+    `filepath.EvalSymlinks`, then `os.SameFile` — to the same file as the supervisor of
+    rule 6, and its first argument is the word `heartbeat`. There is no field and no flag
+    saying "this one is the beat", because a unit that says it is the beat and does not run
+    the verb is the exemption of rule 11 handed to a stranger.
+
     `check` therefore takes the beat from the declaration and from the record, and fails,
     exit 1, on any of three:
     - **`BEAT reason=no_beat`** — the file declares no heartbeat unit at all. Draft 1
       named this exact hole as the risk of leaving the beat to the caller and offered an
       optional flag as the mitigation. An optional mitigation for a named hole is a green
       report;
-    - **`BEAT reason=too_slow`**, naming both durations — the shortest `every <d>` among
-      the declared heartbeat units is not **strictly less than** the shortest interval
+    - **`BEAT reason=too_slow`**, naming both durations — the declared heartbeat unit's
+      `every <d>` is not **strictly less than** the shortest interval
       between two consecutive firings of any **other** unit in the file. The word *other*
       is load-bearing and draft 2 left it out: rule 19 insists the heartbeat is a unit in
       the file, so the shortest interval in the file was the beat's own, `30s < 30s` is
@@ -625,17 +737,25 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
     schedule it was meant to replace passes every other test and fixes nothing. The flags
     are a different thing from the content: `--sandbox`, `--secrets-exec`, every
     `--secrets-arg`, `--self` and every `--tool` of the **install that was refused**, stored
-    verbatim, so the retry installs the wall that install chose. **The heartbeat carries no
+    verbatim in the owed record and nowhere else, so the retry installs with the tools that
+    install named. Whether the unit is walled at all is content and is re-derived with the
+    rest of it, from the `wall` field of rule 2 as the file stands at repair time. **The heartbeat carries no
     such flags of its own** (rule 12). Draft 2 let the heartbeat re-install an owed unit
     with the heartbeat's own `--sandbox`, which is a `command` field a person typed into
     the declaration — so an `install --sandbox <path>` refused over a live run, the
     2026-08-23 shape, was retried thirty seconds later and landed **unwalled, secretless,
     on a POSIX `PATH`**, stamping a `wall=none` nobody chose: the 2026-08-12 and
     2026-08-13 hurts, reached through the repair path, with the worked example
-    demonstrating it. An owed install whose record carries no flags — written by an older
-    build — is **refused, not guessed**: `BEAT FAIL <u>: owed_no_argv`, exit 1, the act
-    left owed, remedy *run `install` for this unit by hand*. One writer per fact: the wall
-    is the installer's, and the beat replays it.
+    demonstrating it. **`owed_no_argv` is one missing value, and this is which.** An owed **install** whose
+    record carries no `--sandbox` — written by an older build — is **refused, not
+    guessed**: `BEAT FAIL <u>: owed_no_argv`, exit 1, the act left owed, remedy *run
+    `install` for this unit by hand*. One writer per fact: the tools are the installer's,
+    and the beat replays them. The wall's program is the one value nothing else on
+    the box can supply. A record with no `--self` is not refused: it is replayed with the
+    executable the beat is itself running, which is rule 6's own default. A record with no
+    `--secrets-exec` replays none, because a unit whose `env` is `none` needs none. An owed
+    `remove` or `repin` carries no such flags in any grammar and is never refused for want
+    of them (read of draft 3, 2026-09-13).
 
     An empty owed set **removes the file** rather than writing an empty one, so "no file"
     means one thing only.
@@ -672,8 +792,13 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
     claims" is what makes rule 16's `COALESCED` computable.
 
     **`log_bytes` is the size of this run's own log file at the end stamp**, and it is the
-    one fact rule 9's `IDLE` is computed from: a daemon that recycled twice having written
-    nothing either time did no work either time.
+    one fact rule 9's `IDLE` is computed from: a daemon whose log came out the same size
+    two cadences running wrote nothing new in either of them.
+
+    **`recycled` is the stamp's field and `RECYCLED` is the line's token**, one fact in two
+    spellings — a boolean in the stamp, a word in the verdict and in `RUN RECYCLED` — and
+    they are named together here because draft 3 spelled it both ways in different places
+    (read of draft 3, 2026-09-13).
 
     `self_sha256` is the supervisor that actually ran: the fourth fact rule 15 needs, and
     the one `repin` is about. `file_sha256` is the declaration as this run read it, and it
@@ -714,6 +839,17 @@ heartbeat exist, and it is why `check` asks the init system rather than the stam
     after it writes its own last line and before it exits. The cutter is named because a
     cap with no cutter is a wish: `run` is the only process guaranteed to touch that file
     on every firing.
+
+    **It is cut in place, and never by `rename`.** The loader holds an open descriptor on
+    that file for this very job — `StandardOutPath` on darwin, `StandardOutput=append:` on
+    linux — so a rewrite-and-`rename` leaves the loader appending to an orphaned inode and
+    the file an operator reads at three in the morning stops growing with nothing to say it
+    did: this spec's own subject, one level down (read of draft 3, 2026-09-13). `run`
+    writes the kept head, the mark and the kept tail over the file's own start and
+    truncates it to that length, on the same inode, every writer in `O_APPEND`. The state
+    directory's write-temp-and-`rename` protocol is for `owed.json`, which no loader holds
+    open, and the two are different for that reason. An append that lands during the cut is
+    interleaved, not lost, and the mark says bytes were dropped.
 
 24. **Bookkeeping is loud and never fatal; the work is bounded and never silent.** Two
     halves of one rule. A failure to write a stamp, prune a log or record an owed act is
@@ -771,7 +907,11 @@ rule 4 exists to let a reader catch.
 
 `--sandbox`, `--secrets-exec` and `--secrets-arg` on `render` and `install` are the
 **unit's** argv, not this invocation's (rule 12): they are rendered into the unit file
-verbatim and handed to `run` by the unit file at every firing. On `check` the same three
+verbatim and handed to `run` by the unit file at every firing. **`--sandbox` names the
+wall's program for the whole file; each unit's own `wall` field decides whether that
+program appears in that unit's argv** (rule 2), so one invocation installs a walled estate
+and an unwalled heartbeat, which is the configuration rule 11 prescribes and draft 3 could
+not express. On `check` the same three
 flags — and `--self` — are what the loaded argv is **compared against**, and a difference
 is `WRONG-ARGV`, exit 1. `--secrets-arg` is repeated once per argument the secret tool
 needs ahead of its `--only` — its store, its identity, its key, its `sops`, which
@@ -800,7 +940,9 @@ bootstrapped **after** — never both loaded and disagreeing, the order
 
 **`--units <dir>` stays required, and `check` says whether the loader will read it
 again.** A plist bootstrapped from an arbitrary path is live now and gone at the next
-login: launchd re-reads `~/Library/LaunchAgents` and nothing else. On linux
+login: launchd re-reads the per-user `~/Library/LaunchAgents` and nothing this tool would
+have written anywhere else. (A system-wide `/Library/LaunchAgents` is read too and is not
+a per-user tool's to write — rule 21 and open question 1.) On linux
 `systemctl --user enable <path>` creates symlinks into `~/.config/systemd/user`, so any
 directory works. That asymmetry is rule 6's failure one level up — present, registered,
 and dead after the next reboot — so `check` reports `NOT-PERSISTENT`, exit 1, naming the
@@ -829,7 +971,11 @@ conditional, which is the one shape a silently dead unit hides in.
 
 `status` is the question: the same three facts, one line per unit, **exit 0 even when a
 unit is dead**, because answering is its whole job — the rule [SPEC.md](SPEC.md) states
-for `nova-fuse status`.
+for `nova-fuse status`. **Its verdict enum is `check`'s minus `WRONG-ARGV`**, spelled out
+in the grammar below: that comparison needs the flags the install was given (rule 12) and
+`status` takes none of them, so it answers from the declaration, the loader and the stamp.
+Draft 3 elided the enum as `<...>`, which left `status`'s own `IDLE` and `OWED` undefined
+(read of draft 3, 2026-09-13).
 
 `logs` prints the tail of a unit's log, bounded, `--runs` back. It exists so that reading
 a failure does not require knowing this tool's file layout.
@@ -840,7 +986,8 @@ does nothing, and exits 0 (rule 26).
 `heartbeat` is one pass of the fast beat, and does exactly four things, in this order:
 retry the owed acts of rule 20, each with the flags that act recorded; repin what the
 loader reports killed or flagged stale, skipping anything running; prune logs past
-`--log-days`; print one `BEAT` line. It is the repairs `check` is forbidden to make, and
+`--log-days`, which is why the log directory is inside its write set under rule 11's one
+exemption; print one `BEAT` line. It is the repairs `check` is forbidden to make, and
 it makes no judgment `check` would not make; it never spawns a model, a
 session or a harness — **the tool finds and repairs machinery; judgment costs tokens and
 belongs to a mind that is called only when there is something to think about.** It is
@@ -936,7 +1083,7 @@ DAEMON FAIL <u>: <reason>
 DAEMON UNDECLARED name=<u>
 DAEMON REFUSED reason=<no_body|bad_file|bad_flag|no_tool>: <text>
 
-STATUS UNIT name=<u> installed=<true|false> up=<true|false|-> last=<rfc3339|never> exit=<n|-|killed> verdict=<...> reason=<one token|->
+STATUS UNIT name=<u> installed=<true|false> up=<true|false|-> last=<rfc3339|never> exit=<n|-|killed> verdict=<OK|CAUGHT-UP|COALESCED|NOT-INSTALLED|NOT-PERSISTENT|WRONG-WHEN|WRONG-BIN|MISSED|FAILED|TIMEOUT|IDLE|RECYCLED|KILLED|LEFTWORK|OWED|UNKNOWN> reason=<one token|->
 STATUS OK units=<n> shown=<n>
 
 BEAT OK owed=<n> retried=<n> repinned=<n> skipped=<n> pruned=<n> failed=<n> shown=<n> beat=<duration>
@@ -1014,18 +1161,18 @@ never is.
 The header, byte for byte, tab-separated:
 
 ```
-name	line	kind	when	deadline	dir	write	env	command
+name	line	kind	when	deadline	dir	write	wall	env	command
 ```
 
 One line per unit. A worked example — generic, and the paths are the caller's:
 
 ```
-name	line	kind	when	deadline	dir	write	env	command
-fold	alpha	role	daily 00:03	1h	/srv/alpha/work	/srv/alpha/work	API_KEY	/srv/alpha/bin/harness fold
-inbox	alpha	daemon	always	24h	/srv/alpha/work	/srv/alpha/work,/srv/alpha/state	API_KEY,GH_TOKEN	/srv/alpha/bin/inbox serve
-sweeper	alpha	consumer	every 60s	5m	/srv/alpha/work	/srv/alpha/work,/srv/alpha/queue	none	/srv/alpha/bin/sweeper once
-beat	alpha	consumer	every 30s	2m	/srv/alpha/beat	/srv/alpha/beat,/srv/alpha/state,/srv/alpha/units	none	/srv/alpha/bin/nova-daemon heartbeat --file /srv/alpha/units.tsv --units /srv/alpha/units --state /srv/alpha/state --logs /srv/alpha/logs --prefix com.example.alpha
-weekly-eval	beta	role	weekly sun 16:33	3h	/srv/beta/work	/srv/beta/work	none	/srv/beta/bin/eval run
+name	line	kind	when	deadline	dir	write	wall	env	command
+fold	alpha	role	daily 00:03	1h	/srv/alpha/work	/srv/alpha/work	sandbox	API_KEY	/srv/alpha/bin/harness fold
+inbox	alpha	daemon	always	24h	/srv/alpha/work	/srv/alpha/work,/srv/alpha/inbox	sandbox	API_KEY,GH_TOKEN	/srv/alpha/bin/inbox serve
+sweeper	alpha	consumer	every 60s	5m	/srv/alpha/work	/srv/alpha/work,/srv/alpha/queue	sandbox	none	/srv/alpha/bin/sweeper once
+beat	alpha	consumer	every 30s	2m	/srv/alpha/beat	/srv/alpha/beat,/srv/alpha/state,/srv/alpha/units,/srv/alpha/logs	none	none	/srv/alpha/bin/nova-daemon heartbeat --file /srv/alpha/units.tsv --units /srv/alpha/units --state /srv/alpha/state --logs /srv/alpha/logs --prefix com.example.alpha
+weekly-eval	beta	role	weekly sun 16:33	3h	/srv/beta/work	/srv/beta/work	sandbox	none	/srv/beta/bin/eval run
 ```
 
 **`when` by kind, and a mismatch is a refusal naming both**: `role` takes `daily HH:MM`
@@ -1040,6 +1187,19 @@ example gave `inbox` and `sweeper` a `dir` their write sets did not contain, whi
 refuses at 125 before the command starts: a worked example that cannot run is a worked
 example nobody ran.
 
+**`inbox` keeps its own state under a path of its own, and draft 3's could not install.**
+Draft 3 gave that row the write set `/srv/alpha/work,/srv/alpha/state`, and
+`/srv/alpha/state` is this file's own state directory — which rule 11 refuses for every
+unit but the beat, so the estate this document works through was un-installable in the
+document that prescribed it (read of draft 3, 2026-09-13). A daemon's own working state is
+its own directory; the tool's state directory belongs to the tool.
+
+**`wall` by unit, and the beat is the row that needs it** (rules 2, 11, 12). Every row here
+declares `sandbox` except `beat`, which declares `none` because `launchctl bootout` and
+`bootstrap` under a narrowed profile are UNVERIFIED (rule 11, test 19b) and because its
+step 3 prunes under `--logs`. One `install --sandbox <path>` over this file therefore walls
+four units and leaves one unwalled, and every line that one writes says `wall=none`.
+
 **`deadline` means one thing for a `role` and a `consumer` and another for a `daemon`**:
 a bound on one piece of work for the first two, a **recycle cadence** for the third (rule
 9). `inbox ... always 24h` above is a daemon restarted once a day and stamped `RECYCLED`
@@ -1048,12 +1208,22 @@ reported as a failure once a day.
 
 **The `beat` row is the heartbeat** (rule 19): an ordinary `consumer` whose command is
 this tool's own `heartbeat` verb, faster than the fastest thing it repairs, carrying the
-state and unit directories in its write set under rule 11's one exemption, installed and
-stamped and judged like every other row. A file with no such row fails `check` with
+state, unit **and log** directories in its write set under rule 11's one exemption,
+installed and stamped and judged like every other row. **A file declares exactly one such
+row**; a second is refused at load time naming both lines (rule 19). A file with no such row fails `check` with
 `BEAT reason=no_beat`. **Its command carries no `--sandbox` and no `--secrets-exec`**, and
 draft 2's did: the beat chooses no wall for anybody, it replays the wall each owed install
 recorded (rule 20). `every 30s` is strictly faster than `every 60s`, the shortest interval
 among the **other** units, which is what rule 19 measures.
+
+**A `daemon`'s command owes one line per cadence, and the declaration is where that is
+said** (rule 9). A `daemon` is the one kind with no deadline to settle a park with, so the
+only evidence it is working is what it writes: one line per recycle cadence saying what it
+did, carrying something that changes — a count, a total, a name. A command that prints a
+banner at startup and nothing after it is reported `IDLE`, because from outside it that is
+what a parked process looks like. This is an obligation on the command, stated here so the
+person writing the row reads it; rule 25 leaves the *content* of that line entirely to its
+author.
 
 **Minutes on the hour are the caller's business, not this tool's.** It offers no
 scheduling advice and rejects no slot; it only refuses a `when` that does not parse, a
@@ -1067,12 +1237,19 @@ fastest heartbeat is not strictly faster than its shortest interval (rule 19).
 ```
 <state>/<unit>/last.json      the most recent run, overwritten
 <state>/<unit>/runs.tsv       append-only, pruned from the front to --keep-runs
-<state>/owed.json             the owed acts of rule 20: unit -> {act, file, at}
+<state>/owed.json             the owed acts of rule 20: unit -> {act, file, at, flags}
 ```
 
 `owed.json` is a map rather than a list because the retry needs the declaration file's
 path and **must not guess it** from the unit's name; and an empty map removes the file
-(rule 20). Nothing else lives here, so one glob finds the whole record of a box's unit
+(rule 20). **`flags` is the refused act's own flag list, stored verbatim** — for an owed
+`install`, `--sandbox`, `--secrets-exec`, every `--secrets-arg`, `--self` and every
+`--tool` as they were typed; for an owed `remove` or `repin`, the empty list, those verbs
+having none in their grammar. Draft 3 drew this record as `{act, file, at}` here while
+rule 20 required the flags there, so an implementer building from this section wrote
+records with no flags and every retry hit `owed_no_argv` — the 2026-08-21 forty-three
+ticks with a new spelling (read of draft 3, 2026-09-13). One shape for one fact, and it is
+this one. Nothing else lives here, so one glob finds the whole record of a box's unit
 layer, and `remove` leaving it behind is deliberate: the record outlives the unit.
 
 **`owed.json` has four writers and therefore has a protocol.** `install`, `remove`, `repin`
@@ -1136,9 +1313,13 @@ silent overwrite. This is [SPEC-MERGE.md](SPEC-MERGE.md)'s shape for the same qu
   operating system, and nothing this tool reads — an exit status, a process group, a
   stamp — distinguishes a process waiting on a dialog from a process working. For a `role`
   and a `consumer` the deadline settles it. For a `daemon` there is no deadline to settle
-  it with, and what stands in its place is a **proxy**: two recycles that wrote nothing are
-  `IDLE` (rule 9). A parked daemon that keeps its log growing is invisible here, and
-  bounding its own calls is its owner's job, not this tool's.
+  it with, and what stands in its place is a **proxy**: two recycles whose logs came out
+  the same size are `IDLE` (rule 9), which is why the declaration section states the
+  one-line-per-cadence contract as the daemon's own obligation. The proxy bounds silence,
+  not liveness: a parked daemon whose log keeps **growing** — a retry loop, a progress
+  line, a stack trace every minute — is invisible here, and a daemon whose honest output is
+  the same number of bytes every cadence is called `IDLE` when it is not. Bounding its own
+  calls is its owner's job, not this tool's.
 - **It cannot tell a late firing from a wake-up catch-up on a box that slept.**
   `booted_at` proves a power-down (rule 13) and nothing portable proves a sleep, so a unit
   that fires an hour late every day for a reason that never touches the loaded schedule —
@@ -1164,8 +1345,9 @@ these is proved **red first**, against a real artifact, before it is proved gree
    header-less file does **not** silently lose its first unit. The refusal is
    `DAEMON REFUSED reason=bad_file`, exit 2, on `render` as on every other verb — there is
    no `RENDER FAIL` line to assert.
-3. A line with eight or ten fields refuses naming the line number; an empty field
-   refuses; `none` is accepted for `write` and `env` only.
+3. A line with nine or eleven fields refuses naming the line number; an empty field
+   refuses; `none` is accepted for `write`, `wall` and `env` only, and `wall` accepts
+   nothing but `sandbox` and `none` (rule 2).
 4. A `command` with two adjacent spaces, a leading space or a trailing space refuses with
    the script remedy; a rendered unit for a well-formed command contains no shell.
 5. `kind`/`when` mismatch refuses naming both, in all six wrong pairings.
@@ -1199,8 +1381,9 @@ these is proved **red first**, against a real artifact, before it is proved gree
 10. Every rendered unit's argv is `<self> run --file ... --unit ... --state ... --logs ...
     --sandbox ...`, carrying the `--secrets-exec` and every `--secrets-arg` the install was
     given, asserted **against the installed file** and not against what the test passed in.
-    A unit rendered with `--sandbox none` says so in its argv; one rendered with a sandbox
-    path names it.
+    A unit declaring `wall none` carries `--sandbox none` in its argv; one declaring
+    `wall sandbox` carries the path `--sandbox` named, in the same file and the same
+    invocation (rules 2, 12).
 11. Every rendered unit names `<logs>/<unit>.daemon.log` for the supervisor's own stdout
     and stderr (`StandardOutPath`/`StandardErrorPath`, `StandardOutput=append:`).
 12. A `dir` containing `&`, `<`, `>` renders a plist a parser accepts; the same containing
@@ -1223,23 +1406,33 @@ these is proved **red first**, against a real artifact, before it is proved gree
     is `none` (rule 8); a run whose `HOME` would fall outside the wall's write set is
     asserted **not** to happen for any unit the declaration accepts.
 18. A `write` set containing the declaration file, the units directory, the state
-    directory, the log directory, the command or the supervisor refuses, six cases, each
-    naming the path — **and the containment is proved with a symlinked parent and with a
+    directory, the log directory, the command, the supervisor or the sandbox tool refuses,
+    seven cases, each naming the path — **and the containment is proved with a symlinked parent and with a
     case-differing spelling on a case-insensitive volume**, against the `os.SameFile`
     ancestor walk of rule 11 and not a string prefix. The heartbeat unit of rule 19 is the
-    one unit for which the state and units directories are accepted, and a second unit
+    one unit for which the state, units **and log** directories are accepted — asserted by
+    a beat that prunes under `--logs` on its first tick behind a wall — and a second unit
     declaring the same write set is refused.
 19. `render`, `install` or `check` with no `--sandbox` refuses, exit 2,
     `reason=no_tool`; `--sandbox none` is accepted and reaches the unit. `heartbeat`
     **rejects** `--sandbox` as an unknown flag (rules 12, 20).
+19c. **The per-unit wall, pinned.** One `install --sandbox <path>` over a file whose beat
+    declares `wall none` and whose other units declare `wall sandbox` installs the beat
+    with `--sandbox none` in its argv and every other unit with the path, in **one**
+    invocation; `check --sandbox <path>` over that estate reports `OK` for all of them,
+    including the beat. Under draft 3 — one flag for the whole invocation — either value
+    reported `WRONG-ARGV`, exit 1, forever, on a correct estate. A unit declaring
+    `wall sandbox` installed with `--sandbox none` refuses, exit 2, `reason=no_tool`,
+    naming the unit (rules 2, 12).
 19a. A sandbox tool or a secret tool under a `go-build` segment, absent, non-executable, or
     inside the unit's own `write` set refuses at install, each by its own reason, exactly
     as the supervisor and the command do (rule 6).
 19b. **A measurement, not a unit test, and a gate on ratification:** on a darwin box,
     `launchctl bootout` and `launchctl bootstrap` are run under the sandbox profile
     [SPEC-SANDBOX.md](SPEC-SANDBOX.md) narrows to, and the result — permitted or denied —
-    is recorded in this spec beside rule 11. Until it is, a heartbeat unit is declared
-    `--sandbox none`.
+    is recorded in this spec beside rule 11. Until it is, the heartbeat unit declares
+    `none` in its `wall` field (rule 2), which is a word in the file and not a flag of the
+    invocation.
 20. `install` is idempotent: a second run reports `unchanged` and rewrites identical
     bytes; a changed declaration boots out before the file changes and bootstraps after,
     proved by a scripted loader seam recording the call order.
@@ -1252,8 +1445,10 @@ these is proved **red first**, against a real artifact, before it is proved gree
 **Check, and the three facts**
 
 21. A unit installed with one schedule and declared with another reports `WRONG-WHEN`, and
-    the reported `loaded=` is read **back from the installed file**, not from what the test
-    asked to be installed.
+    the reported `loaded=` is read **from the loader**, through the scripted seam of test
+    20, and not from the installed file and not from what the test asked to be installed
+    (rule 13, and test 25b for the file-versus-loader case). Draft 3's wording here said
+    "back from the installed file" against its own rule 13.
 22. A stamp whose `started_at` is inside `--when-tolerance` of the slot it names counts in
     `ontime=`; one outside it is verdict `CAUGHT-UP`, counts in `caughtup=`, and the run
     **exits 0** — the catch-up regression, pinned, with a fixture whose `started_at` is six
@@ -1266,12 +1461,19 @@ these is proved **red first**, against a real artifact, before it is proved gree
     of `runs.tsv` claims: a fixture with two unclaimed slots behind one run pins the
     selection, and the second slot reports `COALESCED`, counts in `coalesced=`, and the run
     **exits 0** — not `MISSED`, which is what draft 2 reported for a loader doing what
-    `launchd.plist(5)` says it does (rules 16, 22).
+    `launchd.plist(5)` says it does (rules 16, 22). A third fixture folds its slots into a
+    `CAUGHT-UP reason=unproved` run: each folded slot reports `COALESCED reason=unproved`
+    and counts in `unproved=` as well as in `coalesced=`, so a late start cannot turn an
+    unrowed Saturday green (rule 16).
 23. A `consumer` whose last stamp is older than twice its declared interval reports
     `MISSED`, **measured against now**; one inside it reports `OK` (rule 13). A third
     fixture is the regression: a consumer with exactly one stamp, old, and nothing since —
     a unit killed at exec that stopped stamping — reports `MISSED` and the run exits 1.
     Draft 2 measured the gap between two stamps and gave that fixture no verdict at all.
+23a. A `consumer` with **no stamp at all**, whose unit file in `--units` is older than twice
+    its declared interval, reports `MISSED`, exit 1 — the consumer killed at exec at its
+    very first firing, which draft 3 printed as `fired=never` with no verdict (rule 13).
+    One installed inside that window reports `OK`.
 24. A slot inside `--since` that came and went with no `runs.tsv` row naming it in
     `fired_for` reports `MISSED`; one with a non-zero exit reports `FAILED`; one with a
     loader kernel-kill reason and **no stamp at all** reports `KILLED` — three distinct
@@ -1282,10 +1484,14 @@ these is proved **red first**, against a real artifact, before it is proved gree
     from the stamp's `self_sha256` reports `SELF-MOVED` as a `NOTE`, exit 0, and that is
     the fact the build's `repin` is keyed to; a loaded unit whose program is now absent or
     non-executable reports `WRONG-BIN` and the run exits 1 (rule 15).
-25a. A unit installed with `--sandbox <path>` and checked with `--sandbox none` reports
-    `WRONG-ARGV`, exit 1, with the loaded `wall=` on the line; checked with the flags it
-    was installed with, it reports `OK`. The same for a changed `--secrets-exec` and for an
-    added `--secrets-arg` (rule 12).
+25a. A unit declaring `wall sandbox`, installed with `--sandbox <path>` and checked with
+    `--sandbox <other path>`, reports `WRONG-ARGV`, exit 1, with the loaded `wall=` on the
+    line; checked with the flags it was installed with, it reports `OK`. The same for a
+    changed `--secrets-exec`, for an added `--secrets-arg` and for a `--self` naming another
+    file. **Exactly four fields are compared**: a unit installed with `--keep-runs 500` and
+    `--log-bytes 65536`, checked by a `check` that is given neither, reports `OK` — the
+    draft-3 regression, pinned, where a whole-argv comparison red-failed a healthy estate
+    forever because `check` had nothing to render those fields from (rule 12).
 25b. A unit whose file on disk holds one schedule and whose loader holds another reports
     `WRONG-WHEN reason=stale`, exit 1, and `loaded=` is the **loader's** value, proved by a
     scripted loader seam that disagrees with the file (rule 13).
@@ -1304,7 +1510,10 @@ these is proved **red first**, against a real artifact, before it is proved gree
 28. A listing above `--max` prints exactly `--max` item lines plus one `MORE` line naming
     the remedy; `--max 0` prints all; `--max -1` refuses. Asserted on `check`, `status`,
     `install`, `remove`, `repin` and `heartbeat`, each of which prints one line per unit.
-29. A file with no heartbeat unit fails `BEAT reason=no_beat`; a heartbeat slower than the
+29. A file declaring **two** heartbeat units refuses at load time, exit 2, naming both
+    lines — the beat identified by its command resolving to the supervisor with `heartbeat`
+    as its first argument, not by its name (rule 19). A file with no heartbeat unit fails
+    `BEAT reason=no_beat`; a heartbeat slower than the
     shortest declared interval of any **other** unit fails `BEAT reason=too_slow` naming
     both durations; a heartbeat unit whose own last stamp is older than twice its interval
     fails `BEAT reason=stalled` naming both timestamps; **this spec's own worked example
@@ -1324,6 +1533,10 @@ these is proved **red first**, against a real artifact, before it is proved gree
 33. `run` writes the start stamp **before** the child starts — proved by a child that
     blocks until the test observes the stamp.
 34. A command that reads stdin gets EOF immediately and does not block.
+34a. `run` **TERM**ed by the loader forwards `TERM` to the command's process group, waits
+    the grace, `KILL`s what is left, writes the end stamp with `signal` set, and exits
+    128+N — proved with a grandchild that would otherwise outlive the supervisor, and with
+    the stamp asserted to carry an `ended_at` rather than reading as a crash (rules 9, 22).
 35. A `role` that outlives its deadline is `TERM`ed, then `KILL`ed after the grace, its
     **whole process group** dies (proved with a grandchild), and the stamp says
     `timed_out`, not `exit=0`.
@@ -1332,10 +1545,15 @@ these is proved **red first**, against a real artifact, before it is proved gree
     0 and 128+N cannot both be claimed; `check` counts it and does not fail. The same
     fixture with `kind=role` stamps `timed_out`, prints `RUN TIMEOUT` to stderr, and fails.
     One fixture, one field changed, two verdicts — the daemon-deadline regression, pinned.
-36a. **The parked-daemon regression, pinned.** A `daemon` whose command blocks forever
-    writing nothing is recycled twice; both stamps carry `recycled` and `log_bytes=0`;
-    `check` reports `IDLE`, exit 1, naming both run times (rule 9). The same daemon writing
-    one line per cadence reports `OK`. Without this test draft 2's spec reports a daemon
+36a. **The parked-daemon regression, pinned, in its two shapes.** A `daemon` whose command
+    blocks forever writing nothing is recycled twice; both stamps carry `recycled` and
+    `log_bytes=0`; `check` reports `IDLE`, exit 1, naming both run times and both byte
+    counts (rule 9). **The second shape is the one draft 3 missed**: a daemon that prints
+    one `listening on ...` banner at startup and then blocks forever has the same non-zero
+    `log_bytes` at both recycles and must report `IDLE` too — under draft 3's zero-in-both
+    it was `OK` forever, which both cold reads of draft 3 called the 2026-07-22 hurt with a
+    green verdict on it. The same daemon writing one line per cadence whose length changes
+    reports `OK`. Without this test draft 2's spec reports a daemon
     parked on a permission modal as healthy forever, which is the 2026-07-22 hurt with a
     green verdict on it.
 37. A command that exits 0 leaving a live grandchild reports `LEFTWORK`, its stamp carries
@@ -1361,7 +1579,11 @@ these is proved **red first**, against a real artifact, before it is proved gree
 43a. `<logs>/<unit>.daemon.log` is cut by `run` under the same `--log-bytes` cap, after the
     run's last line and before it exits: a fixture grown past the cap by repeated runs is
     asserted to be at or under it afterwards, with the head, the tail and the mark (rule
-    23). An age prune is asserted **not** to reach it while the unit keeps firing.
+    23). **The inode is asserted to be the same file before and after the cut**, and a
+    descriptor opened on it before the cut is asserted to still be appending to the file
+    the path names afterwards — the loader holds exactly such a descriptor, and a
+    rewrite-and-`rename` would leave it writing to an orphan. An age prune is asserted
+    **not** to reach it while the unit keeps firing.
 
 **Repair**
 
@@ -1378,8 +1600,11 @@ these is proved **red first**, against a real artifact, before it is proved gree
     the installed argv carries that path. The heartbeat is run with no wall flags of its
     own, because it has none. Under draft 2 this test installs `--sandbox none` and the
     unit is silently unwalled (rule 20).
-45b. An owed install record carrying no flags is **refused**, not guessed:
-    `BEAT FAIL <u>: owed_no_argv`, exit 1, the record still owed afterwards.
+45b. An owed **install** record carrying no `--sandbox` is **refused**, not guessed:
+    `BEAT FAIL <u>: owed_no_argv`, exit 1, the record still owed afterwards. A record with
+    no `--self` is **not** refused — it is replayed with the beat's own executable — and an
+    owed `remove` or `repin`, which carry no such flags in any grammar, is never refused
+    for want of them (rule 20).
 45c. The beat's own owed install is **not** retried by the beat — the beat is running — and
     `check` reports that unit `OWED`, exit 1, until an install from outside performs it
     (rules 18, 20).
@@ -1446,7 +1671,7 @@ closed rather than deleted.**
 
 ---
 
-*Draft 3, 2026-09-13. Folds the two cold reads of draft 2 on this pull request. Not
+*Draft 4, 2026-09-13. Folds the two cold reads of draft 3 on this pull request. Not
 ratified: this document is a proposal until every named reader has said APPROVE against a
 head sha — and the linux leg's claims are UNVERIFIED until one read walks them on a linux
 box (rule 5).*
