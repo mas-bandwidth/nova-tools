@@ -1,4 +1,4 @@
-# nova-work — specification (DRAFT 9, 2026-09-13)
+# nova-work — specification (DRAFT 10, 2026-09-13)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
@@ -66,10 +66,15 @@ published, revision-labelled snapshots. **The mechanism that makes the rule hold
 substrate we already trust, and it fences MUTATION, not only publication.** The branch that
 holds S carries an ownership record (`OWNER`: the coordinator's name, a **generation**, a
 **token** drawn at random when the generation was taken, the stamp it was taken, and
-**`until`**, the stamp the ownership lease expires). The token is written to the taking
-session's own journal and nowhere else, so **only the process that took a generation can
-resume it**: a second session under the same name on another bench holds no token and is a
-taker, not a resumer. Three rules:
+**`until`**, the stamp the ownership lease expires). The token is written in two places and
+nowhere else: the `OWNER` record on the branch and the taking session's own journal, so
+**only a process holding that journal can resume the generation**; a second session under
+the same name on another bench holds no journal with the token and is a taker, not a resumer.
+**Two processes cannot hold one journal**: the session socket at `--session <path>` is also
+the journal's lock, created exclusively at start, and a start that finds a live socket there
+refuses (exit 1, naming the pid); a dead socket (no process answers) is removed and the
+start proceeds as a resume. So the resume predicate is: the record names me, my journal holds
+its token, and I hold the journal's lock (Stella's finding 1, comment 5654659093). Three rules:
 
 1. **Taking.** `session start` fetches the tip, reads `OWNER`, and takes ownership only if the
    record names nobody, or its `until` plus `--skew` is in the past, or it names this session
@@ -218,10 +223,17 @@ they are distinct kinds:
   is distinct from unstarted and from unknown, and **an out-of-scope cell leaves that axis
   member's applicable rows** (5654160320: *fully green features / applicable features*).
   Adding an axis member or a feature is a scope revision; removing one is not completion.
-- `:task` — work with `:acceptance`, a list of the criteria that close it, each with a short
-  id and a **kind** (`:test` for a named test at a revision, `:job` for a CI job at a revision,
-  `:merged` for a PR merged at a revision, `:attested` for a criterion only a reviewer's
-  attestation can close), `:required` (default true), and a current state, generation,
+- `:task` — work with `:acceptance`, a list of the criteria that close it, **one schema**:
+  `(:id "c1" :kind :test :subject "test:internal/lockfile/TestLockRule1@<rev>" :predicate
+  :passes)`, where `:kind` is `:test`, `:job`, `:merged` or `:attested`, `:subject` names the
+  exact thing the evidence must be about (a test name, a job name, a PR number, or for
+  `:attested` the criterion text a reviewer signs), and `:predicate` is what must be true of it
+  (`:passes`, `:succeeds`, `:merged-at`, `:attested-by`); `node add --acceptance` takes exactly
+  this form, and an evidence pointer qualifies a criterion only when its kind matches, **its
+  subject is the criterion's subject** (a passing test of another name qualifies nothing), its
+  predicate holds at the named revision, and its `:generation` is the task's current one, so a
+  `correct` event makes every earlier qualification void for the done claim (Stella's finding
+  2, comment 5654659093); `:required` (default true), and a current state, generation,
   evidence set and blocked reason **all derived from its events**. A task with no `:children`
   is a **leaf subtask**, the unit `unit=leaves` counts; a task with children is counted by its
   leaves, never itself; so the four units of 5654012267 are `:feature`, `:task`, the leaf
@@ -382,8 +394,11 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
   prints them under `deferred=<n>`, `cancelled=<n>` and `superseded=<n>`, kept apart, so the
   subtraction is visible; the baseline denominator
   still counts them. **Active rows** of a roadmap are its baseline rows plus discovered rows,
-  less rows removed, deferred or superseded by a scope event; **applicable rows** for an axis
-  member are the active rows less those with an out-of-scope cell for that member.
+  less rows removed or superseded by a scope event; **a deferred row stays active and stays
+  in the denominator, because it is not done** (Johnny Grok's HOLD on draft 9, bus note
+  johnny-e51960925453: deferring an applicable row must not raise green/rows); **applicable
+  rows** for an axis member are the active rows less those with an out-of-scope cell for that
+  member, and every change to `rows=` is a scope event with an author and a reason.
 - **Units are labelled** on every line: `unit=features` or `unit=leaves`; a comparison never
   changes unit silently.
 - **Future cannot lower the active percentage; a deferred item cannot raise the completed
@@ -444,7 +459,7 @@ nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> -
                          [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>]
                          [--since <revision>] [--at <revision>] --cache <path> [--max <n>]   (who and stale: --window <duration>, required)
 nova-work render         --session <path> --view <roadmap-id> --into <path> --start <marker> --end <marker> [--at <revision>] [--check]
-nova-work node add       --session <path> <write flags> --id <id> --type <kind> --under <parent-id> [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id=pointer> ...] --reason <text>
+nova-work node add       --session <path> <write flags> --id <id> --type <kind> --under <parent-id> [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id:kind:subject:predicate> ...] --reason <text>
 nova-work decompose      --session <path> <write flags> --node <id> --into <id,...> --reason <text>
 nova-work dep            --session <path> <write flags> --node <id> (--add <id> | --remove <id>) --reason <text>
 nova-work axis           --session <path> <write flags> --roadmap <id> --axis <id> --add <member> --reason <text>
@@ -729,7 +744,10 @@ as unknown in every rollup; stale evidence counted as unknown; a `note:` pointer
 evidence for done; a `run:` pointer to a failed run resolving and counting as unverified; a
 structure-plus-scope envelope crashed between its two events replaying all-or-none; a task split by `decompose` (both units printed, revision moved); scope
 expansion by `node add` (added since baseline visible, new rows at the bottom, `baseline-rows`
-printed); deferral (cannot raise the done count); reopening; a correction bumping the
+printed); deferral (cannot raise the done count, and cannot raise the percentage: a deferred row
+stays in `rows=`); reopening; two processes opening one journal, the second refused; a
+passing test of another name failing to qualify a criterion; a `correct` event voiding an
+earlier qualification for the done claim; a correction bumping the
 generation and an older attempt's result refused at `state --to done`; future work cannot
 lower the active percentage; an out-of-scope cell leaving the applicable rows; a changed
 nested task updates every affected view and no unrelated cached projection; `--at` replaying
