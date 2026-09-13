@@ -415,10 +415,11 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
 ## Queries — the contract *(Rowan; Glenn's list from 5654012267)*
 
 Every answer is computed whole before anything is printed, then printed as one `QUERY OK`
-scope line and one `QUERY ROW` line per fact, capped and counted. The scope line is the `QUERY OK` line of the grammar below: scope revision, membership rule,
-unit, source sha, freshest evidence stamp, `done=`, `done-unverified=`, `unknown=`, `deferred=`,
-`stale=`, `rows=`, `shown=`, `parses=` and `emitted=`; `percent` adds `green=` and
-`baseline-rows=`.
+scope line and one `QUERY ROW` line per fact, capped and counted. The scope line is the
+`QUERY OK` line of the grammar below, and the grammar is the one enumeration: scope revision,
+membership rule, unit, source sha, freshest evidence stamp, `done=`, `done-unverified=`,
+`unknown=`, `deferred=`, `cancelled=`, `superseded=`, `stale=`, `rows=`, `shown=`, `parses=`
+and `emitted=`; `percent` adds `green=` and `baseline-rows=`.
 
 | ask | answers |
 |---|---|
