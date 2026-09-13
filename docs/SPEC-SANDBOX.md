@@ -11,7 +11,7 @@ nova-sandbox --read <dir>... --write <dir>... [--net-deny] [--net-listen] -- <co
 ```
 
 This spec is normative. If the code and this document disagree, one of them has
-a bug, and the tests decide which. It stands beside [SPEC.md](../SPEC.md), whose
+a bug, and the tests decide which. It stands beside [SPEC.md](SPEC.md), whose
 **Conventions** section — no guessed paths, the one-line output grammar, the
 cap-and-count rule, `internal/oneline` and `internal/bounded` — applies here
 unchanged and is not restated. The one deliberate departure from it is the exit
@@ -396,6 +396,12 @@ computed from the command ("the directory of the resolved command"), so a
 most needs to see. With no `--`, `sh` is the floor every wrapped shell command
 already stands on.
 
+> **Unimplemented proposal (2026-09-12).** The `fence`, `grant` and `release`
+> verbs described in the paragraphs below are not implemented: the `nova-sandbox`
+> binary built today has no `fence`, no `grant` and no `release` verb. Their
+> requirements are preserved below, word for word, as the owed work for when they
+> are built; nothing below is a promise the current binary keeps.
+
 `fence` writes the `opencode.json` `permission` block of rule 14 to a file, so
 that the block is generated from one place rather than copied by hand.
 
@@ -533,6 +539,18 @@ recursively. **The read set** is each `--read` and everything under it: read
 only, recursively. Shared inputs — one reference checkout, a corpus, the specs,
 the worker home with its `AGENTS.md` — belong in the read set, named once, so
 that N workers read one copy.
+
+**"Inside" is asked of the filesystem, not of a string prefix.** The one predicate
+behind rule 6's `--secret`, rule 10's outside path, rule 9's `HOME`, rule 13's
+`--cwd`, rule 8's `--tmp` and the command-directory home guard — and behind no
+other question — asks `os.SameFile` of the path and its existing ancestors against
+the directory, keeping the string prefix as the cheap first answer and, for a
+directory that is not there to be asked, falling back to that prefix
+case-insensitively only where a probe file written and removed in the nearest
+directory that does exist measures a fold (a spelling that differs only in case is
+one file on APFS and on NTFS, and the backend grants it: measured, a `--secret` at
+`<base>/R/env` under a `--read` of `<base>/r` was READABLE inside the wall); that
+names a mechanism and adds no rule.
 
 **The roots** are what any command needs to run at all: read only, recursively
 unless marked otherwise. They are a per-platform list in one data file in the
@@ -725,6 +743,13 @@ waits rather than `exec`s in order to forward signals and return the command's
 status, not to clean anything up.
 
 ## Linux — Landlock, no root
+
+> **Unimplemented proposal (2026-09-12).** The Linux (Landlock) backend
+> described in this section is not implemented: the linux body of `nova-sandbox`
+> is not built today (`cmd/nova-sandbox/parent_linux.go` carries only the
+> probe's parent-executable guard), so no Landlock wall is applied on linux. Its
+> requirements are preserved below, word for word, as the owed work for when the
+> body is built; nothing below is a promise the current binary keeps.
 
 Landlock is an LSM available from kernel **5.13**, usable by an unprivileged
 process, and inherited across `execve(2)` so that the child cannot lift it. The
@@ -1192,7 +1217,13 @@ until its own checklist is green.
 Rule 9's scrub set is stated so that a launcher's own markers survive: a line
 that exports `AI_AGENT` or `CLAUDE_AGENT_SDK_VERSION` keeps them.
 
-## The harness fence that ships beside it
+## The proposed harness fence
+
+> **Unimplemented proposal (2026-09-12).** The current binary has no `fence`
+> verb, and nova-swarm does not generate this permission block in its worker
+> configuration. The following is the intended design, not a description of
+> protection supplied by the current release. The implemented OS wall is
+> separate from this proposed harness configuration.
 
 `nova-sandbox fence --out <dir>/opencode.json` writes the block below into each
 wrapped line's home or each worker home. OpenCode 1.18.20's `permission` block

@@ -39,13 +39,13 @@ const usage = `nova-swarm: a pool of one-task workers, with the ways a swarm fai
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
-  nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
-  nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>]
+  nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
+  nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
   nova-swarm status    --pool <dir> [--max <n>]
   nova-swarm stop      --pool <dir>
-  nova-swarm requeue   --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>]
+  nova-swarm requeue   --pool <dir> --task <id> --task-file <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--max-input <bytes>]
   nova-swarm verdict   --pool <dir> --task <id> --who <name> --accurate <n> --wrong <n>
   nova-swarm triage    --pool <dir> [--batch <id>] [--since <stamp>] [--all] [--no-state] [--max <n>] [--owed <file>]
   nova-swarm result    --pool <dir> --id <job>
@@ -215,6 +215,17 @@ func (f *flags) wantCount(value int, name, wants string) {
 
 func (f *flags) add(problem string) { f.problems = append(f.problems, problem) }
 
+// maxInput reads --max-input, the OPTIONAL ceiling a task names on the prompt this tool hands
+// the harness, in BYTES (#103). It is optional because a window is a fact about somebody
+// else's provider and this tool guesses nothing; a NEGATIVE one is a typo with two readings
+// and is refused rather than read as "none".
+func (f *flags) maxInput(value int) int {
+	if value < 0 {
+		f.add(fmt.Sprintf("--max-input is 0 or more, got %d; 0 is how a caller says this task names no window, and a negative ceiling is a typo with two readings", value))
+	}
+	return value
+}
+
 // refused prints every problem this run found, one line each, and reports whether there
 // were any. Three independent flags cost one run, not three.
 func (f *flags) refused(stderr io.Writer) bool {
@@ -290,6 +301,7 @@ func cmdAdd(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.T
 	label := f.fs.String("label", "", "")
 	template := f.fs.String("template", "", "")
 	deadline := f.fs.String("deadline", "", "")
+	maxInput := f.fs.Int("max-input", 0, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -299,6 +311,7 @@ func cmdAdd(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.T
 	}
 	f.wantCount(*files, "files", "the file budget for this job: a worker that may open no file is a worker asked for a plan")
 	budget, unmetered := f.tokens(*tokens)
+	window := f.maxInput(*maxInput)
 	if *deadline != "" {
 		if _, err := time.ParseDuration(*deadline); err != nil {
 			f.add(fmt.Sprintf("--deadline wants a duration such as 20m, got %q", *deadline))
@@ -326,7 +339,7 @@ func cmdAdd(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.T
 	}
 	sc := swarm.Sidecar{
 		ID: swarm.NewID(now, *label), Label: *label, Template: *template, Files: *files,
-		Tokens: budget, Unmetered: unmetered, Deadline: *deadline, RC: -1,
+		Tokens: budget, Unmetered: unmetered, Deadline: *deadline, MaxInput: window, RC: -1,
 	}
 	if err := p.Add(text, sc); err != nil {
 		fmt.Fprintf(stderr, "ADD REFUSED: %s\n", oneline.Err(err))
@@ -350,6 +363,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	label := f.fs.String("label", "", "")
 	template := f.fs.String("template", "", "")
 	deadline := f.fs.String("deadline", "", "")
+	maxInput := f.fs.Int("max-input", 0, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -357,6 +371,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 	f.want(*tasks, "tasks", "a directory holding one task file per job")
 	f.wantCount(*files, "files", "the file budget every job in this batch carries")
 	budget, unmetered := f.tokens(*tokens)
+	window := f.maxInput(*maxInput)
 	if f.refused(stderr) {
 		return 2
 	}
@@ -405,7 +420,7 @@ func cmdBatch(args []string, stdout, stderr io.Writer, now time.Time) int {
 		sc := swarm.Sidecar{
 			ID: swarm.NewID(now.Add(time.Duration(i)*time.Millisecond), *label), Label: *label,
 			Template: *template, Files: *files, Tokens: budget, Unmetered: unmetered,
-			Deadline: *deadline, Batch: batchID, RC: -1,
+			Deadline: *deadline, Batch: batchID, MaxInput: window, RC: -1,
 		}
 		if err := p.Add(text, sc); err != nil {
 			fmt.Fprintf(stderr, "BATCH REFUSED: %s\n", oneline.Err(err))
@@ -709,6 +724,7 @@ func cmdRequeue(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 	files := f.fs.Int("files", 0, "")
 	tokens := f.fs.String("tokens", "", "")
 	label := f.fs.String("label", "", "")
+	maxInput := f.fs.Int("max-input", 0, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -719,6 +735,7 @@ func cmdRequeue(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 	}
 	f.wantCount(*files, "files", "the file budget for the new job: the remedy that worked in batch 3 was a SMALLER one")
 	budget, unmetered := f.tokens(*tokens)
+	window := f.maxInput(*maxInput)
 	if f.refused(stderr) {
 		return 2
 	}
@@ -747,7 +764,11 @@ func cmdRequeue(args []string, stdin io.Reader, stdout, stderr io.Writer, now ti
 	sc := swarm.Sidecar{
 		ID: swarm.NewID(now, orElse(*label, oldSc.Label)), Label: orElse(*label, oldSc.Label),
 		Template: oldSc.Template, Files: *files, Tokens: budget, Unmetered: unmetered,
-		Deadline: oldSc.Deadline, Batch: oldSc.Batch, From: *task, RC: -1,
+		Deadline: oldSc.Deadline, Batch: oldSc.Batch, From: *task,
+		// The window is the NEW task's, named on this verb or named nowhere: a requeue that
+		// inherited an oversized task's ceiling would repeat the failure it was typed to fix
+		// (SPEC-SWARM, `requeue`).
+		MaxInput: window, RC: -1,
 	}
 	if err := p.Add(text, sc); err != nil {
 		fmt.Fprintf(stderr, "REQUEUE REFUSED: %s\n", oneline.Err(err))

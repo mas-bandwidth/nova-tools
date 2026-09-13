@@ -10,3 +10,12 @@ tending/
 # it would become a nocode finding the day this repo gates itself.
 /nova-check
 /nova-check.exe
+
+# A repo-root bin/ is where a local `go build -o bin/<tool> ./cmd/<tool>` lands,
+# and one of those executables was tracked for a while: a 4.9 MB Mach-O arm64
+# `bin/nova-bus`, swept in by an unrelated commit, referenced by nothing, one
+# platform only, and carrying no version stamp anything here could identify. A
+# source repository ships no built executables — a reader cannot tell what is
+# inside one, and a release tarball that carries one is a supply-chain surface
+# with no provenance. Build them; do not commit them.
+/bin/

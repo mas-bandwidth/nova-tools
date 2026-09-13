@@ -6,8 +6,12 @@ deliberately carry privacy sentinels so a test can prove they reach no record an
 diagnostic.
 
 The mapping decisions these fixtures encode are tabulated in
-[docs/MAPPING-TOKENS-GROK.md](../../../docs/MAPPING-TOKENS-GROK.md) under "Wire literals
+[docs/MAPPING-TOKENS-GROK.md](../../MAPPING-TOKENS-GROK.md) under "Wire literals
 under the mapping decisions"; the decisions themselves are the source owner's on PR #142.
+
+The fixture files themselves stay executable data and live in
+[`testdata/tokens/grok/`](../../../testdata/tokens/grok); every file named below is in
+that directory.
 
 | File | What it is |
 |---|---|

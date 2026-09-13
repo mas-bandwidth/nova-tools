@@ -114,6 +114,9 @@ func TestAFlagTypoIsOneLine(t *testing.T) {
 	for _, args := range [][]string{
 		{"verify", "--rooot", "x", "--links", "gate"},
 		{"frobnicate"},
+		{"stats", "--root", corpus, "extra"},
+		{"verify", "--root", corpus, "--links", "gate", "extra"},
+		{"quickstart", "--root", corpus, "extra"},
 		nil,
 	} {
 		exit, stdout, stderr := runCLI(t, "", args...)

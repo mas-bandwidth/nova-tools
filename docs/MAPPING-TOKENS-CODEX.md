@@ -29,6 +29,7 @@ what those decisions place outside this initial mapping is listed as owed at the
 owed is not covered. Where an earlier paragraph of this document defers a question these
 tables decide, the tables are the decision.
 
+The fixtures are described in [docs/fixtures/tokens/codex.md](fixtures/tokens/codex.md).
 The executable form is `testdata/tokens/codex/`: the sealed mapping manifest, the synthetic
 source records, the expected observation envelopes and the shapes the wire must refuse. The
 landed record validator checks all of it in

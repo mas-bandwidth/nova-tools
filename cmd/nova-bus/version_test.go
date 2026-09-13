@@ -125,18 +125,11 @@ func TestVersionResolvesInOrder(t *testing.T) {
 }
 
 // The wiring, which lives in main.go's dispatch and is one line there. This test is the
-// thing that will catch it if that line is ever removed; until it is added, it SKIPS with
-// the line named, because a test that fails for work another branch owns fails for
-// everyone and stops being read. The skip is keyed on the exact unknown-subcommand
-// refusal, so any other breakage is a failure rather than a skip.
+// thing that will catch it if that line is ever removed.
 func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
 	t.Parallel()
 	for _, verb := range []string{"version", "--version"} {
 		r := invoke(t, "", verb)
-		if r.code == 2 && strings.Contains(r.stderr, "unknown subcommand") {
-			t.Skipf("main.go's dispatch does not route %q yet; add to the switch in run():\n"+
-				"\tcase \"version\", \"--version\":\n\t\treturn cmdVersion(rest, stdout, stderr)", verb)
-		}
 		if r.code != 0 {
 			t.Errorf("%s: exit %d, want 0\nstderr: %s", verb, r.code, r.stderr)
 			continue

@@ -29,7 +29,7 @@ not built, so transport-independence is proven by two rather than asserted by
 one. The name stays: the alternatives (`nova-session`, `nova-presence`) name the
 mechanism, and what a person wants is to keep talking.
 
-This spec is normative. It is a sibling of [SPEC.md](../SPEC.md), whose
+This spec is normative. It is a sibling of [SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line guarantee,
 the field escape, the cap-and-count law, and the rule that **every stamp is the
 tool's own clock and a typed time orders nothing** — governs here unchanged except
@@ -517,7 +517,7 @@ the token resolves to, on one line naming both.
 
 Disclosure is required and it is two facts:
 
-- **The profile says it, permanently.** The bot's *About Me* carries one sentence naming the line as an AI and naming its person; `--disclosure-file <path>` is where that sentence lives — required by `serve` and `check` — and `check` is exit 1 when the profile no longer contains it. CONTRIBUTING's first ground rule is *an account operated by an AI collaborator says so*, and a profile is where a stranger looks.
+- **The profile says it, permanently.** The bot's *About Me* carries one sentence naming the line as an AI and naming its person; `--disclosure-file <path>` is where that sentence lives — required by `serve` and `check` — and `check` is exit 1 when the profile no longer contains it. CONTRIBUTING's first ground rule is *an account operated by an AI says so*, and a profile is where a stranger looks.
 - **The first message in a room says it, once.** The first reply the line posts in a conversation carries the sentence as a prefix; `disclosed:<conversation>` is written **after** the post is confirmed, and it is never said again there. Glenn, 2026-07-16: *"It's OK and probably good for you to disclose that you are an AI, especially on first meeting somebody. Honesty first."* And the half this tool must also obey: *"Once you are friends with somebody, it's no longer necessary to repeat that you are an AI."*
 
 **A conversation the line has not spoken in yet is `pending-disclosure`, not
@@ -1178,7 +1178,7 @@ shared packages used rather than re-spelled (`internal/oneline`,
 7. **`internal/chat/fuse.go`** — the three or four `nova-fuse` calls in order — four with a guild, three on `class=dm` — before the first request of every cycle, and nowhere on the post path; the three mechanical blows. Tests: 11, 20.
 8. **`internal/chat/prompt.go`** — the open frame (boot, sandbox sentences, reply contract, conversation facts) and the turn block, written on every invocation (the sentinel, the escape, the standing sentence, the floor paragraph, the whole message, the window). Tests: 2, 10, 14, 22.
 9. **`internal/chat/run.go`** — the `nova-sandbox` argv from `--sandbox-args`, the explicitly built child environment with the pinned `HOME` and cwd, the `O_CLOEXEC` token read, the pipe drained outside the wall, the deadline held here with terminate-wait-kill against the process group, `REPLY.md` after exit. Tests: 15, 16, 27.
-10. **`cmd/nova-chat/main.go`** — the verbs, refusals naming what each flag wants and reporting every independent problem at once, the opening line, the poll loop with per-conversation due times and the 5s floor, the lossy collapse, the truncation with its mark, `internal/bounded` per kind. Tests: 21, 24, 28, 29, 30. Plus **onboarding**, which `internal/ci/onboarding_test.go` requires the moment `cmd/nova-chat/` exists: a usage banner ending in a runnable `example:` block, a `### First run` in `README.md`, `nova-chat help` on stdout at exit 0, a one-line refusal for a bad invocation, `cmd/nova-chat/testdata/fakeharness` and the fake transport — and the `SPEC.md`/`README.md` wiring.
+10. **`cmd/nova-chat/main.go`** — the verbs, refusals naming what each flag wants and reporting every independent problem at once, the opening line, the poll loop with per-conversation due times and the 5s floor, the lossy collapse, the truncation with its mark, `internal/bounded` per kind. Tests: 21, 24, 28, 29, 30. Plus **onboarding**, which `internal/ci/onboarding_test.go` requires the moment `cmd/nova-chat/` exists: a usage banner ending in a runnable `example:` block, a `### First run` in `docs/CLI.md`, `nova-chat help` on stdout at exit 0, a one-line refusal for a bad invocation, `cmd/nova-chat/testdata/fakeharness` and the fake transport — and the `docs/SPEC.md`/`docs/CLI.md` wiring.
 
 11. **The deduplication cut of this document — owed at the first dogfood, about 190 lines, against read 2's per-rule table.** All of it is triple-telling and specimen (the invite order told three times, rule 22 restating rule 10 part two, rule 9 quoting `:14` verbatim, the specimens already in their tests' comments) plus the three this revision's read named — the DM-creation skip's reason in rule 6, **Dependencies** and test 6; the self-bot observable's reason in rule 6 and test 6; *"only us"* at `:12`, in rule 11 twice and in **First run** — and none of it is a test, a forbid or a rule's depth. It is not a blocker for ratification and it is not done by guessing: the table names every line.
 
