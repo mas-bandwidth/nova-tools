@@ -40,6 +40,7 @@ func TestRefusesToGuess(t *testing.T) {
 
 		{"stats without root", []string{"stats"}, "--root is required"},
 		{"stats stray argument", []string{"stats", "--root", corpus, "extra"}, "unexpected argument"},
+		{"quickstart stray argument", []string{"quickstart", "--root", corpus, "extra"}, "unexpected argument"},
 
 		{"search without root", []string{"search", "--channels", "bm25", "--k", "3", "x"}, "--root is required"},
 		{"search without channels", []string{"search", "--root", corpus, "--k", "3", "x"}, "--channels is required"},

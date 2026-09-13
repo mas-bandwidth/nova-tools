@@ -43,7 +43,6 @@ func (r *Reports) Poll(ctx context.Context, now time.Time) (Result, error) {
 	bad := 0
 	var lastErr error
 	for _, dir := range r.Dirs {
-		found := false
 		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
 			if ctx.Err() != nil {
 				return ctx.Err()
@@ -59,7 +58,6 @@ func (r *Reports) Poll(ctx context.Context, now time.Time) (Result, error) {
 			if d.IsDir() || d.Name() != ReportName {
 				return nil
 			}
-			found = true
 			info, err := d.Info()
 			if err != nil {
 				return nil
@@ -71,7 +69,6 @@ func (r *Reports) Poll(ctx context.Context, now time.Time) (Result, error) {
 			})
 			return nil
 		})
-		_ = found
 		if err != nil {
 			bad++
 			lastErr = err

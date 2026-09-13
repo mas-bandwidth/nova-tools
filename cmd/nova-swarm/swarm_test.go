@@ -101,6 +101,12 @@ func builtBinaries(t *testing.T) (string, string) {
 		if buildErr != nil {
 			return
 		}
+		// THE TAGGED BUILD. The same binary with -tags swarmtest, which is the only build
+		// that honours the NOVA_SWARM_* injection variables. The recovery tests that plant
+		// a kill or a pause run this one; every other test runs the release build above.
+		if builtTaggedTool, buildErr = buildTagged(t, dir, "nova-swarm-swarmtest", "./cmd/nova-swarm"); buildErr != nil {
+			return
+		}
 		harnessDir := filepath.Join(dir, "bin")
 		if buildErr = os.MkdirAll(harnessDir, 0o755); buildErr != nil {
 			return
@@ -137,6 +143,7 @@ var (
 	buildOnce        sync.Once
 	builtDir         string
 	builtTool        string
+	builtTaggedTool  string
 	builtPath        string
 	builtSandbox     string
 	builtFakeSandbox string
@@ -155,12 +162,27 @@ func TestMain(m *testing.M) {
 }
 
 func build(t *testing.T, into, name, pkg string) (string, error) {
+	return buildWith(t, into, name, pkg)
+}
+
+// buildTagged builds with -tags swarmtest, the build whose injection functions read the
+// NOVA_SWARM_* environment variables. It is the binary the recovery tests run.
+func buildTagged(t *testing.T, into, name, pkg string) (string, error) {
+	return buildWith(t, into, name, pkg, "swarmtest")
+}
+
+func buildWith(t *testing.T, into, name, pkg string, tags ...string) (string, error) {
 	t.Helper()
 	bin := filepath.Join(into, name)
 	if runtime.GOOS == "windows" {
 		bin += ".exe"
 	}
-	cmd := exec.Command("go", "build", "-o", bin, pkg)
+	args := []string{"build", "-o", bin}
+	if len(tags) > 0 {
+		args = append(args, "-tags", strings.Join(tags, ","))
+	}
+	args = append(args, pkg)
+	cmd := exec.Command("go", args...)
 	cmd.Dir = repoRoot(t)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("building %s: %v\n%s", pkg, err, out)
@@ -197,6 +219,14 @@ func (b *bench) swarm(args ...string) (exit int, stdout, stderr string) {
 		b.t.Fatalf("running nova-swarm %s: %v", strings.Join(args, " "), err)
 	}
 	return exit, stdout, stderr
+}
+
+// inject switches this bench to the swarmtest build, the one whose injection functions read
+// the NOVA_SWARM_* environment variables. A test that plants a kill or a pause calls it;
+// every other test runs the release build, which ignores those variables entirely.
+func (b *bench) inject() {
+	b.t.Helper()
+	b.binary = builtTaggedTool
 }
 
 // swarmTry is swarm with the failure RETURNED rather than reported: t.Fatalf from a

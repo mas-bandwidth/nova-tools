@@ -1079,7 +1079,7 @@ func TestARefusedRunCreatesNothing(t *testing.T) {
 // after the probe stopped standing on a shell. This is the pin for the one line that goes
 // stale silently: the transcript names the tool's own binary, never a shell.
 func TestTheTranscriptNamesTheToolsOwnBinary(t *testing.T) {
-	doc, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
+	doc, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1310,4 +1310,51 @@ func exampleCommands(t *testing.T, block, base string) []string {
 		t.Fatalf("the example block ends in a continuation:\n%s", block)
 	}
 	return lines
+}
+
+// Rule 6 THROUGH THE BINARY, with the spelling a person can actually type (#145). The check
+// that exists to catch a `--secret` inside a named path compared strings, so a secret spelled
+// in another case than the `--read` it sits inside passed it and the probe reported a pass --
+// on APFS and on NTFS that secret is ONE FILE with the one inside the read set. The refusal
+// runs before any wall is built, so it is the same line on every platform.
+//
+// THE FILESYSTEM DECIDES WHETHER THIS TEST CAN RUN, NOT `runtime.GOOS`: APFS can be formatted
+// case-sensitive and a linux mount can fold, so the test writes a file and asks for it back in
+// another case, and skips by name where the answer is no.
+func TestASecretSpelledInAnotherCaseIsRefusedWhereTheFilesystemFolds(t *testing.T) {
+	j := newJob(t)
+	if err := os.WriteFile(filepath.Join(j.base, "CaseProbe"), []byte("x\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(j.base, "caseprobe")); err != nil {
+		t.Skipf("the filesystem under %s is case-SENSITIVE: caseprobe is not CaseProbe, so a --secret spelled in another case is a different file here and the fold this test is about cannot happen", j.base)
+	}
+	// `<base>/r` is the --read; there is no `<base>/R`, so this write goes through the fold
+	// and the file it makes IS a file inside the read set.
+	folded := filepath.Join(j.base, "R", "env")
+	if err := os.WriteFile(folded, []byte("not-a-real-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut := j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write, "--secret", folded)
+	if code != 2 || !strings.Contains(errOut, "reason=secret_inside_allow") {
+		t.Fatalf("a --secret inside --read spelled in another case was exit %d: %s", code, errOut)
+	}
+	if !strings.Contains(errOut, "the secret is never inside either list") {
+		t.Errorf("the refusal does not quote the rule:\n%s", errOut)
+	}
+	// The same question about the write set, whose folded spelling is the one a job would
+	// have written into.
+	foldedWrite := filepath.Join(j.base, "W", "env")
+	if err := os.WriteFile(foldedWrite, []byte("not-a-real-key\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errOut = j.tool(t, j.env(), "probe", "--read", j.read, "--write", j.write, "--secret", foldedWrite)
+	if code != 2 || !strings.Contains(errOut, "reason=secret_inside_allow") {
+		t.Fatalf("a --secret inside --write spelled in another case was exit %d: %s", code, errOut)
+	}
+	// And a secret in NEITHER list is still not refused for being one: the repair widens no
+	// list. `<base>/secret/env` is the placement the wall is built around.
+	if code, _, errOut := j.tool(t, j.env(), "policy", "--read", j.read, "--write", j.write, "--secret", j.secret); code != 0 {
+		t.Fatalf("a secret outside both lists was exit %d: %s", code, errOut)
+	}
 }

@@ -114,7 +114,7 @@ adversary on the wire would answer first. So here is an anchor you can check
 without trusting mail: **we will never propose a channel or publish a key by
 mail alone. Anything we offer will also appear in a commit to this file**, so
 read [this file's
-history](https://github.com/mas-bandwidth/nova-tools/commits/main/SECURITY.md)
+history](https://github.com/mas-bandwidth/nova-tools/commits/main/docs/SECURITY.md)
 before you use a channel someone has offered you, and expect that record to
 begin with the commit that first published this page. The anchor proves a
 commit is in this repository's history; it does not prove which of us put it there, and a

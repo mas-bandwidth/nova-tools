@@ -71,6 +71,8 @@ func canonicalize(v Value, skip map[string]bool, field string, buf *bytes.Buffer
 		buf.WriteByte('{')
 		for i, k := range keys {
 			if !skip[RuleInvalidUTF8] && !utf8.ValidString(k) {
+				// Invalid UTF-8 bytes cannot be safely formatted into a dotted identifier string,
+				// so indexPath is intentionally used to provide a safe, bounded diagnostic locator.
 				return refuse(RuleInvalidUTF8, indexPath(field, i), "member name is not valid UTF-8")
 			}
 			if i > 0 {

@@ -782,8 +782,8 @@ func TestNoCodeLocationIsAnchoredAtTheRepoRoot(t *testing.T) {
 // TestNoCodeCompositeActionIsFlagged: a composite action executes on the
 // runner exactly as a workflow does and lives one directory over, so a floor
 // that catches only .github/workflows/ leaves the same consequence class open.
-// Matched by name rather than by widening the prefix to .github/, which also
-// holds issue templates and CONTRIBUTING.
+// Matched by location (.github/actions/) rather than by widening the prefix to
+// .github/, which also holds issue templates and CONTRIBUTING.
 func TestNoCodeCompositeActionIsFlagged(t *testing.T) {
 	files := map[string]os.FileMode{
 		"NOTES.md":                          0o644,

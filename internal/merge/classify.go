@@ -2,6 +2,7 @@ package merge
 
 import (
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -96,7 +97,7 @@ func (p *Pass) classify(e *Entry, baseSHA string, res *Result) Classification {
 	// ONE STATEMENT of the decision, shared with dry-run and status (lesson 113: a
 	// matching rule has exactly one statement). What is here and not in standing() is
 	// the side effects: the detail sentences, the build, and the record.
-	state, admitted := standing(p.State.Base, checks, c.Reads, c.Gate, p.basePending)
+	state, admitted := standing(p.State.HostedRedBlocks(p.DefaultBranch), checks, c.Reads, c.Gate, p.basePending)
 	c.Admitted = admitted
 	c.State = state
 	switch state {
@@ -183,7 +184,29 @@ func selector(e *Entry) string {
 func (p *Pass) blockedLine(e *Entry, files []string) {
 	fmt.Fprintf(p.Stderr, "RUN BLOCKED entry=%s head=%s files=%d: %s\n",
 		oneline.Field(e.ID()), oneline.Field(Short(e.OID)), len(files),
-		oneline.Escape(oneline.Cap(HandCommand(p.State.Repo, p.State.Base, e.Head, files), oneline.TailBytes)))
+		oneline.Escape(oneline.Cap(HandCommand(cloneToken(p), p.State.Base, e.Head, files), oneline.TailBytes)))
+}
+
+// cloneToken is the shell-quoted thing a hand command clones from: the lane's CONFIGURED
+// remote, read back from the clone the pass already holds. It is never an invented host,
+// and it is never a credential: when the remote's URL carries userinfo -- a token or a
+// password -- or when it cannot be read, the token is the command substitution, which
+// prints no token here and reads the URL only when the hand pastes and runs the command.
+func cloneToken(p *Pass) string {
+	remote, err := p.Clone.Out("remote", "get-url", p.Remote)
+	if err != nil || hasUserinfo(remote) {
+		return fmt.Sprintf("$(git -C %s remote get-url %s)", shellQuote(p.Clone.Dir), p.Remote)
+	}
+	return shellQuote(remote)
+}
+
+// hasUserinfo reports whether a remote URL carries a username or a password. The lane's
+// remote may be an https URL with a token in it -- git clones with the token embedded and
+// stores it verbatim -- and a token printed into RUN BLOCKED is a credential written into
+// a log.
+func hasUserinfo(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.User != nil
 }
 
 // remerge is rule 3: after a merge the base has moved, and an entry that CONFLICTS with
