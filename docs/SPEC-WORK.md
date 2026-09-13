@@ -1,11 +1,15 @@
-# nova-work — specification (DRAFT 5, 2026-09-13)
+# nova-work — specification (DRAFT 6, 2026-09-13)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
 what this document keeps. Sections marked *(Stella)* are hers; sections marked *(Rowan)* are
-mine; the rest is shared. Every requirement that is Glenn's cites the nova-tools#177 comment
-it comes from, by id, or names the note that reports his live word, so a reader can check the
-words. **Two things in this document are the authors' proposals and not Glenn's requirements,
+mine; the rest is shared. Every requirement that is Glenn's cites its source so a reader can check the words: a
+nova-tools#177 comment by id, or one of the four bus notes in which Stella reports his live
+words of 2026-09-13 — stella-5adca9a1f09d (resident S, periodic clips, verbs for structure),
+stella-deed78e54cb4 (link versus absorb, the initial import that loses no data),
+stella-0ace603bdc22 (one coordinator, one live reader/writer) and stella-fe600103fa2e (*"the
+work set is the PRIMARY FORM"*, superseding 5653982211's hesitation). Where a later word
+supersedes an earlier comment, the later word governs and the earlier is named. **Two things in this document are the authors' proposals and not Glenn's requirements,
 and they are marked where they stand: the lease model (Rowan's, from #177 comment 5654176537)
 and everything in the section *Additions of the authors'*.** Draft 5 integrates Stella's
 resident-session amendment (her 9757de0, on Glenn's clarification after draft 3: *the
@@ -22,13 +26,13 @@ scope changes). Everything **derived** — a task's current state, counts, perce
 plans — is computed and cached in memory and never written as authority; a roadmap table, an
 owner queue, a stream report and a percentage are each a **projection** of S at a named scope
 revision, and none of them is a second store. `ROADMAP.md` is regenerated, never edited; a
-hand-typed percentage is a bug (5653970526). **Where S lives is two statements that do not yet
-agree, and both are kept:** #177 comment 5653982211 says to *evaluate making this the primary
-internal state only after lossless import/export, stable identity mapping, provenance
-retention, conflict handling, restart/replay and reconstruction have been demonstrated*;
-Stella reports Glenn's later live word of 2026-09-13 that S is the primary form with a
-persistent versioned repository home. Until his later word is on #177 in his own words, the
-demonstration conditions bind, and nothing in this draft migrates or imports anything.
+hand-typed percentage is a bug (5653970526). **S is the primary form, in a persistent versioned repository** (Glenn, 2026-09-13, via
+stella-fe600103fa2e: *"the work set is the PRIMARY FORM"*, which supersedes #177 comment
+5653982211's *evaluate … only after … demonstrated*). What 5653982211 listed — lossless
+import/export, stable identity mapping, provenance retention, restart/replay and
+reconstruction — is kept as the gate on **migration**, not on the requirement: his own rule for
+the initial import is *"We must not lose data"* (stella-deed78e54cb4), and Stella's migration
+section below carries it. Nothing in this draft migrates or imports anything.
 
 This spec is normative once it leaves draft. It is a sibling of [SPEC.md](SPEC.md), whose
 **Conventions** — exit codes, no guessed paths, the one-line guarantee, the field escape, the
@@ -62,27 +66,41 @@ the mechanism is Stella's proposal below, not a built fact.
 
 A **session** is that coordinator's supervised, long-lived process, and it owns the one S: it loads the snapshot once,
 validates it whole, builds the indexes, replays nothing thereafter, and answers verbs against
-its resident objects. **The CLI is a thin client**: `nova-work <verb> --session <name>` sends
-the verb to the named session and prints its one-line answer; a fresh CLI process is never a
-fresh parse. A session's identity, bounds, journal path, base revision and clip cadence are
+its resident objects. **The CLI is a thin client**: `nova-work <verb> --session <path>` sends the verb to the
+session listening at that path (a Unix socket the session creates at start; no default path)
+and prints its one-line answer; a fresh CLI process is never a fresh parse. A reader who is
+not the coordinator reads a published snapshot with `--snapshot <path>` in place of
+`--session`, read-only, and its answers carry the snapshot's revision. The client is Go under
+this repository's conventions; the session's own language is the pilot's decision (Stella:
+*trusted implementation code may be Lisp*), and the version line is the client's. A session's identity, bounds, journal path, base revision and clip cadence are
 explicit at start and readable at any time (`session status`), and it is stopped explicitly;
 no always-on daemon is required, and a supervised session that a coordinator starts for a
 sitting and stops at its end is enough (Stella, *Keep the work set alive*).
 
-Every mutation is one typed event. The session validates it against the current local
-revision over the resident S as it would be with the event applied, appends the event with
-its stable id to the **local recovery journal**, acknowledges only after the journal is
-durable, then applies it to the resident objects, updates the affected indexes and invalidates
-the affected derived values. A failed validation changes neither S nor the journal. The same
-event id cannot apply twice (Stella, *Accept locally, then clip into Git*).
+Every mutation is one typed event and carries a **request id**: `--request <id>` on every
+mutation verb, drawn by the caller (a friend's request arrives with one), or drawn by the tool
+and printed on the `OK` line when absent. The session validates the event against the current
+local revision over the resident S as it would be with the event applied, appends it with its
+request id to the **local recovery journal**, acknowledges only after the journal is durable,
+then applies it to the resident objects, updates the affected indexes and invalidates the
+affected derived values. A failed validation changes neither S nor the journal. A retry with a
+request id the journal already holds is answered with the original `OK` line and applies
+nothing, which is how a crash between durability and acknowledgement yields one event
+(Stella, *Accept locally, then clip into Git*).
 
-A **clip** is the only write to the repository: it names a local event boundary, fetches the
-upstream revision, reconciles the events since the session's base against it, validates the
-combined candidate whole, writes one deterministic snapshot carrying the structure and the
-retained event history, commits and pushes, and records the shared revision and which local
-events it contains. A failed push leaves accepted local work and the pending clip intact and
-reports *locally durable, not shared*; a conflict preserves both versions and names the nodes
-and events; nothing is force-pushed. A session stop and a coordinator handoff request a clip.
+**The repository branch that holds S has one writer too: the active coordinator.** A **clip**
+is the only write to it: it names a local event boundary, fetches the upstream revision, and
+**refuses if upstream is not the session's base** — a moved upstream means a fenced old owner's
+late push or a hand edit, and either is a handoff or a reload, never a merge — then validates
+the resident S whole, writes one deterministic snapshot carrying the structure and the
+retained event history, commits and pushes under `--git-timeout <seconds>` with `--attempts
+<n>` (default 25, as the bus's, a budget measured against the bus rather than a fact about
+it), and records the shared revision and which local events it contains. A failed push leaves
+accepted local work and the pending clip intact and reports *locally durable, not shared*; a
+divergence prints the upstream sha and the session's base and stops; nothing is force-pushed
+and nothing is reconciled. A session stop and a coordinator handoff request a clip under the
+same flags, so a stop is bounded by the same timeout and budget. `render` writes a working-tree
+file that the next clip commits; it is not a second write path to the branch.
 
 ## The data *(Rowan)*
 
@@ -102,8 +120,9 @@ execution model, below): its **structure** — nodes, `:id`, `:type`, `:children
 `:acceptance`, `:responsible`, axes and cells — and its **log** — every event below — are both
 held there, both changed only through typed verbs, and both written to the repository only by a
 **clip**, as one deterministic snapshot carrying the structure and the retained history. Nothing
-in the normal path is hand-written; the snapshot is data a person may read and, under review,
-edit, and the next session load validates it whole. Every mutation is an event: a structural
+in the normal path is hand-written; the snapshot is data a person may read, and a hand edit
+to it is a maintenance act outside the verbs, loaded and validated whole by the next session
+start, never the way structure changes in use. Every mutation is an event: a structural
 verb appends a structure event and a scope event where a required set changes, so every
 transition is kept rather than overwritten (#177: *preserve transitions and corrections rather
 than overwriting the history*).
@@ -149,7 +168,8 @@ they are distinct kinds:
   is distinct from unstarted and from unknown, and **an out-of-scope cell leaves that axis
   member's applicable rows** (5654160320: *fully green features / applicable features*).
   Adding an axis member or a feature is a scope revision; removing one is not completion.
-- `:task` — work with `:acceptance` (pointers to the criteria that close it, each with a
+- `:task` — work with `:acceptance`; a task with no `:children` is a **leaf subtask**, the
+  unit `unit=leaves` counts; a task with children is counted by its leaves, never itself; (pointers to the criteria that close it, each with a
   short id), `:required` (default true), and a current state, generation, evidence set and
   blocked reason **all derived from its events**. A task has no stored worker; who is working
   on it is answered from leases only; who is responsible is `:responsible`, inherited down the
@@ -160,15 +180,16 @@ they are distinct kinds:
   - `:transition` — `:to <state>`, `:reason`, and for `:blocked` a `:blocked-by` reference; a
     `:to :done` names the evidence event ids it stands on.
   - `:evidence` — `:pointer`, `:criterion` (an `:acceptance` id on the node), `:against <sha>`
-    (the tree it was read against), `:attempt` (optional).
+    (the tree it was read against), `:generation` (the node's, at the time of writing),
+    `:attempt` (optional).
   - `:attempt` — `:model`, `:bench`, `:started`, `:ended`, `:result` (a pointer), `:usage` (a
     pointer to a token record, #181), `:generation` (the task generation it answered).
   - `:correct` — a correction to a task: `:reason`; bumps the task's `:generation`
     (5653982211).
   - `:responsible` — `:to <name>` on a work-set or feature, on a person's word, `:reason`.
   - `:lease`, `:heartbeat`, `:release`, `:handoff` — the lease log, below.
-  - `:baseline`, `:discovery`, `:remove`, `:defer`, `:reopen`, `:split`, `:supersede`,
-    `:scope` — the scope log: a baseline records the required set of its node **as the tool
+  - `:baseline`, `:discovery`, `:remove`, `:defer`, `:cancel` (carrying `:evidence` that the
+    worker stopped), `:reopen`, `:split`, `:supersede`, `:scope` — the scope log: a baseline records the required set of its node **as the tool
     computed it at that moment**, member by member; a split names the new children; a
     supersede names `:by`; every one of them increments the node's scope revision, because
     every one changes a required set. Splitting is decomposition, not discovery or completion
@@ -283,12 +304,17 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
   gate is satisfied. *Do not average nested percentages, round 99.9 to green, treat an empty
   checklist as done, or count one shared leaf repeatedly within a cell* (5653970526).
 - **Completion of a focus** = completed required work / current required work, with the
-  baseline denominator kept beside it for expansion and contraction (5654160320).
+  baseline denominator kept beside it for expansion and contraction (5654160320). **Current
+  required work excludes `:deferred`, `:cancelled` and `:superseded` leaves** and `remaining`
+  prints them under `deferred=<n>` so the subtraction is visible; the baseline denominator
+  still counts them.
 - **Units are labelled** on every line: `unit=features` or `unit=leaves`; a comparison never
   changes unit silently.
 - **Future cannot lower the active percentage; a deferred item cannot raise the completed
   count** (5653970526). Both are tests.
-- **Unknown and unverified are counts of their own**, printed on every answer.
+- **Unknown is a count of its own**, printed on every answer; `done-unverified=<n>` is the
+  part of `unknown=` that is a recorded done standing on unverified or stale evidence, so the
+  two are never added.
 
 ## Queries — the contract *(Rowan; Glenn's list from 5654012267)*
 
@@ -310,37 +336,40 @@ source=<sha> freshest=<stamp> unknown=<n> unverified=<n> emitted=<bytes>`.
 ## The verbs *(Rowan; a draft shape, to be cut by the pilot)*
 
 Session verbs run the process; every other verb is a client verb addressed to a session by
-`--session <name>` (required; no default session). Every client verb that lists takes `--max
+`--session <path>` (required; no default), or, for `check` and `query` only, to a published
+snapshot by `--snapshot <path>` with the three bounds, read-only. Every mutation verb takes
+`[--request <id>]`, drawn by the tool and printed when absent. Every client verb that lists takes `--max
 <n>`, default 20, `0` means all, negative refused (SPEC.md, the cap-and-count law). Every
 duration comes from a flag: `--window` is required by `who` and `stale`, `--by` by `take`,
 `--every` by `session start`. `--now <stamp>` is optional on every verb and records `:clock
 :given`; absent, the session's clock is used and recorded as `:clock :tool`.
 
 ```
-nova-work session start  --name <name> --file <S.sexp> --journal <path> --repo <path> --remote <name> --branch <name>
-                         --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> [--now <stamp>]
-nova-work session status --session <name>
-nova-work session stop   --session <name> [--no-clip]
-nova-work clip           --session <name> --as <name> [--attempts <n>] [--now <stamp>]
-nova-work check          --session <name> [--max <n>]
-nova-work verify         --session <name> --max-fetch <n> --fetch-timeout <seconds> --cache <path> [--offline] [--node <id>] [--max <n>]
-nova-work query          --session <name> --ask <kind> [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>]
-                         [--axis <member>] [--window <duration>] [--since <revision>] [--at <revision>] [--max <n>]
-nova-work render         --session <name> --view <roadmap-id> --into <path> --start <marker> --end <marker> [--at <revision>] [--check]
-nova-work node add       --session <name> --as <name> --id <id> --type <kind> --under <parent-id> [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id=pointer> ...] --reason <text>
-nova-work decompose      --session <name> --as <name> --node <id> --into <id,...> --reason <text>
-nova-work dep            --session <name> --as <name> --node <id> (--add <id> | --remove <id>) --reason <text>
-nova-work axis           --session <name> --as <name> --roadmap <id> --axis <id> --add <member> --reason <text>
-nova-work cell           --session <name> --as <name> --roadmap <id> --at <member,member> (--ref <id> | --out-of-scope) --reason <text>
-nova-work responsible    --session <name> --as <name> --node <id> --to <name> --reason <text>
-nova-work take           --session <name> --as <name> --node <id> --by <duration|stamp> --default <release|extend-once|escalate:<name>>
-nova-work heartbeat      --session <name> --as <name> --node <id> --evidence <pointer>
-nova-work release        --session <name> --as <name> --node <id> [--handed <name>]
-nova-work attempt        --session <name> --as <name> --node <id> --model <name> --bench <name> --result <pointer> [--usage <pointer>]
-nova-work evidence       --session <name> --as <name> --node <id> --pointer <pointer> --criterion <id> --against <sha> [--attempt <id>]
-nova-work state          --session <name> --as <name> --node <id> --to <state> (--evidence <event-id> ... | --reason <text>) [--blocked-by <id>]
-nova-work correct        --session <name> --as <name> --node <id> --reason <text>
-nova-work event          --session <name> --as <name> --kind <baseline|discovery|remove|defer|cancel|reopen|split|supersede|scope> --node <id> --reason <text> [--by-node <id>] [--children <id,...>]
+nova-work session start  --session <path> --file <S.sexp> --journal <path> --repo <path> --remote <name> --branch <name>
+                         --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --git-timeout <seconds> [--now <stamp>]
+nova-work session status --session <path>
+nova-work session stop   --session <path> --git-timeout <seconds> [--attempts <n>] [--no-clip]
+nova-work clip           --session <path> --as <name> --git-timeout <seconds> [--attempts <n>] [--max <n>] [--now <stamp>]
+nova-work check          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) [--max <n>]
+nova-work verify         --session <path> --max-fetch <n> --fetch-timeout <seconds> --cache <path> [--offline] [--node <id>] [--max <n>]
+nova-work query          (--session <path> | --snapshot <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) --ask <kind>
+                         [--node <id>] [--repo <o/n>] [--owner <name>] [--category <label>] [--axis <member>]
+                         [--since <revision>] [--at <revision>] [--max <n>]   (who and stale: --window <duration>, required)
+nova-work render         --session <path> --view <roadmap-id> --into <path> --start <marker> --end <marker> [--at <revision>] [--check]
+nova-work node add       --session <path> --as <name> [--request <id>] --id <id> --type <kind> --under <parent-id> [--title <text>] [--category <label>] [--required <true|false>] [--acceptance <id=pointer> ...] --reason <text>
+nova-work decompose      --session <path> --as <name> [--request <id>] --node <id> --into <id,...> --reason <text>
+nova-work dep            --session <path> --as <name> [--request <id>] --node <id> (--add <id> | --remove <id>) --reason <text>
+nova-work axis           --session <path> --as <name> [--request <id>] --roadmap <id> --axis <id> --add <member> --reason <text>
+nova-work cell           --session <path> --as <name> --roadmap <id> --coord <member,member> (--ref <id> | --out-of-scope) --reason <text>
+nova-work responsible    --session <path> --as <name> [--request <id>] --node <id> --to <name> --reason <text>
+nova-work take           --session <path> --as <name> [--request <id>] --node <id> --by <duration|stamp> --default <release|extend-once|escalate:<name>>
+nova-work heartbeat      --session <path> --as <name> [--request <id>] --node <id> --evidence <pointer>
+nova-work release        --session <path> --as <name> [--request <id>] --node <id> [--handed <name>]
+nova-work attempt        --session <path> --as <name> [--request <id>] --node <id> --model <name> --bench <name> --result <pointer> [--usage <pointer>]
+nova-work evidence       --session <path> --as <name> [--request <id>] --node <id> --pointer <pointer> --criterion <id> --against <sha> [--attempt <id>]
+nova-work state          --session <path> --as <name> [--request <id>] --node <id> --to <state> (--evidence <event-id> ... | --reason <text>) [--blocked-by <id>]
+nova-work correct        --session <path> --as <name> [--request <id>] --node <id> --reason <text>
+nova-work event          --session <path> --as <name> --kind <baseline|discovery|remove|defer|cancel|reopen|split|supersede|scope> --node <id> --reason <text> [--by-node <id>] [--children <id,...>] [--evidence <pointer>]
 nova-work version
 nova-work help
 ```
@@ -409,9 +438,9 @@ next clip. Do not discard recovery records before successful checkpointing.
 
 A failed network request leaves local accepted work and the pending clip intact;
 report it as locally durable but not shared. Retry with bounded exponential
-backoff. A rejected push or semantic conflict preserves both versions and names
-the conflicting nodes/events; never force-push or silently prefer the last writer.
-Apply nonconflicting incoming events incrementally where supported. An explicit
+backoff. A rejected push preserves the local work and names the upstream and base shas; never
+force-push and never merge (the sentence "apply nonconflicting incoming events
+incrementally" stood here in 9757de0 and is struck by stella-0ace603bdc22). An explicit
 reload/rebuild is a recovery or maintenance operation, not the normal verb path.
 Clip cadence is configurable; shutdown and coordinator handoff request a clip.
 A Git checkpoint is not required for every small mutation.
@@ -553,27 +582,26 @@ event's id and the session's local revision after it, and `shared=<rev|->` for t
 confirmed clip.
 
 ```
-SESSION OK name=<name> file=<path> base=<sha> journal=<path> events=<n> pending=<n> nodes=<n> edges=<n> parses=<n> replays=<n> emitted=<bytes>
-SESSION FAIL name=<name>: <reason>
-CLIP OK name=<name> boundary=<event-id> events=<n> commit=<sha> pushed=<true|false> attempts=<n> emitted=<bytes>
-CLIP FAIL name=<name> boundary=<event-id> events=<n> conflicts=<n> shown=<n>: <reason>
-CLIP ROW conflict node=<id> event=<id> theirs=<sha>
+SESSION OK session=<path> file=<path> base=<sha> journal=<path> events=<n> pending=<n> nodes=<n> edges=<n> parses=<n> replays=<n> emitted=<bytes>
+SESSION FAIL session=<path>: <reason>
+CLIP OK session=<path> boundary=<request-id> events=<n> base=<sha> commit=<sha> pushed=<true|false> attempts=<n> emitted=<bytes>
+CLIP FAIL session=<path> boundary=<request-id> events=<n> base=<sha> upstream=<sha> pushed=false attempts=<n>: <reason>
 WORK OK nodes=<n> edges=<n> events=<n> leases=<n> expired=<n> stale=<n> scope=<rev> source=<sha> emitted=<bytes>
 WORK FAIL <id>: rule <n>: <reason>
 WORK FAIL nodes=<n> findings=<n> shown=<n> expired=<n> stale=<n>
 VERIFY OK pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> emitted=<bytes>
 VERIFY ROW <event-id> pointer=<p> verdict=<verified|unverified|stale> at=<stamp>
 VERIFY FAIL pointers=<n> unverified=<n> shown=<n>
-QUERY OK ask=<kind> scope=<rev> membership=<rule> unit=<unit> source=<sha> freshest=<stamp> done=<n> done-unverified=<n> unknown=<n> stale=<n> rows=<n> shown=<n> parses=0 emitted=<bytes>
+QUERY OK ask=<kind> scope=<rev> membership=<rule> unit=<unit> source=<sha> freshest=<stamp> done=<n> done-unverified=<n> unknown=<n> deferred=<n> stale=<n> [green=<k> baseline-rows=<n0>] rows=<n> shown=<n> parses=<n> emitted=<bytes>
 QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> holder=<name|unowned> shared=<true|false|-> heartbeat=<age|none> deadline=<stamp|-> blocked-by=<id|->
-QUERY FAIL ask=<kind>: <reason>
+QUERY FAIL ask=<kind> rows=<n> shown=<n>: <reason>
 RENDER OK view=<id> cells=<n> bytes=<n> into=<path> emitted=<bytes>
 RENDER FAIL view=<id> cells=<n> drifted=<n> into=<path>
-<MUTATION> OK id=<event-id> node=<id> rev=<n> shared=<rev|-> ... emitted=<bytes>
+<MUTATION> OK id=<event-id> request=<id> node=<id> rev=<n> shared=<rev|-> ... emitted=<bytes>
 <MUTATION> FAIL node=<id>: rule <n>: <reason>
 LEASE FAIL node=<id> holder=<name> since=<stamp> deadline=<stamp> live=<n>: held
 <TOKEN> NOTE <caveat>
-<TOKEN> MORE kind=<rule|row|conflict> shown=<n> total=<t> <remedy>
+<TOKEN> MORE kind=<rule|row> shown=<n> total=<t> <remedy>
 nova-work <build identity> <goos>/<goarch> <go version>
 ```
 
@@ -793,10 +821,10 @@ overwrite of the work tree. Issue text remains data and cannot assign authority,
 or grant permissions. Publishing a summary back to GitHub is a separate, explicit adapter
 operation with a receipt; importing does not close, delete or rewrite the source issue.
 
-Concurrent coordinators must detect revision conflicts rather than overwrite each other's
-work. A checkpoint records the parent revision and change; after a conflict, read the new
-head and reconcile against the same stable IDs. Network failure leaves a pending local
-checkpoint whose sync status is visible. Reads should remain useful offline; stale or
+*(A paragraph on concurrent coordinators reconciling conflicts stood here in e167483 and is
+struck by the one-coordinator rule of stella-0ace603bdc22; the clip refuses on divergence,
+above.)* A checkpoint records the parent revision and change. Network failure leaves a pending
+local checkpoint whose sync status is visible. Reads should remain useful offline; stale or
 unavailable remote evidence is reported as such without erasing the last verified record.
 The persistence protocol and recovery tests are production spec work informed by the pilot,
 not guarantees supplied merely by putting a file in Git.
