@@ -618,6 +618,9 @@ func stagedADeath(t *testing.T, boundary string, attempt int) bool {
 			t.Logf("%s (attempt %d): the killed git left .git/index.lock; with the whole process group verified gone, the test performed the operator's named repair before retrying", boundary, attempt)
 		}
 	}
+	if r.removeStaleBusLock(t) {
+		t.Logf("%s (attempt %d): the killed bus left .git/nova-bus.lock.held; with the whole process group verified gone, the test performed the operator's named repair before retrying", boundary, attempt)
+	}
 	clearWrapper(t)
 	code, out, errs = r.send(t, r.bin)
 	if code != 0 {
@@ -722,7 +725,7 @@ func (r reporter) leftInTheLane(t *testing.T) string {
 // retry that refuses forever is usually a lock nobody owns.
 func (r reporter) locks() []string {
 	var found []string
-	for _, pattern := range []string{".git/index.lock", ".git/*.lock", "*.lock", ".nova-bus*"} {
+	for _, pattern := range []string{".git/index.lock", ".git/*.lock", ".git/*.held", "*.lock", ".nova-bus*"} {
 		m, _ := filepath.Glob(filepath.Join(r.bus.checkout, filepath.FromSlash(pattern)))
 		found = append(found, m...)
 	}
@@ -757,6 +760,20 @@ func (r reporter) removeStaleIndexLock(t *testing.T) bool {
 		return false
 	}
 	if err := os.Remove(lock); err != nil {
+		t.Fatal(err)
+	}
+	return true
+}
+
+// removeStaleBusLock performs the operator's repair on Windows where a killed
+// bus process cannot have its sentinel lock file dropped by the kernel.
+func (r reporter) removeStaleBusLock(t *testing.T) bool {
+	t.Helper()
+	lock := filepath.Join(r.bus.checkout, ".git", "nova-bus.lock.held")
+	if _, err := os.Stat(lock); err != nil {
+		return false
+	}
+	if err := os.Remove(lock); err != nil && !os.IsNotExist(err) {
 		t.Fatal(err)
 	}
 	return true
@@ -870,6 +887,9 @@ func TestJoinReporterDeathWithPendingSavedFinishesTheSameReport(t *testing.T) {
 	if _, err := os.Stat(r.snapshot + ".lock"); err == nil {
 		t.Log("the killed reporter left its sibling lock file behind, as expected; only the kernel lock meant ownership")
 	}
+	if r.removeStaleBusLock(t) {
+		t.Log("the killed reporter left .git/nova-bus.lock.held; cleaned up before retry")
+	}
 	code, out, errs := r.send(t, r.bin)
 	if code != 0 {
 		t.Fatalf("the report did not finish: %d\n%s\n%s", code, out, errs)
@@ -892,6 +912,9 @@ func TestJoinReporterDeathAfterRemoteConfirmationDoesNotPublishTwice(t *testing.
 	id := r.pendingID(t)
 	if r.removeStaleIndexLock(t) {
 		t.Log("the killed reporter's bus child left .git/index.lock; the test performed the bus's named repair before retrying")
+	}
+	if r.removeStaleBusLock(t) {
+		t.Log("the killed reporter's bus child left .git/nova-bus.lock.held; the test performed the bus's named repair before retrying")
 	}
 	head := git(t, r.bus.bare, "rev-parse", "main")
 	code, out, errs := r.send(t, r.bin)
@@ -947,12 +970,18 @@ func TestJoinTwoPhaseInterruptionPreservesIndexPrefixAndRecovers(t *testing.T) {
 	if r.removeStaleIndexLock(t) {
 		t.Log("phase 1 killed child left .git/index.lock; cleaned up before phase 2")
 	}
+	if r.removeStaleBusLock(t) {
+		t.Log("phase 1 killed child left .git/nova-bus.lock.held; cleaned up before phase 2")
+	}
 
 	// 4. Phase 2: Interrupt recovery before confirmation (killReporterWhen note is on remote)
 	clearWrapper(t)
 	r.killReporterWhen(t, r.bin, "recovery note reaching remote", func() bool { return r.remoteHasANote(t) })
 	if r.removeStaleIndexLock(t) {
 		t.Log("phase 2 killed recovery left .git/index.lock; cleaned up before final retry")
+	}
+	if r.removeStaleBusLock(t) {
+		t.Log("phase 2 killed recovery left .git/nova-bus.lock.held; cleaned up before final retry")
 	}
 
 	// 5. Phase 3: Final retry runs to completion
