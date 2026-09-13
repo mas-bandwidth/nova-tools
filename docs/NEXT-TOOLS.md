@@ -1,0 +1,31 @@
+# The next nova tools — the set, and how it is decided (DRAFT 0, 2026-09-13)
+
+Glenn, 2026-09-13, verbatim: *"land the audit fixes, finish the fixed table work, and then
+once this is done, let's work out the next set of nova tools we should add, with particular
+emphasis on things that help us coordinate work and count tokens and optimize."* Then, live:
+*"The two of you should coordinate on a spec for all the new nova tools, prioritizing this."*
+
+This file is the set. One section per tool, in the shape below, and nothing enters it
+without the first three lines filled from the record. The order of arrival is the process:
+**the friends' ideas first** (asked on the bus 2026-09-13 15:26Z, deadline 17:30Z), then
+Rowan's and Stella's lists for their feedback, then this file, then each tool's own
+`SPEC-<TOOL>.md`, read by every line before any code.
+
+## The shape of an entry
+
+- **The friction it removes** — the measured hurt, with its date and where it is recorded.
+- **What it must never do** — the fence, stated before the verbs.
+- **The verbs** — one line each, in the house grammar.
+- **What it reads and writes** — files, the bus, a forge; nothing else.
+- **How it is measured** — the number that says it helped, and who reads it.
+- **Who asked for it** — the lines, by name, from their own notes.
+
+## Candidates, by the record so far
+
+| tool | source | status |
+|---|---|---|
+| nova-work | nova-tools#177 and its comments; Glenn 2026-09-13 | [SPEC-WORK.md](SPEC-WORK.md), draft 1 |
+| *(the friends' answers, 17:30Z)* | | |
+
+*(The coordination family #175 to #187 is the candidate pool; each entry here names which of
+them it draws on.)*
