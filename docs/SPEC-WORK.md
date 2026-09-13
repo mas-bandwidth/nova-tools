@@ -1,4 +1,4 @@
-# nova-work — specification (DRAFT 8, 2026-09-13)
+# nova-work — specification (DRAFT 9, 2026-09-13)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
@@ -64,26 +64,35 @@ memory via nova-work"; "Otherwise, we have races"*). Friends and workers submit 
 and requested changes to that coordinator; they never open a second live S; other readers read
 published, revision-labelled snapshots. **The mechanism that makes the rule hold across benches is proposed for the pilot, on the
 substrate we already trust, and it fences MUTATION, not only publication.** The branch that
-holds S carries an ownership record (`OWNER`: the coordinator's name, a **generation**, the
-stamp it was taken, and **`until`**, the stamp the ownership lease expires). Three rules:
+holds S carries an ownership record (`OWNER`: the coordinator's name, a **generation**, a
+**token** drawn at random when the generation was taken, the stamp it was taken, and
+**`until`**, the stamp the ownership lease expires). The token is written to the taking
+session's own journal and nowhere else, so **only the process that took a generation can
+resume it**: a second session under the same name on another bench holds no token and is a
+taker, not a resumer. Three rules:
 
 1. **Taking.** `session start` fetches the tip, reads `OWNER`, and takes ownership only if the
-   record names nobody, names itself, or its `until` is in the past; it then pushes one
+   record names nobody, or its `until` plus `--skew` is in the past, or it names this session
+   and this session's journal holds the record's token (that is a resume: same generation, no
+   bump, `until` advanced); it then pushes one
    fast-forward commit that bumps the generation and sets `until = now + 2 × --every`, using
    a compare-and-swap push (`--force-with-lease=<branch>:<tip read>`: git refuses the push if
    the tip moved; **no history is ever rewritten** — the flag is the CAS, not a force). A
    refused push, or an `OWNER` whose lease is live and names another, is exit 1 naming the
-   owner, generation and `until`, and the session never activates. The same owner restarting
-   inside its live lease resumes its generation without a bump.
+   owner, generation and `until`, and the session never activates. A restart without the token waits like anyone else.
 2. **Holding.** Every `--every`, the owner fetches the tip and **reconfirms** that `OWNER`
-   still carries its generation, then pushes a fast-forward commit advancing `until` the same
-   way. **An owner that cannot reconfirm before its `until` fences itself**: it stops
+   still carries its generation and token, then pushes a fast-forward commit advancing
+   `until` the same way. **The session's base is the sha of the last commit it pushed**, a
+   reconfirm as much as a clip, so its own reconfirms never read as divergence; divergence is
+   a tip this session did not write. **An owner that cannot reconfirm before its `until` fences itself**: it stops
    accepting mutations (exit 1, `fenced`, on every write) and keeps its journal. Offline or
    partitioned, it fences at `until` without any network at all. So at no instant do two
-   sessions accept mutations: the old owner is fenced by the clock before the new one may take,
-   and a takeover is refused until `until` has passed. The bound this rests on is stated: the
-   benches' clocks agree to within a skew the team names (`--skew <duration>`, added to
-   `until` before a takeover is allowed), and the reconfirm cadence is `--every`.
+   sessions accept mutations: the old owner is fenced by its clock at `until`, and a takeover
+   is refused until `until` plus `--skew` has passed on the taker's clock. The bound this
+   rests on is stated: the benches' clocks agree to within `--skew <duration>`, and the
+   reconfirm cadence is `--every`. A fenced owner that later reconfirms successfully (its
+   generation and token still on the tip, nobody took) unfences and continues; one that finds
+   another generation stays fenced and exports.
 3. **Publishing.** Every clip carries the generation and is pushed the same CAS way; a late
    clip from a fenced owner is refused by the moved tip. A friend's request that reaches a
    fenced session is refused, not queued.
@@ -370,7 +379,8 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
 - **Completion of a focus** = completed required work / current required work, with the
   baseline denominator kept beside it for expansion and contraction (5654160320). **Current
   required work excludes `:deferred`, `:cancelled` and `:superseded` leaves** and `remaining`
-  prints them under `deferred=<n>` so the subtraction is visible; the baseline denominator
+  prints them under `deferred=<n>`, `cancelled=<n>` and `superseded=<n>`, kept apart, so the
+  subtraction is visible; the baseline denominator
   still counts them. **Active rows** of a roadmap are its baseline rows plus discovered rows,
   less rows removed, deferred or superseded by a scope event; **applicable rows** for an axis
   member are the active rows less those with an out-of-scope cell for that member.
@@ -395,7 +405,7 @@ unit, source sha, freshest evidence stamp, `done=`, `done-unverified=`, `unknown
 | `done --node X` / `remaining --node X` | completed and outstanding required work under X, by kind, capped and counted |
 | `who --node X --window <dur>` | live leases on X and beneath it: holder, heartbeat age, deadline, default; then `held-not-worked` and `unowned` counts; and `responsible=` for X |
 | `percent --node R --axis <member>` | the roadmap rollup for one axis member, with `green=<k> rows=<n> baseline-rows=<n0> done-unverified=<n>` and every partial cell's `k/n` and `unknown=<u>` |
-| `size` / `size --node X` | total required leaves, done, unknown, unverified, deferred, since-baseline |
+| `size` / `size --node X` | total required leaves, done, unknown, unverified, deferred, cancelled, superseded, since-baseline |
 | `stream --repo <owner/name>` / `--owner <name>` | the same, for one repository or one friend's own selected work, plus `responsible=` and live lease count (5654012267: *ownership for a named stream*) |
 | `under --repo <owner/name> --category <label>` | compact listing of nodes by category with state (5654164074; taxonomy TBD) |
 | `stale --window <dur>` | leases past deadline or past the heartbeat window, grouped by holder |
@@ -470,8 +480,8 @@ this draft**: named here so a reader knows they are deferred, with their own sec
 pilot has shown what a plan must name.
 
 **A lease is authoritative the moment the one coordinator accepts it**, because the ownership
-record above admits one live S; `pushed=<true|false>` on its answer says only whether the clip
-carrying it has been pushed, which is durability, not exclusivity. A request to take a node
+record above admits one live S; `pushed=<rev|->` on its answer says only which clip carried it to the branch, which is
+durability, not exclusivity. A request to take a node
 arrives at the coordinator from a friend as a mutation request with a stable request id and
 the friend's expected revision; the coordinator serializes it like any other (Stella, *One
 coordinator, one live reader/writer*).
@@ -684,8 +694,8 @@ WORK FAIL nodes=<n> findings=<n> shown=<n> expired=<n> stale=<n>
 VERIFY OK pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> emitted=<bytes>
 VERIFY ROW <event-id> pointer=<p> verdict=<verified|unverified|stale> at=<stamp>
 VERIFY FAIL pointers=<n> unverified=<n> shown=<n>
-QUERY OK ask=<kind> scope=<rev> membership=<rule> unit=<unit> source=<sha> freshest=<stamp> done=<n> done-unverified=<n> unknown=<n> deferred=<n> stale=<n> [green=<k> baseline-rows=<n0>] rows=<n> shown=<n> parses=<n> emitted=<bytes>
-QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> holder=<name|unowned> pushed=<true|false|-> heartbeat=<age|none> deadline=<stamp|-> blocked-by=<id|->
+QUERY OK ask=<kind> scope=<rev> membership=<rule> unit=<unit> source=<sha> freshest=<stamp> done=<n> done-unverified=<n> unknown=<n> deferred=<n> cancelled=<n> superseded=<n> stale=<n> [green=<k> baseline-rows=<n0>] rows=<n> shown=<n> parses=<n> emitted=<bytes>
+QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> holder=<name|unowned> pushed=<rev|-> heartbeat=<age|none> deadline=<stamp|-> blocked-by=<id|->
 QUERY FAIL ask=<kind> rows=<n> shown=<n>: <reason>
 RENDER OK view=<id> cells=<n> bytes=<n> into=<path> emitted=<bytes>
 RENDER FAIL view=<id> cells=<n> drifted=<n> into=<path>
@@ -727,7 +737,7 @@ to an earlier revision; malformed and cyclic data refused at load; a `#.` payloa
 the reader; a `:deps` cycle refused; a cancel request withdrawn and a cancel confirmed; a deep
 chain with no quadratic work (visit counts asserted); a lease past its deadline reads as
 unowned, its responsibility unchanged, and its release is not blocked; `:extend-once` once; a
-lease reads `pushed=false` until its clip reaches the branch; an invalid transition refused;
+lease reads `pushed=-` until its clip reaches the branch; an invalid transition refused;
 a refused mutation leaving S, the journal and the indexes unchanged; `render --check` fails
 on one changed cell; **start once, run many** (zero parses and zero replays on unchanged
 indexed queries, counts asserted); incremental results equal a clean reconstruction of the
@@ -742,8 +752,8 @@ belong to stall detection, deferred below, and are listed there so they are not 
 ## What this draft does not do
 
 Stall detection and bounded recovery with its six replays (5649089106), `plan`/`apply`/
-`reconcile` (5653982211), the cross-bench ownership backend and fencing generations (Stella, *One coordinator*;
-the rule is Glenn's, the backend is undecided), the `link`/`absorb` intake modes and the
+`reconcile` (5653982211), the cross-bench ownership backend and fencing generations (the rule is Glenn's; the git-lease backend above is this draft's proposal for the pilot and
+Stella's section keeps the general requirement), the `link`/`absorb` intake modes and the
 staged migration as code (their contracts are Stella's sections), the GitHub issue intake and correspondence adapter as code (its contract is Stella's
 section below; the adapter is its own spec), token and cost joins beyond the attempt's
 `:usage` pointer (#175, #181), and the categories taxonomy (5654164074) are later revisions,
