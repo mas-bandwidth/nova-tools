@@ -260,7 +260,7 @@ func TestAFoldWhoseStateWriteIsRefusedIsNotSilent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer release()
-	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once", "--timeout", "1")
+	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once", "--timeout", "5")
 	if exit != 2 {
 		t.Fatalf("a fold that could not write the state exits 2: got %d\n%s\n%s", exit, stdout, stderr)
 	}
@@ -409,7 +409,7 @@ func TestAPassWhoseOwnStateWriteIsRefusedIsNotSilent(t *testing.T) {
 		}
 		release = rel
 	}}
-	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once", "--timeout", "1")
+	exit, stdout, stderr := l.run("run", "--lane", l.lane, "--once", "--timeout", "5")
 	if release != nil {
 		release()
 	}

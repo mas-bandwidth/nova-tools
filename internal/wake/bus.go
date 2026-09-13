@@ -431,6 +431,45 @@ func BusNoteIDs(out string) []string {
 	return ids
 }
 
+// busCarried are the tokens one CARRIED ENTRY prints under. `carrying=` is the
+// size of the whole open list -- "every entry on it, the heard and the
+// unreadable included" (SPEC.md, inbox) -- and these four are how nova-bus
+// names those entries: a note, a note this reader has said it heard, a bare
+// receipt, and a file on the bus nobody can parse, which is carried rather than
+// dropped and printed on its own line every read.
+var busCarried = map[string]bool{
+	"INBOX NOTE":       true,
+	"INBOX HEARD":      true,
+	"INBOX RECEIPT":    true,
+	"INBOX UNREADABLE": true,
+}
+
+// BusCarriedEntries is how many carried entries one listing HELD, counted off
+// the transcript and off nothing this tool remembers.
+//
+// It exists because the recovery's completeness test compares what the `--open`
+// read listed against `carrying=`, and every measure taken from what the
+// classifier RELAYED is a partial count of that: a note already printed is
+// suppressed, a line already standing is not an item, and the INBOX NOTE ids
+// are only the notes. On 2026-09-12 the audit of packet 1 (#164, F2) found the
+// consequence with an ordinary carried list -- one printed note and one receipt
+// -- where every partial count was short of `carrying=`, so the recovery could
+// never call itself complete and the marker was kept for ever. The transcript
+// is the one thing that holds them all, so the count is taken there.
+func BusCarriedEntries(out string) int {
+	n := 0
+	for _, line := range strings.Split(out, "\n") {
+		toks := strings.Fields(line)
+		if len(toks) < 2 {
+			continue
+		}
+		if busCarried[toks[0]+" "+toks[1]] {
+			n++
+		}
+	}
+	return n
+}
+
 // StampOf is an RFC 3339 stamp from a git-formatted one, put into UTC the way
 // every other stamp this tool prints is. git's %cI carries the committer's own
 // offset, and a freshness field a reader compares to at= must not read four

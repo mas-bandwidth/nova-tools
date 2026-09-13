@@ -6,32 +6,33 @@ prints `store=` and `shared=` always, and refuses a store outside the shared roo
 when asked (`serve --require-shared-store`). Everything that makes `shared=yes` true is here, and
 `nova-line`'s recipe will consume this document.
 
-Why it exists, in Glenn's words (bus, 2026-09-12; no receipt in `memory/` yet):
+Why it exists, as a requirement rather than as a preference: on a box where more than one
+account runs models, **the weights must be reachable from every one of those accounts, and
+they must not live under any one account's home.** Both halves are load-bearing — the
+second is what makes the first survive a home whose mode changes — and the operator who
+asks for this setup is the one who states it. Keep that provenance in the issue that
+commissions the recipe; this page is the box's side of it and nothing here is anybody's
+account.
 
-> *"I would like for local models to be accessible both here in this admin account, and
-> in your rowan account. This is a requirement for this local setup and nova-local."*
-
-> *"I'd really not like to the local models to stay in rowans account, but move to a
-> shared location explicitly."*
-
-## Measured on this box, 2026-09-12T02:22Z
+## Measured on one two-account macOS box, 2026-09-12T02:22Z
 
 Every line below but the four rows carrying their own date was read that minute on the
-Studio. **This is a snapshot, and it
+box the recipe was written against. Two accounts run models there: `<service-user>`, the
+account that owns the weights today, and `<other-user>`. **This is a snapshot, and it
 moves** — the ollama store went from six tags to nine to twelve, and from 53 GB to 105
 GB to 162 GB, in about ninety minutes of the same night — which is why the numbers are
 dated and live here rather than in the spec.
 
 | fact | value |
 |---|---|
-| ollama's service | `homebrew.mxcl.ollama`, a **per-user LaunchAgent** under `glenn` (`launchctl list` → `56334 1 homebrew.mxcl.ollama`), i.e. `brew services`, not a LaunchDaemon |
+| ollama's service | `homebrew.mxcl.ollama`, a **per-user LaunchAgent** under `<service-user>` (`launchctl list` lists it in that account and nowhere else), i.e. `brew services`, not a LaunchDaemon |
 | ollama's store setting | `OLLAMA_MODELS` **unset** on the running daemon (its only `OLLAMA_*` environment is `FLASH_ATTENTION=1`, `KV_CACHE_TYPE=q8_0`), so the store is that account's `~/.ollama/models` |
-| ollama's store size | `/Users/glenn/.ollama` = **162 GB**, twelve tags advertised by `/api/tags` |
-| ds4's weights | **528 GB** under `/Users/rowan/rowan-working/ds4` (2026-09-12, read 4), the other account's home; no ds4 server running |
-| ds4's `ds4flash.gguf` | a **symlink** to the 464 GB **Pro** file, not a separate Flash GGUF (`ls -li`, 2026-09-12: `lrwxr-xr-x`, and the Pro inode's link count is **1**; the bake-off's "same inode", `research/2026-09-12-local-model-bakeoff.md` on standard `c94ee4d`, is `stat` through that link), so a `ds4-server` started with no `-m` loads Pro; this box's job must pass an explicit `-m` to the Flash weights |
-| ds4's lock file | `/tmp/ds4.lock` is created `rowan:0600` (same source), so the second account cannot start ds4 unless `DS4_LOCK_FILE` names a group-writable path — the recipe puts it under the shared store |
+| ollama's store size | `~<service-user>/.ollama` = **162 GB**, twelve tags advertised by `/api/tags` |
+| ds4's weights | **528 GB** under `~<other-user>/<a working directory>/ds4` (2026-09-12, read 4), the other account's home; no ds4 server running |
+| ds4's `ds4flash.gguf` | a **symlink** to the 464 GB **Pro** file, not a separate Flash GGUF (`ls -li`, 2026-09-12: `lrwxr-xr-x`, and the Pro inode's link count is **1**; the bake-off note that reported "same inode" was reading `stat` through that link), so a `ds4-server` started with no `-m` loads Pro; this box's job must pass an explicit `-m` to the Flash weights |
+| ds4's lock file | `/tmp/ds4.lock` is created `<first-to-start>:0600` (same source), so the second account cannot start ds4 unless `DS4_LOCK_FILE` names a group-writable path — the recipe puts it under the shared store |
 | ollama's sharing today | already shared across accounts: **one** daemon on `127.0.0.1:11434`, one store, pulls done by the daemon (same source); only the store's location **under a home** is what this recipe moves |
-| the two homes | `/Users/glenn` and `/Users/rowan` are both `drwxr-x---` (**750**) `<user>:staff` — each account reads the other's **only** because of that mode |
+| the two homes | both accounts' homes are `drwxr-x---` (**750**) `<user>:staff` — each account reads the other's **only** because of that mode |
 | the shared path | `/Users/Shared` is `drwxrwxrwt root:wheel` (**1777**); `/Users/Shared/nova-local` does not exist yet |
 
 The last two rows are the whole argument. `750 <user>:staff` is not a guarantee: a home's
@@ -124,7 +125,7 @@ with **that user's `HOME`** (`man launchd.plist` documents the user, not the var
 step 4's `status` is what confirms it here), the daemon resolves the symlink on every
 start, whatever brew regenerates, and no `OLLAMA_MODELS` is needed on this box at all.
 
-**The `--sudo-service-user glenn` flag is part of every start of this daemon, not a
+**The `--sudo-service-user <service-user>` flag is part of every start of this daemon, not a
 one-time setting.** Homebrew writes `UserName` only when the flag is present at *that*
 invocation (`cli.rb:535-540`) and reads it back from the installed plist for nothing but
 reporting the owner (`formula_wrapper.rb:288`), so a `sudo brew services start|restart
@@ -139,15 +140,15 @@ sudo chown -R root:staff /Users/Shared/nova-local/models/ollama && sudo chmod -R
 sudo find /Users/Shared/nova-local/models/ollama -type d -exec chmod g+s {} +
 mv ~/.ollama/models ~/.ollama/models.pre-nova-local
 ln -s /Users/Shared/nova-local/models/ollama ~/.ollama/models
-sudo brew services start ollama --sudo-service-user glenn
+sudo brew services start ollama --sudo-service-user <service-user>
 ```
 
 Lines 2-4 are step 2's copy and its two mode repairs again, after the daemon is stopped:
 incremental, seconds, and what catches a tag pulled during step 2's window. The mode
 lines repeat for step 2's reason: `rsync -a` re-applies the source's `755`, undoing them.
 `~` on lines 5 and 6 is the **service
-user's** home — the account open question 1 below picks, `glenn` today because that
-account owns the weights and is in `staff` — and those two lines are run in that account,
+user's** home — the account open question 1 below picks, which on the measured box is the
+account that already owns the weights and is in `staff` — and those two lines are run in that account,
 not under `sudo`, so the symlink is that user's. Nothing is deleted here either: the old
 store is renamed aside and goes in step 4.
 
@@ -158,7 +159,7 @@ real task. That is rule 15's test 17, run for real instead of against a fake, an
 where the two-account requirement is enforced on this box — with `serve
 --require-shared-store` passed by whatever starts a model here thereafter. Then one more
 check that belongs to step 3's choice — `sudo brew services restart ollama
---sudo-service-user glenn`, the flag again because it is not sticky (step 3) — and
+--sudo-service-user <service-user>`, the flag again because it is not sticky (step 3) — and
 `status` again, which is what proves the store survived a plist regeneration rather than
 merely a boot.
 `~/.ollama/models.pre-nova-local` goes only after both.
@@ -171,7 +172,7 @@ These are open, and a builder will ask them before writing the plist:
   already owns the weights? (`nova-local` never needs to know; the store's group does.)
 - **Whether `brew services` stays the installer** for ollama once the daemon is a
   LaunchDaemon, or the recipe writes its own plist and stops using brew for it. The
-  argument for its own plist is step 3's: `--sudo-service-user glenn` is **not sticky** —
+  argument for its own plist is step 3's: `--sudo-service-user <service-user>` is **not sticky** —
   every start and every restart must carry it or brew regenerates a plist with no
   `UserName` and the engine comes back as root on an empty store — and a plist the recipe
   owns is not regenerated behind it at all.

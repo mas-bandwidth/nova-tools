@@ -7,7 +7,7 @@ cannot name.
 
 This spec is normative. If the code and this document disagree, one of them has
 a bug, and the tests decide which. It stands beside
-[SPEC.md](../SPEC.md), whose **Conventions** section — exit codes, no guessed
+[SPEC.md](SPEC.md), whose **Conventions** section — exit codes, no guessed
 paths, the one-line output grammar, the cap-and-count rule, `internal/oneline`
 and `internal/bounded` — applies here unchanged and is not restated. Where this
 tool needs something the Conventions do not cover, it is below and it says so.
@@ -193,6 +193,20 @@ the day it was learned.
     10 applied to the evidence and not only to placement.
     (2026-09-11: eleven gate-green pull requests below `main` sat behind a
     hosted red the hosted lane had caused itself.)
+    (2026-09-12: `main` in this rule is the lane's **important base** — the
+    repository's default branch — and never the literal string, so a
+    repository whose default branch is `trunk`, `master` or `release` takes
+    the same rule. Which arm applies is the lane's `hosted_red` policy: stated
+    outright as `blocks` or `names` with `--hosted-red`, or derived. The
+    derived arm is conservative, and it is stated in one sentence: a failed
+    or unavailable discovery of the default branch is `blocks`, even when an
+    older non-matching name is recorded; a matching recorded OR freshly
+    discovered default is `blocks`; and only a successful current discovery
+    establishing a different default derives `names`. A recorded fact is
+    evidence, not perpetual proof — the weaker arm is never taken on a stale
+    name. The effective policy is printed on the `RUN PASS` line,
+    `hosted_red_policy=<blocks|names>`, so an explicit `names` is visible and
+    never silent.)
 16. **`run` prints its build id and steps aside for a newer binary.** Every
     `RUN PASS` line carries `build=<id>`, the id compiled into the running
     binary. At the end of every pass under `--loop`, the tool reads the build
@@ -423,7 +437,7 @@ the day it was learned.
 ## The verbs
 
 ```
-nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name>
+nova-merge init       --lane <dir> --repo <owner>/<name> --base <branch> --lane-branch <name> [--remote <url>]
 nova-merge add        --lane <dir> --pr <n> [--needs-read]
 nova-merge add-branch --lane <dir> --branch <name> [--needs-read]
 nova-merge read       --lane <dir> (--pr <n>|--branch <name>) --who <name> --head <sha> --verdict approve|hold [--note <text>]
@@ -451,6 +465,21 @@ interval and `run --hours` no default deadline for the opposite reason: a loop
 with no deadline is a lane that is stuck rather than working, and nobody outside
 can tell the two apart (Glenn, 2026-09-09: **every ask, child or read has a
 written deadline and a default action; never wait forever**).
+
+**`init --remote <url>` names the URL the lane clones from and pushes to, and a
+first run is told to rehearse with it.** (Additive, 2026-09-12, Stella's ruling on
+nova-tools #116: the flag is in the tool and was in no verb list here.) Without it
+the URL comes from `--repo` through the host, which means nothing about a lane
+could be exercised without a live repository, and git's own config was the only
+way in — so the *environment* could move where a lane pushes with no flag saying
+so. Given a bare repository of the caller's own it is the whole first run with
+nothing reaching a forge, which is what `docs/CLI.md`'s `### First run` shows before
+the live form, because `init` creating the lane branch **is a push** (rule 20,
+rule 22) and a first run that has not been told so is a first run that mutates a
+shared repository to say hello. It wants an absolute path or a URL: git runs in
+the lane directory, so a relative one resolves against the lane and the run is
+refused. It is `init`'s alone, for rule 20's reason — a lane's remote, like its
+repository and its base, is written once and not overridable by a flag afterwards.
 
 The repository and the base are properties of the **lane**, written into its
 state once, by `init` (rule 20), and never overridable by a flag afterwards.
@@ -527,7 +556,7 @@ READ REFUSED: <reason>
 GATE OK entry=<n-or-name> head=<sha12> base=<sha12> merge=<sha12> verdict=<green|red> summary=<path> in_lane=<true|false> newest=<true|false> file=<path> pushed=true
 GATE FAIL entry=<n-or-name> head=<sha12> base=<sha12> merge=<sha12> file=<path> pushed=false: <reason>; re-run the same verb to push it
 GATE REFUSED: <reason>
-RUN PASS n=<k> at=<stamp> build=<id> pulled=<n> planned_red=<text|->
+RUN PASS n=<k> at=<stamp> build=<id> pulled=<n> planned_red=<text|-> hosted_red_policy=<blocks|names>
 RUN NEWER build=<id> on_disk=<id>: the binary changed; this loop ends after this pass; restart it by hand
 RUN BASE base=<branch> head=<sha12> checks=g<n>/p<n>/r<n> gate=<green|-> state=<GREEN|RED|PENDING|PLANNED-RED>
 RUN STOPPED base=<branch>: the base is red (<n> failing); nothing merges onto a red base
@@ -1078,7 +1107,9 @@ stops before touching any entry when the base is red. The only way through is
 
 `<lane>/state.json`, decoded **strictly** — an unknown field is a refusal,
 because a state file whose `needs_read` key was typed `needs_reads` is a state
-file whose owner believes a read is required.
+file whose owner believes a read is required. `needs_read` is a closed
+vocabulary of exactly `yes` and `no`, and a missing or empty field refuses
+rather than silently reading as "no read required". (2026-09-12.)
 
 ```json
 {
@@ -1086,6 +1117,8 @@ file whose owner believes a read is required.
   "repo": "<owner>/<name>",
   "base": "<branch>",
   "lane_branch": "nova-merge/schema-main",
+  "default_branch": "main",
+  "hosted_red": "blocks",
   "prs": [
     {"pr": 951, "needs_read": "yes",
      "reads": [{"who": "emma", "verdict": "approve", "note": "", "at": "2026-09-11T12:31:07Z",
@@ -1139,6 +1172,21 @@ is worth stating as a rule: **a list whose items have two shapes is two lists.**
 The counts (`green`, `pending`, `red`) are numbers here and strings in the
 prototype, because `jq --arg` writes strings. A count that is a string compares
 as a string, and `"10" < "9"`. This spec makes them numbers.
+
+`default_branch` and `hosted_red` are the two facts rule 15 turns on (added
+2026-09-12). `default_branch` is the repository's default branch as a recorded
+fact, discovered by `init` from the remote's own HEAD or seeded with
+`--default-branch`; empty means the fact is not recorded, and an unrecorded
+fact takes the stronger arm. `hosted_red` is the policy stated outright,
+`blocks` or `names`; it is a closed vocabulary — an unknown value is a refusal
+at load, never an arm — and empty derives the arm from `default_branch`. The
+derivation is exactly rule 15's dated clause: `blocks` when the discovery of
+the default branch failed or did not answer (even when an older non-matching
+name is recorded), `blocks` when the base matches the recorded OR the freshly
+discovered default, and `names` only when a successful current discovery
+establishes a default the base is not. `--default-branch` may seed the recorded
+fact and skip `init`'s lookup, but it cannot disable the discovery the pass
+performs; a recorded fact is evidence, not perpetual proof.
 
 ## The log
 
@@ -1447,7 +1495,7 @@ check never seen failing is not a check).
     `--lane-branch` on any verb but `init` is exit 2 naming the flag, `gate
     --base <sha>` is exit 2 naming `--base-sha`, and `--base-sha` on any verb
     but `gate` is exit 2 naming `gate`; a state file with `version: 2` is
-    exit 2 naming both numbers; the `### First run` in `README.md` starts with
+    exit 2 naming both numbers; the `### First run` in `docs/CLI.md` starts with
     `init` and a test executes it.
 21. `TestOnlyTheGatedObjectIsPublished`: with a green record for `(A, X, M)`
     the fake remote receives exactly one push, a lease on `refs/heads/<base>`
@@ -1526,7 +1574,7 @@ standard library only, no hardcoded paths, no default paths, the exit grammar
 above, `internal/oneline` for every printed value, `internal/bounded` for every
 listing, and `ONBOARDING.md`'s first-day standard — a usage banner ending in a
 runnable `example:` block, refusals that say what the flag wants and report every
-independent problem at once, a `### First run` in `README.md`, a `quickstart`
+independent problem at once, a `### First run` in `docs/CLI.md`, a `quickstart`
 verb, and tests that pin all three by executing them.
 
 1. **`internal/merge/state.go`** — the state file: `version` checked first,
@@ -1612,7 +1660,7 @@ verb, and tests that pin all three by executing them.
     `--who`'s read, `last_read` from the fold, the range, holds as pointers,
     `--max` through `internal/bounded`, no write and no lock (rule 23).
     Tests: demanded test 23.
-13. **`README.md`'s `### First run`** and the `quickstart` verb: `init` a
+13. **`docs/CLI.md`'s `### First run`** and the `quickstart` verb: `init` a
     lane with its repository and base, add one entry, print the status, with
     every path a flag (demanded test 20).
 

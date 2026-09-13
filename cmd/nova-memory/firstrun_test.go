@@ -207,7 +207,7 @@ func shape(line string) string {
 // one run that printed everything, and two runs a reader types themselves.
 func readmeFirstRun(t *testing.T) [][]string {
 	t.Helper()
-	raw, err := os.ReadFile(filepath.Join("..", "..", "TESTS.md"))
+	raw, err := os.ReadFile(filepath.Join("..", "..", "docs", "TESTS.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -216,11 +216,11 @@ func readmeFirstRun(t *testing.T) [][]string {
 	// would hand this test another binary's transcript to run.
 	_, section, found := strings.Cut(string(raw), "\n## nova-memory\n")
 	if !found {
-		t.Fatal("README.md has no `## nova-memory` section")
+		t.Fatal("docs/TESTS.md has no `## nova-memory` section")
 	}
 	_, tail, found := strings.Cut(section, "\n### First run\n")
 	if !found {
-		t.Fatal("README.md `## nova-memory` has no `### First run` section; it is what a stranger reads before anything else here")
+		t.Fatal("docs/TESTS.md `## nova-memory` has no `### First run` section; it is what a stranger reads before anything else here")
 	}
 	body, _, found := strings.Cut(tail, "\n## ")
 	if !found {
@@ -621,5 +621,39 @@ func TestTheEchoedStepPastesBackIntoThatPlatformsShell(t *testing.T) {
 				t.Error("the echoed line is more than one line")
 			}
 		})
+	}
+}
+
+// Every flag defined by any subcommand must have a flag entry in the usage banner (F5-7).
+func TestEveryDefinedFlagAppearsInTheUsageBanner(t *testing.T) {
+	exit, stdout, _ := runCLI(t, "", "help")
+	if exit != 0 {
+		t.Fatalf("help failed: %d", exit)
+	}
+	// All twelve flags supported by nova-memory subcommands.
+	flags := []string{
+		"root", "channels", "k", "exclude", "floor", "links",
+		"coverage", "frontmatter", "exempt", "fail-max", "words", "draft",
+	}
+	for _, f := range flags {
+		target := "  --" + f + " "
+		if !strings.Contains(stdout, target) {
+			t.Errorf("flag --%s has no entry in the usage banner flags list:\n%s", f, stdout)
+		}
+	}
+	// Assert --fail-max default is not welded onto words.
+	welded := "cannot bury the one frontmatter finding. the words the demonstration search runs."
+	if strings.Contains(stdout, welded) {
+		t.Errorf("the --fail-max and --words help text are still welded together:\n%s", stdout)
+	}
+}
+
+func TestQuickstartRunsWithDashLeadingWords(t *testing.T) {
+	exit, stdout, stderr := runCLI(t, "", "quickstart", "--root", corpus, "--words", "-glazing")
+	if exit != 0 {
+		t.Fatalf("quickstart with dash-leading word failed: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "$ nova-memory search ") || !strings.Contains(stdout, "SEARCH OK query=-glazing") {
+		t.Errorf("quickstart did not complete search step with dash-leading word:\n%s", stdout)
 	}
 }

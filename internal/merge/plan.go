@@ -50,19 +50,24 @@ func (p *Pass) plan(e *Entry, baseSHA string) Classification {
 	c.Checks = checks
 	c.Reads = EvaluateReads(e, c.Author)
 	c.Gate = StandOfGates(p.State.Gates, e.ID(), e.OID, baseSHA)
-	c.State, c.Admitted = standing(p.State.Base, checks, c.Reads, c.Gate, p.basePending)
+	c.State, c.Admitted = standing(p.State.HostedRedBlocks(p.DefaultBranch), checks, c.Reads, c.Gate, p.basePending)
 	return c
 }
 
 // standing is the state and the admission, as a function of the four things they are a
-// function of: the base, the hosted checks, the reads and the gate records. classify's
-// own switch is the same decision written out with its side effects around it, and this
-// is the version status and dry-run share.
-func standing(base string, checks Checks, reads Standing, gate GateStand, basePending bool) (state, admitted string) {
+// function of: the base's hosted-red policy, the hosted checks, the reads and the gate
+// records. classify's own switch is the same decision written out with its side effects
+// around it, and this is the version status and dry-run share.
+//
+// The first argument was `base string` and the fork was `base == "main"`, which is why a
+// repository whose default branch is master, trunk or release took the weaker arm in
+// silence: every hosted red on it was printed as a field and merged over. It is now the
+// POLICY, decided by State.HostedRedBlocks from a recorded fact and a lane's own
+// configuration, so rule 15 turns on the lane's important base and not on a name.
+func standing(onMain bool, checks Checks, reads Standing, gate GateStand, basePending bool) (state, admitted string) {
 	if reads.Held {
 		return StateHold, ""
 	}
-	onMain := base == "main"
 	headGateGreen := (gate.Kind == "head" && gate.Record != nil && gate.Record.Verdict == "green") || gate.Green()
 	switch {
 	case onMain && checks.Verdict() == "RED":

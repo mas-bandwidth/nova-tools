@@ -20,7 +20,7 @@ the tool hands it, and ends with a model serving and a worker description
 `nova-swarm` accepts. That is demanded test 1.
 
 This spec is normative; if the code and this document disagree, one of them has a bug
-and the tests decide which. It stands beside [SPEC.md](../SPEC.md), whose
+and the tests decide which. It stands beside [SPEC.md](SPEC.md), whose
 **Conventions** — exit codes, no guessed paths, the one-line grammar, cap-and-count,
 `internal/oneline`, `internal/bounded` — apply unchanged and are not restated. The
 **box's** side of rule 15 (the daemon, the store's owner, the one-time move) is
@@ -430,9 +430,9 @@ matter are the served id under `provider.ollama.models`, an `options.apiKey` of
 Whether OpenCode accepts that block with no `npm` key is a fact about OpenCode and not
 about this repo — **the one fact in these seven lines no test here can see**, and the
 thing the new-user hour's transcript exists to prove.
-`README.md`'s `### First run` **will be** these lines with their output plus the
+[`docs/CLI.md`](CLI.md)'s `### First run` **will be** these lines with their output plus the
 sentence naming OpenCode as the seventh line's prerequisite, executed by test 1 (work
-list 7; `README.md` has no `nova-local` section today).
+list 7; `docs/CLI.md` has no `nova-local` section today).
 
 ## Deliberately not in this tool
 
@@ -551,7 +551,7 @@ supplies a **fake box** through the one interface that reads them
     `held_by`. No verb writes a plist, a unit, or anything under `/Library`.
 
 Plus the house standard: a usage banner ending in a runnable `example:` block, refusals
-reporting every independent problem at once, a `### First run` in `README.md` pinned by
+reporting every independent problem at once, a `### First run` in `docs/CLI.md` pinned by
 an executing test, and three-GOOS builds green.
 
 ## The work list
@@ -579,7 +579,7 @@ hardcoded paths, the exit grammar above, `internal/oneline` for every printed va
    opened. Tests 10, 14, 15.
 6. **`cmd/nova-local/main.go`** — three verbs, the banner, the nothing-answering remedy
    line folded into `status`, refusals that name the next command. Tests 1, 12, 13.
-7. **`README.md`'s `### First run`** — the six lines with their output, the seventh, and
+7. **`docs/CLI.md`'s `### First run`** — the six lines with their output, the seventh, and
    the sentence naming OpenCode as its prerequisite. Test 1.
 
 Owed outside this tool and filed as nova-tools issues rather than drafted here: a

@@ -209,11 +209,12 @@ func TestTemplateWorkerPrintsADescriptionThisToolAccepts(t *testing.T) {
 }
 
 // S3: the harness contract was undocumented -- cwd, argv, NOVA_SWARM_JOB, RESULT.md -- and
-// the audit learned it by dumping the fake harness's own environment. The README says it,
-// and names the fake harness that already demonstrates it.
-func TestTheReadmeCarriesTheHarnessContract(t *testing.T) {
+// the audit learned it by dumping the fake harness's own environment. The command reference
+// says it, and names the fake harness that already demonstrates it. That reference is
+// docs/CLI.md since the README became an adoption guide.
+func TestTheCommandReferenceCarriesTheHarnessContract(t *testing.T) {
 	t.Parallel()
-	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "README.md"))
+	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "CLI.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +222,7 @@ func TestTheReadmeCarriesTheHarnessContract(t *testing.T) {
 	for _, want := range []string{"### The harness contract", "NOVA_SWARM_JOB", "RESULT.md",
 		"cmd/nova-swarm/testdata/fakeharness", "harness_args"} {
 		if !strings.Contains(body, want) {
-			t.Errorf("the README's harness contract wants %q", want)
+			t.Errorf("docs/CLI.md's harness contract wants %q", want)
 		}
 	}
 }

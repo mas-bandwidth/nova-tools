@@ -509,6 +509,31 @@ func TestAStandingBusLineIsShownEveryTimeAndWokenOnOnce(t *testing.T) {
 	}
 }
 
+// A line already relayed as WAKE BUS LINE in this same watch call must not be
+// reprinted as WAKE BUS STANDING on subsequent polls within the same call.
+func TestWatchSuppressesStandingReprintInSameCall(t *testing.T) {
+	busDir, _ := fakes(t)
+	write(t, filepath.Join(busDir, "out"), "INBOX REFUSED the bus is not a git checkout\nINBOX OK as=Rowan carrying=0 open=0 notes=0 receipts=0\n")
+	write(t, filepath.Join(busDir, "exit.1"), "2")
+	write(t, filepath.Join(busDir, "exit.2"), "0")
+	state := filepath.Join(t.TempDir(), "wake.state")
+	args := []string{"watch", "--state", state, "--max", "10s", "--on-deadline", "report",
+		"--interval", "5s", "--bus", t.TempDir(), "--as", "Rowan", "--receipt-max-words", "40"}
+
+	r := wakeRun(t, args...)
+	if countLines(r.stdout, "WAKE BUS LINE INBOX REFUSED") != 1 {
+		t.Errorf("expected 1 WAKE BUS LINE, got:\n%s", r.stdout)
+	}
+	if countLines(r.stdout, "WAKE BUS STANDING INBOX REFUSED") != 0 {
+		t.Errorf("standing line should be suppressed when already relayed in same call, got:\n%s", r.stdout)
+	}
+
+	second := wakeRun(t, args...)
+	if !strings.Contains(second.stdout, "WAKE BUS STANDING INBOX REFUSED") {
+		t.Errorf("standing line should be printed on subsequent call, got:\n%s", second.stdout)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // 8. The watcher's own failure is loud.
 

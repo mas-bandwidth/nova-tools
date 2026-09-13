@@ -53,16 +53,26 @@ var ErrLockHeld = errors.New("lock held")
 // If wait > 0, LockFile polls every 25ms until the deadline.
 // If the lock cannot be acquired within wait, it returns an error wrapping ErrLockHeld.
 func LockFile(path string, wait time.Duration) (func(), error) {
+	return lockFile(path, wait, tryLockFile)
+}
+
+func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, retryable bool, err error)) (func(), error) {
 	f, err := os.OpenFile(path, os.O_RDWR|os.O_CREATE, 0o644)
 	if err != nil {
 		return nil, fmt.Errorf("the lock at %s could not be opened: %w", path, err)
 	}
 	deadline := time.Now().Add(wait)
+	var lastErr error
 	for {
-		ok, lockErr := tryLockFile(f)
+		ok, retryable, lockErr := try(f)
 		if lockErr != nil {
-			f.Close()
-			return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lockErr)
+			if !retryable || wait == 0 {
+				f.Close()
+				return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lockErr)
+			}
+			lastErr = lockErr
+		} else {
+			lastErr = nil
 		}
 		if ok {
 			stampLockHolder(f)
@@ -77,8 +87,11 @@ func LockFile(path string, wait time.Duration) (func(), error) {
 			}, nil
 		}
 		if wait == 0 || !time.Now().Before(deadline) {
-			holder := ReadLockHolder(path)
 			f.Close()
+			if lastErr != nil {
+				return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lastErr)
+			}
+			holder := ReadLockHolder(path)
 			return nil, fmt.Errorf("the lock at %s is held by process %s; waited %s: %w", path, holder, wait, ErrLockHeld)
 		}
 		time.Sleep(jitter(lockPoll))
