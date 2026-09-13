@@ -156,3 +156,7 @@ Acceptance requires independent decoder and privacy-sentinel tests plus a real
 collector/publisher/view join. Preserve raw evidence even where normalization remains
 unknown, and report the specific unsupported shape or unresolved identity/semantic gap.
 Neither this document nor a successful fixture implies production September coverage.
+
+The separately proposed [raw snapshot contract](PROPOSAL-TOKENS-CODEX-SNAPSHOTS.md) supplies
+physical-identity decisions and synthetic acceptance fixtures for #154. It remains under
+review and does not change this shipped response mapping or prove historical coverage.
