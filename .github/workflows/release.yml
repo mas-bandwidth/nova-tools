@@ -55,10 +55,11 @@ jobs:
     # here outgrew its cap (run 34775563018: cancelled with packages still to run, the
     # release job skipped, no release object, while certification had passed the same
     # commit in six minutes). Two copies of one test set drift, and the copy that ran here
-    # was the slower and the older one. So this job is two questions to the API: is a
-    # certification.yml run still in flight on the commit this run is building (then wait),
-    # and did the NEWEST completed one succeed (then release)? A commit no certification run
-    # vouches for, or whose newest run is red, gets no release, and the refusal names the remedy.
+    # was the slower and the older one. So this job is one question to the API, answered from
+    # one snapshot: of every certification.yml run on the commit this run is building, is any
+    # still unfinished (then wait), and did the most recently updated one succeed (then
+    # release)? A commit no certification run vouches for, or whose latest evidence is red,
+    # gets no release, and the refusal names the remedy.
     # It is the tag-only-a-certified-commit practice made into something that can say no.
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -79,8 +80,16 @@ jobs:
           # ONE ASKER, AND IT READS THE STATUS RATHER THAN THE EXIT CODE, for the reason the
           # release job's `ask` below states: `gh api` exits 1 on an empty answer and on no
           # answer alike. `-i` puts the status line first and the body after the blank line.
+          # ONE SNAPSHOT, NO STATUS FILTER. Two asks (completed, then in flight) are two
+          # snapshots, and a run that finishes red between them is in neither answer. So every
+          # run on this commit is fetched once, and the decision is made from that one list:
+          # anything not yet completed (queued, waiting, in progress) refuses with a wait line;
+          # otherwise the run with the LATEST UPDATE decides, not the newest by creation or by
+          # array position, because a rerun of an older run id is newer evidence than a later
+          # run that was never rerun. The perf wall clock lives in certification, so a commit
+          # green once and red on a rerun is a commit the newest evidence says not to release.
           set +e
-          out=$(gh api -i "repos/${GITHUB_REPOSITORY}/actions/workflows/certification.yml/runs?head_sha=${SHA}&status=completed&per_page=100" 2>&1); rc=$?
+          out=$(gh api -i "repos/${GITHUB_REPOSITORY}/actions/workflows/certification.yml/runs?head_sha=${SHA}&per_page=100" 2>&1); rc=$?
           set -e
           case "$(printf '%s\n' "$out" | head -n 1)" in
             HTTP/*" 200 "*) ;;
@@ -91,37 +100,23 @@ jobs:
               ;;
           esac
           body=$(printf '%s\n' "$out" | sed -e '1,/^[[:space:]]*$/d')
-          # A RUN STILL IN FLIGHT ON THIS COMMIT IS ASKED ABOUT TOO, and refuses: the completed
-          # list cannot see it (queued, waiting and in progress alike, so no status filter on this
-          # ask), and a certification whose required job has already gone red is in that list
-          # until it finishes. Refuse and say wait, rather than release on the older
-          # answer while a newer one is being written.
-          set +e
-          live=$(gh api -i "repos/${GITHUB_REPOSITORY}/actions/workflows/certification.yml/runs?head_sha=${SHA}&per_page=100" 2>&1); lrc=$?
-          set -e
-          case "$(printf '%s\n' "$live" | head -n 1)" in
-            HTTP/*" 200 "*) ;;
-            *)
-              echo "asking GitHub for in-flight certification runs on $SHA did not answer 200 (gh exit $lrc):"
-              printf '%s\n' "$live"
-              exit 1
-              ;;
-          esac
-          inflight=$(printf '%s\n' "$live" | sed -e '1,/^[[:space:]]*$/d' | jq -r '[.workflow_runs[] | select(.status != "completed")] | length')
-          if [ "$inflight" != 0 ]; then
-            echo "refusing: $inflight certification run(s) on $SHA still in progress; wait for certification-ok, then re-run this workflow: gh run rerun $GITHUB_RUN_ID -R $GITHUB_REPOSITORY"
+          total=$(printf '%s' "$body" | jq -r '.total_count')
+          listed=$(printf '%s' "$body" | jq -r '.workflow_runs | length')
+          if [ "$total" != "$listed" ]; then
+            echo "refusing: $total certification runs on $SHA but only $listed listed; the selection would be ambiguous"
             exit 1
           fi
-          total=$(printf '%s' "$body" | jq -r '.total_count')
-          # THE NEWEST COMPLETED RUN DECIDES, not any green among them: the list is newest first,
-          # and a commit certified green once and red on a later rerun (the perf wall clock is
-          # in that workflow) is a commit the newest evidence says not to release. A run still in
-          # progress is not in this list; the refusal says to wait for it.
-          newest=$(printf '%s' "$body" | jq -r '.workflow_runs[0].conclusion // "none"')
-          echo "certification runs on $SHA: $total completed; newest concluded: $newest"
-          printf '%s' "$body" | jq -r '.workflow_runs[] | "  run \(.id) \(.conclusion) \(.html_url)"'
-          if [ "$newest" != success ]; then
-            echo "refusing: the newest completed certification run on $SHA is $newest, so nothing vouches for this tree"
+          printf '%s' "$body" | jq -r '.workflow_runs[] | "  run \(.id) attempt \(.run_attempt) \(.status) \(.conclusion // "-") updated \(.updated_at) \(.html_url)"'
+          inflight=$(printf '%s' "$body" | jq -r '[.workflow_runs[] | select(.status != "completed")] | length')
+          if [ "$inflight" != 0 ]; then
+            echo "refusing: $inflight certification run(s) on $SHA not yet completed; wait for certification-ok, then re-run this workflow: gh run rerun $GITHUB_RUN_ID -R $GITHUB_REPOSITORY"
+            exit 1
+          fi
+          newest=$(printf '%s' "$body" | jq -r '(.workflow_runs | sort_by(.updated_at) | last) // {} | "\(.id // "none") \(.run_attempt // 0) \(.conclusion // "none") \(.updated_at // "-")"')
+          set -- $newest
+          echo "certification runs on $SHA: $total completed; latest update is run $1 attempt $2, concluded $3 at $4"
+          if [ "$3" != success ]; then
+            echo "refusing: the latest certification evidence on $SHA is $3, so nothing vouches for this tree"
             echo "certify it first (a run still in progress does not count; wait for certification-ok):"
             echo "  gh workflow run certification.yml -R $GITHUB_REPOSITORY --ref $REF"
             echo "then re-run this workflow: gh run rerun $GITHUB_RUN_ID -R $GITHUB_REPOSITORY"
