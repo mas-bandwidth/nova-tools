@@ -70,11 +70,26 @@ holds S carries an ownership record (`OWNER`: the coordinator's name, a **genera
 nowhere else: the `OWNER` record on the branch and the taking session's own journal, so
 **only a process holding that journal can resume the generation**; a second session under
 the same name on another bench holds no journal with the token and is a taker, not a resumer.
-**Two processes cannot hold one journal**: the session socket at `--session <path>` is also
-the journal's lock, created exclusively at start, and a start that finds a live socket there
-refuses (exit 1, naming the pid); a dead socket (no process answers) is removed and the
-start proceeds as a resume. So the resume predicate is: the record names me, my journal holds
-its token, and I hold the journal's lock (Stella's finding 1, comment 5654659093). Three rules:
+**Two processes cannot hold one journal**, and the lock that says so is the journal's, not
+the socket's (Stella's narrowed finding, comment 5654780545: `--session` and `--journal` are
+independent arguments, so two sessions on different socket paths could otherwise share one
+journal and both satisfy the resume predicate). At start the session takes an OS-held
+exclusive lock (`flock`) on `<journal>.lock`, keyed by the journal's canonical path (realpath,
+so a symlink or a relative spelling is the same journal), and holds it for its whole life; a
+start that cannot take it refuses (exit 1, `journal held`, naming the holder's pid and socket
+from the lock file's contents) and **never unlinks another process's lock**: a socket that
+does not answer is an availability signal, not a death certificate, and a stopped or wedged
+owner still owns its journal until its lease fences it. The kernel releases the lock when the
+holder dies, so a crashed owner needs no cleanup; a stale socket file with no lock behind it is
+removed and the start proceeds. A journal copied to another bench carries the token but not
+the lock, and the original process may still be alive: **a copied journal is never resumed**.
+The journal records the bench (hostname and the lock's device/inode) that wrote it; a start on
+a different bench, or with a different lock identity, is a taker (fresh generation after
+`until` plus `--skew`, and its own new journal), and the copy's unclipped events go through
+`session export` / `session replay` like any fenced owner's, never through a resume. So the
+resume predicate is: the record names me, my journal holds its token, my bench wrote that
+journal, and I hold the journal's lock (Stella's finding 1, comment 5654659093, narrowed in
+5654780545). Three rules:
 
 1. **Taking.** `session start` fetches the tip, reads `OWNER`, and takes ownership only if the
    record names nobody, or its `until` plus `--skew` is in the past, or it names this session
@@ -99,7 +114,12 @@ its token, and I hold the journal's lock (Stella's finding 1, comment 5654659093
    rests on is stated: the benches' clocks agree to within `--skew <duration>`, and the
    reconfirm cadence is `--every`. A fenced owner that later reconfirms successfully (its
    generation and token still on the tip, nobody took) unfences and continues; one that finds
-   another generation stays fenced and exports.
+   another generation stays fenced and exports. **Admission is checked per request, not per
+   reconfirm**: every read and every write compares the session's clock to `until` at the
+   moment it is admitted, and a request that arrives after `until` is refused `fenced` even if
+   the reconfirm that would have advanced `until` is in flight; a reconfirm's result is applied
+   only if the reconfirm began before `until` and its pushed commit is the tip, so a delayed
+   callback that completes after expiry cannot re-admit writes (Stella, 5654780545).
 3. **Publishing.** Every clip carries the generation and is pushed the same CAS way; a late
    clip from a fenced owner is refused by the moved tip. A friend's request that reaches a
    fenced session is refused, not queued.
@@ -775,7 +795,12 @@ same accepted revision; a crash after journal durability and before acknowledgem
 same request retried, yields one accepted event; a crash or disconnect during a clip retains
 every accepted event and reports the last confirmed shared checkpoint honestly; a second
 coordinator refused while one is active; a controlled handoff with the old owner fenced; an
-old owner returning with a delayed request, refused by generation; structure
+old owner returning with a delayed request, refused by generation; two sessions on different
+socket paths naming one journal, the second refused `journal held`; an owner that is stopped
+(`SIGSTOP`) and answers nothing on its socket keeps its journal lock and its lease until
+`until`, and a second start in that window is refused; a journal copied to another bench
+starts as a taker with a fresh generation and never as a resume; a reconfirm callback
+delayed past `until` admits no write; structure
 verbs produce a reproducible `ROADMAP.md` with no hand edit. The stall replays of 5649089106
 belong to stall detection, deferred below, and are listed there so they are not lost.
 
@@ -810,8 +835,9 @@ evidence and `verify` as a separate pass with a cache (Stella's points 1 and 2);
 `--at <revision>`; `emitted=<bytes>` on every `OK` line; the structure verbs' names and
 flags. Stella's: the local recovery journal, event ids and expected revisions, the named event
 boundary per clip, the offline-clip rule, the fencing-generation ownership record as a proposal (the `OWNER`-on-the-branch form with
-CAS push, the lease `until`, the self-fence at `until`, `--skew`, and the export/replay path
-are Rowan's), fold/unfold/propagate as
+CAS push, the lease `until`, the self-fence at `until`, `--skew`, the journal lock keyed by
+the journal's canonical path and bench identity, per-request admission, and the export/replay
+path are Rowan's), fold/unfold/propagate as
 operators, the measurement list, the `link`/`absorb` archive order, the migration dispositions; and in her sections below,
 the pilot branch and sha, the prototype facts, the rate schedule and virtual cost, the
 `NEXT-TOOLS.md` hand-off, and the fixed-table capability boundary. Each is open to be cut by
@@ -936,6 +962,11 @@ safe cross-bench failover protocol has already been built. All older references
 to merging simultaneous coordinator edits are superseded by this section.
 
 ## Roadmap as a view; the Schema pilot *(Stella)*
+
+**The current roadmap view is completion-only** (Glenn, via Stella's 5654780545): a green
+tick for a verified-complete cell, empty otherwise. Partial, missing and unknown stay in S and
+in `check`'s counts; the view is a projection choice, not lost information and not a change
+to any denominator. Schema pilot 7f02f871 renders this form.
 
 **Practice first, then retrospective, then production.** Glenn reaffirmed this sequence on
 2026-09-13: dogfood the hierarchy on Fixed Tables, inspect what worked and what did not,
