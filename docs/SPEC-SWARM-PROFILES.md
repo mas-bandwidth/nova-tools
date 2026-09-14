@@ -187,6 +187,67 @@ trust root.
 
 ## Frozen attempt and evidence
 
+### Encoding and admission bounds — proposed, awaiting friend review
+
+Pin the following shared encoding before implementing profile admission. This
+proposal does not complete the remaining policy, launcher or quota interfaces.
+
+Read a catalog from one validated regular-file handle, at most 262144 bytes
+plus one overflow-detection byte, within five seconds. Reject trailing JSON,
+duplicate members (including equivalent escaped names), unknown members,
+invalid UTF-8 or lone surrogates before resolution. Limit object/array nesting
+to 32, counting the root object as one. Do not read a FIFO while waiting to
+discover that it is not regular. These bounds cover parsing, not a promise of
+provider response time. Existing path-placement checks still apply.
+
+The admitted catalog has exactly `version` and `profiles` at its root.
+`version` is the integer token `1`; `1.0`, `1e0`, `"1"` and other versions
+refuse. Hash the validated catalog's [RFC8785 canonical JSON](https://www.rfc-editor.org/rfc/rfc8785)
+bytes, with no trailing newline, as `sha256:<64 lowercase hex>`. The current
+schema has no other JSON numbers. Do not pass the whole catalog blindly to
+`internal/records.Canonicalize`: that helper deliberately rejects numbers.
+Reuse its validated number-free string/array/object encoding for `profiles`,
+then frame the root exactly as `{"profiles":<canonical profiles>,"version":1}`.
+Future numeric metadata needs an explicit schema/encoding amendment; no generic
+float conversion or silent string conversion is permitted.
+
+Object member order, whitespace and equivalent JSON escapes do not change this
+digest. Array order and explicit optional-member presence do: preserve both;
+do not sort arrays, inject defaults, normalize Unicode or canonicalize paths
+as part of hashing. Resolution and path validation happen separately. A model
+override belongs to the admission snapshot, not an edit of the catalog hash.
+The catalog digest identifies the complete admitted catalog, including unused
+profiles; the existing `run --profiles` match therefore checks that same whole
+catalog, not an undocumented selected-profile hash.
+
+An attempt's proposed protected snapshot encoding uses
+`schema: "nova.swarm.attempt/1"`, with identities, counts and duration values
+represented as strings, not floating-point numbers. Its digest uses the same
+number-free canonical JSON helper, over the body only; `snapshot_hash` belongs
+in its containing receipt, never inside its own hashed body. Bound serialized
+snapshot input/output to 1048576 bytes and nesting to 32; overflow refuses
+before launch. These are distinct catalog/snapshot caps, not permission to
+truncate a selected profile or lose an argument. A digest establishes content
+identity, not origin, authority or filesystem protection.
+The prose inventory below is not yet an exact snapshot JSON schema. Required
+member names, types, presence/default rules and rejection of unknown members
+must be pinned before runtime implementation or recovery fixtures can pass;
+this encoding decision alone does not clear that separate gate.
+
+Required deterministic fixtures: reordered members/whitespace/escaped spellings
+hash identically; reordered arrays, changed optional presence and a changed
+model hash differently; astral member names sort by UTF-16 code units; duplicate
+escaped members, lone surrogates, unsupported numbers, depth 33 and each byte
+limit plus one refuse. Exactly-at-limit inputs pass if otherwise valid. Tests
+exercise the actual read boundary and require zero queued tasks, reservations,
+gate invocations or worker starts on every refusal. Snapshot round trips retain
+every accepted field; a hash mismatch or changed protected body quarantines the
+attempt. Tiny encoding vectors may use an empty `profiles` object, but do not
+establish that an empty catalog can admit a job.
+The [encoding-only vectors](fixtures/swarm-profile-catalog-encoding.json)
+pin canonical bytes and SHA-256 values, including UTF-16 member ordering.
+They are proposed acceptance inputs, not evidence that profile admission exists.
+
 Before a worker starts, the coordinator writes the authoritative snapshot to
 the coordinator-owned protected path
 `<pool>/evidence/<job-id>/PROFILE.json`, where `<job-id>` is the concrete

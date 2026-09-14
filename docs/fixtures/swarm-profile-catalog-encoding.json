@@ -1,0 +1,23 @@
+{
+  "status": "proposed encoding-only vectors; profile values intentionally do not pass admission schema",
+  "vectors": [
+    {
+      "name": "empty",
+      "input": "{ \"version\": 1, \"profiles\": {} }",
+      "canonical": "{\"profiles\":{},\"version\":1}",
+      "sha256": "67d82c25cee9879aa641a9988622147511968e3956ca3407d73550757a539c86"
+    },
+    {
+      "name": "empty-reordered",
+      "input": "{\"profiles\":{},\"version\":1}",
+      "canonical": "{\"profiles\":{},\"version\":1}",
+      "sha256": "67d82c25cee9879aa641a9988622147511968e3956ca3407d73550757a539c86"
+    },
+    {
+      "name": "utf16-order",
+      "input": "{\"version\":1,\"profiles\":{\"\\ue000\":{},\"\\ud800\\udc00\":{}}}",
+      "canonical": "{\"profiles\":{\"\ud800\udc00\":{},\"\ue000\":{}},\"version\":1}",
+      "sha256": "95ce28aab5589541c6d0b0ce393f4575e6d8b0a5c78dcca33baf2b56d101ed73"
+    }
+  ]
+}
