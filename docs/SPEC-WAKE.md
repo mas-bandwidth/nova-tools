@@ -3665,7 +3665,7 @@ left without what it pins.
     that declares `UNAVAILABLE` on a partial correlation turns it red on poll
     two; one that advances the cursor or writes `OPEN` turns it red on the
     byte-identical assertion. The same lane drained to 200 notes is
-    `correlation=complete remaining=- gaps=0` on one poll and does reach
+    `correlation=complete remaining=0 gaps=0` on one poll and does reach
     `UNAVAILABLE` at 8m; **the over-header-cap header is a permanent gap** (draft 8,
     K3a; **corrected draft 9, K4a** — draft 8 asserted here that a
     `--correlate-bytes` raise reads this header, and it cannot, because the
