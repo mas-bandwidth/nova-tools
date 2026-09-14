@@ -599,3 +599,16 @@ in SPEC-BUS-DELIVERY.md replaces waiting for an unrelated future push. Until tha
 mode is implemented and its real-Git recovery witnesses pass, the reporter's sending
 path is not ready for adoption. Local inventory, draft and update-choice implementation
 can proceed independently. No timer or reporter-owned Git is added.
+
+## Amendment note, 2026-09-13 (draft 2): `adoption` is this tool's verb
+
+`nova-update adoption` is a verb of **this** binary, and its whole contract —
+grammar, evidence, exits and demanded test — is drafted in
+[SPEC-TOKENS.md](SPEC-TOKENS.md), section **Adoption: the matrix lives on
+`nova-update`** (2026-09-13), and moves here whole, as a numbered rule and a
+work item, when that amendment is ratified. (Draft 2 cuts this note to the
+pointer and the date: restating the contract here was a second copy of it in
+the one place whose job is to stop the two drifting.) **Draft 4**: that
+contract's `--tokens-out` flag is deleted, so this verb opens no file written
+by `nova-tokens` and reads the bus and `--reports` alone — SPEC-TOKENS's rule
+2, one reader per format, applies across tools as well as within one.
