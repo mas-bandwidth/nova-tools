@@ -190,6 +190,38 @@ usage bases, subscription reference-vs-cash accounting, local-token API zero and
 unknown pricing. Compare real operational token overhead for repeated manual
 capacity/pricing inquiries versus this exchange at equal information quality.
 
+## Model knowledge informs scheduling
+
+Maintain a shared `models` section keyed by stable model/version identity, with
+provider-route/alias mappings where they differ. Friend CONFIG references these
+model records instead of repeating descriptions for every pool. Record concise
+strengths, limitations and task-suitability information, supported modalities and
+tool/harness needs, context/output constraints, and pricing record references.
+Separate declared vendor capabilities, friend assessments and measured results;
+unknown or outdated evidence must not become an established strength/weakness.
+
+Retain task-class observations with the workload/revision, model/provider/harness
+configuration, accepted quality and verification outcome, operational tokens,
+review/retry/correction overhead, cost and wall time. Include observation date,
+source, sample count and uncertainty. Failed attempts remain evidence without
+turning a task failure into a verdict on a model's or friend's worth. A model
+version/route/configuration change does not silently inherit all old conclusions.
+Do not publish unsupported numerical rankings from a handful of unmatched tasks.
+
+Expose compact suitability summaries and indexes by task class/capability, with
+bounded drill-down to the original receipts. The coordinator combines them with
+friend availability, actual free capacity, task prerequisites, agreed limits and
+cost policies. CONFIG holds agreed maximum children and per-swarm agents/models;
+limits apply across all applicable levels and are never silently raised. ACTIVE
+supplies occupancy and ongoing attempt data, not new permission to launch.
+
+Prefer capable economical routes by default and compare total operational cost
+for accepted work, including reviews and rework, not token price alone. Keep
+specialized perspectives and security roles available where needed. Initially
+these facts support coordinator decisions; automate routine scheduling only with
+explicit policy and measured real-work results. No model profile grants access,
+execution authority or capacity by itself.
+
 ## The agreed hierarchy
 
 Glenn's hierarchy is repository -> roadmap -> epic -> feature -> subtasks,
