@@ -228,7 +228,7 @@ func TestZshLargeHeredocKeepsItsTemporaryFileInsideTheWall(t *testing.T) {
 	}
 	j := newJob(t)
 	payload := strings.Repeat("x", 16000) + "\n"
-	script := "test \"$TMPPREFIX\" = \"$TMPDIR/zsh\"\ncat <<'NOVA_REPORT' > \"$TMPDIR/report\"\n" + payload + "NOVA_REPORT\ntest \"$(wc -c < \"$TMPDIR/report\")\" -eq 16001\n"
+	script := "test \"$TMPPREFIX\" = \"$TMPDIR/zsh\" || exit 1\ncat <<'NOVA_REPORT' > \"$TMPDIR/report\"\n" + payload + "NOVA_REPORT\ntest \"$(wc -c < \"$TMPDIR/report\")\" -eq 16001\n"
 	args := []string{"--read", j.read, "--write", j.write, "--", "/bin/zsh", "-c", script}
 	code, _, errOut := j.tool(t, j.env("TMPPREFIX="+j.outside+"/zsh"), args...)
 	if code != 0 {
