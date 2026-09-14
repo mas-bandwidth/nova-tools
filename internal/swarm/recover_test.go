@@ -133,9 +133,11 @@ func TestARecoveredKilledJobRunsOnceMore(t *testing.T) {
 		wasReaped    int
 		wantReaped   int
 		wantRequeued bool
+		noAutoRetry  bool
 	}{
-		{"the first reap runs once more", 0, 1, true},
-		{"the second reap is final", 1, 2, false},
+		{"the first reap runs once more", 0, 1, true, false},
+		{"the second reap is final", 1, 2, false, false},
+		{"an explicit one-attempt recovery", 0, 1, false, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			dir := t.TempDir()
@@ -175,8 +177,9 @@ func TestARecoveredKilledJobRunsOnceMore(t *testing.T) {
 				// The RECOVERY path is what this test is about and it starts no worker; the
 				// wall is the launch seam's and is proved in cmd/nova-swarm's own tests, so
 				// this unit takes rule 11's loud workaround rather than needing a binary.
-				NoSandbox: true,
-				Now:       func() time.Time { return time.Now().UTC() }})
+				NoSandbox:   true,
+				NoAutoRetry: c.noAutoRetry,
+				Now:         func() time.Time { return time.Now().UTC() }})
 			stdout := out.String()
 			want := "RUN RECLAIM slot=1 id=" + id + " end=killed dest=failed"
 			if !strings.Contains(stdout, want) {
@@ -184,6 +187,9 @@ func TestARecoveredKilledJobRunsOnceMore(t *testing.T) {
 			}
 			if !strings.Contains(stdout, "requeued="+boolWord(c.wantRequeued)) {
 				t.Errorf("the reclaim line wants requeued=%t:\n%s", c.wantRequeued, stdout)
+			}
+			if !strings.Contains(stdout, "auto_retry="+boolWord(!c.noAutoRetry)) {
+				t.Errorf("the run summaries want auto_retry=%t:\n%s", !c.noAutoRetry, stdout)
 			}
 			// The counts are the truth about the pool: a job this pass ended is in them.
 			if !strings.Contains(stdout, "killed=1") || !strings.Contains(stdout, "recovered=1") {

@@ -111,9 +111,10 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
    its own clone under its own job directory, never shared. Each job carries a
    deadline in seconds and the default action at it: the machinery reaps the
    worker and records what is on disk. The swarm never waits forever. A worker
-   silent past its deadline is reaped and its job is re-queued once, with
-   `requeued=1` in the new task's sidecar; a job reaped a second time goes to
-   `failed/` with `reaped=2` and is not re-queued again.
+   silent past its deadline is reaped and its job is re-queued once by default,
+   with `requeued=1` in the new task's sidecar; `run --no-auto-retry` instead
+   finalizes that attempt without an automatic descendant. A job reaped a second
+   time goes to `failed/` with `reaped=2` and is not re-queued again.
 8. **Results are counted per batch, on one line, and completion is evidence
    separate from the finding count.** `triage` classifies every report as
    `ok`, `clean`, `plan-only` or `no-result`, and prints one `TRIAGE BATCH`
@@ -517,7 +518,7 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
 ```
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
-nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--launch-timeout <s>] [--usage-interval <s>] [--sandbox <path>] [--no-sandbox]
+nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
 nova-swarm stop     --pool <dir>
@@ -535,6 +536,12 @@ nova-swarm reclaim  --pool <dir> (--task <id> | --done) [--max <n>]
 
 `--tokens <n>` is the token budget (rule 13). It has no default and `0` is
 refused, on `add` and on `batch` alike, for the reason `--files` has none.
+
+`--no-auto-retry` belongs only to `run`. It finalizes deadline and true-429
+outcomes without an automatic same-text descendant, while preserving the
+attempt's report, usage, failure reason and manual `requeue`. It is an
+invocation policy, not task metadata: a later `run` that recovers an ended job
+needs the flag again. Absent it, the default automatic behavior below applies.
 
 `batch --tasks <dir>` queues one task per regular file directly under `<dir>`,
 in name order, each with the same `--files`, `--tokens`, `--template` and
@@ -638,7 +645,7 @@ ADD OK id=<id> label=<label> template=<name|-> deadline=<d> files=<n> tokens=<n|
 ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
-RUN POOL workers=<n> hours=<h> worker=<name> model=<model> pool=<dir>
+RUN POOL workers=<n> hours=<h> worker=<name> model=<model> auto_retry=<true|false> pool=<dir>
 RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path>
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
@@ -652,7 +659,7 @@ RUN DONE id=<id> slot=<n> rc=<n> after=<d> result=<ok|clean|no-result|plan-only|
 RUN VIOLATION id=<id> slot=<n> background=<n> dest=failed: <reason>
 RUN KILLED id=<id> slot=<n> after=<d> deadline=<d> findings=<n> unpublished=<true|false> budget=<spent|n+|->/<n> survived=<true|false> requeued=<true|false> reaped=<1|2>
 RUN MORE kind=<task> shown=<n> total=<t> nova-swarm status --pool <dir> --max 0
-RUN OK started=<n> done=<n> failed=<n> killed=<n> pending=<n> recovered=<n> after=<d>
+RUN OK started=<n> done=<n> failed=<n> killed=<n> pending=<n> recovered=<n> auto_retry=<true|false> after=<d>
 RUN NOTE <the one remedy line>
 RUN UNSANDBOXED id=<id> slot=<n>: no OS containment; every read and write this job makes is yours
 RUN REFUSED: <reason>
@@ -685,13 +692,16 @@ STOP OK pool=<dir> running=<n>
 ```
 
 `RUN POOL` is the first line of every dispatcher run and it says what will run
-before anything runs: the provider, the model and the pool. **It never prints
-the key, the key file's contents, or the env var's value** — only the variable's
-name, where a name is needed at all.
+before anything runs: the provider, the model, the pool and the effective
+automatic-retry policy. `RUN OK` repeats that policy in the terminal summary.
+**Neither line prints the key, the key file's contents, or the env var's value**
+— only the variable's name, where a name is needed at all.
 
 **Every listing is a cap and a count**, per SPEC.md. `run`, `status`, `triage`
 and `cost` take `--max <n>`, default 20, `0` for all, one MORE line naming the
-remedy. The counts are the truth about the **pool**, never about the output.
+remedy. On `run`, `--max` limits only displayed `RUN` task lines; it never
+limits admissions, workers, attempts or retries. The counts are the truth about
+the **pool**, never about the output.
 A `status` over a 67-task pool printed 67 lines in the prototype; the finding a
 reader wanted was one of them.
 
@@ -803,15 +813,17 @@ then a kill.
 to enforce its own deadline is a worker whose deadline depends on the thing
 that has stopped responding.
 
-**A reaped job runs once more, and only once (rule 7).** The first reap keeps
-the partial `RESULT.md`, moves the task's files to `failed/`, and queues the
-same task text again with `requeued=1` and `from=<old-id>` in the new sidecar.
-`RUN KILLED … requeued=true reaped=1` says so. A second reap of the re-queued
-task is `reaped=2`, `requeued=false`, and the job stays in `failed/`; the
-remedy line names `requeue` with a smaller budget, which is a person's act.
-One automatic retry closes the case where a worker was silent because the
-provider was, and never the case where the task was too big, which a second
-identical run would only prove twice.
+**A reaped job runs once more, and only once by default (rule 7).** The first
+reap keeps the partial `RESULT.md`, moves the task's files to `failed/`, and
+queues the same task text again with `requeued=1` and `from=<old-id>` in the
+new sidecar. `RUN KILLED … requeued=true reaped=1` says so. With
+`run --no-auto-retry`, that same line says `requeued=false` and no automatic
+descendant is queued. A second reap of the re-queued task is `reaped=2`,
+`requeued=false`, and the job stays in `failed/`; the remedy line names
+`requeue` with a smaller file budget, which is a person's act. One automatic
+retry closes the case where a worker was silent because the provider was, and
+never the case where the task was too big, which a second identical run would
+only prove twice.
 
 **The worker is told its deadline in its own prompt**, in seconds, with the
 sentence that it will be killed by machinery — because a worker that knows it
@@ -821,8 +833,9 @@ them at the end it never reaches.
 **The dispatcher's own deadline is `--hours`**, and it is required. At it, the
 dispatcher starts nothing new and exits when the running workers finish or are
 killed. Glenn, 2026-09-09: **every ask, child or read has a written deadline and
-a default action; never wait forever.** A `stop` file in the pool does the same
-thing on demand.
+a default action; never wait forever.** A `stop` file in the pool stops new
+admissions on demand, but does not kill or cancel workers already running,
+including a retry that has already started.
 
 **A wait loop never ends by scanning for its own name.** The dispatcher waits on
 pids it started, and it never matches a process by its command line: that is how
@@ -1179,11 +1192,13 @@ tokens, and three parallel workflows hit the limit in 20 minutes (Glenn,
 expensive by being cut off.
 
 **Rate limits are the dispatcher's business.** A provider's 429 is not a failed
-task: the dispatcher holds the slot, waits the interval the provider names (or
-its own `--backoff`, default 30 seconds, doubling to a cap of 5 minutes), and
-retries the **same** task once. A second 429 on the same task fails it with
-`rc=429` in its sidecar, so `triage` can see that a batch's silence was a limit
-rather than a set of bad tasks. Three of seven workers in batch 2 came back
+task by default: the dispatcher holds the slot, waits the interval the provider
+names (or its own `--backoff`, default 30 seconds, doubling to a cap of 5
+minutes), and retries the **same** task once. With `run --no-auto-retry`, it
+records and finalizes the true-429 attempt without waiting or launching a
+descendant. A second 429 on the same task fails it with `rc=429` in its
+sidecar, so `triage` can see that a batch's silence was a limit rather than a
+set of bad tasks. Three of seven workers in batch 2 came back
 with a plan and no findings and nothing in the pool said why; the cause turned
 out to be a refusal, not a limit (rule 5), but a 429 is a second road to the
 same silence and the sidecar closes both.
@@ -1348,9 +1363,9 @@ pending path it no longer owns.
 - **It does not choose a model.** The worker description does, and it is
   required.
 - **It does not retry a failed task.** `requeue` with changed text is a person's
-  decision. The one exception is rule 7: a job reaped at its deadline is
-  re-queued once by the machinery, because a silent provider and a silent
-  worker look the same from outside, and once is enough to tell them apart.
+  decision. The default automatic exceptions are rule 7's one deadline re-queue
+  and the rate-limit section's one true-429 retry. `run --no-auto-retry`
+  declines both for its invocation.
 - **It does not judge accuracy.** `accurate` and `wrong` are a reader's
   verdicts, recorded by `verdict`, and a batch line with no verdict prints a
   dash.
@@ -1480,7 +1495,9 @@ be seen red before it is trusted.
 7. Each job's clone path is under its own job directory and no two jobs share
    one; a worker that sleeps past its deadline is killed, `requeued=true
    reaped=1`, runs again, is killed again, `requeued=false reaped=2`, and lands
-   in `failed/`; the dispatcher exits at `--hours` with the injected clock.
+   in `failed/`; under `--no-auto-retry` its first kill is
+   `requeued=false reaped=1` and creates no descendant. The dispatcher exits at
+   `--hours` with the injected clock.
 8. `TestCompletionIsEvidenceNotCount`: eight jobs — three with findings, one
    completed review with `findings: 0` and no finding lines, one completed
    `probe-row` with `findings: 0` and one item `not done` with its reason,
@@ -1724,7 +1741,8 @@ verb, and tests that pin all three by executing them.
    `requeued`, `reaped`, `from`, `batch`, `tokens`, `launch`, `malformed`
    and the verdict, the atomic claim by rename, the kernel lock on
    `run.lock` (dispatcher exclusion only; slot transitions take
-   `slots.lock`, item 3), the one automatic re-queue of a reaped job, and `finalize`:
+   `slots.lock`, item 3), the default one automatic re-queue of a reaped job
+   and run-scoped `--no-auto-retry` exception, and `finalize`:
    the usage file, then the report copy or its marker under
    `<pool>/reports/<job>/`, each through `.tmp` and rename, before any move
    (rule 12), and `reclaim` refusing without both. Tests: two claimants, one

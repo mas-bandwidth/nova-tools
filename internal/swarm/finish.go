@@ -141,9 +141,9 @@ func (in RunInput) finish(r *running, retired map[int]bool, now time.Time) (stri
 	// task's text is the old task's text and it is read from where the old task still is.
 	requeued := false
 	switch {
-	case end == EndKilled:
+	case end == EndKilled && !in.NoAutoRetry:
 		requeued = in.requeue(sc, now)
-	case limited && sc.Requeued < 1:
+	case limited && sc.Requeued < 1 && !in.NoAutoRetry:
 		in.waitBackoff(r.jobDir)
 		requeued = in.retry429(sc, now)
 	}

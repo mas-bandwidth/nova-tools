@@ -25,15 +25,18 @@ import (
 
 // RunInput is one dispatcher run.
 type RunInput struct {
-	Pool           *Pool
-	Worker         Worker
-	Key            string
-	Workers        int
-	Hours          float64
-	Max            int
-	LaunchTimeout  time.Duration
-	UsageInterval  time.Duration
-	Backoff        time.Duration // the wait before retrying a 429; zero takes the default
+	Pool          *Pool
+	Worker        Worker
+	Key           string
+	Workers       int
+	Hours         float64
+	Max           int
+	LaunchTimeout time.Duration
+	UsageInterval time.Duration
+	Backoff       time.Duration // the wait before retrying a 429; zero takes the default
+	// NoAutoRetry finalizes deadline and true-429 outcomes without creating a
+	// descendant. It is a dispatcher-invocation policy; false preserves automatic retries.
+	NoAutoRetry    bool
 	Stdout, Stderr io.Writer
 	Now            func() time.Time
 	Supervisor     string // this binary, re-invoked as `supervise`
@@ -84,8 +87,8 @@ func Run(in RunInput) int {
 	out, errOut := in.Stdout, in.Stderr
 	now := in.Now
 
-	fmt.Fprintf(out, "RUN POOL workers=%d hours=%s worker=%s model=%s pool=%s\n",
-		in.Workers, trimFloat(in.Hours), oneline.Field(in.Worker.Name), oneline.Field(in.Worker.Model), oneline.Field(p.Dir))
+	fmt.Fprintf(out, "RUN POOL workers=%d hours=%s worker=%s model=%s auto_retry=%t pool=%s\n",
+		in.Workers, trimFloat(in.Hours), oneline.Field(in.Worker.Name), oneline.Field(in.Worker.Model), !in.NoAutoRetry, oneline.Field(p.Dir))
 
 	// THE PROBE, ONCE, BEFORE THE FIRST WORKER (SPEC-SANDBOX rule 10 and test 23). It
 	// costs a process and it answers a question about the MACHINE, not about a job, so it
@@ -201,7 +204,7 @@ func Run(in RunInput) int {
 			dest := destinationFor(end, fin.Class, rec.RC)
 			_ = p.WriteSidecar(Running, sc)
 			requeued := false
-			if end == EndKilled {
+			if end == EndKilled && !in.NoAutoRetry {
 				requeued = in.requeue(sc, now())
 			}
 			_ = p.Claim(sc.ID, Running, dest)
@@ -433,8 +436,8 @@ func Run(in RunInput) int {
 	tasks.More()
 
 	pending, _ := p.List(Pending)
-	fmt.Fprintf(out, "RUN OK started=%d done=%d failed=%d killed=%d pending=%d recovered=%d after=%s\n",
-		started, done, failed, killed, len(pending), recovered, trimDuration(now().Sub(deadline.Add(-time.Duration(in.Hours*float64(time.Hour))))))
+	fmt.Fprintf(out, "RUN OK started=%d done=%d failed=%d killed=%d pending=%d recovered=%d auto_retry=%t after=%s\n",
+		started, done, failed, killed, len(pending), recovered, !in.NoAutoRetry, trimDuration(now().Sub(deadline.Add(-time.Duration(in.Hours*float64(time.Hour))))))
 	fmt.Fprintf(out, "RUN NOTE %s\n", oneline.Escape(remedy(p, failed+launchFailed, killed, len(pending), len(quarantined)+len(retired))))
 	if len(pending) > 0 && started == 0 && len(watching) == 0 {
 		said = true
