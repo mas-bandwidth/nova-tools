@@ -371,7 +371,9 @@ func taskDeadline(sc Sidecar, w Worker) time.Duration {
 
 // harnessArgs is the harness's argv: the description's own arguments with this tool's two
 // placeholders expanded, and the prompt FILE last where the description names no place for
-// it. THE TASK TEXT IS NEVER AN ARGUMENT -- the prototype took it as $1, which puts a
+// it. The sandbox sets the child's cwd to the job directory, so the prompt file is passed
+// as the stable relative name PROMPT.md even when the job's absolute path has an alias.
+// THE TASK TEXT IS NEVER AN ARGUMENT -- the prototype took it as $1, which puts a
 // multi-paragraph task into the process table and into every ps a bench user runs.
 //
 // The placeholders exist because the model must REACH THE CHILD. On 2026-09-11 a real run
@@ -381,7 +383,9 @@ func taskDeadline(sc Sidecar, w Worker) time.Duration {
 // RUN OK. A description now writes the invocation it means --
 // ["run", "--model", "{model}", "--", "{prompt}"] -- and this function fills it in.
 func harnessArgs(w Worker, jobDir string) []string {
-	prompt := filepath.Join(jobDir, "PROMPT.md")
+	// The sandbox's --cwd is jobDir. A relative prompt path avoids an absolute alias (for
+	// example /tmp versus /private/tmp) being interpreted as outside the worker's wall.
+	prompt := "PROMPT.md"
 	out := make([]string, 0, len(w.HarnessArgs)+1)
 	placed := false
 	for _, a := range w.HarnessArgs {
