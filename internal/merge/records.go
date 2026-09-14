@@ -541,9 +541,9 @@ func (r *Records) FoldReadOnly() (*Folded, error) {
 	return foldWithOneReread(list)
 }
 
-// foldWithOneReread is the report-fold policy for immutable records. The first read may
-// have caught a checkout restore in progress; one later parse is authoritative for a path
-// that then decodes. A problem that remains after both reads is retained by mergeFolds.
+// foldWithOneReread is the checkout report-fold policy. The first read may have caught a
+// checkout restore in progress; one later parse is authoritative for a path that then
+// decodes. A problem that remains after both reads is retained by mergeFolds.
 func foldWithOneReread(list func(string) ([]foldFile, error)) (*Folded, error) {
 	first, err := foldFiles(list)
 	if err != nil {
@@ -643,7 +643,23 @@ func (r *Records) FoldFetchedTip(tip string) (*Folded, error) {
 	if kind != "commit" {
 		return nil, fmt.Errorf("fetched tip %s is a %s, not a commit", tip, oneLineOf(kind))
 	}
-	return r.foldTipTree(tip)
+	paths, err := r.tipRecordPaths(tip)
+	if err != nil {
+		return nil, err
+	}
+	first, err := r.foldTipPaths(tip, paths)
+	if err != nil || len(first.Problems) == 0 {
+		return first, err
+	}
+	// The commit is immutable, so the tree listing remains one snapshot. Match the
+	// lock-free report policy without charging healthy records twice: only paths that
+	// first refused are shown once more at this same full SHA.
+	Sleep(reReadPause)
+	second, err := r.foldTipPaths(tip, foldProblemPaths(first.Problems))
+	if err != nil {
+		return nil, err
+	}
+	return mergeFolds(first, second), nil
 }
 
 // foldTipTree is the common immutable-object walk. FoldTip decides locking for its legacy
@@ -653,7 +669,11 @@ func (r *Records) foldTipTree(tip string) (*Folded, error) {
 	if err != nil {
 		return nil, err
 	}
-	return foldWithOneReread(func(dir string) ([]foldFile, error) {
+	return r.foldTipPaths(tip, paths)
+}
+
+func (r *Records) foldTipPaths(tip string, paths map[string][]string) (*Folded, error) {
+	return foldFiles(func(dir string) ([]foldFile, error) {
 		var out []foldFile
 		for _, p := range paths[dir] {
 			if !strings.HasSuffix(p, ".json") {
@@ -667,6 +687,24 @@ func (r *Records) foldTipTree(tip string) (*Folded, error) {
 		}
 		return out, nil
 	})
+}
+
+func foldProblemPaths(problems []FoldProblem) map[string][]string {
+	out := map[string][]string{}
+	seen := map[string]bool{}
+	for _, problem := range problems {
+		if seen[problem.File] {
+			continue
+		}
+		seen[problem.File] = true
+		switch {
+		case strings.HasPrefix(problem.File, ReadsDir+"/"):
+			out[ReadsDir] = append(out[ReadsDir], problem.File)
+		case strings.HasPrefix(problem.File, GatesDir+"/"):
+			out[GatesDir] = append(out[GatesDir], problem.File)
+		}
+	}
+	return out
 }
 
 // tipRecordPaths uses Git's NUL-delimited tree form. A newline-delimited list followed by
