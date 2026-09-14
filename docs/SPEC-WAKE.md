@@ -193,7 +193,9 @@ body, under a per-poll budget of `--correlate-max` items and
 `--correlate-bytes` bytes; where the budget stops short of the lane's tip the
 line says `correlation=partial remaining=<n>`, the state word stays `PINGED`
 however far `--answer-within` has run, and the position reached is bookmarked
-in the record's new seventh field so the next poll **resumes** there. Bounded
+in the record's new seventh field so the next poll **resumes** there. (Draft 8
+rewrites what those bounds measure, makes an unread item a **coverage gap**
+rather than a skip, and counts `remaining=` in items.) Bounded
 per poll, complete over polls, and `UNAVAILABLE` is never inferred from a read
 that could not have seen the answer. The read is non-destructive as draft 6's
 was and more plainly so: no cursor advance, no `OPEN` write, no `nova-bus`
@@ -208,6 +210,37 @@ offered until it lands, the fetched remote ref as the one evidence, the anchor
 as the correlation range's floor and the caller's cursor kept out of the answer
 all stand — what changed is which program performs the correlation read, and
 that it can stop and resume.
+
+**Draft 8, 2026-09-13**, repairs draft 7 (head 4ffeb264) against the Astra
+direct read at that head (bus note `stella-3e1c0182f78f`), which narrowed K3 to
+three details, and every passage it changes is marked `draft 8` beside the
+change with the defect named. **K3a** — draft 7 skipped an over-4 KiB header
+and then let a read that reached the tip count as **complete**, so a skipped
+potential answer could be followed by `UNAVAILABLE`: a skipped or unreadable
+item is now a **coverage gap**, retained in the record, counted on the line as
+`gaps=<n>`, named once, and `complete` requires the tip **and** zero gaps, so
+incomplete coverage can never become negative evidence about a friend.
+**K3b** — *every byte this read takes out of the object store* is not
+enforceable by a program driving `git`, which inflates and reads more than it
+returns: the byte bound is now **consumed and decoded** bytes, joined by a wall
+clock on the `git` processes and a one-item streaming buffer, with physical I/O
+named as unbounded rather than promised; `remaining=` is counted in **items**
+and not commits, because nine hundred notes in one commit are one commit and
+three polls of work, and it is **`-`** where the exact count would itself cost
+an unbounded walk; and the within-commit read order is fixed — note paths
+bytewise, then `RECEIPTS` lines in file order — so a bookmark means the same
+thing twice. **K3c** — a byte budget could stop mid-header or mid-line where
+the bookmark can only name an item: item handling is now **all-or-none**, a
+poll stops **before** an item that does not fit and never advances past unread
+content, an item larger than a whole budget is a gap rather than a stall, and
+a poll that takes no item and records no gap is named as the spin a test
+fails. And the bounded lane read is named once as **the bounded read**, owned
+by this file, referenced by SPEC-BUS-REPLY.md (#267) rather than restated
+there. **No design of draft 7 is reversed**: the correlation is still this
+tool's own bounded read of the lane, still bounded per poll and complete over
+polls, and `UNAVAILABLE` is still owed a complete read — what changed is what
+*complete* means, what the bounds measure, and that an item is read whole or
+not at all.
 
 The
 amendment adds four sources to `watch`, one flag on the bus source, one verdict,
@@ -1420,7 +1453,10 @@ and the clocks, and every `WAKE SOURCE` line for a **forge** source — `prs`,
 the record beside the news and a rate limit arrives as `unreadable:` rather
 than as silence. `probe` adds **no** `nova-bus` read per poll and **one bounded
 `git` walk of the pinged line's lane** — at most `--correlate-max` items and
-`--correlate-bytes` bytes, resuming where the last poll stopped — and only
+`--correlate-bytes` consumed-and-decoded bytes, under a 10s-per-process wall
+clock, resuming where the last poll stopped, plus at most one further
+name-only commit listing of `--correlate-max` to count what remains (draft 8,
+K3b: past that allowance the count is `remaining=-` and no walk is made) — and only
 while a ping is outstanding (draft 4, finding 3; two inbox reads from draft 5,
 finding M4, until **draft 7**, K3, which took the correlation off the inbox
 altogether because a plain `inbox` prints every NEW note in full and so cannot
@@ -1828,7 +1864,13 @@ spec forbids**.
    cap — one poll prints at most `8 * --max-lines + 17` lines plus those three
    named terms, and with `--max-lines 40`, one `--owned-prs` repository and
    twenty `--line` names none of which authors a commit that is at most
-   320 + 17 + 5 + 20 + 7 = 369. (Glenn, 2026-09-09: tool output costs tokens; test at the largest
+   320 + 17 + 5 + 20 + 7 = 369. **`probe` is bounded separately and in the same
+   style** (draft 8, K3a): one `WAKE PROBE` line per `--line` name, at most one
+   partial-correlation `WAKE NOTE` per name per poll, and **at most 64** gap
+   notes per name over the whole life of a record — a gap is named **once**,
+   on the poll that first records it, and never again while it stands, so that
+   term is bounded by the retained gap list's own cap and not by how many polls
+   a record lives through. (Glenn, 2026-09-09: tool output costs tokens; test at the largest
    plausible state.)
    plausible state.)
 
@@ -2383,32 +2425,141 @@ bound, it is a capture and a cut. The lane read has no cursor in it, so there
 is nothing to be on the wrong side of; it reads headers and not bodies; and its
 size is this tool's own to bound before the bytes are read rather than after.
 
-**The budget, and `correlation=partial` rather than a guess** (draft 7, K3).
-One poll's read takes at most `--correlate-max <n>` items and
-`--correlate-bytes <n>` bytes: an **item** is one note header read or one
-appended `RECEIPTS` line, the bytes are every byte this read takes out of the
-object store, and the defaults are **300** items — the bound **State** already
-uses for its sighting memory — and **262144** bytes. One file is read at most
-**4 KiB** deep looking for the end of its header; one with no blank line by
-there is counted, skipped and named once, because a note whose header does not
-end is the bus's `INBOX UNREADABLE` and not this probe's verdict. Either flag
-at `0` is exit 2 naming it (**No guessed anything**: a budget of nothing is not
-a budget), and a `--correlate-max` over **2000** or a `--correlate-bytes` over
-**4194304** is exit 2 naming that ceiling — a bound a caller can raise without
-limit is not a bound, which is the ceiling `--answer-within` already has.
-Where a budget runs out before the lane's tip:
+**The budget, and `correlation=partial` rather than a guess** (draft 7, K3;
+the bounds, the gaps and item handling redrawn **draft 8**, K3a-c). One poll's
+read is **the bounded read** named below, under **five** bounds and no others:
 
-- the line carries `correlation=partial` and `remaining=<n>`, the number of
-  lane commits between the position reached and the ref's tip — a `git rev-list
-  --count`, which opens no note;
+- `--correlate-max <n>` **items**, default **300** — the bound **State**
+  already uses for its sighting memory. An **item** is one note header read or
+  one appended `RECEIPTS` line;
+- `--correlate-bytes <n>` bytes, default **262144**, counted as **the bytes
+  this read consumes from the `git` adapter and decodes** — every byte handed
+  back to this process by the object reader and every byte it inflates in its
+  own buffers, summed over the poll;
+- **4 KiB decoded per note file**, the depth one header is read to looking for
+  the blank line that ends it;
+- **a wall clock on the reading itself**: no single `git` process this read
+  starts may run longer than **10s**, and the whole read may not run longer
+  than `--interval` or 30s, whichever is smaller — the two-minute law applied
+  to a read the same way `--gh-timeout` applies it to the forge;
+- **one item of buffer at a time**: the read streams, holding at most one
+  item's 4 KiB and one `RECEIPTS` line at once, so peak resident bytes are a
+  constant and not a function of how deep the lane is.
+
+**Those five are what this tool can enforce, and naming them is the point**
+(draft 8, K3b). Draft 7 said the byte budget counted *every byte this read
+takes out of the object store*, and no program driving `git` can promise that:
+`git` inflates objects, reads pack indexes, may walk a whole delta chain and
+may map more than it hands back, none of it visible to the caller. What can be
+enforced is what crosses into this process — consumed and decoded bytes — and
+this process's own time and its own buffers. **Physical I/O inside `git` is not
+bounded here and is not claimed to be**, and a lane whose objects are
+pathological is held instead by the item bound and the wall clock, which is why
+the clock is one of the five and not an afterthought.
+
+**An item that does not fit is not read** (draft 8, K3c). Draft 7's budget
+could stop in the middle of a header or in the middle of a `RECEIPTS` line, and
+a bookmark of `<lane commit>:<items taken inside it>` cannot describe half an
+item. So item handling is **all-or-none**: before each item the read asks
+whether that item's whole cost — up to 4 KiB for a header, its own length for a
+receipt line — fits in what is left of both budgets. Where it does not, **the
+item is not read at all**, the poll stops **before** it, and the bookmark names
+**that item**, so the next poll begins by attempting it again. No item is ever
+half-read, no bookmark ever points inside one, and **a poll never advances past
+content it did not cover**.
+
+**An item that cannot fit a whole budget, or cannot be read at all, is a
+coverage gap** (draft 8, K3a). Two cases, one treatment:
+
+- a note file whose header has no blank line within 4 KiB, or an item whose own
+  cost is larger than the whole of `--correlate-bytes` so that no poll at this
+  budget can ever take it — the bus's own `INBOX UNREADABLE` case and not this
+  probe's verdict;
+- an object this read cannot get from `git` at all: missing, corrupt, or a read
+  that failed — named by its reason, never guessed past.
+
+Each is **skipped, counted and named once** — one `WAKE NOTE probe <name>:
+<lane commit>:<item> could not be read (<reason>); it is a coverage gap and no
+unavailability is declared` — its position is **retained in the record** so a
+later poll can come back to it, and the line carries `gaps=<n>`.
+
+**A gap is a potential answer this read did not see**, and that is the whole of
+why it is kept. The skipped item may be exactly the note that answers the ping.
+So while any gap stands the correlation is **`partial`**, the state word stays
+**`PINGED`** however far `--answer-within` has run, and **`UNAVAILABLE` is not
+reachable at all**. The remedy is on the record and in the caller's hand: a
+later poll with more budget left, or an explicit `--correlate-bytes` raise,
+reads the item and the gap is **resolved** — and where the resolved item is the
+answer, that poll is `ANSWERED`. A gap is never aged out, never rounded away
+and never turned into a negative by the clock.
+
+**`complete` is the tip *and* zero gaps**, both halves, and that is its whole
+definition (draft 8, K3a). A read that reached the ref's tip with `gaps=0` is
+`correlation=complete`; a read that reached the tip with a gap standing is
+`correlation=partial remaining=0 gaps=<n>`, because **reaching the tip is not
+covering the lane**. Only a **complete** read with no answer past
+`--answer-within` is a **timeout**, and a timeout is the one path to
+`UNAVAILABLE`. **No `UNAVAILABLE` without complete negative evidence**: nothing
+incomplete — a budget that stopped short, a gap, a range that could not be
+formed, a fetch that did not happen — is ever evidence *against* a friend.
+Incomplete coverage is an unknown, and an unknown is `PINGED`.
+
+**The retained gap list is bounded too.** A record carries at most **64** gap
+positions. A poll that would record a sixty-fifth stops **before** that item
+and leaves the bookmark there, so the rest stays behind the bookmark as
+ordinary uncovered lane rather than growing the state file without limit: a
+bound on a read that becomes an unbounded bound on the state is not a bound
+(**Bounded output**, and Glenn's rule that a tool is tested at the largest
+plausible state).
+
+**Where a budget runs out before the lane's tip**, the poll prints and records:
+
+- the line carries `correlation=partial`, `remaining=<n|->` and `gaps=<n>`;
+- **`remaining=` counts items, never commits** (draft 8, K3b). Draft 7 made it
+  "the number of lane commits between the position reached and the ref's tip",
+  and a commit count is the wrong unit for an item budget: nine hundred notes
+  added in **one** commit are `remaining=1` in commits and nine hundred items
+  of work, so a caller reading `remaining=1` would expect one more poll and
+  need three. `remaining=<n>` is **items** — note headers plus appended
+  `RECEIPTS` lines — between the bookmark and the tip, the same unit
+  `--correlate-max` spends;
+- **and `remaining=-` where the exact count is itself past budget.** Counting
+  what remains means walking the rest of the lane, which is the unbounded read
+  this section exists to avoid — `git rev-list --count` scans history, and
+  counting items means listing each commit's paths as well. So the count is
+  attempted only inside a **counting allowance** of at most `--correlate-max`
+  further commits, names and paths only, **no object opened**; where the
+  remainder is larger than that allowance the field is **`remaining=-`**, which
+  reads *more than this poll could count* and is never a number the tool did
+  not measure (**No guessed anything**);
 - one `WAKE NOTE probe <name>: this poll's correlation read covered <n> items
-  to <sha>, <n> lane commits remain; the correlation is partial and no
-  unavailability is declared` is printed;
+  to <sha>, <n|more than <n>> items remain, <n> gaps stand; the correlation is
+  partial and no unavailability is declared` is printed;
 - **the state word stays `PINGED`** however far `--answer-within` has run, and
   the record stands;
-- the position reached — `<lane commit>:<items taken inside it>` — is written
-  into the record as its **seventh field**, so the **next** poll resumes there
-  and not at the anchor.
+- the position reached is written into the record as its **seventh field** —
+  `<lane commit>:<item offset within it>[;<gap>,...]`, the item the next poll
+  attempts first followed by the gap positions still owed — so the **next**
+  poll resumes there and not at the anchor.
+
+**The order items are read in is fixed, so a bookmark means the same thing
+twice** (draft 8, K3b). Commits are taken in the lane's first-parent order
+forward from the anchor; within one commit the items are **the note files that
+commit added under `from-<line>/`, by path, compared bytewise**, and then **the
+lines that commit appended to `from-<line>/RECEIPTS`, in file order**. An item
+offset is an index into that sequence. Without a fixed order a bookmark is a
+number about one run on one machine, and a resume is a guess; with it, two
+implementations, two platforms and two polls resume at the same item.
+
+**A budget of one item still makes progress, and no poll ever spins** (draft 8,
+K3c). With `--correlate-max 1` a poll reads exactly one item and the bookmark
+moves by one; with a `--correlate-bytes` that fits one header, one header. The
+two behaviours that would be bugs are written down so a test can fail them: a
+poll must never **advance past an item it did not read**, and a poll that read
+nothing must never say **`correlation=complete`**. A poll whose next item
+cannot fit any budget records it as a **gap** and moves the bookmark past it,
+which is progress; a poll that takes no item and records no gap is the spin,
+and the test named below asserts against it.
 
 So the read is bounded **per poll** and complete **over polls**: a lane nine
 hundred notes deep is covered in three polls of the default budget rather than
@@ -2417,14 +2568,47 @@ anchor stays in the record as the range's true floor — a person checking by
 hand starts there — and the seventh field is only how far this tool has got.
 
 An unanswered friend is **never** called `UNAVAILABLE` on a read that could not
-have seen the answer. `UNAVAILABLE` needs `correlation=complete`, which is a
-read that reached the ref's tip, and only a complete read with no answer past
-`--answer-within` is a **timeout**; a probe that makes no correlation read at
-all prints `correlation=-` and `remaining=-`. Where the recorded position is no
+have seen the answer. A probe that makes no correlation read at all prints
+`correlation=-`, `remaining=-` and `gaps=-`. Where the recorded position is no
 longer an ancestor of the ref — a bus whose history was rewritten — the read
-restarts from the anchor; where the **anchor** is not an ancestor either no
-range can be formed at all, and that is `correlation=partial`, `remaining=-`
-and one `WAKE NOTE` naming the anchor, never an `UNAVAILABLE` by inference.
+restarts from the anchor and the retained gaps are dropped with the bookmark
+that named them, because those positions no longer name anything and a gap
+nobody can return to is not a gap but a claim; the restart itself is
+`correlation=partial`. Where the **anchor** is not an ancestor either, no range
+can be formed at all, and that is `correlation=partial`, `remaining=-` and one
+`WAKE NOTE` naming the anchor, never an `UNAVAILABLE` by inference.
+
+**The header this read parses is the bus's header, under the bus's own
+semantics** (draft 8): the keys, their order and case, the blank line that ends
+them, and the resolution of a `From`, `To` or `Cc` value to a line identity are
+SPEC.md's, **nova-bus** — *The header*. This tool writes **no second header
+grammar and no second identity rule**; where that section and this one could be
+read two ways, that section wins, and a header this read cannot parse under
+those semantics is a **coverage gap** by the rule above and never a note ruled
+out. A parser that diverged here would make *addressed to the caller* mean one
+thing in `nova-bus inbox` and another in this probe, and the two would disagree
+about the same note on the same lane — which is a friend's availability decided
+by whose parser ran.
+
+**The bounded read — one primitive, and this file owns it** (draft 8). What is
+specified above is not a paragraph about one verb; it is a primitive, and it
+has a name. **The bounded read** is: *a read-only walk of a bus lane from a
+floor commit forward, taking note headers and appended `RECEIPTS` lines and
+never a body, under the five bounds above, with all-or-none item handling, the
+fixed within-commit order, a resumable bookmark, retained coverage gaps, and
+`complete` only on the tip with zero gaps.* **SPEC-WAKE.md owns that
+definition** and SPEC-BUS-REPLY.md (#267, head `dc679ab9`) **references it**
+rather than restating it. It lives here for two reasons a reader can check:
+this is the document whose tool reads `git` objects itself, while #267's read
+half is by its own **no second read path** law an additive flag on `nova-bus
+inbox` and reads through the bus's existing listing; and a bound is only real
+where the bytes are consumed, which is here. At `dc679ab9` that document names
+the read half but has not pinned it — so the reference is **owed by #267 and
+not yet written in it**, and this paragraph is the definition it cites when it
+is. Where the read half needs a bound this one does not have, the bound is
+added **here** and both follow it. Two definitions of one primitive is how two
+tools come to disagree about whether a lane was fully read, and that
+disagreement lands on a friend's availability.
 
 What this correlation proves is *this line wrote to me after my ping*; where
 the answer is a receipt naming the ping's id, or a note whose `Re` names it,
@@ -2716,8 +2900,9 @@ land**, the intent cleared (a `pushed=false`, a refusal, a non-zero exit);
 **on `ANSWERED`**, the record cleared, once; and **on a retired ping**, where a
 fresh sign ended the silence an unanswered ping measured (draft 5, the
 `UNAVAILABLE`→`PRESENT` cell); and **on a correlation read that stopped short
-of the lane's tip**, the `<read>` field of a record that already stands and
-**nothing else** — not the phase word, not the sign, the stamp, the note id,
+of the lane's tip or left a coverage gap behind it**, the `<read>` field of a
+record that already stands — its bookmark and its retained gap positions, which
+are one field and one write (draft 8, K3a) — and **nothing else** — not the phase word, not the sign, the stamp, the note id,
 the anchor or the scope, and never a record created or cleared (draft 7, K3).
 That sixth write is what makes the bounded read incremental instead of a read
 that starts again from the anchor every poll and so never finishes a deep lane;
@@ -2741,9 +2926,10 @@ probe that has pinged blocks for the rest of `--answer-within`, fetching each
 correlation read again after each, and it returns **`ANSWERED` the poll a note
 or receipt from the line addressed to the caller appears on that read** or
 `UNAVAILABLE` at the window's end — one turn, one answer. `UNAVAILABLE` there
-is still owed a **complete** correlation (draft 7, K3): a window that ends on a
-read still short of the lane's tip returns `PINGED` with `correlation=partial`
-and `remaining=<n>`, and because each `--interval` resumes the read where the
+is still owed a **complete** correlation — the tip **and** `gaps=0` (draft 8,
+K3a) — (draft 7, K3): a window that ends on a read still short of the lane's
+tip, or with a gap standing however far it read, returns `PINGED` with
+`correlation=partial`, `remaining=<n|->` and `gaps=<n>`, and because each `--interval` resumes the read where the
 last one stopped, a deep lane is covered across the polls that call already
 makes rather than in one unbounded read at the end. Draft 3's *returns
 `ANSWERED` the poll a new sign appears* stood here until draft 5 (from the
@@ -3375,24 +3561,57 @@ left without what it pins.
     replacing draft 6's inbox-cap assertions) — **the 900-note lane**: the
     pinged line's lane carries 900 notes past the ping's anchor and the answer
     — a note from that line addressed to the caller — is the **850th**. Under
-    the default budget the first poll is `correlation=partial remaining=600`,
-    `PINGED`, exit 1; the second is `correlation=partial remaining=300`,
-    `PINGED`, exit 1, **at 8m, past `--answer-within`, and never
-    `UNAVAILABLE`**; the third reaches the answer and is `ANSWERED`, exit 0,
-    with `pinged-id=` on the line. Asserted with it: **no `nova-bus` is started
-    by the read** on any of the three, the bytes each poll takes out of the
-    object store are **under `--correlate-bytes`** and the items under
+    the default budget the first poll is `correlation=partial remaining=600
+    gaps=0`, `PINGED`, exit 1; the second is `correlation=partial
+    remaining=300 gaps=0`, `PINGED`, exit 1, **at 8m, past `--answer-within`,
+    and never `UNAVAILABLE`**; the third reaches the answer and is `ANSWERED`,
+    exit 0, with `pinged-id=` on the line. **`remaining=` is asserted in
+    items** (draft 8, K3b): the same 900 notes delivered in **one** lane commit
+    give the same `remaining=600` then `remaining=300`, and a mutation that
+    counts commits prints `remaining=1` on the first poll and turns the test
+    red — **the 900-notes-in-one-commit test**. Asserted with it: **no `nova-bus` is started
+    by the read** on any of the three, the bytes each poll **consumes from the
+    `git` adapter and decodes** are **under `--correlate-bytes`** (draft 8,
+    K3b: measured at this process's boundary, which is the bound the spec
+    makes, and not inside `git`, which it does not) and the items under
     `--correlate-max`, **no note body is opened** (each poll's reads stop at
-    the header), the caller's `CURSOR` and `OPEN` are **byte-identical** after
-    all three, and the only state byte that changes between polls one and two
-    is the record's seventh field. A mutation that restarts each poll from the
+    the header), the wall clock on each `git` process is **under 10s**, the
+    read's peak resident bytes are **flat across the three polls** (draft 8,
+    K3b: a constant, not a function of lane depth), the caller's `CURSOR` and
+    `OPEN` are **byte-identical** after all three, and the only state byte that
+    changes between polls one and two is the record's seventh field. **No poll
+    stops inside an item** (draft 8, K3c): every bookmark names an item
+    boundary, and a mutation that spends the last of the byte budget on half a
+    header turns the test red on the next poll's resume. A mutation that restarts each poll from the
     anchor turns it red by never reaching the 850th note; one that reads the
     lane unbounded and truncates after turns it red on the byte assertion; one
     that declares `UNAVAILABLE` on a partial correlation turns it red on poll
     two; one that advances the cursor or writes `OPEN` turns it red on the
     byte-identical assertion. The same lane drained to 200 notes is
-    `correlation=complete remaining=-` on one poll and does reach
-    `UNAVAILABLE` at 8m; and a **receipt** naming the ping id, appended to that
+    `correlation=complete remaining=- gaps=0` on one poll and does reach
+    `UNAVAILABLE` at 8m; **the oversize header that is the answer** (draft 8,
+    K3a): the 850th note's header has no blank line within 4 KiB, so it is a
+    coverage gap — every poll from the second on prints `PINGED
+    correlation=partial gaps=1`, at 8m, at 20m and at an hour, and **never
+    `UNAVAILABLE`**, while the gap is named exactly **once**; raising
+    `--correlate-bytes` past that note's size reads it and the next poll is
+    `ANSWERED`, exit 0. A mutation that ages the gap out, one that reads the
+    tip as complete with the gap standing, and one that declares `UNAVAILABLE`
+    on `gaps=1` each turn it red, and one that names the gap every poll turns
+    it red on the **once**. **An unreadable object** (draft 8, K3a): the same
+    lane with the 850th note's blob deleted from the object store is
+    `PINGED correlation=partial gaps=1` for ever with the reason named once,
+    never `UNAVAILABLE`, and restoring the object reaches `ANSWERED`. **A
+    budget of one item never spins** (draft 8, K3c): `--correlate-max 1` over
+    the 900-note lane advances the bookmark by exactly one item per poll,
+    reaches the answer on the 850th poll, and **no poll both takes no item and
+    records no gap**; `--correlate-bytes` set so that one header fits and two
+    do not behaves the same way; a mutation that advances the bookmark past an
+    item it did not read turns it red by missing the answer, and one that
+    returns `correlation=complete` from a poll that read nothing turns it red
+    at once. **The retained gap list is capped**: a lane with 100 unreadable
+    items records **64** and stops the bookmark before the sixty-fifth, and the
+    state file's `probe:` line stays under its bound; and a **receipt** naming the ping id, appended to that
     lane's `RECEIPTS` inside the range, is `ANSWERED` on its own with no note
     at all; **a record is bound to its transport
     and `--as` is required wherever one stands** (draft 6, K6): the same state
@@ -3515,6 +3734,23 @@ left without what it pins.
   **SPEC-BUS-DELIVERY**, whose own status line still reads *not implemented* and
   is stale against that code. This tool depends on the contract, so a change to
   it is a change here.
+- **The correlation read bounds what it consumes, not what `git` does** (draft
+  8, K3b). `--correlate-bytes` is consumed-and-decoded bytes at this process's
+  boundary; `git` may inflate objects, read pack indexes, walk a delta chain or
+  map more than it returns, and none of that is visible here or bounded by this
+  spec. What holds a pathological lane instead is the item bound and the wall
+  clock on each `git` process, which are the other two of the five bounds. A
+  tool that promised physical I/O it cannot see would be promising a number it
+  never measured, which is the same defect as a guessed `remaining=`.
+- **A coverage gap can stand for ever, and that is the safe end of it** (draft
+  8, K3a). An item this read cannot take — a header with no end inside 4 KiB,
+  an item larger than a whole budget, an object `git` cannot give it — leaves
+  the state at `PINGED correlation=partial gaps=<n>` with no clock that ends
+  it, because the skipped item may be the answer and *skipped* is not
+  *absent*. The record says so on every line and the remedy is a caller's
+  `--correlate-bytes` raise; what this tool will not do is convert an unread
+  item into a verdict about a friend. Where the bus itself cannot read that
+  note either, the fix belongs on the bus (`INBOX UNREADABLE`) and not here.
 - **What this tool assumes about other systems, rather than verifies** (draft 5,
   from the Fable read, finding L9). Verified at this head, against this repo:
   the lock protocols and their build tags (`internal/bus/lock_unix.go`,
@@ -3773,7 +4009,9 @@ shared packages used rather than re-spelled.
     receipt from the pinged line addressed to the caller and never any newer
     commit, `correlation=partial remaining=<n>` where the budget stopped
     short** (draft 4; bounded draft 6; the lane walk, the budget and the resume
-    are **draft 7**, K3), the `probe:<name>`
+    are **draft 7**, K3), **all-or-none items, the fixed within-commit order,
+    retained coverage gaps with `gaps=<n>`, `remaining=` in items or `-`, and
+    `complete` only on the tip with zero gaps** (**draft 8**, K3a-c), the `probe:<name>`
     record written after **`SEND OK pushed=true`** on a living call or after a
     reconcile that finds the prepared id on the fetched remote ref, and never
     otherwise (draft 3, qualified draft 7)
