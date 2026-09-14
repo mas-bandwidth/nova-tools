@@ -91,6 +91,15 @@ Caches hold at most index-cache pages across roots/manifests and never establish
 
 Required witnesses: a backdated stamp stays in its recorded day yet merges in revision/id order; absent day differs from named missing manifest; a busy day uses canonical bounded leaves across different clip batching; request envelopes with generated events yield one published dedup record while retained retries return original OK; huge evidence chunks; indivisible oversize field pre-ack refusal; crash yields old roots plus overlay or one new complete graph; filtered historical query reaches page-budget continuation without confusing it with output max.
 
+## Recovery boundary companion
+
+[The savepoint/journal proposal](WORK-RECOVERY-BOUNDARY.md) specifies a complete
+envelope replay cut, logical journal identity across physical rotation, and
+retained original replies until exact committed dedup coverage is accessible.
+It addresses the local-retry integration gap above without changing event keys
+or treating a savepoint as a clip. Physical record/header/reference forms and
+snapshot-isolation mechanics still require joint integration and review.
+
 ## Review decisions before a codec lock
 
 - Freeze exact record field order, empty roots, path derivation, minimum wrapper sizes, metadata counts, detail/segment reference forms, and the shared pre-ACK representability check. The forms above are illustrative, not a complete executable schema. No arbitrary integer cap is adopted; representability remains bounded by configured serialized resource limits.
