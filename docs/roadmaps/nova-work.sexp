@@ -10,7 +10,7 @@
     :response-correlation "SPEC-WORK.md@7db3b95cd4c16b1eb34b1c77c0fc224755cc7a64"
     :resident-window-bound-proposed "SPEC-WORK.md@a0cfcf580d3140ce6c30d51b3a7f884c9b2afcd6"
     :efficiency-policy "SPEC-WORK.md@685b7c2"
-    :recursive-grouping-proposed "SPEC-WORK.md@58f39fa"
+    :recursive-grouping-proposed "SPEC-WORK.md@9488a19"
     :production-inventory "ec01647")
   :baseline-features 52
   :baseline-items 171
@@ -106,10 +106,10 @@
     "https://github.com/mas-bandwidth/nova-tools/issues/185"
     "Merged foundations remain PR 300 at d21d65f0, PR 314 at 4b99c1b4, PR 311 at 14ef63b1 and PR 312 at 20f8581; feature rows remain partial, with no whole criterion or measured efficiency result green"
     "PR 310 merged as 95ceae8b into draft PR 264 at 19:11 UTC; parent and schema gates remain"
-    "PR 316 remains open at f8fc40e with its scoped retained-receipt discovery repair cold-clear"
+    "PR 316 merged as 269e56d2 into held parent PR 240 at 18:33:30 UTC; the parent remains held on other findings"
     "PR 317 merged as cf5dd8f5 into spec/nova-work at 19:29 UTC after Rowan, Emma and Freddy reviewed current 685b7c2; its acceptance replays are mapped here without implementation credit"
-    "PR 320 is at 83269f66 with root and Emma clear while Rowan and Freddy remain pending; PR 322 is at 76cc160e with root 29/29 and CI green while independent friends remain pending; neither implementation is merged or makes a feature green"
-    "PR 319 remains a proposed v1 recursive-grouping refinement under repair after Rowan ITERATE; Emma approved an older head; three non-duplicate acceptance gaps map existing features without implementation credit"
+    "PR 320 is at 83269f66 with root and Emma clear while Rowan and Freddy remain pending; PR 322 is based on main at 76cc160e with root 29/29, CI green and Emma APPROVE/CLEAR 5669726199 while other independent friends remain pending; neither implementation is merged or makes a feature green"
+    "PR 319 remains a proposed v1 recursive-grouping refinement at repaired 9488a19, awaiting exact-head delta reviews; three non-duplicate acceptance gaps map existing features without implementation credit"
     "PRs 293, 294 and 295 have current Rowan/Fable approvals at 47c3f9a, 4fddfcb and c2be4d6b; other friend, parent and schema gates remain"
     "Issue 321 tracks v2 multiple-human/coordinator direction outside the v1 denominator"
     "Issue 185: native Codex usage decoding exists without an operational ingestion path, so no parent-plus-child token saving is claimed"
@@ -118,6 +118,7 @@
     "https://github.com/mas-bandwidth/nova-tools/pull/312"
     "https://github.com/mas-bandwidth/nova-tools/pull/310"
     "https://github.com/mas-bandwidth/nova-tools/pull/316"
+    "https://github.com/mas-bandwidth/nova-tools/pull/240"
     "https://github.com/mas-bandwidth/nova-tools/pull/317"
     "https://github.com/mas-bandwidth/nova-tools/pull/319"
     "https://github.com/mas-bandwidth/nova-tools/pull/320"
@@ -163,7 +164,7 @@
           :depends-on (            "E01-F02")
           :source-sections (            "The data"
             "Engine and representation"
-            "Recursive structure within a repository (proposed SPEC-WORK.md@58f39fa)")
+            "Recursive structure within a repository (proposed SPEC-WORK.md@9488a19)")
           :state "partial"
           :evidence ("PR300@d21d65f0: event identity and parent-cycle refusal; full canonical node lifecycle remains incomplete; 26/26 subset tests, no full feature verification"))
         (          :id "E01-F04"
@@ -174,7 +175,7 @@
             "Represent project and stream groupings as work-set categories without inferring kind from title or position")
           :depends-on (            "E01-F03")
           :source-sections (            "The data"
-            "Recursive structure within a repository (proposed SPEC-WORK.md@58f39fa)")
+            "Recursive structure within a repository (proposed SPEC-WORK.md@9488a19)")
           :state "missing"
           :evidence ())
         (          :id "E01-F05"
@@ -313,7 +314,7 @@
           :source-sections (            "The data"
             "The validator"
             "Required coordinator operations"
-            "Recursive structure within a repository (proposed SPEC-WORK.md@58f39fa)")
+            "Recursive structure within a repository (proposed SPEC-WORK.md@9488a19)")
           :state "missing"
           :evidence ())
         (          :id "E03-F05"
@@ -539,7 +540,7 @@
             "E03-F03")
           :source-sections (            "The data"
             "A cell is a reference, not another state store"
-            "Recursive structure within a repository (proposed SPEC-WORK.md@58f39fa)")
+            "Recursive structure within a repository (proposed SPEC-WORK.md@9488a19)")
           :state "missing"
           :evidence ())
         (          :id "E07-F02"

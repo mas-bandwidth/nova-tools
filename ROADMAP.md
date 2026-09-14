@@ -14,10 +14,10 @@ The current work register is below. The first internal C/O kernel has merged; a 
 ✅ = implemented and verified against the agreed criteria at a recorded source revision. ❌ = any other state.
 Completion is verified features divided by applicable features; it is not averaged subtask percentages or an estimate of time remaining.
 
-The hierarchy is **epic → feature → sub-feature/acceptance item**, with no language axis.
+This roadmap uses **epic → feature → sub-feature/acceptance item**, with no language axis.
 [Recursive work data](docs/roadmaps/nova-work.sexp) retains stable IDs, dependencies and source references.
 This baseline format is planning data, not a claim that nova-work import/export already exists.
-Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation), proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound), `SPEC-WORK.md@685b7c2` (efficiency policy, merged to `spec/nova-work` by PR #317 as `cf5dd8f5`), and proposed PR #319 `SPEC-WORK.md@58f39fa` (recursive project/stream grouping, under repair). A source-section label below is resolved through its named file/revision key.
+Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation), proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound), `SPEC-WORK.md@685b7c2` (efficiency policy, merged to `spec/nova-work` by PR #317 as `cf5dd8f5`), and proposed PR #319 `SPEC-WORK.md@9488a19` (recursive project/stream grouping). A source-section label below is resolved through its named file/revision key.
 
 | Epic | Features | Verified |
 |---|:---:|:---:|
@@ -55,14 +55,14 @@ The team is testing efficiency improvements in existing tools while building nov
 
 The first internal Common Lisp C/O kernel and maintained open counter merged through [#300](https://github.com/mas-bandwidth/nova-tools/pull/300), while its feature rows remain incomplete. Operational token and worker-cost experiments run alongside real work under [#185](https://github.com/mas-bandwidth/nova-tools/issues/185); implementation cost is excluded, while retries, review and rescue remain part of accepted-work cost.
 
-Current evidence at 2026-09-14 19:31 UTC:
+Current evidence at 2026-09-14 19:39 UTC:
 
 - Merged foundations remain [#300](https://github.com/mas-bandwidth/nova-tools/pull/300) at `d21d65f0`, [#314](https://github.com/mas-bandwidth/nova-tools/pull/314) at `4b99c1b4`, [#311](https://github.com/mas-bandwidth/nova-tools/pull/311) at `14ef63b1`, and [#312](https://github.com/mas-bandwidth/nova-tools/pull/312) at `20f8581`; feature rows remain partial, and no whole criterion or measured efficiency result is green.
 - [#310](https://github.com/mas-bandwidth/nova-tools/pull/310) merged as `95ceae8b` into draft [#264](https://github.com/mas-bandwidth/nova-tools/pull/264) at 19:11 UTC; parent and schema gates remain.
-- [#316](https://github.com/mas-bandwidth/nova-tools/pull/316) remains open at `f8fc40e`; its scoped retained-receipt discovery repair is cold-clear.
+- [#316](https://github.com/mas-bandwidth/nova-tools/pull/316) merged as `269e56d2` into held parent [#240](https://github.com/mas-bandwidth/nova-tools/pull/240) at 18:33:30 UTC; the parent remains held on other findings.
 - [#317](https://github.com/mas-bandwidth/nova-tools/pull/317) merged as `cf5dd8f5` into `spec/nova-work` at 19:29 UTC after Rowan, Emma and Freddy reviewed current `685b7c2`; its acceptance replays are mapped here without implementation credit.
-- [#320](https://github.com/mas-bandwidth/nova-tools/pull/320) is at `83269f66` with root and Emma clear; Rowan and Freddy remain pending. [#322](https://github.com/mas-bandwidth/nova-tools/pull/322) is at `76cc160e` with root's 29/29 run and CI green; independent friends remain pending. Neither implementation is merged or makes a feature green.
-- [#319](https://github.com/mas-bandwidth/nova-tools/pull/319) remains a proposed v1 recursive-grouping refinement under repair after Rowan ITERATE; Emma approved an older head. Three non-duplicate acceptance gaps are mapped to existing features without implementation credit.
+- [#320](https://github.com/mas-bandwidth/nova-tools/pull/320) is at `83269f66` with root and Emma clear; Rowan and Freddy remain pending. [#322](https://github.com/mas-bandwidth/nova-tools/pull/322) is based on main at `76cc160e`, with root's 29/29 run, CI green and Emma APPROVE/CLEAR `5669726199`; other independent friends remain pending. Neither implementation is merged or makes a feature green.
+- [#319](https://github.com/mas-bandwidth/nova-tools/pull/319) remains a proposed v1 recursive-grouping refinement at repaired `9488a19`, awaiting exact-head delta reviews. Three non-duplicate acceptance gaps are mapped to existing features without implementation credit.
 - [#293](https://github.com/mas-bandwidth/nova-tools/pull/293), [#294](https://github.com/mas-bandwidth/nova-tools/pull/294) and [#295](https://github.com/mas-bandwidth/nova-tools/pull/295) have current Rowan/Fable approvals at `47c3f9a`, `4fddfcb` and `c2be4d6b`; other friend, parent and schema gates remain.
 - [#321](https://github.com/mas-bandwidth/nova-tools/issues/321) tracks v2 multiple-human/coordinator direction outside the v1 denominator.
 - [#185](https://github.com/mas-bandwidth/nova-tools/issues/185) records that native Codex usage decoding exists without an operational ingestion path. No parent-plus-child token saving is claimed.
@@ -115,7 +115,7 @@ Prerequisites: E01-F02.
 - [ ] Preserve IDs through rename, close, reopen and reparent
 - [ ] Allow omitted, repeated and recursively nested work-set grouping layers without a prescribed depth
 
-Source sections: The data; Engine and representation; Recursive structure within a repository (proposed SPEC-WORK.md@58f39fa).
+Source sections: The data; Engine and representation; Recursive structure within a repository (proposed SPEC-WORK.md@9488a19).
 
 **E01-F04 — Typed work kinds and acceptance schema**
 
@@ -126,7 +126,7 @@ Prerequisites: E01-F03.
 - [ ] Validate acceptance kind, subject, predicate and required flag
 - [ ] Represent project and stream groupings as work-set categories without inferring kind from title or position
 
-Source sections: The data; Recursive structure within a repository (proposed SPEC-WORK.md@58f39fa).
+Source sections: The data; Recursive structure within a repository (proposed SPEC-WORK.md@9488a19).
 
 **E01-F05 — Canonical encoding and semantic round trip**
 
@@ -285,7 +285,7 @@ Prerequisites: E03-F03, E05-F01.
 - [ ] Keep reopen, pause and stop as durable events
 - [ ] Settle and reopen required-member ancestors at every grouping depth while empty required sets remain incomplete
 
-Source sections: The data; The validator; Required coordinator operations; Recursive structure within a repository (proposed SPEC-WORK.md@58f39fa).
+Source sections: The data; The validator; Required coordinator operations; Recursive structure within a repository (proposed SPEC-WORK.md@9488a19).
 
 **E03-F05 — Reversible undo and redo plans**
 
@@ -551,7 +551,7 @@ Prerequisites: E01-F04, E03-F03.
 - [ ] Preserve selected scope and completion unit across recursive grouping layouts without mandatory axis or cell wrappers
 - [ ] Retain completed roadmap members and historical code/test evidence beyond the active 24-hour window
 
-Source sections: The data; A cell is a reference, not another state store; Recursive structure within a repository (proposed SPEC-WORK.md@58f39fa).
+Source sections: The data; A cell is a reference, not another state store; Recursive structure within a repository (proposed SPEC-WORK.md@9488a19).
 
 **E07-F02 — Completion-only projection renderer**
 
