@@ -85,12 +85,18 @@ name can reach the reader only through the `|` escape it already refuses
       (find ch '(#\( #\) #\; #\" #\# #\| #\' #\` #\, #\\))))
 
 (defun decimal-integer-token-p (text start end)
-  (let ((digit-start (if (and (< start end)
-                              (find (char text start) "+-"))
-                         (1+ start)
-                         start)))
-    (and (< digit-start end)
-         (loop for i from digit-start below end
+  (let* ((digit-start (if (and (< start end)
+                               (find (char text start) "+-"))
+                          (1+ start)
+                          start))
+         ;; Common Lisp reads a terminal decimal point as an integer marker:
+         ;; 1., +1. and -1. are integers, while 1.0 remains a float.
+         (digit-end (if (and (< digit-start end)
+                             (char= (char text (1- end)) #\.))
+                        (1- end)
+                        end)))
+    (and (< digit-start digit-end)
+         (loop for i from digit-start below digit-end
                always (find (char text i) "0123456789")))))
 
 (defun keyword-token-p (text start end)
@@ -103,7 +109,7 @@ name can reach the reader only through the `|` escape it already refuses
   "Lex the restricted grammar before the Common Lisp reader can intern a
 forbidden token. Report the token's UTF-8 start byte. Comment text is opaque;
 each of its UTF-8 characters is counted exactly once."
-  (let ((in-string nil) (escaped nil) (byte-offset 0)
+  (let ((in-string nil) (escaped nil) (string-start-byte nil) (byte-offset 0)
         (len (length text)) (i 0))
     (loop while (< i len)
           do (let ((ch (char text i)))
@@ -117,7 +123,11 @@ each of its UTF-8 characters is counted exactly once."
                   (incf byte-offset (char-utf8-bytes ch))
                   (incf i))
                  ((char= ch #\")
-                  (setf in-string (not in-string))
+                  (if in-string
+                      (setf in-string nil
+                            string-start-byte nil)
+                      (setf in-string t
+                            string-start-byte byte-offset))
                   (incf byte-offset (char-utf8-bytes ch))
                   (incf i))
                  (in-string
@@ -164,7 +174,8 @@ each of its UTF-8 characters is counted exactly once."
                       (error 'restricted-data-violation
                              :value (format nil "forbidden token at byte ~D" start-byte))))))))
     (when in-string
-      (error 'restricted-data-violation :value "unterminated string"))))
+      (error 'restricted-data-violation
+             :value (format nil "unterminated string at byte ~D" string-start-byte)))))
 
 (defun check-restricted (form)
   (typecase form
@@ -184,7 +195,8 @@ each of its UTF-8 characters is counted exactly once."
   (refuse-evaluation-syntax text)
   (let ((*read-eval* nil)
         (*package* (find-package '#:nova-work.read))
-        (*read-base* 10))
+        (*read-base* 10)
+        (end-of-input (gensym "END-OF-INPUT-")))
     (with-input-from-string (in text)
       (flet ((offset () (utf8-bytes-up-to text (or (ignore-errors (file-position in)) 0))))
         (let ((form (handler-case (read in)
@@ -196,13 +208,13 @@ each of its UTF-8 characters is counted exactly once."
                       (error ()
                         (error 'restricted-data-violation
                                :value (format nil "refused by the reader at byte ~D" (offset)))))))
-          (let ((next (handler-case (read in nil :end-of-input)
+          (let ((next (handler-case (read in nil end-of-input)
                          (error ()
                            ;; A stray closer is trailing bytes, not an end.
                            (error 'restricted-data-violation
                                   :value (format nil "trailing bytes after one form, at byte ~D"
                                                  (offset)))))))
-            (unless (eq next :end-of-input)
+            (unless (eq next end-of-input)
               (error 'restricted-data-violation
                      :value (format nil "trailing bytes after one form, at byte ~D" (offset)))))
           (incf *parses*)
