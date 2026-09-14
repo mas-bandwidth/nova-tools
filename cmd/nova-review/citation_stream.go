@@ -415,7 +415,9 @@ func (r *citationRest) Feed(ch rune) {
 		r.possessive = false
 	}
 	if !allowedCitationRune(ch) {
-		r.finishCurrent(false, false)
+		// Punctuation ends the candidate, so `rule 1's.` has the same
+		// possessive terminal as `rule 1's` at EOF.
+		r.finishCurrent(false, true)
 		r.ended = true
 		r.feedFollowing(ch)
 		return
@@ -474,6 +476,19 @@ func (r *citationRest) afterNumberRune(ch rune) {
 	}
 	r.continuation = append(r.continuation, ch)
 	word := string(r.continuation)
+	if len(r.continuation) == 1 && unicode.IsDigit(ch) {
+		// Whitespace cannot join two numbers in any listed form.
+		r.invalid = true
+		r.finalize()
+		return
+	}
+	if len(r.continuation) == 4 && strings.HasPrefix(word, "and") && (unicode.IsDigit(ch) || ch == ',') {
+		// `and` is a word token separated on both sides; `and2` and `and,`
+		// are malformed continuations, not prose after a singular citation.
+		r.invalid = true
+		r.finalize()
+		return
+	}
 	if word == "through" {
 		r.invalid = true
 		r.finalize()

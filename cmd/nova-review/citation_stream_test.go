@@ -144,3 +144,47 @@ func TestStreamingCitationsKeepProseAndPrefixBoundaries(t *testing.T) {
 		})
 	}
 }
+
+func TestStreamingCitationsUseClosedBoundaries(t *testing.T) {
+	spec := citationSpec(t, "docs/SPEC.md", "1. one\n2. two\n3. three\n")
+	for _, tc := range []struct {
+		name string
+		line string
+		want []string
+	}{
+		{"singular eof", "rule 1", []string{"docs/SPEC.md:2"}},
+		{"singular punctuation", "rule 1.", []string{"docs/SPEC.md:2"}},
+		{"singular prose", "rule 1 applies", []string{"docs/SPEC.md:2"}},
+		{"possessive eof", "rule 1's", []string{"docs/SPEC.md:2"}},
+		{"possessive punctuation", "rule 1's.", []string{"docs/SPEC.md:2"}},
+		{"possessive prose", "rule 1's wording", []string{"docs/SPEC.md:2"}},
+		{"and eof", "rules 1 and 2", []string{"docs/SPEC.md:2", "docs/SPEC.md:3"}},
+		{"and punctuation", "rules 1 and 2.", []string{"docs/SPEC.md:2", "docs/SPEC.md:3"}},
+		{"and prose", "rules 1 and 2 apply", []string{"docs/SPEC.md:2", "docs/SPEC.md:3"}},
+		{"comma eof", "rules 1, 2", []string{"docs/SPEC.md:2", "docs/SPEC.md:3"}},
+		{"comma punctuation", "rules 1, 2.", []string{"docs/SPEC.md:2", "docs/SPEC.md:3"}},
+		{"comma prose", "rules 1, 2 apply", []string{"docs/SPEC.md:2", "docs/SPEC.md:3"}},
+		{"comma three eof", "rules 1, 2, 3", []string{"docs/SPEC.md:2", "docs/SPEC.md:3", "docs/SPEC.md:4"}},
+		{"comma three punctuation", "rules 1, 2, 3.", []string{"docs/SPEC.md:2", "docs/SPEC.md:3", "docs/SPEC.md:4"}},
+		{"comma three prose", "rules 1, 2, 3 apply", []string{"docs/SPEC.md:2", "docs/SPEC.md:3", "docs/SPEC.md:4"}},
+		{"comma and eof", "rules 1, 2 and 3", []string{"docs/SPEC.md:2", "docs/SPEC.md:3", "docs/SPEC.md:4"}},
+		{"comma and punctuation", "rules 1, 2 and 3.", []string{"docs/SPEC.md:2", "docs/SPEC.md:3", "docs/SPEC.md:4"}},
+		{"comma and prose", "rules 1, 2 and 3 apply", []string{"docs/SPEC.md:2", "docs/SPEC.md:3", "docs/SPEC.md:4"}},
+		{"singular unseparated number", "rule 1 2", nil},
+		{"singular glued conjunction", "rule 1 and2", nil},
+		{"plural singleton", "rules 1", nil},
+		{"plural unseparated number", "rules 1 2", nil},
+		{"plural dangling conjunction", "rules 1 and", nil},
+		{"plural dangling comma", "rules 1,", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			chunks := make([]int, len(tc.line))
+			for i := range chunks {
+				chunks[i] = 1
+			}
+			if got := ruleIDs(streamCitationTargets([]scopedSpec{spec}, tc.line, chunks...)); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("one-byte stream got %v, want golden %v", got, tc.want)
+			}
+		})
+	}
+}
