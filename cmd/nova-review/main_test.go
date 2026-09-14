@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -124,5 +125,92 @@ func TestPacketReuseCopiesOnlyAnExactTuple(t *testing.T) {
 	}
 	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "stella", "--out", "third.md", "--head", strings.Repeat("b", 40), "--reuse", "first.md"}, &out, &errb); code != 1 {
 		t.Fatalf("mismatched head did not refuse stale: %d", code)
+	}
+}
+
+func TestPacketFirstLineIsTypedTuple(t *testing.T) {
+	lane, head := packetLab(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", "tuple.md"}, &out, &errb); code != 0 {
+		t.Fatalf("packet exit=%d stderr=%s", code, errb.String())
+	}
+	body, err := os.ReadFile("tuple.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdr, err := readPacketFirstLine("tuple.md")
+	if err != nil {
+		t.Fatalf("readPacketFirstLine: %v", err)
+	}
+	if hdr.Entry != "feature" {
+		t.Errorf("entry=%q, want feature", hdr.Entry)
+	}
+	if hdr.Head != head {
+		t.Errorf("head=%q, want %q", hdr.Head, head)
+	}
+	if hdr.Who != "emma" {
+		t.Errorf("who=%q, want emma", hdr.Who)
+	}
+	if hdr.Cut != 0 {
+		t.Errorf("cut=%d, want 0", hdr.Cut)
+	}
+	if hdr.Bytes != len(body) {
+		t.Errorf("bytes=%d in header, want exact len(body)=%d", hdr.Bytes, len(body))
+	}
+	expectedID := packetID("feature", head, hdr.Base, hdr.Range)
+	if hdr.ID != expectedID {
+		t.Errorf("id=%q, want %q", hdr.ID, expectedID)
+	}
+}
+
+func TestPacketReuseRejectsArbitraryLineScanning(t *testing.T) {
+	lane, head := packetLab(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+
+	st, _ := merge.Load(lane)
+	rng := merge.Short(st.Base) + ".." + merge.Short(head)
+	pID := packetID("feature", head, st.Base, rng)
+
+	// A file with arbitrary lines containing key=value fields in the body,
+	// but lacking the typed first-line tuple header.
+	bogus := fmt.Sprintf("# Note from another tool\n\nsome text\nid=%s\nentry=feature\nhead=%s\nbase=%s\n", pID, head, st.Base)
+	if err := os.WriteFile("bogus.md", []byte(bogus), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out, errb bytes.Buffer
+	code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "stella", "--out", "reused.md", "--reuse", "bogus.md"}, &out, &errb)
+	if code != 2 {
+		t.Fatalf("expected exit 2, got %d", code)
+	}
+	if !strings.Contains(errb.String(), "PACKET REFUSED: --reuse file is not a valid packet") {
+		t.Fatalf("expected refusal for invalid packet, got: %s", errb.String())
+	}
+}
+
+func TestParsePacketFirstLineRejectsMalformed(t *testing.T) {
+	cases := []struct {
+		name string
+		line string
+	}{
+		{"wrong prefix", "something else id=abc entry=f"},
+		{"missing fields", "nova-review packet v1 id=123 entry=f"},
+		{"negative bytes", "nova-review packet v1 id=123 entry=f head=h base=b range=r who=w built=s bytes=-5 cut=0"},
+		{"negative cut", "nova-review packet v1 id=123 entry=f head=h base=b range=r who=w built=s bytes=10 cut=-1"},
+		{"non-numeric bytes", "nova-review packet v1 id=123 entry=f head=h base=b range=r who=w built=s bytes=abc cut=0"},
+		{"malformed token", "nova-review packet v1 id=123 entry=f notoken head=h base=b range=r who=w built=s bytes=10 cut=0"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := parsePacketFirstLine(tc.line)
+			if err == nil {
+				t.Errorf("expected error for %q", tc.line)
+			}
+		})
 	}
 }
