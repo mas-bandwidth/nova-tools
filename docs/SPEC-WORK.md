@@ -1704,9 +1704,9 @@ holds a live lease, and W is exactly that view; `alex-4` closed as `cancelled`, 
 `done` and counted in neither `done=` nor a percentage; `parses=0 replays=0`, because the
 closed rows came from the closed index and the open one from the resident tree, and `pages=4`
 because the index was read in pages and never loaded — **the same ask run against a set carrying a
-year of older closed history prints the same four rows, the same `pages=4` and the same startup
-resident bytes**, which is Stella's W1 written as an assertion (replay
-`history-grows-startup-does-not`); and **the same
+year of older closed history prints the same four rows, the same `pages=4` (if the depth is
+unchanged) and the same startup resident bytes**, which is Stella's W1 written as an assertion
+(replay `history-grows-startup-does-not`); and **the same
 ask with the retention archive file absent printing the same four rows** — the bodies are the
 archive's and the rows are the index's — while an ask that reaches for a body prints `gap=<n>`
 and its `QUERY NOTE coverage-gap` and never a shorter list. Running it again with `--max 2`
@@ -2775,8 +2775,10 @@ access and never O(1)**: a cold lookup may read as many pages as the index is de
 session prints `pages=<n>` on the answer so the number is read rather than assumed. **The
 measurement that keeps all of this honest is one experiment and it is named**: hold O, the
 recent-window volume and the page bounds fixed, grow the old history, and assert that startup
-resident bytes, index pages read, segment bytes read, parses, replays and emitted bytes do not
-move (replay `history-grows-startup-does-not`, and Stella's `SPEC-WORK-CLOSED.md` acceptance 6,
+resident bytes, segment bytes read, parses, replays and emitted bytes DO NOT MOVE; index pages
+read stay BOUNDED BY THE INDEX DEPTH -- the `pages=<n>` bound at :2773-2775 -- and may grow with
+the depth, never with the volume within one depth (replay `history-grows-startup-does-not`, and
+Stella's `SPEC-WORK-CLOSED.md` acceptance 6,
 whose *no whole-C load, no directory scan and no whole-history dedup load on the ordinary path* is
 what the replay asserts). **The sixth is on the write path and not the read path**: a `:cancel`, a
 `:supersede` and a `node remove` must each move *every roadmap that has it as a row* by the delta
@@ -3153,9 +3155,11 @@ are named because they were asked for by name):
 - **`busy-day-many-segments`** — one day holding many bounded segments read in bounded pages,
   `--max` capping the rows, `MORE` naming `--after`, and the day never read whole.
 - **`history-grows-startup-does-not`** — O, the recent-window volume and the page bounds held
-  fixed while the old history grows by orders of magnitude: startup resident bytes, index pages
-  read, segment bytes read, parses, replays and emitted bytes unchanged, and no whole-C load, no
-  directory scan and no whole-history dedup load anywhere on the ordinary path.
+  fixed while the old history grows by orders of magnitude: startup resident bytes, segment bytes
+  read, parses, replays and emitted bytes DO NOT MOVE; index pages read stay BOUNDED BY THE INDEX
+  DEPTH -- the `pages=<n>` bound at :2773-2775 -- and may grow with the depth, never with the volume
+  within one depth, and no whole-C load, no directory scan and no whole-history dedup load anywhere
+  on the ordinary path.
 - **`one-revision-publishes-together`** — a clip staging its segments, verifying the hashes its
   manifests name, then committing the snapshot, both index roots and every file they reference in
   one commit; a kill before the commit leaving the previous root whole and readable; a kill after
