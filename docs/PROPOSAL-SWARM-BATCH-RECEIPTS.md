@@ -2,6 +2,8 @@
 
 **Status: proposal, not implemented or approved for build.** Maintainer review and independent reviewers' dispositions must name the exact revision before implementation. This extends the existing `batch` admission boundary; it introduces no dispatcher, model-call batching, accounting ledger, dependency scheduler or cancellation behavior. The current `batch` invocation without the new option remains compatible.
 
+The companion [proposed batch admission implementation contract](PROPOSAL-SWARM-BATCH-ADMISSION-CONTRACT.md) specifies proposed v1 encoding, reservation transitions, platform and recovery limits, and required witnesses. It remains subject to exact-revision maintainer/all-friend review and the existing build gates; it does not establish implementation or durability approval.
+
 ## Problem and evidence
 
 At public main `86785fd0accf997662c1cd5356f60acaf7a0821c`, [batch admission](https://github.com/mas-bandwidth/nova-tools/blob/86785fd0accf997662c1cd5356f60acaf7a0821c/cmd/nova-swarm/main.go#L365) reads all task files and then writes jobs sequentially. It does not preserve the input filename in the sidecar or return a filename/job mapping. [IDs](https://github.com/mas-bandwidth/nova-tools/blob/86785fd0accf997662c1cd5356f60acaf7a0821c/internal/swarm/pool.go#L136) contain second-resolution time and randomness: sorting them does not reconstruct card order. [Pool.Add](https://github.com/mas-bandwidth/nova-tools/blob/86785fd0accf997662c1cd5356f60acaf7a0821c/internal/swarm/pool.go#L182) writes the task before its sidecar; a later write failure does not roll back earlier jobs.
