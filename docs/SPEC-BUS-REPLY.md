@@ -177,6 +177,7 @@ refusal says which of the reasons it is:
 - you have already answered it — a note of yours carries its id on a `Re:` line;
 - it was never addressed to you, `To:` or `Cc:`;
 - it is behind your switch-day line, so this reader has taken it as read;
+- the target is not on the listing this run can see;
 - you have no cursor yet, so there is no listing for it to be on.
 
 The reason for the restriction is what this form is for: it answers what you are
@@ -184,9 +185,9 @@ carrying. A target you are not carrying is far more often a stale id copied out
 of an older listing than a deliberate second reply — and a second reply that
 nobody is waiting for costs a reader a turn to work out why it arrived. **It is
 a restriction with a door in it**, and the refusal names the door. For the first
-three reasons the door is the existing `draft --re` form, which resolves against
+four reasons the door is the existing `draft --re` form, which resolves against
 the whole bus and is untouched, so a deliberate reply to a closed thread is one
-flag away and always was. For the fourth the door is not `--re` at all: a reader
+flag away and always was. For the fifth the door is not `--re` at all: a reader
 with no cursor needs an `inbox` run, which is what gives them a cursor and a
 listing, and the refusal names that instead.
 
@@ -219,7 +220,7 @@ from somewhere and the somewhere is not always a person.
 | `From` | `--as`, in the roster's own spelling |
 | `To` | `--to` when given; otherwise the resolved sender of the target note |
 | `Cc` | `--cc` when given; otherwise **absent**, never inherited from the target |
-| `Re` | the resolved target's id, or its path for a note written before ids |
+| `Re` | the resolved target's id, or its path for a note written before ids; a target may carry an `Id:` that the open list cannot carry, it is resolved by PATH, and the `Re:` line takes the open entry's target name |
 | `Subject` | `--subject` when given; otherwise the target's subject with one `Re: ` in front, and an existing `Re: ` is not stacked |
 | `Kind` | absent — a reply is a note, and the receipt heuristic is the reader's |
 
@@ -304,11 +305,12 @@ filesystem support:
    The link call is atomic and fails with an already-exists error rather than
    replacing, on every POSIX filesystem and on NTFS, so this is the primary path
    on all three platforms the family builds for.
-2. **the operating system's own no-replace rename**, where the filesystem
-   refuses hard links — some network mounts, some container overlays, FAT:
-   `renameat2` with `RENAME_NOREPLACE` on Linux, `renamex_np` with `RENAME_EXCL`
-   on macOS, and `MoveFileEx` **without** `MOVEFILE_REPLACE_EXISTING` on
-   Windows, which is refusal-by-default and not a flag that has to be added.
+2. **the operating system's own no-replace rename**, where the call is
+   reachable from the language's standard library without cgo; where it is
+   not, the third branch refuses and names the call: `renameat2` with
+   `RENAME_NOREPLACE` on Linux, `renamex_np` with `RENAME_EXCL` on macOS,
+   and `MoveFileEx` **without** `MOVEFILE_REPLACE_EXISTING` on Windows, which
+   is refusal-by-default and not a flag that has to be added.
 3. **where neither is available** — an old kernel, or a filesystem that
    implements neither, seen as the call reporting that it is not supported — the
    tool **refuses to publish**: exit 2, naming the directory, the call it tried
@@ -401,7 +403,7 @@ bus state in that form to say anything — and this table is the reply form only
 | the fetch failed, timed out, or named a remote or branch that is not there | the remote, the branch, and git's transcript under the event line | 1 |
 | the checkout has diverged from the named branch | the recovery command, and that nothing was written | 1 |
 | `--reply-to` names no id, no path and no listed subject on the refreshed bus | that threads are named by id, and that a slug is not a thread | 1 |
-| `--reply-to` resolves on the bus but is not on this reader's live listing | which of the four reasons it is, and the door: `draft --re` for a closed thread, an `inbox` run for a reader with no cursor | 1 |
+| `--reply-to` resolves on the bus but is not on this reader's live listing | which of the five reasons it is, and the door: `draft --re` for a closed thread, an `inbox` run for a reader with no cursor | 1 |
 | the target's sender is `--as` and no `--to` was given | a reply to your own note needs an explicit `--to` | 1 |
 | the body is empty, or over `--max-body-bytes` | the budget and the size, read at budget+1 and no further | 1 |
 | a file already exists at the draft path | the path, and that this tool never overwrites a draft | 1 |
@@ -1224,10 +1226,10 @@ abbreviated commit strings: where `next=` is opaque the receipt is quoted up to
   and says how to be exact.
 - `TestTargetNotOnTheOpenListIsItsOwnRefusal` — the refused target is a note
   that is on the refreshed bus and on **neither** half of the live listing:
-  not carried on `OPEN`, and not new since the cursor. Four fixtures, one per
+  not carried on `OPEN`, and not new since the cursor. Five fixtures, one per
   reason: already answered, never addressed to this reader, behind the
-  switch-day line, and no cursor at all. Each refusal names its own reason and
-  its door — `draft --re` for the first three, an `inbox` run for the fourth.
+  switch-day line, the target not on the listing this run can see, and no cursor at all. Each refusal names its own reason and
+  its door — `draft --re` for the first four, an `inbox` run for the fifth.
 - `TestReplyResolvesAPathForANoteWrittenBeforeIds` — a legacy target is answered
   by path, and the path is what lands on the `Re:` line, while the draft's
   filename is the derived `legacy-<12 hex>` id and holds no `/`; two legacy
