@@ -313,7 +313,11 @@ func refuseDraft(stderr io.Writer, problems []error) int {
 // rules the rest of this tool already uses. A flag that was not given resolves to nothing
 // and is not a problem.
 func replyResolve(c *bus.Config, flagName, value string, given bool, problems *[]error) []string {
-	if !given || strings.TrimSpace(value) == "" {
+	if !given {
+		return nil
+	}
+	if strings.TrimSpace(value) == "" {
+		*problems = append(*problems, fmt.Errorf("nova-bus draft: %s is required; refusing to guess", flagName))
 		return nil
 	}
 	names, unknown := c.ResolveList(value)

@@ -604,7 +604,30 @@ func TestReplyToYourOwnNoteNeedsAnExplicitTo(t *testing.T) {
 	invoke(t, "", replyArgs(checkout, drafts, "bo-cccccccccccc", body, "--to", "Bo")...).mustCode(t, 0)
 }
 
-// "`--body-file` is body text and nothing else: it is never parsed for headers, and a line
+// docs/SPEC-BUS-REPLY.md 427-431: the released form's own sentence --
+// `nova-bus draft: --to is required; refusing to guess` -- is the error message for a
+// `--to` flag that is GIVEN but BLANK (empty or all whitespace).
+//
+// expected= exit 2 with the exact sentence, and NO draft file in the directory afterwards.
+func TestToBlankIsRefused(t *testing.T) {
+	t.Parallel()
+	checkout, _, _ := replyBus(t)
+	body := bodyFile(t, "Yes.\n")
+	for _, tc := range []struct{ name, to string }{
+		{"--to \"\"", ""},
+		{"--to \"   \"", "   "},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			r := invoke(t, "", replyArgs(checkout, dir, "bo-abcdef012345", body, "--to", tc.to)...).
+				mustCode(t, 2)
+			r.mustContain(t, "stderr", "DRAFT REFUSED: nova-bus draft: --to is required; refusing to guess")
+			mustEmptyDir(t, dir)
+		})
+	}
+}
+
+// "`--body-file` is body text and nothing else:: it is never parsed for headers, and a line
 // in it reading `To: somebody` is a line of prose in the note that goes out."
 //
 // expected= `to="Bo"` on the receipt, and the body's own `To: somebody-else` line present
