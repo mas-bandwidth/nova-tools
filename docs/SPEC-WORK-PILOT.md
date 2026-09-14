@@ -83,6 +83,25 @@ attempts keep separate model and usage attribution; retries never overwrite the
 previous attempt. The compact view must answer "friend, task, executing model"
 directly from these indexed records, showing delegated execution explicitly.
 
+Each friend may expose four execution capability groups: child agents, swarms,
+local models and one-shots. Child-agent capabilities enumerate configured allowed
+models; swarm capabilities enumerate pool/provider/harness routes, supported
+models and slot/concurrency limits; local capabilities enumerate bench/model
+routes and usable capacity; one-shot capabilities enumerate supported launchers
+and selectable models. Every entry has a stable capability ID, source and
+last-verified timestamp, availability and applicable budget/permission constraints.
+Declared support, successful runtime verification and current free capacity are
+separate fields. A catalog entry is not evidence of a live child or free credits.
+
+Actual children, swarm jobs, local runs and one-shots are execution instances
+linked to their parent friend, capability, canonical task and attempt. Retain
+requested/observed model, bench, status, deadline, provider/job handle and usage
+receipts. Nested delegated executions retain parent lineage without counting one
+attempt multiple times in friend/pool/task totals. Capability entries are not
+work-containment children and never inflate |O| or roadmap completion. Model
+selection respects allowed capability/configuration and confirmed availability;
+one-shot describes the launch shape and does not imply one model call.
+
 Maintain counters and indexes incrementally with assignments, release, completion
 and observation changes. Friend lookup and current assigned-count lookup are
 constant-time resident operations; enumerating a friend's k tasks costs O(k),
