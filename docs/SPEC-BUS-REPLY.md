@@ -1019,10 +1019,10 @@ INBOX BODY END id=<id|->
 ```
 
 `INBOX BODY` is the fixed opening line and carries the note's id and the exact
-byte count of what follows. The `<n>` bytes after it are the body as the sender
-wrote it: **no escaping, no re-wrapping, no trailing-newline normalisation and
-no substitution of any kind.** `INBOX BODY END` is the fixed closing line and
-carries the same id.
+byte count of what follows. The `<n>` bytes after it are the body as this tool
+parses it, CRLF folded to LF: **no escaping, no re-wrapping, no trailing-newline
+normalisation, and the count and the bytes agree.** `INBOX BODY END` is the
+fixed closing line and carries the same id.
 
 **R4 — the exact bytes, and the separator is outside the count.** A body the
 sender did not end in a newline would otherwise run into the closing line and
@@ -1096,7 +1096,10 @@ range, invalid item position, or inconsistent frontier/gap fields refuse at exit
 Every refusal in this section — a token that does not decode or does not match,
 and a persisted cursor that is not the token's expected one — prints
 `INBOX REFUSED: <reason>` in the shape **SPEC.md:2485** fixes and the limits
-above already use: the reason names what did not match and carries one remedy,
+above already use: the reason names what did not match and carries one remedy.
+Where the reason mentions `<token>`, that placeholder is printed literally as the
+flag's metavariable, not replaced by the caller's input (up to 8 KiB), so the
+bounded-output law is respected.
 which is the same command without `--after`. `TestSnapshotTokenValidationAndBound`
 is the test. A token is client-supplied query state, not authentication: its checksum, if any,
 only detects accidental corruption. Never use it to bypass roster/path checks or
