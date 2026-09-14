@@ -37,7 +37,11 @@ beside the Go client's existing `cmd/` and `internal/`.
   and a **reopen + generated `:revive`** envelope (`src/kernel.lisp`,
   `SPEC-WORK.md:1202-1214`); event identity; append-only history and
   append-only closed rows, each carrying `revived=<rev|->` and `settles=<n>`
-  (`:1216-1222`).
+  (`:1216-1222`). Static `:work-set` and `:feature` containers maintain direct
+  required-member counters: closing the last required member settles the
+  containment path in the same envelope, and reopening one revives that path
+  (`:1272-1283`). Optional children do not block completion, and an empty
+  required set never settles.
 - Root and container **O counters maintained on write** (`src/state.lisp`,
   `SPEC-WORK.md:1568`): `|O|` is read, never computed by a walk. `query --ask
   size` prints the counters that ask itself measured.
@@ -57,8 +61,8 @@ beside the Go client's existing `cmd/` and `internal/`.
 `W` and its deadline semantics (W1–W5, `SPEC-WORK.md:1316-1357`), the public
 session and CLI, the socket and the JSON wire, providers, live work import,
 savepoints, the two-day retention window, batches, clip and checkpoint, undo and
-redo, container settle cascades, and every verb schema proposed in PRs 293/294 —
-none of which is invented here.
+redo, dynamic required-set mutation, roadmap/epic cascade policy, and every verb
+schema proposed in PRs 293/294 — none of which is invented here.
 
 No unbounded request-id map is used as production dedup: `SPEC-WORK.md:2117`
 forbids it. The kernel keeps no resident map; the two-part retry test asks the
@@ -143,8 +147,16 @@ Nothing here claims green on:
   which is outside this slice's transition subset. `settles=2` is exercised on
   `apply-event` — the primitive the live path and the replay path share — and
   the test says so at the assertion.
-- **Container settle cascades** (`containers-settle-with-their-members`). Not
-  implemented; a container close refuses at exit 2 naming the boundary.
+- **The complete container model.** `containers-settle-with-their-members`
+  covers the static containment subset for `:work-set` and `:feature`. Direct
+  container close still refuses, and roadmap/epic membership, dynamic
+  `node require`, cancellation, removal and supersession remain outside this
+  slice. A cascade decision is O(1) at each ancestor, but this kernel still
+  copies the full candidate state and each emitted event updates containment
+  counters along its ancestor path; it makes no O(depth) claim for the whole
+  mutation. `container-cascade-journal-rejection-and-retry-stability` tests
+  whole-cascade refusal at journal acceptance and an accepted request's retry;
+  it does not inject a failure in an ancestor event.
 - **`open-count-is-read-not-computed`'s import-replay leg** (`:1572`). Not
   exercised, because import is out of the boundary. Its close and reopen legs
   are.

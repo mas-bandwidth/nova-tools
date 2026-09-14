@@ -14,7 +14,7 @@
 (in-package #:nova-work)
 
 (defstruct (wnode (:conc-name wnode-))
-  id type parent children state branch open-count links
+  id type parent children required required-count required-open state branch open-count links
   ;; SPEC-WORK.md:1222 -- the newest row of an id carries revived=<rev|-> and
   ;; settles=<n>. Both are kept on the node and moved on write, like every
   ;; other counter here, so a row is written and never computed by a scan.
@@ -42,6 +42,17 @@
 own ancestor walk, and serialization of the whole state."
   (gethash id (wstate-nodes state)))
 
+(defun %seed-required (spec)
+  "Read the internal seed's boolean without accepting truthy lookalikes. An
+absent field defaults to T; an explicitly supplied value is exactly T or NIL."
+  (let* ((missing (gensym "MISSING-REQUIRED-"))
+         (value (getf spec :required missing)))
+    (cond ((eq value missing) t)
+          ((eq value t) t)
+          ((null value) nil)
+          (t (error 'unsupported-input
+                    :what "required must be the internal boolean T or NIL")))))
+
 (defun make-seed-state (nodes)
   (let ((table (make-hash-table :test #'equal))
         (order '()))
@@ -55,6 +66,12 @@ own ancestor walk, and serialization of the whole state."
                           :type (getf spec :type)
                           :parent (getf spec :parent)
                           :children '()
+                          ;; The approved data model defaults :required to true.
+                          ;; NIL is the restricted-data spelling used by this
+                          ;; static seed subset for an explicitly optional node.
+                          :required (%seed-required spec)
+                          :required-count 0
+                          :required-open 0
                           :state (getf spec :state :unknown)
                           :branch :o
                           :open-count 0
@@ -71,7 +88,9 @@ own ancestor walk, and serialization of the whole state."
                  :what (format nil "rule 2: ~A names a parent that does not exist" id)))
         (when parent
           (setf (wnode-children parent)
-                (append (wnode-children parent) (list id))))))
+                (append (wnode-children parent) (list id)))
+          (when (wnode-required node)
+            (incf (wnode-required-count parent))))))
     ;; SPEC-WORK.md:3347 referential-integrity -- "duplicate ids, dangling
     ;; references, cycles, conflicting parents ... all fail BEFORE publication".
     ;; Rule 1 is above and rule 2 is in the edge walk; rule 3 is the forest
@@ -119,6 +138,13 @@ own id would not be the same counting rule one level down. Decision for review."
                  (unless n (return))
                  (incf (wnode-open-count n) delta)
                  (setf cur (wnode-parent n)))))
+    ;; A required set contains direct members, so only the containment parent
+    ;; moves here. This counter makes a cascade decision proportional to depth
+    ;; rather than to the number of siblings.
+    (let ((parent (and (wnode-parent node)
+                       (%node-quiet state (wnode-parent node)))))
+      (when (and parent (wnode-required node))
+        (incf (wnode-required-open parent) delta)))
     (incf (wstate-root-open state) delta)
     (decf (wstate-closed state) delta)
     (when (eq :task (wnode-type node))
@@ -163,7 +189,10 @@ own id would not be the same counting rule one level down. Decision for review."
               (loop for id in (sort (copy-list (wstate-order state)) #'string<)
                     collect (let ((n (%node-quiet state id)))
                               (list (wnode-id n) (wnode-type n) (wnode-state n)
-                                    (wnode-branch n) (wnode-open-count n)))))))
+                                    (wnode-branch n) (wnode-open-count n)
+                                    (if (wnode-required n) :required :optional)
+                                    (wnode-required-count n)
+                                    (wnode-required-open n)))))))
 
 (defun root-digest (state)
   (sha256-hex (canonical-string (root-form state))))
