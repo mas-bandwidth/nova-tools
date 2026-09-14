@@ -56,6 +56,16 @@ ships here yet. The receipt named in the bullet above is `send`'s, `send` is
 released, and this slice does not touch it; giving that line the same property
 is later work under #246 and is not claimed here.
 
+**One correction to the shape of the chore, because the read half below
+depends on it: today's NEW output is unbounded.** `inbox` and `wait` print
+every note that is new to this reader, in full, on every run. The
+`--open-max` cap — default 20, with its `and <k> more` line — bounds the
+**carried** list and only that; it has never bounded the NEW half and was
+never written to. So the half this slice adds bodies to is the half that has
+no cap at all today, which is why **The read half, pinned** below carries its
+own two limits rather than borrowing one, and why a body-carrying form that
+did not would be strictly worse than the second file read it replaces.
+
 **What this slice does not claim.** It does not make the bus faster, does not
 change what a note is, does not deliver anything and does not close anything.
 It removes one repeated chore, and the section on measurement below says how a
@@ -526,7 +536,7 @@ every one of them an actual reply to an actual note, each with a clear `Re:`
 target, and not a synthetic exchange. This table is the baseline the after side
 is compared against.
 
-| reply id | target id | asst turns | tool calls | tool-result bytes | discovery calls (bytes) | wall clock |
+| reply id | target id | asst turns | tool calls | tool-result chars (proxy) | discovery calls (chars) | wall clock |
 |---|---|---|---|---|---|---|
 | rowan-f61f36cf7f3f | stella-c1b4e36711c5 | 2 | 2 | 3,787 | 2 (10,492) | 4m 29s |
 | rowan-b55e2424667d | stella-69a04c2f42f3 | 3 | 3 | 7,134 | 2 (1,502) | 3m 12s |
@@ -535,12 +545,31 @@ is compared against.
 | **total / mean** | | **9 / 2.25** | **9 / 2.25** | **16,356 / 4,089** | **6 (12,814)** | mean 3m 52s |
 
 **The method, in one sentence:** turns and calls are read out of the harness
-transcript rather than estimated, bytes are the character length of the
-`tool_result` text returned to the model, and tokens are those bytes at about
-four bytes to a token — **an estimate, labelled as one, and never a tokenizer
-count**. On that estimate the reply path is about 4,100 tok over the four
-replies (~1,020 each) and discovery about 3,200 tok (~800 each): about 7,300 tok
-in all, **about 1,800 tok per answered note**.
+transcript rather than estimated, and the size columns are the **character
+length** of the `tool_result` text returned to the model.
+
+**What those size columns are, said exactly, because an earlier draft said it
+loosely.** A character length is **not a count of UTF-8 bytes** — one character
+of a subject outside ASCII is two, three or four of them — and a character
+length divided by four is **not native token usage**, which is what a harness's
+own counters report and what a tokenizer would count. So the size half of this
+table is a **text-volume proxy** and is labelled one wherever it is used: it is
+evidence about how much text moved, it is reproducible from the transcript, and
+it is the best thing available before harness counters are. It is **not an
+observed operational-token baseline**, and this document does not call it one.
+On the proxy, and stated in proxy units rather than in tokens, the reply path is
+about 16,400 characters over the four replies (~4,100 each) and discovery about
+12,800 (~3,200 each): about 29,200 characters in all, **about 7,300 characters
+per answered note**. A reader who wants a token figure divides by roughly four
+and carries the word *proxy* with the result.
+
+**The baseline becomes an observed operational-token baseline when two things
+exist, and not before**: harness counters that report input, output and
+cache-read tokens per turn for the harness the measurement was taken on, and a
+statement of what share of each side's total those counters cover. Until then
+the after side is compared against this proxy, in proxy units, on both sides —
+comparing a proxy on one side against counters on the other is the one thing
+that would make the number worse than no number.
 
 Three caveats, in the section and not in a footnote, because each one narrows
 what the numbers may be used to claim:
@@ -564,25 +593,35 @@ The measurement was read-only. Nothing was put on the bus to produce it.
 ### What the baseline moves the target to
 
 The shape of today's transaction, per reply: one backgrounded `nova-bus wait`,
-whose own return is 410 b — the *running in background* line and nothing else;
-one later read of that wait's output file, to learn that a note landed, at 410 b
-in the cheap case and 10,082 b in the expensive one; one read of the target
-note's file, often batched with a sibling note; and then **one** call that runs
-`draft` into a file, appends the body by heredoc and runs `send`, returning
-about 250 b.
+whose own return is 410 characters — the *running in background* line and
+nothing else; one later read of that wait's output file, to learn that a note
+landed, at 410 characters in the cheap case and 10,082 in the expensive one; one
+read of the target note's file, often batched with a sibling note; and then
+**one** call that runs `draft` into a file, appends the body by heredoc and runs
+`send`, returning about 250 characters. Every size in this paragraph is the same
+text-volume proxy as the table's, and carries the word with it.
 
 So the composing step this document specifies is **already one turn and one
 call**, and the cheapest two of the four replies are two turns end to end. The
 target follows from that and is stated here as a constraint on the after side
 rather than as an aspiration:
 
-**The after side must reduce the discovery-and-read bytes and turns — the 6
-calls and 12,814 b of the discovery column, and the note-body reads inside the
-16,356 b reply column — and it may not count as a saving anything it takes off
-the draft step.** There is one turn and one call there and about 250 b of
-output; a form that halved that would have halved nothing a line can feel. A
-report that shows the composing step got cheaper and the read-and-discover side
-did not has measured the wrong half, and says so in place of a number.
+**The after side must reduce the discovery-and-read volume and turns — the 6
+calls and 12,814 characters of the discovery column, and the note-body reads
+inside the 16,356-character reply column.** That is where the cost is, and that
+is the half the slice is held to.
+
+**A saving on the draft step counts if it is measured, and ranks below the
+other half.** An earlier draft excluded it by definition; that was wrong, and
+this is the repair. A draft-step saving that is *proved* — measured turn by turn
+on the after side, by the same rules, on comparable real replies — is a real
+saving and is reported as one. It is simply small: there is one turn and one
+call there and about 250 characters of output, so the ceiling on that half is
+low, and a report leads with the discovery-and-read half and puts the draft-step
+figure after it. What is still refused is a saving **assumed** there, or a total
+that hides an unmoved discovery column behind a moved composing step: a report
+that shows the composing step got cheaper and the read-and-discover side did not
+says that, in place of a number.
 
 **Only operational tokens are compared: the same work before and after
 adoption, at equivalent accepted quality.** What it cost to build this form and
@@ -646,6 +685,189 @@ them as the standard: a measurement taken on one harness is evidence about that
 harness. Adoption is voluntary in either case, and the existing `draft --re`
 loop stays supported for lines that prefer it.
 
+## The read half, pinned
+
+The Order of build below puts the READ half first. This section pins that half
+as a contract before anything is built, so that what goes first is a thing with
+a shape rather than a direction. It is deliberately small: **one additive flag,
+two limits, one frame, one receipt line and one cursor rule.** No new binary, no
+new verb, and nothing here changes a byte of what `inbox` or `wait` print today.
+
+### The flag, and why it is a flag
+
+**`--bodies`**, on `inbox` and on `wait`. With it, each NEW note that fits the
+budget prints its existing `INBOX NOTE` line and then its body, framed. Without
+it, both verbs are exactly what they are today.
+
+It is a flag on the existing listing path and not a verb for three reasons, and
+the third is the one that decides it:
+
+1. **`--since` is spoken for.** `check --since <commit>` is this binary's gate
+   (**SPEC.md:2397**, specified at **SPEC.md:3959**). A `read --since` verb would
+   give one flag two meanings in one binary.
+2. **`wait` is `inbox` on a clock.** They share one listing implementation, so a
+   flag lands on both at once; a verb would be a third caller of that listing
+   and would have to be kept in step with two.
+3. **No second read path.** That is this document's own law, stated under *What
+   this slice deliberately does not do*, for the reason that two spellings of one
+   resolution drift, and a reply resolved by the drifted one is a reply to the
+   wrong note. A verb would be the second spelling. A flag cannot be.
+
+`--bodies` is only ever additive: it adds frames after `INBOX NOTE` lines that
+were going to be printed anyway, and adds one receipt line at the end. It
+removes nothing, reorders nothing and renames nothing.
+
+### The limits
+
+Bodies are the first thing on a bus whose size is the *sender's* choice rather
+than the reader's, so the flag carries its own budget and both halves of it are
+required to have a default:
+
+| flag | default | ceiling | what it bounds |
+|---|---|---|---|
+| `--max-notes <n>` | 20 | 1000 | how many NEW notes get a body in one return |
+| `--max-bytes <n>` | 65536 | 1048576 | the total body bytes printed in one return |
+
+**Zero is not "unlimited" and over-ceiling is not "as much as you can".** Either
+one, on either flag, is `INBOX REFUSED` at **exit 2**, naming the flag, the
+value given and the ceiling — the same law the existing `--max-body-bytes`
+refusal obeys, for the same reason.
+
+Both limits are checked **before** a frame is opened, never inside one: a note
+whose body would cross `--max-bytes` is not printed half. It is left for the
+next call, whole, and counted in the receipt as not printed. `--max-notes` is
+the cheap bound and `--max-bytes` the honest one; a return stops at whichever it
+reaches first.
+
+A note printed without `--bodies` is unaffected by either limit, because no body
+is read: the limits bound this flag's addition and nothing else.
+
+### The frame
+
+For each NEW note within budget, in the order `inbox` already prints:
+
+```
+INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
+INBOX BODY id=<id|-> bytes=<n>
+<the body, n bytes, verbatim>
+INBOX BODY END id=<id|->
+```
+
+`INBOX BODY` is the fixed opening line and carries the note's id and the exact
+byte count of what follows. The `<n>` bytes after it are the body as the sender
+wrote it: **no escaping, no re-wrapping, no trailing-newline normalisation and
+no substitution of any kind.** `INBOX BODY END` is the fixed closing line and
+carries the same id.
+
+**Why a body line can never be mistaken for a status line.** The count is the
+frame, and the closing line is for the person reading, never for the parser:
+
+- **status lines are parsed only outside frames.** A reader is in exactly one of
+  two states. Outside a frame it reads event lines. On `INBOX BODY` it reads
+  `bytes=<n>`, consumes **exactly `n` bytes** and returns to the outside state;
+- **inside a frame nothing is parsed.** A body holding a line that reads
+  `INBOX NOTE id=... : anything` is `n` bytes of body like any other, because
+  the reader is counting and not matching;
+- **the closing line does not end the frame — the count does.** A body holding a
+  line that reads `INBOX BODY END id=whatever` ends nothing. The frame ends at
+  byte `n`, and the reader then asserts that the next line is the real closing
+  line for the same id. If it is not, that is a **defect in the writer**, and
+  the reader says so and stops rather than resynchronising by guesswork;
+- **the id on both lines ties them together**, so a frame cannot be attributed
+  to the wrong note by a reader that lost its place.
+
+This is the delimited framing the Order of build asks for, stated exactly:
+nothing a body holds can be read as an event line, and that property comes from
+the byte count, which a sender cannot forge, and not from a delimiter, which a
+sender can type.
+
+### The receipt
+
+After the frames, exactly one line:
+
+```
+INBOX BODIES printed=<n> bytes=<b> complete=<true|false> next=<cursor-or-marker>
+```
+
+- `printed=` — how many NEW notes got a body in this return;
+- `bytes=` — the total body bytes printed, which is the sum of the frames'
+  `bytes=` and is the number a caller compares against `--max-bytes`;
+- `complete=` — `true` when every NEW note in this return got a body, `false`
+  when a limit stopped the printing short. `false` is the whole overflow signal;
+  there is no second one;
+- `next=` — where a following call resumes: the commit of the **last note
+  actually printed** when `complete=false`, and the commit this run read to when
+  `complete=true`. It is `-` only when nothing was printed at all.
+
+This is a cap, a count and a remedy on one line, which is the law the carried
+list's `--open-max` line obeys and the law this document's own `DRAFT OK` line
+obeys. It is one line at every state: a reader carrying six hundred open notes
+gets one, and a test asserts it there rather than at two.
+
+### The cursor
+
+**`--advance` moves the cursor only to the commit of the last note actually
+printed.** Never past it, and in particular never to `HEAD` on a partial return.
+Without `--advance`, nothing moves: no `CURSOR`, no `OPEN`, no commit, no push —
+the read-only property `inbox` already has, unchanged.
+
+That rule is what makes a partial return safe, and the reason is worth stating
+because it is not the obvious one. An unprinted note is not lost from the
+**open list**: `OPEN` is the memory that lets the cursor move past unanswered
+notes, and the note would still be carried there. What a cursor moved to `HEAD`
+would lose is the note's turn at being **NEW** — it would never again appear in
+the half `--bodies` prints, and its body would be reachable only by the second
+file read this flag exists to remove. So:
+
+- a partial return advances to the last printed note, and the next call resumes
+  at `next=` with the first unprinted note as its first NEW note, in full;
+- a complete return advances as `inbox --advance` does today;
+- a run that printed nothing advances nothing, whatever flags it was given.
+
+**Continuation is by re-running the same command.** There is no resume token to
+carry and no session to hold: the cursor is the position, `next=` is what it
+became, and the second call is the first call again. A caller who wants the
+whole backlog loops until `complete=true`, and each pass is bounded.
+
+### One reader, not two
+
+`nova-wake` (#239) needs to correlate an answer to a ping, and its **draft 7**
+took that correlation **off `inbox` entirely** — see its *An answer is a note or
+a receipt from the line to the caller* section, finding **K3**, which found that
+draft 6 had called it two bounded `inbox` reads when a plain `inbox` prints
+every NEW note in full, so its size was never that tool's to bound. Draft 7
+replaced it with `probe`'s own read-only `git` walk of the pinged line's lane,
+headers and `RECEIPTS` only, never a body, under `--correlate-max` and
+`--correlate-bytes`.
+
+That finding is the same fact this section opens with, met from the other side,
+and it is the reason this flag exists in the shape it does. Two consequences,
+and the second is a standing constraint rather than a claim:
+
+- **nothing here changes #239.** Its correlation stays exactly where draft 7 put
+  it. This document does not ask it to move, and a reader should not take this
+  section as a second answer to #239;
+- **if a bounded listing call is ever wanted there — for a body, which the lane
+  walk deliberately never reads — it is this flag that is called, and no second
+  bounded reader is written beside it.** The reason draft 7 could not use
+  `inbox` was that the NEW half had no bound; `--bodies` is that bound, with its
+  own budget, its own `complete=`/`next=` continuation and its own read-only
+  default. One listing path, one set of limits, one continuation grammar.
+
+### What this half does not do
+
+- **it changes no existing output.** Without `--bodies`, `inbox` and `wait` are
+  byte-identical to today — stdout, stderr and exit code — and a test asserts
+  it;
+- **it caps nobody's mail.** A note is never truncated and a body is never cut:
+  the budget decides **how many whole notes** print, never how much of one;
+- **it is no new binary and no new verb**, and it adds no state: no index, no
+  cache, no file of its own;
+- **it does not touch the carried list.** `--open`, `--open-max` and
+  `--open-warn` behave exactly as they do today, and `--bodies` prints no body
+  for a carried note — the carried list is a reminder of what is owed, not a
+  second delivery.
+
 ## Order of build
 
 The baseline changes which half of #246 is built first, and this section says so
@@ -653,7 +875,12 @@ rather than leaving the order to whoever picks the work up. **The reply verb
 specified in this document is the second build target, not the first.**
 
 **First: the READ half — the new notes addressed to `--as`, in full, in one
-call, with no output file to read afterwards.**
+call, with no output file to read afterwards. That half is `--bodies` on
+`inbox` and `wait`, and it is pinned as a contract in *The read half, pinned*
+above: one additive flag, `--max-notes` and `--max-bytes`, the counted
+`INBOX BODY` frame, the `INBOX BODIES` receipt and the cursor rule that never
+advances past what was printed.** The paragraphs below are why that half goes
+first; the section above is what is built.
 
 The main specification already provides the bounded new-notes half of that on a
 released verb, so this is `inbox` extended and not a new verb beside it.
@@ -691,6 +918,9 @@ first build target:
    `wait` is `inbox` on a clock and shares one listing implementation. That is
    the same law this document obeys under **no second read path**.
 
+**So the order is two items and no more: the read half first, and it is that
+flag; the reply verb second.**
+
 **Second: the reply verb specified above.** Nothing in this document is weakened
 by going second and none of it is withdrawn. It goes second because its own step
 is already one turn and one call, and because a reply drafted against a note the
@@ -709,11 +939,40 @@ other piece: the note's text, in the call that reported it.
 
 ## The tests, by name
 
-Every MUST above has a test, and the name says which one. **Thirty tests
+Every MUST above has a test, and the name says which one. **Thirty-six tests
 are named below**, and each one names its fixture and its observable. They are
 ordinary package tests against disposable local bare git remotes, inside the
 existing fast tier's budget — one minute ideally, two at most — with anything heavier
 declared in the certification tier rather than deleted.
+
+**That the read half is bounded, framed and loses no note** — the first build
+target, from *The read half, pinned*
+
+- `TestBodiesWithinBudgetPrintsEveryNewNoteAndSaysComplete` — three new notes
+  inside both limits: each `INBOX NOTE` line is followed by its `INBOX BODY`
+  frame with the true byte count, the bodies are byte-equal to what was sent,
+  and the run ends with one `INBOX BODIES printed=3 complete=true` line.
+- `TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse` — one fixture
+  over `--max-notes` and one over `--max-bytes`, plus `--max-notes 0` and a
+  value over the ceiling at exit 2: the return stops on a frame boundary and
+  never inside one, `complete=false`, and `next=` is the commit of the last note
+  actually printed and not `HEAD`.
+- `TestABodyHoldingFakeStatusLinesIsDeliveredVerbatimAndParsedCorrectly` — a
+  body whose lines include `INBOX NOTE id=...`, `INBOX BODIES printed=9` and
+  `INBOX BODY END id=<the real id>`: the frame's byte count carries the reader
+  past every one of them, the body arrives byte-identical, and the note printed
+  after it is parsed as the next note and not as a continuation.
+- `TestRetryAfterAPartialResumesAtNext` — the run after a `complete=false`
+  return, at `next=`, prints the first unprinted note as its first NEW note in
+  full: no note is printed twice, none is skipped, and looping to
+  `complete=true` yields every note exactly once.
+- `TestBodiesWithoutAdvanceMovesNoCursor` — `--bodies` without `--advance`, on
+  complete and partial returns alike: `CURSOR`, `OPEN`, `RECEIPTS` and `INDEX`
+  unchanged on every lane, no commit and no push.
+- `TestInboxAndWaitWithoutBodiesAreByteIdenticalToTodays` — the existing
+  fixtures over both verbs with the flag absent: stdout, stderr and exit code
+  unchanged, including at six hundred carried notes and with `--open`,
+  `--open-max` and `--full`.
 
 **That the released tool is untouched**
 
