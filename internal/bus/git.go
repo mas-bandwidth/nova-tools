@@ -1,9 +1,11 @@
 package bus
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
 	"os/exec"
@@ -16,6 +18,113 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
+
+// gitOutputAtMost is for read paths whose protocol has a concrete response bound.  The
+// normal git helper keeps complete successful output for older operations; a snapshot walk
+// cannot, because an unbounded successful `show` or `diff-tree` defeats bodies mode before
+// its own budget is applied.
+func gitOutputAtMost(dir string, limit int, args ...string) (string, error) {
+	out, truncated, err := gitOutputPrefixAtMost(dir, limit, args...)
+	if err != nil {
+		return "", err
+	}
+	if truncated {
+		return "", fmt.Errorf("git %s produced more than %d bytes; snapshot read refused before an unbounded result", strings.Join(args, " "), limit)
+	}
+	return out, nil
+}
+
+// gitOutputPrefixAtMost reads no more than limit bytes from git's stdout.  A caller that
+// can safely classify an over-limit object (the bodies reader records it as an oversize
+// gap) receives the bounded prefix and truncated=true; all other callers use
+// gitOutputAtMost and refuse it.  Neither path lets a successful subprocess accumulate an
+// unbounded result in memory.
+func gitOutputPrefixAtMost(dir string, limit int, args ...string) (string, bool, error) {
+	if limit < 1 {
+		return "", false, fmt.Errorf("git output limit must be positive")
+	}
+	full := append([]string{"-C", dir}, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd.Env = append(cmd.Environ(), gitEnv...)
+	cmd.WaitDelay = killGrace
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", false, err
+	}
+	var stderr limitedGitBuffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return "", false, err
+	}
+	out, readErr := io.ReadAll(io.LimitReader(stdout, int64(limit)+1))
+	if len(out) > limit {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return string(out[:limit]), true, nil
+	}
+	waitErr := cmd.Wait()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "", false, fmt.Errorf("git %s did not finish within %s", strings.Join(args, " "), gitTimeout())
+	}
+	if readErr != nil {
+		return "", false, readErr
+	}
+	if waitErr != nil {
+		return "", false, &gitError{args: full, err: waitErr, output: stderr.String()}
+	}
+	return string(out), false, nil
+}
+
+// gitReadBounded streams a Git response through consume while preserving the normal Git
+// timeout, child-process grace, and bounded stderr.  It deliberately retains no stdout:
+// snapshot bodies use it to normalize and count arbitrarily large blobs with fixed memory.
+// A consumer error stops Git before returning the parser's explicit refusal.
+func gitReadBounded(dir string, consume func(io.Reader) error, args ...string) error {
+	full := append([]string{"-C", dir}, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd.Env = append(cmd.Environ(), gitEnv...)
+	cmd.WaitDelay = killGrace
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return err
+	}
+	var stderr limitedGitBuffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	consumeErr := consume(stdout)
+	if consumeErr != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return consumeErr
+	}
+	waitErr := cmd.Wait()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("git %s did not finish within %s", strings.Join(args, " "), gitTimeout())
+	}
+	if waitErr != nil {
+		return &gitError{args: full, err: waitErr, output: stderr.String()}
+	}
+	return nil
+}
+
+type limitedGitBuffer struct{ bytes.Buffer }
+
+func (b *limitedGitBuffer) Write(p []byte) (int, error) {
+	if b.Len() < gitOutputCap {
+		remain := gitOutputCap - b.Len()
+		if remain > len(p) {
+			remain = len(p)
+		}
+		_, _ = b.Buffer.Write(p[:remain])
+	}
+	return len(p), nil
+}
 
 // The push protocol.
 //

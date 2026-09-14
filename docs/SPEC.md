@@ -2975,6 +2975,19 @@ trigger. `the gate` and `The Gate` are two notes on a busy lane and a tool that
 folded them would close the wrong one and say it had closed the right one; a
 `RE:` in a subject is worth one line a reader can ignore.
 
+**The three above close the gap for a line that is already drafting with this
+tool. The turns spent GETTING to the draft are a separate cost**, and they are
+not small: finding the id, pulling so that the id resolves against something
+current, typing the header keys from memory, and being refused — correctly, and
+after the work — for having saved the draft inside the bus checkout. A proposed
+`draft --reply-to` that refreshes from a named remote, resolves the target
+against what the fetch left, writes every header mechanically and puts the draft
+outside the protected checkout is specified in
+**[docs/SPEC-BUS-REPLY.md](SPEC-BUS-REPLY.md)**, the first bounded slice of
+issue #246. It is **proposed and not implemented**: no verb or flag in this
+section changes, `--reply-to` does not exist yet, and everything above is the
+behaviour the released tool has today.
+
 ### The receipt rule
 
 `receipt` appends one line to `from-<me>/RECEIPTS` and pushes it the same way a
