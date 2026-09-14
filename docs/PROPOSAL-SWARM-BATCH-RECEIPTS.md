@@ -2,7 +2,7 @@
 
 **Status: proposal, not implemented or approved for build.** Maintainer review and independent reviewers' dispositions must name the exact revision before implementation. This extends the existing `batch` admission boundary; it introduces no dispatcher, model-call batching, accounting ledger, dependency scheduler or cancellation behavior. The current `batch` invocation without the new option remains compatible.
 
-The companion [proposed batch admission implementation contract](PROPOSAL-SWARM-BATCH-ADMISSION-CONTRACT.md) specifies proposed v1 encoding, reservation transitions, platform and recovery limits, and required witnesses. It remains subject to exact-revision maintainer/all-friend review and the existing build gates; it does not establish implementation or durability approval.
+The companion [proposed batch admission implementation contract](PROPOSAL-SWARM-BATCH-ADMISSION-CONTRACT.md) specifies proposed v1 encoding, reservation transitions, platform and recovery limits, and required witnesses. It remains subject to exact-revision maintainer and independent reviewer dispositions and the existing build gates; it does not establish implementation or durability approval.
 
 ## Problem and evidence
 
