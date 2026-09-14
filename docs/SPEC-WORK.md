@@ -354,7 +354,7 @@ replayed answer**: a retry whose id the index holds is refused `already applied`
 revision it was applied at, so the requester re-reads rather than acting twice, and no session
 — a successor after a handoff among them — ever applies one request id twice.
 
-A valid mutation whose patches change nothing still records a durable event with a real event id, its request id, its payload digest and the preimage it was applied against, and reports `changed=0`; a lost reply retries through the ordinary request-id lookup of the journal's two-part test and is answered with the original receipt; a later retry, past the journal and into the dedup index, is refused `already applied` by the rule above; nothing is silently dropped and no phantom `id=-` outcome exists. A no-effect event is a HISTORICAL RECEIPT and never a domain change, and a no-op never evades its verb's reversibility or its stale-and-conflict rules.
+A valid mutation whose patches change nothing still records a durable event with a real event id, its request id, its payload digest and the preimage it was applied against, and reports `changed=0`; a lost reply retries through the ordinary request-id lookup of the journal's two-part test and is answered with the original receipt; a later retry, past the journal and into the dedup index, is refused `already applied` by the rule above; nothing is silently dropped and no phantom `id=-` outcome exists. A no-effect event is a historical receipt and never a domain change, and a no-op never evades its verb's reversibility or its stale-and-conflict rules.
 
 **The repository branch that holds O has one writer too: the owning coordinator.** A **clip**,
 the ownership commits of rules 1 and 2 above, the handoff commit below and `session stop`'s release commit are the only writes to it, and a clip: it names a local event boundary, fetches the upstream revision, and
@@ -1880,14 +1880,15 @@ removal of something above it — a leaf that was `done` before the removal reac
 them instead, in its `:already-closed` field**, the ids beneath it that were already closed, so
 the removal's one record accounts for every item of the subtree exactly once and a reader of C
 can tell a leaf that was removed from a leaf that had already finished. **A `node remove` whose
-own node is already in C writes nothing at all**: it is a no-op at exit 0 with one `NODE NOTE
-already-closed node=<id> disposition=<d> settled=<stamp>` line before its `NODE OK`. A new valid request
-under a different request id appends this typed no-effect receipt and writes no second `:settle`,
-no detach and no scope, membership or counter change; a replay of the SAME request id returns its
-recorded disposition before current state is evaluated; the closed disposition and its evidence are
-untouched. Nothing is detached and no scope event is written by that no-op, so the item stays where
-the settle that closed it left it: in its parent's `:children`, and in its parent's required set
-exactly where its disposition already had it.
+own node is already in C changes no domain state**: it is a no-op at exit 0 with one `NODE NOTE
+already-closed node=<id> disposition=<d> settled=<stamp>` line before its `NODE OK`. A retry of the
+same request id returns its prior disposition and writes nothing; even after a reopen it leaves the
+reopened item untouched. A `fresh-id remove after a reopen is evaluated against the current open
+state and may really settle or remove. A fresh-id repeated remove while the node is still closed is
+the no-effect case: one typed receipt, `changed=0`, with no second `:settle`, no detach, no scope,
+membership or counter change. The event revision advances; scope counters and effective-change
+identities do not. A second `:settle` for the node finds the closed disposition (rule 18) rather
+than writing a second history.
 **Why a live lease refuses a removal while a `state --to done` ends one**: a settle ends a claim
 on work that has ended, written by the author who is ending it, and a removal ends work that
 somebody else is still holding — so the first releases and the second refuses and names the
@@ -2834,6 +2835,7 @@ and refusals go to stderr. Every count line prints on failure as on
 success. Every `OK` line ends `emitted=<bytes>`. Every mutation's `OK` line carries the
 event's id, its request id, the session's local revision after it (`rev=<n>`), and
 `pushed=<rev|->`, the clipped revision, the same number as the last `CLIP OK`'s `pushed=`;
+`changed=<n>` records how many effective mutations the event produced.
 `SESSION OK` is one shape, printed by `session start`, `session status` and `session stop`
 alike, and its `state=` reads `live`, `fenced` or `red`: lowercase *active* is W's word in the
 root section above, `ACTIVE` in capitals is the per-friend live-data node, and neither names a
@@ -2892,7 +2894,7 @@ OBSERVE OK id=<event-id> request=<id> friend=<name> change=<state|attempt> rev=<
 RENDER OK view=<id> cells=<n> private=<n> bytes=<n> into=<path> pushed=<rev|-> emitted=<bytes>
 RENDER FAIL view=<id> cells=<n> private=<n> drifted=<n> into=<path>: <reason>
 NODE NOTE already-closed node=<id> disposition=<d> settled=<stamp>   (a `node remove` of an item already in C: nothing written, exit 0, its NODE OK line following)
-<MUTATION> OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> ... emitted=<bytes>
+<MUTATION> OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> changed=<n> ... emitted=<bytes>
 <MUTATION> FAIL node=<id>: rule <n>: <reason>
 <MUTATION> FAIL node=<id> expect=<rev> current=<rev>: stale
 <MUTATION> FAIL request=<id> applied=<rev>: already applied
@@ -3223,10 +3225,12 @@ of this list and are not repeated here):
   stands, the same request id and body returns the recorded disposition, and the same id with
   different arguments is refused; `rev=` and `pushed=` distinct in every response.
 - **`no-effect-mutation-is-journaled`** — a mutation whose patches are all no-ops; the event id
-  recorded, journal length +1, `changed=0` on its OK line, and state digest unchanged; the same
-  request id returns the same receipt, and after the dedup boundary refuses `already applied`;
-  a retry arriving after a reopen returns its recorded disposition unchanged while a different
-  request id at that later state appends its own no-effect receipt.
+  recorded, journal length +1, `changed=0` on its OK line, and the domain projection (node fields,
+  counters, membership) unchanged while the event revision advances by one. A retry of the same
+  request id returns its recorded disposition unchanged; even after a reopen it leaves the reopened
+  item untouched. A fresh-id invocation validates current state and gives its normal effect or
+  refusal. A fresh-id while still closed is the no-effect case: one typed receipt, changed=0,
+  with no second `:settle`, no detach, no scope, membership or counter change.
 - **`operation-survives-the-client`** — a long import returning an operation id, the CLI exiting,
   the work continuing, the result retrievable by id afterwards, and `operation wait` timing out
   while leaving the operation running.
