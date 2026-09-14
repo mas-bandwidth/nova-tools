@@ -273,20 +273,25 @@ file and the repair. In a fixed order, against the working copy at `--store`:
    not delegated to a `.gitignore` the store does not have, which would pass vacuously.
 8. **The working copy is the store, not a memory of it**: `HEAD` equals the remote-tracking
    ref it tracks, read as **files** — `.git/HEAD`, the upstream named by `branch.<name>.remote`
-   and `.merge` in `.git/config`, then `.git/refs/…` and `.git/packed-refs` — no `git` binary,
-   no network. Behind it is a bench running a value a rotation replaced; ahead of it is a local
-   edit nobody reviewed; both are exit 1 naming `git -C <store> pull --ff-only`, and `exec`
-   refuses the same case at 125, the value it is about to hand a process being exactly the one
-   in question. Three states are refusals naming the fact, never a stale-ref failure and never
-   the "no `.git`" sentence: a **detached `HEAD`**, a **branch with no upstream**, and a `.git`
-   that is a **file** (a worktree or a submodule), whose real directory this tool does not
-   follow. Both OK lines carry `head=<short sha>`, so two benches compare by eye. **What it
-   notices is a fetch nobody merged, never a fetch nobody ran**: a remote-tracking ref is only
-   as fresh as the last fetch, so a clone nobody fetches satisfies invariant 8 forever, which is
-   why every launcher line carries `git -C <store> pull --ff-only &&` — the one network call
-   on this page, the launcher's and never the tool's. The cost is that a bench which cannot
-   reach GitHub cannot clear the refusal at seat start; accepted, the alternative being a seat
-   running a revoked value with a green `check` beside it, the row this tool exists to close.
+   and `.merge` in `.git/config`, then `.git/refs/…` and `.git/packed-refs` — no network.
+   Every tracked store file (`*.yaml`, `.sops.yaml`, `recovery.pub`) matches the committed
+   `HEAD` tree object (inspected via local git loose objects or local `git ls-tree -r`), ensuring
+   staged but uncommitted modifications (`git add`) are detected and refused. Local git consistency
+   (clean tree, index, HEAD) detects local drift and never authenticates owner intent by itself;
+   launch refuses when the protected-boundary prerequisite from 0f70c7f cannot be established;
+   check and exec agree on the admissible committed artifact. Behind it is a bench running a value
+   a rotation replaced; ahead of it is a local edit nobody reviewed; both are exit 1 naming
+   `git -C <store> pull --ff-only`, and `exec` refuses the same case at 125, the value it is about
+   to hand a process being exactly the one in question. Three states are refusals naming the fact,
+   never a stale-ref failure and never the "no `.git`" sentence: a **detached `HEAD`**, a **branch
+   with no upstream**, and a `.git` that is a **file** (a worktree or a submodule), whose real
+   directory this tool does not follow. Both OK lines carry `head=<short sha>`, so two benches
+   compare by eye. **What it notices is a fetch nobody merged, never a fetch nobody ran**: a
+   remote-tracking ref is only as fresh as the last fetch, so a clone nobody fetches satisfies
+   invariant 8 forever, which is why every launcher line carries `git -C <store> pull --ff-only &&` —
+   the one network call on this page, the launcher's and never the tool's. The cost is that a bench
+   which cannot reach GitHub cannot clear the refusal at seat start; accepted, the alternative being
+   a seat running a revoked value with a green `check` beside it, the row this tool exists to close.
 
 Any of the eight is its own `SECRETS CHECK FAIL` line, every failure in one run, capped per
 kind at `--max` with a MORE line, the counts never capped and printed on failure as well as
@@ -593,6 +598,7 @@ token; the free-text tail after `: ` is never scanned for fields. Nothing a file
 caller argument can author a second line.
 
 ```
+SECRETS REFUSED: <reason>
 SECRETS EXEC   OK   as=<name> keys=<n> only=<all|n> required=<n> file=<path> head=<sha> cmd=<argv0>
 SECRETS EXEC   FAIL <what>: <why>
 SECRETS NAME        key=<NAME> clear=<true|false>
