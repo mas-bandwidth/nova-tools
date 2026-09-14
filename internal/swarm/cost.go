@@ -30,7 +30,9 @@ func Cost(p *Pool, since string, max int, stdout, stderr io.Writer) int {
 	list := bounded.Capped(stdout, max, "COST", "task", "nova-swarm cost --pool "+p.Dir+" --max 0")
 	totals := map[string]int{}
 	dashes := map[string]int{}
-	usd := 0.0
+	knownUSD := 0.0
+	knownUSDCount := 0
+	usdMissing := 0
 	first, last := "", ""
 	tasks := 0
 	for _, row := range rows {
@@ -52,7 +54,10 @@ func Cost(p *Pool, since string, max int, stdout, stderr io.Writer) int {
 			}
 		}
 		if f, err := strconv.ParseFloat(strings.TrimSpace(row["usd"]), 64); err == nil {
-			usd += f
+			knownUSD += f
+			knownUSDCount++
+		} else {
+			usdMissing++
 		}
 		list.Line(fmt.Sprintf("COST TASK id=%s attempt=%s end=%s in=%s out=%s cache_write=%s cache_read=%s reasoning=%s usd=%s model=%s repo=%s",
 			oneline.Field(row["job"]), oneline.Field(dashOr(row["attempt"])), oneline.Field(dashOr(row["end"])),
@@ -62,10 +67,18 @@ func Cost(p *Pool, since string, max int, stdout, stderr io.Writer) int {
 			oneline.Field(dashOr(row["model"])), oneline.Field(dashOr(row["repo"]))))
 	}
 	list.More()
-	fmt.Fprintf(stdout, "COST OK tasks=%d in=%d out=%d cache_write=%d cache_read=%d reasoning=%d dashes=%d,%d,%d,%d,%d usd=%.4f window=%s..%s\n",
+	// A zero is a measured value, while an all-unknown pool has no USD total. In a
+	// mixed pool `usd` remains the known subtotal for compatibility; `usd_missing`
+	// makes that partial coverage explicit and `known_usd` gives machine readers a
+	// stable name for the subtotal.
+	usd := "-"
+	if tasks == 0 || knownUSDCount > 0 {
+		usd = fmt.Sprintf("%.4f", knownUSD)
+	}
+	fmt.Fprintf(stdout, "COST OK tasks=%d in=%d out=%d cache_write=%d cache_read=%d reasoning=%d dashes=%d,%d,%d,%d,%d usd=%s window=%s..%s known_usd=%.4f usd_missing=%d\n",
 		tasks, totals["tokens_in"], totals["tokens_out"], totals["cache_write"], totals["cache_read"], totals["reasoning"],
 		dashes["tokens_in"], dashes["tokens_out"], dashes["cache_write"], dashes["cache_read"], dashes["reasoning"],
-		usd, oneline.Field(dashOr(first)), oneline.Field(dashOr(last)))
+		usd, oneline.Field(dashOr(first)), oneline.Field(dashOr(last)), knownUSD, usdMissing)
 	return 0
 }
 
