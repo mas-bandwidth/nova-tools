@@ -1142,91 +1142,85 @@ rules; retry may re-show a body and is not an exactly-once human-delivery promis
 
 ### The receipt
 
-After the frames, exactly one line:
+A continuation is a position in one immutable listing snapshot. It is not a
+receipt, a reply, permission to read another lane, or proof that a person read a
+body. `--advance` remains the explicit request to update this reader's bus state.
+
+**Snapshot.** The first call captures the reader's base cursor C0 and refreshed
+bus tip H, plus the canonical reader identity and listing selector. The existing
+inbox listing implementation defines eligible NEW items in that range. Pagination
+uses a stable internal ordering of those same items: first-parent commit order,
+then bytewise repository-relative note path, then appended receipt-record offset
+within its path. It does not borrow nova-wake's narrower lane selection. Within
+each page, the existing display groups keep their order. Legacy notes without an
+Id and two items in one commit remain distinct by path/record offset; `id=-` is
+never a continuation identity.
+
+**Token.** `next=` is a bounded, versioned, opaque URL-safe token, passed back
+unchanged as `--after <token>`. Version1 carries C0, H, reader/selector identity,
+the last accounted item identity, the earliest unresolved gap (or none), cumulative
+gap count, the whole-commit safe frontier, and the expected persisted cursor after
+this call. No body, subject, secret, unbounded item list, or absolute path belongs
+in it. Encoding and decoding use a single schema; malformed, oversized (over8KiB),
+unknown-version, mismatched reader/selector, unavailable snapshot, non-ancestor
+range, invalid item position, or inconsistent frontier/gap fields refuse at exit2.
+A token is client-supplied query state, not authentication: its checksum, if any,
+only detects accidental corruption. Never use it to bypass roster/path checks or
+claim a read receipt. Cursor update authority comes from `--advance` alone.
+
+**Resume.** Validate the token against its original C0..H snapshot, not the new
+CURSOR..HEAD range. A normal prior page may have advanced CURSOR to the commit
+containing the token's item; that does not invalidate the token. The current
+persisted cursor must equal the token's expected cursor. A different cursor means
+another read changed this reader's state: refuse with an explicit fresh-read
+remedy rather than moving it backward or silently changing the snapshot. New
+commits after H wait for a fresh chain. A missing or rewritten snapshot likewise
+refuses without mutation. No continuation token requires a hidden server ledger
+or writes from a read-only invocation.
+
+**Page accounting.** `--max-notes` caps all NEW items emitted, including gap
+lines and summaries of receipt/heard items. `--max-bytes` caps the sum of emitted
+body bytes. A summary and its body frame are emitted together. Stop before an
+item that would exhaust the remaining body budget; the next token points to the
+last item already accounted for, so the omitted item is first on the next page.
+If the first candidate's body exceeds the full per-call budget, emit one bounded
+`INBOX BODY OVERSIZE` line with its identity, size and repository-relative path,
+count one gap/item, and account for that position. It consumes no body bytes.
+The following candidate may fit on this page if item and byte budgets remain.
+The token carries the earliest gap across every later page, even when later
+pages print ordinary bodies. A later page cannot forget a skipped first body.
+
+**Completion.** The receipt is:
 
 ```
-INBOX BODIES printed=<n> bytes=<b> oversize=<k> complete=<true|false> next=<commit>:<id>|-
+INBOX BODIES printed=<n> bytes=<b> oversize=<k> gaps=<g> drained=<true|false> complete=<true|false> next=<token|->
 ```
 
-- `printed=` — how many NEW notes got a body in this return. A gap is not one;
-- `bytes=` — the total body bytes printed, which is the sum of the frames'
-  `bytes=` and is the number a caller compares against `--max-bytes`. It counts
-  no separator (**R4**) and no gap (**R2**);
-- `oversize=` — how many items this return named as gaps (**R2**), each of which
-  printed one `INBOX BODY OVERSIZE` line naming its id **once**. It is `0` on
-  every ordinary return, and it is the only place a gap is counted;
-- `complete=` — `true` when every NEW item this run reached printed in full,
-  `false` when a limit stopped the printing short **or** any gap was named.
-  `false` is the whole overflow signal; there is no second one;
-- `next=` — the **item** a following call resumes after, as `<commit>:<id>`
-  (**R1**): the commit, and within it the id of the last item this return
-  accounted for in the scan order — the last item printed, or the gap, whichever
-  came last. It is a value to pass back as `--after`, never a status: it says
-  where to continue, and says nothing about what was consumed. It is `-` only
-  when the return accounted for no item at all, which is a return that printed
-  nothing and named no gap, and from which rerunning the same command is
-  therefore correct.
+`printed` counts body frames and `bytes` their body bytes only; `oversize` counts
+new gap lines on this page, `gaps` all unresolved gaps in this chain. `drained`
+means no eligible items remain after this page in C0..H. `complete` means drained
+AND gaps=0. `next` is present exactly when another page remains; terminal pages
+have `next=-`. Thus empty snapshots are drained/complete, while a lone oversized
+body is drained but incomplete. There is no command to repeat indefinitely.
+At a gapped terminal page print one bounded remedy naming the first unresolved
+gap: restart without `--after` with a sufficient allowed byte budget, or inspect
+the named file explicitly if it exceeds the hard ceiling. A fresh chain starts
+from the persisted cursor and may re-show bodies; it never silently marks a gap
+consumed. Do not loop on `complete=false`: drain only while `next` is present.
 
-This is a cap, a count and a remedy on one line, which is the law the carried
-list's `--open-max` line obeys and the law this document's own `DRAFT OK` line
-obeys. It is one line at every state: a reader carrying six hundred open notes
-gets one, and a test asserts it there rather than at two.
-
-### The cursor
-
-**`--advance` moves the cursor only to the last commit every one of whose items
-this run printed in full.** Never past it, in particular never to `HEAD` on a
-partial return, never into a commit the return was cut inside (**R1**), and
-never past a gap (**R2**). Without `--advance`, nothing moves: no `CURSOR`, no
-`OPEN`, no commit, no push — the read-only property `inbox` already has,
-unchanged.
-
-The cursor is a commit and cannot name a position inside one, so where a return
-stopped part-way through a commit the cursor stops **before** that commit. Its
-already-printed items are then NEW again on a run that passes no `--after`,
-which is a **re-show and never a loss** — the direction SPEC.md's open-list
-section already fixes for this bus — and `--after` is what makes the next call
-exact instead of merely safe. A gap is the same rule from the other side: the
-cursor stopping before it is precisely what keeps the note NEW, so a caller who
-raises `--max-bytes` later still finds it in the half `--bodies` prints.
-
-That rule is what makes a partial return safe, and the reason is worth stating
-because it is not the obvious one. An unprinted note is not lost from the
-**open list**: `OPEN` is the memory that lets the cursor move past unanswered
-notes, and the note would still be carried there. What a cursor moved to `HEAD`
-would lose is the note's turn at being **NEW** — it would never again appear in
-the half `--bodies` prints, and its body would be reachable only by the second
-file read this flag exists to remove. So:
-
-- a partial return advances to the last printed note, and the next call resumes
-  at `next=` with the first unprinted note as its first NEW note, in full;
-- a complete return advances as `inbox --advance` does today;
-- a run that printed nothing advances nothing, whatever flags it was given.
-
-**R1/R2 — continuation is an explicit input, `--after <commit>:<id>`.** Draft 5
-said the second call was the first call again. It is not, and could not be: a
-read-only run moves no cursor, so rerunning the same command returns the same
-items forever, and a run that stopped on a gap reruns into the same gap. So:
-
-- **`--after <commit>:<id>`** takes a `next=` value back and starts the scan at
-  the item **after** the one it names, in the fixed scan order. The id is the
-  last printed note's id — or the gap's — and never a commit alone;
-- the flag is **only** ever a value the tool printed. `--after` naming a commit
-  outside the range this run reads, or an id that commit does not hold, is
-  `INBOX REFUSED` at **exit 2**, naming the value given and, as its remedy, the
-  same command **without** `--after`. It is never silently ignored and never
-  silently restarted, because either would re-read items the caller was told it
-  had passed;
-- a caller draining the backlog loops `--bodies --after <the last next=>` until
-  `complete=true`, each pass bounded by both limits. With `--advance`, the
-  cursor follows behind at whole commits; without it, nothing moves at all and
-  `--after` alone carries the position. Both are exact, and neither can spin: a
-  pass that prints nothing and names no gap returns `next=-`, which is the one
-  state where rerunning unchanged is the right thing.
-
-`TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither` and
-`TestASingleOversizeBodyIsANamedGapAndNeverALoop` both drain to
-`complete=true` through `--after` and assert every item arrives exactly once.
+**Cursor and OPEN.** Without `--advance`, no CURSOR, OPEN, RECEIPTS, INDEX,
+commit or push changes. With it, the safe frontier is the greatest whole commit
+whose entire eligible prefix in this snapshot has been emitted in full across
+this chain, strictly before the earliest unresolved gap or partially emitted
+commit. Do not infer this frontier from display order or from the last printed
+body. The token carries the prefix accounting needed to resume inside a commit;
+validate its internal ordering and snapshot identities before accepting it.
+Advance only monotonically from the expected current cursor to that frontier.
+An entirely empty return or one containing only gaps does not advance it. OPEN
+updates use the same emitted set and existing bookkeeping rules; excluded bodies
+do not lose their NEW turn. Failure writing stdout must not advance past the last
+fully emitted safe prefix. Network/publish recovery follows the existing bus
+rules; retry may re-show a body and is not an exactly-once human-delivery promise.
 
 ### One reader, not two
 
@@ -1308,8 +1302,8 @@ advances past what was printed.** The paragraphs below are why that half goes
 past what was printed in full.** The paragraphs below are why that half goes
 first; the section above is what is built.
 
-The main specification already provides the bounded new-notes half of that on a
-released verb, so this is `inbox` extended and not a new verb beside it.
+The released listing supplies eligibility and bookkeeping; this opt-in flag adds
+the NEW-output bounds, so it extends `inbox` rather than creating a second reader.
 SPEC.md's nova-bus section states the shape at **SPEC.md:2539**:
 
 > Every `inbox` and `wait` return has the same three parts, in this order: what
@@ -1435,84 +1429,56 @@ ordinary package tests against disposable local bare git remotes, inside the
 existing fast tier's budget — one minute ideally, two at most — with anything heavier
 declared in the certification tier rather than deleted.
 
-**That the read half is bounded, framed and loses no note** — the first build
-target, from *The read half, pinned*
+**That the read half is bounded, framed and loses no note** — each fixture
+uses the actual shared inbox selector. Tokens are asserted by decoding the one
+schema, never by inventing abbreviated commit strings.
 
-- `TestBodiesWithinBudgetPrintsEveryNewNoteAndSaysComplete` — three new notes,
-  one per commit, inside both limits: each `INBOX NOTE` line is followed by its
-  `INBOX BODY` frame with the true byte count and a byte-equal body, and the run
-  ends with one receipt line,
-  `expected=INBOX BODIES printed=3 bytes=612 oversize=0 complete=true next=c3:n3`.
-- `TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse` — one fixture
-  over `--max-notes` and one over `--max-bytes`, plus `--max-notes 0` and a
-  value over the ceiling: the return stops on a frame boundary and never inside
-  one, and the continuation names the item and not `HEAD`,
-  `expected=INBOX BODIES printed=2 bytes=408 oversize=0 complete=false next=c2:n2`;
-  the two bad values are refusals,
-  `expected=INBOX REFUSED: --max-notes 0 is not unlimited; give 1 to 1000` and
-  `expected=INBOX REFUSED: --max-bytes 4194304 is over the ceiling 1048576`.
-- `TestABodyHoldingFakeStatusLinesIsDeliveredVerbatimAndParsedCorrectly` — a
-  body whose lines include `INBOX NOTE id=...`, `INBOX BODIES printed=9` and
-  `INBOX BODY END id=<the real id>`: the frame's byte count carries the reader
-  past every one of them, the body arrives byte-identical, and the note printed
-  after it is parsed as the next note and not as a continuation,
-  `expected=INBOX BODIES printed=2 bytes=290 oversize=0 complete=true next=c2:n2`.
-- `TestRetryAfterAPartialResumesAtNext` — the run after a `complete=false`
-  return, given `--after` with that return's `next=` value verbatim, prints the
-  first unaccounted item as its first NEW item in full: no item is printed
-  twice, none is skipped, and looping to `complete=true` yields every item
-  exactly once. A run given `--after c9:nobody` refuses,
-  `expected=INBOX REFUSED: --after c9:nobody names no item in this range; rerun without --after`.
-- `TestBodiesWithoutAdvanceMovesNoCursor` — `--bodies` without `--advance`, on
-  complete, partial and gapped returns alike: `CURSOR`, `OPEN`, `RECEIPTS` and
-  `INDEX` unchanged on every lane, no commit and no push, and the return still
-  carries a usable continuation, `expected=next=c2:n2`.
-- `TestInboxAndWaitWithoutBodiesAreByteIdenticalToTodays` — the existing
-  fixtures over both verbs with the flag absent: stdout, stderr and exit code
-  unchanged, including at six hundred carried notes and with `--open`,
-  `--open-max` and `--full`, `expected=` the recorded golden output of today's
-  binary, byte for byte, with no `INBOX BODIES` line anywhere in it.
-- `TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither` (**R1**) — **one commit
-  adds two notes**, `a-note.md` then `b-note.md`, whose bytewise path order is
-  the scan order and whose ids are `nA` and `nB`. Read with `--max-notes 1`:
-  `expected=INBOX BODIES printed=1 bytes=140 oversize=0 complete=false next=c1:nA`,
-  and exactly one `INBOX NOTE` line on stdout. The next call, `--after c1:nA`,
-  reads the same range again and
-  prints B whole,
-  `expected=INBOX BODIES printed=1 bytes=155 oversize=0 complete=true next=c1:nB`.
-  With `--advance` the first run's `CURSOR` is `c1`'s parent — the fixture gives
-  `c1` one — and never `c1` itself, because `c1` was cut inside; a third run with
-  no `--after` is then asked about A again, which is the re-show the cursor rule
-  allows and not the loss draft 5 had. A second fixture makes display order differ
-  from scan order — one commit adding a note and appending to `RECEIPTS`, which
-  print in different groups — and asserts the same two returns cover both items
-  exactly once, in the scan order's prefix and the display's own order.
-- `TestASingleOversizeBodyIsANamedGapAndNeverALoop` (**R2**) — the first NEW
-  note's body is 2,097,152 bytes, over the 1048576 ceiling, so no `--max-bytes`
-  can carry it. The default run opens no frame and names the gap once,
-  `expected=INBOX BODY OVERSIZE id=nBig bytes=2097152 max-bytes=65536 path=from-x/2026-09-13-big.md`,
-  then
-  `expected=INBOX BODIES printed=0 bytes=0 oversize=1 complete=false next=c1:nBig`.
-  The next call, `--after c1:nBig`, prints the following note and reaches
-  `complete=true`, so the drain terminates; rerunning the **first** command
-  unchanged returns the identical gap, which is why `next=` is not `-`. With
-  `--advance`, `CURSOR` does not reach `c1`, and a later run at
-  `--max-bytes 1048576` still finds the note NEW and still names it a gap.
-- `TestBodiesModeCapsTheNewSummaryLinesToo` (**R3**) — fifty NEW notes,
-  `--bodies --max-notes 5`: exactly five `INBOX NOTE` lines and five frames on
-  stdout and no sixth line of either kind,
-  `expected=INBOX BODIES printed=5 bytes=1020 oversize=0 complete=false next=c5:n5`.
-  The same fixture **without** `--bodies` prints all fifty `INBOX NOTE` lines and
-  no `INBOX BODIES` line at all, which is the released behaviour the guarantee
-  leaves alone.
-- `TestTheFrameSeparatorIsExactBytesIncludingAnEmptyBody` (**R4**) — three
-  bodies in one return: `ok\n` (ends in a newline), `ok` (does not), and the
-  empty body. Stdout is asserted byte for byte, and the separator is present for
-  the last two and absent for the first:
-  `expected=INBOX BODY id=n1 bytes=3\nok\nINBOX BODY END id=n1\nINBOX BODY id=n2 bytes=2\nok\nINBOX BODY END id=n2\nINBOX BODY id=n3 bytes=0\n\nINBOX BODY END id=n3\n`.
-  The reader's consume-and-assert sequence is exercised rather than a search for
-  the closing line, and the receipt counts body bytes only,
-  `expected=INBOX BODIES printed=3 bytes=5 oversize=0 complete=true next=c1:n3`.
+- `TestBodiesWithinBudgetPrintsEveryNewNoteAndSaysComplete`: three bodies,
+  one per commit; byte-identical frames; final printed=3,bytes=612,oversize=0,
+  gaps=0,drained=true,complete=true,next=-.
+- `TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse`: exercise
+  both limits and invalid zero/over-ceiling values; no partial frame; page1
+  drained=false,complete=false and usable token; remaining item delivered whole.
+- `TestABodyHoldingFakeStatusLinesIsDeliveredVerbatimAndParsedCorrectly`:
+  fake INBOX NOTE/BODIES/END lines inside body bytes remain body data; only exact
+  byte count plus separator and closing-line validation establish a frame.
+- `TestRetryAfterAPartialResumesAtNext`: drain a fixed snapshot with/without
+  --advance. Each accounted item appears once in that chain; new commits after H
+  wait for a fresh chain. Malformed or mismatched tokens refuse without writes.
+- `TestBodiesWithoutAdvanceMovesNoCursor`: complete, partial, empty and gapped
+  returns leave every lane's bookkeeping and Git state unchanged; tokens work
+  without a hidden writable ledger.
+- `TestInboxAndWaitWithoutBodiesAreByteIdenticalToTodays`: existing golden
+  bytes/statuses over both verbs and --open/--open-max/--full, including600carried
+  items; no new receipt without the opt-in flag.
+- `TestTwoNotesInOneCommitWithMaxNotesOneLosesNeither`: page1 prints A and
+  cursor stays before c1; page2 prints B and may advance to c1; continuation uses
+  pinned C0..H. Repeat with legacy id=- notes and display-group order differing
+  from scan order, asserting unique path/record identities and no lost item.
+- `TestContinuationSurvivesOrdinaryCursorAdvance`: c1:A,c2:B,max-notes1,
+  --advance: page1 moves CURSOR to c1; its token remains valid for B. A distinct
+  external cursor change instead refuses and never rewinds state.
+- `TestASingleOversizeBodyIsANamedGapAndNeverALoop`: only item exceeds1MiB;
+  no frame,one gap line,printed=0,oversize=1,gaps=1,drained=true,complete=false,
+  next=-; first-gap remedy explicit, no cursor advance, no repeated drain call.
+- `TestEarlierGapSurvivesLaterPages`: oversized c1:A then c2:B,c3:C with
+  max-notes1. Each later token retains the c1gap; terminal drained=true remains
+  incomplete,gaps=1. CURSOR never crosses c1. Fresh raised-budget run re-shows A
+  if it fits; a hard-ceiling gap remains explicit. Repeat multiple gaps and
+  assert constant-size earliest-gap state rather than an unbounded list.
+- `TestSnapshotTokenValidationAndBound`: unknown versions,over8KiB,wrong reader
+  or selector,non-ancestor/unavailable snapshot,invalid path/offset,frontier past
+  gap or unaccounted partial commit all refuse. No token confers new read or
+  write authority. The token is not asserted to authenticate a prior human read.
+- `TestBodiesModeCapsTheNewSummaryLinesToo`: fifty eligible items,cap5;
+  at most5 NEW summaries/gap lines with associated frames. Without --bodies,
+  preserve today's fifty-line output. Include heard/receipt-only and mixed pages.
+- `TestTheFrameSeparatorIsExactBytesIncludingAnEmptyBody`: bodies `ok\n`,
+  `ok`, and empty produce separators only for the latter two. Assert exact bytes,
+  byte-count parsing and printed=3,bytes=5; separators do not add to bytes.
+- `TestBrokenOutputCannotAcknowledgeUnprintedBodies`: inject stdout failure
+  before and inside frames; no cursor advancement crosses unprinted data; retry
+  may re-show a body but cannot skip it. Preserve existing publish-retry rules.
 
 **That the released tool is untouched**
 
