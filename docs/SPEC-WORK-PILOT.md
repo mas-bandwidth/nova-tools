@@ -125,13 +125,20 @@ agents, each swarm and its models/limits, local-model routes, one-shot launchers
 reserved roles and budget policies. Update it only on meaningful configuration
 change; do not rewrite it on every heartbeat or token sample.
 
-ACTIVE is each friend's deployed work configuration for this work: the children,
-swarms, local runs and one-shots being used, their chosen models, benches and task
-assignments. It references CONFIG by stable identity and revision. ACTIVE is not
-a synonym for a generic current-status snapshot. Availability, progress and usage
-are timestamped observations attached to these deployed executions. Capability
-configuration, deployed work configuration and observations remain distinct even
-when all are efficiently indexed in one resident session.
+**ACTIVE = active data per friend.** It records what each friend is doing right
+now: current tasks and the children, swarms, local runs and one-shots executing
+them, chosen/observed models, benches, handles, status, timestamps, tokens and
+costs. This is variable operational data, never called configuration. References
+to stable CONFIG identity/revision explain the capabilities used without copying
+those definitions into every activity record. Updates and observations are
+journaled/retained according to their existing event and accounting contracts.
+
+The coordinator is included in `friends` and tracks her or his own tasks,
+executions, model, bench, usage and availability through the same indexes and
+queries as every other friend. Coordinator ownership is a role with its existing
+single-writer/fencing rules, not an exemption from attribution or accounting.
+A role transfer changes coordinator authority; it does not merge two friend
+identities or erase either friend's historical work.
 
 ## Efficient friend config exchange and token pricing
 
