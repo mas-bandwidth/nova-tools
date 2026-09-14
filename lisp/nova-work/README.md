@@ -33,6 +33,13 @@ beside the Go client's existing `cmd/` and `internal/`.
   names differing only in case would otherwise print identical bytes.
 - Deterministic canonical payload serialization and its SHA-256 digest
   (`src/sha256.lisp`, `SPEC-WORK.md:325`), for the supported transition subset.
+- The internal `:state-to-doing` request applies one nonterminal `:transition`
+  through the same `submit` validation, journal acceptance, payload dedup and
+  publication path. It admits `:todo`, `:blocked`, `:review` and
+  `:cancel-requested` to `:doing`; `:unknown` additionally requires a nonempty
+  reason or a nonempty list of evidence IDs (`SPEC-WORK.md:994-1005`). It emits
+  no settle/revive, leaves branch counters unchanged, and makes no claim of a
+  live lease or W membership. Containers and other incoming edges refuse.
 - Pure atomic application of a validated **close + generated `:settle`** envelope
   and a **reopen + generated `:revive`** envelope (`src/kernel.lisp`,
   `SPEC-WORK.md:1202-1214`); event identity; append-only history and
@@ -111,6 +118,13 @@ names where the row has none.
 | `request-fields-refuse-rather-than-drop` | `:3227` `every-field-has-an-owning-verb` |
 | `dedup-refuses-past-its-bound` | `:3349` `retry-protocol` |
 
+The `second-settle-through-submit-keeps-container-history` case now starts a
+`:todo` leaf through `:state-to-doing`, closes it, reopens it, starts it again
+and closes it again through `submit`. Static required-member ancestors settle
+and revive with it; their second settle rows carry `settles=2`. Reconstruction
+retains the same counters, rows and history. The prior primitive-level test
+remains separate.
+
 ## Partial coverage, stated rather than implied
 
 Nothing here claims green on:
@@ -128,7 +142,10 @@ Nothing here claims green on:
   post-stop state is proof of ordering and of nothing else.
 - **Recovery** (`:3357`). Untouched.
 - **The materialized working set** (`:3354`). Untouched; there is no W here.
-- **Evidence resolution.** Rule 5 (`:2657-2659`) refuses a `:to :done` "naming
+- **Evidence resolution.** The new unknown-to-doing evidence-only path checks
+  a nonempty list of nonempty event-ID strings, not their existence; callers
+  may use a reason instead. This shares the internal kernel's existing
+  evidence-store limitation and does not claim live admission readiness. Rule 5 (`:2657-2659`) refuses a `:to :done` "naming
   no evidence events, or naming ones whose criteria do not cover the node's
   `:acceptance`, or of an older generation than the node's, or whose pointer is
   a `note:` scheme". Only the first clause and the `note:` clause are enforced.
@@ -141,12 +158,6 @@ Nothing here claims green on:
   here, run in two kernels with different revision bases and different stamps.
   That proves the digest is independent of what the session assigns; it does not
   prove two builds agree.
-- **A second settle of one id through the kernel's gate.** `:3104-3106` wants a
-  third row with `settles=2`. A `:reopen` lands at `:todo`, and `:todo` has no
-  edge to `:done` (`:994-1005`), so reaching it would need `state --to doing`,
-  which is outside this slice's transition subset. `settles=2` is exercised on
-  `apply-event` — the primitive the live path and the replay path share — and
-  the test says so at the assertion.
 - **The complete container model.** `containers-settle-with-their-members`
   covers the static containment subset for `:work-set` and `:feature`. Direct
   container close still refuses, and roadmap/epic membership, dynamic
