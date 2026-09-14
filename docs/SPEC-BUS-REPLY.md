@@ -831,6 +831,11 @@ state. The snapshot continuation contract below replaces the earlier commit:id
 scheme. It is awaiting independent friend review; reply-side approval remains
 scoped to the unchanged reply contract.
 
+
+a shape rather than a direction. It is deliberately small: **one additive flag,
+two limits, one frame, one receipt line and one cursor rule.** No new binary, no
+new verb, and nothing here changes a byte of what `inbox` or `wait` print today.
+
 ### The flag, and why it is a flag
 
 **`--bodies`**, on `inbox` and on `wait`. With it, each NEW note that fits the
@@ -867,6 +872,10 @@ still additive in the only sense that was ever promised to the released tool —
 it reorders nothing, renames nothing and changes no run that does not pass it —
 and `TestBodiesModeCapsTheNewSummaryLinesToo` asserts the counts on both sides.
 
+`--bodies` is only ever additive: it adds frames after `INBOX NOTE` lines that
+were going to be printed anyway, and adds one receipt line at the end. It
+removes nothing, reorders nothing and renames nothing.
+
 ### The limits
 
 Bodies are the first thing on a bus whose size is the *sender's* choice rather
@@ -876,6 +885,8 @@ required to have a default:
 | flag | default | ceiling | what it bounds |
 |---|---|---|---|
 | `--max-notes <n>` | 20 | 1000 | how many NEW items print at all in one return — summary line and frame together (**R3**) |
+
+| `--max-notes <n>` | 20 | 1000 | how many NEW notes get a body in one return |
 | `--max-bytes <n>` | 65536 | 1048576 | the total body bytes printed in one return |
 
 **Zero is not "unlimited" and over-ceiling is not "as much as you can".** Either
@@ -904,6 +915,11 @@ The snapshot continuation section below defines page selection, gaps and
 resume. Its item accounting includes gap lines in the note cap. Body framing
 remains exactly the R4 contract that follows.
 
+reaches first.
+
+A note printed without `--bodies` is unaffected by either limit, because no body
+is read: the limits bound this flag's addition and nothing else.
+
 ### The frame
 
 For each NEW note within budget, in the order `inbox` already prints:
@@ -912,6 +928,8 @@ For each NEW note within budget, in the order `inbox` already prints:
 INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>
 INBOX BODY id=<id|-> bytes=<n>
 <the body, exactly n bytes, verbatim>
+
+<the body, n bytes, verbatim>
 INBOX BODY END id=<id|->
 ```
 
@@ -1049,6 +1067,54 @@ do not lose their NEW turn. Failure writing stdout must not advance past the las
 fully emitted safe prefix. Network/publish recovery follows the existing bus
 rules; retry may re-show a body and is not an exactly-once human-delivery promise.
 
+### The receipt
+
+After the frames, exactly one line:
+
+```
+INBOX BODIES printed=<n> bytes=<b> complete=<true|false> next=<cursor-or-marker>
+```
+
+- `printed=` — how many NEW notes got a body in this return;
+- `bytes=` — the total body bytes printed, which is the sum of the frames'
+  `bytes=` and is the number a caller compares against `--max-bytes`;
+- `complete=` — `true` when every NEW note in this return got a body, `false`
+  when a limit stopped the printing short. `false` is the whole overflow signal;
+  there is no second one;
+- `next=` — where a following call resumes: the commit of the **last note
+  actually printed** when `complete=false`, and the commit this run read to when
+  `complete=true`. It is `-` only when nothing was printed at all.
+
+This is a cap, a count and a remedy on one line, which is the law the carried
+list's `--open-max` line obeys and the law this document's own `DRAFT OK` line
+obeys. It is one line at every state: a reader carrying six hundred open notes
+gets one, and a test asserts it there rather than at two.
+
+### The cursor
+
+**`--advance` moves the cursor only to the commit of the last note actually
+printed.** Never past it, and in particular never to `HEAD` on a partial return.
+Without `--advance`, nothing moves: no `CURSOR`, no `OPEN`, no commit, no push —
+the read-only property `inbox` already has, unchanged.
+
+That rule is what makes a partial return safe, and the reason is worth stating
+because it is not the obvious one. An unprinted note is not lost from the
+**open list**: `OPEN` is the memory that lets the cursor move past unanswered
+notes, and the note would still be carried there. What a cursor moved to `HEAD`
+would lose is the note's turn at being **NEW** — it would never again appear in
+the half `--bodies` prints, and its body would be reachable only by the second
+file read this flag exists to remove. So:
+
+- a partial return advances to the last printed note, and the next call resumes
+  at `next=` with the first unprinted note as its first NEW note, in full;
+- a complete return advances as `inbox --advance` does today;
+- a run that printed nothing advances nothing, whatever flags it was given.
+
+**Continuation is by re-running the same command.** There is no resume token to
+carry and no session to hold: the cursor is the position, `next=` is what it
+became, and the second call is the first call again. A caller who wants the
+whole backlog loops until `complete=true`, and each pass is bounded.
+
 ### One reader, not two
 
 `nova-wake` (#239) needs to correlate an answer to a ping, and its **draft 7**
@@ -1074,6 +1140,9 @@ and the second is a standing constraint rather than a claim:
   own budget, its own `drained=`/`complete=`/`next=`/`--after` continuation and its
   own read-only default. One listing path, one set of limits, one continuation grammar.
 
+  own budget, its own `complete=`/`next=` continuation and its own read-only
+  default. One listing path, one set of limits, one continuation grammar.
+
 ### What this half does not do
 
 - **it changes no existing output.** Without `--bodies`, `inbox` and `wait` are
@@ -1086,6 +1155,8 @@ and the second is a standing constraint rather than a claim:
 - **it consumes nothing it did not print.** `printed=`, the cursor and
   `oversize=` are three separate statements and none of them stands in for
   another: a gap is counted, is not printed, and is not passed by the cursor;
+
+  the budget decides **how many whole notes** print, never how much of one;
 - **it is no new binary and no new verb**, and it adds no state: no index, no
   cache, no file of its own;
 - **it does not touch the carried list.** `--open`, `--open-max` and
@@ -1112,6 +1183,11 @@ The released listing supplies eligibility and bookkeeping; this opt-in flag adds
 the NEW-output bounds, so it extends `inbox` rather than creating a second reader.
 
 call, with no output file to read afterwards.**
+
+above: one additive flag, `--max-notes` and `--max-bytes`, the counted
+`INBOX BODY` frame, the `INBOX BODIES` receipt and the cursor rule that never
+advances past what was printed.** The paragraphs below are why that half goes
+first; the section above is what is built.
 
 The main specification already provides the bounded new-notes half of that on a
 released verb, so this is `inbox` extended and not a new verb beside it.
@@ -1231,10 +1307,41 @@ schema, never by inventing abbreviated commit strings.
 ## The tests, by name
 
 Every MUST above has a test, and the name says which one. **Thirty tests
+
+Every MUST above has a test, and the name says which one. **Thirty-six tests
 are named below**, and each one names its fixture and its observable. They are
 ordinary package tests against disposable local bare git remotes, inside the
 existing fast tier's budget — one minute ideally, two at most — with anything heavier
 declared in the certification tier rather than deleted.
+
+**That the read half is bounded, framed and loses no note** — the first build
+target, from *The read half, pinned*
+
+- `TestBodiesWithinBudgetPrintsEveryNewNoteAndSaysComplete` — three new notes
+  inside both limits: each `INBOX NOTE` line is followed by its `INBOX BODY`
+  frame with the true byte count, the bodies are byte-equal to what was sent,
+  and the run ends with one `INBOX BODIES printed=3 complete=true` line.
+- `TestBodiesOverBudgetStopPrintingWholeNotesAndSayCompleteFalse` — one fixture
+  over `--max-notes` and one over `--max-bytes`, plus `--max-notes 0` and a
+  value over the ceiling at exit 2: the return stops on a frame boundary and
+  never inside one, `complete=false`, and `next=` is the commit of the last note
+  actually printed and not `HEAD`.
+- `TestABodyHoldingFakeStatusLinesIsDeliveredVerbatimAndParsedCorrectly` — a
+  body whose lines include `INBOX NOTE id=...`, `INBOX BODIES printed=9` and
+  `INBOX BODY END id=<the real id>`: the frame's byte count carries the reader
+  past every one of them, the body arrives byte-identical, and the note printed
+  after it is parsed as the next note and not as a continuation.
+- `TestRetryAfterAPartialResumesAtNext` — the run after a `complete=false`
+  return, at `next=`, prints the first unprinted note as its first NEW note in
+  full: no note is printed twice, none is skipped, and looping to
+  `complete=true` yields every note exactly once.
+- `TestBodiesWithoutAdvanceMovesNoCursor` — `--bodies` without `--advance`, on
+  complete and partial returns alike: `CURSOR`, `OPEN`, `RECEIPTS` and `INDEX`
+  unchanged on every lane, no commit and no push.
+- `TestInboxAndWaitWithoutBodiesAreByteIdenticalToTodays` — the existing
+  fixtures over both verbs with the flag absent: stdout, stderr and exit code
+  unchanged, including at six hundred carried notes and with `--open`,
+  `--open-max` and `--full`.
 
 **That the released tool is untouched**
 
