@@ -538,6 +538,30 @@ invalid suggestions after concurrent changes and bounded output on large nodes.
 The operational experiment must include time/tokens spent discovering and fixing
 syntax before and after adoption; shorter help alone does not establish a win.
 
+## Fast failure diagnosis
+
+Every failure receipt carries a stable error code, stage (client validation,
+transport, admission/fencing, source I/O, validation, journal, apply/index,
+checkpoint, publication or rendering), verb, request/operation ID and relevant
+node/source/revision when known. Distinguish refused/not accepted, accepted but
+reply lost, running, cancelled and external outcome unknown. Do not invent an
+identity or stage when unavailable; client-side failures still carry correlation
+information available locally.
+
+Keep the default response compact with one concrete cause and the next diagnostic
+query. Provide bounded `operation inspect` / `diagnose` drill-down by correlation
+ID to structured stage events, timestamps/durations and invariant details. Link
+CLI, engine and adapter traces without exposing credentials or dumping private
+issue bodies by default. Logs have explicit size/retention bounds; durable work
+and preservation evidence must not depend on a short-lived debug log surviving.
+
+Validation errors name the field/path, violated rule and related IDs; malformed
+serialized data names a safe byte/line location when available. A failed atomic
+mutation says whether any work was accepted. Performance diagnostics distinguish
+queue, execution, network, validation and journal time where measured, so slow
+work is diagnosable as well as failed work. Tests deliberately break each stage
+and assert correct attribution, safe bounded output and a usable recovery query.
+
 ## Lossless migration and round-trip release gates
 
 No data-loss guarantee rests on parser success, counts alone, Git commits alone
