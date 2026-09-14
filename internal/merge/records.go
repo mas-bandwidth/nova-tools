@@ -538,6 +538,13 @@ func (r *Records) Fold() (*Folded, error) {
 // the rest are surfaced by Packet (rule 23) exactly as Run surfaces them.
 func (r *Records) FoldReadOnly() (*Folded, error) {
 	list := func(dir string) ([]foldFile, error) { return readDirFiles(r.Lane, dir) }
+	return foldWithOneReread(list)
+}
+
+// foldWithOneReread is the report-fold policy for immutable records. The first read may
+// have caught a checkout restore in progress; one later parse is authoritative for a path
+// that then decodes. A problem that remains after both reads is retained by mergeFolds.
+func foldWithOneReread(list func(string) ([]foldFile, error)) (*Folded, error) {
 	first, err := foldFiles(list)
 	if err != nil {
 		return nil, err
@@ -610,34 +617,44 @@ func mergeFolds(a, b *Folded) *Folded {
 	return out
 }
 
-// FoldTip folds the record files of the FETCHED tip in memory, writing neither the state
-// nor the checkout. It is dry-run's fold.
+// FoldTip folds the record files of the fetched tip in memory, writing neither the state
+// nor the checkout. Its existing callers hold the checkout lock because FetchTip acquires
+// and reads FETCH_HEAD under that lock.
 func (r *Records) FoldTip(tip string) (*Folded, error) {
 	release, err := r.LockCheckout()
 	if err != nil {
 		return nil, err
 	}
 	defer release()
-	out, err := r.Git.Out("ls-tree", "-r", "--name-only", tip)
+	return r.foldFetchedTip(tip)
+}
+
+// FoldFetchedTip folds one already acquired immutable commit without taking the checkout
+// lock. It accepts only a full commit sha: mutable names such as HEAD and FETCH_HEAD would
+// make the two tree reads different snapshots, and state.json or the work tree is never a
+// fallback. Fetch acquisition itself remains a separate locked integration step.
+func (r *Records) FoldFetchedTip(tip string) (*Folded, error) {
+	return r.foldFetchedTip(tip)
+}
+
+func (r *Records) foldFetchedTip(tip string) (*Folded, error) {
+	if !IsSHA(tip) {
+		return nil, fmt.Errorf("fetched tip must be a full 40-character sha, got %q", tip)
+	}
+	kind, err := r.Git.Out("cat-file", "-t", tip)
+	if err != nil {
+		return nil, fmt.Errorf("could not inspect fetched tip %s: %w", tip, err)
+	}
+	if kind != "commit" {
+		return nil, fmt.Errorf("fetched tip %s is a %s, not a commit", tip, oneLineOf(kind))
+	}
+	paths, err := r.tipRecordPaths(tip)
 	if err != nil {
 		return nil, err
 	}
-	byDir := map[string][]string{}
-	for _, p := range strings.Split(out, "\n") {
-		p = strings.TrimSpace(p)
-		if p == "" {
-			continue
-		}
-		switch {
-		case strings.HasPrefix(p, ReadsDir+"/"):
-			byDir[ReadsDir] = append(byDir[ReadsDir], p)
-		case strings.HasPrefix(p, GatesDir+"/"):
-			byDir[GatesDir] = append(byDir[GatesDir], p)
-		}
-	}
-	return foldFiles(func(dir string) ([]foldFile, error) {
+	return foldWithOneReread(func(dir string) ([]foldFile, error) {
 		var out []foldFile
-		for _, p := range byDir[dir] {
+		for _, p := range paths[dir] {
 			if !strings.HasSuffix(p, ".json") {
 				continue
 			}
@@ -649,6 +666,29 @@ func (r *Records) FoldTip(tip string) (*Folded, error) {
 		}
 		return out, nil
 	})
+}
+
+// tipRecordPaths uses Git's NUL-delimited tree form. A newline-delimited list followed by
+// TrimSpace turns legal leading/trailing whitespace in a record path into another path;
+// these bytes stay exact through the show and the named fold problem.
+func (r *Records) tipRecordPaths(tip string) (map[string][]string, error) {
+	out, err := r.Git.Run("ls-tree", "-r", "-z", "--name-only", tip)
+	if err != nil {
+		return nil, err
+	}
+	byDir := map[string][]string{}
+	for _, p := range strings.Split(out, "\x00") {
+		if p == "" {
+			continue
+		}
+		switch {
+		case strings.HasPrefix(p, ReadsDir+"/"):
+			byDir[ReadsDir] = append(byDir[ReadsDir], p)
+		case strings.HasPrefix(p, GatesDir+"/"):
+			byDir[GatesDir] = append(byDir[GatesDir], p)
+		}
+	}
+	return byDir, nil
 }
 
 type foldFile struct {
