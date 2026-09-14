@@ -504,3 +504,34 @@ examples and assumptions to verify with the mocked gate and at most one real
 probe per route; this proposal makes no current availability or account claim.
 Provider details were checked on 2026-09-13; availability, pricing and account
 policies remain observations that require refresh.
+
+## Planned trial: lightweight hosted workers alongside local inference
+
+Include OpenCode Go DeepSeek Flash as a candidate for bounded lightweight coding
+jobs, alongside existing local and metered worker routes. The observed motivating
+constraint is bench occupancy: local inference can consume the bench's usable
+GPU/memory capacity and produce tokens slowly. Do not generalize that observation
+into an unmeasured claim about every local or hosted model.
+
+After the credential gate and profile contract are ready, trial comparable small
+fixes, test scaffolding and focused reviews through the existing harness/profile
+path. Pin actual model/version, route, prompt, cache/session behavior and accepted
+quality. Record time to first token, tokens per second where observable, completed
+accepted tasks per minute, queue time, total operational tokens including review
+and rework, subscription allowance consumption, cash/reference cost and bench
+capacity left available for other jobs. A faster token stream or covered marginal
+charge alone does not establish a better completed-work cost.
+
+Start with a bounded task count and concurrency within observed allowance; no
+unlimited-capacity assumption, paid overflow or silent route fallback. Discover
+current model/rate/window metadata rather than hardcoding a promotional allowance.
+Preserve coding-client identity and stable per-conversation session routing where
+the provider requires it. Failures or unavailable capacity produce observations
+and reconciled jobs, not repeated blind launches. Provider-specific API behavior
+is tested with fixtures before live use. No key handling or live launch is granted
+by this plan entry.
+
+Adopt the route for task classes where measured quality is maintained and total
+operational cost/latency improve. Keep local execution available where it wins or
+where the configured data boundary requires it. Record negative or inconclusive
+results; repeat only when changed conditions justify another bounded trial.
