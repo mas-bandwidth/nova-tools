@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -340,6 +341,8 @@ func formatPacket(hdr packetHeader, rest string) string {
 	}
 }
 
+const packetHeaderLimit = 4096
+
 func readPacketFirstLine(path string) (*packetHeader, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -347,29 +350,75 @@ func readPacketFirstLine(path string) (*packetHeader, error) {
 	}
 	defer f.Close()
 
-	var buf [4096]byte
-	n, err := io.ReadFull(io.LimitReader(f, 4096), buf[:])
-	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+	// The header is the only part this helper reads.  A missing newline must not
+	// turn the first 4 KiB of an arbitrarily long file into a plausible packet.
+	content, err := io.ReadAll(io.LimitReader(f, packetHeaderLimit+1))
+	if err != nil {
 		return nil, err
 	}
-	content := string(buf[:n])
-	firstLine, _, _ := strings.Cut(content, "\n")
-	firstLine = strings.TrimRight(firstLine, "\r")
-	return parsePacketFirstLine(firstLine)
+	firstLine, _, found := bytes.Cut(content, []byte{'\n'})
+	if !found || len(firstLine) > packetHeaderLimit {
+		return nil, fmt.Errorf("packet header exceeds %d bytes or is unterminated", packetHeaderLimit)
+	}
+	return parsePacketFirstLine(strings.TrimSuffix(string(firstLine), "\r"))
+}
+
+func isLowerHex(s string, n int) bool {
+	if len(s) != n {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if (s[i] < '0' || s[i] > '9') && (s[i] < 'a' || s[i] > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+func packetHeaderCount(field, value string) (int, error) {
+	n, err := strconv.ParseUint(value, 10, strconv.IntSize)
+	if err != nil || strconv.FormatUint(n, 10) != value {
+		return 0, fmt.Errorf("invalid %s field %q", field, value)
+	}
+	return int(n), nil
+}
+
+func packetHeaderToken(field, value string) error {
+	if value == "" || strings.ContainsAny(value, "=\r\n\t ") {
+		return fmt.Errorf("invalid %s field %q", field, value)
+	}
+	return nil
+}
+
+func packetHeaderRange(value, base, head string) error {
+	sep := "..."
+	if !strings.Contains(value, sep) {
+		sep = ".."
+	}
+	left, right, ok := strings.Cut(value, sep)
+	if !ok || strings.Contains(right, ".") || !isLowerHex(left, 12) || !isLowerHex(right, 12) {
+		return fmt.Errorf("invalid range field %q", value)
+	}
+	if left != merge.Short(base) || right != merge.Short(head) {
+		return fmt.Errorf("range field %q does not name base and head", value)
+	}
+	return nil
 }
 
 func parsePacketFirstLine(line string) (*packetHeader, error) {
-	if !strings.HasPrefix(line, packetV1Prefix+" ") && line != packetV1Prefix {
-		return nil, fmt.Errorf("line does not begin with %q", packetV1Prefix)
+	if !strings.HasPrefix(line, packetV1Prefix+" ") {
+		return nil, fmt.Errorf("line does not begin with %q", packetV1Prefix+" ")
 	}
-	rest := strings.TrimPrefix(line, packetV1Prefix)
-	fields := strings.Fields(rest)
+	fields := strings.Fields(strings.TrimPrefix(line, packetV1Prefix+" "))
 	hdr := &packetHeader{}
 	seen := map[string]bool{}
 	for _, f := range fields {
 		k, v, ok := strings.Cut(f, "=")
-		if !ok {
+		if !ok || k == "" || v == "" {
 			return nil, fmt.Errorf("malformed header field %q", f)
+		}
+		if seen[k] {
+			return nil, fmt.Errorf("duplicate header field %q", k)
 		}
 		seen[k] = true
 		switch k {
@@ -388,17 +437,19 @@ func parsePacketFirstLine(line string) (*packetHeader, error) {
 		case "built":
 			hdr.Built = v
 		case "bytes":
-			b, err := strconv.Atoi(v)
-			if err != nil || b < 0 {
-				return nil, fmt.Errorf("invalid bytes field %q", v)
+			n, err := packetHeaderCount(k, v)
+			if err != nil {
+				return nil, err
 			}
-			hdr.Bytes = b
+			hdr.Bytes = n
 		case "cut":
-			c, err := strconv.Atoi(v)
-			if err != nil || c < 0 {
-				return nil, fmt.Errorf("invalid cut field %q", v)
+			n, err := packetHeaderCount(k, v)
+			if err != nil {
+				return nil, err
 			}
-			hdr.Cut = c
+			hdr.Cut = n
+		default:
+			return nil, fmt.Errorf("unknown header field %q", k)
 		}
 	}
 	required := []string{"id", "entry", "head", "base", "range", "who", "built", "bytes", "cut"}
@@ -406,6 +457,28 @@ func parsePacketFirstLine(line string) (*packetHeader, error) {
 		if !seen[r] {
 			return nil, fmt.Errorf("missing required header field %q", r)
 		}
+	}
+	if !isLowerHex(hdr.ID, 12) {
+		return nil, fmt.Errorf("invalid id field %q", hdr.ID)
+	}
+	if err := packetHeaderToken("entry", hdr.Entry); err != nil {
+		return nil, err
+	}
+	if !merge.IsSHA(hdr.Head) || !merge.IsSHA(hdr.Base) {
+		return nil, fmt.Errorf("head and base must be full lower-case shas")
+	}
+	if err := packetHeaderRange(hdr.Range, hdr.Base, hdr.Head); err != nil {
+		return nil, err
+	}
+	if err := packetHeaderToken("who", hdr.Who); err != nil {
+		return nil, err
+	}
+	built, err := time.Parse(time.RFC3339, hdr.Built)
+	if err != nil || built.UTC().Format(time.RFC3339) != hdr.Built {
+		return nil, fmt.Errorf("invalid built field %q", hdr.Built)
+	}
+	if hdr.ID != packetID(hdr.Entry, hdr.Head, hdr.Base, hdr.Range) {
+		return nil, fmt.Errorf("id field does not match packet tuple")
 	}
 	return hdr, nil
 }

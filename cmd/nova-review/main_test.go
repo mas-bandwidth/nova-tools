@@ -632,3 +632,46 @@ func TestMaxFlagTruncatesEarlierVerdicts(t *testing.T) {
 		t.Fatalf("lacks roster continuation line in All verdicts:\n%s", text)
 	}
 }
+
+func validPacketHeaderForTest() packetHeader {
+	base := strings.Repeat("a", 40)
+	head := strings.Repeat("b", 40)
+	rng := merge.Short(base) + "..." + merge.Short(head)
+	return packetHeader{
+		ID: packetID("feature", head, base, rng), Entry: "feature", Head: head, Base: base,
+		Range: rng, Who: "ada", Built: "2026-09-14T00:00:00Z", Bytes: 100, Cut: 0,
+	}
+}
+
+func TestPacketHeaderRejectsDuplicateUnknownAndInvalidTupleFields(t *testing.T) {
+	h := validPacketHeaderForTest()
+	cases := []struct {
+		name string
+		line string
+	}{
+		{"duplicate", h.String() + " head=" + h.Head},
+		{"unknown", h.String() + " extra=field"},
+		{"upper sha", strings.Replace(h.String(), "head="+h.Head, "head="+strings.ToUpper(h.Head), 1)},
+		{"mismatched range", strings.Replace(h.String(), "range="+h.Range, "range="+merge.Short(h.Base)+".."+merge.Short(h.Head), 1)},
+		{"non-UTC timestamp", strings.Replace(h.String(), "built=2026-09-14T00:00:00Z", "built=2026-09-14T01:00:00+01:00", 1)},
+		{"wrong id", strings.Replace(h.String(), "id="+h.ID, "id="+strings.Repeat("c", 12), 1)},
+		{"noncanonical bytes", strings.Replace(h.String(), "bytes=100", "bytes=0100", 1)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := parsePacketFirstLine(tc.line); err == nil {
+				t.Fatalf("accepted malformed header: %s", tc.line)
+			}
+		})
+	}
+}
+
+func TestReadPacketFirstLineRejectsOverlongUnterminatedHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "packet.md")
+	if err := os.WriteFile(path, []byte(strings.Repeat("x", packetHeaderLimit+1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readPacketFirstLine(path); err == nil {
+		t.Fatal("accepted an unterminated overlong packet header")
+	}
+}
