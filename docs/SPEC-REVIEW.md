@@ -1,4 +1,4 @@
-# nova-review — specification (draft 5, 2026-09-13)
+# nova-review — specification (draft 6, 2026-09-14)
 
 `nova-review` is one binary at the **review layer**. It builds the packet a
 reader needs to read one entry at one head, records the reader's verdict with
@@ -591,7 +591,7 @@ the end. The date on a rule is the day it was learned.
 nova-review packet  --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--reuse <file>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max <n>]
 nova-review verdict --lane <dir> (--pr <n>|--branch <name>) --who <name> --model <id> --kind line|child|card [--of <line>] [--job <id>] --head <sha> [--base <sha>] --verdict approve|hold|abstain (--findings <file> | --reason <text>) [--note <text>] [--usage <file> --usage-source <id> --bench <name> | --receipt <id>] [--started <stamp>] [--max <n>] [--max-rows <n>] [--max-input-bytes <n>] [--max-line-bytes <n>]
 nova-review answer  --lane <dir> (--pr <n>|--branch <name>) --who <name> --finding <id> --head <sha> --as fixed|declined|dup [--of <id>] [--note <text>]
-nova-review policy  --lane <dir> (--pr <n>|--branch <name>) --who <name> --readers <name,...> --reserved <name,...> --deadline <stamp> --reason <text> [--head <sha>]
+nova-review policy  --lane <dir> (--pr <n>|--branch <name>) --who <name> --readers <name,...> --reserved <name,...> --deadline <stamp> --reason <text> --head <sha>
 nova-review roster  --lane <dir> (--pr <n>|--branch <name>) (--readers <name,...> [--reserved <name,...> --deadline <stamp>] | --policy <id>) [--max <n>]
 nova-review dedupe  --lane <dir> (--pr <n>|--branch <name>) [--head <sha>] [--max <n>]
 nova-review cost    --lane <dir> ((--pr <n>|--branch <name>) | --all) [--max <n>]
@@ -649,6 +649,32 @@ OK` prints `current=true|false` against the head the host reports at record
 time, so a reader who is already stale hears it at once and records again at
 the new head rather than discovering it in `roster`.
 
+**`policy --head` is required too, and the record binds to the head it was
+made at.** `head12` in `policy-<who>-<head12>-<at>-<rand6>.json` is the
+twelve-character prefix of the sha the actor passed with `--head` — the full
+40-character sha of the head the entry stood at when they made the decision,
+carried whole in the record's `head` field — and **there is no default**: the
+tool never fills it in from the head the host happens to report at write time,
+and a `policy` with no `--head` is refused, exit 2, naming the flag, exactly as
+`verdict` and `answer` are. Draft 5 marked the flag optional while the record
+required the field, which left one legal reading in which a waiver decided
+against one head was stamped with another the actor never saw; a record that
+closes another reader's row is the last record that should carry a sha nobody
+chose, and rule 13's "nothing is guessed" would have been untrue of exactly
+that one.
+
+**A policy applies to its own head and to no other.** `roster --policy <id>`
+is asked about one head — the head on its own `ROSTER OK` line — and a record
+whose `head` is not that head is refused, exit 2, `ROSTER POLICY HEAD
+policy=<id> policy_head=<sha12> head=<sha12> ratified=false`, naming both shas;
+no row is `waived`, nothing is ratified, and no `ROSTER OK` is printed, so the
+line carries `ratified=false` itself for the reason `ROSTER FOLD` carries it.
+A waiver therefore cannot ride silently from the head it was written for onto a
+head the author has pushed since, which is the fact rule 1 already keeps for a
+verdict — a read binds to the head it was made at — and the remedy is the one
+every record here has: the actor writes a new policy at the new head, with
+their reason, and the roster names the new id. (draft 6)
+
 **`verdict --base <sha>` is the packet's base, and it is the tree every
 `base:` form is checked in** (draft 5). "The packet's base" is not a tree the
 verb can derive: the base is per reader (rule 1), so for a second-round HOLD
@@ -698,7 +724,7 @@ the verb could not run, rather than ran and said no.
 |------|---------|
 | 0 | the verb ran and passed: a packet written, a verdict, answer or policy recorded and pushed, a roster that is ratified, a dedupe or cost report printed **whatever it holds** |
 | 1 | the verb ran and said **NO**: `roster` with `ratified=false`, a packet refused as stale, a record written but not pushed (`pushed=false`, re-run the same verb) |
-| 2 | could not run: missing flag, unreadable lane, a directory that is not a lane, a findings row that fails rule 4 or rule 5, a `close <id>` of a finding that is not open or is another reader's (rule 8), a findings file past `--max-rows`, input past `--max-input-bytes` or a line past `--max-line-bytes` (rule 12), a usage file whose header is not SPEC-SWARM rule 12's, `--usage` without `--usage-source` or `--bench`, `--usage` with `--receipt`, one receipt identity with two digests (`COST RECEIPT`), a `--spec` with no heading in a file of several rule sequences, `--readers` together with `--policy`, `--reserved` without `--deadline` or the reverse, a `policy` whose `--who` is one of its own readers or reserved, a `--policy <id>` no record on the lane carries (rule 7), an APPROVE standing over that reader's own open `block` or `fix` that the file neither closes nor dups (rule 8), a `base:` row with no `--base` or a `--base` that names no commit (rule 4), a `--reuse` whose id is not this reader's or given beside `--spec`, `--rule` or `--max-bytes` (`PACKET REUSE`), a record that does not decode (`<VERB> FOLD`), a read-and-review pair that disagrees (`ROSTER PAIR`, `DEDUPE PAIR`, `COST PAIR`), a `--who` of `answer` or `policy`, or beginning `answer-` or `policy-`, `--max-bytes`, `--max-input-bytes` or `--max-line-bytes` of zero or less, a negative `--max`, bad invocation, `git` or `gh` absent |
+| 2 | could not run: missing flag, unreadable lane, a directory that is not a lane, a findings row that fails rule 4 or rule 5, a `close <id>` of a finding that is not open or is another reader's (rule 8), a findings file past `--max-rows`, input past `--max-input-bytes` or a line past `--max-line-bytes` (rule 12), a usage file whose header is not SPEC-SWARM rule 12's, `--usage` without `--usage-source` or `--bench`, `--usage` with `--receipt`, one receipt identity with two digests (`COST RECEIPT`), a `--spec` with no heading in a file of several rule sequences, `--readers` together with `--policy`, `--reserved` without `--deadline` or the reverse, a `policy` whose `--who` is one of its own readers or reserved, a `--policy <id>` no record on the lane carries (rule 7), a `policy` with no `--head`, a `--policy <id>` whose record's `head` is not the head being rostered (`ROSTER POLICY HEAD`, rule 7, draft 6), an APPROVE standing over that reader's own open `block` or `fix` that the file neither closes nor dups (rule 8), a `base:` row with no `--base` or a `--base` that names no commit (rule 4), a `--reuse` whose id is not this reader's or given beside `--spec`, `--rule` or `--max-bytes` (`PACKET REUSE`), a record that does not decode (`<VERB> FOLD`), a read-and-review pair that disagrees (`ROSTER PAIR`, `DEDUPE PAIR`, `COST PAIR`), a `--who` of `answer` or `policy`, or beginning `answer-` or `policy-`, `--max-bytes`, `--max-input-bytes` or `--max-line-bytes` of zero or less, a negative `--max`, bad invocation, `git` or `gh` absent |
 
 A findings row that fails its check is exit 2 and not 1 because nothing was
 recorded and nothing was judged: the invocation was unusable, and the remedy
@@ -755,6 +781,7 @@ ROSTER MORE kind=<reader|fold> shown=<n> total=<t> nova-review roster --lane <di
 ROSTER OK entry=<n-or-name> head=<sha12> yes=<n> hold=<n> abstain=<n> waived=<n> pending=<n> evidence=<n> ratified=<true|false> merge_read=<satisfied|needs-read|hold> policy=<id|-> deadline=<stamp|-> policy_by=<name|-> policy_reason=<text|->
 ROSTER FOLD file=<path> ratified=false: <reason>
 ROSTER PAIR read=<path> review=<path> field=<who|head|at|verdict>: the two records of one submission disagree
+ROSTER POLICY HEAD policy=<id> policy_head=<sha12> head=<sha12> ratified=false: the policy was made at another head (rule 7)
 ROSTER REFUSED: <reason>
 DEDUPE FINDING id=<id> key=<path>:<line>@<rule_kind>:<rule ref as written> sev=<block|fix|nit|ok> head=<sha12> members=<id,...> seen=<who:model,...> unreported=<who:model,...> blind=<n> dups=<n> open=<true|false> answer=<fixed|declined|dup|->
 DEDUPE MORE kind=<finding|fold> shown=<n> total=<t> nova-review dedupe --lane <dir> … --max 0
@@ -1073,13 +1100,37 @@ as having read at any head, on any restart.
 
 **Destinations stay confined to each part's own directory.** Each part word
 maps to exactly one directory — `read` to `reads/<entry>/`, `gate` to
-`gates/<entry>/`, `review` and `answer` to `reviews/<entry>/` — and a part
+`gates/<entry>/`, and `review`, `answer` and `policy` to `reviews/<entry>/`,
+all five part words of the closed set and no sixth, the manifest
+`<submission id>-parts.json` being an item and not a part — and a part
 whose `file` is absolute, holds `..`, or falls outside the directory its own
 part word maps to is a refusal that publishes **no part of that submission**,
 over and above the check `destinationOf` (`records.go:267-279`) already makes.
 The manifest's own destinations are checked the same way before the first part
 is restored, so the set of paths a submission can write is known and confined
 before anything is written.
+
+**`policy` is named in that mapping, and draft 5 left it out.** Rule 7 makes
+the policy record a legal part and stores it at
+`<lane>/reviews/<entry>/policy-<who>-<head12>-<at>-<rand6>.json`, and amendment
+B makes `policy` one of the five part words; this paragraph enumerated the
+destinations and mapped four of them, which left the fifth with no destination
+checked anywhere a reader of this section would look. An implementation
+reading it as the whole mapping had two bad choices — refuse a flush rule 7
+declares legal, or invent a destination nothing checks — and the confinement
+guarantee is only worth what its enumeration covers. `policy` maps to
+`reviews/<entry>/`, the directory rule 7's own record name already gives it,
+and to nothing else. (draft 6)
+**`TestOneFactOneWriter/PolicyIsConfinedToReviews`** (rule 7 and amendment B,
+draft 6): a `policy` part whose `file` names
+`reviews/<entry>/policy-<who>-<head12>-<at>-<rand6>.json` publishes with the
+rest of its submission; a `policy` part whose `file` names `reads/<entry>/`,
+`gates/<entry>/`, any directory outside `reviews/<entry>/`, an absolute path,
+or a path holding `..` is each a refusal that publishes **no part of that
+submission** and is named before any part is restored; the manifest is checked
+for the `policy` part's destination exactly as it is for the other four; and a
+mutation that maps `policy` to any directory but `reviews/<entry>/`, and one
+that lets a `policy` part escape it, each turn the test red.
 
 **No report verb takes the checkout lock.** `packet`, `roster`, `dedupe` and
 `cost` fetch the lane branch and fold the record files of the fetched tip in
@@ -1590,6 +1641,18 @@ One line per rule. Each must be seen red before it is trusted.
    naming the reserved word and the `policy-` stem; and a mutation that
    ratifies an entry from a `waived` row whose `policy=` is `-`, or one that
    puts the silent reader's own name in `policy_by=`, turns the test red.
+   **`TestSilenceIsPending/PolicyBindsToItsHead`** (rule 7, draft 6): a
+   `policy` with no `--head` is exit 2 naming the flag, and a mutation that
+   fills the head in from the host turns the test red; a policy written at H1
+   carries H1 whole in `head` and H1's twelve characters in its own file name;
+   `roster --policy <id>` at H1 waives `d` as above, and after the author
+   pushes H2 that same `roster --policy <id>` prints `ROSTER POLICY HEAD
+   policy=<id> policy_head=<H1 sha12> head=<H2 sha12> ratified=false`, exit 2,
+   naming both shas, waiving nothing and printing no `ROSTER OK`; a second
+   `policy` written at H2 waives `d` again under its own new id, the first
+   record unchanged; and a mutation that lets a policy carry across heads, and
+   one that ratifies an entry from a policy tied to another head, each turn the
+   test red.
 8. `TestNewestPerReaderDecides`: `stella hold@H1` with findings f1, f2;
    `stella hold@H2` re-listing `dup f1` and adding f3:
    **`/OmissionCarriesForward`** (rule 8, draft 4) — open is `{f1, f2, f3}`,
@@ -1896,6 +1959,18 @@ run's own output.
 No reproducer is executed for any requirement form (what it deliberately does
 not do), and no new product scope is added: every repair above is a contract
 on a rule that was already here.
+
+## Reads folded, 2026-09-14 (draft 5 to draft 6)
+
+Stella's disposition at `5132cadb` (nova-tools#236) clears the seven findings
+of the draft-4 fold and holds on two policy integrations draft 5 declared but
+did not finish wiring. Both are folded above; neither reopens a decided
+question and neither adds product scope.
+
+| the number | the ask | the repair |
+|---|---|---|
+| R8 | `policy` is a legal part stored under `reviews/<entry>/`, but the confinement mapping enumerates destinations and omits it | the mapping names all five part words — `read`, `gate`, `review`, `answer` and `policy` — with `policy` to `reviews/<entry>/` and nowhere else, the manifest still an item and not a part; `TestOneFactOneWriter/PolicyIsConfinedToReviews` publishes a policy at its own destination and refuses one that names `reads/`, `gates/`, an absolute path or `..` |
+| R9 | `policy --head` was optional while the record required `head`, and a waiver could outlive the head it was made at | `--head` is required, is the full sha the actor decided against, and is never filled in from the current head; `roster --policy <id>` refuses a record whose `head` is not the head being rostered, exit 2, `ROSTER POLICY HEAD` naming both shas and carrying `ratified=false`; `TestSilenceIsPending/PolicyBindsToItsHead` |
 
 ## Reads folded, 2026-09-13 (draft 4 to draft 5)
 
