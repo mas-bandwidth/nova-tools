@@ -418,7 +418,7 @@ func TestBodiesWithoutAdvanceMovesNoCursor(t *testing.T) {
 			}
 			run = append(append(append([]string{}, base...), "--max-notes", "1"), "--after", next)
 		}
-		if !strings.Contains(last.stdout, "drained=true") || !strings.Contains(last.stdout, "next=-") {
+		if !strings.Contains(last.stdout, "drained=true") || !strings.Contains(last.stdout, "complete=true") || !strings.Contains(last.stdout, "next=-") {
 			t.Fatalf("the read-only chain did not reach a terminal page:\n%s", last.stdout)
 		}
 		after := readBusState(t, checkout)
@@ -572,6 +572,23 @@ func TestEarlierGapSurvivesLaterPages(t *testing.T) {
 	})
 }
 
+// makeNonAncestorToken creates a token whose base is not an ancestor of its head by using
+// two divergent branches from a common ancestor.
+func makeNonAncestorToken(t *testing.T, checkout string) string {
+	t.Helper()
+	gitIn(t, checkout, "checkout", "-b", "divergent")
+	commitFiles(t, checkout, "div-v1", busFile{"from-bo/div-v1.md", noteFrom("nD1", "div-v1", fill(100))})
+	divHead := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
+	gitIn(t, checkout, "checkout", "main")
+	commitFiles(t, checkout, "main-v1", busFile{"from-bo/main-v1.md", noteFrom("nM1", "main-v1", fill(100))})
+	mainHead := strings.TrimSpace(gitIn(t, checkout, "rev-parse", "HEAD"))
+	first := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--bodies", "--max-notes", "1").mustCode(t, 0)
+	good := bodyNext(t, first.stdout)
+	tok := decodeToken(t, good)
+	return retoken(t, retoken(t, good, `"h":"`+tok.Head+`"`, `"h":"`+divHead+`"`), `"b":"`+tok.Base+`"`, `"b":"`+mainHead+`"`)
+}
+
 // TestSnapshotTokenValidationAndBound: every way a token can be wrong refuses at exit 2 in
 // one shape, and none of them confers any authority.
 func TestSnapshotTokenValidationAndBound(t *testing.T) {
@@ -590,6 +607,7 @@ func TestSnapshotTokenValidationAndBound(t *testing.T) {
 		{"wrong reader", retoken(t, good, `"r":"Ada"`, `"r":"Bo"`)},
 		{"wrong selector", retoken(t, good, `"s":"inbox-new"`, `"s":"other"`)},
 		{"unavailable snapshot", retoken(t, good, decodeToken(t, good).Head, absent)},
+		{"non-ancestor base", makeNonAncestorToken(t, checkout)},
 		{"invalid item path", retoken(t, good, `"p":"from-bo/v1.md"`, `"p":"../../etc/passwd"`)},
 		{"invalid item offset", retoken(t, good, `"o":0`, `"o":-1`)},
 		{"frontier past an unaccounted partial commit", retoken(t, good, `"f":"`+decodeToken(t, good).Frontier+`"`, `"f":"`+decodeToken(t, good).Head+`"`)},
