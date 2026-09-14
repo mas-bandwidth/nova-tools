@@ -143,3 +143,68 @@ func TestBodyRecordsAtSnapshotKeepsTwoReceiptOffsetsInOnePath(t *testing.T) {
 		t.Fatalf("receipt offsets collapsed in snapshot: %+v", records)
 	}
 }
+
+func TestBodySnapshotReadsFirstParentMergeDelta(t *testing.T) {
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+	base, err := HeadCommit(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(clone, "branch", "side", base); err != nil {
+		t.Fatal(err)
+	}
+	write(t, clone, "from-bo/main.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: main\n\nmain")
+	commitByHand(t, clone, "from-bo/main.md", "main body")
+	if _, err := git(clone, "checkout", "-q", "side"); err != nil {
+		t.Fatal(err)
+	}
+	write(t, clone, "from-bo/side.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: side\n\nside")
+	commitByHand(t, clone, "from-bo/side.md", "side body")
+	if _, err := git(clone, "checkout", "-q", "main"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(clone, "-c", "user.name=Merge", "-c", "user.email=merge@example.com", "merge", "--no-ff", "--no-edit", "side"); err != nil {
+		t.Fatal(err)
+	}
+	head, err := HeadCommit(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadConfig(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := BodyNewItemsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, c, mustParticipant(t, c, "Ada"), 40, LegacyLine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 2 || items[0].Path != "from-bo/main.md" || items[1].Path != "from-bo/side.md" {
+		t.Fatalf("first-parent merge walk missed a note: %+v", items)
+	}
+}
+
+func TestBodySnapshotRefusesSuccessfulGitShowPastItsCap(t *testing.T) {
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+	base, err := HeadCommit(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, clone, "from-bo/too-large.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: large\n\n"+strings.Repeat("x", bodySnapshotGitLimit))
+	commitByHand(t, clone, "from-bo/too-large.md", "large body")
+	head, err := HeadCommit(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadConfig(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = BodyNewItemsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, c, mustParticipant(t, c, "Ada"), 40, LegacyLine{})
+	if err == nil || !strings.Contains(err.Error(), "more than") {
+		t.Fatalf("large successful git show was accepted: %v", err)
+	}
+}

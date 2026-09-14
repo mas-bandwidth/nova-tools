@@ -1,9 +1,11 @@
 package bus
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"os"
 	"os/exec"
@@ -16,6 +18,61 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
+
+// gitOutputAtMost is for read paths whose protocol has a concrete response bound.  The
+// normal git helper keeps complete successful output for older operations; a snapshot walk
+// cannot, because an unbounded successful `show` or `diff-tree` defeats bodies mode before
+// its own budget is applied.
+func gitOutputAtMost(dir string, limit int, args ...string) (string, error) {
+	if limit < 1 {
+		return "", fmt.Errorf("git output limit must be positive")
+	}
+	full := append([]string{"-C", dir}, args...)
+	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout())
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", full...)
+	cmd.Env = append(cmd.Environ(), gitEnv...)
+	cmd.WaitDelay = killGrace
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return "", err
+	}
+	var stderr limitedGitBuffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return "", err
+	}
+	out, readErr := io.ReadAll(io.LimitReader(stdout, int64(limit)+1))
+	if len(out) > limit {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return "", fmt.Errorf("git %s produced more than %d bytes; snapshot read refused before an unbounded result", strings.Join(args, " "), limit)
+	}
+	waitErr := cmd.Wait()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return "", fmt.Errorf("git %s did not finish within %s", strings.Join(args, " "), gitTimeout())
+	}
+	if readErr != nil {
+		return "", readErr
+	}
+	if waitErr != nil {
+		return "", &gitError{args: full, err: waitErr, output: stderr.String()}
+	}
+	return string(out), nil
+}
+
+type limitedGitBuffer struct{ bytes.Buffer }
+
+func (b *limitedGitBuffer) Write(p []byte) (int, error) {
+	if b.Len() < gitOutputCap {
+		remain := gitOutputCap - b.Len()
+		if remain > len(p) {
+			remain = len(p)
+		}
+		_, _ = b.Buffer.Write(p[:remain])
+	}
+	return len(p), nil
+}
 
 // The push protocol.
 //

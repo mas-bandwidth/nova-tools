@@ -18,6 +18,10 @@ import (
 const (
 	bodyTokenVersion = 1
 	bodyTokenLimit   = 8 << 10
+	// Snapshot Git responses are protocol data, not a stream for arbitrary repository
+	// contents.  One MiB permits the documented 1,000-item maximum while refusing a
+	// successful command that would make the bodies budget meaningless.
+	bodySnapshotGitLimit = 1 << 20
 )
 
 // BodySnapshot is the immutable identity captured by a first bodies call.  Base and Head
@@ -82,6 +86,7 @@ type BodyPage struct {
 	Gaps         []BodyGap
 	EarliestGap  *BodyGap
 	PrintedBytes int64
+	Frames       int
 	GapCount     int
 	Drained      bool
 	Complete     bool
@@ -172,6 +177,9 @@ func BodyPageFor(items []BodyItem, request BodyPageRequest) (BodyPage, error) {
 			break
 		}
 		size := int64(len(item.Body))
+		if !bodyFrameItem(item) {
+			size = 0
+		}
 		if size > request.MaxBytes {
 			gap := BodyGap{ID: item.Entry.ID, Commit: item.Commit, Path: item.Path, Offset: item.Offset, Bytes: size}
 			page.Gaps = append(page.Gaps, gap)
@@ -193,6 +201,9 @@ func BodyPageFor(items []BodyItem, request BodyPageRequest) (BodyPage, error) {
 		page.Items = append(page.Items, item)
 		page.Emissions = append(page.Emissions, BodyEmission{Item: &page.Items[len(page.Items)-1]})
 		page.PrintedBytes += size
+		if bodyFrameItem(item) {
+			page.Frames++
+		}
 		key := item.key()
 		last = &key
 	}
@@ -222,6 +233,10 @@ func BodyPageFor(items []BodyItem, request BodyPageRequest) (BodyPage, error) {
 		page.Next = encoded
 	}
 	return page, nil
+}
+
+func bodyFrameItem(item BodyItem) bool {
+	return item.Entry.Kind != OpenReceipt && !item.Entry.Heard
 }
 
 func validBodyRequest(r BodyPageRequest) error {
@@ -425,7 +440,7 @@ func BodyRecordsAtSnapshot(root string, snapshot BodySnapshot, eligible []BodyIt
 	}
 	byKey := make(map[bodyItemKey]BodyItem, len(eligible))
 	for _, commit := range commits {
-		out, err := git(root, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", commit)
+		out, err := firstParentChangedPaths(root, commit)
 		if err != nil {
 			return nil, err
 		}
@@ -434,7 +449,7 @@ func BodyRecordsAtSnapshot(root string, snapshot BodySnapshot, eligible []BodyIt
 			if !wantedHere {
 				continue
 			}
-			raw, err := git(root, "show", commit+":"+p)
+			raw, err := gitOutputAtMost(root, bodySnapshotGitLimit, "show", commit+":"+p)
 			if err != nil {
 				return nil, fmt.Errorf("snapshot %s cannot read %s: %w", commit, p, err)
 			}
@@ -492,6 +507,10 @@ func BodyNewItemsAtSnapshot(root string, snapshot BodySnapshot, c *Config, me Pa
 	if err != nil {
 		return nil, err
 	}
+	heard, err := receiptTargetsAtSnapshot(root, snapshot.Head, me.Lane)
+	if err != nil {
+		return nil, err
+	}
 	answered := make(map[string]bool)
 	type candidate struct {
 		item BodyItem
@@ -500,7 +519,7 @@ func BodyNewItemsAtSnapshot(root string, snapshot BodySnapshot, c *Config, me Pa
 	var candidates []candidate
 	seenPath := make(map[string]bool)
 	for _, commit := range commits {
-		out, err := git(root, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", commit)
+		out, err := firstParentChangedPaths(root, commit)
 		if err != nil {
 			return nil, err
 		}
@@ -510,7 +529,7 @@ func BodyNewItemsAtSnapshot(root string, snapshot BodySnapshot, c *Config, me Pa
 			if !isNotePath(p) {
 				continue
 			}
-			raw, err := git(root, "show", commit+":"+p)
+			raw, err := gitOutputAtMost(root, bodySnapshotGitLimit, "show", commit+":"+p)
 			if err != nil {
 				return nil, fmt.Errorf("snapshot %s cannot read %s: %w", commit, p, err)
 			}
@@ -528,7 +547,8 @@ func BodyNewItemsAtSnapshot(root string, snapshot BodySnapshot, c *Config, me Pa
 				continue
 			}
 			seenPath[p] = true
-			candidates = append(candidates, candidate{item: BodyItem{Commit: commit, Path: p, Entry: openEntryFor(c, &note, me, false, maxWords), Body: []byte(note.Body)}, note: note})
+			entry := openEntryFor(c, &note, me, heard[note.Header.ID] || heard[note.Path], maxWords)
+			candidates = append(candidates, candidate{item: BodyItem{Commit: commit, Path: p, Entry: entry, Body: []byte(note.Body)}, note: note})
 		}
 	}
 	items := make([]BodyItem, 0, len(candidates))
@@ -540,6 +560,27 @@ func BodyNewItemsAtSnapshot(root string, snapshot BodySnapshot, c *Config, me Pa
 	return items, nil
 }
 
+func receiptTargetsAtSnapshot(root, head, lane string) (map[string]bool, error) {
+	targets := map[string]bool{}
+	path := lane + "/" + ReceiptsName
+	if _, err := gitOutputAtMost(root, bodySnapshotGitLimit, "cat-file", "-e", head+":"+path); err != nil {
+		if strings.Contains(err.Error(), "exit status 1") {
+			return targets, nil
+		}
+		return nil, fmt.Errorf("snapshot %s cannot inspect %s: %w", head, path, err)
+	}
+	raw, err := gitOutputAtMost(root, bodySnapshotGitLimit, "show", head+":"+path)
+	if err != nil {
+		return nil, fmt.Errorf("snapshot %s cannot read %s: %w", head, path, err)
+	}
+	for _, record := range records(raw) {
+		if _, target, ok := strings.Cut(record.text, " "); ok {
+			targets[strings.TrimSpace(target)] = true
+		}
+	}
+	return targets, nil
+}
+
 func firstParentRange(root, base, head string) ([]string, error) {
 	args := []string{"rev-list", "--reverse", "--first-parent"}
 	if base != "" {
@@ -547,7 +588,7 @@ func firstParentRange(root, base, head string) ([]string, error) {
 	} else {
 		args = append(args, "--root", head)
 	}
-	out, err := git(root, args...)
+	out, err := gitOutputAtMost(root, bodySnapshotGitLimit, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -558,4 +599,19 @@ func firstParentRange(root, base, head string) ([]string, error) {
 		}
 	}
 	return commits, nil
+}
+
+func firstParentChangedPaths(root, commit string) (string, error) {
+	parents, err := gitOutputAtMost(root, bodySnapshotGitLimit, "rev-list", "--parents", "-n", "1", commit)
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(parents)
+	if len(fields) == 0 || fields[0] != commit {
+		return "", fmt.Errorf("cannot determine first parent of snapshot commit %s", commit)
+	}
+	if len(fields) == 1 {
+		return gitOutputAtMost(root, bodySnapshotGitLimit, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", commit)
+	}
+	return gitOutputAtMost(root, bodySnapshotGitLimit, "diff-tree", "--no-commit-id", "--name-only", "-r", fields[1], commit)
 }

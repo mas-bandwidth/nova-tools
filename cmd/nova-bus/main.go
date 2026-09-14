@@ -1333,7 +1333,11 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
 				return 1, r
 			}
-			r.BodyPrinted, r.BodyBytes, r.BodyGaps, r.Next = len(page.Items), page.PrintedBytes, page.GapCount, page.Next
+			r.BodyPrinted, r.BodyBytes, r.BodyGaps, r.Next = page.Frames, page.PrintedBytes, page.GapCount, page.Next
+			// Only the NEW entries fully emitted on this page become carried.  Keeping
+			// every entry from the current listing here would move CURSOR past B while
+			// silently placing B in OPEN, so its body would never get its own NEW turn.
+			r.Open = openAfterBodies(res.Open, res.Fresh, page)
 			if page.SafeFrontier != cursor.Commit {
 				r.AdvanceTo = page.SafeFrontier
 			}
@@ -1400,13 +1404,33 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	// BOTH, under the same names, beside the decomposition that makes them add up.
 	fmt.Fprintf(stdout, "INBOX OK as=%s carrying=%d open=%d notes=%d receipts=%d heard=%d unaddressed=%d unreadable=%d\n",
 		oneline.Field(me.Name), len(res.Open), notes+receipts, notes, receipts, heard, len(res.Unaddressed), len(res.Unreadable))
-	r.Me, r.Open, r.Legacy, r.Cursor, r.Full = me, res.Open, legacy, cursor.Commit, scope.Full
+	r.Me, r.Legacy, r.Cursor, r.Full = me, legacy, cursor.Commit, scope.Full
+	if !o.bodies {
+		r.Open = res.Open
+	}
 	// What this run would show a reader as news; see inboxReading.New.
 	r.New = res.New
 	if scope.Full {
 		r.New = len(res.Open)
 	}
 	return 0, r
+}
+
+func openAfterBodies(current, fresh []bus.OpenEntry, page bus.BodyPage) []bus.OpenEntry {
+	freshPath := make(map[string]bool, len(fresh))
+	for _, entry := range fresh {
+		freshPath[entry.Path] = true
+	}
+	out := make([]bus.OpenEntry, 0, len(current))
+	for _, entry := range current {
+		if !freshPath[entry.Path] {
+			out = append(out, entry)
+		}
+	}
+	for _, item := range page.Items {
+		out = append(out, item.Entry)
+	}
+	return out
 }
 
 // effectiveLegacy is the line a run reads under: the flag when it is given, and otherwise
@@ -1572,6 +1596,18 @@ func printBodyPage(stdout io.Writer, page bus.BodyPage) error {
 		}
 		item := *emission.Item
 		e := item.Entry
+		kind := "NOTE"
+		if e.Heard {
+			kind = "HEARD"
+		} else if e.Kind == bus.OpenReceipt {
+			kind = "RECEIPT"
+		}
+		if kind != "NOTE" {
+			if _, err := fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n", kind, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
+				return err
+			}
+			continue
+		}
 		bodyBytes := item.Body
 		if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
 			return err

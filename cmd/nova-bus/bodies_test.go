@@ -42,6 +42,24 @@ func TestBodiesBrokenOutputCannotAdvanceCursor(t *testing.T) {
 	}
 }
 
+func TestBodiesPreservesReceiptAndHeardAsSummaryOnly(t *testing.T) {
+	checkout, _ := busDir(t)
+	// The fixture's second incoming note is an actual receipt-shaped note. It remains a
+	// listing entry, but must not be reframed as body prose.
+	receipt := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--bodies", "--max-notes", "10", "--max-bytes", "1000").mustCode(t, 0)
+	if !strings.Contains(receipt.stdout, "INBOX RECEIPT id=bo-111111111111") || strings.Contains(receipt.stdout, "INBOX BODY id=bo-111111111111") {
+		t.Fatalf("receipt did not remain summary-only:\n%s", receipt.stdout)
+	}
+
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--advance", "--carry-history", "--remote", "origin", "--branch", "main").mustCode(t, 0)
+	addBodyCommit(t, checkout, "from-bo/heard.md", "bo-121212121212", "heard body")
+	addReceiptRecord(t, checkout, "bo-121212121212")
+	heard := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--bodies", "--max-notes", "10", "--max-bytes", "1000").mustCode(t, 0)
+	if !strings.Contains(heard.stdout, "INBOX HEARD id=bo-121212121212") || strings.Contains(heard.stdout, "INBOX BODY id=bo-121212121212") {
+		t.Fatalf("valid RECEIPTS record did not make the note heard/summary-only:\n%s", heard.stdout)
+	}
+}
+
 type refusingWriter struct{}
 
 func (refusingWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
@@ -57,6 +75,19 @@ func TestBodiesContinuationKeepsOriginalSnapshotAfterAdvanceAndNewTip(t *testing
 	token := bodyNext(t, first.stdout)
 	if !strings.Contains(first.stdout, "\nA\n") || strings.Contains(first.stdout, "\nB\n") {
 		t.Fatalf("first page was not the first immutable item:\n%s", first.stdout)
+	}
+	open, err := bus.ReadOpen(checkout, "from-ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range open {
+		if entry.ID == "bo-bbbbbbbbbbbb" {
+			t.Fatalf("unemitted B was persisted in OPEN: %+v", open)
+		}
+	}
+	ordinary := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40").mustCode(t, 0)
+	if !strings.Contains(ordinary.stdout, "path=from-bo/b.md") {
+		t.Fatalf("ordinary inbox did not retain B as NEW after page A advance:\n%s", ordinary.stdout)
 	}
 	// This reply reaches HEAD after H and closes B in today's OPEN.  The continuation
 	// must rebuild C0..H from its token, rather than let that later state erase B.
@@ -94,6 +125,14 @@ func addBodyReply(t *testing.T, checkout, path, target string) {
 	writeFile(t, checkout, path, "From: Ada\nTo: Bo\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: later reply\nRe: "+target+"\n\nlater")
 	gitIn(t, checkout, "add", "--", path)
 	gitIn(t, checkout, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "commit", "-q", "-m", "later reply")
+	gitIn(t, checkout, "push", "-q", "origin", "main")
+}
+
+func addReceiptRecord(t *testing.T, checkout, target string) {
+	t.Helper()
+	writeFile(t, checkout, "from-ada/RECEIPTS", "2026-09-09T12:34:56Z "+target+"\n")
+	gitIn(t, checkout, "add", "--", "from-ada/RECEIPTS")
+	gitIn(t, checkout, "-c", "user.name=Ada", "-c", "user.email=ada@example.com", "commit", "-q", "-m", "receipt "+target)
 	gitIn(t, checkout, "push", "-q", "origin", "main")
 }
 
