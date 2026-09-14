@@ -2635,8 +2635,11 @@ closed experiments and attempts; roadmap and friend views reference them after c
    its parent context was cleared or stopped accumulating tokens.
 5. **Review once per applicable scope and revision.** Reuse a valid review only when its
    reviewed content, acceptance contract and dependencies are unchanged. Read the relevant
-   delta when they change; expand for unresolved interaction risk. Required independent friend
-   reviews remain required. A repeated review records its trigger rather than silently charging
+   delta when they change; expand for unresolved interaction risk. The reviewer determines
+   relevance and depth against the unchanged acceptance contract and records the reviewed scope,
+   dependency assumptions and unresolved risks. Reuse never shortens the required read of the
+   integrating context; a prior receipt cannot decide that context safe on the reviewer's behalf.
+   Required independent friend reviews remain required. A repeated review records its trigger rather than silently charging
    the task twice. A shorter report is never a quality waiver.
 6. **Measure the whole operational unit.** Include preparation, parent and descendants,
    coordination, review, retries and repair. Exclude building the optimisation tool itself;
@@ -2668,7 +2671,14 @@ Optimise cached-input volume as well as hit rate: repeated large prefixes still 
 Record request count and input-size distribution alongside accepted units, without substituting
 either for completed work.
 
-Context refresh is a policy decision, not an unconditional timer. Compare retained-context cost
+Context refresh is a policy decision, not an unconditional timer. The friend policy stores a
+`:context-mode` (`:retain`, `:trial-refresh`, or `:verified-refresh`), the refresh adapter capability
+reference, and a revision-bound decision artifact containing the chosen action, checkpoint,
+comparison inputs, assumptions and quality gate. Validated `config --intake` owns changes to these
+fields under the same friend-subject event. The dispatch admission validator refuses an automatic
+refresh lacking that artifact, capable adapter, or applicable trial/adoption evidence; it does
+not pretend to reset a host that exposes no reset operation. A bounded trial can investigate
+unknown costs, but unknowns cannot satisfy a verified-refresh gate. Compare retained-context cost
 against checkpoint creation, new-prefix processing/cache writes, expected subsequent reads and
 any recovery/review cost. Trial stable compact instruction/tool prefixes with task-specific deltas
 at the end where the harness supports this. Preserve required safety and tool schemas. A new
@@ -2684,7 +2694,12 @@ independent ready results and questions until one bound is reached, then present
 revision-bound packet. Reuse the existing read-bundle, independent-batch and atomic-batch
 semantics; no new transaction protocol is implied. Dependent work still waits for its prerequisite,
 and urgent corrections, stop requests, lease changes and deadlines bypass the delay. Do not
-inflate a prompt just to fill a batch. Empty or unchanged batches require zero model calls.
+inflate a prompt just to fill a batch. Each packet manifest references the task or required
+shared instructions for every included fragment and records its digest and bytes. The packet
+builder admits only those fragments; its validator rejects unreferenced padding and excess
+bounds. Whether a referenced fragment is necessary remains reviewer judgment, recorded in the
+packet review: the byte validator cannot establish semantic relevance. Empty or unchanged
+batches require zero model calls.
 
 Measure batches by accepted work, total actor tokens and priced cost, with queueing latency and
 quality beside them. Record model round trips, API requests and work units separately: reducing
@@ -2705,8 +2720,8 @@ safety margin for latency and head-of-line blocking rather than maximising batch
 | quiet-until-actionable | Unchanged observations cause zero model dispatches; actionable batching respects bounds and urgent corrections/stops bypass it. |
 | reuse-only-valid-review | Same-scope review is reusable; changed acceptance/dependencies invalidate it; independent friend gates cannot be replaced by reuse. |
 | complete-cost-lineage | Parent/child/retry receipts join once, failed attempts count, cache subsets do not double count, implementation cost stays separate, gaps remain unknown. |
-| batch-with-bounds-and-urgency | Independent results coalesce within byte/record/delay bounds, unchanged batches cause no call, urgent corrections bypass delay, dependencies and partial retry identities survive. |
-| cache-aware-context-choice | Cache reads/writes and tier thresholds price separately; a reset includes rebuild costs; a lower hit rate can still win when total matched-work cost falls. |
+| batch-with-bounds-and-urgency | Independent results coalesce within byte/record/delay bounds, unchanged batches cause no call, unreferenced padding refuses, urgent corrections bypass delay, dependencies and partial retry identities survive. |
+| cache-aware-context-choice | Cache reads/writes and tier thresholds price separately; a reset includes rebuild costs and refuses missing decision/adapter/evidence; a lower hit rate can still win when total matched-work cost falls. |
 | evidence-before-adoption | Missing baseline/coverage, unmatched quality or a retrospective correlation alone cannot auto-promote; a fully qualified prospective result can. |
 | regression-and-recovery | A breached trial stops new automatic assignments; eligible fallback preserves role limits, history and uncertain live handles. |
 
