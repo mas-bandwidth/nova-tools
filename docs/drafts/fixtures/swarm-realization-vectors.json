@@ -1,0 +1,54 @@
+{
+  "schema": "nova.swarm.realization.vectors/1",
+  "scope": "proposal only; no secret values or launch behavior",
+  "input": {
+    "context": {"kind": "pool", "root": "/srv/nova/pool-A"},
+    "job_id": "20260914T120000Z-proof-0a1b2c",
+    "execution": {
+      "path": ["/opt/opencode/bin", "/usr/bin", "/bin"],
+      "env": [{"name": "NO_COLOR", "value": "1"}]
+    },
+    "secret_env_var": "OPENCODE_API_KEY"
+  },
+  "vectors": [
+    {
+      "slot": "2", "reservation_nonce": "0123456789ab",
+      "paths": {
+        "slot": "/srv/nova/pool-A/slots/2/worker",
+        "job": "/srv/nova/pool-A/slots/2/worker/jobs/20260914T120000Z-proof-0a1b2c",
+        "data_home": "/srv/nova/pool-A/slots/2/worker/jobs/20260914T120000Z-proof-0a1b2c/data"
+      },
+      "env": [
+        {"name": "HOME", "value": "/srv/nova/pool-A/slots/2/worker/jobs/20260914T120000Z-proof-0a1b2c/data"},
+        {"name": "NOVA_SWARM_JOB", "value": "/srv/nova/pool-A/slots/2/worker/jobs/20260914T120000Z-proof-0a1b2c"},
+        {"name": "NO_COLOR", "value": "1"},
+        {"name": "PATH", "value": "/opt/opencode/bin:/usr/bin:/bin"},
+        {"name": "XDG_DATA_HOME", "value": "/srv/nova/pool-A/slots/2/worker/jobs/20260914T120000Z-proof-0a1b2c/data"}
+      ],
+      "env_hash": "sha256:c99ac104c4adda7a57c838b2c86294ea63ae5375cc442f794f10f931c41a676c"
+    },
+    {
+      "slot": "7", "reservation_nonce": "fedcba987654",
+      "paths": {
+        "slot": "/srv/nova/pool-A/slots/7/worker",
+        "job": "/srv/nova/pool-A/slots/7/worker/jobs/20260914T120000Z-proof-0a1b2c",
+        "data_home": "/srv/nova/pool-A/slots/7/worker/jobs/20260914T120000Z-proof-0a1b2c/data"
+      },
+      "env": [
+        {"name": "HOME", "value": "/srv/nova/pool-A/slots/7/worker/jobs/20260914T120000Z-proof-0a1b2c/data"},
+        {"name": "NOVA_SWARM_JOB", "value": "/srv/nova/pool-A/slots/7/worker/jobs/20260914T120000Z-proof-0a1b2c"},
+        {"name": "NO_COLOR", "value": "1"},
+        {"name": "PATH", "value": "/opt/opencode/bin:/usr/bin:/bin"},
+        {"name": "XDG_DATA_HOME", "value": "/srv/nova/pool-A/slots/7/worker/jobs/20260914T120000Z-proof-0a1b2c/data"}
+      ],
+      "env_hash": "sha256:58e4ade2659df573db2d6b906d22636c00d291694bb84de2b8d79429d234e1ae"
+    }
+  ],
+  "control_manifest_shape": {
+    "schema": "nova.swarm.control/1",
+    "entries": [
+      {"role": "launcher", "destination": "launcher", "type": "regular", "mode": "0755", "bytes": "123", "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
+      {"role": "sandbox", "destination": "sandbox", "type": "regular", "mode": "0755", "bytes": "456", "sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"}
+    ]
+  }
+}

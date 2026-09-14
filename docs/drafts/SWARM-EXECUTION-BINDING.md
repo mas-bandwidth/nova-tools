@@ -6,6 +6,11 @@ in that spec, update encoding fixtures, or approve an implementation. The propos
 copy and hash design has coordinator review, but no new independent friend approval.
 Two bounded DeepSeek cold reads produced no reports and confer no approval.
 
+The [realization contract](SWARM-REALIZATION.md) and
+[artifact publication contract](SWARM-ARTIFACT-PUBLICATION.md) now supply concrete
+proposals for the first three decisions below, including synthetic vectors.
+They amend this discussion draft as stated; parent tables/readers remain unchanged.
+
 Pending amendment to `SPEC-SWARM-PROFILES.md`; it is neither a runtime claim nor a change to legacy `--worker`
 readers. New members apply only to a profiled `nova.swarm.attempt/1` after that reader is upgraded.
 `worker.usage` stays an accounting-source selector; it never selects an adapter or executable.
@@ -35,7 +40,7 @@ At admission, stream no more than `max_manifest_bytes` plus an overflow byte and
 (UTF-8 JSON, no trailing bytes) with this exact record shape:
 
 ```json
-{"version":1,"entries":[
+{"schema":"nova.swarm.artifact/1","entries":[
  {"role":"harness","destination":"harness/opencode","type":"regular",
   "mode":"0755","bytes":"123","sha256":"sha256:<64 lowercase hex>"},
  {"role":"worker","destination":"worker/INSTRUCTIONS.md","type":"regular",
@@ -51,7 +56,7 @@ parents must be explicit `dir` entries, so an empty directory is retained determ
 unique, clean, relative slash paths, lexicographically ordered by raw UTF-8 bytes, bounded by 4096 bytes, and
 have the shown role prefix. Regular `bytes` are canonical decimal, their sum is at most `max_bytes`, and entry
 count is at most `max_files`. Modes are exactly `0644|0755` for regulars and `0755` for dirs. Links, devices,
-FIFOs, sockets, set-id modes, unknown types, missing parents, extra harness files, writable source/control
+FIFOs, sockets, set-id modes, unknown types, missing parents, extra harness files, worker-writable source/control
 parents, or aggregate/manifest bound failure refuse.
 
 Copy precisely those regular files, no replace, into a coordinator-owned, worker-nonwritable protected artifact
@@ -93,8 +98,7 @@ role map, and callback input are all bound by the two noncyclic preimages. For p
 must materialize only the protected copies; a live `worker_dir` or slot copy is never a recovery preimage.
 
 The generator may consume only those canonical non-secret values: `credentials` contributes its retained names
-and paths, never opened credential contents or a gated environment. `ARTIFACT.json` uses ordinary canonical JSON
-`version: 1`; this is intentional and separate from the number-free protected attempt schema.
+and paths, never opened credential contents or a gated environment. `ARTIFACT.json` and `CONTROL.json` use number-free string schema tags under the publication amendment, so their validated values can use the same canonical encoder as the protected attempt. The existing catalog framing is unchanged.
 
 ## Authenticated launch realization
 Admission freezes a plan before a slot exists. After the launcher verifies the protected attempt and
@@ -121,7 +125,7 @@ lifecycle sandbox source into a worker-nonwritable control artifact at
 no-replace and durable, with exact shape:
 
 ```json
-{"version":1,"entries":[
+{"schema":"nova.swarm.control/1","entries":[
  {"role":"launcher","destination":"launcher","type":"regular","mode":"0755","bytes":"<canonical decimal>","sha256":"sha256:<64 lowercase hex>"},
  {"role":"sandbox","destination":"sandbox","type":"regular","mode":"0755","bytes":"<canonical decimal>","sha256":"sha256:<64 lowercase hex>"}
 ]}
@@ -132,18 +136,17 @@ of its canonical bytes. `control.launcher.path`, rather than `credentials.launch
 gate-argv program; top-level `sandbox` is the copied sandbox path that child argv executes. Sources are
 provenance only. This gives each program one source owner and one protected execution path, not two launcher
 owners. Launcher validates attempt/artifact/HARNESS/control hashes before identify and refuses unknown
-adapter/revision/platform/loader/interpreter compatibility. Task read/write roots remain task surfaces,
-distinct from immutable control inputs.
+adapter/revision/platform/loader/interpreter compatibility. The derived job/data write roots and explicitly frozen read roots remain task surfaces,
+distinct from immutable control inputs; profiles add no task-selected write roots.
 
-`realization.env_hash` is required. It is SHA-256 of canonical JSON `{"reservation_nonce":"<existing
-nonce>","slot":"<existing slot>","env":[ {"name":"...","value":"..."}]}`: entries include derived HOME/XDG/job
-values, frozen PATH and static env, and are sorted by raw UTF-8 name; names are unique and the route-secret
-value is excluded. Launcher recomputes it after reservation and refuses mismatch before identify. It is excluded
-from attempt/config hashes. Every new reservation has a new nonce, may select another slot, and therefore has a
-new realization hash, while retaining first validated context, sandbox/control copies, usage cadence, and
-generation inputs. A `lineage.retry` uses the prior immutable execution binding rather than recomputing changed
-catalog/worker sources. Any changed profile, artifact, adapter, generator, PATH, static env, or runtime control
-input is explicit rework with a new attempt. Mismatch or partial artifact quarantines.
+`realization.env_hash` is required. Its exact number-free preimage, profile-only
+slot/job path formulas, and independent coordinator/launcher recomputation are in
+[SWARM-REALIZATION](SWARM-REALIZATION.md). This supersedes the earlier abbreviated
+`{reservation_nonce,slot,env}` preimage: context, paths, job and secret-variable
+name are explicitly bound too; secret values remain excluded. The realization
+hash stays outside attempt/config hashes. Another reservation of the same job
+keeps its protected roots; a linked retry job gets byte-identical protected copies
+under its new evidence identity. Changed inputs require explicit rework.
 
 ## Tables, fixtures, and decisive tests
 Update the profile worker table (current lines 77–100), protected-attempt body and `config` preimage table
@@ -166,21 +169,20 @@ supported interpreter/runtime-library compatibility; implementation of protected
 no-secret and one-shot adapters; plus existing gate-observation, accounting, profile-encoding, and
 source-of-truth review gates. This proposal does not claim those compatible or implemented.
 
-## Remaining decisions before incorporation
+## Integration and remaining decisions before incorporation
 
-- Define the exact relationship among `control.root`, the two manifest role
+- The realization companion proposes the exact relationship among `control.root`, the two manifest role
   destinations, `control.launcher.path`, top-level `sandbox`, and their source
   provenance. Cross-check every duplicate digest against the one manifest
   entry; never accept an arbitrary protected path because its bytes hash.
-- Pin one pure environment-realization function shared by coordinator and
+- The realization companion proposes one pure environment-realization function shared by coordinator and
   launcher. The coordinator must calculate the expected hash before publishing
   the launch record; the launcher independently recomputes it before identify.
   The current phrase “it alone derives” describes launcher enforcement, not a
-  prohibition on coordinator calculation. Exact context/job/slot path mappings
-  still need a compatibility vector.
-- Pin bounded readers and durable publication order for ARTIFACT, CONTROL and
-  HARNESS, including aggregate byte accounting and which first-launch controls
-  are reused across a new retry job ID. An interrupted copy is not a committed
+  prohibition on coordinator calculation. Exact context/job/slot path mappings now have synthetic compatibility vectors; actual launcher materialization remains unimplemented.
+- The publication companion proposes bounded readers and durable publication order for ARTIFACT, CONTROL and
+  HARNESS, including aggregate byte accounting and the realization companion specifies how first-launch control bytes
+  are reused across a new retry job ID. These still require incorporation and runtime verification. An interrupted copy is not a committed
   artifact, and a changed source is not a recovery preimage.
 - Specify exact generated OpenCode configuration bytes, allowed static variable
   names and supported native adapter compatibility. A named revision plus a
