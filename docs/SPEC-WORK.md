@@ -2077,7 +2077,7 @@ key and an empty array cannot digest to one value (replay
 `absent-empty-and-null-are-three-spellings`). A request is `{"op": "<verb>", "request": "<id>", "as": "<name>", "expect": "<rev>", "now":
 "<stamp>", "max": "<n>", "deadline": "<stamp>", "args": {…}}` with `op` a **typed operation name
 and never an executable form**, no Lisp, no shell, no path the engine did not resolve itself. A
-response is `{"ok": true|false, "exit": "<0|1|2>", "lines": [ … ], "rev": "<n>", "pushed":
+response is `{"request": "<id>", "ok": true|false, "exit": "<0|1|2>", "lines": [ … ], "rev": "<n>", "pushed":
 "<rev>|-"}`, where **`lines` are exactly the one-line answers of *Output grammar* below,
 verbatim** — so the grammar has one definition and the CLI prints what it was handed rather than
 formatting a second time. **The client splits them by the second token and by nothing else**:
@@ -2089,6 +2089,25 @@ the one version it will speak or refuses, naming what it supports, and closes; a
 version fails clearly and never degrades into a guess. **Restricted s-expressions remain the
 durable work-data format** — JSON is the wire and never the store (replays
 `wire-integers-are-strings`, `protocol-version-negotiated-or-refused`).
+
+**Every ordinary response echoes its request id** *(Stella's correction for review)*.
+This includes read-only queries, refusals, batch envelopes, and the initial acknowledgement
+of a long operation. The client matches replies by this field, never arrival order or the
+human-readable lines: a bounded status query may finish before an earlier slow operation.
+The long operation's durable id identifies the continuing work; it does not replace the id
+of the request that asked for it. An independent batch also names each entry's request id
+beside its disposition, including `not attempted`; an atomic batch retains its envelope id
+and the stable entry ids used to identify validation failures. These are the existing ids,
+not a second deduplication mechanism.
+
+The client does not put the same request id in flight twice on one connection. An uncertain
+retry on a new connection keeps the original id and payload and uses the existing durable
+mutation-disposition rules. A response with an unknown, duplicate or missing request id is a
+protocol error: close the connection and reconcile outstanding mutation ids rather than
+guessing which request succeeded. A frame refused before a valid id can be decoded carries
+`"request": null` and closes the connection; it does not acknowledge any queued request.
+The initial `hello` negotiation is the sole ordinary exchange without a request id and
+finishes before pipelining begins (replay `pipeline-replies-are-correlated`).
 
 **Durability across the wire is the journal's, not the connection's.** Mutations enter the single
 writer's queue; the accepted envelope is journaled and applied before its success response.
@@ -3178,6 +3197,14 @@ of this list and are not repeated here):
 - **`protocol-version-negotiated-or-refused`** — a client offering an unsupported version refused
   with the supported list named and the connection closed, no request admitted before the
   handshake, and an oversized frame refused with one framed error before the close.
+- **`pipeline-replies-are-correlated`** — pipeline two different queries, a mutation and a
+  long-operation acceptance, then deliver their response frames out of order and in fragments:
+  every response reaches only its matching request, and the operation id remains distinct.
+  Include independent-batch `not attempted` entries and atomic-batch validation failures.
+  Unknown, duplicate and absent response ids close the connection without falsely settling
+  any outstanding request; malformed input with no decodable id receives a null-id refusal
+  and no admission. Reconnect after a lost mutation response and prove same-id reconciliation
+  applies no second event. These are required implementation tests, not results already observed.
 - **`disconnect-is-not-a-rollback`** — a client killed after its mutation was journaled: the event
   stands, the same request id and body returns the recorded disposition, and the same id with
   different arguments is refused; `rev=` and `pushed=` distinct in every response.
