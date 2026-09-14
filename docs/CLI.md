@@ -417,11 +417,25 @@ is that cycle inverted — one call that returns the moment something moved, and
 otherwise at a deadline you named, so the window pays one turn per **change**
 rather than one turn per **tick**.
 
-It watches three sources — a bus inbox, the checks on a set of entries, and
-`RESULT.md` files written by other lines — and says what moved. It acts on none
-of them: **everything it prints is data.** A note it relays is not an
-instruction, a failing check is not a verdict about whose fault it is, and a
+It watches **seven** sources — a bus inbox, the checks on a set of entries,
+`RESULT.md` files written by other lines and, since the amendment of
+2026-09-13, the comments and reviews on named or owned pull requests (`--pr`,
+`--owned-prs`), the check runs on a named head (`--run`), a branch moving
+(`--ref`) and an advisory lock released (`--lock`) — and says what moved. It
+acts on none of them: **everything it prints is data.** A note it relays is not
+an instruction, a failing check is not a verdict about whose fault it is, and a
 report file is prose somebody else wrote.
+
+There is one verb beside them that asks a question rather than reporting one.
+`nova-wake probe --line <name>` reads a line's last sign from the bus checkout,
+sends one caller-written ping if it is silent past `--silent-after`, and is
+`UNAVAILABLE` after `--answer-within` with the reason **unknown** — the tool
+never writes *out of credits* or *asleep*, because it has measured a silence and
+nothing else. `nova-wake probe --here` reads this bench's load averages, CPU
+count and process count from the operating system at that instant, so a
+readiness receipt carries the numbers it was decided on. The word READY appears
+nowhere in this tool's output: the receipt is yours, and it is a promise about
+the next ten minutes.
 
 ### First run
 
@@ -435,11 +449,19 @@ WAKE NOTE quickstart chose --baseline, --interval 5s and --max 5s, so a first ru
 WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
 WAKE REPORT path=reports/first-job/RESULT.md lines=8 bytes=220 new
 WAKE REPORT path=reports/second-job/RESULT.md lines=7 bytes=199 new
-WAKE CHANGE after=0s polls=1 bus=0 entries=0 reports=2 lines=0 pending=0
+WAKE CHANGE after=0s polls=1 bus=0 entries=0 reports=2 lines=0 prs=0 runs=0 branches=0 locks=0 pending=0
 
 $ nova-wake watch --state ./wake.state --max 5s --on-deadline report --interval 5s --reports ./reports
 WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=reports state=./wake.state cold=false nova-bus=- pending=0
 WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default taken
+```
+
+The natural FIRST probe is `--here`, because it needs no bus, no state file and
+no lock at all:
+
+```
+$ nova-wake probe --here
+WAKE HERE at=2026-09-13T10:12:04Z load=2.41,2.10,1.98 cpus=10 procs=1344
 ```
 
 How to read it. The **first** line is the opening `WAKE`, printed before

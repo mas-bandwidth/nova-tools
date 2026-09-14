@@ -4161,11 +4161,16 @@ keeps working.
 ## nova-wake — one turn per change, not one per tick
 
 One binary at the **attention layer**. It blocks inside a tool call and returns
-the moment a bus inbox, the checks on a named entry, a report file or a watched
-line's silence has moved, and otherwise at the deadline the caller named.
-Everything it prints is data: a note it relays is not an instruction.
+the moment one of **seven** sources — a bus inbox, the checks on a named entry,
+a report file, the conversation on a named or owned pull request, the check runs
+on a named head, a branch's tip, an advisory lock — or a watched line's silence
+has moved, and otherwise at the deadline the caller named. Everything it prints
+is data: a note it relays is not an instruction.
 
-Verbs: `watch`, `serve`, `quickstart`, `version`, `help`.
+Verbs: `watch`, `probe`, `serve`, `quickstart`, `version`, `help`. `probe` is
+the one that gates: it asks whether a named line, or this bench, can be handed
+work right now, and its exit 1 says *do not assign now* — never anything about
+the line or the person.
 
 Its governing text is **[docs/SPEC-WAKE.md](SPEC-WAKE.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated

@@ -87,6 +87,18 @@ type Bus struct {
 	Refresh bool
 	Remote  string
 	Branch  string
+	// ToOnly brings watch into line with serve, which has always dispatched
+	// only on `to` (rule 10: to means must act, cc means should know, and a
+	// broadcast to five is five turns). With it, an INBOX NOTE ... addr=cc is
+	// NOT A CHANGE: not printed, not queued and not marked printed= -- a mark
+	// would claim the window was shown it -- but COUNTED, cc=<n> on the WAKE
+	// SOURCE bus line, so the window knows how much is waiting for its next
+	// natural inbox.
+	//
+	// A cc note counts as `suppressed` so rule 7's sum still holds: cc= is a
+	// BREAKDOWN of suppressed=, never a fourth term, and read = suppressed +
+	// relayed + standing with the flag as without it.
+	ToOnly bool
 
 	// Seen answers whether this tool has seen an unrecognised line before. It
 	// is the state's sighting memory, handed in rather than reached for, so
@@ -96,10 +108,10 @@ type Bus struct {
 	// Printed answers whether a note id has already been printed.
 	Printed func(id string) bool
 
-	read, suppress, relay, standing int
-	firstPoll                       bool
-	budget                          time.Duration
-	budgetSet                       bool
+	read, suppress, relay, standing, cc int
+	firstPoll                           bool
+	budget                              time.Duration
+	budgetSet                           bool
 }
 
 func (b *Bus) Name() string         { return "bus" }
@@ -109,6 +121,15 @@ func (b *Bus) Every() time.Duration { return b.Every_ }
 // They add up: read equals the sum of the other three. A bus that printed
 // nothing and a bus that printed twelve bookkeeping lines must not look the
 // same.
+// CC is the --to-only breakdown of suppressed=.
+func (b *Bus) CC() int { return b.cc }
+
+// addrOf reads the addr= half out of a composed note value.
+func addrOf(value string) string {
+	p := fields(Decompose(value), 6)
+	return p[1]
+}
+
 func (b *Bus) Counts() (read, suppress, relay, standing int) {
 	return b.read, b.suppress, b.relay, b.standing
 }
@@ -268,6 +289,13 @@ func (b *Bus) classify(out string, res *Result) {
 		}
 		if token == "INBOX NOTE" {
 			id, value := parseNote(line)
+			if b.ToOnly && addrOf(value) == "cc" {
+				// A suppression this tool's OWN FLAG decided, exactly as a note
+				// already marked printed= is one its own state decided.
+				b.suppress++
+				b.cc++
+				continue
+			}
 			if id != "" && b.Printed != nil && b.Printed(id) {
 				// The window has been shown it. This is the ONE suppression
 				// this tool's own state decides, and the mark behind it is
