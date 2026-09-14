@@ -11,6 +11,16 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 )
 
+func TestSingleUnscopedNumberedSequenceBelowHeading(t *testing.T) {
+	s, err := parseScopedSpec("docs/SPEC.md", "# Example\n\nIntro.\n\n## Rules\n1. First rule\ncontinued\n2. Second rule\n\n## Notes\nnot a rule\n", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Rules) != 2 || s.Rules[1].Text != "1. First rule\ncontinued" || s.Rules[1].Line != 6 {
+		t.Fatalf("unique unscoped sequence lost: %#v", s.Rules)
+	}
+}
+
 const twoSequences = `# Fixture
 ## The rules, numbered
 1. First rule
