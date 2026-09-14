@@ -558,15 +558,18 @@ work the team has finished. **The indexes are rebuildable from the retained cano
 the closure records**, which is what makes them an index and not a second store; a key-value cache
 in front of them, if a pilot wants one, is a cache and nothing more.
 
-**The resident cache is bounded, and the default window is Glenn's two days.** `session start
+**The resident cache is bounded, and the default window is Glenn's rolling 24 hours.** `session start
 --index-cache <n>` is required and names the greatest number of index pages the session holds
 resident across both roots and the day manifests together; it prints on `SESSION OK` and on
 `session status`, like every other bound. **The default closed-history window is the rolling
 `[now - 24h, now)` in UTC** — not the last 24 calendar dates and not all of yesterday plus today
 — named by `session start --closed-window <duration>`, default `24h`, **refused at exit 2 above
-`48h`** because the resident bound is two day partitions and a flag that could ask for three would
-be the bound removed by a number. At startup and on a default closed-history query the session
-**opens at most the two UTC day partitions that interval intersects**, today's and yesterday's; at
+`24h`**. A longer rolling window can intersect three UTC dates: at noon on September 14,
+`[September 12 noon, September 14 noon)` spans parts of September 12 and 14 and all of
+September 13. The two-partition bound therefore limits the ordinary resident window to
+24 hours; longer ranges use the explicit historical query below. This is a scoped correction
+to draft 28's 48-hour limit, proposed by Stella for review. At startup and on a default
+closed-history query the session **opens at most the two UTC day partitions that interval intersects**, today's and yesterday's; at
 exactly `00:00:00Z` the interval is yesterday's whole day and only yesterday intersects it, which
 is one partition and not two. **The time range is bounded and the volume inside it is not**, so the byte, record and page
 bounds hold inside the window too: the default window is read in bounded pages, `--max` caps the
@@ -3149,7 +3152,10 @@ are named because they were asked for by name):
   midday and at exactly `00:00:00Z` opening at most two UTC day partitions and, at midnight, one;
   no partition older than the window opened for it; the same listing with `--from` reaching back
   a month opening exactly the days in that range that hold closure records and printing its
-  `pages=` accordingly.
+  `pages=` accordingly. At `2026-09-14T12:00:00Z`, a `24h` window intersects September 13
+  and 14, while at `2026-09-14T00:00:00Z` it intersects September 13 only.
+  `--closed-window 24h1s` and `--closed-window 48h` both refuse with exit 2 before opening history; a separate
+  explicit historical query for the same longer interval remains supported under its page bounds.
 - **`busy-day-many-segments`** — one day holding many bounded segments read in bounded pages,
   `--max` capping the rows, `MORE` naming `--after`, and the day never read whole.
 - **`history-grows-startup-does-not`** — O, the recent-window volume and the page bounds held
@@ -3561,7 +3567,7 @@ refusals, `--from`/`--to` over settle stamps, `--after` and its cursor, the disp
 `landed=` and `released=`, `:version` on a `:task`, `open=`, `closed=`, `closed-in=` and `gap=`,
 and `closed-index=` on `CLIP FAIL`; **the spelling of draft 25's bound, whose requirement is
 Glenn's and whose mechanism is Stella's** — `--index-cache`, `--page-bytes`, `--page-records` and
-`--closed-window` with its 48-hour refusal, `pages=` on an answer, `settles-in=`, `revives-in=`
+`--closed-window` with its proposed corrected 24-hour refusal, `pages=` on an answer, `settles-in=`, `revives-in=`
 and `items-in=` beside `closed-in=`, the `<event-rev>:<id>` cursor and its pinned revision, the
 `page expired`, `historical window unavailable` and `dedup unavailable` refusals, and rule 2's
 `unavailable` reason told apart from `dangling`; **and draft 26's decisions, each marked
