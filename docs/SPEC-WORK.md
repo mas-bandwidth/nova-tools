@@ -354,6 +354,8 @@ replayed answer**: a retry whose id the index holds is refused `already applied`
 revision it was applied at, so the requester re-reads rather than acting twice, and no session
 — a successor after a handoff among them — ever applies one request id twice.
 
+A valid mutation whose patches change nothing still records a durable event with a real event id, its request id, its payload digest and the preimage it was applied against, and reports `changed=0`; a lost reply retries through the ordinary request-id lookup of the journal's two-part test and is answered with the original receipt; a later retry, past the journal and into the dedup index, is refused `already applied` by the rule above; nothing is silently dropped and no phantom `id=-` outcome exists. A no-effect event is a HISTORICAL RECEIPT and never a domain change, and a no-op never evades its verb's reversibility or its stale-and-conflict rules.
+
 **The repository branch that holds O has one writer too: the owning coordinator.** A **clip**,
 the ownership commits of rules 1 and 2 above, the handoff commit below and `session stop`'s release commit are the only writes to it, and a clip: it names a local event boundary, fetches the upstream revision, and
 **refuses, `CLIP RACED`, by the one base predicate of rule 2 (`tip == base`, the check the
@@ -1879,12 +1881,13 @@ them instead, in its `:already-closed` field**, the ids beneath it that were alr
 the removal's one record accounts for every item of the subtree exactly once and a reader of C
 can tell a leaf that was removed from a leaf that had already finished. **A `node remove` whose
 own node is already in C writes nothing at all**: it is a no-op at exit 0 with one `NODE NOTE
-already-closed node=<id> disposition=<d> settled=<stamp>` line before its `NODE OK`, because
-what the caller asked for — that this item is not open work — already holds, because a second
-`:settle` for it is rule 18's finding rather than a second history, and because a retry after a
-crash lands here and must read the same. Nothing is detached and no scope event is written by
-that no-op, so the item stays where the settle that closed it left it: in its parent's
-`:children`, and in its parent's required set exactly where its disposition already had it.
+already-closed node=<id> disposition=<d> settled=<stamp>` line before its `NODE OK`. A new valid request
+under a different request id appends this typed no-effect receipt and writes no second `:settle`,
+no detach and no scope, membership or counter change; a replay of the SAME request id returns its
+recorded disposition before current state is evaluated; the closed disposition and its evidence are
+untouched. Nothing is detached and no scope event is written by that no-op, so the item stays where
+the settle that closed it left it: in its parent's `:children`, and in its parent's required set
+exactly where its disposition already had it.
 **Why a live lease refuses a removal while a `state --to done` ends one**: a settle ends a claim
 on work that has ended, written by the author who is ending it, and a removal ends work that
 somebody else is still holding — so the first releases and the second refuses and names the
@@ -3219,6 +3222,11 @@ of this list and are not repeated here):
 - **`disconnect-is-not-a-rollback`** — a client killed after its mutation was journaled: the event
   stands, the same request id and body returns the recorded disposition, and the same id with
   different arguments is refused; `rev=` and `pushed=` distinct in every response.
+- **`no-effect-mutation-is-journaled`** — a mutation whose patches are all no-ops; the event id
+  recorded, journal length +1, `changed=0` on its OK line, and state digest unchanged; the same
+  request id returns the same receipt, and after the dedup boundary refuses `already applied`;
+  a retry arriving after a reopen returns its recorded disposition unchanged while a different
+  request id at that later state appends its own no-effect receipt.
 - **`operation-survives-the-client`** — a long import returning an operation id, the CLI exiting,
   the work continuing, the result retrievable by id afterwards, and `operation wait` timing out
   while leaving the operation running.
