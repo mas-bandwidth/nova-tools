@@ -37,6 +37,42 @@ func TestARelativeWorkerDirWorksFromTheSlot(t *testing.T) {
 	}
 }
 
+func TestMissingWorkerDirRefusesBeforeTaskAdmission(t *testing.T) {
+	t.Parallel()
+	b := newBench(t)
+	id := b.add("a task must remain recoverable when preparation cannot start\nFAKE-FINDINGS 1\n")
+	missing := filepath.Join(b.dir, "worker-home-missing")
+	b.rewriteWorker(func(d map[string]any) { d["worker_dir"] = missing })
+
+	exit, stdout, stderr := b.run()
+	if exit != 2 {
+		t.Fatalf("missing worker_dir exits %d, want refusal:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "preparation refusal", stderr, "RUN REFUSED reason=prepare")
+	mustContain(t, "preparation refusal", stderr, "worker_dir")
+	if _, err := os.Stat(filepath.Join(b.pool, "pending", id+".task")); err != nil {
+		t.Fatalf("task remains pending after preparation refusal: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "running", id+".task")); err == nil {
+		t.Fatal("preparation refusal stranded the task in running/")
+	}
+	if entries, err := os.ReadDir(filepath.Join(b.pool, "slots")); err != nil {
+		t.Fatal(err)
+	} else if len(entries) != 0 {
+		t.Fatalf("preparation refusal left slot ownership behind: %d files", len(entries))
+	}
+
+	if err := os.MkdirAll(missing, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	write(t, filepath.Join(missing, "AGENTS.md"), "the worker's own self\n")
+	exit, stdout, stderr = b.run()
+	if exit != 0 {
+		t.Fatalf("the corrected worker_dir did not recover the pending task, exit %d:\n%s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "recovered run", stdout, "RUN DONE id="+id)
+}
+
 // F6 / lesson 83: "a negative ceiling is refused (0 already means all; a negative number is
 // a typo with two readings)". `--max -1` listed a whole pool with no MORE line and exit 0 --
 // a typo on the one flag whose job is to bound output un-bounding it, on the largest state.

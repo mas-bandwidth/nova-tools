@@ -278,6 +278,19 @@ func Run(in RunInput) int {
 			fmt.Fprintf(out, "RUN QUARANTINE slot=%d id=%s: %s\n", n, oneline.Field(dashOr(d.File.Job)), oneline.Escape(d.Reason))
 		}
 	}
+	// PREPARATION IS BEFORE ADMISSION. RefreshSlot copies the worker directory before a
+	// job directory or supervisor exists; checking it here keeps a missing worker home from
+	// stranding the task in running/ with no owner. This follows startup recovery, so an
+	// existing job can still be adopted or reclaimed even when the next worker cannot start.
+	if pending, err := p.List(Pending); err != nil {
+		fmt.Fprintf(errOut, "RUN REFUSED reason=prepare: pending tasks could not be read: %s\n", oneline.Escape(redactedReason(err)))
+		return 2
+	} else if len(pending) > 0 {
+		if err := workerDirReady(in.Worker.WorkerDir); err != nil {
+			fmt.Fprintf(errOut, "RUN REFUSED reason=prepare: %s\n", oneline.Escape(err.Error()))
+			return 2
+		}
+	}
 
 	deadline := now().Add(time.Duration(in.Hours * float64(time.Hour)))
 	tasks := bounded.Capped(out, in.Max, "RUN", "task", "nova-swarm status --pool "+p.Dir+" --max 0")
@@ -397,6 +410,17 @@ func Run(in RunInput) int {
 		return 1
 	}
 	return 0
+}
+
+func workerDirReady(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return fmt.Errorf("worker_dir %s is unavailable: %s", oneline.Field(path), redactedReason(err))
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("worker_dir %s is not a directory", oneline.Field(path))
+	}
+	return nil
 }
 
 // freeSlot is the allocation, and it asks ONE authority: the slot files. Never a directory
