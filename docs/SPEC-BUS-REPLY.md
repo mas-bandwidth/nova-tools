@@ -36,6 +36,18 @@ None of that is judgment. All of it is mechanical, all of it is already
 knowable from state the tool holds, and the cost of doing it by hand is paid
 once per reply, forever, by every line on every bus.
 
+**The fifth cost is removed for this form's own output, and there only.** The
+receipt this verb prints is one line, and every value on it is a `key=value`
+field through the main specification's one-line field escape, which escapes
+every whitespace character: **no field carries an unquoted space**, so a shell
+boundary that word-splits the line can neither fuse two fields nor cut one in
+half, and a caller reconciles what happened field by field rather than by
+guessing where the tokens were. That is free to specify because this form's
+output is new — the additive rule constrains what already ships, and nothing
+ships here yet. The receipt named in the bullet above is `send`'s, `send` is
+released, and this slice does not touch it; giving that line the same property
+is later work under #246 and is not claimed here.
+
 **What this slice does not claim.** It does not make the bus faster, does not
 change what a note is, does not deliver anything and does not close anything.
 It removes one repeated chore, and the section on measurement below says how a
@@ -89,9 +101,11 @@ scheme exists to remove, arriving through the reader's own door.
 **The refresh is `wait`'s poll, and is one implementation with it** — the same
 `internal/bus` code path, not a second one that could drift:
 
-1. take the checkout lock, as every verb does;
+1. take the checkout lock, as every verb that runs git does;
 2. `git fetch <remote> <branch>` under `--git-timeout`;
-3. **fast-forward the checkout**, never merge and never rebase. Every read in
+3. **fast-forward the checkout**, never merge and never rebase — which is the
+   main specification's own account of `wait`'s poll restated here, and is
+   pinned by the existing wait tests rather than asserted fresh: every read in
    this tool reads the working tree, so a fetch that stopped at `FETCH_HEAD`
    would resolve against the same stale tree it was run to replace;
 4. a checkout that is **ahead** — holding a commit of its own that has not been
@@ -113,32 +127,56 @@ thread.
 ## Resolving the target
 
 `--reply-to` takes the three shapes `--re` already takes — an **id**, a **path**,
-or the **exact subject** of a note on your open list — resolved by the rules
+or the **exact subject** of a note on your live listing — resolved by the rules
 already written for `--re`, with one addition and one restriction.
 
 **The addition: it is resolved after the refresh**, against the tree the fetch
 left. That is the whole point of the form.
 
-**The restriction: the target must be on the caller's own open list.** A note
-that is on the bus but not on your open list is refused, and the refusal says
-which of the reasons it is:
+**The restriction: the target must be on the caller's live inbox listing.** That
+listing is defined here, for this verb, as **what an `inbox` run at this instant
+would list**: the `OPEN` entries this reader is already carrying, **plus** every
+note new since their `CURSOR` addressed to `--as` on `To:` or `Cc:`. It is
+computed **read-only**, after the refresh, against the tree the fetch left, by
+the listing implementation the reading verbs already share — and nothing is
+written back: no `CURSOR`, no `OPEN`, no `RECEIPTS`, no `INDEX`.
+
+The second half of that set is not decoration; without it the form contradicts
+itself. `OPEN` is written only when a read has already shown a note, so a target
+that landed on the remote a minute ago is in nobody's `OPEN`. Defining the set
+as the carried `OPEN` alone would fetch that note, resolve it, and then refuse it
+as *never addressed to you* — the fetch would have done work the rule then threw
+away. New-since-the-cursor is exactly what the fetch is for.
+
+**A note already heard is still a legal target.** A receipt records that a note
+arrived, not that it was answered: the main specification keeps a receipted note
+on the open list for that reason — *heard is not answered* — and this verb keeps
+it targetable for the same one.
+
+A note that is on the bus but on neither half of that listing is refused, and the
+refusal says which of the reasons it is:
 
 - you have already answered it — a note of yours carries its id on a `Re:` line;
 - it was never addressed to you, `To:` or `Cc:`;
 - it is behind your switch-day line, so this reader has taken it as read;
-- you have no cursor yet, so you have no open list at all.
+- you have no cursor yet, so there is no listing for it to be on.
 
 The reason for the restriction is what this form is for: it answers what you are
 carrying. A target you are not carrying is far more often a stale id copied out
 of an older listing than a deliberate second reply — and a second reply that
 nobody is waiting for costs a reader a turn to work out why it arrived. **It is
-a restriction with a door in it**, and the refusal names the door: the existing
-`draft --re` form resolves against the whole bus and is untouched, so a
-deliberate reply to a closed thread is one flag away and always was.
+a restriction with a door in it**, and the refusal names the door. For the first
+three reasons the door is the existing `draft --re` form, which resolves against
+the whole bus and is untouched, so a deliberate reply to a closed thread is one
+flag away and always was. For the fourth the door is not `--re` at all: a reader
+with no cursor needs an `inbox` run, which is what gives them a cursor and a
+listing, and the refusal names that instead.
 
 **A subject that matches two notes resolves to the newest and says so**, which
-is the rule `send` already applies to a `Re:` line naming a subject, kept
-verbatim so the two cannot disagree:
+is **the same rule** `send` already applies to a `Re:` line naming a subject.
+The rule is what is kept, not the wording: `send` says it closed the newest and
+today's `draft` says the skeleton names the newest, and this line is this verb's
+own spelling of the one rule, which is what must not disagree:
 
 ```
 DRAFT NOTE --reply-to: subject matched <n> notes; this draft names the newest <id> from <name>; name the id to be exact
@@ -205,10 +243,24 @@ this section is for.
 
 The file is named `<UTC minute>Z-re-<target id>.md` in `--draft-dir`. It is
 named by the tool and not by the caller so that two replies to two notes cannot
-land on one path; the minute is there for a person reading the directory. **An
-existing file at that path is a refusal, never an overwrite** — exit 1, naming
-the path — because the one thing that can be at that path is a draft of this
-same reply that somebody is editing in another window.
+land on one path; the minute is there for a person reading the directory.
+
+**The name is built from the target's id and never from a path.** An id is a
+lane name and hex — `ada-3f9a1c2b8d40` — so it is one path segment by
+construction, while `--reply-to` may resolve a legacy note to a repo-relative
+path, and a path holds `/`. A filename built from one would put the draft in a
+directory nobody named, or in none at all. **A target with no `Id:` line gets a
+derived id instead**, stated here so nobody has to guess it: the literal
+`legacy-` followed by the first 12 lowercase hex digits of the SHA-256 of the
+target's repo-relative path, exactly as the path appears on the `Re:` line the
+draft writes. It is one segment, it is deterministic, and two legacy targets
+cannot collide onto one name — which is the whole job of the field. The `Re:`
+line itself is unaffected and still carries the path: the filename is the
+bench's, the header is the bus's.
+
+**An existing file at that path is a refusal, never an overwrite** — exit 1,
+naming the path — because the one thing that can be at that path is a draft of
+this same reply that somebody is editing in another window.
 
 The path is printed, once, on the receipt line. Nothing else goes to stdout in
 this form.
@@ -281,15 +333,16 @@ bus state in that form to say anything — and this table is the reply form only
 | `--remote`, `--branch`, `--body-file`, `--draft-dir` or `--git-timeout` without `--reply-to` | this form runs no git and writes no file; the flag belongs to `--reply-to` | 2 |
 | `--draft-dir` inside the bus checkout | drafts go outside the bus, because `send` needs its tree clean; the refusal names the bus root it resolved | 2 |
 | `--draft-dir` that does not exist, or is not a directory | the path, and that this tool creates no directories | 2 |
+| the body file is unreadable, or is not a file | the path and the reason | 2 |
+| `--remote` or `--branch` failing the conservative charset check | the existing refusal, unchanged | 2 |
 | `--as` naming nobody, or nobody with a lane | the existing refusal, unchanged | 2 |
 | `--to`, `--cc` or `--subject` carrying a control character or a line separator | the existing one-line validation's refusal | 2 |
 | `--max-body-bytes` zero or negative | a budget of zero is not "unlimited"; the existing law | 2 |
 | the fetch failed, timed out, or named a remote or branch that is not there | the remote, the branch, and git's transcript under the event line | 1 |
 | the checkout has diverged from the named branch | the recovery command, and that nothing was written | 1 |
-| `--reply-to` names no id, no path and no open subject on the refreshed bus | that threads are named by id, and that a slug is not a thread | 1 |
-| `--reply-to` resolves on the bus but is not on this reader's open list | which of the four reasons it is, and that `draft --re` answers a closed thread | 1 |
+| `--reply-to` names no id, no path and no listed subject on the refreshed bus | that threads are named by id, and that a slug is not a thread | 1 |
+| `--reply-to` resolves on the bus but is not on this reader's live listing | which of the four reasons it is, and the door: `draft --re` for a closed thread, an `inbox` run for a reader with no cursor | 1 |
 | the target's sender is `--as` and no `--to` was given | a reply to your own note needs an explicit `--to` | 1 |
-| the body file is unreadable | the path and the reason | 1 |
 | the body is empty, or over `--max-body-bytes` | the budget and the size, read at budget+1 and no further | 1 |
 | a file already exists at the draft path | the path, and that this tool never overwrites a draft | 1 |
 | another `nova-bus` holds this checkout | the existing lock refusal, unchanged | 1 |
@@ -319,7 +372,7 @@ none of them.
 The path from here is the one that already exists and is already reviewed:
 
 ```
-nova-bus draft ... --reply-to <id> --body-file reply.txt --draft-dir /tmp/drafts ...
+nova-bus draft ... --reply-to <id> --body-file reply.txt --draft-dir <scratch dir> ...
 nova-bus prepare --bus <dir> --as <name> --file <the path it printed>
 nova-bus send    --bus <dir> --as <name> --prepared <artifact> --remote <r> --branch <b>
 ```
@@ -341,8 +394,10 @@ holds each one:
   in the invocation**, and the problems in an invocation are bounded by the
   number of flags;
 - **the resolution parses what it must and no more.** The target is found
-  through the open list and the catalogue the reading verbs already use, so a
-  reply on a bus of ten thousand notes costs what a reply on a bus of ten costs.
+  through the live listing and the catalogue the reading verbs already use — the
+  carried `OPEN` plus the change set since the cursor, which is the O(new) read
+  and not a walk of the bus — so a reply on a bus of ten thousand notes costs
+  what a reply on a bus of ten costs.
   Where the existing resolution does read more than that, this slice **preserves
   correctness and measures it** rather than introducing a second index whose
   freshness nobody can vouch for; any indexing change is a separate, separately
@@ -362,12 +417,16 @@ with the alternative and what it would cost.
    draft to be literally complete, the honest version is a `send` that
    recognises its own `Date` line and stays quiet about it, and that is a change
    to a released verb, which this slice will not make.
-2. **The target must be on the caller's open list.** The proposal resolves an
-   exact id against the bus. The restriction catches a stale id copied out of an
-   older listing, which is the failure this form is most likely to produce; it
-   refuses a deliberate second reply to a closed thread, which `draft --re`
-   still does. If reviewers would rather have the looser rule, the change is to
-   the refusal table and to two tests, and nothing else.
+2. **The target must be on the caller's live inbox listing** — the carried
+   `OPEN` plus everything new since the cursor, computed read-only after the
+   fetch, with a receipted note still a legal target. The proposal resolves an
+   exact id against the whole bus. The restriction catches a stale id copied out
+   of an older listing, which is the failure this form is most likely to
+   produce; it refuses a deliberate second reply to a closed thread, which
+   `draft --re` still does. Note that the narrower reading — the carried `OPEN`
+   alone — is not on the table: it would refuse the note the fetch was run to
+   find. If reviewers would rather have the looser rule, the change is to the
+   refusal table and to two tests, and nothing else.
 3. **The draft is a file, not stdout.** The proposal prints the draft on stdout.
    A file that the tool names, refuses to overwrite and refuses to put inside
    the bus is what closes the in-checkout refusal at the start of the job rather
@@ -417,6 +476,9 @@ What is counted, per reply:
   measured **at the largest plausible state** — a reader carrying several
   hundred open notes — because a receipt that is bounded at ten notes and
   unbounded at six hundred is unbounded;
+- **the coordinator's own input and cache-read tokens per reply**, where the
+  harness reports them, because a turn is mostly a cache read and a count of
+  turns alone would hide the category the saving actually lands in;
 - **errors, retries and wall time**, because a form that halves the turns and
   doubles the refusals has moved the cost rather than removed it;
 - **source and recipient correctness**: did the reply name the note it meant and
@@ -437,9 +499,10 @@ loop stays supported for lines that prefer it.
 
 ## The tests, by name
 
-Every MUST above has a test, and the name says which one. They are ordinary
-package tests against disposable local bare git remotes, inside the existing
-fast tier's budget — one minute ideally, two at most — with anything heavier
+Every MUST above has a test, and the name says which one. **Twenty-nine tests
+are named below**, and each one names its fixture and its observable. They are
+ordinary package tests against disposable local bare git remotes, inside the
+existing fast tier's budget — one minute ideally, two at most — with anything heavier
 declared in the certification tier rather than deleted.
 
 **That the released tool is untouched**
@@ -448,23 +511,31 @@ declared in the certification tier rather than deleted.
   stderr and exit code, over the existing fixtures, unchanged.
 - `TestTheReplyFlagsAreRefusedWithoutReplyTo` — `--remote`, `--branch`,
   `--body-file`, `--draft-dir` and `--git-timeout` each exit 2 with a sentence.
-- `TestPrepareAndSendAreUnchangedByThisSlice` — the prepared-artifact tests pass
-  unmodified, and a draft this form wrote is an ordinary input to them.
+- `TestPrepareAndSendAreUnchangedByThisSlice` — **the fixture is the draft
+  `TestGeneratedReplyHeaderIsByteEqualToTheHandBuiltOne` produces**, fed to
+  `prepare` with no tolerance applied: it validates as an ordinary draft, and
+  the prepared-artifact tests pass unmodified beside it.
 
 **That it is fresh**
 
 - `TestReplyRefreshesBeforeItResolves` — **the fixture is a target note that
-  exists only on the remote.** The checkout is stale, the id is unknown locally,
-  and the run resolves it and writes the draft. The same run with the fetch
-  disabled at the seam refuses, which is what proves the fetch is load-bearing
-  rather than incidental.
+  exists only on the remote**, addressed to `--as` and newer than this reader's
+  `CURSOR`, so it is on no `OPEN` file anywhere and the refresh is what puts it
+  on the live listing. The checkout is stale, the id is unknown locally, and the
+  run resolves it and writes the draft. The same run with the fetch disabled at
+  the seam refuses, which is what proves the fetch is load-bearing rather than
+  incidental. A second fixture asserts the other half of the set: a note the
+  reader is carrying on `OPEN` and has already receipted is still a legal
+  target, because heard is not answered.
 - `TestRefreshFailureIsARefusalAndNeverAStaleAnswer` — an unreachable remote, a
   branch nobody has, and a fetch that times out: exit 1 each, no draft written,
   and git's transcript under the event line.
 - `TestADivergedCheckoutIsRefusedAndLosesNothing` — local commits and unrelated
   dirty files survive the refusal byte for byte.
 - `TestTheRefreshWritesNothingToTheBus` — no commit, no push, and `CURSOR`,
-  `OPEN`, `RECEIPTS` and `INDEX` unchanged on every lane.
+  `OPEN`, `RECEIPTS` and `INDEX` unchanged on every lane, including after a run
+  whose target was found only in the new-since-the-cursor half of the listing:
+  computing that listing is a read and leaves no trace.
 
 **That it resolves the right note**
 
@@ -474,11 +545,16 @@ declared in the certification tier rather than deleted.
 - `TestReplySubjectMatchingTwoNotesTakesTheNewestAndSaysSo` — two open notes
   with one subject; the draft names the newer id and one `DRAFT NOTE` says so
   and says how to be exact.
-- `TestTargetNotOnTheOpenListIsItsOwnRefusal` — four fixtures, one per reason:
-  already answered, never addressed to this reader, behind the switch-day line,
-  and no cursor at all. Each refusal names its own reason and the `--re` door.
+- `TestTargetNotOnTheOpenListIsItsOwnRefusal` — the refused target is a note
+  that is on the refreshed bus and on **neither** half of the live listing:
+  not carried on `OPEN`, and not new since the cursor. Four fixtures, one per
+  reason: already answered, never addressed to this reader, behind the
+  switch-day line, and no cursor at all. Each refusal names its own reason and
+  its door — `draft --re` for the first three, an `inbox` run for the fourth.
 - `TestReplyResolvesAPathForANoteWrittenBeforeIds` — a legacy target is answered
-  by path, and the path is what lands on the `Re:` line.
+  by path, and the path is what lands on the `Re:` line, while the draft's
+  filename is the derived `legacy-<12 hex>` id and holds no `/`; two legacy
+  targets in one directory produce two names.
 
 **That the headers are the tool's and the body is the author's**
 
