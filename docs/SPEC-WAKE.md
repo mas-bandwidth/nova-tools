@@ -147,6 +147,36 @@ seven LOWs are folded in place. **No design of draft 4 is reversed**: the ping
 is still intended before it is made, the anchor is still the checkout's head
 before the send, and what changed is which ref the evidence is read from.
 
+**Draft 6, 2026-09-13**, repairs draft 5 (head fb00295e) against the Astra read
+at that head (comment 5657411696, HOLD on K1 to K6), and every passage it
+changes is marked `draft 6` beside the change with the defect named. The repair
+that held the draft is again a **re-derivation and not a patch**: draft 5's
+reconcile asked the lane whether *this bench pushed anything past an anchor*,
+while `nova-bus send --file` assigns a fresh note id on every call and the bus's
+push deliberately carries an earlier unpushed local commit along — so an
+interrupted ping and its resend are two notes a friend can see, and one
+unrelated note by the caller reads as a delivered ping. Draft 6 deletes the
+anchor-commit reconcile and takes the bus's own answer to this class instead:
+the ping is `nova-bus prepare`d, which fixes the note id in an artifact
+**before** any send; the intent names that id; every send is `nova-bus send
+--prepared` of that one saved artifact, which is its own retry and carries the
+same note's unpushed commit along with it; and a reconcile asks the **fetched**
+remote lane for a note with **that exact id**. One note identity, offered until
+it lands, delivered once. The rest, by that read's numbers: **K2** — delivery
+matched by note id and never by a caller commit past an anchor; **K3** —
+identity and anchor carried through every transition, the anchor demoted to the
+correlation range it is, and the two inbox reads bounded with `correlation=`
+printed where they cannot cover that range; **K4** — the `updated=` watermark
+stored on every tick as observed, and suppression forbidden to make a moved
+stamp silent; **K5** — the transition matrix and its prose made one contract,
+with `reconcile` and `no-fetch` moved ahead of `ping` in the column order the
+prose already required; **K6** — `probe:<name>` bound to bus, remote, branch,
+caller and line, `--as` required wherever a record stands, and the prepared
+note's own recipient compared with `--line` before any send. **No design of
+draft 5 is reversed**: the ping is still intended before it is made and the one
+evidence is still the lane's fetched remote ref — what changed is that the
+evidence is now the note's own id.
+
 The
 amendment adds four sources to `watch`, one flag on the bus source, one verdict,
 and one verb (`probe`); it changes no exit code that exists and takes the one
@@ -1012,12 +1042,14 @@ thread read:
   one. A tick on which `updated=` and `head=` both moved and no count moved is a
   **push**: `push=true head=<sha> rescan=false`, and the line says where the
   movement came from. Under `--not-mine` a new head sha **listed in that file**
-  is this actor's own push — the file holds the ids of the things this actor
-  emitted, a head sha it pushed is one of them, and whoever pushed it writes it
-  there, because this tool pushes nothing and can only be told — so that tick is
-  this actor's own work and **not a change**, exactly as an id in that file is.
-  Without `--not-mine` a head move is a change like every other movement, which
-  is the safe default this source keeps.
+  names the push — the
+  file holds the ids of the things this actor emitted, a head sha it pushed is
+  one of them, and whoever pushed it writes it there, because this tool pushes
+  nothing and can only be told — so the tick prints `push=true self=1`, and
+  (draft 6, K4) it is **still a change**: a push and a reply on an older thread
+  can share one tick and one stamp, so naming the push has never been the same
+  as accounting for the movement. Without `--not-mine` a head move is a change
+  like every other movement, which is the safe default this source keeps.
 - **When `updated=` moved and no count moved and `newest=` and `head=` did not
   change**, the tick knows the conversation moved and cannot say where. That is
   a change, and it is reported as one rather than resolved: one `WAKE PR
@@ -1032,33 +1064,52 @@ thread read:
   is 0: an actor that replies on an older thread of a pull request it watches
   wakes itself once. That false wake is accepted here by name, and it is the
   direction this hurt chooses.
-- **The `updated=` watermark advances only as far as the tick's attribution
-  reaches** (amended 2026-09-13, draft 5, from the Fable read, finding M5).
-  Draft 4 stored the whole observed value on a tick whose movement was set
-  aside, `updated=` included. But a reply on an older thread landing in the
-  same tick as this actor's own comment moves that same stamp: the tick
-  attributes the movement to its own ids, stores the stamp the reply moved too,
-  and **no later tick can ever see that reply** — the missed wake this source
-  exists to prevent, arriving inside a false-wake repair. So on a tick whose
-  movement was fully set aside, the new `updated=` is stored **only if it is not
-  newer than the newest node this tick fetched and set aside**; where it is
-  newer, something this tick did not fetch moved the stamp, the stored
-  `updated=` is left as it was, and the tick is a change reported as
-  `rescan=true`. This compares two stamps the same forge wrote and **assumes**
-  only that a pull request's `updatedAt` is not older than the item whose
-  arrival moved it — an assumption, named here and verified against no forge
-  (**Known limits**). Where that assumption fails, a forge stamping the pull
-  request earlier than the item cannot be told from a tick with nothing hidden
-  in it, and draft 4's residual stands for that tick alone; where it holds, an
-  older-thread reply that shares a tick with this actor's own comment is a
-  `rescan=true` wake on that same tick rather than a silence for ever.
+- **`updated=` is stored on every tick exactly as observed, and no tick on which
+  it moved is ever silent** (draft 6, K4, which replaces draft 5's finding-M5
+  rule outright). Draft 5 advanced the watermark only as far as a tick's
+  attribution reached, and bought two defects with one sentence. A reply on an
+  older thread at T under this actor's own comment at T+1 leaves `updatedAt`
+  equal to the attributed node's own stamp and **not newer** than it, so that
+  tick stored the stamp, set itself aside, and no later tick could ever see the
+  reply — the missed wake this source exists to prevent, arriving inside a
+  false-wake repair for the second time. Two items sharing one stamp fail
+  identically, and a reply sharing a tick with this actor's own **push** is the
+  same shape again over `head=`. And where the stamp *was* newer than everything
+  the tick fetched, draft 5 left the stored value behind, so every later tick
+  observed that same movement and reported it again — a rescan on every poll,
+  for ever.
+- **So the watermark and the suppression are two things** (draft 6). A watermark
+  records what was **observed**: the new `updated=` is stored on every tick,
+  always, and carries no claim about attribution. Suppression sets aside only
+  what the tick **fetched and matched** — ids under `--not-mine`, and a head sha
+  listed there — and it may not make a moved stamp silent. This read fetches at
+  most the newest node of each list whose count moved, and a reply on an older
+  thread and a dismissal move no count at all, so a tick can never enumerate the
+  interval between the stored stamp and the observed one. A moved `updated=` is
+  therefore **always** a change: under `--not-mine` a tick whose counted movement
+  was wholly this actor's prints `self=<n> push=<true|false> rescan=true`, whose
+  whole content is *the counted part of this movement was mine; what else moved
+  is not resolved by this read; open it*. Only a tick on which `updated=` did not
+  move is quiet, which is the only quiet this read can prove.
+- **What that costs, named rather than discovered** (draft 6). A window that
+  comments on, reviews or pushes to a pull request it watches wakes itself once
+  on that tick — the false wake draft 5's `head=` repair removed, accepted back
+  here by name. It is accepted because the alternative is the 100-minute HOLD
+  this source was built for arriving as a reply the tool had proved it could not
+  see, and because **a rescan is never suppressed** was already this section's
+  rule two bullets above: draft 5 carved the exception, and draft 6 takes it
+  back. The wake is one line, it is labelled `self=`, and a missed obligation is
+  never traded for a quieter tick. This bullet assumes only what the bullet above
+  assumes — that a pull request's `updatedAt` moves when its conversation moves
+  (**Known limits**) — and it no longer assumes anything about the **order** of
+  two stamps, which is the assumption draft 5 rested a suppression on.
 - **What remains a limit, at its true width**: whatever the forge does not
   stamp into `updatedAt`, this source still cannot see. The tool asserts
   nothing about which acts a forge stamps — that is `gh`'s and the forge's
   behaviour, reported and never modelled (**Known limits**) — and what it does
-  assert is falsifiable: a stamp it has not seen before is a change, and it
-  will not report quiet about a conversation whose own stamp moved past what
-  the tick could attribute.
+  assert is falsifiable, and draft 6 makes it unconditional (K4): a stamp it has
+  not seen before is a change, and it never reports quiet about a conversation
+  whose own stamp moved.
   `review=DISMISSED` stays a **state this source can print and not an event it
   can see**: it is named in the grammar because the forge reports it and the
   window reads it, it appears as the state of the newest review read at the
@@ -1327,7 +1378,8 @@ and the clocks, and every `WAKE SOURCE` line for a **forge** source — `prs`,
 `calls=<n>`, the `gh` invocations that source made this run, so the spend is on
 the record beside the news and a rate limit arrives as `unreadable:` rather
 than as silence. `probe` adds **two** `nova-bus inbox` reads per poll — the
-plain listing and one `--open --open-max <carrying>` — and only while a ping is
+plain listing and one bounded `--open --open-max <n>`, `n` at most 300 (draft
+6) — and only while a ping is
 outstanding (draft 4, finding 3; two since draft 5, finding M4, because one
 listing is read from the caller's own cursor and two are a read of the lane).
 **`WAKE SOURCE locks` carries no `calls=` and no `login=`**
@@ -1351,10 +1403,19 @@ watched thing, namespaced by source — `bus:line:<bytes>`, `bus:note:<id>`,
 `entry:<repo>#<n>`, `report:<path>`, `line:<name>`, and since 2026-09-13
 `pr:<owner/repo>#<n>`, `run:<owner/repo>@<sha>`, `branch:<owner/repo>:<name>`,
 `lock:<path>` and `probe:<name>` — which holds exactly one of
-`<sign sha>|sending|<stamp>|<anchor>`, the durable intent (draft 4), and
-`<sign sha>|pinged|<stamp>|<note id>`, the recorded ping (draft 5, from the
-Fable read, finding L10: draft 4 added the first form under **probe** and left
-this list naming only the second) — plus one `fail:<source>`
+`<sign sha>|sending|<stamp>|<note id>|<anchor>|<scope>`, the durable intent, and
+`<sign sha>|pinged|<stamp>|<note id>|<anchor>|<scope>`, the recorded ping —
+**the same six fields in both, with only the phase word moved** (draft 6, K3:
+draft 5's intent had no note id to name and its ping dropped the anchor that
+**probe**'s answer lookup then required on every poll, so each form lost exactly
+what the other needed). `<note id>` is the id `nova-bus prepare` fixed before
+any send and is never `-`; `<anchor>` is the bus checkout's head sha as it stood
+before the send and is the **correlation range's floor and nothing else** (draft
+6, K2: it is no longer evidence that anything was delivered); `<scope>` is the
+first twelve hex characters of SHA-256 over the resolved bus path, `--remote`,
+`--branch`, `--as` and `--line` joined by NUL, so a state file carried to
+another checkout, lane, branch or caller cannot present another transport's ping
+as this one's (draft 6, K6) — plus one `fail:<source>`
 per source, the **delivery queue** `queue:<n>` with its counter `queue:next`,
 the advance marker `bus:advance`, and for `serve` one `serve:<id>` per note
 holding exactly one of `queued|<stamp>`, `dispatching|<stamp>|attempt=<n>`,
@@ -1392,10 +1453,15 @@ shape): **`--final-only`**, which keeps a non-final entry or run value out,
 because that is what the flag asked for; **`--to-only`**, which keeps an
 `addr=cc` note out and counts it in `suppressed=` and `cc=` (**`--to-only`**);
 and **a pull request tick, under `--not-mine`, whose whole movement the tool
-proved was this actor's own emitted ids** (amended 2026-09-13, draft 4: with
+proved was this actor's own emitted ids and whose `updated=` did not move**
+(amended 2026-09-13, draft 4, and narrowed draft 6, K4: with
 no `--not-mine` there is no third exclusion at all, because nothing is set
-aside), which stores the moved counts, `updated=` and the new `newest=` and
-queues nothing (**Comments and reviews on a pull request**). Each is this tool's own flag or
+aside, and a tick whose own stamp moved is a change however well its counts
+were attributed — a movement this read cannot account for is the one thing
+suppression may not silence), which stores the moved counts and the new
+`newest=` and queues nothing (**Comments and reviews on a pull request**). The
+`updated=` watermark is stored on **every** tick and is never what is set aside
+(draft 6). Each is this tool's own flag or
 this tool's own rule deciding, each is counted where its source's counts are,
 and none of the three drops a line silently. Every other observation whose
 value differs from the stored one becomes a queue record. A key or value holding `%` or `|` is
@@ -2025,16 +2091,20 @@ amendment's table and each written so a test can be built from it.
     whatever its contact reads, and only the window's own hand ends that, after
     a fresh explicit return. Otherwise: within `--silent-after` it is
     `PRESENT`. Past it,
-    with `--ping-draft`, the tool sends **one** note — the caller's draft, `To:`
-    the line, through `nova-bus send` as `--as` — writing a durable intent
-    before the send and recording the ping against the sign it was made on in
+    with `--ping-draft`, the tool sends **one note identity** — the caller's
+    draft, `To:` the line, fixed by `nova-bus prepare` before anything is sent
+    and delivered by `nova-bus send --prepared` as `--as` (draft 6) — writing a
+    durable intent naming that note id before the send and recording the ping
+    against the sign it was made on in
     `probe:<name>`; a later probe that finds the
     same sign and a recorded ping **does not ping again**, whatever the
-    interval, and one that finds an interrupted intent **reconciles it against
-    the lane's fetched remote ref before it sends, or says `UNRECONCILED` and
+    interval, and one that finds an interrupted intent **reconciles it by asking
+    the lane's fetched remote ref for that exact note id before it sends the same
+    artifact again, or says `UNRECONCILED` and
     sends nothing** (draft 4, finding 5; re-derived in draft 5, from the Fable
-    read, H1: the checkout carries a send's commit before the push does, so no
-    read of local state can say whether a ping left this bench). A note or
+    read, H1: the checkout carries a send's commit before the push does; and in
+    draft 6, K1 and K2: a fresh send invents a second id, and a caller's commit
+    past an anchor is not the ping). A note or
     receipt from the
     line **addressed to the caller** after the ping is `ANSWERED` once and
     clears the record; an unrelated commit on the lane is not an answer. No sign within `--answer-within` of the ping is `UNAVAILABLE`, and
@@ -2126,15 +2196,15 @@ event, and a cell is either the state the probe reaches or `—`, which means
 rows and closed with *nothing else moves a state*, which forbade transitions the
 rest of this section requires).
 
-| from ↓ · on → | rest | return | fresh | stale | ping | reconcile | no-fetch | answer | timeout |
+| from ↓ · on → | rest | return | reconcile | no-fetch | fresh | stale | ping | answer | timeout |
 |---|---|---|---|---|---|---|---|---|---|
-| `PRESENT` | `RESTING` | — | `PRESENT` | `SILENT` | `PINGED` | — | `UNRECONCILED` | — | — |
-| `SILENT` | `RESTING` | — | `PRESENT` | `SILENT` | `PINGED` | — | `UNRECONCILED` | — | — |
-| `PINGED` | `RESTING` | — | `PINGED` | `PINGED` | — | — | — | `ANSWERED` | `UNAVAILABLE` |
-| `ANSWERED` | `RESTING` | — | `PRESENT` | `SILENT` | `PINGED` | — | `UNRECONCILED` | — | — |
-| `UNAVAILABLE` | `RESTING` | — | `PRESENT` | `UNAVAILABLE` | — | — | — | `ANSWERED` | `UNAVAILABLE` |
-| `UNRECONCILED` | `RESTING` | — | `UNRECONCILED` | `UNRECONCILED` | — | `PINGED` | `UNRECONCILED` | `ANSWERED` | — |
-| `RESTING` | `RESTING` | `PRESENT` or `SILENT`, by the record and `contact=` | `RESTING` | `RESTING` | — | — | `RESTING` | `RESTING` | `RESTING` |
+| `PRESENT` | `RESTING` | — | `PINGED` or `SILENT` | `UNRECONCILED` | `PRESENT` | `SILENT` | `PINGED` | — | — |
+| `SILENT` | `RESTING` | — | `PINGED` or `SILENT` | `UNRECONCILED` | `PRESENT` | `SILENT` | `PINGED` | — | — |
+| `PINGED` | `RESTING` | — | — | — | `PINGED` | `PINGED` | — | `ANSWERED` | `UNAVAILABLE` |
+| `ANSWERED` | `RESTING` | — | `PINGED` or `SILENT` | `UNRECONCILED` | `PRESENT` | `SILENT` | `PINGED` | — | — |
+| `UNAVAILABLE` | `RESTING` | — | — | — | `PRESENT` | `UNAVAILABLE` | — | `ANSWERED` | `UNAVAILABLE` |
+| `UNRECONCILED` | `RESTING` | — | `PINGED` or `SILENT` | `UNRECONCILED` | `UNRECONCILED` | `UNRECONCILED` | — | `ANSWERED` | — |
+| `RESTING` | `RESTING` | `PRESENT`, `SILENT`, `PINGED` or `UNAVAILABLE`, by the record and `contact=` | — | `RESTING` | `RESTING` | `RESTING` | — | `RESTING` | `RESTING` |
 
 The events, each one thing a probe can observe on one call: **rest**, an entry
 for the line in `--rest`; **return**, the window taking that entry out after a
@@ -2150,13 +2220,23 @@ Why each `—` cannot be observed, in one place: **return** needs an entry in
 `--rest`, and only the `RESTING` row has one. **ping** needs a silence with no
 record standing against this sign, so no row holding a record reaches it, and
 nothing is sent from `RESTING` at all. **reconcile** and **no-fetch** need a
-`sending` intent, which only an interrupted call leaves — a `pinged` record is
-not an intent, and `PINGED`, `UNAVAILABLE` and `RESTING` hold no intent to
-resolve. **answer** and **timeout** need a record: `PRESENT`, `SILENT` and
-`ANSWERED` (whose record cleared as it printed) hold none, and a note from the
-line to a caller with no ping outstanding is the bus source's news and not this
-probe's. And `UNRECONCILED` cannot **timeout**, because a window measured from a
-ping this call could not confirm has not started.
+`sending` intent, which only an interrupted send leaves — so they are observed
+in the three states a send is made from (`PRESENT`, `SILENT`, `ANSWERED`, each
+across the interrupted call) and in `UNRECONCILED`, which leaves the intent
+standing, and not in `PINGED`, `UNAVAILABLE` or `RESTING`, which hold a record
+or no record but never an intent to resolve (amended draft 6, K5: draft 5 let
+`PRESENT` reach `UNRECONCILED` on **no-fetch** while marking its **reconcile**
+`—`, which is the same interrupted send read two ways). **A reconcile reaches
+two states**, `PINGED` where the note is on the lane or a resend lands, and
+`SILENT` where the resend did not push — draft 5's single `PINGED` cell promised
+an outcome the send does not owe. **answer** and **timeout** need a record:
+`PRESENT`, `SILENT` and `ANSWERED` (whose record cleared as it printed) hold
+none, and a note from the line to a caller with no ping outstanding is the bus
+source's news and not this probe's. **timeout** additionally needs a **complete**
+correlation read (draft 6, K3): a partial read is not a timeout observation, so
+it stays on the `PINGED`→`PINGED` cell. And `UNRECONCILED` cannot **timeout**,
+because a window measured from a ping this call could not confirm has not
+started.
 
 Four cells were the finding, and each decides something (draft 5, M2):
 `SILENT`→`PRESENT`, a line that starts signing again with no ping ever sent;
@@ -2176,7 +2256,10 @@ other two are written down because a window may take an entry out for its own
 reasons.
 
 Where two events land on one call they are applied in the order of the columns,
-so a rest wins over every reading and a reconcile happens before any send. This
+so a rest wins over every reading and a reconcile happens before any send —
+which is why `reconcile` and `no-fetch` now stand left of `ping` (draft 6, K5:
+draft 5 wrote this sentence over a table whose `ping` column came first, so the
+prose and the matrix ordered one call two ways). This
 matrix is the whole of what moves a state, and **no clock leaves `RESTING`**: a
 rest ends on the line's own return and the window's hand, never on a timer and
 never by this tool (Grok, on #178: *"A deliberate stop of the poller must not be
@@ -2201,8 +2284,10 @@ finding 3; the cursor half is draft 5, from the Fable read, finding M4). While a
 record stands — the `sending` intent or the `pinged` record, and only then — the
 probe makes **two** read-only `nova-bus inbox --as <caller>` calls per poll,
 never `--advance`, the cursor never moves: the plain listing, and then `--open
---open-max <carrying>` with the `carrying=<n>` the plain listing printed, which
-is the pattern **How the checkout receives mail** already gives a cold watcher.
+--open-max <n>` with `n` the smaller of the `carrying=<n>` that listing printed
+and 300 (draft 6, K3, below), which
+is the pattern **How the checkout receives mail** already gives a cold watcher,
+bounded.
 Two rather than one, because a plain `inbox` lists a note **only while the
 caller's own cursor stands behind it**, and once the cursor has passed it only
 `--open --open-max <n>` lists it (measured, **How the checkout receives mail**)
@@ -2212,10 +2297,34 @@ two probes moved the reply onto its `OPEN` list, and the next probe read
 `UNAVAILABLE` of a line that had answered. The union of the two listings is what
 the bus would show this caller on either side of its cursor, and of that union
 the probe considers only notes whose bus commit is **newer than the ping's
-anchor** — a range fixed by the anchor this tool wrote and by no cursor at all.
+anchor** — a range fixed by the anchor this tool wrote and by no cursor at all,
+and **that is the anchor's whole job** (draft 6, K2: it is a correlation range
+and never evidence that a note was delivered).
 `ANSWERED` requires one of them to be `from=` the pinged line. A cursor commit,
 a receipt to somebody else, a note to a third line: none of them is an answer,
-and draft 3 took all three for one. What this correlation proves is *this line
+and draft 3 took all three for one.
+
+**The two reads are bounded, and a read that could not cover the range says so
+rather than calling a friend unavailable** (draft 6, K3). `nova-bus inbox` takes
+no `--since <commit>`, so the anchor filters the listing after it arrives, and a
+filter is not a bound: draft 5's `--open --open-max <carrying>` asked a busy
+caller's bus for every open note it had, which is unbounded output on the
+noisiest bench — against **Bounded output**, and against rule 13's *bounded by
+design, tested at the largest plausible state*. So the second read is `--open
+--open-max <n>` with `n` the smaller of the `carrying=<n>` the plain listing
+printed and **300**, the bound **State** already uses for its sighting memory.
+Where `carrying=` exceeded that cap the union cannot cover the whole range
+beyond the anchor: the line carries `correlation=partial`, one `WAKE NOTE probe
+<name>: the inbox carries <n> notes past this read's cap of 300, so this
+correlation is partial and no unavailability is declared; drain the inbox` is
+printed, and **the state word stays `PINGED`** however far `--answer-within` has
+run. An unanswered friend is never called `UNAVAILABLE` on a read that could not
+have seen the answer, and the record stands so a later probe over a drained
+inbox decides it. A read that covered the range carries `correlation=complete`,
+and only a complete read with no answer past `--answer-within` is a **timeout**;
+a probe that makes no correlation read at all prints `correlation=-`.
+
+What this correlation proves is *this line
 wrote to me after my ping*, not *this note answers that note*: `nova-bus inbox`
 prints a note's id and its sender and not its `Re:` line, so the exact
 correlation is the bus's to show and a person's to read. So the ping's
@@ -2223,12 +2332,15 @@ id is printed on the `WAKE PING` line and carried on `WAKE PROBE` as
 `pinged-id=`, `nova-bus receipt --note <that id>` from the line is a
 correlation anybody can check by hand, and the residual — a note the line was
 already writing to the caller as the ping landed — is named here rather than
-discovered. **A reconciled record carries `pinged-id=-`**, and that is a second
-residual named rather than discovered (draft 5, from the Fable read, finding
-L14): the note's id was never read back, so what a person checks by hand is the
-anchor and the lane's commits beyond it, and the ping's own clock is this tool's
-stamp on the intent rather than a `SEND OK commit=` stamp — rule 9's two clocks,
-said out loud.
+discovered. **`pinged-id=` is never `-` once a ping has been prepared** (draft
+6, K3). Draft 5 reconciled without ever reading an id back and printed
+`pinged-id=-` on every reconciled record, so the one field a person could check
+by hand was blank on exactly the calls that most needed checking, and what was
+left to check was an anchor and a range of commits. The id is fixed by `nova-bus
+prepare` before any send, it is in the intent, it is in the record, and it is
+what the reconcile matches on the remote — so the hand check is the same check
+on every path, and the ping's own clock remains this tool's stamp rather than a
+`SEND OK commit=` stamp, which is rule 9's two clocks said out loud.
 
 Exit 1 is Conventions' NO and it says *do not assign now*: `SILENT` and
 `PINGED` are 1 as well as `UNAVAILABLE` because Glenn's rule holds new
@@ -2266,23 +2378,69 @@ about what a bus is beyond what those two programs tell it"*). A name is
 resolved by the program that owns the roster: `nova-bus send` refuses a name
 it does not know and the probe relays that refusal as `WAKE REFUSED`, exit 2,
 with the bus's own reason. So the name check happens where the ping happens,
-and **`--as` is required only with `--ping-draft`** — without a draft there is
-nothing to send, nothing to sign and no name to resolve, and the probe is a
-read of the checkout's commits (rule 2), which needs no roster at all. Test
+and **`--as` is required with `--ping-draft`, and on any call that finds a
+`probe:<name>` record standing** (draft 6, K6; draft 5 required it only with the
+flag). Without a draft there is nothing to send and nothing to sign, and a probe
+with no record standing is a read of the checkout's commits (rule 2) that needs
+no roster at all — but a standing record was made *for* a caller, the
+correlation read is `nova-bus inbox --as <caller>`, and a record read without
+that caller is a record read blind: such a call is `WAKE REFUSED`, exit 2,
+naming the key and the flag, and it sends nothing and writes nothing. Test
 19's *a `--line` not on the roster is exit 2* is scoped to the `--ping-draft`
-call for the same reason. It is sent as `nova-bus send --bus <dir>
---as <name> --file <file> --remote <name> --branch <name>` — `probe`'s one
-write to a bus, only under this flag, only for a line past
-`--silent-after` with no ping recorded against its current sign — and the send's
-result is one `WAKE PING id=<id> to=<name> commit=<sha> pushed=<true|false>
-attempt=<n>` line — `attempt=` is the grammar's own field and draft 4 left it
-off this sentence (draft 5, from the Fable read, finding L10); a first send for
-a silence is `attempt=1`. `pushed=false` is printed and is not a ping: *"a bus send alone does not
-wake a stopped harness"*, and a send that did not land did not even reach the
+call for the same reason.
+
+**A record is bound to its transport, and a mismatch is refused rather than
+acted on** (draft 6, K6). A name is not a transport: draft 5's `probe:<name>`
+named a line and nothing else, so a state file copied to a second checkout,
+pointed at a second remote or branch, or run under a second caller presented
+another transport's ping as this one's — a `PINGED` or an `UNAVAILABLE` about a
+note that was never sent on this lane at all. So every record carries `<scope>`
+(**State**), over the resolved bus path, `--remote`, `--branch`, `--as` and
+`--line`; a call whose own scope differs from a standing record's is `WAKE
+REFUSED`, exit 2, on one line naming the key, both scopes and the fix — a state
+file of its own — and it sends nothing, clears nothing and writes nothing.
+Refusing is the answer rather than re-scoping or overwriting, because the one
+thing this tool cannot do is decide which of two transports a standing ping
+belonged to.
+
+**The ping is prepared before it is sent, and its identity is fixed there**
+(draft 6, K1). Under `--ping-draft` the probe first runs `nova-bus prepare --bus
+<dir> --as <caller> --file <file>`, which is the bus's own operation for exactly
+this class: it uses the existing participant, recipient and draft validation,
+computes the existing deterministic note id, assigns `Date` once, **performs no
+network, no Git write, no checkout write, no index update and no delivery**, and
+prints one artifact carrying `id`, `path`, `note` and `sha256`
+(**SPEC-BUS-DELIVERY**, *Two operations, one identity*). The probe saves that
+artifact whole beside the state file at `<state>.probe.<name>.prepared`, through
+the same temporary-file-and-atomic-rename the state itself uses, **before**
+anything is sent — the bus's own instruction is *do not prepare again while
+pending; retry the saved artifact*, and this tool obeys it. A `prepare` that
+fails wrote no bus state and sent nothing: it is relayed as `WAKE REFUSED`, exit
+2, with the bus's own reason, and no record is made.
+
+**The prepared note's own recipient is compared with `--line` before any send**
+(draft 6, K6). The artifact carries the complete rendered note, so the `To:` the
+roster resolved is readable without this tool reading the roster — the rule
+above is untouched. Where it does not resolve to `--line` the probe refuses,
+`WAKE REFUSED`, exit 2, naming both, rather than sending a person's words to one
+friend and recording a delivered probe against another. Draft 5 had no such
+check anywhere: the draft went straight to `send`, and a draft addressed to
+somebody else became this line's ping.
+
+The send is then `nova-bus send --bus <dir> --remote <name> --branch <name>
+--as <name> --prepared <artifact>` — `probe`'s one write to a bus, only under
+this flag, only for a line past `--silent-after` with no ping recorded against
+its current sign — and its result is one `WAKE PING id=<id> to=<name>
+commit=<sha> pushed=<true|false> attempt=<n>` line; a first send for a silence
+is `attempt=1`, and `id=` is the **prepared** id on every attempt (draft 6:
+draft 5 sent `--file` and printed whatever id that call invented, which is the
+whole of K1). `pushed=false` is printed and is not a ping: *"a bus send alone
+does not wake a stopped harness"*, and a send that did not land did not even
+reach the
 bus. **The state records `probe:<name>` = `<sign sha>|pinged|<stamp>|<note
-id>` after `SEND OK pushed=true` and never otherwise** (amended 2026-09-13,
-draft 3, from the Fable read; the intent written before the send is draft 4's,
-below). Draft 2 wrote *after `SEND OK` and never
+id>|<anchor>|<scope>` after `SEND OK pushed=true` and never otherwise** (amended
+2026-09-13, draft 3, from the Fable read; the six fields are draft 6's). Draft 2
+wrote *after `SEND OK` and never
 before* two lines under *`pushed=false` … is not a ping*, and SPEC.md's
 grammar is `SEND OK id=<id> path=<path> commit=<sha> pushed=<true|false>` — a
 note committed to the checkout and not pushed is a `SEND OK` — so one reading
@@ -2291,88 +2449,125 @@ sign so no later probe would send again, and let `UNAVAILABLE` follow
 `--answer-within` later, gating an assignment on a note that never left this
 bench. So: a `SEND OK pushed=false` is a note in this checkout and nothing
 more. Nothing is recorded, the state word is `SILENT` and not `PINGED`, the
-line still prints so the failure is visible, and **the next probe sends
-again**.
+line still prints so the failure is visible, and **the next probe offers the
+same prepared artifact again**.
 
-**A send is intended before it is made, and the only evidence that it was made
-is on the lane's remote ref** (the intent is draft 4, from the Astra read,
-finding 5; the evidence is **re-derived in draft 5**, from the Fable read, H1).
+**A send is intended before it is made, one identity is offered to the bus, and
+the only evidence that it arrived is that identity on the lane's fetched remote
+ref** (the intent is draft 4, from the Astra read, finding 5; the fetched ref is
+draft 5, from the Fable read, H1; the one identity is **draft 6**, K1 and K2,
+from the Astra read at fb00295e).
+
 Draft 3 answered a kill between a pushed send and the state write by sending
-again, which is a second ping for one silence standing against
-**What the probe will not infer**'s *it never pings twice for one silence* —
-two sentences, no reconciliation between them. Draft 4 gave the ping a durable
-intent and an anchor and then reconciled it **against the bus checkout**. But
-`nova-bus send` commits to the checkout and then pushes, which this section says
-itself one paragraph above: a kill after the local commit and before the push
-leaves exactly the commit draft 4 read as proof that the ping had landed, so the
-probe recorded `pinged`, sent nothing, and let `UNAVAILABLE` follow on a note
-that never left this bench — the draft-2 defect draft 3 closed, reopened by
-draft 4's repair of a different one. Two drafts moving one defect is the tell
-that the wrong thing was patched, so draft 5 deletes the **category** rather
-than the sentence: *the reconcile can read local state to learn whether a send
-reached the bus* is not a claim this tool may make, in this form or any other.
-The distinction that matters is where the evidence came from and not which
-program printed it: a `SEND OK pushed=true` **returned to a living call** is the
-remote's answer, relayed by the sender, and it is why the ordinary path records
-a ping with no fetch at all. After a kill there is no return value, and what is
-left on the bench — a local commit, the checkout's head, this tool's own intent
-file — is one bench talking to itself.
+again, which is a second ping for one silence. Draft 4 gave the ping a durable
+intent and an anchor and reconciled it **against the bus checkout**, which
+carries a send's commit before the push does. Draft 5 moved the evidence to the
+lane's **fetched** remote ref, which is right, and then asked it the wrong
+question — *does it carry a commit by this caller newer than the anchor?* Two
+more defects came out of that one question:
 
-**The one evidence is the fetched remote ref.** A ping reached the bus when the
-note's commit is reachable from the lane's remote ref **as this call has just
-fetched it**: `git fetch <remote> <branch>`, then `git merge-base --is-ancestor
-<commit> <remote>/<branch>`, or the equivalent the bus tool offers. Nothing else
-counts, and a reconcile therefore costs a fetch or does not happen.
+- a fresh `nova-bus send --file` assigns a **new** note id per call, so draft 5's
+  resend after an interrupted attempt was a **second note** and not a retry of
+  the first; and the bus's push deliberately carries an earlier unpushed local
+  commit along with the new one, so both notes land together and the friend is
+  pinged twice for the one silence a guarantee promised once (K1);
+- *a commit by the caller past an anchor* is not the ping. Any other note the
+  caller sent in that gap reads the same, so a kill before the ping was even
+  constructed, followed by one unrelated note, reconciled as **delivered** — a
+  `PINGED` and then an `UNAVAILABLE` standing on a ping nobody ever sent (K2).
 
-- **Before** the send, `probe:<name>` = `<sign sha>|sending|<stamp>|<anchor>`,
-  where the anchor is the bus checkout's head sha as it stood before the send.
-  A kill anywhere after this leaves the send **known to be uncertain** rather
-  than invisible, which is the whole of what the intent buys.
+Two defects, one cause: the tool was inventing a delivery protocol beside the
+bus's own. So draft 6 deletes the **anchor-commit reconcile** — the category and
+not the sentence, as draft 5 deleted the local-state reconcile before it — and
+uses the mechanism `nova-bus` already has for exactly this failure: **one
+prepared identity, offered until it lands**. The anchor stays, with its other
+job: it is the floor of the answer-correlation range and nothing more.
+
+**The one evidence is that note's id on the fetched remote ref.** A ping reached
+the bus when a note with the **prepared id** is on the lane's remote ref as this
+call has just fetched it: `git fetch <remote> <branch>`, then the bus's own
+already-published check over `<remote>/<branch>` — the note at the prepared
+path, with the prepared id, whose bytes match the artifact's `sha256`
+(**SPEC-BUS-DELIVERY**, step 1; a same-id different-content note, an unsafe path
+or an inconsistent INDEX is a refusal there, and this tool relays it as one and
+preserves the evidence). Nothing else counts — not the checkout's head, not an
+unpushed commit, not another note by the same caller however recent — and a
+reconcile therefore costs a fetch or does not happen.
+
+- **Before** the send, `probe:<name>` = `<sign sha>|sending|<stamp>|<note
+  id>|<anchor>|<scope>`, written after the artifact is saved and before the send
+  is started. The note id is the prepared one, so the intent names **what** was
+  being sent and not merely that something was (draft 6, K3); the anchor is the
+  checkout's head before the send and is the correlation range's floor. A kill
+  anywhere after this leaves the send **known to be uncertain, and known by
+  name**, which is the whole of what the intent buys.
 - After the send returns `SEND OK pushed=true` the record becomes `<sign
-  sha>|pinged|<stamp>|<note id>`, as above. A `SEND OK pushed=false`, a refusal,
-  or a `send` that exits non-zero clears the intent: nothing is recorded, the
-  word is `SILENT`, and the next probe sends again.
+  sha>|pinged|<stamp>|<note id>|<anchor>|<scope>`: the same six fields with the
+  phase word moved, so nothing a later call needs is ever dropped by a
+  transition (draft 6, K3). A `SEND OK pushed=false`, a refusal, or a `send` that
+  exits non-zero clears the intent: nothing is recorded, the word is `SILENT`,
+  the artifact is kept, and the next probe offers it again.
 - **A probe that finds `sending` reconciles before it does anything else, and
   the reconcile is a fetch.** Under `--refresh` it fetches the lane and asks one
-  question of the fetched remote ref: does it carry a commit by the caller newer
-  than the anchor? **It does** — the ping left this bench: the record becomes
-  `pinged` with `<note id>` unknown as `-`, the line carries `reconciled=true`,
-  and **nothing is sent**. **It does not** — the ping did not leave this bench,
-  whatever this checkout holds: one `WAKE NOTE probe <name>: a ping was
-  interrupted and the lane's remote ref carries nothing from this bench beyond
-  the anchor; sending again`, and the send is made, `attempt=2` on the `WAKE
-  PING` line.
-- **A resend is never a second ping for that silence** (draft 5, H1). The
-  silence is one silence and the friend has been written to once, because the
-  first attempt never reached them: `--answer-within` is measured from the send
-  that landed, `attempt=` counts what this bench tried and not what a mailbox
-  received, and no count of pings for a silence is incremented by a resend. The
-  tool is reading its own notebook here, and the line says so.
+  question of the fetched remote ref: **is the note with the recorded id there?**
+  **It is** — the ping reached the bus: the record becomes `pinged` carrying the
+  same six fields, the line carries `reconciled=true` and `pinged-id=<that id>`,
+  and **nothing is sent**. **It is not** — that note has not reached the bus,
+  whatever this checkout holds and whatever else this caller has pushed: one
+  `WAKE NOTE probe <name>: a ping was interrupted and note <id> is not on the
+  lane's remote ref; sending the same prepared note again`, and `nova-bus send
+  --prepared` is run over the saved artifact, `attempt=2` on the `WAKE PING`
+  line.
+- **A resend is the same note, which is why it is not a second ping** (draft 6,
+  K1; draft 5 asserted this and could not keep it). `send --prepared` is the
+  bus's own retry and confirmation: it re-checks the remote for that id and
+  returns `already-published` without writing a note, a commit or a push; it
+  completes an exactly-matching partial local write and **reuses an existing
+  pending commit** of that same note rather than making a second one; and it
+  refuses unrelated local commits ahead of the named remote rather than
+  publishing them (**SPEC-BUS-DELIVERY**, steps 1 to 4). So the unpushed commit
+  an interrupted attempt left behind is **this note's own**, and the bus carrying
+  it along on the next push is what delivers the one identity, not what
+  duplicates it. `--answer-within` is measured from the attempt whose
+  `pushed=true` landed, `attempt=` counts what this bench tried and not what a
+  mailbox received, and no count of pings for a silence is incremented by a
+  resend.
+- **A resend that does not land leaves no ping** (draft 6, K5). A negative
+  reconcile followed by a `pushed=false`, a refusal or a non-zero exit clears the
+  intent, the word is `SILENT`, the artifact is kept, and the next probe offers
+  the same identity again — the `reconcile` column's second outcome, which draft
+  5's matrix did not have and its prose required.
 - **With no network there is no answer, and the tool says that instead of
   guessing.** Without `--refresh` — or with a fetch that fails — an intent
   cannot be reconciled at all, so the state word is **`UNRECONCILED`**, exit 1,
   the line carries `reconciled=false`, and one `WAKE NOTE probe <name>: a ping
   was interrupted and this call cannot reach the lane's remote ref; run again
-  with --refresh` is printed. **Nothing is sent**, the record is left exactly as
-  it stands, no `--answer-within` window opens, and the tool claims neither
-  `pinged` nor `SILENT`. Draft 4 sent again in this case, which is how it
-  produced the *two pings* its own guarantee then had to carve an exception for;
-  draft 5 neither sends nor claims, and the exception goes with it.
-- **What the reconcile proves, exactly**: that this bench pushed to the lane
-  after the anchor, not that the note it pushed was the ping. Another note the
-  caller sent in that gap reads the same, which is why `reconciled=true` is on
-  the line rather than folded away and why the exit stays 1 either way. The
-  residual is a ping recorded that may not have been sent, and its cost is one
-  silence left unpinged, which the next silence pings again — against the defect
-  it replaces, which cost an `UNAVAILABLE` on a note nobody ever saw.
-- **The guarantee, in one sentence a test can falsify**: for one silence,
-  `nova-bus send` runs a second time only on a call whose own fetch showed the
-  lane's remote ref carrying nothing from this bench beyond the anchor — so a
-  ping a friend can see is never sent twice, and no `PINGED` or `UNAVAILABLE`
-  ever stands on a note that did not leave this bench. Test 19 drives the three
-  kill points — before the local commit, after the local commit and before the
-  push, and after the push and before the record — and asserts the send count
-  and the state word at each.
+  with --refresh` is printed. **Nothing is sent**, the record and the artifact
+  are left exactly as they stand, no `--answer-within` window opens, and the tool
+  claims neither `pinged` nor `SILENT`. Draft 4 sent again in this case, which is
+  how it produced the *two pings* its own guarantee then had to carve an
+  exception for; draft 5 neither sent nor claimed, and draft 6 keeps that
+  unchanged.
+- **What the reconcile proves, exactly** (draft 6, K2): that the note whose id
+  this tool fixed before sending is on the lane, or that it is not. It is an
+  identity match and no longer an inference from recency or authorship, so draft
+  5's own residual — *another note the caller sent in the gap reads the same* —
+  is **gone** rather than printed beside the answer. `reconciled=true` stays on
+  the line because a person should see which path a record took, and the exit
+  stays 1 either way. The residual that remains is the one named above the
+  matrix, and it is about the answer and not the ping: a note the line was
+  already writing to the caller as the ping landed satisfies the correlation, and
+  `pinged-id=` is what a person checks it against by hand.
+- **The guarantee, in one sentence a test can falsify**: for one silence this
+  tool ever offers the bus exactly one note identity — the id `nova-bus prepare`
+  fixed before the first send — and it offers that identity again only on a call
+  whose own fetch found no note with that id on the lane's remote ref, so the
+  lane never carries two notes for one silence and no `PINGED` or `UNAVAILABLE`
+  ever stands on a note the lane does not carry. Test 19 drives the three kill
+  points of the prepared path — **after `prepare` and before the send**, **after
+  the send's local commit and before its push**, and **after the push and before
+  the intent is replaced** — and asserts at each the notes **on the remote**,
+  their ids, and the state word.
 
 **The bus is the channel because it is the one every line has consented to by
 being on the roster**; a line whose harness needs more than a note to wake (a
@@ -2397,8 +2592,9 @@ shares a map with a live watcher and never writes over one: the only key it
 ever writes is `probe:<name>`, and it is written in exactly these five places,
 counted rather than asserted (draft 5, finding L10: draft 4 said *exactly
 three* with a fourth two paragraphs above it) — **before a send**, the durable
-intent with the anchor (draft 4); **after `SEND OK pushed=true`**, the ping
-recorded against the sign it was made on (draft 3); **on a send that did not
+intent with the prepared note id and the anchor (draft 4; the id is draft 6);
+**after `SEND OK pushed=true`**, the ping recorded against the sign it was made
+on (draft 3); **on a send that did not
 land**, the intent cleared (a `pushed=false`, a refusal, a non-zero exit);
 **on `ANSWERED`**, the record cleared, once; and **on a retired ping**, where a
 fresh sign ended the silence an unanswered ping measured (draft 5, the
@@ -2407,7 +2603,11 @@ fresh sign ended the silence an unanswered ping measured (draft 5, the
 `PINGED` that sends nothing, an `UNRECONCILED` that leaves the intent exactly
 as it found it (draft 5), and `--here`, which takes no state and no lock at
 all — writes **nothing**, and leaves the file's bytes as it found them. A
-measurement is not a state change.
+measurement is not a state change. The prepared artifact beside the file is
+written **once**, before the first send of a silence, and is deleted with the
+record it belongs to — on `ANSWERED`, on a retired ping, and on a cleared intent
+(draft 6): it is this tool's own file by the rule this section already states,
+and a person who wants the note's words has `pinged-id=` and the bus.
 
 **Blocking, or one-shot.** With `--refresh --remote --branch --interval`, a
 probe that has pinged blocks for the rest of `--answer-within`, fetching each
@@ -2457,16 +2657,23 @@ has none, and a caller who means a different window still says so.
 **What the probe will not infer.** It never writes a cause. It never pings a
 line whose sign is fresh, whatever the caller believes. It never pings a line
 named in `--rest`, whatever its sign reads (draft 4). It pings **once** per
-silence under the guarantee stated above — a durable intent, a stable anchor,
-and a reconcile against the lane's fetched remote ref before any second send —
-and where it cannot fetch it neither sends nor claims, which is `UNRECONCILED`
+silence under the guarantee stated above — **one prepared note identity**, a
+durable intent that names it, an anchor that bounds the answer read, and a
+reconcile that asks the lane's fetched remote ref for that exact id before any
+second send (draft 6, K1 and K2) — and where it cannot fetch it neither sends
+nor claims, which is `UNRECONCILED`
 (draft 5, H1; draft 4 promised one ping *wherever the reconcile can read the
 lane* and sent a second one wherever it could not, and draft 3 promised *never
-twice* beside a rule that deliberately sent again). **It never reads this bench to decide
+twice* beside a rule that deliberately sent again). **It never invents a
+delivery protocol beside the bus's own** (draft 6): the identity is `nova-bus
+prepare`'s, the retry is `nova-bus send --prepared`'s, and this tool contributes
+the notebook and the fetch. **It never reads this bench to decide
 whether an interrupted note reached the bus** (draft 5): a `pushed=true`
 returned to a living call is the remote's answer and is taken as one, but after
 a kill the checkout's own commits are this bench talking to itself, and the
-lane's fetched remote ref is the only thing it will take for delivery. It never reads the process table of this or
+lane's fetched remote ref carrying **that note's id** is the only thing it will
+take for delivery. It never counts a note it did not prepare as this probe's
+ping (draft 6, K2 and K6). It never reads the process table of this or
 any bench to
 decide whether a line is running (*absence of a process is not absence of a
 session*, 2026-08-25). It never receipts, never replies, never reassigns:
@@ -2822,20 +3029,28 @@ left without what it pins.
     `self=0`; a tick on which no field moved at all prints nothing; and a
     mutation that drops `updated=` from the value leaves the reply invisible
     and turns the test red.
-    **A self-only tick does not advance the watermark past what it attributed**
-    (draft 5, from the Fable read, finding M5): with `--not-mine` holding this
-    actor's comment id, a tick in which that comment and an older-thread reply
-    land together — the reply stamping `updatedAt` later than the comment node —
-    is a change, `rescan=true`, `self=1`, and the stored `updated=` is asserted
-    **unchanged**; the same tick with the comment alone stores the stamp and is
-    not a change; a mutation that always stores the observed stamp leaves the
-    reply invisible for ever and turns the test red. **A push is a push and not
-    a rescan** (draft 5, finding M6): a tick on which only `updatedAt` and
-    `headRefOid` move prints `push=true head=<sha> rescan=false` and is a
-    change; the same tick with that head sha listed in `--not-mine` is this
-    actor's own push and not a change at all, and the fake `gh` is asserted to
-    have made exactly one `api graphql` call on it; a mutation that drops
-    `headRefOid` from the standing query reports the push as `rescan=true` and
+    **A watermark is stored on every tick, and a moved stamp is never silent**
+    (draft 6, K4, replacing draft 5's finding-M5 assertions): with `--not-mine`
+    holding this actor's comment id, a tick in which that comment and an
+    older-thread reply land together is a change, `rescan=true`, `self=1`, and
+    the stored `updated=` is asserted **advanced to the observed stamp** — and
+    the case is driven in **both orderings and at equal stamps**: the reply
+    earlier and the comment later, the comment earlier and the reply later, and
+    both carrying one identical stamp. A mutation that suppresses the tick when
+    the observed stamp is not newer than the attributed node — which is draft
+    5's rule — leaves the reply invisible for ever and turns the test red, and a
+    mutation that leaves the stored stamp behind makes the following three ticks
+    report the same movement again and turns the test red for the other reason.
+    **A push names a movement and does not account for it** (draft 5, finding M6;
+    amended draft 6, K4): a tick on which only `updatedAt` and `headRefOid` move
+    prints `push=true head=<sha>` and is a change; the same tick with that head
+    sha listed in `--not-mine` prints `push=true self=1 rescan=true` and is
+    **still a change**, with a reply-plus-own-push fixture — an older-thread
+    reply landing on the same tick as this actor's push — asserted to wake the
+    window on that tick; the fake `gh` is asserted to have made exactly one `api
+    graphql` call on each of them; a mutation that drops `headRefOid` from the
+    standing query loses `push=` from the line and turns the test red, and a
+    mutation that restores draft 5's *not a change at all* loses the reply and
     turns the test red. **`--not-mine` is re-read each forge tick** (draft 5,
     finding L15): an id appended to the file between two ticks is set aside from
     the next tick and not before, and a mutation that reads the file once per
@@ -2929,8 +3144,11 @@ left without what it pins.
     an injected clock, a line whose last sign is 4m old is `PRESENT` exit 0;
     at 6m without `--ping-draft` it is `SILENT` exit 1 and the fake `nova-bus`
     records no `send`; at 6m with `--ping-draft` it is `PINGED` exit 1, one
-    `WAKE PING` line, `nova-bus send` run exactly once as `--as <caller>`, and
-    `probe:<name>` holds the sign sha, the stamp and the note id; a second
+    `WAKE PING` line, `nova-bus prepare` run exactly once and `nova-bus send
+    --prepared` run exactly once as `--as <caller>` over the saved artifact
+    (draft 6), the `WAKE PING id=` equal to the artifact's `id`, and
+    `probe:<name>` holding all six fields — the sign sha, `pinged`, the stamp,
+    that note id, the anchor and the scope; a second
     probe at 7m sends nothing and is `PINGED`; a receipt by the line **addressed to the
     caller** pushed
     from the other clone under `--refresh` is `ANSWERED` exit 0 within one
@@ -2945,7 +3163,7 @@ left without what it pins.
     so the reply is on the caller's `OPEN` list and a plain `inbox` no longer
     lists it, the next probe still reaches `ANSWERED` exit 0, the fake
     `nova-bus` records **two** `inbox` reads for that poll — the plain listing
-    and `--open --open-max <carrying>` — and a mutation that makes the plain
+    and the bounded `--open --open-max <n>` — and a mutation that makes the plain
     read the only one leaves that probe `PINGED` and then `UNAVAILABLE` of a
     line that answered, and turns the test red; the fake `nova-bus` is asserted
     to record **no** `inbox` read at all on a `PRESENT`, `SILENT` or `RESTING`
@@ -2969,39 +3187,75 @@ left without what it pins.
     **sends again**; a mutation that
     records the ping on `SEND OK` alone makes that probe send nothing, reach
     `UNAVAILABLE` at 8m on a note that never left the bench, and turns the test
-    red; **an interrupted send is reconciled from the lane's fetched remote ref,
-    and the reconcile is a fetch** (draft 4, finding 5; re-derived draft 5, H1,
-    whose repair of draft 4 is that the checkout carries a send's commit before
-    the push does). The fake `nova-bus send` is killed at **three** points and
-    the observable asserted at each. Killed **after the local commit and before
-    the push** — the commit is in this checkout and on no remote ref — the
-    record holds `sending` with the anchor and the next probe under `--refresh`
-    fetches, finds nothing of this bench's beyond the anchor on
-    `<remote>/<branch>`, prints the interrupted-ping `WAKE NOTE`, **sends
-    again** as `attempt=2` and reaches `PINGED` exit 1; the mutation that
-    reconciles against the checkout — its head, its unpushed commits, or the
-    `SEND OK` output — makes that probe record `pinged`, send nothing and reach
-    `UNAVAILABLE` at 8m on a note that never left the bench, and turns the test
-    red. Killed **after the push and before the record is written** — the commit
-    is on the remote ref — the next probe under `--refresh` finds it beyond the
-    anchor, prints `reconciled=true` with `pinged-id=-`, records `pinged`, sends
-    nothing, and `nova-bus send` is asserted to have run **exactly once** for
-    that silence. Killed **before the local commit** — nothing exists anywhere —
-    the next probe under `--refresh` sends again as `attempt=2`, and that resend
-    is asserted **not** to count as a second ping for the silence: the probe is
-    `PINGED` and not `UNAVAILABLE`, and `--answer-within` is measured from the
-    send that landed. In all three the same call **without** `--refresh`, and
-    the same call with a fetch that fails, is `UNRECONCILED` exit 1 carrying
-    `reconciled=false`, prints the unreconciled `WAKE NOTE`, runs `nova-bus
-    send` **not at all**, leaves the record exactly as it found it, and prints
-    neither `PINGED` nor `SILENT` anywhere on its output; a mutation that sends
-    over an unreconciled intent, and one that answers `PINGED` on it, each turn
-    the test red, and one that writes no intent before the send turns all three
-    kills red because the kill then leaves nothing to reconcile. **The
-    guarantee** is asserted directly, over fifty randomised kill points across
-    the three: `nova-bus send` runs more than once for one silence only on a
-    call whose own fetch showed the lane's remote ref carrying nothing from this
-    bench beyond the anchor;
+    red; **one prepared identity is offered to the bus until it lands, and an
+    interrupted send is reconciled by that identity on the lane's fetched remote
+    ref** (draft 4, finding 5; re-derived draft 5, H1, whose repair was that the
+    checkout carries a send's commit before the push does; re-derived **draft
+    6**, K1 and K2, whose repair is that a fresh send invents a second id and
+    that a caller's commit past an anchor is not the ping). The fake `nova-bus`
+    is killed at **three** points on the prepared path and the observable is
+    asserted at each, **against the real disposable bare remote and not against
+    the send's own output**: the notes the remote carries, and their ids. Killed
+    **after `prepare` and before the send** — the artifact is saved, the intent
+    stands, and the remote carries nothing — the next probe under `--refresh`
+    fetches, finds no note with the recorded id, prints the interrupted-ping
+    `WAKE NOTE` naming that id, runs `send --prepared` over the **same**
+    artifact as `attempt=2`, and reaches `PINGED` exit 1 with the remote carrying
+    **exactly one** note whose id is the prepared one. Killed **after the send's
+    local commit and before its push** — the note is in this checkout and on no
+    remote ref — the record holds `sending` with the same id and the next probe
+    reconciles negatively, resends the same artifact, and the remote is again
+    asserted to carry **exactly one** note with that id: the mutation that sends
+    a fresh `--file` instead of the saved artifact makes the remote carry
+    **two** notes, which is K1's duplicate ping, and turns the test red; the
+    mutation that reconciles against the checkout — its head, its unpushed
+    commits, or the `SEND OK` output — makes that probe record `pinged`, send
+    nothing and reach `UNAVAILABLE` at 8m on a note that never left the bench,
+    and turns the test red. Killed **after the push and before the intent is
+    replaced** — the note is on the remote ref — the next probe under `--refresh`
+    finds **that id** there, prints `reconciled=true` with `pinged-id=` equal to
+    it and never `-`, records `pinged`, sends nothing, and `nova-bus send` is
+    asserted to have been run **exactly once more than the kills forced** for
+    that silence. **An unrelated note is not a ping** (draft 6, K2): with the
+    probe killed **before** `prepare` and the caller pushing one unrelated note
+    to the lane, the next probe finds no intent to reconcile and pings for the
+    first time; and with the intent standing and the recorded id absent while an
+    unrelated note by the caller sits past the anchor, the reconcile is negative,
+    the artifact is resent, and a mutation that asks *any commit by the caller
+    past the anchor* reaches `PINGED` and then `UNAVAILABLE` on a note nobody
+    sent, and turns the test red. In all three kills the same call **without**
+    `--refresh`, and the same call with a fetch that fails, is `UNRECONCILED`
+    exit 1 carrying `reconciled=false`, prints the unreconciled `WAKE NOTE`, runs
+    `nova-bus send` **not at all**, leaves the record and the artifact exactly as
+    it found them, and prints neither `PINGED` nor `SILENT` anywhere on its
+    output; a mutation that sends over an unreconciled intent, and one that
+    answers `PINGED` on it, each turn the test red, and one that writes no intent
+    before the send turns all three kills red because the kill then leaves
+    nothing to reconcile. **A negative reconcile whose resend does not push is
+    `SILENT`** (draft 6, K5): `send --prepared` returning `SEND OK pushed=false`
+    after a negative reconcile leaves no `probe:<name>` key, prints `SILENT`, and
+    the next probe offers the same artifact again — and a mutation that reaches
+    `PINGED` there turns the test red. **The guarantee** is asserted directly,
+    over fifty randomised kill points across the three: for one silence the
+    remote ever carries **at most one** note, its id is the prepared one, and
+    `send --prepared` runs again only on a call whose own fetch found that id
+    absent from the lane's remote ref; **the correlation read is bounded and says
+    when it is partial** (draft 6, K3): with the caller's inbox made to print
+    `carrying=900`, the second read is asserted to be `--open --open-max 300`,
+    the line carries `correlation=partial`, the `WAKE NOTE` naming the cap is
+    printed, and the probe stays `PINGED` exit 1 at 8m — never `UNAVAILABLE` —
+    while the same probe over a drained inbox carries `correlation=complete` and
+    does reach `UNAVAILABLE` at 8m; a mutation that passes the raw `carrying=`
+    to `--open-max`, and one that declares `UNAVAILABLE` on a partial
+    correlation, each turn the test red; **a record is bound to its transport
+    and `--as` is required wherever one stands** (draft 6, K6): the same state
+    file presented with a different `--remote`, a different `--branch`, a
+    different `--bus` or a different `--as` is `WAKE REFUSED` exit 2 naming both
+    scopes, sends nothing and leaves the file byte-identical, a standing record
+    read with no `--as` is `WAKE REFUSED` exit 2, and a `--ping-draft` whose
+    prepared note resolves to a `To:` other than `--line` is `WAKE REFUSED` exit
+    2 naming both with `nova-bus send` never run; a mutation that drops the
+    scope, or that sends on a mismatch, turns the test red;
     **a declared rest is never probed** (draft 4, finding 3): with the line
     named in `--rest` and its sign 6m old, the probe is `RESTING` exit 1
     carrying `rest=<the declaring note id>` and `contact=STALE`, `nova-bus
@@ -3095,14 +3349,23 @@ left without what it pins.
   that the line wrote to the caller after the ping and not that the note
   answered it — `nova-bus inbox` prints no `Re:` line, so the exact
   correlation is a person's to read from `pinged-id=`.
-- **A ping repeats only where a fetch proved it had to** (draft 4, finding 5;
-  re-derived draft 5, H1): an interrupted send is reconciled against the lane's
-  **fetched remote ref** before any resend, so a kill produces no second ping a
-  friend can see; where this tool cannot fetch, it reports `UNRECONCILED` and
-  neither sends nor claims. The reconcile's own residual — `reconciled=true`
-  against a different note the caller sent in the gap — is printed rather than
-  folded away, and its cost is one silence left unpinged rather than an
-  `UNAVAILABLE` on a note that never left the bench.
+- **A ping is one identity, offered until it lands** (draft 4, finding 5;
+  re-derived draft 5, H1; re-derived again **draft 6**, K1 and K2): the note id
+  is fixed by `nova-bus prepare` before any send, every send is `nova-bus send
+  --prepared` of that one artifact, and an interrupted send is reconciled by
+  asking the lane's **fetched remote ref** for that exact id before any resend —
+  so a kill produces no second note a friend can see, and no unrelated note by
+  the caller is ever counted as the ping. Where this tool cannot fetch, it
+  reports `UNRECONCILED` and neither sends nor claims. The residual that remains
+  is on the **answer** and not the ping — a note the line was already writing to
+  the caller as the ping landed — and `pinged-id=` is what a person checks it
+  against; draft 5's own reconcile residual is gone with the anchor-commit
+  reconcile that produced it. **What this rests on, checked rather than assumed**
+  (draft 6): `prepare` and `send --prepared` are in `nova-bus` at this head —
+  `internal/bus/prepared.go` and `cmd/nova-bus/main.go` — and their contract is
+  **SPEC-BUS-DELIVERY**, whose own status line still reads *not implemented* and
+  is stale against that code. This tool depends on the contract, so a change to
+  it is a change here.
 - **What this tool assumes about other systems, rather than verifies** (draft 5,
   from the Fable read, finding L9). Verified at this head, against this repo:
   the lock protocols and their build tags (`internal/bus/lock_unix.go`,
@@ -3110,8 +3373,10 @@ left without what it pins.
   2026-09-11 against `nova-bus v0.10.3` (**How the checkout receives mail**).
   **Assumed**, and verified against no forge or kernel: that a thread reply
   moves a pull request's `updatedAt` and that dismissing a review moves no count
-  and creates no node; that a pull request's `updatedAt` is never older than the
-  item whose arrival moved it (**The `updated=` watermark**); that `O_NONBLOCK`
+  and creates no node — draft 5 also assumed that a pull request's `updatedAt`
+  is never older than the item whose arrival moved it, and draft 6 **withdraws**
+  that assumption together with the suppression it was holding up (K4); that
+  `O_NONBLOCK`
   keeps the open of a FIFO from blocking; that a kernel grants a released
   `flock` to a blocking waiter no later than one probe gap; and that
   `fcntl(F_GETLK)` does not see a `flock` on every platform. Each is a claim
@@ -3348,11 +3613,14 @@ shared packages used rather than re-spelled.
 18. **`internal/wake/probe.go` and `internal/wake/here.go`** — the sign read
     reusing `line.go` printed as **`contact=`** beside the state word, the
     **`--rest` roll read and `RESTING` before anything else is decided, with no
-    clock that ends it**, the **`sending` intent written before the send with
-    the head sha as its anchor and the reconcile that reads the lane before any
-    resend**, and **`ANSWERED` from one read-only `nova-bus inbox --as
-    <caller>` per poll — a note or receipt from the pinged line addressed to
-    the caller, never any newer commit** (all draft 4), the `probe:<name>`
+    clock that ends it**, the **ping prepared by `nova-bus prepare` before any
+    send, the `sending` intent naming that note id with the checkout head as its
+    correlation anchor, and every send `nova-bus send --prepared` of the one
+    saved artifact, resent only where a fetch found that id absent from the
+    lane's remote ref** (draft 6), and **`ANSWERED` from two bounded read-only
+    `nova-bus inbox --as <caller>` reads per poll — a note or receipt from the
+    pinged line addressed to the caller, never any newer commit** (draft 4,
+    bounded draft 6), the `probe:<name>`
     record written after **`SEND OK
     pushed=true`** and never otherwise (draft 3)
     **under `<state>.lock`, with no other key written and nothing written at
@@ -3361,7 +3629,7 @@ shared packages used rather than re-spelled.
     the one `nova-bus send`, the name resolved by `nova-bus` and no roster read
     (draft 2), the 5m/2m defaults (draft 2), the blocking half through
     `nova-bus wait
-    --timeout <interval>` as `--refresh` already does, the **six** state words
+    --timeout <interval>` as `--refresh` already does, the **seven** state words
     and their exit codes; `here.go` reading load, CPUs and **a process count
     with no listing — `sysinfo`'s `procs`, a nil-buffer `kern.proc.all` length
     divided by `sizeof(kinfo_proc)`** (draft 2)
