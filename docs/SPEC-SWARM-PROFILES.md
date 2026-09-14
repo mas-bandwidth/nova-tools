@@ -7,6 +7,14 @@ proposal only: it records the contract to review and the gates to implement;
 it does not claim that the feature or a provider account exists, and it does
 not claim friend consensus.
 
+The [native model companion](drafts/SWARM-NATIVE-MODEL.md) proposes the
+per-model `route.native` and `resolved.native` additions referenced below,
+alongside the [execution-binding amendment](drafts/SWARM-EXECUTION-BINDING.md).
+Its synthetic encoding vectors do not activate a native reader. Incorporate
+the strict readers, full parent fixture changes and native launch contract
+together before admitting those profiles; earlier parent fixtures still pin
+the earlier draft shapes.
+
 ## Compatibility and vocabulary
 
 An invocation with `--worker <file>` and no profile catalog keeps its current
@@ -78,7 +86,7 @@ catalog is implementation-ready.
 |---|---|---|
 | profile | `worker` object; `route` object; `env_var` string; `model` string; `allowed_models` nonempty string array; `prompt` object | `model` is the default; an admitted override must appear in `allowed_models` |
 | worker | Required strings `name`, `usage`, `harness`, `worker_dir`, `deadline`; required string array `harness_args`; optional string arrays `read_roots`, `input_limit_phrases` | Same execution meanings and validators as the legacy worker; profile harness paths must be absolute |
-| route | Required `provider` string and `credentials` object; optional `endpoint` string | Provider and base URL come only from here; an omitted endpoint uses only the named adapter's declared default |
+| route | Required `provider` string and `credentials` object; optional `endpoint` string; proposed conditional `native` object | Non-native endpoint defaults belong to the named adapter. For `opencode-native/1`, the native model companion requires `native.models`, one exact resolved projection per allowed model; an explicit common endpoint must agree with all of them |
 | credentials | Required strings `kind`, `store`, `seat`, `age_key`, `sops`, `gate`, `launcher` | `kind` is exactly `nova-secrets`; no alternate plaintext or inherited-environment credential source |
 | prompt | Required `mode` string, `prefix` string, `tools` string array | Existing `legacy`/`compact`, byte bound and adapter allow-list rules above |
 
@@ -267,7 +275,7 @@ be valid Unicode. Empty arrays mean no entries, not inherited configuration.
 | `profile_id` | String, the admitted catalog member name |
 | `catalog_hash` | String, the full catalog digest defined above |
 | `requested` | Object with exactly nonempty strings `provider` and `model`, using the existing provider/model validators and admitted allow-list, before adapter resolution; explicit override or the admitted default, never observed identity |
-| `resolved` | Object with exactly strings `provider`, `model`, `endpoint`, after the selected adapter resolves the route; provider/model must pass its nonempty native-ID validators; empty endpoint allowed only if that adapter explicitly declares no configurable endpoint |
+| `resolved` | Object with strings `provider`, `model`, `endpoint`, after adapter resolution; proposed `opencode-native/1` additionally requires exactly `native` from the native model companion, with all effective per-model inputs retained. Other adapters keep exactly the three original members. Provider/model pass the adapter's validators; an empty endpoint is allowed only where the adapter explicitly declares no configurable endpoint |
 | `worker` | Object with exactly strings `name`, `usage`, `harness`, `worker_dir`, and string arrays `harness_args`, `read_roots`, `input_limit_phrases`; the execution-field validation above applies |
 | `credentials` | Exactly the live-route credential object defined above: `kind`, `store`, `seat`, `age_key`, `sops`, `gate`, `launcher`; paths and names only |
 | `env_var` | String, the single admitted secret-variable name |

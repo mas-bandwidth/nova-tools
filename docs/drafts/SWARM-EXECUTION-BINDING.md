@@ -16,6 +16,11 @@ specifies the stdin/argv boundary and records the remaining compatibility gate
 in [issue 296](https://github.com/mas-bandwidth/nova-tools/issues/296). A custom
 config file alone does not establish isolated effective inputs.
 
+The [native model projection](SWARM-NATIVE-MODEL.md) now proposes the missing
+per-model SDK/API/runtime fields and number-free typed option encoding. Its
+selected `resolved` object enters the exact config preimage below; SDK semantic
+schemas, full parent fixture migration and generated native config remain gates.
+
 Pending amendment to `SPEC-SWARM-PROFILES.md`; it is neither a runtime claim nor a change to legacy `--worker`
 readers. New members apply only to a profiled `nova.swarm.attempt/1` after that reader is upgraded.
 `worker.usage` stays an accounting-source selector; it never selects an adapter or executable.

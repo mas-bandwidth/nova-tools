@@ -74,11 +74,12 @@ the existing nova-swarm supervisor already supplies stdin.
 Keep Go and Zen as distinct resolved routes. Each supported adapter revision
 needs a reviewed route table binding native provider ID, model ID, endpoint,
 SDK transport and complete required capability metadata. Names in a profile are
-not proof of a provider's transport; a missing mapping refuses. The existing
-parent config-hash preimage has no SDK/effective-API-ID/capability fields.
-Amend its member tables, preimage and encoding fixtures together to retain and
-hash this full non-secret projection before enabling admission; do not create a
-second unhashed route owner in a callback.
+not proof of a provider's transport; a missing mapping refuses. The proposed
+[native model projection](SWARM-NATIVE-MODEL.md) supplies SDK, effective API ID,
+capability and option fields per selected model, with explicit number encoding.
+Its parent-table additions and companion vectors remain proposals. Incorporate
+the strict reader and full parent catalog/body/launch fixtures together before
+enabling admission; do not create a second unhashed route owner in a callback.
 
 For a provider established by that reviewed route table, native configuration
 accepts `env:["<selected-variable-name>"]`, and
