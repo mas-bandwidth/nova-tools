@@ -772,7 +772,24 @@ Every source adapter reports coverage per field as one of `observed`, `missing`
 or `unsupported`: `observed` retains the value and protected evidence,
 `missing` records `-` because the source was expected but omitted it, and
 `unsupported` records `-` because the adapter cannot provide that field.
-Neither status becomes zero or a success claim. New receipts expose required
+Neither status becomes zero or a success claim. A harness-normalized number is
+an observation of that harness, not automatically a provider-native observation.
+Bind `token_basis` and field coverage to the adapter/harness revision and its
+inclusive/subset mapping. If normalization erased missingness or clamped an
+inconsistent residual, retain that limitation; a manufactured zero does not
+establish a provider-reported zero. Preserve native totals and step/call identity
+when available so a derived total can be checked without adding overlapping
+message and step projections. A last-step message projection cannot stand for a
+whole multi-step attempt unless the adapter proves the aggregation scope.
+
+Adapter fixtures must cover absent input/reasoning/cache fields normalized to
+zero, inconsistent parent/subtype counts, one message per step, multiple steps
+per message, and a numeric zero harness cost with no provider money field.
+Where the source supplies an aggregate total and observations are complete,
+assert that the declared disjoint components reconcile to it. An absent source
+total stays absent; incomplete observations retain raw fields and an explicit
+coverage gap. These exercise the existing provenance and aggregation contract,
+not a second accounting ledger. New receipts expose required
 `bench`, `repo`, `model` and `actor` dimensions (or `-` plus
 `attribution=unattributed`); legacy usage rows remain readable with their
 existing columns. Daily reports may group the same rows by bench, repository,
