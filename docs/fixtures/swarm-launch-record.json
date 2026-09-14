@@ -1,28 +1,62 @@
 {
-  "status": "proposed encoding fixture only; synthetic paths, no launch or security validation",
-  "body": {
-    "schema": "nova.swarm.launch/1",
-    "context": {
-      "kind": "pool",
-      "root": "/secure/example/pool"
-    },
-    "evidence_root": "/secure/example/pool/evidence",
-    "job_id": "20260914T052500Z-fixture-012abc",
-    "slot": "1",
-    "reservation_nonce": "012345abcdef",
-    "manifest_hash": "sha256:e20b9d5658c6b261c78fcdcef224afc495df3e67af652b4cf3b58dd7739e0e53",
-    "sandbox": "/opt/example/bin/nova-sandbox",
-    "usage_every_ns": "1000000000"
-  },
-  "canonical": "{\"context\":{\"kind\":\"pool\",\"root\":\"/secure/example/pool\"},\"evidence_root\":\"/secure/example/pool/evidence\",\"job_id\":\"20260914T052500Z-fixture-012abc\",\"manifest_hash\":\"sha256:e20b9d5658c6b261c78fcdcef224afc495df3e67af652b4cf3b58dd7739e0e53\",\"reservation_nonce\":\"012345abcdef\",\"sandbox\":\"/opt/example/bin/nova-sandbox\",\"schema\":\"nova.swarm.launch/1\",\"slot\":\"1\",\"usage_every_ns\":\"1000000000\"}",
-  "launch_hash": "sha256:80e7370febead00e409117554519a800806ba8108b75d2740d119a3248394c5c",
-  "manifest_canonical": "{\"job_id\":\"20260914T052500Z-fixture-012abc\",\"schema\":\"nova.swarm.prelaunch/1\",\"snapshot_hash\":\"sha256:4c18594f9f05c8ab6024fadefe408c75fad146e21e2f388aa350f5f55c2fdfbe\"}",
   "argv": [
-    "/opt/example/bin/isolated-worker-launcher",
+    "/secure/example/pool/evidence/20260914T052500Z-fixture-012abc/control/sha256-e9b3891aa8a3a362af787218bf8b797090fcda27d47fb4d5dcf296dae8b9a253/launcher",
     "profile-supervise",
     "--launch",
     "/secure/example/pool/evidence/20260914T052500Z-fixture-012abc/launch/012345abcdef.json",
     "--launch-hash",
-    "sha256:80e7370febead00e409117554519a800806ba8108b75d2740d119a3248394c5c"
-  ]
+    "sha256:679631b046f9b7a5cb24d8fce5e291cd0395a5938383bfd818978a3b6ea2375a"
+  ],
+  "body": {
+    "context": {
+      "kind": "pool",
+      "root": "/secure/example/pool"
+    },
+    "control": {
+      "launcher": {
+        "path": "/secure/example/pool/evidence/20260914T052500Z-fixture-012abc/control/sha256-e9b3891aa8a3a362af787218bf8b797090fcda27d47fb4d5dcf296dae8b9a253/launcher",
+        "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "source": "/opt/example/bin/isolated-worker-launcher"
+      },
+      "manifest_hash": "sha256:e9b3891aa8a3a362af787218bf8b797090fcda27d47fb4d5dcf296dae8b9a253",
+      "root": "/secure/example/pool/evidence/20260914T052500Z-fixture-012abc/control/sha256-e9b3891aa8a3a362af787218bf8b797090fcda27d47fb4d5dcf296dae8b9a253",
+      "sandbox_source": "/opt/example/bin/nova-sandbox"
+    },
+    "evidence_root": "/secure/example/pool/evidence",
+    "job_id": "20260914T052500Z-fixture-012abc",
+    "manifest_hash": "sha256:fd6fa79a41350041b1508050fb3e7151ee01c7a02d0e86dc58e83a1330fbfa8e",
+    "realization": {
+      "env_hash": "sha256:be10119f18f935070026812f83d35dd620f2172f0f828e3c76145adab9492746"
+    },
+    "reservation_nonce": "012345abcdef",
+    "sandbox": "/secure/example/pool/evidence/20260914T052500Z-fixture-012abc/control/sha256-e9b3891aa8a3a362af787218bf8b797090fcda27d47fb4d5dcf296dae8b9a253/sandbox",
+    "schema": "nova.swarm.launch/1",
+    "slot": "1",
+    "usage_every_ns": "1000000000"
+  },
+  "canonical": "{\"context\":{\"kind\":\"pool\",\"root\":\"/secure/example/pool\"},\"control\":{\"launcher\":{\"path\":\"/secure/example/pool/evidence/20260914T052500Z-fixture-012abc/control/sha256-e9b3891aa8a3a362af787218bf8b797090fcda27d47fb4d5dcf296dae8b9a253/launcher\",\"sha256\":\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"source\":\"/opt/example/bin/isolated-worker-launcher\"},\"manifest_hash\":\"sha256:e9b3891aa8a3a362af787218bf8b797090fcda27d47fb4d5dcf296dae8b9a253\",\"root\":\"/secure/example/pool/evidence/20260914T052500Z-fixture-012abc/control/sha256-e9b3891aa8a3a362af787218bf8b797090fcda27d47fb4d5dcf296dae8b9a253\",\"sandbox_source\":\"/opt/example/bin/nova-sandbox\"},\"evidence_root\":\"/secure/example/pool/evidence\",\"job_id\":\"20260914T052500Z-fixture-012abc\",\"manifest_hash\":\"sha256:fd6fa79a41350041b1508050fb3e7151ee01c7a02d0e86dc58e83a1330fbfa8e\",\"realization\":{\"env_hash\":\"sha256:be10119f18f935070026812f83d35dd620f2172f0f828e3c76145adab9492746\"},\"reservation_nonce\":\"012345abcdef\",\"sandbox\":\"/secure/example/pool/evidence/20260914T052500Z-fixture-012abc/control/sha256-e9b3891aa8a3a362af787218bf8b797090fcda27d47fb4d5dcf296dae8b9a253/sandbox\",\"schema\":\"nova.swarm.launch/1\",\"slot\":\"1\",\"usage_every_ns\":\"1000000000\"}",
+  "control_manifest": {
+    "entries": [
+      {
+        "bytes": "123",
+        "destination": "launcher",
+        "mode": "0755",
+        "role": "launcher",
+        "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "type": "regular"
+      },
+      {
+        "bytes": "456",
+        "destination": "sandbox",
+        "mode": "0755",
+        "role": "sandbox",
+        "sha256": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "type": "regular"
+      }
+    ],
+    "schema": "nova.swarm.control/1"
+  },
+  "launch_hash": "sha256:679631b046f9b7a5cb24d8fce5e291cd0395a5938383bfd818978a3b6ea2375a",
+  "manifest_canonical": "{\"job_id\":\"20260914T052500Z-fixture-012abc\",\"schema\":\"nova.swarm.prelaunch/1\",\"snapshot_hash\":\"sha256:9636f3217d3d478c885177460aefc9356d7a483cb1f689cbe5bc2443695acb6a\"}",
+  "status": "proposed encoding fixture only; synthetic paths, no launch or security validation"
 }

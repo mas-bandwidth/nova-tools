@@ -85,7 +85,7 @@ catalog is implementation-ready.
 | Object | Fields and types | Single source of truth |
 |---|---|---|
 | profile | `worker` object; `route` object; `env_var` string; `model` string; `allowed_models` nonempty string array; `prompt` object | `model` is the default; an admitted override must appear in `allowed_models` |
-| worker | Required strings `name`, `usage`, `harness`, `worker_dir`, `deadline`; required string array `harness_args`; optional string arrays `read_roots`, `input_limit_phrases` | Same execution meanings and validators as the legacy worker; profile harness paths must be absolute |
+| worker | Required strings `name`, `usage`, `harness`, `worker_dir`, `deadline`; required `execution` object; required string array `harness_args`; optional string arrays `read_roots`, `input_limit_phrases` | Same execution meanings and validators as the legacy worker; catalog `worker.execution` owns admission source data; profile harness paths must be absolute |
 | route | Required `provider` string and `credentials` object; optional `endpoint` string; proposed conditional `native` object | Non-native endpoint defaults belong to the named adapter. For `opencode-native/1`, the native model companion requires `native.models`, one exact resolved projection per allowed model; an explicit common endpoint must agree with all of them and denotes the SDK factory base URL, not its terminal request URL |
 | credentials | Required strings `kind`, `store`, `seat`, `age_key`, `sops`, `gate`, `launcher` | `kind` is exactly `nova-secrets`; no alternate plaintext or inherited-environment credential source |
 | prompt | Required `mode` string, `prefix` string, `tools` string array | Existing `legacy`/`compact`, byte bound and adapter allow-list rules above |
@@ -114,7 +114,7 @@ shell and without catalog-provided gate flags:
 <credentials.gate> exec --store <credentials.store> --as <credentials.seat>
   --key <credentials.age_key> --sops <credentials.sops>
   --only <profile.env_var> --require <profile.env_var> --
-  <credentials.launcher> profile-supervise --launch <absolute-launch-record>
+  <control.launcher.path> profile-supervise --launch <absolute-launch-record>
   --launch-hash <sha256:canonical-launch-record>
 ```
 
@@ -276,13 +276,14 @@ be valid Unicode. Empty arrays mean no entries, not inherited configuration.
 | `catalog_hash` | String, the full catalog digest defined above |
 | `requested` | Object with exactly nonempty strings `provider` and `model`, using the existing provider/model validators and admitted allow-list, before adapter resolution; explicit override or the admitted default, never observed identity |
 | `resolved` | Object with strings `provider`, `model`, `endpoint`, after adapter resolution; proposed `opencode-native/1` additionally requires exactly `native` from the native model companion, with all effective per-model inputs retained. Other adapters keep exactly the three original members. Provider/model pass the adapter's validators; an empty endpoint is allowed only where the adapter explicitly declares no configurable endpoint |
-| `worker` | Object with exactly strings `name`, `usage`, `harness`, `worker_dir`, and string arrays `harness_args`, `read_roots`, `input_limit_phrases`; the execution-field validation above applies |
+| `worker` | Object with exactly strings `name`, `usage`, `harness`, `worker_dir`, and string arrays `harness_args`, `read_roots`, `input_limit_phrases`; `worker` does not carry an execution copy (owned solely by `attempt.execution`); the execution-field validation above applies |
+| `execution` | Object with strings `adapter`, `adapter_revision`, `harness`, `worker_root`, `artifact_hash`, object `artifact`, and arrays `env`, `path`; the single frozen resolved execution owner; rules below |
 | `credentials` | Exactly the live-route credential object defined above: `kind`, `store`, `seat`, `age_key`, `sops`, `gate`, `launcher`; paths and names only |
 | `env_var` | String, the single admitted secret-variable name |
 | `limits` | Object with exactly strings `files`, `tokens`, `deadline_ns`, `max_input`; rules below |
 | `input_bytes` | Object with exactly strings `task` and `prompt`, the measured original payload lengths as nonnegative base-10 integers fitting signed 64 bits, with no leading zero except `0` |
 | `prompt` | Object with exactly strings `mode`, `prefix`, `template`, and string array `tools`; catalog mode/prefix/tools rules apply; template is the selected existing template name, or `-` for none |
-| `hashes` | Object with exactly strings `task`, `prompt`, `config`, `prefix`; each is `sha256:<64 lowercase hex>` with preimages below |
+| `hashes` | Object with exactly strings `task`, `prompt`, `config`, `prefix`, `generated_config`; each is `sha256:<64 lowercase hex>` with preimages below |
 | `attribution` | Object with exactly strings `bench`, `repo`, `actor`, `basis`; rules below |
 
 `lineage.kind` is `none`, `retry`, `rework`, or `unknown`. `none` requires
@@ -318,11 +319,13 @@ them. Raw source attribution stays separate in retained observations.
 Hash `task` over the exact admitted task-file bytes and `prompt` over the exact
 prepared prompt bytes, both without newline normalization. Hash `prefix` over
 the UTF-8 bytes of `prompt.prefix`, including an empty prefix. Hash `config`
-over the canonical JSON object containing exactly `requested`, `resolved`,
-`worker`, `credentials`, `env_var`, `limits`, and `prompt`, copied from this
-body. This is a resolved configuration digest, not a hash of arbitrary harness
-files. The launcher must separately validate its generated configuration under
-its pinned adapter contract. None of these hashes contains itself.
+over the canonical JSON object containing exactly the eight members `requested`,
+`resolved`, `worker`, `credentials`, `env_var`, `limits`, `prompt`, and
+`execution`, copied from this body. This is a resolved configuration digest, not
+a hash of arbitrary harness files. `generated_config` is hashed separately over
+the launcher's generated configuration bytes and cannot create a cycle. The
+launcher must separately validate its generated configuration under its pinned
+adapter contract. None of these hashes contains itself.
 
 Generate and retain the protected task/prompt evidence, then publish this body
 and its snapshot hash after slot preparation but before credential-gate launch.
@@ -406,7 +409,7 @@ overflow detection, within the remaining launch timeout; nesting is at most 8.
 Reject invalid UTF-8, duplicates, unknown members, missing members, trailing
 JSON, noncanonical bytes or a digest mismatch before identifying or spawning.
 
-All members are required and all values are strings, except `context`:
+All members are required and all values are strings, except `context`, `control`, and `realization`:
 
 | Member | Meaning and validation |
 |---|---|
@@ -417,6 +420,8 @@ All members are required and all values are strings, except `context`:
 | `slot` | Positive canonical decimal string, checked against the supported slot integer range and the actual reservation |
 | `reservation_nonce` | Exactly the reservation's twelve lowercase hexadecimal characters |
 | `manifest_hash` | `sha256:<64 lowercase hex>` over the canonical prelaunch `MANIFEST.json` bytes |
+| `control` | Object with string `manifest_hash` (matching canonical control manifest digest), strings `root` and `sandbox_source`, and object `launcher` (strings `path`, `sha256`, `source`); rules in execution binding companion |
+| `realization` | Object with string `env_hash` matching `RealizeProfileEnvironment` digest over the pure environment preimage; rules in realization companion |
 | `sandbox` | Absolute protected sandbox executable path; no implicit PATH lookup or no-sandbox fallback for this profile interface |
 | `usage_every_ns` | Positive canonical decimal nanoseconds, checked against the duration range; fixes the sampling cadence, not the job's token or deadline limits |
 
@@ -439,9 +444,10 @@ record. Only the slot and nonce may change. Reject inconsistent prior records;
 changing these runtime settings requires an explicit new linked attempt, not
 overwriting the old record. Sandbox executable compatibility/integrity belongs
 to the same pending execution-binding gate as the harness and launcher.
-Derive slot/job/data-home paths from the validated context and frozen worker
-description; derive route, arguments, read roots, prompt and effective limits
-only from the snapshot. No launch-record member can replace those choices.
+Derive slot/job/data-home paths from the validated context, job ID, and selected
+slot using the realization formulas; derive route, arguments, read roots, prompt
+and effective limits only from the snapshot. No launch-record member can replace
+those choices.
 The dispatcher retains global worker caps, run duration, backoff, launch timeout
 and output handling; these are not per-worker override arguments. Do not put
 secret values, launch nonces or this control record in worker-visible files.
