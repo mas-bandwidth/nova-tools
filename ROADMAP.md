@@ -55,7 +55,7 @@ The team is testing efficiency improvements in existing tools while building nov
 
 The first internal Common Lisp C/O kernel and maintained open counter merged through [#300](https://github.com/mas-bandwidth/nova-tools/pull/300), while its feature rows remain incomplete. Operational token and worker-cost experiments run alongside real work under [#185](https://github.com/mas-bandwidth/nova-tools/issues/185); implementation cost is excluded, while retries, review and rescue remain part of accepted-work cost.
 
-Current evidence at 2026-09-14 18:26 UTC:
+Current evidence at 2026-09-14 18:33 UTC:
 
 - [#300](https://github.com/mas-bandwidth/nova-tools/pull/300) merged as `d21d65f0e6f16a6b3b797d4620d0f24e0c41c296` at 18:25:58 UTC after root clearance, Emma approval `emma-aa67291093bc`, and Freddy's own Mercury APPROVE relayed in `rowan-d5a2c0d5f70d`. Feature rows remain partial with no whole-criterion green.
 - [#314](https://github.com/mas-bandwidth/nova-tools/pull/314) merged as `4b99c1b4`.
@@ -417,7 +417,7 @@ Prerequisites: E05-F01.
 - [ ] Record exact-revision reviewer findings and author dispositions
 - [ ] Support attested criteria with reviewer identity and result
 - [ ] Preserve disagreement, unknowns and repair cycles
-- [ ] reuse-only-valid-review: reuse a review only for unchanged reviewed content, acceptance and dependencies; retain independent friend gates and record repeat triggers
+- [ ] reuse-only-valid-review: reuse a review only for unchanged reviewed content, acceptance and dependencies; retain independent friend gates, reviewer-selected integrating depth and repeat triggers
 
 Source sections: Operational lessons the pilot must exercise; The data; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
 
@@ -784,7 +784,7 @@ Prerequisites: E08-F05, E03-F04.
 - [ ] Record attempt usage pointers and unresolved usage as unmeasured
 - [ ] Separate billed cash, estimated cash and virtual token cost
 - [ ] Pin rate/config revisions and include coordinator, review and rework overhead
-- [ ] complete-cost-lineage: join parent, child, retry and failed-attempt receipts once; keep cache/reasoning subsets non-overlapping, implementation cost separate and gaps unknown
+- [ ] complete-cost-lineage: join parent, child, retry and failed-attempt receipts once; avoid counting cache/reasoning subsets again, implementation cost separate and gaps unknown
 - [ ] cache-aware-context-choice: price cache read/write categories, service tiers and reset rebuilds; refuse missing decision, adapter or evidence inputs and compare matched accepted work
 
 Source sections: Cost; Model knowledge informs scheduling; Retrospective required before production implementation; Efficiency policy (proposed SPEC-WORK.md@685b7c2).

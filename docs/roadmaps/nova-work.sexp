@@ -397,7 +397,7 @@
           :subfeatures (            "Record exact-revision reviewer findings and author dispositions"
             "Support attested criteria with reviewer identity and result"
             "Preserve disagreement, unknowns and repair cycles"
-            "reuse-only-valid-review: reuse a review only for unchanged reviewed content, acceptance and dependencies; retain independent friend gates and record repeat triggers")
+            "reuse-only-valid-review: reuse a review only for unchanged reviewed content, acceptance and dependencies; retain independent friend gates, reviewer-selected integrating depth and repeat triggers")
           :depends-on (            "E05-F01")
           :source-sections (            "Operational lessons the pilot must exercise"
             "The data"
@@ -720,7 +720,7 @@
           :subfeatures (            "Record attempt usage pointers and unresolved usage as unmeasured"
             "Separate billed cash, estimated cash and virtual token cost"
             "Pin rate/config revisions and include coordinator, review and rework overhead"
-            "complete-cost-lineage: join parent, child, retry and failed-attempt receipts once; keep cache/reasoning subsets non-overlapping, implementation cost separate and gaps unknown"
+            "complete-cost-lineage: join parent, child, retry and failed-attempt receipts once; avoid counting cache/reasoning subsets again, implementation cost separate and gaps unknown"
             "cache-aware-context-choice: price cache read/write categories, service tiers and reset rebuilds; refuse missing decision, adapter or evidence inputs and compare matched accepted work")
           :depends-on (            "E08-F05"
             "E03-F04")
