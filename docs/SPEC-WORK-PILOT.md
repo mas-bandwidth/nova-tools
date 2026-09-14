@@ -481,6 +481,60 @@ the closed-history contract's bounded indexed deduplication, not an unbounded
 resident request-ID map. Local durable revision and last shared Git revision
 remain distinct in responses.
 
+### Batch-friendly transport and explicit atomicity
+
+Support one CLI/tool invocation carrying a bounded array of schema-validated
+commands over the existing framed JSON socket protocol. Lisp stays resident;
+the CLI does not restart it for each command. A persistent client may pipeline
+request frames without waiting for every preceding reply. Correlation IDs make
+responses attributable; pipelining does not create additional canonical writers.
+
+Provide three explicit modes, with final syntax generated from the command schema:
+
+- **Read bundle:** evaluate bounded queries against one captured revision and
+  lease-time watermark. Return selected fields and aggregates, not the whole work
+  set. Subsequent pages retain that snapshot identity or explicitly expire it.
+- **Independent batch:** execute entries in order, each with its own request ID,
+  validation and durable outcome. Stop on the first refusal by default and label
+  remaining entries not attempted; continuing after errors is an explicit choice.
+  Other requests may interleave between entries. This mode promises neither
+  rollback nor a single shared revision. Long-operation acceptance returns its
+  operation ID; later entries must not assume the operation has completed.
+- **Atomic mutation batch:** validate all entries, including their ordered staged
+  effects, against an expected revision and publish one durable mutation envelope.
+  Task state, O/W membership, counters and reverse indexes change together or not
+  at all. Reuse the existing multi-node transaction path. No external I/O or worker
+  launch occurs inside this transaction; explicit subsequent dispatch retains its
+  own durable outcome and retry rules.
+
+Batch and entry IDs are stable across uncertain retries; the existing request
+deduplication rules apply to each independent mutation or the entire atomic
+envelope. Same ID with changed content refuses. Disconnect is not cancellation:
+query accepted outcomes before retrying; never replay a successful prefix as new
+work. Responses include per-entry status/revision, aggregate success/refusal/not-
+attempted counts and bounded error details, with receipt-based drill-down. A
+compact format must never hide failed or uncertain entries.
+
+Negotiate and enforce named limits for command count, request/reply bytes, staged
+mutation size, snapshot lifetime and queued work. Reject oversized atomic batches
+before mutation; never silently split them. Bound independent batches and apply
+backpressure so bulk work cannot starve status, cancellation or lease maintenance.
+Read-compute-write actions use typed server-side verbs or revision-checked plans;
+batch data cannot evaluate arbitrary Lisp or reference unchecked command results.
+
+Inspiration: [Redis pipelining](https://redis.io/docs/latest/develop/using-commands/pipelining/)
+amortizes round trips and socket overhead, with bounded batches to limit reply
+memory. [Redis transactions](https://redis.io/docs/latest/develop/using-commands/transactions/)
+separate grouped execution from pipelining. Nova-work retains its stronger existing
+all-or-none validated mutation contract rather than adopting Redis runtime-error
+semantics. This design does not add Redis as a storage dependency.
+
+Hypothesis: bundling a real coordinator status inspection or several already
+decided assignments reduces operational assistant/tool turns and total tokens
+at equal accepted quality. Compare sequential and bundled versions of the same
+workload, including errors, retries and corrections. Record socket calls and wall
+time separately; neither fewer calls nor smaller output alone proves token savings.
+
 Quick queries/mutations return a bounded result. Long I/O operations (source
 capture, import staging, exports and clip transport) return a durable operation
 ID and status, permitting the CLI to exit while work continues. Provide
