@@ -2,7 +2,7 @@
 ;;;;
 ;;;; docs/SPEC-WORK.md:1169 — "The root is COW: closed, open, working. The root
 ;;;; is `(root C O)`". C and O hold the same nodes told apart by one derived
-;;;; fact; this is a partition and not a second ledger (SPEC-WORK.md:1190).
+;;;; fact; this is a partition and not a second ledger (SPEC-WORK.md:1187-1190).
 ;;;;
 ;;;; SPEC-WORK.md:1562 — "|O| is a counter carried by every accepted mutation
 ;;;; envelope and is read, never computed ... The root's open-item count, and
@@ -14,7 +14,11 @@
 (in-package #:nova-work)
 
 (defstruct (wnode (:conc-name wnode-))
-  id type parent children state branch open-count links)
+  id type parent children state branch open-count links
+  ;; SPEC-WORK.md:1222 -- the newest row of an id carries revived=<rev|-> and
+  ;; settles=<n>. Both are kept on the node and moved on write, like every
+  ;; other counter here, so a row is written and never computed by a scan.
+  settles revived)
 
 (defstruct (wstate (:conc-name wstate-))
   seed       ; the seed forest, verbatim, so a reconstruction starts where this did
@@ -54,7 +58,9 @@ own ancestor walk, and serialization of the whole state."
                           :state (getf spec :state :unknown)
                           :branch :o
                           :open-count 0
-                          :links (getf spec :links)))))
+                          :links (getf spec :links)
+                          :settles 0
+                          :revived "-"))))
     (setf order (nreverse order))
     ;; Containment edges, in seed order.
     (dolist (id order)
@@ -66,6 +72,22 @@ own ancestor walk, and serialization of the whole state."
         (when parent
           (setf (wnode-children parent)
                 (append (wnode-children parent) (list id))))))
+    ;; SPEC-WORK.md:3347 referential-integrity -- "duplicate ids, dangling
+    ;; references, cycles, conflicting parents ... all fail BEFORE publication".
+    ;; Rule 1 is above and rule 2 is in the edge walk; rule 3 is the forest
+    ;; check, and it is here rather than left to the ancestor walk, which would
+    ;; spin on a cycle instead of refusing. It is bounded by the node count.
+    (let ((limit (hash-table-count table)))
+      (dolist (id order)
+        (let ((cur id) (steps 0))
+          (loop while cur
+                do (when (> (incf steps) limit)
+                     (error 'unsupported-input
+                            :what (format nil "rule 3: :children edges are not a forest; a cycle of :parent through ~A"
+                                          id)))
+                   (let ((node (gethash cur table)))
+                     (unless node (return))
+                     (setf cur (wnode-parent node)))))))
     (let ((state (make-wstate :seed (copy-tree nodes) :nodes table :order order
                               :root-open 0 :closed 0 :leaf-open 0 :issue-open 0
                               :history '() :rows '() :revision 0)))
@@ -80,7 +102,16 @@ own ancestor walk, and serialization of the whole state."
 (defun %adjust-counters (state id delta)
   "Move the root counter, every containment ancestor's counter, and the two
 separate counters, by DELTA. The walk is the item's ancestor chain, which is
-bounded by depth; it is never a walk of O."
+bounded by depth and is acyclic by rule 3 above; it is never a walk of O.
+
+A CONTAINER IS IN ITS OWN COUNT -- the chain starts at the item itself, so a
+container's counter is the open canonical item ids in its subtree INCLUDING
+itself. SPEC-WORK.md:1568 says only \"the per-repository and per-container
+counts beneath it\", where \"beneath it\" is beneath the root; it does not
+settle self-inclusion. The root's |O| counts containers as items -- five at the
+suite's seed, of which three are containers -- and :1573 says the counters
+\"count canonical item ids once\", so a per-container count that excluded its
+own id would not be the same counting rule one level down. Decision for review."
   (let ((node (%node-quiet state id)))
     (let ((cur id))
       (loop while cur
@@ -178,20 +209,27 @@ bounded by depth; it is never a walk of O."
          (error 'unsupported-input :what (format nil "rule 18: ~A is already in C" id)))
        (setf (wnode-branch node) :c)
        (%adjust-counters state id -1)
+       (incf (wnode-settles node))
+       (setf (wnode-revived node) "-")
        (push (list :key (closed-row-key event) :kind :settle :node id
                    :rev (work-event-rev event)
                    :disposition (getf (work-event-fields event) :disposition)
-                   :stamp (work-event-stamp event))
+                   :stamp (work-event-stamp event)
+                   :revived (wnode-revived node)
+                   :settles (wnode-settles node))
              (wstate-rows state)))
       (:revive
        (unless (eq :c (wnode-branch node))
          (error 'unsupported-input :what (format nil "rule 18: ~A is not in C" id)))
        (setf (wnode-branch node) :o)
        (%adjust-counters state id 1)
+       (setf (wnode-revived node) (work-event-rev event))
        (push (list :key (closed-row-key event) :kind :revive :node id
                    :rev (work-event-rev event)
                    :disposition (getf (work-event-fields event) :disposition +absent+)
-                   :stamp (work-event-stamp event))
+                   :stamp (work-event-stamp event)
+                   :revived (wnode-revived node)
+                   :settles (wnode-settles node))
              (wstate-rows state))))
     (setf (wstate-revision state) (max (wstate-revision state) (work-event-rev event)))
     state))

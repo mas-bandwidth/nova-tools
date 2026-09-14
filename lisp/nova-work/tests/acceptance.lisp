@@ -8,12 +8,23 @@
 (in-package #:nova-work/tests)
 
 (defparameter *seed*
-  '((:id "acme/work"       :type :work-set :parent nil               :state :unknown)
-    (:id "acme/work/f1"    :type :feature  :parent "acme/work"       :state :unknown)
-    (:id "acme/work/f1/t1" :type :task     :parent "acme/work/f1"    :state :doing)
-    (:id "acme/work/f1/t2" :type :task     :parent "acme/work/f1"    :state :review)
-    (:id "acme/work/f2"    :type :feature  :parent "acme/work"       :state :unknown))
-  "Five canonical item ids, all in O at the seed: |O| = 5.")
+  '((:id "acme/work"       :type :work-set :parent nil            :state :unknown)
+    (:id "acme/work/f1"    :type :feature  :parent "acme/work"    :state :unknown)
+    (:id "acme/work/f1/t1" :type :task     :parent "acme/work/f1" :state :doing
+     :links ("https://github.com/acme/work/issues/11"
+             "https://github.com/acme/work/issues/12"))
+    (:id "acme/work/f1/t2" :type :task     :parent "acme/work/f1" :state :review
+     :links ("https://github.com/acme/work/issues/21"))
+    (:id "acme/work/f2"    :type :feature  :parent "acme/work"    :state :unknown))
+  "Five canonical item ids, all in O at the seed: |O| = 5, of which two are
+leaf tasks and three are open linked issues (SPEC-WORK.md:1577 keeps the three
+counters apart).")
+
+(defparameter *cyclic-seed*
+  '((:id "a" :type :task :parent "b" :state :doing)
+    (:id "b" :type :task :parent "a" :state :doing))
+  "a -> b -> a. SPEC-WORK.md:3347 referential-integrity: cycles fail BEFORE
+publication.")
 
 (defun fresh (&key (journal (make-ordering-journal)) (rev-base 1))
   (make-kernel :state (make-seed-state *seed*) :journal journal :rev-base rev-base))
@@ -86,7 +97,29 @@ is compared against; it is never the path `query --ask size` takes."
     (restricted-data-violation () t))
   (handler-case (progn (read-restricted "(:kind #.(error \"x\"))")
                        (fail "a dispatch macro was read instead of refused"))
-    (restricted-data-violation () t)))
+    (restricted-data-violation () t))
+  ;; The printer downcases a keyword's name, so a keyword whose name is not
+  ;; already upper case would collide with one that is. It refuses instead.
+  (handler-case (progn (canonical-string (intern "done" :keyword))
+                       (fail "a lower-case keyword serialized instead of refusing"))
+    (restricted-data-violation () t))
+  (ok (string/= (canonical-string :done)
+                (handler-case (canonical-string (intern "Done" :keyword))
+                  (restricted-data-violation () "refused")))
+      "a case-differing keyword printed the same bytes as :done")
+  ;; Evaluation syntax and a malformed form refuse at the boundary, with the
+  ;; byte offset SPEC-WORK.md:678-681 asks for -- never as a raw reader error.
+  (dolist (bad '("(:a ,x)" "(:a `b)" "(:a 'b)" "(:a" "(:a))" "(:a |b|)" "(:a ;c
+)"))
+    (handler-case
+        (progn (read-restricted bad)
+               (fail "~S was read instead of refused" bad))
+      (restricted-data-violation (c)
+        (ok (search "byte" (princ-to-string c))
+            "~S refused without a byte offset: ~A" bad c))))
+  ;; A well-formed restricted form still reads.
+  (check-equal '(:a 1 "b" (:absent) ()) (read-restricted "(:a 1 \"b\" (:absent) ())")
+               "a well-formed restricted form"))
 
 ;;; ------------------------------------------------------------------
 ;;; 2. settle-outside-the-digest                SPEC-WORK.md:3122
@@ -152,6 +185,7 @@ is compared against; it is never the path `query --ask size` takes."
     (ok (submit k (close-request :request "req-1")) "close refused")
     (check-equal 4 (state-open-count (kernel-state k)) "|O| after the close")
     (check-equal 1 (state-closed-count (kernel-state k)) "|C| after the close")
+    (check-equal 1 (open-issue-count k) "the linked-issue counter after the close")
     ;; Mutate, then ask repeatedly: zero visits, zero parses, zero replays.
     (with-instrumentation
       (dotimes (i 100)
@@ -170,6 +204,7 @@ is compared against; it is never the path `query --ask size` takes."
     (ok (submit k (reopen-request :request "req-2")) "reopen refused")
     (check-equal 5 (state-open-count (kernel-state k)) "|O| after the reopen")
     (check-equal 0 (state-closed-count (kernel-state k)) "|C| after the reopen")
+    (check-equal 3 (open-issue-count k) "the linked-issue counter after the reopen")
     (with-instrumentation
       (ask-size k)
       (check-equal 0 *visits* "node visits during the ask after a reopen")
@@ -187,17 +222,24 @@ is compared against; it is never the path `query --ask size` takes."
     (check-equal 4 (node-open-count (kernel-state k) "acme/work")
                  "the work set's own open count")
     ;; The open-issue and open-leaf counters are separate and neither is |O|.
-    (check-equal 0 (open-issue-count k) "the open linked-issue counter")
+    (check-equal 2 (open-issue-count k) "the open linked-issue counter")
     (check-equal 1 (open-leaf-count k) "the open leaf-task counter")
     (ok (/= (open-leaf-count k) (state-open-count (kernel-state k)))
-        "the leaf counter was silently labelled |O|")))
+        "the leaf counter was silently labelled |O|")
+    (ok (/= (open-issue-count k) (state-open-count (kernel-state k)))
+        "the linked-issue counter was silently labelled |O|")
+    ;; The QUERY OK line prints the counters this ask measured, not a literal.
+    (multiple-value-bind (open unit scope line) (ask-size k)
+      (declare (ignore open unit scope))
+      (ok (search "parses=0" line) "the ask did not print its measured parses: ~A" line)
+      (ok (search "replays=0" line) "the ask did not print its measured replays: ~A" line))))
 
 ;;; ------------------------------------------------------------------
 ;;; 4. full independent reconstruction after close then revive
-;;;    SPEC-WORK.md:3348 (indexes-and-counters); rows per :3104
+;;;    SPEC-WORK.md:3353 (indexes-and-counters); rows per :3103
 ;;; ------------------------------------------------------------------
 
-(deftest "reconstruction-after-close-and-revive" "docs/SPEC-WORK.md:3348"
+(deftest "reconstruction-after-close-and-revive" "docs/SPEC-WORK.md:3353"
     "expected=root-digest=equal,open=equal,closed=equal,container-counters=equal,rows=append-only"
   (let ((k (fresh)))
     (ok (submit k (close-request :request "req-1")) "close refused")
@@ -236,10 +278,10 @@ is compared against; it is never the path `query --ask size` takes."
 
 ;;; ------------------------------------------------------------------
 ;;; 5. all-or-none two-event candidate application
-;;;    SPEC-WORK.md:3346 (atomic-mutation)
+;;;    SPEC-WORK.md:3348 (atomic-mutation)
 ;;; ------------------------------------------------------------------
 
-(deftest "two-event-candidate-is-all-or-none" "docs/SPEC-WORK.md:3346"
+(deftest "two-event-candidate-is-all-or-none" "docs/SPEC-WORK.md:3348"
     "expected=events=2,request-ids=1,on-reject:applied=0,digest=unchanged,history=unchanged,rows=unchanged,journal=empty"
   ;; The accepted case: one envelope, two events, one request id.
   (let ((k (fresh)))
@@ -328,3 +370,236 @@ is compared against; it is never the path `query --ask size` takes."
       (ok (not okp) "a :todo item closed")
       (check-equal 1 code "an invalid transition's exit code")
       (ok (search "rule 10" line) "the refusal does not name rule 10: ~A" line))))
+
+;;; ------------------------------------------------------------------
+;;; 6. cycles fail before publication            SPEC-WORK.md:3347
+;;; ------------------------------------------------------------------
+
+(deftest "referential-integrity-refuses-a-cycle" "docs/SPEC-WORK.md:3347"
+    "expected=cycle=refused-before-publication,terminates=yes,rule=3"
+  (let ((refusal nil))
+    (handler-case
+        (sb-ext:with-timeout 10
+          (make-seed-state *cyclic-seed*)
+          (fail "a cyclic :parent chain was published"))
+      (sb-ext:timeout ()
+        (fail "a cyclic :parent chain neither refused nor terminated"))
+      (unsupported-input (c) (setf refusal (princ-to-string c))))
+    (ok refusal "no refusal was signalled")
+    (ok (search "rule 3" refusal) "the refusal does not name rule 3: ~A" refusal))
+  ;; A node that is its own parent is the same finding.
+  (handler-case
+      (sb-ext:with-timeout 10
+        (make-seed-state '((:id "a" :type :task :parent "a" :state :doing)))
+        (fail "a self-parenting node was published"))
+    (sb-ext:timeout () (fail "a self-parenting node neither refused nor terminated"))
+    (unsupported-input () t))
+  ;; Rules 1 and 2 still refuse, and the acyclic seed still publishes.
+  (handler-case
+      (progn (make-seed-state '((:id "a" :type :task :parent nil :state :doing)
+                                (:id "a" :type :task :parent nil :state :doing)))
+             (fail "a duplicate id was published"))
+    (unsupported-input (c) (ok (search "rule 1" (princ-to-string c))
+                               "a duplicate id did not name rule 1")))
+  (handler-case
+      (progn (make-seed-state '((:id "a" :type :task :parent "nope" :state :doing)))
+             (fail "a dangling parent was published"))
+    (unsupported-input (c) (ok (search "rule 2" (princ-to-string c))
+                               "a dangling parent did not name rule 2")))
+  (check-equal 5 (state-open-count (make-seed-state *seed*)) "the acyclic seed still publishes"))
+
+;;; ------------------------------------------------------------------
+;;; 7. an id's newest closed row carries revived= and settles=
+;;;    SPEC-WORK.md:3103; the requirement is :1222
+;;; ------------------------------------------------------------------
+
+(deftest "closed-rows-carry-revived-and-settles" "docs/SPEC-WORK.md:3103"
+    "expected=settle:settles=1,revived=-;revive:revived=<rev>,settles=1;settle2:settles=2,earlier-rows=unchanged"
+  (let ((k (fresh)))
+    (ok (submit k (close-request :request "req-1")) "close refused")
+    (let* ((rows1 (state-closed-rows (kernel-state k)))
+           (settle-row (first (last rows1))))
+      (check-equal 1 (length rows1) "one row after the settle")
+      (check-equal 1 (getf settle-row :settles) "settles= on the settle row")
+      (check-string= "-" (getf settle-row :revived) "revived= on the settle row")
+      (ok (submit k (reopen-request :request "req-2")) "reopen refused")
+      (let* ((rows2 (state-closed-rows (kernel-state k)))
+             (revive-row (first (last rows2))))
+        (check-equal 2 (length rows2) "two rows after the revive")
+        (check-equal settle-row (first rows2) "the settle row was rewritten by the revive")
+        (check-equal :revive (getf revive-row :kind) "the newest row's kind")
+        (check-equal (getf revive-row :rev) (getf revive-row :revived)
+                     "revived= on the revive row is that event's own revision")
+        (check-equal 1 (getf revive-row :settles) "settles= on the revive row")
+        ;; A second id keeps its own chain.
+        (ok (submit k (close-request :request "req-3" :node "acme/work/f1/t2"
+                                     :evidence '("ev-2")))
+            "the other close refused")
+        (let ((other (first (last (state-closed-rows (kernel-state k))))))
+          (check-equal 1 (getf other :settles) "the other id's own settles=")
+          (check-string= "-" (getf other :revived) "the other id's own revived=")
+          (check-equal settle-row (first (state-closed-rows (kernel-state k)))
+                       "the first row moved when another id settled")))))
+  ;; settles=2 -- the third row of SPEC-WORK.md:3104-3106 -- needs one id
+  ;; settled twice, and a :reopen lands at :todo, which has no edge to :done
+  ;; (:994-1005). Reaching it through the kernel's gate would need
+  ;; `state --to doing`, which is outside this slice's transition subset, so it
+  ;; is exercised HERE ON APPLY-EVENT, the primitive the live path and the
+  ;; replay path share. This is the row counter, not the kernel's gate, and
+  ;; README.md says so under partial coverage.
+  (let* ((state (make-seed-state *seed*))
+         (id "acme/work/f1/t1")
+         (event (lambda (kind rev fields)
+                  (make-work-event :kind kind :node id :by "rowan" :fields fields
+                                   :stamp "2026-09-14T12:00:00Z" :clock :tool
+                                   :request "req-p" :generation-owner "gen-4"
+                                   :rev rev :session-written-p t))))
+    (setf state (apply-event state (funcall event :settle 1 '(:disposition :done :reason "a"))))
+    (setf state (apply-event state (funcall event :revive 2 '(:reason "b"))))
+    (let ((first-two (copy-seq (state-closed-rows state))))
+      (setf state (apply-event state (funcall event :settle 3 '(:disposition :done :reason "c"))))
+      (let* ((rows (state-closed-rows state))
+             (newest (first (last rows))))
+        (check-equal 3 (length rows) "three rows after the second settle")
+        (check-equal (first first-two) (first rows) "the first row moved")
+        (check-equal (second first-two) (second rows) "the second row moved")
+        (check-equal 2 (getf newest :settles) "settles= on the newest row")
+        (check-string= "-" (getf newest :revived) "revived= on the newest row")))))
+
+;;; ------------------------------------------------------------------
+;;; 8. the journal is appended before the apply
+;;;    SPEC-WORK.md:3348; the ordering is :307, the retry rests on it at :315
+;;; ------------------------------------------------------------------
+
+(deftest "journal-records-before-it-applies" "docs/SPEC-WORK.md:3348"
+    "expected=record-then-apply,stop-between:record=present,applied=0,on-reject:record=absent,applied=0"
+  ;; A stop injected between the journal append and the apply leaves the record
+  ;; written and nothing applied. The reverse ordering cannot produce that.
+  (let* ((journal (make-ordering-journal))
+         (k (fresh :journal journal))
+         (before-digest (root-digest (kernel-state k)))
+         (before-open (state-open-count (kernel-state k)))
+         (before-history (length (state-history (kernel-state k)))))
+    (handler-case
+        (let ((*before-apply-hook* (lambda (envelope)
+                                     (declare (ignore envelope))
+                                     (error "injected stop between append and apply"))))
+          (submit k (close-request :request "req-1"))
+          (fail "the injected stop did not fire"))
+      (simple-error () t))
+    (multiple-value-bind (found digest line) (journal-lookup journal "req-1")
+      (ok (eq t found) "the journal holds no record for the stopped request")
+      (ok (and (stringp digest) (plusp (length digest))) "the record carries no digest")
+      (ok (and (stringp line) (search "STATE OK" line)) "the record carries no OK line"))
+    (check-string= before-digest (root-digest (kernel-state k)) "the root digest after the stop")
+    (check-equal before-open (state-open-count (kernel-state k)) "|O| after the stop")
+    (check-equal before-history (length (state-history (kernel-state k))) "history after the stop")
+    (check-equal '("req-1") (journal-order journal) "the journal's order after the stop"))
+  ;; An acceptance failure leaves no record and no apply.
+  (let* ((journal (make-rejecting-journal :reject-on "req-x"))
+         (k (fresh :journal journal)))
+    (submit k (close-request :request "req-x"))
+    (multiple-value-bind (found) (journal-lookup journal "req-x")
+      (ok (not (eq t found)) "a refused envelope was recorded"))
+    (check-equal '() (journal-order journal) "the journal's order after a refusal")))
+
+;;; ------------------------------------------------------------------
+;;; 9. a kernel over a reconstructed state reissues no id
+;;;    SPEC-WORK.md:3353; the row key is :1216-1218, the rebuild is :1578
+;;; ------------------------------------------------------------------
+
+(deftest "reconstructed-kernel-does-not-reissue-ids" "docs/SPEC-WORK.md:3353"
+    "expected=ids=distinct,row-keys=distinct,revision=monotone"
+  (let* ((k (fresh))
+         (first-id nil))
+    (multiple-value-bind (okp line code env) (submit k (close-request :request "req-1"))
+      (declare (ignore line code))
+      (ok okp "close refused")
+      (setf first-id (event-id (first (getf env :events)))))
+    (let* ((text (canonical-string (state-canonical-form (kernel-state k))))
+           (rebuilt (reconstruct-state text))
+           (k2 (make-kernel :state rebuilt :journal (make-ordering-journal))))
+      (ok (> (state-revision rebuilt) 0) "the reconstructed revision is zero")
+      (multiple-value-bind (okp line code env) (submit k2 (reopen-request :request "req-2"))
+        (declare (ignore line code))
+        (ok okp "reopen over the reconstructed state refused")
+        (let ((next-id (event-id (first (getf env :events)))))
+          (ok (string/= first-id next-id)
+              "the reconstructed kernel reissued event id ~A" next-id)))
+      (ok (> (state-revision (kernel-state k2)) (state-revision rebuilt))
+          "the revision did not move past the reconstructed one")
+      (let ((keys (mapcar (lambda (row) (getf row :key))
+                          (state-closed-rows (kernel-state k2)))))
+        (check-equal 2 (length keys) "two rows after the reopen")
+        (ok (= (length keys) (length (remove-duplicates keys :test #'string=)))
+            "two closed rows share a key: ~S" keys)))
+    ;; A revision base at or below the state's own revision is refused rather
+    ;; than reissued.
+    (let ((rebuilt (reconstruct-state
+                    (canonical-string (state-canonical-form (kernel-state k))))))
+      (handler-case (progn (make-kernel :state rebuilt :rev-base 1)
+                           (fail "a revision base below the state's own was accepted"))
+        (unsupported-input () t)))))
+
+;;; ------------------------------------------------------------------
+;;; 10. request fields refuse rather than drop
+;;;     SPEC-WORK.md:3227 every-field-has-an-owning-verb
+;;; ------------------------------------------------------------------
+
+(deftest "request-fields-refuse-rather-than-drop" "docs/SPEC-WORK.md:3227"
+    "expected=unknown-key=refused,forbidden-field=refused,note-pointer=refused,digest-differs=n/a"
+  (let ((k (fresh)))
+    ;; An unknown key is refused, never dropped into an identical digest.
+    (multiple-value-bind (okp line code)
+        (submit k (append (close-request :request "req-1") (list :priority "high")))
+      (ok (not okp) "an unknown request key was accepted")
+      (check-equal 2 code "an unknown key's exit code")
+      (ok (search "priority" line) "the refusal does not name the key: ~A" line))
+    ;; A field the transition forbids is refused, never silently overwritten.
+    (multiple-value-bind (okp line code)
+        (submit k (append (close-request :request "req-2")
+                          (list :blocked-by "acme/work/f1/t2")))
+      (ok (not okp) "a :blocked-by on a :to :done was accepted")
+      (check-equal 2 code "a forbidden field's exit code")
+      (ok (search "blocked-by" line) "the refusal does not name the field: ~A" line))
+    ;; A note: pointer is never completion evidence (SPEC-WORK.md:1052, rule 5).
+    (multiple-value-bind (okp line code)
+        (submit k (close-request :request "req-3" :evidence '("note:bus:emma-841138a3b056")))
+      (ok (not okp) "a note: pointer was accepted as evidence")
+      (check-equal 1 code "a note: evidence exit code")
+      (ok (search "rule 5" line) "the refusal does not name rule 5: ~A" line))
+    ;; An evidence entry that is not an id at all is refused.
+    (multiple-value-bind (okp line code)
+        (submit k (close-request :request "req-4" :evidence '("")))
+      (declare (ignore line))
+      (ok (not okp) "an empty evidence id was accepted")
+      (check-equal 1 code "an empty evidence id's exit code"))
+    ;; And the legal request still passes.
+    (ok (submit k (close-request :request "req-5")) "the legal close refused")))
+
+;;; ------------------------------------------------------------------
+;;; 11. the bounded dedup store refuses past its bound
+;;;     SPEC-WORK.md:3349 retry-protocol; the refusal is :517
+;;; ------------------------------------------------------------------
+
+(deftest "dedup-refuses-past-its-bound" "docs/SPEC-WORK.md:3349"
+    "expected=within-bound=answered,past-bound=dedup-unavailable,never=treated-as-new"
+  (let* ((journal (make-ordering-journal :capacity 2))
+         (k (fresh :journal journal)))
+    (ok (submit k (close-request :request "req-1")) "first close refused")
+    (ok (submit k (close-request :request "req-2" :node "acme/work/f1/t2"
+                                 :evidence '("ev-2")))
+        "second close refused")
+    ;; Within the bound, the retry is still answered by its original OK line.
+    (multiple-value-bind (okp line code) (submit k (close-request :request "req-1"))
+      (declare (ignore line))
+      (ok okp "a retry inside the bound was refused")
+      (check-equal 0 code "a retry inside the bound's exit code"))
+    ;; A third record evicts the oldest; nothing is then reported as new.
+    (ok (submit k (reopen-request :request "req-3")) "reopen refused")
+    (multiple-value-bind (okp line code) (submit k (reopen-request :request "req-9"
+                                                                  :node "acme/work/f1/t2"))
+      (ok (not okp) "a request past the bound was treated as new")
+      (check-equal 1 code "the past-bound exit code")
+      (ok (search "dedup unavailable" line)
+          "the refusal does not say dedup unavailable: ~A" line))))

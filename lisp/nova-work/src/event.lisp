@@ -21,9 +21,9 @@
 
 (defparameter *kind-field-order*
   '((:transition :to :reason :blocked-by :evidence)   ; SPEC-WORK.md:823
-    (:reopen     :reason)                             ; SPEC-WORK.md:886
-    (:settle     :disposition :reason :already-closed) ; SPEC-WORK.md:889
-    (:revive     :reason))                            ; SPEC-WORK.md:891
+    (:reopen     :reason)                             ; SPEC-WORK.md:887
+    (:settle     :disposition :reason :already-closed) ; SPEC-WORK.md:889-892
+    (:revive     :reason))                            ; SPEC-WORK.md:892
   "The ordered field list per kind, for the four kinds slice 1 supports. Any
 other kind is refused rather than serialized on a guessed order.")
 

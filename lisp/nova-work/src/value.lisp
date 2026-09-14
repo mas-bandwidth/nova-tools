@@ -20,10 +20,24 @@ this too; the empty list is a value and is not this.")
 
 (defun absentp (value) (equal value +absent+))
 
+(defun check-keyword (keyword)
+  "The printer downcases a keyword's name, so two names differing only in case
+would print identical bytes. Only a name that is already upper case is admitted,
+which makes the downcasing injective over what is admitted, and a lower-case
+name can reach the reader only through the `|` escape it already refuses
+(SPEC-WORK.md:678-681, and :337, which calls this the one deterministic printer)."
+  (let ((name (symbol-name keyword)))
+    (unless (string= name (string-upcase name))
+      (error 'restricted-data-violation
+             :value (format nil "keyword name ~S is not upper case and would collide when downcased"
+                            name))))
+  keyword)
+
 (defun canonical-print (value stream)
   (typecase value
     (integer (format stream "~D" value))
-    (keyword (write-char #\: stream)
+    (keyword (check-keyword value)
+             (write-char #\: stream)
              (write-string (string-downcase (symbol-name value)) stream))
     (string (write-char #\" stream)
             (loop for ch across value
@@ -70,6 +84,15 @@ evaluation, outside a string literal (SPEC-WORK.md:681)."
                    ((char= ch #\;)
                     (error 'restricted-data-violation
                            :value (format nil "comment at byte ~D" i)))
+                   ((char= ch #\')
+                    (error 'restricted-data-violation
+                           :value (format nil "quote at byte ~D" i)))
+                   ((char= ch #\`)
+                    (error 'restricted-data-violation
+                           :value (format nil "backquote at byte ~D" i)))
+                   ((char= ch #\,)
+                    (error 'restricted-data-violation
+                           :value (format nil "unquote at byte ~D" i)))
                    ((char= ch #\\)
                     (error 'restricted-data-violation
                            :value (format nil "single escape at byte ~D" i)))))
@@ -79,7 +102,7 @@ evaluation, outside a string literal (SPEC-WORK.md:681)."
 (defun check-restricted (form)
   (typecase form
     (integer form)
-    (keyword form)
+    (keyword (check-keyword form))
     (string form)
     (null form)
     (cons (loop for tail on form
@@ -95,9 +118,26 @@ evaluation, outside a string literal (SPEC-WORK.md:681)."
   (let ((*read-eval* nil)
         (*package* (find-package '#:nova-work.read))
         (*read-base* 10))
-    (multiple-value-bind (form position) (read-from-string text)
-      (unless (every (lambda (ch) (member ch '(#\Space #\Tab #\Newline #\Return)))
-                     (subseq text position))
-        (error 'restricted-data-violation :value "trailing bytes after one form"))
-      (incf *parses*)
-      (check-restricted form))))
+    (with-input-from-string (in text)
+      (flet ((offset () (or (ignore-errors (file-position in)) 0)))
+        (let ((form (handler-case (read in)
+                      (restricted-data-violation (c) (error c))
+                      (end-of-file ()
+                        (error 'restricted-data-violation
+                               :value (format nil "unbalanced form; input ended at byte ~D"
+                                              (length text))))
+                      (error ()
+                        (error 'restricted-data-violation
+                               :value (format nil "refused by the reader at byte ~D" (offset)))))))
+          (let ((next (handler-case (read in nil :end-of-input)
+                        (end-of-file () :end-of-input)
+                        (error ()
+                          ;; A stray closer is trailing bytes, not an end.
+                          (error 'restricted-data-violation
+                                 :value (format nil "trailing bytes after one form, at byte ~D"
+                                                (offset)))))))
+            (unless (eq next :end-of-input)
+              (error 'restricted-data-violation
+                     :value (format nil "trailing bytes after one form, at byte ~D" (offset)))))
+          (incf *parses*)
+          (check-restricted form))))))

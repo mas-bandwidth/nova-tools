@@ -52,10 +52,12 @@
    #:root-digest
    #:state-canonical-form
    #:reconstruct-state
+   #:apply-event
    ;; instrumentation
    #:*visits* #:*parses* #:*replays*
    #:with-instrumentation
    ;; journal acceptance interface
+   #:*before-apply-hook*
    #:journal-accept
    #:journal-record
    #:journal-lookup

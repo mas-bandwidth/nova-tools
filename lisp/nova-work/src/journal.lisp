@@ -7,7 +7,7 @@
 ;;;;
 ;;;; What is here is the interface and a fake. THE FAKE TESTS ORDERING ONLY,
 ;;;; NOT DURABILITY: it holds no file, does no fsync, survives no restart, and
-;;;; the `atomic-mutation` and `recovery` suites (SPEC-WORK.md:3346, :3357) are
+;;;; the `atomic-mutation` and `recovery` suites (SPEC-WORK.md:3348, :3357) are
 ;;;; out of this slice and are not claimed green by anything here.
 ;;;;
 ;;;; The dedup lookup lives behind this interface on purpose. SPEC-WORK.md:2117
@@ -37,6 +37,12 @@ and the OK line it was answered with."))
    (evicted :initform nil :accessor journal-evicted-p)))
 
 (defun make-ordering-journal (&key (capacity 64))
+  "A bounded fake. Past CAPACITY the oldest record is evicted and EVERY id the
+store no longer holds -- including one it has never seen -- answers `dedup
+unavailable` from then on. That is deliberate: SPEC-WORK.md:517 refuses rather
+than assuming a request outside the bound is new, and a fake that cannot tell
+the two apart must take the refusal. A production store answers from the
+retention section's bounded indexed pages instead; this one is not that."
   (make-instance 'ordering-journal :capacity capacity))
 
 (defun journal-order (journal)
