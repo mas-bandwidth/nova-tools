@@ -159,24 +159,68 @@ on a :to :done is the case, and it must never be quietly overwritten with
                               (string-downcase (symbol-name (wnode-state node)))))))))
     nil))
 
-(defun %session-event (kernel verb requester)
-  "The session's own half of the envelope: a :settle beside a close, a :revive
-beside a reopen. Outside the payload digest (SPEC-WORK.md:894)."
+(defun %derived-branch-event (verb requester node reason rev)
+  "One session-written branch event. Ancestor events inherit the requester's
+author and provenance; their reason names the direct member that moved them."
   (make-work-event
    :kind (ecase verb (:state-to-done :settle) (:event-reopen :revive))
-   :node (work-event-node requester)
+   :node node
    :by (work-event-by requester)
    :fields (ecase verb
              (:state-to-done (list :disposition :done
-                                   :reason (getf (work-event-fields requester) :reason +absent+)
+                                   :reason reason
                                    :already-closed '()))
-             (:event-reopen (list :reason (getf (work-event-fields requester) :reason +absent+))))
+             (:event-reopen (list :reason reason)))
    :stamp (work-event-stamp requester)
    :clock (work-event-clock requester)
    :request (work-event-request requester)
    :generation-owner (work-event-generation-owner requester)
-   :rev (1+ (work-event-rev requester))
+   :rev rev
    :session-written-p t))
+
+(defun %session-event (kernel verb requester)
+  "The session's own half of the envelope: a :settle beside a close, a :revive
+beside a reopen. Outside the payload digest (SPEC-WORK.md:894)."
+  (declare (ignore kernel))
+  (%derived-branch-event
+   verb requester (work-event-node requester)
+   (getf (work-event-fields requester) :reason +absent+)
+   (1+ (work-event-rev requester))))
+
+(defun %static-container-p (node)
+  "The container kinds whose static containment sets this slice represents."
+  (member (wnode-type node) '(:work-set :feature)))
+
+(defun %cascade-events (state verb requester session)
+  "Build and validate the branch cascade on a private candidate. Each decision
+reads a direct required-member counter, then walks at most one ancestor edge."
+  (let ((candidate (copy-state state))
+        (events (list requester session))
+        (cascade '())
+        (child-id (work-event-node requester))
+        (next-rev (1+ (work-event-rev session))))
+    (apply-event candidate requester)
+    (apply-event candidate session)
+    (loop
+      (let* ((child (%node-quiet candidate child-id))
+             (parent-id (and child (wnode-parent child)))
+             (parent (and parent-id (%node-quiet candidate parent-id))))
+        (unless (and parent (%static-container-p parent)) (return))
+        (unless (ecase verb
+                  (:state-to-done
+                   (and (eq :o (wnode-branch parent))
+                        (plusp (wnode-required-count parent))
+                        (zerop (wnode-required-open parent))))
+                  (:event-reopen
+                   (and (eq :c (wnode-branch parent))
+                        (plusp (wnode-required-open parent)))))
+          (return))
+        (let ((event (%derived-branch-event verb requester parent-id child-id next-rev)))
+          (push event cascade)
+          (apply-event candidate event)
+          (incf next-rev)
+          (setf child-id parent-id))))
+    (nconc events (nreverse cascade))))
 
 (defun %ok-line (word requester session)
   "Derived from the envelope's own events, so the line exists before anything is
@@ -234,8 +278,10 @@ whole envelope is applied."
                                 word (work-event-node requester) rule reason)
                     1 nil))))
       (let* ((session (%session-event kernel verb requester))
+             (events (%cascade-events (kernel-state kernel) verb requester session))
+             (last-event (car (last events)))
              (envelope (list :request rid :digest digest
-                             :events (list requester session)
+                             :events events
                              :settle session)))
         ;; Acceptance is asked before anything is applied.
         (multiple-value-bind (accepted refusal) (journal-accept (kernel-journal kernel) envelope)
@@ -250,14 +296,14 @@ whole envelope is applied."
         ;; two leaves the record written and nothing applied, which is the order
         ;; the two-part retry of :315 rests on; the reverse order would let a
         ;; stop apply an envelope the journal never heard of.
-        (let ((line (%ok-line word requester session)))
+        (let ((line (%ok-line word requester last-event)))
           (journal-record (kernel-journal kernel) rid digest line
-                          (work-event-rev session))
+                          (work-event-rev last-event))
           (when *before-apply-hook* (funcall *before-apply-hook* envelope))
           ;; All-or-none: the candidate is built whole, then installed.
           (let ((candidate (apply-envelope (kernel-state kernel) envelope)))
             (setf (kernel-state kernel) candidate)
-            (setf (kernel-next-rev kernel) (1+ (work-event-rev session)))
+            (setf (kernel-next-rev kernel) (1+ (work-event-rev last-event)))
             (values t line 0 envelope)))))))
 
 ;;; The counters, read.

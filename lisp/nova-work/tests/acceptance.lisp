@@ -791,7 +791,25 @@ is compared against; it is never the path `query --ask size` takes."
       (check-equal 4 (length (state-history (kernel-state k)))
                    "one history record per request")
       (check-equal 9 (length (state-closed-rows (kernel-state k)))
-                   "one immutable row per settle and revive"))))
+                   "one immutable row per settle and revive")
+      (let ((rebuilt (reconstruct-state
+                      (canonical-string (state-canonical-form (kernel-state k))))))
+        (check-string= (root-digest (kernel-state k)) (root-digest rebuilt)
+                       "cascade reconstruction root")
+        (check-equal (state-closed-rows (kernel-state k)) (state-closed-rows rebuilt)
+                     "cascade reconstruction rows"))))
+  ;; A required empty container is itself never complete and therefore blocks
+  ;; its parent after every other required member settles.
+  (let* ((seed '((:id "empty-root" :type :work-set :parent nil :state :unknown)
+                 (:id "empty-root/empty" :type :feature :parent "empty-root" :state :unknown)
+                 (:id "empty-root/task" :type :task :parent "empty-root" :state :doing)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (ok (submit k (close-request :node "empty-root/task" :request "empty-required"))
+        "sibling of required empty container refused")
+    (check-equal :o (node-branch (kernel-state k) "empty-root/empty")
+                 "required empty container settled")
+    (check-equal :o (node-branch (kernel-state k) "empty-root")
+                 "parent settled over a required empty container")))
 
 (deftest "container-cascade-is-atomic-and-retry-stable" "docs/SPEC-WORK.md:1272-1283,3128-3131"
     "expected=reject-applies-0;accept-all;retry-applies-0"
