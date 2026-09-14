@@ -86,7 +86,7 @@ catalog is implementation-ready.
 |---|---|---|
 | profile | `worker` object; `route` object; `env_var` string; `model` string; `allowed_models` nonempty string array; `prompt` object | `model` is the default; an admitted override must appear in `allowed_models` |
 | worker | Required strings `name`, `usage`, `harness`, `worker_dir`, `deadline`; required string array `harness_args`; optional string arrays `read_roots`, `input_limit_phrases` | Same execution meanings and validators as the legacy worker; profile harness paths must be absolute |
-| route | Required `provider` string and `credentials` object; optional `endpoint` string; proposed conditional `native` object | Non-native endpoint defaults belong to the named adapter. For `opencode-native/1`, the native model companion requires `native.models`, one exact resolved projection per allowed model; an explicit common endpoint must agree with all of them |
+| route | Required `provider` string and `credentials` object; optional `endpoint` string; proposed conditional `native` object | Non-native endpoint defaults belong to the named adapter. For `opencode-native/1`, the native model companion requires `native.models`, one exact resolved projection per allowed model; an explicit common endpoint must agree with all of them and denotes the SDK factory base URL, not its terminal request URL |
 | credentials | Required strings `kind`, `store`, `seat`, `age_key`, `sops`, `gate`, `launcher` | `kind` is exactly `nova-secrets`; no alternate plaintext or inherited-environment credential source |
 | prompt | Required `mode` string, `prefix` string, `tools` string array | Existing `legacy`/`compact`, byte bound and adapter allow-list rules above |
 

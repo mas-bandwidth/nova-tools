@@ -81,6 +81,11 @@ Its parent-table additions and companion vectors remain proposals. Incorporate
 the strict reader and full parent catalog/body/launch fixtures together before
 enabling admission; do not create a second unhashed route owner in a callback.
 
+The [SDK routing contract](SWARM-NATIVE-MODEL.md#sdk-base-urls-and-terminal-request-paths)
+uses the SDK base URL in `resolved.endpoint`, not the full documentation
+endpoint. Its pinned fake-fetch witnesses catch duplicated terminal paths;
+they do not clear native configuration isolation.
+
 For a provider established by that reviewed route table, native configuration
 accepts `env:["<selected-variable-name>"]`, and
 [provider initialization](https://github.com/anomalyco/opencode/blob/16747470f976aca3d362ad730bcd3fe82ecc2c9a/packages/opencode/src/provider/provider.ts#L1578)

@@ -36,9 +36,9 @@ adapter's reviewed route table. A synthetic example is not such a table.
 The existing `route.provider` remains the requested provider identity. Each
 model's `resolved.provider` is its effective native provider ID; the reviewed
 route table must admit that mapping. An explicit `route.endpoint` must equal
-every admitted member's final endpoint. It does not silently overwrite one.
+every admitted member's final SDK factory base URL. It does not silently overwrite one.
 Omit that common override when models have distinct endpoints. Each member
-then carries its own explicit endpoint, obtained at admission from the pinned
+then carries its own explicit SDK base URL, obtained at admission from the pinned
 route table, never a launch-time provider default.
 
 The selected `resolved` object has exactly:
@@ -47,7 +47,7 @@ The selected `resolved` object has exactly:
 | --- | --- |
 | `provider` | Nonempty native provider ID, with no `/` |
 | `model` | Nonempty native model key; `/` may occur inside it |
-| `endpoint` | Final literal API endpoint admitted by the route table |
+| `endpoint` | Final literal SDK factory base URL admitted by the route table; not the complete request URL |
 | `native` | The closed object below |
 
 `requested.provider/model` keep the caller/default selection. Copy the selected
@@ -64,13 +64,58 @@ API ID or endpoint under `worker`, or recalculate it after admission.
   must bind those separately. File URLs and runtime package installation are
   not implied permissions.
 - `model_url` retains the explicit model URL before a provider override;
-  `resolved.endpoint` is the final URL. Their distinct roles are checked by
+  `resolved.endpoint` is the final SDK base URL. Their distinct roles are checked by
   the route table. Neither contains environment-substitution syntax.
 - `runtime` is the complete supported effective model projection below.
 
 URLs are nonempty absolute HTTP(S) URLs with a host, without userinfo or
 fragments. Actual schemes, hosts, ports, paths and queries require route-table
 approval. A fixture's `.invalid` host authorizes no network operation.
+
+## SDK base URLs and terminal request paths
+
+For this native adapter only, `resolved.endpoint` and the optional common
+`route.endpoint` mean the SDK factory **base URL**. The reviewed route table
+binds that base, the exact SDK dependency, API model ID and selected model
+factory to the terminal request path. The terminal URL is derived by that
+pinned SDK; it is not a second caller-controlled override. A table row must
+reject a terminal URL supplied in the base field before starting a worker.
+
+The [Go endpoint table](https://opencode.ai/docs/go/#endpoints) and
+[Zen endpoint table](https://opencode.ai/docs/zen/#endpoints), read 2026-09-14,
+show complete request URLs. The following are concrete request-construction
+witnesses, not an admitted production catalog:
+
+| Route witness | SDK package / version | Factory base | Terminal path |
+| --- | --- | --- | --- |
+| Go DeepSeek V4 Flash | `@ai-sdk/openai-compatible` 2.0.41 | `https://opencode.ai/zen/go/v1` | `/chat/completions` |
+| Zen DeepSeek V4 Flash | `@ai-sdk/openai-compatible` 2.0.41 | `https://opencode.ai/zen/v1` | `/chat/completions` |
+| Zen Responses protocol | `@ai-sdk/openai` 3.0.84 | `https://opencode.ai/zen/v1` | `/responses` |
+
+These versions match the pinned OpenCode
+[package manifest](https://github.com/anomalyco/opencode/blob/16747470f976aca3d362ad730bcd3fe82ecc2c9a/packages/opencode/package.json).
+The [reproducible SDK probe](fixtures/sdk-route-probe/README.md) invokes the
+actual packages with recording fake fetches. It checks each final URL and
+shows that passing a complete chat URL as the base duplicates
+`/chat/completions`. It also exercises the OpenAI package's
+`languageModel(...)` Responses selection. The model ID in that synthetic
+response fixture does not establish model availability or entitlement.
+
+Admission tests must cover each additional SDK/protocol separately, including
+streaming, request bodies and tool calls. Do not extrapolate these three
+nonstreaming witnesses to the Anthropic `/messages` route or to native OpenCode
+configuration isolation. A pinned package manifest alone does not prove the
+running artifact contains the same dependency bytes.
+
+The [Go client requirements](https://opencode.ai/docs/go/#where-can-i-use-it)
+call for a client User-Agent and a stable `x-opencode-session` for a conversation.
+The probe confirms that the explicit fixture session survives and the SDK
+appends its runtime suffix to the supplied User-Agent. Production acceptance
+must bind actual session ownership and persistence across requests, resume and
+retries; a constant fixture value or a new ID on every request does not prove
+that contract. Native OpenCode's own header generation and override order must
+be verified at its request boundary before enabling the route. Do not add a
+second unhashed identity override through arbitrary model options.
 
 ## Runtime fields
 
