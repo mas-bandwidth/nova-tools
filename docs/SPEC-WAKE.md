@@ -242,6 +242,29 @@ polls, and `UNAVAILABLE` is still owed a complete read — what changed is what
 *complete* means, what the bounds measure, and that an item is read whole or
 not at all.
 
+**Draft 9, 2026-09-13**, repairs draft 8 (head 2c76c56c) against the Astra read
+at that head, which held **two acceptance lines** and reopened nothing else;
+every passage it changes is marked `draft 9` beside the change with the defect
+named. **K4a** — draft 8's oversize-header test asserted that raising
+`--correlate-bytes` reads an over-4 KiB header, and it cannot: the **4 KiB
+header cap is fixed**, it is not a share of the byte budget and this spec adds
+no flag that raises it, so a header with no blank line inside 4 KiB is a
+**permanent gap at every budget** and the test claimed an option this tool does
+not have. **K4b** — the raise a caller *can* make is real for a different
+fixture, so the two are now separate fixtures rather than one sentence: a
+header that ends **within** 4 KiB whose whole item cost is larger than a small
+`--correlate-bytes` is a gap **at that budget only**, and it clears when the
+budget is raised. **K4c** — *a poll that read nothing may never say `complete`*
+was written unconditionally, and unconditionally it takes `UNAVAILABLE` off the
+board: an **empty lane**, and a **covered lane whose tip has not moved since
+the last poll**, are exactly the complete negative evidence a timeout is owed,
+so the unqualified rule would hold a genuinely silent friend at `PINGED` for
+ever — the opposite of rule 17. The rule is now **zero progress while uncovered
+items or gaps remain**, which still fails the spin it was written for and lets
+a covered silence time out. **No design of draft 8 is reversed**: coverage
+gaps, the five bounds, all-or-none items, and `complete` as the tip **and**
+zero gaps all stand.
+
 The
 amendment adds four sources to `watch`, one flag on the bus source, one verdict,
 and one verb (`probe`); it changes no exit code that exists and takes the one
@@ -2437,7 +2460,11 @@ read is **the bounded read** named below, under **five** bounds and no others:
   back to this process by the object reader and every byte it inflates in its
   own buffers, summed over the poll;
 - **4 KiB decoded per note file**, the depth one header is read to looking for
-  the blank line that ends it;
+  the blank line that ends it — **a fixed cap, not a flag and not a share of
+  `--correlate-bytes`** (draft 9, K4a). It does not move when the byte budget
+  moves and no option in this spec raises it, so a header that does not end
+  inside 4 KiB is unreadable by this probe **at every budget** (test: **the
+  over-header-cap header is a permanent gap**);
 - **a wall clock on the reading itself**: no single `git` process this read
   starts may run longer than **10s**, and the whole read may not run longer
   than `--interval` or 30s, whichever is smaller — the two-minute law applied
@@ -2469,14 +2496,28 @@ half-read, no bookmark ever points inside one, and **a poll never advances past
 content it did not cover**.
 
 **An item that cannot fit a whole budget, or cannot be read at all, is a
-coverage gap** (draft 8, K3a). Two cases, one treatment:
+coverage gap** (draft 8, K3a; the first case split in two, **draft 9**, K4a and
+K4b, because one of them a caller can clear and the other one cannot).
+**Three** cases, one treatment:
 
-- a note file whose header has no blank line within 4 KiB, or an item whose own
-  cost is larger than the whole of `--correlate-bytes` so that no poll at this
-  budget can ever take it — the bus's own `INBOX UNREADABLE` case and not this
-  probe's verdict;
-- an object this read cannot get from `git` at all: missing, corrupt, or a read
-  that failed — named by its reason, never guessed past.
+- **a note file whose header has no blank line within 4 KiB** — the fixed
+  header cap among the five bounds above. This gap is **permanent at every
+  budget**: `--correlate-bytes` bounds the poll, the 4 KiB bounds the single
+  header, and raising the first raises nothing about the second, so **no
+  `--correlate-bytes` value a caller can pass ever reads this header** (draft
+  9, K4a; test: **the over-header-cap header is a permanent gap**). It is the
+  bus's own `INBOX UNREADABLE` case and not this probe's verdict, and the fix
+  belongs where that note was written or on the bus, never on a flag here;
+- **an item whose header does end within 4 KiB but whose whole cost is larger
+  than the whole of `--correlate-bytes`**, so that no poll *at this budget* can
+  take it. This gap is **the budget's and not the item's**: it stands only
+  while the budget stands, and a `--correlate-bytes` raise that makes the item
+  fit reads it on the next poll and **resolves** it (draft 9, K4b; test: **the
+  within-cap header over the total budget clears on a raise**);
+- **an object this read cannot get from `git` at all**: missing, corrupt, or a
+  read that failed — named by its reason, never guessed past. Restoring the
+  object resolves it and no budget change does (test: **an unreadable
+  object**).
 
 Each is **skipped, counted and named once** — one `WAKE NOTE probe <name>:
 <lane commit>:<item> could not be read (<reason>); it is a coverage gap and no
@@ -2487,11 +2528,16 @@ later poll can come back to it, and the line carries `gaps=<n>`.
 why it is kept. The skipped item may be exactly the note that answers the ping.
 So while any gap stands the correlation is **`partial`**, the state word stays
 **`PINGED`** however far `--answer-within` has run, and **`UNAVAILABLE` is not
-reachable at all**. The remedy is on the record and in the caller's hand: a
-later poll with more budget left, or an explicit `--correlate-bytes` raise,
-reads the item and the gap is **resolved** — and where the resolved item is the
-answer, that poll is `ANSWERED`. A gap is never aged out, never rounded away
-and never turned into a negative by the clock.
+reachable at all**. **Which remedy applies depends on which of the three kinds
+it is, and the line names it** (draft 9, K4a and K4b): a later poll with more
+budget left, or an explicit `--correlate-bytes` raise, resolves a **budget**
+gap, and where the resolved item is the answer that poll is `ANSWERED` (test:
+**the within-cap header over the total budget clears on a raise**); a
+**header-cap** gap and an **unreadable object** are not budget gaps and **no
+`--correlate-bytes` raise resolves either** (tests: **the over-header-cap
+header is a permanent gap**, **an unreadable object**). A caller must never be
+told to raise a budget against a cap that is not a budget. A gap is never aged
+out, never rounded away and never turned into a negative by the clock.
 
 **`complete` is the tip *and* zero gaps**, both halves, and that is its whole
 definition (draft 8, K3a). A read that reached the ref's tip with `gaps=0` is
@@ -2555,11 +2601,40 @@ implementations, two platforms and two polls resume at the same item.
 K3c). With `--correlate-max 1` a poll reads exactly one item and the bookmark
 moves by one; with a `--correlate-bytes` that fits one header, one header. The
 two behaviours that would be bugs are written down so a test can fail them: a
-poll must never **advance past an item it did not read**, and a poll that read
-nothing must never say **`correlation=complete`**. A poll whose next item
-cannot fit any budget records it as a **gap** and moves the bookmark past it,
-which is progress; a poll that takes no item and records no gap is the spin,
-and the test named below asserts against it.
+poll must never **advance past an item it did not read**, and **a poll that
+made zero progress while uncovered items or gaps remain may not say
+`correlation=complete`** (draft 9, K4c; test: **a budget of one item never
+spins**). A poll whose next item cannot fit any budget records it as a **gap**
+and moves the bookmark past it, which is progress; a poll that takes no item
+and records no gap **while uncovered content or a standing gap remains** is the
+spin, and the test named below asserts against it.
+
+**A poll that reads nothing because there is nothing left to read is complete,
+and that is how a silent friend times out** (draft 9, K4c). Draft 8 wrote the
+rule above without its qualifier, and unqualified it says a lane with nothing
+in it can never be `complete` — which would hold a genuinely silent friend at
+`PINGED` for ever and take `UNAVAILABLE`, the one verdict rule 17 asks this
+verb for, off the board entirely. So two reads that take no item are **complete
+negative evidence** and not spins:
+
+- **an empty lane**: the pinged line's lane carries no item at all past the
+  ping's anchor. Nothing is uncovered and no gap stands, so the read is
+  `correlation=complete remaining=0 gaps=0` and `--answer-within` runs on it to
+  `UNAVAILABLE` (test: **the empty lane times out**);
+- **a covered lane whose tip has not moved**: an earlier poll reached the tip
+  with `gaps=0`, and this poll finds the ref at the **same** tip with no new
+  item since. Nothing was read because nothing arrived and the earlier
+  coverage still stands, so this poll is `correlation=complete` too and
+  `--answer-within` runs on it to `UNAVAILABLE` (test: **the drained lane at an
+  unchanged tip times out**).
+
+The distinction is **progress against what is owed**, never bytes read: a poll
+that takes no item *while* an uncovered item or a standing gap remains is the
+spin and may not say `complete`; a poll that takes no item *because* the lane
+is covered to a tip that has not moved is the timeout this verb exists to
+reach. `UNAVAILABLE` still requires the tip **and** zero gaps, so neither case
+weakens **No `UNAVAILABLE` without complete negative evidence** — they are what
+that sentence means when the lane is quiet.
 
 So the read is bounded **per poll** and complete **over polls**: a lane nine
 hundred notes deep is covered in three polls of the default budget rather than
@@ -2595,8 +2670,10 @@ specified above is not a paragraph about one verb; it is a primitive, and it
 has a name. **The bounded read** is: *a read-only walk of a bus lane from a
 floor commit forward, taking note headers and appended `RECEIPTS` lines and
 never a body, under the five bounds above, with all-or-none item handling, the
-fixed within-commit order, a resumable bookmark, retained coverage gaps, and
-`complete` only on the tip with zero gaps.* **SPEC-WAKE.md owns that
+fixed within-commit order, a resumable bookmark, retained coverage gaps — of
+which the fixed-header-cap kind is permanent at every budget (draft 9, K4a) —
+and `complete` only on the tip with zero gaps, withheld from a poll that made
+no progress only while uncovered items or gaps remain (draft 9, K4c).* **SPEC-WAKE.md owns that
 definition** and SPEC-BUS-REPLY.md (#267, head `dc679ab9`) **references it**
 rather than restating it. It lives here for two reasons a reader can check:
 this is the document whose tool reads `git` objects itself, while #267's read
@@ -3589,27 +3666,67 @@ left without what it pins.
     two; one that advances the cursor or writes `OPEN` turns it red on the
     byte-identical assertion. The same lane drained to 200 notes is
     `correlation=complete remaining=- gaps=0` on one poll and does reach
-    `UNAVAILABLE` at 8m; **the oversize header that is the answer** (draft 8,
-    K3a): the 850th note's header has no blank line within 4 KiB, so it is a
-    coverage gap — every poll from the second on prints `PINGED
-    correlation=partial gaps=1`, at 8m, at 20m and at an hour, and **never
-    `UNAVAILABLE`**, while the gap is named exactly **once**; raising
-    `--correlate-bytes` past that note's size reads it and the next poll is
-    `ANSWERED`, exit 0. A mutation that ages the gap out, one that reads the
-    tip as complete with the gap standing, and one that declares `UNAVAILABLE`
-    on `gaps=1` each turn it red, and one that names the gap every poll turns
-    it red on the **once**. **An unreadable object** (draft 8, K3a): the same
+    `UNAVAILABLE` at 8m; **the over-header-cap header is a permanent gap** (draft 8,
+    K3a; **corrected draft 9, K4a** — draft 8 asserted here that a
+    `--correlate-bytes` raise reads this header, and it cannot, because the
+    4 KiB header cap is fixed and is not a share of the byte budget): the 850th
+    note's header has no blank line within 4 KiB, so it is a coverage gap —
+    every poll from the second on prints `PINGED correlation=partial gaps=1`,
+    at 8m, at 20m and at an hour, and **never `UNAVAILABLE`**, while the gap is
+    named exactly **once**; and the same lane re-run at `--correlate-bytes
+    1048576`, and again at `4194304`, is **still** a gap and still not
+    `ANSWERED`, because no budget reaches past the cap —
+    `expected=WAKE PROBE name=peer state=PINGED correlation=partial remaining=0 gaps=1`
+    on every one of those polls. A mutation that ages the gap out, one that
+    reads the tip as complete with the gap standing, one that declares
+    `UNAVAILABLE` on `gaps=1`, one that names the gap every poll, and **one
+    that lets a raised `--correlate-bytes` read an over-cap header** each turn
+    it red. **The within-cap header over the total budget clears on a raise**
+    (draft 9, K4b): the same lane with the 850th note's header ending **inside**
+    4 KiB — 3 KiB of it — polled at `--correlate-bytes 2048`, so the item's
+    whole cost is larger than the whole budget and it is a gap at that budget,
+    `expected=WAKE PROBE name=peer state=PINGED correlation=partial remaining=0 gaps=1`;
+    re-run at the default `--correlate-bytes 262144` the item fits, the gap is
+    resolved on the poll that reads it, and because that item is the answer the
+    poll is `ANSWERED`, exit 0,
+    `expected=WAKE PROBE name=peer state=ANSWERED correlation=complete remaining=0 gaps=0`.
+    A mutation that leaves the gap standing after the raise turns it red, and
+    one that treats this fixture as the header-cap one and refuses to clear it
+    turns it red on the same line. **An unreadable object** (draft 8, K3a): the same
     lane with the 850th note's blob deleted from the object store is
     `PINGED correlation=partial gaps=1` for ever with the reason named once,
     never `UNAVAILABLE`, and restoring the object reaches `ANSWERED`. **A
-    budget of one item never spins** (draft 8, K3c): `--correlate-max 1` over
+    budget of one item never spins** (draft 8, K3c; the `complete` rule
+    qualified **draft 9**, K4c): `--correlate-max 1` over
     the 900-note lane advances the bookmark by exactly one item per poll,
     reaches the answer on the 850th poll, and **no poll both takes no item and
-    records no gap**; `--correlate-bytes` set so that one header fits and two
+    records no gap while uncovered items remain** — and because the counting
+    allowance is itself `--correlate-max` commits, which is one, the remainder
+    is past it and the field is `-`:
+    `expected=WAKE PROBE name=peer state=PINGED correlation=partial remaining=- gaps=0`
+    on the first poll; `--correlate-bytes` set so that one header fits and two
     do not behaves the same way; a mutation that advances the bookmark past an
     item it did not read turns it red by missing the answer, and one that
-    returns `correlation=complete` from a poll that read nothing turns it red
-    at once. **The retained gap list is capped**: a lane with 100 unreadable
+    returns `correlation=complete` from a poll that took no item **while
+    uncovered items or gaps stood** turns it red at once. **The empty lane
+    times out** (draft 9, K4c): the pinged line's lane carries **no** item past
+    the ping's anchor, so the poll reads nothing, nothing is uncovered and no
+    gap stands — it is complete negative evidence, `PINGED` before
+    `--answer-within` and `UNAVAILABLE` at 8m, exit 1,
+    `expected=WAKE PROBE name=peer state=UNAVAILABLE correlation=complete remaining=0 gaps=0`.
+    A mutation that applies draft 8's unqualified rule — no `complete` from a
+    poll that read nothing — keeps this probe at `PINGED` at 8m, at an hour and
+    for ever, and turns the test red; that mutation is the acceptance line
+    draft 9 repairs. **The drained lane at an unchanged tip times out** (draft
+    9, K4c): the 200-note lane already covered to its tip with `gaps=0` by an
+    earlier poll is polled again with **no new item** and the ref at the
+    **same** tip; the second poll takes no item, stays `complete`, and
+    `--answer-within` runs on it to `UNAVAILABLE` at 8m, exit 1,
+    `expected=WAKE PROBE name=peer state=UNAVAILABLE correlation=complete remaining=0 gaps=0`.
+    A mutation that turns the unchanged tip into `partial` because the poll
+    read nothing turns it red at 8m; a mutation that reports `complete` here
+    **while a gap from the earlier poll still stands** turns it red on the gap
+    fixture, because `complete` is still the tip **and** zero gaps. **The retained gap list is capped**: a lane with 100 unreadable
     items records **64** and stops the bookmark before the sixty-fifth, and the
     state file's `probe:` line stays under its bound; and a **receipt** naming the ping id, appended to that
     lane's `RECEIPTS` inside the range, is `ANSWERED` on its own with no note
@@ -3747,10 +3864,22 @@ left without what it pins.
   an item larger than a whole budget, an object `git` cannot give it — leaves
   the state at `PINGED correlation=partial gaps=<n>` with no clock that ends
   it, because the skipped item may be the answer and *skipped* is not
-  *absent*. The record says so on every line and the remedy is a caller's
-  `--correlate-bytes` raise; what this tool will not do is convert an unread
-  item into a verdict about a friend. Where the bus itself cannot read that
-  note either, the fix belongs on the bus (`INBOX UNREADABLE`) and not here.
+  *absent*. The record says so on every line, and **only one of the three kinds
+  has a remedy a caller here can apply** (draft 9, K4a): a `--correlate-bytes`
+  raise resolves an item larger than the whole budget and nothing else, because
+  **the fixed 4 KiB header cap does not move with the byte budget** — an
+  over-cap header is permanent for this probe at every budget, and an
+  unreadable object is resolved by restoring the object. What this tool will
+  not do is convert an unread item into a verdict about a friend. Where the bus
+  itself cannot read that note either, the fix belongs on the bus (`INBOX
+  UNREADABLE`) and not here.
+- **A quiet lane is complete; a rewritten one is not** (draft 9, K4c). An empty
+  lane, and a covered lane at an unchanged tip, are complete negative evidence
+  and `--answer-within` runs to `UNAVAILABLE` on them. What that rests on is
+  that the fetched ref's tip is the same object it was — the one thing a
+  rewritten history breaks — and there the read already restarts from the
+  anchor as `correlation=partial` with the retained gaps dropped, so a rewrite
+  can delay a timeout but can never manufacture one.
 - **What this tool assumes about other systems, rather than verifies** (draft 5,
   from the Fable read, finding L9). Verified at this head, against this repo:
   the lock protocols and their build tags (`internal/bus/lock_unix.go`,
@@ -4011,7 +4140,12 @@ shared packages used rather than re-spelled.
     short** (draft 4; bounded draft 6; the lane walk, the budget and the resume
     are **draft 7**, K3), **all-or-none items, the fixed within-commit order,
     retained coverage gaps with `gaps=<n>`, `remaining=` in items or `-`, and
-    `complete` only on the tip with zero gaps** (**draft 8**, K3a-c), the `probe:<name>`
+    `complete` only on the tip with zero gaps** (**draft 8**, K3a-c), **the
+    fixed 4 KiB header cap as a permanent gap no `--correlate-bytes` raise
+    clears, the budget gap that a raise does clear, and `complete` withheld
+    only where a poll made zero progress while uncovered items or gaps
+    remain — an empty lane and an unchanged covered tip timing out to
+    `UNAVAILABLE`** (**draft 9**, K4a-c), the `probe:<name>`
     record written after **`SEND OK pushed=true`** on a living call or after a
     reconcile that finds the prepared id on the fetched remote ref, and never
     otherwise (draft 3, qualified draft 7)
