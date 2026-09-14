@@ -117,6 +117,72 @@ execute jobs and return receipts. Test dispatch/ack distinctions, duplicate
 receipts, explicit sleep, recovery with stale contact and reassignment while a
 previous attempt is uncertain, as well as indexed-query cost after mutations.
 
+## CONFIG and ACTIVE are different sections
+
+Glenn separates mostly constant CONFIG from ACTIVE. CONFIG contains each known
+friend's work capabilities and configuration: selectable models, maximum child
+agents, each swarm and its models/limits, local-model routes, one-shot launchers,
+reserved roles and budget policies. Update it only on meaningful configuration
+change; do not rewrite it on every heartbeat or token sample.
+
+ACTIVE is each friend's deployed work configuration for this work: the children,
+swarms, local runs and one-shots being used, their chosen models, benches and task
+assignments. It references CONFIG by stable identity and revision. ACTIVE is not
+a synonym for a generic current-status snapshot. Availability, progress and usage
+are timestamped observations attached to these deployed executions. Capability
+configuration, deployed work configuration and observations remain distinct even
+when all are efficiently indexed in one resident session.
+
+## Efficient friend config exchange and token pricing
+
+Provide a bounded machine-readable friend config export/request exchange through
+the existing bus transport. A request names the friend and last-known config
+hash/revision. Respond UNCHANGED with that identity when equal; otherwise return
+a validated manifest or a bounded delta against the exact named base. Unknown
+bases request a bounded full manifest. Do not send the whole roster or repeat
+prose every poll. Changed fragments are applied atomically after schema, identity
+and hash validation, by the coordinator; a message never executes imported code.
+Large manifests use explicit bounded parts/references with a completeness hash;
+partial config is not admitted as a complete replacement.
+
+Each manifest records schema version, stable friend/capability/route IDs, revision,
+content hash and observation/source provenance. Each executable model route gives
+provider, exact model/version or alias with resolved identity, harness/endpoint
+class, billing mode (metered, subscription, local or unknown), pricing reference
+and effective/version timestamps. No API keys, credential values or secret-store
+contents are present. Configuration sharing respects its configured audience.
+
+A pricing record, embedded or referenced by immutable content identity, states
+currency, unit scale (for example price per million tokens), separate applicable
+input/output/cache-write/cache-read rates, and reasoning-token treatment. Describe
+whether cache/reasoning counters are included in parent totals; tiers, long-context
+thresholds, batch/discount conditions and their applicability are explicit when
+relevant. An unsupported or missing dimension is unknown, not zero. Separate a
+model's requested alias from the observed billed model and retain uncertainty if
+they cannot be reconciled.
+
+Keep measured provider cash charges, estimated marginal cash and virtual/reference
+token cost as separately labelled values. Subscription coverage does not mean
+zero reference token cost; allowance exhaustion or paid overflow changes whether
+a route is usable under its policy. Local inference counts tokens with declared
+API charge zero; hardware/energy costs, if tracked, are a separate cost model.
+Live remaining quota/balance belongs to observations, not repeated CONFIG edits.
+
+The coordinator resolves rate references once, caches by immutable identity and
+computes comparable costs mechanically from retained source-normalized usage.
+Every execution/estimate pins its configuration and pricing revision, keeping old
+estimates reproducible when rates change. Config supplies enough information to
+price supported usage; it does not fabricate exact cash charges when a provider
+or plan does not expose them. Price refresh is a meaningful config change with
+source/effective time, not an automatic change to historical receipts.
+
+Acceptance: unchanged config uses a bounded response; changed-model/rate/slot
+configuration updates only after validated complete intake; invalid deltas and
+missing parts leave the old config intact. Exercise cached/inclusive/exclusive
+usage bases, subscription reference-vs-cash accounting, local-token API zero and
+unknown pricing. Compare real operational token overhead for repeated manual
+capacity/pricing inquiries versus this exchange at equal information quality.
+
 ## The agreed hierarchy
 
 Glenn's hierarchy is repository -> roadmap -> epic -> feature -> subtasks,
