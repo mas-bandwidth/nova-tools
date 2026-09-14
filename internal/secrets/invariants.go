@@ -476,16 +476,14 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 		return "", nil, nil, "", 2, err
 	}
 
-	gitStatus, gitFail, gitRefusal := CheckInvariant8(storeDir)
+	gitStatus, _, indexData, storeFailures, gitRefusal := ValidateAdmissibleStore(storeDir)
 	if gitRefusal != nil {
 		return "", nil, nil, "", 2, gitRefusal
 	}
 
 	// 2. Invariant checks
 	var allFailures []CheckFailure
-	if gitFail != nil {
-		allFailures = append(allFailures, *gitFail)
-	}
+	allFailures = append(allFailures, storeFailures...)
 
 	recoveryKey, recErr := ReadRecoveryPub(storeDir)
 	if recErr != nil {
@@ -511,23 +509,7 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 	inv5Fails := CheckInvariant5(storeDir, keyPath)
 	allFailures = append(allFailures, inv5Fails...)
 
-	headBlobs, headErr := ReadHEADTreeBlobs(storeDir)
-	if headErr != nil {
-		allFailures = append(allFailures, CheckFailure{
-			Kind:   "stale-working-copy",
-			File:   "HEAD",
-			Reason: fmt.Sprintf("failed to read HEAD tree: %v", headErr),
-		})
-	}
-
-	indexData, err := ReadGitIndex(storeDir)
-	if err != nil {
-		allFailures = append(allFailures, CheckFailure{
-			Kind:   "stale-working-copy",
-			File:   ".git/index",
-			Reason: fmt.Sprintf("failed to read git index: %v", err),
-		})
-	} else {
+	if indexData != nil {
 		// Invariant 7: untracked plaintext
 		trackedMap := make(map[string]bool, len(indexData.Entries))
 		for k := range indexData.Entries {
@@ -535,50 +517,6 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 		}
 		inv7Fails := CheckInvariant7(storeDir, trackedMap)
 		allFailures = append(allFailures, inv7Fails...)
-
-		// Invariant 8 / working copy check: verify tracked *.yaml, .sops.yaml, recovery.pub match HEAD tree and index blob SHA1
-		for p := range indexData.Entries {
-			if strings.HasSuffix(p, ".yaml") || p == "recovery.pub" {
-				filePath := filepath.Join(storeDir, filepath.FromSlash(p))
-				if _, err := os.Stat(filePath); err == nil {
-					if headBlobs != nil {
-						if err := VerifyFileMatchesHEADTree(storeDir, filePath, headBlobs); err != nil {
-							allFailures = append(allFailures, CheckFailure{
-								Kind:   "stale-working-copy",
-								File:   p,
-								Reason: "working copy differs from HEAD commit tree; uncommitted changes in store",
-							})
-						}
-					}
-					if err := VerifyFileMatchesIndex(storeDir, filePath, indexData); err != nil {
-						allFailures = append(allFailures, CheckFailure{
-							Kind:   "stale-working-copy",
-							File:   p,
-							Reason: "working copy differs from git index; uncommitted changes in store",
-						})
-					}
-				}
-			}
-		}
-
-		// Verify seat file is tracked in git index and HEAD tree
-		targetRel, _ := filepath.Rel(storeDir, targetFile)
-		targetRel = filepath.Clean(filepath.ToSlash(targetRel))
-		if _, ok := indexData.Entries[targetRel]; !ok {
-			allFailures = append(allFailures, CheckFailure{
-				Kind:   "stale-working-copy",
-				File:   targetRel,
-				Reason: fmt.Sprintf("seat file %s is untracked in git; commit it to the store", targetRel),
-			})
-		} else if headBlobs != nil {
-			if _, ok := headBlobs[targetRel]; !ok {
-				allFailures = append(allFailures, CheckFailure{
-					Kind:   "stale-working-copy",
-					File:   targetRel,
-					Reason: fmt.Sprintf("seat file %s is uncommitted in HEAD tree", targetRel),
-				})
-			}
-		}
 	}
 
 	// List tracked *.yaml files across the store (including subdirectories, excluding .sops.yaml)

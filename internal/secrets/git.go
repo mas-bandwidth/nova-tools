@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -356,4 +357,143 @@ func readLooseTreeRecursive(gitDir, treeSHA, prefix string, out map[string]strin
 		}
 	}
 	return nil
+}
+
+// ValidateAdmissibleStore verifies that the git working copy at storeDir is an admissible store.
+// It verifies:
+// 1. Invariant 8 ref tracking: HEAD equals remote-tracking ref (via CheckGitWorkingCopy).
+// 2. HEAD commit tree and git index can be read.
+// 3. Every tracked store file (*.yaml, .sops.yaml, recovery.pub) in HEAD tree, git index, or working copy:
+//   - exists in working copy (no deletions)
+//   - is tracked in index and committed in HEAD tree (no untracked or uncommitted additions)
+//   - working copy blob SHA1 matches HEAD tree blob SHA1 and git index blob SHA1 (no unstaged or staged modifications)
+func ValidateAdmissibleStore(storeDir string) (status GitRefStatus, headBlobs map[string]string, indexData *GitIndexData, failures []CheckFailure, refusal error) {
+	st, err := CheckGitWorkingCopy(storeDir)
+	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "detached HEAD") || strings.Contains(msg, "no upstream") || strings.Contains(msg, "worktree or submodule") || strings.Contains(msg, "is not a git repository") {
+			return st, nil, nil, nil, err
+		}
+		failures = append(failures, CheckFailure{
+			Kind:   "stale-working-copy",
+			File:   "working copy",
+			Reason: msg,
+		})
+	}
+	status = st
+
+	hBlobs, headErr := ReadHEADTreeBlobs(storeDir)
+	if headErr != nil {
+		failures = append(failures, CheckFailure{
+			Kind:   "stale-working-copy",
+			File:   "HEAD",
+			Reason: fmt.Sprintf("failed to read HEAD tree: %v", headErr),
+		})
+	}
+	headBlobs = hBlobs
+
+	idxData, idxErr := ReadGitIndex(storeDir)
+	if idxErr != nil {
+		failures = append(failures, CheckFailure{
+			Kind:   "stale-working-copy",
+			File:   ".git/index",
+			Reason: fmt.Sprintf("failed to read git index: %v", idxErr),
+		})
+	}
+	indexData = idxData
+
+	if headErr != nil || idxErr != nil {
+		return status, headBlobs, indexData, failures, nil
+	}
+
+	candidates := make(map[string]bool)
+	for p := range headBlobs {
+		if strings.HasSuffix(p, ".yaml") || p == "recovery.pub" {
+			candidates[p] = true
+		}
+	}
+	for p := range indexData.Entries {
+		if strings.HasSuffix(p, ".yaml") || p == "recovery.pub" {
+			candidates[p] = true
+		}
+	}
+
+	var sortedPaths []string
+	for p := range candidates {
+		sortedPaths = append(sortedPaths, p)
+	}
+	sort.Strings(sortedPaths)
+
+	for _, p := range sortedPaths {
+		headSHA, inHead := headBlobs[p]
+		indexEntry, inIndex := indexData.Entries[p]
+		filePath := filepath.Join(storeDir, filepath.FromSlash(p))
+		fi, statErr := os.Stat(filePath)
+
+		if statErr != nil {
+			if os.IsNotExist(statErr) {
+				failures = append(failures, CheckFailure{
+					Kind:   "stale-working-copy",
+					File:   p,
+					Reason: fmt.Sprintf("working copy differs from HEAD commit tree; missing tracked file %s", p),
+				})
+			} else {
+				failures = append(failures, CheckFailure{
+					Kind:   "stale-working-copy",
+					File:   p,
+					Reason: fmt.Sprintf("unable to stat %s: %v", p, statErr),
+				})
+			}
+			continue
+		}
+
+		if fi.IsDir() {
+			continue
+		}
+
+		if !inHead {
+			failures = append(failures, CheckFailure{
+				Kind:   "stale-working-copy",
+				File:   p,
+				Reason: fmt.Sprintf("working copy differs from HEAD commit tree; uncommitted file in index %s", p),
+			})
+		}
+		if !inIndex {
+			failures = append(failures, CheckFailure{
+				Kind:   "stale-working-copy",
+				File:   p,
+				Reason: fmt.Sprintf("working copy differs from git index; untracked file %s", p),
+			})
+		}
+
+		data, readErr := os.ReadFile(filePath)
+		if readErr != nil {
+			failures = append(failures, CheckFailure{
+				Kind:   "stale-working-copy",
+				File:   p,
+				Reason: fmt.Sprintf("unable to read %s: %v", p, readErr),
+			})
+			continue
+		}
+
+		actualBlob := GitBlobSHA1(data)
+		actualHexSHA := hex.EncodeToString(actualBlob[:])
+
+		if inHead && actualHexSHA != headSHA {
+			failures = append(failures, CheckFailure{
+				Kind:   "stale-working-copy",
+				File:   p,
+				Reason: fmt.Sprintf("working copy differs from HEAD commit tree (working copy blob differs from HEAD tree); uncommitted modifications in %s", p),
+			})
+		}
+		if inIndex && actualBlob != indexEntry.BlobSHA1 {
+			failures = append(failures, CheckFailure{
+				Kind:   "stale-working-copy",
+				File:   p,
+				Reason: fmt.Sprintf("working copy differs from git index; uncommitted changes in %s", p),
+			})
+		}
+	}
+
+	return status, headBlobs, indexData, failures, nil
 }

@@ -69,54 +69,29 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		return 125, fmt.Errorf("store file %s is absent", targetFile)
 	}
 
-	// 2. Invariant 8 git check (HEAD == tracking ref)
-	st, err := CheckGitWorkingCopy(storeDir)
-	if err != nil {
-		return 125, err
+	// 2. Invariant 8 git check and complete committed-artifact validation
+	st, headBlobs, indexData, failures, refusal := ValidateAdmissibleStore(storeDir)
+	if refusal != nil {
+		return 125, refusal
+	}
+	if len(failures) > 0 {
+		return 125, fmt.Errorf("store %s: %s", storeDir, failures[0].Reason)
 	}
 	headSHA := st.HeadSHA
 
-	// 2b. Verify working copy files against HEAD commit tree and .git/index (N1)
-	headBlobs, err := ReadHEADTreeBlobs(storeDir)
-	if err != nil {
-		return 125, fmt.Errorf("store %s: %w", storeDir, err)
-	}
-	if err := VerifyFileMatchesHEADTree(storeDir, targetFile, headBlobs); err != nil {
-		return 125, fmt.Errorf("store %s: %w", storeDir, err)
-	}
-	if err := VerifyFileMatchesHEADTree(storeDir, sopsConfigPath, headBlobs); err != nil {
-		return 125, fmt.Errorf("store %s: %w", storeDir, err)
-	}
-	recPath := filepath.Join(storeDir, "recovery.pub")
-	if _, err := os.Stat(recPath); err == nil {
-		if err := VerifyFileMatchesHEADTree(storeDir, recPath, headBlobs); err != nil {
-			return 125, fmt.Errorf("store %s: %w", storeDir, err)
-		}
-	}
-	indexData, err := ReadGitIndex(storeDir)
-	if err != nil {
-		return 125, fmt.Errorf("store %s: %w", storeDir, err)
-	}
-	if err := VerifyFileMatchesIndex(storeDir, targetFile, indexData); err != nil {
-		return 125, fmt.Errorf("store %s: %w", storeDir, err)
-	}
-	if err := VerifyFileMatchesIndex(storeDir, sopsConfigPath, indexData); err != nil {
-		return 125, fmt.Errorf("store %s: %w", storeDir, err)
-	}
-	if _, err := os.Stat(recPath); err == nil {
-		if err := VerifyFileMatchesIndex(storeDir, recPath, indexData); err != nil {
-			return 125, fmt.Errorf("store %s: %w", storeDir, err)
-		}
-	}
 	entries, err := os.ReadDir(storeDir)
 	if err == nil {
 		for _, e := range entries {
 			if strings.HasSuffix(e.Name(), ".yaml") && e.Name() != ".sops.yaml" {
-				if _, ok := headBlobs[e.Name()]; !ok {
-					return 125, fmt.Errorf("uncommitted or untracked yaml file in store root: %s", e.Name())
+				if headBlobs != nil {
+					if _, ok := headBlobs[e.Name()]; !ok {
+						return 125, fmt.Errorf("uncommitted or untracked yaml file in store root: %s", e.Name())
+					}
 				}
-				if _, ok := indexData.Entries[e.Name()]; !ok {
-					return 125, fmt.Errorf("untracked yaml file in store root: %s", e.Name())
+				if indexData != nil {
+					if _, ok := indexData.Entries[e.Name()]; !ok {
+						return 125, fmt.Errorf("untracked yaml file in store root: %s", e.Name())
+					}
 				}
 			}
 		}
