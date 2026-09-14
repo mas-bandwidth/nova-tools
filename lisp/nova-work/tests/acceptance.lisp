@@ -137,6 +137,77 @@ is compared against; it is never the path `query --ask size` takes."
   (check-equal '(:X "é") (read-restricted "(:X \"é\")") "unicode string round-trips"))
 
 ;;; ------------------------------------------------------------------
+;;; 1d. Stella's comment-family reproductions (SPEC-WORK.md:678-679)
+;;; ------------------------------------------------------------------
+
+(deftest "comment-text-is-text" "docs/SPEC-WORK.md:678-679"
+    "expected=forbidden-looking-comment-is-text"
+  (check-equal '(:X 1)
+               (read-restricted "(:X 1) ; #. forbidden-looking comment
+")
+               "a #. inside a comment is text, not a dispatch macro"))
+
+(deftest "quote-in-comment-is-text" "docs/SPEC-WORK.md:678-679"
+    "expected=quote-inside-comment-is-text"
+  (check-equal '(:X 1)
+               (read-restricted "(:X 1) ; \" in a comment
+")
+               "a quote inside a comment does not change string state"))
+
+(deftest "comment-inside-form" "docs/SPEC-WORK.md:678-679"
+    "expected=comment-inside-form-is-skipped"
+  (check-equal '(:X 1)
+               (read-restricted "(:X 1 ; #. forbidden
+)")
+               "a comment inside a form is skipped"))
+
+(deftest "semicolon-in-string-is-literal" "docs/SPEC-WORK.md:678-679"
+    "expected=semicolon-inside-string-stays-literal"
+  (check-equal '(:X "a;b") (read-restricted "(:X \"a;b\")")
+               "a semicolon inside a string is not a comment"))
+
+(deftest "forbidden-after-unicode-comment" "docs/SPEC-WORK.md:678-680"
+    "expected=quote-after-unicode-comment-refused-at-byte-16"
+  (handler-case
+      (progn (read-restricted "(:X 1) ; é end
+'quote")
+             (fail "a quote after a Unicode comment was read"))
+    (restricted-data-violation (c)
+      (ok (search "byte 16" (princ-to-string c))
+          "quote byte offset after a Unicode comment wrong: ~A" c))))
+
+;;; ------------------------------------------------------------------
+;;; 1e. Stella's byte-offset reproductions (SPEC-WORK.md:680)
+;;; ------------------------------------------------------------------
+
+(deftest "eof-byte-offset-utf8" "docs/SPEC-WORK.md:680"
+    "expected=eof-byte-8"
+  (handler-case
+      (progn (read-restricted "(:X \"é\"")
+             (fail "(:X \"é\" was read instead of ending at EOF"))
+    (restricted-data-violation (c)
+      (ok (search "byte 8" (princ-to-string c))
+          "EOF byte offset wrong: ~A" c))))
+
+(deftest "trailing-byte-offset-utf8" "docs/SPEC-WORK.md:680"
+    "expected=trailing-byte-11"
+  (handler-case
+      (progn (read-restricted "(:X \"é\") )")
+             (fail "(:X \"é\") ) was read instead of refusing trailing bytes"))
+    (restricted-data-violation (c)
+      (ok (search "byte 11" (princ-to-string c))
+          "trailing byte offset wrong: ~A" c))))
+
+(deftest "dispatch-byte-offset-utf8" "docs/SPEC-WORK.md:680"
+    "expected=dispatch-byte-9"
+  (handler-case
+      (progn (read-restricted "(:X \"é\" #.)")
+             (fail "(:X \"é\" #.) was read instead of refusing the dispatch macro"))
+    (restricted-data-violation (c)
+      (ok (search "byte 9" (princ-to-string c))
+          "dispatch byte offset wrong: ~A" c))))
+
+;;; ------------------------------------------------------------------
 ;;; 2. settle-outside-the-digest                SPEC-WORK.md:3122
 ;;; ------------------------------------------------------------------
 
