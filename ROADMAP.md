@@ -7,7 +7,7 @@ Help AI friends coordinate work without repeatedly rebuilding the plan in their 
 **Planning baseline: 10 epics, 52 features, 171 inventoried items (166 acceptance items and 5 open questions).**
 **Verified implementation: 0%.** This is proposed scope for review, not a delivery-date or effort estimate.
 The current main branch has no production `nova-work` engine or CLI; existing prototypes and written specs do not count as verified production features.
-Current scope after the recorded moves and discoveries: 57 product features and 186 tickable acceptance items; the historical 171-item baseline remains unchanged.
+Current scope after the recorded moves and discoveries: 57 product features and 186 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
 
 The current work register is below; nova-work remains inventory/specification scope until those changes are adopted.
 
@@ -154,7 +154,7 @@ Source sections: The execution model; The root is COW; Engine and representation
 Prerequisites: E02-F01.
 
 - [ ] Persist owner name, generation, random token, stamp and expiry
-- [ ] Allow take, resume and successor handoff with generation rules
+- [ ] Allow take and resume with generation rules; successor handoff belongs to E02-F05
 - [ ] Refuse competing live owners and name holder details
 - [ ] Verify generation fencing under partitions and clock skew; reject unsafe takeover rather than relying on PID locks alone
 

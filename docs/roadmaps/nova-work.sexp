@@ -102,7 +102,7 @@
         (          :id "E02-F02"
           :title "Single coordinator ownership record"
           :subfeatures (            "Persist owner name, generation, random token, stamp and expiry"
-            "Allow take, resume and successor handoff with generation rules"
+            "Allow take and resume with generation rules; successor handoff belongs to E02-F05"
             "Refuse competing live owners and name holder details"
             "Verify generation fencing under partitions and clock skew; reject unsafe takeover rather than relying on PID locks alone")
           :depends-on (            "E02-F01")
