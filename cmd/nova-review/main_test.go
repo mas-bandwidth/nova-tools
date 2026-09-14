@@ -912,3 +912,49 @@ func TestPacketTimeoutFlagRejectsNonpositiveAndOverflow(t *testing.T) {
 		}
 	}
 }
+
+func TestPacketDiagnosticCaptureBoundariesAndRenderedCap(t *testing.T) {
+	cases := []struct {
+		name   string
+		writes []int
+		cut    bool
+	}{
+		{"below", []int{packetDiagnosticCap - 1}, false},
+		{"at", []int{packetDiagnosticCap}, false},
+		{"above", []int{packetDiagnosticCap + 1}, true},
+		{"multiwrite at", []int{200, packetDiagnosticCap - 200}, false},
+		{"multiwrite over", []int{200, packetDiagnosticCap - 199}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var d diagnosticCapture
+			for _, n := range tc.writes {
+				if got, err := d.Write([]byte(strings.Repeat("x", n))); err != nil || got != n {
+					t.Fatalf("Write(%d) got=%d err=%v", n, got, err)
+				}
+			}
+			if d.cut != tc.cut || len(d.data) != min(packetDiagnosticCap, sumInts(tc.writes)) {
+				t.Fatalf("cut=%t bytes=%d", d.cut, len(d.data))
+			}
+		})
+	}
+	var controls diagnosticCapture
+	_, _ = controls.Write([]byte(strings.Repeat("\x01", packetDiagnosticCap)))
+	if got := controls.String(); len(got) > packetDiagnosticCap || strings.ContainsAny(got, "\r\n") {
+		t.Fatalf("escaped diagnostic is not bounded one-line text: %d %q", len(got), got)
+	}
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+func sumInts(xs []int) int {
+	n := 0
+	for _, x := range xs {
+		n += x
+	}
+	return n
+}

@@ -298,13 +298,16 @@ type diagnosticCapture struct {
 }
 
 func (d *diagnosticCapture) Write(p []byte) (int, error) {
-	if remaining := packetDiagnosticCap - len(d.data); remaining > 0 {
-		if remaining > len(p) {
-			remaining = len(p)
-		}
-		d.data = append(d.data, p[:remaining]...)
+	remaining := packetDiagnosticCap - len(d.data)
+	if remaining < 0 {
+		remaining = 0
 	}
-	if len(p) > packetDiagnosticCap-len(d.data) {
+	written := remaining
+	if written > len(p) {
+		written = len(p)
+	}
+	d.data = append(d.data, p[:written]...)
+	if len(p) > written {
 		d.cut = true
 	}
 	return len(p), nil
@@ -315,7 +318,9 @@ func (d *diagnosticCapture) String() string {
 	if d.cut {
 		text += " [stderr truncated]"
 	}
-	return oneline.Escape(strings.TrimSpace(text))
+	// The event line holds rendered diagnostic data. Escaping can expand a
+	// control byte, so cap the escaped representation as well as its capture.
+	return oneline.Cap(oneline.Escape(strings.TrimSpace(text)), packetDiagnosticCap)
 }
 
 func sourceOutput(timeout time.Duration, dir, binary string, args ...string) (string, error) {
