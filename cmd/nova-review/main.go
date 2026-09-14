@@ -2,6 +2,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,7 +26,7 @@ import (
 const usage = `nova-review: bounded exact-revision review packets (docs/SPEC-REVIEW.md)
 
 usage:
-  nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--reuse <file>]
+  nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--reuse <file>] [--timeout <seconds>]
   nova-review version
   nova-review help
 
@@ -77,6 +79,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	reuse := fs.String("reuse", "", "")
 	maxBytes := fs.Int("max-bytes", 131072, "")
 	maxFlag := fs.Int("max", 20, "")
+	timeout := fs.Int("timeout", 120, "")
 	var specs, rules stringsFlag
 	fs.Var(&specs, "spec", "")
 	fs.Var(&rules, "rule", "")
@@ -92,18 +95,25 @@ func packet(args []string, out, errOut io.Writer) int {
 	if *maxFlag < 0 {
 		return refuse(errOut, "--max must be non-negative")
 	}
+	if *timeout <= 0 {
+		return refuse(errOut, "--timeout must be positive")
+	}
 	if (*pr > 0) == (*branch != "") {
 		return refuse(errOut, "give exactly one of --pr or --branch")
 	}
 	if filepath.IsAbs(*dest) || strings.Contains(filepath.Clean(*dest), "..") {
 		return refuse(errOut, "--out must be a relative path without ..")
 	}
-	if _, err := os.Stat(*dest); err == nil {
+	if _, err := os.Lstat(*dest); err == nil {
 		return refuse(errOut, "--out already exists; packets are immutable")
 	}
 	if *reuse != "" && (len(specs) != 0 || len(rules) != 0 || *maxBytes != 131072) {
 		return refuse(errOut, "--reuse cannot be combined with --spec, --rule or --max-bytes")
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeout)*time.Second)
+	defer cancel()
+
 	st, err := merge.Load(*lane)
 	if err != nil {
 		return refuse(errOut, fmt.Sprintf("could not read lane: %v", err))
@@ -121,9 +131,9 @@ func packet(args []string, out, errOut io.Writer) int {
 	repo := filepath.Join(*lane, merge.RepoDir)
 	current := ""
 	if *pr > 0 {
-		current, err = hostPRHead(st.Repo, *pr)
+		current, err = hostPRHead(ctx, st.Repo, *pr)
 	} else {
-		current, err = gitOut(repo, "rev-parse", selector)
+		current, err = gitOut(ctx, repo, "rev-parse", selector)
 	}
 	if err != nil {
 		return refuse(errOut, "could not resolve the entry head")
@@ -150,43 +160,41 @@ func packet(args []string, out, errOut io.Writer) int {
 	}
 	base := st.Base
 	rangeText := ""
+	var fullRange string
+	var diffBase string
 	if priorRead != nil && priorRead.Head != "" {
 		base = priorRead.Head
 		rangeText = merge.Short(base) + ".." + merge.Short(current)
+		fullRange = base + ".." + current
+		diffBase = base
 	} else {
 		rangeText = merge.Short(base) + "..." + merge.Short(current)
+		fullRange = base + "..." + current
 	}
 	if base == "" {
 		return refuse(errOut, "the lane has no recorded base; the packet cannot guess its range")
 	}
 	packetID := packetID(id, current, base, rangeText)
 	if *reuse != "" {
-		hdr, e := readPacketFirstLine(*reuse)
+		hdr, content, e := readReusePacket(*reuse, *maxBytes)
 		if e != nil {
-			return refuse(errOut, fmt.Sprintf("--reuse file is not a valid packet: %v", e))
+			return refuse(errOut, e.Error())
 		}
 		if hdr.ID != packetID || hdr.Entry != id || hdr.Head != current || hdr.Base != base || hdr.Range != rangeText {
 			fmt.Fprintf(errOut, "PACKET REUSE asked=%s found=%s file=%s: that packet was built for another (entry, head, range); build this reader's own\n", packetID, oneline.Field(hdr.ID), oneline.Field(*reuse))
 			return 2
 		}
-		candidateBytes, e := os.ReadFile(*reuse)
-		if e != nil {
-			return refuse(errOut, "--reuse could not be read")
+		sections, err := splitPacketSections(content)
+		if err != nil {
+			return refuse(errOut, "--reuse candidate packet is missing required sections or malformed")
 		}
-		content := string(candidateBytes)
-		const mThisHead = "## This head\n"
-		const mYourPrior = "## Your prior verdicts on this entry\n"
-		const mAllVerdicts = "## All verdicts at earlier heads\n"
-		idxThisHead := strings.Index(content, mThisHead)
-		idxYourPrior := strings.Index(content, mYourPrior)
-		idxAllVerdicts := strings.Index(content, mAllVerdicts)
-		if idxThisHead == -1 || idxYourPrior == -1 || idxAllVerdicts == -1 || idxThisHead >= idxYourPrior || idxYourPrior >= idxAllVerdicts {
-			return refuse(errOut, "--reuse candidate packet is missing required sections")
-		}
-		headSection := content[idxThisHead:idxYourPrior]
-		restSection := content[idxAllVerdicts:]
-		yourPriorSection := formatYourPriorVerdicts(*who, entry.Reads, base, current, rangeText)
-		bodyRest := headSection + yourPriorSection + "\n" + restSection
+		yourPriorSec := formatYourPriorVerdicts(*who, entry.Reads, base, current, rangeText)
+		bodyRest := sections.thisHead + yourPriorSec + "\n" +
+			sections.allVerdicts +
+			sections.openFindings +
+			sections.rulesTouched +
+			sections.diff +
+			sections.notIncluded
 
 		hdrNew := packetHeader{
 			ID:    hdr.ID,
@@ -202,16 +210,31 @@ func packet(args []string, out, errOut io.Writer) int {
 		if len(newBody) > *maxBytes {
 			return refuse(errOut, "--reuse packet exceeds the byte budget")
 		}
-		files, hunks := diffCounts(restSection)
-		ruleCount := strings.Count(restSection, "### ")
-		priorCount := len(entry.Reads)
-		openCount := 0
+		priorCount := parseSectionCount(sections.allVerdicts, "| who |")
+		openCount := parseSectionCount(sections.openFindings, "| id |")
+		ruleCount, err := packetRulesSectionCount(sections.rulesTouched)
+		if err != nil {
+			return refuse(errOut, err.Error())
+		}
+		diffFiles, diffHunks := diffCounts(sections.diff)
+		cutFiles, cutHunks := notIncludedCounts(sections.notIncluded)
+		files := diffFiles + cutFiles
+		hunks := diffHunks + cutHunks
 		return writePacket(*dest, newBody, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(newBody), hdr.Cut, true)
 	}
-	if _, err := gitOut(repo, "rev-parse", base+"^{commit}"); err != nil {
+
+	if diffBase == "" {
+		mb, err := gitOut(ctx, repo, "merge-base", base, current)
+		if err != nil {
+			return refuse(errOut, "could not determine merge-base for triple-dot range")
+		}
+		diffBase = strings.TrimSpace(mb)
+	}
+
+	if _, err := gitOut(ctx, repo, "rev-parse", base+"^{commit}"); err != nil {
 		return refuse(errOut, "the lane does not hold the recorded base commit")
 	}
-	diff, err := gitOut(repo, "diff", "--no-ext-diff", "--unified=3", base, current)
+	diff, err := gitOut(ctx, repo, "diff", "--no-ext-diff", "--unified=3", fullRange)
 	if err != nil {
 		return refuse(errOut, "could not read the selected diff")
 	}
@@ -221,15 +244,18 @@ func packet(args []string, out, errOut io.Writer) int {
 	for _, f := range fileDiffs {
 		hunks += f.Hunks
 	}
-	ruleText, ruleCount, err := selectedRules(repo, base, current, diff, specs, rules, *maxFlag, *lane)
+	ruleText, ruleCount, err := selectedRules(ctx, repo, diffBase, current, diff, specs, rules, *maxFlag, *lane)
 	if err != nil {
 		return refuse(errOut, err.Error())
 	}
-	intentTitle, intentBody, _ := getAuthorIntent(repo, st.Repo, *pr, *branch, current)
+	intentTitle, intentBody, _ := getAuthorIntent(ctx, repo, st.Repo, *pr, *branch, current)
 	thisHeadSec := formatThisHead(intentTitle, intentBody)
 	yourPriorSec := formatYourPriorVerdicts(*who, entry.Reads, base, current, rangeText)
-	allVerdictsSec, priorCount := formatAllVerdicts(entry.Reads, *maxFlag, *lane)
-	openFindingsSec, openCount := formatOpenFindings(*maxFlag, *lane)
+	allVerdictsSec, priorCount := formatAllVerdicts(entry.Reads, *maxFlag, *lane, *pr, *branch)
+	openFindingsSec, openCount, err := formatOpenFindings(*lane, id, *maxFlag, *pr, *branch)
+	if err != nil {
+		return refuse(errOut, err.Error())
+	}
 	rulesTouchedSec := fmt.Sprintf("## Rules touched\n%s\n", ruleText)
 
 	assembleBody := func(diffSec, notIncSec string, cut int) string {
@@ -260,19 +286,59 @@ func packet(args []string, out, errOut io.Writer) int {
 	return writePacket(*dest, body, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(body), cut, false)
 }
 
-func gitOut(repo string, args ...string) (string, error) {
-	c := exec.Command("git", args...)
+func gitOut(ctx context.Context, repo string, args ...string) (string, error) {
+	c := exec.CommandContext(ctx, "git", args...)
 	c.Dir = repo
-	b, err := c.CombinedOutput()
+	stdout, err := c.StdoutPipe()
 	if err != nil {
+		return "", err
+	}
+	var stderr bytes.Buffer
+	c.Stderr = &stderr
+	if err := c.Start(); err != nil {
+		return "", err
+	}
+	const maxRead = 16 * 1024 * 1024
+	b, err := io.ReadAll(io.LimitReader(stdout, maxRead+1))
+	if err != nil {
+		_ = c.Process.Kill()
+		return "", err
+	}
+	if len(b) > maxRead {
+		_ = c.Process.Kill()
+		return "", fmt.Errorf("git %s output exceeded limit (%d bytes)", args[0], maxRead)
+	}
+	if err := c.Wait(); err != nil {
+		if stderr.Len() > 0 {
+			return "", fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
+		}
 		return "", err
 	}
 	return string(b), nil
 }
-func hostPRHead(repo string, pr int) (string, error) {
-	c := exec.Command("gh", "pr", "view", fmt.Sprint(pr), "--repo", repo, "--json", "headRefOid")
-	b, err := c.Output()
+
+func hostPRHead(ctx context.Context, repo string, pr int) (string, error) {
+	c := exec.CommandContext(ctx, "gh", "pr", "view", fmt.Sprint(pr), "--repo", repo, "--json", "headRefOid")
+	stdout, err := c.StdoutPipe()
 	if err != nil {
+		return "", err
+	}
+	var stderr bytes.Buffer
+	c.Stderr = &stderr
+	if err := c.Start(); err != nil {
+		return "", err
+	}
+	const maxRead = 1024 * 1024
+	b, err := io.ReadAll(io.LimitReader(stdout, maxRead+1))
+	if err != nil {
+		_ = c.Process.Kill()
+		return "", err
+	}
+	if len(b) > maxRead {
+		_ = c.Process.Kill()
+		return "", fmt.Errorf("gh pr view output exceeded limit (%d bytes)", maxRead)
+	}
+	if err := c.Wait(); err != nil {
 		return "", err
 	}
 	var v struct {
@@ -283,6 +349,7 @@ func hostPRHead(repo string, pr int) (string, error) {
 	}
 	return v.Head, nil
 }
+
 func diffCounts(diff string) (files, hunks int) {
 	for _, l := range strings.Split(diff, "\n") {
 		if strings.HasPrefix(l, "diff --git ") {
@@ -333,63 +400,144 @@ func formatPacket(hdr packetHeader, rest string) string {
 	}
 }
 
+func isLowerHex(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
+}
+
+func validRangeFormat(r string) bool {
+	if strings.Contains(r, "...") {
+		parts := strings.Split(r, "...")
+		return len(parts) == 2 && len(parts[0]) == 12 && isLowerHex(parts[0]) && len(parts[1]) == 12 && isLowerHex(parts[1])
+	}
+	if strings.Contains(r, "..") {
+		parts := strings.Split(r, "..")
+		return len(parts) == 2 && len(parts[0]) == 12 && isLowerHex(parts[0]) && len(parts[1]) == 12 && isLowerHex(parts[1])
+	}
+	return false
+}
+
 func readPacketFirstLine(path string) (*packetHeader, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, fmt.Errorf("packet %s is not a regular file", path)
+	}
 
 	var buf [4096]byte
 	n, err := io.ReadFull(io.LimitReader(f, 4096), buf[:])
 	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
 		return nil, err
 	}
-	content := string(buf[:n])
-	firstLine, _, _ := strings.Cut(content, "\n")
-	firstLine = strings.TrimRight(firstLine, "\r")
+	if n == 0 {
+		return nil, fmt.Errorf("packet file is empty")
+	}
+	idx := bytes.IndexByte(buf[:n], '\n')
+	if idx == -1 {
+		if n == 4096 {
+			return nil, fmt.Errorf("overlong unterminated header line")
+		}
+		return nil, fmt.Errorf("unterminated header line")
+	}
+	firstLine := strings.TrimRight(string(buf[:idx]), "\r")
 	return parsePacketFirstLine(firstLine)
 }
 
 func parsePacketFirstLine(line string) (*packetHeader, error) {
-	if !strings.HasPrefix(line, packetV1Prefix+" ") && line != packetV1Prefix {
+	if !strings.HasPrefix(line, packetV1Prefix+" ") {
 		return nil, fmt.Errorf("line does not begin with %q", packetV1Prefix)
 	}
-	rest := strings.TrimPrefix(line, packetV1Prefix)
-	fields := strings.Fields(rest)
+	rest := strings.TrimPrefix(line, packetV1Prefix+" ")
+	fields := strings.Split(rest, " ")
 	hdr := &packetHeader{}
 	seen := map[string]bool{}
+	allowed := map[string]bool{
+		"id":    true,
+		"entry": true,
+		"head":  true,
+		"base":  true,
+		"range": true,
+		"who":   true,
+		"built": true,
+		"bytes": true,
+		"cut":   true,
+	}
 	for _, f := range fields {
+		if f == "" {
+			return nil, fmt.Errorf("consecutive spaces in header line")
+		}
 		k, v, ok := strings.Cut(f, "=")
 		if !ok {
 			return nil, fmt.Errorf("malformed header field %q", f)
 		}
+		if !allowed[k] {
+			return nil, fmt.Errorf("unknown header field %q", k)
+		}
+		if seen[k] {
+			return nil, fmt.Errorf("duplicate header field %q", k)
+		}
 		seen[k] = true
 		switch k {
 		case "id":
+			if len(v) != 12 || !isLowerHex(v) {
+				return nil, fmt.Errorf("invalid id field %q: must be 12 lower-hex characters", v)
+			}
 			hdr.ID = v
 		case "entry":
+			if v == "" || strings.ContainsAny(v, " \t\r\n") {
+				return nil, fmt.Errorf("invalid entry field %q", v)
+			}
 			hdr.Entry = v
 		case "head":
+			if !merge.IsSHA(v) {
+				return nil, fmt.Errorf("invalid head field %q: must be 40-character sha", v)
+			}
 			hdr.Head = v
 		case "base":
+			if !merge.IsSHA(v) {
+				return nil, fmt.Errorf("invalid base field %q: must be 40-character sha", v)
+			}
 			hdr.Base = v
 		case "range":
+			if !validRangeFormat(v) {
+				return nil, fmt.Errorf("invalid range field %q", v)
+			}
 			hdr.Range = v
 		case "who":
+			if v == "" || strings.ContainsAny(v, " \t\r\n") {
+				return nil, fmt.Errorf("invalid who field %q", v)
+			}
 			hdr.Who = v
 		case "built":
+			if _, err := time.Parse(time.RFC3339, v); err != nil {
+				return nil, fmt.Errorf("invalid built timestamp %q: %v", v, err)
+			}
 			hdr.Built = v
 		case "bytes":
 			b, err := strconv.Atoi(v)
-			if err != nil || b < 0 {
-				return nil, fmt.Errorf("invalid bytes field %q", v)
+			if err != nil || b <= 0 {
+				return nil, fmt.Errorf("invalid bytes field %q: must be positive integer", v)
 			}
 			hdr.Bytes = b
 		case "cut":
 			c, err := strconv.Atoi(v)
 			if err != nil || c < 0 {
-				return nil, fmt.Errorf("invalid cut field %q", v)
+				return nil, fmt.Errorf("invalid cut field %q: must be non-negative integer", v)
 			}
 			hdr.Cut = c
 		}
@@ -400,7 +548,220 @@ func parsePacketFirstLine(line string) (*packetHeader, error) {
 			return nil, fmt.Errorf("missing required header field %q", r)
 		}
 	}
+	parts := strings.Split(hdr.Range, "...")
+	if len(parts) != 2 {
+		parts = strings.Split(hdr.Range, "..")
+	}
+	if len(parts) == 2 {
+		if !strings.HasPrefix(hdr.Base, parts[0]) || !strings.HasPrefix(hdr.Head, parts[1]) {
+			return nil, fmt.Errorf("range %q does not match base %s and head %s", hdr.Range, hdr.Base, hdr.Head)
+		}
+	}
 	return hdr, nil
+}
+
+func readReusePacket(path string, maxBytes int) (*packetHeader, string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return nil, "", err
+	}
+	if !fi.Mode().IsRegular() {
+		return nil, "", fmt.Errorf("--reuse candidate %s is not a regular file", path)
+	}
+	if fi.Size() > int64(maxBytes) {
+		return nil, "", fmt.Errorf("--reuse packet exceeds the byte budget")
+	}
+	contentBytes, err := io.ReadAll(io.LimitReader(f, int64(maxBytes)+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(contentBytes) > maxBytes {
+		return nil, "", fmt.Errorf("--reuse packet exceeds the byte budget")
+	}
+	idx := bytes.IndexByte(contentBytes, '\n')
+	if idx == -1 {
+		return nil, "", fmt.Errorf("--reuse candidate has unterminated header")
+	}
+	firstLine := strings.TrimRight(string(contentBytes[:idx]), "\r")
+	hdr, err := parsePacketFirstLine(firstLine)
+	if err != nil {
+		return nil, "", fmt.Errorf("--reuse file is not a valid packet: %w", err)
+	}
+	if len(contentBytes) != hdr.Bytes {
+		return nil, "", fmt.Errorf("--reuse packet byte count mismatch: file has %d bytes, header claims %d", len(contentBytes), hdr.Bytes)
+	}
+	return hdr, string(contentBytes), nil
+}
+
+type packetSections struct {
+	thisHead     string
+	yourPrior    string
+	allVerdicts  string
+	openFindings string
+	rulesTouched string
+	diff         string
+	notIncluded  string
+}
+
+func splitPacketSections(text string) (packetSections, error) {
+	const (
+		mThisHead     = "## This head\n"
+		mYourPrior    = "## Your prior verdicts on this entry\n"
+		mAllVerdicts  = "## All verdicts at earlier heads\n"
+		mOpenFindings = "## Open findings (answer with `dup <id>` if you see the same thing)\n"
+		mRulesTouched = "## Rules touched\n"
+		mDiff         = "## Diff "
+		mNotIncluded  = "## Not included\n"
+	)
+
+	findHeader := func(s, prefix string) int {
+		if strings.HasPrefix(s, prefix) {
+			return 0
+		}
+		idx := strings.Index(s, "\n"+prefix)
+		if idx != -1 {
+			return idx + 1
+		}
+		return -1
+	}
+
+	idxThisHead := findHeader(text, mThisHead)
+	if idxThisHead == -1 {
+		return packetSections{}, fmt.Errorf("packet missing '## This head' section")
+	}
+
+	idxAllVerdicts := findHeader(text, mAllVerdicts)
+	if idxAllVerdicts == -1 || idxAllVerdicts <= idxThisHead {
+		return packetSections{}, fmt.Errorf("packet missing or misplaced '## All verdicts at earlier heads' section")
+	}
+
+	// Find the true yourPrior section, which immediately precedes allVerdicts.
+	// We search for the last occurrence of mYourPrior before allVerdicts to ensure
+	// any mention of that heading in author text within thisHead is preserved.
+	beforeAll := text[:idxAllVerdicts]
+	idxYourPrior := -1
+	lastIdx := strings.LastIndex(beforeAll, "\n"+mYourPrior)
+	if lastIdx != -1 {
+		idxYourPrior = lastIdx + 1
+	} else if strings.HasPrefix(beforeAll, mYourPrior) {
+		idxYourPrior = 0
+	}
+	if idxYourPrior == -1 || idxYourPrior <= idxThisHead {
+		return packetSections{}, fmt.Errorf("packet missing or misplaced '## Your prior verdicts on this entry' section")
+	}
+
+	idxOpenFindingsRel := findHeader(text[idxAllVerdicts:], mOpenFindings)
+	if idxOpenFindingsRel == -1 {
+		return packetSections{}, fmt.Errorf("packet missing '## Open findings' section")
+	}
+	idxOpenFindings := idxAllVerdicts + idxOpenFindingsRel
+
+	idxRulesTouchedRel := findHeader(text[idxOpenFindings:], mRulesTouched)
+	if idxRulesTouchedRel == -1 {
+		return packetSections{}, fmt.Errorf("packet missing '## Rules touched' section")
+	}
+	idxRulesTouched := idxOpenFindings + idxRulesTouchedRel
+
+	idxDiffRel := findHeader(text[idxRulesTouched:], mDiff)
+	if idxDiffRel == -1 {
+		return packetSections{}, fmt.Errorf("packet missing '## Diff' section")
+	}
+	idxDiff := idxRulesTouched + idxDiffRel
+
+	idxNotIncludedRel := findHeader(text[idxDiff:], mNotIncluded)
+	if idxNotIncludedRel == -1 {
+		return packetSections{}, fmt.Errorf("packet missing '## Not included' section")
+	}
+	idxNotIncluded := idxDiff + idxNotIncludedRel
+
+	return packetSections{
+		thisHead:     text[idxThisHead:idxYourPrior],
+		yourPrior:    text[idxYourPrior:idxAllVerdicts],
+		allVerdicts:  text[idxAllVerdicts:idxOpenFindings],
+		openFindings: text[idxOpenFindings:idxRulesTouched],
+		rulesTouched: text[idxRulesTouched:idxDiff],
+		diff:         text[idxDiff:idxNotIncluded],
+		notIncluded:  text[idxNotIncluded:],
+	}, nil
+}
+
+func packetRulesSectionCount(section string) (int, error) {
+	trimmed := strings.TrimSpace(section)
+	if !strings.HasPrefix(trimmed, "## Rules touched") {
+		return 0, fmt.Errorf("rules section missing '## Rules touched' header")
+	}
+	if strings.Contains(trimmed, "No changed files") || strings.Contains(trimmed, "none recorded") {
+		return 0, nil
+	}
+	if total := matchMoreOfTotal(section); total > 0 {
+		return total, nil
+	}
+	seen := make(map[string]struct{})
+	for _, l := range strings.Split(section, "\n") {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "### ") {
+			seen[l] = struct{}{}
+		}
+	}
+	return len(seen), nil
+}
+
+func parseSectionCount(sec, tableHeader string) int {
+	if strings.Contains(sec, "none recorded") {
+		return 0
+	}
+	if t := matchMoreOfTotal(sec); t > 0 {
+		return t
+	}
+	count := 0
+	for _, l := range strings.Split(sec, "\n") {
+		l = strings.TrimSpace(l)
+		if strings.HasPrefix(l, "|") && !strings.Contains(l, tableHeader) {
+			count++
+		}
+	}
+	return count
+}
+
+func matchMoreOfTotal(sec string) int {
+	for _, l := range strings.Split(sec, "\n") {
+		l = strings.TrimSpace(l)
+		if strings.Contains(l, " more of ") && strings.Contains(l, "; print with:") {
+			parts := strings.Split(l, " more of ")
+			if len(parts) == 2 {
+				sub := strings.Split(parts[1], ";")[0]
+				if t, err := strconv.Atoi(strings.TrimSpace(sub)); err == nil && t >= 0 {
+					return t
+				}
+			}
+		}
+	}
+	return 0
+}
+
+func notIncludedCounts(sec string) (files, hunks int) {
+	for _, l := range strings.Split(sec, "\n") {
+		l = strings.TrimSpace(l)
+		if l == "" || l == "nothing" || strings.HasPrefix(l, "##") {
+			continue
+		}
+		if strings.Contains(l, " hunks,") {
+			files++
+			parts := strings.Split(l, ": ")
+			if len(parts) >= 2 {
+				hunkPart := strings.Split(parts[1], " hunks,")[0]
+				if n, err := strconv.Atoi(strings.TrimSpace(hunkPart)); err == nil {
+					hunks += n
+				}
+			}
+		}
+	}
+	return
 }
 
 func lastReadAt(reads []merge.Read, who string) string {
@@ -412,14 +773,15 @@ func lastReadAt(reads []merge.Read, who string) string {
 	}
 	return best
 }
-func selectedRules(repo, base, head, diff string, specFlags, requested []string, maxRules int, lane string) (string, int, error) {
+
+func selectedRules(ctx context.Context, repo, base, head, diff string, specFlags, requested []string, maxRules int, lane string) (string, int, error) {
 	var specs []scopedSpec
 	for _, flag := range specFlags {
 		p, heading, err := splitSpecFlag(flag)
 		if err != nil {
 			return "", 0, err
 		}
-		text, err := gitOut(repo, "show", head+":"+p)
+		text, err := gitOut(ctx, repo, "show", head+":"+p)
 		if err != nil {
 			return "", 0, fmt.Errorf("--spec %s is not readable at head", p)
 		}
@@ -438,13 +800,12 @@ func selectedRules(repo, base, head, diff string, specFlags, requested []string,
 		selected[key] = rule
 		touched[key] = append(touched[key], why)
 	}
-	// Scan only added diff lines for citation grammar.
 	currentFile := ""
 	for _, line := range strings.Split(diff, "\n") {
-		if strings.HasPrefix(line, "diff --git a/") {
-			p := strings.Split(strings.TrimPrefix(line, "diff --git a/"), " b/")
-			if len(p) == 2 {
-				currentFile = p[1]
+		if strings.HasPrefix(line, "diff --git ") {
+			parts := strings.Split(strings.TrimPrefix(line, "diff --git a/"), " b/")
+			if len(parts) == 2 {
+				currentFile = parts[1]
 			}
 			continue
 		}
@@ -476,8 +837,6 @@ func selectedRules(repo, base, head, diff string, specFlags, requested []string,
 		}
 		add(found, "caller (named)")
 	}
-	// A changed spec selects the rule enclosing a changed line. Read the base
-	// side too so the rendered section can quote both exact revisions.
 	for _, file := range files {
 		for _, spec := range specs {
 			if file.Path != spec.Path {
@@ -490,7 +849,7 @@ func selectedRules(repo, base, head, diff string, specFlags, requested []string,
 					}
 				}
 			}
-			oldText, err := gitOut(repo, "show", base+":"+spec.Path)
+			oldText, err := gitOut(ctx, repo, "show", base+":"+spec.Path)
 			if err != nil {
 				continue
 			}
@@ -548,22 +907,28 @@ func selectedRules(repo, base, head, diff string, specFlags, requested []string,
 	return strings.Join(out, "\n"), len(selected), nil
 }
 
-func getAuthorIntent(repo, hostRepo string, pr int, branch, head string) (title, body string, err error) {
+func getAuthorIntent(ctx context.Context, repo, hostRepo string, pr int, branch, head string) (title, body string, err error) {
 	if pr > 0 && hostRepo != "" {
-		c := exec.Command("gh", "pr", "view", fmt.Sprint(pr), "--repo", hostRepo, "--json", "title,body")
-		b, err := c.Output()
+		c := exec.CommandContext(ctx, "gh", "pr", "view", fmt.Sprint(pr), "--repo", hostRepo, "--json", "title,body")
+		stdout, err := c.StdoutPipe()
 		if err == nil {
-			var v struct {
-				Title string `json:"title"`
-				Body  string `json:"body"`
-			}
-			if err := json.Unmarshal(b, &v); err == nil {
-				return strings.TrimSpace(v.Title), strings.TrimSpace(v.Body), nil
+			if err := c.Start(); err == nil {
+				const maxRead = 1024 * 1024
+				b, err := io.ReadAll(io.LimitReader(stdout, maxRead+1))
+				if err == nil && len(b) <= maxRead && c.Wait() == nil {
+					var v struct {
+						Title string `json:"title"`
+						Body  string `json:"body"`
+					}
+					if err := json.Unmarshal(b, &v); err == nil {
+						return strings.TrimSpace(v.Title), strings.TrimSpace(v.Body), nil
+					}
+				}
 			}
 		}
 	}
 	if head != "" && repo != "" {
-		out, err := gitOut(repo, "log", "-1", "--format=%s%n%n%b", head)
+		out, err := gitOut(ctx, repo, "log", "-1", "--format=%s%n%n%b", head)
 		if err == nil {
 			t, b, _ := strings.Cut(out, "\n\n")
 			return strings.TrimSpace(t), strings.TrimSpace(b), nil
@@ -610,7 +975,25 @@ func formatYourPriorVerdicts(who string, reads []merge.Read, base, current, rng 
 	return sb.String()
 }
 
-func formatAllVerdicts(reads []merge.Read, max int, lane string) (string, int) {
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	safe := true
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '/' || c == '.' || c == '_' || c == '-' || c == ':') {
+			safe = false
+			break
+		}
+	}
+	if safe {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func formatAllVerdicts(reads []merge.Read, max int, lane string, pr int, branch string) (string, int) {
 	var sb strings.Builder
 	sb.WriteString("## All verdicts at earlier heads\n")
 	if len(reads) == 0 {
@@ -633,17 +1016,260 @@ func formatAllVerdicts(reads []merge.Read, max int, lane string) (string, int) {
 			r.Who, strings.ToLower(r.Verdict), merge.Short(r.Head), r.At))
 	}
 	if max > 0 && len(sorted) > max {
-		sb.WriteString(fmt.Sprintf("%d more of %d; print with: nova-review roster --lane %s ... --max 0\n",
-			len(sorted)-max, len(sorted), lane))
+		entryFlag := ""
+		if pr > 0 {
+			entryFlag = fmt.Sprintf("--pr %d", pr)
+		} else {
+			entryFlag = fmt.Sprintf("--branch %s", shellQuote(branch))
+		}
+		sb.WriteString(fmt.Sprintf("%d more of %d; print with: nova-review roster --lane %s %s --max 0\n",
+			len(sorted)-max, len(sorted), shellQuote(lane), entryFlag))
 	}
 	return sb.String(), len(reads)
 }
 
-func formatOpenFindings(max int, lane string) (string, int) {
+type rawReviewRecord struct {
+	Version  int          `json:"version"`
+	Entry    string       `json:"entry"`
+	Who      string       `json:"who"`
+	Model    string       `json:"model"`
+	Kind     string       `json:"kind"`
+	Verdict  string       `json:"verdict"`
+	Head     string       `json:"head"`
+	At       string       `json:"at"`
+	Findings []rawFinding `json:"findings"`
+}
+
+type rawFinding struct {
+	ID       string `json:"id"`
+	State    string `json:"state"`
+	Side     string `json:"side"`
+	Path     string `json:"path"`
+	Line     int    `json:"line"`
+	Spec     string `json:"spec"`
+	SpecLine int    `json:"spec_line"`
+	RuleKind string `json:"rule_kind"`
+	Rule     string `json:"rule"`
+	Claim    string `json:"claim"`
+}
+
+type rawAnswerRecord struct {
+	Version int    `json:"version"`
+	Entry   string `json:"entry"`
+	Who     string `json:"who"`
+	Finding string `json:"finding"`
+	As      string `json:"as"`
+	Of      string `json:"of"`
+	Head    string `json:"head"`
+	At      string `json:"at"`
+	Note    string `json:"note"`
+}
+
+func formatOpenFindings(lane, entryID string, max int, pr int, branch string) (string, int, error) {
 	var sb strings.Builder
 	sb.WriteString("## Open findings (answer with `dup <id>` if you see the same thing)\n")
-	sb.WriteString("none recorded\n")
-	return sb.String(), 0
+	entryDir := merge.EntryDirName(entryID)
+	reviewsDir := filepath.Join(lane, "reviews", entryDir)
+	entries, err := os.ReadDir(reviewsDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			sb.WriteString("none recorded\n")
+			return sb.String(), 0, nil
+		}
+		return "", 0, fmt.Errorf("could not read reviews directory: %w", err)
+	}
+
+	type findingItem struct {
+		ID         string
+		FileLine   string
+		Rule       string
+		Severity   string
+		Claim      string
+		SeenBy     []string
+		AuthorSays string
+		At         string
+		Closed     bool
+	}
+
+	findingsMap := make(map[string]*findingItem)
+	answers := make(map[string]rawAnswerRecord)
+	var verdictFiles []string
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		if strings.HasPrefix(e.Name(), "policy-") {
+			continue
+		}
+		p := filepath.Join(reviewsDir, e.Name())
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return "", 0, fmt.Errorf("could not read review file %s: %w", e.Name(), err)
+		}
+		if strings.HasPrefix(e.Name(), "answer-") {
+			var ans rawAnswerRecord
+			if err := json.Unmarshal(b, &ans); err != nil {
+				return "", 0, fmt.Errorf("could not decode answer record %s: %w", e.Name(), err)
+			}
+			answers[ans.Finding] = ans
+		} else {
+			verdictFiles = append(verdictFiles, p)
+		}
+	}
+
+	var verdicts []rawReviewRecord
+	for _, p := range verdictFiles {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return "", 0, fmt.Errorf("could not read review file %s: %w", p, err)
+		}
+		var rec rawReviewRecord
+		if err := json.Unmarshal(b, &rec); err != nil {
+			return "", 0, fmt.Errorf("could not decode review record %s: %w", p, err)
+		}
+		verdicts = append(verdicts, rec)
+	}
+
+	sort.Slice(verdicts, func(i, j int) bool {
+		return verdicts[i].At < verdicts[j].At
+	})
+
+	for _, rec := range verdicts {
+		for _, f := range rec.Findings {
+			if strings.EqualFold(f.State, "ok") {
+				continue
+			}
+			if strings.EqualFold(f.State, "close") || strings.EqualFold(f.State, "closed") {
+				if item, ok := findingsMap[f.ID]; ok {
+					item.Closed = true
+				}
+				continue
+			}
+			if strings.EqualFold(f.State, "dup") {
+				targetID := f.ID
+				if f.Claim != "" && findingsMap[f.Claim] != nil {
+					targetID = f.Claim
+				}
+				if item, ok := findingsMap[targetID]; ok {
+					if !containsString(item.SeenBy, rec.Who) {
+						item.SeenBy = append(item.SeenBy, rec.Who)
+					}
+				}
+				continue
+			}
+			fl := f.Path
+			if f.Side == "base" {
+				fl = "base:" + fl
+			}
+			fl = fmt.Sprintf("%s:%d", fl, f.Line)
+
+			if existing, ok := findingsMap[f.ID]; ok {
+				if !containsString(existing.SeenBy, rec.Who) {
+					existing.SeenBy = append(existing.SeenBy, rec.Who)
+				}
+			} else {
+				findingsMap[f.ID] = &findingItem{
+					ID:       f.ID,
+					FileLine: fl,
+					Rule:     f.Rule,
+					Severity: strings.ToLower(f.State),
+					Claim:    f.Claim,
+					SeenBy:   []string{rec.Who},
+					At:       rec.At,
+				}
+			}
+		}
+	}
+
+	for id, ans := range answers {
+		if item, ok := findingsMap[id]; ok {
+			item.AuthorSays = ans.As
+			if ans.As == "dup" && ans.Of != "" {
+				if target, tok := findingsMap[ans.Of]; tok {
+					if !containsString(target.SeenBy, ans.Who) {
+						target.SeenBy = append(target.SeenBy, ans.Who)
+					}
+				}
+			}
+		}
+	}
+
+	var open []*findingItem
+	for _, item := range findingsMap {
+		if !item.Closed {
+			open = append(open, item)
+		}
+	}
+
+	if len(open) == 0 {
+		sb.WriteString("none recorded\n")
+		return sb.String(), 0, nil
+	}
+
+	sort.Slice(open, func(i, j int) bool {
+		pri := func(s string) int {
+			switch strings.ToLower(s) {
+			case "block":
+				return 0
+			case "fix":
+				return 1
+			case "nit":
+				return 2
+			default:
+				return 3
+			}
+		}
+		pi, pj := pri(open[i].Severity), pri(open[j].Severity)
+		if pi != pj {
+			return pi < pj
+		}
+		if open[i].At != open[j].At {
+			return open[i].At > open[j].At
+		}
+		return open[i].ID < open[j].ID
+	})
+
+	sb.WriteString("| id | file:line | rule | severity | claim | seen by | author says |\n")
+	limit := len(open)
+	if max > 0 && limit > max {
+		limit = max
+	}
+	cleanCell := func(s string) string {
+		s = strings.ReplaceAll(s, "|", "\\|")
+		s = strings.ReplaceAll(s, "\n", " ")
+		return strings.TrimSpace(s)
+	}
+	for i := 0; i < limit; i++ {
+		item := open[i]
+		auth := "-"
+		if item.AuthorSays != "" {
+			auth = cleanCell(item.AuthorSays)
+		}
+		sb.WriteString(fmt.Sprintf("| %s | %s | %s | %s | %s | %s | %s |\n",
+			cleanCell(item.ID), cleanCell(item.FileLine), cleanCell(item.Rule),
+			cleanCell(item.Severity), cleanCell(item.Claim), strings.Join(item.SeenBy, ", "), auth))
+	}
+	if max > 0 && len(open) > max {
+		entryFlag := ""
+		if pr > 0 {
+			entryFlag = fmt.Sprintf("--pr %d", pr)
+		} else {
+			entryFlag = fmt.Sprintf("--branch %s", shellQuote(branch))
+		}
+		sb.WriteString(fmt.Sprintf("%d more of %d; print with: nova-review dedupe --lane %s %s --max 0\n",
+			len(open)-max, len(open), shellQuote(lane), entryFlag))
+	}
+	return sb.String(), len(open), nil
+}
+
+func containsString(ss []string, s string) bool {
+	for _, x := range ss {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }
 
 type fileDiff struct {
@@ -735,7 +1361,7 @@ func buildDiffAndNotIncluded(files []fileDiff, rangeText string, maxBytes int, a
 		notIncLines = append(notIncLines, "## Not included")
 		for _, cf := range testCut {
 			notIncLines = append(notIncLines, fmt.Sprintf("%s: %d hunks, +%d -%d; print with: git diff %s -- %s",
-				cf.Path, cf.Hunks, cf.Added, cf.Deleted, rangeText, cf.Path))
+				cf.Path, cf.Hunks, cf.Added, cf.Deleted, rangeText, shellQuote(cf.Path)))
 		}
 		testNotIncSec := strings.Join(notIncLines, "\n") + "\n"
 
@@ -765,7 +1391,7 @@ func buildDiffAndNotIncluded(files []fileDiff, rangeText string, maxBytes int, a
 	} else {
 		for _, cf := range cutFiles {
 			notIncLines = append(notIncLines, fmt.Sprintf("%s: %d hunks, +%d -%d; print with: git diff %s -- %s",
-				cf.Path, cf.Hunks, cf.Added, cf.Deleted, rangeText, cf.Path))
+				cf.Path, cf.Hunks, cf.Added, cf.Deleted, rangeText, shellQuote(cf.Path)))
 		}
 	}
 	finalNotIncSec := strings.Join(notIncLines, "\n") + "\n"
@@ -782,15 +1408,22 @@ func writePacket(dest, body string, out io.Writer, entry, id, head, base, rng st
 		fmt.Fprintf(os.Stderr, "PACKET REFUSED: could not exclusively create --out: %s\n", oneline.Escape(err.Error()))
 		return 2
 	}
-	fmt.Fprintf(out, "PACKET OK entry=%s id=%s head=%s base=%s range=%s files=%d hunks=%d rules=%d prior=%d open=%d bytes=%d cut=%d reused=%t out=%s\n",
+	_, err := fmt.Fprintf(out, "PACKET OK entry=%s id=%s head=%s base=%s range=%s files=%d hunks=%d rules=%d prior=%d open=%d bytes=%d cut=%d reused=%t out=%s\n",
 		oneline.Field(entry), id, merge.Short(head), merge.Short(base), oneline.Field(rng), files, hunks, rules, prior, open, bytesN, cut, reused, oneline.Field(dest))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "PACKET REFUSED: could not write receipt: %s\n", oneline.Escape(err.Error()))
+		return 2
+	}
 	return 0
 }
 
 func writeExclusive(dest string, body []byte) error {
+	if _, err := os.Lstat(dest); err == nil {
+		return fmt.Errorf("destination file %s already exists", dest)
+	}
 	dir := filepath.Dir(dest)
 	base := filepath.Base(dest)
-	var randBytes [3]byte
+	var randBytes [6]byte
 	if _, err := rand.Read(randBytes[:]); err != nil {
 		return err
 	}
@@ -813,9 +1446,10 @@ func writeExclusive(dest string, body []byte) error {
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	if err = os.Rename(tmpName, dest); err != nil {
+	if err = os.Link(tmpName, dest); err != nil {
 		return err
 	}
 	cleaned = true
+	_ = os.Remove(tmpName)
 	return nil
 }
