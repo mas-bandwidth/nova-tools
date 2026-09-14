@@ -62,6 +62,7 @@ usage:
         [--legacy-before <date-or-instant>|--legacy-now|--carry-history]
         [--advance --remote <name> --branch <name> [--attempts <n>] [--no-push]]
   nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --timeout <duration> --remote <name> --branch <name>
+        [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]]
         [--interval <duration>] [--open [--open-max <n>]] [--open-warn <n>]
         [--legacy-before <date-or-instant>|--carry-history]
         [--advance [--attempts <n>] [--no-push]]
