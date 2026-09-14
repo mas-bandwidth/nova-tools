@@ -1,0 +1,85 @@
+{
+  "status": "proposed encoding fixture only; no live configuration or launch validation",
+  "task_bytes": "Review the supplied fixture.\n",
+  "prompt_bytes": "Synthetic prompt for encoding validation only.\n",
+  "body": {
+    "schema": "nova.swarm.attempt/1",
+    "job_id": "20260914T052500Z-fixture-012abc",
+    "lineage": {
+      "kind": "none",
+      "previous": "-"
+    },
+    "profile_id": "go-small",
+    "catalog_hash": "sha256:e8d2ad634cca482b99e74751409a54999da312af7454637e33ec4cb6d262a1ec",
+    "requested": {
+      "provider": "opencode-go",
+      "model": "example-go-model"
+    },
+    "resolved": {
+      "provider": "opencode-go",
+      "model": "example-go-model",
+      "endpoint": "https://go.invalid"
+    },
+    "worker": {
+      "name": "hosted-small",
+      "usage": "opencode",
+      "harness": "/opt/example/bin/opencode",
+      "worker_dir": "/opt/example/worker",
+      "harness_args": [
+        "run",
+        "--model",
+        "{model}",
+        "--",
+        "{prompt}"
+      ],
+      "read_roots": [],
+      "input_limit_phrases": []
+    },
+    "credentials": {
+      "kind": "nova-secrets",
+      "store": "/secure/example/store",
+      "seat": "worker",
+      "age_key": "/secure/example/worker.agekey",
+      "sops": "/opt/example/bin/sops",
+      "gate": "/opt/example/bin/nova-secrets",
+      "launcher": "/opt/example/bin/isolated-worker-launcher"
+    },
+    "env_var": "OPENCODE_GO_KEY",
+    "limits": {
+      "files": "2",
+      "tokens": "36000",
+      "deadline_ns": "300000000000",
+      "max_input": "-"
+    },
+    "prompt": {
+      "mode": "compact",
+      "prefix": "Use the bounded task contract.",
+      "tools": [],
+      "template": "read-pr"
+    },
+    "attribution": {
+      "bench": "fixture",
+      "repo": "example/project",
+      "actor": "example",
+      "basis": "caller"
+    },
+    "hashes": {
+      "task": "sha256:afb0d071a235742a1b08c556cf08656a90b927bbafba5165b660f5360297cbbb",
+      "prompt": "sha256:58606cecffccdd9be46ca9fc9680b3d35b86108b1002772937d4d77ce777c612",
+      "config": "sha256:c7ad372f8713082aea981dc567ffcab9f7685dda6355919b5d95d42898d1af39",
+      "prefix": "sha256:1dc4b30148929d5b72447c5f6e8cca3794d817a8de22e25448b02bd39951d88d"
+    },
+    "input_bytes": {
+      "task": "29",
+      "prompt": "47"
+    }
+  },
+  "canonical": "{\"attribution\":{\"actor\":\"example\",\"basis\":\"caller\",\"bench\":\"fixture\",\"repo\":\"example/project\"},\"catalog_hash\":\"sha256:e8d2ad634cca482b99e74751409a54999da312af7454637e33ec4cb6d262a1ec\",\"credentials\":{\"age_key\":\"/secure/example/worker.agekey\",\"gate\":\"/opt/example/bin/nova-secrets\",\"kind\":\"nova-secrets\",\"launcher\":\"/opt/example/bin/isolated-worker-launcher\",\"seat\":\"worker\",\"sops\":\"/opt/example/bin/sops\",\"store\":\"/secure/example/store\"},\"env_var\":\"OPENCODE_GO_KEY\",\"hashes\":{\"config\":\"sha256:c7ad372f8713082aea981dc567ffcab9f7685dda6355919b5d95d42898d1af39\",\"prefix\":\"sha256:1dc4b30148929d5b72447c5f6e8cca3794d817a8de22e25448b02bd39951d88d\",\"prompt\":\"sha256:58606cecffccdd9be46ca9fc9680b3d35b86108b1002772937d4d77ce777c612\",\"task\":\"sha256:afb0d071a235742a1b08c556cf08656a90b927bbafba5165b660f5360297cbbb\"},\"input_bytes\":{\"prompt\":\"47\",\"task\":\"29\"},\"job_id\":\"20260914T052500Z-fixture-012abc\",\"limits\":{\"deadline_ns\":\"300000000000\",\"files\":\"2\",\"max_input\":\"-\",\"tokens\":\"36000\"},\"lineage\":{\"kind\":\"none\",\"previous\":\"-\"},\"profile_id\":\"go-small\",\"prompt\":{\"mode\":\"compact\",\"prefix\":\"Use the bounded task contract.\",\"template\":\"read-pr\",\"tools\":[]},\"requested\":{\"model\":\"example-go-model\",\"provider\":\"opencode-go\"},\"resolved\":{\"endpoint\":\"https://go.invalid\",\"model\":\"example-go-model\",\"provider\":\"opencode-go\"},\"schema\":\"nova.swarm.attempt/1\",\"worker\":{\"harness\":\"/opt/example/bin/opencode\",\"harness_args\":[\"run\",\"--model\",\"{model}\",\"--\",\"{prompt}\"],\"input_limit_phrases\":[],\"name\":\"hosted-small\",\"read_roots\":[],\"usage\":\"opencode\",\"worker_dir\":\"/opt/example/worker\"}}",
+  "snapshot_hash": "sha256:4c18594f9f05c8ab6024fadefe408c75fad146e21e2f388aa350f5f55c2fdfbe",
+  "manifest": {
+    "schema": "nova.swarm.prelaunch/1",
+    "job_id": "20260914T052500Z-fixture-012abc",
+    "snapshot_hash": "sha256:4c18594f9f05c8ab6024fadefe408c75fad146e21e2f388aa350f5f55c2fdfbe"
+  },
+  "config_canonical": "{\"credentials\":{\"age_key\":\"/secure/example/worker.agekey\",\"gate\":\"/opt/example/bin/nova-secrets\",\"kind\":\"nova-secrets\",\"launcher\":\"/opt/example/bin/isolated-worker-launcher\",\"seat\":\"worker\",\"sops\":\"/opt/example/bin/sops\",\"store\":\"/secure/example/store\"},\"env_var\":\"OPENCODE_GO_KEY\",\"limits\":{\"deadline_ns\":\"300000000000\",\"files\":\"2\",\"max_input\":\"-\",\"tokens\":\"36000\"},\"prompt\":{\"mode\":\"compact\",\"prefix\":\"Use the bounded task contract.\",\"template\":\"read-pr\",\"tools\":[]},\"requested\":{\"model\":\"example-go-model\",\"provider\":\"opencode-go\"},\"resolved\":{\"endpoint\":\"https://go.invalid\",\"model\":\"example-go-model\",\"provider\":\"opencode-go\"},\"worker\":{\"harness\":\"/opt/example/bin/opencode\",\"harness_args\":[\"run\",\"--model\",\"{model}\",\"--\",\"{prompt}\"],\"input_limit_phrases\":[],\"name\":\"hosted-small\",\"read_roots\":[],\"usage\":\"opencode\",\"worker_dir\":\"/opt/example/worker\"}}"
+}

@@ -229,10 +229,9 @@ snapshot input/output to 1048576 bytes and nesting to 32; overflow refuses
 before launch. These are distinct catalog/snapshot caps, not permission to
 truncate a selected profile or lose an argument. A digest establishes content
 identity, not origin, authority or filesystem protection.
-The prose inventory below is not yet an exact snapshot JSON schema. Required
-member names, types, presence/default rules and rejection of unknown members
-must be pinned before runtime implementation or recovery fixtures can pass;
-this encoding decision alone does not clear that separate gate.
+The proposed exact live-profile snapshot shape below supplies member names,
+types and presence rules. Its review, launcher binding, and runtime round-trip
+fixtures remain required; an encoding fixture alone does not clear those gates.
 
 Required deterministic fixtures: reordered members/whitespace/escaped spellings
 hash identically; reordered arrays, changed optional presence and a changed
@@ -248,11 +247,138 @@ The [encoding-only vectors](fixtures/swarm-profile-catalog-encoding.json)
 pin canonical bytes and SHA-256 values, including UTF-16 member ordering.
 They are proposed acceptance inputs, not evidence that profile admission exists.
 
+### Protected attempt body — proposed, awaiting friend review
+
+This shape applies to a new live-profile attempt. It does not retrofit snapshots
+onto legacy jobs or invent a no-secret local-route variant. Every member in the
+table is required. Every object rejects unknown/duplicate members and `null`;
+there are no runtime-injected JSON defaults. Arrays retain order. Strings must
+be valid Unicode. Empty arrays mean no entries, not inherited configuration.
+
+| Member | Exact type and meaning |
+|---|---|
+| `schema` | String, exactly `nova.swarm.attempt/1` |
+| `job_id` | String, the concrete `Sidecar.ID` for this attempt, validated by the existing job-ID rules; also the evidence-directory ID |
+| `lineage` | Object with exactly string `kind` and `previous`; rules below |
+| `profile_id` | String, the admitted catalog member name |
+| `catalog_hash` | String, the full catalog digest defined above |
+| `requested` | Object with exactly nonempty strings `provider` and `model`, using the existing provider/model validators and admitted allow-list, before adapter resolution; explicit override or the admitted default, never observed identity |
+| `resolved` | Object with exactly strings `provider`, `model`, `endpoint`, after the selected adapter resolves the route; provider/model must pass its nonempty native-ID validators; empty endpoint allowed only if that adapter explicitly declares no configurable endpoint |
+| `worker` | Object with exactly strings `name`, `usage`, `harness`, `worker_dir`, and string arrays `harness_args`, `read_roots`, `input_limit_phrases`; the execution-field validation above applies |
+| `credentials` | Exactly the live-route credential object defined above: `kind`, `store`, `seat`, `age_key`, `sops`, `gate`, `launcher`; paths and names only |
+| `env_var` | String, the single admitted secret-variable name |
+| `limits` | Object with exactly strings `files`, `tokens`, `deadline_ns`, `max_input`; rules below |
+| `input_bytes` | Object with exactly strings `task` and `prompt`, the measured original payload lengths as nonnegative base-10 integers fitting signed 64 bits, with no leading zero except `0` |
+| `prompt` | Object with exactly strings `mode`, `prefix`, `template`, and string array `tools`; catalog mode/prefix/tools rules apply; template is the selected existing template name, or `-` for none |
+| `hashes` | Object with exactly strings `task`, `prompt`, `config`, `prefix`; each is `sha256:<64 lowercase hex>` with preimages below |
+| `attribution` | Object with exactly strings `bench`, `repo`, `actor`, `basis`; rules below |
+
+`lineage.kind` is `none`, `retry`, `rework`, or `unknown`. `none` requires
+`previous: "-"`; every other kind requires a distinct validated predecessor
+job ID. `retry` means the same admitted task text and execution choices are
+being retried; `rework` means an explicit changed task, profile, model or budget.
+The originating operation records the kind. Legacy `Sidecar.From` alone cannot
+prove it: that field covers both automatic retries and changed manual requeues.
+If migrating such lineage without sufficient evidence, preserve the predecessor
+as `unknown`, not a guessed retry. Refuse a self-reference or an attempt to
+change an already retained job ID's immutable predecessor binding. Rework may
+change task/profile/model/budgets; it preserves the predecessor's record, not
+equality with its execution choices. A new attempt always gets a new `job_id`.
+The legacy usage column `attempt` currently records only 1 or 2 according to
+`Requeued`; it is neither an ordinal nor identity and is not copied into this
+body. Existing usage files remain unchanged.
+
+`files` and `deadline_ns` are positive base-10 integers without a sign or leading
+zero, fitting signed 64 bits and the receiving platform's applicable budget
+types. `tokens` is such a positive integer or exactly `unmetered`; the existing
+metering rules still apply. `max_input` is such a positive integer or `-` when
+the caller set no input limit. The deadline is the resolved effective duration,
+in nanoseconds; do not recover it from a mutable worker default. The snapshot
+worker therefore has no second `deadline` member. `harness_args` freezes the
+admitted argument templates in order; expansion remains the named adapter's
+contract, not a shell evaluation or a fresh catalog read.
+
+Each attribution value is an explicit coordinator binding or `-`. `basis` is
+`caller` only if all three are supplied, otherwise `unattributed`. These are
+accounting labels, not a worker identity or a claim that the provider measured
+them. Raw source attribution stays separate in retained observations.
+
+Hash `task` over the exact admitted task-file bytes and `prompt` over the exact
+prepared prompt bytes, both without newline normalization. Hash `prefix` over
+the UTF-8 bytes of `prompt.prefix`, including an empty prefix. Hash `config`
+over the canonical JSON object containing exactly `requested`, `resolved`,
+`worker`, `credentials`, `env_var`, `limits`, and `prompt`, copied from this
+body. This is a resolved configuration digest, not a hash of arbitrary harness
+files. The launcher must separately validate its generated configuration under
+its pinned adapter contract. None of these hashes contains itself.
+
+Generate and retain the protected task/prompt evidence, then publish this body
+and its snapshot hash after slot preparation but before credential-gate launch.
+Under the protected `<pool>/evidence/<job_id>/` (or the explicitly supplied
+one-shot evidence root), retain exactly named `TASK.txt` and `PROMPT.md` with
+their original bytes, `PROFILE.json` containing the canonical body bytes with
+no trailing newline, and `MANIFEST.json` containing the canonical object
+`{"schema":"nova.swarm.prelaunch/1","job_id":"<id>","snapshot_hash":"sha256:<digest>"}`.
+The displayed object is a member inventory; canonical serialization determines
+its actual member order. These three manifest strings are required, and no
+other members are accepted. This manifest is the prelaunch expected-hash
+reference outside the body; a final receipt is not required to recover it.
+
+Create files only within the validated coordinator-owned directory, with
+same-directory temporary writes and atomic no-replace publication. Never
+follow an existing symlink or overwrite an existing evidence file. Write,
+flush and verify TASK, PROMPT and PROFILE, then flush their directory before
+publishing MANIFEST last and flushing the directory again. An existing complete
+set with identical verified bytes is an idempotent replay; differing content
+under the same job ID refuses. An incomplete set is not a committed snapshot
+and must go through existing preparation/launch reconciliation before any retry;
+presence of a partial directory is not proof of either launch or non-launch.
+Unsupported atomic/durable publication refuses before gate invocation.
+
+Record `input_bytes` from the same bytes used for task/prompt hashing; compare
+the prepared prompt length against `limits.max_input` when it is set. Recovery
+streams each payload up to its recorded length and probes at most one extra
+byte, with overflow-safe arithmetic and bounded memory; shorter or longer files
+refuse even if some unrelated hash is well formed. The recorded length is not
+an allocation size or permission to expand the worker's input allowance.
+
+Recovery opens bounded regular files at these constant names, verifies manifest
+job ID against its directory and selected sidecar, verifies PROFILE against
+the manifest digest, and recomputes task/prompt/config/prefix hashes before
+using the snapshot. Manifest body and record input share the snapshot size and
+depth bounds; task/prompt payload readers use the recorded lengths above.
+The worker-writable
+copies are projections, never recovery preimages. Missing evidence, mismatched
+body/config/prefix hashes, or a
+job-ID/path/lineage conflict quarantines before launch/reclaim. Retrying retains
+the old body and admission; it creates a new body and prepared prompt for the
+new job ID, never edits an old snapshot or blindly copies its prompt hash.
+Template/generator and adapter compatibility must be verified by the launcher;
+if it cannot reproduce the admitted choices, it refuses rather than silently
+substituting current defaults. The exact executable/adapter binding remains a
+launcher-protocol gate.
+
+Provider-observed identity, native call IDs, token/cost observations, timestamps,
+outcomes, PIDs, slot numbers, launch nonces and exit attestations are not fields
+of this body. They belong to runtime evidence and receipts, joined by `job_id`
+and the existing protected launch checks. Never expose the launch nonce or exit
+attestation in the worker projection to make snapshot validation easier.
+
+Add round-trip/refusal fixtures for every member/type/presence rule, automatic
+retry versus changed requeue and ambiguous legacy lineage, mutated defaults,
+changed task/prompt bytes, config digest mismatch, and swapping snapshots between
+two job IDs. A legacy configured model does not become `model_observed`: that
+receipt field still requires source evidence. This proposal awaits friend
+review and does not assert any of these runtime fixtures pass yet.
+The [complete synthetic body](fixtures/swarm-attempt-body.json) pins all members
+and hash preimages for encoding checks only. Its fake paths, endpoint and prompt
+are not a live launch configuration or proof that launch validation is ready.
+
 Before a worker starts, the coordinator writes the authoritative snapshot to
 the coordinator-owned protected path
 `<pool>/evidence/<job-id>/PROFILE.json`, where `<job-id>` is the concrete
 swarm job/attempt id, outside every writable job directory and slot data home,
-through the same temporary-and-rename rule as `RESULT.md`. Its hash is rooted
+through the manifest-last publication protocol above. Its hash is rooted
 in that protected copy; a worker cannot replace the trust root. A pool-less
 direct one-shot must supply a coordinator-owned protected `evidence_root` and
 refuses before send when it is absent or writable by the worker. The worker may
@@ -270,6 +396,11 @@ The sidecar carries `profile`, `model_requested`, `model_observed`,
 `snapshot_hash`, `prompt_hash`, `config_hash`, and `bench` when the caller
 supplies it. The proposed `run --bench <name>` flag supplies bench metadata
 for legacy sidecars. Existing sidecars with none of these fields remain valid. The
+new profile projection maps `profile` to body `profile_id`, `model_requested`
+to `requested.model`, `prompt_hash`/`config_hash` to `hashes.prompt`/`hashes.config`,
+and `snapshot_hash` to the verified prelaunch manifest value. `model_observed`
+is populated only from later runtime evidence, never from `resolved.model`.
+The
 snapshot and hashes are immutable for the attempt. Recovery and retries use
 the snapshot, never a changed catalog; a missing, malformed or mismatched
 snapshot fails closed and is quarantined. Finalization copies the protected
