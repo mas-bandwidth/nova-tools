@@ -3045,7 +3045,7 @@ cover); **a retry inside the owner's own journal with the same payload answered 
 `OK` line, and one with a different payload refused `reused with a different payload`**; **one
 request digested to one value by two independent serializers, over a `node add` envelope holding
 a structure event and a scope event, with two `:stamp`s and two `:request` ids and the same
-digest, and with an absent optional field written `()` by both**; **a clip whose snapshot passes `--max-bytes` refused with all four
+digest, and with an absent optional field written `(:absent)` by both**; **a clip whose snapshot passes `--max-bytes` refused with all four
 numbers printed and `lower --retain or raise --max-bytes` named, the lower `--retain` then
 passing, run with the published index bytes larger than the retained part so the remedy is tested
 on the flag that moves the number and not on the sizes**; **a `session export --journal` writing
