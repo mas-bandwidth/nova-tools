@@ -13,9 +13,10 @@ import (
 
 // The day file: one file per day, eleven columns, every one written on every row.
 //
-// It is RECOMPUTED WHOLE from the sources every time and never appended to, never edited
-// in place: the write goes to one fixed temp name in the same directory and lands by one
-// atomic rename. The fixed name is safe because one fold runs per output directory (the
+// It is WRITTEN WHOLE every time and never appended to, never edited in place: the write
+// goes to one fixed temp name in the same directory and lands by one atomic rename. Whole
+// is not the same as recomputed -- a fold recomputes the rows ITS OWN declared sources
+// wrote and carries the rest of the file's rows over unchanged (MergeDay, #268). The fixed name is safe because one fold runs per output directory (the
 // lock in lock.go), and a stranded temp is then a name a person can see rather than a
 // scatter of `.tmp.<pid>` files nobody can tell apart. `check` steps over exactly that
 // name, so the wreckage of a killed fold is not reported as a stray.
@@ -137,6 +138,126 @@ func Shrinks(old, now Counts, day string) []Shrink {
 			out = append(out, Shrink{Day: day, Type: t, File: strconv.FormatInt(was, 10), Now: strconv.FormatInt(is, 10)})
 		}
 	}
+	return out
+}
+
+// The merge, and why the fold is no longer a whole recomputation of the file (#268).
+//
+// A fold declares SOURCES, and a day file's rows each name the sources that wrote them.
+// A run that declares one source and recomputes the file whole ERASES every row the other
+// sources wrote, and rule 10 cannot see it: the shrink comparison is over the day's per-type
+// TOTALS, so a run whose own numbers are bigger than what it deleted writes a smaller file
+// with a bigger total and says written=true. Measured at tip, 2026-09-14: a day holding
+// `claude-x 410` folded with only `--swarm freddy=<pool>` (mercury-2.5, 2000) came back
+// holding the mercury row alone, exit 0, no TOKENS SHRANK.
+//
+// So the fold merges by source instead. This run's rows replace the rows its own sources
+// wrote; a row no declared source wrote is kept exactly as it is; and the two rows that
+// cannot be either -- a row already summed over a declared and an undeclared source, and a
+// retained row colliding with a recomputed one -- are refused before anything is written,
+// because both would need arithmetic nothing on disk can undo.
+
+// PartialBlended and PartialCollision are the two reasons a row of the file on disk can be
+// neither kept nor recomputed by this fold.
+const (
+	PartialBlended   = "blended"
+	PartialCollision = "collision"
+)
+
+// Partial is one row this fold can neither retain nor replace. It is a refusal, not a
+// warning: nothing of the day is written while one stands.
+type Partial struct {
+	Day, Model, Repo string
+	Sources          []string // the row's own sources cell
+	Folded           []string // the labels this run declared, sorted
+	Why              string   // PartialBlended or PartialCollision
+}
+
+// MergeDay merges this run's recomputed rows into the rows already in the day file.
+//
+// declared is the set of source labels this run read, the same labels that land in a row's
+// sources column. For each row of old:
+//
+//   - every source outside declared: RETAINED, cell for cell, because no source this run
+//     read contributed to it and this run has nothing truer to say about it;
+//   - every source inside declared: REPLACED by this run's row for that (model, repo), and
+//     never summed with it, so no source is counted twice;
+//   - some inside and some outside: a Partial, PartialBlended. Its cells are already a sum
+//     over both and nothing on disk takes them apart.
+//
+// A retained row and a recomputed row with the same (model, repo) is a Partial too,
+// PartialCollision: the day file's rows are unique by (model, repo), and summing the two
+// would blend two runs' arithmetic into one cell no later fold could undo.
+//
+// The returned rows are sorted by (model, repo), which is what ParseDayFile demands. When
+// any Partial is returned the caller writes NOTHING: the rows are what the merge would have
+// been, and are not a file.
+func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained int, partials []Partial) {
+	isDeclared := map[string]bool{}
+	for _, l := range declared {
+		isDeclared[l] = true
+	}
+	folded := append([]string(nil), declared...)
+	sort.Strings(folded)
+
+	rows = append(rows, fresh...)
+	computed := map[string]bool{}
+	for _, r := range fresh {
+		computed[r.Model+"\t"+r.Repo] = true
+	}
+	for _, r := range old {
+		in, out := 0, 0
+		for _, l := range r.Sources {
+			if isDeclared[l] {
+				in++
+			} else {
+				out++
+			}
+		}
+		switch {
+		case in > 0 && out > 0:
+			partials = append(partials, partialOf(r, folded, PartialBlended))
+		case in > 0:
+			// replaced: this run recomputed every source that wrote it. A (model, repo)
+			// this run no longer reports at all is a row that goes away, and that is a
+			// shrink for rule 10 to judge, not a row to keep.
+		default:
+			if computed[r.Model+"\t"+r.Repo] {
+				partials = append(partials, partialOf(r, folded, PartialCollision))
+				continue
+			}
+			rows = append(rows, r)
+			retained++
+		}
+	}
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].Model != rows[j].Model {
+			return rows[i].Model < rows[j].Model
+		}
+		return rows[i].Repo < rows[j].Repo
+	})
+	return rows, retained, partials
+}
+
+func partialOf(r DayRow, folded []string, why string) Partial {
+	return Partial{Day: r.Date, Model: r.Model, Repo: r.Repo,
+		Sources: append([]string(nil), r.Sources...), Folded: folded, Why: why}
+}
+
+// SourcesOf is the union of every row's sources, sorted: what the version line's `sources=`
+// says about the file that was actually written, retained rows included.
+func SourcesOf(rows []DayRow) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, r := range rows {
+		for _, l := range r.Sources {
+			if !seen[l] {
+				seen[l] = true
+				out = append(out, l)
+			}
+		}
+	}
+	sort.Strings(out)
 	return out
 }
 

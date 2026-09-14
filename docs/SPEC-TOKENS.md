@@ -192,6 +192,19 @@ is the day it was learned.
     must never quietly lower a day's spend. (2026-09-11: the keeper's rows
     would have vanished from every day the moment his transcripts went
     unreadable, and the file would have said less with no word why.)
+    The comparison is with the MERGED file, because the fold merges by
+    source: this run's rows replace the rows its own declared sources wrote,
+    a row no declared source wrote is retained exactly as it is, and a row
+    this fold can neither retain nor recompute -- one already summed over a
+    declared and an undeclared source, or a retained row colliding with a
+    recomputed one on (model, repo) -- is `TOKENS PARTIAL`, the file is left
+    as it was, and the run exits 1. `--allow-shrink` does not write it: it is
+    a person's word about a day going backwards, not about a row nothing on
+    disk can take apart. When any row is retained the version line carries
+    `turns=-`, because turns counts the messages this run read and cannot be
+    split per source. (2026-09-14: a swarm-only fold into a day file holding
+    another source's row erased it with exit 0 and written=true, and the
+    totals comparison saw nothing because the new numbers were bigger.)
 11. **Bounded output, measured at the largest plausible state.** The state is
     a month of 20 models and 10 repos (200 pairs, up to 6,200 rows over 31
     files) folded from 3,000 transcript files and 50,000 messages a day.
@@ -586,9 +599,10 @@ TOKENS TOUCHED label=bus:<name> day=<d> repos=<list>
 TOKENS MIXED date=<d> model=<model> repo=<repo> bases=<utc,zone>: two day bases on one row; declare one export for that day
 TOKENS DAY date=<d> rows=<n> models=<n> repos=<n> turns=<n|-> unknown=<pct>% other=<pct>% rough=<n> dashes=<n> nonutc=<n> sources=<labels> written=<true|false>
 TOKENS SHRANK date=<d> type=<type> file=<n> now=<n|-> written=<true|false>: a source went quiet; --allow-shrink writes it anyway
-TOKENS MORE kind=<source|unreadable|unparsed|superseded|conflict|touched|mixed|day> shown=<n> total=<t> <remedy>
-TOKENS OK days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n>
-TOKENS FAIL days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n>
+TOKENS PARTIAL date=<d> model=<model> repo=<repo> sources=<labels> folded=<labels> written=<true|false>: this fold declared only some of the sources that wrote the row; declare every source in the file's sources= line, or fold this day into its own --out
+TOKENS MORE kind=<source|unreadable|unparsed|superseded|conflict|touched|mixed|day|partial> shown=<n> total=<t> <remedy>
+TOKENS OK days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n> partial=<n>
+TOKENS FAIL days=<n> rows=<n> sources=<n> unreadable=<n> unparsed=<n> mixed=<n> conflict=<n> shrank=<n> partial=<n>
 TOKENS NOTE <the one remedy line>
 TOKENS REFUSED: <reason>
 REPORT OK who=<name> day=<d> rows=<n> at=<stamp> build=<id> subject=<subject>

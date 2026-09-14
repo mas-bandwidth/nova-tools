@@ -86,6 +86,12 @@ A day that would go backwards is refused: TOKENS SHRANK names the type, what the
 said and what the sources say now, the file is left as it was, and --allow-shrink is the
 person's act. A source that became unreadable must never quietly lower a day's spend.
 
+A fold merges into the day file by SOURCE: it recomputes the rows its own declared sources
+wrote and keeps every other row exactly as it is, so a run that declares one source does
+not erase what the others reported. A row it can neither keep nor recompute -- one already
+summed over a declared and an undeclared source -- is TOKENS PARTIAL, nothing of that day
+is written, and --allow-shrink does not write it either.
+
 Two notes for one day in one lane are one report only when the later names the earlier in
 its subject: supersedes=<id>[,<id>...], sorted, no duplicates. Nothing else orders them --
 not the Date, not the filename, not the directory listing, not the git history. Two tips
@@ -474,9 +480,14 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	mixedList := bounded.Capped(stderr, *max, "TOKENS", "mixed", maxRemedy("fold"))
 	dayList := bounded.Capped(stdout, *max, "TOKENS", "day", maxRemedy("fold"))
 	shrankList := bounded.Capped(stderr, *max, "TOKENS", "shrank", maxRemedy("fold"))
+	partialList := bounded.Capped(stderr, *max, "TOKENS", "partial", maxRemedy("fold"))
 
 	conflictDays := map[string]bool{}
+	// The labels this run declared: exactly what lands in a row's sources column, and so
+	// exactly the rows this fold is entitled to recompute (rule 10, #268).
+	declared := make([]string, 0, len(sources))
 	for _, s := range sources {
+		declared = append(declared, s.Label)
 		srcList.Line(sourceLine("TOKENS", s))
 	}
 	srcList.More()
@@ -526,6 +537,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	daysWritten, rowsWritten := 0, 0
 	mixedLabels := "-"
+	firstPartial := ""
 	for _, d := range days {
 		rows, mixed := folder.DayRows(d)
 		for _, m := range mixed {
@@ -541,16 +553,45 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		file := buildDayFile(d, rows, folder, now)
 		written := false
 		shrank := false
+		partial := false
 		if !conflictDays[d] {
 			if old, findings, err := tokens.ReadDayFile(tokens.Path(*out, d)); err == nil && !hasVersionFinding(findings) {
-				for _, sh := range tokens.Shrinks(old.Totals(), file.Totals(), d) {
-					shrank = true
-					shrankList.Line(fmt.Sprintf("TOKENS SHRANK date=%s type=%s file=%s now=%s written=%t: a source went quiet; --allow-shrink writes it anyway",
-						oneline.Field(sh.Day), oneline.Field(tokens.TypeNames[sh.Type]),
-						oneline.Field(sh.File), oneline.Field(sh.Now), *allowShrink))
+				// Merge by source BEFORE anything else touches the file: a row no
+				// declared source wrote is carried over, a row they all wrote is
+				// replaced, and a row this fold can neither keep nor recompute refuses
+				// the day. Rule 10 then compares the file with the MERGED file, which is
+				// like with like -- the old comparison hid an erased row whenever this
+				// run's own numbers were bigger. (#268)
+				merged, retained, partials := tokens.MergeDay(old.Rows, file.Rows, declared)
+				for _, pt := range partials {
+					partial = true
+					partialList.Line(fmt.Sprintf("TOKENS PARTIAL date=%s model=%s repo=%s sources=%s folded=%s written=false: this fold declared only some of the sources that wrote the row; declare every source in the file's sources= line, or fold this day into its own --out",
+						oneline.Field(pt.Day), oneline.Field(pt.Model), oneline.Field(pt.Repo),
+						oneline.Field(strings.Join(pt.Sources, ",")), oneline.Field(strings.Join(pt.Folded, ","))))
+					if firstPartial == "" {
+						firstPartial = pt.Model + " on " + pt.Repo + " for " + pt.Day
+					}
+				}
+				if !partial {
+					file.Rows = merged
+					file.Sources = tokens.SourcesOf(merged)
+					if retained > 0 {
+						// turns= counts the messages THIS run read and cannot be split
+						// per source, so a file holding a row this run did not read is a
+						// file whose turns nobody can state.
+						file.Turns = tokens.Dash
+					}
+					for _, sh := range tokens.Shrinks(old.Totals(), file.Totals(), d) {
+						shrank = true
+						shrankList.Line(fmt.Sprintf("TOKENS SHRANK date=%s type=%s file=%s now=%s written=%t: a source went quiet; --allow-shrink writes it anyway",
+							oneline.Field(sh.Day), oneline.Field(tokens.TypeNames[sh.Type]),
+							oneline.Field(sh.File), oneline.Field(sh.Now), *allowShrink))
+					}
 				}
 			}
-			if !shrank || *allowShrink {
+			// --allow-shrink is a person's word about a day going backwards. It is NOT a
+			// word about a row this fold cannot compute, so it does not override a partial.
+			if !partial && (!shrank || *allowShrink) {
 				if err := file.Save(*out); err != nil {
 					unreadable.Line(unreadableLine("TOKENS", tokens.Unreadable{Label: "out", Path: tokens.Path(*out, d), Why: err.Error()}))
 				} else {
@@ -566,19 +607,20 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	mixedList.More()
 	dayList.More()
 	shrankList.More()
+	partialList.More()
 
-	counts := fmt.Sprintf("days=%d rows=%d sources=%d unreadable=%d unparsed=%d mixed=%d conflict=%d shrank=%d",
+	counts := fmt.Sprintf("days=%d rows=%d sources=%d unreadable=%d unparsed=%d mixed=%d conflict=%d shrank=%d partial=%d",
 		daysWritten, rowsWritten, len(sources), unreadable.Total(), unparsed.Total(),
-		mixedList.Total(), conflicts.Total(), shrankList.Total())
+		mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total())
 	bad := unreadable.Total() > 0 || unparsed.Total() > 0 || mixedList.Total() > 0 ||
-		conflicts.Total() > 0 || (shrankList.Total() > 0 && !*allowShrink)
+		conflicts.Total() > 0 || (shrankList.Total() > 0 && !*allowShrink) || partialList.Total() > 0
 	if bad {
 		fmt.Fprintf(stderr, "TOKENS FAIL %s\n", counts)
 	} else {
 		fmt.Fprintf(stdout, "TOKENS OK %s\n", counts)
 	}
 	fmt.Fprintf(stdout, "TOKENS NOTE %s\n", oneline.Escape(remedy(sources, folder.Overlaps(), unreadable.Total(), unparsed.Total(),
-		mixedList.Total(), conflicts.Total(), shrankList.Total(), *allowShrink, *out, mixedLabels)))
+		mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total(), *allowShrink, *out, mixedLabels, firstPartial)))
 	if bad {
 		return 1
 	}
@@ -671,7 +713,7 @@ func dayLine(day string, file *tokens.DayFile, rows []*tokens.Row, folder *token
 
 // remedy is the ONE line TOKENS NOTE carries. It names the label and the act, in the order
 // a reader would act on them, and when nothing was wrong it names the gate.
-func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unparsed, mixed, conflict, shrank int, allowShrink bool, out, mixedLabels string) string {
+func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unparsed, mixed, conflict, shrank, partial int, allowShrink bool, out, mixedLabels, firstPartial string) string {
 	switch {
 	case unreadable > 0:
 		return "a declared source could not be read whole (" + firstUnreadableLabel(sources) + "): open those files to this group, or drop the flag -- a declared source is a claim that the report covers it"
@@ -698,6 +740,10 @@ func remedy(sources []*tokens.Source, overlaps []tokens.Overlap, unreadable, unp
 		// the caller knows which two are competing. Every other branch of this switch
 		// names a label, a note or a lane; this one named nothing.
 		return "a row was fed by two day bases (" + mixedLabels + "): declare one of those two for that day, not both"
+	case partial > 0:
+		// Above the shrank branches: a row this fold cannot compute is not a day going
+		// backwards, and --allow-shrink is not the act that clears it.
+		return "a row of the day file was written by sources this fold did not declare (" + firstPartial + "): declare every source in that file's sources= line, or fold this day into its own --out -- --allow-shrink does not write it"
 	case shrank > 0 && !allowShrink:
 		return "a day would have gone backwards and was left as it was: --allow-shrink writes it anyway, and it is a person's act"
 	case shrank > 0:

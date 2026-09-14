@@ -625,6 +625,124 @@ func TestRule10ANumberBecomingADashShrinksAndADashBecomingANumberDoesNot(t *test
 	wantNotContains(t, r.stderr, "SHRANK")
 }
 
+// ---------------------------------------------------------------- issue #268: the fold merges by source
+
+// foldPools writes two swarm pools, one row each, and returns dir, out, repos, poolA, poolB.
+// poolA is claude-x on serialize; poolB is mercury-2.5 on serialize, the pair Rowan measured
+// at tip when a swarm-only fold erased the other source's row.
+func foldPools(t *testing.T, aIn, aOut, bIn, bOut string) (out, repos, poolA, poolB string) {
+	t.Helper()
+	dir := t.TempDir()
+	out = mkdir(t, filepath.Join(dir, "out"))
+	repos = reposFile(t, dir)
+	poolA = mkdir(t, filepath.Join(dir, "poolA"))
+	poolB = mkdir(t, filepath.Join(dir, "poolB"))
+	swarmUsage(t, poolA, "j1", swarmRow("j1", "1", "-", "claude-x", "serialize", "2026-09-14T01:00:00Z", aIn, aOut, "0", "0", "-"))
+	swarmUsage(t, poolB, "j2", swarmRow("j2", "1", "-", "mercury-2.5", "serialize", "2026-09-14T02:00:00Z", bIn, bOut, "0", "81000", "50"))
+	return out, repos, poolA, poolB
+}
+
+// R1, the issue: a swarm-only fold into a day file that holds another source's row keeps
+// that row. Measured at tip before the fix: exit 0, written=true, no SHRANK, and the
+// claude-x row simply gone -- because the totals ROSE, so rule 10's day-total comparison
+// saw nothing.
+func TestIssue268AFoldKeepsARowNoDeclaredSourceWrote(t *testing.T) {
+	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
+	day := filepath.Join(out, "2026-09-14.tsv")
+
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "glenn="+poolA), 0)
+	wantContains(t, read(t, day), "claude-x")
+
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB)
+	wantExit(t, r, 0)
+	wantNotContains(t, r.all(), "SHRANK")
+	wantNotContains(t, r.all(), "PARTIAL")
+	got := read(t, day)
+	wantContains(t, got, "claude-x")
+	wantContains(t, got, "\t410\t")
+	wantContains(t, got, "mercury-2.5")
+	wantContains(t, got, "\t2000\t")
+	wantContains(t, got, "sources=swarm:freddy,swarm:glenn")
+}
+
+// R2: full replacement -- every source in the file is declared -- is exactly what it was.
+// The one row is REPLACED by this run's arithmetic, never summed with the file's.
+func TestIssue268AFullReplacementIsUnchanged(t *testing.T) {
+	out, repos, poolA, _ := foldPools(t, "410", "100", "2000", "420")
+	day := filepath.Join(out, "2026-09-14.tsv")
+
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "glenn="+poolA), 0)
+	swarmUsage(t, poolA, "j1", swarmRow("j1", "1", "-", "claude-x", "serialize", "2026-09-14T01:00:00Z", "900", "100", "0", "0", "-"))
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "glenn="+poolA)
+	wantExit(t, r, 0)
+	wantNotContains(t, r.all(), "SHRANK")
+	wantNotContains(t, r.all(), "PARTIAL")
+	got := read(t, day)
+	wantContains(t, got, "\t900\t")
+	wantNotContains(t, got, "\t410\t")  // replaced, not kept
+	wantNotContains(t, got, "\t1310\t") // replaced, not summed
+	wantContains(t, got, "sources=swarm:glenn")
+}
+
+// R3: a BLENDED row -- one row whose sources cell names a label this run declared and one
+// it did not. Its cells are already a sum over both and nothing on disk takes them apart,
+// so the fold refuses the day rather than guessing.
+func TestIssue268ABlendedRowIsRefusedAndNothingIsWritten(t *testing.T) {
+	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
+	day := filepath.Join(out, "2026-09-14.tsv")
+	// Both pools on the SAME model and repo, so one row carries both labels.
+	swarmUsage(t, poolB, "j2", swarmRow("j2", "1", "-", "claude-x", "serialize", "2026-09-14T02:00:00Z", "2000", "420", "0", "0", "-"))
+
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
+		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB), 0)
+	before := read(t, day)
+	wantContains(t, before, "swarm:freddy,swarm:glenn")
+
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS PARTIAL date=2026-09-14 model=claude-x repo=serialize sources=swarm:freddy,swarm:glenn folded=swarm:freddy written=false")
+	wantContains(t, r.stderr, "partial=1")
+	if read(t, day) != before {
+		t.Error("a refused partial fold rewrote the file")
+	}
+	// --allow-shrink is about a shrink, not about a row this fold cannot compute.
+	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB, "--allow-shrink")
+	wantExit(t, r, 1)
+	if read(t, day) != before {
+		t.Error("--allow-shrink wrote a row the fold could not compute")
+	}
+}
+
+// R4: rule 10 still fires on a real shrink, now compared against the MERGED file, and
+// --allow-shrink still writes it with the retained row still there.
+func TestIssue268Rule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testing.T) {
+	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
+	day := filepath.Join(out, "2026-09-14.tsv")
+
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
+		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB), 0)
+	before := read(t, day)
+
+	// poolB's numbers LOWERED, folded alone: the claude-x row is retained, and the one
+	// source this run read went quiet by 1000 input. That is rule 10's day.
+	swarmUsage(t, poolB, "j2", swarmRow("j2", "1", "-", "mercury-2.5", "serialize", "2026-09-14T02:00:00Z", "1000", "420", "0", "81000", "50"))
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=2410 now=1410 written=false")
+	if read(t, day) != before {
+		t.Error("a refused shrink rewrote the file")
+	}
+
+	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB, "--allow-shrink")
+	wantExit(t, r, 0)
+	wantContains(t, r.stderr, "written=true")
+	got := read(t, day)
+	wantContains(t, got, "claude-x")
+	wantContains(t, got, "\t410\t")
+	wantContains(t, got, "\t1000\t")
+	wantContains(t, got, "turns=-")
+}
+
 // ---------------------------------------------------------------- rule 12: the tool stamps
 
 func TestRule12TheToolStampsAndNoFlagSetsIt(t *testing.T) {
