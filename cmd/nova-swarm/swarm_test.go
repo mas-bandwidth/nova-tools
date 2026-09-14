@@ -352,6 +352,7 @@ func TestADispatcherRunsAJobEndToEnd(t *testing.T) {
 		t.Fatalf("run exited %d, want 0 (a pass that started, finished and drained)\nstdout:\n%s\nstderr:\n%s", exit, stdout, stderr)
 	}
 	mustContain(t, "the run", stdout, "RUN POOL workers=1")
+	mustContain(t, "the run", stdout, "auto_retry=true")
 	mustContain(t, "the run", stdout, "RUN START id="+id)
 	mustContain(t, "the run", stdout, "result=ok findings=2 refusals=0")
 	mustContain(t, "the run", stdout, "dest=done")
@@ -551,8 +552,86 @@ func TestResultShapeIsMechanical(t *testing.T) {
 	mustContain(t, "result", stdout, "| the item as it was handed to me | probably |")
 }
 
+func TestNoAutoRetryHelpStatesItsScopeAndExistingRunControls(t *testing.T) {
+	b := newBench(t)
+	exit, stdout, stderr := b.swarm("help")
+	if exit != 0 {
+		t.Fatalf("help exited %d: %s%s", exit, stdout, stderr)
+	}
+	for _, want := range []string{
+		"[--no-auto-retry]", "--no-auto-retry is run-only", "a later recovery run needs the flag again",
+		"--max, default 20, 0 for all", "it never limits\nstarts, workers, attempts or retries",
+		"stop stops new admissions and drains workers already running",
+	} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("help does not explain %q:\n%s", want, stdout)
+		}
+	}
+}
+
 // Rule 7: a job reaped at its deadline is re-queued ONCE, marked, and a second reap fails
 // it. The remedy line names requeue with a smaller budget, which is a person's act.
+// An explicit one-attempt run keeps the killed attempt and its usage evidence, but
+// cannot create a same-text descendant. The normal rule-7 test below remains the
+// backwards-compatibility witness for automatic retries.
+func TestNoAutoRetryKeepsAKilledAttemptWithoutADescendant(t *testing.T) {
+	if testing.Short() {
+		t.Skip("this one waits for the worker deadline")
+	}
+	b := newBench(t)
+	id := b.add("a one-attempt worker that sleeps past its deadline\nFAKE-SLEEP 30\n", "--deadline", "3s")
+	exit, stdout, stderr := b.run("--no-auto-retry")
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	mustContain(t, "the run", stdout, "RUN POOL")
+	mustContain(t, "the run", stdout, "auto_retry=false")
+	mustContain(t, "the killed attempt", stdout, "RUN KILLED id="+id)
+	mustContain(t, "the killed attempt", stdout, "requeued=false reaped=1")
+	if n := strings.Count(stdout, "RUN KILLED id="); n != 1 {
+		t.Fatalf("one-attempt policy launched %d killed attempts:\n%s", n, stdout)
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "failed", id+".task")); err != nil {
+		t.Fatalf("the original task is not retained in failed/: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "usage", id+".tsv")); err != nil {
+		t.Fatalf("the original usage row is not retained: %v", err)
+	}
+	pending, err := os.ReadDir(filepath.Join(b.pool, "pending"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pending) != 0 {
+		t.Fatalf("one-attempt policy created a descendant: %v", mustReadDirNames(t, filepath.Join(b.pool, "pending")))
+	}
+}
+
+// The name no-auto-retry includes the dispatcher's true-429 child, not only the
+// deadline child. It must skip the backoff as well as the descendant.
+func TestNoAutoRetryKeepsA429AttemptWithoutADescendant(t *testing.T) {
+	b := newBench(t)
+	id := b.add("a one-attempt provider that is rate limited\nFAKE-429\nFAKE-USAGE 10 5 - - -\n")
+	exit, stdout, stderr := b.run("--no-auto-retry", "--backoff", "1")
+	if exit != 0 {
+		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
+	}
+	if n := strings.Count(stdout, "RUN DONE id="); n != 1 {
+		t.Fatalf("one-attempt policy launched %d 429 attempts:\n%s", n, stdout)
+	}
+	mustContain(t, "the 429 attempt", stdout, "RUN DONE id="+id)
+	mustContain(t, "the 429 attempt", stdout, "rc=429")
+	mustContain(t, "the 429 attempt", stdout, "auto_retry=false")
+	if _, err := os.Stat(filepath.Join(b.pool, "failed", id+".json")); err != nil {
+		t.Fatalf("the 429 sidecar is not retained: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "usage", id+".tsv")); err != nil {
+		t.Fatalf("the 429 usage row is not retained: %v", err)
+	}
+	if pending, err := os.ReadDir(filepath.Join(b.pool, "pending")); err != nil || len(pending) != 0 {
+		t.Fatalf("one-attempt 429 created a pending descendant: entries=%v err=%v", pending, err)
+	}
+}
+
 func TestAReapedJobRunsOnceMore(t *testing.T) {
 	if testing.Short() {
 		t.Skip("this one waits for two deadlines")

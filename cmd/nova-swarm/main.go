@@ -41,7 +41,7 @@ usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm add       --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
   nova-swarm batch     --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
-  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
+  nova-swarm run       --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
   nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> --worker <file> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand)
   nova-swarm status    --pool <dir> [--max <n>]
   nova-swarm stop      --pool <dir>
@@ -98,8 +98,16 @@ clamp: a caller who asked for 200 workers has a belief about throughput that a
 note at the top of a log does not correct.
 
 Every listing is a cap and a count: --max, default 20, 0 for all, one MORE line
-naming the remedy. The counts are the truth about the POOL, never about the
-output.
+naming the remedy. On run it limits only printed RUN task lines; it never limits
+starts, workers, attempts or retries. The counts are the truth about the POOL,
+never about the output.
+
+--no-auto-retry is run-only. It finalizes deadline and true-429 outcomes without
+creating an automatic descendant; manual requeue remains available. The setting
+is invocation-scoped, so a later recovery run needs the flag again.
+
+stop stops new admissions and drains workers already running; it does not kill or
+cancel them, including a retry that already started.
 
 example:
   nova-swarm template --name read-pr
@@ -442,6 +450,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 	launchTimeout := f.fs.Int("launch-timeout", 10, "")
 	usageInterval := f.fs.Int("usage-interval", 5, "")
 	backoff := f.fs.Int("backoff", int(swarm.DefaultBackoff/time.Second), "")
+	noAutoRetry := f.fs.Bool("no-auto-retry", false, "")
 	// THE WALL (docs/SPEC-SANDBOX.md). Every job runs inside nova-sandbox: --sandbox names
 	// the binary when it is not on PATH under its own name, and --no-sandbox is rule 11's
 	// ONE loud workaround, which a person types and no environment variable can produce.
@@ -539,6 +548,7 @@ func cmdRun(args []string, stdout, stderr io.Writer, now time.Time) int {
 		LaunchTimeout: time.Duration(*launchTimeout) * time.Second,
 		UsageInterval: time.Duration(*usageInterval) * time.Second,
 		Backoff:       time.Duration(*backoff) * time.Second,
+		NoAutoRetry:   *noAutoRetry,
 		Stdout:        stdout, Stderr: stderr, Now: func() time.Time { return time.Now().UTC() },
 		Supervisor: self, WorkerFile: *worker, Sandbox: wall, NoSandbox: *noSandbox,
 	})
