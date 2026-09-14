@@ -410,6 +410,23 @@ allowance and cash are separate, as specified in
 uses the same receipt fields, usage columns, attempt linkage and disjoint
 token basis, including partial or missing observations.
 
+A numeric harness `cost` field is not by itself a provider billing observation.
+Each cost value must retain its source and basis: provider-reported cash,
+harness estimate, dated rate-derived estimate, or declared local API-cost zero.
+Unknown basis stays unknown; do not promote an OpenCode step cost to observed
+provider USD merely because it is numeric. Preserve the raw harness value and
+receipt separately when its rate revision is unavailable, with that gap explicit.
+Do not combine estimates and observed cash into an unlabeled total, and do not
+rewrite historical receipts to invent provenance. The same rule applies to
+swarm, local and one-shot adapters.
+
+An adapter regression must supply synthetic provider responses containing token
+usage but no money field, while the harness emits a nonzero cost. Expected:
+native tokens survive, provider USD remains unknown, and the harness cost survives
+with its own provenance. Also exercise explicit provider zero, declared local
+zero, missing cost and unknown legacy provenance. Synthetic fixture usage is
+excluded from real spend and adoption measurements.
+
 Every source adapter reports coverage per field as one of `observed`, `missing`
 or `unsupported`: `observed` retains the value and protected evidence,
 `missing` records `-` because the source was expected but omitted it, and
