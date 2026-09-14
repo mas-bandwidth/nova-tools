@@ -3154,12 +3154,14 @@ contract. The rules are numbered on from rule 31.
     A plain `receipt` over a session that already has receipts first discovers
     every known receipt of the session, after taking `fold.lock`, from both the
     headers of `<32 hex>.ids` files and the rows' `session` fields. It
-    re-derives and validates **all** of them from their retained files before
-    selecting a write target. Thus a complete receipt whose stored rows differ
-    is still `reason=differs`, and a receipt known from rows whose `.ids` file
-    is absent, corrupt or unreadable is still `reason=missing`, without opening
-    the source. Only after that validation succeeds does it select among the
-    session's incomplete retained receipts.
+    re-derives **all** of them from their retained files before selecting a
+    write target, classifying equal rows, absent days and differing rows.
+    A receipt known from rows whose `.ids` file is absent, corrupt or
+    unreadable still refuses as `reason=missing` before any source open or
+    write. Differing rows are recorded, not overwritten: they do not prevent
+    completing the selected receipt's absent days under the existing rule
+    below. After this classification it selects among the session's incomplete
+    retained receipts. No unselected receipt is written.
     `--node`, `--stage` and `--who` select receipts whose three header values
     all equal the supplied values; complete receipts and incomplete receipts
     with another attribution are not selected. If several incomplete receipts
@@ -3169,8 +3171,11 @@ contract. The rules are numbered on from rule 31.
     that order; it neither opens the source nor changes a file. This keeps the
     diagnostic bounded and lets the caller repeat the existing verb with that
     receipt's attribution. If no incomplete receipt exists, the ordinary
-    `receipted`/`--resume` behavior below applies, but only after every known
-    receipt passed that source-free validation. The selected receipt is
+    `receipted`/`--resume` behavior below applies only when every known receipt
+    is equal; any recorded differing row instead gives `reason=differs` with
+    no write. With a selected receipt, its absent days may be completed even
+    when a differing row was found; the final result remains `reason=differs`
+    and every differing row is untouched. The selected receipt is
     re-derived from its own retained file and **the source has not been
     opened** (draft 5):
     - every day's rows present and equal to the re-derived ones → that receipt
@@ -3273,7 +3278,11 @@ contract. The rules are numbered on from rule 31.
     are each `reason=missing by=X`, nothing written, with the `USAGE NOTE`
     carrying the do-not-resume remedy (draft 4, the remedy draft 5); each case
     is repeated with all expected day rows already present, and remains
-    reachable as `differs` or `missing` before any source open. A session
+    reachable as `differs` or `missing` before any source open. An incomplete
+    selected receipt with one differing day and one absent day still writes
+    the absent day, leaves the differing day untouched and exits 1; the
+    all-receipt classification must not turn this into an early no-write exit.
+    A session
     carrying three receipts at three different node/stage joins, the second
     half written, is completed under the second id when the command supplies
     the second header's `node`, `stage` and `who`; the other two headers need
