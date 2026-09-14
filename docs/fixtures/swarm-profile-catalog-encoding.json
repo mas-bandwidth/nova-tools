@@ -2,22 +2,28 @@
   "status": "proposed encoding-only vectors; profile values intentionally do not pass admission schema",
   "vectors": [
     {
-      "name": "empty",
+      "canonical": "{\"profiles\":{},\"version\":1}",
       "input": "{ \"version\": 1, \"profiles\": {} }",
-      "canonical": "{\"profiles\":{},\"version\":1}",
+      "name": "empty",
       "sha256": "67d82c25cee9879aa641a9988622147511968e3956ca3407d73550757a539c86"
     },
     {
-      "name": "empty-reordered",
+      "canonical": "{\"profiles\":{},\"version\":1}",
       "input": "{\"profiles\":{},\"version\":1}",
-      "canonical": "{\"profiles\":{},\"version\":1}",
+      "name": "empty-reordered",
       "sha256": "67d82c25cee9879aa641a9988622147511968e3956ca3407d73550757a539c86"
     },
     {
-      "name": "utf16-order",
+      "canonical": "{\"profiles\":{\"𐀀\":{},\"\":{}},\"version\":1}",
       "input": "{\"version\":1,\"profiles\":{\"\\ue000\":{},\"\\ud800\\udc00\":{}}}",
-      "canonical": "{\"profiles\":{\"\ud800\udc00\":{},\"\ue000\":{}},\"version\":1}",
+      "name": "utf16-order",
       "sha256": "95ce28aab5589541c6d0b0ce393f4575e6d8b0a5c78dcca33baf2b56d101ed73"
+    },
+    {
+      "canonical": "{\"profiles\":{\"go-small\":{\"allowed_models\":[\"synthetic/go-small\"],\"env_var\":\"OPENCODE_GO_KEY\",\"model\":\"synthetic/go-small\",\"prompt\":{\"mode\":\"compact\",\"prefix\":\"Use the bounded task contract.\",\"tools\":[]},\"route\":{\"credentials\":{\"age_key\":\"/secure/example/worker.agekey\",\"gate\":\"/opt/example/bin/nova-secrets\",\"kind\":\"nova-secrets\",\"launcher\":\"/opt/example/bin/isolated-worker-launcher\",\"seat\":\"worker\",\"sops\":\"/opt/example/bin/sops\",\"store\":\"/secure/example/store\"},\"endpoint\":\"https://go.synthetic.invalid/v1\",\"provider\":\"synthetic-go\"},\"worker\":{\"deadline\":\"300s\",\"execution\":{\"adapter\":\"opencode-native/1\",\"adapter_revision\":\"1\",\"artifact\":{\"max_bytes\":\"1073741824\",\"max_files\":\"4096\",\"max_manifest_bytes\":\"16777216\"},\"env\":[{\"name\":\"NO_COLOR\",\"value\":\"1\"}],\"path\":[\"/usr/bin\",\"/bin\"]},\"harness\":\"/opt/example/bin/opencode\",\"harness_args\":[\"run\",\"--model\",\"{model}\",\"--\",\"{prompt}\"],\"input_limit_phrases\":[],\"name\":\"hosted-small\",\"read_roots\":[],\"usage\":\"opencode\",\"worker_dir\":\"/opt/example/worker\"}}},\"version\":1}",
+      "input": "{\"profiles\":{\"go-small\":{\"allowed_models\":[\"synthetic/go-small\"],\"env_var\":\"OPENCODE_GO_KEY\",\"model\":\"synthetic/go-small\",\"prompt\":{\"mode\":\"compact\",\"prefix\":\"Use the bounded task contract.\",\"tools\":[]},\"route\":{\"credentials\":{\"age_key\":\"/secure/example/worker.agekey\",\"gate\":\"/opt/example/bin/nova-secrets\",\"kind\":\"nova-secrets\",\"launcher\":\"/opt/example/bin/isolated-worker-launcher\",\"seat\":\"worker\",\"sops\":\"/opt/example/bin/sops\",\"store\":\"/secure/example/store\"},\"endpoint\":\"https://go.synthetic.invalid/v1\",\"provider\":\"synthetic-go\"},\"worker\":{\"deadline\":\"300s\",\"execution\":{\"adapter\":\"opencode-native/1\",\"adapter_revision\":\"1\",\"artifact\":{\"max_bytes\":\"1073741824\",\"max_files\":\"4096\",\"max_manifest_bytes\":\"16777216\"},\"env\":[{\"name\":\"NO_COLOR\",\"value\":\"1\"}],\"path\":[\"/usr/bin\",\"/bin\"]},\"harness\":\"/opt/example/bin/opencode\",\"harness_args\":[\"run\",\"--model\",\"{model}\",\"--\",\"{prompt}\"],\"input_limit_phrases\":[],\"name\":\"hosted-small\",\"read_roots\":[],\"usage\":\"opencode\",\"worker_dir\":\"/opt/example/worker\"}}},\"version\":1}",
+      "name": "profile-execution-admission",
+      "sha256": "f7baa8c7d9ae7c3ec60cc3d40604d83eee5775ad3b2a09447461710162ad40b7"
     }
   ]
 }
