@@ -440,9 +440,12 @@ Reconcile the record with that configured root and its reservation; an unrelated
 protected directory is not a substitute merely because it has a matching name.
 For another reservation of the same pending job, retain `context`,
 `evidence_root`, `sandbox` and `usage_every_ns` from its first protected launch
-record. Only the slot and nonce may change. Reject inconsistent prior records;
-changing these runtime settings requires an explicit new linked attempt, not
-overwriting the old record. Sandbox executable compatibility/integrity belongs
+record. Only the slot and nonce may change as reservation inputs; recompute
+`realization.env_hash` and the external `--launch-hash` from the new reservation
+and its canonical launch record. The job identity, protected control identities,
+and attempt/config/artifact/HARNESS bytes remain unchanged. Reject inconsistent
+prior records; changing the retained runtime settings requires an explicit new
+linked attempt, not overwriting the old record. Sandbox executable compatibility/integrity belongs
 to the same pending execution-binding gate as the harness and launcher.
 Derive slot/job/data-home paths from the validated context, job ID, and selected
 slot using the realization formulas; derive route, arguments, read roots, prompt
@@ -474,9 +477,15 @@ The [synthetic launch record](fixtures/swarm-launch-record.json) pins this
 encoding and argv boundary. Runtime tests must cover stale nonce, wrong slot,
 swapped manifest, changed record/hash, duplicate publication, invalid duration,
 path alias/worker-write access, unknown argv and both lifecycle contexts, with
-zero identify/provider calls on refusal. Keep the separate gate-observation
-tests: a launch-validation refusal after `SECRETS EXEC OK` is not proven
-pre-gate non-launch merely because its exit status is 125.
+zero identify/provider calls on refusal. Extend this launch-record witness with
+a new reservation of the same pending job: change the nonce, with and without a
+slot change, and require freshly recomputed `realization.env_hash` and external
+`--launch-hash` while job identity, protected control identities and
+attempt/config/artifact/HARNESS bytes stay unchanged. A stale realization hash
+refuses before identify; the new launch record never overwrites the prior one.
+Keep the separate gate-observation tests: a launch-validation refusal after
+`SECRETS EXEC OK` is not proven pre-gate non-launch merely because its exit
+status is 125.
 
 Before a worker starts, the coordinator writes the authoritative snapshot to
 the coordinator-owned protected path

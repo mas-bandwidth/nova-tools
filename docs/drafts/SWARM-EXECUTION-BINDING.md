@@ -2,14 +2,16 @@
 
 Status: discussion draft. This document proposes changes to
 [SPEC-SWARM-PROFILES](../SPEC-SWARM-PROFILES.md); it does not activate new fields
-in that spec, update encoding fixtures, or approve an implementation. The proposed
-copy and hash design has coordinator review, but no new independent friend approval.
+at runtime or approve an implementation. PR310 incorporated the parent tables
+and linked synthetic encoding fixtures; strict readers and runtime acceptance
+remain open. The proposed copy and hash design has coordinator review, but no new independent friend approval.
 Two bounded DeepSeek cold reads produced no reports and confer no approval.
 
 The [realization contract](SWARM-REALIZATION.md) and
 [artifact publication contract](SWARM-ARTIFACT-PUBLICATION.md) now supply concrete
 proposals for the first three decisions below, including synthetic vectors.
-They amend this discussion draft as stated; parent tables/readers remain unchanged.
+They amend this discussion draft as stated. PR310 incorporated the linked parent
+tables and fixtures; production readers remain unimplemented.
 
 The [native OpenCode source and launch proposal](SWARM-OPENCODE-NATIVE.md)
 specifies the stdin/argv boundary and records the remaining compatibility gate
@@ -19,9 +21,9 @@ config file alone does not establish isolated effective inputs.
 The [native model projection](SWARM-NATIVE-MODEL.md) now proposes the missing
 per-model SDK/API/runtime fields and number-free typed option encoding. Its
 selected `resolved` object enters the exact config preimage below; SDK semantic
-schemas, full parent fixture migration and generated native config remain gates.
+schemas, strict admission readers and generated native config remain gates.
 
-Pending amendment to `SPEC-SWARM-PROFILES.md`; it is neither a runtime claim nor a change to legacy `--worker`
+The parent specification incorporates the encoding amendment; this is neither a runtime claim nor a change to legacy `--worker`
 readers. New members apply only to a profiled `nova.swarm.attempt/1` after that reader is upgraded.
 `worker.usage` stays an accounting-source selector; it never selects an adapter or executable.
 ## Profile plan and admission artifact
@@ -159,11 +161,13 @@ keeps its protected roots; a linked retry job gets byte-identical protected copi
 under its new evidence identity. Changed inputs require explicit rework.
 
 ## Tables, fixtures, and decisive tests
-Update the profile worker table (current lines 77–100), protected-attempt body and `config` preimage table
-(263–313), protected artifact rules (315–359), gate argv (102–115), launch-record table and first-launch
-retention (377–435). Extend `swarm-profile-catalog-encoding.json`, `swarm-attempt-body.json`, and
-`swarm-launch-record.json` with the exact new shapes and their expected canonical preimages/hashes; retain
-old-reader fixtures unchanged.
+PR310 incorporated the linked parent tables and `swarm-profile-catalog-encoding.json`,
+`swarm-attempt-body.json`, and `swarm-launch-record.json`. Their checker now verifies
+the eight-member config preimage, single attempt execution owner, separate generated-config
+hash, protected launch targets, selected catalog projection, and manifest/realization
+digests from the committed fixtures. This closes that encoding/preimage migration;
+retain old-reader fixtures unchanged. Old-reader compatibility and the runtime
+tests below remain required.
 
 1. Decoders reject missing, unknown, duplicate, malformed, and legacy-unrecognized execution/control members while legacy profiles still decode.
 2. Go and Zen fixtures yield distinct route configs with the same adapter grammar; no credential value appears in retained bytes.
@@ -197,7 +201,7 @@ source-of-truth review gates. This proposal does not claim those compatible or i
 - Specify exact generated OpenCode configuration bytes, allowed static variable
   names and supported native adapter compatibility. A named revision plus a
   callback promise alone does not finish that adapter contract.
-- Amend the parent tables and synthetic fixtures together, with independently
-  recomputed canonical preimages/hashes, then obtain explicit friend dispositions
-  on that revision. Do not merge this discussion draft as an implementation-ready
-  contract by leaving these decisions implicit.
+- PR310 incorporated the parent tables and linked synthetic fixtures with
+  independently recomputed canonical preimages/hashes. Obtain explicit friend
+  dispositions on the incorporated revision. Do not merge this discussion draft
+  as an implementation-ready contract by leaving these decisions implicit.
