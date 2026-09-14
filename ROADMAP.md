@@ -7,7 +7,7 @@ Help AI friends coordinate work without repeatedly rebuilding the plan in their 
 **Planning baseline: 10 epics, 52 features, 171 inventoried items (166 acceptance items and 5 open questions).**
 **Verified implementation: 0%.** This is proposed scope for review, not a delivery-date or effort estimate.
 The current main branch has no production `nova-work` engine or CLI; existing prototypes and written specs do not count as verified production features.
-Current scope after the recorded moves and discoveries: 57 product features and 186 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
+Current scope after the recorded moves and discoveries: 57 product features and 187 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
 
 The current work register is below; nova-work remains inventory/specification scope until those changes are adopted.
 
@@ -17,7 +17,7 @@ Completion is verified features divided by applicable features; it is not averag
 The hierarchy is **epic → feature → sub-feature/acceptance item**, with no language axis.
 [Recursive work data](docs/roadmaps/nova-work.sexp) retains stable IDs, dependencies and source references.
 This baseline format is planning data, not a claim that nova-work import/export already exists.
-Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. A source-section label below is resolved through that file/revision key.
+Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation) and proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound). A source-section label below is resolved through its named file/revision key.
 
 | Epic | Features | Verified |
 |---|:---:|:---:|
@@ -38,7 +38,7 @@ Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WOR
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | 52 | 6 | 0 | 0 | 1 | 57 |
 
-Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
+Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation acceptance discovery belongs to E08-F02 without creating a feature. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
 Do not count removal as completion. These counts track inventory movement, not estimated engineering effort.
 
 ## Open questions
@@ -469,9 +469,9 @@ Prerequisites: E06-F01, E03-F04.
 
 - [ ] Partition closure events by their recorded UTC day in immutable bounded segments
 - [ ] Publish manifests, closed rows and dedup/closed index roots in bounded pages
-- [ ] Maintain rolling 24-hour default window with at most two day partitions
+- [ ] Maintain rolling 24-hour default window with at most two day partitions; pending SPEC-WORK.md@a0cfcf5 correction adds noon/midnight/over-limit witnesses while explicit historical queries remain bounded
 
-Source sections: The execution model — retention; The data; Old history.
+Source sections: The execution model — retention; The data; Old history; Resident-window correction (proposed SPEC-WORK.md@a0cfcf5).
 
 **E06-F03 — Clip, commit and recovery replay**
 
@@ -622,8 +622,9 @@ Prerequisites: E08-F01, E02-F04.
 - [ ] Support bounded read bundles at one captured revision and lease-time watermark, with stable paginated snapshot identity
 - [ ] Support independent ordered batches with per-entry IDs/outcomes and explicit stop/continue semantics, without implying rollback
 - [ ] Support atomic mutation batches with all-or-none validated O/W, counter and reverse-index changes; reject oversized batches without silently splitting
+- [ ] pipeline-replies-are-correlated: correlate out-of-order or fragmented ordinary responses by request ID, retain a distinct durable operation ID, name independent not-attempted and atomic validation entry outcomes, and close on unknown, duplicate, absent or undecodable IDs; same-ID recovery uses E03-F01 durable idempotency
 
-Source sections: The verbs; Async operations; Retry/protocol; Batch-friendly transport and explicit atomicity.
+Source sections: The verbs; Async operations; Retry/protocol; Batch-friendly transport and explicit atomicity; Response correlation (SPEC-WORK.md@7db3b95).
 
 **E08-F03 — Friends, CONFIG and ACTIVE indexes**
 

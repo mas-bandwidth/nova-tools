@@ -1,18 +1,20 @@
 ; Proposed recursive roadmap data; not an implemented nova-work interchange schema.
 (  :schema "nova-work-roadmap-baseline-1"
-  :scope-revision 3
+  :scope-revision 4
   :inventory-status "proposed baseline; awaiting friend review"
   :sources (    :main-spec "SPEC-WORK.md@f36b85850620504a74e1229043c7cee2c14ea594"
     :companion "SPEC-WORK-PILOT.md@6e3413f"
     :companion-eager-w "SPEC-WORK-PILOT.md@4e800fb"
     :companion-batch-transport "SPEC-WORK-PILOT.md@bc4a4a4"
     :validation "SPEC-WORK-VALIDATION.md@6e3413f"
+    :response-correlation "SPEC-WORK.md@7db3b95cd4c16b1eb34b1c77c0fc224755cc7a64"
+    :resident-window-bound-proposed "SPEC-WORK.md@a0cfcf580d3140ce6c30d51b3a7f884c9b2afcd6"
     :production-inventory "ec01647")
   :baseline-features 52
   :baseline-items 171
   :discovered-features 6
   :current-features 57
-  :current-acceptance-items 186
+  :current-acceptance-items 187
   :events (    (      :kind "baseline"
       :feature-count 52
       :reason "Full initial nova-work source survey; implementation not started")
@@ -21,7 +23,12 @@
       :reason "PR 269 review found six source-backed inventory gaps; implementation not started")
     (      :kind "remove"
       :feature-count 1
-      :reason "E10-F06 moved to the Now register outside the product feature denominator"))
+      :reason "E10-F06 moved to the Now register outside the product feature denominator")
+    (      :kind "acceptance-discovery"
+      :feature "E08-F02"
+      :acceptance "pipeline-replies-are-correlated"
+      :item-count 1
+      :reason "Draft 28 response correlation requires out-of-order response attribution beyond the existing transport bullets"))
   :open-questions (    "Common Lisp runtime packaging and supported platforms must be pinned before release"
     "Category taxonomy and roadmap completion policy beyond all-required-features remain open"
     "Exact verb and wire protocol spelling must be finalized in one schema before lock"
@@ -378,12 +385,13 @@
           :title "Bounded C partitions and historical indexes"
           :subfeatures (            "Partition closure events by their recorded UTC day in immutable bounded segments"
             "Publish manifests, closed rows and dedup/closed index roots in bounded pages"
-            "Maintain rolling 24-hour default window with at most two day partitions")
+            "Maintain rolling 24-hour default window with at most two day partitions; pending SPEC-WORK.md@a0cfcf5 correction adds noon/midnight/over-limit witnesses while explicit historical queries remain bounded")
           :depends-on (            "E06-F01"
             "E03-F04")
           :source-sections (            "The execution model — retention"
             "The data"
-            "Old history")
+            "Old history"
+            "Resident-window correction (proposed SPEC-WORK.md@a0cfcf5)")
           :state "missing"
           :evidence ())
         (          :id "E06-F03"
@@ -511,13 +519,15 @@
             "Use bounded typed JSON over a local Unix socket, exact integer/time encoding and durable asynchronous operation IDs; reconcile cross-platform endpoint requirements before lock"
             "Support bounded read bundles at one captured revision and lease-time watermark, with stable paginated snapshot identity"
             "Support independent ordered batches with per-entry IDs/outcomes and explicit stop/continue semantics, without implying rollback"
-            "Support atomic mutation batches with all-or-none validated O/W, counter and reverse-index changes; reject oversized batches without silently splitting")
+            "Support atomic mutation batches with all-or-none validated O/W, counter and reverse-index changes; reject oversized batches without silently splitting"
+            "pipeline-replies-are-correlated: correlate out-of-order or fragmented ordinary responses by request ID, retain a distinct durable operation ID, name independent not-attempted and atomic validation entry outcomes, and close on unknown, duplicate, absent or undecodable IDs; same-ID recovery uses E03-F01 durable idempotency")
           :depends-on (            "E08-F01"
             "E02-F04")
           :source-sections (            "The verbs"
             "Async operations"
             "Retry/protocol"
-            "Batch-friendly transport and explicit atomicity")
+            "Batch-friendly transport and explicit atomicity"
+            "Response correlation (SPEC-WORK.md@7db3b95)")
           :state "missing"
           :evidence ())
         (          :id "E08-F03"
