@@ -164,7 +164,7 @@ func TestAnswerDispositionIsClosed(t *testing.T) {
 }
 
 func TestPolicyCodecDoesNotDecideListMembership(t *testing.T) {
-	item, err := PolicyItem("951", "glenn", []string{"emma", "emma"}, []string{"emma"}, "", "verbatim", testHead, testSubmission)
+	item, err := PolicyItem("951", "glenn", []string{"emma", "emma"}, []string{"emma"}, "2026-09-15T00:00:00Z", "verbatim", testHead, testSubmission)
 	if err != nil {
 		t.Fatalf("PolicyItem rejected list membership reserved for policy/fold layers: %v", err)
 	}
@@ -172,13 +172,13 @@ func TestPolicyCodecDoesNotDecideListMembership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got.Readers, []string{"emma", "emma"}) || !reflect.DeepEqual(got.Reserved, []string{"emma"}) || got.Deadline != "" || got.Reason != "verbatim" {
+	if !reflect.DeepEqual(got.Readers, []string{"emma", "emma"}) || !reflect.DeepEqual(got.Reserved, []string{"emma"}) || got.Deadline != "2026-09-15T00:00:00Z" || got.Reason != "verbatim" {
 		t.Fatalf("DecodePolicy changed policy data: %#v", got)
 	}
 }
 
 func TestPolicyItemWritesNonNullEmptyArrays(t *testing.T) {
-	item, err := PolicyItem("951", "glenn", nil, nil, "", "", testHead, testSubmission)
+	item, err := PolicyItem("951", "glenn", nil, nil, "2026-09-15T00:00:00Z", "", testHead, testSubmission)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,6 +187,29 @@ func TestPolicyItemWritesNonNullEmptyArrays(t *testing.T) {
 	}
 	if _, err := DecodePolicy(item.Body); err != nil {
 		t.Fatalf("DecodePolicy rejected its own empty lists: %v", err)
+	}
+}
+
+func TestPolicyDeadlineIsExactUTCStamp(t *testing.T) {
+	for _, deadline := range []string{"", "tomorrow", "2026-09-15T00:00:00+00:00", "2026-09-15T00:00:00.000Z"} {
+		t.Run(deadline, func(t *testing.T) {
+			_, err := PolicyItem("951", "glenn", nil, nil, deadline, "", testHead, testSubmission)
+			if err == nil || !strings.Contains(err.Error(), "deadline") || !strings.Contains(err.Error(), "UTC stamp") {
+				t.Fatalf("PolicyItem deadline %q error = %v", deadline, err)
+			}
+		})
+	}
+	item, err := PolicyItem("951", "glenn", nil, nil, "2026-09-15T00:00:00Z", "", testHead, testSubmission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecodePolicy(item.Body)
+	if err != nil || got.Deadline != "2026-09-15T00:00:00Z" {
+		t.Fatalf("DecodePolicy valid deadline = %#v, %v", got, err)
+	}
+	invalid := replaceOnce(item.Body, `"deadline": "2026-09-15T00:00:00Z"`, `"deadline": "tomorrow"`)
+	if _, err := DecodePolicy(invalid); err == nil || !strings.Contains(err.Error(), "deadline") || !strings.Contains(err.Error(), "UTC stamp") {
+		t.Fatalf("DecodePolicy malformed deadline error = %v", err)
 	}
 }
 

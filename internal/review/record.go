@@ -380,6 +380,9 @@ func validPolicy(rec Policy) error {
 			}
 		}
 	}
+	if err := validUTCStamp("policy record deadline", rec.Deadline); err != nil {
+		return err
+	}
 	return validIdentity(rec.Entry, rec.Who, rec.Head, rec.At, rec.File, "policy")
 }
 
@@ -404,9 +407,8 @@ func validIdentity(entry, who, head, at, file, kind string) error {
 	if !merge.IsSHA(head) {
 		return fmt.Errorf("%s record head %q is not a full lower-case sha", kind, head)
 	}
-	parsed, err := time.Parse(merge.Stamp, at)
-	if err != nil || parsed.Format(merge.Stamp) != at {
-		return fmt.Errorf("%s record at %q is not a UTC stamp", kind, at)
+	if err := validUTCStamp(kind+" record at", at); err != nil {
+		return err
 	}
 	parts := strings.Split(file, "/")
 	if len(parts) != 3 || parts[0] != reviewsDir || parts[1] != entryDir {
@@ -423,6 +425,14 @@ func validIdentity(entry, who, head, at, file, kind string) error {
 	}
 	if want := recordFile(kind, entry, who, head, merge.Submission{At: at, Rand: rand}); file != want {
 		return fmt.Errorf("%s record file %q does not match its fields", kind, file)
+	}
+	return nil
+}
+
+func validUTCStamp(name, value string) error {
+	parsed, err := time.Parse(merge.Stamp, value)
+	if err != nil || parsed.Format(merge.Stamp) != value {
+		return fmt.Errorf("%s %q is not a UTC stamp", name, value)
 	}
 	return nil
 }
@@ -509,13 +519,6 @@ func hexRune(raw []byte) (rune, bool) {
 		}
 	}
 	return value, true
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }
 
 func encode(file string, rec any) (merge.Item, error) {
