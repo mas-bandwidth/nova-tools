@@ -724,6 +724,33 @@ is compared against; it is never the path `query --ask size` takes."
     "expected=value-returned"
   (check-equal '(:X 1) (read-restricted "(:X 1) ; comment") "comment suffix accepted"))
 
+(deftest "reader-eof-sentinel-is-not-payload" "docs/SPEC-WORK.md:678-681"
+    "expected=trailing-keyword-refused;single-keyword=value-returned"
+  (check-equal :END-OF-INPUT (read-restricted ":end-of-input")
+               "valid keyword colliding with the internal EOF name")
+  (handler-case
+      (progn (read-restricted "(:x 1) :end-of-input")
+             (fail "a forged EOF sentinel was accepted as trailing whitespace"))
+    (restricted-data-violation (c)
+      (ok (search "trailing bytes" (princ-to-string c))
+          "forged EOF sentinel refused with the wrong diagnostic: ~A" c))))
+
+(defun refusal-byte (condition)
+  "Extract the diagnostic byte as an integer, so byte 1 cannot match byte 10."
+  (let* ((message (princ-to-string condition))
+         (marker (search "byte " message)))
+    (and marker
+         (parse-integer message :start (+ marker 5) :junk-allowed t))))
+
+(deftest "unterminated-string-start-byte" "docs/SPEC-WORK.md:678-681"
+    "expected=opening-quote-utf8-byte-9"
+  (handler-case
+      (progn (read-restricted "(:x \"é\" \"unterminated")
+             (fail "unterminated string was read instead of refused"))
+    (restricted-data-violation (c)
+      (check-equal 9 (refusal-byte c)
+                   "unterminated string opening-quote byte"))))
+
 ;;; ------------------------------------------------------------------
 ;; 13. forbidden payload tokens refuse before interning
 ;;     SPEC-WORK.md:678-681; validator rule 12 reader payload
@@ -736,10 +763,8 @@ is compared against; it is never the path `query --ask size` takes."
                  (progn (read-restricted text)
                         (fail "~S was read instead of refused" text))
                (restricted-data-violation (c)
-                 (let ((message (princ-to-string c))
-                       (expected (format nil "byte ~D" byte)))
-                   (ok (search expected message)
-                       "~S refused without token-start ~A: ~A" text expected message))))))
+                 (check-equal byte (refusal-byte c)
+                              (format nil "~S forbidden token-start byte" text))))))
     ;; The byte is the forbidden token's first byte, including after a
     ;; multi-byte character earlier in the form.
     (dolist (case '(("foo" 0)
@@ -769,6 +794,8 @@ is compared against; it is never the path `query --ask size` takes."
     (check-equal :FOO (read-restricted ":foo") "a keyword was refused")
     (check-equal -12 (read-restricted "-12") "a signed integer was refused")
     (check-equal 12 (read-restricted "+12") "a signed integer was refused")
+    (check-equal 1 (read-restricted "1.") "a trailing-dot integer was refused")
+    (check-equal -1 (read-restricted "-1.") "a signed trailing-dot integer was refused")
     (check-equal '(:X "foo cl:car 1/2 1.0")
                  (read-restricted "(:x \"foo cl:car 1/2 1.0\")")
                  "forbidden-looking string text was refused")
