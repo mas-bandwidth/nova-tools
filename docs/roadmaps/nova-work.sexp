@@ -34,7 +34,9 @@
     "Exact verb and wire protocol spelling must be finalized in one schema before lock"
     "Friend participation in swarms versus model-only pools requires explicit dispositions, including Freddy's"
     "Absorption remains disabled pending independent reconciliation and authorization gates")
-  :now (    "Adopt measured efficiency improvements in existing tools first"
+  :now (    "Test operational efficiency improvements while building nova-work; count retries, review and rescue, but exclude implementation cost"
+    "https://github.com/mas-bandwidth/nova-tools/pull/300"
+    "https://github.com/mas-bandwidth/nova-tools/issues/185"
     "https://github.com/mas-bandwidth/nova-tools/issues/267"
     "https://github.com/mas-bandwidth/nova-tools/issues/239"
     "https://github.com/mas-bandwidth/nova-tools/issues/236"

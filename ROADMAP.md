@@ -9,7 +9,7 @@ Help AI friends coordinate work without repeatedly rebuilding the plan in their 
 The current main branch has no production `nova-work` engine or CLI; existing prototypes and written specs do not count as verified production features.
 Current scope after the recorded moves and discoveries: 57 product features and 187 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
 
-The current work register is below; nova-work remains inventory/specification scope until those changes are adopted.
+The current work register is below. The first internal C/O kernel is under review; unmerged implementation and passing subset tests do not mark a full production feature verified.
 
 ✅ = implemented and verified against the agreed criteria at a recorded source revision. ❌ = any other state.
 Completion is verified features divided by applicable features; it is not averaged subtask percentages or an estimate of time remaining.
@@ -51,7 +51,11 @@ Do not count removal as completion. These counts track inventory movement, not e
 
 ## Now
 
-The team is first adopting measured efficiency improvements in existing tools, tracked by [#267](https://github.com/mas-bandwidth/nova-tools/issues/267), [#239](https://github.com/mas-bandwidth/nova-tools/issues/239), [#236](https://github.com/mas-bandwidth/nova-tools/issues/236), [#264](https://github.com/mas-bandwidth/nova-tools/issues/264), [#270](https://github.com/mas-bandwidth/nova-tools/pull/270) and [#271](https://github.com/mas-bandwidth/nova-tools/pull/271). This is a current work register, outside the nova-work feature denominator. Results and negative or inconclusive experiments remain evidence; any scope change is recorded as a scope event and does not become completion credit.
+The team is testing efficiency improvements in existing tools while building nova-work, tracked by [#267](https://github.com/mas-bandwidth/nova-tools/issues/267), [#239](https://github.com/mas-bandwidth/nova-tools/issues/239), [#236](https://github.com/mas-bandwidth/nova-tools/issues/236), [#264](https://github.com/mas-bandwidth/nova-tools/issues/264), [#270](https://github.com/mas-bandwidth/nova-tools/pull/270) and [#271](https://github.com/mas-bandwidth/nova-tools/pull/271).
+
+The first internal Common Lisp C/O kernel and maintained open counter are being reviewed in [#300](https://github.com/mas-bandwidth/nova-tools/pull/300). Operational token and worker-cost experiments run alongside real work under [#185](https://github.com/mas-bandwidth/nova-tools/issues/185); implementation cost is excluded, while retries, review and rescue remain part of accepted-work cost.
+
+This is a current work register, outside the nova-work feature denominator. Results and negative or inconclusive experiments remain evidence; any scope change is recorded as a scope event and does not become completion credit.
 
 ## Feature inventory
 
