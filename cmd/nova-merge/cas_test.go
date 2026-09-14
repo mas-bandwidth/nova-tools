@@ -1,9 +1,7 @@
 package main
 
 import (
-	"crypto/sha256"
 	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -30,7 +28,7 @@ func outboxBytes(lane string) map[string][]byte {
 		return out
 	}
 	for _, e := range entries {
-		if e.IsDir() || strings.HasSuffix(e.Name(), ".tmp") || strings.HasSuffix(e.Name(), "-parts.json") {
+		if e.IsDir() || strings.HasSuffix(e.Name(), ".tmp") {
 			continue
 		}
 		body, err := os.ReadFile(filepath.Join(lane, merge.OutboxDir, e.Name()))
@@ -350,8 +348,7 @@ func TestAFlushRemovesOnlyWhatItDelivered(t *testing.T) {
 
 	// A second verb's record, written into the outbox in the window the first verb's
 	// flush is pushing through: the hand runs once, immediately before that push.
-	waiting := filepath.Join(l.lane, merge.OutboxDir, "20260911T131500Z-zzzzzz-read.json")
-	manifest := filepath.Join(l.lane, merge.OutboxDir, "20260911T131500Z-zzzzzz-parts.json")
+	waiting := filepath.Join(l.lane, merge.OutboxDir, "20260911T131500Z-zzzzzz.json")
 	body := []byte(`{"pr":951,"who":"stella","head":"` + oid + `","verdict":"approve","at":"2026-09-11T13:15:00Z","run":"zzzzzz","file":"reads/951/stella-` + oid[:12] + `-20260911T131500Z-zzzzzz.json"}` + "\n")
 	fired := false
 	l.runner = &hookRunner{inner: merge.Exec{}, before: func(dir string, args []string) {
@@ -364,12 +361,6 @@ func TestAFlushRemovesOnlyWhatItDelivered(t *testing.T) {
 			return
 		}
 		if err := os.WriteFile(waiting, body, 0o644); err != nil {
-			t.Error(err)
-			return
-		}
-		digest := fmt.Sprintf("%x", sha256.Sum256(body))
-		manifestBody := []byte(`{"version":1,"parts":[{"part":"read","file":"reads/951/stella-` + oid[:12] + `-20260911T131500Z-zzzzzz.json","digest":"` + digest + `"}]}`)
-		if err := os.WriteFile(manifest, manifestBody, 0o644); err != nil {
 			t.Error(err)
 		}
 	}}
@@ -397,7 +388,7 @@ func TestAFlushRemovesOnlyWhatItDelivered(t *testing.T) {
 	// Emma's own item is gone: delivered is delivered, and nothing it did not carry
 	// stayed behind either.
 	for _, name := range outboxNames(t, l.lane) {
-		if name == filepath.Base(waiting) || name == filepath.Base(manifest) {
+		if name == filepath.Base(waiting) {
 			continue
 		}
 		t.Errorf("the outbox still holds %s, which this flush delivered", name)

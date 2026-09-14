@@ -2,7 +2,6 @@ package merge
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -98,13 +97,6 @@ func GateFile(entry, head, base string, s Submission) string {
 	return path.Join(GatesDir, entry, Short(head)+"-"+Short(base)+"-"+s.ID()+".json")
 }
 
-// PolicyFile is an immutable review-layer policy record. Policies never enter
-// nova-merge's read fold, so changing a review policy cannot manufacture a
-// merge approval.
-func PolicyFile(entry, who, head string, s Submission) string {
-	return path.Join(ReviewsDir, entry, "policy-"+safeName(who)+"-"+Short(head)+"-"+s.ID()+".json")
-}
-
 // SummaryFile is the gate summary, copied beside its record under the same name.
 func SummaryFile(gateFile string) string {
 	return strings.TrimSuffix(gateFile, ".json") + ".summary"
@@ -136,10 +128,6 @@ func EntryFromDir(dir string) string { return strings.ReplaceAll(dir, "%2F", "/"
 
 // Item is one thing on its way to the branch: the bytes, and where they go.
 type Item struct {
-	// Part is the closed vocabulary used by the durable outbox. It says where the
-	// record may be restored; callers cannot smuggle an arbitrary path through a
-	// manifest merely by putting it in File.
-	Part string
 	Path string // relative to the lane, the path in the branch
 	Body []byte
 }
@@ -176,19 +164,8 @@ func (r *Records) writeOutbox(sub Submission, items []Item) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	if len(items) == 0 {
-		return errors.New("a submission has no parts")
-	}
-	seen := make(map[string]bool, len(items))
 	for _, it := range items {
-		if err := validPart(it.Part, it.Path); err != nil {
-			return err
-		}
-		if seen[it.Part] {
-			return fmt.Errorf("a submission has two %q parts", it.Part)
-		}
-		seen[it.Part] = true
-		name := sub.ID() + "-" + it.Part + ".json"
+		name := sub.ID() + filepath.Ext(it.Path)
 		tmp := filepath.Join(dir, name+".tmp")
 		if err := writeWhole(tmp, it.Body, 0o644); err != nil {
 			return err
@@ -196,59 +173,6 @@ func (r *Records) writeOutbox(sub Submission, items []Item) error {
 		if err := os.Rename(tmp, filepath.Join(dir, name)); err != nil {
 			return err
 		}
-	}
-	// The manifest is last: a crash while a part is staged leaves an orphan that
-	// flush discards, never a half submission in the lane branch.
-	parts := make([]outboxPart, 0, len(items))
-	for _, it := range items {
-		parts = append(parts, outboxPart{Part: it.Part, File: it.Path, Digest: digest(it.Body)})
-	}
-	body, err := json.Marshal(struct {
-		Version int          `json:"version"`
-		Parts   []outboxPart `json:"parts"`
-	}{Version: 1, Parts: parts})
-	if err != nil {
-		return err
-	}
-	body = append(body, '\n')
-	name := sub.ID() + "-parts.json"
-	tmp := filepath.Join(dir, name+".tmp")
-	if err := writeWhole(tmp, body, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, filepath.Join(dir, name))
-}
-
-type outboxPart struct {
-	Part   string `json:"part"`
-	File   string `json:"file"`
-	Digest string `json:"digest"`
-}
-
-func digest(body []byte) string {
-	// A manifest is only an integrity witness, not an identity claim. Hex keeps
-	// the record portable and makes the comparison exact.
-	return fmt.Sprintf("%x", sha256.Sum256(body))
-}
-
-func validPart(part, file string) error {
-	if part != "read" && part != "gate" && part != "gate-summary" && part != "review" && part != "answer" && part != "policy" {
-		return fmt.Errorf("outbox part %q is not a known submission item", part)
-	}
-	if file == "" || path.IsAbs(file) || strings.Contains(file, "..") {
-		return fmt.Errorf("a %s part has unsafe destination %q", part, file)
-	}
-	entry := ""
-	switch part {
-	case "read":
-		entry = ReadsDir + "/"
-	case "gate", "gate-summary":
-		entry = GatesDir + "/"
-	default:
-		entry = "reviews/"
-	}
-	if !strings.HasPrefix(file, entry) {
-		return fmt.Errorf("a %s part must stay under %s, got %q", part, entry, file)
 	}
 	return nil
 }
@@ -308,86 +232,36 @@ func (r *Records) outbox() ([]Item, []string, error) {
 		}
 	}
 	sort.Strings(names)
-	byName := make(map[string]struct{}, len(names))
-	for _, name := range names {
-		byName[name] = struct{}{}
-	}
 	var items []Item
+	// THE OUTBOX FILE NAMES THIS READ CONSUMED, and only these: what is delivered is
+	// removed by name afterwards, so an item another verb wrote into the outbox while
+	// this one was pushing is still there to be delivered by its own flush.
 	var taken []string
-	for _, manifestName := range names {
-		if !strings.HasSuffix(manifestName, "-parts.json") {
-			continue
-		}
-		manifestBody, err := os.ReadFile(filepath.Join(r.Lane, OutboxDir, manifestName))
+	for _, name := range names {
+		body, err := os.ReadFile(filepath.Join(r.Lane, OutboxDir, name))
 		if err != nil {
 			return nil, nil, err
 		}
-		var manifest struct {
-			Version int          `json:"version"`
-			Parts   []outboxPart `json:"parts"`
-		}
-		if err := json.Unmarshal(manifestBody, &manifest); err != nil || manifest.Version != 1 || len(manifest.Parts) == 0 {
-			return nil, nil, fmt.Errorf("the outbox manifest %s is invalid", manifestName)
-		}
-		id := strings.TrimSuffix(manifestName, "-parts.json")
-		seen := map[string]bool{}
-		for _, p := range manifest.Parts {
-			if err := validPart(p.Part, p.File); err != nil {
-				return nil, nil, fmt.Errorf("the outbox manifest %s: %w", manifestName, err)
-			}
-			if seen[p.Part] {
-				return nil, nil, fmt.Errorf("the outbox manifest %s names %s twice", manifestName, p.Part)
-			}
-			seen[p.Part] = true
-			partName := id + "-" + p.Part + ".json"
-			if _, ok := byName[partName]; !ok {
-				return nil, nil, fmt.Errorf("the outbox manifest %s is missing %s", manifestName, partName)
-			}
-			body, err := os.ReadFile(filepath.Join(r.Lane, OutboxDir, partName))
-			if err != nil {
-				return nil, nil, err
-			}
-			if digest(body) != p.Digest {
-				return nil, nil, fmt.Errorf("the outbox part %s does not match manifest %s", partName, manifestName)
-			}
-			dest := p.File
-			if p.Part != "gate-summary" {
-				var err error
-				dest, err = destinationOf(body)
-				if err != nil || dest != p.File {
-					return nil, nil, fmt.Errorf("the outbox part %s does not name its manifest destination", partName)
-				}
-			}
-			items = append(items, Item{Part: p.Part, Path: p.File, Body: body})
-			taken = append(taken, partName)
-		}
-		taken = append(taken, manifestName)
-	}
-	// A staged part without its manifest was written by us but can never be a
-	// complete submission. Remove only that known orphan; an unknown name blocks.
-	for _, name := range names {
-		if strings.HasSuffix(name, "-parts.json") {
+		if strings.HasSuffix(name, ".summary") {
+			// A summary is carried beside its record below, under the record's own
+			// name; on its own it names no path in the branch.
 			continue
 		}
-		if _, used := itemNameIn(taken, name); used {
-			continue
+		dest, err := destinationOf(body)
+		if err != nil {
+			return nil, nil, fmt.Errorf("the outbox item %s does not name the path it belongs at: %w", name, err)
 		}
-		if strings.HasSuffix(name, ".json") && strings.Count(strings.TrimSuffix(name, ".json"), "-") >= 3 {
-			_ = os.Remove(filepath.Join(r.Lane, OutboxDir, name))
-			continue
+		items = append(items, Item{Path: dest, Body: body})
+		taken = append(taken, name)
+		// Its summary, if this submission wrote one, goes beside it under the same name.
+		id := strings.TrimSuffix(name, ".json")
+		summary := id + ".summary"
+		if s, err := os.ReadFile(filepath.Join(r.Lane, OutboxDir, summary)); err == nil {
+			items = append(items, Item{Path: SummaryFile(dest), Body: s})
+			taken = append(taken, summary)
 		}
-		return nil, nil, fmt.Errorf("the outbox item %s is not a known manifested part", name)
 	}
 	return items, taken, nil
-}
-
-func itemNameIn(names []string, name string) (int, bool) {
-	for i, n := range names {
-		if n == name {
-			return i, true
-		}
-	}
-	return 0, false
 }
 
 // destinationOf reads the `file` field every record carries.
