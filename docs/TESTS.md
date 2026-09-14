@@ -233,6 +233,25 @@ WAKE at=2026-09-11T18:56:43Z as=- max=5s interval=5s on-deadline=report sources=
 WAKE QUIET after=5s polls=1 default=report sources-failing=0: deadline, default taken
 ```
 
+## nova-review
+
+### First run
+
+`nova-review` builds an artifact from a lane already initialized by
+`nova-merge`; it has no state-creating quickstart. Its first safe command only
+identifies the binary:
+
+```
+$ nova-review version
+nova-review devel
+```
+
+A packet needs the lane, one selector, a reader and a new relative output
+path. It refuses an existing output rather than replacing a packet, and it
+refuses a supplied head that differs from the entry's current head. The packet
+records the exact range and either includes its selected diff or says that the
+byte budget omitted it with the command that prints it.
+
 ## nova-merge
 
 Fixture: a bare git repository and a fake host, both made in `t.TempDir()` by
