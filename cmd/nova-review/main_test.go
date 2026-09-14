@@ -100,6 +100,98 @@ func TestPacketRefusesStaleHeadAndOverwrite(t *testing.T) {
 	}
 }
 
+func TestWriteExclusiveCannotReplaceExistingOrSymlinkDestination(t *testing.T) {
+	dir := t.TempDir()
+	dest := filepath.Join(dir, "packet.md")
+	if err := os.WriteFile(dest, []byte("first publisher"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeExclusive(dest, []byte("second publisher")); err == nil {
+		t.Fatal("exclusive publication replaced an existing packet")
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || string(got) != "first publisher" {
+		t.Fatalf("existing packet changed: %q err=%v", got, err)
+	}
+	target := filepath.Join(dir, "target.md")
+	if err := os.WriteFile(target, []byte("symlink target"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(dir, "symlink.md")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeExclusive(link, []byte("must not follow")); err == nil {
+		t.Fatal("exclusive publication followed an existing destination symlink")
+	}
+	got, err = os.ReadFile(target)
+	if err != nil || string(got) != "symlink target" {
+		t.Fatalf("symlink target changed: %q err=%v", got, err)
+	}
+}
+
+func TestWriteExclusiveConcurrentPublishersLeaveOneImmutablePacket(t *testing.T) {
+	dest := filepath.Join(t.TempDir(), "packet.md")
+	bodies := [][]byte{[]byte("publisher A"), []byte("publisher B")}
+	start := make(chan struct{})
+	errs := make(chan error, len(bodies))
+	for _, body := range bodies {
+		body := body
+		go func() {
+			<-start
+			errs <- writeExclusive(dest, body)
+		}()
+	}
+	close(start)
+	successes := 0
+	for range bodies {
+		if err := <-errs; err == nil {
+			successes++
+		}
+	}
+	if successes != 1 {
+		t.Fatalf("concurrent publishers succeeded %d times, want exactly one", successes)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || (string(got) != string(bodies[0]) && string(got) != string(bodies[1])) {
+		t.Fatalf("published packet is not either complete candidate: %q err=%v", got, err)
+	}
+}
+
+type packetRefusingWriter struct{}
+
+func (packetRefusingWriter) Write([]byte) (int, error) { return 0, fmt.Errorf("broken packet stdout") }
+
+func TestPacketReportsOutputFailureAfterImmutablePublication(t *testing.T) {
+	lane, _ := packetLab(t)
+	old, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chdir(old)
+	if err := os.Chdir(lane); err != nil {
+		t.Fatal(err)
+	}
+	var errb bytes.Buffer
+	args := []string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", "published.md"}
+	if code := run(args, packetRefusingWriter{}, &errb); code != 1 || !strings.Contains(errb.String(), "PACKET FAIL output") {
+		t.Fatalf("published artifact stdout failure was hidden: code=%d stderr=%s", code, errb.String())
+	}
+	published, err := os.ReadFile("published.md")
+	if err != nil || len(published) == 0 {
+		t.Fatalf("output failure did not leave recovery artifact: bytes=%d err=%v", len(published), err)
+	}
+	var out bytes.Buffer
+	errb.Reset()
+	if code := run(args, &out, &errb); code != 2 {
+		t.Fatalf("retry replaced published artifact: code=%d stderr=%s", code, errb.String())
+	}
+	after, err := os.ReadFile("published.md")
+	if err != nil || string(after) != string(published) {
+		t.Fatalf("retry changed published artifact: err=%v", err)
+	}
+}
+
 func TestPacketReuseCopiesOnlyAnExactTuple(t *testing.T) {
 	lane, _ := packetLab(t)
 	old, _ := os.Getwd()

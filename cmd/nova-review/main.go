@@ -206,7 +206,7 @@ func packet(args []string, out, errOut io.Writer) int {
 		ruleCount := strings.Count(restSection, "### ")
 		priorCount := len(entry.Reads)
 		openCount := 0
-		return writePacket(*dest, newBody, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(newBody), hdr.Cut, true)
+		return writePacket(*dest, newBody, out, errOut, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(newBody), hdr.Cut, true)
 	}
 	if _, err := gitOut(repo, "rev-parse", base+"^{commit}"); err != nil {
 		return refuse(errOut, "the lane does not hold the recorded base commit")
@@ -257,7 +257,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return refuse(errOut, err.Error())
 	}
-	return writePacket(*dest, body, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(body), cut, false)
+	return writePacket(*dest, body, out, errOut, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(body), cut, false)
 }
 
 func gitOut(repo string, args ...string) (string, error) {
@@ -777,13 +777,16 @@ func buildDiffAndNotIncluded(files []fileDiff, rangeText string, maxBytes int, a
 	return finalDiffSec, finalNotIncSec, cutCount, finalCand, nil
 }
 
-func writePacket(dest, body string, out io.Writer, entry, id, head, base, rng string, files, hunks, rules, prior, open, bytesN, cut int, reused bool) int {
+func writePacket(dest, body string, out, errOut io.Writer, entry, id, head, base, rng string, files, hunks, rules, prior, open, bytesN, cut int, reused bool) int {
 	if err := writeExclusive(dest, []byte(body)); err != nil {
-		fmt.Fprintf(os.Stderr, "PACKET REFUSED: could not exclusively create --out: %s\n", oneline.Escape(err.Error()))
+		fmt.Fprintf(errOut, "PACKET REFUSED: could not exclusively create --out: %s\n", oneline.Escape(err.Error()))
 		return 2
 	}
-	fmt.Fprintf(out, "PACKET OK entry=%s id=%s head=%s base=%s range=%s files=%d hunks=%d rules=%d prior=%d open=%d bytes=%d cut=%d reused=%t out=%s\n",
-		oneline.Field(entry), id, merge.Short(head), merge.Short(base), oneline.Field(rng), files, hunks, rules, prior, open, bytesN, cut, reused, oneline.Field(dest))
+	if _, err := fmt.Fprintf(out, "PACKET OK entry=%s id=%s head=%s base=%s range=%s files=%d hunks=%d rules=%d prior=%d open=%d bytes=%d cut=%d reused=%t out=%s\n",
+		oneline.Field(entry), id, merge.Short(head), merge.Short(base), oneline.Field(rng), files, hunks, rules, prior, open, bytesN, cut, reused, oneline.Field(dest)); err != nil {
+		fmt.Fprintf(errOut, "PACKET FAIL output: artifact published at %s: %s\n", oneline.Field(dest), oneline.Escape(err.Error()))
+		return 1
+	}
 	return 0
 }
 
@@ -813,7 +816,16 @@ func writeExclusive(dest string, body []byte) error {
 	if err = tmp.Close(); err != nil {
 		return err
 	}
-	if err = os.Rename(tmpName, dest); err != nil {
+	// Rename replaces dest on POSIX, so its apparent atomicity is the wrong guarantee for
+	// an immutable packet: a second publisher can erase the first after the preflight Stat.
+	// A same-directory hard link creates the final name only when it does not already name
+	// anything. The temporary and destination share a filesystem by construction; the one
+	// caller whose Link wins removes its private name, while every loser leaves the existing
+	// packet byte-for-byte alone (including a destination symlink).
+	if err = os.Link(tmpName, dest); err != nil {
+		return err
+	}
+	if err = os.Remove(tmpName); err != nil {
 		return err
 	}
 	cleaned = true
