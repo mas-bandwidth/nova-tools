@@ -547,7 +547,9 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 			mixedList.Line(fmt.Sprintf("TOKENS MIXED date=%s model=%s repo=%s bases=%s: two day bases on one row; declare one export for that day",
 				oneline.Field(m.Day), oneline.Field(m.Model), oneline.Field(m.Repo), oneline.Field(strings.Join(m.Bases, ","))))
 		}
-		if len(rows) == 0 && !conflictDays[d] {
+		outPath := tokens.Path(*out, d)
+		old, findings, readErr := tokens.ReadDayFile(outPath)
+		if len(rows) == 0 && !conflictDays[d] && readErr != nil && os.IsNotExist(readErr) {
 			continue
 		}
 		file := buildDayFile(d, rows, folder, now)
@@ -555,7 +557,18 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		shrank := false
 		partial := false
 		if !conflictDays[d] {
-			if old, findings, err := tokens.ReadDayFile(tokens.Path(*out, d)); err == nil && !hasVersionFinding(findings) {
+			switch {
+			case readErr != nil && !os.IsNotExist(readErr):
+				unreadable.Line(unreadableLine("TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: readErr.Error()}))
+			case readErr == nil && len(findings) > 0:
+				for _, f := range findings {
+					why := oneline.Escape(f.Reason)
+					if f.Line > 0 {
+						why = fmt.Sprintf("line %d: %s", f.Line, oneline.Escape(f.Reason))
+					}
+					unreadable.Line(unreadableLine("TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: why}))
+				}
+			case readErr == nil && len(findings) == 0:
 				// Merge by source BEFORE anything else touches the file: a row no
 				// declared source wrote is carried over, a row they all wrote is
 				// replaced, and a row this fold can neither keep nor recompute refuses
@@ -590,10 +603,14 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 				}
 			}
 			// --allow-shrink is a person's word about a day going backwards. It is NOT a
-			// word about a row this fold cannot compute, so it does not override a partial.
-			if !partial && (!shrank || *allowShrink) {
-				if err := file.Save(*out); err != nil {
-					unreadable.Line(unreadableLine("TOKENS", tokens.Unreadable{Label: "out", Path: tokens.Path(*out, d), Why: err.Error()}))
+			// word about a row this fold cannot compute, so it does not override a partial,
+			// and not a word about replacing a malformed file.
+			if !partial && (!shrank || *allowShrink) && (readErr == nil && len(findings) == 0 || readErr != nil && os.IsNotExist(readErr)) {
+				if len(file.Rows) == 0 {
+					// Absent and empty are one state (rules 8, 9, §Absent and empty):
+					// a day with no rows has no file; a fold never writes an empty day file.
+				} else if err := file.Save(*out); err != nil {
+					unreadable.Line(unreadableLine("TOKENS", tokens.Unreadable{Label: "out", Path: outPath, Why: err.Error()}))
 				} else {
 					written = true
 					daysWritten++
@@ -601,7 +618,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 				}
 			}
 		}
-		dayList.Line(dayLine(d, file, rows, folder, written))
+		dayList.Line(dayLine(d, file, written))
 	}
 	unreadable.More()
 	mixedList.More()
@@ -646,18 +663,6 @@ func daysAsked(day string, all bool) string {
 	return day
 }
 
-// hasVersionFinding reports whether a file on disk is too malformed to compare against:
-// a shrink comparison with a file whose version line is missing would be a comparison
-// with a guess, and `check` is what names that file.
-func hasVersionFinding(findings []tokens.Finding) bool {
-	for _, f := range findings {
-		if f.Line <= 2 {
-			return true
-		}
-	}
-	return false
-}
-
 // buildDayFile turns a day's folded rows into the file that will be written.
 func buildDayFile(day string, rows []*tokens.Row, folder *tokens.Folder, now time.Time) *tokens.DayFile {
 	f := &tokens.DayFile{Day: day, At: stamp(now), Build: buildVersion(), Turns: tokens.Dash}
@@ -683,12 +688,12 @@ func buildDayFile(day string, rows []*tokens.Row, folder *tokens.Folder, now tim
 
 // dayLine is one line per day written or refused, and the two shares on it are how a
 // person sees whether the rules file is good enough.
-func dayLine(day string, file *tokens.DayFile, rows []*tokens.Row, folder *tokens.Folder, written bool) string {
+func dayLine(day string, file *tokens.DayFile, written bool) string {
 	models, repos := map[string]bool{}, map[string]bool{}
 	var whole, unknown, other int64
 	dashes, nonutc := 0, 0
 	rough := 0
-	for _, r := range rows {
+	for _, r := range file.Rows {
 		models[r.Model] = true
 		repos[r.Repo] = true
 		t := r.Counts.Total()
@@ -701,12 +706,12 @@ func dayLine(day string, file *tokens.DayFile, rows []*tokens.Row, folder *token
 		}
 		dashes += r.Counts.Dashes()
 		rough += r.Rough
-		if r.Basis() != tokens.UTC {
+		if r.Basis != tokens.UTC {
 			nonutc++
 		}
 	}
 	return fmt.Sprintf("TOKENS DAY date=%s rows=%d models=%d repos=%d turns=%s unknown=%s%% other=%s%% rough=%d dashes=%d nonutc=%d sources=%s written=%t",
-		oneline.Field(day), len(rows), len(models), len(repos), oneline.Field(file.Turns),
+		oneline.Field(day), len(file.Rows), len(models), len(repos), oneline.Field(file.Turns),
 		oneline.Field(tokens.Percent(unknown, whole)), oneline.Field(tokens.Percent(other, whole)),
 		rough, dashes, nonutc, oneline.Field(strings.Join(file.Sources, ",")), written)
 }

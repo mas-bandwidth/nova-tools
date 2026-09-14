@@ -139,14 +139,17 @@ is the day it was learned.
    `~123` folds as 123. The row's `rough` column counts the rough lines that
    fed it. `TOKENS DAY` prints `rough=<n>` for the day. A sum carries
    `rough=<n>` through, so a month that rests on rough numbers says so.
-8. **The day file is recomputed whole, written to a fixed temp name and
-   renamed.** `<out>/<day>.tsv` is never appended to and never edited in
-   place. The write goes to `<out>/<day>.tsv.tmp` in the same directory and
-   lands by one atomic rename. The fixed name is safe because one fold runs
-   per output directory (a kernel lock on `<out>/fold.lock`, released on
-   death, a second fold waits a bounded, jittered time and exits 2 naming the
-   holder), and a stranded temp is a name a person can see; `check` steps
-   over exactly that name (lessons 53, 54, 67).
+8. **The day file is written whole, to a fixed temp name and
+   renamed.** `<out>/<day>.tsv` is written whole every time and never
+   appended to, never edited in place. Whole is not the same as recomputed --
+   a fold recomputes the rows its own declared sources wrote and carries the
+   rest of the file's rows over unchanged (rule 10, #268). The write goes to
+   `<out>/<day>.tsv.tmp` in the same directory and lands by one atomic rename.
+   The fixed name is safe because one fold runs per output directory (a kernel
+   lock on `<out>/fold.lock`, released on death, a second fold waits a
+   bounded, jittered time and exits 2 naming the holder), and a stranded temp
+   is a name a person can see; `check` steps over exactly that name (lessons
+   53, 54, 67).
 9. **One file per day. A month is a sum of day files. The tool removes
    nothing.** There is no month file. `sum` reads day files and writes
    nothing. No verb deletes, truncates or trims any file, including any log.
@@ -200,11 +203,19 @@ is the day it was learned.
     recomputed one on (model, repo) -- is `TOKENS PARTIAL`, the file is left
     as it was, and the run exits 1. `--allow-shrink` does not write it: it is
     a person's word about a day going backwards, not about a row nothing on
-    disk can take apart. When any row is retained the version line carries
-    `turns=-`, because turns counts the messages this run read and cannot be
-    split per source. (2026-09-14: a swarm-only fold into a day file holding
-    another source's row erased it with exit 0 and written=true, and the
-    totals comparison saw nothing because the new numbers were bigger.)
+    disk can take apart. An existing day file that carries malformed rows or
+    findings fails closed before replacement: the fold refuses the day,
+    reports `TOKENS UNREADABLE label=out ...` with the finding reason, leaves
+    the raw file on disk untouched, and exits 1. An explicitly selected day
+    whose declared source becomes empty reconciles against the existing day
+    file on disk, detecting the shrink rather than silently skipping. A
+    source that cannot be declared again leaves its rows retained; the escape
+    is folding the day into its own `--out`. When any row is retained the version line carries
+    `turns=-`, because turns counts the messages this
+    run read and cannot be split per source. (2026-09-14: a swarm-only fold
+    into a day file holding another source's row erased it with exit 0 and
+    written=true, and the totals comparison saw nothing because the new
+    numbers were bigger.)
 11. **Bounded output, measured at the largest plausible state.** The state is
     a month of 20 models and 10 repos (200 pairs, up to 6,200 rows over 31
     files) folded from 3,000 transcript files and 50,000 messages a day.
@@ -679,12 +690,15 @@ dash is an absence where a zero is a measurement. The same rule is why a
 type cell in a day file is `-` and never `0` when the source did not report
 it.
 
-`TOKENS DAY` is one line per day written or refused. `unknown=` and `other=`
-are each bucket's share of the day's five types summed, to one decimal, so a
-day that is 40% unknown says so on the line a person reads; a `-` cell adds
-nothing to either side of that share. `dashes=` is how many of the day's
-type cells are `-` and `nonutc=` how many of its rows carry a `day_basis`
-other than `utc`. `sources=` is the union of labels across the day's rows.
+`TOKENS DAY` is one line per day written or refused. It describes the day file
+(its rows, models, repos, and sources, including retained rows), while the
+counts on `TOKENS OK` and `TOKENS FAIL` are the truth about the fold itself (the
+rows folded in this run). `unknown=` and `other=` are each bucket's share of the
+day's five types summed, to one decimal, so a day that is 40% unknown says so on
+the line a person reads; a `-` cell adds nothing to either side of that share.
+`dashes=` is how many of the day's type cells are `-` and `nonutc=` how many of
+its rows carry a `day_basis` other than `utc`. `sources=` is the union of labels
+across the day's rows.
 
 **Every listing is a cap and a count**, per SPEC.md. `TOKENS SOURCE`,
 `TOKENS UNREADABLE`, `TOKENS UNPARSED`, `TOKENS SUPERSEDED`, `TOKENS CONFLICT`, `TOKENS TOUCHED`,

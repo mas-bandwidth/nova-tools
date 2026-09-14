@@ -743,6 +743,126 @@ func TestIssue268Rule10StillFiresOnTheMergedTotalsAndKeepsRetainedRows(t *testin
 	wantContains(t, got, "turns=-")
 }
 
+// A malformed existing day row fails closed before replacement: fold refuses the day,
+// reports TOKENS UNREADABLE label=out with the finding reason, and leaves the raw
+// malformed file on disk byte-identical.
+func TestIssue268MalformedExistingDayRowFailsClosedAndPreservesRawFile(t *testing.T) {
+	out, repos, _, poolB := foldPools(t, "410", "100", "2000", "420")
+	day := filepath.Join(out, "2026-09-14.tsv")
+	// Blank the sources cell on the claude-x row (malformed row: sources cell empty).
+	malformed := strings.Join([]string{
+		"nova-tokens v1 day=2026-09-14 at=2026-09-14T02:00:00Z build=test turns=1 sources=swarm:glenn",
+		"date\tmodel\trepo\tinput\toutput\tcache_write\tcache_read\treasoning\trough\tday_basis\tsources",
+		"2026-09-14\tclaude-x\tserialize\t410\t100\t0\t0\t-\t0\tutc\t",
+	}, "\n") + "\n"
+	write(t, day, malformed)
+
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+poolB)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS UNREADABLE label=out")
+	wantContains(t, r.stderr, "the sources cell is empty")
+	wantContains(t, r.stderr, "unreadable=1")
+	if read(t, day) != malformed {
+		t.Error("a malformed existing day file was modified or overwritten")
+	}
+}
+
+// TOKENS DAY summarizes the merged day file, so rows=, models=, repos=, dashes=, nonutc=,
+// sources= and turns= are coherent with the file on disk, while TOKENS OK rows= reflects
+// this run's folded rows.
+func TestIssue268CoherentDaySummaryScopeReflectsMergedFile(t *testing.T) {
+	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
+		"--swarm", "glenn="+poolA), 0)
+
+	// Now fold with poolB alone. The resulting day file on disk holds 2 rows (claude-x and mercury-2.5).
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
+		"--swarm", "freddy="+poolB)
+	wantExit(t, r, 0)
+	daySummary := lineWith(r.stdout, "TOKENS DAY")
+	wantContains(t, daySummary, "rows=2")
+	wantContains(t, daySummary, "models=2")
+	wantContains(t, daySummary, "repos=1")
+	wantContains(t, daySummary, "sources=swarm:freddy,swarm:glenn")
+	wantContains(t, daySummary, "written=true")
+
+	okSummary := lineWith(r.stdout, "TOKENS OK")
+	wantContains(t, okSummary, "rows=1") // this fold's rows
+}
+
+// An explicitly selected day whose declared source becomes empty / goes quiet is detected
+// and refused under rule 10 rather than silently skipping with exit 0. Unrelated sources
+// are preserved.
+func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
+	dir := t.TempDir()
+	out := mkdir(t, filepath.Join(dir, "out"))
+	repos := reposFile(t, dir)
+	pool := mkdir(t, filepath.Join(dir, "pool"))
+	jobPath := filepath.Join(pool, "usage", "j1.tsv")
+	swarmUsage(t, pool, "j1", swarmRow("j1", "1", "-", "mercury-2.5", "serialize", "2026-09-14T01:00:00Z", "100", "50", "0", "0", "-"))
+
+	// Initial fold succeeds.
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+pool), 0)
+	day := filepath.Join(out, "2026-09-14.tsv")
+	before := read(t, day)
+	wantContains(t, before, "\t100\t")
+
+	// Remove the source usage file so the declared source now has zero rows for that day.
+	if err := os.Remove(jobPath); err != nil {
+		t.Fatal(err)
+	}
+
+	// Refused under rule 10: input fell from 100 to unknown (now=-). File on disk is left untouched.
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+pool)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=100 now=- written=false")
+	wantContains(t, r.stderr, "shrank=4")
+	if read(t, day) != before {
+		t.Error("a refused quiet source on explicit day modified the day file")
+	}
+
+	// With --allow-shrink on a day that shrank to 0 rows: fold does not write an empty day file.
+	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+pool, "--allow-shrink")
+	wantExit(t, r, 0)
+	wantContains(t, r.stderr, "written=true")
+	if read(t, day) != before {
+		t.Error("an empty day write modified the existing day file")
+	}
+}
+
+// When one source of a multi-source day goes quiet, shrinking under --allow-shrink preserves
+// the other source's rows.
+func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
+	out, repos, poolA, poolB := foldPools(t, "410", "100", "2000", "420")
+	day := filepath.Join(out, "2026-09-14.tsv")
+	wantExit(t, invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
+		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB), 0)
+	before := read(t, day)
+
+	// Remove poolA's usage file so glenn is quiet.
+	if err := os.Remove(filepath.Join(poolA, "usage", "j1.tsv")); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fold with both declared: glenn went quiet.
+	r := invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
+		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB)
+	wantExit(t, r, 1)
+	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=2410 now=2000 written=false")
+	if read(t, day) != before {
+		t.Error("refused shrink modified file")
+	}
+
+	// With --allow-shrink: writes freddy's rows (2000), glenn's row is removed.
+	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
+		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB, "--allow-shrink")
+	wantExit(t, r, 0)
+	got := read(t, day)
+	wantNotContains(t, got, "claude-x")
+	wantContains(t, got, "mercury-2.5")
+	wantContains(t, got, "\t2000\t")
+}
+
 // ---------------------------------------------------------------- rule 12: the tool stamps
 
 func TestRule12TheToolStampsAndNoFlagSetsIt(t *testing.T) {

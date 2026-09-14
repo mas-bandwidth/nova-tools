@@ -93,7 +93,7 @@ func (d *DayFile) Render() string {
 	return strings.Join(rows, "\n") + "\n"
 }
 
-// Save recomputes the file whole: the bytes to the fixed temp name in the same directory,
+// Save writes the file whole: the bytes to the fixed temp name in the same directory,
 // then one rename. Nothing is appended and nothing is edited in place.
 func (d *DayFile) Save(out string) error {
 	tmp := TempPath(out, d.Day)
@@ -219,8 +219,11 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 			partials = append(partials, partialOf(r, folded, PartialBlended))
 		case in > 0:
 			// replaced: this run recomputed every source that wrote it. A (model, repo)
-			// this run no longer reports at all is a row that goes away, and that is a
-			// shrink for rule 10 to judge, not a row to keep.
+			// this run no longer reports at all is a row that drops out of the merged
+			// file. If overall day totals fall or become unknown, rule 10 catches the
+			// shrink; but if another declared source rises by more than this row's
+			// totals, day-total comparison cannot see the per-source quiet shrink
+			// (preserved as follow-up).
 		default:
 			if computed[r.Model+"\t"+r.Repo] {
 				partials = append(partials, partialOf(r, folded, PartialCollision))

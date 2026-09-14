@@ -241,12 +241,32 @@ func TestTheOutputGrammarAdmitsTheLinesTheToolPrints(t *testing.T) {
 		invoke(t, "sum", "--out", out3, "--month", "2026-09"),
 		invoke(t, "check", "--out", out3))
 
+	// A partial-source fold: produces a TOKENS PARTIAL line when a row was blended across
+	// declared and undeclared sources (#268).
+	dir4 := t.TempDir()
+	out4 := mkdir(t, filepath.Join(dir4, "out"))
+	repos4 := reposFile(t, dir4)
+	poolA := mkdir(t, filepath.Join(dir4, "poolA"))
+	poolB := mkdir(t, filepath.Join(dir4, "poolB"))
+	swarmUsage(t, poolA, "j1", swarmRow("j1", "1", "-", "claude-x", "serialize", "2026-09-14T01:00:00Z", "410", "100", "0", "0", "-"))
+	swarmUsage(t, poolB, "j2", swarmRow("j2", "1", "-", "claude-x", "serialize", "2026-09-14T02:00:00Z", "2000", "420", "0", "0", "-"))
+	invoke(t, "fold", "--out", out4, "--day", "2026-09-14", "--repos", repos4, "--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB)
+	runs = append(runs,
+		invoke(t, "fold", "--out", out4, "--day", "2026-09-14", "--repos", repos4, "--swarm", "freddy="+poolB))
+
+	sawPartial := false
 	n := 0
 	for _, r := range runs {
 		for _, line := range printedLines(r) {
 			n++
 			checkAgainstGrammar(t, grammar, line)
+			if strings.HasPrefix(line, "TOKENS PARTIAL ") {
+				sawPartial = true
+			}
 		}
+	}
+	if !sawPartial {
+		t.Fatal("no TOKENS PARTIAL line was checked against the grammar")
 	}
 	if n < 10 {
 		t.Fatalf("%d printed lines checked against the grammar; the fixtures printed nothing and this test would have passed by checking nothing", n)
