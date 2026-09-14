@@ -436,7 +436,7 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 	body = append(body, '\n')
 	recs := merge.NewRecords(*f.lane, st.LaneBranch, "origin", merge.NewGit(*f.lane, f.dur(), deps.Runner), f.dur())
 	merge.Appendf(*f.lane, deps.Now(), "READ entry=%s who=%s head=%s verdict=%s file=%s", id, *who, *head, *verdict, file)
-	pushErr := recs.Deliver(sub, []merge.Item{{Path: file, Body: body}})
+	pushErr := recs.Deliver(sub, []merge.Item{{Part: "read", Path: file, Body: body}})
 	if pushErr != nil {
 		fmt.Fprintf(stderr, "READ FAIL entry=%s who=%s head=%s file=%s pushed=false: %s; re-run the same verb to push it\n",
 			oneline.Field(id), oneline.Field(*who), oneline.Field(merge.Short(*head)), oneline.Field(file),
@@ -594,8 +594,8 @@ func cmdGate(args []string, stdout, stderr io.Writer, deps Deps) int {
 	recs := merge.NewRecords(*f.lane, st.LaneBranch, "origin", merge.NewGit(*f.lane, f.dur(), deps.Runner), f.dur())
 	merge.Appendf(*f.lane, deps.Now(), "GATE entry=%s head=%s base=%s merge=%s verdict=%s file=%s", id, *head, *baseSHA, *mergeSHA, *verdict, file)
 	pushErr := recs.Deliver(sub, []merge.Item{
-		{Path: file, Body: body},
-		{Path: merge.SummaryFile(file), Body: summaryBytes},
+		{Part: "gate", Path: file, Body: body},
+		{Part: "gate-summary", Path: merge.SummaryFile(file), Body: summaryBytes},
 	})
 	if pushErr != nil {
 		fmt.Fprintf(stderr, "GATE FAIL entry=%s head=%s base=%s merge=%s file=%s pushed=false: %s; re-run the same verb to push it\n",

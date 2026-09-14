@@ -65,7 +65,7 @@ func TestAContendedReadNamesAFileItReallyWrote(t *testing.T) {
 	}
 	held := 0
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), ".json") && !strings.HasSuffix(e.Name(), "-parts.json") {
 			held++
 		}
 	}

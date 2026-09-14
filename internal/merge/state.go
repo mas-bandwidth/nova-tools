@@ -38,6 +38,7 @@ const (
 	RepoDir      = "repo"
 	ReadsDir     = "reads"
 	GatesDir     = "gates"
+	ReviewsDir   = "reviews"
 	OutboxDir    = "outbox"
 	SlotsDir     = "slots"
 	StopName     = "stop"
