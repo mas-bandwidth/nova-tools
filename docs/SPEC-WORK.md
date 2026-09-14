@@ -235,7 +235,10 @@ journal, and I hold the journal's lock (Stella's finding 1, comment 5654659093, 
    except `session status` and `session export`, which are how a fenced session is inspected
    and recovered and which **themselves exit 0 on a fenced session**, answering about the
    fence rather than suffering it (every other verb: exit 1, `fenced`, naming its generation
-   and the tip's if known),
+   and the tip's if known), except that a fenced session admits `operation status|wait|cancel`
+   ONLY with an explicit id resolving to its own `session.export` operation; other ids,
+   general operation listing and every other `operation` verb keep the fenced refusal; an
+   unknown or non-export id refuses (#293).
    because a fenced session's resident O may be behind a new owner's and an answer from it
    would be a stale answer wearing a live one's clothes; it keeps its journal. Offline or
    partitioned, it fences at `until` without any network at all. So at no instant do two
