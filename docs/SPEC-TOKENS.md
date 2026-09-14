@@ -1055,7 +1055,7 @@ endpoint (Stella, 2026-09-12).
 
 | kind | flag | what it is | where it lands | destination is |
 |---|---|---|---|---|
-| **retained batch** — the endpoint | `--batch <dir>` | one `nova.tokens.coverage/2` envelope, the `observation/2` shards it references and any new `mapping/2` envelopes | `records/…`, `mappings/…`, `coverage/…`, the retained-format packet's paths (rule 29) | **content-addressed and immutable**: a path's name is its bytes' digest, so a path is written once and never replaced |
+| **retained batch** — the endpoint | `--batch <dir>` | one `nova.tokens.coverage/2` envelope, the `observation/2` shards it references, all referenced `mapping/2` envelopes, and optional inventories | `records/…`, `mappings/…`, `inventories/…`, `coverage/…`, the retained-format packet's paths (rule 29) | **content-addressed and immutable**: a path's name is its bytes' digest, so a path is written once and never replaced |
 | **v1 day file** — aggregate transport, explicitly typed | `--v1-day <dir> --day <d> --seat <label>` | one `<dir>/<day>.tsv` this bench folded | `v1-days/<seat>/<YYYY-MM>/<day>.tsv`, a subtree no records path uses | **mutable and named by the day**, so it has the one replace transition this spec allows, under `--supersede` (rule 26) |
 
 **What a user gets.**
@@ -1549,24 +1549,49 @@ remedy line. The rules are numbered on from rule 21.
     its own subprocess.
 
 29. **The retained records are the endpoint, their provenance is each
-    record's own, and the missing validators are named dependencies.** Stella, 2026-09-12, deciding the packaging inside Glenn's
+    record's own, and whole-package validation is a named dependency.** Stella, 2026-09-12, deciding the packaging inside Glenn's
     ruling: `nova-tokens` owns an explicit `publish` verb that uploads into
     the caller-selected private git ledger, not a version-report message
     routed through `nova-update`, and the read verbs stay local and
-    read-only. The **retained batch is the publication contract**: a
+    read-only.
+    The **retained batch is the publication contract**: a
     `--batch <dir>` holding exactly one `batch.json` — one
     `nova.tokens.coverage/2` envelope whose content id is the contribution id
     — the `nova.tokens.observation/2` shards it references at their final
-    relative paths, and any new `nova.tokens.mapping/2` envelopes it
-    references, and no other file, symlink or executable content. Its
-    destinations are the retained-format packet's own, not this verb's
-    invention: `records/<friend>/<bench>/<day>/<shard-sha256-hex>.jsonl`,
+    relative paths, all referenced `nova.tokens.mapping/2` envelopes it references,
+    optional `inventories/<digest>.json` files for shards using the `inventory_file`
+    branch, and no other file, symlink or executable content. An input
+    package contains no `coverage/` replica;
+    `coverage/<collector-friend>/<collection-bench>/<UTC-collection-day>/<coverage-sha256-hex>.json`
+    is strictly the destination path written into the ledger repository on
+    publication. A batch directory holding an input `coverage/` directory or
+    replica, an unreferenced file, an orphan mapping, an unreferenced
+    inventory, a symlink or a second `batch.json` is exit 2. Its destinations
+    are the retained-format packet's own, not this verb's invention:
+    `records/<friend>/<bench>/<day>/<shard-sha256-hex>.jsonl`,
     `mappings/<mapping-sha256-hex>.json`,
+    `inventories/<inventory-sha256-hex>.json`,
     `coverage/<collector-friend>/<collection-bench>/<UTC-collection-day>/<coverage-sha256-hex>.json`,
     with the reserved `_` for a null friend or bench and `unallocated` for an
     interval-only allocation; that packet's own line, "the ledger README must
     be reconciled to these exact paths before the first publication", is a
     condition on the first publication and not on this spec.
+    **Strict 3-way mapping closure and observation validation**: a batch
+    enforces exact tripartite mapping closure (Packaged Mappings = Coverage mapping_ids = Observation mapping_ids).
+    Every mapping file in `mappings/` must be declared in `coverage.mapping_ids`
+    (no orphan mappings); every mapping declared in `coverage.mapping_ids` must
+    exist in `mappings/` (no missing mappings; an existing ledger copy does not
+    exempt the input package from packaging all referenced mappings); and
+    every mapping declared in coverage must be referenced by at least one
+    observation in the batch shards (no unused mappings). Writing an
+    already-retained identical content-addressed mapping upon publication into
+    the ledger is a verified no-op. Every shard line is strictly validated as a
+    `nova.tokens.observation/2` envelope under its declared mapping manifest;
+    each record's own `friend`, `bench`, and UTC `day` must match the shard's
+    path `records/<friend>/<bench>/<day>/...` (with `_` for null friend or bench
+    and `unallocated` for null or unallocated day). Shard observation IDs and
+    inventory file contents are compared as sorted ID sets (order-independent).
+    Any divergence, malformed observation, or origin/day path mismatch is exit 2.
     **Provenance is the record's, never the uploader's**: a shard's
     `friend`/`bench` come from the observation's own origin, the coverage
     envelope's collector fields are the collector's, the commit author is
@@ -1582,29 +1607,39 @@ remedy line. The rules are numbered on from rule 21.
     retained record, because the aggregate has no friend, no event identity
     and no coverage, and calling it one would be the reinterpretation
     [PROPOSAL-TOKENS-RECORDS.md](PROPOSAL-TOKENS-RECORDS.md) forbids.
-    **The two missing validators are dependencies with owners.**
-    `nova.tokens.coverage/2` and `nova.tokens.mapping/2` have no validator in
-    this repository today; until they exist, a `--batch` whose envelopes name
-    them is exit 2 `refusing to guess`, saying which validator is missing,
-    with the batch and its shards left exactly where they are and nothing
-    about the retained work discarded, weakened or re-typed to fit the path
-    that does work. The work list carries them as the batch path's blocking
-    dependency, owned by the records lane (#146's construction API being the
-    writer's half, and not a collector, not a publisher, and not evidence that
-    collection or publication is delivered).
+    **Envelope validation and whole-package composition.**
+    Each envelope is validated against its schema (`nova.tokens.observation/2`,
+    `nova.tokens.mapping/2`, `nova.tokens.coverage/2`) using strict envelope
+    parsing. The remaining dependency before publication is
+    whole-package composition (`ValidateCandidateDirectory`,
+    `ValidateInstalledDirectory` in `internal/tokens` or `internal/pkgvalid`),
+    verifying the multi-file directory layout, shard paths, and 3-way mapping
+    closure. Until whole-package validation exists, a `--batch` whose envelopes
+    cannot be validated against the package tree is exit 2 `refusing to guess`,
+    saying which validator component is missing, with the batch and its shards
+    left exactly where they are and nothing about the retained work discarded,
+    weakened or re-typed to fit the path that does work. The work list carries
+    whole-package composition as the batch path's blocking dependency, owned by
+    the records lane (#146's construction API being the writer's half, and not a
+    collector, not a publisher, and not evidence that collection or publication
+    is delivered).
     **Demanded test.** Fixture batches only, synthetic, no private transcript
     and no real ledger. A validating batch lands every path of that layout,
     the shard paths taken from each record's own friend, bench and day: a run
     whose clone identity and configured author differ from the records' origin
     still writes the records' paths, and an implementation that used the
     uploader's identity fails the test. `_` and `unallocated` are exercised. A
-    batch holding an unreferenced file, a symlink or a second `batch.json` is
-    exit 2; one naming `nova.tokens.coverage/2` with no validator compiled in
-    is exit 2 naming the missing validator, the batch directory byte-identical
-    afterwards and nothing pushed; `--batch` with `--day`, `--seat`,
-    `--supersede`, `--public` or `--v1-day` is exit 2 (each its own case, and
-    none of them a success case); and no `records/` path appears in a v1 day's
-    commit, nor a `v1-days/` path in a batch's.
+    batch holding an unreferenced file (including an unreferenced inventory,
+    an orphan mapping, or an input `coverage/` directory), a symlink or a second
+    `batch.json` is exit 2; a batch failing strict 3-way mapping closure,
+    containing a malformed observation envelope, or containing an observation
+    whose origin or day does not match its shard path is exit 2; one failing
+    whole-package validation or naming a schema with no validator compiled in is
+    exit 2 naming the missing validator, the batch directory byte-identical
+    afterwards and nothing pushed; `--batch` with `--day`, `--seat`, `--supersede`, `--public`
+    or `--v1-day` is exit 2 (each its own case, and none of them a success
+    case); and no `records/` path appears in a v1 day's commit, nor a
+    `v1-days/` path in a batch's.
 
 30. **The destination is verified by host, owner, name and branch, for every
     effective URL, and one clone publishes one at a time.**
@@ -2129,12 +2164,15 @@ paragraphs are the normative text and these ten lines are the index.
 29. A fixture batch lands every path of the retained layout, the shard paths
     taken from each record's own friend, bench and day and never from the
     uploader's identity; `_` and `unallocated` are exercised; a batch holding
-    an unreferenced file, a symlink or a second `batch.json` is exit 2; a
-    batch naming a schema with no validator compiled in is exit 2 naming the
-    missing validator, the batch untouched and nothing pushed; `--batch` with
-    `--day`, `--seat`, `--supersede`, `--public` or `--v1-day` is exit 2, each
-    its own case and none a success; no `records/` path appears in a v1 day's
-    commit, nor a `v1-days/` path in a batch's.
+    an unreferenced file, an unreferenced inventory, an orphan mapping, an input
+    `coverage/` directory, a symlink or a second `batch.json` is exit 2; a
+    batch failing strict 3-way mapping closure, a malformed observation envelope,
+    or a shard path origin mismatch is exit 2; a batch failing whole-package
+    validation or naming a schema with no validator compiled in is exit 2 naming
+    the missing validator, the batch untouched and nothing pushed; `--batch` with `--day`, `--seat`,
+    `--supersede`, `--public` or `--v1-day` is exit 2, each its own case and
+    none a success; no `records/` path appears in a v1 day's commit, nor a
+    `v1-days/` path in a batch's.
 30. A remote on the wrong host with the right owner and name is exit 2
     printing both; a matching fetch URL whose `pushurl` names another host is
     exit 2 before any object is written; two push URLs that do not all match
