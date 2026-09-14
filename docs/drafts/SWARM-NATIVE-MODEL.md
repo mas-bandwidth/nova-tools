@@ -251,10 +251,11 @@ The exact final `HARNESS.json` grammar remains a separate native adapter gate.
 Its generator must take the frozen projection, and `generated_config` hashes
 its exact output bytes outside the input preimage, avoiding a cycle. Do not
 mistake an option-tree encoding witness for a native launch/config witness.
-Earlier body/catalog/launch fixtures preserve their earlier draft contract;
-the new companion vectors do not silently rewrite those readers. Incorporating
-the execution/model amendments requires updating all dependent parent fixtures
-and strict readers together before enabling profiled native admission.
+PR310 migrated the linked catalog/attempt/config/launch fixtures to the
+eight-member config preimage and selected native projection, with generated-config
+bytes hashed separately. These are synthetic encoding witnesses. Strict admission
+readers and the native adapter gates remain required before enabling profiled
+native admission.
 
 ## Evidence and remaining acceptance
 
@@ -272,9 +273,10 @@ Production acceptance additionally requires:
 2. Negative production fixtures for wrong/unknown fields, every bound, bad URL,
    option ownership collision, secret header, unsupported variant or tool,
    malformed decimal and selected-model mismatch. Fail before provider calls.
-3. Full catalog, attempt, config and launch fixture migration, including one
-   changed non-default model and one changed numeric option changing the proper
-   digests; secret values never enter these preimages.
+3. The catalog, attempt, config and launch encoding/preimage migration landed in
+   PR310. Production acceptance still requires one changed non-default model and
+   one changed numeric option changing the proper digests; secret values never
+   enter these preimages.
 4. Exact generated native configuration, dependency binding, registry filtering
    and [issue 296](https://github.com/mas-bandwidth/nova-tools/issues/296)
    isolation. Observe actual config/default/catalog reads and any auxiliary model
