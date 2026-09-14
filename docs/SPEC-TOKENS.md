@@ -2963,15 +2963,17 @@ contract. The rules are numbered on from rule 31.
     resume from and `receipt` is the verb. `--resume` with `--job` is exit 2
     (draft 4): a swarm job is one usage row, its retained set is the single
     line `job:<id>`, and there is no second message it could ever gain.
-    **A session's receipts are found through the retained files' headers, and
-    a receipt's expected days are the distinct `day` values in its own file**
-    (draft 5): after taking `fold.lock`, `--resume` and rule 41 both walk
-    `<out>/receipts/*.ids`, take
-    the receipts whose header names this session, and compare each one's days
-    against the receipts files on disk. Draft 4 found a session's receipts
-    through the rows' `session` column, which cannot see a receipt whose rows
-    are all absent, and said nothing about how `--resume` learned a receipt's
-    expected days at all (Fable cold read, 2026-09-13).
+    **A session's receipts are found through both retained `.ids` headers
+    and receipt-row `session` fields, as rule 41 specifies.** After taking
+    `fold.lock`, `--resume` and a plain recovery run use the union of those
+    receipt ids. A receipt's expected days are the distinct `day` values in
+    its own readable retained `.ids` file; receipt rows never substitute for
+    a missing or corrupt retained file. Classify and validate the discovered
+    records under rule 41 before source access: absent or unreadable retained
+    data is `reason=missing by=<id>`, not an empty claimed-id set. Header
+    discovery finds receipts whose rows are all absent; row discovery finds
+    receipts whose retained file is missing. Either source alone loses one
+    side of partial-write recovery.
 
     `--resume` over a session one of whose receipts is **incomplete** — a
     multi-day receipt whose days are not all on disk (rule 41) — is exit 1,
