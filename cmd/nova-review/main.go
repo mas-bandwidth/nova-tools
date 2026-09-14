@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -146,22 +147,25 @@ func packet(args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "the lane does not hold the recorded base commit")
 	}
 	rangeText := merge.Short(base) + ".." + merge.Short(current)
-	packetID := packetID(id, current, base)
+	packetID := packetID(id, current, base, rangeText)
 	if *reuse != "" {
+		hdr, e := readPacketFirstLine(*reuse)
+		if e != nil {
+			return refuse(errOut, fmt.Sprintf("--reuse file is not a valid packet: %v", e))
+		}
+		if hdr.ID != packetID || hdr.Entry != id || hdr.Head != current || hdr.Base != base || hdr.Range != rangeText {
+			fmt.Fprintf(errOut, "PACKET REUSE asked=%s found=%s file=%s: that packet was built for another (entry, head, range); build this reader's own\n", packetID, oneline.Field(hdr.ID), oneline.Field(*reuse))
+			return 2
+		}
 		body, e := os.ReadFile(*reuse)
 		if e != nil {
 			return refuse(errOut, "--reuse could not be read")
-		}
-		fields := packetFields(string(body))
-		if fields["id"] != packetID || fields["entry"] != id || fields["head"] != current || fields["base"] != base {
-			fmt.Fprintf(errOut, "PACKET REUSE asked=%s found=%s file=%s: that packet was built for another (entry, head, range); build this reader's own\n", packetID, oneline.Field(fields["id"]), oneline.Field(*reuse))
-			return 2
 		}
 		if len(body) > *maxBytes {
 			return refuse(errOut, "--reuse packet exceeds the byte budget")
 		}
 		files, hunks := diffCounts(string(body))
-		return writePacket(*dest, string(body), out, id, packetID, current, base, rangeText, files, hunks, 0, len(body), 0, true)
+		return writePacket(*dest, string(body), out, id, packetID, current, base, rangeText, files, hunks, 0, len(body), hdr.Cut, true)
 	}
 	diff, err := gitOut(repo, "diff", "--no-ext-diff", "--unified=3", base, current)
 	if err != nil {
@@ -172,23 +176,33 @@ func packet(args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return refuse(errOut, err.Error())
 	}
-	header := fmt.Sprintf("NOVA-REVIEW PACKET v1\nid=%s\nentry=%s\nwho=%s\nhead=%s\nbase=%s\nrange=%s\nbuilt_from=lane-checkout\n\n## Author intent (data)\nunknown: the lane state has no entry body; no intent is guessed.\n\n## Prior verdicts\nunknown: verdict records are not implemented by this packet-only slice.\n\n## Open findings\nunknown: finding records are not implemented by this packet-only slice.\n\n## Rules touched\n%s\n\n## Diff\n", packetID, id, *who, current, base, rangeText, ruleText)
-	if len(header)+len(diff)+len("\n## Not included\nnone\n") > *maxBytes {
+	hdr := packetHeader{
+		ID:    packetID,
+		Entry: id,
+		Head:  current,
+		Base:  base,
+		Range: rangeText,
+		Who:   *who,
+		Built: time.Now().UTC().Format(time.RFC3339),
+		Cut:   0,
+	}
+	sections := fmt.Sprintf("## Author intent (data)\nunknown: the lane state has no entry body; no intent is guessed.\n\n## Prior verdicts\nunknown: verdict records are not implemented by this packet-only slice.\n\n## Open findings\nunknown: finding records are not implemented by this packet-only slice.\n\n## Rules touched\n%s\n\n## Diff\n", ruleText)
+	candidateBody := formatPacket(hdr, sections+diff+"\n## Not included\nnone\n")
+	if len(candidateBody) > *maxBytes {
 		hunksText, e := gitOut(repo, "diff", "--no-ext-diff", "--unified=0", "--stat", base, current)
 		if e != nil {
 			return refuse(errOut, "could not build the bounded hunk list")
 		}
 		remedy := fmt.Sprintf("\n## Diff omitted\nThe selected diff exceeds --max-bytes. Read it with:\n\ngit -C %s diff --no-ext-diff %s %s\n\n%s", repo, base, current, hunksText)
 		diff = remedy
-		cut := files
-		body := header + diff + "\n## Not included\nfull diff omitted by byte budget\n"
+		hdr.Cut = files
+		body := formatPacket(hdr, sections+diff+"\n## Not included\nfull diff omitted by byte budget\n")
 		if len(body) > *maxBytes {
 			return refuse(errOut, fmt.Sprintf("--max-bytes %d cannot hold packet metadata and bounded remedy (%d bytes)", *maxBytes, len(body)))
 		}
-		return writePacket(*dest, body, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, len(body), cut, false)
+		return writePacket(*dest, body, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, len(body), hdr.Cut, false)
 	}
-	body := header + diff + "\n## Not included\nnone\n"
-	return writePacket(*dest, body, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, len(body), 0, false)
+	return writePacket(*dest, candidateBody, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, len(candidateBody), 0, false)
 }
 
 func gitOut(repo string, args ...string) (string, error) {
@@ -225,10 +239,115 @@ func diffCounts(diff string) (files, hunks int) {
 	}
 	return
 }
-func packetID(entry, head, base string) string {
-	s := sha256.Sum256([]byte(entry + "\x00" + head + "\x00" + base))
-	return hex.EncodeToString(s[:])[:12]
+
+const packetV1Prefix = "nova-review packet v1"
+
+type packetHeader struct {
+	ID    string
+	Entry string
+	Head  string
+	Base  string
+	Range string
+	Who   string
+	Built string
+	Bytes int
+	Cut   int
 }
+
+func (h packetHeader) String() string {
+	return fmt.Sprintf("%s id=%s entry=%s head=%s base=%s range=%s who=%s built=%s bytes=%d cut=%d",
+		packetV1Prefix, h.ID, oneline.Field(h.Entry), h.Head, h.Base, oneline.Field(h.Range), oneline.Field(h.Who), h.Built, h.Bytes, h.Cut)
+}
+
+func packetID(entry, head, base, rng string) string {
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\n%s\n%s\n%s\n", entry, head, base, rng)
+	return hex.EncodeToString(h.Sum(nil))[:12]
+}
+
+func formatPacket(hdr packetHeader, rest string) string {
+	hdr.Bytes = 0
+	candidate := hdr.String() + "\n\n" + rest
+	for {
+		l := len(candidate)
+		if hdr.Bytes == l {
+			return candidate
+		}
+		hdr.Bytes = l
+		candidate = hdr.String() + "\n\n" + rest
+	}
+}
+
+func readPacketFirstLine(path string) (*packetHeader, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var buf [4096]byte
+	n, err := io.ReadFull(io.LimitReader(f, 4096), buf[:])
+	if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+		return nil, err
+	}
+	content := string(buf[:n])
+	firstLine, _, _ := strings.Cut(content, "\n")
+	firstLine = strings.TrimRight(firstLine, "\r")
+	return parsePacketFirstLine(firstLine)
+}
+
+func parsePacketFirstLine(line string) (*packetHeader, error) {
+	if !strings.HasPrefix(line, packetV1Prefix+" ") && line != packetV1Prefix {
+		return nil, fmt.Errorf("line does not begin with %q", packetV1Prefix)
+	}
+	rest := strings.TrimPrefix(line, packetV1Prefix)
+	fields := strings.Fields(rest)
+	hdr := &packetHeader{}
+	seen := map[string]bool{}
+	for _, f := range fields {
+		k, v, ok := strings.Cut(f, "=")
+		if !ok {
+			return nil, fmt.Errorf("malformed header field %q", f)
+		}
+		seen[k] = true
+		switch k {
+		case "id":
+			hdr.ID = v
+		case "entry":
+			hdr.Entry = v
+		case "head":
+			hdr.Head = v
+		case "base":
+			hdr.Base = v
+		case "range":
+			hdr.Range = v
+		case "who":
+			hdr.Who = v
+		case "built":
+			hdr.Built = v
+		case "bytes":
+			b, err := strconv.Atoi(v)
+			if err != nil || b < 0 {
+				return nil, fmt.Errorf("invalid bytes field %q", v)
+			}
+			hdr.Bytes = b
+		case "cut":
+			c, err := strconv.Atoi(v)
+			if err != nil || c < 0 {
+				return nil, fmt.Errorf("invalid cut field %q", v)
+			}
+			hdr.Cut = c
+		}
+	}
+	required := []string{"id", "entry", "head", "base", "range", "who", "built", "bytes", "cut"}
+	for _, r := range required {
+		if !seen[r] {
+			return nil, fmt.Errorf("missing required header field %q", r)
+		}
+	}
+	return hdr, nil
+}
+
 func lastReadAt(reads []merge.Read, who string) string {
 	best := ""
 	for _, r := range reads {
@@ -237,19 +356,6 @@ func lastReadAt(reads []merge.Read, who string) string {
 		}
 	}
 	return best
-}
-func packetFields(body string) map[string]string {
-	out := map[string]string{}
-	for _, line := range strings.Split(body, "\n") {
-		key, value, ok := strings.Cut(line, "=")
-		if !ok || strings.HasPrefix(key, "#") {
-			continue
-		}
-		if key == "id" || key == "entry" || key == "head" || key == "base" {
-			out[key] = value
-		}
-	}
-	return out
 }
 func selectedRules(repo, base, head, diff string, specFlags, requested []string) (string, int, error) {
 	var specs []scopedSpec
