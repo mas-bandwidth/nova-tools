@@ -728,6 +728,18 @@ is compared against; it is never the path `query --ask size` takes."
 ;;; 13. static required-member containers settle and revive on the path
 ;;; ------------------------------------------------------------------
 
+(defun cascade-record-identities (records)
+  "Ordered identities retain membership, multiplicity and append order."
+  (mapcar (lambda (record)
+            (list (getf record :kind) (getf record :node) (getf record :rev)))
+          records))
+
+(defun cascade-history-identities (state)
+  (mapcar (lambda (record)
+            (list (getf record :request)
+                  (cascade-record-identities (getf record :events))))
+          (state-history state)))
+
 (defparameter *cascade-seed*
   '((:id "root"            :type :work-set :parent nil      :state :unknown)
     (:id "root/f"          :type :feature  :parent "root"   :state :unknown)
@@ -805,10 +817,27 @@ is compared against; it is never the path `query --ask size` takes."
                    "unaffected sibling container revived")
       (check-equal 5 (state-open-count (kernel-state k))
                    "open count after the revive cascade")
-      (check-equal 6 (length (state-history (kernel-state k)))
-                   "one history record per request")
-      (check-equal 11 (length (state-closed-rows (kernel-state k)))
-                   "one immutable row per settle and revive")
+      (check-equal
+       '(("cascade-a" ((:transition "root/f/a" 1) (:settle "root/f/a" 2)))
+         ("cascade-b" ((:transition "root/f/b" 3) (:settle "root/f/b" 4)
+                       (:settle "root/f" 5)))
+         ("cascade-g" ((:transition "root/g/one" 6) (:settle "root/g/one" 7)
+                       (:settle "root/g" 8) (:settle "root" 9)))
+         ("cascade-optional-close" ((:transition "root/f/optional" 10)
+                                    (:settle "root/f/optional" 11)))
+         ("cascade-optional-reopen" ((:reopen "root/f/optional" 12)
+                                     (:revive "root/f/optional" 13)))
+         ("cascade-reopen" ((:reopen "root/f/b" 14) (:revive "root/f/b" 15)
+                            (:revive "root/f" 16) (:revive "root" 17))))
+       (cascade-history-identities (kernel-state k))
+       "exact history requests and event identities")
+      (check-equal
+       '((:settle "root/f/a" 2) (:settle "root/f/b" 4) (:settle "root/f" 5)
+         (:settle "root/g/one" 7) (:settle "root/g" 8) (:settle "root" 9)
+         (:settle "root/f/optional" 11) (:revive "root/f/optional" 13)
+         (:revive "root/f/b" 15) (:revive "root/f" 16) (:revive "root" 17))
+       (cascade-record-identities (state-closed-rows (kernel-state k)))
+       "exact immutable settle and revive row identities")
       (let ((rebuilt (reconstruct-state
                       (canonical-string (state-canonical-form (kernel-state k))))))
         (check-string= (root-digest (kernel-state k)) (root-digest rebuilt)
@@ -828,7 +857,7 @@ is compared against; it is never the path `query --ask size` takes."
     (check-equal :o (node-branch (kernel-state k) "empty-root")
                  "parent settled over a required empty container")))
 
-(deftest "static-seed-required-is-a-boolean" "docs/SPEC-WORK.md:799,2769-2781"
+(deftest "static-seed-required-is-a-boolean" "docs/SPEC-WORK.md:799"
     "expected=absent-is-true;nil-is-false;lookalikes-refused;input-unchanged"
   (dolist (bad '(:false "false" 0))
     (let* ((seed (list (list :id "root" :type :work-set :parent nil :state :unknown)
@@ -857,8 +886,8 @@ is compared against; it is never the path `query --ask size` takes."
     (check-equal :o (node-branch (kernel-state k) "root/optional")
                  "explicit NIL did not remain optional")))
 
-(deftest "container-cascade-is-atomic-and-retry-stable" "docs/SPEC-WORK.md:1272-1283,3128-3131"
-    "expected=reject-applies-0;accept-all;retry-applies-0"
+(deftest "container-cascade-journal-rejection-and-retry-stability" "docs/SPEC-WORK.md:1272-1283,3128-3131"
+    "expected=journal-rejection-applies-0;accept-all;retry-applies-0"
   (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
                  (:id "root/f" :type :feature :parent "root" :state :unknown)
                  (:id "root/f/a" :type :task :parent "root/f" :state :doing)))
@@ -879,7 +908,11 @@ is compared against; it is never the path `query --ask size` takes."
       (multiple-value-bind (okp line code envelope) (submit k request)
         (declare (ignore line code))
         (ok okp "cascade after rejection refused")
-        (check-equal 4 (length (getf envelope :events)) "accepted cascade event count"))
+        (check-equal '((:transition "root/f/a" 1) (:settle "root/f/a" 2)
+                       (:settle "root/f" 3) (:settle "root" 4))
+                     (cascade-record-identities
+                      (mapcar #'event-record-form (getf envelope :events)))
+                     "exact accepted cascade event identities"))
       (let ((accepted (root-digest (kernel-state k))))
         (multiple-value-bind (okp line code replay) (submit k request)
           (declare (ignore line code))
@@ -888,5 +921,12 @@ is compared against; it is never the path `query --ask size` takes."
         (check-string= accepted (root-digest (kernel-state k)) "root after retry")
         (check-equal 0 (state-open-count (kernel-state k)) "open after retry")
         (check-equal 3 (state-closed-count (kernel-state k)) "closed after retry")
-        (check-equal 1 (length (state-history (kernel-state k))) "history after retry")
-        (check-equal 3 (length (state-closed-rows (kernel-state k))) "rows after retry")))))
+        (check-equal '(("cascade-accept"
+                        ((:transition "root/f/a" 1) (:settle "root/f/a" 2)
+                         (:settle "root/f" 3) (:settle "root" 4))))
+                     (cascade-history-identities (kernel-state k))
+                     "exact history after retry")
+        (check-equal '((:settle "root/f/a" 2) (:settle "root/f" 3)
+                       (:settle "root" 4))
+                     (cascade-record-identities (state-closed-rows (kernel-state k)))
+                     "exact rows after retry")))))
