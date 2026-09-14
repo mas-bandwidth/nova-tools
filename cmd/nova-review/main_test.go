@@ -663,7 +663,7 @@ func TestPacketOmitsGiantUnquotedPathWholeAndRetainsTinyFile(t *testing.T) {
 	}
 }
 
-func TestPacketRefusesOmittedGiantLineWhoseScopedCitationCannotBeRead(t *testing.T) {
+func TestPacketFindsScopedCitationInOmittedGiantLine(t *testing.T) {
 	lane, _ := packetLab(t)
 	repo := filepath.Join(lane, merge.RepoDir)
 	git := func(args ...string) {
@@ -694,11 +694,19 @@ func TestPacketRefusesOmittedGiantLineWhoseScopedCitationCannotBeRead(t *testing
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", "refused.md", "--max-bytes", "4096", "--spec", "docs/SPEC.md#Rules"}, &out, &errb); code != 2 || !strings.Contains(errb.String(), "cannot fully inspect scoped rule citations") {
-		t.Fatalf("large omitted citation code=%d stderr=%s", code, errb.String())
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", "giant-cited.md", "--max-bytes", "4096", "--spec", "docs/SPEC.md#Rules"}, &out, &errb); code != 0 {
+		t.Fatalf("large cited line code=%d stderr=%s", code, errb.String())
 	}
-	if _, err := os.Stat("refused.md"); !os.IsNotExist(err) {
-		t.Fatalf("incomplete scoped source published a packet: %v", err)
+	packet, err := os.ReadFile("giant-cited.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(packet)
+	if !strings.Contains(text, "a b/x b/y.txt: rules=1") || !strings.Contains(text, "### docs/SPEC.md:2 rule 1") {
+		t.Fatalf("omitted giant source lost its scoped citation:\n%s", text)
+	}
+	if strings.Contains(text, strings.Repeat("x", 1024)) {
+		t.Fatalf("giant source line was retained in packet:\n%s", text)
 	}
 }
 

@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"path"
 	"regexp"
 	"sort"
 	"strconv"
@@ -90,98 +89,25 @@ func splitSpecFlag(v string) (p, heading string, err error) {
 }
 
 // citedRuleNumbers accepts only Rule 2's closed grammar. It deliberately does
-// not treat prose such as "rule 3 through 7" as a citation.
+// not treat prose such as "rule 3 through 7" as a citation. This ordinary-line
+// helper uses the same finite parser as the streaming diff reader.
 func citedRuleNumbers(line string) []int {
-	words := strings.Fields(strings.ToLower(line))
-	for i, word := range words {
-		word = strings.Trim(word, "([{\"'")
-		if word != "rule" && word != "rules" {
-			continue
-		}
-		if i+1 == len(words) {
-			return nil
-		}
-		rest := strings.Join(words[i+1:], " ")
-		end := 0
-		for end < len(rest) {
-			c := rest[end]
-			if (c >= '0' && c <= '9') || c == ',' || c == ' ' || c == '\'' || c == 's' || c == 'a' || c == 'n' || c == 'd' {
-				end++
-				continue
-			}
-			break
-		}
-		following := strings.TrimLeft(rest[end:], " ")
-		if strings.HasPrefix(following, "through") || strings.HasPrefix(following, "to ") {
-			return nil
-		}
-		candidate := strings.TrimSuffix(strings.TrimSpace(rest[:end]), "'s")
-		if candidate == "" {
-			return nil
-		}
-		parts := strings.FieldsFunc(candidate, func(r rune) bool { return r == ',' || r == ' ' })
-		var nums []int
-		for _, part := range parts {
-			if part == "and" {
-				continue
-			}
-			n, err := strconv.Atoi(part)
-			if err != nil || n <= 0 {
-				return nil
-			}
-			nums = append(nums, n)
-		}
-		if len(nums) == 0 || strings.Contains(candidate, "  ") {
-			return nil
-		}
-		if word == "rule" && len(nums) != 1 {
-			return nil
-		}
-		if len(nums) > 1 && !strings.Contains(candidate, ",") && !strings.Contains(candidate, " and ") {
-			return nil
-		}
-		return nums
+	s := newCitationNumberSequence()
+	for _, r := range strings.ToLower(line) {
+		s.Feed(r)
 	}
-	return nil
+	s.Finish()
+	numbers, _ := s.Result()
+	return numbers
 }
 
 func citationTargets(line string, specs []scopedSpec) []specRule {
 	if len(specs) == 0 {
 		return nil
 	}
-	var result []specRule
-	seen := map[string]bool{}
-	for _, spec := range specs {
-		prefix := path.Base(spec.Path) + " "
-		candidate, prefixed := line, false
-		for at := 0; ; {
-			i := strings.Index(strings.ToLower(candidate[at:]), strings.ToLower(prefix))
-			if i < 0 {
-				break
-			}
-			prefixed = true
-			for _, n := range citedRuleNumbers(candidate[at+i+len(prefix):]) {
-				if rule, ok := spec.Rules[n]; ok {
-					key := fmt.Sprintf("%s:%d", rule.Path, rule.Line)
-					if !seen[key] {
-						result, seen[key] = append(result, rule), true
-					}
-				}
-			}
-			at += i + len(prefix)
-		}
-		if !prefixed && len(specs) == 1 {
-			for _, n := range citedRuleNumbers(line) {
-				if rule, ok := spec.Rules[n]; ok {
-					key := fmt.Sprintf("%s:%d", rule.Path, rule.Line)
-					if !seen[key] {
-						result, seen[key] = append(result, rule), true
-					}
-				}
-			}
-		}
-	}
-	return result
+	s := newStreamingCitations(specs)
+	s.Feed([]byte(line))
+	return s.Finish()
 }
 
 type diffFile struct {

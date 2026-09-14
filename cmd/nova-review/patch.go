@@ -104,29 +104,29 @@ func (r *patchNameReader) finish() error {
 }
 
 type patchReader struct {
-	hash               hash.Hash
-	files              []fileDiff
-	current            int
-	oldLine            int
-	newLine            int
-	inHunk             bool
-	prefix             []byte
-	raw                []byte
-	headerProbe        []byte
-	headerState        uint8 // 0 undecided, 1 header, 2 ordinary payload
-	lineBytes          int64
-	truncated          bool
-	lineEnded          bool
-	citationIncomplete bool
-	collect            []bool
-	names              []patchName
-	nameIndex          int
-	pendingType        bool
-	specs              []scopedSpec
-	baseSpecs          map[string]scopedSpec
-	payload            bytes.Buffer
-	payloadMax         int
-	selected           bool
+	hash        hash.Hash
+	files       []fileDiff
+	current     int
+	oldLine     int
+	newLine     int
+	inHunk      bool
+	prefix      []byte
+	raw         []byte
+	headerProbe []byte
+	headerState uint8 // 0 undecided, 1 header, 2 ordinary payload
+	lineBytes   int64
+	truncated   bool
+	lineEnded   bool
+	citation    *streamingCitations
+	collect     []bool
+	names       []patchName
+	nameIndex   int
+	pendingType bool
+	specs       []scopedSpec
+	baseSpecs   map[string]scopedSpec
+	payload     bytes.Buffer
+	payloadMax  int
+	selected    bool
 }
 
 func newPatchReader(selection []bool, payloadMax int, specs []scopedSpec, baseSpecs map[string]scopedSpec, names []patchName) *patchReader {
@@ -158,6 +158,7 @@ func (p *patchReader) Write(data []byte) (int, error) {
 }
 
 func (p *patchReader) part(data []byte, end bool) error {
+	p.feedCitation(data, end)
 	if p.collect != nil && p.selected {
 		if err := p.stageSelectedLine(data); err != nil {
 			return err
@@ -253,10 +254,30 @@ func (p *patchReader) finish() error {
 	if p.nameIndex != len(p.names) || p.pendingType {
 		return fmt.Errorf("git diff headers do not complete name-status metadata")
 	}
-	if p.citationIncomplete {
-		return fmt.Errorf("a changed source line exceeds %d bytes; cannot fully inspect scoped rule citations", patchControlPrefix)
-	}
 	return nil
+}
+
+func (p *patchReader) feedCitation(data []byte, end bool) {
+	if len(p.specs) == 0 || !p.inHunk || len(data) == 0 {
+		return
+	}
+	content := data
+	if end {
+		content = content[:len(content)-1]
+	}
+	if p.lineBytes == 0 {
+		if len(content) == 0 {
+			return
+		}
+		if content[0] != '+' {
+			return
+		}
+		p.citation = newStreamingCitations(p.specs)
+		content = content[1:]
+	}
+	if p.citation != nil {
+		p.citation.Feed(content)
+	}
 }
 
 func (p *patchReader) finishLine() error {
@@ -336,13 +357,11 @@ func (p *patchReader) finishLine() error {
 				f.Added++
 				// Citation extraction sees all ordinary added lines in the first
 				// pass, including those in files that later become omissions.
-				// Never silently treat a bounded-prefix overflow as citation-free.
-				if len(p.specs) != 0 && p.truncated {
-					p.citationIncomplete = true
-				} else if len(p.specs) != 0 {
-					for _, rule := range citationTargets(string(line[1:]), p.specs) {
+				if p.citation != nil {
+					for _, rule := range p.citation.Finish() {
 						appendDistinctRule(&f.Cited, &f.seenCited, rule)
 					}
+					p.citation = nil
 				}
 				if p.newLine > 0 {
 					for _, spec := range p.specs {

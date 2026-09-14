@@ -107,7 +107,7 @@ func TestPatchReaderCountsHunkPayloadPrefixesAndDoesNotAdvanceNoNewlineMarker(t 
 	}
 }
 
-func TestPatchReaderRefusesScopedCitationPastBoundedPrefix(t *testing.T) {
+func TestPatchReaderFindsScopedCitationPastBoundedPrefix(t *testing.T) {
 	spec, err := parseScopedSpec("docs/SPEC.md", "## Rules\n1. rule\n", "Rules")
 	if err != nil {
 		t.Fatal(err)
@@ -117,8 +117,11 @@ func TestPatchReaderRefusesScopedCitationPastBoundedPrefix(t *testing.T) {
 	if _, err := p.Write([]byte(patch)); err != nil {
 		t.Fatal(err)
 	}
-	if err := p.finish(); err == nil || !strings.Contains(err.Error(), "cannot fully inspect scoped rule citations") {
-		t.Fatalf("oversized cited line was silently accepted: %v", err)
+	if err := p.finish(); err != nil {
+		t.Fatalf("oversized cited line was not streamed: %v", err)
+	}
+	if got := p.files[0].Cited; len(got) != 1 || got[0].Number != 1 {
+		t.Fatalf("oversized cited line lost Rule 2 target: %#v", got)
 	}
 }
 
