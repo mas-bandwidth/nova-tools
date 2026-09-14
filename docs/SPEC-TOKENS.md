@@ -1607,10 +1607,10 @@ remedy line. The rules are numbered on from rule 21.
     retained record, because the aggregate has no friend, no event identity
     and no coverage, and calling it one would be the reinterpretation
     [PROPOSAL-TOKENS-RECORDS.md](PROPOSAL-TOKENS-RECORDS.md) forbids.
-    **The envelope validators exist; whole-package composition is the remaining dependency.**
-    `nova.tokens.coverage/2` and `nova.tokens.mapping/2` envelope validators are
-    implemented and tested in `internal/records` (alongside
-    `nova.tokens.observation/2`). The remaining dependency before publication is
+    **Envelope validation and whole-package composition.**
+    Each envelope is validated against its schema (`nova.tokens.observation/2`,
+    `nova.tokens.mapping/2`, `nova.tokens.coverage/2`) using strict envelope
+    parsing. The remaining dependency before publication is
     whole-package composition (`ValidateCandidateDirectory`,
     `ValidateInstalledDirectory` in `internal/tokens` or `internal/pkgvalid`),
     verifying the multi-file directory layout, shard paths, and 3-way mapping
