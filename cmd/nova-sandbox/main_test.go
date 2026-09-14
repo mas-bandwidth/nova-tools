@@ -218,6 +218,27 @@ func TestTheFirstSecondOfARealJob(t *testing.T) {
 	})
 }
 
+// zsh switches large heredocs from a pipe to a temporary file. On macOS it chooses
+// that file from TMPPREFIX, not TMPDIR; an inherited outside prefix therefore made a
+// legitimate report write fail at the wall even though its final destination was allowed.
+func TestZshLargeHeredocKeepsItsTemporaryFileInsideTheWall(t *testing.T) {
+	needDarwin(t)
+	if _, err := os.Stat("/bin/zsh"); err != nil {
+		t.Skip("/bin/zsh is not available on this macOS machine")
+	}
+	j := newJob(t)
+	payload := strings.Repeat("x", 16000) + "\n"
+	script := "test \"$TMPPREFIX\" = \"$TMPDIR/zsh\"\ncat <<'NOVA_REPORT' > \"$TMPDIR/report\"\n" + payload + "NOVA_REPORT\ntest \"$(wc -c < \"$TMPDIR/report\")\" -eq 16001\n"
+	args := []string{"--read", j.read, "--write", j.write, "--", "/bin/zsh", "-c", script}
+	code, _, errOut := j.tool(t, j.env("TMPPREFIX="+j.outside+"/zsh"), args...)
+	if code != 0 {
+		t.Fatalf("large zsh heredoc failed inside the wall: exit %d; %s", code, errOut)
+	}
+	if info, err := os.Stat(filepath.Join(j.write, ".nova-sandbox-tmp", "report")); err != nil || info.Size() != 16001 {
+		t.Fatalf("report was not written inside the selected temp directory at its full size: info=%v err=%v", info, err)
+	}
+}
+
 // This build's fix to the spec: (allow network*) reaches every unix-domain socket, so
 // the SSH agent socket was connectable from inside the wall. A socket created outside
 // the wall must not be connectable from inside it, and SSH_AUTH_SOCK must be gone.

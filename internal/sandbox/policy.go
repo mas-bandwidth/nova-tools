@@ -606,8 +606,10 @@ func lookPathIn(name, path string) (string, error) {
 	return "", fmt.Errorf("%s: not found in %s", name, path)
 }
 
-// ChildEnv is rule 9's environment: the caller's, unchanged, minus the three temp
-// variables the tool sets to rule 8's directory — and minus the agent sockets. It is not
+// ChildEnv is rule 9's environment: the caller's, unchanged, minus the temp
+// variables the tool sets to rule 8's directory — and minus the agent sockets. TMPPREFIX
+// is zsh's independent temporary-file prefix on macOS, so it must be inside the same wall
+// even though other shells ignore it. It is not
 // a secrets tool: the credential the caller deliberately passed by environment must
 // arrive, and every other variable passes through untouched.
 //
@@ -619,18 +621,18 @@ func lookPathIn(name, path string) (string, error) {
 // is the fence beside it, so that an honest program does not try and a log does not have
 // to be read to see that it could not.
 func ChildEnv(env []string, tmp string) []string {
-	out := make([]string, 0, len(env)+3)
+	out := make([]string, 0, len(env)+4)
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
 		switch {
-		case name == "TMPDIR", name == "TMP", name == "TEMP":
+		case name == "TMPDIR", name == "TMP", name == "TEMP", name == "TMPPREFIX":
 			continue
 		case isAgentVar(name):
 			continue
 		}
 		out = append(out, kv)
 	}
-	return append(out, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp)
+	return append(out, "TMPDIR="+tmp, "TMP="+tmp, "TEMP="+tmp, "TMPPREFIX="+filepath.Join(tmp, "zsh"))
 }
 
 // isAgentVar is rule 9's scrub, and it is by EXCLUSION on the name. Revision 7 states the
