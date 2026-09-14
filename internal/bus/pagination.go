@@ -123,6 +123,21 @@ type bodyToken struct {
 	Expected string       `json:"e"`
 }
 
+// ErrBodyTokenNoItem is a continuation whose last accounted item is not in the range this
+// read rebuilt. It is its own error because the refusal that names it is its own sentence:
+// the remedy is the same command without --after, and nothing about the reader is wrong.
+var ErrBodyTokenNoItem = errors.New("--after names no item in this range")
+
+// BodyCursorMismatchError is a continuation whose expected persisted cursor is not the one
+// on the lane: another read changed this reader's state while the chain was open. It
+// carries both commits because the refusal names both, and it is never a reason to move a
+// cursor backward.
+type BodyCursorMismatchError struct{ Token, Persisted string }
+
+func (e *BodyCursorMismatchError) Error() string {
+	return fmt.Sprintf("--after names cursor %s and this reader's cursor is %s", e.Token, e.Persisted)
+}
+
 // BodyPageFor selects a page from one canonical snapshot order.  Items must already be
 // sorted by first-parent commit, bytewise path, then record offset; we validate that rather
 // than sorting a caller's accidental display order into a silently different continuation.
@@ -146,7 +161,7 @@ func BodyPageFor(items []BodyItem, request BodyPageRequest) (BodyPage, error) {
 			return BodyPage{}, fmt.Errorf("continuation belongs to another reader, selector, or snapshot; start a fresh bodies read")
 		}
 		if token.Expected != request.ExpectedCursor {
-			return BodyPage{}, fmt.Errorf("the persisted cursor changed since this continuation; start a fresh bodies read")
+			return BodyPage{}, &BodyCursorMismatchError{Token: token.Expected, Persisted: request.ExpectedCursor}
 		}
 		if token.Last == nil {
 			return BodyPage{}, fmt.Errorf("continuation has no last accounted item")
@@ -159,7 +174,7 @@ func BodyPageFor(items []BodyItem, request BodyPageRequest) (BodyPage, error) {
 			}
 		}
 		if !found {
-			return BodyPage{}, fmt.Errorf("continuation names no item in its snapshot")
+			return BodyPage{}, ErrBodyTokenNoItem
 		}
 		if err := validateTokenAccounting(items, token, start); err != nil {
 			return BodyPage{}, err
@@ -420,6 +435,21 @@ func decodeBodyToken(encoded string) (bodyToken, error) {
 			if err := ValidCommitHex(commit); err != nil {
 				return bodyToken{}, fmt.Errorf("continuation %s: %w", name, err)
 			}
+		}
+	}
+	// An item position is part of the schema and is checked here, not left to the lookup:
+	// a path that escapes the repository or a negative record offset is a malformed token
+	// and says so, rather than arriving as "names no item", which is a different sentence
+	// with a different remedy.
+	for name, key := range map[string]*bodyItemKey{"last accounted item": token.Last, "earliest gap": token.Gap} {
+		if key == nil {
+			continue
+		}
+		if !validSnapshotPath(key.Path) || key.Offset < 0 {
+			return bodyToken{}, fmt.Errorf("continuation %s has an invalid path or record offset", name)
+		}
+		if err := ValidCommitHex(key.Commit); err != nil {
+			return bodyToken{}, fmt.Errorf("continuation %s: %w", name, err)
 		}
 	}
 	return token, nil

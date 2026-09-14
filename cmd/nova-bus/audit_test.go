@@ -88,7 +88,16 @@ var messageBusAudit = audit.Config{
 		// written by the same fmt calls this walk classifies -- inboxListing prints INTO
 		// one -- and read back as a string that is printed at the single exempted site
 		// above. It reaches no stream by itself.
-		`"bytes"`, `"encoding/base64"`, `"encoding/json"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strings"`, `"time"`,
+		// errors is read-only over error VALUES -- errors.Is and errors.As, which
+		// refuseContinuation uses to tell one --after refusal from another -- and
+		// errors.New, which makes one. None of the three holds a writer or reaches a
+		// stream: the sentence they choose between is printed by fmt at the site above,
+		// through oneline like every other line here.
+		//
+		// strconv is the same shape from the other side: FormatInt turns the byte count on
+		// an INBOX BODIES GAP line into digits. It is a converter, it writes to no stream,
+		// and its result reaches the line through oneline.Field.
+		`"bytes"`, `"encoding/base64"`, `"encoding/json"`, `"errors"`, `"flag"`, `"fmt"`, `"io"`, `"os"`, `"path/filepath"`, `"strconv"`, `"strings"`, `"time"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace
 		// publish makes, and errors.New for one refusal's own text. It holds no writer at

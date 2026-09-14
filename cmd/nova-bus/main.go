@@ -41,10 +41,12 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -107,6 +109,29 @@ opening a note, capped at --open-max (default 20) with one line saying how many
 it did not print. Past --open-warn carried (default 40), every return adds one
 line saying the list is large and the three ways out of it -- answer a note by
 naming it, receipt it, or draw the switch-day line now and start over.
+
+--bodies puts each NEW note's TEXT in that same return, so a reader answering a
+note has it from the call that said it arrived. Each note's line is followed by
+one INBOX BODY id=<id> bytes=<n> line, exactly n bytes of body -- no escaping, no
+re-wrapping, no trailing-newline normalisation -- one separator newline IF AND
+ONLY IF n is 0 or the body does not end in one, and one INBOX BODY END id=<id>.
+The COUNT is the frame, never the closing line, so nothing a body holds can be
+read as an event line. It is also the only flag that BOUNDS the NEW half, which
+is otherwise unbounded: --max-notes (default 20, ceiling 1000) is how many NEW
+items print AT ALL -- summary line and frame together -- and --max-bytes (default
+65536, ceiling 1048576) is the body bytes. Both are checked before a frame is
+opened, so a note is never printed half: an item past either limit is left for
+the next call, whole, and the return says complete=false. Zero is not unlimited
+and over-ceiling is not as much as you can: either one is INBOX REFUSED and exit
+2. One INBOX BODIES printed= bytes= oversize= gaps= drained= complete= next= line
+ends the return; next= is an opaque token you hand back as --after <token> to
+continue the SAME snapshot, and a chain drains while next= is present -- never
+loop on complete=false. A body no --max-bytes on this run carries is named on an
+INBOX BODY OVERSIZE line and left whole where it is, and a chain that ends
+holding one prints an INBOX BODIES GAP line saying which --max-bytes would carry
+it, or that none under the ceiling does. Without --advance nothing moves; with
+it the cursor stops at the last WHOLE commit printed before the first gap, and
+never past it. Without --bodies, inbox and wait are exactly what they are today.
 
 A note is closed by a Re: line naming it, and a Re: line is not a thing anybody
 writes from memory: a line that answered every note by hand carried all 74 of
@@ -1010,12 +1035,10 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintln(stderr, "nova-bus inbox: --after requires --bodies")
 		return 2
 	}
-	if *bodies && (*maxNotes < 1 || int64(*maxNotes) > maxBodiesNotesCeiling) {
-		fmt.Fprintf(stderr, "nova-bus inbox: --max-notes must be between 1 and %d\n", maxBodiesNotesCeiling)
+	if *bodies && !bodyLimit(stderr, "--max-notes", int64(*maxNotes), maxBodiesNotesCeiling) {
 		return 2
 	}
-	if *bodies && (*maxBytes < 1 || *maxBytes > maxBodiesBytesCeiling) {
-		fmt.Fprintf(stderr, "nova-bus inbox: --max-bytes must be between 1 and %d\n", maxBodiesBytesCeiling)
+	if *bodies && !bodyLimit(stderr, "--max-bytes", *maxBytes, maxBodiesBytesCeiling) {
 		return 2
 	}
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {
@@ -1377,12 +1400,10 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			if o.after != "" {
 				snapshot, _, headErr = bus.BodyContinuation(o.after)
 				if headErr != nil {
-					fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(headErr))
-					return 2, r
+					return refuseContinuation(stderr, headErr), r
 				}
 				if snapshot.Reader != me.Name || snapshot.Selector != "inbox-new" {
-					fmt.Fprintln(stderr, "INBOX REFUSED: continuation belongs to another reader or selector; start a fresh bodies read")
-					return 2, r
+					return refuseContinuation(stderr, errors.New("it belongs to another reader or selector")), r
 				}
 			}
 			// Rebuild C0..H directly. Current OPEN is deliberately not an input: a note
@@ -1390,15 +1411,21 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			// the body from its immutable snapshot.
 			items, pageErr := bus.BodyNewItemsAtSnapshot(o.busDir, snapshot, c, me, o.maxWords, legacy)
 			if pageErr != nil {
+				if o.after != "" {
+					return refuseContinuation(stderr, pageErr), r
+				}
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(pageErr))
 				return 2, r
 			}
 			page, pageErr := bus.BodyPageFor(items, bus.BodyPageRequest{Snapshot: snapshot, ExpectedCursor: expected, Advance: o.advance, Token: o.after, MaxNotes: o.maxNotes, MaxBytes: o.maxBytes})
 			if pageErr != nil {
+				if o.after != "" {
+					return refuseContinuation(stderr, pageErr), r
+				}
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(pageErr))
 				return 2, r
 			}
-			if err := printBodyPage(stdout, page); err != nil {
+			if err := printBodyPage(stdout, page, o.maxBytes); err != nil {
 				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
 				return 1, r
 			}
@@ -1410,13 +1437,26 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			if page.SafeFrontier != expected {
 				r.AdvanceTo = page.SafeFrontier
 			}
+			// THE REMEDY STANDS IMMEDIATELY BEFORE THE RECEIPT AND NOWHERE ELSE. A chain
+			// holding many gaps names the earliest one and prints no list, so this is one
+			// line at every state -- and it is on stdout, beside the receipt it explains,
+			// because a caller reconciling `complete=false` reads one stream.
+			if page.Drained && !page.Complete && page.EarliestGap != nil {
+				gap := page.EarliestGap
+				kind, retry := "over-budget", strconv.FormatInt(gap.Bytes, 10)
+				if gap.Bytes > maxBodiesBytesCeiling {
+					// No value under the hard ceiling carries it, so there is no number to
+					// name: the door is the file, and path= is what opens it.
+					kind, retry = "over-ceiling", "-"
+				}
+				if _, err := fmt.Fprintf(stdout, "INBOX BODIES GAP id=%s kind=%s retry-max-bytes=%s path=%s\n", oneline.Field(dash(gap.ID)), oneline.Field(kind), oneline.Field(retry), oneline.Field(gap.Path)); err != nil {
+					fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+					return 1, inboxReading{}
+				}
+			}
 			if _, err := fmt.Fprintf(stdout, "INBOX BODIES printed=%d bytes=%d oversize=%d gaps=%d drained=%t complete=%t next=%s\n", r.BodyPrinted, r.BodyBytes, len(page.Gaps), r.BodyGaps, page.Drained, page.Complete, oneline.Field(dash(r.Next))); err != nil {
 				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
 				return 1, inboxReading{}
-			}
-			if page.Drained && !page.Complete && page.EarliestGap != nil {
-				gap := page.EarliestGap
-				fmt.Fprintf(stderr, "INBOX NOTE first unresolved body id=%s path=%s bytes=%d; restart without --after with a sufficient --max-bytes, or inspect the named file explicitly if it exceeds the hard ceiling\n", oneline.Field(dash(gap.ID)), oneline.Field(gap.Path), gap.Bytes)
 			}
 		} else {
 			printOpenEntries(stdout, res.Fresh, len(res.Fresh))
@@ -1677,6 +1717,41 @@ func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int) int {
 	return shown
 }
 
+// bodyLimit checks one of the two --bodies budgets. Zero is not "unlimited" and
+// over-ceiling is not "as much as you can": either one names the flag, the value given and
+// the ceiling, in the INBOX REFUSED shape the rest of this listing's refusals use, and is
+// exit 2 -- a bad invocation, like every other pair of numbers this tool will not guess.
+func bodyLimit(stderr io.Writer, name string, value, ceiling int64) bool {
+	if value < 1 {
+		fmt.Fprintf(stderr, "INBOX REFUSED: %s %d is not unlimited; give 1 to %d\n", oneline.Field(name), value, ceiling)
+		return false
+	}
+	if value > ceiling {
+		fmt.Fprintf(stderr, "INBOX REFUSED: %s %d is over the ceiling %d\n", oneline.Field(name), value, ceiling)
+		return false
+	}
+	return true
+}
+
+// refuseContinuation is the ONE shape a --after refusal takes, and it always carries the
+// same remedy: the same command without --after. Two of the reasons have their own
+// sentence because their remedy needs one -- a token that names no item in this range, and
+// a cursor another read moved under an open chain -- and everything else says what did not
+// match. None of them moves a cursor, writes a file, or leaves a half-listing behind.
+func refuseContinuation(stderr io.Writer, err error) int {
+	var moved *bus.BodyCursorMismatchError
+	switch {
+	case errors.As(err, &moved):
+		fmt.Fprintf(stderr, "INBOX REFUSED: --after names cursor %s and this reader's cursor is %s; rerun without --after\n",
+			oneline.Field(dash(moved.Token)), oneline.Field(dash(moved.Persisted)))
+	case errors.Is(err, bus.ErrBodyTokenNoItem):
+		fmt.Fprintln(stderr, "INBOX REFUSED: --after <token> names no item in this range; rerun without --after")
+	default:
+		fmt.Fprintf(stderr, "INBOX REFUSED: --after <token> is not a continuation for this read: %s; rerun without --after\n", oneline.Err(err))
+	}
+	return 2
+}
+
 const (
 	defaultBodiesNotes          = 20
 	defaultBodiesBytes    int64 = 65536
@@ -1684,7 +1759,7 @@ const (
 	maxBodiesBytesCeiling int64 = 1048576
 )
 
-func printBodyPage(stdout io.Writer, page bus.BodyPage) error {
+func printBodyPage(stdout io.Writer, page bus.BodyPage, maxBytes int64) error {
 	// Selection, continuation identities, and safe-frontier accounting stay in canonical
 	// snapshot order. Display follows the inbox's established NOTE, HEARD, RECEIPT groups;
 	// an earlier receipt must not push a later note below the summary groups on this page.
@@ -1712,7 +1787,7 @@ func printBodyPage(stdout io.Writer, page bus.BodyPage) error {
 			continue
 		}
 		gap := emission.Gap
-		if _, err := fmt.Fprintf(stdout, "INBOX BODY OVERSIZE id=%s bytes=%d path=%s\n", oneline.Field(dash(gap.ID)), gap.Bytes, oneline.Field(gap.Path)); err != nil {
+		if _, err := fmt.Fprintf(stdout, "INBOX BODY OVERSIZE id=%s bytes=%d max-bytes=%d path=%s\n", oneline.Field(dash(gap.ID)), gap.Bytes, maxBytes, oneline.Field(gap.Path)); err != nil {
 			return err
 		}
 	}
@@ -1849,12 +1924,10 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 		fmt.Fprintln(stderr, "nova-bus wait: --after requires --bodies")
 		return 2
 	}
-	if *bodies && (*maxNotes < 1 || int64(*maxNotes) > maxBodiesNotesCeiling) {
-		fmt.Fprintf(stderr, "nova-bus wait: --max-notes must be between 1 and %d\n", maxBodiesNotesCeiling)
+	if *bodies && !bodyLimit(stderr, "--max-notes", int64(*maxNotes), maxBodiesNotesCeiling) {
 		return 2
 	}
-	if *bodies && (*maxBytes < 1 || *maxBytes > maxBodiesBytesCeiling) {
-		fmt.Fprintf(stderr, "nova-bus wait: --max-bytes must be between 1 and %d\n", maxBodiesBytesCeiling)
+	if *bodies && !bodyLimit(stderr, "--max-bytes", *maxBytes, maxBodiesBytesCeiling) {
 		return 2
 	}
 	if !f.gitTimeoutFlag(*gitSeconds, stderr) {

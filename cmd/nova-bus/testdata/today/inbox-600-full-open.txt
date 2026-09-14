@@ -1,0 +1,28 @@
+exit=0
+--- stdout
+INBOX SCOPE mode=full cursor=- changed=0 carrying=602
+INBOX OPEN carrying=602 heard=0
+INBOX NOTE id=bo-abcdef012345 from=Bo addr=to at=2026-09-07T00:01:00Z path=from-bo/2026-09-07T0001Z-a-question-abcdef012345.md: A question about the gate
+INBOX NOTE id=bo-b00000000599 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-599.md: big 599
+INBOX NOTE id=bo-b00000000598 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-598.md: big 598
+INBOX NOTE id=bo-b00000000597 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-597.md: big 597
+INBOX NOTE id=bo-b00000000596 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-596.md: big 596
+INBOX NOTE id=bo-b00000000595 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-595.md: big 595
+INBOX NOTE id=bo-b00000000594 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-594.md: big 594
+INBOX NOTE id=bo-b00000000593 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-593.md: big 593
+INBOX NOTE id=bo-b00000000592 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-592.md: big 592
+INBOX NOTE id=bo-b00000000591 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-591.md: big 591
+INBOX NOTE id=bo-b00000000590 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-590.md: big 590
+INBOX NOTE id=bo-b00000000589 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-589.md: big 589
+INBOX NOTE id=bo-b00000000588 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-588.md: big 588
+INBOX NOTE id=bo-b00000000587 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-587.md: big 587
+INBOX NOTE id=bo-b00000000586 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-586.md: big 586
+INBOX NOTE id=bo-b00000000585 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-585.md: big 585
+INBOX NOTE id=bo-b00000000584 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-584.md: big 584
+INBOX NOTE id=bo-b00000000583 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-583.md: big 583
+INBOX NOTE id=bo-b00000000582 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-582.md: big 582
+INBOX NOTE id=bo-b00000000581 from=Bo addr=to at=2026-09-07T00:00:00Z path=from-bo/big-581.md: big 581
+INBOX OPEN listed=20 and 582 more (--open-max to widen)
+INBOX OPEN carrying=602 is large; answer with Re: <id>, receipt --note <id>, or start over: nova-bus inbox --bus "<bus>" --as "Ada" --receipt-max-words 40 --full --legacy-now --advance --remote "<remote>" --branch "<branch>"
+INBOX OK as=Ada carrying=602 open=602 notes=601 receipts=1 heard=0 unaddressed=0 unreadable=0
+--- stderr
