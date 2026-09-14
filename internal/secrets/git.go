@@ -2,8 +2,13 @@ package secrets
 
 import (
 	"bufio"
+	"bytes"
+	"compress/zlib"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 )
@@ -48,6 +53,10 @@ func CheckGitWorkingCopy(storeDir string) (GitRefStatus, error) {
 	if err != nil {
 		return status, fmt.Errorf("store %s: unable to resolve local branch %s: %w", storeDir, branch, err)
 	}
+	if !isValidHexSHA(localSHA) {
+		return status, fmt.Errorf("store %s: invalid local branch SHA %q", storeDir, localSHA)
+	}
+
 	if len(localSHA) >= 7 {
 		status.HeadSHA = localSHA[:7]
 	} else {
@@ -70,6 +79,9 @@ func CheckGitWorkingCopy(storeDir string) (GitRefStatus, error) {
 	if err != nil {
 		return status, fmt.Errorf("store %s: unable to resolve tracking ref %s: %w; run: git -C %s fetch", storeDir, remoteTrackingRef, err, storeDir)
 	}
+	if !isValidHexSHA(remoteSHA) {
+		return status, fmt.Errorf("store %s: invalid remote tracking SHA %q", storeDir, remoteSHA)
+	}
 	status.RemoteSHA = remoteSHA
 
 	if localSHA != remoteSHA {
@@ -79,6 +91,19 @@ func CheckGitWorkingCopy(storeDir string) (GitRefStatus, error) {
 
 	status.Clean = true
 	return status, nil
+}
+
+func isValidHexSHA(s string) bool {
+	if len(s) != 40 && len(s) != 64 {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
 }
 
 func min(a, b int) int {
@@ -93,7 +118,11 @@ func resolveRef(gitDir, refPath string) (string, error) {
 	loosePath := filepath.Join(gitDir, filepath.FromSlash(refPath))
 	data, err := os.ReadFile(loosePath)
 	if err == nil {
-		return strings.TrimSpace(string(data)), nil
+		sha := strings.TrimSpace(string(data))
+		if isValidHexSHA(sha) {
+			return sha, nil
+		}
+		return "", fmt.Errorf("invalid ref content in %s: %q", loosePath, sha)
 	}
 
 	// Try packed-refs
@@ -112,7 +141,11 @@ func resolveRef(gitDir, refPath string) (string, error) {
 		}
 		fields := strings.Fields(line)
 		if len(fields) >= 2 && fields[1] == refPath {
-			return fields[0], nil
+			sha := fields[0]
+			if isValidHexSHA(sha) {
+				return sha, nil
+			}
+			return "", fmt.Errorf("invalid ref content for %s in packed-refs: %q", refPath, sha)
 		}
 	}
 	return "", fmt.Errorf("ref %s not found", refPath)
@@ -153,4 +186,174 @@ func readBranchConfig(gitDir, branch string) (remote, merge string, err error) {
 		}
 	}
 	return remote, merge, scanner.Err()
+}
+
+// ReadHEADTreeBlobs reads the tree of the HEAD commit and returns a map of relative path -> blob SHA1.
+// It inspects loose objects directly in pure Go, with fallback to git ls-tree if needed.
+func ReadHEADTreeBlobs(storeDir string) (map[string]string, error) {
+	gitDir := filepath.Join(storeDir, ".git")
+	headBytes, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
+	if err != nil {
+		return nil, fmt.Errorf("unable to read .git/HEAD: %w", err)
+	}
+	headContent := strings.TrimSpace(string(headBytes))
+	var commitSHA string
+	if strings.HasPrefix(headContent, "ref: refs/heads/") {
+		branch := strings.TrimPrefix(headContent, "ref: refs/heads/")
+		commitSHA, err = resolveRef(gitDir, "refs/heads/"+branch)
+		if err != nil {
+			return nil, fmt.Errorf("unable to resolve branch %s: %w", branch, err)
+		}
+	} else if isValidHexSHA(headContent) {
+		commitSHA = headContent
+	} else {
+		return nil, fmt.Errorf("invalid HEAD ref or commit %q", headContent)
+	}
+
+	if !isValidHexSHA(commitSHA) {
+		return nil, fmt.Errorf("invalid commit SHA %q in HEAD", commitSHA)
+	}
+
+	// Try pure-Go loose object reading first
+	blobs, err := readLooseCommitTree(gitDir, commitSHA)
+	if err == nil {
+		return blobs, nil
+	}
+
+	// Fallback to git ls-tree -r if available
+	cmd := exec.Command("git", "-C", storeDir, "ls-tree", "-r", commitSHA)
+	out, kErr := cmd.Output()
+	if kErr == nil {
+		res := make(map[string]string)
+		scanner := bufio.NewScanner(bytes.NewReader(out))
+		for scanner.Scan() {
+			line := scanner.Text()
+			tabIdx := strings.IndexByte(line, '\t')
+			if tabIdx < 0 {
+				continue
+			}
+			filePath := line[tabIdx+1:]
+			meta := line[:tabIdx]
+			fields := strings.Fields(meta)
+			if len(fields) >= 3 && fields[1] == "blob" {
+				res[filepath.Clean(filepath.ToSlash(filePath))] = fields[2]
+			}
+		}
+		return res, nil
+	}
+
+	return nil, fmt.Errorf("unable to read HEAD tree objects: %w", err)
+}
+
+func readLooseObject(gitDir, sha string) (string, []byte, error) {
+	if len(sha) < 2 {
+		return "", nil, fmt.Errorf("sha too short")
+	}
+	loosePath := filepath.Join(gitDir, "objects", sha[:2], sha[2:])
+	f, err := os.Open(loosePath)
+	if err != nil {
+		return "", nil, err
+	}
+	defer f.Close()
+
+	zr, err := zlib.NewReader(f)
+	if err != nil {
+		return "", nil, err
+	}
+	defer zr.Close()
+
+	data, err := io.ReadAll(zr)
+	if err != nil {
+		return "", nil, err
+	}
+
+	nullIdx := bytes.IndexByte(data, 0)
+	if nullIdx < 0 {
+		return "", nil, fmt.Errorf("malformed loose object %s: missing null byte", sha)
+	}
+	header := string(data[:nullIdx])
+	parts := strings.SplitN(header, " ", 2)
+	if len(parts) != 2 {
+		return "", nil, fmt.Errorf("malformed loose object %s header", sha)
+	}
+	objType := parts[0]
+	return objType, data[nullIdx+1:], nil
+}
+
+func readLooseCommitTree(gitDir, commitSHA string) (map[string]string, error) {
+	objType, data, err := readLooseObject(gitDir, commitSHA)
+	if err != nil {
+		return nil, err
+	}
+	if objType != "commit" {
+		return nil, fmt.Errorf("object %s is not a commit (got %s)", commitSHA, objType)
+	}
+
+	var treeSHA string
+	lines := strings.Split(string(data), "\n")
+	for _, l := range lines {
+		if strings.HasPrefix(l, "tree ") {
+			treeSHA = strings.TrimSpace(strings.TrimPrefix(l, "tree "))
+			break
+		}
+	}
+	if treeSHA == "" || !isValidHexSHA(treeSHA) {
+		return nil, fmt.Errorf("commit %s has invalid tree %q", commitSHA, treeSHA)
+	}
+
+	blobs := make(map[string]string)
+	err = readLooseTreeRecursive(gitDir, treeSHA, "", blobs)
+	if err != nil {
+		return nil, err
+	}
+	return blobs, nil
+}
+
+func readLooseTreeRecursive(gitDir, treeSHA, prefix string, out map[string]string) error {
+	objType, data, err := readLooseObject(gitDir, treeSHA)
+	if err != nil {
+		return err
+	}
+	if objType != "tree" {
+		return fmt.Errorf("object %s is not a tree (got %s)", treeSHA, objType)
+	}
+
+	offset := 0
+	for offset < len(data) {
+		spaceIdx := bytes.IndexByte(data[offset:], ' ')
+		if spaceIdx < 0 {
+			break
+		}
+		mode := string(data[offset : offset+spaceIdx])
+		offset += spaceIdx + 1
+
+		nullIdx := bytes.IndexByte(data[offset:], 0)
+		if nullIdx < 0 {
+			return fmt.Errorf("corrupt tree object %s: missing null after name", treeSHA)
+		}
+		name := string(data[offset : offset+nullIdx])
+		offset += nullIdx + 1
+
+		if offset+20 > len(data) {
+			return fmt.Errorf("corrupt tree object %s: truncated sha", treeSHA)
+		}
+		entrySHABytes := data[offset : offset+20]
+		entrySHA := hex.EncodeToString(entrySHABytes)
+		offset += 20
+
+		fullPath := name
+		if prefix != "" {
+			fullPath = prefix + "/" + name
+		}
+
+		cleanPath := filepath.Clean(filepath.ToSlash(fullPath))
+		if mode == "40000" || mode == "040000" {
+			if err := readLooseTreeRecursive(gitDir, entrySHA, cleanPath, out); err != nil {
+				return err
+			}
+		} else {
+			out[cleanPath] = entrySHA
+		}
+	}
+	return nil
 }

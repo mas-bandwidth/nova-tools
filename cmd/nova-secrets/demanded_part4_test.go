@@ -428,3 +428,158 @@ func TestAsPathTraversalRefused(t *testing.T) {
 		t.Errorf("expected invalid seat name refusal, got: %s", stderr)
 	}
 }
+
+func TestExecRejectsUncommittedModificationAgainstHEADTree(t *testing.T) {
+	sopsPath := findSops(t)
+	bin := buildNovaSecrets(t)
+
+	td := t.TempDir()
+	storeDir := filepath.Join(td, "store")
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	initGitStore(t, storeDir)
+
+	keyA := genKey(t, td, "rowan")
+	recKey := genKey(t, td, "recovery")
+	_ = os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recKey.pubKey+"\n"), 0644)
+
+	sopsCfg := fmt.Sprintf(`creation_rules:
+  - path_regex: ^rowan\.yaml$
+    age: %s,%s
+`, keyA.pubKey, recKey.pubKey)
+	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsCfg), 0644)
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: initial_committed\n")
+	commitAndPush(t, storeDir)
+
+	// Clean passes
+	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
+	if code != 0 {
+		t.Fatalf("expected check to pass, code %d: %s", code, errOut)
+	}
+
+	// Modify rowan.yaml and stage with git add (working tree matches index, but differs from HEAD tree!)
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: staged_uncommitted\n")
+	runCmd(t, storeDir, "git", "add", "rowan.yaml")
+
+	// Exec must refuse with 125
+	_, errOut, code = runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "true")
+	if code != 125 || !strings.Contains(errOut, "differs from HEAD tree") {
+		t.Errorf("expected exec exit 125 citing HEAD tree diff, got code %d: %s", code, errOut)
+	}
+
+	// Check must fail with 1
+	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
+	if code != 1 || !strings.Contains(errOut, "differs from HEAD commit tree") {
+		t.Errorf("expected check exit 1 citing HEAD commit tree diff, got code %d: %s", code, errOut)
+	}
+}
+
+func TestCheckFailsClosedOnUnreadableIndex(t *testing.T) {
+	sopsPath := findSops(t)
+	bin := buildNovaSecrets(t)
+
+	td := t.TempDir()
+	storeDir := filepath.Join(td, "store")
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	initGitStore(t, storeDir)
+
+	keyA := genKey(t, td, "rowan")
+	recKey := genKey(t, td, "recovery")
+	_ = os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recKey.pubKey+"\n"), 0644)
+
+	sopsCfg := fmt.Sprintf(`creation_rules:
+  - path_regex: ^rowan\.yaml$
+    age: %s,%s
+`, keyA.pubKey, recKey.pubKey)
+	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsCfg), 0644)
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: initial_committed\n")
+	commitAndPush(t, storeDir)
+
+	// Corrupt git index
+	indexPath := filepath.Join(storeDir, ".git", "index")
+	_ = os.WriteFile(indexPath, []byte("NOT_A_VALID_DIRC_HEADER"), 0644)
+
+	_, errOut, code := runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
+	if code != 1 || !strings.Contains(errOut, "failed to read git index") {
+		t.Errorf("expected check exit 1 on corrupt index, got code %d: %s", code, errOut)
+	}
+}
+
+func TestExecFailsOnUntrackedSealedYAML(t *testing.T) {
+	sopsPath := findSops(t)
+	bin := buildNovaSecrets(t)
+
+	td := t.TempDir()
+	storeDir := filepath.Join(td, "store")
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	initGitStore(t, storeDir)
+
+	keyA := genKey(t, td, "rowan")
+	recKey := genKey(t, td, "recovery")
+	_ = os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recKey.pubKey+"\n"), 0644)
+
+	sopsCfg := fmt.Sprintf(`creation_rules:
+  - path_regex: ^rowan\.yaml$
+    age: %s,%s
+`, keyA.pubKey, recKey.pubKey)
+	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsCfg), 0644)
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: initial_committed\n")
+	commitAndPush(t, storeDir)
+
+	// Add untracked sealed other.yaml
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "other.yaml"), []string{keyA.pubKey, recKey.pubKey}, "OTHER_KEY: secret\n")
+
+	_, errOut, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "true")
+	if code != 125 || !strings.Contains(errOut, "uncommitted or untracked yaml file in store root") {
+		t.Errorf("expected exec exit 125 on untracked yaml file, got code %d: %s", code, errOut)
+	}
+}
+
+func TestChildEnvironmentDropsOmittedStoreSecrets(t *testing.T) {
+	sopsPath := findSops(t)
+	bin := buildNovaSecrets(t)
+
+	td := t.TempDir()
+	storeDir := filepath.Join(td, "store")
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	initGitStore(t, storeDir)
+
+	keyA := genKey(t, td, "rowan")
+	recKey := genKey(t, td, "recovery")
+	_ = os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recKey.pubKey+"\n"), 0644)
+
+	sopsCfg := fmt.Sprintf(`creation_rules:
+  - path_regex: ^rowan\.yaml$
+    age: %s,%s
+`, keyA.pubKey, recKey.pubKey)
+	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsCfg), 0644)
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_token\nSECRET_OMITTED: store_secret\n")
+	commitAndPush(t, storeDir)
+
+	cmd := exec.Command(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "GH_TOKEN", "--require", "GH_TOKEN", "--", "printenv")
+	cmd.Env = append(os.Environ(), "SECRET_OMITTED=ATTACKER_INJECTED_OMITTED_VAL", "SOPS_AGE_KEY=AGE-SECRET-KEY-DUMMY", "SOPS_AGE_KEY_FILE=/some/path")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("exec failed: %v, out: %s", err, string(out))
+	}
+	outputStr := string(out)
+	if strings.Contains(outputStr, "ATTACKER_INJECTED_OMITTED_VAL") {
+		t.Errorf("SECRET_OMITTED leaked through from caller environment: %s", outputStr)
+	}
+	if strings.Contains(outputStr, "AGE-SECRET-KEY-DUMMY") {
+		t.Errorf("SOPS_AGE_KEY leaked through to child environment: %s", outputStr)
+	}
+	if strings.Contains(outputStr, "SOPS_AGE_KEY_FILE") {
+		t.Errorf("SOPS_AGE_KEY_FILE leaked through to child environment: %s", outputStr)
+	}
+	if !strings.Contains(outputStr, "GH_TOKEN=ghp_token") {
+		t.Errorf("expected GH_TOKEN in output, got: %s", outputStr)
+	}
+}

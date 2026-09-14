@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/sha1"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -299,45 +300,106 @@ func ParseStoreFileWithoutDecrypting(filePath string) (keys []StoreFileKey, reci
 	return keys, recipients, hasSops, scanner.Err()
 }
 
-func unquoteYAML(val string) string {
+func unquoteYAML(val string) (string, error) {
 	val = strings.TrimSpace(val)
 	if len(val) >= 2 {
 		if val[0] == '"' && val[len(val)-1] == '"' {
 			inner := val[1 : len(val)-1]
 			var b strings.Builder
 			for i := 0; i < len(inner); i++ {
-				if inner[i] == '\\' && i+1 < len(inner) {
-					switch inner[i+1] {
-					case '"':
-						b.WriteByte('"')
-						i++
-					case '\\':
-						b.WriteByte('\\')
-						i++
-					case 'n':
-						b.WriteByte('\n')
-						i++
-					case 'r':
-						b.WriteByte('\r')
-						i++
-					case 't':
-						b.WriteByte('\t')
-						i++
-					default:
-						b.WriteByte(inner[i])
-					}
-				} else {
+				if inner[i] != '\\' {
 					b.WriteByte(inner[i])
+					continue
+				}
+				if i+1 >= len(inner) {
+					return "", fmt.Errorf("unterminated backslash escape")
+				}
+				i++
+				switch inner[i] {
+				case '0':
+					b.WriteByte(0)
+				case 'a':
+					b.WriteByte('\a')
+				case 'b':
+					b.WriteByte('\b')
+				case 't', '\t':
+					b.WriteByte('\t')
+				case 'n':
+					b.WriteByte('\n')
+				case 'v':
+					b.WriteByte('\v')
+				case 'f':
+					b.WriteByte('\f')
+				case 'r':
+					b.WriteByte('\r')
+				case 'e':
+					b.WriteByte(0x1b)
+				case ' ':
+					b.WriteByte(' ')
+				case '"':
+					b.WriteByte('"')
+				case '/':
+					b.WriteByte('/')
+				case '\\':
+					b.WriteByte('\\')
+				case 'N':
+					b.WriteRune(0x85)
+				case '_':
+					b.WriteRune(0xa0)
+				case 'L':
+					b.WriteRune(0x2028)
+				case 'P':
+					b.WriteRune(0x2029)
+				case 'x':
+					if i+2 >= len(inner) {
+						return "", fmt.Errorf("truncated \\x escape")
+					}
+					hexStr := inner[i+1 : i+3]
+					i += 2
+					hb, err := hex.DecodeString(hexStr)
+					if err != nil || len(hb) != 1 {
+						return "", fmt.Errorf("invalid \\x escape: \\x%s", hexStr)
+					}
+					b.WriteByte(hb[0])
+				case 'u':
+					if i+4 >= len(inner) {
+						return "", fmt.Errorf("truncated \\u escape")
+					}
+					hexStr := inner[i+1 : i+5]
+					i += 4
+					hb, err := hex.DecodeString(hexStr)
+					if err != nil || len(hb) != 2 {
+						return "", fmt.Errorf("invalid \\u escape: \\u%s", hexStr)
+					}
+					rVal := binary.BigEndian.Uint16(hb)
+					b.WriteRune(rune(rVal))
+				case 'U':
+					if i+8 >= len(inner) {
+						return "", fmt.Errorf("truncated \\U escape")
+					}
+					hexStr := inner[i+1 : i+9]
+					i += 8
+					hb, err := hex.DecodeString(hexStr)
+					if err != nil || len(hb) != 4 {
+						return "", fmt.Errorf("invalid \\U escape: \\U%s", hexStr)
+					}
+					rVal := binary.BigEndian.Uint32(hb)
+					if rVal > 0x10FFFF || (rVal >= 0xD800 && rVal <= 0xDFFF) {
+						return "", fmt.Errorf("invalid Unicode scalar in \\U%s", hexStr)
+					}
+					b.WriteRune(rune(rVal))
+				default:
+					return "", fmt.Errorf("unrecognised escape sequence \\%c", inner[i])
 				}
 			}
-			return b.String()
+			return b.String(), nil
 		}
 		if val[0] == '\'' && val[len(val)-1] == '\'' {
 			inner := val[1 : len(val)-1]
-			return strings.ReplaceAll(inner, "''", "'")
+			return strings.ReplaceAll(inner, "''", "'"), nil
 		}
 	}
-	return val
+	return val, nil
 }
 
 // ParseDecryptedSecrets parses the output of 'sops -d' into Secret values.
@@ -348,10 +410,14 @@ func ParseDecryptedSecrets(data []byte) (map[string]Secret, []string, error) {
 	}
 
 	scanner := bufio.NewScanner(bytes.NewReader(data))
+	const maxLineLen = 1024 * 1024 // 1MB buffer
+	scanner.Buffer(make([]byte, 64*1024), maxLineLen)
+
 	secrets := make(map[string]Secret)
 	var keys []string
 	var badKeys []string
 	var multilineKeys []string
+	var decodeErr error
 
 	var currentKey string
 	var currentValue strings.Builder
@@ -363,11 +429,19 @@ func ParseDecryptedSecrets(data []byte) (map[string]Secret, []string, error) {
 				multilineKeys = append(multilineKeys, currentKey)
 			} else {
 				val := currentValue.String()
-				val = unquoteYAML(val)
-				if strings.Contains(val, "\n") || strings.Contains(val, "\r") {
+				unquoted, err := unquoteYAML(val)
+				if err != nil {
+					if decodeErr == nil {
+						decodeErr = fmt.Errorf("key=%s: %w", currentKey, err)
+					}
+				} else if strings.Contains(unquoted, "\x00") {
+					if decodeErr == nil {
+						decodeErr = fmt.Errorf("decrypted secret %s contains NUL byte", currentKey)
+					}
+				} else if strings.Contains(unquoted, "\n") || strings.Contains(unquoted, "\r") {
 					multilineKeys = append(multilineKeys, currentKey)
 				} else {
-					secrets[currentKey] = NewSecret(val)
+					secrets[currentKey] = NewSecret(unquoted)
 					keys = append(keys, currentKey)
 				}
 			}
@@ -415,6 +489,14 @@ func ParseDecryptedSecrets(data []byte) (map[string]Secret, []string, error) {
 		}
 	}
 	flushCurrent()
+
+	if err := scanner.Err(); err != nil {
+		return nil, nil, fmt.Errorf("error reading decrypted secrets: %w", err)
+	}
+
+	if decodeErr != nil {
+		return nil, nil, decodeErr
+	}
 
 	if len(badKeys) > 0 {
 		sort.Strings(badKeys)
@@ -470,12 +552,22 @@ func ReadGitIndex(storeDir string) (*GitIndexData, error) {
 
 	if version == 2 || version == 3 {
 		offset := 12
+		var parsedCount uint32
 		for i := uint32(0); i < entries && offset+62 <= len(data); i++ {
 			entryStart := offset
 			var blobSHA1 [20]byte
 			copy(blobSHA1[:], data[entryStart+40:entryStart+60])
 
-			nameStart := entryStart + 62
+			flags := binary.BigEndian.Uint16(data[entryStart+60 : entryStart+62])
+			headerLen := 62
+			if version >= 3 && (flags&0x4000) != 0 {
+				headerLen = 64
+			}
+			if entryStart+headerLen > len(data) {
+				break
+			}
+
+			nameStart := entryStart + headerLen
 			nameEnd := bytes.IndexByte(data[nameStart:], 0)
 			if nameEnd == -1 {
 				break
@@ -486,9 +578,13 @@ func ReadGitIndex(storeDir string) (*GitIndexData, error) {
 				Path:     cleanPath,
 				BlobSHA1: blobSHA1,
 			}
+			parsedCount++
 
-			entryLen := ((62 + nameEnd + 8) / 8) * 8
+			entryLen := ((headerLen + nameEnd + 8) / 8) * 8
 			offset = entryStart + entryLen
+		}
+		if parsedCount != entries {
+			return nil, fmt.Errorf("corrupt git index %s: expected %d entries, parsed %d", indexPath, entries, parsedCount)
 		}
 		return result, nil
 	}
@@ -496,12 +592,22 @@ func ReadGitIndex(storeDir string) (*GitIndexData, error) {
 	if version == 4 {
 		offset := 12
 		prevPath := ""
+		var parsedCount uint32
 		for i := uint32(0); i < entries && offset+62 <= len(data); i++ {
 			entryStart := offset
 			var blobSHA1 [20]byte
 			copy(blobSHA1[:], data[entryStart+40:entryStart+60])
 
-			offset += 62
+			flags := binary.BigEndian.Uint16(data[entryStart+60 : entryStart+62])
+			headerLen := 62
+			if (flags & 0x4000) != 0 {
+				headerLen = 64
+			}
+			if entryStart+headerLen > len(data) {
+				break
+			}
+
+			offset += headerLen
 			stripLen, nextOffset, err := readGitVarint(data, offset)
 			if err != nil {
 				return nil, fmt.Errorf("corrupt index v4 varint: %w", err)
@@ -526,6 +632,10 @@ func ReadGitIndex(storeDir string) (*GitIndexData, error) {
 				BlobSHA1: blobSHA1,
 			}
 			prevPath = path
+			parsedCount++
+		}
+		if parsedCount != entries {
+			return nil, fmt.Errorf("corrupt git index %s: expected %d entries, parsed %d", indexPath, entries, parsedCount)
 		}
 		return result, nil
 	}
@@ -574,6 +684,29 @@ func VerifyFileMatchesIndex(storeDir, filePath string, index *GitIndexData) erro
 	actual := GitBlobSHA1(data)
 	if actual != entry.BlobSHA1 {
 		return fmt.Errorf("%s has uncommitted modifications (working copy blob differs from git index)", rel)
+	}
+	return nil
+}
+
+// VerifyFileMatchesHEADTree checks that filePath matches the blob committed in HEAD commit tree.
+func VerifyFileMatchesHEADTree(storeDir, filePath string, headBlobs map[string]string) error {
+	rel, err := filepath.Rel(storeDir, filePath)
+	if err != nil {
+		rel = filePath
+	}
+	cleanRel := filepath.Clean(filepath.ToSlash(rel))
+	expectedSHA, ok := headBlobs[cleanRel]
+	if !ok {
+		return fmt.Errorf("%s is not committed in HEAD tree", rel)
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("unable to read %s: %w", rel, err)
+	}
+	actual := GitBlobSHA1(data)
+	actualSHA := hex.EncodeToString(actual[:])
+	if actualSHA != expectedSHA {
+		return fmt.Errorf("%s has uncommitted modifications (working copy blob differs from HEAD tree)", rel)
 	}
 	return nil
 }

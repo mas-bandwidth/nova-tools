@@ -25,6 +25,20 @@ func RunNames(storeDir, asName string, maxShown int) (okLine string, nameLines [
 		return "", nil, "", fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
 	}
 
+	sFi, err := os.Stat(storeDir)
+	if err != nil || !sFi.IsDir() {
+		return "", nil, "", fmt.Errorf("store %s is not a directory", storeDir)
+	}
+	gitDir := filepath.Join(storeDir, ".git")
+	gFi, err := os.Stat(gitDir)
+	if err != nil || !gFi.IsDir() {
+		return "", nil, "", fmt.Errorf("store %s has no .git directory", storeDir)
+	}
+	sopsConfigPath := filepath.Join(storeDir, ".sops.yaml")
+	if _, err := os.Stat(sopsConfigPath); err != nil {
+		return "", nil, "", fmt.Errorf("store %s carries no .sops.yaml", storeDir)
+	}
+
 	targetFile := filepath.Join(storeDir, asName+".yaml")
 	if _, err := os.Stat(targetFile); err != nil {
 		// List available files in store

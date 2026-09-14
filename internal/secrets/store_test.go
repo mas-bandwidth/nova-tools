@@ -1,9 +1,13 @@
 package secrets
 
 import (
+	"bytes"
+	"encoding/binary"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -281,5 +285,117 @@ func TestIsValidAsName(t *testing.T) {
 		if IsValidAsName(inv) {
 			t.Errorf("expected %q to be invalid", inv)
 		}
+	}
+}
+
+func TestUnquoteYAMLDecodesAllValidYAMLEscapesAndRejectsUnknown(t *testing.T) {
+	cases := []struct {
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{`"hello\nworld"`, "hello\nworld", false},
+		{`"bell\a and \b"`, "bell\a and \b", false},
+		{`"tab\t and \v and \f"`, "tab\t and \v and \f", false},
+		{`"cr\r and \e"`, "cr\r and \x1b", false},
+		{`"space\  and quote\" and slash\/ and backslash\\"`, "space  and quote\" and slash/ and backslash\\", false},
+		{`"hex \x41\x42"`, "hex AB", false},
+		{`"unicode \u0041\u0042"`, "unicode AB", false},
+		{`"wide \U00000041"`, "wide A", false},
+		{`"nel \N and nbsp \_ and ls \L and ps \P"`, "nel \u0085 and nbsp \u00a0 and ls \u2028 and ps \u2029", false},
+		{`"null \0"`, "null \x00", false},
+		{`'single ''quoted'' string'`, "single 'quoted' string", false},
+		{`plain_value`, "plain_value", false},
+		// Error cases
+		{`"invalid \c"`, "", true},
+		{`"truncated \x4"`, "", true},
+		{`"truncated \u004"`, "", true},
+		{`"truncated \U0000004"`, "", true},
+		{`"invalid hex \xZZ"`, "", true},
+		{`"invalid surrogate \UD8000000"`, "", true},
+		{`"unterminated backslash \"`, "", true},
+	}
+
+	for _, tc := range cases {
+		got, err := unquoteYAML(tc.input)
+		if tc.wantErr {
+			if err == nil {
+				t.Errorf("unquoteYAML(%q) expected error, got nil (val=%q)", tc.input, got)
+			}
+		} else {
+			if err != nil {
+				t.Errorf("unquoteYAML(%q) unexpected error: %v", tc.input, err)
+			} else if got != tc.want {
+				t.Errorf("unquoteYAML(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		}
+	}
+}
+
+func TestParseDecryptedSecretsLargeLineBuffer(t *testing.T) {
+	largeVal := strings.Repeat("A", 128*1024)
+	input := fmt.Sprintf("LARGE_KEY: %s\n", largeVal)
+	sec, keys, err := ParseDecryptedSecrets([]byte(input))
+	if err != nil {
+		t.Fatalf("ParseDecryptedSecrets failed on 128KB line: %v", err)
+	}
+	if len(keys) != 1 || keys[0] != "LARGE_KEY" {
+		t.Fatalf("expected 1 key LARGE_KEY, got %v", keys)
+	}
+	_ = sec["LARGE_KEY"].Use(func(v string) error {
+		if len(v) != 128*1024 {
+			t.Errorf("expected len %d, got %d", 128*1024, len(v))
+		}
+		return nil
+	})
+}
+
+func TestReadGitIndexExtendedFlags(t *testing.T) {
+	td := t.TempDir()
+	gitDir := filepath.Join(td, ".git")
+	_ = os.MkdirAll(gitDir, 0755)
+	indexPath := filepath.Join(gitDir, "index")
+
+	var buf bytes.Buffer
+	// Header: DIRC, version 3, 1 entry
+	buf.WriteString("DIRC")
+	_ = binary.Write(&buf, binary.BigEndian, uint32(3))
+	_ = binary.Write(&buf, binary.BigEndian, uint32(1))
+
+	// Entry:
+	// 40 bytes stat dummy
+	buf.Write(make([]byte, 40))
+	// 20 bytes sha1
+	sha1Bytes := []byte("01234567890123456789")
+	buf.Write(sha1Bytes)
+	// 2 bytes flags: 0x4000 | 8
+	_ = binary.Write(&buf, binary.BigEndian, uint16(0x4000|8))
+	// 2 bytes extended flags
+	_ = binary.Write(&buf, binary.BigEndian, uint16(0x0000))
+	// 8 bytes path: test.txt
+	buf.WriteString("test.txt")
+	// 8 NUL bytes padding (headerLen 64 + 8 path + 8 padding = 80 bytes)
+	buf.Write(make([]byte, 8))
+
+	// Trailing 20 bytes checksum
+	buf.Write(make([]byte, 20))
+
+	if err := os.WriteFile(indexPath, buf.Bytes(), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	idx, err := ReadGitIndex(td)
+	if err != nil {
+		t.Fatalf("ReadGitIndex with extended flags failed: %v", err)
+	}
+	if len(idx.Entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(idx.Entries))
+	}
+	entry, ok := idx.Entries["test.txt"]
+	if !ok {
+		t.Fatalf("expected test.txt entry")
+	}
+	if string(entry.BlobSHA1[:]) != string(sha1Bytes) {
+		t.Errorf("blob SHA1 mismatch")
 	}
 }

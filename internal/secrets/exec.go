@@ -76,7 +76,23 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 	}
 	headSHA := st.HeadSHA
 
-	// 2b. Verify working copy files against .git/index (Fable HIGH)
+	// 2b. Verify working copy files against HEAD commit tree and .git/index (N1)
+	headBlobs, err := ReadHEADTreeBlobs(storeDir)
+	if err != nil {
+		return 125, fmt.Errorf("store %s: %w", storeDir, err)
+	}
+	if err := VerifyFileMatchesHEADTree(storeDir, targetFile, headBlobs); err != nil {
+		return 125, fmt.Errorf("store %s: %w", storeDir, err)
+	}
+	if err := VerifyFileMatchesHEADTree(storeDir, sopsConfigPath, headBlobs); err != nil {
+		return 125, fmt.Errorf("store %s: %w", storeDir, err)
+	}
+	recPath := filepath.Join(storeDir, "recovery.pub")
+	if _, err := os.Stat(recPath); err == nil {
+		if err := VerifyFileMatchesHEADTree(storeDir, recPath, headBlobs); err != nil {
+			return 125, fmt.Errorf("store %s: %w", storeDir, err)
+		}
+	}
 	indexData, err := ReadGitIndex(storeDir)
 	if err != nil {
 		return 125, fmt.Errorf("store %s: %w", storeDir, err)
@@ -87,7 +103,6 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 	if err := VerifyFileMatchesIndex(storeDir, sopsConfigPath, indexData); err != nil {
 		return 125, fmt.Errorf("store %s: %w", storeDir, err)
 	}
-	recPath := filepath.Join(storeDir, "recovery.pub")
 	if _, err := os.Stat(recPath); err == nil {
 		if err := VerifyFileMatchesIndex(storeDir, recPath, indexData); err != nil {
 			return 125, fmt.Errorf("store %s: %w", storeDir, err)
@@ -97,6 +112,9 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 	if err == nil {
 		for _, e := range entries {
 			if strings.HasSuffix(e.Name(), ".yaml") && e.Name() != ".sops.yaml" {
+				if _, ok := headBlobs[e.Name()]; !ok {
+					return 125, fmt.Errorf("uncommitted or untracked yaml file in store root: %s", e.Name())
+				}
 				if _, ok := indexData.Entries[e.Name()]; !ok {
 					return 125, fmt.Errorf("untracked yaml file in store root: %s", e.Name())
 				}
@@ -199,7 +217,15 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		oneline.Field(asName), len(selectedSecrets), oneline.Field(onlyWord), len(required),
 		oneline.Field(targetFile), oneline.Field(headSHA), oneline.Field(cmdArgs[0]))
 
-	// 11. Build environment dropping inherited variables that collide with selected secrets (H1)
+	// 11. Build environment dropping all store secrets (even if omitted by --only)
+	// and SOPS_AGE_KEY / SOPS_AGE_KEY_FILE (H1, N4)
+	scrubKeys := make(map[string]bool)
+	for k := range secretsMap {
+		scrubKeys[k] = true
+	}
+	scrubKeys["SOPS_AGE_KEY"] = true
+	scrubKeys["SOPS_AGE_KEY_FILE"] = true
+
 	var cleanEnv []string
 	for _, envEntry := range os.Environ() {
 		idx := strings.IndexByte(envEntry, '=')
@@ -208,7 +234,7 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		}
 		envKey := envEntry[:idx]
 		collides := false
-		for sKey := range selectedSecrets {
+		for sKey := range scrubKeys {
 			if envKey == sKey || (runtime.GOOS == "windows" && strings.EqualFold(envKey, sKey)) {
 				collides = true
 				break

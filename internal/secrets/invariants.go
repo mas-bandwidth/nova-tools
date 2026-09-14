@@ -360,6 +360,7 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 		defer f.Close()
 
 		scanner := bufio.NewScanner(f)
+		scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 		hasPlaintext := false
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
@@ -373,7 +374,13 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 			}
 		}
 
-		if hasPlaintext {
+		if err := scanner.Err(); err != nil {
+			failures = append(failures, CheckFailure{
+				Kind:   "untracked-plaintext",
+				File:   rel,
+				Reason: fmt.Sprintf("untracked file cannot be scanned: %v", err),
+			})
+		} else if hasPlaintext {
 			failures = append(failures, CheckFailure{
 				Kind:   "untracked-plaintext",
 				File:   rel,
@@ -504,6 +511,15 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 	inv5Fails := CheckInvariant5(storeDir, keyPath)
 	allFailures = append(allFailures, inv5Fails...)
 
+	headBlobs, headErr := ReadHEADTreeBlobs(storeDir)
+	if headErr != nil {
+		allFailures = append(allFailures, CheckFailure{
+			Kind:   "stale-working-copy",
+			File:   "HEAD",
+			Reason: fmt.Sprintf("failed to read HEAD tree: %v", headErr),
+		})
+	}
+
 	indexData, err := ReadGitIndex(storeDir)
 	if err != nil {
 		allFailures = append(allFailures, CheckFailure{
@@ -520,11 +536,20 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 		inv7Fails := CheckInvariant7(storeDir, trackedMap)
 		allFailures = append(allFailures, inv7Fails...)
 
-		// Invariant 8 / working copy check: verify tracked *.yaml, .sops.yaml, recovery.pub match index blob SHA1
+		// Invariant 8 / working copy check: verify tracked *.yaml, .sops.yaml, recovery.pub match HEAD tree and index blob SHA1
 		for p := range indexData.Entries {
 			if strings.HasSuffix(p, ".yaml") || p == "recovery.pub" {
 				filePath := filepath.Join(storeDir, filepath.FromSlash(p))
 				if _, err := os.Stat(filePath); err == nil {
+					if headBlobs != nil {
+						if err := VerifyFileMatchesHEADTree(storeDir, filePath, headBlobs); err != nil {
+							allFailures = append(allFailures, CheckFailure{
+								Kind:   "stale-working-copy",
+								File:   p,
+								Reason: "working copy differs from HEAD commit tree; uncommitted changes in store",
+							})
+						}
+					}
 					if err := VerifyFileMatchesIndex(storeDir, filePath, indexData); err != nil {
 						allFailures = append(allFailures, CheckFailure{
 							Kind:   "stale-working-copy",
@@ -536,7 +561,7 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 			}
 		}
 
-		// Verify seat file is tracked in git index
+		// Verify seat file is tracked in git index and HEAD tree
 		targetRel, _ := filepath.Rel(storeDir, targetFile)
 		targetRel = filepath.Clean(filepath.ToSlash(targetRel))
 		if _, ok := indexData.Entries[targetRel]; !ok {
@@ -545,6 +570,14 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 				File:   targetRel,
 				Reason: fmt.Sprintf("seat file %s is untracked in git; commit it to the store", targetRel),
 			})
+		} else if headBlobs != nil {
+			if _, ok := headBlobs[targetRel]; !ok {
+				allFailures = append(allFailures, CheckFailure{
+					Kind:   "stale-working-copy",
+					File:   targetRel,
+					Reason: fmt.Sprintf("seat file %s is uncommitted in HEAD tree", targetRel),
+				})
+			}
 		}
 	}
 
