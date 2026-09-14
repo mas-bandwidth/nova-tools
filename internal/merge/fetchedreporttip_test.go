@@ -13,6 +13,8 @@ import (
 	"time"
 )
 
+const reportTestGitTimeout = 5 * time.Second
+
 func reportTipLab(t *testing.T) (lane, tip, fetchHeadPath, trackingRef string) {
 	t.Helper()
 	root := t.TempDir()
@@ -95,7 +97,7 @@ func TestWithFetchedReportTipPinsTheCallbackWithoutCheckoutOrFetchHead(t *testin
 		t.Fatal(err)
 	}
 	defer release()
-	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, nil), time.Millisecond)
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, nil), time.Millisecond)
 	var gotTip string
 	err = records.WithFetchedReportTip(func(tip string) error {
 		gotTip = tip
@@ -141,7 +143,7 @@ func TestWithFetchedReportTipPinsTheCallbackWithoutCheckoutOrFetchHead(t *testin
 
 func TestWithFetchedReportTipKeepsConcurrentPinsThroughGC(t *testing.T) {
 	lane, wantTip, _, _ := reportTipLab(t)
-	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, nil), time.Second)
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, nil), time.Second)
 	start := make(chan struct{})
 	arrived := make(chan struct{}, 2)
 	release := make(chan struct{})
@@ -270,7 +272,7 @@ func TestWithFetchedReportTipCleansKnownFailureAndPreservesAmbiguousRef(t *testi
 			lane, _, _, _ := reportTipLab(t)
 			replacement := tipGit(t, lane, "commit-tree", "HEAD^{tree}", "-m", "replacement")
 			runner := &reportRunner{mode: tc.mode, replacement: replacement}
-			records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, runner), time.Second)
+			records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)
 			err := records.WithFetchedReportTip(func(string) error {
 				t.Fatal("callback ran after failed fetch")
 				return nil
@@ -297,7 +299,7 @@ func TestWithFetchedReportTipCleansKnownFailureAndPreservesAmbiguousRef(t *testi
 
 func TestWithFetchedReportTipCleansAfterCallbackFailure(t *testing.T) {
 	lane, _, _, _ := reportTipLab(t)
-	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, nil), time.Second)
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, nil), time.Second)
 	want := errors.New("callback refused")
 	err := records.WithFetchedReportTip(func(string) error { return want })
 	if !errors.Is(err, want) {
@@ -312,7 +314,7 @@ func TestWithFetchedReportTipCleanupCASPreservesReplacement(t *testing.T) {
 	lane, wantTip, _, _ := reportTipLab(t)
 	replacement := tipGit(t, lane, "commit-tree", "HEAD^{tree}", "-m", "replacement")
 	runner := &reportRunner{mode: "replace-before-delete", replacement: replacement}
-	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, runner), time.Second)
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)
 	called := false
 	err := records.WithFetchedReportTip(func(tip string) error {
 		called = true
@@ -350,7 +352,7 @@ func TestWithFetchedReportTipRefusesInvalidBranchAndReservationCollision(t *test
 		ref := reportFetchedRefPrefix + nonce
 		tipGit(t, lane, "update-ref", ref, oldTip)
 		runner := &reportRunner{}
-		records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, runner), time.Second)
+		records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)
 		err := records.WithFetchedReportTip(func(string) error { return nil })
 		if err == nil || !strings.Contains(err.Error(), "could not reserve private") {
 			t.Fatalf("existing private destination must refuse, got %v", err)
@@ -369,7 +371,7 @@ func TestWithFetchedReportTipRefusesInvalidBranchAndReservationCollision(t *test
 func TestWithFetchedReportTipUsesOnlyThePrivateFetchRefspec(t *testing.T) {
 	lane, _, _, _ := reportTipLab(t)
 	runner := &reportRunner{}
-	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, runner), time.Second)
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, reportTestGitTimeout, runner), time.Second)
 	if err := records.WithFetchedReportTip(func(string) error { return nil }); err != nil {
 		t.Fatal(err)
 	}
@@ -395,9 +397,62 @@ func TestWithFetchedReportTipUsesOnlyThePrivateFetchRefspec(t *testing.T) {
 			t.Fatalf("private fetch command misses %q: %v", want, fetch)
 		}
 	}
+	separator := -1
+	for i, arg := range fetch {
+		if arg == "--" {
+			separator = i
+			break
+		}
+	}
+	if separator < 0 || separator+2 >= len(fetch) || fetch[separator+1] != "origin" || !strings.HasPrefix(fetch[separator+2], "+refs/heads/nova-merge/lane:") {
+		t.Fatalf("remote and refspec must follow -- exactly, got %v", fetch)
+	}
 	for _, arg := range fetch {
 		if strings.Contains(arg, "FETCH_HEAD") {
 			t.Fatalf("private fetch reached shared FETCH_HEAD: %v", fetch)
 		}
+	}
+}
+
+type waitForFetchTimeoutRunner struct {
+	fetchCalls   int
+	cleanupCalls int
+	cleanupFresh bool
+}
+
+func (r *waitForFetchTimeoutRunner) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
+	if isReportFetch(args) {
+		r.fetchCalls++
+		<-ctx.Done()
+		return "fetch waited for its deadline", ctx.Err()
+	}
+	if isReportDelete(args) {
+		r.cleanupCalls++
+		_, hasDeadline := ctx.Deadline()
+		r.cleanupFresh = ctx.Err() == nil && hasDeadline
+	}
+	return (Exec{}).Run(ctx, dir, name, args...)
+}
+
+func TestWithFetchedReportTipTimesOutFetchAndCleansOwnedMarker(t *testing.T) {
+	lane, _, _, _ := reportTipLab(t)
+	runner := &waitForFetchTimeoutRunner{}
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, 150*time.Millisecond, runner), time.Second)
+	called := false
+	err := records.WithFetchedReportTip(func(string) error {
+		called = true
+		return nil
+	})
+	if !errors.Is(err, context.DeadlineExceeded) || !strings.Contains(err.Error(), "could not fetch report tip") {
+		t.Fatalf("fetch timeout must remain detectable, got %v", err)
+	}
+	if called || runner.fetchCalls != 1 {
+		t.Fatalf("timeout fetch reached callback or ran more than once: called=%t fetches=%d", called, runner.fetchCalls)
+	}
+	if runner.cleanupCalls != 1 || !runner.cleanupFresh {
+		t.Fatalf("owned marker cleanup needs one fresh bounded call, calls=%d fresh=%t", runner.cleanupCalls, runner.cleanupFresh)
+	}
+	if refs := reportRefNames(t, lane); len(refs) != 0 {
+		t.Fatalf("timed-out fetch leaked owned marker: %v", refs)
 	}
 }

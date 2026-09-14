@@ -545,9 +545,10 @@ func (r *Records) WithFetchedReportTip(callback func(fullSHA string) error) (err
 	if _, err := r.Git.Run(
 		"-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "fetch.writeCommitGraph=false",
 		"fetch", "--no-write-fetch-head", "--no-tags", "--no-recurse-submodules", "--refmap=",
-		// The plus may replace only the marker this invocation reserved above. It does
-		// not force a shared remote-tracking ref, and --refmap= keeps those refs out.
-		r.Remote, "+"+source+":"+ref,
+		// The plus is not expected-old CAS: the random private namespace and successful
+		// reservation cover normal concurrent report calls, not a deliberate writer of
+		// that reserved ref. --refmap= keeps shared remote-tracking refs out.
+		"--", r.Remote, "+"+source+":"+ref,
 	); err != nil {
 		return fmt.Errorf("could not fetch report tip: %w", err)
 	}
