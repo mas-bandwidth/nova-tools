@@ -7,9 +7,9 @@ Help AI friends coordinate work without repeatedly rebuilding the plan in their 
 **Planning baseline: 10 epics, 52 features, 171 inventoried items (166 acceptance items and 5 open questions).**
 **Verified implementation: 0%.** This is proposed scope for review, not a delivery-date or effort estimate.
 The current main branch has no production `nova-work` engine or CLI; existing prototypes and written specs do not count as verified production features.
-Current scope after the recorded moves and discoveries: 57 product features and 187 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
+Current scope after the recorded moves and discoveries: 57 product features and 197 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
 
-The current work register is below. The first internal C/O kernel is under review; unmerged implementation and passing subset tests do not mark a full production feature verified.
+The current work register is below. The first internal C/O kernel has merged; a merged partial implementation and passing subset tests do not mark a full production feature verified.
 
 ✅ = implemented and verified against the agreed criteria at a recorded source revision. ❌ = any other state.
 Completion is verified features divided by applicable features; it is not averaged subtask percentages or an estimate of time remaining.
@@ -17,7 +17,7 @@ Completion is verified features divided by applicable features; it is not averag
 The hierarchy is **epic → feature → sub-feature/acceptance item**, with no language axis.
 [Recursive work data](docs/roadmaps/nova-work.sexp) retains stable IDs, dependencies and source references.
 This baseline format is planning data, not a claim that nova-work import/export already exists.
-Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation) and proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound). A source-section label below is resolved through its named file/revision key.
+Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation), proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound), and proposed PR #317 `SPEC-WORK.md@685b7c2` (efficiency policy). A source-section label below is resolved through its named file/revision key.
 
 | Epic | Features | Verified |
 |---|:---:|:---:|
@@ -38,7 +38,7 @@ Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WOR
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | 52 | 6 | 0 | 0 | 1 | 57 |
 
-Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation acceptance discovery belongs to E08-F02 without creating a feature. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
+Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation and ten proposed efficiency-policy acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
 Do not count removal as completion. These counts track inventory movement, not estimated engineering effort.
 
 ## Open questions
@@ -53,14 +53,17 @@ Do not count removal as completion. These counts track inventory movement, not e
 
 The team is testing efficiency improvements in existing tools while building nova-work, tracked by [#267](https://github.com/mas-bandwidth/nova-tools/issues/267), [#239](https://github.com/mas-bandwidth/nova-tools/issues/239), [#236](https://github.com/mas-bandwidth/nova-tools/issues/236), [#264](https://github.com/mas-bandwidth/nova-tools/issues/264), [#270](https://github.com/mas-bandwidth/nova-tools/pull/270) and [#271](https://github.com/mas-bandwidth/nova-tools/pull/271).
 
-The first internal Common Lisp C/O kernel and maintained open counter are being reviewed in [#300](https://github.com/mas-bandwidth/nova-tools/pull/300). Operational token and worker-cost experiments run alongside real work under [#185](https://github.com/mas-bandwidth/nova-tools/issues/185); implementation cost is excluded, while retries, review and rescue remain part of accepted-work cost.
+The first internal Common Lisp C/O kernel and maintained open counter merged through [#300](https://github.com/mas-bandwidth/nova-tools/pull/300), while its feature rows remain incomplete. Operational token and worker-cost experiments run alongside real work under [#185](https://github.com/mas-bandwidth/nova-tools/issues/185); implementation cost is excluded, while retries, review and rescue remain part of accepted-work cost.
 
-Current evidence at 2026-09-14 17:31 UTC:
+Current evidence at 2026-09-14 18:26 UTC:
 
-- [#300](https://github.com/mas-bandwidth/nova-tools/pull/300) is at `84fb1fc8`. The repaired restricted-reader suite passes 21/21 with isolated ASDF caches after test-only `1b12582f` passed 15/21. Acceptance remains on hold because malformed trailing forms such as `(:X 1) (` are still accepted.
-- [#314](https://github.com/mas-bandwidth/nova-tools/pull/314) is at `4b99c1b4`; its prior scoped review is clear, while Emma owns the pending final-delta and integration decision.
+- [#300](https://github.com/mas-bandwidth/nova-tools/pull/300) merged as `d21d65f0e6f16a6b3b797d4620d0f24e0c41c296` at 18:25:58 UTC after root clearance, Emma approval `emma-aa67291093bc`, and Freddy's own Mercury APPROVE relayed in `rowan-d5a2c0d5f70d`. Feature rows remain partial with no whole-criterion green.
+- [#314](https://github.com/mas-bandwidth/nova-tools/pull/314) merged as `4b99c1b4`.
 - [#311](https://github.com/mas-bandwidth/nova-tools/pull/311) merged as `14ef63b1` after scoped wording and link gates cleared. Freddy adoption and any measured efficiency saving remain unproven.
-- [#312](https://github.com/mas-bandwidth/nova-tools/pull/312) at `0921c800` and [#310](https://github.com/mas-bandwidth/nova-tools/pull/310) at `5fb0feee` have scoped clearances; their integration gates remain with their owners.
+- [#312](https://github.com/mas-bandwidth/nova-tools/pull/312) merged as `20f8581` and was adopted by the root at `0921c80`; no measured efficacy claim follows.
+- [#310](https://github.com/mas-bandwidth/nova-tools/pull/310) remains open at `5fb0feee`, with Emma owning integration.
+- [#316](https://github.com/mas-bandwidth/nova-tools/pull/316) remains open at `f8fc40e`; its scoped retained-receipt discovery repair is cold-clear.
+- [#317](https://github.com/mas-bandwidth/nova-tools/pull/317) remains open at `685b7c2`, with Rowan/Fable CLEAR `rowan-be028c2589e8`. Emma approved older `a77f370` in `emma-a875c5f1e118` and needs the current delta; Freddy is pending. Its proposed efficiency-policy replays are mapped here without implementation credit.
 - [#185](https://github.com/mas-bandwidth/nova-tools/issues/185) records that native Codex usage decoding exists without an operational ingestion path. No parent-plus-child token saving is claimed.
 
 This is a current work register, outside the nova-work feature denominator. Results and negative or inconclusive experiments remain evidence; any scope change is recorded as a scope event and does not become completion credit.
@@ -414,8 +417,9 @@ Prerequisites: E05-F01.
 - [ ] Record exact-revision reviewer findings and author dispositions
 - [ ] Support attested criteria with reviewer identity and result
 - [ ] Preserve disagreement, unknowns and repair cycles
+- [ ] reuse-only-valid-review: reuse a review only for unchanged reviewed content, acceptance and dependencies; retain independent friend gates and record repeat triggers
 
-Source sections: Operational lessons the pilot must exercise; The data.
+Source sections: Operational lessons the pilot must exercise; The data; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
 
 **E05-F04 — Dependency and release gates**
 
@@ -635,8 +639,9 @@ Prerequisites: E08-F01, E02-F04.
 - [ ] Support independent ordered batches with per-entry IDs/outcomes and explicit stop/continue semantics, without implying rollback
 - [ ] Support atomic mutation batches with all-or-none validated O/W, counter and reverse-index changes; reject oversized batches without silently splitting
 - [ ] pipeline-replies-are-correlated: correlate out-of-order or fragmented ordinary responses by request ID, retain a distinct durable operation ID, name independent not-attempted and atomic validation entry outcomes, and close on unknown, duplicate, absent or undecodable IDs; same-ID recovery uses E03-F01 durable idempotency
+- [ ] batch-with-bounds-and-urgency: coalesce independent results within byte, record and delay bounds; refuse unreferenced padding, bypass delay for urgent changes and preserve dependency and retry identity
 
-Source sections: The verbs; Async operations; Retry/protocol; Batch-friendly transport and explicit atomicity; Response correlation (SPEC-WORK.md@7db3b95).
+Source sections: The verbs; Async operations; Retry/protocol; Batch-friendly transport and explicit atomicity; Response correlation (SPEC-WORK.md@7db3b95); Efficiency policy (proposed SPEC-WORK.md@685b7c2).
 
 **E08-F03 — Friends, CONFIG and ACTIVE indexes**
 
@@ -647,8 +652,9 @@ Prerequisites: E04-F04, E03-F04.
 - [ ] Include coordinator identity and attribute model, bench, attempt and usage
 - [ ] Store agreed specialist roles per friend; keep model strengths/weaknesses in the shared model catalog
 - [ ] Represent children, swarm capabilities, local runs and one-shots separately from friend identity; agreed concurrency limits apply
+- [ ] bounds-are-not-prompts: refuse automatic dispatch when an adapter cannot enforce the configured execution limit; distinguish wait deadline from observed stop or unresolved outcome
 
-Source sections: Friends and assignments are resident indexes too; CONFIG and ACTIVE are different sections.
+Source sections: Friends and assignments are resident indexes too; CONFIG and ACTIVE are different sections; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
 
 **E08-F04 — Availability, offers and assignment reconciliation**
 
@@ -658,8 +664,10 @@ Prerequisites: E08-F03, E02-F04.
 - [ ] Distinguish offer, acknowledgment, ownership, lease and execution
 - [ ] Reconcile uncertain prior attempts before relaunch or reassignment
 - [ ] After the team-configured silence threshold use one bounded availability probe; nonresponse is unconfirmed capacity, never proof of exhausted credits
+- [ ] quiet-until-actionable: keep unchanged traffic mechanical, batch actionable deltas within bounds and let corrections, stops, lease loss and deadlines bypass delay
+- [ ] regression-and-recovery: suspend new automatic routing on a breached trial, retain uncertain live handles and use only eligible role-preserving fallback
 
-Source sections: Observed availability; Friends and assignments are resident indexes too.
+Source sections: Observed availability; Friends and assignments are resident indexes too; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
 
 **E08-F05 — Bounded config/pricing exchange and model suitability**
 
@@ -668,8 +676,10 @@ Prerequisites: E08-F03.
 - [ ] Exchange UNCHANGED manifests or validated deltas by hash/revision
 - [ ] Store model route, pricing, quota and provenance without secrets
 - [ ] Keep requested versus observed model and measured suitability separate
+- [ ] policy-round-trip-and-replay: preserve per-friend efficiency policy, trial manifests and execution references through validated intake, export/import, restart, undo and replay
+- [ ] packet-and-route-gates: refuse oversized or history-disallowed packets and ineligible/stale routes; retain a scoped reason for economical-route exceptions
 
-Source sections: Efficient friend config exchange and token pricing; Model knowledge informs scheduling; Swarms, models and friend participation: decision required.
+Source sections: Efficient friend config exchange and token pricing; Model knowledge informs scheduling; Swarms, models and friend participation: decision required; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
 
 </details>
 
@@ -774,8 +784,10 @@ Prerequisites: E08-F05, E03-F04.
 - [ ] Record attempt usage pointers and unresolved usage as unmeasured
 - [ ] Separate billed cash, estimated cash and virtual token cost
 - [ ] Pin rate/config revisions and include coordinator, review and rework overhead
+- [ ] complete-cost-lineage: join parent, child, retry and failed-attempt receipts once; keep cache/reasoning subsets non-overlapping, implementation cost separate and gaps unknown
+- [ ] cache-aware-context-choice: price cache read/write categories, service tiers and reset rebuilds; refuse missing decision, adapter or evidence inputs and compare matched accepted work
 
-Source sections: Cost; Model knowledge informs scheduling; Retrospective required before production implementation.
+Source sections: Cost; Model knowledge informs scheduling; Retrospective required before production implementation; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
 
 **E10-F03 — Generated, golden, property and fault suites**
 
@@ -805,8 +817,9 @@ Prerequisites: E07-F05, E10-F02, E10-F03.
 - [ ] Compare update-and-render tokens/wall time with manual editing
 - [ ] Test lease-only answer for who is working on C and unsupported number detection
 - [ ] Pin scenarios, owners and commands before implementation; require exact-revision correctness and measured operational results before adoption
+- [ ] evidence-before-adoption: refuse automatic promotion on missing baseline or coverage, unmatched quality or retrospective correlation; require a qualified prospective result
 
-Source sections: The measurement that decides; Agreement and lock gate.
+Source sections: The measurement that decides; Agreement and lock gate; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
 
 **E10-F07 — Validator and repair modes**
 

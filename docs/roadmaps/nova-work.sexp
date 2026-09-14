@@ -1,6 +1,6 @@
 ; Proposed recursive roadmap data; not an implemented nova-work interchange schema.
 (  :schema "nova-work-roadmap-baseline-1"
-  :scope-revision 4
+  :scope-revision 5
   :inventory-status "proposed baseline; awaiting friend review"
   :sources (    :main-spec "SPEC-WORK.md@f36b85850620504a74e1229043c7cee2c14ea594"
     :companion "SPEC-WORK-PILOT.md@6e3413f"
@@ -9,12 +9,13 @@
     :validation "SPEC-WORK-VALIDATION.md@6e3413f"
     :response-correlation "SPEC-WORK.md@7db3b95cd4c16b1eb34b1c77c0fc224755cc7a64"
     :resident-window-bound-proposed "SPEC-WORK.md@a0cfcf580d3140ce6c30d51b3a7f884c9b2afcd6"
+    :efficiency-policy-proposed "SPEC-WORK.md@685b7c2"
     :production-inventory "ec01647")
   :baseline-features 52
   :baseline-items 171
   :discovered-features 6
   :current-features 57
-  :current-acceptance-items 187
+  :current-acceptance-items 197
   :events (    (      :kind "baseline"
       :feature-count 52
       :reason "Full initial nova-work source survey; implementation not started")
@@ -28,7 +29,57 @@
       :feature "E08-F02"
       :acceptance "pipeline-replies-are-correlated"
       :item-count 1
-      :reason "Draft 28 response correlation requires out-of-order response attribution beyond the existing transport bullets"))
+      :reason "Draft 28 response correlation requires out-of-order response attribution beyond the existing transport bullets")
+    (      :kind "acceptance-discovery"
+      :feature "E08-F05"
+      :acceptance "policy-round-trip-and-replay"
+      :item-count 1
+      :reason "Proposed PR 317 efficiency policy requires validated policy/trial/execution replay without partial intake")
+    (      :kind "acceptance-discovery"
+      :feature "E08-F05"
+      :acceptance "packet-and-route-gates"
+      :item-count 1
+      :reason "Proposed PR 317 adds packet bounds and retained economical-route exceptions")
+    (      :kind "acceptance-discovery"
+      :feature "E08-F03"
+      :acceptance "bounds-are-not-prompts"
+      :item-count 1
+      :reason "Proposed PR 317 distinguishes adapter-enforced execution limits from prompt and wait deadlines")
+    (      :kind "acceptance-discovery"
+      :feature "E08-F04"
+      :acceptance "quiet-until-actionable"
+      :item-count 1
+      :reason "Proposed PR 317 requires mechanical unchanged handling and urgent bypass of bounded pulses")
+    (      :kind "acceptance-discovery"
+      :feature "E05-F03"
+      :acceptance "reuse-only-valid-review"
+      :item-count 1
+      :reason "Proposed PR 317 limits review reuse to unchanged scope, revision, acceptance and dependencies")
+    (      :kind "acceptance-discovery"
+      :feature "E10-F02"
+      :acceptance "complete-cost-lineage"
+      :item-count 1
+      :reason "Proposed PR 317 adds exact parent/child/retry allocation with unknown gaps and non-overlapping counters")
+    (      :kind "acceptance-discovery"
+      :feature "E08-F02"
+      :acceptance "batch-with-bounds-and-urgency"
+      :item-count 1
+      :reason "Proposed PR 317 adds coordinator record/byte/delay bounds, urgency and retry attribution")
+    (      :kind "acceptance-discovery"
+      :feature "E10-F02"
+      :acceptance "cache-aware-context-choice"
+      :item-count 1
+      :reason "Proposed PR 317 prices cache categories, rebuilds and tiers before context choice")
+    (      :kind "acceptance-discovery"
+      :feature "E10-F05"
+      :acceptance "evidence-before-adoption"
+      :item-count 1
+      :reason "Proposed PR 317 bars retrospective or incomplete evidence from automatic adoption")
+    (      :kind "acceptance-discovery"
+      :feature "E08-F04"
+      :acceptance "regression-and-recovery"
+      :item-count 1
+      :reason "Proposed PR 317 suspends regressed automatic routing and preserves constrained fallback recovery"))
   :open-questions (    "Common Lisp runtime packaging and supported platforms must be pinned before release"
     "Category taxonomy and roadmap completion policy beyond all-required-features remain open"
     "Exact verb and wire protocol spelling must be finalized in one schema before lock"
@@ -37,16 +88,20 @@
   :now (    "Test operational efficiency improvements while building nova-work; count retries, review and rescue, but exclude implementation cost"
     "https://github.com/mas-bandwidth/nova-tools/pull/300"
     "https://github.com/mas-bandwidth/nova-tools/issues/185"
-    "PR 300 at 84fb1fc8: the repaired restricted-reader suite passes 21/21 with isolated ASDF caches after test-only 1b12582f passed 15/21; acceptance remains on hold because malformed trailing forms are still accepted"
-    "PR 314 at 4b99c1b4: prior scoped review is clear; Emma owns the pending final-delta and integration decision"
+    "PR 300 merged as d21d65f0e6f16a6b3b797d4620d0f24e0c41c296 at 18:25:58 UTC after root clearance, Emma approval emma-aa67291093bc and Freddy's own Mercury APPROVE relayed in rowan-d5a2c0d5f70d; feature rows remain partial with no whole-criterion green"
+    "PR 314 merged as 4b99c1b4"
     "PR 311 merged as 14ef63b1 after scoped wording and link gates cleared; Freddy adoption and any measured efficiency saving remain unproven"
-    "PR 312 at 0921c800: scoped review is clear and integration remains pending"
-    "PR 310 at 5fb0feee: scoped profile-preimage review is clear and Emma owns integration"
+    "PR 312 merged as 20f8581 and was adopted by the root at 0921c80; no measured efficacy claim follows"
+    "PR 310 remains open at 5fb0feee with Emma owning integration"
+    "PR 316 remains open at f8fc40e with its scoped retained-receipt discovery repair cold-clear"
+    "PR 317 remains open at 685b7c2 with Rowan/Fable CLEAR rowan-be028c2589e8; Emma approved older a77f370 in emma-a875c5f1e118 and needs the current delta, while Freddy is pending; its proposed replays are mapped here without implementation credit"
     "Issue 185: native Codex usage decoding exists without an operational ingestion path, so no parent-plus-child token saving is claimed"
     "https://github.com/mas-bandwidth/nova-tools/pull/314"
     "https://github.com/mas-bandwidth/nova-tools/pull/311"
     "https://github.com/mas-bandwidth/nova-tools/pull/312"
     "https://github.com/mas-bandwidth/nova-tools/pull/310"
+    "https://github.com/mas-bandwidth/nova-tools/pull/316"
+    "https://github.com/mas-bandwidth/nova-tools/pull/317"
     "https://github.com/mas-bandwidth/nova-tools/issues/267"
     "https://github.com/mas-bandwidth/nova-tools/issues/239"
     "https://github.com/mas-bandwidth/nova-tools/issues/236"
@@ -341,10 +396,12 @@
           :title "Reviews, findings and attestations"
           :subfeatures (            "Record exact-revision reviewer findings and author dispositions"
             "Support attested criteria with reviewer identity and result"
-            "Preserve disagreement, unknowns and repair cycles")
+            "Preserve disagreement, unknowns and repair cycles"
+            "reuse-only-valid-review: reuse a review only for unchanged reviewed content, acceptance and dependencies; retain independent friend gates and record repeat triggers")
           :depends-on (            "E05-F01")
           :source-sections (            "Operational lessons the pilot must exercise"
-            "The data")
+            "The data"
+            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())
         (          :id "E05-F04"
@@ -532,14 +589,16 @@
             "Support bounded read bundles at one captured revision and lease-time watermark, with stable paginated snapshot identity"
             "Support independent ordered batches with per-entry IDs/outcomes and explicit stop/continue semantics, without implying rollback"
             "Support atomic mutation batches with all-or-none validated O/W, counter and reverse-index changes; reject oversized batches without silently splitting"
-            "pipeline-replies-are-correlated: correlate out-of-order or fragmented ordinary responses by request ID, retain a distinct durable operation ID, name independent not-attempted and atomic validation entry outcomes, and close on unknown, duplicate, absent or undecodable IDs; same-ID recovery uses E03-F01 durable idempotency")
+            "pipeline-replies-are-correlated: correlate out-of-order or fragmented ordinary responses by request ID, retain a distinct durable operation ID, name independent not-attempted and atomic validation entry outcomes, and close on unknown, duplicate, absent or undecodable IDs; same-ID recovery uses E03-F01 durable idempotency"
+            "batch-with-bounds-and-urgency: coalesce independent results within byte, record and delay bounds; refuse unreferenced padding, bypass delay for urgent changes and preserve dependency and retry identity")
           :depends-on (            "E08-F01"
             "E02-F04")
           :source-sections (            "The verbs"
             "Async operations"
             "Retry/protocol"
             "Batch-friendly transport and explicit atomicity"
-            "Response correlation (SPEC-WORK.md@7db3b95)")
+            "Response correlation (SPEC-WORK.md@7db3b95)"
+            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())
         (          :id "E08-F03"
@@ -548,11 +607,13 @@
             "Separate stable capabilities/config from observed active executions"
             "Include coordinator identity and attribute model, bench, attempt and usage"
             "Store agreed specialist roles per friend; keep model strengths/weaknesses in the shared model catalog"
-            "Represent children, swarm capabilities, local runs and one-shots separately from friend identity; agreed concurrency limits apply")
+            "Represent children, swarm capabilities, local runs and one-shots separately from friend identity; agreed concurrency limits apply"
+            "bounds-are-not-prompts: refuse automatic dispatch when an adapter cannot enforce the configured execution limit; distinguish wait deadline from observed stop or unresolved outcome")
           :depends-on (            "E04-F04"
             "E03-F04")
           :source-sections (            "Friends and assignments are resident indexes too"
-            "CONFIG and ACTIVE are different sections")
+            "CONFIG and ACTIVE are different sections"
+            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())
         (          :id "E08-F04"
@@ -560,22 +621,28 @@
           :subfeatures (            "Represent explicit rest, unavailable and unconfirmed contact with observation age"
             "Distinguish offer, acknowledgment, ownership, lease and execution"
             "Reconcile uncertain prior attempts before relaunch or reassignment"
-            "After the team-configured silence threshold use one bounded availability probe; nonresponse is unconfirmed capacity, never proof of exhausted credits")
+            "After the team-configured silence threshold use one bounded availability probe; nonresponse is unconfirmed capacity, never proof of exhausted credits"
+            "quiet-until-actionable: keep unchanged traffic mechanical, batch actionable deltas within bounds and let corrections, stops, lease loss and deadlines bypass delay"
+            "regression-and-recovery: suspend new automatic routing on a breached trial, retain uncertain live handles and use only eligible role-preserving fallback")
           :depends-on (            "E08-F03"
             "E02-F04")
           :source-sections (            "Observed availability"
-            "Friends and assignments are resident indexes too")
+            "Friends and assignments are resident indexes too"
+            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())
         (          :id "E08-F05"
           :title "Bounded config/pricing exchange and model suitability"
           :subfeatures (            "Exchange UNCHANGED manifests or validated deltas by hash/revision"
             "Store model route, pricing, quota and provenance without secrets"
-            "Keep requested versus observed model and measured suitability separate")
+            "Keep requested versus observed model and measured suitability separate"
+            "policy-round-trip-and-replay: preserve per-friend efficiency policy, trial manifests and execution references through validated intake, export/import, restart, undo and replay"
+            "packet-and-route-gates: refuse oversized or history-disallowed packets and ineligible/stale routes; retain a scoped reason for economical-route exceptions")
           :depends-on (            "E08-F03")
           :source-sections (            "Efficient friend config exchange and token pricing"
             "Model knowledge informs scheduling"
-            "Swarms, models and friend participation: decision required")
+            "Swarms, models and friend participation: decision required"
+            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())))
     (      :id "E09"
@@ -652,12 +719,15 @@
           :title "Cost, usage and rate accounting"
           :subfeatures (            "Record attempt usage pointers and unresolved usage as unmeasured"
             "Separate billed cash, estimated cash and virtual token cost"
-            "Pin rate/config revisions and include coordinator, review and rework overhead")
+            "Pin rate/config revisions and include coordinator, review and rework overhead"
+            "complete-cost-lineage: join parent, child, retry and failed-attempt receipts once; keep cache/reasoning subsets non-overlapping, implementation cost separate and gaps unknown"
+            "cache-aware-context-choice: price cache read/write categories, service tiers and reset rebuilds; refuse missing decision, adapter or evidence inputs and compare matched accepted work")
           :depends-on (            "E08-F05"
             "E03-F04")
           :source-sections (            "Cost"
             "Model knowledge informs scheduling"
-            "Retrospective required before production implementation")
+            "Retrospective required before production implementation"
+            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())
         (          :id "E10-F03"
@@ -689,12 +759,14 @@
           :title "Measured Fixed Tables go/no-go gate"
           :subfeatures (            "Compare update-and-render tokens/wall time with manual editing"
             "Test lease-only answer for who is working on C and unsupported number detection"
-            "Pin scenarios, owners and commands before implementation; require exact-revision correctness and measured operational results before adoption")
+            "Pin scenarios, owners and commands before implementation; require exact-revision correctness and measured operational results before adoption"
+            "evidence-before-adoption: refuse automatic promotion on missing baseline or coverage, unmatched quality or retrospective correlation; require a qualified prospective result")
           :depends-on (            "E07-F05"
             "E10-F02"
             "E10-F03")
           :source-sections (            "The measurement that decides"
-            "Agreement and lock gate")
+            "Agreement and lock gate"
+            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())
         (          :id "E10-F07"
