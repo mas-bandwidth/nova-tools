@@ -24,7 +24,9 @@ before a worker or provider is started. Run copies that admission into the
 immutable attempt snapshot;
 it does not silently re-resolve against a newer catalog. If `run --profiles` is
 supplied, its catalog hash must match the queued admission for the selected
-profiled task; mismatch refuses that launch before reservation/provider activity.
+profiled task. Select the task before checking its admission hash; a mismatch
+retains that task as pending and refuses its launch before reservation or provider
+activity.
 The flag checks the admission, never replaces it. An explicit changed-profile
 requeue is a new admission linked to the old task, not an automatic retry.
 
@@ -92,7 +94,9 @@ import arbitrary parent values. It never copies the parent environment wholesale
 or variables for other routes. Tests use fake variable
 names and values; real key material is never needed. The variable name may be
 written to configuration and the sanitized projection, but the value may occur
-only in the child environment while the harness runs. Secret values are
+transiently in gate and launcher process memory during preparation and in the
+child environment for harness execution. This does not promise guaranteed memory
+zeroization. Secret values are
 forbidden from task files, catalog and profile paths, snapshots, receipts,
 argv, logs, worker scratch, `RESULT.md` and retained reports. A child may
 overwrite its worker-writable projection, but that projection is never the
