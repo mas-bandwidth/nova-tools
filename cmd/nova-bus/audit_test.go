@@ -48,7 +48,7 @@ var messageBusAudit = audit.Config{
 			"switch-day line that has been through bus.NewLegacyLine, so it is a UTC date or an RFC 3339 instant and nothing else.",
 		"main.go|hiddenReason|at": "the same sentence, and a time this code formatted itself with bus.LegacyInstantLayout; two sites in the one call.",
 		"main.go|cmdDraft|name":   "a reply-only flag's name, one of the five literals in replyOnlyFlags (reply.go), which this loop walks",
-		"reply.go|cmdDraftReply|offTheListingReason(c, t, target, me, legacy, hasCursor, re)": "not an event line's argument but a SENTENCE this package built, the way hiddenReason's is: " +
+		"reply.go|cmdDraftReply|offTheListingReason(c, t, target, me, legacy, hasCursor, replyTargetName(target))": "not an event line's argument but a SENTENCE this package built, the way hiddenReason's is: " +
 			"every value inside it went through oneline.Field at the site that wrote it, and the sentence is one line by construction. The one-line " +
 			"guarantee is made once over the finished sentence rather than twice over its parts. TestTargetNotOnTheOpenListIsItsOwnRefusal is the " +
 			"behavioural test for this site.",

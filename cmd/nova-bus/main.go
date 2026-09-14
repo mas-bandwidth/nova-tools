@@ -355,15 +355,22 @@ func (f *flags) attempts(value int, stderr io.Writer) bool {
 // hung fetch is a tool that has stopped saying anything, which is indistinguishable from a
 // tool that is working.
 func (f *flags) gitTimeoutFlag(seconds int, stderr io.Writer) bool {
-	if seconds < 1 {
-		fmt.Fprintf(stderr, "nova-bus %s: --git-timeout is a whole number of seconds and at least 1, got %d\n", f.verb, seconds)
-		return false
-	}
-	if err := bus.SetGitTimeout(time.Duration(seconds) * time.Second); err != nil {
+	if err := gitTimeoutProblem(seconds); err != nil {
 		fmt.Fprintf(stderr, "nova-bus %s: %s\n", f.verb, oneline.Err(err))
 		return false
 	}
 	return true
+}
+
+// gitTimeoutProblem is the same check with its answer RETURNED rather than printed, for the
+// one verb that collects every problem in an invocation before it prints any of them. One
+// spelling, two callers: a check that printed for one caller and returned for the other
+// would be two rules wearing one name.
+func gitTimeoutProblem(seconds int) error {
+	if seconds < 1 {
+		return fmt.Errorf("--git-timeout is a whole number of seconds and at least 1, got %d", seconds)
+	}
+	return bus.SetGitTimeout(time.Duration(seconds) * time.Second)
 }
 
 // defaultGitTimeoutSeconds is DefaultGitTimeout as the flag spells it.
@@ -497,14 +504,12 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 			return 2
 		}
 	} else {
-		if !f.gitTimeoutFlag(*gitTimeout, stderr) {
-			return 2
-		}
 		return cmdDraftReply(replyOpts{
 			busDir: *busDir, as: *as, to: *to, cc: *cc, subject: *subject,
 			replyTo: *replyTo, bodyFile: *bodyFile, draftDir: *draftDir,
 			remote: *remote, branch: *branch, maxBodyBytes: *maxBodyBytes,
-			reGiven: len(re) > 0, toGiven: given["to"], ccGiven: given["cc"],
+			gitTimeout: *gitTimeout,
+			reGiven:    len(re) > 0, toGiven: given["to"], ccGiven: given["cc"],
 			subjectGiven: given["subject"],
 		}, f, stdout, stderr, now)
 	}

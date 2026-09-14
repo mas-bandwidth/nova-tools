@@ -639,18 +639,51 @@ func TestControlCharactersInSubjectAndToAreRefused(t *testing.T) {
 	t.Parallel()
 	checkout, _, _ := replyBus(t)
 	body := bodyFile(t, "Yes.\n")
-	for _, tc := range []struct{ name, flag, value string }{
-		{"a newline in the subject", "--subject", "one\ntwo"},
-		{"U+2028 in the subject", "--subject", "one\u2028two"},
-		{"a newline in --to", "--to", "Bo\nDana"},
-		{"a bidi override in --cc", "--cc", "Bo\u202e"},
+	// EVERY FIXTURE RESOLVES. The first version of this test picked `--to "Bo\nDana"`
+	// and `--cc "Bo\u202e"`, both of which the ROSTER refuses -- so it was exit 2 over a
+	// rule it never reached, and it stayed green while a trailing newline on a name the
+	// roster knows walked straight onto the header line and ended the header block. The
+	// names below are all names this bus has, so the only thing that can refuse them is
+	// the one-line check.
+	for _, tc := range []struct{ name, flag, value, want string }{
+		{"a newline in the subject", "--subject", "one\ntwo", `--subject: a header line is one line, and "one\ntwo" holds a line break or a control character`},
+		{"U+2028 in the subject", "--subject", "one\u2028two", `--subject: a header line is one line, and "one\u2028two" holds a line break or a control character`},
+		{"a trailing newline on a name the roster knows", "--to", "Bo\n", `--to: a header line is one line, and "Bo\n" holds a line break or a control character`},
+		{"a newline between two names the roster knows", "--to", "Bo\nDana", `--to: a header line is one line, and "Bo\nDana" holds a line break or a control character`},
+		{"U+2028 in --to", "--to", "Bo\u2028", `--to: a header line is one line, and "Bo\u2028" holds a line break or a control character`},
+		{"a trailing newline in --cc", "--cc", "Dana\n", `--cc: a header line is one line, and "Dana\n" holds a line break or a control character`},
+		{"a carriage return in --cc", "--cc", "Dana\r", `--cc: a header line is one line, and "Dana\r" holds a line break or a control character`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
 			invoke(t, "", replyArgs(checkout, dir, "bo-abcdef012345", body, tc.flag, tc.value)...).
-				mustCode(t, 2).mustContain(t, "stderr", "DRAFT REFUSED: ")
+				mustCode(t, 2).mustContain(t, "stderr", "DRAFT REFUSED: "+tc.want)
 			mustEmptyDir(t, dir)
 		})
+	}
+}
+
+// The other half of the same defect, and the reason the check is on the RAW flag value
+// rather than on the resolved names: the header line a reply carries is the caller's own
+// line, so a group stays the group's name and no audience is expanded silently.
+//
+// docs/SPEC-BUS-REPLY.md 514-515: "No group or thread expansion. The audience is the
+// target's sender or what the caller named."
+//
+// expected= `To: The twenty` on the header line, and `to=` on the receipt carrying the
+// three RESOLVED names.
+func TestAGroupStaysTheGroupsNameOnTheHeaderLine(t *testing.T) {
+	t.Parallel()
+	checkout, _, drafts := replyBus(t)
+	body := bodyFile(t, "Yes.\n")
+	r := invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body, "--to", "Everybody on the bus")...).mustCode(t, 0)
+	r.mustContain(t, "stdout", `to="Ada";"Bo";"Dana"`)
+	raw, err := os.ReadFile(replyPath(drafts, "bo-abcdef012345"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "To: Everybody on the bus\n") {
+		t.Errorf("the group was expanded onto the header line:\n%s", raw)
 	}
 }
 
@@ -938,6 +971,32 @@ func TestAReplyRefusalNamesEveryProblemInOneRun(t *testing.T) {
 		t.Errorf("three mistakes produced %d refusal lines:\n%s", n, r.stderr)
 	}
 	mustEmptyDir(t, drafts)
+	// ACROSS THE GROUPS, and not within one of them. The first version of this verb checked
+	// the flags in three passes and returned at the end of whichever one first found
+	// something, so a bad --remote and a bad --subject were one line and two runs -- which
+	// is the cost this rule exists to remove. A charset refusal, a roster refusal, a
+	// one-line refusal, a budget refusal and an unreadable body are five different passes
+	// and one run.
+	five := t.TempDir()
+	r = invoke(t, "", "draft", "--bus", checkout, "--as", "Ada", "--reply-to", "bo-abcdef012345",
+		"--body-file", filepath.Join(t.TempDir(), "no-such-body"), "--draft-dir", five,
+		"--remote", "-not-a-remote", "--branch", "main",
+		"--to", "Nobody", "--subject", "one\ntwo", "--max-body-bytes", "0").mustCode(t, 2)
+	for _, want := range []string{
+		"--remote \"-not-a-remote\": begins with a dash",
+		`--max-body-bytes is a budget in bytes and is at least 1, got 0`,
+		`--subject: a header line is one line`,
+		`--to: Nobody names no one on this bus`,
+		"--body-file ",
+	} {
+		if !strings.Contains(r.stderr, want) {
+			t.Errorf("five mistakes in one run did not name %q:\n%s", want, r.stderr)
+		}
+	}
+	if n := strings.Count(r.stderr, "DRAFT REFUSED: "); n != 5 {
+		t.Errorf("five mistakes produced %d refusal lines:\n%s", n, r.stderr)
+	}
+	mustEmptyDir(t, five)
 }
 
 // "exit 1 is the bus or the state saying NO, and exit 2 is an invocation that could not
@@ -960,8 +1019,20 @@ type refusalRow struct {
 	draftDir string
 }
 
-// refusalTable is the table in docs/SPEC-BUS-REPLY.md, "The refusals, with their exit
-// codes", row for row.
+// refusalTable is the table in docs/SPEC-BUS-REPLY.md 389-409, "The refusals, with their
+// exit codes". NINETEEN rows; thirteen are invocations and are here, and the six that need
+// a fixture or a seam rather than an argument list are named here and asserted in their own
+// tests, so that nothing in the table is asserted nowhere:
+//
+//	the checkout has diverged            TestADivergedCheckoutIsRefusedAndLosesNothing
+//	not on this reader's live listing    TestTargetNotOnTheOpenListIsItsOwnRefusal (4 fixtures)
+//	the target's sender is --as          TestReplyToYourOwnNoteNeedsAnExplicitTo
+//	a file already exists at the path    TestReplyNeverOverwritesAnExistingDraft
+//	no create-exclusive publish          TestAFilesystemWithNoCreateExclusivePublishIsRefused
+//	another nova-bus holds the checkout  TestASecondReplyOnOneCheckoutWaitsAndThenRefuses
+//
+// TestTheRefusalTableIsAccountedForBelow holds that arithmetic, so a row that quietly left
+// this file is a failure rather than a silence.
 func refusalTable(t *testing.T, checkout string) []refusalRow {
 	t.Helper()
 	body := bodyFile(t, "Yes.\n")
@@ -1004,7 +1075,10 @@ func refusalTable(t *testing.T, checkout string) []refusalRow {
 	add("an unreadable body file", 2, "DRAFT REFUSED: --body-file ", d3,
 		replyArgs(checkout, d3, "bo-abcdef012345", filepath.Join(t.TempDir(), "no-such-body"))...)
 	d4 := dir()
-	add("a remote failing the charset check", 2, "nova-bus draft: ", d4,
+	// The existing refusal's own words, in THIS form's grammar: the reply form collects
+	// every problem before it prints any, so the charset check returns its error here
+	// rather than printing `nova-bus draft:` and returning on the spot.
+	add("a remote failing the charset check", 2, `DRAFT REFUSED: --remote "-not-a-remote": begins with a dash, so git would read it as an option rather than a name`, d4,
 		"draft", "--bus", checkout, "--as", "Ada", "--reply-to", "bo-abcdef012345",
 		"--body-file", body, "--draft-dir", d4, "--branch", "main", "--remote", "-not-a-remote")
 	d5 := dir()
@@ -1106,4 +1180,151 @@ func withoutFetch(t *testing.T, fn func()) {
 	refreshCheckout = func(dir, remote, branch string) (bool, error) { return false, nil }
 	defer func() { refreshCheckout = old }()
 	fn()
+}
+
+// ------------------------------------------------------------- the repair commit's tests
+
+// docs/SPEC-BUS-REPLY.md 254-259: "The test is the one `--bus` already makes: resolve both
+// paths, follow symlinks on both sides, and refuse when the draft directory is the bus root
+// or under it."
+//
+// The one `--bus` makes ABSOLUTIZES (internal/bus/git.go's resolved), and comparing two
+// EvalSymlinks outputs without that leaves a relative `--draft-dir` inside the checkout
+// looking like a path outside it -- which writes the draft into the bus and defers the
+// refusal to `send`, after the turns are spent, which is the failure this row exists to
+// move to the start of the job.
+//
+// expected= `DRAFT REFUSED: --draft-dir scratch is the bus checkout at <root>, or inside
+// it; drafts go outside the bus, because send needs its tree clean`, exit 2, nothing
+// written.
+func TestARelativeDraftDirInsideTheCheckoutIsRefused(t *testing.T) {
+	checkout, _, _ := replyBus(t)
+	body := bodyFile(t, "Yes.\n")
+	inside := filepath.Join(checkout, "scratch")
+	if err := os.MkdirAll(inside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(checkout)
+	for _, tc := range []struct{ name, bus, draftDir string }{
+		{"a relative draft dir under a relative bus", ".", "scratch"},
+		{"a relative draft dir under an absolute bus", checkout, "scratch"},
+		{"the relative bus root itself", ".", "."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			invoke(t, "", "draft", "--bus", tc.bus, "--as", "Ada", "--reply-to", "bo-abcdef012345",
+				"--body-file", body, "--draft-dir", tc.draftDir, "--remote", "origin", "--branch", "main").
+				mustCode(t, 2).
+				mustContain(t, "stderr", "drafts go outside the bus, because send needs its tree clean")
+		})
+	}
+	mustEmptyDir(t, inside)
+}
+
+// docs/SPEC-BUS-REPLY.md 408: "the draft directory's filesystem offers no create-exclusive
+// publish | the directory, the call tried, what it said, and to name a `--draft-dir` on a
+// filesystem that has one | 2"
+//
+// The row is asserted here rather than in refusalTable because no invocation can reach it:
+// it is a property of the filesystem under `--draft-dir`, so the publish is taken out at
+// the seam, which is the same thing TestReplyRefreshesBeforeItResolves does to the fetch.
+//
+// expected= `DRAFT REFUSED: <dir>: link said "operation not supported" ...: this filesystem
+// offers no create-exclusive publish; name a --draft-dir on a filesystem that has a
+// create-exclusive publish`, exit 2, nothing written.
+func TestAFilesystemWithNoCreateExclusivePublishIsRefused(t *testing.T) {
+	checkout, _, drafts := replyBus(t)
+	body := bodyFile(t, "Yes.\n")
+	old := publishDraft
+	publishDraft = func(dir, name string, content []byte) (string, error) {
+		return "", fmt.Errorf("%s: link said %q and %s said %q: %w", dir, "operation not supported",
+			"the no-replace rename", "not supported", bus.ErrNoExclusivePublish)
+	}
+	defer func() { publishDraft = old }()
+	r := invoke(t, "", replyArgs(checkout, drafts, "bo-abcdef012345", body)...).mustCode(t, 2)
+	r.mustContain(t, "stderr", "DRAFT REFUSED: "+drafts+`: link said "operation not supported"`)
+	r.mustContain(t, "stderr", "this filesystem offers no create-exclusive publish; name a --draft-dir on a filesystem that has a create-exclusive publish")
+	mustEmptyDir(t, drafts)
+}
+
+// docs/SPEC-BUS-REPLY.md 174-180: the refusal "says which of the reasons it is", and there
+// are four. The case that used to reach a FIFTH sentence is a note whose `Id:` line the open
+// list cannot carry: `openEntryFor` blanks an id that fails `ValidOpenID`, so the entry is
+// named by its PATH, while this verb was looking for it by its header id and missing.
+//
+// It is on the listing, so it is a legal target, and the name the draft writes is the name
+// the listing uses for it.
+//
+// expected= exit 0 and `re=from-bo/2026-09-08T0800Z-an-id-nobody-can-carry.md`, with the
+// draft's filename the derived `legacy-<12 hex>` and holding no path separator.
+func TestAReplyToANoteWhoseIdTheOpenListCannotCarryIsResolvedByPath(t *testing.T) {
+	t.Parallel()
+	hermetic(t)
+	checkout, _ := busDir(t)
+	const path = "from-bo/2026-09-08T0800Z-an-id-nobody-can-carry.md"
+	writeFile(t, checkout, path,
+		"From: Bo\nTo: Ada\nDate: Tue Sep  8 08:00:00 UTC 2026\nId: not an id this tool would ever write\nSubject: An id nobody can carry\n\nAsking.\n")
+	gitIn(t, checkout, "add", "-A")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "an id the open list cannot carry")
+	gitIn(t, checkout, "push", "-q", "origin", "HEAD:refs/heads/main")
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40",
+		"--full", "--advance", "--carry-history", "--remote", "origin", "--branch", "main").mustCode(t, 0)
+
+	drafts := t.TempDir()
+	body := bodyFile(t, "Yes.\n")
+	invoke(t, "", replyArgs(checkout, drafts, path, body)...).
+		mustCode(t, 0).mustContain(t, "stdout", "re="+path)
+	names := draftsIn(t, drafts)
+	if len(names) != 1 || !strings.Contains(names[0], "-re-legacy-") || strings.ContainsAny(names[0], "/\\") {
+		t.Fatalf("the draft is named %v; a name the open list cannot carry is the derived one, and it is one path segment", names)
+	}
+	raw, err := os.ReadFile(filepath.Join(drafts, names[0]))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "Re: "+path+"\n") {
+		t.Errorf("the Re line is not the name the listing uses for this note:\n%s", raw)
+	}
+}
+
+// The count the comment on refusalTable claims, asserted rather than trusted, so that a row
+// which quietly left this file is a failure and not a silence.
+//
+// Thirteen of the nineteen rows at docs/SPEC-BUS-REPLY.md 389-409 are driven from an
+// argument list here, in seventeen fixtures -- the missing-flag row is four flags and the
+// body row is empty AND over-budget -- and the other six have their own test, named in the
+// comment on refusalTable above.
+//
+// expected= 17 fixtures over 13 rows, and 13 + 6 = 19.
+func TestTheRefusalTableIsAccountedForBelow(t *testing.T) {
+	t.Parallel()
+	checkout, _, _ := replyBus(t)
+	const (
+		rowsDrivenHere    = 13
+		rowsOwnTests      = 6
+		fixturesOverThem  = 17
+		rowsInTheDocument = 19
+	)
+	if got := len(refusalTable(t, checkout)); got != fixturesOverThem {
+		t.Errorf("refusalTable drives %d fixtures, want %d over %d rows", got, fixturesOverThem, rowsDrivenHere)
+	}
+	if rowsDrivenHere+rowsOwnTests != rowsInTheDocument {
+		t.Errorf("%d rows are accounted for, and docs/SPEC-BUS-REPLY.md 389-409 is %d", rowsDrivenHere+rowsOwnTests, rowsInTheDocument)
+	}
+	// The six are named, not merely counted: each has to exist in this package.
+	for _, name := range []string{
+		"TestADivergedCheckoutIsRefusedAndLosesNothing",
+		"TestTargetNotOnTheOpenListIsItsOwnRefusal",
+		"TestReplyToYourOwnNoteNeedsAnExplicitTo",
+		"TestReplyNeverOverwritesAnExistingDraft",
+		"TestAFilesystemWithNoCreateExclusivePublishIsRefused",
+		"TestASecondReplyOnOneCheckoutWaitsAndThenRefuses",
+	} {
+		raw, err := os.ReadFile("reply_test.go")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), "func "+name+"(") {
+			t.Errorf("refusalTable's comment names %s and this package does not define it", name)
+		}
+	}
 }

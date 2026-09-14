@@ -52,6 +52,15 @@ var ErrDraftExists = errors.New("a draft already exists at this path")
 // replacing rename, because that is the race the rule exists to close.
 var ErrNoExclusivePublish = errors.New("this filesystem offers no create-exclusive publish")
 
+// linkFile and noReplacePublish are the two create-exclusive publishes, as vars so that a
+// test can stand in for a filesystem that offers one, the other or neither. A filesystem
+// with no hard links is not a thing a test can ask a disk for on the machines this builds
+// on, and the row of the refusal table that covers it has to be asserted somewhere.
+var (
+	linkFile         = os.Link
+	noReplacePublish = noReplaceRename
+)
+
 // PublishNoReplace writes one complete draft into dir and publishes it onto name.
 //
 // Two steps, and the second is the one that matters. First the whole file goes into a
@@ -98,26 +107,32 @@ func PublishNoReplace(dir, name string, content []byte) (string, error) {
 		os.Remove(temp)
 		return "", err
 	}
-	switch err := os.Link(temp, final); {
-	case err == nil:
+	linkErr := linkFile(temp, final)
+	switch {
+	case linkErr == nil:
 		os.Remove(temp)
 		return final, nil
-	case errors.Is(err, os.ErrExist):
+	case errors.Is(linkErr, os.ErrExist):
 		os.Remove(temp)
 		return "", fmt.Errorf("%s: %w", final, ErrDraftExists)
 	}
 	// The filesystem refuses hard links -- some network mounts, some container overlays,
 	// FAT. The operating system's own no-replace rename is the second way, and where the
 	// platform has none this refuses rather than falling back to a rename that replaces.
-	switch err := noReplaceRename(temp, final); {
-	case err == nil:
+	//
+	// THE LINK'S ERROR IS CARRIED HERE and not thrown away. The refusal has to name "the
+	// call it tried and what the call said", and the first version reported only the
+	// SECOND call's words -- so a reader was told what the fallback said about a
+	// filesystem whose actual complaint came from the call before it.
+	switch renameErr := noReplacePublish(temp, final); {
+	case renameErr == nil:
 		return final, nil
-	case errors.Is(err, os.ErrExist):
+	case errors.Is(renameErr, os.ErrExist):
 		os.Remove(temp)
 		return "", fmt.Errorf("%s: %w", final, ErrDraftExists)
 	default:
 		os.Remove(temp)
-		return "", fmt.Errorf("%s: %s said %q: %w", dir, noReplaceRenameCall, err, ErrNoExclusivePublish)
+		return "", fmt.Errorf("%s: link said %q and %s said %q: %w", dir, linkErr, noReplaceRenameCall, renameErr, ErrNoExclusivePublish)
 	}
 }
 
