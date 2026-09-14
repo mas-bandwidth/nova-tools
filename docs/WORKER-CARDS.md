@@ -4,15 +4,14 @@ A **card** is the whole of what a worker is handed: one text, in one order, pinn
 head, with the shape of its answer fixed before its job is described. The card is the message
 and it is the contract — what may be read, what may be touched, what "done" prints and what
 "stop" prints. The provider is a parameter: cards 02 and 05 ran unchanged on Mercury after
-DeepSeek stalled (**2026-09-14 15:23Z**), and every practice below is about the card, not the
-model. Glenn, 15:26Z: "The prompt matters a lot." Each practice carries its rule, what was
-measured and what was not, its expiry and rollback, and who put it on the record. Small
-samples license practical recovery, never a ranking; nothing here is a universal claim from
-one bench or one recovery pair (Stella, stella-3acd28c19920). Stella disposes the exact
-revision of this page, Emma reads it, and Freddy is asked by name where a practice touches his
-swarm (2, 6, 8, 15). Templates read: card-05 (edit), card-08 and card-09 (reads) of the
-2026-09-14 swarm, card-04 of sec38. A promoted practice lands in `nova-swarm template`
-([SPEC-SWARM.md](SPEC-SWARM.md)).
+DeepSeek stalled (**2026-09-14 15:23Z**), and every practice here is about the card. Glenn,
+15:26Z: "The prompt matters a lot." Each practice carries its rule, what was measured and what
+was not, its expiry and rollback, and who put it on the record. Small samples license
+practical recovery, never a ranking; nothing here is a universal claim from one bench or one
+recovery pair (Stella, stella-3acd28c19920). Stella disposes the exact revision of this page,
+Emma reads it, and Freddy is asked by name where a practice touches his swarm (2, 6, 8, 9,
+16). Templates read: cards 05 (edit), 08 and 09 (reads) of 2026-09-14, sec38 card-04. A
+promoted practice lands in `nova-swarm template` ([SPEC-SWARM.md](SPEC-SWARM.md)).
 
 The seven Mercury jobs cited below: 20260914T151824Z-card-03/04, 20260914T152306Z-card-02/05,
 20260914T154040Z-card-06/07, 20260914T153752Z-card-08 — all rc 0, 38 to 60 s, harness-reported
@@ -22,15 +21,15 @@ usd 0.009 to 0.033, input 208k to 728k tokens per job, on OpenCode 1.18.29.
 
 The `RESULT.md` grammar comes before the job: line 1 fixed, line 2 the verdict, findings
 capped, and a checklist whose line count is budgeted to the model's output ceiling. A model
-that sees the grammar first conforms to it; one that sees the prose first improvises.
-**Measured:** seven Mercury cards in this shape, seven rc 0. Stella's Mercury pair: no report,
-then reports after the grammar moved before the prose and the bootstrap went relative (8) —
-two changes at once, a tested recovery, not a proven cause of either. Local, at a 650-token
-ceiling: qwen3.6 (think off) gave the verdict and eight lines, then the checklist truncated;
-Granite gave no verdict — the ceiling must fit the shape. **Not measured:** the same jobs with
-the grammar last. **Expires** on a harness, model or template change, or a report that parses
-and contradicts itself (11). **Rollback:** the previous card. **Held by:** Rowan (measured);
-Emma, principle 1 (emma-500fe5d65cad); Stella, provisional.
+that sees the grammar first conforms to it; prose first, it improvises. **Measured:** seven
+Mercury cards in this shape, seven rc 0. Stella's Mercury pair: no report, then reports after
+the grammar moved before the prose and the bootstrap went relative (9) — two changes at once,
+a tested recovery, not a proven cause of either. Local, at a 650-token ceiling: qwen3.6 (think
+off) gave the verdict and eight lines, then the checklist truncated; Granite gave no verdict —
+the ceiling must fit the shape. **Not measured:** the same jobs with the grammar last.
+**Expires** on a harness, model or template change, or a report that parses and contradicts
+itself (12). **Rollback:** the previous card. **Held by:** Rowan (measured); Emma, principle 1
+(emma-500fe5d65cad); Stella, provisional.
 
 ## 2. RULES first, and the wall
 
@@ -49,13 +48,15 @@ SPEC-SWARM; it is Freddy's swarm's wall too, so a reworded RULES block asks him 
 Every place the worker reads or edits is `file:line` at one head the card prints and the
 worker must see from `git rev-parse HEAD`; the card writer opened every anchor at that head
 before dispatch. Head moved: BLOCKED naming the head you got, and stop. Premise dead: the card
-is not dispatched. **Measured:** card-01 died at the writer's desk — its premise was already
-repaired by 3d0b6635, merged in PR #272 at 2026-09-14T02:56:43Z, verified at c55c7bd6; one
-child's read saved a worker run. Cards 05, 06 and 07 quoted their sites at 7db3b95c and
-7c41f40e and edited the named lines and no other. **Not measured:** a head moving under a live
-card; BLOCKED is written in every card and has been taken in none. **Expires** the first time
-a worker edits a line the card did not name. **Rollback:** none. **Held by:** Rowan; Emma,
-principle 5; Stella ("resolve the premise before dispatch").
+is not dispatched. The clone URL is https, never a host alias: card-13 died at the clone on
+`git@github-rowan:`, which the wall does not resolve. **Measured:** card-01 died at the
+writer's desk — its premise was already repaired by 3d0b6635, merged in PR #272 at
+2026-09-14T02:56:43Z, verified at c55c7bd6; one child's read saved a worker run. Cards 05, 06
+and 07 quoted their sites at 7db3b95c and 7c41f40e and edited the named lines and no other.
+**Not measured:** a head moving under a live card; BLOCKED is written in every card and has
+been taken in none. **Expires** the first time a worker edits a line the card did not name.
+**Rollback:** none. **Held by:** Rowan; Emma, principle 5; Stella ("resolve the premise before
+dispatch").
 
 ## 4. Red first, as a table
 
@@ -72,7 +73,9 @@ before green with real bytes). **Expires** on the first code card on Mercury or 
 GATES lists the commands this change needs, copied from `ci.yml` word for word, each run after
 a commit, each result line pasted. A one-line documentation repair does not carry every Go
 gate. A gate whose tool is absent is skipped and named in BLOCKED, never built or fetched. A
-pre-existing failure is named with its count (`nova-check links`: 19 broken, passes at 19).
+pre-existing failure is named with its count (`nova-check links`: 19 broken, passes at 19). A
+cherry-pick card's gates include the conflict-marker grep: card-16 left `<<<<<<< HEAD` inside
+a fenced grammar block, and `git diff --check` caught it on the read, not in the card.
 **Measured:** cards 05, 06 and 07 carried `git diff --check`, `git diff --stat` and
 `nova-check links` only, and their reports pasted all three; card-08's one gate was the suite
 script. **Expires** on a `ci.yml` change. **Rollback:** the full gate block. **Held by:**
@@ -100,7 +103,22 @@ nova-secrets route ([SPEC-SECRETS.md](SPEC-SECRETS.md)). **Expires** when that r
 and a worker can publish under it. **Rollback:** the THE PR block returns to the card. **Held
 by:** Rowan; Emma, principle 3; Stella ("publication belongs to the coordinator").
 
-## 8. A local task file by relative path, and no parent search
+## 8. The push step checks the branch
+
+Before pushing a worker's commit the launcher prints `git branch --show-current` and refuses
+main, master or the PR's base; `git diff --stat <base>..HEAD` must match the card's TOUCHED
+list; the push names the branch by explicit refspec, never bare `HEAD`. The card says that
+`git branch --show-current` must equal `<branch>` before the commit, and `RESULT.md` line 1
+carries the branch. **Measured:** card-24's Mercury worker committed its one-line HARNESSES.md edit on
+main in its clone though the card named a branch; the launcher's bare `git push origin HEAD`
+landed f2ca7db on mas-bandwidth/nova main at **16:32Z** with no read; reverted within the
+minute (f45fa3d3), reapplied as nova#106 from a branch. The day's eleven earlier pushes went
+to feature branches by the same bare command; only the branch differed. **Not measured:**
+where in the run the worker left the card's branch. **Expires** when the push is a tool that
+refuses by construction. **Rollback:** none; a check, not a practice under test. **Held by:**
+Rowan (the hurt, 16:32Z).
+
+## 9. A local task file by relative path, and no parent search
 
 The initial message says: read `./PROMPT.md` from your working directory, write `./RESULT.md`
 there, do not search parent directories. **Measured:** Stella's Mercury pair — no report, then
@@ -108,11 +126,11 @@ reports after this change and (1) together; six raw attempts retained in private
 51c8fb9. Two changes at once: a tested recovery, not a proven cause. **Not established:** that
 the earlier pair's content-filter response came from the prose conflict; Emma's "eliminates"
 and "preventing" are read here as a local mitigation. **Expires** when the prefix experiment
-(15) separates the two changes, or on a harness change. **Rollback:** the absolute-path
+(16) separates the two changes, or on a harness change. **Rollback:** the absolute-path
 bootstrap. **Held by:** Stella, provisional; Emma, principle 2, calibrated by Stella; it
 touches Freddy's swarm's initial message, so him by name.
 
-## 9. A finding is a defect with a trigger, a location and a consequence, or nothing
+## 10. A finding is a defect with a trigger, a location and a consequence, or nothing
 
 A finding names the defect, what triggers it, its `file:line` and what follows; if there is
 none, write the single word `none`, and do not pad. A description of correct code is not a
@@ -124,7 +142,7 @@ references and weak support; Granite showed the same gap between completion and 
 across models. **Expires** on a new failure class in a report. **Rollback:** none. **Held
 by:** Stella; Rowan (the local arm).
 
-## 10. A checklist read and a cold read are different tasks
+## 11. A checklist read and a cold read are different tasks
 
 Name which one you are asking for. A checklist read grades every numbered item — fixed, not
 fixed or changed, with `file:line` and the test that proves it — and is judged on its coverage
@@ -136,7 +154,7 @@ diagnostic positions counting characters) — HOLD, comment 5666642046. The card
 checklist and got one; no model verdict follows. **Expires** when a card carries both and is
 measured. **Held by:** Stella (stella-d79daffa7ae8).
 
-## 11. Contradiction prediction: one card owns the shared sentence
+## 12. Contradiction prediction: one card owns the shared sentence
 
 When two cards edit the same doctrine, one card owns each shared sentence and the other points
 at it read-only; and each card quotes the sentences its edit must agree with — and where an
@@ -147,11 +165,11 @@ did not: card-06 quoted "writes nothing at all" and asked for "the fewest words 
 sentence point here"; the worker kept the opening and appended the receipt after it (#307
 d338af4, HOLD: 5666664799, 5666669220). Card-07 asked for `dry-run=true` on the receipt but
 never said what a preview prints for the event id and revision it does not have (#308 7534479,
-HOLD: 5666665203, 5666669536). Two workers completed their instructions and the statements
-contradicted; the card must predict that. **Expires** when the repairs land under cards that
-name the words. **Held by:** Stella (stella-c44554a6e814).
+HOLD: 5666665203, 5666669536). Two completed instructions contradicted each other; the card
+must predict that. **Expires** when the repairs land under cards that name the words. **Held
+by:** Stella (stella-c44554a6e814).
 
-## 12. Usage: sum the harness's disjoint categories once, label harness-normalized
+## 13. Usage: sum the harness's disjoint categories once, label harness-normalized
 
 Under pinned OpenCode 1.18.29's `getUsage`, DB input already excludes cache read and write and
 DB output already excludes reasoning: sum the categories once, never twice. A missing provider
@@ -163,25 +181,25 @@ harness-reported; Stella's two aggregation probes agreed across six local jobs a
 normalized-category tokens, USD unknown (private stella-tools a4f311b). **Expires** on a
 harness version change. **Rollback:** dashes. **Held by:** Stella (source note underway).
 
-## 13. Logs private; only the phase and the error class on the wire
+## 14. Logs private; only the phase and the error class on the wire
 
 `--print-logs` stays private: a provider error may carry request data, so it is redacted
 before any excerpt reaches the bus or a result. What travels is the phase — process started,
 request dispatched, response received, report accepted — and the error class. **Measured:**
 the DeepSeek controls A to E: a config-resolution miss under the generic "Unexpected server
 error"; a hung bootstrap under a per-slot data home; Unauthorized on a stale key. Naming the
-phase localized each; the two earlier "silent stalls" had not been. **Not established:** that
-DB size or WAL caused the hang — a hypothesis until discriminated. **Expires** when the tool
+phase localized each; the earlier "silent stalls" had not been. **Not established:** that DB
+size or WAL caused the hang — a hypothesis until discriminated. **Expires** when the tool
 redacts. **Held by:** Stella.
 
-## 14. No ranking from small samples
+## 15. No ranking from small samples
 
 Seven Mercury jobs, two DeepSeek successes (80 to 85 s) and five controls, two local runs at
 one ceiling: enough to recover a practice, not enough to rank a model, and this page ranks
 none. **Expires:** re-examined when a paired measurement that includes review and retries
 exists; never dropped. **Held by:** Stella; Rowan.
 
-## 15. The prefix experiment is the next measurement
+## 16. The prefix experiment is the next measurement
 
 Compare a minimal task-specific worker prefix with the current full self prefix on equivalent
 real tasks: task, route, limits and acceptance held fixed, order alternated, every attempt
@@ -196,4 +214,4 @@ prefix is one arm.
 - **The DeepSeek key route is a human's.** Unauthorized is verified for that credential
   route; no further provider attempt is spent until it is repaired; the repair is not a card.
 - **The seed contraction is the lever on input tokens** (nova#104). The self rides every
-  task, so the lever is the seed, not the prompt; its saving is measured through (15).
+  task, so the lever is the seed, not the prompt; its saving is measured through (16).
