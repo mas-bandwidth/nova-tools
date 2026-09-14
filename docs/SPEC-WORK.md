@@ -1252,8 +1252,11 @@ atomic envelope. Any operational depth or size limit must be explicit and fail w
 partial mutation; it must not masquerade as a domain hierarchy restriction.
 
 **Acceptance:** round-trip both examples with identity, labels, order, evidence and links
-preserved; exercise omitted and repeated grouping layers; query equal semantic scopes at
-different depths; verify a task is counted once even when referenced by multiple roadmaps;
+preserved; also round-trip a deeper witness, repository → project → project → stream →
+work-set → stream → epic → feature → sub-feature → sub-feature → task, and a shallow
+repository → feature → task witness with optional layers omitted; exercise omitted and
+repeated grouping layers; query equal semantic scopes at different depths; verify a task is
+counted once even when referenced by multiple roadmaps;
 settle and reopen through nested project/stream ancestors; compare maintained counts and W
 against an independent traversal oracle in tests; reject cycles and multiple containment
 parents atomically. Rendering must preserve the selected scope and completion unit across
@@ -2609,9 +2612,11 @@ and **no model profile grants access, execution authority or capacity by itself.
 
 ## The hierarchy, the table and the roadmap's own record *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
 
-**Glenn's hierarchy is repository → roadmap → epic → feature → subtasks**, with sub-features and
-subtasks recursive beneath, and it is **stored and queried rather than inferred by a renderer from
-a name**. Optionally a feature splits on another named dimension — a language, a platform, a
+**Repository → epic → feature → subtasks is one example of Glenn's recursive hierarchy**,
+with optional, repeated project and stream groups and recursive sub-features and subtasks.
+Containment is **stored and queried rather than inferred by a renderer from a name**;
+a roadmap is a durable view over that structure, not a required containment level. Optionally
+a feature splits on another named dimension — a language, a platform, a
 backend — and **that optional dimension is what introduces cells**; without the split there is no
 mandatory synthetic cell between a feature and its subtasks. A table projection **selects** rows and
 an axis from this durable hierarchy and **copies no work**; a cell references its canonical target;
@@ -3732,8 +3737,8 @@ ACTIVE with the coordinator inside `friends`, role configuration expressive enou
 essential-security-only role, a specialised different-perspective reserved-plan role and agreed
 participation, the bounded config exchange and the pricing and cost records with their three
 separately labelled values, the model catalog and what its observations are evidence of, Glenn's
-agreed hierarchy with epics and recursive sub-features, the declared row kinds and the optional
-axis layer, roadmaps as durable views that outlive their work, the locked table display and the
+recursive hierarchy with optional and repeated grouping layers, epics and sub-features,
+the declared row kinds and the optional axis layer, roadmaps as durable views that outlive their work, the locked table display and the
 one renderer in two modes, the prototype capabilities kept and its two defects named, the seven
 operational obligations, the preservation and recovery suites whole, the savepoint, checkpoint,
 restore and undo contract, the staged verification and the fast-lane-and-nightly split, and the lock gate; and
