@@ -39,6 +39,30 @@ must mutate, query repeatedly and show zero node visits/parses/replays for |O|,
 then compare against an independent full count after close/reopen/import replay.
 Arbitrary new filters are not promised constant time.
 
+## W is an eagerly maintained working index
+
+W is a materialized view of canonical open task IDs with live task leases, not
+a filter that walks O on demand. Maintain its ID membership, |W| counter and
+per-friend reverse indexes in the same accepted mutation envelope as the
+underlying task and lease changes. Readers observe one consistent revision.
+Pending offers alone do not enter W; multiple active attempts for one task do
+not count that task twice. Assignment, lease take/renew/release/expiry,
+completion, cancellation, reassignment and undo/replay must preserve this rule.
+
+At a published revision, membership and |W| are constant-time resident lookups;
+enumerating k working tasks is O(k), with bounded pages. Neither query scans O
+or C, including the first query after a mutation. Deadline processing uses a
+deadline index/queue and visits due leases, not all open tasks. Expose the
+revision and lease-time watermark: advancing a clock barrier may process due
+leases and is not itself promised constant time. Never present a stale index
+as current. Lease expiry is not proof that the remote execution stopped; retain
+uncertain execution and capacity records separately until reconciled.
+
+W contains references, not duplicate task bodies or a second source of truth.
+Startup, recovery and explicit integrity checks may rebuild it from canonical
+state, with time-sensitive leases reconciled before advertising readiness.
+Normal reads must never perform that rebuild lazily.
+
 ## Friends and assignments are resident indexes too
 
 Glenn explicitly wants nova-work to be the coordinator's fast in-memory tracker
