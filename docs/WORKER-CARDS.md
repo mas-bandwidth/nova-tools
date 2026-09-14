@@ -20,8 +20,9 @@ usd 0.009 to 0.033, input 208k to 728k tokens per job, on OpenCode 1.18.29.
 ## 1. The contract before the prose
 
 The `RESULT.md` grammar comes before the job: line 1 fixed, line 2 the verdict, findings
-capped, and a checklist whose line count is budgeted to the model's output ceiling. A model
-that sees the grammar first conforms to it; prose first, it improvises. **Measured:** seven
+capped, and a checklist whose line count is budgeted to the model's output ceiling. Putting
+the grammar first may improve conformance — a hypothesis, not a measurement; no same-job
+comparison exists, and the observed runs establish recovery, not causation. **Measured:** seven
 Mercury cards in this shape, seven rc 0. Stella's Mercury pair: no report, then reports after
 the grammar moved before the prose and the bootstrap went relative (9) — two changes at once,
 a tested recovery, not a proven cause of either. Local, at a 650-token ceiling: qwen3.6 (think
@@ -62,8 +63,14 @@ dispatch").
 
 A card that changes code names the test before the fix, asks for the red line and then the
 green line, and takes them back as one row per item: `| item | red line | green line |`. A fix
-with no red line is "changed", not "fixed". **Measured today:** not at all — every 2026-09-14
-card was a spec edit or a read. The table is carried from the sec38 template (card-04: four
+with no red line is "changed", not "fixed". **Measured today:** card-13 changed code at
+96034af8 and reported red first, thirteen green — but the reported evidence did not cover the
+claimed defects: the UTF-8 test only round-trips a valid string, and the comment test omits
+forbidden-looking syntax; an independent reproduction still fails both families (PR300
+comment 5667395159). **Limitation:** a test must assert the literal expected failure and be
+run unchanged against the broken revision; a pasted red/green row or an `expected=` label is
+not sufficient. This failed repair and its review costs are preserved here, not erased.
+The table is carried from the sec38 template (card-04: four
 lows, four red lines, four green lines) and the rule that named it (Glenn, 2026-09-11: red
 before green with real bytes). **Expires** on the first code card on Mercury or a local model,
 **Rollback:** red-first as prose. **Held by:** Rowan.
@@ -73,8 +80,11 @@ before green with real bytes). **Expires** on the first code card on Mercury or 
 GATES lists the commands this change needs, copied from `ci.yml` word for word, each run after
 a commit, each result line pasted. A one-line documentation repair does not carry every Go
 gate. A gate whose tool is absent is skipped and named in BLOCKED, never built or fetched. A
-pre-existing failure is named with its count (`nova-check links`: 19 broken, passes at 19). A
-cherry-pick card's gates include the conflict-marker grep: card-16 left `<<<<<<< HEAD` inside
+pre-existing failure is named by its failure set, not only its count, compared against the
+pinned base (`nova-check links`: 19 known broken links, same named targets at the pinned base;
+no new failures) — a count alone can accept a newly broken link when a different old failure
+disappears. A known unchanged failure may be documented; any new or changed failure needs a
+disposition. A cherry-pick card's gates include the conflict-marker grep: card-16 left `<<<<<<< HEAD` inside
 a fenced grammar block, and `git diff --check` caught it on the read, not in the card.
 **Measured:** cards 05, 06 and 07 carried `git diff --check`, `git diff --stat` and
 `nova-check links` only, and their reports pasted all three; card-08's one gate was the suite
@@ -93,7 +103,8 @@ permission model. **Held by:** Rowan; shared with Freddy's swarm, so him by name
 
 ## 7. The card ends at the commit; push and PR are the launcher's
 
-The wall holds no credential by design, so a worker cannot push, and a card that asks it to
+The wall holds no repository-publication credential by design (an inference credential is a
+different capability), so a worker cannot push, and a card that asks it to
 teaches it to report BLOCKED — the honest answer. The card ends at the commit; publication is
 the launcher's step, and the publication credential is never the inference credential.
 **Measured:** the four Mercury reports of 15:27Z all reported the push as BLOCKED; the
@@ -177,9 +188,11 @@ value may already be a zero inside the harness, so a total is labelled harness-n
 never a raw receipt, never proven zero spend. Unknown stays unknown (`usd=-`, SPEC-SWARM,
 **Cost per task**). Accepted-review cost counts the reviewer's and the rescue's tokens at the
 same task boundary, never the worker's report alone. **Measured:** the seven Mercury jobs,
-harness-reported; Stella's two aggregation probes agreed across six local jobs at 422,869
+harness-reported; Stella's two aggregation probes agreed across six locally launched
+provider attempts (not six local-model runs) at 422,869
 normalized-category tokens, USD unknown (private stella-tools a4f311b). **Expires** on a
-harness version change. **Rollback:** dashes. **Held by:** Stella (source note underway).
+harness version change. **Rollback:** dashes. **Held by:** Stella (source note completed at
+stella-tools a4f311b).
 
 ## 14. Logs private; only the phase and the error class on the wire
 
@@ -213,5 +226,7 @@ prefix is one arm.
 
 - **The DeepSeek key route is a human's.** Unauthorized is verified for that credential
   route; no further provider attempt is spent until it is repaired; the repair is not a card.
-- **The seed contraction is the lever on input tokens** (nova#104). The self rides every
-  task, so the lever is the seed, not the prompt; its saving is measured through (16).
+- **The seed contraction may reduce input tokens** (nova#104). For routes that actually
+  load seed-derived text on each task, shrinking it may reduce input; verify the actual loaded
+  prefix and compare accepted-task totals in (16). Neither per-task loading nor this saving
+  is established for every route.
