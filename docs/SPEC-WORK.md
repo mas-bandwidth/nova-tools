@@ -747,9 +747,9 @@ they are distinct kinds:
 
 - `:work-set` — a container. Its completion is its required children's completion; an empty
   required set is **never** done.
-- `:epic` — a container above features, one level of **Glenn's agreed hierarchy**
-  (repository → roadmap → epic → feature → subtasks, with sub-features and subtasks recursive
-  beneath). It is a `:work-set` by every rule; it is a kind of its own because **a row kind must be
+- `:epic` — a semantic container, not a prescribed depth or mandatory layer.
+  Project and stream containers may sit above it; epics and features may decompose recursively.
+  It is a `:work-set` by every rule; it is a kind of its own because **a row kind must be
   queryable and never inferred from a title word** (Stella, `docs/SPEC-WORK-PILOT.md`).
 - `:feature` — a work-set whose completion is what a roadmap row counts; the unit of "green
   feature cells / applicable rows". **A feature decomposes into sub-features recursively**, each a
@@ -1209,6 +1209,55 @@ work; a cross-repository goal is a view over canonical owned nodes, never a copy
 O is the team's authorized known work, never a scan of every reachable repository. A GitHub
 issue or PR is a `:links` entry on a node, not the node's type; intake from issues is in
 Stella's section.
+
+### Recursive structure within a repository
+
+**The repository boundary does not prescribe the hierarchy beneath it.** Glenn's
+2026-09-14 clarification makes project and stream layers first-class uses of the existing
+recursive container, not additional mandatory levels. For example:
+
+```text
+nova-tools repository
+  stream (nova-work)
+    epic
+      feature
+        sub-feature
+          task
+
+monorepo
+  project
+    stream
+      epic
+        feature
+          sub-feature
+            task
+```
+
+These are examples, not grammars. A team may omit, repeat or nest grouping layers as its
+work requires; validation must not enforce a repository/epic/feature depth sequence.
+Project and stream containers use `:type :work-set` with the existing explicit `:category`
+label (`"project"` or `"stream"`), plus stable `:id`, display `:title` and `:children`.
+A tool stream may use category `"stream"` and title `"nova-work"`; its role must not be
+inferred from that title or from its position. This adds no new kind, executable Lisp or
+untyped mutation verb. Existing kind-specific evidence and completion rules still apply.
+
+Canonical containment, reference edges, ownership, required-member aggregation, settling
+and reopening retain the same meaning at every grouping depth. Roadmaps remain durable
+views over selected node ids; a roadmap is not a compulsory containment level. Queries
+and renders select a scope by stable id and declared units, never by a fixed number of
+parent hops. Existing category/repository indexes support discovery of streams and projects;
+adding a grouping layer must not make finding W or reading maintained open counts require
+a walk of O. Mutations update the affected ancestry and references under the existing
+atomic envelope. Any operational depth or size limit must be explicit and fail without
+partial mutation; it must not masquerade as a domain hierarchy restriction.
+
+**Acceptance:** round-trip both examples with identity, labels, order, evidence and links
+preserved; exercise omitted and repeated grouping layers; query equal semantic scopes at
+different depths; verify a task is counted once even when referenced by multiple roadmaps;
+settle and reopen through nested project/stream ancestors; compare maintained counts and W
+against an independent traversal oracle in tests; reject cycles and multiple containment
+parents atomically. Rendering must preserve the selected scope and completion unit across
+these layouts. None of this relaxes the separate repository registration or access boundary.
 
 **The move from O to C is an event, and the item's id, its history and its evidence move with
 it unchanged.** An item settles when its work has ended: a `:to :done` transition, a `:cancel`,
