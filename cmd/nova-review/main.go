@@ -4,6 +4,7 @@ package main
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -102,7 +103,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	}
 	id, selector := "", ""
 	if *pr > 0 {
-		id, selector = fmt.Sprint(*pr), "refs/remotes/origin/"
+		id = fmt.Sprint(*pr)
 	} else {
 		id, selector = *branch, *branch
 	}
@@ -111,9 +112,14 @@ func packet(args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "the lane does not hold this entry")
 	}
 	repo := filepath.Join(*lane, merge.RepoDir)
-	current, err := gitOut(repo, "rev-parse", selector)
+	current := ""
+	if *pr > 0 {
+		current, err = hostPRHead(st.Repo, *pr)
+	} else {
+		current, err = gitOut(repo, "rev-parse", selector)
+	}
 	if err != nil {
-		return refuse(errOut, "could not resolve the entry head in the lane checkout")
+		return refuse(errOut, "could not resolve the entry head")
 	}
 	current = strings.TrimSpace(current)
 	if *asked != "" {
@@ -186,6 +192,20 @@ func gitOut(repo string, args ...string) (string, error) {
 		return "", err
 	}
 	return string(b), nil
+}
+func hostPRHead(repo string, pr int) (string, error) {
+	c := exec.Command("gh", "pr", "view", fmt.Sprint(pr), "--repo", repo, "--json", "headRefOid")
+	b, err := c.Output()
+	if err != nil {
+		return "", err
+	}
+	var v struct {
+		Head string `json:"headRefOid"`
+	}
+	if err := json.Unmarshal(b, &v); err != nil || !merge.IsSHA(v.Head) {
+		return "", fmt.Errorf("host returned no full pull request head")
+	}
+	return v.Head, nil
 }
 func diffCounts(diff string) (files, hunks int) {
 	for _, l := range strings.Split(diff, "\n") {
