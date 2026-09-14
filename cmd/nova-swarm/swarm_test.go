@@ -579,23 +579,26 @@ func TestNoAutoRetryKeepsAKilledAttemptWithoutADescendant(t *testing.T) {
 		t.Skip("this one waits for the worker deadline")
 	}
 	b := newBench(t)
-	id := b.add("a one-attempt worker that sleeps past its deadline\nFAKE-SLEEP 30\n", "--deadline", "3s")
+	id := b.add("a one-attempt worker that publishes before its deadline\nFAKE-PUBLISH-FIRST\nFAKE-FINDINGS 1\nFAKE-SLEEP 30\n", "--deadline", "3s")
 	exit, stdout, stderr := b.run("--no-auto-retry")
 	if exit != 0 {
 		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
 	}
-	mustContain(t, "the run", stdout, "RUN POOL")
-	mustContain(t, "the run", stdout, "auto_retry=false")
+	mustContain(t, "the start summary", lineWith(t, stdout, "RUN POOL"), "auto_retry=false")
+	mustContain(t, "the terminal summary", lineWith(t, stdout, "RUN OK"), "auto_retry=false")
 	mustContain(t, "the killed attempt", stdout, "RUN KILLED id="+id)
 	mustContain(t, "the killed attempt", stdout, "requeued=false reaped=1")
-	if n := strings.Count(stdout, "RUN KILLED id="); n != 1 {
-		t.Fatalf("one-attempt policy launched %d killed attempts:\n%s", n, stdout)
+	if n := strings.Count(stdout, "RUN START id="); n != 1 {
+		t.Fatalf("one-attempt policy started %d workers:\n%s", n, stdout)
 	}
 	if _, err := os.Stat(filepath.Join(b.pool, "failed", id+".task")); err != nil {
 		t.Fatalf("the original task is not retained in failed/: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(b.pool, "usage", id+".tsv")); err != nil {
 		t.Fatalf("the original usage row is not retained: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "reports", id, "RESULT.md")); err != nil {
+		t.Fatalf("the published report is not retained: %v", err)
 	}
 	pending, err := os.ReadDir(filepath.Join(b.pool, "pending"))
 	if err != nil {
@@ -615,17 +618,21 @@ func TestNoAutoRetryKeepsA429AttemptWithoutADescendant(t *testing.T) {
 	if exit != 0 {
 		t.Fatalf("run exited %d: %s%s", exit, stdout, stderr)
 	}
-	if n := strings.Count(stdout, "RUN DONE id="); n != 1 {
-		t.Fatalf("one-attempt policy launched %d 429 attempts:\n%s", n, stdout)
+	if n := strings.Count(stdout, "RUN START id="); n != 1 {
+		t.Fatalf("one-attempt policy started %d 429 workers:\n%s", n, stdout)
 	}
+	mustContain(t, "the start summary", lineWith(t, stdout, "RUN POOL"), "auto_retry=false")
+	mustContain(t, "the terminal summary", lineWith(t, stdout, "RUN OK"), "auto_retry=false")
 	mustContain(t, "the 429 attempt", stdout, "RUN DONE id="+id)
 	mustContain(t, "the 429 attempt", stdout, "rc=429")
-	mustContain(t, "the 429 attempt", stdout, "auto_retry=false")
 	if _, err := os.Stat(filepath.Join(b.pool, "failed", id+".json")); err != nil {
 		t.Fatalf("the 429 sidecar is not retained: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(b.pool, "usage", id+".tsv")); err != nil {
 		t.Fatalf("the 429 usage row is not retained: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(b.pool, "reports", id, "NO-RESULT")); err != nil {
+		t.Fatalf("the finalized no-result marker is not retained: %v", err)
 	}
 	if pending, err := os.ReadDir(filepath.Join(b.pool, "pending")); err != nil || len(pending) != 0 {
 		t.Fatalf("one-attempt 429 created a pending descendant: entries=%v err=%v", pending, err)

@@ -518,7 +518,7 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
 ```
 nova-swarm add      --pool <dir> --task <file>|--stdin --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
 nova-swarm batch    --pool <dir> --tasks <dir> --files <n> --tokens <n>|unmetered [--label <text>] [--template <name>] [--deadline <duration>] [--max-input <bytes>]
-nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--sandbox <path>] [--no-sandbox]
+nova-swarm run      --pool <dir> --workers <n> --hours <h> --worker <file> [--max <n>] [--no-auto-retry] [--launch-timeout <s>] [--usage-interval <s>] [--backoff <s>] [--sandbox <path>] [--no-sandbox]
 nova-swarm supervise --pool <dir> --task <id> --slot <n> --nonce <hex> (--sandbox <path>|--no-sandbox)   (spawned by run; refused by hand, rule 18)
 nova-swarm status   --pool <dir> [--max <n>]
 nova-swarm stop     --pool <dir>
@@ -1363,10 +1363,9 @@ pending path it no longer owns.
 - **It does not choose a model.** The worker description does, and it is
   required.
 - **It does not retry a failed task.** `requeue` with changed text is a person's
-  decision. The default exception is rule 7: a job reaped at its deadline is
-  re-queued once by the machinery, because a silent provider and a silent
-  worker look the same from outside. `run --no-auto-retry` declines that
-  automatic exception for its invocation.
+  decision. The default automatic exceptions are rule 7's one deadline re-queue
+  and the rate-limit section's one true-429 retry. `run --no-auto-retry`
+  declines both for its invocation.
 - **It does not judge accuracy.** `accurate` and `wrong` are a reader's
   verdicts, recorded by `verdict`, and a batch line with no verdict prints a
   dash.
