@@ -1,4 +1,4 @@
-# nova-work — specification (DRAFT 27, 2026-09-14)
+# nova-work — specification (DRAFT 28, 2026-09-14)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
@@ -83,6 +83,25 @@ grammar; each Rowan decision marked where it is made as the header promises; eac
 suite's lane named; and **four sentences of Stella's `docs/SPEC-WORK-PILOT.md` and
 `docs/SPEC-WORK-VALIDATION.md` at `81c2885` restored** — they were dropped by draft 26's
 integration and none of them contradicted anything, which is why each says where it came from.
+
+**Draft 28 folds two more of Stella's companion commits on `codex/work-closed-day-partitions`:
+`4e800fb`, *Specify eager working-set index and query cost checks*, and `bc4a4a4`, *Design
+bounded batches for resident work server*.** Both land the way drafts 25 to 27 landed hers —
+into this file, marked where they are hers — and **neither reopens a decision draft 27 made**.
+`4e800fb` answers a cost question draft 27 left implicit, on Glenn's rule of 2026-09-13 that
+**reading W must never walk O**: *W is materialised eagerly, never rebuilt on a read* below gives
+the view a resident form maintained inside the same accepted mutation envelope that carries the
+item and the lease, beside the `|O|` counter of *Counting*. `bc4a4a4` answers a transport
+question the same way: **the three batch modes ride the accepted mutation envelope and the long
+operation protocol this document already has, and add no second transaction mechanism** —
+*Batches ride the envelope that is already here* below. **Three things the two commits ask for
+are not done here, and each is named rather than quietly dropped**: their two new suites become
+rows of *Preservation and recovery acceptance* below rather than a file, because draft 26 settled
+that **neither companion lands as a file** and this draft keeps that; `bc4a4a4`'s *refuse the
+verbs a table marks as carrying an external effect* has no referent, because draft 27 settled
+that **the external effects are outcomes and not verbs of this grammar**, so the atomic batch
+refuses the long operations by entry id instead, by name; and `bc4a4a4`'s *checkpoint write*
+keeps draft 27's word **savepoint**.
 
 **One recursive work set, and its root is COW: closed, open, working.** The root is `(root C
 O)` — **C** the closed work, **O** the open work — and **W**, the working view, is a predicate
@@ -1294,6 +1313,49 @@ has kept them apart since its first draft. `--window` splits W the way `who` and
 print it: worked-now (a heartbeat inside the window) and `held-not-worked=`. `|W| ≤ |O|` is
 rule 18's business below (replay `working-is-a-view`).
 
+**W is materialised eagerly, never rebuilt on a read** *(Stella, `4e800fb`; on Glenn's rule of
+2026-09-13 that reading W must never walk O)*. W stays exactly what the paragraph above says —
+`(working O)`, derived, written by no verb — and this paragraph says only **how it is held**: a
+resident materialised view of the canonical open ids that hold a live lease, **updated inside the
+accepted mutation envelope** that carries the item and the lease, beside the canonical task, the
+lease and the per-friend indexes, so a reader at a published revision sees one consistent state
+and **no read ever rebuilds it**. A pending offer alone is not in W, and two live attempts on one
+id count that id once; an assignment, a `take`, a renew, a `release`, an expiry, a settle, a
+`:cancel`, a reassignment, an undo and a replay each leave the materialisation equal to
+`(working O)` at the revision they publish (**W1**; suite `materialized-working-set`).
+
+**Membership and `|W|` are resident reads, and a listing is `O(k)`** *(Stella, `4e800fb`)*. At a
+published revision, *is this id working* and `|W|` are **constant-time resident lookups**;
+enumerating k working ids costs `O(k)` in pages bounded by `--page-bytes` and `--page-records`
+like every other listing; and **neither scans O and neither reads C, the first ask after a
+mutation included**. `|W|` is a counter carried and read, never computed, exactly as `|O|` is in
+*Counting* below — and the two are separate counters, neither silently labelled the other. As
+there, **no promise of constant time is made for an arbitrary new filter**, only for what this
+paragraph names (**W2**; suite `materialized-working-set`).
+
+**Due leases are found through a deadline index, and the watermark is printed** *(Stella,
+`4e800fb`)*. Expiry stays derived and is never stored, so the materialisation is exact only as of
+**its lease-time watermark**, which every ask that reads W prints beside its `scope=<rev>`.
+Advancing the clock barrier processes the leases that are due **through that index, visiting due
+leases and not all of O**, and **no constant-time promise is made for that processing** — it is
+bounded by how many leases are due and says so. **A stale watermark is printed as stale and is
+never presented as current** (**W3**; suite `materialized-working-set`).
+
+**An expiry is not proof that the remote work stopped** *(Stella, `4e800fb`)*. A lease past its
+deadline reads as unowned with its responsibility unchanged, which is the lease section's own
+rule; and the uncertain records it leaves — an `:attempt` whose outcome is unknown, an operation
+whose `external=` is `uncertain`, a friend's ACTIVE capacity — are **retained separately until
+they are reconciled** and are never cleared by the expiry that prompted the question, for the
+same reason a cancellation is never reported as an erasure (**W4**; suite
+`materialized-working-set`).
+
+**W holds references and is not a second store** *(Stella, `4e800fb`)*. It holds ids, not task
+bodies, and nothing is true by being in W. **A startup, a recovery and an explicit integrity
+check may rebuild it from the canonical state**, with its time-sensitive leases reconciled before
+readiness is advertised, and **an ordinary read may not** — the same division *Counting* draws
+for the counters, and a recovery that has not reconciled them **advertises no live lease**
+(**W5**; suite `materialized-working-set`).
+
 **C is append-only, and it is read through its index, in pages, and never by loading it.** Every
 clip writes one **closed-index** row per `:settle` and per `:revive` into the day partition of
 that event and into the closed index root the clip's commit names — **beside the snapshot and
@@ -2079,6 +2141,71 @@ reconciles interrupted operation ids and their external outcomes before anything
 and status and cancellation responsiveness are measured under load (replays
 `operation-survives-the-client`, `cancel-is-a-request-not-an-erasure`,
 `status-answers-while-io-runs`).
+
+**Batches ride the envelope that is already here** *(Stella, `bc4a4a4`; the three modes are hers,
+the refusals are this document's)*. One invocation may carry **a bounded array of
+schema-validated commands** over the framed protocol above: the resident session is not restarted
+for a command, a persistent client **may pipeline request frames** without waiting for each
+preceding reply, and every request carries its own id so every reply is attributable.
+**Pipelining creates no second canonical writer** — *One coordinator, one live reader/writer*
+below is unchanged by it. **There are three modes and no fourth, and none of them is a second
+transaction mechanism**: each rides the accepted mutation envelope and the long-operation
+protocol this section already defines, and the spelling of each is generated from the command
+schema rather than written twice (**B1**; suite `batches-and-pipelines`).
+
+**A read bundle is one revision and one watermark** *(Stella, `bc4a4a4`)*. It evaluates bounded
+queries against **one captured revision and one lease-time watermark**, returns the fields and
+aggregates its asks name and never the work set, and a later page **keeps that snapshot identity
+or refuses `page expired`** — the cursor rule of *Retention* above, not a second one (**B2**;
+suite `batches-and-pipelines`).
+
+**An independent batch is ordered entries with outcomes of their own** *(Stella, `bc4a4a4`)*.
+Each entry carries its own request id, its own validation and its own durable disposition; **the
+default is to stop at the first refusal and mark every remaining entry `not attempted`**, and
+continuing past a refusal is an explicit flag and never the default; other requests may interleave
+between entries; **the mode promises no rollback and no single shared revision**; and an entry
+that accepts a long operation returns **an operation id**, which a later entry may not read as a
+completed one (**B3**; suite `batches-and-pipelines`).
+
+**An atomic mutation batch is one envelope, all or none** *(Stella, `bc4a4a4`)*. Every entry,
+including its ordered staged effect, is validated **against the expected revision** before
+anything is published; then the item state, O and W membership, the counters and the reverse
+indexes move **in one accepted mutation envelope or not at all** — the envelope of *The execution
+model*, never a second path. **No external I/O and no worker launch happens inside it.** Draft 27
+settles that **the external effects are outcomes and not verbs of this grammar**, so there is no
+verb to refuse under that name and the refusal is written where the effect actually is *(Rowan's
+decision, for review)*: an entry that would accept a long operation — a source capture, an import
+staging, an export, a clip's transport — is **refused by its own entry id before anything is
+staged**, and a dispatch that follows the batch keeps its own operation id, its own durable
+outcome and its own retry rule (**B4**; suite `batches-and-pipelines`).
+
+**The ids, the limits and the backpressure are the ones already written down** *(Stella,
+`bc4a4a4`)*. A batch id and an entry id are **stable across an uncertain retry**; the dedup
+predicate of *Retention* applies to each independent mutation and to the atomic envelope whole;
+**the same id with a changed payload is refused** `reused with a different payload`; **a
+disconnect is not a cancellation** — the accepted outcome is asked for and never guessed — and
+**a successful prefix is never replayed as new work**. Every response carries per-entry status
+and revision, the aggregate accepted, refused and not-attempted counts, and bounded error detail
+with receipt drill-down, and **a compact form may never hide a failed or an uncertain entry**.
+The named limits — command count, request and reply bytes, staged mutation size, snapshot
+lifetime and queued work — are **negotiated at the `hello` handshake** and enforced there; **an
+oversized atomic batch is refused before any mutation and is never silently split**; and an
+independent batch is bounded and backpressured so bulk work **can never starve status,
+cancellation or lease renewal**, which is the responsiveness the paragraph above already
+measures. **The entries are typed verbs of *The verbs* and nothing else**: batch data evaluates
+no Lisp, and no entry may reference an unchecked result of another (**B5**; suite
+`batches-and-pipelines`).
+
+**What the batches are a hypothesis about is said once and claimed nowhere.** The sources are
+[Redis pipelining](https://redis.io/docs/latest/develop/using-commands/pipelining/) and
+[Redis transactions](https://redis.io/docs/latest/develop/using-commands/transactions/), which
+separate grouped execution from amortised round trips; **neither is a storage dependency**, and
+this document keeps its own stronger all-or-none validated contract rather than Redis's
+runtime-error semantics. **The hypothesis is measured on accepted-work tokens and turns,
+corrections and retries included, and never on socket speed**: a sequential and a bundled run of
+one real workload are compared on what the accepted work cost, because neither fewer calls nor
+smaller output is itself a saving. **No performance claim is made here** (suite
+`batches-and-pipelines`).
 
 **Mistakes are reversible by appending, never by erasing.** `undo-plan` and `undo`, `redo-plan` and
 `redo` name **accepted request ids**, and each reversible verb records enough preimage and
@@ -3194,8 +3321,10 @@ observable inventory and capture scope**.
 | `atomic-mutation` | failure injected before, during and after the journal append, the durable sync, the apply, the savepoint write, the rename and the reply; **every acknowledged mutation survives a process restart** under the declared storage assumptions; a torn unaccepted tail is diagnosed; no partial envelope and no count-versus-evidence split is admitted |
 | `retry-protocol` | a lost reply, fragmented frames, a disconnect, a repeated id with an identical body, the same id with a different body, invalid UTF-8, types and versions, oversized frames and deadlines; **no duplicate accepted mutation and no executable payload**, and the outcome retrievable after the uncertainty |
 | `async-operations` | status, wait and cancel under a busy import, export and clip; bounded queues and output; a restart with operations pending; a stale staged result and an uncertain external effect; **no double launch, no false cancellation success and no control plane stalled behind network I/O** |
+| `batches-and-pipelines` | the same workload run sequentially and in each batch mode under its declared revision semantics; a read bundle held on one snapshot across its pages; a bad middle entry, a moved revision, fragmented frames, a lost reply, a disconnect and a crash injected at every acceptance boundary — **an atomic batch publishes all or none, an independent batch preserves its exact accepted prefix and marks the remainder not attempted**; a same-id retry duplicating no mutation and a changed payload refused; per-entry errors, output limits, an oversized atomic batch refused whole, backpressure, and status, cancel and lease renewal answered within bound under bulk load; O, W, the counters and the indexes consistent after each mode, and **no external effect inside an atomic batch**; the operational token and turn totals measured after adoption, corrections included. `expected=atomic=all-or-none,prefix=exact,unattempted=marked,duplicates=0,oversize=refused,external-in-atomic=0,control-plane=responsive` (**B1**–**B5** above; **T2**) |
 | `single-writer` | two local processes, alias paths, a stale socket, partitioned benches, lease expiry, a delayed old owner and a handoff crash; the fencing rules prevent **stale mutation authority** and not only a stale Git push; exported unshared journal work is preserved |
 | `indexes-and-counters` | random legal verb sequences compared after each step against an independent full reconstruction; the open-item counters and the friend indexes agree; closure, reopen, reparent and shared references never double-count; the required constant-time queries and the bounded historical paging are instrumented |
+| `materialized-working-set` | **hold W fixed while O and C grow**: repeated membership and `|W|` asks, and the first ask after each mutation, visit **zero unrelated nodes**, scan neither O nor C, and a listing visits only the page it returns; W, `|W|` and the per-friend indexes compared against an independent reconstruction after `take`, renew, `release` and expiry, a settle, a `:cancel`, a reassignment, duplicate attempts on one id, an undo and a crash replay; **a fake clock expiring leases through the deadline index**, with a delayed watermark printed rather than freshness claimed; an expiry retaining its uncertain remote execution and capacity records; and a recovery that has not reconciled its leases advertising none of them as live. `expected=unrelated-visits=0,scans=0,reconstruction=equal,watermark=printed,uncertain-retained=yes` (**W1**–**W5** above; **T1**) |
 | `roadmap-proof` | full fixed-table prototype parity, optional axes, partial and stale evidence, shared prerequisites, newly discovered scope and closed members; chat and file renders identical; a marker edit preserving every unrelated byte and refusing ambiguity |
 | `undo-redo` | reversible edits reversed, history preserved, redo only against valid preconditions; dependent later edits, changed criteria, close and reopen, decomposition, accounting receipts and uncertain external actions exercised; **a conflict is explicit and mutates nothing** |
 | `recovery` | restore the newest valid savepoint plus journal; reject a corrupt savepoint; recover from a prior savepoint **without silent loss**; compare an isolated old restore against current state; a missing tail or an unavailable remote backup **reported as a recovery gap** |
@@ -3209,7 +3338,8 @@ and the two-minute bound, each over a bounded fixture subset: `format-determinis
 **Nightly or pre-release**, whole matrices, because none of them fits two minutes and a gate
 nobody runs is worse than an honest slow one: `source-inventory`, `import-replay`,
 `moving-source`, `archive-completeness`, `full-round-trip`, `old-history`, `atomic-mutation`,
-`async-operations`, `single-writer`, `indexes-and-counters`, `recovery`, `schema-evolution` and
+`async-operations`, `single-writer`, `indexes-and-counters`, `materialized-working-set`,
+`batches-and-pipelines`, `recovery`, `schema-evolution` and
 `hostile-data`. Every suite's whole matrix runs at the release revision whatever its lane, and
 each row still needs its fixture, command and observable before the lock gate, which the
 paragraph after the seven obligations below says and this list does not replace.
@@ -3434,7 +3564,11 @@ of missing verbs; `--savepoint-every`, `--savepoint-after`, `--max-frame-bytes` 
 `--silence-ping` on `session start`; the three `:aggregation` values; `unit=epics` and
 `unit=work-sets` beside `unit=features`; `|O|` named as envelope metadata and `query --ask size`
 as the line that prints it with its unit and revision; the word *savepoint* and the
-`SAVEPOINT` line shapes; and each acceptance suite's named lane;
+`SAVEPOINT` line shapes; and each acceptance suite's named lane; **and draft 28's one
+decision, marked *(Rowan's decision, for review)* where it is made**: the atomic mutation
+batch refusing a long-operation entry **by its own entry id**, which is where `bc4a4a4`'s
+*refuse the verbs marked as carrying an external effect* had to be written once draft 27 had
+settled that the external effects are outcomes and not verbs of this grammar;
 the exact list of refused reader syntax beyond `#.` (every dispatch macro,
 `#'`, quote, backquote, package-prefixed symbols, ratios, floats, characters); `;` comments
 discarded by the reader; the three bound flags and their no-default rule; unknown keys
