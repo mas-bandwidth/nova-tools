@@ -16,7 +16,8 @@ func TestNoOtherWriterOrShadowCanBypassTheEscape(t *testing.T) {
 
 var secretsAudit = audit.Config{
 	Exempt: map[string]string{
-		"main.go|main|msg":                "messages in disallowedVerbs map are literal constants",
+		"main.go|main|msg": "messages in disallowedVerbs map are literal constants",
+		"main.go|cmdVersion|buildinfo.Line(\"nova-secrets\", version)": "shared buildinfo.Line renders the complete four-field version line through oneline.Field",
 		"main.go|runNamesCLI|n":           "formatted event line from internal/secrets.RunNames",
 		"main.go|runNamesCLI|more":        "formatted MORE line from internal/secrets.RunNames",
 		"main.go|runNamesCLI|okLine":      "formatted OK line from internal/secrets.RunNames",
@@ -30,6 +31,7 @@ var secretsAudit = audit.Config{
 	},
 	Imports: []string{
 		`"flag"`, `"fmt"`, `"io"`, `"os"`, `"strings"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/buildinfo"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/secrets"`,
 	},

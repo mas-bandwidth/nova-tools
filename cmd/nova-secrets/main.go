@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 )
@@ -14,6 +15,7 @@ import (
 const usage = `nova-secrets: credentials for seats, pools and services (see docs/SPEC-SECRETS.md)
 
 usage:
+  nova-secrets version  print this build identity (--version also accepted)
   nova-secrets exec   --store <dir> --as <name> --key <path> --sops <path> --only <NAME,...|all> [--require <NAME>]... -- <cmd> [args...]
   nova-secrets names  --store <dir> --as <name> [--max <n>]
   nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
@@ -36,6 +38,9 @@ example:
   nova-secrets check  --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
   nova-secrets exec   --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
 `
+
+// version is empty in ordinary builds and is filled only by a release stamp.
+var version string
 
 var disallowedVerbs = map[string]string{
 	"get":        "Refused forever. No verb prints a secret value and no flag makes one. A person who must see a value holds the key and runs 'sops -d <file>' with their own hands.",
@@ -78,6 +83,9 @@ func main() {
 	}
 
 	verb := os.Args[1]
+	if verb == "version" || verb == "--version" {
+		os.Exit(cmdVersion(os.Args[2:], os.Stdout, os.Stderr))
+	}
 
 	// Check refusal table first
 	if msg, refused := disallowedVerbs[verb]; refused {
@@ -106,6 +114,17 @@ func main() {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unknown verb %q; run: nova-secrets help\n", oneline.Field(verb))
 		os.Exit(2)
 	}
+}
+
+// cmdVersion answers from the running binary alone. It deliberately opens no store, key,
+// or helper program, so an inventory can ask this before any credentials exist on a bench.
+func cmdVersion(args []string, stdout, stderr io.Writer) int {
+	if len(args) != 0 {
+		fmt.Fprintf(stderr, "nova-secrets version: takes no flags and no arguments, got %d\n", len(args))
+		return 2
+	}
+	fmt.Fprintln(stdout, buildinfo.Line("nova-secrets", version))
+	return 0
 }
 
 func runExecCLI(args []string) {

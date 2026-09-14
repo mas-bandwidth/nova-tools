@@ -4236,7 +4236,7 @@ store via age and sops — linking no direct cryptography, opening no sockets,
 storing no state of its own, and replacing its process under `RLIMIT_CORE = 0`
 to pass selected secrets into the child environment.
 
-Verbs: `exec`, `names`, `check`, `keygen`, `help`.
+Verbs: `version`, `exec`, `names`, `check`, `keygen`, `help`.
 
 Its governing text is **[docs/SPEC-SECRETS.md](SPEC-SECRETS.md)**, which is
 normative; the Conventions above apply to it unchanged and are not restated
