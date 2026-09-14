@@ -41,13 +41,10 @@ package main
 
 import (
 	"bytes"
-	"encoding/base64"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -1010,8 +1007,11 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 		defer release()
 	}
 	code, r := inboxListing(o, stdout, stderr, now)
-	if code != 0 || !o.advance || (o.bodies && r.Next != "") {
+	if code != 0 || !o.advance || (o.bodies && r.AdvanceTo == "") {
 		return code
+	}
+	if o.bodies {
+		return advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, now, stdout, stderr)
 	}
 	return advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, stdout, stderr)
 }
@@ -1074,6 +1074,7 @@ type inboxReading struct {
 	BodyBytes   int64
 	BodyPrinted int
 	BodyGaps    int
+	AdvanceTo   string
 }
 
 // inboxListing is the whole of an inbox report: what to read, what it found, and every
@@ -1302,22 +1303,48 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	listCarried := o.openList || scope.Full
 	if o.bodies || !listCarried {
 		if o.bodies {
-			fresh := res.Fresh
-			if scope.Full {
-				fresh = res.Open
-			}
 			head, headErr := bus.HeadCommit(o.busDir)
 			if headErr != nil {
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(headErr))
 				return 1, r
 			}
-			fresh, start := bodyPageStart(fresh, o.after, cursor.Commit, head, me.Name)
-			if o.after != "" && start < 0 {
-				fmt.Fprintln(stderr, "INBOX REFUSED: --after is not valid for this reader's current cursor")
+			snapshot := bus.BodySnapshot{Base: cursor.Commit, Head: head, Reader: me.Name, Selector: "inbox-new"}
+			if o.after != "" {
+				snapshot, _, headErr = bus.BodyContinuation(o.after)
+				if headErr != nil {
+					fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(headErr))
+					return 2, r
+				}
+			}
+			// Rebuild C0..H directly. Current OPEN is deliberately not an input: a note
+			// after H may have answered an older item, while that older token still owes
+			// the body from its immutable snapshot.
+			items, pageErr := bus.BodyNewItemsAtSnapshot(o.busDir, snapshot, c, me, o.maxWords, legacy)
+			if pageErr != nil {
+				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(pageErr))
+				return 2, r
+			}
+			page, pageErr := bus.BodyPageFor(items, bus.BodyPageRequest{Snapshot: snapshot, ExpectedCursor: cursor.Commit, Advance: o.advance, Token: o.after, MaxNotes: o.maxNotes, MaxBytes: o.maxBytes})
+			if pageErr != nil {
+				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(pageErr))
+				return 2, r
+			}
+			if err := printBodyPage(stdout, page); err != nil {
+				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
 				return 1, r
 			}
-			r.BodyPrinted, r.BodyBytes, r.BodyGaps, r.Next = printBodies(stdout, o.busDir, fresh, o.maxNotes, o.maxBytes, cursor.Commit, head, me.Name)
-			fmt.Fprintf(stdout, "INBOX BODIES printed=%d bytes=%d oversize=%d gaps=%d drained=%t complete=%t next=%s\n", r.BodyPrinted, r.BodyBytes, r.BodyGaps, r.BodyGaps, r.Next == "", r.Next == "" && r.BodyGaps == 0, oneline.Field(dash(r.Next)))
+			r.BodyPrinted, r.BodyBytes, r.BodyGaps, r.Next = len(page.Items), page.PrintedBytes, page.GapCount, page.Next
+			if page.SafeFrontier != cursor.Commit {
+				r.AdvanceTo = page.SafeFrontier
+			}
+			if _, err := fmt.Fprintf(stdout, "INBOX BODIES printed=%d bytes=%d oversize=%d gaps=%d drained=%t complete=%t next=%s\n", r.BodyPrinted, r.BodyBytes, len(page.Gaps), r.BodyGaps, page.Drained, page.Complete, oneline.Field(dash(r.Next))); err != nil {
+				fmt.Fprintf(stderr, "INBOX FAIL output: %s\n", oneline.Err(err))
+				return 1, inboxReading{}
+			}
+			if page.Drained && !page.Complete && page.EarliestGap != nil {
+				gap := page.EarliestGap
+				fmt.Fprintf(stderr, "INBOX NOTE first unresolved body id=%s path=%s bytes=%d; restart without --after with a sufficient --max-bytes, or inspect the named file explicitly if it exceeds the hard ceiling\n", oneline.Field(dash(gap.ID)), oneline.Field(gap.Path), gap.Bytes)
+			}
 		} else {
 			printOpenEntries(stdout, res.Fresh, len(res.Fresh))
 		}
@@ -1418,12 +1445,7 @@ func legacyToken(l bus.LegacyLine) string {
 // The cursor also records the SWITCH-DAY LINE this run read under, so the next run honours
 // it without the flag and everybody on the bus can see which notes this reader has taken
 // as read.
-func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, legacy string, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
-	head, err := bus.HeadCommit(busDir)
-	if err != nil {
-		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
-		return 1
-	}
+func advanceCursorTo(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, head, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
 	paths := []string{bus.CursorPath(me.Lane), bus.OpenPath(me.Lane)}
 	if err := checkoutReady(busDir, branch, paths); err != nil {
 		fmt.Fprintf(stderr, "INBOX FAIL %s: %s\n", oneline.Escape(bus.CursorPath(me.Lane)), oneline.Err(err))
@@ -1461,6 +1483,17 @@ func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, lega
 	fmt.Fprintf(stdout, "INBOX CURSOR commit=%s carrying=%d pushed=%t attempts=%d\n",
 		oneline.Field(head), len(open), res.Pushed, res.Attempts)
 	return 0
+}
+
+// advanceCursor preserves the released full-head behaviour for listings without bodies.
+// Bodies mode calls advanceCursorTo with the paginator's whole-commit safe frontier.
+func advanceCursor(busDir string, me bus.Participant, open []bus.OpenEntry, legacy, remote, branch string, attempts int, noPush bool, now time.Time, stdout, stderr io.Writer) int {
+	head, err := bus.HeadCommit(busDir)
+	if err != nil {
+		fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
+		return 1
+	}
+	return advanceCursorTo(busDir, me, open, legacy, head, remote, branch, attempts, noPush, now, stdout, stderr)
 }
 
 // defaultOpenMax is how many carried entries `--open` prints before it says how many it
@@ -1521,78 +1554,44 @@ func printOpenEntries(stdout io.Writer, entries []bus.OpenEntry, max int) int {
 const (
 	defaultBodiesNotes          = 20
 	defaultBodiesBytes    int64 = 65536
-	maxBodiesNotesCeiling       = 10000
+	maxBodiesNotesCeiling       = 1000
 	maxBodiesBytesCeiling int64 = 1048576
 )
 
-type bodyToken struct {
-	Version                      int `json:"v"`
-	Cursor, Head, Selector, Last string
-}
-
-func bodyPageStart(entries []bus.OpenEntry, token, cursor, head, selector string) ([]bus.OpenEntry, int) {
-	if token == "" {
-		return entries, 0
-	}
-	if len(token) > 8192 {
-		return nil, -1
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil {
-		return nil, -1
-	}
-	var t bodyToken
-	if json.Unmarshal(raw, &t) != nil || t.Version != 1 || t.Cursor != cursor || t.Head != head || t.Selector != selector {
-		return nil, -1
-	}
-	for i, e := range entries {
-		if e.Path == t.Last {
-			return entries[i+1:], i + 1
-		}
-	}
-	return nil, -1
-}
-
-func printBodies(stdout io.Writer, root string, entries []bus.OpenEntry, max int, budget int64, cursor, head, selector string) (printed int, bytes int64, gaps int, next string) {
-	for i, e := range entries {
-		if printed+gaps >= max {
-			next = encodeBodyToken(bodyToken{Version: 1, Cursor: cursor, Head: head, Selector: selector, Last: entries[i-1].Path})
-			break
-		}
-		raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(e.Path)))
-		if err != nil {
-			fmt.Fprintf(stdout, "INBOX BODY OVERSIZE id=%s bytes=- path=%s: unreadable\n", oneline.Field(dash(e.ID)), oneline.Field(e.Path))
-			gaps++
+func printBodyPage(stdout io.Writer, page bus.BodyPage) error {
+	for _, emission := range page.Emissions {
+		if emission.Gap != nil {
+			gap := emission.Gap
+			if _, err := fmt.Fprintf(stdout, "INBOX BODY OVERSIZE id=%s bytes=%d path=%s\n", oneline.Field(dash(gap.ID)), gap.Bytes, oneline.Field(gap.Path)); err != nil {
+				return err
+			}
 			continue
 		}
-		_, body, ok := strings.Cut(string(raw), "\n\n")
-		if !ok {
-			gaps++
-			fmt.Fprintf(stdout, "INBOX BODY OVERSIZE id=%s bytes=%d path=%s: unreadable\n", oneline.Field(dash(e.ID)), len(raw), oneline.Field(e.Path))
-			continue
+		if emission.Item == nil {
+			return fmt.Errorf("body page has an empty emission")
 		}
-		bodyBytes := []byte(body)
-		if int64(len(bodyBytes)) > budget-bytes || int64(len(bodyBytes)) > maxBodiesBytesCeiling {
-			gaps++
-			fmt.Fprintf(stdout, "INBOX BODY OVERSIZE id=%s bytes=%d path=%s\n", oneline.Field(dash(e.ID)), len(bodyBytes), oneline.Field(e.Path))
-			continue
+		item := *emission.Item
+		e := item.Entry
+		bodyBytes := item.Body
+		if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
+			return err
 		}
-		fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject))
-		fmt.Fprintf(stdout, "INBOX BODY id=%s bytes=%d\n", oneline.Field(dash(e.ID)), len(bodyBytes))
-		fmt.Fprintf(stdout, "%s", bodyBytes)
-		if len(bodyBytes) == 0 || bodyBytes[len(bodyBytes)-1] != '\n' {
-			fmt.Fprint(stdout, "\n")
+		if _, err := fmt.Fprintf(stdout, "INBOX BODY id=%s bytes=%d\n", oneline.Field(dash(e.ID)), len(item.Body)); err != nil {
+			return err
 		}
-		fmt.Fprintf(stdout, "INBOX BODY END id=%s\n", oneline.Field(dash(e.ID)))
-		printed++
-		bytes += int64(len(bodyBytes))
+		if _, err := fmt.Fprintf(stdout, "%s", bodyBytes); err != nil {
+			return err
+		}
+		if len(item.Body) == 0 || item.Body[len(item.Body)-1] != '\n' {
+			if _, err := fmt.Fprint(stdout, "\n"); err != nil {
+				return err
+			}
+		}
+		if _, err := fmt.Fprintf(stdout, "INBOX BODY END id=%s\n", oneline.Field(dash(e.ID))); err != nil {
+			return err
+		}
 	}
-	return
-}
-
-func encodeBodyToken(t bodyToken) string {
-	raw, _ := json.Marshal(t)
-	return base64.RawURLEncoding.EncodeToString(raw)
+	return nil
 }
 
 // countListable is how many entries printOpenEntries would print with no cap: the whole
@@ -1887,7 +1886,9 @@ func waitPoll(o inboxOpts, first bool, now time.Time, keep func(inboxReading) bo
 	if !keep(r) {
 		return 0, r, ""
 	}
-	if o.advance && !(o.bodies && r.Next != "") {
+	if o.advance && o.bodies && r.AdvanceTo != "" {
+		code = advanceCursorTo(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), r.AdvanceTo, o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
+	} else if o.advance && !o.bodies {
 		code = advanceCursor(o.busDir, r.Me, r.Open, legacyToken(r.Legacy), o.remote, o.branch, o.attempts, o.noPush, now, &buf, stderr)
 	}
 	return code, r, buf.String()

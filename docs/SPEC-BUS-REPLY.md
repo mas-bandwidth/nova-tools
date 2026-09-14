@@ -878,7 +878,8 @@ or writes from a read-only invocation.
 **Page accounting.** `--max-notes` caps all NEW items emitted, including gap
 lines and summaries of receipt/heard items. `--max-bytes` caps the sum of emitted
 body bytes. A summary and its body frame are emitted together. Stop before an
-item that would exhaust the remaining body budget; the next token points to the
+item whose body would exceed the remaining body budget. A body exactly equal to
+the remaining budget is emitted; the next token points to the
 last item already accounted for, so the omitted item is first on the next page.
 If the first candidate's body exceeds the full per-call budget, emit one bounded
 `INBOX BODY OVERSIZE` line with its identity, size and repository-relative path,

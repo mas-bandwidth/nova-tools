@@ -29,7 +29,7 @@ var messageBusAudit = audit.Config{
 		"main.go|count|name":             "a required flag's name, a literal at every call site in this file",
 		"main.go|openBus|verb":           "the verb's own name, a literal at every call site in this file",
 		"main.go|printOpenEntries|token": "the event's second token, one of the three literals NOTE, HEARD and RECEIPT assigned above the site",
-		"main.go|printBodies|bodyBytes":  "the note body is the explicitly requested verbatim byte payload; framing is emitted separately and the body is never escaped or rewritten",
+		"main.go|printBodyPage|bodyBytes": "the note body is the explicitly requested verbatim byte payload; framing is emitted separately and the body is never escaped or rewritten",
 		"main.go|atLeastZero|f.verb":     "the verb's own name, a literal at every newFlags call site in this file",
 		"main.go|atLeastZero|name":       "a threshold flag's name, a literal at every call site in this file",
 		"main.go|lockCheckout|token":     "the verb's own event token, the literals \"INBOX\" and \"WAIT\" at the two call sites in this file",
