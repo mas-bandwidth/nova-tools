@@ -1,4 +1,4 @@
-# nova-work — specification (DRAFT 24, 2026-09-13)
+# nova-work — specification (DRAFT 25, 2026-09-13)
 
 **Status: a draft under joint authorship, Rowan and Stella, on Glenn's word of 2026-09-13.**
 Nothing here is built. The Schema NEW Fixed Tables roadmap is the pilot, and the pilot decides
@@ -26,6 +26,27 @@ and 15:49Z; drafts 20 and 21 folded 5655371246, 5655806486, 5655806825, 56559039
 5655905248; draft 22 folded the two whole reads at efc26a2e, 5655987384 and 5655988102; and this
 draft folds Glenn's root refinement of 23:36Z, stella-461d99ec092d, and his live word on the
 words and the letters that followed it).
+
+**Draft 25 bounds the closed history, and the bound is Glenn's.** His words, live on 2026-09-13
+in Stella's report of them: *"we only load the last 24 hours of closed history by default"*;
+*"Across the last 2 days at most"*; *"This way it is bounded."* So the default window for loading
+closed history is `[now - 24h, now)` in UTC; **at most today's and yesterday's day partitions are
+resident**; pages and bytes are bounded even inside a busy day; older history is reached only by
+an explicit historical query or a required indexed dependency lookup; and **no history is ever
+deleted automatically**. The mechanism that carries those five sentences is **Stella's**, from her
+additive amendment `docs/SPEC-WORK-CLOSED.md` at `4978e8e` on `codex/work-closed-day-partitions`,
+which her disposition on draft 24 asked be integrated here rather than circulated as a competing
+spec. **It is integrated into this file and not kept as a companion**, because this document's own
+convention is one file whose authors' sections are named inside it — her resident-session, intake
+and roadmap sections already live here, and the sibling `SPEC-*.md` files are sibling *tools*, not
+amendments to one — and because her own rule is *do not create a second work-set owner*: two files
+describing one C is exactly the second owner. Her **W1** (the whole-history loads) and **W2** (a
+latest-row-only index promising state as of an earlier window end) are answered in *The execution
+model — retention*, *The data — The root is COW*, *Counting*, *Queries — the contract*, *The
+validator* and *Cost*; her scoped clearances at draft 24 are folded as cleared where each stands;
+and her four inter-section questions are closed under *What this draft does not do*. Nothing of the
+COW root, the remove-settles-only-open rule, the revive-appends rule or the worked acceptance
+changes except where the bound changes its text, and each such place says so.
 
 **One recursive work set, and its root is COW: closed, open, working.** The root is `(root C
 O)` — **C** the closed work, **O** the open work — and **W**, the working view, is a predicate
@@ -200,9 +221,12 @@ its exit is the session's (Fable at d1b20f42, 2026-09-13: a launcher that exits 
 child is what an init system refuses to supervise). What a supervisor holds is the session
 process either way. That process loads the snapshot at the
 fetched tip once (`--file` is the snapshot's path inside `--repo`, read at that tip, never a
-free file), replays its own journal from that journal's newest boundary record beyond that snapshot once
+free file), **opens — and does not load — the two index roots that same commit names**, the closed
+index's and the dedup index's, which are read as bounded pages into a resident cache of at most
+`--index-cache` pages and never whole (*Retention* below, on Stella's W1), replays its own journal
+from that journal's newest boundary record beyond that snapshot once
 (recovery, and the only replay),
-validates the set whole, builds the indexes, and answers verbs against its resident objects
+validates the set whole, builds the indexes over O, and answers verbs against its resident objects
 thereafter; `--at` answers from the retained history in memory, by a replay counted in `replays=`. **The CLI is a thin client**: `nova-work <verb> --session <path>` sends the verb to the
 session listening at that path (a Unix socket the session creates at start; no default path)
 and prints its one-line answer; a fresh CLI process is never a fresh parse. A reader who is
@@ -213,7 +237,8 @@ this repository's conventions; the session's own language is the pilot's decisio
 status` with its own `SESSION OK … build=<identity>` field, so every running binary says
 which build it is. A session's identity, bounds, state, journal path, base revision and clip cadence are
 explicit at start and readable at any time (`session status`, whose `SESSION OK` carries
-`state=`, `every=`, `skew=`, `max-bytes=`, `max-depth=` and `max-nodes=` beside the clip
+`state=`, `every=`, `skew=`, `max-bytes=`, `max-depth=`, `max-nodes=`, `index-cache=`,
+`page-bytes=`, `page-records=` and `closed-window=` beside the clip
 cadence, so every bound is read rather than remembered), and it is stopped explicitly;
 no always-on daemon is required, and a supervised session that a coordinator starts for a
 sitting and stops at its end is enough (Stella, *Keep the work set alive*).
@@ -268,7 +293,15 @@ the resident O whole, writes one deterministic snapshot carrying the structure a
 retained event history, commits and pushes under `--git-timeout <seconds>` with `--attempts
 <n>` (default 25 as the bus's; what an attempt retries here is the CAS push after a fetch
 shows the tip unchanged but the push raced the same owner's own reconfirm commit, the one
-moving-remote case this design allows), and records the shared revision and which local events it contains. **A clip also appends one
+moving-remote case this design allows), and records the shared revision and which local events it contains. **A transport retry and a
+durable request-id retry are two different things, and `--attempts` is only the first** (Stella's
+third inter-section question, closed here): `--attempts` with bounded exponential backoff inside
+`--git-timeout` is the *network's* budget for one push, retrying a request the remote never
+accepted; the dedup predicate above is the *request's* durability, retained across every retry, a
+clip, a rotation and a handoff alike; and **a semantic conflict is never retried blindly** — a
+`RACED` push, a `stale` expectation and a `reused with a different payload` each end their
+attempt and are reported, because retrying a refusal is how one request becomes two events.
+**A clip also appends one
 boundary record to the journal**: the record carries the clip's commit sha, the base sha, the
 clipped revision and the local event boundary the clip named, so the journal alone says which of
 its events a clip has carried and at what clipped revision. That record is what lets the offline
@@ -333,14 +366,20 @@ is this paragraph, and it meets Stella's *Clip cadence is configurable* — her 
 no flags; `--clip-every` and `--clip-after` are Rowan's spelling of her requirement, and the
 claim here is only that they satisfy it.
 
-**Retention is explicit, and a snapshot has two parts: one bounded by `--retain`, and one that
-grows with the set's whole history.** The structure and the retained events are the first; **the
-dedup index below and the closed index of C are the second** — two indexes that may not forget,
-one of request ids and one of settled items, named together here so a bench is sized by both —
-and this document claims nothing wider — an earlier draft's
+**Retention is explicit, and the snapshot a session loads is bounded by `--retain` whole.** The
+structure and the retained events are the snapshot; **the two indexes that may not forget — the
+dedup index of request ids and the closed index of C — are published beside it, on disk, in
+bounded pages, and are never loaded whole.** An earlier draft's
 heading called the whole snapshot *bounded by construction* while its own index bullet said the
 index grows with history, and a reader who believed the heading would size a bench by `--retain`
-alone (Fable at 7472e545, 2026-09-13). `session start --retain
+alone (Fable at 7472e545, 2026-09-13); draft 24 corrected that heading and left both indexes
+*inside* the snapshot file, so the sentence was honest and the load was still one row per request
+id and one row per settled item of the whole history at every start — **calling a thing an index
+does not bound the memory it is read into** (Stella at e79847fb, 2026-09-13, W1, and her amendment
+`docs/SPEC-WORK-CLOSED.md` at `4978e8e`, whose layout, recovery and gap rules the five paragraphs
+after this list are). **The bound is Glenn's, and it is the header's**: *"we only load the last 24
+hours of closed history by default"*; *"Across the last 2 days at most"*; *"This way it is
+bounded."* `session start --retain
 <duration>` is required and names how much history a snapshot carries: **the revision it names
 is the newest clipped revision whose commit stamp is older than the clip's own stamp less
 `--retain`**, so the boundary moves forward at a clip and never backward (Fable at d1b20f42,
@@ -354,9 +393,10 @@ intake sections below, which preserves a source issue's content before a deletio
 deleted: a retention archive is provenance, retrievable, and never read on the normal path.
 **This document calls neither of them a checkpoint**: *checkpoint* is Stella's word below for
 the clip commit her sections publish, and one word for two things is how a reader learns the
-wrong one. **So the retention boundary carries everything the normal path reads, or that
-sentence is false. It is a closed list, and it is the baseline of record every rule compares
-forward from:**
+wrong one. **So the retention boundary and the two published indexes together carry everything the normal
+path reads, or that sentence is false. It is a closed list, and it is the baseline of record every
+rule compares forward from** — the first two bullets and the last are in the snapshot, and the two
+index bullets name what the same clip publishes beside it, each bullet saying which:
 
 - **per node** — its derived state, generation, scope revision, source revision, lease state,
   and, **for every event of its evidence set, that event's five fields: `:pointer`,
@@ -375,9 +415,14 @@ forward from:**
   set derived at the point of a re-baseline; with them the two counts a reader is promised,
   the baseline row count `baseline-rows=` prints and the `since-baseline=` of every ask;
 - **the request id of every accepted event before the boundary, with the revision it was
-  applied at and the digest of its payload** — the dedup index, three fields per event. It is
-  the one part of this list that grows with the set's whole history rather than with `--retain`,
-  and it is kept because **an index that forgets is not one**. **The predicate it serves is the
+  applied at and the digest of its payload** — the dedup index, three fields per event. It grows
+  with the set's whole history rather than with `--retain`,
+  and it is kept because **an index that forgets is not one** — **so it is not in the snapshot**:
+  the clip publishes it under its own versioned index root, in pages bounded by `--page-bytes` and
+  `--page-records`, and a session holds only the pages its bounded cache is holding, by the
+  paragraphs below. **Retaining every past request in one resident map is the same failure under
+  another name** and is refused here in words, since no test can see it on a small fixture
+  (Stella, W1). **The predicate it serves is the
   index together with the request ids and payload digests of the retained events**, and that
   pairing is what makes the covered range the whole history up to the tip with no gap: the index
   holds every event before the boundary, the retained events the snapshot carries hold their own
@@ -390,53 +435,146 @@ forward from:**
   which is how a reused id is caught rather than obeyed; it is a refusal and not a replayed
   answer because the original `OK` line is not retained and an invented one would be a worse
   answer than none. The
-  index is written into the snapshot, so it survives a clip and crosses a handoff with the clip
-  the handoff makes (Stella 5655371246 item 2, Fable and Opus at d1b20f42, 2026-09-13: a
-  successor starts with *its own journal*, so before this bullet the once-only promise ended at
-  the handoff and a friend's retry applied a second time);
-- **one closed-index row per settled item of C** — the row the root section below enumerates:
-  its `:id`, `:under`, repository, kind, category, disposition, the state and generation it
-  settled at, its scope and source revisions, its required-leaf count at settle, the settle
-  event's revision, stamp, author and request id, and its evidence events' five fields. It is
-  the second part of this list that grows with the set's whole history rather than with
-  `--retain`, for the same reason the dedup index does: C is append-only and what it holds is
-  read from this row, never from a body, so an ask over C costs no archive read and a rollup
+  index is published by the clip and named by the commit the clip pushes, so it survives a clip and
+  crosses a handoff with the clip the handoff makes (Stella 5655371246 item 2, Fable and Opus at
+  d1b20f42, 2026-09-13: a successor starts with *its own journal*, so before this bullet the
+  once-only promise ended at the handoff and a friend's retry applied a second time). **A dedup
+  page the predicate needs and cannot read is a refusal to admit that request and never evidence
+  that it is new**: exit 1, `<MUTATION> FAIL request=<id> page=<name>: dedup unavailable`, because
+  a retry answered as new is the once-only promise broken in the one place a friend can feel it
+  (Stella, W1) (replay `dedup-page-unavailable-refuses`);
+- **one closed-index row per `:settle` and per `:revive` of C** — the row the root section below
+  enumerates: its `:id`, `:under`, repository, kind, category, disposition, the state and
+  generation it settled at, its scope and source revisions, its required-leaf count at settle, the
+  event's revision, stamp, author and request id, and its evidence events' five fields. **The rows
+  are append-only, one per transition and never one per item**, which is Stella's W2 and the
+  paragraphs below. It grows with the set's whole history rather than with
+  `--retain`, for the same reason the dedup index does — C is append-only and what it holds is
+  read from these rows, never from a body, so an ask over C costs no archive read and a rollup
   over a container whose members have long since finished costs no more than one whose members
-  have not;
+  have not — and, for that same reason, **it is published beside the snapshot and not inside it**,
+  under its own versioned index root, in the same bounded pages;
 - **the lease log from each node's newest lease with no release and no handoff onward** —
   *live* would drop a lease past its deadline, and an expired unreleased lease is exactly what
   `stale` and `expired=` must still see — which is what `handoffs` answers from.
 
+**C is partitioned by day, and the day is the event's own.** A closure record is written into the
+UTC day of the event's recorded stamp — `closed/<yyyy>/<mm>/<dd>/`, an illustrative layout and not
+a second public interface — in **bounded immutable segments**, each carrying a stable event id, the
+item id, the event revision and the recorded stamp. **A reopen or a correction is appended at its
+own event time and references the original identity**: no old closure event is ever rewritten,
+migrated into today or deleted because the item is open again, which is what makes a past answer
+stay past. **A dated manifest names that day's segments with their revision and stamp bounds,
+their hashes and their record counts**, so a reader knows what the day is supposed to hold before
+it opens anything, and **a busy day has many segments**: *one file per day* is not permission for
+one unbounded read. **Recorded event time chooses the partition and the revision remains the
+authoritative ordering** — a backdated `--now` or a skewed clock does not let an index assume time
+is monotonic with revision — so a selection reads the intersecting days by the date index and then
+applies the exact half-open `[from, to)` bounds inside them, and never lists every historical file
+and filters afterwards (Stella, `SPEC-WORK-CLOSED.md`).
+
+**Both indexes are versioned roots of bounded pages, and the clip's small root names them.** An
+index root names its pages; a page locates partitions by day and records by stable item and event
+id and by repository; **every page is bounded by `--page-bytes <n>` and `--page-records <n>`, both
+named at `session start`**, and a page that would pass either is split into another page by the
+clip that writes it rather than written past the bound. A lookup is **bounded indexed access and
+never a promise of O(1)**: a cold lookup may read as many pages as the index is deep, and what
+this document promises is that the number is bounded by that depth and by nothing about how much
+work the team has finished. **The indexes are rebuildable from the retained canonical events and
+the closure records**, which is what makes them an index and not a second store; a key-value cache
+in front of them, if a pilot wants one, is a cache and nothing more.
+
+**The resident cache is bounded, and the default window is Glenn's two days.** `session start
+--index-cache <n>` is required and names the greatest number of index pages the session holds
+resident across both roots and the day manifests together; it prints on `SESSION OK` and on
+`session status`, like every other bound. **The default closed-history window is the rolling
+`[now - 24h, now)` in UTC** — not the last 24 calendar dates and not all of yesterday plus today
+— named by `session start --closed-window <duration>`, default `24h`, **refused at exit 2 above
+`48h`** because the resident bound is two day partitions and a flag that could ask for three would
+be the bound removed by a number. At startup and on a default closed-history query the session
+**opens at most the two UTC day partitions that interval intersects**, today's and yesterday's; at
+exactly `00:00:00Z` the interval is yesterday's whole day and only yesterday intersects it, which
+is one partition and not two. **The time range is bounded and the volume inside it is not**, so the byte, record and page
+bounds hold inside the window too: the default window is read in bounded pages, `--max` caps the
+rows, and truncation and continuation are printed rather than assumed. **An ongoing session
+advances the rolling window and evicts expired pages from the cache, least recently used first,
+and evicting a page deletes nothing** — `--retain`, the archive and the partitions are untouched by
+a cache. **Older history is reached only two ways**: an explicit historical query, which is an
+`--ask` whose `--from` reaches before the window, and a **required indexed dependency lookup** —
+rule 2 resolving a name that is in C, `released=` reading a settled release task through the
+reverse-dependency index, a rollup reading a settled member's row — each of which is one bounded
+indexed access for the one id it needs and never a day opened whole. **No retention cutoff and no
+automatic deletion is introduced by any of this** (Glenn; Stella, W1) (replays
+`default-window-opens-two-days`, `busy-day-many-segments`, `history-grows-startup-does-not`).
+
+**One revision names them all, and one recovery brings them back.** A clip publishes **one**
+revision naming together: the snapshot of O, the immutable closure segments it has written, the
+closed index root, the dedup index root and the day manifests. It **stages the new immutable
+files, verifies the hashes its manifests name, then commits the root and every file it references
+in that same commit** — so a reader never sees a root pointing at a file that is not there, and a
+failed push leaves the work locally durable and unshared exactly as the clip paragraph above
+already says, reconciled against the exact remote commit before the publication is retried and
+never by advancing a shared receipt because the commit exists locally. **Recovery is the one
+replay this document already has**: the session loads the snapshot, opens the two roots at that
+same commit, and replays its journal from the journal's newest boundary record, **applying every
+`:settle` and every `:revive` it passes as an overlay on the index it has opened**, before the
+whole validation and before any ask is answered — the overlay is what the next clip writes into
+the pages, and until it does, a query reads the pages and the overlay as one. So a crash between a
+settle and the next clip leaves no id in both branches and none in neither, whether the crash fell
+before the acknowledgement, after it and before the clip, or inside the publication (replay
+`index-replayed-after-crash`).
+
+**An absent day and a missing segment are two different answers, and the manifest is what tells
+them apart.** A day with no manifest inside a complete manifested range **means no events that
+day**: the answer is the rows there are, `gap=0`, and no note. **A manifest or a segment the
+committed root names that is missing or corrupt is a coverage gap**: the listing prints the rows
+it can answer, `gap=<n>` and one `QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>`, and
+never an empty closed set, because *a missing archive produces an honest coverage gap, not an
+empty completed set* (Glenn, 23:34Z). **A query that asks what an item's state was, as of a window
+end whose partition it cannot read, refuses rather than answering from a newer row**: exit 1,
+`QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable`,
+naming the one partition it would need, so the caller reads a refusal it can act on instead of a
+number it cannot check. **A cached summary may answer an independent query with its provenance and
+can never make missing evidence read as verified.** These three are one rule stated three ways: an
+answer says which question it answered and over what it could actually read (replays
+`absent-day-is-not-a-gap`, `missing-segment-is-a-gap`, `as-of-refuses-unavailable-partition`).
+
 A `handoffs --since <revision>` whose revision is before the loaded snapshot's boundary is
 refused exactly as `--at` is (exit 1, `QUERY FAIL … : since=<rev> boundary=<rev> before the
 retained history`, naming the retention archive that holds it). A session start loads the
-snapshot alone — the retention boundary, then the retained events — so load cost is bounded by the retention
-window and not by the set's age, `--at` reaches the boundary and no further, and **a session
-whose archive file is absent answers every ask and runs every rule**, which is the test that
-keeps this paragraph honest. **A clip whose snapshot would exceed the session's own
-`--max-bytes` refuses**, and **the refusal prints all three numbers and names the remedy that can
-actually work**: `CLIP FAIL … : snapshot=<bytes> retained=<bytes> index=<bytes> closed-index=<bytes> past
+snapshot alone — the retention boundary, then the retained events — and opens the two index roots
+without loading them, so **load cost is bounded by the retention window and by `--index-cache`,
+and by neither the set's age nor how much work the team has finished**; `--at` reaches the
+boundary and no further; and **a session whose archive file is absent answers every ask and runs
+every rule**, which is the test that keeps this paragraph honest. **A clip whose snapshot would
+exceed the session's own `--max-bytes` refuses**, and **the refusal prints all four numbers and
+names the remedy that can actually work**: `CLIP FAIL … : snapshot=<bytes> retained=<bytes>
+index=<bytes> closed-index=<bytes> past
 --max-bytes=<n>, <remedy>`, where `snapshot=` is the whole file the clip would write — the word
 means the whole file everywhere else in this document and is not narrowed here — `retained=` is
-the structure and the retained events, `index=` is the dedup index and `closed-index=` is C's
+the structure and the retained events, and `index=` and `closed-index=` are the bytes this clip
+would publish into the dedup and closed index pages **beside** the snapshot, printed so an
+operator sizes the bench by every file the clip writes and not by the one `--max-bytes` governs
 (Fable and Opus at efc26a2e, 2026-09-13: two numbers were printed and the first was the whole
-file's name over a part's value; and a fourth number is printed here because a second index that
-may not forget arrived with the root's C branch and a remedy must name the part that overflowed).
-**The remedy branches on whether `--retain` can bring the total under the bound and never on
-which part is larger**: where the two indexes together are already past `--max-bytes` the
-remedy is `raise --max-bytes` alone, since no flag lowers an index that may not forget and no
-`--retain` can help; otherwise it is `lower --retain or raise --max-bytes`, since a shorter
-retention window makes the retained part smaller and a longer one never does. The one file a
+file's name over a part's value; and a fourth number is printed because a second index that may
+not forget arrived with the root's C branch). **The remedy no longer branches, and the reason it
+does not is this draft's change**: every part of the snapshot is now bounded by `--retain`, so the
+remedy is always `lower --retain or raise --max-bytes` and there is no longer a part no flag can
+lower. **An index page never refuses a clip at all**: a page that would pass `--page-bytes` or
+`--page-records` is split into another page, which is what a paged index on disk is for, and the
+bound a growing history meets is the bench's own disk rather than a session's resident memory.
+The one file a
 tool must never write is one it cannot read back, and a remedy that cannot move the number it
 names is worse than no remedy at all (Fable at 7472e545, 2026-09-13: the refusal named
 `--retain` for an overflow `--retain` cannot shrink; Opus at efc26a2e, 2026-09-13: branching on
 the larger part told an operator with `index=55 retained=50` under a bound of 100 to find a
-bigger bench, when lowering `--retain` on his own keyboard would have done) (replay
-`clip-names-the-index-that-overflowed`). **A removed subtree leaves the live snapshot the same way**:
+bigger bench, when lowering `--retain` on his own keyboard would have done; Stella at e79847fb,
+2026-09-13: while the indexes were in the file, an operator could reach a clip no flag of his
+could pass) (replay `clip-names-the-index-that-overflowed`). **A removed subtree leaves the live snapshot the same way**:
 the snapshot's structure is O's tree, and a node removed by `node remove`, its subtree
 and their events are written into the archive by the first clip after their `:remove` event
 passes the retention boundary and into the snapshot's structure never again — **their
-closed-index rows staying in the snapshot**, which is how a removal is still answerable, by id
+closed-index rows staying in C's index**, which is how a removal is still answerable, by id
 and by repository, after the archive is gone — so `--retain`
 bounds the live structure whatever has been removed from it, and the refusal above names a flag
 that moves the part that overflowed.
@@ -932,14 +1070,39 @@ table (a `:reopen` of a `:deferred` item writes none: a deferred item never left
 **A `:revive` takes nothing out of C, because C is append-only.** The item's closed record and
 every event under it stay exactly where they are; the `:revive` is appended to that history, and
 the closed record reads as revived by it, naming that event's revision, stamp and author. **The
-closed index keeps one row per id — the latest — and that row carries `revived=<rev|->` and
-`settles=<n>`**, so an id that has settled twice has one row and one cursor,
-`<settle-rev>:<id>`, which names its latest settle and can never collide with an earlier one.
+closed index's rows are append-only, one per transition, and that is what makes a past answer stay
+past.** Each `:settle` and each `:revive` writes **its own immutable row**, keyed
+`<event-rev>:<id>` and written into the day partition of that event's stamp; a row is never
+rewritten and never replaced. An id's rows are its **branch history** in revision order, reached
+through the id index in one bounded lookup, and the row a reader wants for a given moment is **the
+newest row at or before that moment** — so a settle, a revive and a second settle reconstruct as
+the three things they were, and an ask whose window ends between the first two answers the first.
+The **newest** row of an id carries `revived=<rev|->` and `settles=<n>`, so every field draft 24
+printed still prints; what has changed is that the rows behind it are still there. **Two bounds
+make this affordable, and they are why this is the shape chosen over refusing every historical
+ask**: a row is written per *transition*, and a transition is a real settle or a real reopen, so
+the index grows with the work that happened and never with the questions asked; and an as-of
+lookup for one id reads that id's chain in pages bounded by `--page-records`, the chain itself
+bounded by its own `settles=`, and never scans a day. **The refusal is the floor under it and not
+the design**: where a partition such a lookup needs is missing or corrupt, the ask refuses by the
+retention section's one line naming that partition, and never answers an earlier moment from a
+later row. **The cursor is `<event-rev>:<id>`**, stable for the same reason the rows are — a
+cursor keyed on an item's *latest* settle moves between pages the moment that item settles again
+(Stella at e79847fb, W2) (replays `as-of-reconstructs-settle-revive-settle`,
+`cursor-pinned-across-a-new-settle`).
 **An id is counted and printed by its latest state at the query's window end**: an id whose
 newest branch event by then is a `:settle` is in `closed=` and prints the disposition row of C,
 one whose newest is a `:revive` is in `open=` and prints O's, so an item that settled and was
 revived inside one window is counted once, as open, and `closed-in=` counts only the ids whose
-latest state at the window's end is settled. Rule 18 below reads the same way: the finding is an
+latest state at the window's end is settled.
+**Closure activity and item state are two questions, and this document answers both rather than
+letting one stand for the other**: `closed=` and `closed-in=` are item state at the window's end,
+each id once; `settles-in=<n>` and `revives-in=<n>` are the *events* inside the window, one per
+transition; and `items-in=<n>` is the distinct ids those events touched. So an item that settled
+and was reopened inside one window still shows the settle that happened — `settles-in=` counts it
+— while `closed=` counts that id once and as open, which is the reading rule 18 rests on (Stella
+at e79847fb, W2: a reopen must not erase work that actually happened during an interval) (replay
+`activity-and-state-are-two-counts`). Rule 18 below reads the same way: the finding is an
 id whose *latest* state puts it in both branches, never the history of an id that has honestly
 moved and kept its record (replay `revive-appends-and-counts-latest`). `:cancelled`,
 `:superseded` and `:removed` are terminal and no `:reopen` reaches them, as the transition table
@@ -990,29 +1153,36 @@ has kept them apart since its first draft. `--window` splits W the way `who` and
 print it: worked-now (a heartbeat inside the window) and `held-not-worked=`. `|W| ≤ |O|` is
 rule 18's business below (replay `working-is-a-view`).
 
-**C is append-only, and it is read through its index and never by loading it.** Every clip
-writes one **closed-index** row per settled item into the snapshot, beside the dedup index of
-the retention boundary above and growing with the set's whole history for the same reason: an
-index that forgets is not one. **On recovery the same replay that rebuilds O rebuilds the
-index.** A session loads the snapshot's closed index as the last clip wrote it and replays its
-own journal from that journal's newest boundary record, which is the execution model's one
-replay above; **that replay applies every `:settle` and every `:revive` it passes to the loaded
-index exactly as a clip would write them** — a settle adds or replaces that id's row, a revive
-marks the row revived — and it does so before the whole validation runs and before any ask is
-answered. So a crash between a settle and the next clip leaves no id in both branches and no id
+**C is append-only, and it is read through its index, in pages, and never by loading it.** Every
+clip writes one **closed-index** row per `:settle` and per `:revive` into the day partition of
+that event and into the closed index root the clip's commit names — **beside the snapshot and
+never inside it**, in pages bounded by `--page-bytes` and `--page-records`, as the retention
+section above sets out on Stella's W1. **A session start loads no row of it**: it opens the root,
+reads the manifests and the pages the default window needs, and holds at most `--index-cache`
+pages resident, so **startup cost is flat in how much work the team has ever finished** and an ask
+that reaches further back pays for exactly what it reaches. **On recovery the same replay that
+rebuilds O overlays the index.** A session opens the closed index root as the last clip published
+it and replays its own journal from that journal's newest boundary record, which is the execution
+model's one replay above; **that replay applies every `:settle` and every `:revive` it passes as
+an overlay on that index exactly as a clip would write them** — each appending its own row, the
+overlay read together with the pages until the next clip writes it down — and it does so before
+the whole validation runs and before any ask is answered. So a crash between a settle and the next clip leaves no id in both branches and no id
 in neither: one pass over one journal recovers the tree and the index together (replay
-`index-replayed-after-crash`). The row carries what the normal path reads about a settled item —
+`index-replayed-after-crash`). Each row carries what the normal path reads about a settled item —
 its `:id`, its `:under`, its repository, its kind and category, its disposition, the state and
 generation it settled at, its scope and source revisions, its required-leaf count at settle, the
 settle event's revision, stamp, author and request id, and, **for every event of its evidence
 set, that event's five fields** (`:pointer`, `:criterion`, `:against`, `:stamp`, `:generation`) —
 so **evidence survives the move** and no ask and no rule loads a body to answer about a settled
-item. **C is not a second file**: a settled item's node and its events live exactly where every
+item. **C is not a second ledger**: a settled item's node and its events live exactly where every
 item's do, in the snapshot's retained part while they are newer than the retention boundary and
-in the retention archive after it, written by the same clip. **C and the retention archive are
-two different axes and this document says so once**: C is a branch by *disposition*, the archive
-is a file bounded by *age*, an item may be in C and its oldest events in the archive, and neither
-one implies the other. **So a session whose archive file is absent still answers every ask over
+in the retention archive after it, written by the same clip; what C adds is rows *about* them.
+**Three things are bounded by three different axes and this document names them together once, so
+no reader takes one for another**: **C** is a branch by *disposition*; the **day partitions** of
+the retention section above hold C's rows by the *event day* of the settle or the revive that
+wrote each, and are what the default window opens two of; and the **retention archive** is a file
+bounded by *age* that holds bodies. An item may be in C, its rows in two day partitions and its
+oldest events in the archive, and no one of the three implies another. **So a session whose archive file is absent still answers every ask over
 C and runs every rule over it**, which is the same test the retention paragraph already stands
 on; an ask that would need a body the archive holds — a `--at` replay or a `handoffs --since`
 before the boundary — is refused by the rules that already refuse it, and a listing whose rows
@@ -1041,10 +1211,18 @@ and printed once**: `open=<n>` and `closed=<n>` partition the scope's counted id
 the scope's counted total, `closed-in=<n>` is the part of `closed=` whose settle stamp falls
 inside the window, and an id in both branches is a finding by rule 18 and not an arithmetic to
 be tidied at read time (replay `cow-root-partition`). **A closed listing never loads all of
-history**: its rows come from the closed index in settle-revision order, the window bounds the
-range, `--max` caps the page under the cap-and-count law, and the `MORE` line's remedy names
-**`--after <cursor>`**, the cursor being the last printed row's `<settle-rev>:<id>` (an open
-listing's is its `<id>`), so the next page is a read of the next rows and never of the whole.
+history**: its rows come from the closed index in event-revision order, the window bounds the
+range and selects the day partitions through the date index — **at most two of them where the
+window is the default `[now - 24h, now)`** — `--max` caps the page under the cap-and-count law,
+and the `MORE` line's remedy names **`--after <cursor>`**, the cursor being the last printed row's
+`<event-rev>:<id>` (an open listing's is its `<id>`), so the next page is a read of the next rows
+and never of the whole. **A page is pinned to the revision, the filter and the ordering its first
+page captured**, which the cursor carries: `now` and the query revision are read once at the first
+page, every later page answers as of them, and **a continuation whose pinned revision the session
+can no longer serve is refused rather than drifted** — `QUERY FAIL ask=<kind> after=<cursor>
+pinned=<rev> current=<rev>: page expired`, exit 1 — because a continuation that silently skipped
+or repeated a row because another item settled between two pages would be a report nobody could
+check (Stella at e79847fb, W2) (replay `cursor-pinned-across-a-new-settle`).
 
 **The three questions Glenn asked are three asks over the same identities** (23:34Z: *answer
 "what remains?", "what is in flight?", and "what did we complete during this interval?" from the
@@ -1056,8 +1234,8 @@ evidence and the settle events are already in the root.
 
 **Which branch a sentence of this document is about, said once.** Every sentence about loading,
 validating, journaling, clipping, ownership, fencing, the one coordinator and the one live
-reader/writer is about **O** and the closed index the same session holds: the session loads O
-whole and C's index, never C's history. Every sentence about membership, required sets, counting,
+reader/writer is about **O** and the closed index the same session opens: the session loads O
+whole and reads C's index in bounded pages, never C's history. Every sentence about membership, required sets, counting,
 states, transitions and leases is about **O** unless it names C. Stella's sections below keep her
 spelling, and where they say S they mean O.
 
@@ -1156,9 +1334,19 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
   counted items still in O, `closed=<n>` those in C, and **their sum is the scope's counted
   total with no id in both**, which rule 18 makes a finding rather than an arithmetic tidied at
   read time. `closed-in=<n>`, printed only where a window is given, is the part of `closed=`
-  whose settle stamp falls inside it — *what did we complete during this interval*. `gap=<n>` is
-  the rows whose body the retention archive holds and the read could not reach, printed so a
-  missing archive reads as a coverage gap and never as a completed set of nothing. **A settled
+  whose settle stamp falls inside it — *what did we complete during this interval*. **Three more
+  are printed with it wherever a window is given, and they count events rather than items**:
+  `settles-in=<n>` and `revives-in=<n>`, one per `:settle` and one per `:revive` recorded inside
+  the window, and `items-in=<n>`, the distinct ids those events touched. **The two grains are
+  never added and never substituted**: `closed-in=` answers *which items are finished as of the
+  window's end* and `settles-in=` answers *how much finishing happened inside it*, so an item
+  settled and reopened in one window is `settles-in=1 revives-in=1 items-in=1 closed-in=0`, and
+  the interval's real work is on the line rather than erased by the reopen (Stella at e79847fb,
+  W2). `gap=<n>` is
+  the rows whose body the retention archive holds, or whose day partition the committed root names
+  and the read could not open, printed so a missing file reads as a coverage gap and never as a
+  completed set of nothing; **a day with no manifest inside a complete manifested range is no
+  events and not a gap**, by the retention section above. **A settled
   item is counted exactly where it was counted before it settled**: `done=`, `required=`,
   `rows=`, `applicable=` and every percentage fold both branches, because a member that has
   finished is still a member and a denominator that dropped it would be the silent denominator
@@ -1179,8 +1367,13 @@ stamp (`-` where no evidence event falls under the scope, as `source=` prints `-
 `stale=`, `required=` (the total required leaves under the scope), `since-baseline=`,
 `private=` (nodes a view reached through a parent and printed nothing of, 5653982211),
 `rows=`, `open=`, `closed=`, `gap=`, `shown=`, `parses=`, `replays=` and `emitted=`; and
-`from=`, `to=` and `closed-in=` wherever a window was given, which is every `--branch closed`
-and every `--branch root`. **Per ask, named in brackets in the
+`from=`, `to=`, `closed-in=`, `settles-in=`, `revives-in=` and `items-in=` wherever a window was
+given, which is every `--branch closed` and every `--branch root`. **The window a closed ask reads
+by default is the rolling `[now - 24h, now)` of the retention section above**, and an `--ask`
+whose `--from` reaches before it is an **explicit historical query**: it is answered the same way
+from the same rows, it opens the day partitions its range intersects and no others, and it prints
+`pages=<n>` — the index and segment pages this answer read — so the cost of reaching back is on
+the line the answer is printed on and never hidden in it. **Per ask, named in brackets in the
 grammar and by the table here, so the table can never promise a field the grammar lacks**:
 `percent` adds `green=`, `applicable=` and `baseline-rows=`; `who` and `stale` add `held-not-worked=`,
 `unowned=` and `responsible=`; `done`, `remaining`, `size`, `stream` and `under` add
@@ -1243,15 +1436,23 @@ work excluding exactly the `:cancelled` and `:superseded` leaves by *Counting* b
 cancelled, and `alex-3` is `:doing` — a state of its own, where `:unknown` is the state of a node
 with no transition at all; `since-baseline=0`, because no node in the fixture carries a
 `:baseline` and so no `:discovery` has added a member since one; `rows=0`, because `rows=` is a
-roadmap's required-set cardinality and this category scope covers no roadmap; and `open=1
-closed=3`, which sum to the four ids the scope counts.
+roadmap's required-set cardinality and this category scope covers no roadmap; `open=1
+closed=3`, which sum to the four ids the scope counts; `settles-in=3 revives-in=0 items-in=3`,
+because three `:settle` events fall inside the window, no `:revive` does, and they touched three
+distinct ids, which is the activity beside the state; and `pages=4`, the three day partitions the
+window intersects that hold closure records — `2026/09/11`, `2026/09/12` and `2026/09/13` — plus
+the one date-index page they were reached through, the other ten days of the window holding no
+manifest and so being opened not at all. **This `--from` reaches before the default `[now - 24h,
+now)`, so it is an explicit historical query**, which is exactly the way a report of a month's
+findings is meant to be asked for; what the bound promises is that `pages=` is unchanged when a
+year of older history stands behind this window, and that is the assertion the replay makes.
 
 ```
 nova-work query --session /run/work.sock --ask under --repo mas-bandwidth/nova-tools \
                 --category security-finding --branch root \
                 --from 2026-09-01T00:00:00Z --to 2026-09-14T00:00:00Z --max 20
 
-QUERY OK ask=under scope=412 membership=category branch=root unit=leaves source=9f2c1a7e freshest=2026-09-13T18:22:41Z done=2 done-unverified=0 unknown=0 deferred=0 cancelled=1 superseded=0 stale=0 required=3 since-baseline=0 private=0 open=1 closed=3 gap=0 from=2026-09-01T00:00:00Z to=2026-09-14T00:00:00Z closed-in=3 responsible=rowan pushed=410 rows=0 shown=4 parses=0 replays=0 emitted=612
+QUERY OK ask=under scope=412 membership=category branch=root unit=leaves source=9f2c1a7e freshest=2026-09-13T18:22:41Z done=2 done-unverified=0 unknown=0 deferred=0 cancelled=1 superseded=0 stale=0 required=3 since-baseline=0 private=0 open=1 closed=3 gap=0 from=2026-09-01T00:00:00Z to=2026-09-14T00:00:00Z closed-in=3 settles-in=3 revives-in=0 items-in=3 responsible=rowan pushed=410 rows=0 shown=4 pages=4 parses=0 replays=0 emitted=612
 QUERY ROW nova-tools/sec/alex-1 branch=closed disposition=done repo=mas-bandwidth/nova-tools kind=task state=done landed=9f2c1a7e released=v0.4.2 holder=unowned settled=2026-09-12T18:22:41Z evidence=2 verified=2 responsible=emma
 QUERY ROW nova-tools/sec/alex-2 branch=closed disposition=done repo=mas-bandwidth/nova-tools kind=task state=done landed=4b81c0d5 released=- holder=unowned settled=2026-09-13T09:14:02Z evidence=2 verified=2 responsible=emma
 QUERY ROW nova-tools/sec/alex-3 branch=open disposition=working repo=mas-bandwidth/nova-tools kind=task state=doing landed=- released=- holder=freddy settled=- evidence=0 verified=0 responsible=freddy
@@ -1270,7 +1471,11 @@ remaining --branch open --repo mas-bandwidth/nova-tools --category release`, whi
 identities read twice and never two ledgers; `alex-3` in O, `disposition=working` because it
 holds a live lease, and W is exactly that view; `alex-4` closed as `cancelled`, distinct from
 `done` and counted in neither `done=` nor a percentage; `parses=0 replays=0`, because the
-closed rows came from the closed index and the open one from the resident tree; and **the same
+closed rows came from the closed index and the open one from the resident tree, and `pages=4`
+because the index was read in pages and never loaded — **the same ask run against a set carrying a
+year of older closed history prints the same four rows, the same `pages=4` and the same startup
+resident bytes**, which is Stella's W1 written as an assertion (replay
+`history-grows-startup-does-not`); and **the same
 ask with the retention archive file absent printing the same four rows** — the bodies are the
 archive's and the rows are the index's — while an ask that reaches for a body prints `gap=<n>`
 and its `QUERY NOTE coverage-gap` and never a shorter list. Running it again with `--max 2`
@@ -1337,6 +1542,7 @@ re-authors it. `--now <stamp>` is optional on every verb and records `:clock
 ```
 nova-work session start  --session <path> --as <name> --file <path-in-repo> --journal <path> --cache <path> --repo <path> --remote <name> --branch <name>
                          --max-bytes <n> --max-depth <n> --max-nodes <n> --every <duration> --skew <duration> --clip-every <duration> --clip-after <n> --retain <duration>
+                         --index-cache <n> --page-bytes <n> --page-records <n> [--closed-window <duration>]
                          [--resolver <scheme>=<command> ...] --git-timeout <seconds> [--attempts <n>] [--repair] [--foreground] [--max <n>] [--now <stamp>]
 nova-work session export (--session <path> | --journal <path> --max-bytes <n> --max-depth <n> --max-nodes <n>) --into <path>
 nova-work session replay --session <path> --from <path> --as <name> [--max <n>]
@@ -1594,7 +1800,15 @@ it names), refusing the event at exit 1 with the finding's line and changing not
    O's nodes or C's closed index, whichever branch holds that id**, so a reference to an item
    that has settled is not dangling — a finished task is still the task its parent contains and
    its cell points at — and the rule stays green with the retention archive absent, because the
-   closed index is in the snapshot and the body is what the archive holds; and, **for a first-axis
+   closed index is published with the snapshot and the body is what the archive holds. **The
+   resolution against C is a required indexed dependency lookup**, one of the two ways the
+   retention section above reaches past the default window: one bounded lookup for the one id,
+   never a day opened whole. **Where the page that lookup needs cannot be read, the rule reports
+   that it could not check and never that the reference is broken, and never that it is green**:
+   `WORK FAIL <id>: rule 2: unavailable partition=<yyyy-mm-dd>`, which is a finding at exit 1 with
+   `unavailable` as its reason and not `dangling`, because *incomplete* and *invalid* are two
+   different answers and a validation that reported neither would be claiming every rule valid
+   with its history missing (Stella at e79847fb, W1) (replay `rule-2-unavailable-is-not-green`); and, **for a first-axis
    member that is in its roadmap's required set**, a member naming nothing, or naming a node
    that is not a `:feature`, is the same finding, because such a member is counted by `rows=`
    and a mistyped or wrongly typed row was a phantom in the denominator that no rule refused
@@ -1675,8 +1889,14 @@ it names), refusing the event at exit 1 with the finding's line and changing not
     `:settle` whose item is already in C, and a `:revive` whose item is already in O, are the
     two ways to write one, and each is refused at the candidate gate before anything is written.
     **Branch membership is read at the latest state of an id**, by the root section above, so an
-    id that settled, revived and settled again is one row and one branch at any instant and never
-    a finding; and a `node remove` settles only the open items beneath it, for exactly this
+    id that settled, revived and settled again is one branch at any instant and never
+    a finding. **The partition this rule guards is over CURRENT membership and never over
+    historical occurrence**: C's day partitions hold a closure row for every settle that ever
+    happened, so an id now in O has rows in C's history by design, and reading one of those rows
+    as a second membership would make every honest reopen a finding (Stella at e79847fb, W2:
+    historical C containing a revived id must be distinguished from current C membership for the
+    partition invariant). The finding is an id whose newest transition row and whose place in O's
+    tree disagree at one instant, and nothing older than that row; and a `node remove` settles only the open items beneath it, for exactly this
     reason, rather than being refused by this rule over a subtree that holds finished work.
 
 **There is no rule about an empty required set, and its deletion is part of this draft**
@@ -1713,14 +1933,25 @@ intake that creates it.
 At load the session builds six indexes — id to node, containment adjacency, reverse dependency,
 repository, category (5654164074), and **reverse roadmap reference: from a node id to every
 roadmap that has it as a first-axis member, and to every cell whose `:ref` names it** — and every
-walk goes through them. **A seventh is loaded rather than built: C's closed index**, which the
-snapshot carries whole and which no walk over O has to rebuild — keyed by `:id`, ordered by
-settle revision, and grouped by repository, so a rollup reads a settled member's row in one
-lookup, a closed listing reads one page of a revision range, and `--after` continues it. **A
+walk goes through them. **A seventh is opened rather than built or loaded: C's closed index**, which the
+clip publishes beside the snapshot in bounded pages and which no walk over O has to rebuild —
+keyed by `:id` and by `<event-rev>:<id>`, partitioned by event day, ordered by event revision, and
+grouped by repository, so a rollup reads a settled member's newest row in one bounded lookup, a
+closed listing reads the pages of one revision range, and `--after` continues it. **A
 settled item therefore costs a row and never a body**: the O(V+E) of a full validation is O's
-edges plus one lookup per settled member, and neither the fold nor the load grows with how much
-work the team has finished, which is the whole reason C is a branch with an index rather than
-more of O. **The sixth is on the write path and not the read path**: a `:cancel`, a
+edges plus one bounded lookup per settled member, and neither the fold nor the load grows with how
+much work the team has finished, which is the whole reason C is a branch with an index rather than
+more of O. **The eighth is the dedup index and is opened the same way**, in pages under the same
+bounds, for the same reason: neither index is resident, and what is resident is a cache of at most
+`--index-cache` pages across both. **What this section promises about either is bounded indexed
+access and never O(1)**: a cold lookup may read as many pages as the index is deep, and the
+session prints `pages=<n>` on the answer so the number is read rather than assumed. **The
+measurement that keeps all of this honest is one experiment and it is named**: hold O, the
+recent-window volume and the page bounds fixed, grow the old history, and assert that startup
+resident bytes, index pages read, segment bytes read, parses, replays and emitted bytes do not
+move (replay `history-grows-startup-does-not`, and Stella's `SPEC-WORK-CLOSED.md` acceptance 6,
+whose *no whole-C load, no directory scan and no whole-history dedup load on the ordinary path* is
+what the replay asserts). **The sixth is on the write path and not the read path**: a `:cancel`, a
 `:supersede` and a `node remove` must each move *every roadmap that has it as a row* by the delta
 table above, and `node remove` must find its cell referrers in order to refuse; with no such
 index each of those is a scan of every roadmap on every cancel, on the write path, which at nine
@@ -1764,7 +1995,7 @@ alike, and its `state=` reads `live`, `fenced` or `red`: *active* is W's word in
 section above and names no session state here.
 
 ```
-SESSION OK session=<path> owner=<name> generation=<n> state=<live|fenced|red> until=<stamp> file=<path> base=<sha> journal=<path> events=<n> pending=<n> pushed=<rev|-> nodes=<n> edges=<n> parses=<n> replays=<n> every=<duration> skew=<duration> clip-every=<duration> clip-after=<n> retain=<duration> max-bytes=<n> max-depth=<n> max-nodes=<n> boundary=<rev> findings=<n> build=<identity> emitted=<bytes>
+SESSION OK session=<path> owner=<name> generation=<n> state=<live|fenced|red> until=<stamp> file=<path> base=<sha> journal=<path> events=<n> pending=<n> pushed=<rev|-> nodes=<n> edges=<n> parses=<n> replays=<n> every=<duration> skew=<duration> clip-every=<duration> clip-after=<n> retain=<duration> index-cache=<n> page-bytes=<n> page-records=<n> closed-window=<duration> max-bytes=<n> max-depth=<n> max-nodes=<n> boundary=<rev> findings=<n> build=<identity> emitted=<bytes>
 SESSION FAIL session=<path> owner=<name> generation=<n>: <reason>
 SESSION RACED session=<path> generation=<n> expected=<sha12> found=<sha12>   (printed by the session's own reconfirm, on its stderr; the fence that follows is read by `session status`)
 EXPORT OK session=<path> into=<path> requests=<n> base=<sha> pushed=<rev|-> emitted=<bytes>
@@ -1785,13 +2016,15 @@ WORK FAIL nodes=<n> findings=<n> shown=<n> expired=<n> escalated=<n> stale=<n>
 VERIFY OK pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> pushed=<rev|-> emitted=<bytes>
 VERIFY ROW <event-id> pointer=<p> verdict=<verified|unverified|stale> at=<stamp>
 VERIFY FAIL pointers=<n> verified=<n> unverified=<n> stale=<n> fetched=<n> cached=<n> pushed=<rev|-> shown=<n>
-QUERY OK ask=<kind> scope=<rev> membership=<rule> branch=<open|closed|root> unit=<unit> source=<sha|-> freshest=<stamp|-> done=<n> done-unverified=<n> unknown=<n> deferred=<n> cancelled=<n> superseded=<n> stale=<n> required=<n> since-baseline=<n> private=<n> open=<n> closed=<n> gap=<n> [from=<stamp> to=<stamp> closed-in=<n>] [green=<k> applicable=<n> baseline-rows=<n0>] [held-not-worked=<n> unowned=<n>] [leases=<n>] [responsible=<name|->] pushed=<rev|-> rows=<n> shown=<n> parses=<n> replays=<n> emitted=<bytes>
+QUERY OK ask=<kind> scope=<rev> membership=<rule> branch=<open|closed|root> unit=<unit> source=<sha|-> freshest=<stamp|-> done=<n> done-unverified=<n> unknown=<n> deferred=<n> cancelled=<n> superseded=<n> stale=<n> required=<n> since-baseline=<n> private=<n> open=<n> closed=<n> gap=<n> [from=<stamp> to=<stamp> closed-in=<n> settles-in=<n> revives-in=<n> items-in=<n>] [green=<k> applicable=<n> baseline-rows=<n0>] [held-not-worked=<n> unowned=<n>] [leases=<n>] [responsible=<name|->] pushed=<rev|-> rows=<n> shown=<n> pages=<n> parses=<n> replays=<n> emitted=<bytes>
 QUERY ROW <id> kind=<k> state=<s> k=<n> n=<n> unknown=<u> responsible=<name|-> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> escalated-to=<name|-> blocked-by=<id|->
 QUERY ROW <id> lease=<lease-id> holder=<name|unowned> heartbeat=<age|none> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|-> escalated-to=<name|-> responsible=<name|->   (who, stale)
 QUERY ROW <id> branch=<open|closed> disposition=<pending|working|deferred|done|cancelled|superseded|removed> repo=<o/n|-> kind=<k> state=<s> landed=<sha|-> released=<version|-> holder=<name|unowned> settled=<stamp|-> evidence=<n> verified=<n> responsible=<name|->   (done, remaining and under, under --branch closed or --branch root)
-QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>   (rows the closed index answered whose bodies the retention archive holds and this read could not reach)
+QUERY NOTE coverage-gap file=<name> range=<rev>-<rev>   (rows whose bodies the retention archive holds, or whose day partition or manifest the committed root names, and this read could not reach; an absent day inside a complete manifested range is no events and prints no note)
 QUERY ROW <lease-id> node=<id> kind=<lease|heartbeat|release|handoff> rev=<n> at=<stamp> from=<name|-> to=<name|-> deadline=<stamp|-> default=<release|extend-once|escalate:<name>|->   (handoffs)
 QUERY FAIL ask=<kind> rows=<n> shown=<n>: <reason>
+QUERY FAIL ask=<kind> as-of=<stamp> partition=<yyyy-mm-dd>: historical window unavailable   (a state-as-of ask whose day partition the committed root names and this read could not open; never answered from a later row)
+QUERY FAIL ask=<kind> after=<cursor> pinned=<rev> current=<rev>: page expired   (a continuation whose captured revision the session can no longer serve; never a drifted page)
 RENDER OK view=<id> cells=<n> private=<n> bytes=<n> into=<path> pushed=<rev|-> emitted=<bytes>
 RENDER FAIL view=<id> cells=<n> private=<n> drifted=<n> into=<path>: <reason>
 NODE NOTE already-closed node=<id> disposition=<d> settled=<stamp>   (a `node remove` of an item already in C: nothing written, exit 0, its NODE OK line following)
@@ -1800,6 +2033,7 @@ NODE NOTE already-closed node=<id> disposition=<d> settled=<stamp>   (a `node re
 <MUTATION> FAIL node=<id> expect=<rev> current=<rev>: stale
 <MUTATION> FAIL request=<id> applied=<rev>: already applied
 <MUTATION> FAIL request=<id>: reused with a different payload
+<MUTATION> FAIL request=<id> page=<name>: dedup unavailable   (a dedup page the predicate needs and could not read: the request is refused admission, never admitted as new)
 <MUTATION> FAIL node=<id> findings=<n> was=<n>: no repair   (--repair only)
 LEASE FAIL node=<id> holder=<name> since=<stamp> deadline=<stamp> live=<n>: held
 <TOKEN> NOTE <caveat>
@@ -1951,11 +2185,10 @@ cover); **a retry inside the owner's own journal with the same payload answered 
 `OK` line, and one with a different payload refused `reused with a different payload`**; **one
 request digested to one value by two independent serializers, over a `node add` envelope holding
 a structure event and a scope event, with two `:stamp`s and two `:request` ids and the same
-digest, and with an absent optional field written `()` by both**; **a clip whose dedup index alone is
-already past `--max-bytes` refused naming `raise --max-bytes` alone, and one whose index is under
-the bound refused naming `lower --retain or raise --max-bytes` with a lower `--retain` then
-passing — the second case run with the index the larger of the two parts, so the branch is
-tested on the remedy that works and not on the sizes**; **a `session export --journal` writing
+digest, and with an absent optional field written `()` by both**; **a clip whose snapshot passes `--max-bytes` refused with all four
+numbers printed and `lower --retain or raise --max-bytes` named, the lower `--retain` then
+passing, run with the published index bytes larger than the retained part so the remedy is tested
+on the flag that moves the number and not on the sizes**; **a `session export --journal` writing
 every request's `--expect` and the bundle's `base=` from the journal's newest clip boundary
 record, with no repository present, and the bundle replaying whole**, its `base=` equal to the
 live `session export --session`'s for the same journal; **a bundle holding two requests against
@@ -2008,9 +2241,9 @@ are named because they were asked for by name):
   evidence and its generation intact, `open=` up by one and `closed=` down by one; a `:reopen`
   of a deferred item writes no `:revive`, because it never left O.
 - **`revive-appends-and-counts-latest`** — the revived item's closed record and every event
-  under it still in C after the `:revive`, its closed-index row carrying `revived=<rev>` and
-  `settles=1`; the item settled a second time, one row still, `settles=2`, and the cursor naming
-  the newer settle revision; an ask whose window ends between the settle and the revive counting
+  under it still in C after the `:revive`, the `:revive`'s own row carrying `revived=<rev>` and
+  its newest row `settles=1`; the item settled a second time, a third row appended and the earlier
+  two unchanged, `settles=2` on the newest, and the cursor naming that newest event revision; an ask whose window ends between the settle and the revive counting
   that id in `closed=` and one whose window ends after it counting the same id in `open=`, once
   either way, with no rule 18 finding on any of them.
 - **`index-replayed-after-crash`** — a session killed between a `:settle` and the next clip:
@@ -2045,9 +2278,54 @@ are named because they were asked for by name):
   four rows, `open=1 closed=3 closed-in=3`, no id twice, the dispositions distinct, and the
   release task listed as `pending` by the second ask.
 - **`clip-names-the-index-that-overflowed`** — a clip refused with `snapshot=`, `retained=`,
-  `index=` and `closed-index=` all printed, naming `raise --max-bytes` alone where the two
-  indexes together already pass the bound and `lower --retain or raise --max-bytes` otherwise,
-  with the lower `--retain` then passing.
+  `index=` and `closed-index=` all printed and `lower --retain or raise --max-bytes` named as the
+  one remedy, since no part of the snapshot grows with history any more, with the lower `--retain`
+  then passing; and an index page that would pass `--page-bytes` or `--page-records` split into a
+  further page by the clip that writes it, with no clip refused for an index at all.
+
+**Draft 25's replays, for the bound Glenn set on the closed history and for Stella's W1 and W2**:
+
+- **`default-window-opens-two-days`** — a default closed-history listing at early morning, at
+  midday and at exactly `00:00:00Z` opening at most two UTC day partitions and, at midnight, one;
+  no partition older than the window opened for it; the same listing with `--from` reaching back
+  a month opening exactly the days in that range that hold closure records and printing its
+  `pages=` accordingly.
+- **`busy-day-many-segments`** — one day holding many bounded segments read in bounded pages,
+  `--max` capping the rows, `MORE` naming `--after`, and the day never read whole.
+- **`history-grows-startup-does-not`** — O, the recent-window volume and the page bounds held
+  fixed while the old history grows by orders of magnitude: startup resident bytes, index pages
+  read, segment bytes read, parses, replays and emitted bytes unchanged, and no whole-C load, no
+  directory scan and no whole-history dedup load anywhere on the ordinary path.
+- **`one-revision-publishes-together`** — a clip staging its segments, verifying the hashes its
+  manifests name, then committing the snapshot, both index roots and every file they reference in
+  one commit; a kill before the commit leaving the previous root whole and readable; a kill after
+  the commit and before the push leaving the work locally durable and unshared, reconciled against
+  the exact remote commit and never by advancing a shared receipt; and one revision restoring the
+  journal, the clip and both indexes together.
+- **`absent-day-is-not-a-gap`** — a day with no manifest inside a complete manifested range
+  answering its rows with `gap=0` and no note.
+- **`missing-segment-is-a-gap`** — a segment the committed root names, removed: the listing
+  answering what it can with `gap=<n>` and one `QUERY NOTE coverage-gap`, and never an empty
+  closed set.
+- **`as-of-refuses-unavailable-partition`** — a state-as-of ask whose day partition cannot be
+  opened refused at exit 1 naming that one partition, never answered from a later row.
+- **`as-of-reconstructs-settle-revive-settle`** — one id settled on day A, revived on day B and
+  settled again on day C: an ask whose window ends inside each of the three intervals answering
+  that interval's state, the three answers different, the earlier two unchanged by the later
+  events, and each read one bounded lookup over that id's chain.
+- **`cursor-pinned-across-a-new-settle`** — a paged closed listing with another item settling
+  between two pages: no row missing, no row twice, the cursor's pinned revision honoured, and a
+  continuation whose pinned revision can no longer be served refused `page expired`.
+- **`activity-and-state-are-two-counts`** — an item settled and reopened inside one window
+  printing `settles-in=1 revives-in=1 items-in=1 closed-in=0` with `open=` counting it once, and
+  the same window's `closed=` unchanged by the reopen having happened.
+- **`dedup-page-unavailable-refuses`** — a retry whose dedup page cannot be read refused
+  `dedup unavailable`, applying nothing, and admitted once the page is readable again; a retry
+  across a day rollover, a clip and a successor handoff refused `already applied`; a reused id
+  with a different payload still refused `reused with a different payload`.
+- **`rule-2-unavailable-is-not-green`** — a reference into C whose partition cannot be read
+  reported `rule 2: unavailable partition=<yyyy-mm-dd>` at exit 1, distinct from `dangling`, and
+  the validation never printing green over history it could not read.
 
 The stall replays of 5649089106
 belong to stall detection, deferred below, and are listed there so they are not lost.
@@ -2063,11 +2341,33 @@ section below; the adapter is its own spec), token and cost joins beyond the att
 each with its issue. Nothing here deletes, migrates or publishes an issue. Known work is not
 authorized, working, scheduled or public by being in O.
 
-**Four questions between Stella's sections and the shared ones are open and are hers to close**,
-kept here so they live in the file and not only in a review comment: her resident-session load
-line against the execution model's; her clip section against the two `--expect` revisions above;
-her journal and retry line against `--attempts`; and her clip-cadence sentence, which names no
-flags.
+**The four questions between Stella's sections and the shared ones are closed, by her, at
+e79847fb**, and the answers are here rather than only in a review comment because that is where
+the open ones lived. (1) Her resident-session load line against the execution model's: **one
+initial snapshot load plus a journal-tail replay, zero repeated parsing for an ordinary resident
+query**, subject to the bounded historical storage of *Retention* above — which is the condition
+she attached and this draft's W1 work is. (2) Her clip section against the two `--expect`
+revisions: **the local revision on the coordinator's own resident verbs, the clipped revision
+required on every replayed request, with the per-node conflict check and the ordered-bundle
+exemption** exactly as *The verbs* states them. (3) Her journal and retry line against
+`--attempts`: **a durable request-id retry and a transport retry are different things**, as the
+clip paragraph now says — dedup retained across every retry, bounded exponential backoff inside
+the timeout and attempt budget, and no blind retry of a semantic conflict. (4) Her clip-cadence
+sentence, which names no flags: **`--clip-every` and `--clip-after` are the cadence**, distinct
+from the reconfirm's `--every`. **Her scoped clearances at that head are folded as cleared where
+each stands and are not reopened by this draft**: the same-envelope settle and revive keeping
+stable ids and required membership; `node remove` preserving an already-closed disposition and a
+repeated removal being a no-op; and a revive appending and each current id counting once. They are
+clearances of the specification's text and not of a runtime, which this draft has none of.
+
+**Automatic cross-bench takeover stays disabled for the first Lisp pilot**, whatever the ownership
+paragraphs above propose: the `OWNER`-on-the-branch mechanism is this draft's proposal and Stella's
+*One coordinator, one live reader/writer* section governs the requirement, and her sentence that
+*the ownership and recovery mechanism must be decided and tested before automatic takeover is
+enabled* is the gate — the partition, clock-skew and fencing replays pass first, and no second
+coordinator and no parallel writer is authorized by any review so far. **Reconciling her
+cross-bench-backend-is-undecided paragraph with that proposal in one voice is still open and is
+hers**, and it is named here so it is not mistaken for settled.
 
 ## Additions of the authors', not in the source
 
@@ -2090,7 +2390,12 @@ scope kinds and the envelopes that carry them, their place outside the payload d
 closed index and the fields of its row, rule 18, `--branch` with its three values and its
 refusals, `--from`/`--to` over settle stamps, `--after` and its cursor, the disposition row with
 `landed=` and `released=`, `:version` on a `:task`, `open=`, `closed=`, `closed-in=` and `gap=`,
-and `closed-index=` on `CLIP FAIL`;
+and `closed-index=` on `CLIP FAIL`; **the spelling of draft 25's bound, whose requirement is
+Glenn's and whose mechanism is Stella's** — `--index-cache`, `--page-bytes`, `--page-records` and
+`--closed-window` with its 48-hour refusal, `pages=` on an answer, `settles-in=`, `revives-in=`
+and `items-in=` beside `closed-in=`, the `<event-rev>:<id>` cursor and its pinned revision, the
+`page expired`, `historical window unavailable` and `dedup unavailable` refusals, and rule 2's
+`unavailable` reason told apart from `dangling`;
 `cell --in-scope`; the exact list of refused reader syntax beyond `#.` (every dispatch macro,
 `#'`, quote, backquote, package-prefixed symbols, ratios, floats, characters); `;` comments
 discarded by the reader; the three bound flags and their no-default rule; unknown keys
@@ -2112,7 +2417,16 @@ CAS push, the lease `until`, the self-fence at `until`, `--skew`, the journal lo
 the journal's canonical path and bench identity, per-request admission, the base predicate
 before every CAS push, the two clip triggers, the handoff verb, the two `--expect` revisions,
 and the export/replay path are Rowan's), fold/unfold/propagate as
-operators, the measurement list, the `link`/`absorb` archive order, the migration dispositions; and in her sections below,
+operators, the measurement list, the `link`/`absorb` archive order, the migration dispositions;
+**the whole of draft 25's closed-history contract from her amendment `docs/SPEC-WORK-CLOSED.md`
+at `4978e8e`** — C partitioned by the event's own UTC day into bounded immutable segments under
+dated manifests, the versioned index roots with their page bounds, the bounded resident index
+cache, the rolling default window that opens two day partitions at most, historical access only by
+an explicit query or a required indexed lookup, the append-only per-transition closed rows and the
+bounded as-of lookup over them, closure activity counted beside item state, pagination pinned to a
+captured revision and filter, an absent day told apart from a missing segment, the dedup page that
+refuses rather than admits, one revision publishing snapshot, segments, indexes and manifests
+together, and the real-work acceptance with its honesty rules; and in her sections below,
 the pilot branch and sha, the prototype facts, the rate schedule and virtual cost, the
 `NEXT-TOOLS.md` hand-off, and the fixed-table capability boundary. Each is open to be cut by
 the pilot.
@@ -2388,3 +2702,14 @@ fact in O (an `evidence` event and a `state --to done`) and regenerate the table
 the table by hand; whether "who is on the C leg" is answerable from leases alone without
 reading the bus; whether a reader of the generated table found a number the source did not
 support. The benefit is observed or the tool is not built (5653982211).
+
+**The closed history has its own workload, and it is real work rather than a fixture** (Stella,
+`SPEC-WORK-CLOSED.md` at `4978e8e`): the security closeout report — findings across repositories
+joined to their fixes, the releases that carry them, the friends and models that did the work, the
+benches and the retained usage pointers — baselined as the **actual manual workflow** and compared
+against the same report produced from O and C. **What counts as a win is stated before it is
+measured, so it cannot be found afterwards**: correctness replays passing and fewer bytes emitted
+are not a token saving; the implementation's own tokens are sunk cost and are outside the
+before-and-after; usage nobody recorded stays unknown and is never estimated into the comparison;
+and the honest outcomes are a **verified saving**, **inconclusive evidence** or a **failed
+hypothesis**, each reportable and none of them a percentage invented to fill the line.
