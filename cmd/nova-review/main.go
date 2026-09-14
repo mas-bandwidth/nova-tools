@@ -8,7 +8,6 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -267,7 +266,10 @@ func packet(args []string, out, errOut io.Writer) int {
 	if err != nil {
 		return refuse(errOut, err.Error())
 	}
-	intentTitle, intentBody, _ := getAuthorIntent(timeout, repo, st.Repo, *pr, *branch, current)
+	intentTitle, intentBody, err := getAuthorIntent(timeout, repo, st.Repo, *pr, *branch, current, *maxBytes)
+	if err != nil {
+		return refuse(errOut, err.Error())
+	}
 	thisHeadSec := formatThisHead(intentTitle, intentBody)
 	yourPriorSec := formatYourPriorVerdicts(*who, entry.Reads, base, current, rangeText)
 	allVerdictsSec, priorCount := formatAllVerdicts(entry.Reads, *maxFlag, *lane)
@@ -402,13 +404,21 @@ func sourceOutputWithLimit(timeout time.Duration, dir, binary string, stdoutLimi
 }
 
 func sourceOutput(timeout time.Duration, dir, binary string, args ...string) (string, error) {
+	var stdout bytes.Buffer
+	err := sourceOutputTo(timeout, dir, binary, &stdout, args...)
+	return stdout.String(), err
+}
+
+// sourceOutputTo keeps source stdout and diagnostic stderr separate while a
+// caller incrementally consumes stdout.  Unlike the fixed-SHA helper above,
+// its writer owns any source-specific admission decision.
+func sourceOutputTo(timeout time.Duration, dir, binary string, stdout io.Writer, args ...string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
-	var stdout bytes.Buffer
 	stderr := &diagnosticCapture{}
-	cmd.Stdout = &stdout
+	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	// A deadline must still return when a killed command left a child holding
 	// its output pipe; this is the lifecycle guard merge.Exec uses as well.
@@ -417,17 +427,17 @@ func sourceOutput(timeout time.Duration, dir, binary string, args ...string) (st
 	diagnostic := stderr.String()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		if diagnostic != "" {
-			return stdout.String(), fmt.Errorf("%s timed out after %s; raise --timeout <seconds> to wait longer: %s", binary, timeout, diagnostic)
+			return fmt.Errorf("%s timed out after %s; raise --timeout <seconds> to wait longer: %s", binary, timeout, diagnostic)
 		}
-		return stdout.String(), fmt.Errorf("%s timed out after %s; raise --timeout <seconds> to wait longer", binary, timeout)
+		return fmt.Errorf("%s timed out after %s; raise --timeout <seconds> to wait longer", binary, timeout)
 	}
 	if err != nil {
 		if diagnostic != "" {
-			return stdout.String(), fmt.Errorf("%s failed: %w: %s", binary, err, diagnostic)
+			return fmt.Errorf("%s failed: %w: %s", binary, err, diagnostic)
 		}
-		return stdout.String(), fmt.Errorf("%s failed: %w", binary, err)
+		return fmt.Errorf("%s failed: %w", binary, err)
 	}
-	return stdout.String(), nil
+	return nil
 }
 
 func gitOut(timeout time.Duration, repo string, args ...string) (string, error) {
@@ -1151,24 +1161,15 @@ func selectedRulesFromPatch(timeout time.Duration, repo, base, head string, spec
 	return strings.Join(out, "\n"), len(selected), nil
 }
 
-func getAuthorIntent(timeout time.Duration, repo, hostRepo string, pr int, branch, head string) (title, body string, err error) {
+func getAuthorIntent(timeout time.Duration, repo, hostRepo string, pr int, branch, head string, maxBytes int) (title, body string, err error) {
 	if pr > 0 && hostRepo != "" {
-		b, err := sourceOutput(timeout, "", packetGHBinary, "pr", "view", fmt.Sprint(pr), "--repo", hostRepo, "--json", "title,body")
-		if err == nil {
-			var v struct {
-				Title string `json:"title"`
-				Body  string `json:"body"`
-			}
-			if err := json.Unmarshal([]byte(b), &v); err == nil {
-				return strings.TrimSpace(v.Title), strings.TrimSpace(v.Body), nil
-			}
+		if result, complete := streamGHAuthorIntent(timeout, hostRepo, pr, maxBytes); complete {
+			return result.title, result.body, result.err
 		}
 	}
 	if head != "" && repo != "" {
-		out, err := gitOut(timeout, repo, "log", "-1", "--format=%s%n%n%b", head)
-		if err == nil {
-			t, b, _ := strings.Cut(out, "\n\n")
-			return strings.TrimSpace(t), strings.TrimSpace(b), nil
+		if result, complete := streamGitAuthorIntent(timeout, repo, head, maxBytes); complete {
+			return result.title, result.body, result.err
 		}
 	}
 	return "", "unknown: the lane state has no entry body; no intent is guessed.", nil
