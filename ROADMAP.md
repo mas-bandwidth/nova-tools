@@ -4,9 +4,10 @@
 
 Help AI friends coordinate work without repeatedly rebuilding the plan in their context.
 
-**Planning baseline: 10 epics, 52 features, 163 acceptance items and 5 open questions.**
+**Planning baseline: 10 epics, 52 features, 171 inventoried items (166 acceptance items and 5 open questions).**
 **Verified implementation: 0%.** This is proposed scope for review, not a delivery-date or effort estimate.
 The current main branch has no production `nova-work` engine or CLI; existing prototypes and written specs do not count as verified production features.
+Current scope after the recorded moves and discoveries: 57 product features and 186 tickable acceptance items; the historical 171-item baseline remains unchanged.
 
 The current work register is below; nova-work remains inventory/specification scope until those changes are adopted.
 
@@ -16,7 +17,7 @@ Completion is verified features divided by applicable features; it is not averag
 The hierarchy is **epic → feature → sub-feature/acceptance item**, with no language axis.
 [Recursive work data](docs/roadmaps/nova-work.sexp) retains stable IDs, dependencies and source references.
 This baseline format is planning data, not a claim that nova-work import/export already exists.
-Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. A source-section label below is resolved through that file/revision key.
+Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. A source-section label below is resolved through that file/revision key.
 
 | Epic | Features | Verified |
 |---|:---:|:---:|
@@ -332,8 +333,9 @@ Prerequisites: E04-F01, E01-F03.
 - [ ] Build and incrementally update indexes for IDs, containment, dependencies and repositories
 - [ ] Provide bounded focus, subtree, category, ready and blocker queries
 - [ ] Avoid materialized transitive descendant sets and unbounded scans
+- [ ] Maintain eager W membership, its counter and per-friend reverse indexes in the same mutation envelope; normal reads never rebuild W lazily
 
-Source sections: The data; Counting; Queries — the contract.
+Source sections: The data; Counting; Queries — the contract; W is an eagerly maintained working index.
 
 **E04-F05 — Historical indexed queries and coverage honesty**
 
@@ -617,8 +619,11 @@ Prerequisites: E08-F01, E02-F04.
 - [ ] Handle disconnect, lost reply, deadlines and uncertain outcomes
 - [ ] Keep control operations responsive during import/export/clip
 - [ ] Use bounded typed JSON over a local Unix socket, exact integer/time encoding and durable asynchronous operation IDs; reconcile cross-platform endpoint requirements before lock
+- [ ] Support bounded read bundles at one captured revision and lease-time watermark, with stable paginated snapshot identity
+- [ ] Support independent ordered batches with per-entry IDs/outcomes and explicit stop/continue semantics, without implying rollback
+- [ ] Support atomic mutation batches with all-or-none validated O/W, counter and reverse-index changes; reject oversized batches without silently splitting
 
-Source sections: The verbs; Async operations; Retry/protocol.
+Source sections: The verbs; Async operations; Retry/protocol; Batch-friendly transport and explicit atomicity.
 
 **E08-F03 — Friends, CONFIG and ACTIVE indexes**
 

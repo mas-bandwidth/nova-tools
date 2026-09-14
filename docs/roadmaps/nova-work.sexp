@@ -4,11 +4,15 @@
   :inventory-status "proposed baseline; awaiting friend review"
   :sources (    :main-spec "SPEC-WORK.md@f36b85850620504a74e1229043c7cee2c14ea594"
     :companion "SPEC-WORK-PILOT.md@6e3413f"
+    :companion-eager-w "SPEC-WORK-PILOT.md@4e800fb"
+    :companion-batch-transport "SPEC-WORK-PILOT.md@bc4a4a4"
     :validation "SPEC-WORK-VALIDATION.md@6e3413f"
     :production-inventory "ec01647")
   :baseline-features 52
+  :baseline-items 171
   :discovered-features 6
   :current-features 57
+  :current-acceptance-items 186
   :events (    (      :kind "baseline"
       :feature-count 52
       :reason "Full initial nova-work source survey; implementation not started")
@@ -257,7 +261,8 @@
           :title "Stable resident indexes and bounded access"
           :subfeatures (            "Build and incrementally update indexes for IDs, containment, dependencies and repositories"
             "Provide bounded focus, subtree, category, ready and blocker queries"
-            "Avoid materialized transitive descendant sets and unbounded scans")
+            "Avoid materialized transitive descendant sets and unbounded scans"
+            "Maintain eager W membership, its counter and per-friend reverse indexes in the same mutation envelope; normal reads never rebuild W lazily")
           :depends-on (            "E04-F01"
             "E01-F03")
           :source-sections (            "The data"
@@ -502,12 +507,16 @@
           :subfeatures (            "Support framed requests, status, wait, cancel and bounded backpressure"
             "Handle disconnect, lost reply, deadlines and uncertain outcomes"
             "Keep control operations responsive during import/export/clip"
-            "Use bounded typed JSON over a local Unix socket, exact integer/time encoding and durable asynchronous operation IDs; reconcile cross-platform endpoint requirements before lock")
+            "Use bounded typed JSON over a local Unix socket, exact integer/time encoding and durable asynchronous operation IDs; reconcile cross-platform endpoint requirements before lock"
+            "Support bounded read bundles at one captured revision and lease-time watermark, with stable paginated snapshot identity"
+            "Support independent ordered batches with per-entry IDs/outcomes and explicit stop/continue semantics, without implying rollback"
+            "Support atomic mutation batches with all-or-none validated O/W, counter and reverse-index changes; reject oversized batches without silently splitting")
           :depends-on (            "E08-F01"
             "E02-F04")
           :source-sections (            "The verbs"
             "Async operations"
-            "Retry/protocol")
+            "Retry/protocol"
+            "Batch-friendly transport and explicit atomicity")
           :state "missing"
           :evidence ())
         (          :id "E08-F03"
