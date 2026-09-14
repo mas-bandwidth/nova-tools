@@ -36,6 +36,14 @@ None of that is judgment. All of it is mechanical, all of it is already
 knowable from state the tool holds, and the cost of doing it by hand is paid
 once per reply, forever, by every line on every bus.
 
+**That survey is a wide count; the Measurement section below now carries a
+narrow one, and the two do not disagree.** Four replies measured turn by turn
+out of one live session cost **2.25 reply-attributable turns each**, sitting
+inside raw spans of 11, 11, 16 and 5 assistant turns — one loop counted two
+ways. The survey says how often the chore is paid and the baseline says what one
+payment costs and **which half of the transaction it goes to**, and it is the
+narrow count this slice is held to.
+
 **The fifth cost is removed for this form's own output, and there only.** The
 receipt this verb prints is one line, and every value on it is a `key=value`
 field through the main specification's one-line field escape, which escapes
@@ -509,6 +517,73 @@ answering a note, and its own output does not cost back what it saved.** Nothing
 here claims a percentage, and shorter output on its own proves nothing about
 total cost.
 
+### The before side, measured
+
+**The before side is no longer a method to be run later. It has been run.** Four
+real coordination replies were measured out of one coordinating line's live
+session, 2026-09-13 22:55Z to 2026-09-14 01:10Z, against a live bus checkout —
+every one of them an actual reply to an actual note, each with a clear `Re:`
+target, and not a synthetic exchange. This table is the baseline the after side
+is compared against.
+
+| reply id | target id | asst turns | tool calls | tool-result bytes | discovery calls (bytes) | wall clock |
+|---|---|---|---|---|---|---|
+| rowan-f61f36cf7f3f | stella-c1b4e36711c5 | 2 | 2 | 3,787 | 2 (10,492) | 4m 29s |
+| rowan-b55e2424667d | stella-69a04c2f42f3 | 3 | 3 | 7,134 | 2 (1,502) | 3m 12s |
+| rowan-ddfbbd2a2cf9 | stella-0c1bdfd61805 | 2 | 2 | 3,239 | 1 (410) | 6m 21s |
+| rowan-b2b8550843de | stella-d7257ff57d84 | 2 | 2 | 2,196 | 1 (410) | 1m 27s |
+| **total / mean** | | **9 / 2.25** | **9 / 2.25** | **16,356 / 4,089** | **6 (12,814)** | mean 3m 52s |
+
+**The method, in one sentence:** turns and calls are read out of the harness
+transcript rather than estimated, bytes are the character length of the
+`tool_result` text returned to the model, and tokens are those bytes at about
+four bytes to a token — **an estimate, labelled as one, and never a tokenizer
+count**. On that estimate the reply path is about 4,100 tok over the four
+replies (~1,020 each) and discovery about 3,200 tok (~800 each): about 7,300 tok
+in all, **about 1,800 tok per answered note**.
+
+Three caveats, in the section and not in a footnote, because each one narrows
+what the numbers may be used to claim:
+
+- **a turn is an assistant record carrying a tool use.** Not a message, not a
+  thought, and not a turn that called nothing;
+- **only reply-attributable turns are counted** — the read of the target note
+  and the draft/body/send call — and not the unrelated work interleaved between
+  them. The raw assistant-turn span from note-read to `SEND OK` was 11, 11, 16
+  and 5 for the four rows, so the columns above are the cost of the reply and
+  not the span it sat inside. Where one call served both discovery and reading
+  the note it was counted once, on the reply side, which makes the discovery
+  column conservative;
+- **wall clock is elapsed time in a busy window** — target-note bus commit to
+  reply bus commit — and is **not** reply latency. It is in the table because a
+  reply that takes six minutes to arrive is a fact about the loop, not because
+  it is a number this slice promises to move.
+
+The measurement was read-only. Nothing was put on the bus to produce it.
+
+### What the baseline moves the target to
+
+The shape of today's transaction, per reply: one backgrounded `nova-bus wait`,
+whose own return is 410 b — the *running in background* line and nothing else;
+one later read of that wait's output file, to learn that a note landed, at 410 b
+in the cheap case and 10,082 b in the expensive one; one read of the target
+note's file, often batched with a sibling note; and then **one** call that runs
+`draft` into a file, appends the body by heredoc and runs `send`, returning
+about 250 b.
+
+So the composing step this document specifies is **already one turn and one
+call**, and the cheapest two of the four replies are two turns end to end. The
+target follows from that and is stated here as a constraint on the after side
+rather than as an aspiration:
+
+**The after side must reduce the discovery-and-read bytes and turns — the 6
+calls and 12,814 b of the discovery column, and the note-body reads inside the
+16,356 b reply column — and it may not count as a saving anything it takes off
+the draft step.** There is one turn and one call there and about 250 b of
+output; a form that halved that would have halved nothing a line can feel. A
+report that shows the composing step got cheaper and the read-and-discover side
+did not has measured the wrong half, and says so in place of a number.
+
 **Only operational tokens are compared: the same work before and after
 adoption, at equivalent accepted quality.** What it cost to build this form and
 to review it is sunk and is **excluded entirely** — not folded into the
@@ -522,9 +597,10 @@ not do the same work as one that did not, and must carry that pass in its own
 column rather than in neither.
 
 **The two forms are compared without the same live reply being delivered
-twice.** Pick a handful of actual coordination replies — not synthetic ones,
-because a synthetic reply has no stale checkout and no ambiguous subject, which
-is where the cost actually goes. Then compare at draft time: the other side is
+twice.** The before side above is real coordination replies for exactly this
+reason — a synthetic reply has no stale checkout and no ambiguous subject, which
+is where the cost actually goes — and the after side is gathered the same way,
+over comparable real replies, by the same rules. Then compare at draft time: the other side is
 composed as a draft and stopped there, or both sides are replayed as a fixture
 exchange against a disposable local bare remote. **A duplicate note is never put
 on the real bus to produce a number.** Where a real reply does go out it goes
@@ -535,6 +611,11 @@ What is counted, per reply:
 
 - **coordinator turns**, before and after, read out of the harness transcript
   rather than estimated. This is the number the slice exists to move;
+- **the discovery-and-read side, as its own column** — the calls and the
+  tool-result bytes spent finding out that a note landed and getting its text,
+  kept separate from the composing call. That is the half the baseline says the
+  cost is in, and a total that folds the two together cannot show whether it
+  moved;
 - **the coordinator's own input, output and cache-read tokens per reply**, where
   the harness reports them, because a turn is mostly a cache read and a count of
   turns alone would hide the category the saving actually lands in;
@@ -564,6 +645,67 @@ and the report names the harnesses and models involved without treating any of
 them as the standard: a measurement taken on one harness is evidence about that
 harness. Adoption is voluntary in either case, and the existing `draft --re`
 loop stays supported for lines that prefer it.
+
+## Order of build
+
+The baseline changes which half of #246 is built first, and this section says so
+rather than leaving the order to whoever picks the work up. **The reply verb
+specified in this document is the second build target, not the first.**
+
+**First: the READ half — the new notes addressed to `--as`, in full, in one
+call, with no output file to read afterwards.**
+
+The main specification already provides the bounded new-notes half of that on a
+released verb, so this is `inbox` extended and not a new verb beside it.
+SPEC.md's nova-bus section states the shape at **SPEC.md:2539**:
+
+> Every `inbox` and `wait` return has the same three parts, in this order: what
+> is NEW, in full; one `INBOX OPEN carrying=<n> heard=<m>` line; and the carried
+> list only if you asked for it.
+
+and caps the carried half at **SPEC.md:2559–2561** — `--open-max`, default 20,
+with one `INBOX OPEN listed=<n> and <k> more (--open-max to widen)` line where
+the listing stopped. That cap is the shape the body-carrying form takes too: a
+cap, a count and a remedy on one line, which is the law this document already
+obeys on its own receipt.
+
+Two things that reading leaves open, and between them they are the whole of the
+first build target:
+
+1. **"In full" there is the display line, not the body.** What a new note prints
+   as is `INBOX NOTE id=<id|-> from=<name> addr=<to|cc> at=<stamp|-> path=<path>: <subject>`
+   — **SPEC.md:2479** — which is id, sender, address, date, path and subject,
+   and no body. That is exactly why the measured transaction pays a second read:
+   the listing says a note exists and the file says what it says. The first
+   build target is **the body in that same return**, under an `--open-max` style
+   cap with the same count-and-remedy line, each note's text delimited so that
+   nothing a body holds can be read as an event line. A reader answering a note
+   then has its text from the call that told them it arrived.
+2. **`--since` is already spoken for, so the form is a flag and not a verb.** In
+   this tool `--since` belongs to `check` —
+   `nova-bus check --bus <dir> (--full | --as <name> | --since <commit>)`,
+   **SPEC.md:2397**, specified at **SPEC.md:3959** — and `check` is the gate. A
+   `read --since <cursor-or-instant>` verb would give one flag two meanings
+   across two verbs of one binary, and would be a second read path besides. The
+   form to build is an additive flag on `inbox`, and on `wait` with it, because
+   `wait` is `inbox` on a clock and shares one listing implementation. That is
+   the same law this document obeys under **no second read path**.
+
+**Second: the reply verb specified above.** Nothing in this document is weakened
+by going second and none of it is withdrawn. It goes second because its own step
+is already one turn and one call, and because a reply drafted against a note the
+reader needed three calls to read has removed the last and smallest part of the
+chore rather than the chore.
+
+**The larger lever is neither of these, and this slice does not duplicate it.**
+The backgrounded wait whose output file has to be read is a wake problem rather
+than a read problem: one turn per *change* instead of one per tick is
+`nova-wake`, which is issue #239 and is specified in this repository's
+SPEC-WAKE.md. That is where it stays. This document does not restate it, does
+not extend it, and nothing here should be read as a second answer to it. Where
+#239 lands, the discovery column of the table above goes to the wake rather than
+to a poll's output file, and what the read half is then responsible for is the
+other piece: the note's text, in the call that reported it.
 
 ## The tests, by name
 
