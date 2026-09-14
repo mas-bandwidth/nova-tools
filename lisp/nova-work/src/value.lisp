@@ -70,50 +70,68 @@ name can reach the reader only through the `|` escape it already refuses
           ((<= code #xffff) 3)
           (t 4))))
 
+(defun utf8-bytes-up-to (text n)
+  "UTF-8 octet length of the first N characters of TEXT."
+  (loop for i from 0 below n
+        summing (char-utf8-bytes (char text i))))
+
 (defpackage #:nova-work.read (:use))
 
 (defun refuse-evaluation-syntax (text)
   "Refuse every dispatch macro and every other form the source forbids as
-evaluation, outside a string literal (SPEC-WORK.md:681)."
-  (let ((in-string nil) (escaped nil) (byte-offset 0))
-    (loop for ch across text
-          for i from 0
-          do (block skip-comment
-               (cond (escaped (setf escaped nil))
-                   ((and in-string (char= ch #\\)) (setf escaped t))
-                   ((char= ch #\") (setf in-string (not in-string)))
-                   (in-string)
-                   ((char= ch #\;)
-                    (loop for j from (1+ i) below (length text)
-                          for c across text
-                          do (when (char= c #\Newline)
-                               (setf byte-offset (+ byte-offset (char-utf8-bytes c)))
-                               (return-from skip-comment))
-                          (when (char= c #\Return)
-                            (setf byte-offset (+ byte-offset (char-utf8-bytes c)))
-                            (return-from skip-comment))
-                          (setf byte-offset (+ byte-offset (char-utf8-bytes c))))
-                    (return-from skip-comment))
-                   ((char= ch #\#)
-                    (error 'restricted-data-violation
-                           :value (format nil "dispatch macro at byte ~D" byte-offset)))
-                   ((char= ch #\|)
-                    (error 'restricted-data-violation
-                           :value (format nil "multiple escape at byte ~D" byte-offset)))
-                   ((char= ch #\')
-                    (error 'restricted-data-violation
-                           :value (format nil "quote at byte ~D" byte-offset)))
-                   ((char= ch #\`)
-                    (error 'restricted-data-violation
-                           :value (format nil "backquote at byte ~D" byte-offset)))
-                   ((char= ch #\,)
-                    (error 'restricted-data-violation
-                           :value (format nil "unquote at byte ~D" byte-offset)))
-                   ((char= ch #\\)
-                    (error 'restricted-data-violation
-                           :value (format nil "single escape at byte ~D" byte-offset))))
-)
-          (setf byte-offset (+ byte-offset (char-utf8-bytes ch))))
+evaluation, outside a string literal (SPEC-WORK.md:681). Comment text is text:
+it changes no string or dispatch state, and each of its UTF-8 characters is
+counted exactly once."
+  (let ((in-string nil) (escaped nil) (byte-offset 0)
+        (len (length text)) (i 0))
+    (loop while (< i len)
+          do (let ((ch (char text i)))
+               (cond
+                 ((and in-string escaped)
+                  (setf escaped nil)
+                  (incf byte-offset (char-utf8-bytes ch))
+                  (incf i))
+                 ((and in-string (char= ch #\\))
+                  (setf escaped t)
+                  (incf byte-offset (char-utf8-bytes ch))
+                  (incf i))
+                 ((char= ch #\")
+                  (setf in-string (not in-string))
+                  (incf byte-offset (char-utf8-bytes ch))
+                  (incf i))
+                 (in-string
+                  (incf byte-offset (char-utf8-bytes ch))
+                  (incf i))
+                 ((char= ch #\;)
+                  ;; Skip to the end of the line: a comment is opaque, its
+                  ;; bytes count exactly once, and the newline that ends it is
+                  ;; consumed by the ordinary arm on the next pass.
+                  (loop while (and (< i len)
+                                   (not (char= (char text i) #\Newline))
+                                   (not (char= (char text i) #\Return)))
+                        do (incf byte-offset (char-utf8-bytes (char text i)))
+                           (incf i)))
+                 ((char= ch #\#)
+                  (error 'restricted-data-violation
+                         :value (format nil "dispatch macro at byte ~D" byte-offset)))
+                 ((char= ch #\|)
+                  (error 'restricted-data-violation
+                         :value (format nil "multiple escape at byte ~D" byte-offset)))
+                 ((char= ch #\')
+                  (error 'restricted-data-violation
+                         :value (format nil "quote at byte ~D" byte-offset)))
+                 ((char= ch #\`)
+                  (error 'restricted-data-violation
+                         :value (format nil "backquote at byte ~D" byte-offset)))
+                 ((char= ch #\,)
+                  (error 'restricted-data-violation
+                         :value (format nil "unquote at byte ~D" byte-offset)))
+                 ((char= ch #\\)
+                  (error 'restricted-data-violation
+                         :value (format nil "single escape at byte ~D" byte-offset)))
+                 (t
+                  (incf byte-offset (char-utf8-bytes ch))
+                  (incf i)))))
     (when in-string
       (error 'restricted-data-violation :value "unterminated string"))))
 
@@ -137,13 +155,13 @@ evaluation, outside a string literal (SPEC-WORK.md:681)."
         (*package* (find-package '#:nova-work.read))
         (*read-base* 10))
     (with-input-from-string (in text)
-      (flet ((offset () (or (ignore-errors (file-position in)) 0)))
+      (flet ((offset () (utf8-bytes-up-to text (or (ignore-errors (file-position in)) 0))))
         (let ((form (handler-case (read in)
                       (restricted-data-violation (c) (error c))
                       (end-of-file ()
                         (error 'restricted-data-violation
                                :value (format nil "unbalanced form; input ended at byte ~D"
-                                              (length text))))
+                                              (utf8-bytes-up-to text (length text)))))
                       (error ()
                         (error 'restricted-data-violation
                                :value (format nil "refused by the reader at byte ~D" (offset)))))))
