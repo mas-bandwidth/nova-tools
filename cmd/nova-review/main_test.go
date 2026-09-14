@@ -226,6 +226,9 @@ func TestPacketReuseCopiesOnlyAnExactTuple(t *testing.T) {
 	if hdrFirst.Who != "emma" || hdrSecond.Who != "stella" {
 		t.Errorf("who failed: first=%s second=%s", hdrFirst.Who, hdrSecond.Who)
 	}
+	if hdrSecond.Built != hdrFirst.Built {
+		t.Errorf("reuse changed the source evidence timestamp: first=%s second=%s", hdrFirst.Built, hdrSecond.Built)
+	}
 	contentFirst := string(first)
 	contentSecond := string(second)
 	mAllVerdicts := "## All verdicts at earlier heads\n"

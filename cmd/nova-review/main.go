@@ -205,7 +205,7 @@ func packet(args []string, out, errOut io.Writer) int {
 		bodyRest := sections.thisHead + yourPriorSection + "\n" + sections.allVerdicts + sections.openFindings + sections.rules + sections.diff + sections.notIncluded
 		hdrNew := packetHeader{
 			ID: hdr.ID, Entry: hdr.Entry, Head: hdr.Head, Base: hdr.Base, Range: hdr.Range,
-			Who: *who, Built: time.Now().UTC().Format(time.RFC3339), Cut: hdr.Cut,
+			Who: *who, Built: hdr.Built, Cut: hdr.Cut,
 		}
 		newBody := formatPacket(hdrNew, bodyRest)
 		reuseLimit := hdr.Bytes
