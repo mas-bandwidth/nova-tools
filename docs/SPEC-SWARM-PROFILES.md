@@ -22,7 +22,10 @@ writable pool, job, slot, scratch, worker data home and configured `read_roots`;
 if `--profiles` names a path in any of those locations, admission refuses exit 2
 before a worker or provider is started. Run copies that admission into the
 immutable attempt snapshot;
-it does not silently re-resolve against a newer catalog. An explicit changed-profile
+it does not silently re-resolve against a newer catalog. If `run --profiles` is
+supplied, its catalog hash must match the queued admission for the selected
+profiled task; mismatch refuses that launch before reservation/provider activity.
+The flag checks the admission, never replaces it. An explicit changed-profile
 requeue is a new admission linked to the old task, not an automatic retry.
 
 Workers are task workers. A profile never carries a friend, line, self,
@@ -79,10 +82,12 @@ explicit interface gate below; this projection makes no availability claim:
 }
 ```
 
-The coordinator constructs every child environment from an empty environment
-set, adds only adapter-declared non-secret runtime variables (such as absolute
-PATH entries and the isolated HOME/XDG homes), and adds exactly the selected
-profile's one secret variable. Runtime variables cannot alias a secret name or
+The isolated-worker launcher constructs every harness environment from an empty
+environment set, adds only adapter-declared non-secret runtime variables (such
+as absolute PATH entries and isolated HOME/XDG homes), and takes exactly the
+selected profile's one secret variable from the gated environment supplied by
+`nova-secrets exec`. The coordinator pins the launch configuration and does not
+read the secret value into its own process. Runtime variables cannot alias a secret name or
 import arbitrary parent values. It never copies the parent environment wholesale
 or variables for other routes. Tests use fake variable
 names and values; real key material is never needed. The variable name may be
@@ -246,13 +251,29 @@ only through a coordinator-controlled invocation of `nova-secrets exec
 coordinator invokes the gate for each selected live-route worker; an environment
 flag claiming a parent wrapper ran is not proof. The immutable profile pins
 non-secret store/seat/key-path/sops and executable bindings, with the credential
-interface schema finalized before implementation. `nova-swarm run` refuses
+interface schema finalized before implementation. The launch order is `run` ->
+`nova-secrets exec` -> isolated-worker launcher -> sandbox -> harness; decryption
+and store validation run outside the worker sandbox. Pinned seat key and store
+root paths must satisfy the same resolved-filesystem placement checks as secret
+`key_file` paths in SPEC-SWARM.md, including aliases and not-yet-created slots,
+and must be outside all worker-readable or writable pool/job/slot/scratch/data
+home/read-root locations. The pinned gate executable must not be replaceable by
+the worker. Admission and prelaunch validation refuse unsafe placement exit 2
+before decrypting or starting a harness. `nova-swarm run` refuses
 exit 2 before the first worker if that binding is absent or unsupported. The gate refuses exit 125
 for a missing or malformed store shape, including a missing/malformed recovery.pub or a recipient rule other than one
 seat age public key plus exactly the recovery age public key declared there.
 Encryption recipients are not API keys: --only and --require select the one
 API-key environment variable needed by the route. A fixture with three recipients must
-exit 125 and start zero workers. The gate keeps key values out of profiles,
+exit 125 and start zero workers for that attempted launch. On a per-worker gate
+exit 125, `run` emits one bounded `RUN REFUSED profile=<id> reason=secrets_gate
+code=125` line, retains the selected task pending (not failed), and disables
+further launches of that profile for this run. Return the task from a claim only
+after the pinned gate/launcher contract proves no harness started; an uncertain
+exit follows existing quarantine/reconciliation rules, never blind requeue.
+Already-running jobs continue under normal accounting/finalization; unrelated
+profiles may run only under their own valid gates. Reservation release requires
+confirmed non-launch. The gate keeps key values out of profiles,
 snapshots, receipts, task argv and logs, and passes recovery and scope checks
 before real traffic is enabled.
 
@@ -380,7 +401,10 @@ wall clock.
    malformed catalog, no-route or multi-route profile, changed/missing snapshot,
    unsupported tool profile, a catalog under a writable pool/job/slot/scratch/
    `read_roots` path, and an untrusted worker-writable catalog all fail exit 2
-   before provider launch, with no fallback.
+   before provider launch, with no fallback. Include key/store paths inside each
+   protected placement, case/symlink aliases, future slots, and worker-replaceable
+   gate executables. Assert no decrypt or harness call. A `run --profiles` hash
+   mismatch cannot silently replace an admitted snapshot.
 3. **FROZEN-RECOVERY.** Dispatcher recovery and automatic retry use the frozen
    non-secret snapshot after catalog mutation; each new concrete job id has its
    own protected `<pool>/evidence/<job-id>/PROFILE.json`, while `retry_from`
@@ -405,7 +429,11 @@ wall clock.
 7. **PROTECTED-EVIDENCE-CONFLICT.** The coordinator's protected snapshot survives
    a worker write attempt and a crash; recovery trusts only its hash, retains
    non-secret raw evidence, and exposes only a sanitized worker-writable
-   projection. A changed counter payload for one stable attempt identity prints
+   projection. Profiled reclaim refuses before removing job files when the retained
+   profile snapshot/receipt is missing or its snapshot hash mismatches; success
+   retains the matching protected evidence and usage/report after reclaim. Include
+   a worker-modified sanitized projection that cannot satisfy this precondition.
+   A changed counter payload for one stable attempt identity prints
    `CONFLICT` and is not accepted as a second usage row.
 8. **SHARED-KERNEL-LOCK.** Two profiles and two pools sharing one provider
    allocation contend on one launcher-named kernel lock outside the pools. A
@@ -419,7 +447,11 @@ wall clock.
    missing bindings cause `run` exit 2 before the first worker, a forged parent
    environment marker cannot bypass it, and a fake three-recipient store causes
    `nova-secrets exec` exit 125
-   and starts zero workers. No key value appears in argv, snapshots, receipts,
+   and starts zero workers for that launch. Exercise a mid-pool 125: the selected
+   task remains pending, one profile-scoped refusal is printed, no later job on
+   that profile starts, other running jobs retain accounting, and no task is
+   falsely failed. An uncertain launch is quarantined and not requeued.
+   No key value appears in argv, snapshots, receipts,
    raw evidence, `RESULT.md` or logs.
 10. **COMMON-ACCOUNTING.** Legacy, profiled, `nova-local` and direct one-shot
     attempts use one accounting pipeline. Retries, rework and bounded multi-turn
