@@ -54,6 +54,10 @@ func parseScopedSpec(p, source, heading string) (scopedSpec, error) {
 			}
 		}
 		return scopedSpec{}, fmt.Errorf("--spec %s has multiple numbered sequences; add one of %s", p, strings.Join(headings, ", "))
+	} else if len(starts) == 1 {
+		// The unique sequence can follow a title, introduction and H2 heading.
+		// Starting at byte zero would stop on that heading before any rule.
+		start = starts[0]
 	}
 	end := len(lines)
 	for i := start; i < len(lines); i++ {
