@@ -3219,7 +3219,11 @@ contract. The rules are numbered on from rule 31.
     as every other listing in this spec does (Fable cold read, 2026-09-13).
     `by=` is the first in `started` order on `receipted`, and on `differs`,
     `missing` and `incomplete` it is the one receipt the line is about, where
-    `receipts=` is not printed.
+    `receipts=` is not printed. On `differs`, `by=` names the receipt owning
+    the differing row even when it was not selected for completion; it never
+    substitutes the selected receipt's id. If multiple differing receipts are
+    found, name the first by `(started, receipt id)` and its first differing
+    day in UTC day order.
     With days written and no differing row, it is `USAGE OK … state=completed`,
     `receipt=` the stored id it completed and `days=` the days this run added.
     A completing run takes `node`, `stage` and `who` **from the selected retained
