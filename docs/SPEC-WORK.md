@@ -1728,11 +1728,12 @@ verdicts the coordinator last fetched. **Every mutation verb takes `<write flags
 being the wire's `"deadline"` field spelled for the CLI — after it the caller stops waiting for
 this answer, and it is not a cancellation of the work, which is `operation cancel`: the request id is drawn by
 the tool and printed when absent. **`--dry-run` validates arguments, authority and permissions,
-fencing and every precondition against the revision `--expect` names, prints the PROJECTED receipt
+fencing and every precondition against the revision `--expect` names, prints the projected receipt
 with `dry-run=true`, and writes zero events, commits no journal revision and records no dedup
-entry; per Stella it CONSUMES NO REQUEST ID, so a later real apply may carry the same `--request`
-id, and that apply revalidates the expectation rather than trusting the preview -- the
-revision-bound-plan invariant of the acceptance section above, worn by every mutation verb rather
+entry; a dry run reserves nothing and promises nothing about a later apply—it holds no lease,
+no id and no slot for the caller; a later real apply may carry the same `--request`
+id, and that apply revalidates the expectation rather than trusting the preview—the
+revision-bound-plan invariant of the section "The engine and its client" below, worn by every mutation verb rather
 than by a plan verb alone.** **`--expect` names a revision the requester can read, and
 there are exactly two, in one number space.** The session's **local revision** is the count of
 accepted events, the snapshot's plus its journal's, printed `rev=<n>` on every mutation's `OK`
@@ -2837,7 +2838,8 @@ and refusals go to stderr. Every count line prints on failure as on
 success. Every `OK` line ends `emitted=<bytes>`. Every mutation's `OK` line carries the
 event's id, its request id, the session's local revision after it (`rev=<n>`), and
 `pushed=<rev|->`, the clipped revision, the same number as the last `CLIP OK`'s `pushed=`; a
-projected receipt adds `dry-run=true` to distinguish preview from committed receipt.
+projected receipt adds `dry-run=true` to distinguish preview from committed receipt, using the
+same shape with event id and revision spelled `-`.
 `SESSION OK` is one shape, printed by `session start`, `session status` and `session stop`
 alike, and its `state=` reads `live`, `fenced` or `red`: lowercase *active* is W's word in the
 root section above, `ACTIVE` in capitals is the per-friend live-data node, and neither names a
@@ -2897,6 +2899,7 @@ RENDER OK view=<id> cells=<n> private=<n> bytes=<n> into=<path> pushed=<rev|-> e
 RENDER FAIL view=<id> cells=<n> private=<n> drifted=<n> into=<path>: <reason>
 NODE NOTE already-closed node=<id> disposition=<d> settled=<stamp>   (a `node remove` of an item already in C: nothing written, exit 0, its NODE OK line following)
 <MUTATION> OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> ... emitted=<bytes>
+<MUTATION> OK id=- request=<id> node=<id> rev=- pushed=<rev|-> dry-run=true ... emitted=<bytes>
 <MUTATION> FAIL node=<id>: rule <n>: <reason>
 <MUTATION> FAIL node=<id> expect=<rev> current=<rev>: stale
 <MUTATION> FAIL request=<id> applied=<rev>: already applied
@@ -3241,9 +3244,8 @@ of this list and are not repeated here):
   what changed, writing nothing, and never reached by deleting the undo.
 - **`dry-run-writes-nothing`** — a dry run that validates and projects without mutating; after a
   green preview an accepted mutation moves the revision, then a real apply at that revision
-  REFUSES atomically, naming what changed and writing nothing; under SESSION OK the state digest,
-  `|O|` and journal length are unchanged, `events=`, `pending=` and `rev=` have not moved, and the
-  `--request` id is still new to the dedup index.
+  refuses atomically, naming what changed and writing nothing; under SESSION OK events, pending
+  and pushed have not moved, and the `--request` id is still new to the dedup index.
 - **`undo-refuses-an-external-effect`** — an undo over a sent message, a paid execution, a
   publication and a source deletion refused and reported as an external effect with its own
   compensating workflow; shared Git history never reset as the undo path.
