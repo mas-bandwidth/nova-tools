@@ -213,9 +213,11 @@ and 25 duplicate (batch 1) into 17 of 17 with 0 wrong and 0 duplicate (batch
     attempt the same precondition includes its non-secret profile snapshot and
     receipt, copied under `<pool>/reports/<job>/` and checked by
     `snapshot_hash` before the move. The authoritative profile snapshot lives
-    under the coordinator-owned protected `<pool>/evidence/<job>/<attempt>/`
-    path; a worker-visible `<job>/PROFILE.json` is only a read-only sanitized
-    projection. A `reclaim` whose
+    under the coordinator-owned protected `<pool>/evidence/<job-id>/PROFILE.json`
+    path, where `<job-id>` is the concrete attempt id; a worker-visible
+    `<job>/PROFILE.json` is a worker-writable sanitized projection and never
+    the trust root. The catalog path is likewise outside every writable pool,
+    job, slot, scratch, worker data home and configured `read_roots`. A `reclaim` whose
     copy does not hash to `REV`, or whose `REV` is missing, is refused the
     same way, `report copy does not match REV`, because a persistence that
     cannot be verified is not a persistence; `finalize` on a
@@ -648,10 +650,10 @@ ADD REFUSED: <reason>
 BATCH OK id=<id> tasks=<n> pending=<n>
 BATCH REFUSED: <reason>
 RUN POOL workers=<n> hours=<h> worker=<name> model=<model> pool=<dir>
-RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path>
+RUN START id=<id> slot=<n> pid=<n> pgid=<n> started=<stamp> deadline=<d> tokens=<n> job=<path> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN LAUNCH-FAILED id=<id> slot=<n> after=<d>: <reason>
 RUN ADOPT id=<id> slot=<n> pid=<n> started=<stamp> remaining=<d>
-RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false>
+RUN RECLAIM slot=<n> id=<id> end=<done|killed|failed|budget|budget-unverifiable|violation|input-limit|unknown|unlaunched> dest=<done|failed|-> usage=<path|-> requeued=<true|false> [profile=<id> model_requested=<id> model_observed=<id>]
 RUN QUARANTINE slot=<n> id=<id|->: <reason>
 RUN BUDGET id=<id> slot=<n> spent=<n> of=<n> findings=<n>
 RUN BUDGET-UNVERIFIABLE id=<id> slot=<n> samples=3 findings=<n>: <reason>
@@ -1341,8 +1343,10 @@ compact prompt prefixes, provider-capacity observations, frozen non-secret
 attempt snapshots and Go/Zen route rules are normative in
 [`SPEC-SWARM-PROFILES.md`](SPEC-SWARM-PROFILES.md). That document is the one
 owner of this amendment; it does not add a second dispatcher or ledger. Any
-Go/Zen secrets activation remains a protected integration gate with Rowan and
-the approved store/command; it is never satisfied by task prose or a selector.
+Go/Zen live-route activation remains a protected `nova-secrets exec` gate
+with the approved store/command; a run without that provenance refuses before
+the first worker, and the store-shape gate refuses exit 125. It is never
+satisfied by task prose or a selector.
 
 ## What it deliberately does not do
 
