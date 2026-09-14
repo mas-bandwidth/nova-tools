@@ -978,6 +978,28 @@ const LanePathspec = ":(glob)from-*/**"
 //   - the pathspec, because the bus's own machinery -- a README, a CI file, the roster --
 //     is not a note, and reading one as a note would be a parse failure reported to every
 //     reader on the bus.
+//
+// CommitsBetween is how many commits a fast-forward brought in, for the one line that says
+// the bus moved before an id was resolved. A count and never a list: what arrived is the
+// bus's business and the receipt's job is to say that it did.
+func CommitsBetween(dir, from, to string) (int, error) {
+	if err := ValidRevision(from); err != nil {
+		return 0, err
+	}
+	if err := ValidRevision(to); err != nil {
+		return 0, err
+	}
+	out, err := git(dir, "rev-list", "--count", from+".."+to)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	if _, err := fmt.Sscanf(strings.TrimSpace(out), "%d", &n); err != nil {
+		return 0, fmt.Errorf("git rev-list --count did not answer with a number: %w", err)
+	}
+	return n, nil
+}
+
 func ChangedSince(dir, commit string) ([]string, error) {
 	if err := ValidCommitHex(commit); err != nil {
 		return nil, err

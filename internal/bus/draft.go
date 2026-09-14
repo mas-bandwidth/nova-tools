@@ -100,7 +100,16 @@ type Skeleton struct {
 }
 
 // Render is the skeleton as a file: the header, a blank line, one line of body.
-func (s Skeleton) Render() string {
+func (s Skeleton) Render() string { return s.RenderWith(PlaceholderBody + "\n") }
+
+// RenderWith is the same header with a body somebody has already written, which is what the
+// reply form has and the skeleton has not. ONE renderer and not two: the file a person
+// edits, the file the reply form writes and the file that lands on the bus are the same
+// shape because the same code writes the header of all three.
+//
+// The body is written VERBATIM but for one thing: a file whose last byte is not a newline
+// gets one, which is the note convention every other writer here keeps.
+func (s Skeleton) RenderWith(body string) string {
 	var b strings.Builder
 	b.WriteString(KeyFrom + ": " + s.From + "\n")
 	b.WriteString(KeyTo + ": " + s.To + "\n")
@@ -116,7 +125,10 @@ func (s Skeleton) Render() string {
 	}
 	b.WriteString(KeySubject + ": " + subject + "\n")
 	b.WriteString("\n")
-	b.WriteString(PlaceholderBody + "\n")
+	b.WriteString(body)
+	if !strings.HasSuffix(body, "\n") {
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 
