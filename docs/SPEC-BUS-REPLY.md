@@ -124,6 +124,10 @@ scheme exists to remove, arriving through the reader's own door.
 3. **fast-forward the checkout**, never merge and never rebase — which is the
    main specification's own account of `wait`'s poll restated here, and is
    pinned by the existing wait tests rather than asserted fresh: every read in
+
+1. take the checkout lock, as every verb does;
+2. `git fetch <remote> <branch>` under `--git-timeout`;
+3. **fast-forward the checkout**, never merge and never rebase. Every read in
    this tool reads the working tree, so a fetch that stopped at `FETCH_HEAD`
    would resolve against the same stale tree it was run to replace;
 4. a checkout that is **ahead** — holding a commit of its own that has not been
@@ -146,6 +150,8 @@ thread.
 
 `--reply-to` takes the three shapes `--re` already takes — an **id**, a **path**,
 or the **exact subject** of a note on your live listing — resolved by the rules
+
+or the **exact subject** of a note on your open list — resolved by the rules
 already written for `--re`, with one addition and one restriction.
 
 **The addition: it is resolved after the refresh**, against the tree the fetch
@@ -174,10 +180,16 @@ it targetable for the same one.
 A note that is on the bus but on neither half of that listing is refused, and the
 refusal says which of the reasons it is:
 
+**The restriction: the target must be on the caller's own open list.** A note
+that is on the bus but not on your open list is refused, and the refusal says
+which of the reasons it is:
+
 - you have already answered it — a note of yours carries its id on a `Re:` line;
 - it was never addressed to you, `To:` or `Cc:`;
 - it is behind your switch-day line, so this reader has taken it as read;
 - you have no cursor yet, so there is no listing for it to be on.
+
+- you have no cursor yet, so you have no open list at all.
 
 The reason for the restriction is what this form is for: it answers what you are
 carrying. A target you are not carrying is far more often a stale id copied out
@@ -195,6 +207,14 @@ is **the same rule** `send` already applies to a `Re:` line naming a subject.
 The rule is what is kept, not the wording: `send` says it closed the newest and
 today's `draft` says the skeleton names the newest, and this line is this verb's
 own spelling of the one rule, which is what must not disagree:
+
+a restriction with a door in it**, and the refusal names the door: the existing
+`draft --re` form resolves against the whole bus and is untouched, so a
+deliberate reply to a closed thread is one flag away and always was.
+
+**A subject that matches two notes resolves to the newest and says so**, which
+is the rule `send` already applies to a `Re:` line naming a subject, kept
+verbatim so the two cannot disagree:
 
 ```
 DRAFT NOTE --reply-to: subject matched <n> notes; this draft names the newest <id> from <name>; name the id to be exact
@@ -322,6 +342,11 @@ The temporary is removed on every failing path — the already-exists refusal an
 the unsupported-filesystem refusal alike — so a refused run leaves `--draft-dir`
 holding exactly what it held before, and no stray `.tmp` beside it.
 
+land on one path; the minute is there for a person reading the directory. **An
+existing file at that path is a refusal, never an overwrite** — exit 1, naming
+the path — because the one thing that can be at that path is a draft of this
+same reply that somebody is editing in another window.
+
 The path is printed, once, on the receipt line. Nothing else goes to stdout in
 this form.
 
@@ -417,6 +442,20 @@ old one nor the new one, and here that would be half a reply that looks
 sendable; and a rename that replaces silently loses a whole draft that another
 checkout sharing this directory created in the meantime.
 
+| `--reply-to` names no id, no path and no open subject on the refreshed bus | that threads are named by id, and that a slug is not a thread | 1 |
+| `--reply-to` resolves on the bus but is not on this reader's open list | which of the four reasons it is, and that `draft --re` answers a closed thread | 1 |
+| the target's sender is `--as` and no `--to` was given | a reply to your own note needs an explicit `--to` | 1 |
+| the body file is unreadable | the path and the reason | 1 |
+| the body is empty, or over `--max-body-bytes` | the budget and the size, read at budget+1 and no further | 1 |
+| a file already exists at the draft path | the path, and that this tool never overwrites a draft | 1 |
+| another `nova-bus` holds this checkout | the existing lock refusal, unchanged | 1 |
+
+**No refusal writes a partial draft.** The file is written once, complete, by
+rename into `--draft-dir`, after every check above has passed — the same rename
+discipline the lane state files use, for the same reason: a kill between the
+truncate and the write leaves a file that is neither the old one nor the new
+one, and here it would leave half a reply that looks sendable.
+
 ## What a draft does not do to the open list
 
 **Nothing.** Drafting a reply does not close the note it answers, does not mark
@@ -437,6 +476,8 @@ The path from here is the one that already exists and is already reviewed:
 
 ```
 nova-bus draft ... --reply-to <id> --body-file reply.txt --draft-dir <scratch dir> ...
+
+nova-bus draft ... --reply-to <id> --body-file reply.txt --draft-dir /tmp/drafts ...
 nova-bus prepare --bus <dir> --as <name> --file <the path it printed>
 nova-bus send    --bus <dir> --as <name> --prepared <artifact> --remote <r> --branch <b>
 ```
@@ -462,6 +503,9 @@ holds each one:
   carried `OPEN` plus the change set since the cursor, which is the O(new) read
   and not a walk of the bus — so a reply on a bus of ten thousand notes costs
   what a reply on a bus of ten costs.
+
+  through the open list and the catalogue the reading verbs already use, so a
+  reply on a bus of ten thousand notes costs what a reply on a bus of ten costs.
   Where the existing resolution does read more than that, this slice **preserves
   correctness and measures it** rather than introducing a second index whose
   freshness nobody can vouch for; any indexing change is a separate, separately
@@ -491,6 +535,13 @@ with the alternative and what it would cost.
    alone — is not on the table: it would refuse the note the fetch was run to
    find. If reviewers would rather have the looser rule, the change is to the
    refusal table and to two tests, and nothing else.
+
+2. **The target must be on the caller's open list.** The proposal resolves an
+   exact id against the bus. The restriction catches a stale id copied out of an
+   older listing, which is the failure this form is most likely to produce; it
+   refuses a deliberate second reply to a closed thread, which `draft --re`
+   still does. If reviewers would rather have the looser rule, the change is to
+   the refusal table and to two tests, and nothing else.
 3. **The draft is a file, not stdout.** The proposal prints the draft on stdout.
    A file that the tool names, refuses to overwrite and refuses to put inside
    the bus is what closes the in-checkout refusal at the start of the job rather
@@ -646,6 +697,16 @@ on the real bus to produce a number.** Where a real reply does go out it goes
 out once, by whichever form is in use that day, and the other form is the dry
 run beside it.
 
+The claim under test is narrow: **this form removes turns from answering a note,
+and its own output does not cost back what it saved.** Nothing here claims a
+percentage, and shorter output on its own proves nothing about total cost.
+
+**The comparison is the same real exchange, answered both ways.** Pick a handful
+of actual coordination replies — not synthetic ones, because a synthetic reply
+has no stale checkout and no ambiguous subject, which is where the turns
+actually go. Answer each one by hand as today, and once through this form, from
+the same checkout state.
+
 What is counted, per reply:
 
 - **coordinator turns**, before and after, read out of the harness transcript
@@ -668,6 +729,13 @@ What is counted, per reply:
   re-run. A form that halves the composing turns and adds a review pass has
   moved the cost rather than removed it;
 - **errors and wall time**, for that same reason;
+
+- **the tokens of the tool's own output**, before and after: stdout plus stderr,
+  measured **at the largest plausible state** — a reader carrying several
+  hundred open notes — because a receipt that is bounded at ten notes and
+  unbounded at six hundred is unbounded;
+- **errors, retries and wall time**, because a form that halves the turns and
+  doubles the refusals has moved the cost rather than removed it;
 - **source and recipient correctness**: did the reply name the note it meant and
   reach the people it meant. A turn saved by a reply that went to the wrong
   audience is not a turn saved.
@@ -678,6 +746,12 @@ that reports turns but not cache reads yields a turn comparison and an unknown
 token comparison, and the summary says so in the same sentence as the number,
 not in a footnote. A saving claimed over a total that is largely unknown is not
 a saving claimed.
+
+**Implementation and review cost is excluded from the per-reply figure and
+reported beside it**, as its own number, with the count of replies at which it
+pays for itself. Folding it into the per-reply figure would hide the steady
+state; leaving it out entirely would hide the bill. Both numbers, separately, is
+the only honest shape.
 
 Raw transcripts and the exact revision each side was measured at are retained,
 and the report names the harnesses and models involved without treating any of
@@ -1093,6 +1167,14 @@ schema, never by inventing abbreviated commit strings.
   before and inside frames; no cursor advancement crosses unprinted data; retry
   may re-show a body but cannot skip it. Preserve existing publish-retry rules.
 
+
+## The tests, by name
+
+Every MUST above has a test, and the name says which one. They are ordinary
+package tests against disposable local bare git remotes, inside the existing
+fast tier's budget — one minute ideally, two at most — with anything heavier
+declared in the certification tier rather than deleted.
+
 **That the released tool is untouched**
 
 - `TestDraftWithoutReplyToIsByteIdenticalToTodays` — the existing form's stdout,
@@ -1103,6 +1185,9 @@ schema, never by inventing abbreviated commit strings.
   `TestGeneratedReplyHeaderIsByteEqualToTheHandBuiltOne` produces**, fed to
   `prepare` with no tolerance applied: it validates as an ordinary draft, and
   the prepared-artifact tests pass unmodified beside it.
+
+- `TestPrepareAndSendAreUnchangedByThisSlice` — the prepared-artifact tests pass
+  unmodified, and a draft this form wrote is an ordinary input to them.
 
 **That it is fresh**
 
@@ -1115,6 +1200,11 @@ schema, never by inventing abbreviated commit strings.
   incidental. A second fixture asserts the other half of the set: a note the
   reader is carrying on `OPEN` and has already receipted is still a legal
   target, because heard is not answered.
+
+  exists only on the remote.** The checkout is stale, the id is unknown locally,
+  and the run resolves it and writes the draft. The same run with the fetch
+  disabled at the seam refuses, which is what proves the fetch is load-bearing
+  rather than incidental.
 - `TestRefreshFailureIsARefusalAndNeverAStaleAnswer` — an unreachable remote, a
   branch nobody has, and a fetch that times out: exit 1 each, no draft written,
   and git's transcript under the event line.
@@ -1124,6 +1214,8 @@ schema, never by inventing abbreviated commit strings.
   `OPEN`, `RECEIPTS` and `INDEX` unchanged on every lane, including after a run
   whose target was found only in the new-since-the-cursor half of the listing:
   computing that listing is a read and leaves no trace.
+
+  `OPEN`, `RECEIPTS` and `INDEX` unchanged on every lane.
 
 **That it resolves the right note**
 
@@ -1143,6 +1235,12 @@ schema, never by inventing abbreviated commit strings.
   by path, and the path is what lands on the `Re:` line, while the draft's
   filename is the derived `legacy-<12 hex>` id and holds no `/`; two legacy
   targets in one directory produce two names.
+
+- `TestTargetNotOnTheOpenListIsItsOwnRefusal` — four fixtures, one per reason:
+  already answered, never addressed to this reader, behind the switch-day line,
+  and no cursor at all. Each refusal names its own reason and the `--re` door.
+- `TestReplyResolvesAPathForANoteWrittenBeforeIds` — a legacy target is answered
+  by path, and the path is what lands on the `Re:` line.
 
 **That the headers are the tool's and the body is the author's**
 
