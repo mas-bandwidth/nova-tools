@@ -69,9 +69,8 @@ original operation/control identity.
 Admission journals the hold and a recoverable capture anchor before an
 acknowledgement. The engine record pins the validated base snapshot hash, accepted
 journal boundary and captured model revision; retention cannot discard that base
-or journal span until target capture and its durable manifest have completed.
-Recovery reconstructs that exact revision, not the newer mutable scope. Its in-memory
-COW pointer alone is insufficient. A crash cannot leave an acknowledged pause with
+or journal span until target capture and its durable manifest have completed. A concurrent clip may publish, but it must carry the live capture pin forward and retain the anchored snapshot object plus committed journal span until that manifest is durable; it may not make the capture reconstruct from a newer scope. If the configured retention/clip representation cannot hold those exact references, admission refuses the control before acknowledgement rather than waiting through external I/O or silently weakening the capture. The durable pin is released only after the manifest's anchor and referenced bytes verify.
+Recovery reconstructs that exact revision, not the newer mutable scope. Here C/O/W means the source's closed/open/working root and working predicate; it is **not** copy-on-write and its in-memory pointer alone is insufficient. A crash cannot leave an acknowledged pause with
 no hold or no reproducible target set. Capture selects pending offers
 and current or unresolved execution identities through the existing per-node/repo/
 friend indexes; a lease expiry cannot remove a target from this capture. The
@@ -168,10 +167,7 @@ installs the node hold, captures old-generation executions, writes the existing
 `:correct` event and binds the new generation to immutable instruction bytes and
 their SHA-256. The instruction reference is data, not a command or access grant.
 Its envelope identity covers both generation change and control so retry cannot
-bump generation twice. Admission validates and durably retains the bounded instruction
-bytes through the configured content reader before acknowledging the generation
-change; missing or mismatched content refuses atomically. Dispatch uses that retained
-body through the configured transport, never newer text at the reference.
+bump generation twice. The configured content reader validates and bounds instruction bytes **outside** the mutation loop; only after it has returned immutable staged bytes does the writer revalidate the expected revision, target generation and holds, then durably retain those bytes and acknowledge the generation change. Missing, mismatched or stale staged content refuses atomically. Dispatch uses that retained body through the configured transport, never newer text at the reference.
 
 Each capable worker receives a directive naming old/new generations, its original
 offer/attempt, and exact instruction hash. A worker acknowledges the applied
@@ -184,9 +180,19 @@ claiming transport delivery; while any execution remains active/uncertain, it mu
 refuse naming `execution correct`, otherwise it bypasses the dispatch barrier.
 
 
-Undo can compensate local un-dispatched intent under postimage guards. A delivered
-stop cannot be undone by deleting its receipts or replaying a model job. Resume and
-new assignment are explicit subsequent actions with their own ids and authorization.
+## Undo disposition — proposed
+
+The parent undo table requires a named disposition for every control mutation. A local reversal only appends a new guarded envelope while no target directive was handed to transport and the control's exact postimage, captured target set, and hold generation are still current. It never deletes a control, receipt, observation, usage segment, or external effect.
+
+| verb | reversible before transport handoff, with exact postimage guard | refused or compensating action after handoff/delivery/uncertainty |
+| --- | --- | --- |
+| `execution pause` | append a control reversal that removes only this untouched hold and cancels its unsent directives | after any directive delivery or target uncertainty; retain the pause and use `execution resume --action release-hold` only after the named control's required outcomes reconcile |
+| `execution stop` | append a control reversal that removes only this untouched hold and cancels its unsent stop directives | after delivery, acknowledgement, or uncertain process state; retain the stop and use a new authorized resume/reconcile action. No undo claims a worker restarted |
+| `execution resume` | append a reversal that restores only the prior untouched hold and cancels unsent resume directives | after resume delivery or a running/unknown observation; retain the control and use pause, stop, or reconcile as a new action |
+| `execution correct` | append a reversal only before any correction directive leaves the coordinator and only if old/new generation postimages and retained instruction identity are unchanged | after delivery or any old/new execution uncertainty; retain linked segments and use stop/reconcile followed by a new assignment or correction, never a generation rewind |
+| `execution reconcile` | never: it records validated observations and their disposition | always; a later reconciliation records a new observation set and preserves the earlier one, including contradictions |
+
+Transport handoff includes a claimed or in-flight send even when no delivery receipt exists; absence of a receipt does not prove that a directive was never sent. A correction compensator that reapplies earlier instruction content allocates a new generation and preserves its predecessor lineage; it never restores an old generation number or relabels old results as current. The exact canonical reversal event shape and its relationship to the parent `undo` verb remain a friend-review decision. Until pinned, an implementation must refuse a requested undo rather than infer that a transport queue, worker, or lease can be restored.
 
 ## Required witnesses and remaining decisions
 
@@ -202,10 +208,11 @@ new assignment are explicit subsequent actions with their own ids and authorizat
   is retained independently and the task id is counted once in W.
 - Restart coordinator, release one of overlapping holds, undo after delivery and
   return a friend: no implicit restart, cleared uncertainty or permission change.
+- **Capture survives clip:** a clip completes after a control anchors its base snapshot and journal boundary but before its target manifest. The retained pin still resolves the same revision and span; an unavailable pin representation refuses admission before the control acknowledgement.
+- **Staged correction refusal:** a bounded instruction read or target verifier completes after a conflicting revision. The writer records no hold/generation/control envelope and status remains responsive while that read runs.
+- **Undo boundary:** an undispatched pause/stop/resume/correct with unchanged postimage appends its named local reversal; a claimed send with no receipt, delivery, receipt or unknown process state refuses and preserves all receipts and segments. Reapplying old correction content produces a fresh generation with lineage, never a generation rewind.
 
-Agree the derived capture/receipt and observation codecs, hold/dispatch barrier
-implementation, adapter pause/resume/correction capabilities and segment-boundary codec, fencing enforcement,
-and trusted execution-outcome evidence. These refine existing assignment/ACTIVE
+Agree the derived capture/receipt and observation codecs, the durable capture-pin/clip representation, the exact guarded reversal-envelope codec, hold/dispatch barrier implementation, adapter pause/resume/correction capabilities and segment-boundary codec, fencing enforcement, and trusted execution-outcome evidence. These refine existing assignment/ACTIVE
 and distributed-stop requirements; no scheduler or test suite is complete yet.
 
 Related proposal: [assignment admission](WORK-ASSIGNMENT-VERBS.md).
