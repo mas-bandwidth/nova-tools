@@ -117,6 +117,32 @@ that contract. Native OpenCode's own header generation and override order must
 be verified at its request boundary before enabling the route. Do not add a
 second unhashed identity override through arbitrary model options.
 
+## Streaming evidence and the accounting boundary
+
+The companion [stream probe](fixtures/sdk-route-probe/stream-probe.mjs) now
+feeds synthetic SSE through the same pinned SDKs. For Go/Zen chat and Zen
+Responses it verifies function-tool request encoding, reassembled arguments,
+call ID/name, exactly one successful tool-call finish, and usage fields.
+Chat requests explicitly ask for streamed usage. Missing chat usage stays
+undefined at this SDK boundary; malformed chat data emits an error rather
+than a successful finish. This is finite SDK coverage, not a native execution
+or exhaustive stream-validation result.
+
+The fixture's input total 11 includes cache read 3; output total 7 includes
+reasoning 2. Its inclusive total is 18, not 23. These synthetic counts establish
+no real spend or provider billing. The launcher must preserve each call's raw
+usage and normalization basis before later transformations can erase absence.
+
+Pinned OpenCode's
+[usage conversion](https://github.com/anomalyco/opencode/blob/16747470f976aca3d362ad730bcd3fe82ecc2c9a/packages/opencode/src/session/session.ts#L338)
+replaces absent counters with zero and clamps negative residuals; its
+[step-finish handler](https://github.com/anomalyco/opencode/blob/16747470f976aca3d362ad730bcd3fe82ecc2c9a/packages/opencode/src/session/processor.ts#L452)
+updates message tokens from the current step while retaining a separate step
+record. Consequently a later message-only numeric observation cannot certify
+provider-native zero or whole-attempt totals. The shared accounting contract in
+the parent specification still requires explicit coverage, call/step identity
+and disjoint aggregation. These probes do not implement that bridge.
+
 ## Runtime fields
 
 Every listed field is required; unknown and duplicate members refuse at every

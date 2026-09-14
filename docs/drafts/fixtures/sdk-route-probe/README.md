@@ -12,14 +12,14 @@ From this directory, with Node.js 18+ and npm on PATH:
 
 ```sh
 probe_work=$(mktemp -d)
-cp package.json package-lock.json probe.mjs "$probe_work/"
+cp package.json package-lock.json probe.mjs stream-probe.mjs "$probe_work/"
 printf 'registry=https://registry.npmjs.org/\n' > "$probe_work/npmrc"
 printf '' > "$probe_work/global-npmrc"
 (cd "$probe_work" && env NPM_CONFIG_USERCONFIG="$probe_work/npmrc" \
   NPM_CONFIG_GLOBALCONFIG="$probe_work/global-npmrc" \
   NPM_CONFIG_CACHE="$probe_work/cache" \
   npm ci --ignore-scripts --no-audit --no-fund --registry=https://registry.npmjs.org/ \
-  && node probe.mjs)
+  && node probe.mjs && node stream-probe.mjs)
 ```
 
 Installation downloads public dependencies; the probe uses intercepted requests.
@@ -37,6 +37,17 @@ User-Agent per call. No request can use global fetch; the script does not call a
 provider, load OpenCode, use a worker, or use credentials. `fixture-only-key` is
 a literal test value and not a credential.
 
-The probe covers direct nonstreaming `doGenerate` construction only. It does not
-validate streaming/SSE parsing, authentication, provider availability, retries,
-model catalog/config isolation, tool conversion, or native-adapter admission.
+`probe.mjs` covers direct nonstreaming `doGenerate` construction.
+`stream-probe.mjs` supplies synthetic SSE to actual `doStream` calls for both
+chat routes and the Responses route. It checks declared function-tool request
+schemas, split argument deltas, normalized tool-call identity/arguments,
+inclusive input/output counts and their cache/reasoning subcounts, absent
+chat usage, and malformed chat chunks. Positive streams must finish once with
+`tool-calls` and no error events. These are SDK-level fixture results, not
+proof that native OpenCode exposes, executes or authorizes those tools.
+
+The inputs are deliberately synthetic and never enter operational token or
+cost reports. They contain no provider money observation. This fixture does
+not validate authentication, provider availability, retries, native catalog or
+configuration isolation, arbitrary transport fragmentation, interrupted streams,
+all malformed inputs, missing Responses usage or full native-adapter admission.
