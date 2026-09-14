@@ -29,6 +29,8 @@ import (
 
 const defaultPacketMaxBytes = 131072
 const defaultPacketTimeout = 120 * time.Second
+const maxPacketTimeoutSeconds = int64(time.Duration(1<<63-1) / time.Second)
+const packetDiagnosticCap = oneline.TailBytes
 
 var packetGitBinary = "git"
 var packetGHBinary = "gh"
@@ -105,8 +107,8 @@ func packet(args []string, out, errOut io.Writer) int {
 	if *maxFlag < 0 {
 		return refuse(errOut, "--max must be non-negative")
 	}
-	if *timeoutSeconds < 1 {
-		return refuse(errOut, "--timeout must be a positive number of seconds")
+	if *timeoutSeconds < 1 || int64(*timeoutSeconds) > maxPacketTimeoutSeconds {
+		return refuse(errOut, fmt.Sprintf("--timeout must be a positive number of seconds no greater than %d", maxPacketTimeoutSeconds))
 	}
 	timeout := time.Duration(*timeoutSeconds) * time.Second
 	if (*pr > 0) == (*branch != "") {
@@ -290,22 +292,59 @@ func packet(args []string, out, errOut io.Writer) int {
 	return writePacket(*dest, body, out, errOut, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(body), cut, false)
 }
 
+type diagnosticCapture struct {
+	data []byte
+	cut  bool
+}
+
+func (d *diagnosticCapture) Write(p []byte) (int, error) {
+	if remaining := packetDiagnosticCap - len(d.data); remaining > 0 {
+		if remaining > len(p) {
+			remaining = len(p)
+		}
+		d.data = append(d.data, p[:remaining]...)
+	}
+	if len(p) > packetDiagnosticCap-len(d.data) {
+		d.cut = true
+	}
+	return len(p), nil
+}
+
+func (d *diagnosticCapture) String() string {
+	text := string(d.data)
+	if d.cut {
+		text += " [stderr truncated]"
+	}
+	return oneline.Escape(strings.TrimSpace(text))
+}
+
 func sourceOutput(timeout time.Duration, dir, binary string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, args...)
 	cmd.Dir = dir
+	var stdout bytes.Buffer
+	stderr := &diagnosticCapture{}
+	cmd.Stdout = &stdout
+	cmd.Stderr = stderr
 	// A deadline must still return when a killed command left a child holding
 	// its output pipe; this is the lifecycle guard merge.Exec uses as well.
 	cmd.WaitDelay = 2 * time.Second
-	b, err := cmd.CombinedOutput()
+	err := cmd.Run()
+	diagnostic := stderr.String()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return string(b), fmt.Errorf("%s timed out after %s; raise --timeout <seconds> to wait longer", binary, timeout)
+		if diagnostic != "" {
+			return stdout.String(), fmt.Errorf("%s timed out after %s; raise --timeout <seconds> to wait longer: %s", binary, timeout, diagnostic)
+		}
+		return stdout.String(), fmt.Errorf("%s timed out after %s; raise --timeout <seconds> to wait longer", binary, timeout)
 	}
 	if err != nil {
-		return string(b), fmt.Errorf("%s failed: %w", binary, err)
+		if diagnostic != "" {
+			return stdout.String(), fmt.Errorf("%s failed: %w: %s", binary, err, diagnostic)
+		}
+		return stdout.String(), fmt.Errorf("%s failed: %w", binary, err)
 	}
-	return string(b), nil
+	return stdout.String(), nil
 }
 
 func gitOut(timeout time.Duration, repo string, args ...string) (string, error) {

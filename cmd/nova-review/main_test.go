@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -854,7 +855,7 @@ func TestPacketSourceCommandsUseSuccessFailureAndTimeoutBudgets(t *testing.T) {
 		fake := packetFakeCommand(t, "printf 'fake git failure' >&2; exit 7")
 		withPacketSourceBinaries(t, fake, packetGHBinary)
 		got, err := gitOut(time.Second, t.TempDir(), "diff")
-		if err == nil || !strings.Contains(err.Error(), "failed") || !strings.Contains(got, "fake git failure") {
+		if err == nil || !strings.Contains(err.Error(), "failed") || !strings.Contains(err.Error(), "fake git failure") || got != "" {
 			t.Fatalf("git failure got=%q err=%v", got, err)
 		}
 	})
@@ -875,6 +876,15 @@ func TestPacketSourceCommandsUseSuccessFailureAndTimeoutBudgets(t *testing.T) {
 			t.Fatalf("gh success got=%q err=%v", got, err)
 		}
 	})
+	t.Run("gh warning stays out of JSON", func(t *testing.T) {
+		sha := strings.Repeat("b", 40)
+		fake := packetFakeCommand(t, "printf '{\"headRefOid\":\""+sha+"\"}'; printf 'warning only' >&2")
+		withPacketSourceBinaries(t, packetGitBinary, fake)
+		got, err := hostPRHead(time.Second, "owner/repo", 8)
+		if err != nil || got != sha {
+			t.Fatalf("gh warning got=%q err=%v", got, err)
+		}
+	})
 }
 
 func TestPacketTimeoutFlagBoundsSourceCommand(t *testing.T) {
@@ -890,5 +900,15 @@ func TestPacketTimeoutFlagBoundsSourceCommand(t *testing.T) {
 	}
 	if _, err := os.Stat("timed.md"); !os.IsNotExist(err) {
 		t.Fatalf("timeout wrote artifact: %v", err)
+	}
+}
+
+func TestPacketTimeoutFlagRejectsNonpositiveAndOverflow(t *testing.T) {
+	base := []string{"packet", "--lane", "lane", "--branch", "feature", "--who", "emma", "--out", "packet.md", "--timeout"}
+	for _, value := range []string{"0", "-1", strconv.FormatInt(maxPacketTimeoutSeconds+1, 10)} {
+		var out, errb bytes.Buffer
+		if code := run(append(base, value), &out, &errb); code != 2 || !strings.Contains(errb.String(), "--timeout") {
+			t.Fatalf("timeout=%s code=%d stderr=%s", value, code, errb.String())
+		}
 	}
 }
