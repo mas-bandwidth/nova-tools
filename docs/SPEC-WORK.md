@@ -2357,7 +2357,8 @@ not a second way in:
   delivery, acknowledgement and accepted ownership as four facts, and only the lease verbs write
   any of them. A pending offer has no verb and so no event.
 - **`pause`, `stop`, `reconcile`** — `a-stop-reaches-distributed-work` is an obligation with no
-  verb to reach it, and `:cancel-requested` is a state nothing writes.
+  verb to reach it, and `:cancel-requested` is a state written by `state --to :cancel-requested`
+  from `:todo`, `:doing`, or `:blocked` (994–996; 1007–1008).
 - **`session export --at <revision>`** — `full-round-trip` asks for the **export of a captured
   revision**, and `session export` exports requests, not a revision's state. The export the
   acceptance suite names is a verb this draft does not have.
