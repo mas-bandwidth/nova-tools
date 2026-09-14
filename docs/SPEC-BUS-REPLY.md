@@ -453,11 +453,14 @@ checkout sharing this directory created in the meantime.
 | a file already exists at the draft path | the path, and that this tool never overwrites a draft | 1 |
 | another `nova-bus` holds this checkout | the existing lock refusal, unchanged | 1 |
 
-**No refusal writes a partial draft.** The file is written once, complete, by
-rename into `--draft-dir`, after every check above has passed — the same rename
-discipline the lane state files use, for the same reason: a kill between the
-truncate and the write leaves a file that is neither the old one nor the new
-one, and here it would leave half a reply that looks sendable.
+**No refusal writes a partial draft, and no publish replaces one.** The file is
+written once, complete, into a unique temporary and then published onto its
+final name by the create-exclusive step set out under the filename above, after
+every check in this table has passed. Two reasons, and the second is not the
+first: a kill between a truncate and a write leaves a file that is neither the
+old one nor the new one, and here that would be half a reply that looks
+sendable; and a rename that replaces silently loses a whole draft that another
+checkout sharing this directory created in the meantime.
 
 ## What a draft does not do to the open list
 
@@ -704,11 +707,27 @@ The claim under test is narrow: **this form removes turns from answering a note,
 and its own output does not cost back what it saved.** Nothing here claims a
 percentage, and shorter output on its own proves nothing about total cost.
 
-**The comparison is the same real exchange, answered both ways.** Pick a handful
-of actual coordination replies — not synthetic ones, because a synthetic reply
-has no stale checkout and no ambiguous subject, which is where the turns
-actually go. Answer each one by hand as today, and once through this form, from
-the same checkout state.
+**Only operational tokens are compared: the same work before and after
+adoption, at equivalent accepted quality.** What it cost to build this form and
+to review it is sunk and is **excluded entirely** — not folded into the
+per-reply figure, not reported beside it, and above all not turned into a count
+of replies at which it pays for itself. A build cost is spent whatever happens
+next, so a payback threshold measures nothing anybody can act on. The question
+is only whether a line that has the form spends fewer tokens than a line that
+does not, on the same work, for a reply of the same accepted quality —
+"accepted" because a draft that needed a second pass before it could be sent did
+not do the same work as one that did not, and must carry that pass in its own
+column rather than in neither.
+
+**The two forms are compared without the same live reply being delivered
+twice.** Pick a handful of actual coordination replies — not synthetic ones,
+because a synthetic reply has no stale checkout and no ambiguous subject, which
+is where the cost actually goes. Then compare at draft time: the other side is
+composed as a draft and stopped there, or both sides are replayed as a fixture
+exchange against a disposable local bare remote. **A duplicate note is never put
+on the real bus to produce a number.** Where a real reply does go out it goes
+out once, by whichever form is in use that day, and the other form is the dry
+run beside it.
 
 What is counted, per reply:
 
@@ -733,15 +752,20 @@ What is counted, per reply:
   moved the cost rather than removed it;
 - **errors and wall time**, for that same reason;
 
+
+- **the coordinator's own input, output and cache-read tokens per reply**, where
+  the harness reports them, because a turn is mostly a cache read and a count of
+  turns alone would hide the category the saving actually lands in;
 - **the tokens of the tool's own output**, before and after: stdout plus stderr,
   measured **at the largest plausible state** — a reader carrying several
   hundred open notes — because a receipt that is bounded at ten notes and
-  unbounded at six hundred is unbounded;
-- **the coordinator's own input and cache-read tokens per reply**, where the
-  harness reports them, because a turn is mostly a cache read and a count of
-  turns alone would hide the category the saving actually lands in;
-- **errors, retries and wall time**, because a form that halves the turns and
-  doubles the refusals has moved the cost rather than removed it;
+  unbounded at six hundred is unbounded. The tool's output is an operational
+  cost like any other, counted on the after side and never netted out;
+- **operational review and retry overhead**: the turns and tokens spent reading
+  a generated draft before it is sent, every refusal met on the way, and every
+  re-run. A form that halves the composing turns and adds a review pass has
+  moved the cost rather than removed it;
+- **errors and wall time**, for that same reason;
 - **source and recipient correctness**: did the reply name the note it meant and
   reach the people it meant. A turn saved by a reply that went to the wrong
   audience is not a turn saved.
@@ -1176,7 +1200,7 @@ schema, never by inventing abbreviated commit strings.
 
 ## The tests, by name
 
-Every MUST above has a test, and the name says which one. **Twenty-nine tests
+Every MUST above has a test, and the name says which one. **Thirty tests
 are named below**, and each one names its fixture and its observable. They are
 ordinary package tests against disposable local bare git remotes, inside the
 existing fast tier's budget — one minute ideally, two at most — with anything heavier
