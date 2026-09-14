@@ -2558,6 +2558,176 @@ while keeping specialised perspectives and security roles available where they a
 **Routine scheduling is automated only under an explicit policy and measured real-work results**,
 and **no model profile grants access, execution authority or capacity by itself.**
 
+## Efficiency policy is validated data *(Stella; proposed enforcement, 2026-09-14)*
+
+Glenn asks that lessons from real coordination become hard rules in nova-work structure and
+configuration. This section specifies those gates; **it does not claim they are implemented**.
+It refines the existing CONFIG, attempt, pricing and measurement contracts, without creating
+another scheduler, usage ledger or executable Lisp configuration. Pulse duration and worker
+choice remain team policy: diversity of friends, models and harnesses remains welcome.
+
+### Records and owning operations
+
+Each friend CONFIG may hold a versioned `:efficiency-policy` record, scoped only to that friend
+and its capabilities. A team-wide change is explicit validated intake for each affected friend,
+never an implicit cross-friend mutation. Its required fields are a stable
+id, schema version, revision/content hash, scope, author/provenance, and these typed groups:
+
+- `:quality`: references to the task-class acceptance and required review gates.
+- `:routing`: eligible capability references, configured preference order among suitable
+  economical routes, and conditions requiring an explicitly recorded escalation reason.
+  Role, consent, availability, fencing and capacity constraints still take precedence.
+- `:bounds`: positive integer input-packet bytes, report bytes, attempt count and execution-limit
+  milliseconds; checkpoint reference and a boolean full-history permission. Limits are
+  configured per task class, never hardcoded friend or model names.
+- `:measurement`: workload/accepted-unit definition, required actor and attempt coverage,
+  rate-revision references, and separate operational versus tool-implementation allocation.
+- `:trial`: optional experiment reference, stage (`:observe`, `:trial`, `:adopt`, `:retire`),
+  expiry, and explicit quality, total-token, cost and wall-time regression tolerances.
+
+Validated `config --intake` owns policy admission and replacement under the existing config
+journal event, existing friend subject and revision guard. Trial-stage changes use that same
+config event with prior revision, new policy and evidence references; no out-of-band promotion
+exists. An invalid or incomplete policy leaves the previous revision
+intact. The canonical schema, digest field ordering and grammar must include these fields
+before this slice can lock; no generic field edit bypasses validation.
+
+An experiment is retained as a canonical task with acceptance criteria and references to an
+immutable manifest and observation artifacts. The manifest pins its hypothesis, workload,
+source/acceptance revisions, baseline selection, changed variables, comparison procedure,
+sample/stop rule and tolerances **before a prospective trial**. A historical comparison is
+explicitly `:retrospective`, retaining its selection rule and confounders; it cannot be relabelled
+as preregistered. Outcomes are `:saving`, `:inconclusive`, or `:regression`, with coverage and
+uncertainty. A zero accepted-unit denominator is undefined, never zero cost per result.
+
+ACTIVE executions reference policy revision, task generation, attempt and parent execution,
+packet digest/byte count, requested and observed model, harness, bench,
+`:execution-limit-ms` (positive integer), `:execution-started-at` and
+`:execution-expires-at` (UTC stamps or explicitly unknown before launch),
+`:stop-outcome` (not-requested, requested, confirmed-stopped, completed or unresolved),
+`:stop-observed-at` (UTC stamp or explicitly unknown), checkpoint, result and usage pointers.
+The client wait deadline is not stored in any of these execution-bound fields. These extend existing execution/attempt records; references never
+duplicate usage. Unattributed coordinator work remains an explicit allocation gap. C retains
+closed experiments and attempts; roadmap and friend views reference them after closure.
+
+### Admission and result gates
+
+1. **Bound the work packet.** A delegated request has one named objective, source revision,
+   acceptance criteria, allowed scope, result contract and recovery checkpoint. Prefer a focused
+   packet to a transcript fork. Refuse dispatch above the configured packet bound, or a history
+   fork when disallowed. Context expansion needs a recorded reason and revised packet.
+2. **Prefer a suitable economical route.** Eligibility is checked before price/preference.
+   An expensive-route exception records why the cheaper eligible choice does not fit. Unknown
+   price is not cheap; new routes can run only as explicitly bounded authorised trials.
+3. **Enforce real bounds.** Record launcher support separately for input, output, deadline and
+   attempt limits. An instruction saying “five minutes” is not an enforced timeout. The
+   execution limit is distinct from the existing client `--deadline`, which bounds waiting and
+   does not stop a worker. The execution record retains the requested limit and observed expiry
+   or stop outcome; timeout is not proof of termination. If a configured hard bound lacks adapter
+   support, refuse automatic dispatch with the missing
+   capability; leave manual work visibly outside that enforcement claim. Never silently start
+   another attempt after uncertainty about an earlier one.
+4. **Keep routine traffic mechanical.** Unchanged-state detection, deduplication and receipt
+   collection require no model call. Queue independent actionable deltas for a bounded pulse;
+   corrections, stop requests, lease loss and deadlines bypass batching. A pulse resumes from
+   a revision-bound checkpoint and returns changed facts, decisions and evidence pointers.
+   The interactive coordinator is included in measurement; a worker pulse does not imply that
+   its parent context was cleared or stopped accumulating tokens.
+5. **Review once per applicable scope and revision.** Reuse a valid review only when its
+   reviewed content, acceptance contract and dependencies are unchanged. Read the relevant
+   delta when they change; expand for unresolved interaction risk. The reviewer determines
+   relevance and depth against the unchanged acceptance contract and records the reviewed scope,
+   dependency assumptions and unresolved risks. Reuse never shortens the required read of the
+   integrating context; a prior receipt cannot decide that context safe on the reviewer's behalf.
+   Required independent friend reviews remain required. A repeated review records its trigger rather than silently charging
+   the task twice. A shorter report is never a quality waiver.
+6. **Measure the whole operational unit.** Include preparation, parent and descendants,
+   coordination, review, retries and repair. Exclude building the optimisation tool itself;
+   mixed unallocated sessions remain incomplete. Native totals, cache subsets and reasoning
+   subsets follow their source semantics; never sum overlapping counters twice. Preserve raw
+   observations and immutable rate references. Unknown usage or rates block a complete saving
+   claim, not unrelated authorised work.
+7. **Promote evidence, not enthusiasm.** Automatic trial-to-adopt promotion requires matching
+   acceptance scope, completed coverage, passing quality and the predeclared tolerances with
+   referenced results. A cheap model rate, shorter response, fewer emitted bytes, lower tokens
+   per model response or faster wall clock alone cannot satisfy it. Keep total operational
+   tokens per accepted unit, comparable cost per accepted unit, and weighted cost per million
+   tokens separate; never average model prices without their token weights. Cash, estimated
+   marginal and virtual cost use separate columns and consistent scope.
+8. **Respond to regressions.** A measured tolerance breach suspends new automatic routing under
+   that trial and returns to an eligible approved policy, recording the reason. It does not
+   erase failed attempts, terminate live work blindly, relax quality, or manufacture consent.
+   No eligible fallback leaves an explicit scheduling blocker for the coordinator.
+
+### Cache-aware context policy
+
+The measurement group also pins provider token-category semantics, service tier and
+long-context thresholds. Unknown tier or cache-write semantics leaves actual priced cost unknown. A separate scenario
+may show an explicitly assumed tier, token semantics and immutable rate revision; label its
+assumptions and any applicable range. It never fills missing fields in the actual record,
+satisfies complete-cost coverage, or qualifies automatic adoption. A public API reference
+scenario is not a subscription charge or plan-usage measurement.
+Optimise cached-input volume as well as hit rate: repeated large prefixes still incur a charge.
+Record request count and input-size distribution alongside accepted units, without substituting
+either for completed work.
+
+Context refresh is a policy decision, not an unconditional timer. The friend policy stores a
+`:context-mode` (`:retain`, `:trial-refresh`, or `:verified-refresh`), the refresh adapter capability
+reference, and a revision-bound decision artifact containing the chosen action, checkpoint,
+comparison inputs, assumptions and quality gate. Validated `config --intake` owns changes to these
+fields under the same friend-subject event. The dispatch admission validator refuses an automatic
+refresh lacking that artifact, capable adapter, or applicable trial/adoption evidence; it does
+not pretend to reset a host that exposes no reset operation. A bounded trial can investigate
+unknown costs, but unknowns cannot satisfy a verified-refresh gate. Compare retained-context cost
+against checkpoint creation, new-prefix processing/cache writes, expected subsequent reads and
+any recovery/review cost. Trial stable compact instruction/tool prefixes with task-specific deltas
+at the end where the harness supports this. Preserve required safety and tool schemas. A new
+worker does not guarantee a cache hit. Do not rewrite prefixes repeatedly to save a few bytes,
+keep a giant context merely for its hit rate, or infer that a reset saves money without including
+its cache rebuild. Adapter support for caching controls is explicit; nova-work never claims to
+control settings a host does not expose.
+
+### Batch the round trips, preserve urgency
+
+CONFIG bounds each coordinator batch by records, bytes and maximum delay. Accumulate
+independent ready results and questions until one bound is reached, then present one focused
+revision-bound packet. Reuse the existing read-bundle, independent-batch and atomic-batch
+semantics; no new transaction protocol is implied. Dependent work still waits for its prerequisite,
+and urgent corrections, stop requests, lease changes and deadlines bypass the delay. Do not
+inflate a prompt just to fill a batch. Each packet manifest references the task or required
+shared instructions for every included fragment and records its digest and bytes. The packet
+builder admits only those fragments; its validator rejects unreferenced padding and excess
+bounds. Whether a referenced fragment is necessary remains reviewer judgment, recorded in the
+packet review: the byte validator cannot establish semantic relevance. Empty or unchanged
+batches require zero model calls.
+
+Measure batches by accepted work, total actor tokens and priced cost, with queueing latency and
+quality beside them. Record model round trips, API requests and work units separately: reducing
+one is not proof the others fell. Distinguish programmatic tool-call batching, result aggregation
+and provider batch billing. A provider batch discount applies only to a supported, authorised
+route and eligible nonurgent work; tool calls in one shell invocation do not earn that discount.
+A large batch must stay inside input and context-tier limits, with partial failures and retries
+attributed once. Compare pooled work against the same unbatched acceptance scope; preserve a
+safety margin for latency and head-of-line blocking rather than maximising batch size blindly.
+
+### Required enforcement replays
+
+| Replay | Required outcome |
+| --- | --- |
+| policy-round-trip-and-replay | Policy, trial manifests and execution references survive export/import, restart, undo rules and revision replay; malformed intake has no partial effect. |
+| packet-and-route-gates | Oversized/history-disallowed packets, reserved or stale routes and unexplained costly escalation refuse before dispatch; a valid scoped exception is retained. |
+| bounds-are-not-prompts | A launcher lacking a required hard limit refuses automatic dispatch; a supported deadline returns a terminal or unresolved handle without duplicate execution. |
+| quiet-until-actionable | Unchanged observations cause zero model dispatches; actionable batching respects bounds and urgent corrections/stops bypass it. |
+| reuse-only-valid-review | Same-scope review is reusable; changed acceptance/dependencies invalidate it; independent friend gates cannot be replaced by reuse. |
+| complete-cost-lineage | Parent/child/retry receipts join once, failed attempts count, cache subsets do not double count, implementation cost stays separate, gaps remain unknown. |
+| batch-with-bounds-and-urgency | Independent results coalesce within byte/record/delay bounds, unchanged batches cause no call, unreferenced padding refuses, urgent corrections bypass delay, dependencies and partial retry identities survive. |
+| cache-aware-context-choice | Cache reads/writes and tier thresholds price separately; a reset includes rebuild costs and refuses missing decision/adapter/evidence; a lower hit rate can still win when total matched-work cost falls. |
+| evidence-before-adoption | Missing baseline/coverage, unmatched quality or a retrospective correlation alone cannot auto-promote; a fully qualified prospective result can. |
+| regression-and-recovery | A breached trial stops new automatic assignments; eligible fallback preserves role limits, history and uncertain live handles. |
+
+These acceptance items belong to the existing configuration, execution, measurement and recovery
+roadmap features. They add no verified completion until implementation and failure replays pass.
+
 ## The hierarchy, the table and the roadmap's own record *(Stella, `docs/SPEC-WORK-PILOT.md` at `81c2885`)*
 
 **Glenn's hierarchy is repository → roadmap → epic → feature → subtasks**, with sub-features and
