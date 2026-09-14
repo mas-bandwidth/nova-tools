@@ -36,14 +36,15 @@ select a profile, grant a tool, widen a path, add a network permission, expose
 a key, extend a deadline or start another task.
 
 The catalog is strict JSON, with `version: 1` and a `profiles` object. Each
-entry has a complete worker description, exactly one `route`, an `env_var`
+entry has the worker execution description below, exactly one `route`, an `env_var`
 name for that route's secret, an `allowed_models` list, and a `prompt` object.
-A route has a provider, endpoint or harness, and one selected credential
+A route has a provider, an optional endpoint, and one selected credential
 source; an empty or multi-route profile is an exit-2 refusal with the named
 reason `profile <id> has no configured route` or `profile <id> has multiple
 routes`. The selected child receives only the named route secret. The worker
-description uses the fields already accepted by `--worker`; catalog entries do
-not invent a second worker schema. `allowed_models`
+description shares execution-field types and validation with `--worker`; the
+profile field ownership below prevents duplicate route and credential sources.
+`allowed_models`
 is an allow-list, not a mutable model catalog or a promise of capacity. A
 profile's model is the default requested model and an explicit override is
 valid only when listed there. Unknown fields, duplicate ids, empty ids, empty
@@ -59,30 +60,112 @@ trusted configuration, never task text, is UTF-8 and at most 4096 bytes. The
 complete generated prompt is still measured against `max_input`. A harness that
 cannot express the named tool profile is refused before launch.
 
-This illustrative profile projection uses fake endpoints and names only. It
-omits the required worker description and credential-source binding and is not
-a launchable catalog or an acceptance fixture. The complete schema remains an
-explicit interface gate below; this projection makes no availability claim:
+### Live-route credential binding and field ownership
+
+This amendment separates two different keys. Legacy `worker.key_file` is a
+plaintext provider-key file. Profile `route.credentials.age_key` is the private
+age identity passed to `nova-secrets --key`; it is never a provider-key file.
+Legacy invocations keep their existing parser and key-file behavior. A profiled
+launch must not call the legacy provider-key reader, materialize a decrypted
+key file, or use a dummy `key_file` to get past legacy validation.
+
+These are the required live-route fields. JSON objects reject duplicate and
+unknown members at every depth. Optional capacity/policy metadata and the
+remaining interfaces below still need their own pinned schema before the whole
+catalog is implementation-ready.
+
+| Object | Fields and types | Single source of truth |
+|---|---|---|
+| profile | `worker` object; `route` object; `env_var` string; `model` string; `allowed_models` nonempty string array; `prompt` object | `model` is the default; an admitted override must appear in `allowed_models` |
+| worker | Required strings `name`, `usage`, `harness`, `worker_dir`, `deadline`; required string array `harness_args`; optional string arrays `read_roots`, `input_limit_phrases` | Same execution meanings and validators as the legacy worker; profile harness paths must be absolute |
+| route | Required `provider` string and `credentials` object; optional `endpoint` string | Provider and base URL come only from here; an omitted endpoint uses only the named adapter's declared default |
+| credentials | Required strings `kind`, `store`, `seat`, `age_key`, `sops`, `gate`, `launcher` | `kind` is exactly `nova-secrets`; no alternate plaintext or inherited-environment credential source |
+| prompt | Required `mode` string, `prefix` string, `tools` string array | Existing `legacy`/`compact`, byte bound and adapter allow-list rules above |
+
+`worker.provider`, `worker.model`, `worker.base_url`, `worker.env_var`,
+`worker.key_file` and `worker.board` are forbidden in a profile. In particular,
+even a duplicate that agrees with the canonical field is refused. The common
+execution validator is reused; resolution supplies provider/model/base URL and
+environment-variable name from their single owners. This produces a resolved
+execution description plus a typed credential binding, not a legacy Worker
+with a pretend plaintext key path. Profile workers still carry no friend/board
+identity.
+
+`store`, `age_key`, `sops`, `gate`, `launcher`, `worker.harness` and
+`worker.worker_dir` are explicit absolute paths; `read_roots` keeps its existing
+absolute-path rules. `seat` uses nova-secrets' existing seat-name validator.
+`env_var` names one variable, never `all`, a comma-separated list, or a runtime
+variable such as PATH/HOME. Its syntax and reserved-name rules must agree with
+the selected adapter and nova-secrets. Paths undergo the resolved placement and
+worker-write-authority checks below at admission and again before launch.
+
+The coordinator constructs this argv as separate literal arguments, without a
+shell and without catalog-provided gate flags:
+
+```text
+<credentials.gate> exec --store <credentials.store> --as <credentials.seat>
+  --key <credentials.age_key> --sops <credentials.sops>
+  --only <profile.env_var> --require <profile.env_var> --
+  <credentials.launcher> <coordinator-generated launch arguments>
+```
+
+The generated launcher arguments identify only the protected attempt snapshot,
+job and slot nonce through the separately pinned launcher protocol. They cannot
+carry secrets or choose a different route. The launcher revalidates the protected
+attempt and constructs the empty-based child environment specified below. It
+never inherits a plaintext-provider-key fallback. Credential binding freezes
+paths, seat and variable selection; it does not cache decrypted values or claim
+that a provider credential can never be rotated in the committed store.
+
+This complete *required-field projection* uses fake names and paths. It is a
+schema example, not live configuration: provider policy/capacity attestations
+and a supported protected launcher are still required before launch.
 
 ```json
 {
   "version": 1,
   "profiles": {
-    "opencode-go": {
-      "route": {"provider": "opencode-go", "endpoint": "https://go.invalid"},
+    "go-small": {
+      "worker": {
+        "name": "hosted-small", "usage": "opencode",
+        "harness": "/opt/example/bin/opencode",
+        "harness_args": ["run", "--model", "{model}", "--", "{prompt}"],
+        "worker_dir": "/opt/example/worker", "deadline": "5m"
+      },
+      "route": {
+        "provider": "opencode-go", "endpoint": "https://go.invalid",
+        "credentials": {
+          "kind": "nova-secrets", "store": "/secure/example/store",
+          "seat": "worker", "age_key": "/secure/example/worker.agekey",
+          "sops": "/opt/example/bin/sops",
+          "gate": "/opt/example/bin/nova-secrets",
+          "launcher": "/opt/example/bin/isolated-worker-launcher"
+        }
+      },
       "env_var": "OPENCODE_GO_KEY", "model": "example-go-model",
       "allowed_models": ["example-go-model"],
       "prompt": {"mode": "compact", "prefix": "Use the bounded task contract.", "tools": []}
-    },
-    "opencode": {
-      "route": {"provider": "opencode", "endpoint": "https://zen.invalid"},
-      "env_var": "OPENCODE_ZEN_KEY", "model": "example-zen-model",
-      "allowed_models": ["example-zen-model"],
-      "prompt": {"mode": "legacy", "prefix": "", "tools": []}
     }
   }
 }
 ```
+
+A Zen route uses its own `provider: opencode`, endpoint, variable and selected
+credential binding. Reusing a seat does not authorize passing all of its keys;
+`--only` and `--require` still name that route's one variable. For a local route
+that needs no credential, do not invent a fake API key or bypass this live-route
+contract: its adapter and explicit no-secret variant must be pinned separately
+under the existing shared-accounting scope.
+
+Add these cases to CATALOG-REFUSAL and SECRETS-EXEC-SHAPE: plaintext `key_file`
+in a profile, duplicate field owners, `kind` other than `nova-secrets`, missing
+binding fields, relative paths and `env_var=all` all refuse before decrypt or
+launch. A mixed legacy/profile fixture proves the legacy reader sees only the
+legacy task's file; a profiled task invokes the pinned gate with exactly the
+mapped argv and never opens that file. A fake gate injects only the named route
+value; tests inspect it inside the fake child without retaining it in production
+artifacts. The age-key path must never reach provider configuration as an API
+key or be opened by the sandboxed harness.
 
 The isolated-worker launcher constructs every harness environment from an empty
 environment set, adds only adapter-declared non-secret runtime variables (such
@@ -117,7 +200,8 @@ read and overwrite a worker-writable sanitized projection at
 never the projection. The snapshot is a non-secret record of the resolved
 profile and attempt: catalog/profile id and catalog hash,
 requested and resolved provider/model, base URL, harness and arguments, worker
-directory, key-file path and env-var name, usage source, deadline, prompt mode
+directory, credential-binding paths and seat (or legacy key-file path), env-var
+name, usage source, deadline, prompt mode
 and prefix hash, tool list, task id, attempt and retry origin. It never holds a
 key, decrypted credential, token or response body.
 
@@ -248,14 +332,14 @@ An OpenCode Go profile may name `provider: opencode-go`, a native
 name `provider: opencode`, a native `opencode/<model>` id and its native
 endpoint/protocol. Neither
 example hardcodes a price, model list, allowance, retention claim or protocol
-shape. Existing key-file handling remains the swarm's responsibility; this
-spec does not define a second credential store. A live-route profile launches
+shape. Legacy key-file handling remains unchanged; live profiles use the
+credential binding above and do not define a second credential store. A live-route profile launches
 only through a coordinator-controlled invocation of `nova-secrets exec
 --only <route-env> --require <route-env> -- <isolated-worker-launcher>`. The
 coordinator invokes the gate for each selected live-route worker; an environment
 flag claiming a parent wrapper ran is not proof. The immutable profile pins
-non-secret store/seat/key-path/sops and executable bindings, with the credential
-interface schema finalized before implementation. The launch order is `run` ->
+non-secret store/seat/age-key/sops and executable bindings using the field mapping
+above; the protected launcher protocol remains a pre-implementation gate. The launch order is `run` ->
 `nova-secrets exec` -> isolated-worker launcher -> sandbox -> harness; decryption
 and store validation run outside the worker sandbox. Pinned seat key and store
 root paths must satisfy the same resolved-filesystem placement checks as secret
