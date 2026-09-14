@@ -109,7 +109,7 @@
     "PR 316 merged as 269e56d2 into held parent PR 240 at 18:33:30 UTC; the parent remains held on other findings"
     "PR 317 merged as cf5dd8f5 into spec/nova-work at 19:29 UTC after Rowan, Emma and Freddy reviewed current 685b7c2; its acceptance replays are mapped here without implementation credit"
     "PR 320 is at 83269f66 with root and Emma clear while Rowan and Freddy remain pending; PR 322 is based on main at 76cc160e with root 29/29, CI green and Emma APPROVE/CLEAR 5669726199 while other independent friends remain pending; neither implementation is merged or makes a feature green"
-    "PR 319 remains a proposed v1 recursive-grouping refinement at repaired 9488a19, awaiting exact-head delta reviews; three non-duplicate acceptance gaps map existing features without implementation credit"
+    "PR 319 remains a proposed v1 recursive-grouping refinement at repaired 9488a19, with Emma APPROVE/CLEAR 5669804565; Rowan and Freddy exact-head delta reviews remain pending; three non-duplicate acceptance gaps map existing features without implementation credit"
     "PRs 293, 294 and 295 have current Rowan/Fable approvals at 47c3f9a, 4fddfcb and c2be4d6b; other friend, parent and schema gates remain"
     "Issue 321 tracks v2 multiple-human/coordinator direction outside the v1 denominator"
     "Issue 185: native Codex usage decoding exists without an operational ingestion path, so no parent-plus-child token saving is claimed"
