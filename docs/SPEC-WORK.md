@@ -2568,14 +2568,16 @@ choice remain team policy: diversity of friends, models and harnesses remains we
 
 ### Records and owning operations
 
-CONFIG may reference a versioned `:efficiency-policy` record. Its required fields are a stable
+Each friend CONFIG may hold a versioned `:efficiency-policy` record, scoped only to that friend
+and its capabilities. A team-wide change is explicit validated intake for each affected friend,
+never an implicit cross-friend mutation. Its required fields are a stable
 id, schema version, revision/content hash, scope, author/provenance, and these typed groups:
 
 - `:quality`: references to the task-class acceptance and required review gates.
 - `:routing`: eligible capability references, configured preference order among suitable
   economical routes, and conditions requiring an explicitly recorded escalation reason.
   Role, consent, availability, fencing and capacity constraints still take precedence.
-- `:bounds`: positive integer input-packet bytes, report bytes, attempt count and deadline
+- `:bounds`: positive integer input-packet bytes, report bytes, attempt count and execution-limit
   milliseconds; checkpoint reference and a boolean full-history permission. Limits are
   configured per task class, never hardcoded friend or model names.
 - `:measurement`: workload/accepted-unit definition, required actor and attempt coverage,
@@ -2584,7 +2586,9 @@ id, schema version, revision/content hash, scope, author/provenance, and these t
   expiry, and explicit quality, total-token, cost and wall-time regression tolerances.
 
 Validated `config --intake` owns policy admission and replacement under the existing config
-journal event and revision guard. An invalid or incomplete policy leaves the previous revision
+journal event, existing friend subject and revision guard. Trial-stage changes use that same
+config event with prior revision, new policy and evidence references; no out-of-band promotion
+exists. An invalid or incomplete policy leaves the previous revision
 intact. The canonical schema, digest field ordering and grammar must include these fields
 before this slice can lock; no generic field edit bypasses validation.
 
@@ -2613,7 +2617,10 @@ closed experiments and attempts; roadmap and friend views reference them after c
    price is not cheap; new routes can run only as explicitly bounded authorised trials.
 3. **Enforce real bounds.** Record launcher support separately for input, output, deadline and
    attempt limits. An instruction saying “five minutes” is not an enforced timeout. If the
-   configured hard bound lacks adapter support, refuse automatic dispatch with the missing
+   execution limit is distinct from the existing client `--deadline`, which bounds waiting and
+   does not stop a worker. The execution record retains the requested limit and observed expiry
+   or stop outcome; timeout is not proof of termination. If a configured hard bound lacks adapter
+   support, refuse automatic dispatch with the missing
    capability; leave manual work visibly outside that enforcement claim. Never silently start
    another attempt after uncertainty about an earlier one.
 4. **Keep routine traffic mechanical.** Unchanged-state detection, deduplication and receipt
@@ -2648,8 +2655,11 @@ closed experiments and attempts; roadmap and friend views reference them after c
 ### Cache-aware context policy
 
 The measurement group also pins provider token-category semantics, service tier and
-long-context thresholds. Unknown tier or cache-write semantics makes a priced total conditional;
-a public API reference estimate is not a subscription charge or plan-usage measurement.
+long-context thresholds. Unknown tier or cache-write semantics leaves actual priced cost unknown. A separate scenario
+may show an explicitly assumed tier, token semantics and immutable rate revision; label its
+assumptions and any applicable range. It never fills missing fields in the actual record,
+satisfies complete-cost coverage, or qualifies automatic adoption. A public API reference
+scenario is not a subscription charge or plan-usage measurement.
 Optimise cached-input volume as well as hit rate: repeated large prefixes still incur a charge.
 Record request count and input-size distribution alongside accepted units, without substituting
 either for completed work.
