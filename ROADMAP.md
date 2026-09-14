@@ -55,6 +55,14 @@ The team is testing efficiency improvements in existing tools while building nov
 
 The first internal Common Lisp C/O kernel and maintained open counter are being reviewed in [#300](https://github.com/mas-bandwidth/nova-tools/pull/300). Operational token and worker-cost experiments run alongside real work under [#185](https://github.com/mas-bandwidth/nova-tools/issues/185); implementation cost is excluded, while retries, review and rescue remain part of accepted-work cost.
 
+Current evidence at 2026-09-14 17:31 UTC:
+
+- [#300](https://github.com/mas-bandwidth/nova-tools/pull/300) is at `84fb1fc8`. The repaired restricted-reader suite passes 21/21 with isolated ASDF caches after test-only `1b12582f` passed 15/21. Acceptance remains on hold because malformed trailing forms such as `(:X 1) (` are still accepted.
+- [#314](https://github.com/mas-bandwidth/nova-tools/pull/314) is at `4b99c1b4`; its prior scoped review is clear, while Emma owns the pending final-delta and integration decision.
+- [#311](https://github.com/mas-bandwidth/nova-tools/pull/311) merged as `14ef63b1` after scoped wording and link gates cleared. Freddy adoption and any measured efficiency saving remain unproven.
+- [#312](https://github.com/mas-bandwidth/nova-tools/pull/312) at `0921c800` and [#310](https://github.com/mas-bandwidth/nova-tools/pull/310) at `5fb0feee` have scoped clearances; their integration gates remain with their owners.
+- [#185](https://github.com/mas-bandwidth/nova-tools/issues/185) records that native Codex usage decoding exists without an operational ingestion path. No parent-plus-child token saving is claimed.
+
 This is a current work register, outside the nova-work feature denominator. Results and negative or inconclusive experiments remain evidence; any scope change is recorded as a scope event and does not become completion credit.
 
 ## Feature inventory
