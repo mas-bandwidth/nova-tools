@@ -166,12 +166,11 @@ counted exactly once."
                         (error 'restricted-data-violation
                                :value (format nil "refused by the reader at byte ~D" (offset)))))))
           (let ((next (handler-case (read in nil :end-of-input)
-                        (end-of-file () :end-of-input)
-                        (error ()
-                          ;; A stray closer is trailing bytes, not an end.
-                          (error 'restricted-data-violation
-                                 :value (format nil "trailing bytes after one form, at byte ~D"
-                                                (offset)))))))
+                         (error ()
+                           ;; A stray closer is trailing bytes, not an end.
+                           (error 'restricted-data-violation
+                                  :value (format nil "trailing bytes after one form, at byte ~D"
+                                                 (offset)))))))
             (unless (eq next :end-of-input)
               (error 'restricted-data-violation
                      :value (format nil "trailing bytes after one form, at byte ~D" (offset)))))
