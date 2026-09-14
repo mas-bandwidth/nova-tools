@@ -385,30 +385,17 @@ func TestASecondInvocationOnOneCheckoutRefuses(t *testing.T) {
 	checkoutLockWait = 200 * time.Millisecond
 	t.Cleanup(func() { checkoutLockWait = real })
 
-	held := make(chan struct{})
-	done := make(chan struct{})
-	var first error
-	go func() {
-		defer close(done)
-		release, err := bus.LockCheckout(checkout, time.Second)
-		first = err
-		close(held)
-		if err != nil {
-			return
-		}
-		time.Sleep(600 * time.Millisecond)
-		release()
-	}()
-	<-held
-	if first != nil {
-		t.Fatalf("the first run could not take the lock: %v", first)
+	release, err := bus.LockCheckout(checkout, time.Second)
+	if err != nil {
+		t.Fatalf("the first run could not take the lock: %v", err)
 	}
+	defer release()
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
 		mustCode(t, 1).
 		mustContain(t, "stderr", "SEND REFUSED: ").
 		mustContain(t, "stderr", "another nova-bus is already running on this checkout").
 		mustContain(t, "stderr", "run this again when that one has finished")
-	<-done
+	release()
 
 	// The other way: with nothing holding it, the same send runs.
 	invoke(t, draft, "send", "--bus", checkout, "--stdin", "--remote", "origin", "--branch", "main").
