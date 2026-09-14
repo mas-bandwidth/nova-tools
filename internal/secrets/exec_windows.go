@@ -24,7 +24,11 @@ func replaceProcess(argv []string, env []string) error {
 	err := cmd.Run()
 	if err != nil {
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
+			code := exitErr.ExitCode()
+			if code < 0 {
+				code = 1
+			}
+			os.Exit(code)
 		}
 		return err
 	}

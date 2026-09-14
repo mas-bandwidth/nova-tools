@@ -6,12 +6,17 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // RunKeygen generates a new age private key and formats the .sops.yaml rule block.
 func RunKeygen(asName, keyPath, ageKeygenPath, storeDir string) (okLine string, ruleLines []string, noteLine string, err error) {
 	if asName == "" {
 		return "", nil, "", fmt.Errorf("missing --as <name>")
+	}
+	if !IsValidAsName(asName) {
+		return "", nil, "", fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
 	}
 	if keyPath == "" {
 		return "", nil, "", fmt.Errorf("missing --key <path>")
@@ -71,9 +76,13 @@ func RunKeygen(asName, keyPath, ageKeygenPath, storeDir string) (okLine string, 
 	// 4. Generate key
 	cmd := exec.Command(ageKeygenPath, "-o", keyPath)
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
-	out, err := cmd.CombinedOutput()
+	_, err = cmd.CombinedOutput()
 	if err != nil {
-		return "", nil, "", fmt.Errorf("age-keygen failed: %v, output: %s", err, string(out))
+		exitCode := 1
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			exitCode = exitErr.ExitCode()
+		}
+		return "", nil, "", fmt.Errorf("age-keygen failed: exit %d (transcript withheld)", exitCode)
 	}
 	if err := os.Chmod(keyPath, 0600); err != nil {
 		return "", nil, "", fmt.Errorf("failed to chmod 0600 %s: %w", keyPath, err)
@@ -85,7 +94,8 @@ func RunKeygen(asName, keyPath, ageKeygenPath, storeDir string) (okLine string, 
 		return "", nil, "", err
 	}
 
-	okLine = fmt.Sprintf("SECRETS KEYGEN OK as=%s key=%s mode=0600 pub=%s", asName, keyPath, pubKey)
+	okLine = fmt.Sprintf("SECRETS KEYGEN OK as=%s key=%s mode=0600 pub=%s",
+		oneline.Field(asName), oneline.Field(keyPath), oneline.Field(pubKey))
 	ruleLines = []string{
 		"SECRETS RULE   creation_rules:",
 		fmt.Sprintf("SECRETS RULE     - path_regex: ^%s\\.yaml$", regexp.QuoteMeta(asName)),

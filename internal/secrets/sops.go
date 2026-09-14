@@ -103,23 +103,19 @@ func DecryptFile(sopsPath, keyPath, filePath string) ([]byte, error) {
 
 	cmd := exec.Command(sopsPath, "-d", filePath)
 
-	// Filter out all SOPS_* variables from current environment
-	var cleanEnv []string
-	for _, env := range os.Environ() {
-		if strings.HasPrefix(env, "SOPS_") {
-			continue
-		}
-		if strings.HasPrefix(env, "HOME=") || strings.HasPrefix(env, "XDG_CONFIG_HOME=") {
-			continue
-		}
-		cleanEnv = append(cleanEnv, env)
+	// Build isolated environment: do not inherit caller's AWS_*, VAULT_*, GNUPGHOME, etc.
+	cleanEnv := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"SOPS_AGE_KEY_FILE=" + keyPath,
+		"HOME=" + tmpDir,
+		"XDG_CONFIG_HOME=" + tmpDir,
 	}
-
-	cleanEnv = append(cleanEnv,
-		"SOPS_AGE_KEY_FILE="+keyPath,
-		"HOME="+tmpDir,
-		"XDG_CONFIG_HOME="+tmpDir,
-	)
+	if tmp := os.Getenv("TMPDIR"); tmp != "" {
+		cleanEnv = append(cleanEnv, "TMPDIR="+tmp)
+	}
+	if sysroot := os.Getenv("SYSTEMROOT"); sysroot != "" {
+		cleanEnv = append(cleanEnv, "SYSTEMROOT="+sysroot)
+	}
 	cmd.Env = cleanEnv
 
 	var stdoutBuf, stderrBuf bytes.Buffer

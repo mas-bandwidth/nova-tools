@@ -46,7 +46,7 @@ var disallowedVerbs = map[string]string{
 	"set":        "run 'sops <store>/<name>.yaml' or 'sops set'; then git add, git commit, and a pull request the other collaborator approves.",
 	"add":        "run 'sops <store>/<name>.yaml' or 'sops set'; then git add, git commit, and a pull request the other collaborator approves.",
 	"edit":       "run 'sops <store>/<name>.yaml' or 'sops set'; then git add, git commit, and a pull request the other collaborator approves.",
-	"rotate":     "rotate at the provider's console (Glenn's hand), then sops, then an approved pull request, then a pull on every bench, then a probe. See docs/SPEC-SECRETS.md Rotation.",
+	"rotate":     "rotate at the provider's console (store administrator), then sops, then an approved pull request, then a pull on every bench, then a probe. See docs/SPEC-SECRETS.md Rotation.",
 	"delete":     "run 'sops unset' or 'git rm', and rotate whatever the deleted value was.",
 	"rm":         "run 'sops unset' or 'git rm', and rotate whatever the deleted value was.",
 	"unset":      "run 'sops unset' or 'git rm', and rotate whatever the deleted value was.",

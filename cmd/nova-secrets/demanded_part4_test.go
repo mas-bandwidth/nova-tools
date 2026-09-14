@@ -6,6 +6,7 @@ import (
 	"go/token"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -344,5 +345,86 @@ func TestADecryptedFileLeftInTheStoreIsRed(t *testing.T) {
 	_, errOut, code = runNovaSecrets(bin, "check", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath)
 	if code != 1 || !strings.Contains(errOut, "decrypted.yaml") {
 		t.Errorf("expected .gitignore not to bypass invariant 7: code %d, err: %s", code, errOut)
+	}
+}
+
+func TestChildEnvironmentCollisionsAreDropped(t *testing.T) {
+	sopsPath := findSops(t)
+	bin := buildNovaSecrets(t)
+
+	td := t.TempDir()
+	storeDir := filepath.Join(td, "store")
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	initGitStore(t, storeDir)
+
+	keyA := genKey(t, td, "rowan")
+	recKey := genKey(t, td, "recovery")
+	_ = os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recKey.pubKey+"\n"), 0644)
+
+	sopsCfg := fmt.Sprintf(`creation_rules:
+  - path_regex: ^rowan\.yaml$
+    age: %s,%s
+`, keyA.pubKey, recKey.pubKey)
+	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsCfg), 0644)
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: ghp_REALSTOREVALUE_12345\n")
+	commitAndPush(t, storeDir)
+
+	cmd := exec.Command(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "GH_TOKEN", "--require", "GH_TOKEN", "--", "printenv", "GH_TOKEN")
+	cmd.Env = append(os.Environ(), "GH_TOKEN=ATTACKER_CONTROLLED_VALUE")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("exec failed: %v, out: %s", err, string(out))
+	}
+	outputStr := string(out)
+	if !strings.Contains(outputStr, "ghp_REALSTOREVALUE_12345") {
+		t.Errorf("expected store value in output, got: %s", outputStr)
+	}
+	if strings.Contains(outputStr, "ATTACKER_CONTROLLED_VALUE") {
+		t.Errorf("caller environment variable took precedence over store value: %s", outputStr)
+	}
+}
+
+func TestExecLookPathFailureDoesNotPrintOK(t *testing.T) {
+	sopsPath := findSops(t)
+	bin := buildNovaSecrets(t)
+
+	td := t.TempDir()
+	storeDir := filepath.Join(td, "store")
+	if err := os.MkdirAll(storeDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	initGitStore(t, storeDir)
+
+	keyA := genKey(t, td, "rowan")
+	recKey := genKey(t, td, "recovery")
+	_ = os.WriteFile(filepath.Join(storeDir, "recovery.pub"), []byte(recKey.pubKey+"\n"), 0644)
+
+	sopsCfg := fmt.Sprintf(`creation_rules:
+  - path_regex: ^rowan\.yaml$
+    age: %s,%s
+`, keyA.pubKey, recKey.pubKey)
+	_ = os.WriteFile(filepath.Join(storeDir, ".sops.yaml"), []byte(sopsCfg), 0644)
+	sealFileWithSops(t, sopsPath, filepath.Join(storeDir, "rowan.yaml"), []string{keyA.pubKey, recKey.pubKey}, "GH_TOKEN: 123\n")
+	commitAndPush(t, storeDir)
+
+	stdout, stderr, code := runNovaSecrets(bin, "exec", "--store", storeDir, "--as", "rowan", "--key", keyA.privPath, "--sops", sopsPath, "--only", "all", "--", "/no/such/binary/exists")
+	if code != 125 {
+		t.Errorf("expected exit 125 on missing binary, got %d", code)
+	}
+	if strings.Contains(stdout, "SECRETS EXEC OK") || strings.Contains(stderr, "SECRETS EXEC OK") {
+		t.Errorf("failed exec must never print SECRETS EXEC OK line: stdout=%s stderr=%s", stdout, stderr)
+	}
+}
+
+func TestAsPathTraversalRefused(t *testing.T) {
+	bin := buildNovaSecrets(t)
+	_, stderr, code := runNovaSecrets(bin, "names", "--store", "/any/path", "--as", "../outside")
+	if code != 2 {
+		t.Errorf("expected exit 2 on path traversal in --as, got %d", code)
+	}
+	if !strings.Contains(stderr, "invalid seat name") {
+		t.Errorf("expected invalid seat name refusal, got: %s", stderr)
 	}
 }

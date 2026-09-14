@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // RunNames reads <store>/<as>.yaml without decrypting and reports top-level key names.
@@ -18,6 +20,9 @@ func RunNames(storeDir, asName string, maxShown int) (okLine string, nameLines [
 	}
 	if asName == "" {
 		return "", nil, "", fmt.Errorf("missing --as <name>")
+	}
+	if !IsValidAsName(asName) {
+		return "", nil, "", fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
 	}
 
 	targetFile := filepath.Join(storeDir, asName+".yaml")
@@ -61,16 +66,16 @@ func RunNames(storeDir, asName string, maxShown int) (okLine string, nameLines [
 	}
 
 	for i := 0; i < shown; i++ {
-		nameLines = append(nameLines, fmt.Sprintf("SECRETS NAME key=%s clear=%t", keys[i].Name, keys[i].Clear))
+		nameLines = append(nameLines, fmt.Sprintf("SECRETS NAME key=%s clear=%t", oneline.Field(keys[i].Name), keys[i].Clear))
 	}
 
 	if maxShown > 0 && totalKeys > maxShown {
 		moreLine = fmt.Sprintf("SECRETS NAMES MORE kind=key shown=%d total=%d run: nova-secrets names --store %s --as %s --max 0",
-			shown, totalKeys, storeDir, asName)
+			shown, totalKeys, oneline.Field(storeDir), oneline.Field(asName))
 	}
 
 	okLine = fmt.Sprintf("SECRETS NAMES OK as=%s keys=%d shown=%d sealed=%d clear=%d",
-		asName, totalKeys, shown, sealedCount, clearCount)
+		oneline.Field(asName), totalKeys, shown, sealedCount, clearCount)
 
 	return okLine, nameLines, moreLine, nil
 }

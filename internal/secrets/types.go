@@ -5,11 +5,23 @@ type CreationRule struct {
 	PathRegex        string
 	UnencryptedRegex string
 	Recipients       []string
+	NonAgeRecipients []string
 }
 
 // SopsConfig holds creation rules parsed from .sops.yaml.
 type SopsConfig struct {
 	CreationRules []CreationRule
+}
+
+// GitIndexEntry holds path and blob SHA1 parsed from .git/index.
+type GitIndexEntry struct {
+	Path     string
+	BlobSHA1 [20]byte
+}
+
+// GitIndexData holds all parsed entries from .git/index.
+type GitIndexData struct {
+	Entries map[string]GitIndexEntry
 }
 
 // CheckFailure records one invariant failure found during 'check'.

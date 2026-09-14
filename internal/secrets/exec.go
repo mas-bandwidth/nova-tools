@@ -3,10 +3,14 @@ package secrets
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // RunExec validates all preflight invariants, decrypts <store>/<as>.yaml,
@@ -16,11 +20,25 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 	if len(cmdArgs) == 0 {
 		return 125, fmt.Errorf("no command specified after '--'")
 	}
+
+	// 0. Set RLIMIT_CORE to 0 immediately (M5)
+	if err := setRlimitCoreZero(); err != nil {
+		return 125, fmt.Errorf("failed to set RLIMIT_CORE to 0: %w", err)
+	}
+
+	// Pre-validate command binary existence before printing OK (M4)
+	if _, err := exec.LookPath(cmdArgs[0]); err != nil {
+		return 125, fmt.Errorf("command not found: %s", cmdArgs[0])
+	}
+
 	if storeDir == "" {
 		return 125, fmt.Errorf("missing --store <dir>")
 	}
 	if asName == "" {
 		return 125, fmt.Errorf("missing --as <name>")
+	}
+	if !IsValidAsName(asName) {
+		return 125, fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
 	}
 	if keyPath == "" {
 		return 125, fmt.Errorf("missing --key <path>")
@@ -51,12 +69,40 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		return 125, fmt.Errorf("store file %s is absent", targetFile)
 	}
 
-	// 2. Invariant 8 git check
+	// 2. Invariant 8 git check (HEAD == tracking ref)
 	st, err := CheckGitWorkingCopy(storeDir)
 	if err != nil {
 		return 125, err
 	}
 	headSHA := st.HeadSHA
+
+	// 2b. Verify working copy files against .git/index (Fable HIGH)
+	indexData, err := ReadGitIndex(storeDir)
+	if err != nil {
+		return 125, fmt.Errorf("store %s: %w", storeDir, err)
+	}
+	if err := VerifyFileMatchesIndex(storeDir, targetFile, indexData); err != nil {
+		return 125, fmt.Errorf("store %s: %w", storeDir, err)
+	}
+	if err := VerifyFileMatchesIndex(storeDir, sopsConfigPath, indexData); err != nil {
+		return 125, fmt.Errorf("store %s: %w", storeDir, err)
+	}
+	recPath := filepath.Join(storeDir, "recovery.pub")
+	if _, err := os.Stat(recPath); err == nil {
+		if err := VerifyFileMatchesIndex(storeDir, recPath, indexData); err != nil {
+			return 125, fmt.Errorf("store %s: %w", storeDir, err)
+		}
+	}
+	entries, err := os.ReadDir(storeDir)
+	if err == nil {
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".yaml") && e.Name() != ".sops.yaml" {
+				if _, ok := indexData.Entries[e.Name()]; !ok {
+					return 125, fmt.Errorf("untracked yaml file in store root: %s", e.Name())
+				}
+			}
+		}
+	}
 
 	// 3. Invariant 1 shape check (recovery.pub & .sops.yaml rules)
 	recKey, err := ReadRecoveryPub(storeDir)
@@ -102,6 +148,7 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		onlyWord = "all"
 	} else {
 		parts := strings.Split(onlyArg, ",")
+		var missingOnly []string
 		for _, p := range parts {
 			p = strings.TrimSpace(p)
 			if p == "" {
@@ -109,15 +156,21 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 			}
 			sec, ok := secretsMap[p]
 			if !ok {
-				return 125, fmt.Errorf("--only names key %q which is not in %s", p, targetFile)
+				missingOnly = append(missingOnly, p)
+				continue
 			}
 			selectedSecrets[p] = sec
+		}
+		if len(missingOnly) > 0 {
+			sort.Strings(missingOnly)
+			return 125, fmt.Errorf("--only names key(s) not in %s: %s", targetFile, strings.Join(missingOnly, ", "))
 		}
 		onlyWord = strconv.Itoa(len(selectedSecrets))
 	}
 
 	// 9. Verify --require
 	var missingRequired []string
+	var excludedRequired []string
 	for _, req := range required {
 		req = strings.TrimSpace(req)
 		if req == "" {
@@ -128,7 +181,7 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 			continue
 		}
 		if _, ok := selectedSecrets[req]; !ok {
-			return 125, fmt.Errorf("--require %q is excluded by --only %q", req, onlyArg)
+			excludedRequired = append(excludedRequired, req)
 		}
 	}
 	if len(missingRequired) > 0 {
@@ -136,18 +189,36 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		return 125, fmt.Errorf("required key(s) missing from %s: %s; run: sops %s",
 			targetFile, strings.Join(missingRequired, ", "), targetFile)
 	}
-
-	// 10. Print OK line to stderr
-	fmt.Fprintf(os.Stderr, "SECRETS EXEC OK as=%s keys=%d only=%s required=%d file=%s head=%s cmd=%s\n",
-		asName, len(selectedSecrets), onlyWord, len(required), targetFile, headSHA, cmdArgs[0])
-
-	// 11. RLIMIT_CORE = 0
-	if err := setRlimitCoreZero(); err != nil {
-		return 125, fmt.Errorf("failed to set RLIMIT_CORE to 0: %w", err)
+	if len(excludedRequired) > 0 {
+		sort.Strings(excludedRequired)
+		return 125, fmt.Errorf("--require %s is excluded by --only %q", strings.Join(excludedRequired, ", "), onlyArg)
 	}
 
-	// 12. Build environment
-	env := os.Environ()
+	// 10. Print OK line to stderr escaped via oneline.Field (H3)
+	fmt.Fprintf(os.Stderr, "SECRETS EXEC OK as=%s keys=%d only=%s required=%d file=%s head=%s cmd=%s\n",
+		oneline.Field(asName), len(selectedSecrets), oneline.Field(onlyWord), len(required),
+		oneline.Field(targetFile), oneline.Field(headSHA), oneline.Field(cmdArgs[0]))
+
+	// 11. Build environment dropping inherited variables that collide with selected secrets (H1)
+	var cleanEnv []string
+	for _, envEntry := range os.Environ() {
+		idx := strings.IndexByte(envEntry, '=')
+		if idx == -1 {
+			continue
+		}
+		envKey := envEntry[:idx]
+		collides := false
+		for sKey := range selectedSecrets {
+			if envKey == sKey || (runtime.GOOS == "windows" && strings.EqualFold(envKey, sKey)) {
+				collides = true
+				break
+			}
+		}
+		if !collides {
+			cleanEnv = append(cleanEnv, envEntry)
+		}
+	}
+	env := cleanEnv
 	for k, sec := range selectedSecrets {
 		_ = sec.Use(func(val string) error {
 			env = append(env, k+"="+val)
@@ -155,7 +226,7 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		})
 	}
 
-	// 13. Replace process
+	// 12. Replace process
 	if err := replaceProcess(cmdArgs, env); err != nil {
 		return 125, fmt.Errorf("exec failed: %w", err)
 	}

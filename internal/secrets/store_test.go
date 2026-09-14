@@ -162,4 +162,124 @@ func TestGitIndexParser(t *testing.T) {
 	if tracked["untracked.txt"] {
 		t.Errorf("untracked.txt should not be in index")
 	}
+
+	// 2. Index Version 4 with prefix compression
+	f2 := filepath.Join(tmp, "tracked2.txt")
+	if err := os.WriteFile(f2, []byte("world"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", "tracked2.txt")
+	run("update-index", "--index-version", "4")
+
+	idxData, err := ReadGitIndex(tmp)
+	if err != nil {
+		t.Fatalf("ReadGitIndex v4 failed: %v", err)
+	}
+	if len(idxData.Entries) != 2 {
+		t.Fatalf("expected 2 entries in v4 index, got %d", len(idxData.Entries))
+	}
+	if _, ok := idxData.Entries["tracked.txt"]; !ok {
+		t.Errorf("tracked.txt missing from v4 index")
+	}
+	if _, ok := idxData.Entries["tracked2.txt"]; !ok {
+		t.Errorf("tracked2.txt missing from v4 index")
+	}
+	// Verify blob SHA1 match
+	if err := VerifyFileMatchesIndex(tmp, f1, idxData); err != nil {
+		t.Errorf("VerifyFileMatchesIndex f1 failed: %v", err)
+	}
+	if err := VerifyFileMatchesIndex(tmp, f2, idxData); err != nil {
+		t.Errorf("VerifyFileMatchesIndex f2 failed: %v", err)
+	}
+}
+
+func TestUnquoteYAMLPreservesTrailingQuotes(t *testing.T) {
+	data := []byte(`
+V_TRAILQ: p@ss"
+V_PAD: "  padded  "
+V_SINGLE: 'it''s'
+V_NORMAL: hello
+`)
+	secrets, keys, err := ParseDecryptedSecrets(data)
+	if err != nil {
+		t.Fatalf("ParseDecryptedSecrets failed: %v", err)
+	}
+	if len(keys) != 4 {
+		t.Fatalf("expected 4 keys, got %d", len(keys))
+	}
+	_ = secrets["V_TRAILQ"].Use(func(v string) error {
+		if v != `p@ss"` {
+			t.Errorf("V_TRAILQ got %q, want %q", v, `p@ss"`)
+		}
+		return nil
+	})
+	_ = secrets["V_PAD"].Use(func(v string) error {
+		if v != "  padded  " {
+			t.Errorf("V_PAD got %q, want %q", v, "  padded  ")
+		}
+		return nil
+	})
+	_ = secrets["V_SINGLE"].Use(func(v string) error {
+		if v != "it's" {
+			t.Errorf("V_SINGLE got %q, want %q", v, "it's")
+		}
+		return nil
+	})
+	_ = secrets["V_NORMAL"].Use(func(v string) error {
+		if v != "hello" {
+			t.Errorf("V_NORMAL got %q, want %q", v, "hello")
+		}
+		return nil
+	})
+}
+
+func TestPostSopsKeysDetected(t *testing.T) {
+	tmp := t.TempDir()
+	content := `
+sops:
+    age:
+        - recipient: age1s6kpww894xpuylmck9f2g5kz2007a8nuy6guqrjj39s0gaqf6pkqydlata
+LEAKED_TOKEN: cleartext_after_sops
+`
+	filePath := filepath.Join(tmp, "test.yaml")
+	if err := os.WriteFile(filePath, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+	keys, recipients, hasSops, err := ParseStoreFileWithoutDecrypting(filePath)
+	if err != nil {
+		t.Fatalf("ParseStoreFileWithoutDecrypting failed: %v", err)
+	}
+	if !hasSops {
+		t.Errorf("expected hasSops=true")
+	}
+	if len(recipients) != 1 {
+		t.Errorf("expected 1 recipient, got %d", len(recipients))
+	}
+	found := false
+	for _, k := range keys {
+		if k.Name == "LEAKED_TOKEN" {
+			found = true
+			if !k.Clear {
+				t.Errorf("expected LEAKED_TOKEN to be marked clear")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("LEAKED_TOKEN after sops block was not detected")
+	}
+}
+
+func TestIsValidAsName(t *testing.T) {
+	valid := []string{"rowan", "emma-1", "seat_2", "A", "0"}
+	for _, v := range valid {
+		if !IsValidAsName(v) {
+			t.Errorf("expected %q to be valid", v)
+		}
+	}
+	invalid := []string{"", "../outside", "a/b", "a\nb", "foo bar", "a*b"}
+	for _, inv := range invalid {
+		if IsValidAsName(inv) {
+			t.Errorf("expected %q to be invalid", inv)
+		}
+	}
 }

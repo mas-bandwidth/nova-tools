@@ -10,6 +10,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // ExtractPublicKeyFromKeyFile parses '# public key: (age1...)' from an age private key file.
@@ -61,6 +63,15 @@ func CheckInvariant1(storeDir string, sopsCfg *SopsConfig, recoveryKey string) [
 				Kind:   "rule-shape",
 				File:   ".sops.yaml",
 				Reason: fmt.Sprintf("rule path_regex %q is not a valid regular expression: %v", rule.PathRegex, err),
+			})
+		}
+
+		// Check non-age recipients
+		for _, nonAge := range rule.NonAgeRecipients {
+			failures = append(failures, CheckFailure{
+				Kind:   "rule-shape",
+				File:   ".sops.yaml",
+				Reason: fmt.Sprintf("rule for %s carries non-age recipient key %q; only age recipients are permitted", label, nonAge),
 			})
 		}
 
@@ -279,20 +290,14 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 			}
 			return nil
 		}
-		fi, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		if fi.Mode().Perm() == 0600 {
-			data, err := os.ReadFile(path)
-			if err == nil && bytes.Contains(data, []byte("AGE-SECRET-KEY-1")) {
-				rel, _ := filepath.Rel(storeDir, path)
-				failures = append(failures, CheckFailure{
-					Kind:   "store-private-key",
-					File:   rel,
-					Reason: "private key found in store",
-				})
-			}
+		data, err := os.ReadFile(path)
+		if err == nil && bytes.Contains(data, []byte("AGE-SECRET-KEY-1")) {
+			rel, _ := filepath.Rel(storeDir, path)
+			failures = append(failures, CheckFailure{
+				Kind:   "store-private-key",
+				File:   rel,
+				Reason: "private key found in store",
+			})
 		}
 		return nil
 	})
@@ -405,6 +410,18 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 		return "", nil, nil, "", 2, fmt.Errorf("--max %d is negative; expected non-negative integer", maxShown)
 	}
 
+	// 0. Set RLIMIT_CORE to 0 immediately (M5)
+	if err := setRlimitCoreZero(); err != nil {
+		return "", nil, nil, "", 2, fmt.Errorf("failed to set RLIMIT_CORE to 0: %w", err)
+	}
+
+	if asName == "" {
+		return "", nil, nil, "", 2, fmt.Errorf("missing --as <name>")
+	}
+	if !IsValidAsName(asName) {
+		return "", nil, nil, "", 2, fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
+	}
+
 	// 1. Refusal checks
 	storeFi, err := os.Stat(storeDir)
 	if err != nil || !storeFi.IsDir() {
@@ -487,21 +504,64 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 	inv5Fails := CheckInvariant5(storeDir, keyPath)
 	allFailures = append(allFailures, inv5Fails...)
 
-	trackedFiles, err := ReadGitIndexTrackedFiles(storeDir)
-	if err == nil {
-		inv7Fails := CheckInvariant7(storeDir, trackedFiles)
+	indexData, err := ReadGitIndex(storeDir)
+	if err != nil {
+		allFailures = append(allFailures, CheckFailure{
+			Kind:   "stale-working-copy",
+			File:   ".git/index",
+			Reason: fmt.Sprintf("failed to read git index: %v", err),
+		})
+	} else {
+		// Invariant 7: untracked plaintext
+		trackedMap := make(map[string]bool, len(indexData.Entries))
+		for k := range indexData.Entries {
+			trackedMap[k] = true
+		}
+		inv7Fails := CheckInvariant7(storeDir, trackedMap)
 		allFailures = append(allFailures, inv7Fails...)
+
+		// Invariant 8 / working copy check: verify tracked *.yaml, .sops.yaml, recovery.pub match index blob SHA1
+		for p := range indexData.Entries {
+			if strings.HasSuffix(p, ".yaml") || p == "recovery.pub" {
+				filePath := filepath.Join(storeDir, filepath.FromSlash(p))
+				if _, err := os.Stat(filePath); err == nil {
+					if err := VerifyFileMatchesIndex(storeDir, filePath, indexData); err != nil {
+						allFailures = append(allFailures, CheckFailure{
+							Kind:   "stale-working-copy",
+							File:   p,
+							Reason: "working copy differs from git index; uncommitted changes in store",
+						})
+					}
+				}
+			}
+		}
+
+		// Verify seat file is tracked in git index
+		targetRel, _ := filepath.Rel(storeDir, targetFile)
+		targetRel = filepath.Clean(filepath.ToSlash(targetRel))
+		if _, ok := indexData.Entries[targetRel]; !ok {
+			allFailures = append(allFailures, CheckFailure{
+				Kind:   "stale-working-copy",
+				File:   targetRel,
+				Reason: fmt.Sprintf("seat file %s is untracked in git; commit it to the store", targetRel),
+			})
+		}
 	}
 
-	// List tracked *.yaml files
-	entries, _ := os.ReadDir(storeDir)
+	// List tracked *.yaml files across the store (including subdirectories, excluding .sops.yaml)
 	var yamlFiles []string
-	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), ".yaml") && e.Name() != ".sops.yaml" {
-			if trackedFiles != nil && !trackedFiles[e.Name()] {
-				continue
+	if indexData != nil {
+		for p := range indexData.Entries {
+			if strings.HasSuffix(p, ".yaml") && filepath.Base(p) != ".sops.yaml" {
+				yamlFiles = append(yamlFiles, p)
 			}
-			yamlFiles = append(yamlFiles, e.Name())
+		}
+	} else {
+		entries, _ := os.ReadDir(storeDir)
+		for _, e := range entries {
+			if strings.HasSuffix(e.Name(), ".yaml") && e.Name() != ".sops.yaml" {
+				yamlFiles = append(yamlFiles, e.Name())
+			}
 		}
 	}
 	sort.Strings(yamlFiles)
@@ -530,7 +590,7 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 
 	if len(allFailures) == 0 {
 		okLine = fmt.Sprintf("SECRETS CHECK OK  as=%s recipients=%d files=%d sealed=%d mine=%d foreign=%d clear=%d head=%s",
-			asName, recipientsCount, len(yamlFiles), sealedCount, mineCount, foreignCount, clearCount, gitStatus.HeadSHA)
+			oneline.Field(asName), recipientsCount, len(yamlFiles), sealedCount, mineCount, foreignCount, clearCount, oneline.Field(gitStatus.HeadSHA))
 		return okLine, nil, nil, "", 0, nil
 	}
 
@@ -564,17 +624,17 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 		}
 
 		for i := 0; i < shownInKind; i++ {
-			failLines = append(failLines, fmt.Sprintf("SECRETS CHECK FAIL %s: %s", fails[i].File, fails[i].Reason))
+			failLines = append(failLines, fmt.Sprintf("SECRETS CHECK FAIL %s: %s", oneline.Escape(fails[i].File), oneline.Escape(fails[i].Reason)))
 			totalShown++
 		}
 
 		if maxShown > 0 && totalInKind > maxShown {
 			moreLines = append(moreLines, fmt.Sprintf("SECRETS CHECK MORE kind=%s shown=%d total=%d run: nova-secrets check --store %s --as %s --key %s --sops %s --max 0",
-				kind, shownInKind, totalInKind, storeDir, asName, keyPath, sopsPath))
+				oneline.Field(kind), shownInKind, totalInKind, oneline.Field(storeDir), oneline.Field(asName), oneline.Field(keyPath), oneline.Field(sopsPath)))
 		}
 	}
 
 	summaryLine = fmt.Sprintf("SECRETS CHECK FAIL as=%s files=%d failed=%d shown=%d",
-		asName, len(yamlFiles), len(allFailures), totalShown)
+		oneline.Field(asName), len(yamlFiles), len(allFailures), totalShown)
 	return "", failLines, moreLines, summaryLine, 1, nil
 }

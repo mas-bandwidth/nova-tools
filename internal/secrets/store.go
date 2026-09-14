@@ -3,6 +3,7 @@ package secrets
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -152,6 +153,13 @@ func ParseSopsConfig(storeDir string) (*SopsConfig, error) {
 			continue
 		}
 
+		for _, nonAgeKey := range []string{"pgp:", "kms:", "gcp_kms:", "azure_kv:", "hc_vault:"} {
+			if strings.HasPrefix(trimmed, nonAgeKey) {
+				currentRule.NonAgeRecipients = append(currentRule.NonAgeRecipients, strings.TrimSuffix(nonAgeKey, ":"))
+				break
+			}
+		}
+
 		if strings.HasPrefix(trimmed, "age:") {
 			val := strings.TrimSpace(strings.TrimPrefix(trimmed, "age:"))
 			val = strings.Trim(val, `"'`)
@@ -205,7 +213,7 @@ func ParseSopsConfig(storeDir string) (*SopsConfig, error) {
 
 // FindMatchingRule locates the creation rule that governs filePath.
 func FindMatchingRule(cfg *SopsConfig, relPath string) (*CreationRule, error) {
-	base := filepath.Base(relPath)
+	cleanRel := filepath.ToSlash(filepath.Clean(relPath))
 	for i := range cfg.CreationRules {
 		r := &cfg.CreationRules[i]
 		if r.PathRegex == "" {
@@ -215,7 +223,7 @@ func FindMatchingRule(cfg *SopsConfig, relPath string) (*CreationRule, error) {
 		if err != nil {
 			continue
 		}
-		if re.MatchString(relPath) || re.MatchString(base) {
+		if re.MatchString(cleanRel) {
 			return r, nil
 		}
 	}
@@ -250,44 +258,86 @@ func ParseStoreFileWithoutDecrypting(filePath string) (keys []StoreFileKey, reci
 			continue
 		}
 
-		if !inSops {
-			// Check if we hit top-level sops:
+		// Root level check: not indented and contains colon
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && strings.Contains(line, ":") {
 			if strings.HasPrefix(line, "sops:") {
 				inSops = true
 				hasSops = true
+				inAge = false
+				continue
+			}
+			// Root key outside sops (could be before or after sops block)
+			inSops = false
+			inAge = false
+			parts := strings.SplitN(line, ":", 2)
+			keyName := strings.TrimSpace(parts[0])
+			val := strings.TrimSpace(parts[1])
+			isClear := !strings.HasPrefix(val, "ENC[")
+			keys = append(keys, StoreFileKey{
+				Name:  keyName,
+				Value: val,
+				Clear: isClear,
+			})
+			continue
+		}
+
+		if inSops {
+			if strings.HasPrefix(trimmed, "age:") {
+				inAge = true
 				continue
 			}
 
-			// Must be at root indentation (no leading space)
-			if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") && strings.Contains(line, ":") {
-				parts := strings.SplitN(line, ":", 2)
-				keyName := strings.TrimSpace(parts[0])
-				val := strings.TrimSpace(parts[1])
-				isClear := !strings.HasPrefix(val, "ENC[")
-				keys = append(keys, StoreFileKey{
-					Name:  keyName,
-					Value: val,
-					Clear: isClear,
-				})
-			}
-			continue
-		}
-
-		// Inside sops block
-		if strings.HasPrefix(trimmed, "age:") {
-			inAge = true
-			continue
-		}
-
-		if inAge {
-			match := recipientRegex.FindStringSubmatch(trimmed)
-			if len(match) > 1 {
-				recipients = append(recipients, match[1])
+			if inAge {
+				match := recipientRegex.FindStringSubmatch(trimmed)
+				if len(match) > 1 {
+					recipients = append(recipients, match[1])
+				}
 			}
 		}
 	}
 
 	return keys, recipients, hasSops, scanner.Err()
+}
+
+func unquoteYAML(val string) string {
+	val = strings.TrimSpace(val)
+	if len(val) >= 2 {
+		if val[0] == '"' && val[len(val)-1] == '"' {
+			inner := val[1 : len(val)-1]
+			var b strings.Builder
+			for i := 0; i < len(inner); i++ {
+				if inner[i] == '\\' && i+1 < len(inner) {
+					switch inner[i+1] {
+					case '"':
+						b.WriteByte('"')
+						i++
+					case '\\':
+						b.WriteByte('\\')
+						i++
+					case 'n':
+						b.WriteByte('\n')
+						i++
+					case 'r':
+						b.WriteByte('\r')
+						i++
+					case 't':
+						b.WriteByte('\t')
+						i++
+					default:
+						b.WriteByte(inner[i])
+					}
+				} else {
+					b.WriteByte(inner[i])
+				}
+			}
+			return b.String()
+		}
+		if val[0] == '\'' && val[len(val)-1] == '\'' {
+			inner := val[1 : len(val)-1]
+			return strings.ReplaceAll(inner, "''", "'")
+		}
+	}
+	return val
 }
 
 // ParseDecryptedSecrets parses the output of 'sops -d' into Secret values.
@@ -313,9 +363,13 @@ func ParseDecryptedSecrets(data []byte) (map[string]Secret, []string, error) {
 				multilineKeys = append(multilineKeys, currentKey)
 			} else {
 				val := currentValue.String()
-				val = strings.Trim(val, `"'`)
-				secrets[currentKey] = NewSecret(val)
-				keys = append(keys, currentKey)
+				val = unquoteYAML(val)
+				if strings.Contains(val, "\n") || strings.Contains(val, "\r") {
+					multilineKeys = append(multilineKeys, currentKey)
+				} else {
+					secrets[currentKey] = NewSecret(val)
+					keys = append(keys, currentKey)
+				}
 			}
 			currentKey = ""
 			currentValue.Reset()
@@ -376,8 +430,28 @@ func ParseDecryptedSecrets(data []byte) (map[string]Secret, []string, error) {
 	return secrets, keys, nil
 }
 
-// ReadGitIndexTrackedFiles reads .git/index directly to find all tracked files.
-func ReadGitIndexTrackedFiles(storeDir string) (map[string]bool, error) {
+func readGitVarint(data []byte, offset int) (int, int, error) {
+	if offset >= len(data) {
+		return 0, offset, fmt.Errorf("unexpected EOF reading varint")
+	}
+	v := data[offset]
+	offset++
+	stripLen := int(v & 0x7f)
+	for v&0x80 != 0 {
+		if offset >= len(data) {
+			return 0, offset, fmt.Errorf("unexpected EOF reading varint")
+		}
+		stripLen++
+		v = data[offset]
+		offset++
+		stripLen = (stripLen << 7) + int(v&0x7f)
+	}
+	return stripLen, offset, nil
+}
+
+// ReadGitIndex reads .git/index directly to find all tracked files and their blob SHAs.
+// Supports index formats v2, v3, and v4 (prefix compression).
+func ReadGitIndex(storeDir string) (*GitIndexData, error) {
 	indexPath := filepath.Join(storeDir, ".git", "index")
 	data, err := os.ReadFile(indexPath)
 	if err != nil {
@@ -390,26 +464,129 @@ func ReadGitIndexTrackedFiles(storeDir string) (map[string]bool, error) {
 
 	version := binary.BigEndian.Uint32(data[4:8])
 	entries := binary.BigEndian.Uint32(data[8:12])
-	tracked := make(map[string]bool, entries)
+	result := &GitIndexData{
+		Entries: make(map[string]GitIndexEntry, entries),
+	}
 
 	if version == 2 || version == 3 {
 		offset := 12
 		for i := uint32(0); i < entries && offset+62 <= len(data); i++ {
 			entryStart := offset
+			var blobSHA1 [20]byte
+			copy(blobSHA1[:], data[entryStart+40:entryStart+60])
+
 			nameStart := entryStart + 62
 			nameEnd := bytes.IndexByte(data[nameStart:], 0)
 			if nameEnd == -1 {
 				break
 			}
 			path := string(data[nameStart : nameStart+nameEnd])
-			tracked[filepath.Clean(path)] = true
+			cleanPath := filepath.Clean(filepath.ToSlash(path))
+			result.Entries[cleanPath] = GitIndexEntry{
+				Path:     cleanPath,
+				BlobSHA1: blobSHA1,
+			}
 
 			entryLen := ((62 + nameEnd + 8) / 8) * 8
 			offset = entryStart + entryLen
 		}
-		return tracked, nil
+		return result, nil
 	}
 
-	// For version 4 or other, fallback: walk index entries if possible or return error
+	if version == 4 {
+		offset := 12
+		prevPath := ""
+		for i := uint32(0); i < entries && offset+62 <= len(data); i++ {
+			entryStart := offset
+			var blobSHA1 [20]byte
+			copy(blobSHA1[:], data[entryStart+40:entryStart+60])
+
+			offset += 62
+			stripLen, nextOffset, err := readGitVarint(data, offset)
+			if err != nil {
+				return nil, fmt.Errorf("corrupt index v4 varint: %w", err)
+			}
+			offset = nextOffset
+
+			nameEnd := bytes.IndexByte(data[offset:], 0)
+			if nameEnd == -1 {
+				return nil, fmt.Errorf("corrupt index v4 entry: unterminated path suffix")
+			}
+			suffix := string(data[offset : offset+nameEnd])
+			offset += nameEnd + 1
+
+			prefix := ""
+			if stripLen <= len(prevPath) {
+				prefix = prevPath[:len(prevPath)-stripLen]
+			}
+			path := prefix + suffix
+			cleanPath := filepath.Clean(filepath.ToSlash(path))
+			result.Entries[cleanPath] = GitIndexEntry{
+				Path:     cleanPath,
+				BlobSHA1: blobSHA1,
+			}
+			prevPath = path
+		}
+		return result, nil
+	}
+
 	return nil, fmt.Errorf("unsupported git index version %d", version)
+}
+
+// ReadGitIndexTrackedFiles reads .git/index directly to find all tracked files.
+func ReadGitIndexTrackedFiles(storeDir string) (map[string]bool, error) {
+	data, err := ReadGitIndex(storeDir)
+	if err != nil {
+		return nil, err
+	}
+	tracked := make(map[string]bool, len(data.Entries))
+	for k := range data.Entries {
+		tracked[k] = true
+	}
+	return tracked, nil
+}
+
+// GitBlobSHA1 computes the SHA1 hash of a git blob object for content.
+func GitBlobSHA1(content []byte) [20]byte {
+	h := sha1.New()
+	fmt.Fprintf(h, "blob %d\x00", len(content))
+	h.Write(content)
+	var out [20]byte
+	copy(out[:], h.Sum(nil))
+	return out
+}
+
+// VerifyFileMatchesIndex checks that the file on disk matches its index blob SHA1.
+func VerifyFileMatchesIndex(storeDir, filePath string, index *GitIndexData) error {
+	rel, err := filepath.Rel(storeDir, filePath)
+	if err != nil {
+		rel = filePath
+	}
+	cleanRel := filepath.Clean(filepath.ToSlash(rel))
+	entry, ok := index.Entries[cleanRel]
+	if !ok {
+		return fmt.Errorf("%s is untracked in git", rel)
+	}
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("unable to read %s: %w", rel, err)
+	}
+	actual := GitBlobSHA1(data)
+	if actual != entry.BlobSHA1 {
+		return fmt.Errorf("%s has uncommitted modifications (working copy blob differs from git index)", rel)
+	}
+	return nil
+}
+
+// IsValidAsName checks if a seat name matches [A-Za-z0-9_-]+
+func IsValidAsName(name string) bool {
+	if len(name) == 0 {
+		return false
+	}
+	for _, r := range name {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+			return false
+		}
+	}
+	return true
 }
