@@ -97,8 +97,12 @@ dedup disposition; an eventual apply revalidates.
 
 ## Admission and state effects
 
-The allowed created kinds are existing containment kinds `:work-set`, `:epic`,
-`:feature`, `:roadmap`, and `:task`; `:event` and `:lease` are not addable nodes.
+The proposed sole creation owner for a roadmap is `roadmap create`, which admits
+the node and mandatory view data atomically. `node add` therefore admits only
+`:work-set`, `:epic`, `:feature`, and `:task`; `--type roadmap` refuses at exit 2
+naming `roadmap create`. This is an explicit parent grammar/type-admission revision
+for friend review, not a second alias or a compatibility path. `:event` and
+`:lease` remain non-addable. Metadata edits may still target existing roadmaps.
 Existing unique-id, hierarchy, cycle, acceptance and candidate validation rules stand.
 A direct add under a roadmap remains exit 2 naming `axis --add` (923–36).
 
@@ -155,6 +159,30 @@ if the current metadata still equals the original postimage and the node remains
 otherwise undo-plan/apply refuses conflict. A no-effect edit is likewise historical and
 its undo may append a no-effect compensator under that check. It changes no scope or
 counter. Add retains the current node-add removal undo rules.
+
+## Required acceptance witnesses
+
+- `metadata-patches-preserve-intent`: keep, clear, set-empty, set-false and set-value
+  round-trip and digest distinctly where the parent distinguishes them; omitted
+  and null use the parent's absent rule. All-keep, malformed tags and wrong types
+  refuse without an event or counter change.
+- `metadata-create-has-one-owner`: generic add of roadmap refuses with the owning
+  command; roadmap create produces exactly one node and one coherent view in one
+  accepted envelope, never a half-created node or duplicate alias.
+- `metadata-repository-and-version`: root ownership must be explicit and unique;
+  non-root repo selectors and non-task version edits refuse; task version keep
+  preserves the source value without changing identity or ownership.
+- `metadata-edit-is-atomic-and-replayable`: bad one-of-five patch writes nothing;
+  accepted mixed edits update only declared fields/indexes; identical-request
+  retry returns its disposition without another event, changed payload refuses.
+- `metadata-undo-preserves-later-work`: compensate only against matching postimage;
+  intervening edit refuses rather than overwriting; original events remain.
+- `metadata-privacy-and-output`: privacy invalidates affected public projections;
+  errors name field/index without revealing private values; links are never fetched.
+
+The no-effect-event and global `--dry-run` rules above remain joint parent
+integration decisions. Their witnesses must be adopted with one shared convention,
+not implemented independently in each verb draft.
 
 ## Friend-review decisions
 

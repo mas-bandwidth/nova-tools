@@ -4,8 +4,11 @@ This proposal owns roadmap configuration, targets and `axis --remove`; it needs 
 
 ## Model and operation boundary
 
-A roadmap is a node plus a durable view record. `node add`, `axis --add`, and `cell`
-retain ownership. Create writes its initial view atomically; configure changes view
+A roadmap is a node plus a durable view record. **Proposed sole creation owner:**
+`roadmap create` creates both atomically; `node add --type roadmap` refuses and
+names this command. This explicit parent-admission revision requires friend review.
+`node edit` retains metadata ownership, while `axis --add` and `cell` retain their
+existing membership ownership. Create writes its initial view atomically; configure changes view
 metadata, projections own destinations, and axisless rows own ordered membership.
 
 ```
