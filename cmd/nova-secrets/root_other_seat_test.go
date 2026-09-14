@@ -118,3 +118,42 @@ func TestRootExecRejectsModifiedNestedCommittedYAML(t *testing.T) {
 		t.Fatalf("invariant 8 disagreement on nested yaml: want check=1 exec=125; got check=%d exec=%d", checkCode, execCode)
 	}
 }
+
+func TestRootExecRejectsDirectoryReplacingOtherCommittedSeat(t *testing.T) {
+	sops := findSops(t)
+	bin := buildNovaSecrets(t)
+	td := t.TempDir()
+	store := filepath.Join(td, "store")
+	if err := os.Mkdir(store, 0755); err != nil {
+		t.Fatal(err)
+	}
+	initGitStore(t, store)
+	seat, recovery := genKey(t, td, "seat"), genKey(t, td, "recovery")
+	if err := os.WriteFile(filepath.Join(store, "recovery.pub"), []byte(recovery.pubKey+"\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	config := fmt.Sprintf("creation_rules:\n  - path_regex: ^(rowan|other)\\.yaml$\n    age: %s,%s\n", seat.pubKey, recovery.pubKey)
+	if err := os.WriteFile(filepath.Join(store, ".sops.yaml"), []byte(config), 0644); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"rowan", "other"} {
+		sealFileWithSops(t, sops, filepath.Join(store, name+".yaml"), []string{seat.pubKey, recovery.pubKey}, "TEST_KEY: disposable_fixture\n")
+	}
+	commitAndPush(t, store)
+	args := []string{"exec", "--store", store, "--as", "rowan", "--key", seat.privPath, "--sops", sops, "--only", "all", "--", "true"}
+	if _, _, code := runNovaSecrets(bin, args...); code != 0 {
+		t.Fatalf("clean control exit=%d", code)
+	}
+	if err := os.Remove(filepath.Join(store, "other.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(store, "other.yaml"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	_, _, checkCode := runNovaSecrets(bin, "check", "--store", store, "--as", "rowan", "--key", seat.privPath, "--sops", sops)
+	_, _, execCode := runNovaSecrets(bin, args...)
+	t.Logf("directory replacement sibling: check=%d exec=%d", checkCode, execCode)
+	if checkCode != 1 || execCode != 125 {
+		t.Fatalf("invariant 8 disagreement: want check=1 exec=125; got check=%d exec=%d", checkCode, execCode)
+	}
+}

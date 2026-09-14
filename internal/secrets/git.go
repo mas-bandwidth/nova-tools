@@ -363,9 +363,9 @@ func readLooseTreeRecursive(gitDir, treeSHA, prefix string, out map[string]strin
 // It verifies:
 // 1. Invariant 8 ref tracking: HEAD equals remote-tracking ref (via CheckGitWorkingCopy).
 // 2. HEAD commit tree and git index can be read.
-// 3. Every tracked store file (*.yaml, .sops.yaml, recovery.pub) in HEAD tree, git index, or working copy:
-//   - exists in working copy (no deletions)
-//   - is tracked in index and committed in HEAD tree (no untracked or uncommitted additions)
+// 3. Every tracked store file (*.yaml, .sops.yaml, recovery.pub) in HEAD tree or git index:
+//   - exists in working copy as a regular file (no deletions or non-regular artifact replacements)
+//   - is tracked in index and committed in HEAD tree (no uncommitted additions or index drift)
 //   - working copy blob SHA1 matches HEAD tree blob SHA1 and git index blob SHA1 (no unstaged or staged modifications)
 func ValidateAdmissibleStore(storeDir string) (status GitRefStatus, headBlobs map[string]string, indexData *GitIndexData, failures []CheckFailure, refusal error) {
 	st, err := CheckGitWorkingCopy(storeDir)
@@ -447,7 +447,12 @@ func ValidateAdmissibleStore(storeDir string) (status GitRefStatus, headBlobs ma
 			continue
 		}
 
-		if fi.IsDir() {
+		if !fi.Mode().IsRegular() {
+			failures = append(failures, CheckFailure{
+				Kind:   "stale-working-copy",
+				File:   p,
+				Reason: fmt.Sprintf("working copy differs from HEAD commit tree; tracked artifact %s is not a regular file", p),
+			})
 			continue
 		}
 
