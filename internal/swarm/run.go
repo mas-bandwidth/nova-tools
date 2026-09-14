@@ -235,19 +235,52 @@ func Run(in RunInput) int {
 				quarantined[n] = true
 			}
 		case DecideUnlaunched:
-			sc, _ := p.ReadSidecar(Running, d.File.Job)
-			if sc.ID != "" {
-				sc.Launch = "unlaunched"
-				_ = p.WriteSidecar(Running, sc)
-				_ = p.Claim(sc.ID, Running, Pending)
+			// This is a confirmed pre-launch failure. Every write and move must
+			// succeed before the reservation is released; otherwise the next run
+			// would inherit an ownerless task or could free a newer reservation.
+			id := d.File.Job
+			var sc Sidecar
+			var recoverErr error
+			if _, err := os.Stat(p.taskFile(Running, id)); err == nil {
+				sc, recoverErr = p.ReadSidecar(Running, id)
+				if recoverErr == nil {
+					sc.Launch = "unlaunched"
+					recoverErr = p.WriteSidecar(Running, sc)
+				}
+				if recoverErr == nil {
+					recoverErr = p.Claim(id, Running, Pending)
+				}
+				if recoverErr == nil {
+					sc, recoverErr = p.ReadSidecar(Pending, id)
+				}
+				if recoverErr == nil {
+					sc.Launch = "unlaunched"
+					recoverErr = p.WriteSidecar(Pending, sc)
+				}
+			} else if _, err := os.Stat(p.taskFile(Pending, id)); err == nil {
+				sc, recoverErr = p.ReadSidecar(Pending, id)
+				if recoverErr == nil {
+					sc.Launch = "unlaunched"
+					recoverErr = p.WriteSidecar(Pending, sc)
+				}
+			} else {
+				recoverErr = fmt.Errorf("task %s is missing from running and pending", id)
 			}
-			_ = p.Free(n)
+			if recoverErr == nil {
+				recoverErr = p.FreeIf(n, d.File.Nonce)
+			}
+			if recoverErr != nil {
+				said = true
+				quarantined[n] = true
+				fmt.Fprintf(out, "RUN QUARANTINE slot=%d id=%s: unlaunched recovery failed: %s\n", n, oneline.Field(id), oneline.Escape(redactedReason(recoverErr)))
+				continue
+			}
 			// ONE GRAMMAR LINE HAS ONE SHAPE (SPEC-SWARM.md:566): `RUN RECLAIM … end=<…>
 			// dest=<done|failed|-> usage=<path|->`. The reclaim above prints `dest=`; this
 			// one did not, so the same line came out two ways and a reader parsing it by
 			// field found the field missing. An unlaunched task goes back to pending/,
 			// which is neither done nor failed: the dash the grammar names for exactly that.
-			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=unlaunched dest=%s usage=- requeued=false\n", n, oneline.Field(d.File.Job), Dash)
+			fmt.Fprintf(out, "RUN RECLAIM slot=%d id=%s end=unlaunched dest=%s usage=- requeued=false\n", n, oneline.Field(id), Dash)
 		default:
 			// A reservation whose launch is unproven is rewritten to `orphaned` with its
 			// nonce KEPT -- under slots.lock, after a recheck that it still reads reserved
