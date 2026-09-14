@@ -120,6 +120,10 @@ that a provider credential can never be rotated in the committed store.
 This complete *required-field projection* uses fake names and paths. It is a
 schema example, not live configuration: provider policy/capacity attestations
 and a supported protected launcher are still required before launch.
+The example assumes a wrapper that consumes a prompt **filename**; it is not a
+stock OpenCode command. The proposed native adapter instead requires the exact
+prompt on stdin, as specified in
+[the native launch proposal](drafts/SWARM-OPENCODE-NATIVE.md).
 
 ```json
 {
@@ -128,7 +132,7 @@ and a supported protected launcher are still required before launch.
     "go-small": {
       "worker": {
         "name": "hosted-small", "usage": "opencode",
-        "harness": "/opt/example/bin/opencode",
+        "harness": "/opt/example/bin/prompt-file-harness",
         "harness_args": ["run", "--model", "{model}", "--", "{prompt}"],
         "worker_dir": "/opt/example/worker", "deadline": "5m"
       },

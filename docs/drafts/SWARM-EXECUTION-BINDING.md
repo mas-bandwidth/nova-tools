@@ -11,6 +11,11 @@ The [realization contract](SWARM-REALIZATION.md) and
 proposals for the first three decisions below, including synthetic vectors.
 They amend this discussion draft as stated; parent tables/readers remain unchanged.
 
+The [native OpenCode source and launch proposal](SWARM-OPENCODE-NATIVE.md)
+specifies the stdin/argv boundary and records the remaining compatibility gate
+in [issue 296](https://github.com/mas-bandwidth/nova-tools/issues/296). A custom
+config file alone does not establish isolated effective inputs.
+
 Pending amendment to `SPEC-SWARM-PROFILES.md`; it is neither a runtime claim nor a change to legacy `--worker`
 readers. New members apply only to a profiled `nova.swarm.attempt/1` after that reader is upgraded.
 `worker.usage` stays an accounting-source selector; it never selects an adapter or executable.
