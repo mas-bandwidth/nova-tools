@@ -49,6 +49,16 @@ Disconnect does not cancel the operation. Recovery resolves its existing ID,
 captured sources and output identity before any retry, never blindly republishes.
 Atomic mutation batches refuse export as an external-effect long operation.
 
+**Required parent fence-exception amendment:** a fenced session admits
+`operation status|wait|cancel` only with an explicit ID resolving to its own
+`session.export` operation. These calls observe that export or request its bounded
+cancellation/reconciliation; they grant no canonical mutation authority. Other
+operation IDs, general operation listing, and other operation verbs retain the
+parent's fenced refusal. This narrow exception must land with the long-operation
+export contract, so a fenced export can retrieve its terminal outcome or cancel
+without opening unrelated state/operations. Unknown or non-export IDs refuse.
+
+
 The explicit offline snapshot form has no resident mutation loop or live session.
 It is a finite isolated process that waits for its own staged export and prints
 the terminal grammar with `operation=-`; it does not register a resident operation
@@ -150,5 +160,7 @@ revision/cache binding belongs in the exact capture codec before lock.
 7. `state-export-is-one-long-operation`: an export blocked on archive I/O still promptly acknowledges its operation; status/cancel and unrelated mutation remain responsive. Wait returns the same operation/captured revision after publication or refusal.
 8. `state-export-pin-survives-clip`: capture R, run clip/retention at R+1 during copy, then complete exactly R or name a recovery gap; no pinned member reclaimed, no current bytes substituted.
 9. `state-export-disconnect-and-cancel`: lost client, restart, and cancellation around no-replace publication retain the same operation/output identity; no duplicate directory publication or claim to reverse it.
+
+10. `fenced-export-can-finish`: in a fenced session start an export, retrieve its status and terminal result by its ID, and separately cancel an unfinished export with publication reconciliation. Refuse unknown/non-export IDs, general operation listing and canonical writes. Verify no second owner or mutation authority is created.
 
 Review must still pin path taxonomy/record codecs, no-replace platform support/recovery, and signing/audience policy for distribution. None permits reinterpreting request export or adding a live-state import.
