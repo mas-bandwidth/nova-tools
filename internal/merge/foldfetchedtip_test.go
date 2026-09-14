@@ -120,6 +120,57 @@ func TestFoldTipRetainsLegacyTreeishInput(t *testing.T) {
 	}
 }
 
+type countingExec struct {
+	calls [][]string
+}
+
+func (r *countingExec) Run(ctx context.Context, dir, name string, args ...string) (string, error) {
+	r.calls = append(r.calls, append([]string(nil), args...))
+	return (Exec{}).Run(ctx, dir, name, args...)
+}
+
+func (r *countingExec) count(args ...string) int {
+	n := 0
+	for _, call := range r.calls {
+		if len(call) != len(args) {
+			continue
+		}
+		matched := true
+		for i := range args {
+			if call[i] != args[i] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			n++
+		}
+	}
+	return n
+}
+
+func TestFoldFetchedTipRereadsOnlyProblemPaths(t *testing.T) {
+	lane, tip, _ := fetchedTipLab(t)
+	runner := &countingExec{}
+	records := NewRecords(lane, "nova-merge/lane", "origin", NewGit(lane, time.Second, runner), time.Second)
+	folded, err := records.FoldFetchedTip(tip)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(folded.Problems) != 1 {
+		t.Fatalf("malformed path must survive its retry: %+v", folded.Problems)
+	}
+	if got := runner.count("ls-tree", "-r", "-z", "--name-only", tip); got != 1 {
+		t.Fatalf("pinned tree must be listed once, got %d", got)
+	}
+	if got := runner.count("show", tip+":reads/951/ reader record .json"); got != 1 {
+		t.Fatalf("valid record must be read once, got %d", got)
+	}
+	if got := runner.count("show", tip+":reads/951/ malformed .json"); got != 2 {
+		t.Fatalf("only malformed record must receive one retry, got %d", got)
+	}
+}
+
 type tipRunner struct {
 	calls [][]string
 }
