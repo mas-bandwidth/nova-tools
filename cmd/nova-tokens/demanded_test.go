@@ -822,9 +822,12 @@ func TestIssue273ExplicitDayQuietSourceDetectedAndRefused(t *testing.T) {
 	}
 
 	// With --allow-shrink on a day that shrank to 0 rows: fold does not write an empty day file.
+	// Both SHRANK and DAY agree that written=false, and the file on disk remains unchanged.
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos, "--swarm", "freddy="+pool, "--allow-shrink")
 	wantExit(t, r, 0)
-	wantContains(t, r.stderr, "written=true")
+	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=100 now=- written=false")
+	wantContains(t, r.stdout, "TOKENS DAY date=2026-09-14")
+	wantContains(t, r.stdout, "written=false")
 	if read(t, day) != before {
 		t.Error("an empty day write modified the existing day file")
 	}
@@ -854,9 +857,13 @@ func TestIssue273ExplicitDayQuietSourcePreservesOtherSources(t *testing.T) {
 	}
 
 	// With --allow-shrink: writes freddy's rows (2000), glenn's row is removed.
+	// Both SHRANK and DAY agree that written=true.
 	r = invoke(t, "fold", "--out", out, "--day", "2026-09-14", "--repos", repos,
 		"--swarm", "glenn="+poolA, "--swarm", "freddy="+poolB, "--allow-shrink")
 	wantExit(t, r, 0)
+	wantContains(t, r.stderr, "TOKENS SHRANK date=2026-09-14 type=input file=2410 now=2000 written=true")
+	wantContains(t, r.stdout, "TOKENS DAY date=2026-09-14")
+	wantContains(t, r.stdout, "written=true")
 	got := read(t, day)
 	wantNotContains(t, got, "claude-x")
 	wantContains(t, got, "mercury-2.5")

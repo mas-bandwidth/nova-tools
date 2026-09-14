@@ -556,6 +556,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		written := false
 		shrank := false
 		partial := false
+		var dayShrinks []tokens.Shrink
 		if !conflictDays[d] {
 			switch {
 			case readErr != nil && !os.IsNotExist(readErr):
@@ -594,11 +595,9 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 						// file whose turns nobody can state.
 						file.Turns = tokens.Dash
 					}
-					for _, sh := range tokens.Shrinks(old.Totals(), file.Totals(), d) {
+					dayShrinks = tokens.Shrinks(old.Totals(), file.Totals(), d)
+					if len(dayShrinks) > 0 {
 						shrank = true
-						shrankList.Line(fmt.Sprintf("TOKENS SHRANK date=%s type=%s file=%s now=%s written=%t: a source went quiet; --allow-shrink writes it anyway",
-							oneline.Field(sh.Day), oneline.Field(tokens.TypeNames[sh.Type]),
-							oneline.Field(sh.File), oneline.Field(sh.Now), *allowShrink))
 					}
 				}
 			}
@@ -616,6 +615,11 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 					daysWritten++
 					rowsWritten += len(rows)
 				}
+			}
+			for _, sh := range dayShrinks {
+				shrankList.Line(fmt.Sprintf("TOKENS SHRANK date=%s type=%s file=%s now=%s written=%t: a source went quiet; --allow-shrink writes it anyway",
+					oneline.Field(sh.Day), oneline.Field(tokens.TypeNames[sh.Type]),
+					oneline.Field(sh.File), oneline.Field(sh.Now), written))
 			}
 		}
 		dayList.Line(dayLine(d, file, written))
