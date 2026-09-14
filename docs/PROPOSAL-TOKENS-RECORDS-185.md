@@ -15,7 +15,7 @@ This decision packet settles the blocking contract gates for native token record
 
 1. **Multi-Binding Source/Result Attribution & Conflict Cardinality**: Supports multiple source streams with explicit ordinals/IDs; introduces `ObservationProvenance` / `SourceRef` (retaining `SourceOrdinal`, `SourceID`) pairing each observation occurrence with its originating source stream without mutating the sealed wire type `CodexObservation`; assigns conflict reasons to all participating sources (same-binding, cross-source, and unknown-source); strictly rejects partial origin bindings; pins multi-source decoder preconditions (source/reader length equality, ordinal agreement, source-ID uniqueness); defines conflict cardinality as the count of *distinct conflicting identity keys*, keeping single-record decoder outcomes separate.
 2. **Package Allowance & Strict 3-Way Mapping Closure**: Amends Rule 29 to explicitly admit optional `inventories/<digest>.json`; removes input `coverage/` replica allowance (input package contains strictly `batch.json`, referenced shards, all referenced mappings, and optional inventories; no `coverage/` replica in input packages); enforces strict tripartite closure: $\text{Packaged Mappings} \equiv \text{Coverage } \texttt{mapping\_ids} \equiv \text{Observation } \texttt{mapping\_id}\text{s}$ (no orphans, no missing files, no unused mappings; an existing ledger copy does not exempt the package; writing an already-retained identical mapping into the ledger is a verified no-op).
-3. **Coverage Reason Mapping & Separate Retained Observations**: Maps unknown origin/model and ambiguous default-zero counters into the closed reason set `{source_unavailable, unsupported_rows, unknown_fields, partial_interval, conflict}`; clearly distinguishes 0 emitted observations (wire refusals and truncated lines, tracked in refusal and truncated-line counters) from 1 retained observation (unavailable counters, arithmetic mismatches, impossible subsets, which retain sealed observations and are unspendable without incrementing wire-shape/refusal counters); keeps distinct-key conflict cardinality separate (0 conflicts for single-record inconsistencies); pins additive reason composition (conflicts, unsupported rows, and unknown fields compose additively); enforces the structural invariant $\texttt{gaps} = \operatorname{len}(\texttt{reasons})$ over deduplicated $(code, source)$ entries.
+3. **Coverage Reason Mapping & Separate Retained Observations**: Maps unknown origin/model and ambiguous default-zero counters into the closed reason set `{source_unavailable, unsupported_rows, unknown_fields, partial_interval, conflict}`; clearly distinguishes 0 emitted observations (whole-record wire refusals, unparseable wire shapes, and truncated lines, tracked in refusal, unmapped shape, and per-source truncation counters) from 1 retained observation (unavailable counters, arithmetic mismatches, impossible subsets, and unsupported-subfield diagnostics such as unreadable turn IDs, which retain sealed observations and are unspendable without incrementing wire counters solely for coverage mapping); keeps distinct-key conflict cardinality separate (0 conflicts for single-record inconsistencies); pins additive reason composition (conflicts, unsupported rows, and unknown fields compose additively to 3, 4, or 5 distinct gaps); enforces the structural invariant $\texttt{gaps} = \operatorname{len}(\texttt{reasons})$ over deduplicated $(code, source)$ entries.
 4. **Two-Phase Directory Validation, Bottom-Up Durability Trace, and Readiness**: Establishes `ValidateCandidateDirectory` (pre-marker, checking directory contents excluding only the explicitly owned marker temp, verifying its file type/mode/non-symlink boundary; forbidding pre-existing marker temp before staging) and `ValidateInstalledDirectory` (post-marker, strictly forbidding `batch.json.tmp`, any `*.tmp` files, and any unexpected extra files); strictly validates `nova.tokens.observation/2` envelopes and verifies record origin/day matches shard path (`records/<friend>/<bench>/<day>/...` with `_` and `unallocated`); preserves sorted-ID-set inventory comparison; pins explicit bottom-up fsync trace (`mkdir(root) -> fsync(parent-dir)`, intermediate directories created without premature sync, write & sync files, bottom-up sync `day -> bench -> friend -> records (and mappings/, inventories/) -> root` before marker staging, write & sync `batch.json.tmp`, atomic no-replace rename, and `fsync(root)` after marker installation); specifies explicit fail-stop on any sync failure; verifies link/unlink crash witness (marker + temp present) is unpublishable under `ValidateInstalledDirectory`; clarifies that envelope validators for `observation/2`, `mapping/2`, and `coverage/2` exist in `internal/records`, with whole-package composition in `internal/tokens` (or `internal/pkgvalid`) as the remaining dependency.
 
 ---
@@ -64,7 +64,8 @@ type SourceRefusal struct {
 }
 
 // SourceUnsupported records counts of unsupported wire shapes attributed per source.
-// Emits 0 observations (count = 0); no observation envelope or spend key is created.
+// Whole-record wire refusals and unparseable wire shapes emit 0 observations (count = 0; no observation envelope or spend key is created).
+// Existing unsupported-subfield diagnostics (e.g. unreadable turn ID) are counted in Shapes alongside retained records (count = 1, unspendable).
 type SourceUnsupported struct {
     SourceOrdinal int            `json:"source_ordinal"`
     SourceID      string         `json:"source_id"`
@@ -75,14 +76,17 @@ type SourceUnsupported struct {
 type MultiSourceDecoding struct {
     Observations   []ObservationProvenance `json:"observations"`   // Sealed observations (retained records, count=1 per record; includes unspendable)
     Refusals       []SourceRefusal         `json:"refusals"`       // Boundary refusals (0 observations emitted)
-    Unsupported    []SourceUnsupported     `json:"unsupported"`    // Per-source counts of unsupported wire shapes (0 observations emitted)
-    TruncatedLines int                     `json:"truncated_lines"` // Truncated final JSONL lines (0 observations emitted)
+    Unsupported    []SourceUnsupported     `json:"unsupported"`    // Per-source counts of unsupported wire shapes (0 observations emitted for whole-record refusals/unparseable shapes; retains observation count=1 for unsupported-subfield diagnostics)
+    TruncatedLines map[string]int          `json:"truncated_lines"` // Per-source counts of truncated final JSONL lines (source_id -> count; 0 observations emitted)
     OwedTasks      []string                `json:"owed_tasks"`     // Distinct owed coverage tasks from mappings
 }
 
 // DecodeCodexMultiSource decodes multiple source streams under their declared bindings.
 func DecodeCodexMultiSource(m *CodexMapping, sources []SourceBinding, readers []io.Reader) (*MultiSourceDecoding, error)
 ```
+
+**Source-Local Truncation Attribution (Collector Note)**:
+For multi-source decoding, source-local truncation attribution is retained (e.g. via per-source counts `map[string]int` in `TruncatedLines` or already-composed source reasons) rather than a single aggregate count, so each affected source receives its own `{code: "unsupported_rows", source: S}` truncation reason. (The read-only package validator is independent of this decoder-internal choice.)
 
 **Preconditions on MultiSourceDecoding**:
 1. **Source / Reader Length Equality**: `len(sources) == len(readers)`. The number of declared source bindings must strictly equal the number of reader streams. Any mismatch fails immediately upfront with an error (`RuleDecoderLengthMismatch`).
@@ -133,10 +137,10 @@ The `conflicts` count in `coverage/2` is the count of **distinct conflicting ide
 
 * **Separation of Retained Observations from Refusals / Truncation**:
   - **Count 1 vs Count 0**:
-    * *0 Observations Emitted (Count = 0)*: Wire refusals (envelope schema / field validation failures) and truncated final JSONL lines fail validation before creating an observation envelope. They emit 0 observations (`count = 0`), create no observation envelope ID, and produce no spend key. They are tracked strictly in wire-level `Refusals`, `Unsupported`, or `TruncatedLines` counters.
-    * *1 Retained Observation Emitted (Count = 1)*: Records with unavailable supported counters (`Presence == "unavailable"`, completeness gap), arithmetic mismatches (`input + output != total`), or impossible subsets (`cached_input > input`, `reasoning > output`) parse successfully into sealed `nova.tokens.observation/2` envelopes. They emit 1 observation (`count = 1`), retain their original sealed content IDs and mapping diagnoses, and are retained in shard records. They are marked `Spendable = false`.
+    * *0 Observations Emitted (Count = 0)*: Whole-record wire refusals (envelope schema / field validation failures), unparseable wire shapes, and truncated final JSONL lines fail validation before creating an observation envelope. They emit 0 observations (`count = 0`), create no observation envelope ID, and produce no spend key. They are tracked strictly in wire-level `Refusals`, whole-record `Unsupported`, or per-source `TruncatedLines` counters.
+    * *1 Retained Observation Emitted (Count = 1)*: Records with unavailable supported counters (`Presence == "unavailable"`, completeness gap), arithmetic mismatches (`input + output != total`), impossible subsets (`cached_input > input`, `reasoning > output`), or unsupported subfields (such as an unreadable turn ID in `internal/tokens/codex.go:586–592`, which counts `token_usage_record_with_unreadable_turn_id` in `Unsupported` while omitting the subfield, verified in `codex_test.go:649–659`) parse successfully into sealed `nova.tokens.observation/2` envelopes. They emit 1 observation (`count = 1`), retain their original sealed content IDs and mapping diagnoses, and are retained in shard records. They are marked `Spendable = false`.
   - **Strict Counter Separation**:
-    Do NOT increment wire-shape (`Unsupported`) or boundary refusal (`Refusals`) counters solely because a coverage reason uses `unsupported_rows`. Those counters strictly track unmapped source shapes and syntax refusals where 0 observations are emitted. Retained observations (count = 1) do not increment wire-shape or refusal counters.
+    Do NOT increment wire-shape (`Unsupported`) or boundary refusal (`Refusals`) counters solely because a coverage reason uses `unsupported_rows`. Those counters strictly track unmapped source shapes, syntax refusals, and specific unsupported-subfield diagnostics (which accompany retained records with `count = 1`, unspendable). Coverage reason mapping alone never increments wire counters.
   - **Distinct-Key Conflict Cardinality**:
     When an anomalous record has no competing distinct-content records for its spend key, $|V(k)| = 1$ and it contributes 0 distinct-key conflicts (`counts.conflicts = 0`). A single record's internal invalidity is never counted as a conflict.
   - **Additive Reason Composition**:
@@ -145,8 +149,9 @@ The `conflicts` count in `coverage/2` is the count of **distinct conflicting ide
       - Spend-key collision yields 1 distinct conflicting key (`counts.conflicts` increments by 1). Both $A$ and $B$ are marked `Conflict = true`, `Spendable = false`.
       - Both participating sources receive conflict reasons: `{code: "conflict", source: S_1}` and `{code: "conflict", source: S_2}`.
       - Source $S_1$ additively receives `{code: "unsupported_rows", source: S_1}` because observation $A$ has an arithmetic mismatch.
-      - If either $A$ or $B$ originates from an unattributed origin binding (`Friend == nil`), `{code: "unknown_fields", source: ...}` is additively emitted for that source.
-      - Total `reasons` carries all three distinct `(code, source)` tuples; `counts.gaps` is the deduplicated count ($\operatorname{len}(\texttt{reasons}) = 3$).
+      - When both origins are known (`Friend != nil`), total `reasons` carries exactly three distinct `(code, source)` tuples: `("conflict", S_1)`, `("conflict", S_2)`, and `("unsupported_rows", S_1)` $\implies \texttt{counts.gaps} = 3$.
+      - When one or both origins are unknown (`Friend == nil`), an `unknown_fields` reason is additively emitted for each affected source (e.g. `("unknown_fields", S_1)` and/or `("unknown_fields", S_2)`), yielding 4 distinct tuples (if one source is unknown) or 5 distinct tuples (if both sources are unknown).
+      - In all cases, the general deduplication invariant remains exact: $\texttt{counts.gaps} = \operatorname{len}(\texttt{reasons})$.
       - The original sealed observation content IDs and mapping diagnoses remain intact.
 
 ---
@@ -218,8 +223,9 @@ When native collection encounters incomplete or ambiguous metadata or decoder an
 | Unknown origin (`friend`/`bench`/`basis="unknown"`) | 1 (retained) | `unknown_fields` | Specific `source_id` | Records retained with unattributed origin; spendable if counters valid. |
 | Unknown / unconfigured model ID on valid response | 1 (retained) | `unknown_fields` | Specific `source_id` | Model is absent/ambiguous; record retained; spendable if counters valid. |
 | Ambiguous zero detail counters (`default_may_mask_absence`) | 1 (retained) | `unknown_fields` | Specific `source_id` | Detail counter emitted as 0 may mask unmeasured absence; record retained. |
-| Unmapped source shapes or unsupported wire types | 0 | `unsupported_rows` | Specific `source_id` | Counted in `Unsupported`, excluded from records. 0 observations emitted. |
-| Truncated final JSONL line in source stream | 0 | `unsupported_rows` | Specific `source_id` | Counted in `TruncatedLines`, excluded from records. 0 observations emitted (no envelope ID, no spend key). |
+| Whole-record unmapped source shapes or unsupported wire types | 0 | `unsupported_rows` | Specific `source_id` | Counted in `Unsupported`, excluded from records. 0 observations emitted. |
+| Unsupported subfield with valid enclosing record (e.g. unreadable turn ID) | 1 (retained) | `unsupported_rows` | Specific `source_id` | Counted in `Unsupported` (`token_usage_record_with_unreadable_turn_id`), subfield omitted, record retained in shard (count=1, unspendable). |
+| Truncated final JSONL line in source stream | 0 | `unsupported_rows` | Specific `source_id` | Counted in `TruncatedLines` (per-source), excluded from records. 0 observations emitted (no envelope ID, no spend key). |
 | Boundary refusals (envelope schema / field validation failure) | 0 | `unsupported_rows` | Specific `source_id` | Counted in `Refusals`, excluded from records. 0 observations emitted. |
 | Supported counter unavailable (`f.Presence == "unavailable"`, completeness gap) | 1 (retained) | `unsupported_rows` | Specific `source_id` | Retained observation (count=1, unspendable). Shard record emitted with sealed ID intact. Does NOT increment wire `Unsupported`/`Refusals`. 0 conflicts (unless colliding). |
 | Arithmetic mismatch (`input + output != total` with all present) | 1 (retained) | `unsupported_rows` | Specific `source_id` | Retained observation (count=1, unspendable). Shard record emitted with sealed ID intact. Does NOT increment wire `Unsupported`/`Refusals`. 0 conflicts (unless colliding). |
@@ -229,19 +235,20 @@ When native collection encounters incomplete or ambiguous metadata or decoder an
 
 **Emitted Observations vs. Wire Refusals / Truncation and Additive Composition**:
 1. **Zero Observations Emitted (Count = 0)**:
-   - Wire refusals (envelope schema violations, type mismatches, integer/decimal lexeme errors) and unmapped wire shapes fail validation before creating an observation envelope. They emit 0 observations (`count = 0`), create no observation envelope ID, and produce no spend key. They are tracked strictly in wire-level `Refusals` or unmapped shape `Unsupported` counters.
-   - Truncated final JSONL lines at stream EOF cannot form a valid JSON object. They emit 0 observations (`count = 0`, no envelope ID, no spend key). They are tracked in `TruncatedLines` (or source shape `truncated_final_line`), and map to coverage reason `{code: "unsupported_rows", source: S}`.
+   - Whole-record wire refusals (envelope schema violations, type mismatches, integer/decimal lexeme errors) and unmapped wire shapes fail validation before creating an observation envelope. They emit 0 observations (`count = 0`), create no observation envelope ID, and produce no spend key. They are tracked strictly in wire-level `Refusals` or unmapped shape `Unsupported` counters.
+   - Truncated final JSONL lines at stream EOF cannot form a valid JSON object. They emit 0 observations (`count = 0`, no envelope ID, no spend key). They are tracked in per-source `TruncatedLines` (or source shape `truncated_final_line`), and map to coverage reason `{code: "unsupported_rows", source: S}`.
 2. **One Retained Observation Emitted (Count = 1)**:
-   - Records with unavailable supported counters, arithmetic mismatches, or impossible subsets parse validly into sealed `nova.tokens.observation/2` envelopes. They are retained in the shard records (emitting 1 observation, contributing to `record_count`), preserving their original sealed envelope IDs and mapping diagnoses.
-   - They are marked `Spendable = false` due to incompleteness or internal inconsistency.
-   - **Counter Separation**: Do NOT increment wire-shape (`Unsupported`) or boundary refusal (`Refusals`) counters solely because a coverage reason uses `unsupported_rows`. Those counters strictly measure wire-level parser rejections where 0 observations are emitted.
+   - Records with unavailable supported counters, arithmetic mismatches, impossible subsets, or unsupported subfields (such as unreadable turn IDs in `internal/tokens/codex.go:586–592`, which counts `token_usage_record_with_unreadable_turn_id` in `Unsupported` while omitting the subfield, verified in `codex_test.go:649–659`) parse validly into sealed `nova.tokens.observation/2` envelopes. They are retained in the shard records (emitting 1 observation, contributing to `record_count`), preserving their original sealed envelope IDs and mapping diagnoses.
+   - They are marked `Spendable = false` due to incompleteness, internal inconsistency, or unsupported subfields.
+   - **Counter Separation**: Do NOT increment wire-shape (`Unsupported`) or boundary refusal (`Refusals`) counters solely because a coverage reason uses `unsupported_rows`. Those counters strictly measure wire-level parser rejections or unmapped shapes / unsupported subfields; coverage reason mapping alone never increments wire counters.
 3. **Additive Reason Composition**:
    - Coverage reasons do not map exclusively; they compose additively across independent anomaly dimensions:
      - An observation with an arithmetic mismatch ($A$, source $S_1$) that also shares a spend key with a distinct observation ($B$, source $S_2$):
        * Contributes 1 distinct-key conflict to `counts.conflicts` ($|V(k)| > 1$). Both $A$ and $B$ have `Conflict = true`, `Spendable = false`.
        * Emits conflict reasons for both sources: `{code: "conflict", source: S_1}` and `{code: "conflict", source: S_2}`.
        * Emits an unsupported-rows reason for $A$'s arithmetic failure: `{code: "unsupported_rows", source: S_1}`.
-       * If $A$ or $B$ also has unknown origin (`Friend == nil`), an unknown-fields reason is emitted: `{code: "unknown_fields", source: ...}`.
+       * When both origins are known (`Friend != nil`), this yields 3 distinct tuples: `("conflict", S_1)`, `("conflict", S_2)`, and `("unsupported_rows", S_1)` $\implies \texttt{counts.gaps} = 3$.
+       * When one or both origins are unknown (`Friend == nil`), an `unknown_fields` reason is additively emitted for each affected source (e.g. `("unknown_fields", S_1)` and/or `("unknown_fields", S_2)`), yielding 4 or 5 distinct tuples ($\texttt{counts.gaps} = 4$ or $5$).
      - All distinct `(code, source)` tuples deduplicate and satisfy $\texttt{gaps} = \operatorname{len}(\texttt{reasons})$.
      - Sealed observation content IDs and mapping diagnoses remain intact and unmodified.
 
@@ -264,6 +271,8 @@ $$\texttt{counts.gaps} == \operatorname{len}(\texttt{reasons})$$
 ### 4.1 Validator Architecture & Go API
 
 Because `internal/records` strictly excludes path I/O, dealing purely with in-memory data structures, canonical serialization, and envelope validation, whole-package validation (`ValidateCandidateDirectory`, `ValidateInstalledDirectory`) is composed in `internal/tokens` (or `internal/pkgvalid`). The underlying envelope and schema validators (`nova.tokens.observation/2`, `nova.tokens.mapping/2`, and `nova.tokens.coverage/2`) are already implemented and tested in `internal/records`. The composing package manages directory traversal, file I/O, bottom-up fsync verification, and atomic commit semantics, delegating in-memory envelope and schema validation to `internal/records`.
+
+For multi-source decoding in native collection, source-local truncation attribution is retained (per-source counts or composed source reasons) rather than a single aggregate count, so each affected source receives its corresponding `{code: "unsupported_rows", source: S}` truncation reason. The read-only package validator remains independent of this decoder-internal choice.
 
 Two distinct functions provide pre-commit validation and post-install validation:
 
@@ -383,6 +392,8 @@ Both validators execute the verification matrix against the batch:
        - If `bench` is nil / empty, path component must be `_`.
        - If `day` is nil / unallocated, path component must be `unallocated`.
        - Any mismatch between the observation's own origin/day and the shard path fails with `RuleRecordPathOriginMismatch` (exit 2).
+     - **Retained Unsupported-Subfield Witness**:
+       Existing decoder logic (`internal/tokens/codex.go:586–592`, tested in `codex_test.go:649–659`) counts unsupported subfields (such as `token_usage_record_with_unreadable_turn_id`) in `Unsupported` while omitting the invalid subfield and retaining the observation (`count = 1`, sealed and unspendable). Shard validation accepts these retained observations as valid `nova.tokens.observation/2` envelopes; an unsupported subfield diagnostic on the decoder side does not invalidate or exclude the sealed observation envelope from shard records.
    - **Sorted-ID-Set Inventory Comparison**:
      - For `inline_ids`: sorted unique observation envelope IDs in the shard must equal sorted `inline_ids`.
      - For `inventory_file`: `inventories/<inventory-id-hex>.json` exists, byte SHA-256 matches `inventory_file`, content is canonical JSON array of CIDs ending in `\n`. Shard observation IDs and inventory file contents are compared as **sorted ID sets** (order-independent), preserving existing sorted-ID-set inventory comparison without imposing an undocumented physical line order constraint.
@@ -496,6 +507,7 @@ Both validators execute the verification matrix against the batch:
 | `TC-RSN-13` | `reason_boundary_refusal_unsupported_rows` | Wire Refusal / Count=0 | Single record refused by wire envelope validator (e.g. invalid integer lexeme). | Emits 0 observations (`count = 0`). Counted in `Refusals` (1), mapped to `{code: "unsupported_rows", source: "src-0"}`. `counts.conflicts = "0"`. |
 | `TC-RSN-14` | `reason_additive_composition_conflict_and_arithmetic` | Additive Reasons | Source 1 emits observation A with arithmetic mismatch. Source 2 emits distinct observation B with same spend key. | `counts.conflicts = "1"`. Both A and B marked `Conflict: true`, `Spendable: false`. Reasons carry `("conflict", "src-1")`, `("conflict", "src-2")`, and `("unsupported_rows", "src-1")`. `len(reasons) == 3`, `gaps = "3"`. Original sealed IDs and diagnoses intact. Obs A retained in shard (`count = 1`). Wire `Refusals` remain 0. |
 | `TC-RSN-15` | `reason_additive_composition_unknown_fields` | Additive Reasons | Source 1 emits observation with arithmetic mismatch under unknown origin binding (`Friend == nil`). | 1 retained observation. Reasons compose additively: `("unsupported_rows", "src-1")` and `("unknown_fields", "src-1")`. `len(reasons) == 2`, `gaps = "2"`. |
+| `TC-RSN-16` | `reason_additive_composition_conflict_unknown_origins` | Additive Reasons | Source 1 (unknown origin) emits observation A with arithmetic mismatch; Source 2 (unknown origin) emits distinct observation B with same spend key. | `counts.conflicts = "1"`. Both A and B marked `Conflict: true`, `Spendable: false`. Reasons carry `("conflict", "src-1")`, `("conflict", "src-2")`, `("unsupported_rows", "src-1")`, `("unknown_fields", "src-1")`, and `("unknown_fields", "src-2")`. `len(reasons) == 5`, `gaps = "5"` (or `gaps = "4"` if only one source is unknown). Deduplication invariant $\texttt{gaps} = \operatorname{len}(\texttt{reasons})$ holds exactly. |
 
 ### 5.4 Two-Phase Directory, Observation Validation & Durability Tests
 
@@ -517,6 +529,7 @@ Both validators execute the verification matrix against the batch:
 | `TC-VAL-14` | `shard_record_unallocated_and_underscore_paths` | Positive | Shard at `records/_/_/unallocated/...` containing observations with nil friend, bench, and day. | Validation passes (valid origin-path match). |
 | `TC-VAL-15` | `inventory_sorted_id_set_order_independent` | Positive | Shard lines ordered differently from inventory array, but identical sorted ID set. | Validation passes (sorted-ID-set equality confirmed). |
 | `TC-VAL-16` | `link_unlink_fallback_crash_unpublishable` | Crash Boundary | Simulates crash during link/unlink fallback between link and unlink, leaving both `batch.json` and `batch.json.tmp` on disk. | `ValidateInstalledDirectory` refuses batch with `RuleTemporaryFilePresent` (exit 2). Unfinished staging is strictly unpublishable. |
+| `TC-VAL-17` | `retained_unreadable_turn_id_observation_valid` (TC-VAL-20b) | Retained Obs / Subfield | Shard contains observation decoded with unreadable turn ID (`codexShapeNoTurnIDLexeme` counted in decoder `Unsupported`; `turn_id` omitted from receipt; `codex.go:586–592`, `codex_test.go:649–659`). | Observation envelope is valid `observation/2`, passes `ValidateInstalledDirectory` as retained record (`count = 1`, `Spendable = false`). Unsupported subfield diagnostic does not invalidate envelope or shard. |
 
 ---
 
@@ -529,7 +542,7 @@ Both validators execute the verification matrix against the batch:
 3. **Extend Codex Decoder with `DecodeCodexMultiSource`**:
    - Enforce preconditions upfront: source/reader length equality (`len(sources) == len(readers)`), ordinal agreement (`sources[i].Ordinal == i`), source-ID uniqueness (no duplicate `SourceID`s), and origin completeness (§1.2).
    - Output `MultiSourceDecoding` with `ObservationProvenance` pairing each observation with its `SourceOrdinal` and `SourceID`.
-   - Separate retained observations (count = 1; unavailable counters, arithmetic mismatches, impossible subsets) from wire refusals / truncated lines (count = 0; tracked in `Refusals`, `Unsupported`, `TruncatedLines` counters). Do not increment wire counters for retained observations.
+   - Separate retained observations (count = 1; unavailable counters, arithmetic mismatches, impossible subsets, unsupported subfields) from whole-record wire refusals / unparseable shapes and truncated lines (count = 0; tracked in `Refusals`, `Unsupported`, and per-source `TruncatedLines` counters). Do not increment wire counters solely because a coverage reason uses `unsupported_rows`; preserve existing unsupported-subfield diagnostics (e.g. `token_usage_record_with_unreadable_turn_id` in `internal/tokens/codex.go:586–592`) alongside retained records (count = 1, unspendable).
    - Implement additive reason composition across conflicts, unsupported rows, and unknown fields.
    - Preserve distinct key conflict cardinality ($|V(k)| > 1$).
 4. **Wire Native Collector**:
