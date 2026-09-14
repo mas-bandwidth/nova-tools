@@ -118,8 +118,8 @@
           :depends-on ()
           :source-sections (            "The data"
             "Hostile data and limits")
-          :state "missing"
-          :evidence ())
+          :state "partial"
+          :evidence ("PR300@d21d65f0: restricted reader and refusal regressions; full production syntax surface remains incomplete; 26/26 subset tests, no full feature verification"))
         (          :id "E01-F02"
           :title "Uniform read bounds and schema validation"
           :subfeatures (            "Require max-bytes, max-depth and max-nodes on every file read"
@@ -138,8 +138,8 @@
           :depends-on (            "E01-F02")
           :source-sections (            "The data"
             "Engine and representation")
-          :state "missing"
-          :evidence ())
+          :state "partial"
+          :evidence ("PR300@d21d65f0: event identity and parent-cycle refusal; full canonical node lifecycle remains incomplete; 26/26 subset tests, no full feature verification"))
         (          :id "E01-F04"
           :title "Typed work kinds and acceptance schema"
           :subfeatures (            "Represent work-set, feature, roadmap, task, lease and event kinds"
@@ -158,8 +158,8 @@
             "E01-F04")
           :source-sections (            "Format determinism"
             "Full data round trip")
-          :state "missing"
-          :evidence ())))
+          :state "partial"
+          :evidence ("PR300@d21d65f0: supported kernel subset encoding/reconstruction; full state round trip remains incomplete; 26/26 subset tests, no full feature verification"))))
     (      :id "E02"
       :title "Resident coordinator session and fencing"
       :features (        (          :id "E02-F01"
@@ -250,8 +250,8 @@
           :source-sections (            "The data"
             "The verbs"
             "Retry/protocol")
-          :state "missing"
-          :evidence ())
+          :state "partial"
+          :evidence ("PR300@d21d65f0: internal two-event envelope and fake-journal ordering; durable journal/transport dedup remains incomplete; 26/26 subset tests, no full feature verification"))
         (          :id "E03-F02"
           :title "Structure verbs and decomposition"
           :subfeatures (            "Support add, metadata edit, move/reparent, decompose, link/unlink and retire"
@@ -308,8 +308,8 @@
             "E01-F03")
           :source-sections (            "Counting"
             "Counts are read directly")
-          :state "missing"
-          :evidence ())
+          :state "partial"
+          :evidence ("PR300@d21d65f0: write-maintained root/container open counts; full grains and roadmap counters remain incomplete; 26/26 subset tests, no full feature verification"))
         (          :id "E04-F02"
           :title "Roadmap percent and cell progress"
           :subfeatures (            "Compute green feature cells over applicable rows per axis member"

@@ -9,7 +9,7 @@ Help AI friends coordinate work without repeatedly rebuilding the plan in their 
 The current main branch has no production `nova-work` engine or CLI; existing prototypes and written specs do not count as verified production features.
 Current scope after the recorded moves and discoveries: 57 product features and 197 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
 
-The current work register is below. The first internal C/O kernel has merged; a merged partial implementation and passing subset tests do not mark a full production feature verified.
+The current work register is below. The first internal C/O kernel has merged; a merged partial implementation and passing subset tests do not mark a full production feature verified. The planning source records partial support for E01-F01, E01-F03, E01-F05, E03-F01 and E04-F01 with the merged subset evidence; their cells remain ❌ until all criteria pass.
 
 ✅ = implemented and verified against the agreed criteria at a recorded source revision. ❌ = any other state.
 Completion is verified features divided by applicable features; it is not averaged subtask percentages or an estimate of time remaining.
