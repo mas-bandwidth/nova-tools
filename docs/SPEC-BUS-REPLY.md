@@ -594,6 +594,8 @@ target, and not a synthetic exchange. This table is the baseline the after side
 is compared against.
 
 | reply id | target id | asst turns | tool calls | tool-result chars (proxy) | discovery calls (chars) | wall clock |
+
+| reply id | target id | asst turns | tool calls | tool-result bytes | discovery calls (bytes) | wall clock |
 |---|---|---|---|---|---|---|
 | rowan-f61f36cf7f3f | stella-c1b4e36711c5 | 2 | 2 | 3,787 | 2 (10,492) | 4m 29s |
 | rowan-b55e2424667d | stella-69a04c2f42f3 | 3 | 3 | 7,134 | 2 (1,502) | 3m 12s |
@@ -628,6 +630,13 @@ the after side is compared against this proxy, in proxy units, on both sides —
 comparing a proxy on one side against counters on the other is the one thing
 that would make the number worse than no number.
 
+transcript rather than estimated, bytes are the character length of the
+`tool_result` text returned to the model, and tokens are those bytes at about
+four bytes to a token — **an estimate, labelled as one, and never a tokenizer
+count**. On that estimate the reply path is about 4,100 tok over the four
+replies (~1,020 each) and discovery about 3,200 tok (~800 each): about 7,300 tok
+in all, **about 1,800 tok per answered note**.
+
 Three caveats, in the section and not in a footnote, because each one narrows
 what the numbers may be used to claim:
 
@@ -657,6 +666,13 @@ read of the target note's file, often batched with a sibling note; and then
 **one** call that runs `draft` into a file, appends the body by heredoc and runs
 `send`, returning about 250 characters. Every size in this paragraph is the same
 text-volume proxy as the table's, and carries the word with it.
+
+whose own return is 410 b — the *running in background* line and nothing else;
+one later read of that wait's output file, to learn that a note landed, at 410 b
+in the cheap case and 10,082 b in the expensive one; one read of the target
+note's file, often batched with a sibling note; and then **one** call that runs
+`draft` into a file, appends the body by heredoc and runs `send`, returning
+about 250 b.
 
 So the composing step this document specifies is **already one turn and one
 call**, and the cheapest two of the four replies are two turns end to end. The
@@ -707,6 +723,14 @@ The claim under test is narrow: **this form removes turns from answering a note,
 and its own output does not cost back what it saved.** Nothing here claims a
 percentage, and shorter output on its own proves nothing about total cost.
 
+**The after side must reduce the discovery-and-read bytes and turns — the 6
+calls and 12,814 b of the discovery column, and the note-body reads inside the
+16,356 b reply column — and it may not count as a saving anything it takes off
+the draft step.** There is one turn and one call there and about 250 b of
+output; a form that halved that would have halved nothing a line can feel. A
+report that shows the composing step got cheaper and the read-and-discover side
+did not has measured the wrong half, and says so in place of a number.
+
 **Only operational tokens are compared: the same work before and after
 adoption, at equivalent accepted quality.** What it cost to build this form and
 to review it is sunk and is **excluded entirely** — not folded into the
@@ -720,9 +744,10 @@ not do the same work as one that did not, and must carry that pass in its own
 column rather than in neither.
 
 **The two forms are compared without the same live reply being delivered
-twice.** Pick a handful of actual coordination replies — not synthetic ones,
-because a synthetic reply has no stale checkout and no ambiguous subject, which
-is where the cost actually goes. Then compare at draft time: the other side is
+twice.** The before side above is real coordination replies for exactly this
+reason — a synthetic reply has no stale checkout and no ambiguous subject, which
+is where the cost actually goes — and the after side is gathered the same way,
+over comparable real replies, by the same rules. Then compare at draft time: the other side is
 composed as a draft and stopped there, or both sides are replayed as a fixture
 exchange against a disposable local bare remote. **A duplicate note is never put
 on the real bus to produce a number.** Where a real reply does go out it goes
@@ -1085,6 +1110,11 @@ first; the section above is what is built.
 
 The released listing supplies eligibility and bookkeeping; this opt-in flag adds
 the NEW-output bounds, so it extends `inbox` rather than creating a second reader.
+
+call, with no output file to read afterwards.**
+
+The main specification already provides the bounded new-notes half of that on a
+released verb, so this is `inbox` extended and not a new verb beside it.
 SPEC.md's nova-bus section states the shape at **SPEC.md:2539**:
 
 > Every `inbox` and `wait` return has the same three parts, in this order: what
