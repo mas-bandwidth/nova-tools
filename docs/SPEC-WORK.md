@@ -354,6 +354,8 @@ replayed answer**: a retry whose id the index holds is refused `already applied`
 revision it was applied at, so the requester re-reads rather than acting twice, and no session
 — a successor after a handoff among them — ever applies one request id twice.
 
+A valid mutation whose patches change nothing still records a durable event with a real event id, its request id, its payload digest and the preimage it was applied against, and reports `changed=0`; a lost reply retries through the ordinary request-id lookup of the journal's two-part test and is answered with the original receipt; a later retry, past the journal and into the dedup index, is refused `already applied` by the rule above; nothing is silently dropped and no phantom `id=-` outcome exists. A no-effect event is a historical receipt and never a domain change, and a no-op never evades its verb's reversibility or its stale-and-conflict rules.
+
 **The repository branch that holds O has one writer too: the owning coordinator.** A **clip**,
 the ownership commits of rules 1 and 2 above, the handoff commit below and `session stop`'s release commit are the only writes to it, and a clip: it names a local event boundary, fetches the upstream revision, and
 **refuses, `CLIP RACED`, by the one base predicate of rule 2 (`tip == base`, the check the
@@ -1570,6 +1572,7 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
   event kind would have broken it *(Rowan's decision, for review)*. The root's open-item count, and the per-repository and
   per-container counts beneath it, are updated by the same envelope that moves an item, including
   the whole of a settle or revive cascade, before its `OK` line is printed; **a resident
+  counters count canonical item ids once—while a container is itself an item, while it is open it is in `|O|` and in its own container's open count, and its settle removes it from both like any other id.
   current-revision `|O|` query reads the counter and triggers no rollup, no scan, no parse and no
   replay**, and a test that mutates and then asks repeatedly asserts zero visits, zero parses and
   zero replays and compares against an independent full count after a close, a reopen and an
@@ -1724,10 +1727,17 @@ snapshot by `--snapshot <path>` with the three bounds, read-only; under `--snaps
 verification cache is named by `--cache <path>`, required there and refused under `--session`
 (the session's own, from its start, is the one path), so a snapshot reader sees the same
 verdicts the coordinator last fetched. **Every mutation verb takes `<write flags>` = `--as
-<name> [--request <id>] [--expect <rev>] [--now <stamp>] [--deadline <stamp>]`**, `--deadline`
+<name> [--request <id>] [--expect <rev>] [--now <stamp>] [--deadline <stamp>] [--dry-run]`**, `--deadline`
 being the wire's `"deadline"` field spelled for the CLI — after it the caller stops waiting for
 this answer, and it is not a cancellation of the work, which is `operation cancel`: the request id is drawn by
-the tool and printed when absent. **`--expect` names a revision the requester can read, and
+the tool and printed when absent. **`--dry-run` validates arguments, authority and permissions,
+fencing and every precondition against the revision `--expect` names, prints the projected receipt
+with `dry-run=true`, and writes zero events, commits no journal revision and records no dedup
+entry; a dry run reserves nothing and promises nothing about a later apply—it holds no lease,
+no id and no slot for the caller; a later real apply may carry the same `--request`
+id, and that apply revalidates the expectation rather than trusting the preview—the
+revision-bound-plan invariant of the section "The engine and its client" below, worn by every mutation verb rather
+than by a plan verb alone.** **`--expect` names a revision the requester can read, and
 there are exactly two, in one number space.** The session's **local revision** is the count of
 accepted events, the snapshot's plus its journal's, printed `rev=<n>` on every mutation's `OK`
 line; the **clipped revision** is the local revision at the last clip's boundary, carried
@@ -1878,13 +1888,15 @@ removal of something above it — a leaf that was `done` before the removal reac
 them instead, in its `:already-closed` field**, the ids beneath it that were already closed, so
 the removal's one record accounts for every item of the subtree exactly once and a reader of C
 can tell a leaf that was removed from a leaf that had already finished. **A `node remove` whose
-own node is already in C writes nothing at all**: it is a no-op at exit 0 with one `NODE NOTE
-already-closed node=<id> disposition=<d> settled=<stamp>` line before its `NODE OK`, because
-what the caller asked for — that this item is not open work — already holds, because a second
-`:settle` for it is rule 18's finding rather than a second history, and because a retry after a
-crash lands here and must read the same. Nothing is detached and no scope event is written by
-that no-op, so the item stays where the settle that closed it left it: in its parent's
-`:children`, and in its parent's required set exactly where its disposition already had it.
+own node is already in C changes no domain state**: it is a no-op at exit 0 with one `NODE NOTE
+already-closed node=<id> disposition=<d> settled=<stamp>` line before its `NODE OK`. A retry of the
+same request id returns its prior disposition and writes nothing; even after a reopen it leaves the
+reopened item untouched. A `fresh-id remove after a reopen is evaluated against the current open
+state and may really settle or remove. A fresh-id repeated remove while the node is still closed is
+the no-effect case: one typed receipt, `changed=0`, with no second `:settle`, no detach, no scope,
+membership or counter change. The event revision advances; scope counters and effective-change
+identities do not. A second `:settle` for the node finds the closed disposition (rule 18) rather
+than writing a second history.
 **Why a live lease refuses a removal while a `state --to done` ends one**: a settle ends a claim
 on work that has ended, written by the author who is ending it, and a removal ends work that
 somebody else is still holding — so the first releases and the second refuses and names the
@@ -2831,6 +2843,8 @@ and refusals go to stderr. Every count line prints on failure as on
 success. Every `OK` line ends `emitted=<bytes>`. Every mutation's `OK` line carries the
 event's id, its request id, the session's local revision after it (`rev=<n>`), and
 `pushed=<rev|->`, the clipped revision, the same number as the last `CLIP OK`'s `pushed=`;
+`changed=<n>` records how many effective mutations the event produced.
+A projected receipt adds `dry-run=true` to distinguish preview from committed receipt, using the same shape with event id and revision spelled `-`.
 `SESSION OK` is one shape, printed by `session start`, `session status` and `session stop`
 alike, and its `state=` reads `live`, `fenced` or `red`: lowercase *active* is W's word in the
 root section above, `ACTIVE` in capitals is the per-friend live-data node, and neither names a
@@ -2889,7 +2903,9 @@ OBSERVE OK id=<event-id> request=<id> friend=<name> change=<state|attempt> rev=<
 RENDER OK view=<id> cells=<n> private=<n> bytes=<n> into=<path> pushed=<rev|-> emitted=<bytes>
 RENDER FAIL view=<id> cells=<n> private=<n> drifted=<n> into=<path>: <reason>
 NODE NOTE already-closed node=<id> disposition=<d> settled=<stamp>   (a `node remove` of an item already in C: nothing written, exit 0, its NODE OK line following)
-<MUTATION> OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> ... emitted=<bytes>
+<<<<<<< HEAD
+<MUTATION> OK id=<event-id> request=<id> node=<id> rev=<n> pushed=<rev|-> changed=<n> ... emitted=<bytes>
+<MUTATION> OK id=- request=<id> node=<id> rev=- pushed=<rev|-> changed=<n> dry-run=true ... emitted=<bytes>
 <MUTATION> FAIL node=<id>: rule <n>: <reason>
 <MUTATION> FAIL node=<id> expect=<rev> current=<rev>: stale
 <MUTATION> FAIL request=<id> applied=<rev>: already applied
@@ -3219,6 +3235,13 @@ of this list and are not repeated here):
 - **`disconnect-is-not-a-rollback`** — a client killed after its mutation was journaled: the event
   stands, the same request id and body returns the recorded disposition, and the same id with
   different arguments is refused; `rev=` and `pushed=` distinct in every response.
+- **`no-effect-mutation-is-journaled`** — a mutation whose patches are all no-ops; the event id
+  recorded, journal length +1, `changed=0` on its OK line, and the domain projection (node fields,
+  counters, membership) unchanged while the event revision advances by one. A retry of the same
+  request id returns its recorded disposition unchanged; even after a reopen it leaves the reopened
+  item untouched. A fresh-id invocation validates current state and gives its normal effect or
+  refusal. A fresh-id while still closed is the no-effect case: one typed receipt, changed=0,
+  with no second `:settle`, no detach, no scope, membership or counter change.
 - **`operation-survives-the-client`** — a long import returning an operation id, the CLI exiting,
   the work continuing, the result retrievable by id afterwards, and `operation wait` timing out
   while leaving the operation running.
@@ -3232,6 +3255,10 @@ of this list and are not repeated here):
   envelope with its lineage while the original event and every receipt stay exactly where they are.
 - **`redo-refuses-a-stale-plan`** — a redo whose preconditions moved refused atomically, naming
   what changed, writing nothing, and never reached by deleting the undo.
+- **`dry-run-writes-nothing`** — a dry run that validates and projects without mutating; after a
+  green preview an accepted mutation moves the revision, then a real apply at that revision
+  refuses atomically, naming what changed and writing nothing; under SESSION OK events, pending
+  and pushed have not moved, and the `--request` id is still new to the dedup index.
 - **`undo-refuses-an-external-effect`** — an undo over a sent message, a paid execution, a
   publication and a source deletion refused and reported as an external effect with its own
   compensating workflow; shared Git history never reset as the undo path.
