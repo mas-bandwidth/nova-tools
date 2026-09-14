@@ -509,6 +509,35 @@ Exercise all normal coordinator workflows through these public verbs, without
 hand-editing Lisp, JSON, journal records or derived caches. The implementation
 plan must identify missing verbs and conflicting existing semantics before lock.
 
+## Learn verbs without carrying the manual in context
+
+Use one versioned typed command schema as the source for client validation,
+protocol bindings, compact human/AI help and executable examples. Do not maintain
+independent handwritten CLI/protocol/help inventories. This is a build-time
+source of truth; no live code generation or evaluation of imported schemas.
+
+Provide bounded `help` by family and `help <verb>` with required/optional arguments,
+preconditions, effect, one working example and possible refusal outcomes. Provide
+machine-readable command discovery with schema hash/version and an UNCHANGED
+response for callers holding that version. Cache discovery against the actual
+connected engine/client protocol version; upgrades must invalidate stale syntax.
+Do not inject the entire manual into every worker prompt or every tool response.
+
+A proposed `next <node-id>` query returns a bounded revision-labelled set of valid
+actions and missing prerequisites, with typed argument templates. It explains
+whether an action is unavailable due to state, evidence, dependencies, ownership,
+capacity or configured policy. These suggestions neither grant authority nor
+execute automatically; mutation-time validation remains mandatory. Never turn
+untrusted task prose into command strings for shell execution.
+
+Refusals identify the exact invalid argument/precondition and a safe next query
+or repair template, without silently performing the repair. Include stable error
+codes for mechanical callers. Test every published example against the same
+command schema and temporary fixtures; test stale discovery, version mismatch,
+invalid suggestions after concurrent changes and bounded output on large nodes.
+The operational experiment must include time/tokens spent discovering and fixing
+syntax before and after adoption; shorter help alone does not establish a win.
+
 ## Lossless migration and round-trip release gates
 
 No data-loss guarantee rests on parser success, counts alone, Git commits alone
