@@ -262,7 +262,12 @@ root paths must satisfy the same resolved-filesystem placement checks as secret
 `key_file` paths in SPEC-SWARM.md, including aliases and not-yet-created slots,
 and must be outside all worker-readable or writable pool/job/slot/scratch/data
 home/read-root locations. The pinned gate executable must not be replaceable by
-the worker. Admission and prelaunch validation refuse unsafe placement exit 2
+the worker. Admission and prelaunch validate its resolved path and every parent
+against the worker's effective write authority: both the configured sandbox write
+roots and the execution identity's filesystem permissions must be considered.
+If the launcher cannot establish that the worker cannot modify the executable or
+replace it through a writable parent, it refuses; a safe-looking path alone is
+not proof. Admission and prelaunch validation refuse unsafe placement exit 2
 before decrypting or starting a harness. `nova-swarm run` refuses
 exit 2 before the first worker if that binding is absent or unsupported. The gate refuses exit 125
 for a missing or malformed store shape, including a missing/malformed recovery.pub or a recipient rule other than one
@@ -273,7 +278,9 @@ exit 125 and start zero workers for that attempted launch. On a per-worker gate
 exit 125, `run` emits one bounded `RUN REFUSED profile=<id> reason=secrets_gate
 code=125` line, retains the selected task pending (not failed), and disables
 further launches of that profile for this run. Return the task from a claim only
-after the pinned gate/launcher contract proves no harness started; an uncertain
+after exit 125 is observed from the gate's own process and no supervisor identify
+record exists under that attempt's slot nonce. These two observations are the
+pinned gate/launcher contract's evidence that no harness started; an uncertain
 exit follows existing quarantine/reconciliation rules, never blind requeue.
 Already-running jobs continue under normal accounting/finalization; unrelated
 profiles may run only under their own valid gates. Reservation release requires
@@ -451,7 +458,10 @@ wall clock.
    missing bindings cause `run` exit 2 before the first worker, a forged parent
    environment marker cannot bypass it, and a fake three-recipient store causes
    `nova-secrets exec` exit 125
-   and starts zero workers for that launch. Exercise a mid-pool 125: the selected
+   and starts zero workers for that launch. Assert the refusal is from the gate
+   process and the supervisor identify record for that nonce is absent. A harness
+   that itself exits 125 after identifying is not this non-launch case and must
+   retain normal attempt finalization/accounting. Exercise a mid-pool 125: the selected
    task remains pending, one profile-scoped refusal is printed, no later job on
    that profile starts, other running jobs retain accounting, and no task is
    falsely failed. An uncertain launch is quarantined and not requeued.

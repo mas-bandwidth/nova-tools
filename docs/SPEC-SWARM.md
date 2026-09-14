@@ -668,6 +668,7 @@ RUN NOTE <the one remedy line>
 RUN UNSANDBOXED id=<id> slot=<n>: no OS containment; every read and write this job makes is yours
 RUN REFUSED: <reason>
 RUN REFUSED reason=<sandbox_probe|no_sandbox>: <reason>
+RUN REFUSED profile=<id> reason=secrets_gate code=125
 STATUS TASK id=<id> state=<pending|running|done|failed> slot=<n|-> for=<d|-> tail=<one line>
 STATUS OK pending=<n> running=<n> done=<n> failed=<n> slots=<n>/<n> quarantined=<n>
 TRIAGE REPORT id=<id> rev=<sha12> job=<name> result=<ok|clean|plan-only> items=<n> red=<n> green=<n> notdone=<n>: <head>
