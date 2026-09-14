@@ -106,12 +106,12 @@ shell and without catalog-provided gate flags:
 <credentials.gate> exec --store <credentials.store> --as <credentials.seat>
   --key <credentials.age_key> --sops <credentials.sops>
   --only <profile.env_var> --require <profile.env_var> --
-  <credentials.launcher> <coordinator-generated launch arguments>
+  <credentials.launcher> profile-supervise --launch <absolute-launch-record>
+  --launch-hash <sha256:canonical-launch-record>
 ```
 
-The generated launcher arguments identify only the protected attempt snapshot,
-job and slot nonce through the separately pinned launcher protocol. They cannot
-carry secrets or choose a different route. The launcher revalidates the protected
+The generated launcher arguments identify only the protected launch record below.
+They cannot carry secrets or choose a different route. The launcher revalidates the protected
 attempt and constructs the empty-based child environment specified below. It
 never inherits a plaintext-provider-key fallback. Credential binding freezes
 paths, seat and variable selection; it does not cache decrypted values or claim
@@ -373,6 +373,87 @@ review and does not assert any of these runtime fixtures pass yet.
 The [complete synthetic body](fixtures/swarm-attempt-body.json) pins all members
 and hash preimages for encoding checks only. Its fake paths, endpoint and prompt
 are not a live launch configuration or proof that launch validation is ready.
+
+### Protected launch record and command boundary
+
+The argv above is the complete proposed internal launcher interface: no extra
+positional arguments, alternate route/model flags, shell expansion or inherited
+environment override. Its hash is supplied by the coordinator that published the
+record, not read from a worker projection. `profile-supervise` is an internal
+entry point of the configured trusted launcher, not a second dispatcher.
+`--launch-hash` is exactly `sha256:<64 lowercase hex>` over all canonical
+launch-record bytes, without a trailing newline. The record contains no self-hash.
+
+For each reservation, publish canonical JSON at
+`<evidence_root>/<job_id>/launch/<reservation_nonce>.json` using the protected,
+no-replace and durable publication rules above. A later reservation gets a new
+nonce and a new record even if the same pending job is retried after proven
+non-launch. Never overwrite or reuse the earlier launch record. The launcher
+opens one bounded regular no-follow file, at most 65536 bytes plus one byte for
+overflow detection, within the remaining launch timeout; nesting is at most 8.
+Reject invalid UTF-8, duplicates, unknown members, missing members, trailing
+JSON, noncanonical bytes or a digest mismatch before identifying or spawning.
+
+All members are required and all values are strings, except `context`:
+
+| Member | Meaning and validation |
+|---|---|
+| `schema` | Exactly `nova.swarm.launch/1` |
+| `context` | Exactly strings `kind` and `root`; kind is `pool` or `one-shot`; root is the absolute coordinator-owned lifecycle root selected for this run, checked against its protected reservation owner |
+| `evidence_root` | Absolute protected evidence root; for a pool, exactly its configured evidence directory; a direct one-shot uses its explicitly supplied protected root |
+| `job_id` | Exact admitted job/attempt ID; matches the protected manifest, snapshot, reservation and enclosing job directory |
+| `slot` | Positive canonical decimal string, checked against the supported slot integer range and the actual reservation |
+| `reservation_nonce` | Exactly the reservation's twelve lowercase hexadecimal characters |
+| `manifest_hash` | `sha256:<64 lowercase hex>` over the canonical prelaunch `MANIFEST.json` bytes |
+| `sandbox` | Absolute protected sandbox executable path; no implicit PATH lookup or no-sandbox fallback for this profile interface |
+| `usage_every_ns` | Positive canonical decimal nanoseconds, checked against the duration range; fixes the sampling cadence, not the job's token or deadline limits |
+
+`context.root` locates existing protected lifecycle state. A pool-less one-shot
+must maintain one private reservation using the same identify, ownership and
+finalization protocol; it must not invent a nonce or skip the reservation check
+because it has only one worker. It remains pool-less at the user interface.
+The one-shot adapter's concrete reservation storage is still an implementation
+gate; this record does not claim that adapter exists.
+
+Before identify, verify the record path, digest and protected placement, then
+the matching reserved slot and complete prelaunch manifest/snapshot/files.
+The coordinator constructs `context` and `sandbox` from the run's validated
+lifecycle and confinement settings, never from a queued task or worker output.
+Reconcile the record with that configured root and its reservation; an unrelated
+protected directory is not a substitute merely because it has a matching name.
+For another reservation of the same pending job, retain `context`,
+`evidence_root`, `sandbox` and `usage_every_ns` from its first protected launch
+record. Only the slot and nonce may change. Reject inconsistent prior records;
+changing these runtime settings requires an explicit new linked attempt, not
+overwriting the old record. Sandbox executable compatibility/integrity belongs
+to the same pending execution-binding gate as the harness and launcher.
+Derive slot/job/data-home paths from the validated context and frozen worker
+description; derive route, arguments, read roots, prompt and effective limits
+only from the snapshot. No launch-record member can replace those choices.
+The dispatcher retains global worker caps, run duration, backoff, launch timeout
+and output handling; these are not per-worker override arguments. Do not put
+secret values, launch nonces or this control record in worker-visible files.
+
+The existing `worker.usage` identifies an accounting source. It does not select
+an execution adapter or establish support for a tool allow-list. Before the
+runtime implementation, pin the execution adapter's identity and compatibility
+contract, generated configuration and declared non-secret environment (including
+PATH); current `childEnv` inheritance is insufficient for profiles. Likewise,
+current `RefreshSlot` copies a live `worker_dir`: freezing the path does not
+freeze its contents. The adapter contract must pin the worker artifact used by
+an admitted attempt, or explicitly delimit and validate mutable inputs. A
+retry may not silently switch worker instructions, executable or generator.
+Hashing a path immediately before use is not proof against replacement races.
+These are remaining compatibility gates, not claims that this command record
+alone solves executable or artifact integrity.
+
+The [synthetic launch record](fixtures/swarm-launch-record.json) pins this
+encoding and argv boundary. Runtime tests must cover stale nonce, wrong slot,
+swapped manifest, changed record/hash, duplicate publication, invalid duration,
+path alias/worker-write access, unknown argv and both lifecycle contexts, with
+zero identify/provider calls on refusal. Keep the separate gate-observation
+tests: a launch-validation refusal after `SECRETS EXEC OK` is not proven
+pre-gate non-launch merely because its exit status is 125.
 
 Before a worker starts, the coordinator writes the authoritative snapshot to
 the coordinator-owned protected path
