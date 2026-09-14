@@ -81,13 +81,32 @@ func TestCostPreservesUnknownUSD(t *testing.T) {
 				t.Fatalf("Cost exited %d: %s", exit, stderr.String())
 			}
 			output := stdout.String()
-			for _, want := range []string{
-				"usd=" + tt.wantUSD,
-				"known_usd=" + tt.wantKnown,
-				fmt.Sprintf("usd_missing=%d", tt.wantMissing),
+			var summary string
+			for _, line := range strings.Split(output, "\n") {
+				if strings.HasPrefix(line, "COST OK ") {
+					if summary != "" {
+						t.Fatalf("multiple summary lines:\n%s", output)
+					}
+					summary = line
+				}
+			}
+			if summary == "" {
+				t.Fatalf("missing COST OK summary:\n%s", output)
+			}
+			fields := map[string]string{}
+			for _, field := range strings.Fields(summary)[2:] {
+				key, value, ok := strings.Cut(field, "=")
+				if ok {
+					fields[key] = value
+				}
+			}
+			for key, want := range map[string]string{
+				"usd":         tt.wantUSD,
+				"known_usd":   tt.wantKnown,
+				"usd_missing": fmt.Sprint(tt.wantMissing),
 			} {
-				if !strings.Contains(output, want) {
-					t.Fatalf("cost output lacks %q:\n%s", want, output)
+				if got := fields[key]; got != want {
+					t.Fatalf("summary %s=%q, want %q:\n%s", key, got, want, output)
 				}
 			}
 		})
