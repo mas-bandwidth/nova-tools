@@ -588,7 +588,7 @@ the end. The date on a rule is the day it was learned.
 ## The verbs
 
 ```
-nova-review packet  --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--reuse <file>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max <n>]
+nova-review packet  --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--reuse <file>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max-input-bytes <n>] [--max <n>]
 nova-review verdict --lane <dir> (--pr <n>|--branch <name>) --who <name> --model <id> --kind line|child|card [--of <line>] [--job <id>] --head <sha> [--base <sha>] --verdict approve|hold|abstain (--findings <file> | --reason <text>) [--note <text>] [--usage <file> --usage-source <id> --bench <name> | --receipt <id>] [--started <stamp>] [--max <n>] [--max-rows <n>] [--max-input-bytes <n>] [--max-line-bytes <n>]
 nova-review answer  --lane <dir> (--pr <n>|--branch <name>) --who <name> --finding <id> --head <sha> --as fixed|declined|dup [--of <id>] [--note <text>]
 nova-review policy  --lane <dir> (--pr <n>|--branch <name>) --who <name> --readers <name,...> --reserved <name,...> --deadline <stamp> --reason <text> --head <sha>
@@ -821,8 +821,9 @@ the entry, never about the output.
 ## The packet file
 
 `--out <file>` is written through a **unique exclusive temporary file** —
-`<file>.<pid>-<rand6>.tmp`, created with `O_CREAT|O_EXCL` and renamed onto
-`<file>` — never in place and never through a shared `<file>.tmp`, so two
+`<file>.<pid>-<rand6>.tmp`, created with `O_CREAT|O_EXCL` and atomically
+published to `<file>` without replacing any existing destination (draft-7
+proposal) — never in place and never through a shared `<file>.tmp`, so two
 callers building packets to one path cannot interleave their bytes and a
 reader handed the path is handed a whole file or none. The temporary is
 removed on every exit path, and a `.tmp` left by a kill is the killed run's
@@ -830,7 +831,7 @@ and is never adopted. Its first line is machine-readable and the rest is for a
 reader:
 
 ```
-nova-review packet v1 id=<hex12> entry=<n-or-name> head=<sha> base=<sha> range=<r> who=<name> built=<utc stamp> bytes=<n> cut=<n>
+nova-review packet v1 id=<hex12> entry=<n-or-name> head=<sha> base=<sha> range=<r> who=<name> built=<utc stamp> bytes=<n> limit=<n> cut=<n>
 
 ## This head
 <the entry's title and the author's stated intent, quoted from the entry body,
@@ -905,7 +906,10 @@ found=<id> file=<path>`, naming both, because a reader whose range differs
 must have their own packet and never a mislabeled one; `--reuse` with
 `--spec`, `--rule` or `--max-bytes` is refused the same way, since those flags
 change what a packet would hold and a reused packet holds what it already
-holds.
+holds. The draft-7 proposal permits `--max-input-bytes` with `--reuse`: it
+bounds input admission only, never changes the copied sections or original
+output limit. Zero, negative, or exceeded input limits refuse at exit 2, with
+an executable remedy for increasing that independently chosen read ceiling.
 
 **What is reused and what never is.** A second reader reuses the delta, the
 ground the first build already read at this head — the diff, the rule text
@@ -1471,9 +1475,10 @@ One line per rule. Each must be seen red before it is trusted.
    intent appears under the label "the author says" and a fixture body
    holding a sentence shaped as an instruction appears verbatim under that
    label and nowhere else; the file is written through a unique
-   `<out>.<pid>-<rand6>.tmp` and a kill before the rename leaves no `--out`
+   `<out>.<pid>-<rand6>.tmp` and a kill before final publication leaves no `--out`
    file and no shared `<out>.tmp`; two `packet` runs to one `--out` at once
-   both succeed and the file is one of the two whole, never a mixture; with
+   yield exactly one successful publisher and one exit-2 refusal (draft-7
+   proposal), with the winning whole file preserved and never replaced; with
    `--max-bytes` below the diff, `cut=<n>` is right, the cut files appear
    under "Not included" with the exact `git diff` command, and the file is at
    most `--max-bytes`; `--max-bytes 0`, `-1` and a value below the fixed
@@ -2103,3 +2108,8 @@ clipped distinct-rule totals; unchanged source `built=` on reuse; action JSON
 round-trip, cross-owner closure refusal and omission preserving open findings.
 The packet still needs the previously specified fetched-tip review-record fold;
 legacy merge reads alone are not evidence that there are zero open findings.
+
+Cold review of c0d909b by GPT-5.6 Terra found the older concurrency test still
+required both publishers to succeed and the packet usage/reuse contract omitted
+the new input flag. Those concrete clauses are aligned above. This is a cold
+model review; Emma and Rowan have not yet supplied a disposition on draft 7.
