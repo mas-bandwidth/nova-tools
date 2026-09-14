@@ -190,6 +190,69 @@ usage bases, subscription reference-vs-cash accounting, local-token API zero and
 unknown pricing. Compare real operational token overhead for repeated manual
 capacity/pricing inquiries versus this exchange at equal information quality.
 
+## Friend roles, experience and availability
+
+Track each friend's own strengths, limitations, experience and agreed roles,
+separately from the characteristics of the models they can run. Record source,
+date, task context and confidence for self-reports and observed performance.
+Useful fields include specialties, preferred/suitable task classes, coordination
+or review roles, reserved specialist work and agreed limits. Unknown experience
+is allowed; model capability is not a substitute for friend-specific knowledge.
+These are scheduling aids, not global identity rankings or obligations imposed
+by a registry. Role/config changes retain their provenance and agreed scope.
+
+ACTIVE records whether a friend is confirmed awake, explicitly asleep/resting,
+unavailable because of a confirmed plan/credit/provider limit, or unconfirmed/
+unreachable, with source and last-contact time. Preserve remaining quota and
+expected reset/return time only when observed; neither an old heartbeat nor an
+elapsed estimate proves current availability. Explicit rest remains respected.
+
+The requested five-minute silence threshold triggers one bounded availability
+ping through the existing bus/wake protocol, unless the friend is already
+explicitly resting or reserved from routine wakeups. A configured bounded answer
+window then marks nonresponsive capacity unavailable for scheduling, with reason
+unconfirmed; it does not assert sleep or exhausted credits without evidence.
+Probe transport failure is unresolved delivery, not proof that the friend failed.
+A fresh return reconciles outstanding assignments and observed capacity before
+new dispatch. Do not wait an hour to discover a missing worker, and do not
+relaunch an uncertain prior execution merely because its friend is unreachable.
+The same rules apply to the coordinator; automatic role transfer still requires
+fencing and recovery, not only a stale-contact test.
+
+## Operational lessons the pilot must exercise
+
+Today's Fixed Tables and nova-tools work make these existing concepts explicit
+acceptance obligations, not invitations to expand into another scheduler:
+
+- Preserve the initial inventory and count discovered, completed, reopened,
+  decomposed and explicitly removed work separately. Show expansion/contraction
+  over a named interval; warn on sustained divergence under a stated policy.
+  A changed denominator must be visible beside progress, not silently revised.
+- Derive a ready-to-assign view from dependencies, agreed scope, acceptance
+  readiness, ownership, availability and resource limits. Report the exact reason
+  work cannot proceed and who can resolve it; waiting is not active execution.
+- Keep shared prerequisites owned once and referenced by all affected cells;
+  surface integration/release gates beside feature completion. A merged fix,
+  verified behavior and published distribution are separate evidence obligations.
+- Record each required friend's exact-revision review and finding IDs, author
+  dispositions and clearance. Reuse valid evidence; reread the affected delta.
+  Repeated review/repair cycles remain visible as work and operational cost.
+- Validate what proof actually establishes: a test that passes with its asserted
+  behavior deliberately broken is not adequate regression evidence. Preserve
+  specific criterion/revision coverage and uncertainty, not only green CI badges.
+- Support a priority change, correction, pause or stop across already distributed
+  tasks with durable request identity, delivery/acknowledgment and reconciled
+  execution handles. Persist blocked questions and bounded fallback plans so a
+  missing answer at night does not silently stall every independent task.
+- Retain comparable-work experiment records and complete operational cost joins,
+  including coordinator overhead and rework. Attribute elapsed time to execution,
+  queueing, review and CI waiting when observable. Run the token-saving hypothesis
+  against real work after adoption; implementation cost remains sunk.
+
+Each obligation needs an observable fixture or real-work replay and an owner in
+the implementation plan. Already captured main-spec requirements should be
+linked and tested, not rewritten as duplicate tools or competing state models.
+
 ## Model knowledge informs scheduling
 
 Maintain a shared `models` section keyed by stable model/version identity, with
