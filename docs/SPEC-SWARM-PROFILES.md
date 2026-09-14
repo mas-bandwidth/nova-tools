@@ -114,7 +114,7 @@ shell and without catalog-provided gate flags:
 <credentials.gate> exec --store <credentials.store> --as <credentials.seat>
   --key <credentials.age_key> --sops <credentials.sops>
   --only <profile.env_var> --require <profile.env_var> --
-  <credentials.launcher> profile-supervise --launch <absolute-launch-record>
+  <control.launcher.path> profile-supervise --launch <absolute-launch-record>
   --launch-hash <sha256:canonical-launch-record>
 ```
 
@@ -444,9 +444,10 @@ record. Only the slot and nonce may change. Reject inconsistent prior records;
 changing these runtime settings requires an explicit new linked attempt, not
 overwriting the old record. Sandbox executable compatibility/integrity belongs
 to the same pending execution-binding gate as the harness and launcher.
-Derive slot/job/data-home paths from the validated context and frozen worker
-description; derive route, arguments, read roots, prompt and effective limits
-only from the snapshot. No launch-record member can replace those choices.
+Derive slot/job/data-home paths from the validated context, job ID, and selected
+slot using the realization formulas; derive route, arguments, read roots, prompt
+and effective limits only from the snapshot. No launch-record member can replace
+those choices.
 The dispatcher retains global worker caps, run duration, backoff, launch timeout
 and output handling; these are not per-worker override arguments. Do not put
 secret values, launch nonces or this control record in worker-visible files.

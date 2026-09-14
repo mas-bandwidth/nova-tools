@@ -77,6 +77,9 @@ func TestSwarmProfilePreimageMigrationFixtures(t *testing.T) {
 	if !ok || len(vectors) < 4 {
 		t.Fatalf("catalog vectors must have at least 4 entries, got %d", len(vectors))
 	}
+	var vec4ParsedProfiles map[string]any
+	var vec4SHA string
+
 	for _, v := range vectors {
 		vm := v.(map[string]any)
 		name := vm["name"].(string)
@@ -100,10 +103,52 @@ func TestSwarmProfilePreimageMigrationFixtures(t *testing.T) {
 		if actualSHA != expectedSHA {
 			t.Fatalf("vector %q sha mismatch\n got: %s\nwant: %s", name, actualSHA, expectedSHA)
 		}
+		if name == "profile-execution-admission" {
+			vec4ParsedProfiles = profilesRaw
+			vec4SHA = actualSHA
+		}
+	}
+
+	if vec4ParsedProfiles == nil {
+		t.Fatalf("vector profile-execution-admission not found")
 	}
 
 	// 2. Verify Attempt Body & 8-member Config Preimage
 	bodyMap := attFix["body"].(map[string]any)
+	if attFix["body"].(map[string]any)["catalog_hash"] != "sha256:"+vec4SHA {
+		t.Fatalf("attempt catalog_hash linkage mismatch: got %s, want %s", bodyMap["catalog_hash"], "sha256:"+vec4SHA)
+	}
+
+	// Native model correspondence
+	profileID := bodyMap["profile_id"].(string)
+	catProf := vec4ParsedProfiles[profileID].(map[string]any)
+	catRoute := catProf["route"].(map[string]any)
+	catNative := catRoute["native"].(map[string]any)
+	catModels := catNative["models"].([]any)
+	reqModel := bodyMap["requested"].(map[string]any)["model"].(string)
+	var catMatchingResolved map[string]any
+	for _, m := range catModels {
+		mm := m.(map[string]any)
+		if mm["requested"] == reqModel {
+			catMatchingResolved = mm["resolved"].(map[string]any)
+			break
+		}
+	}
+	if catMatchingResolved == nil {
+		t.Fatalf("catalog profile %q missing native model entry for %q", profileID, reqModel)
+	}
+	catResCan, err := testCanonicalBytes(catMatchingResolved)
+	if err != nil {
+		t.Fatalf("canonicalize catalog resolved native: %v", err)
+	}
+	attResCan, err := testCanonicalBytes(bodyMap["resolved"])
+	if err != nil {
+		t.Fatalf("canonicalize attempt resolved: %v", err)
+	}
+	if string(catResCan) != string(attResCan) {
+		t.Fatalf("catalog native model projection does not match attempt resolved projection\n got: %s\nwant: %s", catResCan, attResCan)
+	}
+
 	workerMap := bodyMap["worker"].(map[string]any)
 	if _, dup := workerMap["execution"]; dup {
 		t.Fatalf("attempt.worker must NOT contain execution (attempt.execution is single owner)")
@@ -178,6 +223,25 @@ func TestSwarmProfilePreimageMigrationFixtures(t *testing.T) {
 	if ctrlMap["root"] == "" || ctrlMap["manifest_hash"] == "" {
 		t.Fatalf("launch control missing root or manifest_hash")
 	}
+	ctrlManCan, err := testCanonicalBytes(lchFix["control_manifest"])
+	if err != nil {
+		t.Fatalf("canonicalize control_manifest: %v", err)
+	}
+	if ctrlMap["manifest_hash"] != shaPrefixedBytes(ctrlManCan) {
+		t.Fatalf("control.manifest_hash mismatch: got %s, want %s", ctrlMap["manifest_hash"], shaPrefixedBytes(ctrlManCan))
+	}
+
+	launcherMap := ctrlMap["launcher"].(map[string]any)
+	expectedLauncherPath := ctrlMap["root"].(string) + "/launcher"
+	expectedSandboxPath := ctrlMap["root"].(string) + "/sandbox"
+
+	if launcherMap["path"] != expectedLauncherPath {
+		t.Fatalf("control.launcher.path mismatch: got %s, want %s", launcherMap["path"], expectedLauncherPath)
+	}
+	if lchBody["sandbox"] != expectedSandboxPath {
+		t.Fatalf("launch body sandbox is not protected control path: got %s, want %s", lchBody["sandbox"], expectedSandboxPath)
+	}
+
 	realMap := lchBody["realization"].(map[string]any)
 	if realMap["env_hash"] == "" {
 		t.Fatalf("launch realization missing env_hash")
@@ -195,7 +259,13 @@ func TestSwarmProfilePreimageMigrationFixtures(t *testing.T) {
 	}
 
 	argv := lchFix["argv"].([]any)
-	if len(argv) != 6 || argv[5] != lchFix["launch_hash"] {
+	if len(argv) != 6 {
+		t.Fatalf("launch argv length mismatch")
+	}
+	if argv[0] != expectedLauncherPath {
+		t.Fatalf("launch argv[0] is not protected control launcher path: got %s, want %s", argv[0], expectedLauncherPath)
+	}
+	if argv[5] != lchFix["launch_hash"] {
 		t.Fatalf("launch argv linkage mismatch")
 	}
 }
@@ -283,5 +353,15 @@ func TestSwarmProfilePreimageNegativeWitnesses(t *testing.T) {
 	}
 	if shaPrefixedBytes(alteredCan) == bodyMap["hashes"].(map[string]any)["config"] {
 		t.Fatalf("NEGATIVE WITNESS FAIL: altered execution field produced identical config hash")
+	}
+
+	// Witness 5: Corrupted snapshot_hash
+	corruptedAttFix := make(map[string]any)
+	for k, v := range attFix {
+		corruptedAttFix[k] = v
+	}
+	corruptedAttFix["snapshot_hash"] = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+	if shaPrefixedBytes(attBytes) == corruptedAttFix["snapshot_hash"] {
+		t.Fatalf("corrupted snapshot_hash unexpectedly matched")
 	}
 }
