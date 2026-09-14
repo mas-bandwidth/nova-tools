@@ -2663,6 +2663,24 @@ keep a giant context merely for its hit rate, or infer that a reset saves money 
 its cache rebuild. Adapter support for caching controls is explicit; nova-work never claims to
 control settings a host does not expose.
 
+### Batch the round trips, preserve urgency
+
+CONFIG bounds each coordinator batch by records, bytes and maximum delay. Accumulate
+independent ready results and questions until one bound is reached, then present one focused
+revision-bound packet. Reuse the existing read-bundle, independent-batch and atomic-batch
+semantics; no new transaction protocol is implied. Dependent work still waits for its prerequisite,
+and urgent corrections, stop requests, lease changes and deadlines bypass the delay. Do not
+inflate a prompt just to fill a batch. Empty or unchanged batches require zero model calls.
+
+Measure batches by accepted work, total actor tokens and priced cost, with queueing latency and
+quality beside them. Record model round trips, API requests and work units separately: reducing
+one is not proof the others fell. Distinguish programmatic tool-call batching, result aggregation
+and provider batch billing. A provider batch discount applies only to a supported, authorised
+route and eligible nonurgent work; tool calls in one shell invocation do not earn that discount.
+A large batch must stay inside input and context-tier limits, with partial failures and retries
+attributed once. Compare pooled work against the same unbatched acceptance scope; preserve a
+safety margin for latency and head-of-line blocking rather than maximising batch size blindly.
+
 ### Required enforcement replays
 
 | Replay | Required outcome |
@@ -2673,6 +2691,7 @@ control settings a host does not expose.
 | quiet-until-actionable | Unchanged observations cause zero model dispatches; actionable batching respects bounds and urgent corrections/stops bypass it. |
 | reuse-only-valid-review | Same-scope review is reusable; changed acceptance/dependencies invalidate it; independent friend gates cannot be replaced by reuse. |
 | complete-cost-lineage | Parent/child/retry receipts join once, failed attempts count, cache subsets do not double count, implementation cost stays separate, gaps remain unknown. |
+| batch-with-bounds-and-urgency | Independent results coalesce within byte/record/delay bounds, unchanged batches cause no call, urgent corrections bypass delay, dependencies and partial retry identities survive. |
 | cache-aware-context-choice | Cache reads/writes and tier thresholds price separately; a reset includes rebuild costs; a lower hit rate can still win when total matched-work cost falls. |
 | evidence-before-adoption | Missing baseline/coverage, unmatched quality or a retrospective correlation alone cannot auto-promote; a fully qualified prospective result can. |
 | regression-and-recovery | A breached trial stops new automatic assignments; eligible fallback preserves role limits, history and uncertain live handles. |
