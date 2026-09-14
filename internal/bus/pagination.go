@@ -9,7 +9,9 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"path"
 	"sort"
 	"strings"
@@ -19,9 +21,11 @@ const (
 	bodyTokenVersion = 1
 	bodyTokenLimit   = 8 << 10
 	// Snapshot Git responses are protocol data, not a stream for arbitrary repository
-	// contents.  One MiB permits the documented 1,000-item maximum while refusing a
-	// successful command that would make the bodies budget meaningless.
-	bodySnapshotGitLimit = 1 << 20
+	// contents. SplitDraft folds CRLF to LF, so a legal one-MiB body can occupy two MiB in
+	// Git; the bounded header allowance covers the parser's heading and whitespace
+	// separator forms without inventing a second header grammar here.
+	bodySnapshotHeaderLimit = 64 << 10
+	bodySnapshotGitLimit    = (2 * 1 << 20) + bodySnapshotHeaderLimit
 )
 
 // BodySnapshot is the immutable identity captured by a first bodies call.  Base and Head
@@ -41,6 +45,10 @@ type BodyItem struct {
 	Offset int
 	Entry  OpenEntry
 	Body   []byte
+	// Bytes is the source body size when Body is deliberately absent for an object that
+	// is already larger than the hard page ceiling.  Zero means len(Body), including a
+	// real empty body.  It keeps an oversize item explicit without reading it unboundedly.
+	Bytes int64
 }
 
 func (i BodyItem) key() bodyItemKey {
@@ -164,7 +172,7 @@ func BodyPageFor(items []BodyItem, request BodyPageRequest) (BodyPage, error) {
 	if earliest != nil {
 		for _, item := range items {
 			if item.key().equal(*earliest) {
-				page.EarliestGap = &BodyGap{ID: item.Entry.ID, Commit: item.Commit, Path: item.Path, Offset: item.Offset, Bytes: int64(len(item.Body))}
+				page.EarliestGap = &BodyGap{ID: item.Entry.ID, Commit: item.Commit, Path: item.Path, Offset: item.Offset, Bytes: bodyItemBytes(item)}
 				break
 			}
 		}
@@ -176,7 +184,7 @@ func BodyPageFor(items []BodyItem, request BodyPageRequest) (BodyPage, error) {
 		if len(page.Items)+len(page.Gaps) >= request.MaxNotes {
 			break
 		}
-		size := int64(len(item.Body))
+		size := bodyItemBytes(item)
 		if !bodyFrameItem(item) {
 			size = 0
 		}
@@ -239,6 +247,13 @@ func bodyFrameItem(item BodyItem) bool {
 	return item.Entry.Kind != OpenReceipt && !item.Entry.Heard
 }
 
+func bodyItemBytes(item BodyItem) int64 {
+	if item.Bytes > 0 {
+		return item.Bytes
+	}
+	return int64(len(item.Body))
+}
+
 func validBodyRequest(r BodyPageRequest) error {
 	if r.MaxNotes < 1 || r.MaxNotes > 1000 {
 		return fmt.Errorf("--max-notes must be between 1 and 1000")
@@ -270,7 +285,7 @@ func validBodyItems(items []BodyItem, snapshot BodySnapshot) error {
 		if err := ValidCommitHex(item.Commit); err != nil {
 			return fmt.Errorf("snapshot item %d: %w", i, err)
 		}
-		if !validSnapshotPath(item.Path) || item.Offset < 0 {
+		if !validSnapshotPath(item.Path) || item.Offset < 0 || item.Bytes < 0 {
 			return fmt.Errorf("snapshot item %d has an invalid path or record offset", i)
 		}
 		key := item.key()
@@ -334,13 +349,39 @@ func validateTokenAccounting(items []BodyItem, token bodyToken, start int) error
 }
 
 func safeBodyFrontier(items []BodyItem, accounted int, gap *bodyItemKey) string {
-	if accounted < 0 || gap != nil {
+	if accounted < 0 {
 		return ""
 	}
-	if accounted+1 >= len(items) || items[accounted].Commit != items[accounted+1].Commit {
-		return items[accounted].Commit
+	limit := accounted
+	if gap != nil {
+		gapIndex := -1
+		for i := 0; i <= accounted; i++ {
+			if items[i].key().equal(*gap) {
+				gapIndex = i
+				break
+			}
+		}
+		if gapIndex < 0 {
+			return ""
+		}
+		// A gap's own commit is never safe, even when its other items happened to
+		// print.  The greatest safe prefix ends at the preceding whole commit.
+		limit = gapIndex - 1
 	}
-	return ""
+	frontier := ""
+	for i := 0; i <= limit; {
+		commit := items[i].Commit
+		end := i
+		for end+1 < len(items) && items[end+1].Commit == commit {
+			end++
+		}
+		if end > limit {
+			break
+		}
+		frontier = commit
+		i = end + 1
+	}
+	return frontier
 }
 
 func encodeBodyToken(token bodyToken) (string, error) {
@@ -433,7 +474,7 @@ func BodyRecordsAtSnapshot(root string, snapshot BodySnapshot, eligible []BodyIt
 	}
 	wanted := make(map[string][]BodyItem, len(eligible))
 	for _, entry := range eligible {
-		if !validSnapshotPath(entry.Path) || entry.Offset < 0 {
+		if !validSnapshotPath(entry.Path) || entry.Offset < 0 || entry.Bytes < 0 {
 			return nil, fmt.Errorf("eligible entry has invalid path or record offset %q", entry.Path)
 		}
 		wanted[entry.Path] = append(wanted[entry.Path], entry)
@@ -449,24 +490,22 @@ func BodyRecordsAtSnapshot(root string, snapshot BodySnapshot, eligible []BodyIt
 			if !wantedHere {
 				continue
 			}
-			raw, err := gitOutputAtMost(root, bodySnapshotGitLimit, "show", commit+":"+p)
-			if err != nil {
-				return nil, fmt.Errorf("snapshot %s cannot read %s: %w", commit, p, err)
-			}
 			needsBody := false
 			for _, record := range records {
 				needsBody = needsBody || bodyFrameItem(record)
 			}
 			body := []byte(nil)
+			bodyBytes := int64(0)
 			if needsBody {
-				note, err := ParseNote(p, raw)
+				note, sourceBody, sourceBytes, err := snapshotNote(root, commit, p)
 				if err != nil {
 					return nil, fmt.Errorf("snapshot %s cannot parse %s: %w", commit, p, err)
 				}
-				body = []byte(note.Body)
+				_ = note
+				body, bodyBytes = sourceBody, sourceBytes
 			}
 			for _, record := range records {
-				record.Commit, record.Path, record.Body = commit, p, body
+				record.Commit, record.Path, record.Body, record.Bytes = commit, p, body, bodyBytes
 				byKey[record.key()] = record
 			}
 		}
@@ -499,6 +538,9 @@ func BodyNewItemsAtSnapshot(root string, snapshot BodySnapshot, c *Config, me Pa
 	if err := validBodyRequest(BodyPageRequest{Snapshot: snapshot, MaxNotes: 1, MaxBytes: 1}); err != nil {
 		return nil, err
 	}
+	if snapshot.Reader != me.Name || snapshot.Selector != "inbox-new" {
+		return nil, fmt.Errorf("snapshot belongs to another reader or selector")
+	}
 	if c == nil || me.Lane == "" {
 		return nil, fmt.Errorf("snapshot reader has no roster lane")
 	}
@@ -507,6 +549,10 @@ func BodyNewItemsAtSnapshot(root string, snapshot BodySnapshot, c *Config, me Pa
 		return nil, fmt.Errorf("snapshot head is unavailable")
 	}
 	if snapshot.Base != "" {
+		resolvedBase, baseErr := ResolveCommit(root, snapshot.Base)
+		if baseErr != nil || resolvedBase != snapshot.Base {
+			return nil, fmt.Errorf("snapshot base cursor is unavailable")
+		}
 		if ancestor, ancestorErr := isAncestorOf(root, snapshot.Base, snapshot.Head); ancestorErr != nil || !ancestor {
 			return nil, fmt.Errorf("snapshot base cursor is not an ancestor of its head")
 		}
@@ -519,30 +565,42 @@ func BodyNewItemsAtSnapshot(root string, snapshot BodySnapshot, c *Config, me Pa
 	if err != nil {
 		return nil, err
 	}
+	// ChangedSince reports one path at HEAD, not every historical revision in its range.
+	// Mirror that selector against C0..H: a note edited twice is one item carrying H's
+	// final body, and a reply whose Re: was later removed must not settle another note.
+	latest := make(map[string]string)
+	for _, commit := range commits {
+		out, err := firstParentChangedPaths(root, commit)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range strings.Fields(out) {
+			if isNotePath(p) {
+				latest[p] = commit
+			}
+		}
+	}
 	answered := make(map[string]bool)
 	type candidate struct {
 		item BodyItem
 		note Note
 	}
 	var candidates []candidate
-	seenPath := make(map[string]bool)
 	for _, commit := range commits {
-		out, err := firstParentChangedPaths(root, commit)
-		if err != nil {
-			return nil, err
+		paths := make([]string, 0)
+		for p, last := range latest {
+			if last == commit {
+				paths = append(paths, p)
+			}
 		}
-		paths := strings.Fields(out)
 		sort.Strings(paths)
 		for _, p := range paths {
-			if !isNotePath(p) {
-				continue
-			}
-			raw, err := gitOutputAtMost(root, bodySnapshotGitLimit, "show", commit+":"+p)
+			note, body, bodyBytes, err := snapshotNote(root, snapshot.Head, p)
 			if err != nil {
-				return nil, fmt.Errorf("snapshot %s cannot read %s: %w", commit, p, err)
-			}
-			note, err := ParseNote(p, raw)
-			if err != nil {
+				var sourceErr *snapshotSourceError
+				if errors.As(err, &sourceErr) {
+					return nil, fmt.Errorf("snapshot %s cannot read %s: %w", commit, p, sourceErr)
+				}
 				continue
 			}
 			if note.Lane == me.Lane {
@@ -551,12 +609,11 @@ func BodyNewItemsAtSnapshot(root string, snapshot BodySnapshot, c *Config, me Pa
 				}
 				continue
 			}
-			if seenPath[p] || !addressedTo(c, &note, me) || legacy.covers(note.legacyDay()) {
+			if !addressedTo(c, &note, me) || legacy.covers(note.legacyDay()) {
 				continue
 			}
-			seenPath[p] = true
 			entry := openEntryFor(c, &note, me, heard[note.Header.ID] || heard[note.Path], maxWords)
-			candidates = append(candidates, candidate{item: BodyItem{Commit: commit, Path: p, Entry: entry, Body: []byte(note.Body)}, note: note})
+			candidates = append(candidates, candidate{item: BodyItem{Commit: commit, Path: p, Entry: entry, Body: body, Bytes: bodyBytes}, note: note})
 		}
 	}
 	items := make([]BodyItem, 0, len(candidates))
@@ -571,11 +628,12 @@ func BodyNewItemsAtSnapshot(root string, snapshot BodySnapshot, c *Config, me Pa
 func receiptTargetsAtSnapshot(root, head, lane string) (map[string]bool, error) {
 	targets := map[string]bool{}
 	path := lane + "/" + ReceiptsName
-	if _, err := gitOutputAtMost(root, bodySnapshotGitLimit, "cat-file", "-e", head+":"+path); err != nil {
-		if strings.Contains(err.Error(), "exit status 1") {
-			return targets, nil
-		}
+	tree, err := gitOutputAtMost(root, bodySnapshotGitLimit, "ls-tree", "-z", head, "--", path)
+	if err != nil {
 		return nil, fmt.Errorf("snapshot %s cannot inspect %s: %w", head, path, err)
+	}
+	if tree == "" {
+		return targets, nil
 	}
 	raw, err := gitOutputAtMost(root, bodySnapshotGitLimit, "show", head+":"+path)
 	if err != nil {
@@ -587,6 +645,39 @@ func receiptTargetsAtSnapshot(root, head, lane string) (map[string]bool, error) 
 		}
 	}
 	return targets, nil
+}
+
+// snapshotNote streams one pinned blob through ParseNoteBodyStream. Git stays under its
+// existing timeout and the parser retains at most one legal body while still counting a
+// larger one exactly, so a three-MiB body is named as three MiB rather than a fabricated
+// lower bound.
+type snapshotSourceError struct{ err error }
+
+func (e *snapshotSourceError) Error() string { return e.err.Error() }
+func (e *snapshotSourceError) Unwrap() error { return e.err }
+
+func snapshotSource(err error) error { return &snapshotSourceError{err: err} }
+
+func snapshotNote(root, commit, p string) (Note, []byte, int64, error) {
+	var note Note
+	var body []byte
+	var size int64
+	var parseErr error
+	err := gitReadBounded(root, func(r io.Reader) error {
+		note, body, size, parseErr = ParseNoteBodyStream(p, r, 1048576, bodySnapshotHeaderLimit)
+		return parseErr
+	}, "show", commit+":"+p)
+	if err != nil {
+		if parseErr != nil {
+			var headerErr *noteHeaderLimitError
+			if errors.As(parseErr, &headerErr) {
+				return Note{}, nil, 0, snapshotSource(parseErr)
+			}
+			return Note{}, nil, 0, parseErr
+		}
+		return Note{}, nil, 0, snapshotSource(err)
+	}
+	return note, body, size, nil
 }
 
 func firstParentRange(root, base, head string) ([]string, error) {
@@ -619,7 +710,7 @@ func firstParentChangedPaths(root, commit string) (string, error) {
 		return "", fmt.Errorf("cannot determine first parent of snapshot commit %s", commit)
 	}
 	if len(fields) == 1 {
-		return gitOutputAtMost(root, bodySnapshotGitLimit, "diff-tree", "--root", "--no-commit-id", "--name-only", "-r", commit)
+		return gitOutputAtMost(root, bodySnapshotGitLimit, "diff-tree", "--root", "--no-commit-id", "--name-only", "--diff-filter=AM", "-r", commit)
 	}
-	return gitOutputAtMost(root, bodySnapshotGitLimit, "diff-tree", "--no-commit-id", "--name-only", "-r", fields[1], commit)
+	return gitOutputAtMost(root, bodySnapshotGitLimit, "diff-tree", "--no-commit-id", "--name-only", "--diff-filter=AM", "-r", fields[1], commit)
 }

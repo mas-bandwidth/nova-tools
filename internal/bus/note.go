@@ -1,9 +1,11 @@
 package bus
 
 import (
+	"bufio"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -278,6 +280,158 @@ func parseLines(path string, lines []string, at []int, first int) (Note, []error
 	}
 	n.Header = h
 	return n, problems
+}
+
+// ParseNoteBodyStream applies the same header rules as ParseNote while consuming the body
+// as a stream. It retains at most retain bytes, but always returns the exact normalized
+// body length: CRLF folding, a leading BOM, a markdown heading, and a whitespace-only
+// header separator all follow SplitDraft/parseLines rather than a second delimiter rule.
+// Header bytes are bounded before allocation; a valid-but-enormous header is an explicit
+// refusal instead of being mistaken for an oversize body.
+func ParseNoteBodyStream(path string, r io.Reader, retain, headerLimit int64) (Note, []byte, int64, error) {
+	if retain < 0 || headerLimit < 1 {
+		return Note{}, nil, 0, fmt.Errorf("invalid streamed note limits")
+	}
+	reader := bufio.NewReaderSize(r, 32<<10)
+	var lines []string
+	var used int64
+	first := 0
+	heading := false
+	headerStarted := false
+	for {
+		raw, ended, eof, err := readHeaderLine(reader, headerLimit-used)
+		if err != nil {
+			return Note{}, nil, 0, err
+		}
+		used += int64(len(raw))
+		line := normalizedHeaderLine(raw, ended)
+		if len(lines) == 0 {
+			line = strings.TrimPrefix(line, "\ufeff")
+			heading = strings.HasPrefix(line, headingPrefix)
+			headerStarted = !heading
+		}
+		lines = append(lines, line)
+		if heading && !headerStarted {
+			if strings.TrimSpace(line) == "" && len(lines) > 1 {
+				first++
+			} else if len(lines) > 1 {
+				headerStarted = true
+			}
+		}
+		if headerStarted && strings.TrimSpace(line) == "" {
+			break
+		}
+		if eof {
+			break
+		}
+	}
+	if heading {
+		first++ // skip the heading itself; the loop counted only its following blanks.
+	}
+	note, problems := parseLines(path, lines, nil, first)
+	if len(problems) > 0 {
+		return Note{Path: note.Path, Lane: note.Lane}, nil, 0, problems[0]
+	}
+	body, size, err := normalizedBody(reader, retain)
+	if err != nil {
+		return Note{}, nil, 0, err
+	}
+	note.Body = string(body)
+	if size > retain {
+		note.Body = ""
+		body = nil
+	}
+	return note, body, size, nil
+}
+
+// readHeaderLine reads exactly one raw line without permitting a long line to allocate
+// beyond the caller's verified header limit.
+func readHeaderLine(reader *bufio.Reader, remain int64) ([]byte, bool, bool, error) {
+	if remain < 1 {
+		return nil, false, false, &noteHeaderLimitError{}
+	}
+	var line []byte
+	for {
+		part, err := reader.ReadSlice('\n')
+		if int64(len(line)+len(part)) > remain {
+			return nil, false, false, &noteHeaderLimitError{}
+		}
+		line = append(line, part...)
+		switch err {
+		case nil:
+			return line, true, false, nil
+		case bufio.ErrBufferFull:
+			continue
+		case io.EOF:
+			return line, false, true, nil
+		default:
+			return nil, false, false, err
+		}
+	}
+}
+
+func normalizedHeaderLine(raw []byte, ended bool) string {
+	line := string(raw)
+	if ended {
+		line = strings.TrimSuffix(line, "\n")
+		return strings.TrimSuffix(line, "\r")
+	}
+	return line
+}
+
+type noteHeaderLimitError struct{}
+
+func (*noteHeaderLimitError) Error() string {
+	return "headers exceed the bounded snapshot header limit"
+}
+
+func normalizedBody(reader *bufio.Reader, retain int64) ([]byte, int64, error) {
+	body := make([]byte, 0, minBodyCapacity(retain))
+	var size int64
+	var pendingCR bool
+	emit := func(b byte) {
+		size++
+		if int64(len(body)) < retain {
+			body = append(body, b)
+		}
+	}
+	buf := make([]byte, 32<<10)
+	for {
+		n, err := reader.Read(buf)
+		for _, b := range buf[:n] {
+			if pendingCR {
+				if b == '\n' {
+					emit('\n')
+					pendingCR = false
+					continue
+				}
+				emit('\r')
+				pendingCR = false
+			}
+			if b == '\r' {
+				pendingCR = true
+				continue
+			}
+			emit(b)
+		}
+		if err == io.EOF {
+			if pendingCR {
+				emit('\r')
+			}
+			return body, size, nil
+		}
+		if err != nil {
+			return nil, 0, err
+		}
+	}
+}
+
+func minBodyCapacity(retain int64) int {
+	const initial = 32 << 10
+	if retain < initial {
+		return int(retain)
+	}
+	return initial
 }
 
 // blankLineAdvice is the one sentence that fixes every note whose header ran on into its

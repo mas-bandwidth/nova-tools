@@ -1101,6 +1101,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	scope := bus.Scope{Full: o.full}
 	var res bus.InboxResult
 	var cursor bus.Cursor
+	var priorOpen []bus.OpenEntry
 	// held is the cursor as it stands on the bus, read for the SWITCH-DAY LINE it carries
 	// as well as for the commit. A full run reads it too, and ignores a cursor it cannot
 	// read: `--full --advance` is the documented repair for a broken cursor, and a repair
@@ -1109,6 +1110,11 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	held := bus.Cursor{}
 	if o.full {
 		held, _ = bus.ReadCursor(o.busDir, me.Lane)
+		// A full read rebuilds the current listing, but an existing valid OPEN file is
+		// still the bookkeeping that distinguishes carried work from NEW bodies.  Keep
+		// its survivors when a bounded full page advances; only newly eligible bodies
+		// wait for their own emitted prefix.
+		priorOpen, _ = bus.ReadOpen(o.busDir, me.Lane)
 	}
 	// The line this run reads under, whichever mode it is in.
 	var legacy bus.LegacyLine
@@ -1166,6 +1172,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(err))
 				return 1, r
 			}
+			priorOpen = open
 			scope.From, scope.Changed = cursor.Commit, len(changed)
 			legacy = effectiveLegacy(o.legacy, held)
 			res, err = bus.InboxSince(o.busDir, c, me, changed, open, o.maxWords, legacy)
@@ -1308,11 +1315,19 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(headErr))
 				return 1, r
 			}
-			snapshot := bus.BodySnapshot{Base: cursor.Commit, Head: head, Reader: me.Name, Selector: "inbox-new"}
+			base, expected := cursor.Commit, cursor.Commit
+			if scope.Full {
+				base, expected = held.Commit, held.Commit
+			}
+			snapshot := bus.BodySnapshot{Base: base, Head: head, Reader: me.Name, Selector: "inbox-new"}
 			if o.after != "" {
 				snapshot, _, headErr = bus.BodyContinuation(o.after)
 				if headErr != nil {
 					fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(headErr))
+					return 2, r
+				}
+				if snapshot.Reader != me.Name || snapshot.Selector != "inbox-new" {
+					fmt.Fprintln(stderr, "INBOX REFUSED: continuation belongs to another reader or selector; start a fresh bodies read")
 					return 2, r
 				}
 			}
@@ -1324,7 +1339,7 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(pageErr))
 				return 2, r
 			}
-			page, pageErr := bus.BodyPageFor(items, bus.BodyPageRequest{Snapshot: snapshot, ExpectedCursor: cursor.Commit, Advance: o.advance, Token: o.after, MaxNotes: o.maxNotes, MaxBytes: o.maxBytes})
+			page, pageErr := bus.BodyPageFor(items, bus.BodyPageRequest{Snapshot: snapshot, ExpectedCursor: expected, Advance: o.advance, Token: o.after, MaxNotes: o.maxNotes, MaxBytes: o.maxBytes})
 			if pageErr != nil {
 				fmt.Fprintf(stderr, "INBOX REFUSED: %s\n", oneline.Err(pageErr))
 				return 2, r
@@ -1337,8 +1352,8 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 			// Only the NEW entries fully emitted on this page become carried.  Keeping
 			// every entry from the current listing here would move CURSOR past B while
 			// silently placing B in OPEN, so its body would never get its own NEW turn.
-			r.Open = openAfterBodies(res.Open, res.Fresh, page)
-			if page.SafeFrontier != cursor.Commit {
+			r.Open = openAfterBodies(res.Open, res.Fresh, priorOpen, items, page, scope.Full)
+			if page.SafeFrontier != expected {
 				r.AdvanceTo = page.SafeFrontier
 			}
 			if _, err := fmt.Fprintf(stdout, "INBOX BODIES printed=%d bytes=%d oversize=%d gaps=%d drained=%t complete=%t next=%s\n", r.BodyPrinted, r.BodyBytes, len(page.Gaps), r.BodyGaps, page.Drained, page.Complete, oneline.Field(dash(r.Next))); err != nil {
@@ -1416,19 +1431,52 @@ func inboxListing(o inboxOpts, stdout, stderr io.Writer, now time.Time) (int, in
 	return 0, r
 }
 
-func openAfterBodies(current, fresh []bus.OpenEntry, page bus.BodyPage) []bus.OpenEntry {
+func openAfterBodies(current, fresh, prior []bus.OpenEntry, items []bus.BodyItem, page bus.BodyPage, full bool) []bus.OpenEntry {
 	freshPath := make(map[string]bool, len(fresh))
 	for _, entry := range fresh {
 		freshPath[entry.Path] = true
 	}
-	out := make([]bus.OpenEntry, 0, len(current))
-	for _, entry := range current {
-		if !freshPath[entry.Path] {
-			out = append(out, entry)
+	// A full read derives OPEN anew.  Its listing may contain every outstanding note
+	// while a bodies page has emitted only one, so retaining current here would move a
+	// cursor past unprinted bodies.  Incremental reads retain only their prior carry;
+	// current-fresh rows are rebuilt below from the immutable emitted prefix.
+	out := make([]bus.OpenEntry, 0, len(current)+len(items))
+	if full {
+		currentByPath := make(map[string]bus.OpenEntry, len(current))
+		for _, entry := range current {
+			currentByPath[entry.Path] = entry
+		}
+		for _, entry := range prior {
+			if survivor, ok := currentByPath[entry.Path]; ok {
+				out = append(out, survivor)
+			}
+		}
+	} else {
+		for _, entry := range current {
+			if !freshPath[entry.Path] {
+				out = append(out, entry)
+			}
 		}
 	}
-	for _, item := range page.Items {
-		out = append(out, item.Entry)
+	inOut := make(map[string]bool, len(out))
+	for _, entry := range out {
+		inOut[entry.Path] = true
+	}
+	// SafeFrontier is precisely the greatest complete emitted prefix.  Re-add every
+	// eligible item through it, rather than only this page's Items: the final page of a
+	// two-note commit must persist both A and B, and a later page must not replace A.
+	frontier := -1
+	for i, item := range items {
+		if item.Commit == page.SafeFrontier {
+			frontier = i
+		}
+	}
+	for i := 0; i <= frontier; i++ {
+		item := items[i]
+		if !inOut[item.Entry.Path] {
+			out = append(out, item.Entry)
+			inOut[item.Entry.Path] = true
+		}
 	}
 	return out
 }
@@ -1583,49 +1631,77 @@ const (
 )
 
 func printBodyPage(stdout io.Writer, page bus.BodyPage) error {
+	// Selection, continuation identities, and safe-frontier accounting stay in canonical
+	// snapshot order. Display follows the inbox's established NOTE, HEARD, RECEIPT groups;
+	// an earlier receipt must not push a later note below the summary groups on this page.
+	for _, group := range []string{"NOTE", "HEARD", "RECEIPT"} {
+		for _, emission := range page.Emissions {
+			if emission.Gap != nil {
+				continue
+			}
+			if emission.Item == nil {
+				return fmt.Errorf("body page has an empty emission")
+			}
+			if bodyDisplayGroup(*emission.Item) != group {
+				continue
+			}
+			if err := printBodyItem(stdout, *emission.Item); err != nil {
+				return err
+			}
+		}
+	}
+	// Gaps are accounting events rather than listing groups. Preserve every selected gap
+	// in canonical order after the grouped listing rows, and retain the same write-error
+	// path that prevents a cursor advance when stdout breaks.
 	for _, emission := range page.Emissions {
-		if emission.Gap != nil {
-			gap := emission.Gap
-			if _, err := fmt.Fprintf(stdout, "INBOX BODY OVERSIZE id=%s bytes=%d path=%s\n", oneline.Field(dash(gap.ID)), gap.Bytes, oneline.Field(gap.Path)); err != nil {
-				return err
-			}
+		if emission.Gap == nil {
 			continue
 		}
-		if emission.Item == nil {
-			return fmt.Errorf("body page has an empty emission")
-		}
-		item := *emission.Item
-		e := item.Entry
-		kind := "NOTE"
-		if e.Heard {
-			kind = "HEARD"
-		} else if e.Kind == bus.OpenReceipt {
-			kind = "RECEIPT"
-		}
-		if kind != "NOTE" {
-			if _, err := fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n", kind, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
-				return err
-			}
-			continue
-		}
-		bodyBytes := item.Body
-		if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
+		gap := emission.Gap
+		if _, err := fmt.Fprintf(stdout, "INBOX BODY OVERSIZE id=%s bytes=%d path=%s\n", oneline.Field(dash(gap.ID)), gap.Bytes, oneline.Field(gap.Path)); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(stdout, "INBOX BODY id=%s bytes=%d\n", oneline.Field(dash(e.ID)), len(item.Body)); err != nil {
+	}
+	return nil
+}
+
+func bodyDisplayGroup(item bus.BodyItem) string {
+	e := item.Entry
+	if e.Heard {
+		return "HEARD"
+	}
+	if e.Kind == bus.OpenReceipt {
+		return "RECEIPT"
+	}
+	return "NOTE"
+}
+
+func printBodyItem(stdout io.Writer, item bus.BodyItem) error {
+	e := item.Entry
+	kind := bodyDisplayGroup(item)
+	if kind != "NOTE" {
+		if _, err := fmt.Fprintf(stdout, "INBOX %s id=%s from=%s addr=%s at=%s path=%s: %s\n", kind, oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(stdout, "%s", bodyBytes); err != nil {
+		return nil
+	}
+	bodyBytes := item.Body
+	if _, err := fmt.Fprintf(stdout, "INBOX NOTE id=%s from=%s addr=%s at=%s path=%s: %s\n", oneline.Field(dash(e.ID)), oneline.Field(dash(e.From)), oneline.Field(dash(e.Addr)), oneline.Field(dash(e.Date)), oneline.Field(e.Path), oneline.Escape(e.Subject)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "INBOX BODY id=%s bytes=%d\n", oneline.Field(dash(e.ID)), len(item.Body)); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(stdout, "%s", bodyBytes); err != nil {
+		return err
+	}
+	if len(item.Body) == 0 || item.Body[len(item.Body)-1] != '\n' {
+		if _, err := fmt.Fprint(stdout, "\n"); err != nil {
 			return err
 		}
-		if len(item.Body) == 0 || item.Body[len(item.Body)-1] != '\n' {
-			if _, err := fmt.Fprint(stdout, "\n"); err != nil {
-				return err
-			}
-		}
-		if _, err := fmt.Fprintf(stdout, "INBOX BODY END id=%s\n", oneline.Field(dash(e.ID))); err != nil {
-			return err
-		}
+	}
+	if _, err := fmt.Fprintf(stdout, "INBOX BODY END id=%s\n", oneline.Field(dash(e.ID))); err != nil {
+		return err
 	}
 	return nil
 }

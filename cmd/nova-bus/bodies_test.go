@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/base64"
 	"errors"
 	"strings"
 	"testing"
@@ -60,6 +61,22 @@ func TestBodiesPreservesReceiptAndHeardAsSummaryOnly(t *testing.T) {
 	}
 }
 
+func TestBodiesKeepInboxDisplayGroupsWhenCanonicalOrderStartsReceipt(t *testing.T) {
+	checkout, _ := busDir(t)
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--advance", "--carry-history", "--remote", "origin", "--branch", "main").mustCode(t, 0)
+	addGroupedBodyCommit(t, checkout)
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--bodies", "--max-notes", "3", "--max-bytes", "1000").mustCode(t, 0)
+	note := strings.Index(r.stdout, "INBOX NOTE id=bo-ccccccccccce")
+	heard := strings.Index(r.stdout, "INBOX HEARD id=bo-bbbbbbbbbbbe")
+	receipt := strings.Index(r.stdout, "INBOX RECEIPT id=bo-aaaaaaaaaaae")
+	if note < 0 || heard < 0 || receipt < 0 || !(note < heard && heard < receipt) {
+		t.Fatalf("bodies did not retain NOTE, HEARD, RECEIPT display groups:\n%s", r.stdout)
+	}
+	if strings.Contains(r.stdout, "INBOX BODY id=bo-bbbbbbbbbbbe") || strings.Contains(r.stdout, "INBOX BODY id=bo-aaaaaaaaaaae") {
+		t.Fatalf("grouped summary entries were reframed as bodies:\n%s", r.stdout)
+	}
+}
+
 type refusingWriter struct{}
 
 func (refusingWriter) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
@@ -112,11 +129,111 @@ func TestBodiesReadOnlyContinuationNeedsNoPersistedOpenSnapshot(t *testing.T) {
 	}
 }
 
+func TestBodiesSameCommitPersistsWholeEmittedPrefix(t *testing.T) {
+	checkout, _ := busDir(t)
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--advance", "--carry-history", "--remote", "origin", "--branch", "main").mustCode(t, 0)
+	addTwoBodyNotesOneCommit(t, checkout)
+	first := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--bodies", "--max-notes", "1", "--max-bytes", "100", "--advance", "--remote", "origin", "--branch", "main").mustCode(t, 0)
+	token := bodyNext(t, first.stdout)
+	if open, err := bus.ReadOpen(checkout, "from-ada"); err != nil || hasOpenID(open, "bo-cccccccccccc") || hasOpenID(open, "bo-dddddddddddd") {
+		t.Fatalf("partial commit wrote either new body into OPEN: open=%+v err=%v", open, err)
+	}
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--bodies", "--max-notes", "1", "--max-bytes", "100", "--after", token, "--advance", "--remote", "origin", "--branch", "main").mustCode(t, 0)
+	open, err := bus.ReadOpen(checkout, "from-ada")
+	if err != nil || !hasOpenID(open, "bo-cccccccccccc") || !hasOpenID(open, "bo-dddddddddddd") {
+		t.Fatalf("whole same-commit prefix did not persist A and B: open=%+v err=%v", open, err)
+	}
+}
+
+func TestBodiesFullAdvancePersistsOnlyEmittedItems(t *testing.T) {
+	checkout, _ := busDir(t)
+	addBodyCommit(t, checkout, "from-bo/unprinted.md", "bo-eeeeeeeeeeef", "unprinted")
+	r := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--bodies", "--max-notes", "2", "--max-bytes", "1000", "--advance", "--carry-history", "--remote", "origin", "--branch", "main").mustCode(t, 0)
+	open, err := bus.ReadOpen(checkout, "from-ada")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open) != 2 || hasOpenID(open, "bo-eeeeeeeeeeef") {
+		t.Fatalf("full bodies page persisted unprinted OPEN rows: %d\n%s", len(open), r.stdout)
+	}
+	if !strings.Contains(r.stdout, "id="+open[0].ID) {
+		t.Fatalf("persisted row was not emitted by the bounded page: open=%+v\n%s", open, r.stdout)
+	}
+}
+
+func TestBodiesFullAdvancePreservesExistingOpenCarry(t *testing.T) {
+	checkout, _ := busDir(t)
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--advance", "--carry-history", "--remote", "origin", "--branch", "main").mustCode(t, 0)
+	before, err := bus.ReadOpen(checkout, "from-ada")
+	if err != nil || len(before) == 0 {
+		t.Fatalf("fixture did not establish carried OPEN: open=%+v err=%v", before, err)
+	}
+	addBodyCommit(t, checkout, "from-bo/new-full.md", "bo-eeeeeeeeeeea", "new full")
+	invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--bodies", "--max-notes", "1", "--max-bytes", "100", "--advance", "--remote", "origin", "--branch", "main").mustCode(t, 0)
+	after, err := bus.ReadOpen(checkout, "from-ada")
+	if err != nil || !hasOpenID(after, "bo-eeeeeeeeeeea") {
+		t.Fatalf("full bodies advance did not record its emitted NEW item: open=%+v err=%v", after, err)
+	}
+	for _, entry := range before {
+		if !hasOpenID(after, entry.ID) {
+			t.Fatalf("full bodies advance dropped prior carry %q: before=%+v after=%+v", entry.ID, before, after)
+		}
+	}
+}
+
+func hasOpenID(entries []bus.OpenEntry, id string) bool {
+	for _, entry := range entries {
+		if entry.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func TestBodiesContinuationRefusesOtherReaderAndSelector(t *testing.T) {
+	checkout, _ := busDir(t)
+	first := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--bodies", "--max-notes", "1", "--max-bytes", "1000").mustCode(t, 0)
+	token := bodyNext(t, first.stdout)
+	other := invoke(t, "", "inbox", "--bus", checkout, "--as", "Bo", "--receipt-max-words", "40", "--full", "--bodies", "--max-notes", "1", "--max-bytes", "1000", "--after", token)
+	if other.code != 2 || !strings.Contains(other.stderr, "another reader or selector") {
+		t.Fatalf("other reader accepted Ada token: code=%d stderr=%s", other.code, other.stderr)
+	}
+	raw, err := base64.RawURLEncoding.DecodeString(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bad := base64.RawURLEncoding.EncodeToString([]byte(strings.Replace(string(raw), `"s":"inbox-new"`, `"s":"other"`, 1)))
+	wrongSelector := invoke(t, "", "inbox", "--bus", checkout, "--as", "Ada", "--receipt-max-words", "40", "--full", "--bodies", "--max-notes", "1", "--max-bytes", "1000", "--after", bad)
+	if wrongSelector.code != 2 || !strings.Contains(wrongSelector.stderr, "another reader or selector") {
+		t.Fatalf("other selector accepted token: code=%d stderr=%s", wrongSelector.code, wrongSelector.stderr)
+	}
+}
+
 func addBodyCommit(t *testing.T, checkout, path, id, body string) {
 	t.Helper()
 	writeFile(t, checkout, path, "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nId: "+id+"\nSubject: "+body+"\n\n"+body)
 	gitIn(t, checkout, "add", "--", path)
 	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "body "+body)
+	gitIn(t, checkout, "push", "-q", "origin", "main")
+}
+
+func addGroupedBodyCommit(t *testing.T, checkout string) {
+	t.Helper()
+	writeFile(t, checkout, "from-bo/a-receipt.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nId: bo-aaaaaaaaaaae\nSubject: receipt\nKind: receipt\n\nreceived")
+	writeFile(t, checkout, "from-bo/b-heard.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nId: bo-bbbbbbbbbbbe\nSubject: heard\n\nheard body")
+	writeFile(t, checkout, "from-bo/c-note.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nId: bo-ccccccccccce\nSubject: note\n\nnote body")
+	writeFile(t, checkout, "from-ada/RECEIPTS", "2026-09-09T12:34:56Z bo-bbbbbbbbbbbe\n")
+	gitIn(t, checkout, "add", "--", "from-bo/a-receipt.md", "from-bo/b-heard.md", "from-bo/c-note.md", "from-ada/RECEIPTS")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "receipt heard note")
+	gitIn(t, checkout, "push", "-q", "origin", "main")
+}
+
+func addTwoBodyNotesOneCommit(t *testing.T, checkout string) {
+	t.Helper()
+	writeFile(t, checkout, "from-bo/a.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nId: bo-cccccccccccc\nSubject: A\n\nA")
+	writeFile(t, checkout, "from-bo/b.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nId: bo-dddddddddddd\nSubject: B\n\nB")
+	gitIn(t, checkout, "add", "--", "from-bo/a.md", "from-bo/b.md")
+	gitIn(t, checkout, "-c", "user.name=Bo", "-c", "user.email=bo@example.com", "commit", "-q", "-m", "two bodies")
 	gitIn(t, checkout, "push", "-q", "origin", "main")
 }
 

@@ -49,6 +49,22 @@ func TestBodyPaginatorCarriesEarlierGapAcrossChangedBudgetAndLaterPages(t *testi
 	}
 }
 
+func TestBodyPaginatorAdvancesToWholePrefixBeforeLaterGap(t *testing.T) {
+	items := []BodyItem{
+		{Commit: paginationOne, Path: "from-bo/a.md", Entry: OpenEntry{Path: "from-bo/a.md"}, Body: []byte("a")},
+		{Commit: paginationTwo, Path: "from-bo/b.md", Entry: OpenEntry{Path: "from-bo/b.md"}, Body: []byte("oversize")},
+	}
+	request := paginationRequest("", paginationBase, 2, 1)
+	request.Advance = true
+	page, err := BodyPageFor(items, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.SafeFrontier != paginationOne || len(page.Items) != 1 || len(page.Gaps) != 1 {
+		t.Fatalf("did not retain the complete prefix before the gap: %+v", page)
+	}
+}
+
 func TestBodyPaginatorRefusesExternalCursorChange(t *testing.T) {
 	items := []BodyItem{
 		{Commit: paginationOne, Path: "from-bo/a.md", Entry: OpenEntry{Path: "from-bo/a.md"}, Body: []byte("a")},
@@ -185,7 +201,7 @@ func TestBodySnapshotReadsFirstParentMergeDelta(t *testing.T) {
 	}
 }
 
-func TestBodySnapshotRefusesSuccessfulGitShowPastItsCap(t *testing.T) {
+func TestBodySnapshotUsesFinalRevisionAtHeadAndRetractedReplyDoesNotSettle(t *testing.T) {
 	hermetic(t)
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
@@ -193,8 +209,95 @@ func TestBodySnapshotRefusesSuccessfulGitShowPastItsCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	write(t, clone, "from-bo/too-large.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: large\n\n"+strings.Repeat("x", bodySnapshotGitLimit))
-	commitByHand(t, clone, "from-bo/too-large.md", "large body")
+	path := "from-bo/edited.md"
+	write(t, clone, path, "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nId: bo-aaaaaaaaaaaa\nSubject: first\n\nfirst")
+	commitByHand(t, clone, path, "first revision")
+	write(t, clone, path, "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nId: bo-aaaaaaaaaaaa\nSubject: final\n\nfinal")
+	commitByHand(t, clone, path, "final revision")
+	reply := "from-ada/retract.md"
+	write(t, clone, reply, "From: Ada\nTo: Bo\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: reply\nRe: bo-aaaaaaaaaaaa\n\nreply")
+	commitByHand(t, clone, reply, "reply")
+	write(t, clone, reply, "From: Ada\nTo: Bo\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: retracted\n\nreply")
+	commitByHand(t, clone, reply, "retract reply")
+	head, err := HeadCommit(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadConfig(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := BodyNewItemsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, c, mustParticipant(t, c, "Ada"), 40, LegacyLine{})
+	if err != nil || len(items) != 1 || items[0].Path != path || string(items[0].Body) != "final" {
+		t.Fatalf("snapshot did not use H's final note/reply state: items=%+v err=%v", items, err)
+	}
+}
+
+func TestBodySnapshotAllowsHardCeilingBodyAndNamesLargerBlobAsGap(t *testing.T) {
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+	base, err := HeadCommit(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, clone, "from-bo/exact.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: exact\n\n"+strings.Repeat("x", 1<<20))
+	write(t, clone, "from-bo/crlf.md", "# exact with presentation\r\n \r\nFrom: Bo\r\nTo: Ada\r\nDate: Mon Sep  7 00:00:00 UTC 2026\r\nSubject: crlf\r\n \r\n"+strings.Repeat("x\r\n", 1<<19))
+	const largeBytes = 3 << 20
+	write(t, clone, "from-bo/too-large.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: large\n\n"+strings.Repeat("y", largeBytes))
+	commitByHand(t, clone, "from-bo/exact.md", "exact and large bodies")
+	if _, err := git(clone, "add", "--", "from-bo/crlf.md", "from-bo/too-large.md"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := git(clone, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "large body"); err != nil {
+		t.Fatal(err)
+	}
+	head, err := HeadCommit(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := LoadConfig(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	items, err := BodyNewItemsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, c, mustParticipant(t, c, "Ada"), 40, LegacyLine{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var exact, crlf, large BodyItem
+	for _, item := range items {
+		switch item.Path {
+		case "from-bo/exact.md":
+			exact = item
+		case "from-bo/crlf.md":
+			crlf = item
+		case "from-bo/too-large.md":
+			large = item
+		}
+	}
+	if len(items) != 3 || bodyItemBytes(exact) != 1<<20 || bodyItemBytes(crlf) != 1<<20 || bodyItemBytes(large) != largeBytes {
+		t.Fatalf("bounded source did not preserve exact and oversize body sizes: %+v", items)
+	}
+	crlfPage, err := BodyPageFor([]BodyItem{crlf}, paginationRequest("", base, 1, 1<<20))
+	if err != nil || len(crlfPage.Items) != 1 || !crlfPage.Complete {
+		t.Fatalf("CRLF body with heading and whitespace separator did not fit: page=%+v err=%v", crlfPage, err)
+	}
+	page, err := BodyPageFor([]BodyItem{large}, paginationRequest("", base, 1, 1<<20))
+	if err != nil || len(page.Gaps) != 1 || page.Gaps[0].Bytes != largeBytes || !page.Drained || page.Complete {
+		t.Fatalf("large body was not recorded as a terminal gap: page=%+v err=%v", page, err)
+	}
+}
+
+func TestBodySnapshotRefusesOversizedHeaderInsteadOfCallingSmallBodyOversize(t *testing.T) {
+	hermetic(t)
+	bare := bareBus(t)
+	clone := cloneBus(t, bare)
+	base, err := HeadCommit(clone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, clone, "from-bo/header.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: "+strings.Repeat("x", bodySnapshotHeaderLimit)+"\n\nsmall")
+	commitByHand(t, clone, "from-bo/header.md", "oversized header")
 	head, err := HeadCommit(clone)
 	if err != nil {
 		t.Fatal(err)
@@ -204,7 +307,7 @@ func TestBodySnapshotRefusesSuccessfulGitShowPastItsCap(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = BodyNewItemsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, c, mustParticipant(t, c, "Ada"), 40, LegacyLine{})
-	if err == nil || !strings.Contains(err.Error(), "more than") {
-		t.Fatalf("large successful git show was accepted: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "headers exceed") {
+		t.Fatalf("oversized header was silently treated as a body gap: %v", err)
 	}
 }
