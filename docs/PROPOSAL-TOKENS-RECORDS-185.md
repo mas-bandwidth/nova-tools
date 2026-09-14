@@ -13,10 +13,10 @@
 
 This decision packet settles the blocking contract gates for native token records collection and whole-package validation identified in Issue #185 and Stella's review on PR #323:
 
-1. **Multi-Binding Source/Result Attribution & Conflict Cardinality**: Supports multiple source streams with explicit ordinals/IDs; introduces `ObservationProvenance` / `SourceRef` (retaining `SourceOrdinal`, `SourceID`) pairing each observation occurrence with its originating source stream without mutating the sealed wire type `CodexObservation`; assigns conflict reasons to all participating sources (same-binding, cross-source, and unknown-source); strictly rejects partial origin bindings; defines conflict cardinality as the count of *distinct conflicting identity keys*, keeping single-record decoder outcomes separate.
-2. **Package Allowance & Strict 3-Way Mapping Closure**: Amends Rule 29 to explicitly admit optional `inventories/<digest>.json`; removes input `coverage/` replica allowance (input package contains strictly `batch.json`, referenced shards, mappings, and optional inventories; no `coverage/` replica in input packages); enforces strict tripartite closure: $\text{Packaged Mappings} \equiv \text{Coverage } \texttt{mapping\_ids} \equiv \text{Observation } \texttt{mapping\_id}\text{s}$ (no orphans, no missing files, no unused mappings).
-3. **Coverage Reason Mapping & Gap Invariants**: Maps unknown origin/model and ambiguous default-zero counters into the closed reason set `{source_unavailable, unsupported_rows, unknown_fields, partial_interval, conflict}`; maps supported counters unavailable, arithmetic mismatch, impossible subsets, boundary refusals, and truncated final JSONL to `unsupported_rows`; keeps distinct-key conflict cardinality separate (0 conflicts for single-record inconsistencies); enforces the structural invariant $\texttt{gaps} = \operatorname{len}(\texttt{reasons})$ over deduplicated $(code, source)$ entries.
-4. **Two-Phase Directory Validation, Crash-Resistant Durability, and Strict Observation Checks**: Establishes `ValidateCandidateDirectory` (pre-marker, checking directory contents excluding only the explicitly owned marker temp, verifying its file type/mode/non-symlink boundary; forbidding pre-existing marker temp before staging) and `ValidateInstalledDirectory` (post-marker, strictly forbidding `batch.json.tmp`, any `*.tmp` files, and any unexpected extra files); strictly validates `nova.tokens.observation/2` envelopes and verifies record origin/day matches shard path (`records/<friend>/<bench>/<day>/...` with `_` and `unallocated`); preserves sorted-ID-set inventory comparison; pins explicit fsync trace for every newly created directory ancestor down to day and containing parent of fresh package root; pins supported atomic no-replace commit semantics (`renameatx_np` with `RENAME_EXCL`, `renameat2` with `RENAME_NOREPLACE`, or link/unlink idiom, failing if target exists); specifies composing package `internal/tokens` (or `internal/pkgvalid`) for whole-package validation since `internal/records` excludes path I/O.
+1. **Multi-Binding Source/Result Attribution & Conflict Cardinality**: Supports multiple source streams with explicit ordinals/IDs; introduces `ObservationProvenance` / `SourceRef` (retaining `SourceOrdinal`, `SourceID`) pairing each observation occurrence with its originating source stream without mutating the sealed wire type `CodexObservation`; assigns conflict reasons to all participating sources (same-binding, cross-source, and unknown-source); strictly rejects partial origin bindings; pins multi-source decoder preconditions (source/reader length equality, ordinal agreement, source-ID uniqueness); defines conflict cardinality as the count of *distinct conflicting identity keys*, keeping single-record decoder outcomes separate.
+2. **Package Allowance & Strict 3-Way Mapping Closure**: Amends Rule 29 to explicitly admit optional `inventories/<digest>.json`; removes input `coverage/` replica allowance (input package contains strictly `batch.json`, referenced shards, all referenced mappings, and optional inventories; no `coverage/` replica in input packages); enforces strict tripartite closure: $\text{Packaged Mappings} \equiv \text{Coverage } \texttt{mapping\_ids} \equiv \text{Observation } \texttt{mapping\_id}\text{s}$ (no orphans, no missing files, no unused mappings; an existing ledger copy does not exempt the package; writing an already-retained identical mapping into the ledger is a verified no-op).
+3. **Coverage Reason Mapping & Separate Retained Observations**: Maps unknown origin/model and ambiguous default-zero counters into the closed reason set `{source_unavailable, unsupported_rows, unknown_fields, partial_interval, conflict}`; clearly distinguishes 0 emitted observations (wire refusals and truncated lines, tracked in refusal and truncated-line counters) from 1 retained observation (unavailable counters, arithmetic mismatches, impossible subsets, which retain sealed observations and are unspendable without incrementing wire-shape/refusal counters); keeps distinct-key conflict cardinality separate (0 conflicts for single-record inconsistencies); pins additive reason composition (conflicts, unsupported rows, and unknown fields compose additively); enforces the structural invariant $\texttt{gaps} = \operatorname{len}(\texttt{reasons})$ over deduplicated $(code, source)$ entries.
+4. **Two-Phase Directory Validation, Bottom-Up Durability Trace, and Readiness**: Establishes `ValidateCandidateDirectory` (pre-marker, checking directory contents excluding only the explicitly owned marker temp, verifying its file type/mode/non-symlink boundary; forbidding pre-existing marker temp before staging) and `ValidateInstalledDirectory` (post-marker, strictly forbidding `batch.json.tmp`, any `*.tmp` files, and any unexpected extra files); strictly validates `nova.tokens.observation/2` envelopes and verifies record origin/day matches shard path (`records/<friend>/<bench>/<day>/...` with `_` and `unallocated`); preserves sorted-ID-set inventory comparison; pins explicit bottom-up fsync trace (`mkdir(root) -> fsync(parent-dir)`, intermediate directories created without premature sync, write & sync files, bottom-up sync `day -> bench -> friend -> records (and mappings/, inventories/) -> root` before marker staging, write & sync `batch.json.tmp`, atomic no-replace rename, and `fsync(root)` after marker installation); specifies explicit fail-stop on any sync failure; verifies link/unlink crash witness (marker + temp present) is unpublishable under `ValidateInstalledDirectory`; clarifies that envelope validators for `observation/2`, `mapping/2`, and `coverage/2` exist in `internal/records`, with whole-package composition in `internal/tokens` (or `internal/pkgvalid`) as the remaining dependency.
 
 ---
 
@@ -54,6 +54,7 @@ type ObservationProvenance struct {
 }
 
 // SourceRefusal records an observation rejected at the records boundary, retaining source provenance.
+// Emits 0 observations (count = 0); no observation envelope or spend key is created.
 type SourceRefusal struct {
     SourceOrdinal int    `json:"source_ordinal"`
     SourceID      string `json:"source_id"`
@@ -63,6 +64,7 @@ type SourceRefusal struct {
 }
 
 // SourceUnsupported records counts of unsupported wire shapes attributed per source.
+// Emits 0 observations (count = 0); no observation envelope or spend key is created.
 type SourceUnsupported struct {
     SourceOrdinal int            `json:"source_ordinal"`
     SourceID      string         `json:"source_id"`
@@ -71,12 +73,22 @@ type SourceUnsupported struct {
 
 // MultiSourceDecoding represents the reconciled output of multi-binding decoding.
 type MultiSourceDecoding struct {
-    Observations []ObservationProvenance `json:"observations"` // Sealed observations with exact source provenance
-    Refusals     []SourceRefusal         `json:"refusals"`     // Boundary refusals with exact source attribution
-    Unsupported  []SourceUnsupported     `json:"unsupported"`  // Per-source counts of unsupported wire shapes
-    OwedTasks    []string                `json:"owed_tasks"`   // Distinct owed coverage tasks from mappings
+    Observations   []ObservationProvenance `json:"observations"`   // Sealed observations (retained records, count=1 per record; includes unspendable)
+    Refusals       []SourceRefusal         `json:"refusals"`       // Boundary refusals (0 observations emitted)
+    Unsupported    []SourceUnsupported     `json:"unsupported"`    // Per-source counts of unsupported wire shapes (0 observations emitted)
+    TruncatedLines int                     `json:"truncated_lines"` // Truncated final JSONL lines (0 observations emitted)
+    OwedTasks      []string                `json:"owed_tasks"`     // Distinct owed coverage tasks from mappings
 }
+
+// DecodeCodexMultiSource decodes multiple source streams under their declared bindings.
+func DecodeCodexMultiSource(m *CodexMapping, sources []SourceBinding, readers []io.Reader) (*MultiSourceDecoding, error)
 ```
+
+**Preconditions on MultiSourceDecoding**:
+1. **Source / Reader Length Equality**: `len(sources) == len(readers)`. The number of declared source bindings must strictly equal the number of reader streams. Any mismatch fails immediately upfront with an error (`RuleDecoderLengthMismatch`).
+2. **Ordinal Agreement**: For every index $i \in [0, \text{len}(sources))$, `sources[i].Ordinal == i`. Each binding's declared ordinal must match its position in the slice. Out-of-order, skipped, or misaligned ordinals fail upfront (`RuleDecoderOrdinalMismatch`).
+3. **Source-ID Uniqueness**: All `sources[i].SourceID` must be non-empty and pairwise distinct across the slice. Duplicate source identifiers fail upfront (`RuleDuplicateSourceID`).
+4. **Binding Completeness**: Every source binding must satisfy the origin completeness rule (§1.2: fully specified or explicitly unknown). Partial bindings fail upfront (`RuleBindingPartial`).
 
 ### 1.2 Origin Binding Completeness Rule
 
@@ -119,8 +131,23 @@ The `conflicts` count in `coverage/2` is the count of **distinct conflicting ide
 - Key `C` appears 3 times with identical observation hashes $\implies 0$ conflict keys (2 duplicates).
 - Total `counts.conflicts` = $1 + 1 + 0 = 2$.
 
-* **Separation from Single-Record Decoder Outcomes**:
-  A single observation with an unavailable counter, arithmetic mismatch, or impossible subset has $|V(k)| = 1$ and therefore has **0 distinct-key conflicts**. It is NOT a conflict; its unspendability is attributed exclusively to `unsupported_rows` under its originating source (see Section 3.2).
+* **Separation of Retained Observations from Refusals / Truncation**:
+  - **Count 1 vs Count 0**:
+    * *0 Observations Emitted (Count = 0)*: Wire refusals (envelope schema / field validation failures) and truncated final JSONL lines fail validation before creating an observation envelope. They emit 0 observations (`count = 0`), create no observation envelope ID, and produce no spend key. They are tracked strictly in wire-level `Refusals`, `Unsupported`, or `TruncatedLines` counters.
+    * *1 Retained Observation Emitted (Count = 1)*: Records with unavailable supported counters (`Presence == "unavailable"`, completeness gap), arithmetic mismatches (`input + output != total`), or impossible subsets (`cached_input > input`, `reasoning > output`) parse successfully into sealed `nova.tokens.observation/2` envelopes. They emit 1 observation (`count = 1`), retain their original sealed content IDs and mapping diagnoses, and are retained in shard records. They are marked `Spendable = false`.
+  - **Strict Counter Separation**:
+    Do NOT increment wire-shape (`Unsupported`) or boundary refusal (`Refusals`) counters solely because a coverage reason uses `unsupported_rows`. Those counters strictly track unmapped source shapes and syntax refusals where 0 observations are emitted. Retained observations (count = 1) do not increment wire-shape or refusal counters.
+  - **Distinct-Key Conflict Cardinality**:
+    When an anomalous record has no competing distinct-content records for its spend key, $|V(k)| = 1$ and it contributes 0 distinct-key conflicts (`counts.conflicts = 0`). A single record's internal invalidity is never counted as a conflict.
+  - **Additive Reason Composition**:
+    Coverage reason codes are not mutually exclusive; they compose additively across orthogonal anomaly axes:
+    * *Arithmetic mismatch + spend-key collision*: Suppose observation $A$ (source $S_1$) has an arithmetic mismatch, and distinct observation $B$ (source $S_2$) shares the same spend key ($|V(k)| > 1$):
+      - Spend-key collision yields 1 distinct conflicting key (`counts.conflicts` increments by 1). Both $A$ and $B$ are marked `Conflict = true`, `Spendable = false`.
+      - Both participating sources receive conflict reasons: `{code: "conflict", source: S_1}` and `{code: "conflict", source: S_2}`.
+      - Source $S_1$ additively receives `{code: "unsupported_rows", source: S_1}` because observation $A$ has an arithmetic mismatch.
+      - If either $A$ or $B$ originates from an unattributed origin binding (`Friend == nil`), `{code: "unknown_fields", source: ...}` is additively emitted for that source.
+      - Total `reasons` carries all three distinct `(code, source)` tuples; `counts.gaps` is the deduplicated count ($\operatorname{len}(\texttt{reasons}) = 3$).
+      - The original sealed observation content IDs and mapping diagnoses remain intact.
 
 ---
 
@@ -133,8 +160,11 @@ The `conflicts` count in `coverage/2` is the count of **distinct conflicting ide
 A `--batch <dir>` publication package consists strictly of:
 1. Exactly one `batch.json` at root (the `nova.tokens.coverage/2` envelope).
 2. Referenced observation shards at `records/<friend>/<bench>/<day>/<shard-sha256-hex>.jsonl`.
-3. Referenced mapping manifests at `mappings/<mapping-sha256-hex>.json`.
+3. All referenced mapping manifests at `mappings/<mapping-sha256-hex>.json`.
 4. **Optional Inventory Files**: Shards using the `inventory_file` tagged branch reside at `inventories/<inventory-sha256-hex>.json`.
+
+**Full Self-Contained Mapping Closure**:
+The batch package is strictly self-contained: every mapping envelope referenced in `coverage.mapping_ids` must be packaged in `mappings/`. An existing copy of an identical mapping in the destination ledger repository does NOT exempt the input package from packaging it. When the batch is published into the destination ledger, writing an already-retained identical content-addressed mapping is a verified no-op.
 
 **Strict Exclusion of Input Coverage Replica**:
 An input package contains strictly `batch.json` and referenced shard, mapping, and inventory files. There is **no `coverage/` replica** in an input package. The path `coverage/<collector-friend>/<collection-bench>/<UTC-collection-day>/<coverage-sha256-hex>.json` is strictly the destination written into the ledger repository on publication. Any `coverage/` directory or file present in an input batch package is an unexpected extra directory and rejected with `RulePackageStrayFile` (exit 2).
@@ -157,10 +187,12 @@ Let:
 **The Invariant**:
 $$M_{\text{pkg}} \equiv M_{\text{cov}} \equiv M_{\text{obs}}$$
 
+Every mapping declared in `coverage.mapping_ids` must exist in `mappings/` within the batch ($M_{\text{cov}} \subseteq M_{\text{pkg}}$). An existing copy of a mapping in the destination ledger repository does not exempt the input package from packaging all referenced mappings.
+
 | Condition | Violation Code | Consequence |
 |---|---|---|
 | $M_{\text{pkg}} \setminus M_{\text{cov}} \neq \emptyset$ | `RulePackageOrphanMapping` | Refusal: file exists in `mappings/` but is not declared in coverage. |
-| $M_{\text{cov}} \setminus M_{\text{pkg}} \neq \emptyset$ | `RulePackageMissingMapping` | Refusal: mapping declared in coverage is missing from `mappings/`. |
+| $M_{\text{cov}} \setminus M_{\text{pkg}} \neq \emptyset$ | `RulePackageMissingMapping` | Refusal: mapping declared in coverage is missing from `mappings/` (existing ledger copy does not exempt). |
 | $M_{\text{obs}} \setminus M_{\text{cov}} \neq \emptyset$ | `RuleObservationUndeclaredMapping` | Refusal: observation record references mapping omitted from coverage. |
 | $M_{\text{cov}} \setminus M_{\text{obs}} \neq \emptyset$ | `RuleCoverageUnusedMapping` | Refusal: coverage declares mapping unused by any observation in the batch. |
 
@@ -179,24 +211,39 @@ source_unavailable | unsupported_rows | unknown_fields | partial_interval | conf
 
 When native collection encounters incomplete or ambiguous metadata or decoder anomalies, it maps them into the closed vocabulary as follows:
 
-| Condition | Mapped Reason Code | Source Scope (`reasons.source`) | Notes |
-|---|---|---|---|
-| Entire source stream missing, unreadable, or 0 valid bytes | `source_unavailable` | Specific `source_id` | Stream could not be read or opened. |
-| Stream unparseable or malformed container header | `source_unavailable` | Specific `source_id` | Fatal container-level read failure. |
-| Unknown origin (`friend`/`bench`/`basis="unknown"`) | `unknown_fields` | Specific `source_id` | Records retained with unattributed origin. |
-| Unknown / unconfigured model ID on valid response | `unknown_fields` | Specific `source_id` | Model is absent/ambiguous; response is retained. |
-| Ambiguous zero detail counters (`default_may_mask_absence`) | `unknown_fields` | Specific `source_id` | Detail counter emitted as 0 may mask unmeasured absence. |
-| Unmapped source shapes or unsupported wire types | `unsupported_rows` | Specific `source_id` | Counted in `Unsupported`, excluded from records. |
-| Truncated final JSONL line in source stream | `unsupported_rows` | Specific `source_id` | Trailing unclosed or truncated JSON line. |
-| Boundary refusals (envelope schema / field validation failure) | `unsupported_rows` | Specific `source_id` | Counted in `Refusals`, excluded from records. |
-| Supported counter unavailable (`f.Presence == "unavailable"`, completeness gap) | `unsupported_rows` | Specific `source_id` | Missing counter leaves record unspendable; 0 distinct-key conflicts. |
-| Arithmetic mismatch (`input + output != total` with all present) | `unsupported_rows` | Specific `source_id` | Inconsistent arithmetic; record excluded from spend; 0 distinct-key conflicts. |
-| Impossible subset (`cached_input > input` or `reasoning > output`) | `unsupported_rows` | Specific `source_id` | Impossible subset relationship; record excluded from spend; 0 distinct-key conflicts. |
-| Collection interval boundary truncated | `partial_interval` | `source_id` or `null` | Timestamps cut across active window. |
-| Conflicting spend keys detected across distinct observation content IDs | `conflict` | Participating `source_id`s | Multiple conflicting observation variants for the same spend key ($|V(k)| > 1$). Assigned to all participating sources. |
+| Condition | Emitted Obs Count | Mapped Reason Code | Source Scope (`reasons.source`) | Notes |
+|---|---|---|---|---|
+| Entire source stream missing, unreadable, or 0 valid bytes | 0 | `source_unavailable` | Specific `source_id` | Stream could not be read or opened. |
+| Stream unparseable or malformed container header | 0 | `source_unavailable` | Specific `source_id` | Fatal container-level read failure. |
+| Unknown origin (`friend`/`bench`/`basis="unknown"`) | 1 (retained) | `unknown_fields` | Specific `source_id` | Records retained with unattributed origin; spendable if counters valid. |
+| Unknown / unconfigured model ID on valid response | 1 (retained) | `unknown_fields` | Specific `source_id` | Model is absent/ambiguous; record retained; spendable if counters valid. |
+| Ambiguous zero detail counters (`default_may_mask_absence`) | 1 (retained) | `unknown_fields` | Specific `source_id` | Detail counter emitted as 0 may mask unmeasured absence; record retained. |
+| Unmapped source shapes or unsupported wire types | 0 | `unsupported_rows` | Specific `source_id` | Counted in `Unsupported`, excluded from records. 0 observations emitted. |
+| Truncated final JSONL line in source stream | 0 | `unsupported_rows` | Specific `source_id` | Counted in `TruncatedLines`, excluded from records. 0 observations emitted (no envelope ID, no spend key). |
+| Boundary refusals (envelope schema / field validation failure) | 0 | `unsupported_rows` | Specific `source_id` | Counted in `Refusals`, excluded from records. 0 observations emitted. |
+| Supported counter unavailable (`f.Presence == "unavailable"`, completeness gap) | 1 (retained) | `unsupported_rows` | Specific `source_id` | Retained observation (count=1, unspendable). Shard record emitted with sealed ID intact. Does NOT increment wire `Unsupported`/`Refusals`. 0 conflicts (unless colliding). |
+| Arithmetic mismatch (`input + output != total` with all present) | 1 (retained) | `unsupported_rows` | Specific `source_id` | Retained observation (count=1, unspendable). Shard record emitted with sealed ID intact. Does NOT increment wire `Unsupported`/`Refusals`. 0 conflicts (unless colliding). |
+| Impossible subset (`cached_input > input` or `reasoning > output`) | 1 (retained) | `unsupported_rows` | Specific `source_id` | Retained observation (count=1, unspendable). Shard record emitted with sealed ID intact. Does NOT increment wire `Unsupported`/`Refusals`. 0 conflicts (unless colliding). |
+| Collection interval boundary truncated | N/A | `partial_interval` | `source_id` or `null` | Timestamps cut across active window. |
+| Conflicting spend keys detected across distinct observation content IDs | 1 per variant (retained) | `conflict` | Participating `source_id`s | Multiple conflicting observation variants for the same spend key ($|V(k)| > 1$). Assigned to all participating sources. Counted in `counts.conflicts`. |
 
-**Decoder Outcomes and Spend-Key Conflict Separation**:
-Decoder outcomes resulting from internal record invalidity or inconsistency (unavailable counters, arithmetic mismatch, impossible subsets, boundary refusals, truncated final JSONL) make a record unspendable but do NOT constitute spend-key conflicts: each such single record has $|V(k)| = 1$ and yields 0 distinct-key conflicts. They map exclusively to `unsupported_rows` for their originating source stream. The `conflict` reason code is strictly reserved for instances where distinct observation content IDs compete for the same spend key ($|V(k)| > 1$).
+**Emitted Observations vs. Wire Refusals / Truncation and Additive Composition**:
+1. **Zero Observations Emitted (Count = 0)**:
+   - Wire refusals (envelope schema violations, type mismatches, integer/decimal lexeme errors) and unmapped wire shapes fail validation before creating an observation envelope. They emit 0 observations (`count = 0`), create no observation envelope ID, and produce no spend key. They are tracked strictly in wire-level `Refusals` or unmapped shape `Unsupported` counters.
+   - Truncated final JSONL lines at stream EOF cannot form a valid JSON object. They emit 0 observations (`count = 0`, no envelope ID, no spend key). They are tracked in `TruncatedLines` (or source shape `truncated_final_line`), and map to coverage reason `{code: "unsupported_rows", source: S}`.
+2. **One Retained Observation Emitted (Count = 1)**:
+   - Records with unavailable supported counters, arithmetic mismatches, or impossible subsets parse validly into sealed `nova.tokens.observation/2` envelopes. They are retained in the shard records (emitting 1 observation, contributing to `record_count`), preserving their original sealed envelope IDs and mapping diagnoses.
+   - They are marked `Spendable = false` due to incompleteness or internal inconsistency.
+   - **Counter Separation**: Do NOT increment wire-shape (`Unsupported`) or boundary refusal (`Refusals`) counters solely because a coverage reason uses `unsupported_rows`. Those counters strictly measure wire-level parser rejections where 0 observations are emitted.
+3. **Additive Reason Composition**:
+   - Coverage reasons do not map exclusively; they compose additively across independent anomaly dimensions:
+     - An observation with an arithmetic mismatch ($A$, source $S_1$) that also shares a spend key with a distinct observation ($B$, source $S_2$):
+       * Contributes 1 distinct-key conflict to `counts.conflicts` ($|V(k)| > 1$). Both $A$ and $B$ have `Conflict = true`, `Spendable = false`.
+       * Emits conflict reasons for both sources: `{code: "conflict", source: S_1}` and `{code: "conflict", source: S_2}`.
+       * Emits an unsupported-rows reason for $A$'s arithmetic failure: `{code: "unsupported_rows", source: S_1}`.
+       * If $A$ or $B$ also has unknown origin (`Friend == nil`), an unknown-fields reason is emitted: `{code: "unknown_fields", source: ...}`.
+     - All distinct `(code, source)` tuples deduplicate and satisfy $\texttt{gaps} = \operatorname{len}(\texttt{reasons})$.
+     - Sealed observation content IDs and mapping diagnoses remain intact and unmodified.
 
 ### 3.3 The Invariant: $\texttt{gaps} = \operatorname{len}(\texttt{reasons})$
 
@@ -216,7 +263,7 @@ $$\texttt{counts.gaps} == \operatorname{len}(\texttt{reasons})$$
 
 ### 4.1 Validator Architecture & Go API
 
-Because `internal/records` strictly excludes path I/O, dealing purely with in-memory data structures, canonical serialization, and envelope validation, whole-package validation (`ValidateCandidateDirectory`, `ValidateInstalledDirectory`) is composed in `internal/tokens` (or `internal/pkgvalid`). The composing package manages directory traversal, file I/O, fsync verification, and atomic commit semantics, delegating in-memory envelope and schema validation to `internal/records`.
+Because `internal/records` strictly excludes path I/O, dealing purely with in-memory data structures, canonical serialization, and envelope validation, whole-package validation (`ValidateCandidateDirectory`, `ValidateInstalledDirectory`) is composed in `internal/tokens` (or `internal/pkgvalid`). The underlying envelope and schema validators (`nova.tokens.observation/2`, `nova.tokens.mapping/2`, and `nova.tokens.coverage/2`) are already implemented and tested in `internal/records`. The composing package manages directory traversal, file I/O, bottom-up fsync verification, and atomic commit semantics, delegating in-memory envelope and schema validation to `internal/records`.
 
 Two distinct functions provide pre-commit validation and post-install validation:
 
@@ -247,11 +294,11 @@ func ValidateInstalledDirectory(dir string) error
 [ Collection Phase ]
   │
   ├─ 1. Exclusive Directory Creation (mkdir, O_EXCL, refuse if exists)
-  │     └─ fsync containing parent directory (filepath.Dir(dir))
-  │     └─ fsync fresh package root (dir)
+  │     └─ mkdir(root)
+  │     └─ fsync containing parent directory (filepath.Dir(dir)) to commit root dentry
   │
   ├─ 2. Create Intermediate Directory Tree:
-  │     └─ mkdir & fsync newly created directory ancestors down to day:
+  │     └─ mkdir directory ancestors down to day (no premature sync before children/files):
   │           - dir/records
   │           - dir/records/<friend>
   │           - dir/records/<friend>/<bench>
@@ -259,15 +306,21 @@ func ValidateInstalledDirectory(dir string) error
   │           - dir/mappings
   │           - dir/inventories (if inventory_file used)
   │
-  ├─ 3. Stream & Write Shards, Mappings, Inventories
+  ├─ 3. Stream & Write Shards, Mappings, Inventories:
   │     └─ write & fsync each file (file.Sync(), file.Close())
-  │     └─ fsync leaf directories:
-  │           - records/<friend>/<bench>/<day>
-  │           - mappings/
-  │           - inventories/
-  │     └─ fsync top-level dir
   │
-  ├─ 4. Phase 1 Validation (Candidate Validation):
+  ├─ 4. Bottom-Up Directory Sync (commit file dentries & directory hierarchy before marker):
+  │     └─ fsync newly created directory hierarchy bottom-up:
+  │           - records/<friend>/<bench>/<day>
+  │           - records/<friend>/<bench>
+  │           - records/<friend>
+  │           - records/
+  │           - mappings/
+  │           - inventories/ (if used)
+  │           - package root (dir)
+  │     └─ Explicit fail-stop on any sync failure
+  │
+  ├─ 5. Phase 1 Validation (Candidate Validation):
   │     - Verify no pre-existing marker temp or batch.json before staging
   │     - ValidateCandidateDirectory(dir, "batch.json.tmp", candidateCoverageBytes)
   │       (excludes ONLY explicitly owned marker temp, checking its type/mode/non-symlink)
@@ -275,19 +328,23 @@ func ValidateInstalledDirectory(dir string) error
   │        and sorted-ID-set inventory comparison)
   │     - (Refuse if invalid; dir remains marker-free and unpublishable)
   │
-  ├─ 5. Stage Marker: Write batch.json.tmp
+  ├─ 6. Stage Marker: Write batch.json.tmp
   │     └─ fsync batch.json.tmp (file.Sync(), file.Close())
   │
-  ├─ 6. Commit Marker: Atomic No-Replace Rename batch.json.tmp -> batch.json
+  ├─ 7. Commit Marker: Atomic No-Replace Rename batch.json.tmp -> batch.json
   │     - Pinned atomic no-replace semantics:
   │         * macOS: renameatx_np(AT_FDCWD, tmp, AT_FDCWD, target, RENAME_EXCL)
   │         * Linux: renameat2(AT_FDCWD, tmp, AT_FDCWD, target, RENAME_NOREPLACE)
   │         * Portable POSIX fallback: link(tmp, target) then unlink(tmp)
   │     - If batch.json exists (e.g. concurrent race): fails with EEXIST / RuleMarkerExists
   │       without clobbering existing marker; exits 2
-  │     - fsync top-level dir immediately after rename to commit marker dentry
+  │     - Crash witness for link/unlink fallback: crash between link and unlink leaves both
+  │       batch.json and batch.json.tmp; directory is verified unpublishable under ValidateInstalledDirectory
+  │       (RuleTemporaryFilePresent, exit 2)
+  │     - fsync package root (dir) immediately after marker installation to commit marker dentry
+  │     - Explicit fail-stop on any sync failure
   │
-  └─ 7. Phase 2 Validation / Publication Ingestion:
+  └─ 8. Phase 2 Validation / Publication Ingestion:
         ValidateInstalledDirectory(dir)
         - batch.json MUST exist and validate
         - Strictly forbids batch.json.tmp and any *.tmp files (RuleTemporaryFilePresent)
@@ -351,28 +408,37 @@ Both validators execute the verification matrix against the batch:
      - On Linux: `renameat2(AT_FDCWD, tmpPath, AT_FDCWD, targetPath, RENAME_NOREPLACE)` (flag `1`).
      - Portable POSIX fallback idiom: hard link `link(tmpPath, targetPath)` (which atomically fails with `EEXIST` if `targetPath` exists), followed by `unlink(tmpPath)`.
      - If `batch.json` exists at the destination path prior to or during the atomic no-replace commit, the operation fails with `EEXIST` / `RuleMarkerExists` (exit 2). The existing `batch.json` remains byte-identical and un-clobbered, and execution fails stop.
-2. **Durability Fsync Ordering (Nested Directory Ancestor Trace)**:
-   - Fsync trace covers every newly created directory ancestor down to day and the containing parent of the fresh package root:
-     - `fsync(filepath.Dir(dir))` (persists the package root directory entry).
-     - `fsync(dir)` (persists entries within package root).
-     - `fsync(dir + "/records")`
-     - `fsync(dir + "/records/<friend>")`
-     - `fsync(dir + "/records/<friend>/<bench>")`
-     - `fsync(dir + "/records/<friend>/<bench>/<day>")`
-     - `fsync(dir + "/mappings")`
-     - `fsync(dir + "/inventories")` (if created)
-   - Shards, mappings, and inventories are written and explicitly flushed (`file.Sync()`) before closing (`file.Close()`).
-   - Each leaf directory and ancestor is synced (`dir.Sync()`) to ensure all file directory entries are committed to durable storage.
-   - Top-level directory is synced (`dir.Sync()`).
-   - `batch.json.tmp` is written and flushed (`file.Sync()`) before closing (`file.Close()`).
-   - Atomic no-replace rename `batch.json.tmp` $\to$ `batch.json` is executed.
-   - Top-level directory is flushed (`dir.Sync()`) immediately after rename to guarantee the marker dentry is committed to durable storage.
-3. **Crash Recovery Semantics**:
+2. **Durability Fsync Ordering (Bottom-Up Directory Sync Trace)**:
+   - Fsync trace guarantees that every file and directory entry is safely committed to persistent storage in proper bottom-up dependency order:
+     1. Create fresh root directory (`mkdir(dir, 0755)`).
+     2. `fsync(filepath.Dir(dir))` (persists the package root directory entry into its containing parent).
+     3. Create intermediate directory hierarchy down to day without premature directory sync:
+        - `dir/records`
+        - `dir/records/<friend>`
+        - `dir/records/<friend>/<bench>`
+        - `dir/records/<friend>/<bench>/<day>`
+        - `dir/mappings`
+        - `dir/inventories` (if created)
+     4. Write and flush each file payload: shards, mappings, and inventories (`file.Sync()`, `file.Close()`).
+     5. Bottom-up directory sync: sync directory entries in reverse hierarchical order from deepest leaf up to package root before marker staging:
+        - `fsync(dir + "/records/<friend>/<bench>/<day>")`
+        - `fsync(dir + "/records/<friend>/<bench>")`
+        - `fsync(dir + "/records/<friend>")`
+        - `fsync(dir + "/records")`
+        - `fsync(dir + "/mappings")`
+        - `fsync(dir + "/inventories")` (if created)
+        - `fsync(dir)` (package root)
+     6. Stage marker temp: write and flush `batch.json.tmp` (`file.Sync()`, `file.Close()`).
+     7. Commit marker: atomic no-replace rename `batch.json.tmp` $\to$ `batch.json`.
+     8. Sync package root (`fsync(dir)`) immediately after marker installation to guarantee the marker dentry is committed to durable storage.
+   - **Explicit Fail-Stop**: Any error encountered during `mkdir`, file write, file `fsync`, directory `fsync`, or marker rename causes an immediate fail-stop abort (exit 2). No partial or un-synced state is marked valid.
+3. **Crash Recovery Semantics & Link/Unlink Fallback Crash Boundary**:
    - Presence of valid `batch.json` without any lingering `.tmp` files is the sole atomic commit point.
-   - If collection is killed or crashes before rename:
-     - `batch.json` is absent (or `batch.json.tmp` exists).
+   - If collection is killed or crashes before marker rename:
+     - `batch.json` is absent (or only `batch.json.tmp` exists).
      - Directory is considered **uncommitted and unpublishable**.
      - `publish --batch` refuses any directory missing `batch.json` or containing `.tmp` files (exit 2).
+   - **Link/Unlink Fallback Crash Witness**: If the portable `link`/`unlink` fallback is used and a crash occurs between `link(batch.json.tmp, batch.json)` and `unlink(batch.json.tmp)`, both `batch.json` and `batch.json.tmp` exist on disk simultaneously. Under `ValidateInstalledDirectory`, this state is strictly unpublishable: lingering `*.tmp` files trigger `RuleTemporaryFilePresent` (exit 2).
    - **No In-Place Resumption**: Retries must target a fresh directory. The abandoned directory is left intact for inspection and never cleaned automatically by tool invocations.
 
 ---
@@ -409,6 +475,7 @@ Both validators execute the verification matrix against the batch:
 | `TC-PKG-08` | `mapping_closure_observation_undeclared` | Negative Control | Shard record has `mapping_id: M3`. `coverage.mapping_ids` has only `[M1]`. | Refusal: `RuleObservationUndeclaredMapping` naming `M3`. |
 | `TC-PKG-09` | `mapping_closure_coverage_unused` | Negative Control | `coverage.mapping_ids` has `[M1, M2]`. Both files exist. Shard records only reference `M1`. | Refusal: `RuleCoverageUnusedMapping` naming `M2`. |
 | `TC-PKG-10` | `package_input_coverage_dir_forbidden` | Negative Control | Package contains an input `coverage/` directory or replica. | Refusal: `RulePackageStrayFile` naming `coverage/` (exit 2). |
+| `TC-PKG-11` | `mapping_already_in_destination_ledger_packaged` | Self-Contained Closure | Batch references mapping `M1` which is already retained in destination ledger repository. Batch packages `mappings/M1.json`. | Pass: package satisfies self-contained closure; publisher writes `mappings/M1.json` as verified no-op. |
 
 ### 5.3 Coverage Reason & Gap Invariant Tests
 
@@ -422,11 +489,13 @@ Both validators execute the verification matrix against the batch:
 | `TC-RSN-06` | `reason_gaps_count_mismatch` | Negative Control | `reasons` has 1 entry, but `counts.gaps = "2"`. | Refusal: `RuleCoverageGapsInvariant` (`gaps must equal len(reasons)`). |
 | `TC-RSN-07` | `reason_code_outside_closed_set` | Negative Control | `reasons` carries `{code: "missing_token_rate", source: "src-1"}`. | Refusal: `RuleUnknownEnum` / `coverage_reason_code_unknown`. |
 | `TC-RSN-08` | `reason_source_not_in_source_ids` | Negative Control | `reasons` carries `{code: "unknown_fields", source: "unregistered-id"}` not declared in `source_ids`. | Refusal: `RuleCoverageReasonSource` (`coverage_reason_source_not_in_scope`). |
-| `TC-RSN-09` | `reason_counter_unavailable_unsupported_rows` | Isolated Outcome | Single record with unavailable supported counter (`f.Presence == "unavailable"`). | Mapped to `{code: "unsupported_rows", source: "src-0"}`. `counts.conflicts = "0"`, `Spendable = false`. |
-| `TC-RSN-10` | `reason_arithmetic_mismatch_unsupported_rows` | Isolated Outcome | Single record with input 10, output 5, total 99. | Mapped to `{code: "unsupported_rows", source: "src-0"}`. `counts.conflicts = "0"`, `Spendable = false`. |
-| `TC-RSN-11` | `reason_impossible_subset_unsupported_rows` | Isolated Outcome | Single record with cached input 100, input 50. | Mapped to `{code: "unsupported_rows", source: "src-0"}`. `counts.conflicts = "0"`, `Spendable = false`. |
-| `TC-RSN-12` | `reason_truncated_final_jsonl_unsupported_rows` | Isolated Outcome | Source stream ends in unclosed / truncated JSON line. | Mapped to `{code: "unsupported_rows", source: "src-0"}`. `counts.conflicts = "0"`. |
-| `TC-RSN-13` | `reason_boundary_refusal_unsupported_rows` | Isolated Outcome | Single record refused by wire envelope validator (e.g. invalid integer lexeme). | Counted in `Refusals`, mapped to `{code: "unsupported_rows", source: "src-0"}`. `counts.conflicts = "0"`. |
+| `TC-RSN-09` | `reason_counter_unavailable_unsupported_rows` | Retained Obs / Count=1 | Single record with unavailable supported counter (`f.Presence == "unavailable"`). | Emits 1 retained observation (`count = 1`, `Spendable = false`). Mapped to `{code: "unsupported_rows", source: "src-0"}`. `counts.conflicts = "0"`. Wire `Refusals` and `Unsupported` remain 0. |
+| `TC-RSN-10` | `reason_arithmetic_mismatch_unsupported_rows` | Retained Obs / Count=1 | Single record with input 10, output 5, total 99. | Emits 1 retained observation (`count = 1`, `Spendable = false`). Mapped to `{code: "unsupported_rows", source: "src-0"}`. `counts.conflicts = "0"`. Wire `Refusals` and `Unsupported` remain 0. |
+| `TC-RSN-11` | `reason_impossible_subset_unsupported_rows` | Retained Obs / Count=1 | Single record with cached input 100, input 50. | Emits 1 retained observation (`count = 1`, `Spendable = false`). Mapped to `{code: "unsupported_rows", source: "src-0"}`. `counts.conflicts = "0"`. Wire `Refusals` and `Unsupported` remain 0. |
+| `TC-RSN-12` | `reason_truncated_final_jsonl_unsupported_rows` | Wire Truncation / Count=0 | Source stream ends in unclosed / truncated JSON line. | Emits 0 observations (`count = 0`, no envelope ID or spend key). Truncated line counter incremented. Mapped to `{code: "unsupported_rows", source: "src-0"}`. `counts.conflicts = "0"`. |
+| `TC-RSN-13` | `reason_boundary_refusal_unsupported_rows` | Wire Refusal / Count=0 | Single record refused by wire envelope validator (e.g. invalid integer lexeme). | Emits 0 observations (`count = 0`). Counted in `Refusals` (1), mapped to `{code: "unsupported_rows", source: "src-0"}`. `counts.conflicts = "0"`. |
+| `TC-RSN-14` | `reason_additive_composition_conflict_and_arithmetic` | Additive Reasons | Source 1 emits observation A with arithmetic mismatch. Source 2 emits distinct observation B with same spend key. | `counts.conflicts = "1"`. Both A and B marked `Conflict: true`, `Spendable: false`. Reasons carry `("conflict", "src-1")`, `("conflict", "src-2")`, and `("unsupported_rows", "src-1")`. `len(reasons) == 3`, `gaps = "3"`. Original sealed IDs and diagnoses intact. Obs A retained in shard (`count = 1`). Wire `Refusals` remain 0. |
+| `TC-RSN-15` | `reason_additive_composition_unknown_fields` | Additive Reasons | Source 1 emits observation with arithmetic mismatch under unknown origin binding (`Friend == nil`). | 1 retained observation. Reasons compose additively: `("unsupported_rows", "src-1")` and `("unknown_fields", "src-1")`. `len(reasons) == 2`, `gaps = "2"`. |
 
 ### 5.4 Two-Phase Directory, Observation Validation & Durability Tests
 
@@ -442,11 +511,12 @@ Both validators execute the verification matrix against the batch:
 | `TC-VAL-08` | `strict_symlink_rejection` | Negative Control | Package contains a symlink `records/link.jsonl -> ../shard.jsonl`. | Refusal: `RuleSymlinkForbidden` (exit 2). |
 | `TC-VAL-09` | `crash_recovery_incomplete_batch` | Crash Boundary | Process killed during staging; leaves `batch.json.tmp` on disk without `batch.json`. Next publish run checks dir. | `publish --batch` refuses dir (exit 2, `reason=malformed` / incomplete batch). |
 | `TC-VAL-10` | `atomic_rename_competing_marker_race` | Concurrency / No-Clobber | Competing `batch.json` inserted before atomic no-replace commit. | Atomic no-replace rename fails with `EEXIST` / `RuleMarkerExists` (exit 2). Existing marker preserved byte-identical (no clobber). |
-| `TC-VAL-11` | `durability_fsync_ancestor_directories_trace` | Durability / Trace | Instrumented filesystem trace checks syscall order during write. | Verifies: `fsync(parent-dir)` $\to$ `mkdir(root)` $\to$ `fsync(root)` $\to$ `mkdir & fsync(records)` $\to$ `mkdir & fsync(records/<friend>)` $\to$ `mkdir & fsync(records/<friend>/<bench>)` $\to$ `mkdir & fsync(records/<friend>/<bench>/<day>)` $\to$ `mkdir & fsync(mappings)` $\to$ `mkdir & fsync(inventories)` $\to$ `write & fsync(shards)` $\to$ `write & fsync(mappings)` $\to$ `write & fsync(inventories)` $\to$ `fsync(leaf dirs)` $\to$ `fsync(root)` $\to$ `write & fsync(batch.tmp)` $\to$ atomic no-replace rename $\to$ `fsync(root)`. |
+| `TC-VAL-11` | `durability_fsync_ancestor_directories_trace` | Durability / Trace | Instrumented filesystem trace checks syscall order during write. | Verifies: `mkdir(root)` $\to$ `fsync(parent-dir)` $\to$ mkdir intermediate tree $\to$ write & fsync files $\to$ bottom-up sync: `fsync(day)` $\to$ `fsync(bench)` $\to$ `fsync(friend)` $\to$ `fsync(records)` (and `fsync(mappings)`, `fsync(inventories)`) $\to$ `fsync(root)` $\to$ `write & fsync(batch.json.tmp)` $\to$ atomic no-replace rename $\to$ `fsync(root)`. Explicit fail-stop on any sync failure. |
 | `TC-VAL-12` | `shard_observation_malformed_envelope` | Negative Control | Shard JSONL line contains invalid JSON or violates `observation/2` schema. | Refusal: `RuleObservationMalformed` (exit 2). |
 | `TC-VAL-13` | `shard_record_wrong_origin_path` | Negative Control | Shard at `records/alice/bench1/2026-09-14/...` contains observation with origin `friend: "bob"`. | Refusal: `RuleRecordPathOriginMismatch` (exit 2). |
 | `TC-VAL-14` | `shard_record_unallocated_and_underscore_paths` | Positive | Shard at `records/_/_/unallocated/...` containing observations with nil friend, bench, and day. | Validation passes (valid origin-path match). |
 | `TC-VAL-15` | `inventory_sorted_id_set_order_independent` | Positive | Shard lines ordered differently from inventory array, but identical sorted ID set. | Validation passes (sorted-ID-set equality confirmed). |
+| `TC-VAL-16` | `link_unlink_fallback_crash_unpublishable` | Crash Boundary | Simulates crash during link/unlink fallback between link and unlink, leaving both `batch.json` and `batch.json.tmp` on disk. | `ValidateInstalledDirectory` refuses batch with `RuleTemporaryFilePresent` (exit 2). Unfinished staging is strictly unpublishable. |
 
 ---
 
@@ -454,13 +524,13 @@ Both validators execute the verification matrix against the batch:
 
 1. **Records Owner Approval**: Records owner reviews and affirms this decision packet.
 2. **Implement Whole-Package Validator in `internal/tokens` (or `internal/pkgvalid`)**:
-   - Because `internal/records` strictly excludes path I/O, whole-package validation (`ValidateCandidateDirectory`, `ValidateInstalledDirectory`) is implemented in `internal/tokens` (or `internal/pkgvalid`), composing in-memory validators from `internal/records`.
+   - Note: Envelope validators for `nova.tokens.observation/2`, `nova.tokens.mapping/2`, and `nova.tokens.coverage/2` are already implemented and tested in `internal/records`. Whole-package validation in `internal/tokens` (or `internal/pkgvalid`) composes these sealed validators across the directory tree, verifying shard paths, inventory comparisons, candidate/installed boundaries, and bottom-up durability sync ordering.
    - Implement the test cases from Section 5.2 and 5.4 in `internal/tokens/package_test.go` (or `internal/pkgvalid`).
-3. **Extend Codex Decoder**:
-   - Update `DecodeCodexReaders` to `DecodeCodexMultiSource(m *CodexMapping, sources []SourceBinding, readers []io.Reader)`.
-   - Output `MultiSourceDecoding` with `ObservationProvenance` pairing each observation occurrence with its `SourceOrdinal` and `SourceID`.
-   - Retain source ordinals/IDs in `SourceRefusal` and `SourceUnsupported`.
-   - Assign conflict reasons to all participating sources (same-binding, cross-source, unknown-source).
-   - Implement distinct key conflict cardinality, keeping single-record decoder outcomes (`unsupported_rows`) separate.
+3. **Extend Codex Decoder with `DecodeCodexMultiSource`**:
+   - Enforce preconditions upfront: source/reader length equality (`len(sources) == len(readers)`), ordinal agreement (`sources[i].Ordinal == i`), source-ID uniqueness (no duplicate `SourceID`s), and origin completeness (§1.2).
+   - Output `MultiSourceDecoding` with `ObservationProvenance` pairing each observation with its `SourceOrdinal` and `SourceID`.
+   - Separate retained observations (count = 1; unavailable counters, arithmetic mismatches, impossible subsets) from wire refusals / truncated lines (count = 0; tracked in `Refusals`, `Unsupported`, `TruncatedLines` counters). Do not increment wire counters for retained observations.
+   - Implement additive reason composition across conflicts, unsupported rows, and unknown fields.
+   - Preserve distinct key conflict cardinality ($|V(k)| > 1$).
 4. **Wire Native Collector**:
-   - Expose native collector CLI in `cmd/nova-tokens` targeting the two-phase validator interface with fresh-dir no-clobber, pinned atomic no-replace commit (`renameatx_np` / `renameat2` / `link-unlink`), and durability fsync sequence covering parent directory, root, and all newly created ancestor directories down to day.
+   - Expose native collector CLI in `cmd/nova-tokens` targeting the two-phase validator interface with fresh-dir no-clobber, pinned atomic no-replace commit (`renameatx_np` / `renameat2` / `link-unlink`), and bottom-up durability fsync sequence (`mkdir(root)` $\to$ `fsync(parent-dir)` $\to$ create intermediate tree $\to$ write & sync files $\to$ bottom-up sync day $\to$ bench $\to$ friend $\to$ records (and mappings/, inventories/) $\to$ root $\to$ write & sync `batch.json.tmp` $\to$ atomic no-replace rename $\to$ `fsync(root)`), with explicit fail-stop on any sync failure.
