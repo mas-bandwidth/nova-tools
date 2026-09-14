@@ -274,17 +274,17 @@ func TestPathWithSbplMetacharacterIsRefused(t *testing.T) {
 	}
 }
 
-// Rule 9 and this build's agent fix: the environment passes through, the three temp
+// Rule 9 and this build's agent fix: the environment passes through, the four temp
 // variables are the tool's, and the agent variables are dropped.
 func TestChildEnv(t *testing.T) {
-	env := []string{"HOME=/w/home", "ANTHROPIC_API_KEY=sk-not-real", "TMPDIR=/outside", "SSH_AUTH_SOCK=/private/tmp/agent.sock", "SSH_AGENT_PID=9", "PATH=/bin"}
+	env := []string{"HOME=/w/home", "ANTHROPIC_API_KEY=sk-not-real", "TMPDIR=/outside", "TMPPREFIX=/outside/zsh", "SSH_AUTH_SOCK=/private/tmp/agent.sock", "SSH_AGENT_PID=9", "PATH=/bin"}
 	got := strings.Join(ChildEnv(env, "/w/.nova-sandbox-tmp"), "\n")
-	for _, want := range []string{"ANTHROPIC_API_KEY=sk-not-real", "PATH=/bin", "TMPDIR=/w/.nova-sandbox-tmp", "TMP=/w/.nova-sandbox-tmp", "TEMP=/w/.nova-sandbox-tmp"} {
+	for _, want := range []string{"ANTHROPIC_API_KEY=sk-not-real", "PATH=/bin", "TMPDIR=/w/.nova-sandbox-tmp", "TMP=/w/.nova-sandbox-tmp", "TEMP=/w/.nova-sandbox-tmp", "TMPPREFIX=/w/.nova-sandbox-tmp/zsh"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the child's environment is missing %q:\n%s", want, got)
 		}
 	}
-	for _, gone := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID", "TMPDIR=/outside"} {
+	for _, gone := range []string{"SSH_AUTH_SOCK", "SSH_AGENT_PID", "TMPDIR=/outside", "TMPPREFIX=/outside/zsh"} {
 		if strings.Contains(got, gone) {
 			t.Fatalf("%q survived into the child's environment:\n%s", gone, got)
 		}

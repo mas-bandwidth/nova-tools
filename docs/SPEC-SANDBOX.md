@@ -203,16 +203,18 @@ near the end.
    `<first --write>/.nova-sandbox-tmp` if it does not exist — the one
    directory the tool creates, inside the write set, its name chosen by the
    tool and never by a caller; **what it deliberately does not do** is about
-   the paths it is *handed* — and sets `TMPDIR`,
-   `TMP` and `TEMP` to it in the child's environment, because a deny-by-default
-   policy makes the inherited per-user temp directory unwritable and a
-   toolchain whose first scratch write fails looks like a broken sandbox rather
-   than a working one. `--tmp <dir>` overrides it and must resolve inside a
-   `--write` path.
+   the paths it is *handed* — and sets `TMPDIR`, `TMP` and `TEMP` to that
+   directory. It also sets zsh's `TMPPREFIX` to `<temp>/zsh`: this is a
+   **prefix** for zsh-created temporary files, not another directory. A
+   deny-by-default policy makes the inherited per-user temp directory
+   unwritable, and a toolchain whose first scratch write fails looks like a
+   broken sandbox rather than a working one. `--tmp <dir>` overrides the temp
+   directory and must resolve inside a `--write` path.
 9. **The environment passes through minus the agent, and the caller points the
    child's home into the write set.** This is not a secrets tool: the child
-   inherits the caller's environment, minus the three temp variables the tool
-   sets and minus **this exact set, by name**:
+   inherits the caller's environment, minus the three temp-directory variables
+   and zsh's temp-file prefix that the tool sets, and minus **this exact set,
+   by name**:
 
    ```
    SSH_AUTH_SOCK
@@ -1526,8 +1528,11 @@ One per rule:
    case above, and the only thing that makes `landlock_abi_unknown` more than a
    word in the exit table.
 8. A wrapped command that writes to `$TMPDIR` succeeds and the file lands under
-   the first `--write`; `TMPDIR`, `TMP` and `TEMP` all name it; `--tmp` outside
-   the write set is refused.
+   the first `--write`; `TMPDIR`, `TMP` and `TEMP` all name that directory and
+   zsh's `TMPPREFIX` is a prefix beneath it; `--tmp` outside the write set is
+   refused. A macOS zsh heredoc larger than the pipe buffer succeeds with an
+   inherited outside `TMPPREFIX` and writes its report inside that temp
+   directory.
 9. An environment variable set by the caller arrives in the child unchanged,
    including one whose value is a credential-shaped string, and that value
    appears in no printed line. The `SANDBOX NOTE dropped from the child's
