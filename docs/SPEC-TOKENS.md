@@ -578,14 +578,15 @@ leave them unchanged (draft 2).
 
 ### `receipt`
 
-Asserts: one **span** of one session, read whole from one declared source,
-folded by the same
-reader `fold` uses, joined to one node and one stage, written as one receipt
-under one drawn id. Says NO (exit 1,
+Asserts: one **span** of one session, when newly claimed read whole from one
+declared source and folded by the same reader `fold` uses, joined to one node
+and one stage, written as one receipt under one drawn id; or an interrupted
+receipt completed from its retained record before the source is opened. Says
+NO (exit 1,
 `USAGE FAIL reason=<nosession|receipted|unreadable|differs|missing|incomplete>`)
 and writes **nothing** when the session is not in the source, is already
 receipted whole, has a file the tool cannot read, holds a stored row this run
-cannot reproduce, holds a retained id its source no longer has, or is resumed
+cannot reproduce, lacks a readable retained record, or is resumed
 over a half-written receipt — a receipt over half
 a session
 is a wrong number about one task, where a fold over half a day is a day with
@@ -710,7 +711,8 @@ malformed or duplicate line in `--rates` or an existing frictions file;
 `--rates` on `frictions` without `--out` (draft 2); `--resume` over a session
 with no receipt to resume from (draft 3); `--resume` or `--until` with
 `--job`, a `--until` that is not an RFC 3339 UTC stamp, and a completing run
-whose `--node`, `--stage` or `--who` differs from the retained record's header
+whose `--node`, `--stage` or `--who` selects no incomplete retained header,
+naming the differing fields on the first incomplete receipt
 (draft 4); `--until` on a **completing** run — a plain `receipt` over a
 session that already has receipts — naming the flag (draft 5: draft 4 said
 `--until` "composes with a plain run", which stops being true the moment a
@@ -2143,8 +2145,20 @@ contract. The rules are numbered on from rule 31.
 
 32. **A usage receipt is one session's spend, folded by the same readers,
     joined to one work node and one stage, and never typed.**
-    `receipt` reads exactly one session from one declared source — a Claude
-    Code transcript by its session id (`--claude <label>=<dir> --session
+    Every `receipt` run first takes `<out>/fold.lock`, then walks the retained
+    headers and receipts files for the named session again while holding it.
+    Nothing about an existing receipt, an incomplete receipt or an already
+    claimed message id is decided from a view taken before the lock. A plain
+    run validates every known receipt of the session and completes the retained
+    receipt selected under rule 41 before it opens the declared source;
+    `--resume` refuses an incomplete receipt under rule
+    39 before it opens the source. Only a first receipt, or a `--resume` after
+    that locked check is clean, opens the source. It holds the lock through
+    selection, reading and every rename, so two claiming runs cannot select
+    the same unclaimed id.
+
+    When a source is needed, `receipt` reads exactly one session from one
+    declared source — a Claude Code transcript by its session id (`--claude <label>=<dir> --session
     <id>`; **the session is every message line under `<dir>` whose `sessionId`
     field is that id, in sorted path order, whatever file holds it** — draft
     2, one reading where the first draft had two: a file named for the id
@@ -2165,7 +2179,7 @@ contract. The rules are numbered on from rule 31.
     characters read from the operating system's random source at creation, as
     nova-board draws a card id — derived from nothing two writers could both
     observe (SPEC-BOARD, the id paragraph), so a receipt on any bench gets its
-    id without reading anything first. The rows land in
+    id without deriving it from source or receipt contents. The rows land in
     `<out>/receipts/<day>.tsv` (the **receipts file**, below), one per day
     the session spanned, written whole through `<day>.tsv.tmp` and one rename
     in that directory under the same `fold.lock` rule 8 takes; the tool
@@ -2309,7 +2323,8 @@ contract. The rules are numbered on from rule 31.
     is exit 2 naming the six; `--session Z` is `reason=nosession`, exit 1,
     nothing written; a mode-000 file in the session is `reason=unreadable`
     with no `.tmp` left; two `receipt`s in parallel on one `--out` serialize
-    on `fold.lock` and both land; an OpenCode fixture with a child session
+    on `fold.lock`, reread after acquisition and both land without sharing a
+    claimed id; an OpenCode fixture with a child session
     folds the child into the parent's receipt; a swarm fixture `--job J`
     writes one receipt from the usage file with `started`/`ended` from its
     `started`/`ended` columns; a Claude fixture whose Agent child transcript
@@ -2950,7 +2965,8 @@ contract. The rules are numbered on from rule 31.
     line `job:<id>`, and there is no second message it could ever gain.
     **A session's receipts are found through the retained files' headers, and
     a receipt's expected days are the distinct `day` values in its own file**
-    (draft 5): `--resume` and rule 41 both walk `<out>/receipts/*.ids`, take
+    (draft 5): after taking `fold.lock`, `--resume` and rule 41 both walk
+    `<out>/receipts/*.ids`, take
     the receipts whose header names this session, and compare each one's days
     against the receipts files on disk. Draft 4 found a session's receipts
     through the rows' `session` column, which cannot see a receipt whose rows
@@ -2959,7 +2975,8 @@ contract. The rules are numbered on from rule 31.
 
     `--resume` over a session one of whose receipts is **incomplete** — a
     multi-day receipt whose days are not all on disk (rule 41) — is exit 1,
-    `USAGE FAIL reason=incomplete by=<id>`, nothing written, with the
+    `USAGE FAIL reason=incomplete by=<id>`, nothing written and no source
+    opened, with the
     `USAGE NOTE` naming the plain run as the remedy (draft 4): resuming past a
     half-written receipt would leave its absent day absent for ever, because
     `--resume` writes only a new id and rule 9 forbids the rewrite, and `cost`
@@ -2973,6 +2990,13 @@ contract. The rules are numbered on from rule 31.
     nothing being wrong, which is the hurt draft 3 repaired for
     `CHECK EXCEEDS`, and the exit table already gives exit 0 to "a check with
     nothing to name".
+
+    The retained-header walk, the receipts-file reread and the union of
+    claimed ids all happen after `--resume` has acquired `fold.lock`; the
+    source is opened only after that locked state is known complete. The lock
+    stays held while the source is read and the new retained file and rows are
+    renamed. A waiting resume therefore recomputes its selection against the
+    winner's ids instead of claiming the same messages from a stale union.
 
     **What it still cannot do, said** (draft 4): a message counted at a
     partial usage stays at that usage. A receipt taken while one message is
@@ -3127,10 +3151,28 @@ contract. The rules are numbered on from rule 31.
     2026-09-13, and what makes the third bullet below reachable on an
     ordinary session.
 
-    A plain `receipt` over a session that already has receipts takes **every**
-    receipt of that session — found by the header of each `<32 hex>.ids` under
-    `receipts/`, in `started` order — re-derives each from its own retained
-    file, and **reads no source** (draft 5):
+    A plain `receipt` over a session that already has receipts first discovers
+    every known receipt of the session, after taking `fold.lock`, from both the
+    headers of `<32 hex>.ids` files and the rows' `session` fields. It
+    re-derives and validates **all** of them from their retained files before
+    selecting a write target. Thus a complete receipt whose stored rows differ
+    is still `reason=differs`, and a receipt known from rows whose `.ids` file
+    is absent, corrupt or unreadable is still `reason=missing`, without opening
+    the source. Only after that validation succeeds does it select among the
+    session's incomplete retained receipts.
+    `--node`, `--stage` and `--who` select receipts whose three header values
+    all equal the supplied values; complete receipts and incomplete receipts
+    with another attribution are not selected. If several incomplete receipts
+    match, the one first by `(started, receipt id)` is selected and this run
+    touches only it. If incomplete receipts exist but none matches, the run is
+    exit 2 and names the fields that differ on the first incomplete receipt in
+    that order; it neither opens the source nor changes a file. This keeps the
+    diagnostic bounded and lets the caller repeat the existing verb with that
+    receipt's attribution. If no incomplete receipt exists, the ordinary
+    `receipted`/`--resume` behavior below applies, but only after every known
+    receipt passed that source-free validation. The selected receipt is
+    re-derived from its own retained file and **the source has not been
+    opened** (draft 5):
     - every day's rows present and equal to the re-derived ones → that receipt
       is complete, nothing to do;
     - one or more days' rows absent → those files, and only those, are written
@@ -3175,13 +3217,14 @@ contract. The rules are numbered on from rule 31.
     `receipts=` is not printed.
     With days written it is `USAGE OK … state=completed`,
     `receipt=` the stored id it completed and `days=` the days this run added.
-    A completing run takes `node`, `stage` and `who` **from the retained
+    A completing run takes `node`, `stage` and `who` **from the selected retained
     file's header** (draft 5, where draft 4 took them from the stored rows,
     which an interrupted receipt need not have): a stored row whose `node`,
     `stage`, `who` or `session` disagrees with its own header is one more
     row this tool cannot reproduce, `USAGE FAIL reason=differs by=<id>
-    day=<d>`, and `--node`, `--stage` or `--who` given on the command line
-    that differs from the header is exit 2 naming the field (draft 4):
+    day=<d>`. Command-line attribution is compared only with incomplete
+    receipts considered for selection, never with every header of the mixed
+    session; a nonmatching selection is the bounded exit 2 above (draft 4):
     writing day two under a different node would be a `CHECK SPLIT` of the
     tool's own making, and draft 3's `USAGE FAIL reason=differs day=<d>` named
     neither the receipt nor the field, so a caller who mistyped `--stage` read
@@ -3193,8 +3236,9 @@ contract. The rules are numbered on from rule 31.
     is `reason=receipted` with one `USAGE NOTE` naming `--resume` (rule 39) as
     the remedy. `USAGE NOTE` is this verb's one remedy line, on stdout, per
     SPEC.md's cap-and-count rule, and it is why the `receipt` row of **the
-    largest plausible state** is 23 lines and not 22. The completing write
-    takes `fold.lock` exactly as the first one did and adds no file to rule
+    largest plausible state** is 23 lines and not 22. The completing run
+    already holds `fold.lock` from before it selected or reread the retained
+    receipt, and adds no file to rule
     9's carve-out list: it writes the same `<out>/receipts/<day>.tsv.tmp` and
     renames it, which rule 9's 2026-09-13 amendment already names. **The temp
     name is fixed per directory, so a completing run for a day and a first-run
@@ -3227,13 +3271,16 @@ contract. The rules are numbered on from rule 31.
     (draft 5, the red being draft 4's re-derivation from the live source). X's
     `.ids` file deleted, one byte of it edited, and its header line truncated
     are each `reason=missing by=X`, nothing written, with the `USAGE NOTE`
-    carrying the do-not-resume remedy (draft 4, the remedy draft 5). A session carrying **three** receipts,
-    the second of them half written, is completed under the **second** id and
-    the other two are not touched — the red being draft 3's "that receipt's
-    own span", which named none of the three. A completing run given
-    `--stage review` where the stored rows say `implementation` is exit 2
-    naming `stage` (draft 4). A session that gained messages after a complete
-    receipt is `reason=receipted` with the `USAGE NOTE` naming `--resume`, and
+    carrying the do-not-resume remedy (draft 4, the remedy draft 5); each case
+    is repeated with all expected day rows already present, and remains
+    reachable as `differs` or `missing` before any source open. A session
+    carrying three receipts at three different node/stage joins, the second
+    half written, is completed under the second id when the command supplies
+    the second header's `node`, `stage` and `who`; the other two headers need
+    not match and their files are untouched. Supplying the first receipt's
+    join instead is exit 2 naming the fields that differ on the second, with
+    no source open and no file changed. A session that gained messages after
+    a complete receipt is `reason=receipted` with the `USAGE NOTE` naming `--resume`, and
     never `differs`.
 
 ### The receipts file
@@ -3993,8 +4040,10 @@ beside its rule; these ten lines are the index.
     across the two receipts. `--resume` with no earlier receipt exit 2, with
     `--job` exit 2, over an incomplete receipt exit 1 `reason=incomplete`, and
     with nothing unclaimed **exit 0** `state=nonew` and nothing written;
-    rule 4's streamed message receipted mid-flight lands in exactly one
-    receipt; `check` clean over disjoint id sets whatever their intervals do,
+    two concurrent `--resume` runs both acquire `fold.lock` before rereading
+    the retained headers and claimed-id union, so their new id sets are
+    disjoint; rule 4's streamed message receipted mid-flight lands in exactly
+    one receipt; `check` clean over disjoint id sets whatever their intervals do,
     and `CHECK DUPLICATE ids=1` over a shared id (draft 4).
 40. One **finished** session alternating `n1`, `n2`, `n1` in three blocks with
     gaps, receipted `--until <t1>`, then `--resume --until <t2>`, then
@@ -4014,11 +4063,15 @@ beside its rule; these ten lines are the index.
     **absent** days written (draft 5, the red being draft 4's nothing at all),
     a receipt taken mid-stream is never `differs` (draft 5), a deleted,
     one-byte-edited or header-truncated `.ids` file is `reason=missing by=X`
-    with the do-not-resume remedy on its NOTE (draft 5), a session with three receipts of which the second
-    is half written is completed under the **second** id alone, a completing
-    run whose `--stage` differs from the stored rows is exit 2 naming the
-    field, and a session that grew after a complete receipt is
-    `reason=receipted` with the `USAGE NOTE` naming `--resume` (draft 4).
+    with the do-not-resume remedy on its NOTE (draft 5), including when all
+    expected day rows are present: every known receipt is revalidated without
+    a source before write-target selection; a session with three
+    differently attributed receipts of which the second is half written is
+    completed under the second id alone when its header attribution is
+    supplied; another receipt's attribution is exit 2 naming the differing
+    fields, with no source open and no changes; and a session that grew after
+    a complete receipt is `reason=receipted` with the `USAGE NOTE` naming
+    `--resume` (draft 4).
 
 ## The work list
 
@@ -4139,7 +4192,9 @@ pin all three by executing them.
     id (`crypto/rand`, thirty-two hex), the one-session selection over each
     reader (a transcript by session id, an OpenCode session with its children,
     a swarm job by id), the receipts file with its **eighteen** columns and
-    version line, the whole-file write under `fold.lock`, the `receipted`
+    version line, acquisition of `fold.lock` before every retained-header,
+    receipts-file or claimed-id reread on first, completing and `--resume`
+    runs, the whole-file write while retaining that lock, the `receipted`
     check by `session`, and `check`'s four joins — including the constancy of
     `node`, `stage`, `who`, `session`, `started`, `ended` and `ids_sha256`
     under one receipt id, and the
@@ -4154,8 +4209,10 @@ pin all three by executing them.
     `node`/`stage`/`who` taken from the retained header, `missing` distinguished
     from `differs`, `state=nonew` at exit 0, and `DUPLICATE` over a shared
     message id. **Draft 5**: the `.ids` header and per-message cells, the
-    completion that opens no source, `differs` writing the absent days while
-    leaving the differing one, `DUPLICATE` over every two receipts in the
+    completion selected by matching the supplied `node`/`stage`/`who` only
+    after source-free validation of every known session receipt, against
+    incomplete headers only, before opening the source, `differs` writing
+    the absent days while leaving the differing one, `DUPLICATE` over every two receipts in the
     directory, the three new `CHECK FAIL` reasons on a `.ids` file, and
     `by=<id> receipts=<n>`. Tests: demanded
     tests 32, 34, 39, 40 and 41.
