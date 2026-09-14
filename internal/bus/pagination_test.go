@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"errors"
 	"strings"
 	"testing"
 )
@@ -74,8 +75,17 @@ func TestBodyPaginatorRefusesExternalCursorChange(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := BodyPageFor(items, paginationRequest(first.Next, paginationTwo, 1, 10)); err == nil || !strings.Contains(err.Error(), "persisted cursor changed") {
+	// The refusal is a TYPE and not a sentence, because the command layer prints both
+	// commits in the shape docs/SPEC-BUS-REPLY.md fixes -- `--after names cursor <sha> and
+	// this reader's cursor is <other>` -- and a caller that had to match prose to tell this
+	// refusal from the others is a caller that will match it wrong.
+	var moved *BodyCursorMismatchError
+	_, err = BodyPageFor(items, paginationRequest(first.Next, paginationTwo, 1, 10))
+	if !errors.As(err, &moved) {
 		t.Fatalf("external cursor change was accepted: %v", err)
+	}
+	if moved.Token != paginationBase || moved.Persisted != paginationTwo {
+		t.Fatalf("the refusal does not carry both cursors: %+v", moved)
 	}
 }
 

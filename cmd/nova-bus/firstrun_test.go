@@ -219,7 +219,8 @@ func TestTheFirstRunTranscriptIsWhatTheToolPrints(t *testing.T) {
 		"INBOX CURSOR":  2, // Bo puts hers down, Ada's is replaced
 		"SEND OK":       1, // one note, written and pushed
 		"INBOX REFUSED": 1, // a cursor that is not on this history, and the way out
-		"INBOX SCOPE":   4, // three full reads and the one that is mode=since
+		"INBOX BODIES":  1, // the bounded body return, with its frame above it
+		"INBOX SCOPE":   5, // four full reads and the one that is mode=since
 		"DRAFT OK":      1, // one reply drafted against the bus, outside the checkout
 	} {
 		if seen[prefix] != want {
