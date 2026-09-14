@@ -1,4 +1,4 @@
-# nova-review — specification (draft 4, 2026-09-13)
+# nova-review — specification (draft 5, 2026-09-13)
 
 `nova-review` is one binary at the **review layer**. It builds the packet a
 reader needs to read one entry at one head, records the reader's verdict with
@@ -25,7 +25,7 @@ those failures closed, one rule each.
 
 | the failure, from the record | the rule that closes it |
 |---|---|
-| 25 duplicate findings across readers on one PR family (2026-09-11, swarm batch 1, SPEC-SWARM.md:982: "25 of 67 findings were duplicates of the owed list") | the packet carries every **open finding** with its id and disposition, a reader marks a repeat `dup <id>` and it folds onto the original (rules 3, 6); `dedupe` shows which view saw each |
+| 25 duplicate findings across readers on one PR family (2026-09-11, swarm batch 1, SPEC-SWARM.md:982: "25 of 67 findings were duplicates of the owed list") | the packet carries every **open finding** with its id and disposition, a reader marks a repeat `dup <id>` and it folds onto the original (rules 3 and 9); `dedupe` shows which view saw each |
 | reads recorded against the wrong head — the author had pushed since (2026-09-11: "an approve recorded at 12:31Z counted for a head pushed at 12:47Z") | a `verdict` carries `--head <sha>`, the full sha the reader had open, and binds to it; a packet names the head it was built for on its first line, and refuses to build for a head that is no longer the entry's (rules 1, 2) |
 | a HOLD sat unread for 100 minutes and another 45, because it was a PR comment nobody polled (2026-09-12 20:32Z to 22:09Z) | a verdict is a **record on the lane's branch**, the place the coordinator already pulls every pass; the wake on it is nova-wake's (amendment note A), never a comment somebody remembers to read |
 | a swarm's cheap reads were wrong five times in 67, "each a paraphrase" of a rule nobody opened, and three of the next batch's seven runs "ended with a plan and no findings" (2026-09-11 and 2026-09-12, SPEC-SWARM.md:985 and :1252-1253) | a verdict is refused unless every finding names `file:line` in the tree **at that head** and cites its requirement **verbatim from the spec at that head**, checked mechanically (rule 4); an APPROVE with no compared line is refused (rule 5) |
@@ -103,7 +103,21 @@ the end. The date on a rule is the day it was learned.
    id, its disposition and who saw it; the author's stated intent, quoted
    from the entry body and labeled as the author's claim; and nothing else.
    It is bounded in bytes, and past the bound it holds the hunk list and the
-   command that prints the rest. It asks the reader nothing. (Stella,
+   command that prints the rest. It asks the reader nothing.
+   **Every section of it but one is a pure function of `(entry, head, range)`,
+   so one packet at a head serves every reader whose range it covers** (draft
+   5). "This head", "All verdicts at earlier heads", "Open findings", "Rules
+   touched", "Diff" and "Not included" are computed from the entry, the head
+   and the range and from nothing about who asked; "Your prior verdicts on
+   this entry" is the one per-reader section, and `who=` on the first line is
+   who asked and never who is bound. The packet carries that tuple's `id=`,
+   and `packet --reuse <file>` hands a second reader with the same range the
+   **same bytes** and reads no tree at all. What such a reader reuses is the
+   delta, the ground this tool already read at that head, the base the packet
+   pinned, and the findings list as it stood at `built=`; what no reader ever
+   reuses is **another reader's verdict, or the validation of another reader's
+   findings** — rule 4's checks are made against the record being written, at
+   the moment it is written, and are inherited from nothing. (Stella,
    2026-09-11: "the smallest sufficient review packet is the diff since my
    reviewed sha, the unresolved finding ids with their dispositions, and
    links to the whole; my first pass loaded too much history." 2026-09-12,
@@ -144,9 +158,17 @@ the end. The date on a rule is the day it was learned.
    rule.)
 3. **Open findings travel with the packet and a repeat is a `dup`.** A
    finding is open from the record that raised it until that same reader
-   explicitly closes it — their later `line` APPROVE, or a `close <id>` row of
-   theirs — and a later record that simply does not list it leaves it open
-   (rule 8, draft 4). The packet lists every
+   closes it explicitly, with a `close <id>` row of their own, and a later
+   record that simply does not list it leaves it open (rule 8, drafts 4 and
+   5). **An `ok` row is not a finding and is never open** (draft 5): it is
+   rule 5's evidence that a line was compared and found right, it is counted
+   in `ok=` and printed on its own `VERDICT ROW` line, it appears in no
+   packet's open-findings table, it is never `carried=` and it is never
+   `dup`ped. **A `nit` row is a finding and is open like any other**: it
+   travels in the packet, it carries forward when a later record omits it, and
+   it sustains no HOLD and blocks no APPROVE (rules 5 and 8). The packet's
+   byte budget is the reason the line is drawn there and not elsewhere. The
+   packet lists every
    open finding — id, `file:line`, quoted rule, claim, severity, who saw it,
    the author's disposition if any — so a reader who sees the same thing
    writes `dup <id>` in their findings file, which folds onto the original
@@ -159,7 +181,11 @@ the end. The date on a rule is the day it was learned.
    tool verifies, in the tree at `--head`, that the path exists and the line
    is within the file. A finding whose subject is a line the change
    **deleted** names it `base:<path>:<line>` and is checked in the tree at
-   the packet's base instead: a regression that removes a line has no line at
+   the packet's base instead — **the packet's base is the sha that packet
+   recorded as `base=` on its first line when it was built, the left side of
+   its range, and `verdict --base <sha>` is how a record names it; a `base:`
+   form with no `--base` is refused, exit 2, naming the flag** (draft 5): a
+   regression that removes a line has no line at
    the head, and a tool that cannot report it is a tool that hides the one
    kind of defect nobody can see in the after-image. A finding cites its
    requirement as `<spec path>:<line> "<text>"` and the tool verifies that
@@ -202,7 +228,9 @@ the end. The date on a rule is the day it was learned.
 5. **An APPROVE names what it compared, and a HOLD carries a live row.** An
    APPROVE carries at least one row of state `ok`: a `file:line` the reader
    compared and the rule they compared it against, both checked by rule 4. An
-   APPROVE with zero rows is refused. A HOLD carries at least one row of
+   APPROVE with zero rows is refused, and an APPROVE
+   standing over an open `block` or `fix` of the approver's own is refused too
+   (rule 8, draft 5). A HOLD carries at least one row of
    severity `block` or `fix`, **or one `dup <id>` of a finding that is open
    at `block` or `fix`** — which is the commonest HOLD there is: a reader who
    re-reads at a new head, finds their own blocks unfixed and nothing new,
@@ -251,29 +279,43 @@ the end. The date on a rule is the day it was learned.
    it does not go stale with a head, and it is the only thing that spells
    `abstain`. A reserved reader with no `line` verdict of any kind is
    `pending` before the deadline and **`waived`** after it, printed with
-   `by=reserved deadline=<stamp>`: the literal word `reserved` and the
+   `policy=<id> by=reserved deadline=<stamp>`: the literal word `reserved` and the
    `--deadline` value, **never the silent reader's own name**, because the
    policy that closed the row is the caller's and a `by=` naming the reader
    would say the reader closed a row the reader never touched. (draft 3) That
    state is the CALLER's policy and not the reader's say, and a ledger that
    spells the two the same word cannot answer who closed the row.
    **`by=reserved` names the mechanism; a row an audit can settle also names
-   the actor and the reason** (draft 4). `--reserved`, `--deadline`,
-   `--policy-by <name>` and `--policy-reason <text>` are **all four or none**:
-   any subset is refused, exit 2, naming the flags that are missing.
-   `--policy-by` is the person or line who **selected or changed** this
-   required-reader policy — who named the reserve and set the deadline — and
-   `--policy-reason` is their one-line why; both are the caller's own words,
-   carried verbatim through `oneline`, checked against nothing, and recorded
-   for no purpose but the question an audit asks first. Every `waived` row
-   prints `by=reserved policy_by=<name> policy_reason=<text>`, and `ROSTER OK`
-   carries the same two fields when any row is `waived` and `-` for both when
-   none is. **A `--policy-by` that is one of `--readers` or one of
-   `--reserved` is refused, exit 2, naming it**: a reserved reader may not be
-   the actor who waived their own row, and a named reader who waives a peer
-   records that decision under their own name rather than behind the policy's.
-   No reader's row is ever closed by a mechanism with nobody behind it.
-   (draft 4) `ratified=true` exactly
+   the actor and the reason — and a run's stdout is not where that record
+   lives** (draft 5). The policy is **a record on the lane branch**, written
+   by the actor through a verb, exactly as a verdict is. `policy --who <name>
+   --readers <name,...> --reserved <name,...> --deadline <stamp> --reason
+   <text>` writes one immutable
+   `policy-<who>-<head12>-<at>-<rand6>.json` under `<lane>/reviews/<entry>/`,
+   the `answer-` pattern, holding `who`, `readers`, `reserved`, `deadline`,
+   `reason`, `head` and `at`, and prints its id. `roster --policy <id>` takes
+   that record in place of the reader flags: **`roster` takes either
+   `--readers` (optionally with `--reserved` and `--deadline`, which stay both
+   or neither) or `--policy <id>`, and the two together are refused, exit 2**.
+   A waiver needs the record — **a reserved reader's row is `waived` only
+   under `--policy <id>`** — so a `roster` given `--reserved` and `--deadline`
+   with no policy record behind them leaves that row `pending` past the
+   deadline: a row closed by a policy nobody wrote down is a row closed by
+   nobody, and `ratified=true` is not a thing a shell's scrollback should be
+   the only evidence for. Every `waived` row prints `policy=<id> by=reserved
+   policy_by=<who> policy_reason=<reason>`, read from that record, and `ROSTER
+   OK` carries `policy=<id>` and the same two fields when any row is `waived`,
+   `-` for each when none is. **A `policy` record whose `who` is one of its
+   own `readers` or of its own `reserved` is refused at the verb, exit 2,
+   naming it**: a reserved reader may not be the actor who waived their own
+   row, and a named reader who waives a peer records that decision under their
+   own name rather than behind the policy's. The `reason` is the actor's own
+   words, carried verbatim through `oneline` and checked against nothing.
+   Rule 13 holds — the actor names the readers, the tool decides nothing,
+   keeps no roster store, and `--policy` is an id into the lane the caller
+   already named rather than a path it guessed — and rule 11 holds: one fact,
+   one writer, and this fact is the actor's. No reader's row is ever closed by
+   a mechanism with nobody behind it. (draft 5) `ratified=true` exactly
    when every named reader is `yes`, `abstain` or `waived`, no reader is
    `hold`, and none is `pending`. Nothing here defaults a read.
    **The entry's author does not fill a cell with a yes.** `roster` resolves
@@ -322,12 +364,20 @@ the end. The date on a rule is the day it was learned.
    until an explicit closure record, and an omission closes nothing**
    (draft 4). Printing a
    closure after the fact does not make an accidental omission a resolution,
-   so there is no closure by omission here at all. The two closures are both
-   explicit and both the recording reader's own: a later `line` **APPROVE** by
-   that reader, which is that reader's own recorded statement that they hold
-   nothing open on this entry and closes every open finding of theirs; and a
-   **`close <id>`** row in that reader's later findings file, which closes
-   exactly the finding it names and no other. A later HOLD that does not
+   so there is no closure by omission here at all — **and a verdict word is
+   not a closure either** (draft 5). There is exactly **one** closure and it
+   is a row: a **`close <id>`** in that reader's own later findings file,
+   which closes exactly the finding it names and no other. An APPROVE closes
+   nothing by being an APPROVE. Instead, **an APPROVE is refused, exit 2, when
+   the reader recording it has an open finding of their own at `block` or
+   `fix` which that findings file neither `close`s nor `dup`s**, one `VERDICT
+   REFUSED approve=open id=<id>` line per open id under the cap (rule 12) and
+   nothing recorded: an approve standing over the approver's own unanswered
+   block is the thing rule 5 refuses at the door, and printing `CLOSED` after
+   the fact is the thing an omission may not do. An APPROVE that closes its
+   own blocks by row records, and **its open `nit` findings carry forward
+   exactly as a HOLD's do**, each with its `VERDICT CARRIED` line: approving
+   is not withdrawing a nit nobody mentioned. A later record that does not
    re-list a finding **carries it forward, still open, under its original id**
    (a re-listed finding keeps that id through `dup <id>`): silence in a
    findings file is not a withdrawal, and a reader who drops a row by accident
@@ -406,8 +456,12 @@ the end. The date on a rule is the day it was learned.
     `--usage` without `--usage-source`, or without `--bench`, is refused, exit
     2, naming the missing flag, because an unjoinable number is a number no
     audit can follow back. **Or the caller passes `--receipt <id>` instead of
-    `--usage`**: the id of a retained accounting receipt in nova-tokens,
-    recorded verbatim, checked for shape and **never resolved by this tool**,
+    `--usage`**: the id of a retained receipt in **the caller's accounting
+    store** (nova-tokens in this house, and this spec asserts nothing about
+    that program's behaviour — draft 5), recorded verbatim, **checked for
+    shape and nothing else** — one to a hundred and twenty-eight characters
+    drawn from `A-Za-z0-9`, `.`, `_`, `+`, `-`, `:` and `/`, no whitespace, at
+    least one that is not a separator — and **never resolved by this tool**,
     which opens no accounting store and reaches no network for it — the entry
     then carries the link an auditor follows and carries no token numbers of
     its own, every receipt-fed slot a dash. `--usage` and `--receipt` together
@@ -422,7 +476,8 @@ the end. The date on a rule is the day it was learned.
     join collided or the file changed under it, and either way the total is
     not this tool's to guess. `usd` is the provider's own figure, carried and
     never computed — this tool holds no rate card, multiplies nothing, and
-    **price estimation is nova-tokens' work and stays there**; what this rule
+    **price estimation is the accounting store's work (nova-tokens in this
+    house) and stays there**; what this rule
     requires is the accounting link, not the price.
     `cost` prints per read what the receipt said, `-` where it said nothing,
     and sums per head and per entry with `dashes=<n>` so a total with an
@@ -454,7 +509,9 @@ the end. The date on a rule is the day it was learned.
     `cmd/nova-merge/verbs.go:384` passes today, and never the raw pull request
     number or branch (draft 3) — nova-merge's `read` verb calls it, and nova-review calls the same function with the same
     submission. That is what makes the sentence true in the code rather than
-    in a comparison. Every verdict of every kind also writes one **review
+    in a comparison. Rule 7's **policy record** is written the same way, through the same outbox,
+    the same CAS loop and the same manifest, as the `policy` part of its own
+    one-part submission (draft 5). Every verdict of every kind also writes one **review
     record** under `<lane>/reviews/<entry>/`, with the same submission id,
     holding what nova-merge does not: `model`, `kind`, `of`, `job`, `reason`,
     the findings, the usage, `started`, and `read=<path>` naming its read
@@ -496,7 +553,9 @@ the end. The date on a rule is the day it was learned.
     MORE kind=fold shown=<n> total=<t>`, capped per kind as SPEC.md:206-211
     requires, because a bad upgrade writes fifty undecodable records as
     readily as one and fifty lines is the loud kind eating the quiet one. The
-    exit is still 2 and `total=` is still the truth about the lane. (draft 3) **`verdict` bounds its refusals and its input like
+    exit is still 2 and `total=` is still the truth about the lane. (draft 3)
+    **`verdict` caps `row`, `recorded`, `closed`,
+    `carried` and `open` apart, and bounds its refusals and its input like
     everything else**: a refused findings file prints at most `--max`
     `VERDICT REFUSED row=` lines and one `VERDICT MORE kind=row shown=<n>
     total=<t> refused=<n>`, and the file itself is read at most `--max-rows
@@ -529,10 +588,11 @@ the end. The date on a rule is the day it was learned.
 ## The verbs
 
 ```
-nova-review packet  --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max <n>]
-nova-review verdict --lane <dir> (--pr <n>|--branch <name>) --who <name> --model <id> --kind line|child|card [--of <line>] [--job <id>] --head <sha> --verdict approve|hold|abstain (--findings <file> | --reason <text>) [--note <text>] [--usage <file> --usage-source <id> --bench <name> | --receipt <id>] [--started <stamp>] [--max <n>] [--max-rows <n>] [--max-input-bytes <n>] [--max-line-bytes <n>]
+nova-review packet  --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--reuse <file>] [--spec <path>[#<heading>]]... [--rule <spec>:<n>]... [--max-bytes <n>] [--max <n>]
+nova-review verdict --lane <dir> (--pr <n>|--branch <name>) --who <name> --model <id> --kind line|child|card [--of <line>] [--job <id>] --head <sha> [--base <sha>] --verdict approve|hold|abstain (--findings <file> | --reason <text>) [--note <text>] [--usage <file> --usage-source <id> --bench <name> | --receipt <id>] [--started <stamp>] [--max <n>] [--max-rows <n>] [--max-input-bytes <n>] [--max-line-bytes <n>]
 nova-review answer  --lane <dir> (--pr <n>|--branch <name>) --who <name> --finding <id> --head <sha> --as fixed|declined|dup [--of <id>] [--note <text>]
-nova-review roster  --lane <dir> (--pr <n>|--branch <name>) --readers <name,...> [--reserved <name,...> --deadline <stamp> --policy-by <name> --policy-reason <text>] [--max <n>]
+nova-review policy  --lane <dir> (--pr <n>|--branch <name>) --who <name> --readers <name,...> --reserved <name,...> --deadline <stamp> --reason <text> [--head <sha>]
+nova-review roster  --lane <dir> (--pr <n>|--branch <name>) (--readers <name,...> [--reserved <name,...> --deadline <stamp>] | --policy <id>) [--max <n>]
 nova-review dedupe  --lane <dir> (--pr <n>|--branch <name>) [--head <sha>] [--max <n>]
 nova-review cost    --lane <dir> ((--pr <n>|--branch <name>) | --all) [--max <n>]
 nova-review version
@@ -589,6 +649,25 @@ OK` prints `current=true|false` against the head the host reports at record
 time, so a reader who is already stale hears it at once and records again at
 the new head rather than discovering it in `roster`.
 
+**`verdict --base <sha>` is the packet's base, and it is the tree every
+`base:` form is checked in** (draft 5). "The packet's base" is not a tree the
+verb can derive: the base is per reader (rule 1), so for a second-round HOLD
+it is that reader's own last recorded head and not the entry's base, and
+`verdict` is never handed a packet. It is therefore **the sha `packet`
+recorded as `base=` on its first line when it built that reader's packet** —
+the left side of its `range=` — and the reader hands it back as the full
+40-character sha, exactly as they hand back `--head`. A findings file holding
+any `base:` form, in its second field or its third, **without `--base` is
+refused, exit 2, naming the flag**; a `--base` that does not resolve to a
+commit in the lane's clone, or whose `<base>..<head>` is not a range git can
+walk, is refused, exit 2. The tool checks that the sha is a tree it can read
+and nothing more: it does not require that a packet was ever built for it,
+because a packet is a file a reader may not have kept, and a reader who reads
+a range by hand is a reader this tool refuses nothing else to. `--base` is
+recorded on the review record as `base`, so the tree a `base` row was checked
+in is on the record beside the row, and `VERDICT OK` echoes it as
+`base_tree=<sha12>`, `-` when the record holds no `base:` form.
+
 **`answer` is the author's verb and it closes nothing.** It records, as one
 immutable file under `<lane>/reviews/<entry>/`, that the author says a finding
 is `fixed` at `--head <sha>`, `declined` with `--note`, or `dup` of `--of <id>`.
@@ -607,7 +686,9 @@ ignores the code. The other three are asked "what", not "whether", so they
 **report and exit 0 whatever the lane holds**, exactly as SPEC-MERGE.md:520
 says of `status`, `dry-run` and `packet` and as SPEC.md:278-279 says of
 `nova-fuse status`: `dedupe` and `cost` compute no `ratified` and have no NO to
-say. An unreadable record is neither: a `<VERB> FOLD` refusal is **exit 2**,
+`policy` is a writer like `verdict` and `answer` and takes their codes: 0
+recorded and pushed, 1 recorded and not pushed, 2 could not run (draft 5).
+An unreadable record is neither: a `<VERB> FOLD` refusal is **exit 2**,
 the Conventions' "unreadable input" (SPEC.md:86), on every one of the four —
 the verb could not run, rather than ran and said no.
 
@@ -615,9 +696,9 @@ the verb could not run, rather than ran and said no.
 
 | code | meaning |
 |------|---------|
-| 0 | the verb ran and passed: a packet written, a verdict or answer recorded and pushed, a roster that is ratified, a dedupe or cost report printed **whatever it holds** |
+| 0 | the verb ran and passed: a packet written, a verdict, answer or policy recorded and pushed, a roster that is ratified, a dedupe or cost report printed **whatever it holds** |
 | 1 | the verb ran and said **NO**: `roster` with `ratified=false`, a packet refused as stale, a record written but not pushed (`pushed=false`, re-run the same verb) |
-| 2 | could not run: missing flag, unreadable lane, a directory that is not a lane, a findings row that fails rule 4 or rule 5, a `close <id>` of a finding that is not open or is another reader's (rule 8), a findings file past `--max-rows`, input past `--max-input-bytes` or a line past `--max-line-bytes` (rule 12), a usage file whose header is not SPEC-SWARM rule 12's, `--usage` without `--usage-source` or `--bench`, `--usage` with `--receipt`, one receipt identity with two digests (`COST RECEIPT`), a `--spec` with no heading in a file of several rule sequences, a subset of `--reserved`/`--deadline`/`--policy-by`/`--policy-reason` (rule 7), a `--policy-by` who is a named or reserved reader, a record that does not decode (`<VERB> FOLD`), a read-and-review pair that disagrees (`ROSTER PAIR`, `DEDUPE PAIR`, `COST PAIR`), a `--who` of `answer` or beginning `answer-`, `--max-bytes`, `--max-input-bytes` or `--max-line-bytes` of zero or less, a negative `--max`, bad invocation, `git` or `gh` absent |
+| 2 | could not run: missing flag, unreadable lane, a directory that is not a lane, a findings row that fails rule 4 or rule 5, a `close <id>` of a finding that is not open or is another reader's (rule 8), a findings file past `--max-rows`, input past `--max-input-bytes` or a line past `--max-line-bytes` (rule 12), a usage file whose header is not SPEC-SWARM rule 12's, `--usage` without `--usage-source` or `--bench`, `--usage` with `--receipt`, one receipt identity with two digests (`COST RECEIPT`), a `--spec` with no heading in a file of several rule sequences, `--readers` together with `--policy`, `--reserved` without `--deadline` or the reverse, a `policy` whose `--who` is one of its own readers or reserved, a `--policy <id>` no record on the lane carries (rule 7), an APPROVE standing over that reader's own open `block` or `fix` that the file neither closes nor dups (rule 8), a `base:` row with no `--base` or a `--base` that names no commit (rule 4), a `--reuse` whose id is not this reader's or given beside `--spec`, `--rule` or `--max-bytes` (`PACKET REUSE`), a record that does not decode (`<VERB> FOLD`), a read-and-review pair that disagrees (`ROSTER PAIR`, `DEDUPE PAIR`, `COST PAIR`), a `--who` of `answer` or `policy`, or beginning `answer-` or `policy-`, `--max-bytes`, `--max-input-bytes` or `--max-line-bytes` of zero or less, a negative `--max`, bad invocation, `git` or `gh` absent |
 
 A findings row that fails its check is exit 2 and not 1 because nothing was
 recorded and nothing was judged: the invocation was unusable, and the remedy
@@ -639,29 +720,39 @@ them apart — `entry=` here against `entries=` there, and disjoint `kind=` sets
 — so no line is ambiguous about which tool wrote it. (draft 3, polished)
 
 ```
-PACKET OK entry=<n-or-name> head=<sha12> base=<sha12> range=<r> files=<n> hunks=<n> rules=<n> prior=<n> open=<n> bytes=<n> cut=<n> out=<path>
+PACKET OK entry=<n-or-name> id=<hex12> head=<sha12> base=<sha12> range=<r> files=<n> hunks=<n> rules=<n> prior=<n> open=<n> bytes=<n> cut=<n> reused=<true|false> out=<path>
 PACKET MORE kind=<prior|fold> shown=<n> total=<t> nova-review packet --lane <dir> … --max 0
 PACKET STALE entry=<n-or-name> asked=<sha12> current=<sha12>: the head moved; build the packet for the current head
+PACKET REUSE asked=<hex12> found=<hex12> file=<path>: that packet was built for another (entry, head, range); build this reader's own
 PACKET FOLD file=<path>: <reason>
 PACKET REFUSED: <reason>
-VERDICT OK entry=<n-or-name> who=<name> model=<id> kind=<line|child|card> verdict=<approve|hold|abstain> head=<sha12> current=<true|false> rows=<n> block=<n> fix=<n> nit=<n> ok=<n> dup=<n> base=<n> external=<n> proposed=<n> closed=<n> carried=<n> seconds=<n|-> wall=<n|-> receipt=<source>/<bench>/<job>/<attempt>|<receipt id>|- digest=<hex12|-> review=<path> read=<path|-> pushed=true
+VERDICT OK entry=<n-or-name> who=<name> model=<id> kind=<line|child|card> verdict=<approve|hold|abstain> head=<sha12> base_tree=<sha12|-> current=<true|false> rows=<n> block=<n> fix=<n> nit=<n> ok=<n> dup=<n> base=<n> external=<n> proposed=<n> closed=<n> carried=<n> seconds=<n|-> wall=<n|-> receipt=<source>/<bench>/<job>/<attempt>|<receipt id>|- digest=<hex12|-> review=<path> read=<path|-> pushed=true
+VERDICT ROW row=<n> id=<id> sev=<block|fix|nit|ok|dup|close> at=<path>:<line>|<finding id> side=<head|base|-> rule=<quoted|base|external|proposed|-> pin=<pin|-> ref=<the third field as written>
 VERDICT CLOSED id=<id> <path>:<line> sev=<block|fix|nit|ok>: closed by this record (rule 8)
 VERDICT CARRIED id=<id> <path>:<line> sev=<block|fix|nit|ok>: still open, not listed by this record (rule 8)
 VERDICT FAIL entry=<n-or-name> who=<name> head=<sha12> review=<path> pushed=false: <reason>; re-run the same verb to push it
 VERDICT REFUSED row=<n>: <path>:<line> <check>: <reason>
+VERDICT REFUSED approve=open id=<id> <path>:<line> sev=<block|fix>: an approve cannot stand over this reader's own open finding; close it or dup it (rule 8)
 VERDICT REFUSED input=bytes file=<path> limit=<n>: the input passed its byte budget while being read (rule 12)
 VERDICT REFUSED input=line row=<n> file=<path> limit=<n>: one line passed its byte budget while being read (rule 12)
 VERDICT MORE kind=row shown=<n> total=<t> refused=<n> nova-review verdict --lane <dir> … --max 0
-VERDICT MORE kind=<closed|carried|fold> shown=<n> total=<t> nova-review verdict --lane <dir> … --max 0
+VERDICT MORE kind=<recorded|closed|carried|open|fold> shown=<n> total=<t> nova-review verdict --lane <dir> … --max 0
 VERDICT FOLD file=<path>: <reason>
+VERDICT STAGED ORPHAN id=<submission id> parts=<n> removed=true: staged with no manifest; published nowhere (amendment B)
 VERDICT REFUSED: <reason>
 ANSWER OK entry=<n-or-name> finding=<id> who=<name> as=<fixed|declined|dup> head=<sha12> of=<id|-> file=<path> pushed=true
 ANSWER FAIL entry=<n-or-name> finding=<id> file=<path> pushed=false: <reason>; re-run the same verb to push it
 ANSWER FOLD file=<path>: <reason>
+ANSWER STAGED ORPHAN id=<submission id> parts=<n> removed=true: staged with no manifest; published nowhere (amendment B)
 ANSWER REFUSED: <reason>
-ROSTER READER who=<name> state=<yes|hold|abstain|waived|pending> head=<sha12|-> at=<stamp|-> model=<id|-> open=<n> evidence=<n> reserved=<true|false> by=<reserved|-> policy_by=<name|-> policy_reason=<text|-> deadline=<stamp|-> author=<true|false>
+POLICY OK entry=<n-or-name> id=<id> who=<name> readers=<n> reserved=<n> deadline=<stamp> head=<sha12> file=<path> pushed=true
+POLICY FAIL entry=<n-or-name> id=<id> file=<path> pushed=false: <reason>; re-run the same verb to push it
+POLICY STAGED ORPHAN id=<submission id> parts=<n> removed=true: staged with no manifest; published nowhere (amendment B)
+POLICY FOLD file=<path>: <reason>
+POLICY REFUSED: <reason>
+ROSTER READER who=<name> state=<yes|hold|abstain|waived|pending> head=<sha12|-> at=<stamp|-> model=<id|-> open=<n> evidence=<n> reserved=<true|false> policy=<id|-> by=<reserved|-> policy_by=<name|-> policy_reason=<text|-> deadline=<stamp|-> author=<true|false>
 ROSTER MORE kind=<reader|fold> shown=<n> total=<t> nova-review roster --lane <dir> … --max 0
-ROSTER OK entry=<n-or-name> head=<sha12> yes=<n> hold=<n> abstain=<n> waived=<n> pending=<n> evidence=<n> ratified=<true|false> merge_read=<satisfied|needs-read|hold> deadline=<stamp|-> policy_by=<name|-> policy_reason=<text|->
+ROSTER OK entry=<n-or-name> head=<sha12> yes=<n> hold=<n> abstain=<n> waived=<n> pending=<n> evidence=<n> ratified=<true|false> merge_read=<satisfied|needs-read|hold> policy=<id|-> deadline=<stamp|-> policy_by=<name|-> policy_reason=<text|->
 ROSTER FOLD file=<path> ratified=false: <reason>
 ROSTER PAIR read=<path> review=<path> field=<who|head|at|verdict>: the two records of one submission disagree
 ROSTER REFUSED: <reason>
@@ -693,7 +784,8 @@ committer clock.
 **Every listing is a cap and a count.** `ROSTER READER` prints at most `--max`
 readers in the order of `--readers`; `DEDUPE FINDING` at most `--max` groups in
 `(path, line)` order; `COST READ` at most `--max` reads newest first, then the
-`COST HEAD` lines, then `COST OK`; `VERDICT REFUSED row=`, `VERDICT CLOSED`
+`COST HEAD` lines, then `COST OK`; `VERDICT ROW`, `VERDICT REFUSED row=`, `VERDICT REFUSED approve=open`,
+`VERDICT CLOSED`
 and `VERDICT CARRIED` at most `--max` each, capped per kind as SPEC.md:206-211
 requires, so a loud
 kind never eats a quiet one. The counts on the `OK` line are the truth about
@@ -711,7 +803,7 @@ and is never adopted. Its first line is machine-readable and the rest is for a
 reader:
 
 ```
-nova-review packet v1 entry=<n-or-name> head=<sha> base=<sha> range=<r> who=<name> built=<utc stamp> bytes=<n> cut=<n>
+nova-review packet v1 id=<hex12> entry=<n-or-name> head=<sha> base=<sha> range=<r> who=<name> built=<utc stamp> bytes=<n> cut=<n>
 
 ## This head
 <the entry's title and the author's stated intent, quoted from the entry body,
@@ -760,6 +852,47 @@ tells them the grammar of a `dup`. It does not say what
 to look for, what the answer is expected to be, or whether the change is
 "additive": a reader is handed the source, never a reading of it (2026-09-12).
 
+**One packet at a head serves every reader whose range it covers** (rule 1,
+draft 5). Six of the seven sections above — "This head", "All verdicts at
+earlier heads", "Open findings", "Rules touched", "Diff" and "Not included" —
+are computed from the entry, the head and the range and from nothing about who
+asked. "Your prior verdicts on this entry" is the one per-reader section, and
+`who=` on the first line is **who asked**, never who is bound: a verdict binds
+to its own `--who` and `--head` (rules 6 and 11) and never to a packet.
+
+`id=<hex12>` on the first line names that tuple: the first twelve hex
+characters of the SHA-256 of `<entry>\n<head>\n<base>\n<range>\n`. Two
+packets carry one id exactly when they were built for one entry at one head
+over one range, which is what makes the sentence above checkable rather than
+merely stated.
+
+`packet --reuse <file>` is how the second reader is handed it. The tool reads
+that file's first line, computes the id this reader's own `(entry, head,
+range)` gives, and when the two are equal copies **every reader-independent
+section byte for byte**, writes this reader's own "Your prior verdicts on this
+entry" section and `who=`, and **reads no tree at all**: no `git diff`, no
+`git show`, no spec file opened at any head, nothing but the one host call
+that resolves the entry's current head. It prints `PACKET OK … reused=true`.
+When the two ids differ it is refused, exit 2, `PACKET REUSE asked=<id>
+found=<id> file=<path>`, naming both, because a reader whose range differs
+must have their own packet and never a mislabeled one; `--reuse` with
+`--spec`, `--rule` or `--max-bytes` is refused the same way, since those flags
+change what a packet would hold and a reused packet holds what it already
+holds.
+
+**What is reused and what never is.** A second reader reuses the delta, the
+ground the first build already read at this head — the diff, the rule text
+with its `path:line`, the base the packet pinned — and the open findings as
+they stood when it was built. A second reader reuses **no verdict of
+another's**, and no validation of another reader's findings: rule 4's checks
+are made against the record being written, at the moment it is written, from
+the trees at `--head` and `--base`, and are never inherited from a packet or
+from another record. The packet is source; the verdict is the reader's own.
+Where a packet is older than the newest record on the lane, what it carries is
+the findings list **as of `built=`**, which is why `verdict` re-reads the fold
+and why a stale open-findings table can only cost a reader a `dup` they did not
+need to write — never a closure, a cell or a ratification.
+
 ## The findings file
 
 `verdict --findings <file>` is a UTF-8 text file the reader writes, one row
@@ -787,8 +920,9 @@ this entry or was recorded by another reader (draft 4). A sixth field is a
 refusal naming the row; so is a fourth or a second.
 
 **The second field** is `<path>:<line>`, checked in the tree at `--head`, or
-`base:<path>:<line>`, checked in the tree at the packet's base — the form for
-a line the change deleted, which rule 4 exists to keep reportable.
+`base:<path>:<line>`, checked in the tree at **the packet's base**, which is
+the tree `--base <sha>` names (rule 4) — the form for a line the change
+deleted, which rule 4 exists to keep reportable.
 
 **The third field** names the requirement, and it is one of exactly four
 forms — `rule_kind` is `quoted`, `base`, `external` or `proposed` (rule 4,
@@ -801,7 +935,8 @@ draft 4):
   quote the sentence a bold run opens, and a quote that spans lines names the
   first line and quotes that line.
 - `base:<spec path>:<line>` — `base`. The same check in the tree at the
-  **packet's base**: the form for a requirement this change deleted, which
+  **packet's base**, the tree `--base <sha>` names: the form for a requirement
+  this change deleted, which
   keeps the requirement's own provenance rather than demoting an agreed rule to
   somebody's proposal. Printed `rule=base`.
 - `ext:<pin>:<path>:<line>` — `external`. A pinned requirement in a document
@@ -812,6 +947,24 @@ draft 4):
 - `+` — `proposed`. The fourth field is one sentence the reader says the tree
   ought to require and does not. Recorded, checked for nothing, printed
   `rule=proposed`.
+
+**A version token has a grammar, so "malformed" has a meaning** (draft 5). A
+caller-supplied `<pin>` that is not a 40-hex sha is one to sixty-four
+characters drawn from `A-Za-z0-9`, `.`, `_`, `+` and `-`, and from nothing
+else: it holds **no `:`**, no whitespace and no `/`. The `<path>` of an `ext:`
+row holds no `:` either. That is what makes `ext:<pin>:<path>:<line>` a
+four-field split with no ambiguity, and a pin or a path outside those
+characters is a malformed row, exit 2, naming it.
+
+**Where a row's `rule=` word is printed** (draft 5, the word had no line).
+Every row a record accepts prints one `VERDICT ROW` line — `row=`, the
+finding's id, its severity, its `path:line` and `side=`, then `rule=` and
+`pin=` and the third field as the reader wrote it — at most `--max` of them
+and then one `VERDICT MORE kind=recorded shown=<n> total=<t>`, capped as rule
+12 caps every kind. That is the line `rule=quoted`, `rule=base`,
+`rule=external pin=<pin>` and `rule=proposed` are printed on. A `dup` or
+`close` row prints `rule=- pin=-` and names the finding id it acts on in
+`at=`.
 
 `base=<n>`, `external=<n>` and `proposed=<n>` are counted separately on
 `VERDICT OK` and `DEDUPE OK`, so nobody can read a pin this tool never opened,
@@ -837,6 +990,7 @@ directory to it and nothing else:
 ```
 <lane>/reviews/<entry>/<who>-<head12>-<at>-<rand6>.json     one verdict, immutable, tracked and pushed
 <lane>/reviews/<entry>/answer-<who>-<head12>-<at>-<rand6>.json   one answer, immutable, tracked and pushed
+<lane>/reviews/<entry>/policy-<who>-<head12>-<at>-<rand6>.json   one required-reader policy, immutable, tracked and pushed (rule 7)
 <lane>/reads/<entry>/<who>-<head12>-<at>-<rand6>.json       written for a `line` approve or hold, through internal/merge (rule 11)
 ```
 
@@ -855,11 +1009,18 @@ filepath.Ext(it.Path)`, so two `.json` items of one submission are written to
 reads it back — one record would land, silently. **Amendment B is therefore a
 prerequisite of rule 11 and not a convenience**, and it is written as a closed
 set rather than a glob: the outbox item is `<submission id>-<part>.json`,
-where `<part>` is **one of exactly `read`, `gate`, `review` and `answer`** —
-amendment B's four, the only part set this spec names anywhere, with `gate`
-in it because nova-merge's own gate submission flushes through the same loop
-and a set that omitted it would refuse that flush (draft 3); and every item of
-one submission is restored, committed and confirmed together. Nothing is picked
+where `<part>` is **one of exactly `read`, `gate`, `review`, `answer` and
+`policy`** — five part words, the only part set this spec names anywhere, with
+`gate` in it because nova-merge's own gate submission flushes through the same
+loop and a set that omitted it would refuse that flush (draft 3), and `policy`
+in it because rule 7's policy record flushes through the same loop too (draft
+5); and every item of one submission is restored, committed and confirmed
+together. **`<submission id>-parts.json` is the sixth legal item name and it
+is not a part** (draft 5): it is the submission's manifest, it names the parts
+and no part names it, no part word is `parts`, and `parts` is reserved so that
+no part can ever take that name. Said plainly: five parts and one manifest,
+six legal item names, a closed set, and amendment B's refusal of "a file in
+the outbox that is not a known part" reads against those six. Nothing is picked
 up by sharing a stem, so the outbox gains no surface for a file nobody wrote on
 purpose. Until it lands there is no fallback: a two-item flush is the thing
 that does not work.
@@ -878,6 +1039,29 @@ part it names is present with a matching digest. Anything else — a manifest
 with a part missing, a part whose bytes do not match, a part the manifest does
 not name, no manifest at all — is left in the outbox, **published nowhere**,
 named in the refusal, and recovered by re-running the same verb.
+
+**A staged submission with no manifest at all is an orphan, and its fate is
+stated** (draft 5). A kill between the first part and the manifest's rename
+leaves parts whose names are all legal parts of one submission id with no
+`<id>-parts.json` beside them; nothing of that submission was ever published
+and nothing of it ever can be, because the flush restores only a manifested
+whole. The next flush on that lane therefore prints one informational line per
+orphan — `<VERB> STAGED ORPHAN id=<submission id> parts=<n> removed=true` on
+stdout — **removes those parts from the outbox, publishes no part of them, and
+carries on**, exiting 0 when the rest of the flush succeeds. The remedy is the
+one every unpushed record here has: re-run the same verb. It is removed rather
+than left because the tool knows exactly what it is and that it wrote it,
+which is what separates it from the other thing the outbox can hold: **a file
+that is not a legal item name — a bare `<id>.json` an older binary wrote — is
+never removed, is named in the refusal, and blocks every later flush on that
+lane until a person removes it** (work list 0a). The tool sweeps up after
+itself and never after anybody else.
+
+**The gate's `.summary` sidecar is inside the manifest** (draft 5). It is the
+`gate` part's own file under the name `<submission id>-gate.summary`, and the
+manifest names it with its destination and its own SHA-256 digest like every
+other file of the submission, so a gate whose summary is missing or altered
+publishes no part of itself either.
 
 That is what makes a crash between the read part and the review part harmless.
 With no manifest the flush publishes neither, so **the lane never holds a read
@@ -925,6 +1109,7 @@ The review record:
   "job": "",
   "verdict": "hold",
   "head": "cbde1fc6ba10c1430f9f90615c70706ea7aaa29e",
+  "base": "10a3bf6f2c7d41e0b95a8f3c6d2e17b40a9c8e55",
   "at": "2026-09-13T14:01:02Z",
   "started": "2026-09-13T13:44:10Z",
   "note": "",
@@ -956,7 +1141,10 @@ it. It is a row rule 4 accepts because the quote is **found on** line 798
 after the emphasis run is trimmed, which is the check rule 4 states and the
 one demanded test 4 pins.
 
-`side` is `head` or `base` and says which tree the `path:line` was checked in.
+`side` is `head` or `base` and says which tree the `path:line` was checked in,
+and `base` is the sha `--base` gave — the packet's own base — which is the tree
+every `base` side and every `base:` requirement of this record was checked in;
+it is empty when the record holds neither (rule 4, draft 5).
 `rule_kind` is one of exactly `quoted`, `base`, `external` and `proposed`
 (rule 4, draft 4), and it replaces draft 3's `proposed` boolean; `spec_pin`
 carries the pin of an `external` row and is empty otherwise; `spec_line` is
@@ -970,19 +1158,22 @@ minus `started` and is the only derived number in it, and `null` is the row's
 a dash; `0` is a measurement. `read` is empty for `abstain`, `child` and `card`.
 
 The answer record, under the same directory with the `answer-` stem, which is
-how the fold keeps the two apart — it never tries both decoders on one file.
+how the fold keeps the three apart — it never tries two decoders on one file.
 
-**`answer` is therefore a reserved word on `--who`, and the refusal is at the
-verb.** `safeName` (`internal/merge/records.go:108-116`) keeps `-` and the
-letters, so a `--who` of `answer` or of `answer-bob` writes a review record
-named `answer-...` or `answer-bob-...` under `reviews/<entry>/` — a file the
-fold decodes with the answer decoder and then refuses, `<VERB> FOLD`, blocking
-every report on that entry over a name a reader was free to choose. Every verb
-refuses a `--who` that is exactly `answer` or that begins `answer-`, **exit
+**`answer` and `policy` are therefore reserved words on `--who`, and the
+refusal is at the verb.** `safeName` (`internal/merge/records.go:108-116`)
+keeps `-` and the letters, so a `--who` of `answer` or of `answer-bob` writes
+a review record named `answer-...` or `answer-bob-...` under
+`reviews/<entry>/` — a file the fold decodes with the answer decoder and then
+refuses, `<VERB> FOLD`, blocking every report on that entry over a name a
+reader was free to choose — and a `--who` of `policy` or `policy-bob` does the
+same against the policy decoder (draft 5). Every verb refuses a `--who` that
+is exactly `answer` or `policy`, or that begins `answer-` or `policy-`, **exit
 2**, naming the word and the stem it collides with, before any path is built.
-The reserved set is that one word and that one prefix, because that is the one
-stem this tool spends; nothing else about a name is reserved and `--who` is
-otherwise any name the caller likes (the vocabulary section). (draft 3)
+The reserved set is those two words and those two prefixes, because those are
+the two stems this tool spends; nothing else about a name is reserved and
+`--who` is otherwise any name the caller likes (the vocabulary section).
+(drafts 3 and 5)
 
 ```json
 {
@@ -1001,7 +1192,32 @@ otherwise any name the caller likes (the vocabulary section). (draft 3)
 
 `of` is the finding this one duplicates and is empty unless `as` is `dup`.
 
-`version` is checked first in both, and a number this binary does not know is
+The policy record, under the same directory with the `policy-` stem, which
+keeps its decoder apart from the other two exactly as the `answer-` stem does
+(rule 7, draft 5):
+
+```json
+{
+  "version": 1,
+  "entry": "951",
+  "who": "glenn",
+  "readers": ["emma", "stella", "johnny"],
+  "reserved": ["freddy"],
+  "deadline": "2026-09-14T00:00:00Z",
+  "reason": "freddy's harness is down; his row may be waived at the deadline",
+  "head": "9f4a0c1d77b2e5a3c8106d4f2b9e77aa31c50ef8",
+  "at": "2026-09-13T16:03:10Z",
+  "file": "reviews/951/policy-glenn-9f4a0c1d77b2-20260913T160310Z-77bc1e.json"
+}
+```
+
+Its id is the stem `<who>-<head12>-<at>-<rand6>`, which is what `roster
+--policy <id>` names, and `roster` finds it in the fold it already makes of
+`reviews/<entry>/` — no path is guessed and none is a flag (rule 13). The
+record is immutable like every other here: a changed policy is a new record
+with a new id, and the roster names the id that closed each row.
+
+`version` is checked first in all three, and a number this binary does not know is
 refused by number. Decoding is strict: an unknown field refuses. A record that
 does not decode is never skipped: `packet`, `roster`, `dedupe` and `cost`
 print `<VERB> FOLD file=<path>: <reason>` and refuse, **exit 2**, because the
@@ -1051,18 +1267,22 @@ and the fourth is a fetch it already knows how to bound.
 
 **B. SPEC-MERGE rule 22, a submission is several named parts with a
 manifest.** "An outbox item is `<submission id>-<part>.json`, where `<part>`
-is one of exactly `read`, `gate`, `review` and `answer`. A submission also
-writes `<submission id>-parts.json`, its **manifest**, naming every part of
-that submission with the relative destination its `file` field gives and the
-SHA-256 digest of its bytes; the manifest is written last, by
+is one of exactly `read`, `gate`, `review`, `answer` and `policy`. A
+submission also writes `<submission id>-parts.json`, its **manifest**, which
+is an item and **not a part** — the sixth and last legal item name, and no
+part word is `parts` — naming every part of that submission with the relative
+destination its `file` field gives and the SHA-256 digest of its bytes, the
+gate's `.summary` sidecar among them; the manifest is written last, by
 create-and-rename, and a submission is restored only when its manifest is
 present and every part it names is present with a matching digest, each to the
 directory its part word maps to — `read` to `reads/`, `gate` to `gates/`,
-`review` and `answer` to `reviews/` — committed and confirmed together. A
-submission whose manifest is absent, incomplete or mismatched publishes no
-part of itself, is left in the outbox and is named in the refusal, and a file
-in the outbox that is not a known part of a submission is left alone and named
-in the refusal." Today the loop names the
+`review`, `answer` and `policy` to `reviews/` — committed and confirmed
+together. A submission whose manifest is present but incomplete or mismatched
+publishes no part of itself, is left in the outbox and is named in the
+refusal. A submission with **no manifest at all** is a staged orphan: its
+parts are named on one `STAGED ORPHAN` line, removed, and published nowhere,
+and the flush continues. A file in the outbox that is not a legal item name is
+left alone and named in the refusal." Today the loop names the
 outbox item `sub.ID() + filepath.Ext(it.Path)`
 (`internal/merge/records.go:168`), so two `.json` parts of one submission
 overwrite each other and only one lands, which is why a `line` verdict cannot
@@ -1072,7 +1292,9 @@ back to. It is written as a closed set of parts rather than "any file sharing
 the stem" on purpose: a glob over an outbox is a way for a file nobody wrote
 to be committed to a branch, and this loop already refuses a destination that
 is absolute or holds `..` (`records.go:275`). The `.summary` the loop knows by
-name today becomes the `gate` part's sidecar under the same rule.
+name today becomes the `gate` part's sidecar under the same rule, named **in**
+the manifest with its own digest, so a submission whose sidecar is missing or
+altered publishes nothing (draft 5).
 
 **C. SPEC-MERGE, the read record is unchanged and `status --reads` may name
 this tool.** No field is added to the read record (rule 11 says why). `STATUS
@@ -1095,18 +1317,20 @@ to discuss a HOLD writes a note themselves. This tool adds no verb to the bus.
   call to a host; its only writes are packet files at `--out`, and records on
   the lane branch through the records code nova-merge already trusts.
 - **It does not decide who the readers are.** `--readers` is the caller's, per
-  call, and the tool has no roster file and no notion of a team.
+  call, or the caller's own `policy` record on the lane, written by an actor
+  through the verb; the tool keeps no roster file, has no notion of a team, and
+  writes no policy nobody ran the verb to write.
 - **It does not notify.** No bus note, no PR comment, no wake. The wake is
   nova-wake's (amendment note A).
 - **It does not default a read.** No deadline turns a silence into yes. A
   reserved line's silence past the deadline is `waived`, not `abstain`, and it
-  is `waived` only because the caller named that line reserved, named the
-  deadline, and named themselves: the line carries `by=reserved
-  policy_by=<name> policy_reason=<text> deadline=<stamp>` — the policy's own
-  word, the actor who selected or changed the policy, their reason and the
-  caller's stamp, **never the silent reader's name**, because a `by=` naming
-  the reader would say the reader closed the row (draft 3, draft 4) — and an
-  `abstain` is only ever a reader's own recorded verdict.
+  is `waived` only because an actor wrote a `policy` record naming that line
+  reserved, naming the deadline, and naming themselves: the row carries
+  `policy=<id> by=reserved policy_by=<name> policy_reason=<text>
+  deadline=<stamp>` — the policy's own word, the actor who selected or changed
+  the policy, their reason and their stamp, **never the silent reader's name**,
+  because a `by=` naming the reader would say the reader closed the row (drafts
+  3, 4 and 5) — and an `abstain` is only ever a reader's own recorded verdict.
 - **It does not read the reader's harness.** Cost comes from a usage row the
   caller hands it; the tool opens no session log and knows no provider.
 - **It does not infer which rule a hunk serves.** Cited, changed, or named;
@@ -1155,19 +1379,20 @@ to discuss a HOLD writes a note themselves. This tool adds no verb to the bus.
   (draft 4). The tool will not guess it away: deciding that two claims are one
   thing is the judgment rule 9 refuses to make.
 - **`waived` is the caller's word, not the reader's.** A reserved line silent
-  past the deadline ratifies the entry because the caller named them reserved,
-  named the deadline, and named themselves in `--policy-by` with a reason. The
-  state is spelled differently from `abstain` and carries `by=`, `policy_by=`
-  and `policy_reason=` so the record says who decided and why, but nothing in
-  the tool can tell whether that actor was **entitled** to reserve that line.
-  That is a person's judgment, recorded here and checked by people.
-- **`roster` keeps no policy file, so the `ROSTER READER` and `ROSTER OK`
-  lines are the policy record** (draft 4). The tool has no roster store and
-  invents none (rule 13, "it does not decide who the readers are"), so the
-  durable audit record of a waiver is the output of the run that made it,
-  which now names the actor and the reason on the same line as the state it
-  produced. A coordinator who wants that kept keeps it; the tool will not
-  write a store it would then have to defend.
+  past the deadline ratifies the entry because an actor named them reserved,
+  named the deadline, and named themselves in a `policy` record with a reason.
+  The state is spelled differently from `abstain` and carries `policy=`,
+  `by=`, `policy_by=` and `policy_reason=` so the record says who decided and
+  why, but nothing in the tool can tell whether that actor was **entitled** to
+  reserve that line. That is a person's judgment, recorded here and checked by
+  people.
+- **The policy record says what was decided and by whom, never that it was
+  right** (draft 5). `roster` reads the policy an actor wrote and prints its id
+  beside every row it closed; it keeps no roster store, invents no policy, and
+  refuses to waive a row with no record behind it (rule 13, "it does not decide
+  who the readers are"). A policy record is immutable like every other record
+  here, so a changed policy is a new record with a new id and the roster names
+  the one that closed the row.
 - **`abstain=` on `ROSTER OK` undercounts a TEAM-SPEC (mas-bandwidth/standard)
   rule 5 tally, and the difference is `waived=`.** (draft 3) This tool spells a
   reserved line's silence past the deadline `waived` and counts it in
@@ -1209,6 +1434,26 @@ One line per rule. Each must be seen red before it is trusted.
    the checkout (`internal/merge/records.go:519-521`) while these verbs fold
    the fetched tip: the two agree on a current checkout and the test pulls
    first rather than assuming one (draft 3).
+   **`TestThePacketIsTheDelta/OnePacketServesEveryReaderInRange`** (rule 1,
+   draft 5): two readers whose range at one head is the same get packets whose
+   `id=` is equal and whose six reader-independent sections are **byte for
+   byte identical**, while "Your prior verdicts on this entry" and `who=`
+   differ; the second, built with `--reuse <first>`, makes **no tree read at
+   all** — the test counts the run's `git` invocations and its opens under the
+   clone and asserts none beyond the one host call that resolves the head, so
+   a mutation that rebuilds the diff turns it red — and prints `PACKET OK …
+   reused=true`; a `--reuse` of a packet built for another range is exit 2
+   `PACKET REUSE asked=<id> found=<id>` and writes no file; `--reuse` with
+   `--spec`, `--rule` or `--max-bytes` is exit 2; and no reader's verdict, and
+   no validation of another reader's findings, is carried by a reused packet
+   (the verdict binds to `--who` and `--head`, demanded test 6).
+   **`/StaleAndCurrentArePrinted`** (draft 5, the two lines that had no
+   demanded test): `packet --head <sha>` for a head that is not the entry's
+   current writes no file and is exit 1 `PACKET STALE entry=<n> asked=<sha12>
+   current=<sha12>`; a `packet` with no `--head` writes the entry's current
+   head on its first line; `VERDICT OK` prints `current=true` at that head and
+   `current=false` at an earlier one, and a mutation that prints `current=true`
+   for a stale head turns the test red.
 2. `TestARuleIsTouchedMechanically`: the fixture spec holds **two** sequences
    starting at `^1. ` at column 0, under `## The rules, numbered` and under
    `## Tests this spec demands`, with a different rule 3 in each — the shape
@@ -1231,6 +1476,14 @@ One line per rule. Each must be seen red before it is trusted.
    `dup <id1>` records a verdict whose `dup=1`, creates no new finding, and
    `dedupe` prints `id1` with `seen=stella:…,emma:… dups=1`; a `dup` of an id
    that is not open on this entry is exit 2 naming the row.
+   **`TestOpenFindingsTravel/OkIsNeverOpenAndNitIs`** (rules 3 and 5, draft
+   5): an APPROVE carrying two `ok` rows and one `nit` leaves `open=1` on the
+   entry — the `nit` and neither `ok` — the two `ok` rows appear in no later
+   packet's open-findings table and are `carried=0` at that reader's next
+   record, and they are counted only in `ok=` on `VERDICT OK`; the `nit`
+   appears in the next packet and is `carried=1` at that reader's next record
+   that does not list it; a mutation that opens an `ok` row turns the test
+   red, and so does one that drops the `nit` from the next packet.
 4. `TestTheGroundIsChecked`: a row naming a path absent at the head, a line
    past the file's end, a spec line whose text differs by one character, each
    exit 2 with `VERDICT REFUSED row=<n>` and the check named; all three in one
@@ -1246,31 +1499,31 @@ One line per rule. Each must be seen red before it is trusted.
    findings file of `--max-rows` + 1 rows is exit 2 naming the count, and a
    file of 5,000 failing rows prints twenty `VERDICT REFUSED row=` lines and
    one `VERDICT MORE kind=row shown=20 total=5000 refused=5000`.
-   **`TestTheGroundIsChecked/RequirementProvenance`** (rule 4, draft 4): a
-   third field of `base:<spec>:<line>` whose quote is on that line **at the
-   base** and absent at the head records with `rule_kind=base` and prints
-   `rule=base`, and the same requirement written head-side is exit 2 naming
-   the row — so a requirement the change deleted is never forced into
-   `rule=proposed`; an `ext:<40-hex>:<path>:<line>` row records with
+   **`TestTheGroundIsChecked/RequirementProvenance`** (rule 4, drafts 4 and
+   5): with `--base <sha>`, the sha the packet's first line carried as
+   `base=`, a third field of `base:<spec>:<line>` whose quote is on that line
+   **in the tree at that base** and absent at the head records with
+   `rule_kind=base` and prints `rule=base` on its own `VERDICT ROW` line, and
+   the same requirement written head-side is exit 2 naming the row — so a
+   requirement the change deleted is never forced into `rule=proposed`;
+   **the same findings file run without `--base` is exit 2 naming the flag, a
+   `--base` naming no commit in the clone is exit 2, and a `base:<path>:<line>`
+   second field is checked in that same tree** — so test 4's `base:` cases are
+   writable at last, and a mutation that falls back to the head for either
+   `base:` form turns the test red (draft 5);
+   an `ext:<40-hex>:<path>:<line>` row records with
    `rule=external pin=<pin>` while the run opens no file for it, and a
    mutation that tries to resolve the pin turns the test red; an `ext:` with
-   a malformed pin, an empty path, a line of `0` or an empty fourth field is
-   exit 2 naming the row; a `+` row still records `rule=proposed`; `base=`,
+   a malformed pin — a token holding a `:`, a token holding a space, a
+   sixty-five character token — an empty path, a line of `0` or an empty
+   fourth field is exit 2 naming the row; a `+` row still records
+   `rule=proposed`; **every recorded row prints one `VERDICT ROW` line
+   carrying its `rule=` word and its `pin=`, and a mutation that prints the
+   word nowhere turns the test red** (draft 5); `base=`,
    `external=` and `proposed=` on `VERDICT OK` count the three apart; the
    four words are the only `rule_kind` any record holds; and a source test
    finds no exec, no `go test` and no compile in the package, so no form of
    requirement causes a reproducer to be run.
-   **`TestTheGroundIsChecked/InputIsBoundedWhileRead`** (rule 12, draft 4): a
-   findings file one byte past `--max-input-bytes` is exit 2 `VERDICT REFUSED
-   input=bytes file=<path> limit=<n>`, and a 64 MiB fixture is refused having
-   read at most the bound — the test asserts the bytes read, so a mutation
-   that reads the file whole and measures afterwards turns it red; one line
-   past `--max-line-bytes` inside an otherwise small file is exit 2
-   `input=line row=<n>` at that line; `--max-input-bytes 0`, `-1`,
-   `--max-line-bytes 0` and `-1` are each exit 2; the same two bounds refuse
-   an oversized `--usage` file the same way; and a file that passes
-   `--max-rows` but not the byte bound is refused by bytes, because five
-   hundred enormous rows are five hundred rows.
 5. `TestAnApproveNamesWhatItCompared`: `approve` with an empty findings file is
    exit 2 and the sentence; with one `ok` row it records; with a `block` row
    it is refused naming rule 5; `hold` with only `nit` rows is refused; **`hold`
@@ -1279,6 +1532,15 @@ One line per rule. Each must be seen red before it is trusted.
    `nit` is refused naming rule 5; `hold` with one `fix` row records;
    `abstain` with a findings file is refused and with `--reason` records with
    `rows=0`.
+   **`TestAnApproveNamesWhatItCompared/CannotStandOverItsOwnBlock`** (rules 5
+   and 8, draft 5): a reader with an open `block` of their own recording an
+   APPROVE whose findings file neither `close`s nor `dup`s it is exit 2, one
+   `VERDICT REFUSED approve=open id=<id> <path>:<line> sev=block` line per
+   open id under the cap, with nothing written to the outbox or the lane; the
+   same APPROVE carrying a `close <id>` row records with `closed=1`; an
+   APPROVE over an open `nit` of theirs records and prints `VERDICT CARRIED`
+   for it; and a mutation that closes the block by the verdict word, printing
+   `VERDICT CLOSED` after the fact, turns the test red.
 6. `TestOnlyALineFillsACell`: `verdict --kind child --of emma` and `--kind
    card --of emma --job j1` at H write review records and no read record, the
    nova-merge fold (`nova-merge status`) shows `reads=0a/0h`, and `roster
@@ -1309,28 +1571,41 @@ One line per rule. Each must be seen red before it is trusted.
    `merge_read=hold`, not `needs-read` (draft 3); a mutation that reads a
    stale approve as yes turns the test red; a mutation that expires `b`'s hold
    at T turns it red.
-   **`TestSilenceIsPending/PolicyActorAndReasonRequired`** (rule 7, draft 4):
-   `--reserved` and `--deadline` without `--policy-by`, or without
-   `--policy-reason`, is exit 2 naming the missing flag, and so is any other
-   subset of the four; with all four, `d`'s waived row prints `by=reserved
-   policy_by=<name> policy_reason=<text>` and `ROSTER OK` carries the same
-   two, while a run with no waived row prints `policy_by=- policy_reason=-`;
-   a `--policy-by` naming a reserved reader (`d`) and one naming a required
-   reader (`a`) are each exit 2 naming the flag; a mutation that ratifies an
-   entry from a `waived` row whose `policy_by=` is `-` turns the test red,
-   and so does one that puts the reader's own name in `policy_by=`.
+   **`TestSilenceIsPending/PolicyIsARecord`** (rule 7, draft 5): `roster
+   --readers a,b,c --reserved d --deadline T` with **no** `--policy` leaves
+   `d` `pending` after T, never `waived`, and a mutation that waives a row
+   with no policy record behind it turns the test red; `policy --who g
+   --readers a,b,c --reserved d --deadline T --reason "<text>"` writes exactly
+   one immutable `policy-g-<head12>-<at>-<rand6>.json` under
+   `reviews/<entry>/`, as one submission with its manifest, and prints its id;
+   `roster --policy <id>` after T prints `d` `waived policy=<id> by=reserved
+   policy_by=g policy_reason=<text>` and `ROSTER OK` carries the same three,
+   while a run whose rows are all filled prints `policy=<id> policy_by=-
+   policy_reason=-`; `--policy` together with `--readers` is exit 2; a
+   `policy` verb whose `--who` is one of its own `--readers` (`a`) or of its
+   own `--reserved` (`d`) is exit 2 naming the flag; `roster --policy` of an
+   id no record on the lane carries is exit 2 naming the id; a second `policy`
+   record leaves the first unchanged and the roster names the id that closed
+   the row; a `--who` of `policy` or of `policy-bob` is exit 2 on every verb,
+   naming the reserved word and the `policy-` stem; and a mutation that
+   ratifies an entry from a `waived` row whose `policy=` is `-`, or one that
+   puts the silent reader's own name in `policy_by=`, turns the test red.
 8. `TestNewestPerReaderDecides`: `stella hold@H1` with findings f1, f2;
    `stella hold@H2` re-listing `dup f1` and adding f3:
    **`/OmissionCarriesForward`** (rule 8, draft 4) — open is `{f1, f2, f3}`,
    f2 is **not** closed, that record prints `closed=0 carried=1` with one
    `VERDICT CARRIED id=f2 <path>:<line>` line, and a mutation that closes f2
-   by omission turns the test red. **`/ClosureIsExplicit`** (rule 8, draft 4):
+   by omission turns the test red. **`/ClosureIsExplicit`** (rule 8, drafts 4
+   and 5):
    a `close f2` row in stella's next findings file prints `closed=1` with one
    `VERDICT CLOSED id=f2` and leaves f1 and f3 open; a `close` of a finding
    `emma` recorded, and a `close` of an id not open on this entry, are each
    exit 2 naming the row, and a mutation that lets one reader close another's
-   finding turns the test red; `stella approve@H3`: open is empty and
-   `closed=2`; **a `child` verdict recorded with
+   finding turns the test red; **`stella approve@H3` with f1 and f3 still open
+   at `block` is exit 2, one `VERDICT REFUSED approve=open id=` line per id,
+   and records nothing; the same APPROVE carrying `close f1` and `close f3`
+   records with `closed=2` and open empty, and a mutation that closes them by
+   the verdict word turns the test red** (draft 5); **a `child` verdict recorded with
    `--who stella` at H3 changes nothing — her standing, her open findings and
    her cell are the same before and after** — and a mutation that folds a
    child into a line's ordering turns it red; an author `answer --as fixed` on
@@ -1404,28 +1679,41 @@ One line per rule. Each must be seen red before it is trusted.
     prints `PACKET FOLD`; **`--who answer` and `--who answer-bob` are each
     exit 2 on every verb, naming the reserved word and the `answer-` stem, and
     a mutation that lets either through writes a review record the fold refuses
-    as an answer and turns the test red** (draft 3); **`TestOneFactOneWriter/PartialStagingPublishesNothing`** (rule 11 and
-    amendment B, draft 4): a kill after `<id>-read.json` is staged and before
-    `<id>-parts.json` is renamed leaves the next flush publishing **no new
-    file at all** — `reads/` in particular gains none, so `roster` still shows
-    that reader `pending` and no lone read record can qualify them as a `line`
-    reader on restart (rule 8) — the submission stays in the outbox and is
-    named in the refusal, and re-running the same verb lands both parts in one
-    commit; a manifest naming three parts with two present, a part whose bytes
-    were edited after the manifest was written, and a part the manifest does
-    not name are each a refusal that publishes no part of that submission; a
-    `read` part whose `file` names `reviews/951/…`, one naming an absolute
-    path and one holding `..` are each a refusal before any part is restored;
-    a mutation that restores parts without reading the manifest, and one that
-    checks the manifest's names but not its digests, each turn the test red; `reviews/` is absent from
+    as an answer and turns the test red** (draft 3);
+    **`TestOneFactOneWriter/PartialStagingPublishesNothing`** (rule 11 and
+    amendment B, drafts 4 and 5): a kill after `<id>-read.json` is staged and
+    before `<id>-parts.json` is renamed leaves the next flush publishing **no
+    new file at all** — `reads/` in particular gains none, so `roster` still
+    shows that reader `pending` and no lone read record can qualify them as a
+    `line` reader on restart (rule 8) — and that flush prints one `VERDICT
+    STAGED ORPHAN id=<id> parts=1 removed=true` line on stdout, **removes the
+    staged part, publishes nothing and exits 0**, and re-running the same verb
+    lands both parts in one commit; a mutation that leaves the orphan in the
+    outbox, and one that publishes it, each turn the test red; a bare
+    `<id>.json` an older binary left in the outbox is **not** an orphan, is
+    never removed, is named in the refusal and blocks the flush until a person
+    removes it, and a mutation that removes it turns the test red; the legal
+    item names are the closed six — the `read`, `gate`, `review`, `answer` and
+    `policy` parts and the `parts` manifest — a seventh name is a refusal, and
+    a gate submission whose `<id>-gate.summary` sidecar is missing, or whose
+    sidecar bytes do not match the digest the manifest gives, publishes no part
+    of itself (draft 5); a manifest naming three parts with two present, a part
+    whose bytes were edited after the manifest was written, and a part the
+    manifest does not name are each a refusal that publishes no part of that
+    submission; a `read` part whose `file` names `reviews/951/…`, one naming an
+    absolute path and one holding `..` are each a refusal before any part is
+    restored; a mutation that restores parts without reading the manifest, and
+    one that checks the manifest's names but not its digests, each turn the
+    test red; `reviews/` is absent from
     nova-merge's fold (a review record that does not decode does not block
     `nova-merge run`); a `roster` run while a `nova-merge run` pass holds the
     checkout succeeds, and a mutation that takes the checkout lock in any of
     the four report verbs turns the test red.
 12. `TestBounded`: fifty readers' records on one entry across twelve heads:
     `roster --max 20` prints twenty `READER` lines and one `MORE`; `dedupe`
-    and `cost` the same; `verdict` caps `row`, `closed` and `carried` separately, and a
-    flat cap across the three turns the test red; the counts on each `OK` line
+    and `cost` the same; `verdict` caps `row`, `recorded`, `closed`, `carried`
+    and `open` separately, and a flat cap across the five turns the test red;
+    the counts on each `OK` line
     say fifty; the packet for one reader is under `--max-bytes` with the
     prior-verdicts table collapsed to counts past `--max`; `--max -1` is exit
     2 and `--max 0` prints all fifty; **fifty undecodable records print at
@@ -1434,8 +1722,21 @@ One line per rule. Each must be seen red before it is trusted.
     2, and `roster`'s fold lines carry `ratified=false`** — a mutation that
     prints one line per bad record turns the test red (draft 3); lines and
     bytes measured and written into the commit.
+    **`TestBounded/InputIsBoundedWhileRead`** (rule 12, draft 4, moved here
+    from test 4 in draft 5 so that rule 12's line sits under rule 12's test):
+    a findings file one byte past `--max-input-bytes` is exit 2 `VERDICT
+    REFUSED input=bytes file=<path> limit=<n>`, and a 64 MiB fixture is
+    refused having read at most the bound — the test asserts the bytes read,
+    so a mutation that reads the file whole and measures afterwards turns it
+    red; one line past `--max-line-bytes` inside an otherwise small file is
+    exit 2 `input=line row=<n>` at that line; `--max-input-bytes 0`, `-1`,
+    `--max-line-bytes 0` and `-1` are each exit 2; the same two bounds refuse
+    an oversized `--usage` file the same way; and a file that passes
+    `--max-rows` but not the byte bound is refused by bytes, because five
+    hundred enormous rows are five hundred rows.
 13. `TestNothingGuessedNothingSent`: every verb without `--lane` is exit 2
-    `refusing to guess`; `packet` without `--out` is exit 2; `roster` without
+    `refusing to guess`; `packet` without `--out` is exit 2; `roster` with
+    neither `--readers` nor `--policy` is exit 2, and `policy` without
     `--readers` is exit 2; a fake bus directory and a fake host record zero
     writes across every verb; a source test finds no call to `nova-bus`, no
     `gh pr comment`, no `gh pr review`, and no write outside `--out` and the
@@ -1453,21 +1754,27 @@ that execute `docs/CLI.md`'s `### First run`.
    built until it lands.** **Three** additive changes to the tool that already
    exists (draft 3). **(a)** Amendment B's named parts in `writeOutbox` and
    `outbox` (`records.go:162-265`), replacing `sub.ID() +
-   filepath.Ext(it.Path)` with `<submission id>-<part>.json` and the closed
-   four-part set **and the `<submission id>-parts.json` manifest with its
+   filepath.Ext(it.Path)` with `<submission id>-<part>.json`, the closed
+   five-part set **and the `<submission id>-parts.json` manifest with its
    digests**, so one submission can carry two `.json` records and a crash
    between them publishes neither. An `Item`
    (`records.go:130-133`) carries only `Path` and `Body`, so **the part is
    derived and never passed**: from the first directory of the record's own
    `file` field — `reads/` is `read`, `gates/` is `gate`, `reviews/` is
-   `review` — and, inside `reviews/`, from the `answer-` stem, which is
-   `answer`. The gate's `.summary` sidecar, which the loop knows by name today
-   (`SummaryFile`, `records.go:100-103`), is named `<submission
-   id>-gate.summary` by the same rule. **The upgrade is not silent and must be
-   in the release note**: a bare `<id>.json` an older binary left in an outbox
-   is not a known part, so amendment B leaves it alone and names it in the
-   refusal — and it then blocks every later flush on that lane until a person
-   removes it. **(b)** `merge.ReadItem(entry, who, head, verdict, note string,
+   `review` — and, inside `reviews/`, from the `answer-` and `policy-` stems,
+   which are `answer` and `policy`. The gate's `.summary` sidecar, which the
+   loop knows by name today (`SummaryFile`, `records.go:100-103`), is named
+   `<submission id>-gate.summary` by the same rule and is named in the
+   manifest with its own digest (draft 5). **The upgrade is not silent and
+   must be in the release note**: a bare `<id>.json` an older binary left in
+   an outbox is not a legal item name, so amendment B leaves it alone and
+   names it in the refusal — and it then blocks every later flush on that lane
+   until a person removes it. A **staged orphan** is the other case and is
+   not that one: parts whose names are all legal parts of one submission id,
+   with no manifest beside them, are named on a `STAGED ORPHAN` line, removed
+   by that run, published nowhere, and the flush continues (draft 5). The tool
+   removes what it knows it wrote and leaves alone what it does not.
+   **(b)** `merge.ReadItem(entry, who, head, verdict, note string,
    s merge.Submission) (merge.Item, error)`, the read record's construction
    and marshal moved out of `cmd/nova-merge/verbs.go:384-386` so both binaries
    build that format through one function (rule 11); `entry` is the directory
@@ -1477,12 +1784,14 @@ that execute `docs/CLI.md`'s `### First run`.
    reason and its single re-read — so a report verb never takes the checkout
    lock. Each with nova-merge's own tests green and a golden over the read
    record's bytes.
-1. **`internal/review/record.go`** — the review record and the answer record:
+1. **`internal/review/record.go`** — the review, answer and policy records:
    strict decode, `version` first, `findings` with every field required and
    `side`/`rule_kind` in the closed sets and `spec_pin` beside them, `usage`
    in nova-swarm's names with the `source`/`bench`/`job`/`attempt` join and
    `digest`, or a bare `receipt` id, numbers or null and `seconds` derived, the file names from the submission
-   id with the `answer-` stem keeping the two decoders apart, the write
+   id with the `answer-` and `policy-` stems keeping the three decoders apart,
+   the policy record with its `readers`, `reserved`, `deadline` and `reason`,
+   the write
    through `internal/merge`'s outbox and CAS loop as one submission with the
    read record when there is one (item 0a). Tests: demanded 11.
 2. **`internal/review/findings.go`** — the findings file parser: five fields,
@@ -1503,7 +1812,8 @@ that execute `docs/CLI.md`'s `### First run`.
    `reviews/` at a fetched tip, through item 0c and never the checkout lock:
    per-reader-and-kind newest, the author resolved from the host, open
    findings, dup chains, answers, the read-and-review pair check; the roster
-   states including `waived` with its `policy_by=`/`policy_reason=`
+   states including `waived` with the `policy=<id>`, `policy_by=` and
+   `policy_reason=` it reads from the policy record that closed the row
    and `merge_read=`; findings carried forward and closed only explicitly; the
    dedupe grouping with `members=`, `unreported=` scoped to each reader's own
    range and `blind=`; the cost sums with each receipt identity counted once
@@ -1513,7 +1823,9 @@ that execute `docs/CLI.md`'s `### First run`.
    lane's clone, the byte bound with per-file cuts and the remedy command, the
    positive `--max-bytes` and the too-small-for-the-header refusal, the
    unique `O_EXCL` temporary and the rename. Tests: demanded 1 and 12.
-6. **`cmd/nova-review/main.go`** — the verbs, the flag refusals, the output
+6. **`cmd/nova-review/main.go`** — the verbs including `policy`, the flag refusals
+   (the `--readers`/`--policy` exclusion, `--base` for a `base:` row, `--reuse`
+   and its id check, the reserved `answer` and `policy` names), the output
    grammar exactly as above, `--max` and `--max-bytes`, the exit table, `help`
    and `version`. Tests: demanded 13; every refusal sentence; every exit code.
 7. **`docs/CLI.md`'s `### First run`** — `init` a lane with a bare remote,
@@ -1574,9 +1886,42 @@ at that head and nothing here touches it.
 | 6 bounds | `--max-rows` does not bound one enormous line or file | rule 12: `--max-input-bytes` and `--max-line-bytes`, enforced on a bounded reader during the read, refusing before allocation |
 | 7 atomic pair | a closed part vocabulary is not proof every part exists | rule 11 and amendment B: a `<submission id>-parts.json` manifest with per-part digests, written last, and a submission restored only whole — so a crash after staging the read publishes nothing, and destinations stay confined to each part word's own directory |
 
+Draft 5 narrowed two of those repairs. Closure is a `close <id>` row and
+nothing else: an APPROVE over an open block of the approver's own is refused
+rather than closing it, so the "printing CLOSED after the fact" pattern is
+gone from the APPROVE case as well as the HOLD case. And the policy an audit
+reads is a record on the lane branch written by the actor, not the `roster`
+run's own output.
+
 No reproducer is executed for any requirement form (what it deliberately does
 not do), and no new product scope is added: every repair above is a contract
 on a rule that was already here.
+
+## Reads folded, 2026-09-13 (draft 4 to draft 5)
+
+Rowan's own read on Fable at `399c9b34` (nova-tools#236 comment 5657139511),
+an APPROVE with seven MEDIUM and six LOW, every `path:line` it cites opened at
+that head. Every MEDIUM is folded above and every LOW with it; none reopens a
+decided question and none adds product scope.
+
+| the number | the ask | the repair |
+|---|---|---|
+| M1 | a run's stdout is not the audit record of a waiver | rule 7: a `policy` verb writes one immutable `policy-<who>-<head12>-<at>-<rand6>.json` under `reviews/<entry>/`, the `answer-` pattern; `roster --policy <id>` replaces the four flags, and a row is `waived` only under a policy record |
+| M2 | `verdict` cannot find "the packet's base" | rule 4: the packet's base is the sha the packet's first line carried as `base=`, recorded there at creation; `verdict --base <sha>` carries it back and is required for any `base:` row |
+| M3 | `rule=` is printed by no line | the grammar gains `VERDICT ROW`, one capped line per recorded row, carrying `rule=` and `pin=` where the row's other fields are printed |
+| M4 | the manifest is a fifth name and the orphan has no fate | six legal item names, closed: five parts and the `parts` manifest, which is not a part; a staging with no manifest is a `STAGED ORPHAN`, named, removed, published nowhere, on a run that exits 0 |
+| M5 | are `ok` and `nit` rows open findings? | rule 3: an `ok` row is never a finding and is never carried; a `nit` is a finding, travels and carries forward, and blocks nothing |
+| M6 | nothing says what a second reader reuses | rule 1 and the packet section: every section but "Your prior verdicts" is a pure function of `(entry, head, range)`, the packet's `id=` names that tuple, and `packet --reuse <file>` hands a second reader the same bytes with no tree read |
+| M7 | APPROVE closes by verdict word | rule 8: the only closure is a `close <id>` row, and an APPROVE standing over that reader's own open `block` or `fix` is refused, exit 2, naming the ids |
+
+The six LOWs are folded in place, in order: the fold is rules 3 and 9 (:28); a
+caller-supplied version token has a grammar and holds no `:`, so "malformed
+pin" has a meaning; the receipt id has a shape and the store is named "the
+caller's accounting store (nova-tokens in this house)"; `PACKET STALE` and
+`VERDICT OK current=` have their clauses in demanded test 1; rule 12's
+`InputIsBoundedWhileRead` moves from test 4 to `TestBounded`; and the gate's
+`.summary` sidecar is named **in** the manifest with its own digest. No LOW is
+left open.
 
 ## Reads folded, 2026-09-13 (draft 2 to draft 3)
 
