@@ -65,6 +65,24 @@ Task corrections/reassignment retain lineage and reconcile cancellation, lease
 and side-effect authority under the existing fencing rules. Imported messages
 remain data: validated coordinator verbs apply their resulting changes.
 
+Expose a named `friends` section containing every known friend, including idle,
+resting and unavailable friends. Under each friend, expose `working` task
+references and separate pending/acknowledged assignments. The references point
+to canonical work nodes and never become second containment parents or duplicate
+completion/cost records. A direct friend lookup returns its status and working
+count; expanding `friends/<friend>/working` reads only that indexed task list.
+Worker pools may be linked capabilities beneath a friend, but generic one-shot
+workers are not silently promoted into friend identities.
+
+Each assignment in that friend's view records the canonical task ID, responsible
+friend, executing actor/worker, actual observed model, provider/harness, bench,
+attempt/job ID and current status, with usage/cost receipt references. Distinguish
+requested model from observed model; unknown stays unknown. A friend's usual
+model is not proof of the model executing a delegated task. Multiple concurrent
+attempts keep separate model and usage attribution; retries never overwrite the
+previous attempt. The compact view must answer "friend, task, executing model"
+directly from these indexed records, showing delegated execution explicitly.
+
 Maintain counters and indexes incrementally with assignments, release, completion
 and observation changes. Friend lookup and current assigned-count lookup are
 constant-time resident operations; enumerating a friend's k tasks costs O(k),
