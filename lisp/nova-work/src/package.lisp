@@ -22,6 +22,12 @@
    #:journal-mismatch
    #:journal-mismatch-path
    #:journal-mismatch-what
+   #:journal-sync-failed
+   #:journal-sync-failed-path
+   #:journal-sync-failed-reason
+   #:journal-uncertain-write
+   #:journal-uncertain-write-path
+   #:journal-uncertain-write-reason
    ;; restricted data and canonical serialization
    #:+absent+
    #:absentp
@@ -80,11 +86,15 @@
    #:open-file-journal
    #:close-file-journal
    #:with-file-journal
+   #:journal-fail-sync-on
    #:replay-journal
    #:read-header
    #:read-record-frame
    #:journal-path
    #:journal-seq
+   #:journal-uncertain-p
+   #:sync-stream
+   #:sync-directory
    ;; kernel
    #:make-kernel
    #:kernel-state

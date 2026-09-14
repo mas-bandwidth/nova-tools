@@ -37,6 +37,22 @@
                      (journal-mismatch-path c)
                      (journal-mismatch-what c)))))
 
+(define-condition journal-sync-failed (journal-error)
+  ((path :initarg :path :reader journal-sync-failed-path)
+   (reason :initarg :reason :reader journal-sync-failed-reason))
+  (:report (lambda (c s)
+             (format s "journal sync failed on ~A: ~A"
+                     (journal-sync-failed-path c)
+                     (journal-sync-failed-reason c)))))
+
+(define-condition journal-uncertain-write (journal-error)
+  ((path :initarg :path :reader journal-uncertain-write-path)
+   (reason :initarg :reason :reader journal-uncertain-write-reason))
+  (:report (lambda (c s)
+             (format s "journal ~A is in uncertain-write state; recovery required: ~A"
+                     (journal-uncertain-write-path c)
+                     (journal-uncertain-write-reason c)))))
+
 ;;; Instrumentation. `open-count-is-read-not-computed` (SPEC-WORK.md:3229) asks
 ;;; for zero visits, zero parses and zero replays on a resident current-revision
 ;;; |O| query, so each of the three has a counter and every path that does one

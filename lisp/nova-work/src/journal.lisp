@@ -97,15 +97,54 @@ only property this fake carries."
 (eval-when (:compile-toplevel :load-toplevel :execute)
   (require :sb-posix))
 
-(defun sync-stream (stream)
-  "Flush internal buffers and perform POSIX fsync on the underlying file descriptor."
+(defun sync-stream (stream &key (path "unknown"))
+  "Flush internal buffers and perform POSIX durable sync (F_FULLFSYNC on Darwin, fsync on other POSIX)
+on the underlying file descriptor. Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
   (finish-output stream)
   #+sbcl
   (let ((fd (ignore-errors (sb-sys:fd-stream-fd stream))))
-    (when (and fd (>= fd 0))
-      (sb-posix:fsync fd)))
+    (unless (and fd (integerp fd) (>= fd 0))
+      (error 'journal-sync-failed :path path :reason "cannot obtain valid file descriptor for stream"))
+    (let ((ret (handler-case
+                   #+(and sbcl darwin) (sb-posix:fcntl fd 51 0)
+                   #+(and sbcl (not darwin)) (sb-posix:fsync fd)
+                 (error (c)
+                   (error 'journal-sync-failed :path path :reason (format nil "system sync error: ~A" c))))))
+      (unless (eql ret 0)
+        (error 'journal-sync-failed :path path :reason (format nil "sync returned ~D" ret)))
+      t))
   #-sbcl
-  (finish-output stream))
+  (error 'journal-sync-failed :path path
+         :reason "unsupported platform: durable file synchronization requires SBCL with POSIX support"))
+
+(defun sync-directory (dir-path)
+  "Synchronize parent directory DIR-PATH to non-volatile storage.
+Signals JOURNAL-SYNC-FAILED if unsupported or if synchronization fails."
+  #+sbcl
+  (let ((dir-str (namestring (merge-pathnames dir-path))))
+    (let ((fd nil))
+      (unwind-protect
+           (progn
+             (setf fd (handler-case (sb-posix:open dir-str sb-posix:o-rdonly 0)
+                        (error (c)
+                          (error 'journal-sync-failed
+                                 :path dir-str
+                                 :reason (format nil "cannot open directory for sync: ~A" c)))))
+             (when (or (null fd) (< fd 0))
+               (error 'journal-sync-failed :path dir-str :reason "invalid directory fd"))
+             (let ((ret (handler-case
+                            #+(and sbcl darwin) (sb-posix:fcntl fd 51 0)
+                            #+(and sbcl (not darwin)) (sb-posix:fsync fd)
+                          (error (c)
+                            (error 'journal-sync-failed :path dir-str :reason (format nil "directory sync error: ~A" c))))))
+               (unless (eql ret 0)
+                 (error 'journal-sync-failed :path dir-str :reason (format nil "directory sync returned ~D" ret)))
+               t))
+        (when (and fd (>= fd 0))
+          (ignore-errors (sb-posix:close fd))))))
+  #-sbcl
+  (error 'journal-sync-failed :path (namestring dir-path)
+         :reason "unsupported platform: durable directory synchronization requires SBCL with POSIX support"))
 
 (defclass file-journal ()
   ((path :initarg :path :reader journal-path)
@@ -113,20 +152,22 @@ only property this fake carries."
    (capacity :initarg :capacity :initform 64 :reader journal-capacity)
    (records :initform (make-hash-table :test #'equal) :reader journal-records)
    (order :initform '() :accessor journal-order-slot)
-   (evicted :initform nil :accessor journal-evicted-p)
    (initial-state-hash :initarg :initial-state-hash :initform nil :accessor journal-initial-state-hash)
    (pending-envelope :initform nil :accessor journal-pending-envelope)
    (reject-on :initarg :reject-on :initform nil :accessor journal-reject-on)
-   (seq :initform 0 :accessor journal-seq)))
+   (fail-sync-on :initarg :fail-sync-on :initform nil :accessor journal-fail-sync-on)
+   (seq :initform 0 :accessor journal-seq)
+   (uncertain-p :initform nil :accessor journal-uncertain-p)))
 
-(defun make-file-journal (path &key (capacity 64) initial-state-hash reject-on)
+(defun make-file-journal (path &key (capacity 64) initial-state-hash reject-on fail-sync-on)
   (make-instance 'file-journal
-                 :path path
+                 :path (namestring (merge-pathnames path))
                  :capacity capacity
                  :initial-state-hash initial-state-hash
-                 :reject-on reject-on))
+                 :reject-on reject-on
+                 :fail-sync-on fail-sync-on))
 
-(defun write-header (stream initial-state-hash capacity stamp)
+(defun write-header (stream initial-state-hash capacity stamp path)
   (let* ((header (list :journal-header
                        :magic "nova-work/journal"
                        :version 1
@@ -136,7 +177,7 @@ only property this fake carries."
          (header-str (canonical-string header)))
     (write-string header-str stream)
     (write-char #\Newline stream)
-    (sync-stream stream)))
+    (sync-stream stream :path path)))
 
 (defun read-header (stream path expected-initial-state)
   (let ((line (read-line stream nil :eof)))
@@ -197,12 +238,13 @@ only property this fake carries."
                                       checksum actual-checksum)))
              frame)))))))
 
-(defun open-file-journal (path &key (capacity 64) initial-state-hash reject-on stamp)
+(defun open-file-journal (path &key (capacity 64) initial-state-hash reject-on fail-sync-on stamp)
   (let* ((journal (make-instance 'file-journal
                                  :path (namestring (merge-pathnames path))
                                  :capacity capacity
                                  :initial-state-hash initial-state-hash
-                                 :reject-on reject-on))
+                                 :reject-on reject-on
+                                 :fail-sync-on fail-sync-on))
          (full-path (journal-path journal))
          (exists (probe-file full-path)))
     (if exists
@@ -223,14 +265,14 @@ only property this fake carries."
                        (digest (getf record :digest))
                        (line (getf record :line))
                        (rev (getf record :rev)))
+                  (when (and (>= (hash-table-count (journal-records journal)) (journal-capacity journal))
+                             (null (gethash req (journal-records journal))))
+                    (error 'journal-corrupt-data :path full-path
+                           :reason (format nil "journal contains ~D records, exceeding capacity ~D"
+                                           (1+ (hash-table-count (journal-records journal)))
+                                           (journal-capacity journal))))
                   (setf (gethash req (journal-records journal)) (list digest line rev))
-                  (push req (journal-order-slot journal))
-                  (when (> (length (journal-order-slot journal)) (journal-capacity journal))
-                    (let ((evicted (car (last (journal-order-slot journal)))))
-                      (remhash evicted (journal-records journal))
-                      (setf (journal-evicted-p journal) t)
-                      (setf (journal-order-slot journal)
-                            (butlast (journal-order-slot journal)))))))))
+                  (push req (journal-order-slot journal))))))
           (setf (journal-seq journal) seq)
           ;; 2. Reopen for append once validated.
           (let ((out (open full-path :direction :output
@@ -238,20 +280,24 @@ only property this fake carries."
                                      :if-does-not-exist :error
                                      :element-type 'character)))
             (setf (journal-stream journal) out)))
-        ;; File does not exist: create fresh journal and write header
+        ;; File does not exist: create fresh journal, sync directory, and write header
         (let ((out (open full-path :direction :output
                                    :if-exists :error
                                    :if-does-not-exist :create
                                    :element-type 'character)))
           (setf (journal-stream journal) out)
-          (write-header out initial-state-hash capacity stamp)))
+          ;; Synchronize parent directory to guarantee the new directory entry is durable
+          (let ((parent-dir (directory-namestring (merge-pathnames full-path))))
+            (sync-directory parent-dir))
+          (write-header out initial-state-hash capacity stamp full-path)))
     journal))
 
 (defun close-file-journal (journal)
   (when (journal-stream journal)
-    (sync-stream (journal-stream journal))
-    (close (journal-stream journal))
-    (setf (journal-stream journal) nil))
+    (unwind-protect
+         (sync-stream (journal-stream journal) :path (journal-path journal))
+      (close (journal-stream journal))
+      (setf (journal-stream journal) nil)))
   t)
 
 (defmacro with-file-journal ((var path &rest args) &body body)
@@ -264,6 +310,8 @@ only property this fake carries."
   (let ((request (getf envelope :request))
         (reject (journal-reject-on journal)))
     (cond
+      ((journal-uncertain-p journal)
+       (values nil "journal in uncertain-write state; recovery required"))
       ((and reject (equal request reject))
        (values nil "injected acceptance failure"))
       ((null (journal-stream journal))
@@ -272,63 +320,79 @@ only property this fake carries."
        (values nil "missing request id"))
       ((null (getf envelope :digest))
        (values nil "missing payload digest"))
+      ((and (>= (hash-table-count (journal-records journal)) (journal-capacity journal))
+            (null (gethash request (journal-records journal))))
+       (values nil "journal capacity exceeded"))
       (t
        (setf (journal-pending-envelope journal) envelope)
        (values t nil)))))
 
 (defmethod journal-record ((journal file-journal) request digest line rev)
+  (when (journal-uncertain-p journal)
+    (error 'journal-uncertain-write :path (journal-path journal)
+                                    :reason "prior append or sync failed; recovery required"))
   (let ((envelope (journal-pending-envelope journal)))
     (unless (and envelope
                  (equal (getf envelope :request) request)
                  (equal (getf envelope :digest) digest))
       (error 'unsupported-input
              :what (format nil "journal-record mismatch: expected pending envelope for ~A" request)))
-    (let* ((seq (incf (journal-seq journal)))
-           (events (mapcar #'event-record-form (getf envelope :events)))
-           (record (list :request request
-                         :digest digest
-                         :line line
-                         :rev rev
-                         :events events))
-           (record-canon (canonical-string record))
-           (checksum (sha256-hex record-canon))
-           (len (length record-canon))
-           (frame (list :frame
-                        :seq seq
-                        :len len
-                        :checksum checksum
-                        :record record))
-           (frame-str (canonical-string frame))
-           (stream (journal-stream journal)))
+    (let* ((stream (journal-stream journal))
+           (path (journal-path journal)))
       (unless stream
         (error 'nova-work-error :what "cannot record to closed journal"))
-      (write-string frame-str stream)
-      (write-char #\Newline stream)
-      (sync-stream stream)
-      ;; Update in-memory dedup store
-      (setf (gethash request (journal-records journal)) (list digest line rev))
-      (push request (journal-order-slot journal))
-      (when (> (length (journal-order-slot journal)) (journal-capacity journal))
-        (let ((evicted (car (last (journal-order-slot journal)))))
-          (remhash evicted (journal-records journal))
-          (setf (journal-evicted-p journal) t)
-          (setf (journal-order-slot journal)
-                (butlast (journal-order-slot journal)))))
-      (setf (journal-pending-envelope journal) nil)
-      request)))
+      (let* ((next-seq (1+ (journal-seq journal)))
+             (events (mapcar #'event-record-form (getf envelope :events)))
+             (record (list :request request
+                           :digest digest
+                           :line line
+                           :rev rev
+                           :events events))
+             (record-canon (canonical-string record))
+             (checksum (sha256-hex record-canon))
+             (len (length record-canon))
+             (frame (list :frame
+                          :seq next-seq
+                          :len len
+                          :checksum checksum
+                          :record record))
+             (frame-str (canonical-string frame)))
+        (handler-case
+            (progn
+              (when (and (journal-fail-sync-on journal)
+                         (equal request (journal-fail-sync-on journal)))
+                (error "injected sync failure"))
+              (write-string frame-str stream)
+              (write-char #\Newline stream)
+              (sync-stream stream :path path))
+          (error (c)
+            (setf (journal-uncertain-p journal) t)
+            (error 'journal-uncertain-write :path path
+                                            :reason (format nil "write or sync failed: ~A" c))))
+        ;; Sequence is committed ONLY after successful publication and sync
+        (setf (journal-seq journal) next-seq)
+        ;; Update in-memory dedup store
+        (setf (gethash request (journal-records journal)) (list digest line rev))
+        (push request (journal-order-slot journal))
+        (setf (journal-pending-envelope journal) nil)
+        request))))
 
 (defmethod journal-lookup ((journal file-journal) request)
   (multiple-value-bind (record found) (gethash request (journal-records journal))
-    (cond (found (values t (first record) (second record)))
-          ((journal-evicted-p journal) (values :unavailable "journal-page-0" nil))
-          (t (values nil nil nil)))))
+    (if found
+        (values t (first record) (second record))
+        (values nil nil nil))))
 
 (defun replay-journal (journal target-kernel &key (stop-at-seq nil))
   "Replay entries from JOURNAL into TARGET-KERNEL from its current revision.
 TARGET-KERNEL must start at the seed state matching the journal's initial state hash.
+Replays into private working state and installs into TARGET-KERNEL only after the
+requested replay cut completes without error.
 Returns (values TARGET-KERNEL total-replayed-events total-replayed-records)."
   (let* ((path (journal-path journal))
          (expected-initial (root-digest (kernel-state target-kernel)))
+         (working-state (kernel-state target-kernel))
+         (working-next-rev (kernel-next-rev target-kernel))
          (seq 0)
          (record-count 0)
          (event-count 0))
@@ -353,7 +417,9 @@ Returns (values TARGET-KERNEL total-replayed-events total-replayed-records)."
                  (envelope (list :request req :digest digest :events events)))
             (incf *replays*)
             (incf event-count (length events))
-            (let ((candidate (apply-envelope (kernel-state target-kernel) envelope)))
-              (setf (kernel-state target-kernel) candidate)
-              (setf (kernel-next-rev target-kernel) (max (kernel-next-rev target-kernel) (1+ rev))))))))
+            (let ((candidate (apply-envelope working-state envelope)))
+              (setf working-state candidate)
+              (setf working-next-rev (max working-next-rev (1+ rev))))))))
+    (setf (kernel-state target-kernel) working-state)
+    (setf (kernel-next-rev target-kernel) working-next-rev)
     (values target-kernel event-count record-count)))

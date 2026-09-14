@@ -1337,3 +1337,209 @@ is compared against; it is never the path `query --ask size` takes."
                       (check-equal final-rev (kernel-next-rev k2) "replayed next-rev exact"))
                  (close-file-journal j2)))))
       (ignore-errors (delete-file path)))))
+
+(deftest "durable-journal-uncertain-write-refuses-until-recovery" "docs/SPEC-WORK.md:307,3348"
+    "expected=uncertain-write-refuses-until-recovery;seq-unadvanced;file-untruncated"
+  (let* ((path (test-journal-path "uncertain-write"))
+         (initial-hash (root-digest (make-seed-state *seed*)))
+         (j (open-file-journal path :initial-state-hash initial-hash :fail-sync-on "req-fail"))
+         (k (fresh :journal j)))
+    (unwind-protect
+         (progn
+           ;; 1. Submit valid req-1: succeeds, seq becomes 1
+           (multiple-value-bind (ok1 line1) (submit k (close-request :node "acme/work/f1/t1" :request "req-1"))
+             (declare (ignore line1))
+             (ok ok1 "req-1 succeeds")
+             (check-equal 1 (journal-seq j) "seq is 1 after req-1"))
+           (let ((size-after-req1 (file-byte-count path)))
+             ;; 2. Submit req-fail where sync failure is injected
+             (let ((signaled nil))
+               (handler-case
+                   (submit k (reopen-request :node "acme/work/f1/t1" :request "req-fail"))
+                 (journal-uncertain-write (c)
+                   (declare (ignore c))
+                   (setf signaled t)))
+               (ok signaled "journal-uncertain-write signaled on injected sync failure"))
+             ;; Verify seq was NOT advanced on failure: remains 1!
+             (check-equal 1 (journal-seq j) "seq was not advanced after failed sync")
+             (ok (journal-uncertain-p j) "journal marked uncertain")
+             ;; 3. Subsequent submit on same instance must be refused without writing
+             (multiple-value-bind (ok3 line3) (submit k (reopen-request :node "acme/work/f1/t1" :request "req-3"))
+               (ok (not ok3) "subsequent submit refused while uncertain")
+               (ok (search "uncertain-write state" line3) "refusal cites uncertain state"))
+             ;; 4. File was not truncated: byte count >= size-after-req1
+             (ok (>= (file-byte-count path) size-after-req1) "file not truncated")
+             (close-file-journal j)
+             ;; 5. Recovery via clean reopen: loads validated entries (req-1), seq is 1
+             (let* ((j2 (open-file-journal path :initial-state-hash initial-hash))
+                    (k2 (fresh :journal j2)))
+               (unwind-protect
+                    (progn
+                      (multiple-value-bind (replayed-k ev rec) (replay-journal j2 k2)
+                        (declare (ignore replayed-k ev))
+                        (check-equal 1 rec "recovered 1 valid record"))
+                      (check-equal 1 (journal-seq j2) "recovered journal seq is 1")
+                      (ok (not (journal-uncertain-p j2)) "recovered journal not uncertain")
+                      ;; 6. Subsequent requests on recovered session succeed
+                      (multiple-value-bind (ok4 line4) (submit k2 (reopen-request :node "acme/work/f1/t1" :request "req-after-recovery"))
+                        (declare (ignore line4))
+                        (ok ok4 "request after recovery succeeds")
+                        (check-equal 2 (journal-seq j2) "seq advances to 2 after successful recovery submit")))
+                 (close-file-journal j2)))))
+      (ignore-errors (delete-file path)))))
+
+(deftest "durable-journal-capacity-boundary-refuses-new-preserves-retained" "docs/SPEC-WORK.md:517,2117,3349"
+    "expected=capacity-boundary-refuses;all-retained-retriable;memory-bounded"
+  (let* ((path (test-journal-path "capacity-boundary"))
+         (seed '((:id "root" :type :work-set)
+                 (:id "root/f" :type :feature :parent "root")
+                 (:id "root/f/t1" :type :task :parent "root/f" :state :todo)
+                 (:id "root/f/t2" :type :task :parent "root/f" :state :todo)
+                 (:id "root/f/t3" :type :task :parent "root/f" :state :todo)))
+         (initial-hash (root-digest (make-seed-state seed)))
+         (capacity 3)
+         (j (open-file-journal path :capacity capacity :initial-state-hash initial-hash))
+         (k (make-kernel :state (make-seed-state seed) :journal j)))
+    (unwind-protect
+         (progn
+           ;; 1. Submit up to capacity (3 distinct requests)
+           (multiple-value-bind (ok1 l1) (submit k (doing-request :node "root/f/t1" :request "req-cap-1"))
+             (declare (ignore l1)) (ok ok1 "req 1 accepted"))
+           (multiple-value-bind (ok2 l2) (submit k (doing-request :node "root/f/t2" :request "req-cap-2"))
+             (declare (ignore l2)) (ok ok2 "req 2 accepted"))
+           (multiple-value-bind (ok3 l3) (submit k (doing-request :node "root/f/t3" :request "req-cap-3"))
+             (declare (ignore l3)) (ok ok3 "req 3 accepted"))
+           (check-equal 3 (journal-seq j) "seq is 3")
+           (let ((size-at-capacity (file-byte-count path))
+                 (state-at-capacity (root-digest (kernel-state k))))
+             ;; 2. Attempt request 4 (new distinct request past capacity): must be refused!
+             (multiple-value-bind (ok4 line4 code4)
+                 (submit k (close-request :node "root/f/t1" :request "req-cap-4"))
+               (ok (not ok4) "request past capacity refused")
+               (check-equal 1 code4 "exit code 1 on capacity refusal")
+               (ok (search "capacity exceeded" line4) "refusal message explains capacity bound")
+               (check-equal size-at-capacity (file-byte-count path) "no journal write on capacity refusal")
+               (check-string= state-at-capacity (root-digest (kernel-state k)) "state untouched"))
+             ;; 3. Verify all 3 retained requests can still be retried cleanly
+             (multiple-value-bind (retry1-ok l1-ret code1-ret env1)
+                 (submit k (doing-request :node "root/f/t1" :request "req-cap-1"))
+               (declare (ignore l1-ret code1-ret))
+               (ok retry1-ok "oldest request req-cap-1 retry succeeds")
+               (ok (getf env1 :replayed) "req-cap-1 marked replayed"))
+             (multiple-value-bind (retry2-ok l2-ret code2-ret env2)
+                 (submit k (doing-request :node "root/f/t2" :request "req-cap-2"))
+               (declare (ignore l2-ret code2-ret))
+               (ok retry2-ok "req-cap-2 retry succeeds")
+               (ok (getf env2 :replayed) "req-cap-2 marked replayed"))
+             (multiple-value-bind (retry3-ok l3-ret code3-ret env3)
+                 (submit k (doing-request :node "root/f/t3" :request "req-cap-3"))
+               (declare (ignore l3-ret code3-ret))
+               (ok retry3-ok "req-cap-3 retry succeeds")
+               (ok (getf env3 :replayed) "req-cap-3 marked replayed"))
+             ;; 4. Close and reopen journal: exactly 3 entries preserved and retriable
+             (close-file-journal j)
+             (let* ((j2 (open-file-journal path :capacity capacity :initial-state-hash initial-hash))
+                    (k2 (make-kernel :state (make-seed-state seed) :journal j2)))
+               (unwind-protect
+                    (progn
+                      (multiple-value-bind (rep-k ev rec) (replay-journal j2 k2)
+                        (declare (ignore rep-k ev))
+                        (check-equal 3 rec "replayed 3 records")
+                        (check-string= state-at-capacity (root-digest (kernel-state k2)) "state restored"))
+                      ;; Retrying oldest request on reopened kernel still works
+                      (multiple-value-bind (rep-retry-ok l-rep code-rep env-rep)
+                          (submit k2 (doing-request :node "root/f/t1" :request "req-cap-1"))
+                        (declare (ignore l-rep code-rep))
+                        (ok rep-retry-ok "reopened oldest request retry succeeds")
+                        (ok (getf env-rep :replayed) "reopened retry marked replayed")))
+                 (close-file-journal j2)))))
+      (ignore-errors (delete-file path)))))
+
+(deftest "durable-journal-sync-contract-and-directory-sync" "docs/SPEC-WORK.md:307,3348"
+    "expected=darwin-fullfsync-or-fsync;dir-synced-on-create;invalid-fd-refuses"
+  (let* ((path (test-journal-path "sync-contract"))
+         (initial-hash (root-digest (make-seed-state *seed*))))
+    (unwind-protect
+         (progn
+           ;; 1. Creating a new journal synchronizes parent directory and stream without error
+           (let ((j (open-file-journal path :initial-state-hash initial-hash)))
+             (ok (probe-file path) "journal file created")
+             (close-file-journal j))
+           ;; 2. Direct sync-directory on existing directory succeeds
+           (let ((parent-dir (directory-namestring (merge-pathnames path))))
+             (ok (sync-directory parent-dir) "sync-directory on valid directory succeeds"))
+           ;; 3. sync-directory on nonexistent directory signals journal-sync-failed
+           (let ((signaled nil))
+             (handler-case
+                 (sync-directory "/nonexistent/directory/that/cannot/exist/")
+               (journal-sync-failed (c)
+                 (declare (ignore c))
+                 (setf signaled t)))
+             (ok signaled "sync-directory on nonexistent directory signals journal-sync-failed"))
+           ;; 4. sync-stream on non-file descriptor stream signals journal-sync-failed
+           (let ((signaled nil)
+                 (str-stream (make-string-output-stream)))
+             (handler-case
+                 (sync-stream str-stream :path "string-stream")
+               (journal-sync-failed (c)
+                 (declare (ignore c))
+                 (setf signaled t)))
+             (ok signaled "sync-stream on memory stream signals journal-sync-failed")))
+      (ignore-errors (delete-file path)))))
+
+(deftest "durable-journal-replay-failure-isolates-target-kernel" "docs/SPEC-WORK.md:307,3348,3353"
+    "expected=replay-semantic-error-isolates-target;state-unchanged;rev-unchanged"
+  (let* ((path (test-journal-path "replay-isolation"))
+         (seed '((:id "root" :type :work-set)
+                 (:id "root/f" :type :feature :parent "root")
+                 (:id "root/f/t" :type :task :parent "root/f" :state :todo)))
+         (initial-hash (root-digest (make-seed-state seed))))
+    (unwind-protect
+         (progn
+           ;; 1. Write frame 1 (valid doing event)
+           (let* ((j1 (open-file-journal path :initial-state-hash initial-hash))
+                  (k1 (make-kernel :state (make-seed-state seed) :journal j1)))
+             (submit k1 (doing-request :node "root/f/t" :request "req-valid-1"))
+             (close-file-journal j1))
+           ;; 2. Manually append frame 2 with a semantic error: an event referencing a nonexistent node
+           (let* ((bad-record (list :request "req-bad-2"
+                                    :digest "0000000000000000000000000000000000000000000000000000000000000000"
+                                    :line "ok"
+                                    :rev 2
+                                    :events (list (list :kind :transition
+                                                        :node "nonexistent-node"
+                                                        :by "rowan"
+                                                        :to :done
+                                                        :reason "bad"
+                                                        :blocked-by '(:absent)
+                                                        :evidence '("e1")))))
+                  (bad-canon (canonical-string bad-record))
+                  (bad-frame (list :frame :seq 2 :len (length bad-canon)
+                                   :checksum (sha256-hex bad-canon) :record bad-record))
+                  (bad-frame-str (canonical-string bad-frame)))
+             (with-open-file (out path :direction :output :if-exists :append :element-type 'character)
+               (write-string bad-frame-str out)
+               (write-char #\Newline out)
+               (finish-output out)))
+           ;; 3. Create fresh target kernel
+           (let* ((target-k (make-kernel :state (make-seed-state seed) :journal (make-ordering-journal)))
+                  (init-digest (root-digest (kernel-state target-k)))
+                  (init-rev (kernel-next-rev target-k))
+                  (init-history (state-history (kernel-state target-k)))
+                  (j-replay (open-file-journal path :initial-state-hash initial-hash))
+                  (signaled nil))
+             (unwind-protect
+                  (progn
+                    ;; 4. Attempt replay-journal: frame 1 applies to working state, but frame 2 signals error
+                    (handler-case
+                        (replay-journal j-replay target-k)
+                      (error (c)
+                        (declare (ignore c))
+                        (setf signaled t)))
+                    (ok signaled "error signaled during replay of invalid frame")
+                    ;; 5. CRITICAL INVARIANT: target-k is completely UNTOUCHED
+                    (check-string= init-digest (root-digest (kernel-state target-k)) "target state root digest unchanged")
+                    (check-equal init-rev (kernel-next-rev target-k) "target next-rev unchanged")
+                    (check-equal init-history (state-history (kernel-state target-k)) "target history unchanged"))
+               (close-file-journal j-replay))))
+      (ignore-errors (delete-file path)))))
