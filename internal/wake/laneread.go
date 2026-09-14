@@ -1176,7 +1176,9 @@ func parseNumstat(out string) []numstatCommit {
 				}
 				continue
 			}
-			c.items++
+			if f[1] == "0" {
+				c.items++
+			}
 		}
 		commits = append(commits, c)
 	}
