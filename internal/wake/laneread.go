@@ -125,7 +125,8 @@ type LaneRead struct {
 	Wall  time.Duration
 	Whole time.Duration
 
-	objects *objectReader
+	objects    *objectReader
+	clockGapRecorded bool
 	// streams are the receipt diffs this poll opened. They are CLOSED WHEN THE
 	// POLL ENDS, whether it ended at its budget, at its answer or at its clock:
 	// a poll that returned with a git process still writing into a pipe nobody
@@ -445,6 +446,12 @@ func (r *LaneRead) walkItems(ctx context.Context, res *LaneResult, gaps *[]gap,
 			res.Progress = true
 			if gerr != nil {
 				kind, reason := splitGapError(gerr)
+				if kind == GapObject && strings.Contains(reason, "the object reader is not running") {
+					if r.clockGapRecorded {
+						continue
+					}
+					r.clockGapRecorded = true
+				}
 				if !r.record(res, gaps, item.at(), kind, reason) {
 					return false, true, cur
 				}
@@ -942,6 +949,7 @@ type objectReader struct {
 	wall   time.Duration
 	cancel context.CancelFunc
 	dead   bool
+	clockGap bool
 }
 
 func (r *LaneRead) reader(ctx context.Context) (*objectReader, error) {
@@ -991,6 +999,9 @@ func (o *objectReader) close() {
 // line that ends its header, and the number of bytes the object cost.
 func (o *objectReader) head(sha string, n int) (raw []byte, consumed int, err error) {
 	if o == nil || o.dead {
+		if !o.clockGap {
+			o.clockGap = true
+		}
 		return nil, 0, fmt.Errorf("the object reader is not running")
 	}
 	_ = o.pipe.SetReadDeadline(time.Now().Add(o.wall))
