@@ -109,8 +109,7 @@ is compared against; it is never the path `query --ask size` takes."
       "a case-differing keyword printed the same bytes as :done")
   ;; Evaluation syntax and a malformed form refuse at the boundary, with the
   ;; byte offset SPEC-WORK.md:678-681 asks for -- never as a raw reader error.
-  (dolist (bad '("(:a ,x)" "(:a `b)" "(:a 'b)" "(:a" "(:a))" "(:a |b|)" "(:a ;c
-)"))
+  (dolist (bad '("(:a ,x)" "(:a `b)" "(:a 'b)" "(:a" "(:a))" "(:a |b|)"))
     (handler-case
         (progn (read-restricted bad)
                (fail "~S was read instead of refused" bad))
@@ -119,7 +118,23 @@ is compared against; it is never the path `query --ask size` takes."
             "~S refused without a byte offset: ~A" bad c))))
   ;; A well-formed restricted form still reads.
   (check-equal '(:a 1 "b" (:absent) ()) (read-restricted "(:a 1 \"b\" (:absent) ())")
-               "a well-formed restricted form"))
+                "a well-formed restricted form"))
+
+;;; ------------------------------------------------------------------
+;;; 1b. legal line comments (SPEC-WORK.md:678-679)
+;;; ------------------------------------------------------------------
+
+(deftest "line-comments-accepted" "docs/SPEC-WORK.md:678-679"
+    "expected=semicolon-starts-line-comment"
+  (check-equal '(:X 1) (read-restricted "(:X 1) ; comment") "line comment skipped"))
+
+;;; ------------------------------------------------------------------
+;;; 1c. UTF-8 byte offsets (SPEC-WORK.md:680)
+;;; ------------------------------------------------------------------
+
+(deftest "utf8-byte-offsets" "docs/SPEC-WORK.md:680"
+    "expected=byte-count-not-char-count"
+  (check-equal '(:X "é") (read-restricted "(:X \"é\")") "unicode string round-trips"))
 
 ;;; ------------------------------------------------------------------
 ;;; 2. settle-outside-the-digest                SPEC-WORK.md:3122

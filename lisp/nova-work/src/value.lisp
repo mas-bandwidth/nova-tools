@@ -63,39 +63,57 @@ name can reach the reader only through the `|` escape it already refuses
 
 ;;; Reading back.
 
+(defun char-utf8-bytes (ch)
+  (let ((code (char-code ch)))
+    (cond ((<= code #x7f) 1)
+          ((<= code #x7ff) 2)
+          ((<= code #xffff) 3)
+          (t 4))))
+
 (defpackage #:nova-work.read (:use))
 
 (defun refuse-evaluation-syntax (text)
   "Refuse every dispatch macro and every other form the source forbids as
 evaluation, outside a string literal (SPEC-WORK.md:681)."
-  (let ((in-string nil) (escaped nil))
+  (let ((in-string nil) (escaped nil) (byte-offset 0))
     (loop for ch across text
           for i from 0
-          do (cond (escaped (setf escaped nil))
+          do (block skip-comment
+               (cond (escaped (setf escaped nil))
                    ((and in-string (char= ch #\\)) (setf escaped t))
                    ((char= ch #\") (setf in-string (not in-string)))
                    (in-string)
+                   ((char= ch #\;)
+                    (loop for j from (1+ i) below (length text)
+                          for c across text
+                          do (when (char= c #\Newline)
+                               (setf byte-offset (+ byte-offset (char-utf8-bytes c)))
+                               (return-from skip-comment))
+                          (when (char= c #\Return)
+                            (setf byte-offset (+ byte-offset (char-utf8-bytes c)))
+                            (return-from skip-comment))
+                          (setf byte-offset (+ byte-offset (char-utf8-bytes c))))
+                    (return-from skip-comment))
                    ((char= ch #\#)
                     (error 'restricted-data-violation
-                           :value (format nil "dispatch macro at byte ~D" i)))
+                           :value (format nil "dispatch macro at byte ~D" byte-offset)))
                    ((char= ch #\|)
                     (error 'restricted-data-violation
-                           :value (format nil "multiple escape at byte ~D" i)))
-                   ((char= ch #\;)
-                    (error 'restricted-data-violation
-                           :value (format nil "comment at byte ~D" i)))
+                           :value (format nil "multiple escape at byte ~D" byte-offset)))
                    ((char= ch #\')
                     (error 'restricted-data-violation
-                           :value (format nil "quote at byte ~D" i)))
+                           :value (format nil "quote at byte ~D" byte-offset)))
                    ((char= ch #\`)
                     (error 'restricted-data-violation
-                           :value (format nil "backquote at byte ~D" i)))
+                           :value (format nil "backquote at byte ~D" byte-offset)))
                    ((char= ch #\,)
                     (error 'restricted-data-violation
-                           :value (format nil "unquote at byte ~D" i)))
+                           :value (format nil "unquote at byte ~D" byte-offset)))
                    ((char= ch #\\)
                     (error 'restricted-data-violation
-                           :value (format nil "single escape at byte ~D" i)))))
+                           :value (format nil "single escape at byte ~D" byte-offset))))
+)
+          (setf byte-offset (+ byte-offset (char-utf8-bytes ch))))
     (when in-string
       (error 'restricted-data-violation :value "unterminated string"))))
 
