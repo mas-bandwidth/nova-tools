@@ -117,3 +117,30 @@ func TestStreamingCitationsDeduplicatesRepeatedScopedTargets(t *testing.T) {
 		t.Fatalf("repeated citations retained duplicate targets: %v", ids)
 	}
 }
+
+func TestStreamingCitationsKeepProseAndPrefixBoundaries(t *testing.T) {
+	one := citationSpec(t, "docs/SPEC.md", "1. one\n2. two\n")
+	two := citationSpec(t, "docs/OTHER.md", "1. alpha\n2. beta\n")
+	for _, tc := range []struct {
+		name  string
+		line  string
+		specs []scopedSpec
+		want  []string
+	}{
+		{"ordinary prose", "rule 1 applies here", []scopedSpec{one}, []string{"docs/SPEC.md:2"}},
+		{"ordinary prose says", "rule 1 says this", []scopedSpec{one}, []string{"docs/SPEC.md:2"}},
+		{"adjacent prefixes", "SPEC.md OTHER.md rule 2", []scopedSpec{one, two}, []string{"docs/OTHER.md:3"}},
+		{"intervening prose", "SPEC.md discussion; OTHER.md rule 2", []scopedSpec{one, two}, []string{"docs/OTHER.md:3"}},
+		{"utf8 byte boundaries", "🤖 rule 1 applies", []scopedSpec{one}, []string{"docs/SPEC.md:2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			chunks := make([]int, len(tc.line))
+			for i := range chunks {
+				chunks[i] = 1
+			}
+			if got := ruleIDs(streamCitationTargets(tc.specs, tc.line, chunks...)); !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("one-byte chunks got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

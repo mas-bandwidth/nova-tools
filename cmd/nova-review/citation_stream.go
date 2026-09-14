@@ -106,7 +106,7 @@ func (s *streamingCitations) feedRune(r rune) {
 		}
 		if state.matched == len(state.needle) {
 			state.prefixed = true
-			state.active = newCitationExpression(state.spec.Rules)
+			state.active = newPrefixedCitationExpression(state.spec.Rules)
 			state.matched = state.failure[state.matched-1]
 		}
 		if state.prefixed {
@@ -243,18 +243,23 @@ const (
 // citationExpression is one citedRuleNumbers invocation. It keeps finite word
 // and token state plus distinct declared rule numbers, never the line itself.
 type citationExpression struct {
-	declared map[int]specRule
-	all      bool
-	mode     int
-	done     bool
-	word     boundedRuleWord
-	kind     string
-	rest     citationRest
-	result   []int
+	declared     map[int]specRule
+	all          bool
+	requireFirst bool
+	mode         int
+	done         bool
+	word         boundedRuleWord
+	kind         string
+	rest         citationRest
+	result       []int
 }
 
 func newCitationExpression(declared map[int]specRule) citationExpression {
 	return citationExpression{declared: declared}
+}
+
+func newPrefixedCitationExpression(declared map[int]specRule) citationExpression {
+	return citationExpression{declared: declared, requireFirst: true}
 }
 
 func newCitationNumberExpression() citationExpression { return citationExpression{all: true} }
@@ -265,6 +270,10 @@ func (e *citationExpression) Feed(r rune) {
 	}
 	if e.mode == citationSeekingWord {
 		if unicode.IsSpace(r) {
+			if e.requireFirst && len(e.word.text) == 0 {
+				e.done = true
+				return
+			}
 			e.finishWord()
 			return
 		}
@@ -282,6 +291,8 @@ func (e *citationExpression) finishWord() {
 		e.kind = kind
 		e.mode = citationParsing
 		e.rest = citationRest{declared: e.declared, collectAll: e.all, kind: kind}
+	} else if e.requireFirst {
+		e.done = true
 	}
 	e.word.Reset()
 }
@@ -357,6 +368,8 @@ type citationRest struct {
 	currentSpaceBefore bool
 	nextSpaceBefore    bool
 	possessive         bool
+	afterNumber        bool
+	continuation       []rune // at most len("through")
 }
 
 const (
@@ -381,9 +394,16 @@ func (r *citationRest) Feed(ch rune) {
 		r.feedFollowing(ch)
 		return
 	}
+	if r.afterNumber {
+		r.afterNumberRune(ch)
+		return
+	}
 	if unicode.IsSpace(ch) {
 		r.finishCurrent(true, false)
 		r.nextSpaceBefore = true
+		if r.lastToken == citationNumberToken {
+			r.afterNumber = true
+		}
 		return
 	}
 	if r.possessive {
@@ -419,6 +439,53 @@ func (r *citationRest) Feed(ch rune) {
 		return
 	}
 	r.current = append(r.current, ch)
+}
+
+// afterNumberRune holds only the three possible continuations of a numeric
+// Rule 2 form: `and`, `through`, and `to `. Any other prose closes the valid
+// citation before that prose, rather than treating its first a/s/n/d as a
+// malformed numeric-list token.
+func (r *citationRest) afterNumberRune(ch rune) {
+	if unicode.IsSpace(ch) {
+		if string(r.continuation) == "and" {
+			r.afterNumber = false
+			r.current = append(r.current[:0], []rune("and")...)
+			r.currentSpaceBefore = true
+			r.finishCurrent(true, false)
+			r.nextSpaceBefore = true
+			return
+		}
+		if string(r.continuation) == "to" {
+			r.invalid = true
+			r.finalize()
+			return
+		}
+		// Extra whitespace after a number remains a phrase boundary until a
+		// continuation or ordinary prose decides it.
+		return
+	}
+	if ch == ',' {
+		r.afterNumber = false
+		r.continuation = r.continuation[:0]
+		r.comma = true
+		r.lastToken = citationCommaToken
+		r.nextSpaceBefore = false
+		return
+	}
+	r.continuation = append(r.continuation, ch)
+	word := string(r.continuation)
+	if word == "through" {
+		r.invalid = true
+		r.finalize()
+		return
+	}
+	if strings.HasPrefix("and", word) || strings.HasPrefix("through", word) || strings.HasPrefix("to", word) {
+		return
+	}
+	// This is ordinary prose, not a Rule 2 continuation. The numeric phrase
+	// is already complete and the expression can resume looking after it.
+	r.afterNumber = false
+	r.finalize()
 }
 
 func (r *citationRest) finishCurrent(spaceAfter, terminal bool) {
