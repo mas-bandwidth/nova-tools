@@ -11,7 +11,13 @@
   :license "See LICENSE at the repository root"
   :serial t
   :components ((:file "src/package")
-               (:file "src/stubs")))
+               (:file "src/conditions")
+               (:file "src/sha256")
+               (:file "src/value")
+               (:file "src/event")
+               (:file "src/state")
+               (:file "src/journal")
+               (:file "src/kernel")))
 
 (defsystem "nova-work/tests"
   :description "The slice-1 acceptance cases, each naming its line of docs/SPEC-WORK.md."

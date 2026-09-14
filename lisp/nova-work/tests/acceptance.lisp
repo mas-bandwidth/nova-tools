@@ -296,11 +296,13 @@ is compared against; it is never the path `query --ask size` takes."
       (ok (not okp) "an unsupported verb was applied")
       (check-equal 2 code "an unsupported verb's exit code")
       (ok (search "unsupported" line) "the refusal does not say unsupported: ~A" line))
+    ;; A container settles with its members; that cascade is out of slice 1, so
+    ;; it refuses at exit 2 rather than closing a container on its own.
     (multiple-value-bind (okp line code)
         (submit k (close-request :node "acme/work/f1" :request "req-v"))
-      (declare (ignore line))
-      (ok (not okp) "a close from :unknown by an unsupported edge was applied")
-      (check-equal 1 code "an invalid transition's exit code"))
+      (ok (not okp) "a container close was applied")
+      (check-equal 2 code "a container close's exit code")
+      (ok (search "slice 1" line) "the refusal does not name the boundary: ~A" line))
     (multiple-value-bind (okp line code)
         (submit k (close-request :node "acme/work/nope" :request "req-w"))
       (declare (ignore line))
@@ -315,4 +317,14 @@ is compared against; it is never the path `query --ask size` takes."
         (submit k (close-request :request "req-no-evidence" :evidence nil))
       (declare (ignore line))
       (ok (not okp) "a :to :done naming no evidence was applied")
-      (check-equal 1 code "a done-without-evidence exit code"))))
+      (check-equal 1 code "a done-without-evidence exit code"))
+    ;; A reopened item lands at :todo, and :todo has no edge to :done, so the
+    ;; second close is rule 10 and not a second settle.
+    (ok (submit k (close-request :request "req-a1")) "close refused")
+    (ok (submit k (reopen-request :request "req-a2")) "reopen refused")
+    (check-equal :todo (node-state (kernel-state k) "acme/work/f1/t1")
+                 "the state a reopen lands in")
+    (multiple-value-bind (okp line code) (submit k (close-request :request "req-a3"))
+      (ok (not okp) "a :todo item closed")
+      (check-equal 1 code "an invalid transition's exit code")
+      (ok (search "rule 10" line) "the refusal does not name rule 10: ~A" line))))
