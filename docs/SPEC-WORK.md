@@ -2616,7 +2616,7 @@ closed experiments and attempts; roadmap and friend views reference them after c
    An expensive-route exception records why the cheaper eligible choice does not fit. Unknown
    price is not cheap; new routes can run only as explicitly bounded authorised trials.
 3. **Enforce real bounds.** Record launcher support separately for input, output, deadline and
-   attempt limits. An instruction saying “five minutes” is not an enforced timeout. If the
+   attempt limits. An instruction saying “five minutes” is not an enforced timeout. The
    execution limit is distinct from the existing client `--deadline`, which bounds waiting and
    does not stop a worker. The execution record retains the requested limit and observed expiry
    or stop outcome; timeout is not proof of termination. If a configured hard bound lacks adapter
