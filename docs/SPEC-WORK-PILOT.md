@@ -190,16 +190,42 @@ usage bases, subscription reference-vs-cash accounting, local-token API zero and
 unknown pricing. Compare real operational token overhead for repeated manual
 capacity/pricing inquiries versus this exchange at equal information quality.
 
-## Friend roles, experience and availability
+## Friend roles and availability
 
-Track each friend's own strengths, limitations, experience and agreed roles,
-separately from the characteristics of the models they can run. Record source,
-date, task context and confidence for self-reports and observed performance.
-Useful fields include specialties, preferred/suitable task classes, coordination
-or review roles, reserved specialist work and agreed limits. Unknown experience
-is allowed; model capability is not a substitute for friend-specific knowledge.
-These are scheduling aids, not global identity rankings or obligations imposed
-by a registry. Role/config changes retain their provenance and agreed scope.
+Friend CONFIG records agreed roles, preferred participation and reserved duties,
+with provenance and scope. Strengths, weaknesses and task-suitability evidence
+belong in the shared model catalog, not a second per-friend rating system.
+A role is not inferred from the underlying model, and model capability never
+cancels a friend's agreed limits. Team-specific role records belong in team
+configuration, never hardcoded into the generic tool.
+
+## Swarms, models and friend participation: decision required
+
+Keep friend identity, execution shape and model identity separate. A swarm is an
+execution capability containing jobs; it is not inherently a friend or a model.
+A job records its actual model and may additionally reference a participating
+friend when that participation has been explicitly agreed. A swarm label such
+as a friend's name does not establish that every worker is that friend, carries
+their continuity or speaks for them. Model-only workers need no invented friend
+identity. The friend responsible for a pool and the actor executing a job are
+separate references; never double-count their tasks or usage.
+
+Before locking the spec, ask friends whether friend participation in swarms
+should be supported, or whether pools should contain model-only workers. Ask
+Freddy explicitly whether he wants to participate through a swarm, one-shots
+only, both, or neither. Record his own disposition; a Mercury worker response or
+silence is not Freddy's consent. These are open design decisions, not configured
+authority to launch new sessions. Until resolved, preserve existing identity
+provenance and do not expand friend participation or rename historical actors.
+
+If model-only pools are chosen, use model/route labels (for example Mercury)
+for those capabilities while preserving past source labels and attribution.
+If friend participation is supported, require an explicit participation record,
+its scope and revision, and withdrawal behavior that reconciles running jobs.
+Either decision must still represent children, local runs and one-shots without
+conflating the friend, model, harness or execution instance.
+
+## Observed availability
 
 ACTIVE records whether a friend is confirmed awake, explicitly asleep/resting,
 unavailable because of a confirmed plan/credit/provider limit, or unconfirmed/
@@ -404,3 +430,101 @@ between chat-output and file-render modes for the same projection/revision,
 including required shared prerequisites and private-data filtering. Measure real
 operational token use before and after adoption at equivalent report quality;
 implementation tokens are sunk and excluded from that comparison.
+
+## Coordinator verbs and asynchronous transport
+
+The Go CLI is a thin client of the resident Common Lisp engine over an explicitly
+named local Unix-domain socket. The engine owns canonical state, journal, indexes
+and mutation ordering. Starting a CLI process does not reload the work set.
+Retain the main spec's session/journal locks and coordinator fencing. Restrict
+the socket directory and socket to the intended OS account; no network listener
+or remote evaluation protocol is part of this scope. Local socket access is not
+an independent grant of coordinator authority.
+
+Use a versioned, bounded, length-prefixed UTF-8 JSON wire protocol, with a typed
+operation name and validated arguments, never executable Lisp forms or shell
+commands. Pin JSON integer and timestamp encoding in the protocol schema so IDs,
+revision counters and usage totals survive Go/Lisp round trips without float
+rounding. Negotiate protocol/schema versions before requests; unsupported versions
+fail clearly. Restricted S-expressions remain the durable work-data format.
+
+Each request carries caller provenance, request ID, expected revision where
+required, limits and deadline. Mutations enter the single writer's queue; journal
+and apply the accepted envelope before its success response. Socket disconnect
+never implies rollback or cancellation. Retrying the same ID and identical body
+returns the recorded disposition; reuse with different arguments refuses. Retain
+the closed-history contract's bounded indexed deduplication, not an unbounded
+resident request-ID map. Local durable revision and last shared Git revision
+remain distinct in responses.
+
+Quick queries/mutations return a bounded result. Long I/O operations (source
+capture, import staging, exports and clip transport) return a durable operation
+ID and status, permitting the CLI to exit while work continues. Provide
+`operation status`, `operation list`, `operation wait --timeout ... --after ...`
+and `operation cancel` with bounded output. Waiting uses an event/cursor and
+bounded blocking, not model-driven repeated polling. Completed results are
+retrievable by ID; a wait timeout leaves the operation running. A cancellation
+request has its own acknowledgment and final disposition; it cannot erase
+accepted mutations or undo an uncertain external side effect.
+
+Slow I/O stages immutable inputs/results outside the canonical mutation loop;
+only the owning engine admits validated results at an expected revision. Exports
+pin a captured revision. Concurrent source captures do not gain concurrent write
+authority. Backpressure bounds queues, jobs, staged bytes and retained results;
+limits and retention must be explicit, with accepted work recoverable. Recovery
+reconciles interrupted operation IDs and external outcomes before retrying. No
+unbounded scan or network wait may monopolize the mutation loop: paginate or
+stage it, and measure status/cancellation responsiveness under load.
+
+Complete the main spec's verb contract before lock. Map every canonical field to
+its owning typed mutation, or explicitly mark it derived/immutable. Required
+families below are coverage requirements; finalize exact spelling in one CLI
+schema, without parallel aliases that acquire different semantics:
+
+| Data or action | Required coordinator operations |
+| --- | --- |
+| Session and durability | start, status, clip, checkpoint list/create/verify, isolated restore/compare, export/replay, stop, fenced handoff |
+| Reversible mistakes | undo-plan/undo, redo-plan/redo of named requests; append compensating history and refuse conflicting or irreversible effects |
+| Work structure | add, edit permitted metadata, move/reparent, decompose, link/unlink, require, retire; preserve stable IDs and historical scope |
+| Scope and dependencies | baseline, discovery, dependency add/remove, prioritize, defer, cancel, reopen, supersede |
+| Assignments and execution | offer, acknowledge/decline, assign/responsible, take/heartbeat/release, attempt/result/usage intake, correction, pause/stop/reconcile |
+| Evidence and completion | criteria add/change/retire, source revision, attest/evidence, review/finding/disposition, verify, settle/revive with explicit guards |
+| Roadmaps | create/edit view, axes and members, cells/references, projection targets/policy, query/render/check; no duplicated task state |
+| Friends and CONFIG | register/retire, role/participation changes, capability/limit changes, config request/export/validated intake |
+| ACTIVE | observation/availability intake, current attempts and pending offers, return reconciliation; occupancy derived from execution records |
+| Models and prices | register/version, evidence and suitability updates, route/rate revisions and provenance; historical receipts immutable |
+| Issue correspondence | inventory, read-only capture/plan, non-destructive import, reconcile, archive/export/restore, separately selected absorb or external state update |
+| Queries and operations | indexed counts, focus/subtree, ready/blockers, friend/model/cost/history views; bounded operation status/wait/cancel |
+
+No generic set-field escape hatch may bypass invariants. Each verb specifies
+argument types, prerequisites, read/write set, invalidation/counter effects,
+authority/fencing checks, all-or-none boundary, idempotency, success/refusal/unknown
+outcomes and its evidence receipt. Multi-node changes use atomic validated
+request envelopes. A dry-run produces a revision-bound plan without accepting a
+mutation; applying a stale plan revalidates and refuses conflicting assumptions.
+Do not overload import with deletion, completion with retirement, or a correction
+with proof that a worker has received it.
+
+Exercise all normal coordinator workflows through these public verbs, without
+hand-editing Lisp, JSON, journal records or derived caches. The implementation
+plan must identify missing verbs and conflicting existing semantics before lock.
+
+## Lossless migration and round-trip release gates
+
+No data-loss guarantee rests on parser success, counts alone, Git commits alone
+or a backup that nobody restored. Required executable acceptance coverage is in
+[SPEC-WORK-VALIDATION.md](SPEC-WORK-VALIDATION.md). Import is non-destructive by
+default; dry-run/capture and all initial pilot imports must have no source-delete
+or source-update capability. Destructive absorption is a separate operation and
+remains disabled until its independent reconciliation and authorization gates.
+
+## Agreement and lock gate
+
+Integrate this companion with the main spec into one unambiguous revision before
+implementation approval. Obtain each requested friend's explicit disposition at
+that revision; record unresolved, unavailable or reserved reviewers separately.
+Cold model reads supplement friend discussion. No reply is not approval. Require
+resolved participation policy, complete verb/protocol schemas, migration and
+round-trip acceptance coverage, and named implementation slices. Lock the agreed
+revision and keep subsequent changes explicit, scoped and reviewed; recording a
+requirement or passing fixtures does not mean the runtime exists or is adopted.
