@@ -776,6 +776,23 @@ is compared against; it is never the path `query --ask size` takes."
                    "empty optional container was settled")
       (check-equal 2 (state-open-count (kernel-state k))
                    "open count after the settle cascade")
+      ;; Optional work may close and reopen in its own right. Since it is not
+      ;; in the parent's required set, neither move changes settled ancestors.
+      (close-node "root/f/optional" "cascade-optional-close")
+      (check-equal :c (node-branch (kernel-state k) "root/f")
+                   "optional child close revived its parent")
+      (multiple-value-bind (okp line code optional-reopen)
+          (submit k (reopen-request :node "root/f/optional"
+                                    :request "cascade-optional-reopen"))
+        (declare (ignore line code))
+        (ok okp "optional child reopen refused")
+        (check-equal '("root/f/optional" "root/f/optional")
+                     (mapcar #'work-event-node (getf optional-reopen :events))
+                     "optional child reopen cascaded"))
+      (check-equal :c (node-branch (kernel-state k) "root/f")
+                   "optional child reopen revived its parent")
+      (check-equal :c (node-branch (kernel-state k) "root")
+                   "optional child reopen revived its root")
       (multiple-value-bind (okp line code reopened)
           (submit k (reopen-request :node "root/f/b" :request "cascade-reopen"))
         (declare (ignore line code))
@@ -788,9 +805,9 @@ is compared against; it is never the path `query --ask size` takes."
                    "unaffected sibling container revived")
       (check-equal 5 (state-open-count (kernel-state k))
                    "open count after the revive cascade")
-      (check-equal 4 (length (state-history (kernel-state k)))
+      (check-equal 6 (length (state-history (kernel-state k)))
                    "one history record per request")
-      (check-equal 9 (length (state-closed-rows (kernel-state k)))
+      (check-equal 11 (length (state-closed-rows (kernel-state k)))
                    "one immutable row per settle and revive")
       (let ((rebuilt (reconstruct-state
                       (canonical-string (state-canonical-form (kernel-state k))))))
@@ -810,6 +827,35 @@ is compared against; it is never the path `query --ask size` takes."
                  "required empty container settled")
     (check-equal :o (node-branch (kernel-state k) "empty-root")
                  "parent settled over a required empty container")))
+
+(deftest "static-seed-required-is-a-boolean" "docs/SPEC-WORK.md:799,2769-2781"
+    "expected=absent-is-true;nil-is-false;lookalikes-refused;input-unchanged"
+  (dolist (bad '(:false "false" 0))
+    (let* ((seed (list (list :id "root" :type :work-set :parent nil :state :unknown)
+                       (list :id "root/bad" :type :task :parent "root"
+                             :state :doing :required bad)))
+           (before (copy-tree seed)))
+      (handler-case
+          (progn (make-seed-state seed)
+                 (fail "malformed :required ~S was accepted" bad))
+        (unsupported-input (c)
+          (ok (search "required" (princ-to-string c))
+              "malformed :required refusal did not name the field: ~A" c)))
+      (check-equal before seed "seed mutated while refusing malformed :required")))
+  ;; Absent defaults true, while explicit NIL is the internal seed spelling of
+  ;; false. Closing the default-required child settles its parent despite the
+  ;; optional sibling remaining open.
+  (let* ((seed '((:id "root" :type :work-set :parent nil :state :unknown)
+                 (:id "root/required" :type :task :parent "root" :state :doing)
+                 (:id "root/optional" :type :task :parent "root" :state :doing
+                  :required nil)))
+         (k (make-kernel :state (make-seed-state seed))))
+    (ok (submit k (close-request :node "root/required" :request "boolean-controls"))
+        "default-required child close refused")
+    (check-equal :c (node-branch (kernel-state k) "root")
+                 "absent :required did not default true")
+    (check-equal :o (node-branch (kernel-state k) "root/optional")
+                 "explicit NIL did not remain optional")))
 
 (deftest "container-cascade-is-atomic-and-retry-stable" "docs/SPEC-WORK.md:1272-1283,3128-3131"
     "expected=reject-applies-0;accept-all;retry-applies-0"
