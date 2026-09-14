@@ -675,3 +675,85 @@ func TestReadPacketFirstLineRejectsOverlongUnterminatedHeader(t *testing.T) {
 		t.Fatal("accepted an unterminated overlong packet header")
 	}
 }
+
+func TestPacketHeaderRoundTripsTokenCharactersAndRejectsOverflow(t *testing.T) {
+	h := validPacketHeaderForTest()
+	h.Entry = "feature=one"
+	h.Who = "Ada Vale=two"
+	h.ID = packetID(h.Entry, h.Head, h.Base, h.Range)
+	got, err := parsePacketFirstLine(h.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Entry != h.Entry || got.Who != h.Who {
+		t.Fatalf("token fields did not round trip: %#v", got)
+	}
+	if _, err := parsePacketFirstLine(strings.Replace(h.String(), "bytes=100", "bytes=18446744073709551615", 1)); err == nil {
+		t.Fatal("accepted bytes outside int range")
+	}
+}
+
+func TestPacketReuseReadsOneBoundedVerifiedRegularArtifact(t *testing.T) {
+	lane, _ := packetLab(t)
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "emma", "--out", "first.md"}, &out, &errb); code != 0 {
+		t.Fatalf("first packet=%d %s", code, errb.String())
+	}
+	first, err := os.ReadFile("first.md")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile("tampered.md", append(first, 'x'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errb.Reset()
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "stella", "--out", "bad.md", "--reuse", "tampered.md"}, &out, &errb); code != 2 || !strings.Contains(errb.String(), "does not match") {
+		t.Fatalf("tampered reuse=%d %s", code, errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature", "--who", "stella", "--out", "dir.md", "--reuse", "."}, &out, &errb); code != 2 || !strings.Contains(errb.String(), "regular file") {
+		t.Fatalf("directory reuse=%d %s", code, errb.String())
+	}
+}
+
+func TestPacketCommandReuseRoundTripsNontrivialEntryAndReader(t *testing.T) {
+	lane, _ := packetLab(t)
+	repo := filepath.Join(lane, merge.RepoDir)
+	git := func(args ...string) {
+		c := exec.Command("git", args...)
+		c.Dir = repo
+		if b, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v %s", args, err, b)
+		}
+	}
+	git("branch", "feature=one", "feature")
+	st, err := merge.Load(lane)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.Find("feature").Branch = "feature=one"
+	if err := st.SaveTo(lane); err != nil {
+		t.Fatal(err)
+	}
+	old, _ := os.Getwd()
+	defer os.Chdir(old)
+	os.Chdir(lane)
+	var out, errb bytes.Buffer
+	who := "Ada Vale=two"
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature=one", "--who", who, "--out", "first.md"}, &out, &errb); code != 0 {
+		t.Fatalf("first packet=%d %s", code, errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	if code := run([]string{"packet", "--lane", lane, "--branch", "feature=one", "--who", "next=reader", "--out", "second.md", "--reuse", "first.md"}, &out, &errb); code != 0 {
+		t.Fatalf("reuse=%d %s", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "reused=true") {
+		t.Fatalf("reuse receipt=%s", out.String())
+	}
+}

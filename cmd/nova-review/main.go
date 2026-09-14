@@ -10,6 +10,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +22,8 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
+
+const defaultPacketMaxBytes = 131072
 
 const usage = `nova-review: bounded exact-revision review packets (docs/SPEC-REVIEW.md)
 
@@ -76,7 +79,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	asked := fs.String("head", "", "")
 	dest := fs.String("out", "", "")
 	reuse := fs.String("reuse", "", "")
-	maxBytes := fs.Int("max-bytes", 131072, "")
+	maxBytes := fs.Int("max-bytes", defaultPacketMaxBytes, "")
 	maxFlag := fs.Int("max", 20, "")
 	var specs, rules stringsFlag
 	fs.Var(&specs, "spec", "")
@@ -102,7 +105,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	if _, err := os.Stat(*dest); err == nil {
 		return refuse(errOut, "--out already exists; packets are immutable")
 	}
-	if *reuse != "" && (len(specs) != 0 || len(rules) != 0 || *maxBytes != 131072) {
+	if *reuse != "" && (len(specs) != 0 || len(rules) != 0 || *maxBytes != defaultPacketMaxBytes) {
 		return refuse(errOut, "--reuse cannot be combined with --spec, --rule or --max-bytes")
 	}
 	st, err := merge.Load(*lane)
@@ -162,7 +165,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	}
 	packetID := packetID(id, current, base, rangeText)
 	if *reuse != "" {
-		hdr, e := readPacketFirstLine(*reuse)
+		hdr, content, e := readReusePacket(*reuse, defaultPacketMaxBytes)
 		if e != nil {
 			return refuse(errOut, fmt.Sprintf("--reuse file is not a valid packet: %v", e))
 		}
@@ -170,43 +173,40 @@ func packet(args []string, out, errOut io.Writer) int {
 			fmt.Fprintf(errOut, "PACKET REUSE asked=%s found=%s file=%s: that packet was built for another (entry, head, range); build this reader's own\n", packetID, oneline.Field(hdr.ID), oneline.Field(*reuse))
 			return 2
 		}
-		candidateBytes, e := os.ReadFile(*reuse)
+		sections, e := splitPacketSections(content)
 		if e != nil {
-			return refuse(errOut, "--reuse could not be read")
+			return refuse(errOut, fmt.Sprintf("--reuse candidate packet has invalid sections: %v", e))
 		}
-		content := string(candidateBytes)
-		const mThisHead = "## This head\n"
-		const mYourPrior = "## Your prior verdicts on this entry\n"
-		const mAllVerdicts = "## All verdicts at earlier heads\n"
-		idxThisHead := strings.Index(content, mThisHead)
-		idxYourPrior := strings.Index(content, mYourPrior)
-		idxAllVerdicts := strings.Index(content, mAllVerdicts)
-		if idxThisHead == -1 || idxYourPrior == -1 || idxAllVerdicts == -1 || idxThisHead >= idxYourPrior || idxYourPrior >= idxAllVerdicts {
-			return refuse(errOut, "--reuse candidate packet is missing required sections")
+		files, hunks, e := packetDiffSectionCounts(sections.diff, sections.notIncluded)
+		if e != nil {
+			return refuse(errOut, fmt.Sprintf("--reuse candidate packet has invalid diff sections: %v", e))
 		}
-		headSection := content[idxThisHead:idxYourPrior]
-		restSection := content[idxAllVerdicts:]
-		yourPriorSection := formatYourPriorVerdicts(*who, entry.Reads, base, current, rangeText)
-		bodyRest := headSection + yourPriorSection + "\n" + restSection
+		if hdr.Cut != sections.notIncludedCount {
+			return refuse(errOut, "--reuse candidate packet's cut field disagrees with Not included")
+		}
+		ruleCount, e := packetRulesSectionCount(sections.rules)
+		if e != nil {
+			return refuse(errOut, fmt.Sprintf("--reuse candidate packet has invalid Rules touched section: %v", e))
+		}
+		priorCount, e := packetTableSectionCount(sections.allVerdicts, "## All verdicts at earlier heads\n", "| who | model | kind | verdict | head | at |")
+		if e != nil {
+			return refuse(errOut, fmt.Sprintf("--reuse candidate packet has invalid earlier verdicts section: %v", e))
+		}
+		openCount, e := packetTableSectionCount(sections.openFindings, "## Open findings (answer with `dup <id>` if you see the same thing)\n", "| id | file:line | rule | severity | claim | seen by | author says |")
+		if e != nil {
+			return refuse(errOut, fmt.Sprintf("--reuse candidate packet has invalid open findings section: %v", e))
+		}
 
+		yourPriorSection := formatYourPriorVerdicts(*who, entry.Reads, base, current, rangeText)
+		bodyRest := sections.thisHead + yourPriorSection + "\n" + sections.allVerdicts + sections.openFindings + sections.rules + sections.diff + sections.notIncluded
 		hdrNew := packetHeader{
-			ID:    hdr.ID,
-			Entry: hdr.Entry,
-			Head:  hdr.Head,
-			Base:  hdr.Base,
-			Range: hdr.Range,
-			Who:   *who,
-			Built: time.Now().UTC().Format(time.RFC3339),
-			Cut:   hdr.Cut,
+			ID: hdr.ID, Entry: hdr.Entry, Head: hdr.Head, Base: hdr.Base, Range: hdr.Range,
+			Who: *who, Built: time.Now().UTC().Format(time.RFC3339), Cut: hdr.Cut,
 		}
 		newBody := formatPacket(hdrNew, bodyRest)
 		if len(newBody) > *maxBytes {
 			return refuse(errOut, "--reuse packet exceeds the byte budget")
 		}
-		files, hunks := diffCounts(restSection)
-		ruleCount := strings.Count(restSection, "### ")
-		priorCount := len(entry.Reads)
-		openCount := 0
 		return writePacket(*dest, newBody, out, errOut, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(newBody), hdr.Cut, true)
 	}
 	if _, err := gitOut(repo, "rev-parse", base+"^{commit}"); err != nil {
@@ -319,7 +319,7 @@ type packetHeader struct {
 
 func (h packetHeader) String() string {
 	return fmt.Sprintf("%s id=%s entry=%s head=%s base=%s range=%s who=%s built=%s bytes=%d cut=%d",
-		packetV1Prefix, h.ID, oneline.Field(h.Entry), h.Head, h.Base, oneline.Field(h.Range), oneline.Field(h.Who), h.Built, h.Bytes, h.Cut)
+		packetV1Prefix, h.ID, packetHeaderField(h.Entry), h.Head, h.Base, h.Range, packetHeaderField(h.Who), h.Built, h.Bytes, h.Cut)
 }
 
 func packetID(entry, head, base, rng string) string {
@@ -376,18 +376,27 @@ func isLowerHex(s string, n int) bool {
 }
 
 func packetHeaderCount(field, value string) (int, error) {
-	n, err := strconv.ParseUint(value, 10, strconv.IntSize)
-	if err != nil || strconv.FormatUint(n, 10) != value {
+	n, err := strconv.ParseInt(value, 10, strconv.IntSize)
+	if err != nil || n < 0 || strconv.FormatInt(n, 10) != value {
 		return 0, fmt.Errorf("invalid %s field %q", field, value)
 	}
 	return int(n), nil
 }
 
-func packetHeaderToken(field, value string) error {
-	if value == "" || strings.ContainsAny(value, "=\r\n\t ") {
-		return fmt.Errorf("invalid %s field %q", field, value)
+// packetHeaderField is a canonical, reversible token encoding.  oneline.Field
+// deliberately is not reversible, so it cannot carry tuple members that must
+// be compared byte-for-byte during reuse.
+func packetHeaderField(value string) string { return url.QueryEscape(value) }
+
+func packetHeaderToken(field, value string) (string, error) {
+	if value == "" || strings.ContainsAny(value, "\r\n\t ") {
+		return "", fmt.Errorf("invalid %s field %q", field, value)
 	}
-	return nil
+	decoded, err := url.QueryUnescape(value)
+	if err != nil || decoded == "" || packetHeaderField(decoded) != value {
+		return "", fmt.Errorf("invalid %s field %q", field, value)
+	}
+	return decoded, nil
 }
 
 func packetHeaderRange(value, base, head string) error {
@@ -461,18 +470,22 @@ func parsePacketFirstLine(line string) (*packetHeader, error) {
 	if !isLowerHex(hdr.ID, 12) {
 		return nil, fmt.Errorf("invalid id field %q", hdr.ID)
 	}
-	if err := packetHeaderToken("entry", hdr.Entry); err != nil {
+	entry, err := packetHeaderToken("entry", hdr.Entry)
+	if err != nil {
 		return nil, err
 	}
+	hdr.Entry = entry
 	if !merge.IsSHA(hdr.Head) || !merge.IsSHA(hdr.Base) {
 		return nil, fmt.Errorf("head and base must be full lower-case shas")
 	}
 	if err := packetHeaderRange(hdr.Range, hdr.Base, hdr.Head); err != nil {
 		return nil, err
 	}
-	if err := packetHeaderToken("who", hdr.Who); err != nil {
+	who, err := packetHeaderToken("who", hdr.Who)
+	if err != nil {
 		return nil, err
 	}
+	hdr.Who = who
 	built, err := time.Parse(time.RFC3339, hdr.Built)
 	if err != nil || built.UTC().Format(time.RFC3339) != hdr.Built {
 		return nil, fmt.Errorf("invalid built field %q", hdr.Built)
@@ -481,6 +494,212 @@ func parsePacketFirstLine(line string) (*packetHeader, error) {
 		return nil, fmt.Errorf("id field does not match packet tuple")
 	}
 	return hdr, nil
+}
+
+type packetSections struct {
+	thisHead, allVerdicts, openFindings, rules, diff, notIncluded string
+	notIncludedCount                                              int
+}
+
+// readReusePacket opens the supplied artifact once.  The opened descriptor is
+// checked as a regular file and read with the packet's fixed admission ceiling;
+// its declared byte count then binds the header to exactly the bytes reused.
+func readReusePacket(path string, limit int) (*packetHeader, string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, "", err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, "", fmt.Errorf("reuse candidate is not a regular file")
+	}
+	if info.Size() > int64(limit) {
+		return nil, "", fmt.Errorf("reuse candidate exceeds the %d-byte packet limit", limit)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, int64(limit)+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) > limit {
+		return nil, "", fmt.Errorf("reuse candidate exceeds the %d-byte packet limit", limit)
+	}
+	firstLine, _, found := bytes.Cut(data, []byte{'\n'})
+	if !found || len(firstLine) > packetHeaderLimit {
+		return nil, "", fmt.Errorf("packet header exceeds %d bytes or is unterminated", packetHeaderLimit)
+	}
+	hdr, err := parsePacketFirstLine(strings.TrimSuffix(string(firstLine), "\r"))
+	if err != nil {
+		return nil, "", err
+	}
+	if hdr.Bytes != len(data) {
+		return nil, "", fmt.Errorf("header bytes=%d does not match %d bytes read", hdr.Bytes, len(data))
+	}
+	return hdr, string(data), nil
+}
+
+var packetSectionMarkers = []string{
+	"## This head\n",
+	"## Your prior verdicts on this entry\n",
+	"## All verdicts at earlier heads\n",
+	"## Open findings (answer with `dup <id>` if you see the same thing)\n",
+	"## Rules touched\n",
+}
+
+func splitPacketSections(content string) (packetSections, error) {
+	var sections packetSections
+	firstEnd := strings.IndexByte(content, '\n')
+	if firstEnd < 0 || !strings.HasPrefix(content[firstEnd:], "\n\n## This head\n") {
+		return sections, fmt.Errorf("packet must begin with This head after the header")
+	}
+	indexes := make([]int, len(packetSectionMarkers))
+	at := firstEnd + 2
+	for i, marker := range packetSectionMarkers {
+		off := strings.Index(content[at:], marker)
+		if off < 0 {
+			return sections, fmt.Errorf("missing required section %q", strings.TrimSpace(marker))
+		}
+		indexes[i] = at + off
+		at = indexes[i] + len(marker)
+	}
+	diffIndex := strings.Index(content[at:], "## Diff ")
+	if diffIndex < 0 {
+		return sections, fmt.Errorf("missing required Diff section")
+	}
+	diffIndex += at
+	notIncludedIndex := strings.Index(content[diffIndex:], "## Not included\n")
+	if notIncludedIndex < 0 {
+		return sections, fmt.Errorf("missing required Not included section")
+	}
+	notIncludedIndex += diffIndex
+	sections.thisHead = content[indexes[0]:indexes[1]]
+	sections.allVerdicts = content[indexes[2]:indexes[3]]
+	sections.openFindings = content[indexes[3]:indexes[4]]
+	sections.rules = content[indexes[4]:diffIndex]
+	sections.diff = content[diffIndex:notIncludedIndex]
+	sections.notIncluded = content[notIncludedIndex:]
+	count, err := packetNotIncludedCount(sections.notIncluded)
+	if err != nil {
+		return sections, err
+	}
+	sections.notIncludedCount = count
+	return sections, nil
+}
+
+func packetNotIncludedCount(section string) (int, error) {
+	lines := strings.Split(strings.TrimRight(strings.TrimPrefix(section, "## Not included\n"), "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "nothing" {
+		return 0, nil
+	}
+	if len(lines) == 0 || lines[0] == "" {
+		return 0, fmt.Errorf("Not included is empty")
+	}
+	for _, line := range lines {
+		pathEnd := strings.LastIndex(line, ": ")
+		if pathEnd <= 0 {
+			return 0, fmt.Errorf("invalid Not included row %q", line)
+		}
+		var hunks, added, deleted int
+		if n, err := fmt.Sscanf(line[pathEnd+2:], "%d hunks, +%d -%d; print with: git diff", &hunks, &added, &deleted); err != nil || n != 3 || hunks < 0 || added < 0 || deleted < 0 {
+			return 0, fmt.Errorf("invalid Not included row %q", line)
+		}
+	}
+	return len(lines), nil
+}
+
+func packetDiffSectionCounts(diffSection, notIncluded string) (int, int, error) {
+	if !strings.HasPrefix(diffSection, "## Diff ") {
+		return 0, 0, fmt.Errorf("missing Diff heading")
+	}
+	fence := strings.Index(diffSection, "\n```diff\n")
+	endFence := strings.LastIndex(diffSection, "\n```\n")
+	if fence < 0 || endFence < fence || diffSection[endFence+len("\n```\n"):] != "\n" {
+		return 0, 0, fmt.Errorf("Diff has no complete diff fence")
+	}
+	diffText := diffSection[fence+len("\n```diff\n") : endFence]
+	files := parseFileDiffs(diffText)
+	fileCount, hunkCount := len(files), 0
+	for _, file := range files {
+		hunkCount += file.Hunks
+	}
+	lines := strings.Split(strings.TrimSuffix(strings.TrimPrefix(notIncluded, "## Not included\n"), "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "nothing" {
+		return fileCount, hunkCount, nil
+	}
+	for _, line := range lines {
+		pathEnd := strings.LastIndex(line, ": ")
+		var hunks, added, deleted int
+		if pathEnd <= 0 {
+			return 0, 0, fmt.Errorf("invalid Not included row %q", line)
+		}
+		if n, err := fmt.Sscanf(line[pathEnd+2:], "%d hunks, +%d -%d; print with: git diff", &hunks, &added, &deleted); err != nil || n != 3 {
+			return 0, 0, fmt.Errorf("invalid Not included row %q", line)
+		}
+		fileCount++
+		hunkCount += hunks
+	}
+	return fileCount, hunkCount, nil
+}
+
+func packetRulesSectionCount(section string) (int, error) {
+	if !strings.HasPrefix(section, "## Rules touched\n") {
+		return 0, fmt.Errorf("missing Rules touched heading")
+	}
+	body := strings.TrimRight(strings.TrimPrefix(section, "## Rules touched\n"), "\n")
+	if body == "No changed files." {
+		return 0, nil
+	}
+	count, rows := 0, 0
+	for _, line := range strings.Split(body, "\n") {
+		i := strings.LastIndex(line, ": rules=")
+		if i <= 0 {
+			continue
+		}
+		n, err := packetHeaderCount("rules", line[i+len(": rules="):])
+		if err != nil {
+			return 0, err
+		}
+		count += n
+		rows++
+	}
+	if rows == 0 {
+		return 0, fmt.Errorf("Rules touched has no per-file counts")
+	}
+	return count, nil
+}
+
+func packetTableSectionCount(section, marker, tableHeader string) (int, error) {
+	if !strings.HasPrefix(section, marker) {
+		return 0, fmt.Errorf("missing section heading")
+	}
+	lines := strings.Split(strings.TrimRight(strings.TrimPrefix(section, marker), "\n"), "\n")
+	if len(lines) == 1 && lines[0] == "none recorded" {
+		return 0, nil
+	}
+	if len(lines) < 2 || lines[0] != tableHeader {
+		return 0, fmt.Errorf("section has no recognized table")
+	}
+	shown := 0
+	moreTotal := -1
+	for _, line := range lines[1:] {
+		if strings.HasPrefix(line, "| ") {
+			shown++
+			continue
+		}
+		var omitted, total int
+		if n, err := fmt.Sscanf(line, "%d more of %d;", &omitted, &total); err == nil && n == 2 && omitted >= 0 && total >= shown && omitted+shown == total && moreTotal == -1 {
+			moreTotal = total
+			continue
+		}
+		return 0, fmt.Errorf("unrecognized table row %q", line)
+	}
+	if moreTotal >= 0 {
+		return moreTotal, nil
+	}
+	return shown, nil
 }
 
 func lastReadAt(reads []merge.Read, who string) string {
