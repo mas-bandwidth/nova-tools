@@ -2,6 +2,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -22,7 +24,7 @@ import (
 const usage = `nova-review: bounded exact-revision review packets (docs/SPEC-REVIEW.md)
 
 usage:
-  nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max-bytes <n>]
+  nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--reuse <file>]
   nova-review version
   nova-review help
 
@@ -74,6 +76,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	dest := fs.String("out", "", "")
 	reuse := fs.String("reuse", "", "")
 	maxBytes := fs.Int("max-bytes", 131072, "")
+	maxFlag := fs.Int("max", 20, "")
 	var specs, rules stringsFlag
 	fs.Var(&specs, "spec", "")
 	fs.Var(&rules, "rule", "")
@@ -85,6 +88,9 @@ func packet(args []string, out, errOut io.Writer) int {
 	}
 	if *maxBytes <= 0 {
 		return refuse(errOut, "--max-bytes must be positive")
+	}
+	if *maxFlag < 0 {
+		return refuse(errOut, "--max must be non-negative")
 	}
 	if (*pr > 0) == (*branch != "") {
 		return refuse(errOut, "give exactly one of --pr or --branch")
@@ -132,21 +138,27 @@ func packet(args []string, out, errOut io.Writer) int {
 			return 1
 		}
 	}
-	base := st.Base
-	// A reader's next packet starts at the last head that reader actually
-	// recorded, whatever their verdict. State is the durable fold of reads.
-	for _, read := range entry.Reads {
-		if read.Who == *who && read.Head != "" && read.At >= lastReadAt(entry.Reads, *who) {
-			base = read.Head
+	var priorRead *merge.Read
+	for i := range entry.Reads {
+		r := &entry.Reads[i]
+		if strings.EqualFold(strings.TrimSpace(r.Who), strings.TrimSpace(*who)) &&
+			(strings.EqualFold(r.Verdict, "approve") || strings.EqualFold(r.Verdict, "hold")) {
+			if priorRead == nil || r.At > priorRead.At {
+				priorRead = r
+			}
 		}
+	}
+	base := st.Base
+	rangeText := ""
+	if priorRead != nil && priorRead.Head != "" {
+		base = priorRead.Head
+		rangeText = merge.Short(base) + ".." + merge.Short(current)
+	} else {
+		rangeText = merge.Short(base) + "..." + merge.Short(current)
 	}
 	if base == "" {
 		return refuse(errOut, "the lane has no recorded base; the packet cannot guess its range")
 	}
-	if _, err := gitOut(repo, "rev-parse", base+"^{commit}"); err != nil {
-		return refuse(errOut, "the lane does not hold the recorded base commit")
-	}
-	rangeText := merge.Short(base) + ".." + merge.Short(current)
 	packetID := packetID(id, current, base, rangeText)
 	if *reuse != "" {
 		hdr, e := readPacketFirstLine(*reuse)
@@ -157,52 +169,95 @@ func packet(args []string, out, errOut io.Writer) int {
 			fmt.Fprintf(errOut, "PACKET REUSE asked=%s found=%s file=%s: that packet was built for another (entry, head, range); build this reader's own\n", packetID, oneline.Field(hdr.ID), oneline.Field(*reuse))
 			return 2
 		}
-		body, e := os.ReadFile(*reuse)
+		candidateBytes, e := os.ReadFile(*reuse)
 		if e != nil {
 			return refuse(errOut, "--reuse could not be read")
 		}
-		if len(body) > *maxBytes {
+		content := string(candidateBytes)
+		const mThisHead = "## This head\n"
+		const mYourPrior = "## Your prior verdicts on this entry\n"
+		const mAllVerdicts = "## All verdicts at earlier heads\n"
+		idxThisHead := strings.Index(content, mThisHead)
+		idxYourPrior := strings.Index(content, mYourPrior)
+		idxAllVerdicts := strings.Index(content, mAllVerdicts)
+		if idxThisHead == -1 || idxYourPrior == -1 || idxAllVerdicts == -1 || idxThisHead >= idxYourPrior || idxYourPrior >= idxAllVerdicts {
+			return refuse(errOut, "--reuse candidate packet is missing required sections")
+		}
+		headSection := content[idxThisHead:idxYourPrior]
+		restSection := content[idxAllVerdicts:]
+		yourPriorSection := formatYourPriorVerdicts(*who, entry.Reads, base, current, rangeText)
+		bodyRest := headSection + yourPriorSection + "\n" + restSection
+
+		hdrNew := packetHeader{
+			ID:    hdr.ID,
+			Entry: hdr.Entry,
+			Head:  hdr.Head,
+			Base:  hdr.Base,
+			Range: hdr.Range,
+			Who:   *who,
+			Built: time.Now().UTC().Format(time.RFC3339),
+			Cut:   hdr.Cut,
+		}
+		newBody := formatPacket(hdrNew, bodyRest)
+		if len(newBody) > *maxBytes {
 			return refuse(errOut, "--reuse packet exceeds the byte budget")
 		}
-		files, hunks := diffCounts(string(body))
-		return writePacket(*dest, string(body), out, id, packetID, current, base, rangeText, files, hunks, 0, len(body), hdr.Cut, true)
+		files, hunks := diffCounts(restSection)
+		ruleCount := strings.Count(restSection, "### ")
+		priorCount := len(entry.Reads)
+		openCount := 0
+		return writePacket(*dest, newBody, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(newBody), hdr.Cut, true)
+	}
+	if _, err := gitOut(repo, "rev-parse", base+"^{commit}"); err != nil {
+		return refuse(errOut, "the lane does not hold the recorded base commit")
 	}
 	diff, err := gitOut(repo, "diff", "--no-ext-diff", "--unified=3", base, current)
 	if err != nil {
 		return refuse(errOut, "could not read the selected diff")
 	}
-	files, hunks := diffCounts(diff)
-	ruleText, ruleCount, err := selectedRules(repo, base, current, diff, specs, rules)
+	fileDiffs := parseFileDiffs(diff)
+	files := len(fileDiffs)
+	hunks := 0
+	for _, f := range fileDiffs {
+		hunks += f.Hunks
+	}
+	ruleText, ruleCount, err := selectedRules(repo, base, current, diff, specs, rules, *maxFlag, *lane)
 	if err != nil {
 		return refuse(errOut, err.Error())
 	}
-	hdr := packetHeader{
-		ID:    packetID,
-		Entry: id,
-		Head:  current,
-		Base:  base,
-		Range: rangeText,
-		Who:   *who,
-		Built: time.Now().UTC().Format(time.RFC3339),
-		Cut:   0,
-	}
-	sections := fmt.Sprintf("## Author intent (data)\nunknown: the lane state has no entry body; no intent is guessed.\n\n## Prior verdicts\nunknown: verdict records are not implemented by this packet-only slice.\n\n## Open findings\nunknown: finding records are not implemented by this packet-only slice.\n\n## Rules touched\n%s\n\n## Diff\n", ruleText)
-	candidateBody := formatPacket(hdr, sections+diff+"\n## Not included\nnone\n")
-	if len(candidateBody) > *maxBytes {
-		hunksText, e := gitOut(repo, "diff", "--no-ext-diff", "--unified=0", "--stat", base, current)
-		if e != nil {
-			return refuse(errOut, "could not build the bounded hunk list")
+	intentTitle, intentBody, _ := getAuthorIntent(repo, st.Repo, *pr, *branch, current)
+	thisHeadSec := formatThisHead(intentTitle, intentBody)
+	yourPriorSec := formatYourPriorVerdicts(*who, entry.Reads, base, current, rangeText)
+	allVerdictsSec, priorCount := formatAllVerdicts(entry.Reads, *maxFlag, *lane)
+	openFindingsSec, openCount := formatOpenFindings(*maxFlag, *lane)
+	rulesTouchedSec := fmt.Sprintf("## Rules touched\n%s\n", ruleText)
+
+	assembleBody := func(diffSec, notIncSec string, cut int) string {
+		hdr := packetHeader{
+			ID:    packetID,
+			Entry: id,
+			Head:  current,
+			Base:  base,
+			Range: rangeText,
+			Who:   *who,
+			Built: time.Now().UTC().Format(time.RFC3339),
+			Cut:   cut,
 		}
-		remedy := fmt.Sprintf("\n## Diff omitted\nThe selected diff exceeds --max-bytes. Read it with:\n\ngit -C %s diff --no-ext-diff %s %s\n\n%s", repo, base, current, hunksText)
-		diff = remedy
-		hdr.Cut = files
-		body := formatPacket(hdr, sections+diff+"\n## Not included\nfull diff omitted by byte budget\n")
-		if len(body) > *maxBytes {
-			return refuse(errOut, fmt.Sprintf("--max-bytes %d cannot hold packet metadata and bounded remedy (%d bytes)", *maxBytes, len(body)))
-		}
-		return writePacket(*dest, body, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, len(body), hdr.Cut, false)
+		bodyRest := thisHeadSec + "\n" +
+			yourPriorSec + "\n" +
+			allVerdictsSec + "\n" +
+			openFindingsSec + "\n" +
+			rulesTouchedSec + "\n" +
+			diffSec + "\n" +
+			notIncSec
+		return formatPacket(hdr, bodyRest)
 	}
-	return writePacket(*dest, candidateBody, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, len(candidateBody), 0, false)
+
+	_, _, cut, body, err := buildDiffAndNotIncluded(fileDiffs, rangeText, *maxBytes, assembleBody)
+	if err != nil {
+		return refuse(errOut, err.Error())
+	}
+	return writePacket(*dest, body, out, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(body), cut, false)
 }
 
 func gitOut(repo string, args ...string) (string, error) {
@@ -357,7 +412,7 @@ func lastReadAt(reads []merge.Read, who string) string {
 	}
 	return best
 }
-func selectedRules(repo, base, head, diff string, specFlags, requested []string) (string, int, error) {
+func selectedRules(repo, base, head, diff string, specFlags, requested []string, maxRules int, lane string) (string, int, error) {
 	var specs []scopedSpec
 	for _, flag := range specFlags {
 		p, heading, err := splitSpecFlag(flag)
@@ -470,7 +525,13 @@ func selectedRules(repo, base, head, diff string, specFlags, requested []string)
 		}
 		out = append(out, fmt.Sprintf("%s: rules=%d", file.Path, count))
 	}
-	for _, rule := range orderedRules(selected) {
+	allOrdered := orderedRules(selected)
+	limit := len(allOrdered)
+	if maxRules > 0 && limit > maxRules {
+		limit = maxRules
+	}
+	for i := 0; i < limit; i++ {
+		rule := allOrdered[i]
 		key := fmt.Sprintf("%s:%d", rule.Path, rule.Line)
 		quoted := fmt.Sprintf("> %s", strings.ReplaceAll(rule.Text, "\n", "\n> "))
 		if old, ok := previous[key]; ok {
@@ -478,40 +539,283 @@ func selectedRules(repo, base, head, diff string, specFlags, requested []string)
 		}
 		out = append(out, fmt.Sprintf("### %s:%d rule %d\n%s\ntouched by: %s", rule.Path, rule.Line, rule.Number, quoted, strings.Join(touched[key], ", ")))
 	}
+	if maxRules > 0 && len(allOrdered) > maxRules {
+		out = append(out, fmt.Sprintf("%d more of %d; print with: nova-review packet --lane %s ... --rule <spec>:<n>", len(allOrdered)-maxRules, len(allOrdered), lane))
+	}
 	if len(files) == 0 {
 		out = append(out, "No changed files.")
 	}
 	return strings.Join(out, "\n"), len(selected), nil
 }
-func writePacket(dest, body string, out io.Writer, entry, id, head, base, rng string, files, hunks, rules, bytesN, cut int, reused bool) int {
+
+func getAuthorIntent(repo, hostRepo string, pr int, branch, head string) (title, body string, err error) {
+	if pr > 0 && hostRepo != "" {
+		c := exec.Command("gh", "pr", "view", fmt.Sprint(pr), "--repo", hostRepo, "--json", "title,body")
+		b, err := c.Output()
+		if err == nil {
+			var v struct {
+				Title string `json:"title"`
+				Body  string `json:"body"`
+			}
+			if err := json.Unmarshal(b, &v); err == nil {
+				return strings.TrimSpace(v.Title), strings.TrimSpace(v.Body), nil
+			}
+		}
+	}
+	if head != "" && repo != "" {
+		out, err := gitOut(repo, "log", "-1", "--format=%s%n%n%b", head)
+		if err == nil {
+			t, b, _ := strings.Cut(out, "\n\n")
+			return strings.TrimSpace(t), strings.TrimSpace(b), nil
+		}
+	}
+	return "", "unknown: the lane state has no entry body; no intent is guessed.", nil
+}
+
+func formatThisHead(title, body string) string {
+	var sb strings.Builder
+	sb.WriteString("## This head\n")
+	if title != "" {
+		sb.WriteString(title + "\n\n")
+	}
+	sb.WriteString("the author says:\n")
+	if body != "" {
+		sb.WriteString(body + "\n")
+	} else {
+		sb.WriteString("(no description provided)\n")
+	}
+	return sb.String()
+}
+
+func formatYourPriorVerdicts(who string, reads []merge.Read, base, current, rng string) string {
+	var newest *merge.Read
+	for i := range reads {
+		r := &reads[i]
+		if strings.EqualFold(strings.TrimSpace(r.Who), strings.TrimSpace(who)) &&
+			(strings.EqualFold(r.Verdict, "approve") || strings.EqualFold(r.Verdict, "hold")) {
+			if newest == nil || r.At > newest.At {
+				newest = r
+			}
+		}
+	}
+	var sb strings.Builder
+	sb.WriteString("## Your prior verdicts on this entry\n")
+	if newest != nil {
+		sb.WriteString(fmt.Sprintf("%s's newest: %s at %s (%s); range since: %s\n",
+			who, strings.ToLower(newest.Verdict), merge.Short(newest.Head), newest.At, rng))
+	} else {
+		sb.WriteString(fmt.Sprintf("none; this packet is the whole change, %s...%s\n",
+			merge.Short(base), merge.Short(current)))
+	}
+	return sb.String()
+}
+
+func formatAllVerdicts(reads []merge.Read, max int, lane string) (string, int) {
+	var sb strings.Builder
+	sb.WriteString("## All verdicts at earlier heads\n")
+	if len(reads) == 0 {
+		sb.WriteString("none recorded\n")
+		return sb.String(), 0
+	}
+	sorted := make([]merge.Read, len(reads))
+	copy(sorted, reads)
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].At > sorted[j].At
+	})
+	sb.WriteString("| who | model | kind | verdict | head | at |\n")
+	limit := len(sorted)
+	if max > 0 && limit > max {
+		limit = max
+	}
+	for i := 0; i < limit; i++ {
+		r := sorted[i]
+		sb.WriteString(fmt.Sprintf("| %s | - | line | %s | %s | %s |\n",
+			r.Who, strings.ToLower(r.Verdict), merge.Short(r.Head), r.At))
+	}
+	if max > 0 && len(sorted) > max {
+		sb.WriteString(fmt.Sprintf("%d more of %d; print with: nova-review roster --lane %s ... --max 0\n",
+			len(sorted)-max, len(sorted), lane))
+	}
+	return sb.String(), len(reads)
+}
+
+func formatOpenFindings(max int, lane string) (string, int) {
+	var sb strings.Builder
+	sb.WriteString("## Open findings (answer with `dup <id>` if you see the same thing)\n")
+	sb.WriteString("none recorded\n")
+	return sb.String(), 0
+}
+
+type fileDiff struct {
+	Header   string
+	Path     string
+	Hunks    int
+	Added    int
+	Deleted  int
+	FullText string
+}
+
+func parseFileDiffs(diff string) []fileDiff {
+	var files []fileDiff
+	lines := strings.Split(diff, "\n")
+	var cur *fileDiff
+	var curLines []string
+
+	flush := func() {
+		if cur != nil {
+			cur.FullText = strings.Join(curLines, "\n")
+			files = append(files, *cur)
+			cur = nil
+			curLines = nil
+		}
+	}
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "diff --git ") {
+			flush()
+			cur = &fileDiff{Header: line}
+			parts := strings.Split(strings.TrimPrefix(line, "diff --git a/"), " b/")
+			if len(parts) == 2 {
+				cur.Path = parts[1]
+			}
+			curLines = append(curLines, line)
+			continue
+		}
+		if cur == nil {
+			continue
+		}
+		curLines = append(curLines, line)
+		if strings.HasPrefix(line, "@@") {
+			cur.Hunks++
+		} else if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			cur.Added++
+		} else if strings.HasPrefix(line, "-") && !strings.HasPrefix(line, "---") {
+			cur.Deleted++
+		}
+	}
+	flush()
+	return files
+}
+
+func buildDiffAndNotIncluded(files []fileDiff, rangeText string, maxBytes int, assemble func(diffSec, notIncSec string, cut int) string) (string, string, int, string, error) {
+	var allDiffLines []string
+	for _, f := range files {
+		allDiffLines = append(allDiffLines, f.FullText)
+	}
+	diffFull := strings.Join(allDiffLines, "\n")
+	diffSection := fmt.Sprintf("## Diff %s\n```diff\n%s\n```\n", rangeText, diffFull)
+	notIncludedSection := "## Not included\nnothing\n"
+	candidate := assemble(diffSection, notIncludedSection, 0)
+	if len(candidate) <= maxBytes {
+		return diffSection, notIncludedSection, 0, candidate, nil
+	}
+
+	var included []fileDiff
+	var cutFiles []fileDiff
+
+	for i := 0; i < len(files); i++ {
+		testIncluded := append(included, files[i])
+		testCut := append([]fileDiff{}, cutFiles...)
+		for j := i + 1; j < len(files); j++ {
+			testCut = append(testCut, files[j])
+		}
+
+		var incLines []string
+		for _, f := range testIncluded {
+			incLines = append(incLines, f.FullText)
+		}
+		var testDiffSec string
+		if len(incLines) > 0 {
+			testDiffSec = fmt.Sprintf("## Diff %s\n```diff\n%s\n```\n", rangeText, strings.Join(incLines, "\n"))
+		} else {
+			testDiffSec = fmt.Sprintf("## Diff %s\n```diff\n```\n", rangeText)
+		}
+
+		var notIncLines []string
+		notIncLines = append(notIncLines, "## Not included")
+		for _, cf := range testCut {
+			notIncLines = append(notIncLines, fmt.Sprintf("%s: %d hunks, +%d -%d; print with: git diff %s -- %s",
+				cf.Path, cf.Hunks, cf.Added, cf.Deleted, rangeText, cf.Path))
+		}
+		testNotIncSec := strings.Join(notIncLines, "\n") + "\n"
+
+		testCand := assemble(testDiffSec, testNotIncSec, len(testCut))
+		if len(testCand) <= maxBytes {
+			included = append(included, files[i])
+		} else {
+			cutFiles = append(cutFiles, files[i])
+		}
+	}
+
+	var finalIncLines []string
+	for _, f := range included {
+		finalIncLines = append(finalIncLines, f.FullText)
+	}
+	var finalDiffSec string
+	if len(finalIncLines) > 0 {
+		finalDiffSec = fmt.Sprintf("## Diff %s\n```diff\n%s\n```\n", rangeText, strings.Join(finalIncLines, "\n"))
+	} else {
+		finalDiffSec = fmt.Sprintf("## Diff %s\n```diff\n```\n", rangeText)
+	}
+
+	var notIncLines []string
+	notIncLines = append(notIncLines, "## Not included")
+	if len(cutFiles) == 0 {
+		notIncLines = append(notIncLines, "nothing")
+	} else {
+		for _, cf := range cutFiles {
+			notIncLines = append(notIncLines, fmt.Sprintf("%s: %d hunks, +%d -%d; print with: git diff %s -- %s",
+				cf.Path, cf.Hunks, cf.Added, cf.Deleted, rangeText, cf.Path))
+		}
+	}
+	finalNotIncSec := strings.Join(notIncLines, "\n") + "\n"
+	cutCount := len(cutFiles)
+	finalCand := assemble(finalDiffSec, finalNotIncSec, cutCount)
+	if len(finalCand) > maxBytes {
+		return "", "", 0, "", fmt.Errorf("--max-bytes %d cannot hold packet metadata and bounded remedy (%d bytes)", maxBytes, len(finalCand))
+	}
+	return finalDiffSec, finalNotIncSec, cutCount, finalCand, nil
+}
+
+func writePacket(dest, body string, out io.Writer, entry, id, head, base, rng string, files, hunks, rules, prior, open, bytesN, cut int, reused bool) int {
 	if err := writeExclusive(dest, []byte(body)); err != nil {
 		fmt.Fprintf(os.Stderr, "PACKET REFUSED: could not exclusively create --out: %s\n", oneline.Escape(err.Error()))
 		return 2
 	}
-	fmt.Fprintf(out, "PACKET OK entry=%s id=%s head=%s base=%s range=%s files=%d hunks=%d rules=%d prior=0 open=0 bytes=%d cut=%d reused=%t out=%s\n", oneline.Field(entry), id, merge.Short(head), merge.Short(base), oneline.Field(rng), files, hunks, rules, bytesN, cut, reused, oneline.Field(dest))
+	fmt.Fprintf(out, "PACKET OK entry=%s id=%s head=%s base=%s range=%s files=%d hunks=%d rules=%d prior=%d open=%d bytes=%d cut=%d reused=%t out=%s\n",
+		oneline.Field(entry), id, merge.Short(head), merge.Short(base), oneline.Field(rng), files, hunks, rules, prior, open, bytesN, cut, reused, oneline.Field(dest))
 	return 0
 }
 
-// writeExclusive never follows or replaces an existing output. The hard link is the
-// exclusive publication step: unlike rename it fails if another packet won the name.
 func writeExclusive(dest string, body []byte) error {
 	dir := filepath.Dir(dest)
-	tmp, err := os.CreateTemp(dir, ".nova-review-*.tmp")
+	base := filepath.Base(dest)
+	var randBytes [3]byte
+	if _, err := rand.Read(randBytes[:]); err != nil {
+		return err
+	}
+	randHex := hex.EncodeToString(randBytes[:])
+	tmpName := filepath.Join(dir, fmt.Sprintf("%s.%d-%s.tmp", base, os.Getpid(), randHex))
+	tmp, err := os.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		return err
 	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
-	if _, err = tmp.Write(body); err == nil {
-		err = tmp.Close()
-	} else {
+	cleaned := false
+	defer func() {
+		if !cleaned {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err = tmp.Write(body); err != nil {
 		_ = tmp.Close()
-	}
-	if err != nil {
 		return err
 	}
-	if err = os.Link(tmpName, dest); err != nil {
+	if err = tmp.Close(); err != nil {
 		return err
 	}
+	if err = os.Rename(tmpName, dest); err != nil {
+		return err
+	}
+	cleaned = true
 	return nil
 }
