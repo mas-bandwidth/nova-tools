@@ -125,7 +125,7 @@ type LaneRead struct {
 	Wall  time.Duration
 	Whole time.Duration
 
-	objects    *objectReader
+	objects          *objectReader
 	clockGapRecorded bool
 	// streams are the receipt diffs this poll opened. They are CLOSED WHEN THE
 	// POLL ENDS, whether it ended at its budget, at its answer or at its clock:
@@ -942,13 +942,13 @@ func (r *LaneRead) take(ctx context.Context, item laneItem) (answered bool, id, 
 // the read stops at the blank line that ends the header, so no note body is
 // opened however large the blob is.
 type objectReader struct {
-	cmd    *exec.Cmd
-	in     io.WriteCloser
-	pipe   *os.File
-	out    *bufio.Reader
-	wall   time.Duration
-	cancel context.CancelFunc
-	dead   bool
+	cmd      *exec.Cmd
+	in       io.WriteCloser
+	pipe     *os.File
+	out      *bufio.Reader
+	wall     time.Duration
+	cancel   context.CancelFunc
+	dead     bool
 	clockGap bool
 }
 
