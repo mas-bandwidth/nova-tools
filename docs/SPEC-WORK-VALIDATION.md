@@ -81,6 +81,31 @@ rewinding local state. Report such external effects separately and require their
 own supported compensating workflow; cancellation remains a request until its
 outcome is known. Reject generic undo of irreversible or uncertain operations.
 
+## Build from verified foundations
+
+Implementation proceeds through small gates, each with successful, refused,
+interrupted and replayed cases before dependent behavior is admitted:
+
+1. Restricted parser, typed IDs/schema, canonical encoding and independent
+   round-trip comparison; malformed inputs leave the destination unchanged.
+2. Atomic envelopes, journal/checkpoint durability, crash recovery and fencing;
+   prove accepted work survives and stale owners cannot write.
+3. Core structure/state verbs, invariant validation, indexed counts and guarded
+   undo/redo against an independent model after generated mutation sequences.
+4. Client/socket protocol and asynchronous operations, including disconnect,
+   retry, cancellation, backpressure and diagnostic attribution.
+5. Non-destructive issue capture/import/export and roadmap projections; reconcile
+   full source content and prove fresh-engine restore before live adoption.
+6. Assignment/adapter integration and measured real coordinator dogfooding;
+   preserve uncertain external outcomes and verify no duplicate execution.
+
+Independent pieces may be built in parallel against pinned contracts, but no
+unverified dependency is represented as a passed gate. Keep the first live pilot
+small and reversible, with originals retained and a tested recovery path. A
+successful happy-path demo is never enough to advance a preservation gate.
+Record failures and minimize reproductions; repair and rerun the affected gate
+before proceeding. Correctness evidence determines readiness, not schedule pressure.
+
 ## Staged verification and release
 
 1. Run unit, generated/property, golden and independent-comparator suites. Add
