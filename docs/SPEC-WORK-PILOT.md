@@ -39,6 +39,62 @@ must mutate, query repeatedly and show zero node visits/parses/replays for |O|,
 then compare against an independent full count after close/reopen/import replay.
 Arbitrary new filters are not promised constant time.
 
+## Roadmaps outlive the work that built them
+
+A roadmap is a durable named view/capability inventory owned by nova-work, not a
+queue item that disappears when its last task closes. Keep its stable identity,
+ordered axes, feature membership, baseline/scope history, publication mappings
+and evidence references discoverable after all referenced work enters C.
+The default last24h closed-activity window does not hide older roadmap members
+or erase their proof. Opening a named roadmap is an explicit scoped query;
+resolve the referenced old records through bounded indexes/cache pages, never
+load all closed history to recover that roadmap.
+
+Represent epics, features, sub-features and tasks as typed canonical work nodes,
+with sub-feature decomposition recursive. The initial model may implement epic
+and sub-feature as named container policies, but their meaning and counting units
+must be explicit and queryable rather than inferred from title words. A projection
+can choose an epic summary, feature rows, or expanded sub-features; do not force
+all these views into duplicate state stores. Amend draft24's feature-only first
+axis rule for explicitly declared row kinds and their aggregation policies.
+
+Each feature's implementation record links the source repository, implementation
+commit/PR and relevant paths or symbols; its acceptance record names criteria,
+tests/assertions, reproducible invocation/configuration and retained result
+receipts at exact source revisions. Stable IDs join those facts to work history,
+responsibility, model/bench/usage records when available. File names and green
+aggregate CI badges alone do not prove feature acceptance. Links are not copied
+into every renderer and no renderer owns a second verdict.
+
+Preserve two distinct questions: historical delivery at its accepted revision,
+and current verification against the source/evidence revision selected by this
+view. When code, criteria or dependencies change, retain the past completion and
+receipts; invalidate affected current-verification summaries and show that a
+recheck is needed. Do not erase history, claim an old test ran on new code, or
+silently reopen a closed task merely because evidence became stale. A confirmed
+regression creates linked open repair work under the normal coordinator policy.
+Changes outside a feature's declared proof scope must not invalidate unrelated
+receipts without a dependency reason; provenance and scope determine reuse.
+
+Completed features remain visible in the whole roadmap. Remaining-only is an
+explicit filter, not destructive pruning. Feature retirement or removal from a
+current projection is a recorded scope decision; old revision views remain
+reproducible. The compact table may use tick/X, while drill-down exposes the
+implementation/test/evidence details and separates missing, partial and stale.
+
+For now nova-work owns data, queries and render. A future nova-roadmap command
+may be a thin rendering client if it makes adoption easier, but it cannot own a
+second work set, progress state or evidence ledger. Decide that packaging only
+after the integrated workflow has been tried; no extra service is required.
+
+Acceptance: complete an epic, clip/restart, advance beyond24h, then list/open its
+roadmap, render identical historical rows, and retrieve exact code/test receipts.
+Change a relevant source/criterion, preserve the historic tick at its pinned
+revision while the current view requires re-verification, and leave unrelated
+feature receipts reusable. Reopen a referenced task or add a new sub-feature:
+update affected rollups without dropping completed members or double-counting
+shared prerequisites. Exercise summary and expanded-row views over the same IDs.
+
 ## Port the whole fixed-table roadmap workflow
 
 A :roadmap node stores ordered named axes, coordinate-to-:ref mappings, scope
