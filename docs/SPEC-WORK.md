@@ -1724,10 +1724,16 @@ snapshot by `--snapshot <path>` with the three bounds, read-only; under `--snaps
 verification cache is named by `--cache <path>`, required there and refused under `--session`
 (the session's own, from its start, is the one path), so a snapshot reader sees the same
 verdicts the coordinator last fetched. **Every mutation verb takes `<write flags>` = `--as
-<name> [--request <id>] [--expect <rev>] [--now <stamp>] [--deadline <stamp>]`**, `--deadline`
+<name> [--request <id>] [--expect <rev>] [--now <stamp>] [--deadline <stamp>] [--dry-run]`**, `--deadline`
 being the wire's `"deadline"` field spelled for the CLI — after it the caller stops waiting for
 this answer, and it is not a cancellation of the work, which is `operation cancel`: the request id is drawn by
-the tool and printed when absent. **`--expect` names a revision the requester can read, and
+the tool and printed when absent. **`--dry-run` validates arguments, authority and permissions,
+fencing and every precondition against the revision `--expect` names, prints the PROJECTED receipt
+with `dry-run=true`, and writes zero events, commits no journal revision and records no dedup
+entry; per Stella it CONSUMES NO REQUEST ID, so a later real apply may carry the same `--request`
+id, and that apply revalidates the expectation rather than trusting the preview -- the
+revision-bound-plan invariant of the acceptance section above, worn by every mutation verb rather
+than by a plan verb alone.** **`--expect` names a revision the requester can read, and
 there are exactly two, in one number space.** The session's **local revision** is the count of
 accepted events, the snapshot's plus its journal's, printed `rev=<n>` on every mutation's `OK`
 line; the **clipped revision** is the local revision at the last clip's boundary, carried
@@ -2830,7 +2836,8 @@ tokens `ROW`, `NOTE` and `MORE`. `OK`, `ROW`, `NOTE` and `MORE` go to stdout; `F
 and refusals go to stderr. Every count line prints on failure as on
 success. Every `OK` line ends `emitted=<bytes>`. Every mutation's `OK` line carries the
 event's id, its request id, the session's local revision after it (`rev=<n>`), and
-`pushed=<rev|->`, the clipped revision, the same number as the last `CLIP OK`'s `pushed=`;
+`pushed=<rev|->`, the clipped revision, the same number as the last `CLIP OK`'s `pushed=`; a
+projected receipt adds `dry-run=true` to distinguish preview from committed receipt.
 `SESSION OK` is one shape, printed by `session start`, `session status` and `session stop`
 alike, and its `state=` reads `live`, `fenced` or `red`: lowercase *active* is W's word in the
 root section above, `ACTIVE` in capitals is the per-friend live-data node, and neither names a
@@ -3232,6 +3239,11 @@ of this list and are not repeated here):
   envelope with its lineage while the original event and every receipt stay exactly where they are.
 - **`redo-refuses-a-stale-plan`** — a redo whose preconditions moved refused atomically, naming
   what changed, writing nothing, and never reached by deleting the undo.
+- **`dry-run-writes-nothing`** — a dry run that validates and projects without mutating; after a
+  green preview an accepted mutation moves the revision, then a real apply at that revision
+  REFUSES atomically, naming what changed and writing nothing; under SESSION OK the state digest,
+  `|O|` and journal length are unchanged, `events=`, `pending=` and `rev=` have not moved, and the
+  `--request` id is still new to the dedup index.
 - **`undo-refuses-an-external-effect`** — an undo over a sent message, a paid execution, a
   publication and a source deletion refused and reported as an external effect with its own
   compensating workflow; shared Git history never reset as the undo path.
