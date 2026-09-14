@@ -85,7 +85,7 @@ func readOpenCodeUsage(dataHome string) (ProviderUsage, error) {
 		// reported nothing yet, which is an absence and not a failure.
 		return ProviderUsage{Values: map[string]string{}}, nil
 	}
-	return foldOpenCodeRows(rows), nil
+	return foldOpenCodeRows(rows)
 }
 
 // queryOpenCode runs the one statement, read-only, under the timeout. The database is the
@@ -123,14 +123,16 @@ func queryOpenCode(path string) ([][]string, error) {
 // measurement and a dash is an absence, and nova-tokens reads this file and reads a dash as
 // unknown. So a token type no message reported stays a dash, and one that some message
 // reported is the sum of the messages that did.
-func foldOpenCodeRows(rows [][]string) ProviderUsage {
+func foldOpenCodeRows(rows [][]string) (ProviderUsage, error) {
 	values := map[string]string{}
 	sums := make([]int64, len(TokenColumns))
 	reported := make([]bool, len(TokenColumns))
+	maxInt := int64(^uint(0) >> 1)
+	var total int64
 	provider, model := "", ""
-	for _, row := range rows {
-		if len(row) < 2+len(TokenColumns) {
-			continue
+	for rowIndex, row := range rows {
+		if len(row) != 2+len(TokenColumns) {
+			return ProviderUsage{}, fmt.Errorf("opencode usage row %d column count is invalid", rowIndex+1)
 		}
 		if v := strings.TrimSpace(row[0]); v != "" {
 			provider = v
@@ -138,16 +140,23 @@ func foldOpenCodeRows(rows [][]string) ProviderUsage {
 		if v := strings.TrimSpace(row[1]); v != "" {
 			model = v
 		}
-		for i := range TokenColumns {
+		for i, column := range TokenColumns {
 			cell := strings.TrimSpace(row[2+i])
 			if cell == "" || cell == Dash {
 				continue
 			}
 			n, err := strconv.ParseInt(cell, 10, 64)
-			if err != nil {
-				continue
+			if err != nil || n < 0 || n > maxInt {
+				return ProviderUsage{}, fmt.Errorf("opencode usage row %d column %s is not a nonnegative host integer", rowIndex+1, column)
+			}
+			if sums[i] > maxInt-n {
+				return ProviderUsage{}, fmt.Errorf("opencode usage row %d column %s exceeds the host integer maximum", rowIndex+1, column)
+			}
+			if total > maxInt-n {
+				return ProviderUsage{}, fmt.Errorf("opencode usage row %d column %s makes the token total exceed the host integer maximum", rowIndex+1, column)
 			}
 			sums[i] += n
+			total += n
 			reported[i] = true
 		}
 	}
@@ -163,7 +172,7 @@ func foldOpenCodeRows(rows [][]string) ProviderUsage {
 	// The message table holds no repository, and this reader never invents one: the usage
 	// row's `repo` is what the caller knew, or a dash.
 	values["repo"] = Dash
-	return ProviderUsage{Values: values, Observed: true}
+	return ProviderUsage{Values: values, Observed: true}, nil
 }
 
 // oneLine keeps a subprocess's complaint on the one line a RUN BUDGET-UNVERIFIABLE carries.
