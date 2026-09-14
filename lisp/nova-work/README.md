@@ -145,7 +145,10 @@ Nothing here claims green on:
   covers the static containment subset for `:work-set` and `:feature`. Direct
   container close still refuses, and roadmap/epic membership, dynamic
   `node require`, cancellation, removal and supersession remain outside this
-  slice.
+  slice. A cascade decision is O(1) at each ancestor, but this kernel still
+  copies the full candidate state and each emitted event updates containment
+  counters along its ancestor path; it makes no O(depth) claim for the whole
+  mutation.
 - **`open-count-is-read-not-computed`'s import-replay leg** (`:1572`). Not
   exercised, because import is out of the boundary. Its close and reopen legs
   are.

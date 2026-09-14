@@ -42,6 +42,17 @@
 own ancestor walk, and serialization of the whole state."
   (gethash id (wstate-nodes state)))
 
+(defun %seed-required (spec)
+  "Read the internal seed's boolean without accepting truthy lookalikes. An
+absent field defaults to T; an explicitly supplied value is exactly T or NIL."
+  (let* ((missing (gensym "MISSING-REQUIRED-"))
+         (value (getf spec :required missing)))
+    (cond ((eq value missing) t)
+          ((eq value t) t)
+          ((null value) nil)
+          (t (error 'unsupported-input
+                    :what "required must be the internal boolean T or NIL")))))
+
 (defun make-seed-state (nodes)
   (let ((table (make-hash-table :test #'equal))
         (order '()))
@@ -58,7 +69,7 @@ own ancestor walk, and serialization of the whole state."
                           ;; The approved data model defaults :required to true.
                           ;; NIL is the restricted-data spelling used by this
                           ;; static seed subset for an explicitly optional node.
-                          :required (getf spec :required t)
+                          :required (%seed-required spec)
                           :required-count 0
                           :required-open 0
                           :state (getf spec :state :unknown)
