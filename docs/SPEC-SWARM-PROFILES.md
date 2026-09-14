@@ -550,19 +550,87 @@ for a missing or malformed store shape, including a missing/malformed recovery.p
 seat age public key plus exactly the recovery age public key declared there.
 Encryption recipients are not API keys: --only and --require select the one
 API-key environment variable needed by the route. A fixture with three recipients must
-exit 125 and start zero workers for that attempted launch. On a per-worker gate
-exit 125, `run` emits one bounded `RUN REFUSED profile=<id> reason=secrets_gate
+exit 125 and start zero workers for that attempted launch. On a proven gate
+refusal, `run` emits one bounded `RUN REFUSED profile=<id> reason=secrets_gate
 code=125` line, retains the selected task pending (not failed), and disables
 further launches of that profile for this run. Return the task from a claim only
-after exit 125 is observed from the gate's own process and no supervisor identify
-record exists under that attempt's slot nonce. These two observations are the
-pinned gate/launcher contract's evidence that no harness started; an uncertain
+after the direct child exits 125, its complete privately captured stderr
+contains no `SECRETS EXEC OK` event, and the protected slot proves no identify
+under that attempt's reservation nonce. These three observations are required
+non-launch evidence. `nova-secrets exec` replaces itself with the launcher;
+PID or exit code alone cannot identify which executable exited. An uncertain
 exit follows existing quarantine/reconciliation rules, never blind requeue.
 Already-running jobs continue under normal accounting/finalization; unrelated
 profiles may run only under their own valid gates. Reservation release requires
 confirmed non-launch. The gate keeps key values out of profiles,
 snapshots, receipts, task argv and logs, and passes recovery and scope checks
 before real traffic is enabled.
+
+### Gate observation — proposed, awaiting friend review
+
+The coordinator owns the gate's stderr pipe, observes its direct child through
+the OS process handle, and drains the pipe while waiting. It never infers an
+event from task text, worker logs, worker-supplied status or an environment flag.
+Match SPEC-SECRETS' `SECRETS EXEC OK` grammar; even a suspicious line beginning
+with that prefix defeats an assertion that no OK event was emitted. A forged
+positive event can cause reconciliation, never authorize launch or a grant.
+
+Use a streaming detector with a 65536-byte maximum line, 1048576-byte total
+observation limit and the launch timeout. If a limit, timeout or pipe error
+prevents complete observation, mark completeness false and keep draining without
+retaining bytes until the bounded process wait/cancellation ends. Oversized or
+malformed events are unknown, not absent. Do not persist raw stderr or repeat
+arbitrary child output in a refusal; retain the typed observation and bounded
+static remedy. Classification requires no credential value in stored evidence.
+
+After direct-child termination, persist an immutable coordinator-owned
+`<evidence>/<job_id>/gate/<reservation-nonce>.json`, outside worker-readable and
+writable paths. Its canonical object has exactly: string `schema` equal to
+`nova.swarm.gate/1`; strings `job_id`, `reservation_nonce`, `manifest_hash`,
+`exit_code`, `identity`; and booleans `output_complete`, `ok_event_seen`.
+`manifest_hash` hashes the exact canonical prelaunch manifest bytes.
+It uses `sha256:<64 lowercase hex>`; `reservation_nonce` uses the existing
+twelve-lowercase-hex launch token, not a newly invented task identity.
+`exit_code` is a nonnegative decimal status or `-` for unknown/signal termination.
+`identity` is `absent`, `present` or `unknown`. Use the snapshot's strict JSON,
+regular-file, size and no-replace publication rules. This is protected runtime
+evidence, never a nonce-bearing worker projection.
+
+Latch `identity: present` when the launch handshake observes matching
+`SlotLaunched` with this job and nonce. Hand off to normal asynchronous
+supervision then; do not wait for worker completion before dispatching other
+jobs. Persist that latched fact with the final typed observation before freeing
+or reclaiming its protected slot/evidence. A later empty slot cannot erase it.
+If a crash loses the latch and the protected evidence cannot establish it,
+record `unknown`; do not infer absence from an already freed slot.
+
+`identity: absent` requires a successful read of the still-reserved protected
+slot with this job and nonce after the direct child is observed dead. A missing
+or unreadable slot, nonce mismatch, cleared slot or uncertain lifecycle is
+`unknown`. No process may clear a matching identify record before its
+finalization/reconciliation consumes it. A snapshot-aware launcher performs
+the existing reserve-to-identify CAS before any harness or provider action.
+The legacy supervisor shows this ordering, but its key-file reader is not a
+profile implementation. The profiled launcher consumes only the named
+gate-delivered secret and constructs the empty-based child environment.
+
+| Observed state | Disposition |
+|---|---|
+| Exit 125, output complete, no OK event, identity absent | Proven gate refusal: task pending, profile disabled for this run; release only confirmed non-launch reservation |
+| OK event, identity absent or unknown | Post-gate failure/uncertainty: reconcile or quarantine, no blind requeue or liability release |
+| Identity present, including child exit 125 | Launched attempt: normal process/exit/usage evidence applies |
+| Incomplete output or unknown exit/identity without stronger launch evidence | Unknown: retain liability and reconcile |
+
+The OK event alone proves neither harness startup nor correct secret scope.
+Admission, protected snapshot verification, selected environment construction
+and launch identity remain separate gates. Failed gates do not create provider
+spend or successful worker usage rows. Lost provenance remains unknown.
+
+Required fake-process fixtures: gate refuses 125 without OK/identify; gate emits
+OK then execs a child returning 125 before identify; harness exits 125 after
+identify; oversized/truncated OK line; broken capture pipe; missing/stale-nonce
+slot; forged OK prefix. Only the first may use the gate-refusal pending/release
+path. Use synthetic values, zero live decryptions and zero provider calls.
 
 ## Shared accounting for every worker route
 
@@ -751,8 +819,10 @@ wall clock.
    missing bindings cause `run` exit 2 before the first worker, a forged parent
    environment marker cannot bypass it, and a fake three-recipient store causes
    `nova-secrets exec` exit 125
-   and starts zero workers for that launch. Assert the refusal is from the gate
-   process and the supervisor identify record for that nonce is absent. A harness
+   and starts zero workers for that launch. Assert direct-child exit 125,
+   complete captured stderr with no OK event, and a still-reserved matching
+   protected slot with no identify. OK followed by exit 125 before identify is
+   post-gate uncertainty, not proven gate refusal. A harness
    that itself exits 125 after identifying is not this non-launch case and must
    retain normal attempt finalization/accounting. Exercise a mid-pool 125: the selected
    task remains pending, one profile-scoped refusal is printed, no later job on
