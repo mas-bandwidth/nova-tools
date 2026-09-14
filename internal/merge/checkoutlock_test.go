@@ -37,7 +37,10 @@ var underTheCallersLock = map[string]string{
 	// packet was -- a reader asking for their own packet while the coordinator's pass
 	// held the checkout got a lock refusal, which is a writer's answer. This reads and
 	// never writes; every WRITING path still goes through Fold, which locks.
-	"FoldReadOnly": "rule 23's lock-free read: packet writes nothing and takes no lock",
+	"FoldReadOnly":   "rule 23's lock-free work-tree read: packet writes nothing and takes no lock",
+	"FoldFetchedTip": "rule 23's lock-free immutable-tree fold; FetchTip itself remains locked",
+	"foldFetchedTip": "the shared immutable-tree implementation behind the lock-free public fold and locked legacy FoldTip",
+	"tipRecordPaths": "the immutable commit's NUL-delimited tree walk; callers select its lock policy",
 }
 
 func TestEveryCheckoutOperationIsUnderTheCheckoutLock(t *testing.T) {
