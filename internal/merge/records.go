@@ -92,6 +92,23 @@ func ReadFile(entry, who, head string, s Submission) string {
 	return path.Join(ReadsDir, entry, safeName(who)+"-"+Short(head)+"-"+s.ID()+".json")
 }
 
+// ReadItem constructs the one immutable read record. entry is already EntryDirName(id):
+// callers pass the record directory, never a raw pull request number or branch name.
+// Keeping the record's path and bytes here makes every writer use the same read format.
+func ReadItem(entry, who, head, verdict, note string, s Submission) (Item, error) {
+	file := ReadFile(entry, who, head, s)
+	rec := Read{Who: who, Verdict: verdict, Note: note, At: s.At, Head: head, File: file}
+	if err := ValidRead(rec); err != nil {
+		return Item{}, err
+	}
+	body, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		return Item{}, err
+	}
+	body = append(body, '\n')
+	return Item{Path: file, Body: body}, nil
+}
+
 // GateFile is where one gate record lives: gates/<entry>/<head12>-<base12>-<at>-<rand6>.json
 func GateFile(entry, head, base string, s Submission) string {
 	return path.Join(GatesDir, entry, Short(head)+"-"+Short(base)+"-"+s.ID()+".json")

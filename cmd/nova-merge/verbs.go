@@ -426,17 +426,15 @@ func cmdRead(args []string, stdout, stderr io.Writer, deps Deps) int {
 		fmt.Fprintf(stderr, "READ REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	file := merge.ReadFile(merge.EntryDirName(id), *who, *head, sub)
-	rec := merge.Read{Who: *who, Verdict: *verdict, Note: *note, At: sub.At, Head: *head, File: file}
-	body, err := json.MarshalIndent(rec, "", "  ")
+	item, err := merge.ReadItem(merge.EntryDirName(id), *who, *head, *verdict, *note, sub)
 	if err != nil {
 		fmt.Fprintf(stderr, "READ REFUSED: %s\n", oneline.Err(err))
 		return 2
 	}
-	body = append(body, '\n')
+	file := item.Path
 	recs := merge.NewRecords(*f.lane, st.LaneBranch, "origin", merge.NewGit(*f.lane, f.dur(), deps.Runner), f.dur())
 	merge.Appendf(*f.lane, deps.Now(), "READ entry=%s who=%s head=%s verdict=%s file=%s", id, *who, *head, *verdict, file)
-	pushErr := recs.Deliver(sub, []merge.Item{{Path: file, Body: body}})
+	pushErr := recs.Deliver(sub, []merge.Item{item})
 	if pushErr != nil {
 		fmt.Fprintf(stderr, "READ FAIL entry=%s who=%s head=%s file=%s pushed=false: %s; re-run the same verb to push it\n",
 			oneline.Field(id), oneline.Field(*who), oneline.Field(merge.Short(*head)), oneline.Field(file),
