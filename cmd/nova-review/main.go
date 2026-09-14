@@ -11,7 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/merge"
@@ -132,6 +132,13 @@ func packet(args []string, out, errOut io.Writer) int {
 		}
 	}
 	base := st.Base
+	// A reader's next packet starts at the last head that reader actually
+	// recorded, whatever their verdict. State is the durable fold of reads.
+	for _, read := range entry.Reads {
+		if read.Who == *who && read.Head != "" && read.At >= lastReadAt(entry.Reads, *who) {
+			base = read.Head
+		}
+	}
 	if base == "" {
 		return refuse(errOut, "the lane has no recorded base; the packet cannot guess its range")
 	}
@@ -161,7 +168,7 @@ func packet(args []string, out, errOut io.Writer) int {
 		return refuse(errOut, "could not read the selected diff")
 	}
 	files, hunks := diffCounts(diff)
-	ruleText, ruleCount, err := quotedRules(repo, current, specs, rules)
+	ruleText, ruleCount, err := selectedRules(repo, base, current, diff, specs, rules)
 	if err != nil {
 		return refuse(errOut, err.Error())
 	}
@@ -222,6 +229,15 @@ func packetID(entry, head, base string) string {
 	s := sha256.Sum256([]byte(entry + "\x00" + head + "\x00" + base))
 	return hex.EncodeToString(s[:])[:12]
 }
+func lastReadAt(reads []merge.Read, who string) string {
+	best := ""
+	for _, r := range reads {
+		if r.Who == who && r.At > best {
+			best = r.At
+		}
+	}
+	return best
+}
 func packetFields(body string) map[string]string {
 	out := map[string]string{}
 	for _, line := range strings.Split(body, "\n") {
@@ -235,36 +251,161 @@ func packetFields(body string) map[string]string {
 	}
 	return out
 }
-func quotedRules(repo, head string, specs, rules []string) (string, int, error) {
-	if len(specs) == 0 && len(rules) == 0 {
-		return "No caller-named spec rules; uncited changed lines are not guessed.", 0, nil
-	}
-	var out []string
-	for _, rule := range rules {
-		p, n, ok := strings.Cut(rule, ":")
-		if !ok || p == "" || n == "" {
-			return "", 0, fmt.Errorf("--rule wants <spec>:<n>")
+func selectedRules(repo, base, head, diff string, specFlags, requested []string) (string, int, error) {
+	var specs []scopedSpec
+	for _, flag := range specFlags {
+		p, heading, err := splitSpecFlag(flag)
+		if err != nil {
+			return "", 0, err
 		}
 		text, err := gitOut(repo, "show", head+":"+p)
 		if err != nil {
-			return "", 0, fmt.Errorf("--rule %s is not readable at head", rule)
+			return "", 0, fmt.Errorf("--spec %s is not readable at head", p)
 		}
-		re := regexp.MustCompile("(?m)^" + regexp.QuoteMeta(n) + `\. .*$`)
-		hit := re.FindString(text)
-		if hit == "" {
-			return "", 0, fmt.Errorf("--rule %s names no rule at head", rule)
+		spec, err := parseScopedSpec(p, text, heading)
+		if err != nil {
+			return "", 0, err
 		}
-		out = append(out, fmt.Sprintf("%s: %s", p, hit))
+		specs = append(specs, spec)
 	}
-	if len(out) == 0 {
-		return "No rules were mechanically selected; uncited changed lines are not guessed.", 0, nil
+	files := changedFiles(diff)
+	selected := map[string]specRule{}
+	previous := map[string]specRule{}
+	touched := map[string][]string{}
+	add := func(rule specRule, why string) {
+		key := fmt.Sprintf("%s:%d", rule.Path, rule.Line)
+		selected[key] = rule
+		touched[key] = append(touched[key], why)
 	}
-	return strings.Join(out, "\n"), len(out), nil
+	// Scan only added diff lines for citation grammar.
+	currentFile := ""
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "diff --git a/") {
+			p := strings.Split(strings.TrimPrefix(line, "diff --git a/"), " b/")
+			if len(p) == 2 {
+				currentFile = p[1]
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "+") && !strings.HasPrefix(line, "+++") {
+			for _, rule := range citationTargets(strings.TrimPrefix(line, "+"), specs) {
+				add(rule, fmt.Sprintf("%s (cited)", currentFile))
+			}
+		}
+	}
+	for _, flag := range requested {
+		p, nText, ok := strings.Cut(flag, ":")
+		if !ok || p == "" || nText == "" {
+			return "", 0, fmt.Errorf("--rule wants <spec>:<n>")
+		}
+		n, err := strconv.Atoi(nText)
+		if err != nil || n <= 0 {
+			return "", 0, fmt.Errorf("--rule wants <spec>:<n>")
+		}
+		var found specRule
+		exists := false
+		for _, spec := range specs {
+			if spec.Path == p {
+				found, exists = spec.Rules[n]
+				break
+			}
+		}
+		if !exists {
+			return "", 0, fmt.Errorf("--rule %s names no scoped rule at head; add a matching --spec", flag)
+		}
+		add(found, "caller (named)")
+	}
+	// A changed spec selects the rule enclosing a changed line. Read the base
+	// side too so the rendered section can quote both exact revisions.
+	for _, file := range files {
+		for _, spec := range specs {
+			if file.Path != spec.Path {
+				continue
+			}
+			for _, line := range file.AddedLines {
+				for _, rule := range spec.Rules {
+					if line >= rule.Line && line < rule.End {
+						add(rule, fmt.Sprintf("%s (changed at head)", file.Path))
+					}
+				}
+			}
+			oldText, err := gitOut(repo, "show", base+":"+spec.Path)
+			if err != nil {
+				continue
+			}
+			old, err := parseScopedSpec(spec.Path, oldText, spec.Heading)
+			if err != nil {
+				continue
+			}
+			for _, line := range file.GoneLines {
+				for n, rule := range old.Rules {
+					if line >= rule.Line && line < rule.End {
+						if current, ok := spec.Rules[n]; ok {
+							previous[fmt.Sprintf("%s:%d", current.Path, current.Line)] = rule
+							add(current, fmt.Sprintf("%s (changed at base)", file.Path))
+						} else {
+							add(rule, fmt.Sprintf("%s (changed at base; removed at head)", file.Path))
+						}
+					}
+				}
+			}
+		}
+	}
+	var out []string
+	for _, file := range files {
+		count := 0
+		for _, rule := range selected {
+			for _, why := range touched[fmt.Sprintf("%s:%d", rule.Path, rule.Line)] {
+				if strings.HasPrefix(why, file.Path+" ") {
+					count++
+					break
+				}
+			}
+		}
+		out = append(out, fmt.Sprintf("%s: rules=%d", file.Path, count))
+	}
+	for _, rule := range orderedRules(selected) {
+		key := fmt.Sprintf("%s:%d", rule.Path, rule.Line)
+		quoted := fmt.Sprintf("> %s", strings.ReplaceAll(rule.Text, "\n", "\n> "))
+		if old, ok := previous[key]; ok {
+			quoted = fmt.Sprintf("> head:\n> %s\n> base:\n> %s", strings.ReplaceAll(rule.Text, "\n", "\n> "), strings.ReplaceAll(old.Text, "\n", "\n> "))
+		}
+		out = append(out, fmt.Sprintf("### %s:%d rule %d\n%s\ntouched by: %s", rule.Path, rule.Line, rule.Number, quoted, strings.Join(touched[key], ", ")))
+	}
+	if len(files) == 0 {
+		out = append(out, "No changed files.")
+	}
+	return strings.Join(out, "\n"), len(selected), nil
 }
 func writePacket(dest, body string, out io.Writer, entry, id, head, base, rng string, files, hunks, rules, bytesN, cut int, reused bool) int {
-	if err := os.WriteFile(dest, []byte(body), 0o644); err != nil {
+	if err := writeExclusive(dest, []byte(body)); err != nil {
+		fmt.Fprintf(os.Stderr, "PACKET REFUSED: could not exclusively create --out: %s\n", oneline.Escape(err.Error()))
 		return 2
 	}
 	fmt.Fprintf(out, "PACKET OK entry=%s id=%s head=%s base=%s range=%s files=%d hunks=%d rules=%d prior=0 open=0 bytes=%d cut=%d reused=%t out=%s\n", oneline.Field(entry), id, merge.Short(head), merge.Short(base), oneline.Field(rng), files, hunks, rules, bytesN, cut, reused, oneline.Field(dest))
 	return 0
+}
+
+// writeExclusive never follows or replaces an existing output. The hard link is the
+// exclusive publication step: unlike rename it fails if another packet won the name.
+func writeExclusive(dest string, body []byte) error {
+	dir := filepath.Dir(dest)
+	tmp, err := os.CreateTemp(dir, ".nova-review-*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if _, err = tmp.Write(body); err == nil {
+		err = tmp.Close()
+	} else {
+		_ = tmp.Close()
+	}
+	if err != nil {
+		return err
+	}
+	if err = os.Link(tmpName, dest); err != nil {
+		return err
+	}
+	return nil
 }
