@@ -447,6 +447,11 @@ Hashing a path immediately before use is not proof against replacement races.
 These are remaining compatibility gates, not claims that this command record
 alone solves executable or artifact integrity.
 
+The [execution-binding discussion draft](drafts/SWARM-EXECUTION-BINDING.md)
+proposes protected harness/instruction/control copies and deterministic
+configuration. Its unresolved decisions, encoding fixtures and friend review
+remain gates; it does not yet replace the member tables above.
+
 The [synthetic launch record](fixtures/swarm-launch-record.json) pins this
 encoding and argv boundary. Runtime tests must cover stale nonce, wrong slot,
 swapped manifest, changed record/hash, duplicate publication, invalid duration,
