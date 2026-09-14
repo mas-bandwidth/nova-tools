@@ -4,10 +4,12 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -26,11 +28,15 @@ import (
 )
 
 const defaultPacketMaxBytes = 131072
+const defaultPacketTimeout = 120 * time.Second
+
+var packetGitBinary = "git"
+var packetGHBinary = "gh"
 
 const usage = `nova-review: bounded exact-revision review packets (docs/SPEC-REVIEW.md)
 
 usage:
-  nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--reuse <file>]
+  nova-review packet --lane <dir> (--pr <n>|--branch <name>) --who <name> --out <file> [--head <sha>] [--spec <path>]... [--rule <spec>:<n>]... [--max <n>] [--max-bytes <n>] [--reuse <file>] [--timeout <seconds>]
   nova-review version
   nova-review help
 
@@ -83,6 +89,7 @@ func packet(args []string, out, errOut io.Writer) int {
 	reuse := fs.String("reuse", "", "")
 	maxBytes := fs.Int("max-bytes", defaultPacketMaxBytes, "")
 	maxFlag := fs.Int("max", 20, "")
+	timeoutSeconds := fs.Int("timeout", int(defaultPacketTimeout/time.Second), "")
 	var specs, rules stringsFlag
 	fs.Var(&specs, "spec", "")
 	fs.Var(&rules, "rule", "")
@@ -98,6 +105,10 @@ func packet(args []string, out, errOut io.Writer) int {
 	if *maxFlag < 0 {
 		return refuse(errOut, "--max must be non-negative")
 	}
+	if *timeoutSeconds < 1 {
+		return refuse(errOut, "--timeout must be a positive number of seconds")
+	}
+	timeout := time.Duration(*timeoutSeconds) * time.Second
 	if (*pr > 0) == (*branch != "") {
 		return refuse(errOut, "give exactly one of --pr or --branch")
 	}
@@ -129,12 +140,12 @@ func packet(args []string, out, errOut io.Writer) int {
 	repo := filepath.Join(*lane, merge.RepoDir)
 	current := ""
 	if *pr > 0 {
-		current, err = hostPRHead(st.Repo, *pr)
+		current, err = hostPRHead(timeout, st.Repo, *pr)
 	} else {
-		current, err = gitOut(repo, "rev-parse", selector)
+		current, err = gitOut(timeout, repo, "rev-parse", selector)
 	}
 	if err != nil {
-		return refuse(errOut, "could not resolve the entry head")
+		return refuse(errOut, fmt.Sprintf("could not resolve the entry head: %v", err))
 	}
 	current = strings.TrimSpace(current)
 	if *asked != "" {
@@ -220,8 +231,8 @@ func packet(args []string, out, errOut io.Writer) int {
 		}
 		return writePacket(*dest, newBody, out, errOut, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(newBody), hdr.Cut, true)
 	}
-	if _, err := gitOut(repo, "rev-parse", base+"^{commit}"); err != nil {
-		return refuse(errOut, "the lane does not hold the recorded base commit")
+	if _, err := gitOut(timeout, repo, "rev-parse", base+"^{commit}"); err != nil {
+		return refuse(errOut, fmt.Sprintf("the lane does not hold the recorded base commit: %v", err))
 	}
 	diffRange := base + ".." + current
 	if priorRead == nil {
@@ -230,9 +241,9 @@ func packet(args []string, out, errOut io.Writer) int {
 		// two separate endpoints would instead include unrelated base-only work.
 		diffRange = base + "..." + current
 	}
-	diff, err := gitOut(repo, "diff", "--no-ext-diff", "--unified=3", diffRange)
+	diff, err := gitOut(timeout, repo, "diff", "--no-ext-diff", "--unified=3", diffRange)
 	if err != nil {
-		return refuse(errOut, "could not read the selected diff")
+		return refuse(errOut, fmt.Sprintf("could not read the selected diff: %v", err))
 	}
 	fileDiffs := parseFileDiffs(diff)
 	files := len(fileDiffs)
@@ -240,11 +251,11 @@ func packet(args []string, out, errOut io.Writer) int {
 	for _, f := range fileDiffs {
 		hunks += f.Hunks
 	}
-	ruleText, ruleCount, err := selectedRules(repo, base, current, diff, specs, rules, *maxFlag, *lane)
+	ruleText, ruleCount, err := selectedRules(timeout, repo, base, current, diff, specs, rules, *maxFlag, *lane)
 	if err != nil {
 		return refuse(errOut, err.Error())
 	}
-	intentTitle, intentBody, _ := getAuthorIntent(repo, st.Repo, *pr, *branch, current)
+	intentTitle, intentBody, _ := getAuthorIntent(timeout, repo, st.Repo, *pr, *branch, current)
 	thisHeadSec := formatThisHead(intentTitle, intentBody)
 	yourPriorSec := formatYourPriorVerdicts(*who, entry.Reads, base, current, rangeText)
 	allVerdictsSec, priorCount := formatAllVerdicts(entry.Reads, *maxFlag, *lane)
@@ -279,25 +290,36 @@ func packet(args []string, out, errOut io.Writer) int {
 	return writePacket(*dest, body, out, errOut, id, packetID, current, base, rangeText, files, hunks, ruleCount, priorCount, openCount, len(body), cut, false)
 }
 
-func gitOut(repo string, args ...string) (string, error) {
-	c := exec.Command("git", args...)
-	c.Dir = repo
-	b, err := c.CombinedOutput()
+func sourceOutput(timeout time.Duration, dir, binary string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, binary, args...)
+	cmd.Dir = dir
+	// A deadline must still return when a killed command left a child holding
+	// its output pipe; this is the lifecycle guard merge.Exec uses as well.
+	cmd.WaitDelay = 2 * time.Second
+	b, err := cmd.CombinedOutput()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return string(b), fmt.Errorf("%s timed out after %s; raise --timeout <seconds> to wait longer", binary, timeout)
+	}
 	if err != nil {
-		return "", err
+		return string(b), fmt.Errorf("%s failed: %w", binary, err)
 	}
 	return string(b), nil
 }
-func hostPRHead(repo string, pr int) (string, error) {
-	c := exec.Command("gh", "pr", "view", fmt.Sprint(pr), "--repo", repo, "--json", "headRefOid")
-	b, err := c.Output()
+
+func gitOut(timeout time.Duration, repo string, args ...string) (string, error) {
+	return sourceOutput(timeout, repo, packetGitBinary, args...)
+}
+func hostPRHead(timeout time.Duration, repo string, pr int) (string, error) {
+	b, err := sourceOutput(timeout, "", packetGHBinary, "pr", "view", fmt.Sprint(pr), "--repo", repo, "--json", "headRefOid")
 	if err != nil {
 		return "", err
 	}
 	var v struct {
 		Head string `json:"headRefOid"`
 	}
-	if err := json.Unmarshal(b, &v); err != nil || !merge.IsSHA(v.Head) {
+	if err := json.Unmarshal([]byte(b), &v); err != nil || !merge.IsSHA(v.Head) {
 		return "", fmt.Errorf("host returned no full pull request head")
 	}
 	return v.Head, nil
@@ -743,14 +765,14 @@ func lastReadAt(reads []merge.Read, who string) string {
 	}
 	return best
 }
-func selectedRules(repo, base, head, diff string, specFlags, requested []string, maxRules int, lane string) (string, int, error) {
+func selectedRules(timeout time.Duration, repo, base, head, diff string, specFlags, requested []string, maxRules int, lane string) (string, int, error) {
 	var specs []scopedSpec
 	for _, flag := range specFlags {
 		p, heading, err := splitSpecFlag(flag)
 		if err != nil {
 			return "", 0, err
 		}
-		text, err := gitOut(repo, "show", head+":"+p)
+		text, err := gitOut(timeout, repo, "show", head+":"+p)
 		if err != nil {
 			return "", 0, fmt.Errorf("--spec %s is not readable at head", p)
 		}
@@ -821,7 +843,7 @@ func selectedRules(repo, base, head, diff string, specFlags, requested []string,
 					}
 				}
 			}
-			oldText, err := gitOut(repo, "show", base+":"+spec.Path)
+			oldText, err := gitOut(timeout, repo, "show", base+":"+spec.Path)
 			if err != nil {
 				continue
 			}
@@ -879,22 +901,21 @@ func selectedRules(repo, base, head, diff string, specFlags, requested []string,
 	return strings.Join(out, "\n"), len(selected), nil
 }
 
-func getAuthorIntent(repo, hostRepo string, pr int, branch, head string) (title, body string, err error) {
+func getAuthorIntent(timeout time.Duration, repo, hostRepo string, pr int, branch, head string) (title, body string, err error) {
 	if pr > 0 && hostRepo != "" {
-		c := exec.Command("gh", "pr", "view", fmt.Sprint(pr), "--repo", hostRepo, "--json", "title,body")
-		b, err := c.Output()
+		b, err := sourceOutput(timeout, "", packetGHBinary, "pr", "view", fmt.Sprint(pr), "--repo", hostRepo, "--json", "title,body")
 		if err == nil {
 			var v struct {
 				Title string `json:"title"`
 				Body  string `json:"body"`
 			}
-			if err := json.Unmarshal(b, &v); err == nil {
+			if err := json.Unmarshal([]byte(b), &v); err == nil {
 				return strings.TrimSpace(v.Title), strings.TrimSpace(v.Body), nil
 			}
 		}
 	}
 	if head != "" && repo != "" {
-		out, err := gitOut(repo, "log", "-1", "--format=%s%n%n%b", head)
+		out, err := gitOut(timeout, repo, "log", "-1", "--format=%s%n%n%b", head)
 		if err == nil {
 			t, b, _ := strings.Cut(out, "\n\n")
 			return strings.TrimSpace(t), strings.TrimSpace(b), nil
