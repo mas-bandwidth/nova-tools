@@ -744,6 +744,8 @@ is compared against; it is never the path `query --ask size` takes."
     ;; multi-byte character earlier in the form.
     (dolist (case '(("foo" 0)
                     ("(:x foo)" 4)
+                    ("nil" 0)
+                    ("(:x t)" 4)
                     ("(:x \"é\" cl:car)" 9)
                     ("1/2" 0)
                     ("(:x 1.0)" 4)
@@ -766,6 +768,7 @@ is compared against; it is never the path `query --ask size` takes."
     ;; remain data.
     (check-equal :FOO (read-restricted ":foo") "a keyword was refused")
     (check-equal -12 (read-restricted "-12") "a signed integer was refused")
+    (check-equal 12 (read-restricted "+12") "a signed integer was refused")
     (check-equal '(:X "foo cl:car 1/2 1.0")
                  (read-restricted "(:x \"foo cl:car 1/2 1.0\")")
                  "forbidden-looking string text was refused")

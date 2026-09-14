@@ -77,11 +77,32 @@ name can reach the reader only through the `|` escape it already refuses
 
 (defpackage #:nova-work.read (:use))
 
+(defun reader-whitespace-p (ch)
+  (find ch '(#\Space #\Tab #\Newline #\Return #\Page)))
+
+(defun reader-token-boundary-p (ch)
+  (or (reader-whitespace-p ch)
+      (find ch '(#\( #\) #\; #\" #\# #\| #\' #\` #\, #\\))))
+
+(defun decimal-integer-token-p (text start end)
+  (let ((digit-start (if (and (< start end)
+                              (find (char text start) "+-"))
+                         (1+ start)
+                         start)))
+    (and (< digit-start end)
+         (loop for i from digit-start below end
+               always (find (char text i) "0123456789")))))
+
+(defun keyword-token-p (text start end)
+  (and (< (1+ start) end)
+       (char= (char text start) #\:)
+       (loop for i from (1+ start) below end
+             never (char= (char text i) #\:))))
+
 (defun refuse-evaluation-syntax (text)
-  "Refuse every dispatch macro and every other form the source forbids as
-evaluation, outside a string literal (SPEC-WORK.md:681). Comment text is text:
-it changes no string or dispatch state, and each of its UTF-8 characters is
-counted exactly once."
+  "Lex the restricted grammar before the Common Lisp reader can intern a
+forbidden token. Report the token's UTF-8 start byte. Comment text is opaque;
+each of its UTF-8 characters is counted exactly once."
   (let ((in-string nil) (escaped nil) (byte-offset 0)
         (len (length text)) (i 0))
     (loop while (< i len)
@@ -129,9 +150,19 @@ counted exactly once."
                  ((char= ch #\\)
                   (error 'restricted-data-violation
                          :value (format nil "single escape at byte ~D" byte-offset)))
-                 (t
+                 ((or (reader-whitespace-p ch) (find ch "()"))
                   (incf byte-offset (char-utf8-bytes ch))
-                  (incf i)))))
+                  (incf i))
+                 (t
+                  (let ((start i) (start-byte byte-offset))
+                    (loop while (and (< i len)
+                                     (not (reader-token-boundary-p (char text i))))
+                          do (incf byte-offset (char-utf8-bytes (char text i)))
+                             (incf i))
+                    (unless (or (decimal-integer-token-p text start i)
+                                (keyword-token-p text start i))
+                      (error 'restricted-data-violation
+                             :value (format nil "forbidden token at byte ~D" start-byte))))))))
     (when in-string
       (error 'restricted-data-violation :value "unterminated string"))))
 
