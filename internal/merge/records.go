@@ -480,6 +480,113 @@ func (r *Records) FetchTip() (string, error) {
 	return r.Git.Out("rev-parse", "FETCH_HEAD")
 }
 
+const reportFetchedRefPrefix = "refs/nova-review/fetched/"
+
+var newReportFetchNonce = func() (string, error) {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b[:]), nil
+}
+
+// WithFetchedReportTip acquires the lane branch under a private, temporary ref and keeps
+// that ref reachable for every Git read the callback makes. Report verbs call
+// FoldFetchedTip and their later immutable-tree readers inside callback; returning a SHA
+// after its ref was removed would let a concurrent GC turn a report into a stale fallback.
+//
+// It neither takes the checkout lock nor reads FETCH_HEAD. The private ref is an
+// acquisition effect, not lane state: normal report operations get distinct cryptographic
+// names. That namespace is not a defence against somebody who deliberately writes a
+// private ref, so cleanup deletes only the exact OID this invocation installed.
+func (r *Records) WithFetchedReportTip(callback func(fullSHA string) error) (err error) {
+	if callback == nil {
+		return errors.New("fetched report tip needs a callback")
+	}
+	source, err := reportSourceRef(r.Branch)
+	if err != nil {
+		return err
+	}
+	nonce, err := newReportFetchNonce()
+	if err != nil {
+		return fmt.Errorf("could not draw a private report-fetch name: %w", err)
+	}
+	ref, err := reportFetchedRef(nonce)
+	if err != nil {
+		return err
+	}
+	marker, err := r.Git.Out("rev-parse", "--verify", "HEAD^{commit}")
+	if err != nil {
+		return fmt.Errorf("could not reserve a private report-fetch ref without a local commit: %w", err)
+	}
+	if !IsSHA(marker) {
+		return fmt.Errorf("could not reserve a private report-fetch ref: HEAD resolved to %q, not a full commit sha", marker)
+	}
+	const nullSHA = "0000000000000000000000000000000000000000"
+	if _, err := r.Git.Run("update-ref", "--no-deref", ref, marker, nullSHA); err != nil {
+		return fmt.Errorf("could not reserve private report-fetch ref %s: %w", ref, err)
+	}
+
+	// Before fetch succeeds, marker is the only OID this invocation can prove it owns. A
+	// failed fetch may have changed the ref, but adopting that new value would let cleanup
+	// delete another operation's replacement. The expected-old delete below preserves it.
+	expected := marker
+	defer func() {
+		if _, cleanupErr := r.Git.Run("update-ref", "--no-deref", "-d", ref, expected); cleanupErr != nil {
+			cleanupErr = fmt.Errorf("could not remove private report-fetch ref %s at owned %s: %w", ref, expected, cleanupErr)
+			if err == nil {
+				err = cleanupErr
+			} else {
+				err = fmt.Errorf("%w; %v", err, cleanupErr)
+			}
+		}
+	}()
+
+	if _, err := r.Git.Run(
+		"-c", "gc.auto=0", "-c", "maintenance.auto=false", "-c", "fetch.writeCommitGraph=false",
+		"fetch", "--no-write-fetch-head", "--no-tags", "--no-recurse-submodules", "--refmap=",
+		// The plus may replace only the marker this invocation reserved above. It does
+		// not force a shared remote-tracking ref, and --refmap= keeps those refs out.
+		r.Remote, "+"+source+":"+ref,
+	); err != nil {
+		return fmt.Errorf("could not fetch report tip: %w", err)
+	}
+	tip, err := r.Git.Out("rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	if err != nil {
+		return fmt.Errorf("could not resolve private report-fetch ref %s: %w", ref, err)
+	}
+	if !IsSHA(tip) {
+		return fmt.Errorf("private report-fetch ref %s resolved to %q, not a full commit sha", ref, tip)
+	}
+	expected = tip
+	if err := callback(tip); err != nil {
+		return fmt.Errorf("could not use fetched report tip %s: %w", tip, err)
+	}
+	return nil
+}
+
+func reportSourceRef(branch string) (string, error) {
+	if err := ValidRefName(branch); err != nil {
+		return "", fmt.Errorf("report fetch has invalid lane branch: %w", err)
+	}
+	if strings.HasPrefix(branch, "refs/") {
+		return "", fmt.Errorf("report fetch lane branch must be a short branch name, got %q", branch)
+	}
+	return "refs/heads/" + branch, nil
+}
+
+func reportFetchedRef(nonce string) (string, error) {
+	if len(nonce) != 32 {
+		return "", fmt.Errorf("private report-fetch nonce has %d characters, want 32", len(nonce))
+	}
+	for _, c := range nonce {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return "", fmt.Errorf("private report-fetch nonce %q is not lowercase hexadecimal", nonce)
+		}
+	}
+	return reportFetchedRefPrefix + nonce, nil
+}
+
 // FoldProblem is a record file the fold REFUSED. It is never skipped and never repaired:
 // the unreadable file may be the hold or the newer red, so the entry whose directory
 // holds it is blocked for the pass, and a file whose path names no entry stops the pass
