@@ -2030,3 +2030,76 @@ the class, marked `draft 3` at the passage:
   `ROSTER FOLD` carries `ratified=false` on the line it has;
 - the four nits: the work list's third change, `ReadItem`'s `entry`, the
   checkout-versus-tip clause in test 1, and Known limits' rule extent.
+
+
+## Packet implementation findings — draft 7 proposal, awaiting friend review
+
+This proposed amendment addresses the reproduced packet defects in PR277. It
+is not an implementation approval or consensus record. Once accepted, these
+rules replace the conflicting draft-6 publication and reuse details above.
+
+1. **Final publication is atomic and exclusive.** Keep the unique exclusive
+   temporary, but replace the unconditional rename with a no-replace atomic
+   publication primitive. An existing file or symlink is never overwritten;
+   concurrent publishers produce exactly one complete winner. A stdout failure
+   after publication returns failure and names the retained artifact. Retry
+   cannot overwrite it.
+2. **Store the original output admission limit.** Add required positive integer
+   `limit=<n>` to the unreleased v1 packet header. It is the first builder's
+   `--max-bytes`, including metadata; `0 < bytes <= limit` must hold. Reuse
+   preserves `limit`, the tuple and the reader-independent sections. Recompute
+   actual `bytes` after replacing the per-reader section and refuse before
+   publication if it exceeds the original limit. Do not guess original headroom
+   from actual bytes or a default. Artifacts without the required field need a
+   fresh build; retain the original artifact. The tuple id still identifies the
+   entry/head/base/range, not a content digest or an admission grant.
+3. **Input admission is independent of packet metadata.** Extend `packet` with
+   the existing `--max-input-bytes` vocabulary, default 1048576, for reuse-file
+   reads. A caller may raise this positive input ceiling without changing the
+   copied packet or its original output limit; `--reuse --max-bytes` remains
+   refused even when explicitly equal to its default. Do not let an untrusted
+   header authorize allocation. Read at most the caller's input limit plus one
+   detection byte from one regular-file handle, validate exact declared bytes,
+   and refuse oversized input with an executable remedy naming
+   `--max-input-bytes`. Nonregular paths, including a FIFO with no writer, must
+   refuse within the command timeout rather than block before validation.
+4. **Use a reversible header codec.** Encode `entry` and `who` with canonical
+   RFC3986 percent encoding of UTF-8 bytes: only ASCII letters, digits and
+   `-._~` remain literal; all other bytes are `%HH` using uppercase hex. Decode
+   once and require re-encoding to match before validating the tuple. Literal
+   backslashes, percent sequences, equals signs, spaces and non-ASCII names
+   round-trip distinctly. Other fields retain their closed grammars. Duplicate,
+   unknown, missing, overflowing or malformed fields refuse. The first line is
+   bounded to 4096 bytes including its terminating newline, on write and read.
+5. **Frame data before reusing it.** Author title/body and other free text are
+   quoted as data; section delimiters are complete top-level lines, never
+   substring matches in quoted rules, author prose or diff lines. Use a fence
+   longer than any conflicting run in the enclosed data when a fence is needed.
+   The renderer and reader must round-trip heading-shaped author text and diff
+   content without dropping or moving reader-independent bytes. Refuse ambiguous
+   unframed artifacts with a fresh-build remedy instead of guessing a boundary.
+   Reuse counts distinct rules, preserving explicit omitted totals; per-file
+   rule associations are not additional rules. Preserve original `built=` on
+   reuse because copied findings describe the source snapshot at that time.
+6. **Serialize finding actions explicitly.** For stored `dup` and `close` rows,
+   require exactly `id`, `state`, `target` and `claim`. `id` is this action row's
+   immutable submission/row id; `target` is the existing finding id; `claim` may
+   be empty. Do not fabricate path, line or rule fields for actions. Ordinary
+   `block|fix|nit|ok` rows retain their specified fields. A close targets an open
+   finding belonging to the same `(who, kind, of, job)` owner; a duplicate adds
+   a view and never implies closure. Omission, APPROVE and an author's answer
+   also never close a finding. Resolve actions against the same entry and reject
+   dangling targets and cycles. This pins serialization, not a new verdict
+   writer or a relaxation of the existing pair/owner checks.
+
+Required regressions: concurrent and existing/symlink publication; output failure
+with recoverable immutable artifact; malformed/duplicate/overflowing metadata;
+name-codec round-trip including literal escape sequences; an explicit default
+`--max-bytes` on reuse; a packet larger than the default built under a larger
+limit; per-reader growth within and beyond that original limit; an independent
+input ceiling that cannot be overridden by forged metadata; FIFO refusal;
+heading-shaped source text and code fences; one rule touching two files and
+clipped distinct-rule totals; unchanged source `built=` on reuse; action JSON
+round-trip, cross-owner closure refusal and omission preserving open findings.
+The packet still needs the previously specified fetched-tip review-record fold;
+legacy merge reads alone are not evidence that there are zero open findings.
