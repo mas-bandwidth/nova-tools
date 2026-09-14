@@ -51,7 +51,10 @@ and a bounded resident cache. Moving C out of memory while retaining every past
 request in one resident dedup map does not meet this contract. A retry after day
 rollover, clipping or coordinator handoff cannot execute again; a reused ID with
 a different payload is still refused. An unavailable dedup page is a refusal to
-admit that request, never evidence that it is new.
+admit that request, never evidence that it is new. Inherit SPEC-WORK draft24
+lines221–260: one request-ID namespace across mutation kinds and its canonical
+SHA-256 payload serialization/collision rules. The committed root names this
+dedup state, not a machine-local ledger that disappears on handoff.
 
 ## Queries say which question they answer
 
@@ -59,7 +62,12 @@ The default closed-history window is the **rolling last 24 hours**, not the last
 24 calendar dates or all of yesterday plus today. At startup and for a default
 closed-history query, use `[now - 24h, now)` and open at most the two intersecting
 UTC day partitions (today and yesterday). At exactly midnight only yesterday
-intersects the half-open interval. Older history stays on disk and is accessed
+intersects the half-open interval. This deliberately replaces draft24
+lines1024–1030 requiring explicit --from/--to on every closed/root listing:
+omit both for the default, provide both to select an explicit interval, and
+refuse a single endpoint. With --at, default now is the selected revision's
+recorded timestamp rather than the current wall clock; the reply names both.
+Older history stays on disk and is accessed
 only by an explicitly broader historical query or a required indexed lookup.
 
 The time range is bounded; volume within those hours can still grow. Keep byte,
@@ -74,15 +82,20 @@ exact timestamp bounds. Do not list all historical files and filter afterward.
 A query crossing midnight reads both relevant days. Recorded event time chooses
 the partition; revision remains the authoritative event ordering. Clock skew or
 backdated supplied timestamps do not permit an index to assume time is monotonic
-with revision.
+with revision. Only events at or before the captured revision are eligible;
+exact recorded timestamps determine interval inclusion. The existing event
+clock/provenance rules still apply, normalized to UTC. An explicitly backdated
+or future event is not retimed silently; it appears only in a matching explicit
+interval at a revision that includes it.
 
 Keep two explicit views, using the existing query surface where possible:
 
 - **Closure activity:** what closure events occurred in the interval? Show each
   closure event, including an item later reopened. Report event count and distinct
   item count separately. This is useful for retrospective work and cost analysis.
-- **Item state:** what was the latest state of each selected item as of the query
-  revision/window end? Count each item once, using its event history as of that
+- **Item state:** select distinct item IDs with closure events in the interval,
+  then ask their latest state as of the captured revision, considering transitions
+  before the interval end. Count each item once, using its event history as of that
   point. A later reopen must not change an earlier historical answer.
 
 A latest-row-only index cannot answer the second question for a time before that
@@ -96,11 +109,21 @@ mutation time; do not rescan all C just to print `closed=` on a recent listing.
 Changing a policy that requires a full rebuild must report that operation and its
 cost. Keep pending release tasks visible in O while their fixes appear in C.
 
+Activity rows order by `(event revision, event ID)` across day partitions;
+item-state rows order by stable item ID. Event ID breaks ties within an atomic
+envelope. A continuation binds the committed root/manifest identity, captured
+revision, interval, query kind/scope and last ordering key. A changed binding
+is a refusal; the wire encoding is a pilot decision, not an optional field.
+
 Pagination is pinned to the captured revision, filter and ordering; a continuation
 cannot drift because another item closed between pages. A stale/unavailable page
 snapshot returns an explicit refusal, not skipped or repeated rows. Bound emitted
 rows, bytes and index/body reads. Large complete reports may require multiple
 bounded pages; never imply constant cost for output proportional to history.
+Each invocation has a finite row, emitted-byte and scanned-byte budget. Reaching
+one returns partial coverage plus a continuation, never an automatic loop
+through further pages. Resuming is another explicit bounded invocation. This
+permits requested full reports without one unbounded process response.
 
 An absent day within a complete manifested range can mean no events. A manifest
 or segment expected by the committed root but missing/corrupt means a coverage
@@ -120,7 +143,10 @@ files, verify their referenced hashes, then commit the root and referenced files
 in the same Git checkpoint. A failed push leaves locally durable pending work;
 a missing acknowledgment is reconciled against the exact remote commit before
 retrying publication. Do not advance a local shared-boundary receipt merely
-because the commit exists locally.
+because the commit exists locally. Inherit draft24
+lines271–282's durable journal clip-boundary record and idempotent replay: a
+crash after remote publication but before recording that boundary must reconcile
+the exact committed root before replay, rotation or a second publication.
 
 Closing/reopening must be all-or-none with index updates from the reader's
 perspective, including after a crash before acknowledgment, after acknowledgment
