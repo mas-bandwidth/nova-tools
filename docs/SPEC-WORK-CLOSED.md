@@ -65,8 +65,9 @@ UTC day partitions (today and yesterday). At exactly midnight only yesterday
 intersects the half-open interval. This deliberately replaces draft24
 lines1024–1030 requiring explicit --from/--to on every closed/root listing:
 omit both for the default, provide both to select an explicit interval, and
-refuse a single endpoint. With --at, default now is the selected revision's
-recorded timestamp rather than the current wall clock; the reply names both.
+refuse a single endpoint. With --at, require both --from and --to: a logical
+revision is not a unique wall-clock timestamp, so no historical window is
+invented from event times. The reply names the revision and explicit interval.
 Older history stays on disk and is accessed
 only by an explicitly broader historical query or a required indexed lookup.
 
@@ -94,9 +95,12 @@ Keep two explicit views, using the existing query surface where possible:
   closure event, including an item later reopened. Report event count and distinct
   item count separately. This is useful for retrospective work and cost analysis.
 - **Item state:** select distinct item IDs with closure events in the interval,
-  then ask their latest state as of the captured revision, considering transitions
-  before the interval end. Count each item once, using its event history as of that
-  point. A later reopen must not change an earlier historical answer.
+  then ask their latest state as of the captured revision. The interval selects
+  the item IDs; it is not a second cutoff on their state transitions. A reopen
+  after `to` but at or before the captured revision therefore appears as open.
+  Use --at with an explicit interval to ask the same question at an earlier
+  revision. Count each item once; events beyond that captured revision cannot
+  change the historical answer, whatever timestamps they carry.
 
 A latest-row-only index cannot answer the second question for a time before that
 row. Retain versioned per-item index entries or perform bounded indexed lookups of
@@ -109,9 +113,10 @@ mutation time; do not rescan all C just to print `closed=` on a recent listing.
 Changing a policy that requires a full rebuild must report that operation and its
 cost. Keep pending release tasks visible in O while their fixes appear in C.
 
-Activity rows order by `(event revision, event ID)` across day partitions;
-item-state rows order by stable item ID. Event ID breaks ties within an atomic
-envelope. A continuation binds the committed root/manifest identity, captured
+Activity rows order by `(event revision, canonical envelope position, event ID)`
+across day partitions; item-state rows order by stable item ID. Preserve the
+existing envelope order before the final identity tie-breaker; lexical IDs
+never reorder causally ordered events. A continuation binds the committed root/manifest identity, captured
 revision, interval, query kind/scope and last ordering key. A changed binding
 is a refusal; the wire encoding is a pilot decision, not an optional field.
 
