@@ -723,3 +723,52 @@ is compared against; it is never the path `query --ask size` takes."
 (deftest "comment-suffix-accepted" "docs/SPEC-WORK.md:678-679"
     "expected=value-returned"
   (check-equal '(:X 1) (read-restricted "(:X 1) ; comment") "comment suffix accepted"))
+
+;;; ------------------------------------------------------------------
+;; 13. forbidden payload tokens refuse before interning
+;;     SPEC-WORK.md:678-681; validator rule 12 reader payload
+;;; ------------------------------------------------------------------
+
+(deftest "forbidden-token-boundary-before-interning" "docs/SPEC-WORK.md:678-681"
+    "expected=symbols,ratios,floats,characters,dispatch-refused-at-token-byte;interned=0"
+  (labels ((refuses-at (text byte)
+             (handler-case
+                 (progn (read-restricted text)
+                        (fail "~S was read instead of refused" text))
+               (restricted-data-violation (c)
+                 (let ((message (princ-to-string c))
+                       (expected (format nil "byte ~D" byte)))
+                   (ok (search expected message)
+                       "~S refused without token-start ~A: ~A" text expected message))))))
+    ;; The byte is the forbidden token's first byte, including after a
+    ;; multi-byte character earlier in the form.
+    (dolist (case '(("foo" 0)
+                    ("(:x foo)" 4)
+                    ("(:x \"é\" cl:car)" 9)
+                    ("1/2" 0)
+                    ("(:x 1.0)" 4)
+                    ("#\\a" 0)
+                    ("(:x \"é\" #'car)" 9)))
+      (refuses-at (first case) (second case)))
+
+    ;; A refused bare symbol must not mutate the otherwise empty reader
+    ;; package by interning itself before validation rejects it.
+    (let ((name "NO-INTERN-READER-TOKEN-20260914"))
+      (multiple-value-bind (symbol status) (find-symbol name "NOVA-WORK.READ")
+        (declare (ignore symbol))
+        (ok (null status) "the no-intern test token already exists"))
+      (refuses-at name 0)
+      (multiple-value-bind (symbol status) (find-symbol name "NOVA-WORK.READ")
+        (declare (ignore symbol))
+        (ok (null status) "a refused bare symbol was interned with status ~S" status)))
+
+    ;; Adjacent approved forms and forbidden-looking text inside data/comments
+    ;; remain data.
+    (check-equal :FOO (read-restricted ":foo") "a keyword was refused")
+    (check-equal -12 (read-restricted "-12") "a signed integer was refused")
+    (check-equal '(:X "foo cl:car 1/2 1.0")
+                 (read-restricted "(:x \"foo cl:car 1/2 1.0\")")
+                 "forbidden-looking string text was refused")
+    (check-equal '(:X 1)
+                 (read-restricted "(:x 1) ; foo cl:car 1/2 1.0")
+                 "forbidden-looking comment text was refused")))
