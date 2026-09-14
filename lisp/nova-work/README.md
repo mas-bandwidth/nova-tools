@@ -24,11 +24,13 @@ beside the Go client's existing `cmd/` and `internal/`.
 - Restricted-data values and the ordered envelope representation
   (`src/value.lisp`, `src/event.lisp`), with the one deterministic printer of
   `SPEC-WORK.md:337` and the `(:absent)` / `()` / `""` distinction of `:329-337`.
-  Evaluation syntax — every dispatch macro, quote, backquote, unquote, comment
-  and `|` escape — and a malformed or trailing form refuse at the boundary with
-  a byte offset (`:678-681`), never as a raw reader error. A keyword whose name
-  is not already upper case refuses, because the printer downcases and two names
-  differing only in case would otherwise print identical bytes.
+  Forbidden syntax — every dispatch macro, quote, backquote, unquote, single or
+  multiple escape, bare or package-prefixed symbol, ratio, float and character
+  — refuses before interning at its UTF-8 token-start byte (`:678-681`).
+  Semicolon comments remain discarded. A malformed or trailing form refuses at
+  the boundary with a byte offset, never as a raw reader error. A keyword whose
+  name is not already upper case refuses, because the printer downcases and two
+  names differing only in case would otherwise print identical bytes.
 - Deterministic canonical payload serialization and its SHA-256 digest
   (`src/sha256.lisp`, `SPEC-WORK.md:325`), for the supported transition subset.
 - Pure atomic application of a validated **close + generated `:settle`** envelope
@@ -112,6 +114,10 @@ names where the row has none.
 ## Partial coverage, stated rather than implied
 
 Nothing here claims green on:
+
+- **The complete E01-F01 reader feature.** This slice enforces the supported
+  token boundary for a single form. It does not implement the work-file
+  sequence reader or claim the entire feature's production acceptance.
 
 - **Durability.** `atomic-mutation` (`:3348`) is exercised at two boundaries
   only — the acceptance refusal and a stop injected between the journal append

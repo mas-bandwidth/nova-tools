@@ -7,17 +7,17 @@ Help AI friends coordinate work without repeatedly rebuilding the plan in their 
 **Planning baseline: 10 epics, 52 features, 171 inventoried items (166 acceptance items and 5 open questions).**
 **Verified implementation: 0%.** This is proposed scope for review, not a delivery-date or effort estimate.
 The current main branch has no production `nova-work` engine or CLI; existing prototypes and written specs do not count as verified production features.
-Current scope after the recorded moves and discoveries: 57 product features and 197 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
+Current scope after the recorded moves and discoveries: 57 product features and 200 tickable acceptance items; the historical 171-item baseline count remains unchanged. The original inventory is retained at revision `248d85b`.
 
 The current work register is below. The first internal C/O kernel has merged; a merged partial implementation and passing subset tests do not mark a full production feature verified. The planning source records partial support for E01-F01, E01-F03, E01-F05, E03-F01 and E04-F01 with the merged subset evidence; their cells remain ❌ until all criteria pass.
 
 ✅ = implemented and verified against the agreed criteria at a recorded source revision. ❌ = any other state.
 Completion is verified features divided by applicable features; it is not averaged subtask percentages or an estimate of time remaining.
 
-The hierarchy is **epic → feature → sub-feature/acceptance item**, with no language axis.
+This roadmap uses **epic → feature → sub-feature/acceptance item**, with no language axis.
 [Recursive work data](docs/roadmaps/nova-work.sexp) retains stable IDs, dependencies and source references.
 This baseline format is planning data, not a claim that nova-work import/export already exists.
-Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation), proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound), and proposed PR #317 `SPEC-WORK.md@685b7c2` (efficiency policy). A source-section label below is resolved through its named file/revision key.
+Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WORK-PILOT.md@6e3413f` names resident-engine/roadmap headings; later companion refinements are pinned as `SPEC-WORK-PILOT.md@4e800fb` (eager W) and `SPEC-WORK-PILOT.md@bc4a4a4` (batch transport); `SPEC-WORK-VALIDATION.md@6e3413f` names acceptance suites. Additive deltas are `SPEC-WORK.md@7db3b95` (response correlation), proposed `SPEC-WORK.md@a0cfcf5` (resident 24-hour bound), `SPEC-WORK.md@685b7c2` (efficiency policy, merged to `spec/nova-work` by PR #317 as `cf5dd8f5`), and proposed PR #319 `SPEC-WORK.md@9488a19` (recursive project/stream grouping). A source-section label below is resolved through its named file/revision key.
 
 | Epic | Features | Verified |
 |---|:---:|:---:|
@@ -38,7 +38,7 @@ Source citation key: `SPEC-WORK.md@f36b8585` names main-spec headings; `SPEC-WOR
 |:---:|:---:|:---:|:---:|:---:|:---:|
 | 52 | 6 | 0 | 0 | 1 | 57 |
 
-Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation and ten proposed efficiency-policy acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
+Preserve feature IDs and the baseline. The six discovered features below close source-backed gaps found in the PR #269 review; the response-correlation, ten efficiency-policy and three proposed recursive-grouping acceptance discoveries map to existing features without creating features. E10-F06 moved to the Now register outside this product denominator. Append discoveries with reasons; record decomposition and removal separately.
 Do not count removal as completion. These counts track inventory movement, not estimated engineering effort.
 
 ## Open questions
@@ -55,18 +55,24 @@ The team is testing efficiency improvements in existing tools while building nov
 
 The first internal Common Lisp C/O kernel and maintained open counter merged through [#300](https://github.com/mas-bandwidth/nova-tools/pull/300), while its feature rows remain incomplete. Operational token and worker-cost experiments run alongside real work under [#185](https://github.com/mas-bandwidth/nova-tools/issues/185); implementation cost is excluded, while retries, review and rescue remain part of accepted-work cost.
 
-Current evidence at 2026-09-14 18:33 UTC:
+Current evidence at 2026-09-14T20:57:36Z; proposed v2 planning source remains issue #321 updated 2026-09-14T20:47:32Z:
 
-- [#300](https://github.com/mas-bandwidth/nova-tools/pull/300) merged as `d21d65f0e6f16a6b3b797d4620d0f24e0c41c296` at 18:25:58 UTC after root clearance, Emma approval `emma-aa67291093bc`, and Freddy's own Mercury APPROVE relayed in `rowan-d5a2c0d5f70d`. Feature rows remain partial with no whole-criterion green.
-- [#314](https://github.com/mas-bandwidth/nova-tools/pull/314) merged as `4b99c1b4`.
-- [#311](https://github.com/mas-bandwidth/nova-tools/pull/311) merged as `14ef63b1` after scoped wording and link gates cleared. Freddy adoption and any measured efficiency saving remain unproven.
-- [#312](https://github.com/mas-bandwidth/nova-tools/pull/312) merged as `20f8581` and was adopted by the root at `0921c80`; no measured efficacy claim follows.
-- [#310](https://github.com/mas-bandwidth/nova-tools/pull/310) remains open at `5fb0feee`, with Emma owning integration.
-- [#316](https://github.com/mas-bandwidth/nova-tools/pull/316) remains open at `f8fc40e`; its scoped retained-receipt discovery repair is cold-clear.
-- [#317](https://github.com/mas-bandwidth/nova-tools/pull/317) remains open at `685b7c2`, with Rowan/Fable CLEAR `rowan-be028c2589e8`. Emma approved older `a77f370` in `emma-a875c5f1e118` and needs the current delta; Freddy is pending. Its proposed efficiency-policy replays are mapped here without implementation credit.
+- Merged foundations remain [PR #300](https://github.com/mas-bandwidth/nova-tools/pull/300) at d21d65f0, [PR #314](https://github.com/mas-bandwidth/nova-tools/pull/314) at 4b99c1b4, [PR #311](https://github.com/mas-bandwidth/nova-tools/pull/311) at 14ef63b1 and [PR #312](https://github.com/mas-bandwidth/nova-tools/pull/312) merged at 20f8581; the workshop adopted reviewed nova-bus source 0921c800 (its bus paths match the merge). Feature rows remain partial; no whole criterion or measured efficiency result is green.
+- [#310](https://github.com/mas-bandwidth/nova-tools/pull/310) merged as `95ceae8b` into draft [#264](https://github.com/mas-bandwidth/nova-tools/pull/264) at 19:11 UTC; parent and schema gates remain.
+- [#316](https://github.com/mas-bandwidth/nova-tools/pull/316) merged as `269e56d2` into held parent [#240](https://github.com/mas-bandwidth/nova-tools/pull/240) at 18:33:30 UTC; the parent remains held on other findings.
+- [#317](https://github.com/mas-bandwidth/nova-tools/pull/317) merged as `cf5dd8f5` into `spec/nova-work` at 19:29 UTC after Rowan, Emma and Freddy reviewed current `685b7c2`; its acceptance replays are mapped here without implementation credit.
+- [PR #320](https://github.com/mas-bandwidth/nova-tools/pull/320) at 83269f66 has root 5669188583, Emma 5669320707 and Rowan 5670125575 clear; Freddy remains pending. It is not merged and makes no feature green.
+- [PR #322](https://github.com/mas-bandwidth/nova-tools/pull/322) at dd47e24b has root 5670041086, Emma 5670109927 and Rowan 5670125753 clear after exact closed/history/event identity assertions, journal-rejection wording and the required-boolean citation repair; Freddy remains pending. It is not merged and makes no feature green.
+- [PR #320](https://github.com/mas-bandwidth/nova-tools/pull/320) reader plus [PR #322](https://github.com/mas-bandwidth/nova-tools/pull/322) container integration passed 32/32 with a fresh cache in a local rehearsal from main 86785fd0: combined commit 5b1b194f, tree 07585441495f8f6ea27d52929e1ab71a98e21cd9, with the exact union of unchanged test bodies. Only the acceptance append conflict was resolved. Evidence: workshop docs/experiments/20260914-reader-cascade-integration/. No remote integration or push occurred; Freddy reviews remain pending.
+- [PR #319](https://github.com/mas-bandwidth/nova-tools/pull/319) at 9488a19 has root clear, Emma 5669804565 clear and Rowan 5670125417 clear; Freddy remains pending. The recursive-grouping acceptance discoveries remain proposed without implementation credit.
+- [#293](https://github.com/mas-bandwidth/nova-tools/pull/293), [#294](https://github.com/mas-bandwidth/nova-tools/pull/294) and [#295](https://github.com/mas-bandwidth/nova-tools/pull/295) have current Rowan/Fable approvals at `47c3f9a`, `4fddfcb` and `c2be4d6b`; other friend, parent and schema gates remain.
+- [#321](https://github.com/mas-bandwidth/nova-tools/issues/321) now specifies recursive real/virtual/mixed nodes, optional repository/Issues/Discussions/email backing, and durable delegated-work mappings with accepted completion returned upstream; the proposed v2 inventory below remains outside the v1 denominator.
+- [PR #323](https://github.com/mas-bandwidth/nova-tools/pull/323) at d438bdb7 retains one root finding (5670639237): unreadable turn ID does not itself imply unspendable. Package, durability, mapping, additive-reason and source-local truncation repairs are clear; the remaining prose correction is required.
+- [PR #325](https://github.com/mas-bandwidth/nova-tools/pull/325) at d5f412f has root 5670630047 clear and 9/9 CI checks green; friend gates remain pending. This reconciles swarm migration status and re-reservation hashes without enabling the parent runtime.
+- [PR #326](https://github.com/mas-bandwidth/nova-tools/pull/326) at c598fc3 proposes optional native batch admission receipts, with root review 5670508751. Exact-revision friend review and contract gates remain; no build or operational saving is claimed.
 - [#185](https://github.com/mas-bandwidth/nova-tools/issues/185) records that native Codex usage decoding exists without an operational ingestion path. No parent-plus-child token saving is claimed.
 
-This is a current work register, outside the nova-work feature denominator. Results and negative or inconclusive experiments remain evidence; any scope change is recorded as a scope event and does not become completion credit.
+This current work register is outside the nova-work feature denominator. Results and negative or inconclusive experiments remain evidence; any scope change is recorded as a scope event and does not become completion credit.
 
 ## Feature inventory
 
@@ -112,8 +118,9 @@ Prerequisites: E01-F02.
 - [ ] Model one stable ID per node and one owning containment parent
 - [ ] Keep containment as a forest and references as a separate graph
 - [ ] Preserve IDs through rename, close, reopen and reparent
+- [ ] Allow omitted, repeated and recursively nested work-set grouping layers without a prescribed depth
 
-Source sections: The data; Engine and representation.
+Source sections: The data; Engine and representation; Recursive structure within a repository (proposed SPEC-WORK.md@9488a19).
 
 **E01-F04 — Typed work kinds and acceptance schema**
 
@@ -122,8 +129,9 @@ Prerequisites: E01-F03.
 - [ ] Represent work-set, feature, roadmap, task, lease and event kinds
 - [ ] Represent leaf tasks separately from parent tasks and attempts
 - [ ] Validate acceptance kind, subject, predicate and required flag
+- [ ] Represent project and stream groupings as work-set categories without inferring kind from title or position
 
-Source sections: The data.
+Source sections: The data; Recursive structure within a repository (proposed SPEC-WORK.md@9488a19).
 
 **E01-F05 — Canonical encoding and semantic round trip**
 
@@ -280,8 +288,9 @@ Prerequisites: E03-F03, E05-F01.
 - [ ] Support evidence-guarded state transitions including blocked, done, deferred, cancelled and superseded
 - [ ] Bump task generation on correction and invalidate older evidence
 - [ ] Keep reopen, pause and stop as durable events
+- [ ] Settle and reopen required-member ancestors at every grouping depth while empty required sets remain incomplete
 
-Source sections: The data; The validator; Required coordinator operations.
+Source sections: The data; The validator; Required coordinator operations; Recursive structure within a repository (proposed SPEC-WORK.md@9488a19).
 
 **E03-F05 — Reversible undo and redo plans**
 
@@ -419,7 +428,7 @@ Prerequisites: E05-F01.
 - [ ] Preserve disagreement, unknowns and repair cycles
 - [ ] reuse-only-valid-review: reuse a review only for unchanged reviewed content, acceptance and dependencies; retain independent friend gates, reviewer-selected integrating depth and repeat triggers
 
-Source sections: Operational lessons the pilot must exercise; The data; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
+Source sections: Operational lessons the pilot must exercise; The data; Efficiency policy (SPEC-WORK.md@685b7c2).
 
 **E05-F04 — Dependency and release gates**
 
@@ -544,10 +553,10 @@ Prerequisites: E01-F04, E03-F03.
 - [ ] Represent ordered axes and coordinate-to-node references
 - [ ] Refuse unknown axis members and duplicate coordinates
 - [ ] Treat missing cells and out-of-scope cells distinctly
-- [ ] Preserve epic -> feature -> recursive sub-feature hierarchy without mandatory axis or cell wrappers
+- [ ] Preserve selected scope and completion unit across recursive grouping layouts without mandatory axis or cell wrappers
 - [ ] Retain completed roadmap members and historical code/test evidence beyond the active 24-hour window
 
-Source sections: The data; A cell is a reference, not another state store.
+Source sections: The data; A cell is a reference, not another state store; Recursive structure within a repository (proposed SPEC-WORK.md@9488a19).
 
 **E07-F02 — Completion-only projection renderer**
 
@@ -641,7 +650,7 @@ Prerequisites: E08-F01, E02-F04.
 - [ ] pipeline-replies-are-correlated: correlate out-of-order or fragmented ordinary responses by request ID, retain a distinct durable operation ID, name independent not-attempted and atomic validation entry outcomes, and close on unknown, duplicate, absent or undecodable IDs; same-ID recovery uses E03-F01 durable idempotency
 - [ ] batch-with-bounds-and-urgency: coalesce independent results within byte, record and delay bounds; refuse unreferenced padding, bypass delay for urgent changes and preserve dependency and retry identity
 
-Source sections: The verbs; Async operations; Retry/protocol; Batch-friendly transport and explicit atomicity; Response correlation (SPEC-WORK.md@7db3b95); Efficiency policy (proposed SPEC-WORK.md@685b7c2).
+Source sections: The verbs; Async operations; Retry/protocol; Batch-friendly transport and explicit atomicity; Response correlation (SPEC-WORK.md@7db3b95); Efficiency policy (SPEC-WORK.md@685b7c2).
 
 **E08-F03 — Friends, CONFIG and ACTIVE indexes**
 
@@ -654,7 +663,7 @@ Prerequisites: E04-F04, E03-F04.
 - [ ] Represent children, swarm capabilities, local runs and one-shots separately from friend identity; agreed concurrency limits apply
 - [ ] bounds-are-not-prompts: refuse automatic dispatch when an adapter cannot enforce the configured execution limit; distinguish wait deadline from observed stop or unresolved outcome
 
-Source sections: Friends and assignments are resident indexes too; CONFIG and ACTIVE are different sections; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
+Source sections: Friends and assignments are resident indexes too; CONFIG and ACTIVE are different sections; Efficiency policy (SPEC-WORK.md@685b7c2).
 
 **E08-F04 — Availability, offers and assignment reconciliation**
 
@@ -667,7 +676,7 @@ Prerequisites: E08-F03, E02-F04.
 - [ ] quiet-until-actionable: keep unchanged traffic mechanical, batch actionable deltas within bounds and let corrections, stops, lease loss and deadlines bypass delay
 - [ ] regression-and-recovery: suspend new automatic routing on a breached trial, retain uncertain live handles and use only eligible role-preserving fallback
 
-Source sections: Observed availability; Friends and assignments are resident indexes too; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
+Source sections: Observed availability; Friends and assignments are resident indexes too; Efficiency policy (SPEC-WORK.md@685b7c2).
 
 **E08-F05 — Bounded config/pricing exchange and model suitability**
 
@@ -679,7 +688,7 @@ Prerequisites: E08-F03.
 - [ ] policy-round-trip-and-replay: preserve per-friend efficiency policy, trial manifests and execution references through validated intake, export/import, restart, undo and replay
 - [ ] packet-and-route-gates: refuse oversized or history-disallowed packets and ineligible/stale routes; retain a scoped reason for economical-route exceptions
 
-Source sections: Efficient friend config exchange and token pricing; Model knowledge informs scheduling; Swarms, models and friend participation: decision required; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
+Source sections: Efficient friend config exchange and token pricing; Model knowledge informs scheduling; Swarms, models and friend participation: decision required; Efficiency policy (SPEC-WORK.md@685b7c2).
 
 </details>
 
@@ -787,7 +796,7 @@ Prerequisites: E08-F05, E03-F04.
 - [ ] complete-cost-lineage: join parent, child, retry and failed-attempt receipts once; avoid counting cache/reasoning subsets again, implementation cost separate and gaps unknown
 - [ ] cache-aware-context-choice: price cache read/write categories, service tiers and reset rebuilds; refuse missing decision, adapter or evidence inputs and compare matched accepted work
 
-Source sections: Cost; Model knowledge informs scheduling; Retrospective required before production implementation; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
+Source sections: Cost; Model knowledge informs scheduling; Retrospective required before production implementation; Efficiency policy (SPEC-WORK.md@685b7c2).
 
 **E10-F03 — Generated, golden, property and fault suites**
 
@@ -819,7 +828,7 @@ Prerequisites: E07-F05, E10-F02, E10-F03.
 - [ ] Pin scenarios, owners and commands before implementation; require exact-revision correctness and measured operational results before adoption
 - [ ] evidence-before-adoption: refuse automatic promotion on missing baseline or coverage, unmatched quality or retrospective correlation; require a qualified prospective result
 
-Source sections: The measurement that decides; Agreement and lock gate; Efficiency policy (proposed SPEC-WORK.md@685b7c2).
+Source sections: The measurement that decides; Agreement and lock gate; Efficiency policy (SPEC-WORK.md@685b7c2).
 
 **E10-F07 — Validator and repair modes**
 
@@ -842,6 +851,38 @@ Prerequisites: E08-F01, E10-F01.
 Source sections: Output grammar; The verbs; Required test suites.
 
 </details>
+
+## Proposed v2 discoveries — outside the v1 denominator
+
+Issue [#321](https://github.com/mas-bandwidth/nova-tools/issues/321), updated 2026-09-14 20:47:32 UTC, expands the recursive node contract to arbitrary real/virtual/mixed hierarchies and a mapped GitHub completion return path. This meaningful planning change justifies a refresh before the previous roadmap checkpoint's hourly threshold. Source body SHA256: `138fd865383982f2729484eadb4edeefeb448cd0eb7c56716bd118858a42e0e6`; base roadmap source commit `a61171522f89c627a0e9011b4b6b70036840c8a0` on main `86785fd0accf997662c1cd5356f60acaf7a0821c`.
+
+**Four existing feature areas receive 12 proposed v2 acceptance items; zero new v1 features or items.** V1 remains 57 features/200 acceptance items with five partial features and 0% verified; historical baseline remains 52 features/171 inventoried items. These separate discoveries do not enable an adapter, provision repositories/mailboxes, send messages, or grant access. Actor/audience boundaries, ownership, adapter schema, repository layout and conflict policy require independent v2 review. Every depth uses the same contract; these feature-area labels are planning ownership, not a prescribed organizational hierarchy.
+
+**Proposed v2 extension of E08-F03 — Friends, CONFIG and ACTIVE indexes**
+
+- [ ] Keep node membership, human/AI coordinator composition, real or virtual organizational role and transport backing separate, with stable node and actor identities
+- [ ] Exercise all-real company-style, all-virtual and mixed real/virtual branches at arbitrary finite depths without fixed company/team/person levels; exceeding declared bounds refuses visibly
+- [ ] Keep one coordinating parent distinct from work containment and cross-branch references; record membership, parent and ownership transitions without duplicating work or spend
+
+**Proposed v2 extension of E08-F04 — Availability, offers and assignment reconciliation**
+
+- [ ] Apply the same offer, acceptance/deferral/refusal, local-work/delegation and evidence-return contract at every depth, including a root originating work and a leaf finishing locally
+- [ ] Integrate local and child results against parent acceptance; preserve partial failures, independent reviews, unresolved live handles and explicit pause/cancel/correction/reopen behavior
+- [ ] Return actor/model/bench/attempt usage through every parent mapping, counting local work, descendants, retry, integration, review and rescue once while missing usage remains unknown
+
+**Proposed v2 extension of E09-F02 — Link mode and correspondence reconciliation**
+
+- [ ] Support repository-backed virtual nodes using GitHub Issues and Discussions with optional correlated email; keep shared-project repository layout explicit and duplicate or delayed notices separate from acceptance
+- [ ] Retain delegating/receiving node, offer/assignment, local work, project/repository, Issue and linked Discussion identities and revisions; distinguish GitHub assignees from receiving nodes through regrouping, delegation and transfers
+- [ ] Record a virtual parent creating and assigning an Issue as a locally initiated offer, then accept it through the same contract without inventing an independent human request
+
+**Proposed v2 extension of E09-F05 — External adapter and side-effect safety**
+
+- [ ] After agreed completion and review, close the correctly mapped Issue and post or update one correlated Discussion completion summary with evidence; a child alone cannot close a group Issue and a summary does not imply Discussion closure or accepted answer
+- [ ] Persist the intended upstream operation before delivery and retain acknowledgment; local accepted completion with failed or interrupted GitHub delivery remains visibly pending and reconciles after restart without duplicate comments or closures
+- [ ] Preserve mappings and resolve contradictory upstream reopen, reassignment or transfer while updates are pending; an externally closed Issue does not prove local acceptance, and a future native backing preserves unresolved work and evidence
+
+Source sections: issue #321 — Required recursive behavior; Three distinct structures; Real, virtual and mixed hierarchies; Transitional proposal: repository-backed virtual nodes; Durable mapping from delegated work to GitHub and back; Recursive accounting and existing guardrails.
 
 ## Review and build gates
 

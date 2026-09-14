@@ -1,6 +1,6 @@
 ; Proposed recursive roadmap data; not an implemented nova-work interchange schema.
 (  :schema "nova-work-roadmap-baseline-1"
-  :scope-revision 5
+  :scope-revision 7
   :inventory-status "proposed baseline; awaiting friend review"
   :sources (    :main-spec "SPEC-WORK.md@f36b85850620504a74e1229043c7cee2c14ea594"
     :companion "SPEC-WORK-PILOT.md@6e3413f"
@@ -9,13 +9,16 @@
     :validation "SPEC-WORK-VALIDATION.md@6e3413f"
     :response-correlation "SPEC-WORK.md@7db3b95cd4c16b1eb34b1c77c0fc224755cc7a64"
     :resident-window-bound-proposed "SPEC-WORK.md@a0cfcf580d3140ce6c30d51b3a7f884c9b2afcd6"
-    :efficiency-policy-proposed "SPEC-WORK.md@685b7c2"
+    :efficiency-policy "SPEC-WORK.md@685b7c2"
+    :recursive-grouping-proposed "SPEC-WORK.md@9488a19"
+    :v2-recursive-node-proposed "https://github.com/mas-bandwidth/nova-tools/issues/321@2026-09-14T20:47:32Z"
+    :v2-recursive-node-body-sha256 "138fd865383982f2729484eadb4edeefeb448cd0eb7c56716bd118858a42e0e6"
     :production-inventory "ec01647")
   :baseline-features 52
   :baseline-items 171
   :discovered-features 6
   :current-features 57
-  :current-acceptance-items 197
+  :current-acceptance-items 200
   :events (    (      :kind "baseline"
       :feature-count 52
       :reason "Full initial nova-work source survey; implementation not started")
@@ -34,74 +37,131 @@
       :feature "E08-F05"
       :acceptance "policy-round-trip-and-replay"
       :item-count 1
-      :reason "Proposed PR 317 efficiency policy requires validated policy/trial/execution replay without partial intake")
+      :reason "PR 317 efficiency policy requires validated policy/trial/execution replay without partial intake")
     (      :kind "acceptance-discovery"
       :feature "E08-F05"
       :acceptance "packet-and-route-gates"
       :item-count 1
-      :reason "Proposed PR 317 adds packet bounds and retained economical-route exceptions")
+      :reason "PR 317 adds packet bounds and retained economical-route exceptions")
     (      :kind "acceptance-discovery"
       :feature "E08-F03"
       :acceptance "bounds-are-not-prompts"
       :item-count 1
-      :reason "Proposed PR 317 distinguishes adapter-enforced execution limits from prompt and wait deadlines")
+      :reason "PR 317 distinguishes adapter-enforced execution limits from prompt and wait deadlines")
     (      :kind "acceptance-discovery"
       :feature "E08-F04"
       :acceptance "quiet-until-actionable"
       :item-count 1
-      :reason "Proposed PR 317 requires mechanical unchanged handling and urgent bypass of bounded pulses")
+      :reason "PR 317 requires mechanical unchanged handling and urgent bypass of bounded pulses")
     (      :kind "acceptance-discovery"
       :feature "E05-F03"
       :acceptance "reuse-only-valid-review"
       :item-count 1
-      :reason "Proposed PR 317 limits review reuse to unchanged scope, revision, acceptance and dependencies")
+      :reason "PR 317 limits review reuse to unchanged scope, revision, acceptance and dependencies")
     (      :kind "acceptance-discovery"
       :feature "E10-F02"
       :acceptance "complete-cost-lineage"
       :item-count 1
-      :reason "Proposed PR 317 adds exact parent/child/retry allocation with unknown gaps and non-overlapping counters")
+      :reason "PR 317 adds exact parent/child/retry allocation with unknown gaps and non-overlapping counters")
     (      :kind "acceptance-discovery"
       :feature "E08-F02"
       :acceptance "batch-with-bounds-and-urgency"
       :item-count 1
-      :reason "Proposed PR 317 adds coordinator record/byte/delay bounds, urgency and retry attribution")
+      :reason "PR 317 adds coordinator record/byte/delay bounds, urgency and retry attribution")
     (      :kind "acceptance-discovery"
       :feature "E10-F02"
       :acceptance "cache-aware-context-choice"
       :item-count 1
-      :reason "Proposed PR 317 prices cache categories, rebuilds and tiers before context choice")
+      :reason "PR 317 prices cache categories, rebuilds and tiers before context choice")
     (      :kind "acceptance-discovery"
       :feature "E10-F05"
       :acceptance "evidence-before-adoption"
       :item-count 1
-      :reason "Proposed PR 317 bars retrospective or incomplete evidence from automatic adoption")
+      :reason "PR 317 bars retrospective or incomplete evidence from automatic adoption")
     (      :kind "acceptance-discovery"
       :feature "E08-F04"
       :acceptance "regression-and-recovery"
       :item-count 1
-      :reason "Proposed PR 317 suspends regressed automatic routing and preserves constrained fallback recovery"))
+      :reason "PR 317 efficiency policy suspends regressed automatic routing and preserves constrained fallback recovery")
+    (      :kind "acceptance-discovery"
+      :feature "E01-F03"
+      :acceptance "flexible-recursive-grouping-depth"
+      :item-count 1
+      :reason "Proposed PR 319 permits omitted, repeated and nested work-set grouping layers without prescribing containment depth")
+    (      :kind "acceptance-discovery"
+      :feature "E01-F04"
+      :acceptance "project-stream-work-set-categories"
+      :item-count 1
+      :reason "Proposed PR 319 represents project and stream groupings as work-set categories rather than inferred kinds")
+    (      :kind "acceptance-discovery"
+      :feature "E03-F04"
+      :acceptance "recursive-container-settle-reopen"
+      :item-count 1
+      :reason "Proposed PR 319 requires settle and reopen behavior through required-member ancestors at every grouping depth"))
+  :v2-proposed (    :state "proposed"
+    :outside-v1-denominator "yes"
+    :mapped-feature-areas 4
+    :acceptance-items 12
+    :source-updated-at "2026-09-14T20:47:32Z"
+    :roadmap-base "a61171522f89c627a0e9011b4b6b70036840c8a0"
+    :reason "Meaningful issue321 planning expansion before the hourly refresh: arbitrary real/virtual/mixed hierarchies and durable mapped GitHub completion return; no v1 feature/item addition or verified completion"
+    :features (
+      (:extends "E08-F03" :title "Friends, CONFIG and ACTIVE indexes" :state "proposed"
+       :subfeatures ("Keep node membership, human/AI coordinator composition, real or virtual organizational role and transport backing separate, with stable node and actor identities"
+         "Exercise all-real company-style, all-virtual and mixed real/virtual branches at arbitrary finite depths without fixed company/team/person levels; exceeding declared bounds refuses visibly"
+         "Keep one coordinating parent distinct from work containment and cross-branch references; record membership, parent and ownership transitions without duplicating work or spend"))
+      (:extends "E08-F04" :title "Availability, offers and assignment reconciliation" :state "proposed"
+       :subfeatures ("Apply the same offer, acceptance/deferral/refusal, local-work/delegation and evidence-return contract at every depth, including a root originating work and a leaf finishing locally"
+         "Integrate local and child results against parent acceptance; preserve partial failures, independent reviews, unresolved live handles and explicit pause/cancel/correction/reopen behavior"
+         "Return actor/model/bench/attempt usage through every parent mapping, counting local work, descendants, retry, integration, review and rescue once while missing usage remains unknown"))
+      (:extends "E09-F02" :title "Link mode and correspondence reconciliation" :state "proposed"
+       :subfeatures ("Support repository-backed virtual nodes using GitHub Issues and Discussions with optional correlated email; keep shared-project repository layout explicit and duplicate or delayed notices separate from acceptance"
+         "Retain delegating/receiving node, offer/assignment, local work, project/repository, Issue and linked Discussion identities and revisions; distinguish GitHub assignees from receiving nodes through regrouping, delegation and transfers"
+         "Record a virtual parent creating and assigning an Issue as a locally initiated offer, then accept it through the same contract without inventing an independent human request"))
+      (:extends "E09-F05" :title "External adapter and side-effect safety" :state "proposed"
+       :subfeatures ("After agreed completion and review, close the correctly mapped Issue and post or update one correlated Discussion completion summary with evidence; a child alone cannot close a group Issue and a summary does not imply Discussion closure or accepted answer"
+         "Persist the intended upstream operation before delivery and retain acknowledgment; local accepted completion with failed or interrupted GitHub delivery remains visibly pending and reconciles after restart without duplicate comments or closures"
+         "Preserve mappings and resolve contradictory upstream reopen, reassignment or transfer while updates are pending; an externally closed Issue does not prove local acceptance, and a future native backing preserves unresolved work and evidence"))))
   :open-questions (    "Common Lisp runtime packaging and supported platforms must be pinned before release"
     "Category taxonomy and roadmap completion policy beyond all-required-features remain open"
     "Exact verb and wire protocol spelling must be finalized in one schema before lock"
     "Friend participation in swarms versus model-only pools requires explicit dispositions, including Freddy's"
     "Absorption remains disabled pending independent reconciliation and authorization gates")
+  :now-snapshot-at "2026-09-14T20:57:36Z"
   :now (    "Test operational efficiency improvements while building nova-work; count retries, review and rescue, but exclude implementation cost"
     "https://github.com/mas-bandwidth/nova-tools/pull/300"
     "https://github.com/mas-bandwidth/nova-tools/issues/185"
-    "PR 300 merged as d21d65f0e6f16a6b3b797d4620d0f24e0c41c296 at 18:25:58 UTC after root clearance, Emma approval emma-aa67291093bc and Freddy's own Mercury APPROVE relayed in rowan-d5a2c0d5f70d; feature rows remain partial with no whole-criterion green"
-    "PR 314 merged as 4b99c1b4"
-    "PR 311 merged as 14ef63b1 after scoped wording and link gates cleared; Freddy adoption and any measured efficiency saving remain unproven"
-    "PR 312 merged as 20f8581 and was adopted by the root at 0921c80; no measured efficacy claim follows"
-    "PR 310 remains open at 5fb0feee with Emma owning integration"
-    "PR 316 remains open at f8fc40e with its scoped retained-receipt discovery repair cold-clear"
-    "PR 317 remains open at 685b7c2 with Rowan/Fable CLEAR rowan-be028c2589e8; Emma approved older a77f370 in emma-a875c5f1e118 and needs the current delta, while Freddy is pending; its proposed replays are mapped here without implementation credit"
+    "Merged foundations remain PR #300 at d21d65f0, PR #314 at 4b99c1b4, PR #311 at 14ef63b1 and PR #312 merged at 20f8581; the workshop adopted reviewed nova-bus source 0921c800 (its bus paths match the merge). Feature rows remain partial; no whole criterion or measured efficiency result is green."
+    "PR 310 merged as 95ceae8b into draft PR 264 at 19:11 UTC; parent and schema gates remain"
+    "PR 316 merged as 269e56d2 into held parent PR 240 at 18:33:30 UTC; the parent remains held on other findings"
+    "PR 317 merged as cf5dd8f5 into spec/nova-work at 19:29 UTC after Rowan, Emma and Freddy reviewed current 685b7c2; its acceptance replays are mapped here without implementation credit"
+    "PR #320 at 83269f66 has root 5669188583, Emma 5669320707 and Rowan 5670125575 clear; Freddy remains pending. It is not merged and makes no feature green."
+    "PR #322 at dd47e24b has root 5670041086, Emma 5670109927 and Rowan 5670125753 clear after exact closed/history/event identity assertions, journal-rejection wording and the required-boolean citation repair; Freddy remains pending. It is not merged and makes no feature green."
+    "PR #320 reader plus PR #322 container integration passed 32/32 with a fresh cache in a local rehearsal from main 86785fd0: combined commit 5b1b194f, tree 07585441495f8f6ea27d52929e1ab71a98e21cd9, with the exact union of unchanged test bodies. Only the acceptance append conflict was resolved. Evidence: workshop docs/experiments/20260914-reader-cascade-integration/. No remote integration or push occurred; Freddy reviews remain pending."
+    "PR #319 at 9488a19 has root clear, Emma 5669804565 clear and Rowan 5670125417 clear; Freddy remains pending. The recursive-grouping acceptance discoveries remain proposed without implementation credit."
+    "PRs 293, 294 and 295 have current Rowan/Fable approvals at 47c3f9a, 4fddfcb and c2be4d6b; other friend, parent and schema gates remain"
+    "Issue 321 updated 2026-09-14T20:47:32Z: recursive real/virtual/mixed nodes, optional repository/Issues/Discussions/email backing and durable delegated-work mappings with accepted completion returned upstream; proposed v2 discoveries remain outside the v1 denominator"
+    "PR #323 at d438bdb7 retains one root finding (5670639237): unreadable turn ID does not itself imply unspendable. Package, durability, mapping, additive-reason and source-local truncation repairs are clear; the remaining prose correction is required."
+    "PR #325 at d5f412f has root 5670630047 clear and 9/9 CI checks green; friend gates remain pending. This reconciles swarm migration status and re-reservation hashes without enabling the parent runtime."
+    "PR #326 at c598fc3 proposes optional native batch admission receipts, with root review 5670508751. Exact-revision friend review and contract gates remain; no build or operational saving is claimed."
     "Issue 185: native Codex usage decoding exists without an operational ingestion path, so no parent-plus-child token saving is claimed"
     "https://github.com/mas-bandwidth/nova-tools/pull/314"
     "https://github.com/mas-bandwidth/nova-tools/pull/311"
     "https://github.com/mas-bandwidth/nova-tools/pull/312"
     "https://github.com/mas-bandwidth/nova-tools/pull/310"
     "https://github.com/mas-bandwidth/nova-tools/pull/316"
+    "https://github.com/mas-bandwidth/nova-tools/pull/240"
     "https://github.com/mas-bandwidth/nova-tools/pull/317"
+    "https://github.com/mas-bandwidth/nova-tools/pull/319"
+    "https://github.com/mas-bandwidth/nova-tools/pull/320"
+    "https://github.com/mas-bandwidth/nova-tools/issues/321"
+    "https://github.com/mas-bandwidth/nova-tools/pull/322"
+    "https://github.com/mas-bandwidth/nova-tools/pull/326"
+    "https://github.com/mas-bandwidth/nova-tools/pull/325"
+    "https://github.com/mas-bandwidth/nova-tools/pull/323"
+    "https://github.com/mas-bandwidth/nova-tools/pull/293"
+    "https://github.com/mas-bandwidth/nova-tools/pull/294"
+    "https://github.com/mas-bandwidth/nova-tools/pull/295"
     "https://github.com/mas-bandwidth/nova-tools/issues/267"
     "https://github.com/mas-bandwidth/nova-tools/issues/239"
     "https://github.com/mas-bandwidth/nova-tools/issues/236"
@@ -134,19 +194,23 @@
           :title "Stable node identity and canonical containment"
           :subfeatures (            "Model one stable ID per node and one owning containment parent"
             "Keep containment as a forest and references as a separate graph"
-            "Preserve IDs through rename, close, reopen and reparent")
+            "Preserve IDs through rename, close, reopen and reparent"
+            "Allow omitted, repeated and recursively nested work-set grouping layers without a prescribed depth")
           :depends-on (            "E01-F02")
           :source-sections (            "The data"
-            "Engine and representation")
+            "Engine and representation"
+            "Recursive structure within a repository (proposed SPEC-WORK.md@9488a19)")
           :state "partial"
           :evidence ("PR300@d21d65f0: event identity and parent-cycle refusal; full canonical node lifecycle remains incomplete; 26/26 subset tests, no full feature verification"))
         (          :id "E01-F04"
           :title "Typed work kinds and acceptance schema"
           :subfeatures (            "Represent work-set, feature, roadmap, task, lease and event kinds"
             "Represent leaf tasks separately from parent tasks and attempts"
-            "Validate acceptance kind, subject, predicate and required flag")
+            "Validate acceptance kind, subject, predicate and required flag"
+            "Represent project and stream groupings as work-set categories without inferring kind from title or position")
           :depends-on (            "E01-F03")
-          :source-sections (            "The data")
+          :source-sections (            "The data"
+            "Recursive structure within a repository (proposed SPEC-WORK.md@9488a19)")
           :state "missing"
           :evidence ())
         (          :id "E01-F05"
@@ -278,12 +342,14 @@
           :title "State correction and completion transitions"
           :subfeatures (            "Support evidence-guarded state transitions including blocked, done, deferred, cancelled and superseded"
             "Bump task generation on correction and invalidate older evidence"
-            "Keep reopen, pause and stop as durable events")
+            "Keep reopen, pause and stop as durable events"
+            "Settle and reopen required-member ancestors at every grouping depth while empty required sets remain incomplete")
           :depends-on (            "E03-F03"
             "E05-F01")
           :source-sections (            "The data"
             "The validator"
-            "Required coordinator operations")
+            "Required coordinator operations"
+            "Recursive structure within a repository (proposed SPEC-WORK.md@9488a19)")
           :state "missing"
           :evidence ())
         (          :id "E03-F05"
@@ -401,7 +467,7 @@
           :depends-on (            "E05-F01")
           :source-sections (            "Operational lessons the pilot must exercise"
             "The data"
-            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
+            "Efficiency policy (SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())
         (          :id "E05-F04"
@@ -503,12 +569,13 @@
           :subfeatures (            "Represent ordered axes and coordinate-to-node references"
             "Refuse unknown axis members and duplicate coordinates"
             "Treat missing cells and out-of-scope cells distinctly"
-            "Preserve epic -> feature -> recursive sub-feature hierarchy without mandatory axis or cell wrappers"
+            "Preserve selected scope and completion unit across recursive grouping layouts without mandatory axis or cell wrappers"
             "Retain completed roadmap members and historical code/test evidence beyond the active 24-hour window")
           :depends-on (            "E01-F04"
             "E03-F03")
           :source-sections (            "The data"
-            "A cell is a reference, not another state store")
+            "A cell is a reference, not another state store"
+            "Recursive structure within a repository (proposed SPEC-WORK.md@9488a19)")
           :state "missing"
           :evidence ())
         (          :id "E07-F02"
@@ -598,7 +665,7 @@
             "Retry/protocol"
             "Batch-friendly transport and explicit atomicity"
             "Response correlation (SPEC-WORK.md@7db3b95)"
-            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
+            "Efficiency policy (SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())
         (          :id "E08-F03"
@@ -613,7 +680,7 @@
             "E03-F04")
           :source-sections (            "Friends and assignments are resident indexes too"
             "CONFIG and ACTIVE are different sections"
-            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
+            "Efficiency policy (SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())
         (          :id "E08-F04"
@@ -628,7 +695,7 @@
             "E02-F04")
           :source-sections (            "Observed availability"
             "Friends and assignments are resident indexes too"
-            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
+            "Efficiency policy (SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())
         (          :id "E08-F05"
@@ -642,7 +709,7 @@
           :source-sections (            "Efficient friend config exchange and token pricing"
             "Model knowledge informs scheduling"
             "Swarms, models and friend participation: decision required"
-            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
+            "Efficiency policy (SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())))
     (      :id "E09"
@@ -727,7 +794,7 @@
           :source-sections (            "Cost"
             "Model knowledge informs scheduling"
             "Retrospective required before production implementation"
-            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
+            "Efficiency policy (SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())
         (          :id "E10-F03"
@@ -766,7 +833,7 @@
             "E10-F03")
           :source-sections (            "The measurement that decides"
             "Agreement and lock gate"
-            "Efficiency policy (proposed SPEC-WORK.md@685b7c2)")
+            "Efficiency policy (SPEC-WORK.md@685b7c2)")
           :state "missing"
           :evidence ())
         (          :id "E10-F07"
