@@ -792,7 +792,7 @@ wall ONCE, before the first worker, and refuses the pass if it cannot:
 ```
 $ go build -o ~/bin/nova-sandbox ./cmd/nova-sandbox      # or name it with --sandbox <path>
 $ nova-swarm run --pool ./pool --workers 4 --hours 2 --worker ./worker.json
-RUN POOL workers=4 hours=2 worker=deepseek-1 model=deepseek/deepseek-chat pool=./pool
+RUN POOL workers=4 hours=2 worker=deepseek-1 model=deepseek/deepseek-chat auto_retry=true pool=./pool
 RUN START id=20260912T0141Z-task-1a2b3c slot=1 pid=41321 pgid=41321 started=2026-09-12T01:41:07Z deadline=20m tokens=100000 job=/home/you/worker-1/jobs/20260912T0141Z-task-1a2b3c
 ```
 
@@ -800,7 +800,7 @@ A machine with no backend, or a wall that fails a check, starts no worker at all
 
 ```
 $ nova-swarm run --pool ./pool --workers 4 --hours 2 --worker ./worker.json
-RUN POOL workers=4 hours=2 worker=deepseek-1 model=deepseek/deepseek-chat pool=./pool
+RUN POOL workers=4 hours=2 worker=deepseek-1 model=deepseek/deepseek-chat auto_retry=true pool=./pool
 RUN REFUSED reason=no_sandbox: this machine has no sandbox backend, and a job this tool cannot contain does not run: CHECK OK backend=none abi=- net=unenforceable note=the linux body of docs/SPEC-SANDBOX.md is not built yet. The one workaround is `--no-sandbox`, which runs every job with no OS containment and says so once per job
 ```
 
