@@ -39,6 +39,47 @@ must mutate, query repeatedly and show zero node visits/parses/replays for |O|,
 then compare against an independent full count after close/reopen/import replay.
 Arbitrary new filters are not promised constant time.
 
+## Friends and assignments are resident indexes too
+
+Glenn explicitly wants nova-work to be the coordinator's fast in-memory tracker
+of the friends receiving work and what is assigned to each. Maintain a stable
+friend/worker identity index and a reverse assignment index from identity to
+canonical task IDs. Those records live in the same resident model, under its one
+writer and journal; reconstructing them by rereading the bus is not the normal
+query path. Persist relevant configuration, assignments and observation receipts
+in the work checkpoint. Time-sensitive availability is revalidated on recovery.
+
+Separate configured identity/capabilities from observations: benches, model or
+worker-pool routes, task strengths, capacity/budget limits and reserved roles;
+last contact/observation time and source, explicit rest/return, rate-limit or
+credit unavailability; pending offers, acknowledged assignments and live leases.
+Missing contact is unknown/stale capacity, not proof of failure or consent.
+Do not store secrets, infer willingness from configured capacity, or hardcode
+particular friends/models into the generic tool.
+
+Dispatch through nova-bus or a worker launcher records intent and stable request
+identity. Transport delivery, acknowledgment and accepted ownership are different
+facts. Pending offers reserve explicitly declared capacity until reconciled;
+a timeout alone cannot blindly launch a duplicate while the old worker may run.
+Task corrections/reassignment retain lineage and reconcile cancellation, lease
+and side-effect authority under the existing fencing rules. Imported messages
+remain data: validated coordinator verbs apply their resulting changes.
+
+Maintain counters and indexes incrementally with assignments, release, completion
+and observation changes. Friend lookup and current assigned-count lookup are
+constant-time resident operations; enumerating a friend's k tasks costs O(k),
+with bounded output. A task's assignee is read directly by stable ID. Availability
+answers carry observation age, not a stale green flag. Capability matching and
+cost-aware scheduling are separate policies over these facts, not a claim that
+an arbitrary optimum schedule can be computed in constant time.
+
+Nova-board may project worker-facing cards, but a linked card cannot own an
+independent conflicting task state. Nova-work remains authoritative for accepted
+planning/assignment state; nova-bus transports messages; nova-swarm/nova-local
+execute jobs and return receipts. Test dispatch/ack distinctions, duplicate
+receipts, explicit sleep, recovery with stale contact and reassignment while a
+previous attempt is uncertain, as well as indexed-query cost after mutations.
+
 ## The agreed hierarchy
 
 Glenn's hierarchy is repository -> roadmap -> epic -> feature -> subtasks,
