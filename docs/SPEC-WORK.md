@@ -1570,6 +1570,7 @@ replay and tests (Stella, point 3). Reads take the same `--now` for the same rea
   event kind would have broken it *(Rowan's decision, for review)*. The root's open-item count, and the per-repository and
   per-container counts beneath it, are updated by the same envelope that moves an item, including
   the whole of a settle or revive cascade, before its `OK` line is printed; **a resident
+  counters count canonical item ids once—while a container is itself an item, while it is open it is in `|O|` and in its own container's open count, and its settle removes it from both like any other id.
   current-revision `|O|` query reads the counter and triggers no rollup, no scan, no parse and no
   replay**, and a test that mutates and then asks repeatedly asserts zero visits, zero parses and
   zero replays and compares against an independent full count after a close, a reopen and an
