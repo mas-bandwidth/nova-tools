@@ -130,8 +130,10 @@ or exhaustive stream-validation result.
 
 The fixture's input total 11 includes cache read 3; output total 7 includes
 reasoning 2. Its inclusive total is 18, not 23. These synthetic counts establish
-no real spend or provider billing. The launcher must preserve each call's raw
-usage and normalization basis before later transformations can erase absence.
+no real spend or provider billing. Usage provenance is an adapter responsibility,
+not a launcher promise. Stock `run --format json` exposes post-normalized session
+events; it supplies no raw per-call coverage claim or proof that absence survived
+normalization.
 
 Pinned OpenCode's
 [usage conversion](https://github.com/anomalyco/opencode/blob/16747470f976aca3d362ad730bcd3fe82ecc2c9a/packages/opencode/src/session/session.ts#L338)
@@ -194,9 +196,12 @@ allowed members; a value of the wrong type refuses.
 Decimal grammar is `-?(0|[1-9][0-9]*)(\.[0-9]*[1-9])?`. Negative zero is
 forbidden. Thus `1`, `0.5`, and `-0.25` are numbers, while `1.0`, `01`, `1e3`,
 `NaN` and `-0` refuse; use `1000` for the corresponding integer. The selected
-runtime must reject overflow and nonzero underflow instead of silently turning
-them into infinity or zero. The exact retained token, not a float formatting
-round trip, is emitted into generated JSON. SDK-specific ranges and precision
+closed SDK semantic schema must reject each decimal outside that option's finite
+range, or with unsupported precision, **before** generated configuration or
+`JSON.parse`; otherwise a syntactically valid huge decimal can silently become
+Infinity. It must likewise reject nonzero underflow instead of turning it into
+zero. The exact retained token, not a float formatting round trip, is emitted
+into generated JSON only after that check. SDK-specific ranges and precision
 requirements remain part of its closed option schema.
 
 The proposed adapter bounds a selected canonical `resolved` object to 256 KiB,

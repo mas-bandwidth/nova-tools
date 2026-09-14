@@ -21,7 +21,7 @@ Manifest readers reject duplicates, unknown/missing members, invalid Unicode, no
 
 Report artifact, control and generated-config bytes separately, plus their overflow-checked total. These are retained-input/storage observations, not token usage or provider cost. Directory enumeration must enforce the entry bound while walking, not after collecting an unbounded list. A payload reader consumes its declared length plus at most one overflow-detection byte; a short read or extra byte refuses. Fixed manifest wrappers must fit configured caps before accepting the plan. Empty directories remain explicit; unsupported filesystem objects never disappear silently.
 
-The copying/generation operation respects cancellation and the enclosing admission/run deadline at bounded chunk boundaries. Deadline exhaustion creates an incomplete preparation, not a launch receipt. No provider call is needed to prepare or validate these objects.
+The copying/generation operation respects cancellation and the existing `--launch-timeout` as its enclosing copy/publication deadline at bounded chunk boundaries. Deadline exhaustion creates an incomplete preparation, not a launch receipt. No provider call is needed to prepare or validate these objects.
 
 ## Publish bytes before readiness
 

@@ -168,7 +168,8 @@ profile JSON; the environment array is in raw-name order.
 A's exact public entries are `HOME` and `XDG_DATA_HOME` equal to
 `/srv/nova/pool-A/slots/2/worker/jobs/20260914T120000Z-proof-0a1b2c/data`,
 `NOVA_SWARM_JOB=/srv/nova/pool-A/slots/2/worker/jobs/20260914T120000Z-proof-0a1b2c`,
-`NO_COLOR=1`, and `PATH=/opt/opencode/bin:/usr/bin:/bin`. B proves a new nonce
+`NO_COLOR=1`, and `PATH=/opt/opencode/bin:/usr/bin:/bin`; raw-byte ordering puts
+`NOVA_SWARM_JOB` before `NO_COLOR` because `V` precedes `_`. B proves a new nonce
 and slot change both path values and hash while retaining the frozen plan.
 
 Required refusal vectors: inherited parent PATH or extra parent variable; a colon/NUL in a PATH component; a PATH directory failing read-root validation;

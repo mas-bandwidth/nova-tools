@@ -170,10 +170,12 @@ complete; an empty-only tools implementation does not satisfy that requirement.
 4. Distinct Go/Zen synthetic routes bind all transport metadata and one secret
    name; secret values never enter retained config, argv, hashes or logs. Unknown
    metadata, revision or SDK refuses. Retry preserves the prior protected bytes.
-5. The event/usage reader follows the realized attempt data home and retains raw
-   model/token observations, unknown paid cost, and local zero API cost according
-   to the shared accounting contract. A successful process exit alone proves
-   neither accepted work nor correct accounting.
+5. The adapter-owned event/usage reader follows the realized attempt data home
+   and records model/token coverage, unknown paid cost, and local zero API cost
+   according to the shared accounting contract. Stock `run --format json` exposes
+   post-normalized events, so this route does not claim raw per-call usage
+   coverage. A successful process exit alone proves neither accepted work nor
+   correct accounting.
 
 The exact generated config bytes, derived config-path environment additions and
 static variable whitelist remain implementation-contract gates. Do not add
